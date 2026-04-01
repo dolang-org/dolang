@@ -1,0 +1,5 @@
+let foo = [0]
+if false
+  assert_not true
+foo[0] = 42
+assert_eq $foo[0] 42

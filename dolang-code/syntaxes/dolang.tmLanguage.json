@@ -1,0 +1,217 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "Do",
+    "scopeName": "source.dol",
+    "fileTypes": ["dol"],
+    "uuid": "a-unique-uuid-if-needed",
+    "patterns": [{ "include": "#main" }],
+    "repository": {
+        "main": {
+            "patterns": [
+                { "include": "#comment" },
+                { "include": "#string" },
+                { "include": "#number" },
+                { "include": "#keyword" },
+                { "include": "#modifier" },
+                { "include": "#conditional" },
+                { "include": "#repeat" },
+                { "include": "#include" },
+                { "include": "#constant" },
+                { "include": "#operator" },
+                { "include": "#ellipsis" },
+                { "include": "#dollar_operator" },
+                { "include": "#delimiter" },
+                { "include": "#colon" },
+                { "include": "#compact_expr" },
+                { "include": "#full_expr" },
+                { "include": "#symbol" },
+                { "include": "#ditto_key" },
+                { "include": "#list_item" },
+                { "include": "#key" }
+            ]
+        },
+        "expr": {
+            "patterns": [
+                { "include": "#comment" },
+                { "include": "#string" },
+                { "include": "#number" },
+                { "include": "#keyword" },
+                { "include": "#modifier" },
+                { "include": "#conditional" },
+                { "include": "#repeat" },
+                { "include": "#include" },
+                { "include": "#constant" },
+                { "include": "#operator" },
+                { "include": "#ellipsis" },
+                { "include": "#dollar_operator" },
+                { "include": "#delimiter" },
+                { "include": "#colon" },
+                { "include": "#compact_expr" },
+                { "include": "#full_expr" },
+                { "include": "#symbol" },
+                { "include": "#ditto_key" },
+                { "include": "#key" },
+                { "include": "#identifier" }
+            ]
+        },
+        "comment": {
+            "match": "(?:^|\\s)(#.*)$",
+            "captures": {"1": { "name": "comment.line.number-sign.dol"}}
+        },
+        "string": {
+            "begin": "\"",
+            "end": "\"",
+            "beginCaptures": {
+                "0": { "name": "punctuation.definition.string.begin.dol" }
+            },
+            "endCaptures": {
+                "0": { "name": "punctuation.definition.string.end.dol" }
+            },
+            "name": "string.quoted.double.dol",
+            "patterns": [
+                { "include": "#string_interp" },
+                { "include": "#string_interp_parens" },
+                { "include": "#escape" }
+            ]
+        },
+        "string_interp": {
+            "match": "\\$[A-Za-z0-9_]+",
+            "name": "variable.other.normal.dol"
+        },
+        "string_interp_parens": {
+            "begin": "(\\$)(\\()",
+            "end": "\\)",
+            "beginCaptures": { "2": { "name": "punctuation.section.group.begin.dol" }, "1": { "name": "variable.other.normal.dol"} },
+            "endCaptures": { "0": { "name": "punctuation.section.group.end.dol" } },
+            "patterns": [{ "include": "#expr" }]
+        },
+        "escape": {
+            "match": "\\\\[nrt\"\\\\$]",
+            "name": "constant.character.escape.dol"
+        },
+        "number": {
+            "match": "(?<![A-Za-z0-9_])-?(\\d+|\\d*\\.\\d+|\\d+\\.\\d*)(e[+-]?\\d+)?(?![A-Za-z0-9_])",
+            "name": "constant.numeric.dol"
+        },
+        "keyword": {
+            "match": "\\b(break|continue|return|do|let|def|bind)\\b",
+            "name": "keyword.control.dol"
+        },
+        "modifier": {
+            "match": "\\b(pub)\\b",
+            "name": "storage.modifier.dol"
+        },
+        "conditional": {
+            "match": "\\b(if|else)\\b",
+            "name": "keyword.control.conditional.dol"
+        },
+        "repeat": {
+            "match": "\\b(for|while)\\b",
+            "name": "keyword.control.repeat.dol"
+        },
+        "include": {
+            "match": "\\b(import)\\b",
+            "name": "keyword.control.import.dol"
+        },
+        "constant": {
+            "match": "\\b(false|true|nil)\\b",
+            "name": "constant.language.dol"
+        },
+        "operator": {
+            "match": "[+\\-/*<>=!%&|]",
+            "name": "keyword.operator.dol"
+        },
+        "ellipsis": {
+            "match": "\\.{3}",
+            "name": "keyword.other.special.dol"
+        },
+        "dollar_operator": {
+            "match": "[ \\t]\\$([ \\t]|$)",
+            "name": "keyword.operator.dol"
+        },
+        "delimiter": {
+            "match": "[,|]",
+            "name": "punctuation.separator.dol"
+        },
+        "colon": {
+            "match": ":",
+            "name": "punctuation.separator.dol"
+        },
+        "compact_expr": {
+            "begin": "(\\$|\\.{3})(?=[^ \\t])",
+            "end": "(?=\\s|$)",
+            "beginCaptures": { "1": { "name": "variable.other.normal.dol" } },
+            "patterns": [{ "include": "#expr" }]
+        },
+        "full_expr": {
+            "patterns": [
+                {
+                    "begin": "\\(",
+                    "end": "\\)",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.section.group.begin.dol" }
+                    },
+                    "endCaptures": {
+                        "0": { "name": "punctuation.section.group.end.dol" }
+                    },
+                    "name": "meta.group.dol",
+                    "patterns": [{ "include": "#expr" }]
+                },
+                {
+                    "begin": "\\[",
+                    "end": "\\]",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.section.bracket.begin.dol" }
+                    },
+                    "endCaptures": {
+                        "0": { "name": "punctuation.section.bracket.end.dol" }
+                    },
+                    "name": "meta.bracket.dol",
+                    "patterns": [{ "include": "#expr" }]
+                },
+                {
+                    "begin": "\\{",
+                    "end": "\\}",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.section.brace.begin.dol" }
+                    },
+                    "endCaptures": {
+                        "0": { "name": "punctuation.section.brace.end.dol" }
+                    },
+                    "name": "meta.brace.dol",
+                    "patterns": [{ "include": "#expr" }]
+                }
+            ]
+        },
+        "symbol": {
+            "match": "(:)([A-Za-z_][A-Za-z0-9_]*)(:)",
+            "captures": {
+                "1": { "name": "punctuation.separator.dol" },
+                "2": { "name": "constant.language.dol" },
+                "3": { "name": "punctuation.separator.dol" }
+            }
+        },
+        "ditto_key": {
+            "match": "(:)([A-Za-z_][A-Za-z0-9_]*)",
+            "captures": {
+                "1": { "name": "punctuation.separator.dol" },
+                "2": { "name": "variable.other.dol" }
+            }
+        },
+        "list_item": {
+            "match": "^\\s*-(\\s-)*\\s",
+            "name": "punctuation.definition.list.dol"
+        },
+        "key": {
+            "match": "([A-Za-z_][A-Za-z0-9_]*)(:)",
+            "captures": {
+                "1": { "name": "meta.object-literal.key.dol" },
+                "2": { "name": "punctuation.separator.dol" }
+            }
+        },
+        "identifier": {
+            "match": "[A-Za-z_][A-Za-z0-9_]*",
+            "name": "variable.other.dol"
+        }
+    }
+}

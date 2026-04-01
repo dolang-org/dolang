@@ -1,0 +1,10 @@
+import strand:
+  - fork
+let foo = nil
+let bar = nil
+let res = fork
+  do foo = async 42
+  do bar = async false
+assert_eq $foo 42
+assert_eq $bar false
+assert_eq $res [42, false]

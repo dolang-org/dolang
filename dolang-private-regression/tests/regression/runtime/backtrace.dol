@@ -1,0 +1,141 @@
+import
+  std:
+    - StateError
+  strand:
+    - spawn
+    - stream
+
+def receivers bt
+  let out =
+    for frame = bt
+      - $frame.receiver
+  out
+
+def frame_info bt
+  let out =
+    for frame = bt
+      - [frame.module, frame.receiver, frame.method, frame.source != nil, frame.line != nil]
+  out
+
+def live_inner
+  return strand.backtrace()
+
+def live_middle
+  return live_inner()
+
+def live_outer
+  return live_middle()
+
+def boom_inner
+  throw "boom"
+
+def boom_outer
+  return boom_inner()
+
+def catch_snapshot
+  try
+    boom_outer()
+  catch _
+    strand.error_backtrace()
+
+# Live backtrace snapshots are iterable and expose structured frame fields.
+let live = live_outer()
+let live_receivers = receivers $live
+let live_info = frame_info $live
+assert (live.len >= 3)
+assert_eq $live_receivers[0] "live_inner"
+assert_eq $live_receivers[1] "live_middle"
+assert_eq $live_receivers[2] "live_outer"
+assert_eq $live_info[0][0] "<program>"
+assert_eq $live_info[0][1] "live_inner"
+assert_eq $live_info[0][2] nil
+assert $live_info[0][3]
+assert $live_info[0][4]
+
+# error_backtrace() is only valid while handling an exception.
+let outside = try
+  strand.error_backtrace()
+catch e
+  e
+assert_eq (type outside) $StateError
+assert_eq (str outside) "state error: no active handled exception"
+
+# Catch handlers can snapshot the handled exception backtrace.
+let catch_bt = try
+  boom_outer()
+catch e
+  assert_eq $e "boom"
+  strand.error_backtrace()
+let catch_receivers = receivers $catch_bt
+assert_eq $catch_receivers[0] "boom_inner"
+assert_eq $catch_receivers[1] "boom_outer"
+
+# Do-level error_backtrace snapshots extend the handled trace with the live handler stack.
+let catch_snapshot_receivers = receivers $(catch_snapshot())
+assert_eq $catch_snapshot_receivers[0] "boom_inner"
+assert_eq $catch_snapshot_receivers[1] "boom_outer"
+assert (catch_snapshot_receivers.len >= 3)
+
+# Finally blocks also see the active handled exception backtrace.
+let finally_bt = nil
+let finally_err = try
+  try
+    boom_outer()
+  finally
+    finally_bt = strand.error_backtrace()
+catch e
+  e
+assert_eq $finally_err "boom"
+let finally_receivers = receivers $finally_bt
+assert_eq $finally_receivers[0] "boom_inner"
+assert_eq $finally_receivers[1] "boom_outer"
+
+# Explicit rethrow with backtrace preserves the original trace.
+let reraised_bt = try
+  try
+    boom_outer()
+  catch e
+    let bt = strand.error_backtrace()
+    strand.throw $e backtrace: $bt
+catch e
+  assert_eq $e "boom"
+  strand.error_backtrace()
+let reraised_receivers = receivers $reraised_bt
+assert_eq $reraised_receivers[0] "boom_inner"
+assert_eq $reraised_receivers[1] "boom_outer"
+
+# Strand join preserves the originating backtrace.
+let joined_bt = try
+  let handle = spawn do boom_outer()
+  handle.join()
+catch e
+  assert_eq $e "boom"
+  strand.error_backtrace()
+let joined_receivers = receivers $joined_bt
+assert_eq $joined_receivers[0] "boom_inner"
+assert_eq $joined_receivers[1] "boom_outer"
+
+# Stream next preserves the originating backtrace.
+let next_stream = stream do boom_outer()
+let next_bt = try
+  next_stream.next()
+catch e
+  assert_eq $e "boom"
+  strand.error_backtrace()
+next_stream.wait()
+let next_receivers = receivers $next_bt
+assert_eq $next_receivers[0] "boom_inner"
+assert_eq $next_receivers[1] "boom_outer"
+
+# Stream put preserves the originating backtrace.
+let put_stream = stream do boom_outer()
+let put_bt = try
+  put_stream.put 1
+  put_stream.put 2
+catch e
+  assert_eq $e "boom"
+  strand.error_backtrace()
+put_stream.wait()
+let put_receivers = receivers $put_bt
+assert_eq $put_receivers[0] "boom_inner"
+assert_eq $put_receivers[1] "boom_outer"

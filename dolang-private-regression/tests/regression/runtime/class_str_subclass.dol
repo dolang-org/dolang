@@ -1,0 +1,38 @@
+import std:
+  - hash
+
+# Basic subclassing of str
+class MyStr: str
+  def (init) self value
+    str.(init) $self $value
+
+  def (dbg) self
+    "<MyStr $(str.(dbg) self)>"
+
+let x = MyStr "hello"
+let y = MyStr "world"
+
+# Coercion
+assert_eq (str x) "hello"
+assert_eq (dbg x) r#"<MyStr "hello">"#
+
+# String methods
+assert_eq $x.len 5
+assert (x.starts_with "hel")
+assert (!(x.starts_with "wor"))
+assert_eq (x.without_prefix "hel") "lo"
+assert_eq $x.upper() "HELLO"
+assert_eq $x.lower() "hello"
+assert (x.contains "ell")
+
+# Comparison
+assert (x == x)
+assert (x < y)
+assert (x == "hello")
+
+# Bool
+assert (bool x)
+assert (!(bool (MyStr "")))
+
+# Hash: two equal values must have equal hashes
+assert_eq (hash x) (hash (MyStr "hello"))

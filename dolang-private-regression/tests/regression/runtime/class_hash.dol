@@ -1,0 +1,42 @@
+# Test (hash) special method
+import std:
+  - hash
+
+class Point
+  pub let x = 0
+  pub let y = 0
+
+  def (init) self x y
+    self.x = x
+    self.y = y
+
+  def (hash) self
+    hash $self.x $self.y
+
+  def (eq) self other
+    (self.x == other.x && self.y == other.y)
+
+# Equal objects must hash equal
+let p1 = Point 3 4
+let p2 = Point 3 4
+assert_eq (hash p1) (hash p2)
+
+# hash is deterministic
+assert_eq (hash p1) (hash p1)
+
+# Can be used as dict keys
+let d = {}
+d[p1] = "origin"
+assert_eq $d[p2] "origin"
+
+# multi-arg hash is deterministic
+assert_eq (hash p1 p2) (hash p1 p2)
+
+# Without (hash), instances hash by identity
+class Anon
+  pub let v = 0
+  def (init) self v
+    self.v = v
+
+let a1 = Anon 1
+assert_eq (hash a1) (hash a1)

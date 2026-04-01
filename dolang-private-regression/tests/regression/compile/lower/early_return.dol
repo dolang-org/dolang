@@ -1,0 +1,9 @@
+def foo
+  let cap = 0
+  if true
+    let cap2 = 0
+    let _bar = do
+      echo $cap
+      echo $cap2
+    return
+return foo

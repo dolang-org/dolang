@@ -1,0 +1,54 @@
+import strand:
+  - stream
+  - fork
+  - each
+  - put
+
+# Test 1: basic stream — each branch doubles values
+let s = stream do each do |x| (x * 2)
+
+# Producer and consumer run concurrently (channels are size-1)
+let results = fork
+  do 
+    s.put 1
+    s.put 2
+    s.put 3
+  do [s.next(), s.next(), s.next()]
+
+# join closes the input channel (strand's each exits) and waits for completion
+s.join()
+assert_eq $results[1] [2, 4, 6]
+
+# Test 2: strand error propagates to consumer via next
+# The strand puts one value then throws; next should surface the error after the value.
+let s2 = stream do
+  put 42
+  throw "next error"
+let v = s2.next()
+assert_eq $v 42
+let err2 = try
+  s2.next()
+catch e
+  e
+s2.wait()
+assert_eq $err2 "next error"
+
+# Test 3: strand error propagates to producer via put
+# The strand exits immediately; eventually put sees SinkStop and re-raises the strand error.
+let s3 = stream do throw "put error"
+let err3 = try
+  s3.put 1
+  s3.put 2
+catch e
+  e
+s3.wait()
+assert_eq $err3 "put error"
+
+# Test 4: mapped streams preserve both input and output behavior
+let s4 = stream do each do |x| x
+let mapped = s4.map (do |x| x + 1)
+let results4 = fork
+  do mapped.put 1
+  do mapped.next()
+s4.join()
+assert_eq $results4[1] 3

@@ -1,0 +1,11 @@
+let hello = "Hello"
+let world = "world"
+let foo = "bar"
+assert_eq "" ""
+assert_eq "$hello:$foo:$world" "Hello:bar:world"
+assert_eq "$hello, (world)!" "Hello, (world)!"
+echo "\"$(hello)\"\n\"World\""
+# output: END
+# "Hello"
+# "World"
+# END

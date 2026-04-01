@@ -1,0 +1,129 @@
+# Test: Discarded computation with side effects
+# These should warn that side effects occurred but the result was processed pointlessly
+
+# These will all raise errors at runtime, so skip
+return
+
+# Function call with arithmetic operation
+(echo() + 5)
+# warning: result of computation discarded
+#   --> discarded_computation.dol:LL:LL
+#    |
+# LL | (echo() + 5)
+#    | ^^^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (echo() + 5)
+#    | +++++++
+# warning: unreachable statement
+#   --> discarded_computation.dol:LL:LL
+#    |
+# LL | (echo() + 5)
+#    | ^^^^^^^^^^^^
+
+# Arithmetic with function call  
+(5 + echo())
+# warning: result of computation discarded
+#   --> discarded_computation.dol:LL:LL
+#    |
+# LL | (5 + echo())
+#    | ^^^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (5 + echo())
+#    | +++++++
+
+# Two function calls combined
+(echo() + echo())
+# warning: result of computation discarded
+#   --> discarded_computation.dol:LL:LL
+#    |
+# LL | (echo() + echo())
+#    | ^^^^^^^^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (echo() + echo())
+#    | +++++++
+
+# Array literal with function calls
+[echo(), echo()]
+# warning: result of computation discarded
+#   --> discarded_computation.dol:LL:LL
+#    |
+# LL | [echo(), echo()]
+#    | ^^^^^^^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = [echo(), echo()]
+#    | +++++++
+
+# Dict literal with function call values
+{a: echo(), b: echo()}
+# warning: result of computation discarded
+#   --> discarded_computation.dol:LL:LL
+#    |
+# LL | {a: echo(), b: echo()}
+#    | ^^^^^^^^^^^^^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = {a: echo(), b: echo()}
+#    | +++++++
+
+# Field access on function call result
+(echo().field)
+# warning: result of computation discarded
+#   --> discarded_computation.dol:LL:LL
+#    |
+# LL | (echo().field)
+#    | ^^^^^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (echo().field)
+#    | +++++++
+
+# Indexing into function call result  
+(echo()[0])
+# warning: result of computation discarded
+#   --> discarded_computation.dol:LL:LL
+#    |
+# LL | (echo()[0])
+#    | ^^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (echo()[0])
+#    | +++++++
+
+# Unary operation on function call
+(-echo())
+# warning: result of computation discarded
+#   --> discarded_computation.dol:LL:LL
+#    |
+# LL | (-echo())
+#    | ^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (-echo())
+#    | +++++++
+
+# Nested combinations
+(echo() + echo() * echo())
+# warning: result of computation discarded
+#   --> discarded_computation.dol:LL:LL
+#    |
+# LL | (echo() + echo() * echo())
+#    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (echo() + echo() * echo())
+#    | +++++++
+
+echo()

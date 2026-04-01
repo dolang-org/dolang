@@ -1,0 +1,49 @@
+import
+  glob:
+    - Glob
+    - matches
+  std:
+    - TypeError
+
+def assert_err func type: ty :msg ...rest
+  let res = try
+    func ...rest
+    false
+  catch e
+    assert (type e ty)
+    assert_eq (str e) $msg
+    true
+  assert $res
+
+let png = Glob "**/*.png"
+assert (png.matches "images/logo.png")
+assert (!(png.matches "images/logo.jpg"))
+assert_eq (str png) "**/*.png"
+
+assert (matches "**/*.png" "images/logo.png")
+assert (!(matches "**/*.png" "images/logo.jpg"))
+assert (matches png "assets/icons/app.png")
+assert (!(matches png "assets/icons/app.svg"))
+
+let tree = Glob "src/**/mod.rs"
+assert (tree.matches "src/fs/mod.rs")
+assert (tree.matches "src/fs/path/mod.rs")
+assert (!(tree.matches "src/fs/path.rs"))
+
+let invalid_ctor = try
+  Glob "["
+  false
+catch _
+  true
+assert $invalid_ctor
+
+let invalid_fn = try
+  matches "[" "foo"
+  false
+catch _
+  true
+assert $invalid_fn
+
+assert_err $matches 1 "foo" type: $TypeError msg: "type error: pattern: expected Glob or str"
+assert_err $matches "*.png" 1 type: $TypeError msg: "type error: value: expected `str`"
+assert_err $png.matches 1 type: $TypeError msg: "type error: value: expected `str`"

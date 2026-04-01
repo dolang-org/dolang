@@ -1,0 +1,2 @@
+let foo = record bar: hello
+let _ = {$foo.bar: 5}

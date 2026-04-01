@@ -1,0 +1,9 @@
+import xml:
+  - Node
+
+class MyNode: Node
+  def (init) self tag
+    Node.(init) $self $tag
+
+let node = MyNode foo
+assert_eq $node.tag foo

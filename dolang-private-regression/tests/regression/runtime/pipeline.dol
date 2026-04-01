@@ -1,0 +1,13 @@
+import strand:
+  - pipeline
+  - from
+  - where
+  - each
+  - collect
+
+let res = pipeline
+  do from [1, 2, "foobar", 3]
+  do where do |x| type $x $int
+  do each do |x| (x * 2)
+  do collect()
+assert_eq $res [2, 4, 6]

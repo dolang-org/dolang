@@ -1,0 +1,34 @@
+import std:
+  - Iter
+
+assert_eq [...([].iter().chain())] []
+assert_eq [...[1, 2].iter().chain([],[3, 4])] [1, 2, 3, 4]
+
+let method = [1, 2].iter().chain [3] [] [4, 5]
+assert_eq [...method] [1, 2, 3, 4, 5]
+
+let pair_chain = [10].pairs().chain([20, 30].pairs())
+assert (type pair_chain Iter)
+let pair = pair_chain.max()
+assert_eq $pair[0] 1
+assert_eq $pair[1] 30
+
+let mixed = [10].pairs().chain [20]
+assert (type mixed Iter)
+
+class MyInput: Iter
+  pub let inner = nil
+
+  def (init) self items
+    Iter.(init) self
+    self.inner = items.iter()
+
+  def (next) self
+    self.inner.next()
+
+  def (iter) self
+    self
+
+let custom = MyInput [1, 2]
+let chained = custom.chain [3, 4]
+assert_eq [...chained] [1, 2, 3, 4]

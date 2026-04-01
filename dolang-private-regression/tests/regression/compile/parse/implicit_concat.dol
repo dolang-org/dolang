@@ -1,0 +1,13 @@
+def id value
+  value
+let foo = "jam"
+let bar = "lid"
+assert_eq foo$foo "foojam"
+assert_eq $foo$bar "jamlid"
+assert_eq $foo=$bar "jam=lid"
+assert_eq foo-$bar-bar "foo-lid-bar"
+assert_eq foo(foo)bar "foo(foo)bar"
+assert_eq $foo:$bar:baz "jam:lid:baz"
+assert_eq $foo:bar:baz "jam:bar:baz"
+assert_eq $id(foo)bar "jambar"
+assert_eq $id(foo)(bar) "jam(bar)"

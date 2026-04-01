@@ -1,0 +1,62 @@
+import
+  http
+  std:
+    - TypeError
+
+def assert_err func type: ty :msg ...rest
+  let res = try
+    func ...rest
+    false
+  catch e
+    assert (type e ty)
+    assert_eq (str e) $msg
+    true
+  assert $res
+
+let jarred = http.Client cookies: true
+jarred.get $TEST_URL/login do |res|
+  assert_eq $res.status 200
+  let set_cookie = (res.headers)["set-cookie"]
+  assert ((str set_cookie).contains "session=abc")
+
+jarred.get $TEST_URL/session do |res|
+  assert_eq $res.status 200
+  assert_eq (res.text()) ok
+
+let plain = http.Client()
+plain.get $TEST_URL/login
+let plain_missing_session = try
+  plain.get $TEST_URL/session
+  false
+catch e
+  assert (type e http.Status)
+  assert_eq (str e) "HTTP status client error (401 Unauthorized) for url ($TEST_URL/session)"
+  true
+assert $plain_missing_session
+
+let first = http.Client cookies: true
+let second = http.Client cookies: true
+first.get $TEST_URL/login
+let isolated_clients = try
+  second.get $TEST_URL/session
+  false
+catch e
+  assert (type e http.Status)
+  assert_eq (str e) "HTTP status client error (401 Unauthorized) for url ($TEST_URL/session)"
+  true
+assert $isolated_clients
+second.get $TEST_URL/login
+second.get $TEST_URL/session do |res|
+  assert_eq $res.status 200
+
+http.get $TEST_URL/login
+let top_level_stateless = try
+  http.get $TEST_URL/session
+  false
+catch e
+  assert (type e http.Status)
+  assert_eq (str e) "HTTP status client error (401 Unauthorized) for url ($TEST_URL/session)"
+  true
+assert $top_level_stateless
+
+assert_err $http.Client cookies: 1 type: $TypeError msg: "type error: cookies: expected bool"

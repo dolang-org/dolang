@@ -1,0 +1,6 @@
+echo one
+echo two
+# output: END
+# one
+# two
+# END

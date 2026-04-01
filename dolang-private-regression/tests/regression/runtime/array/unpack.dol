@@ -1,0 +1,11 @@
+let arr = [1, 2]
+let a b = arr
+assert_eq $a 1
+assert_eq $b 2
+let arr = [1, 2, 3, 4]
+let a b ...rest = arr
+assert_eq $a 1
+assert_eq $b 2
+let a b = rest
+assert_eq $a 3
+assert_eq $b 4

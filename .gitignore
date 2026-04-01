@@ -1,0 +1,12 @@
+/dolang-code/dist
+/dolang-code/node_modules
+/dolang-code/.vscode-test/
+/dolang-code/*.vsix
+/dot
+/site
+/target
+/.rumdl_cache
+/.codex
+/.claude
+/.cache
+__pycache__

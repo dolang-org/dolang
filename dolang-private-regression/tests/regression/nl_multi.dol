@@ -1,0 +1,47 @@
+def trampoline thunk
+  thunk()
+
+# Test 1: break path in a guard that also has return
+def func1
+  for i = [0, 1, 2]
+    trampoline do
+      if (i == 1)
+        break
+  "done"
+
+assert_eq $func1() "done"
+
+# Test 2: return path in a guard that also has break
+def func2
+  for i = [0, 1, 2]
+    trampoline do
+      if (i == 1)
+        return "early"
+  "done"
+
+assert_eq $func2() "early"
+
+# Test 3: break + continue + return in one guard
+def func3 mode
+  for i = [0, 1, 2, 3]
+    trampoline do
+      if (mode == "break" && i == 1)
+        break
+      if (mode == "continue" && i == 1)
+        continue
+      if (mode == "return" && i == 1)
+        return "returned"
+      echo $i
+  "loop_done"
+
+assert_eq (func3 "break") "loop_done"
+assert_eq (func3 "continue") "loop_done"
+assert_eq (func3 "return") "returned"
+
+# output: END
+# 0
+# 0
+# 2
+# 3
+# 0
+# END

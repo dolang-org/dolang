@@ -1,0 +1,74 @@
+import fs:
+  - create_dir
+  - Path
+  - with_temp_dir
+  - metadata
+
+import agent:
+  - with_and_without_agent
+
+with_and_without_agent "create_dir creates single directory" do with_temp_dir do |dir|
+  let new_dir = (dir / "new_directory")
+
+  # Directory shouldn't exist yet
+  assert !$new_dir.exists()
+
+  # Create it
+  create_dir $new_dir
+
+  # Now it should exist and be a directory
+  assert $new_dir.exists()
+  let meta = metadata $new_dir
+  assert_eq $meta.type :dir:
+
+with_and_without_agent "create_dir fails if exists" do with_temp_dir do |dir|
+  let new_dir = (dir / "existing")
+
+  # Create first time
+  create_dir $new_dir
+
+  # Second attempt should fail
+  let res = try
+    create_dir $new_dir
+    false
+  catch _
+    true
+  assert $res
+
+with_and_without_agent "create_dir all creates nested directories" do with_temp_dir do |dir|
+  let nested = (dir / "a" / "b" / "c")
+
+  # Create nested structure
+  create_dir $nested all: true
+
+  # All directories should exist
+  assert (dir / "a").exists()
+  assert (dir / "a" / "b").exists()
+  assert $nested.exists()
+
+with_and_without_agent "Path.create_dir method" do with_temp_dir do |dir|
+  let path = Path (dir / "method_test")
+
+  path.create_dir()
+
+  assert path.exists()
+  let meta = path.metadata()
+  assert_eq $meta.type :dir:
+
+with_and_without_agent "Path.create_dir all" do with_temp_dir do |dir|
+  let nested = (dir / "x" / "y" / "z")
+
+  nested.create_dir all: true
+
+  assert nested.exists()
+
+with_and_without_agent "create_dir all is idempotent" do with_temp_dir do |dir|
+  let path = (dir / "idempotent")
+
+  # Create first time with all=true
+  create_dir $path all: true
+  assert $path.exists()
+
+  # Second time should succeed (no error)
+  create_dir $path all: true
+  assert $path.exists()

@@ -1,0 +1,35 @@
+import std:
+  - hash
+
+# Basic subclassing of bool
+class MyBool: bool
+  def (init) self value
+    bool.(init) $self $value
+
+let t = MyBool true
+let f = MyBool false
+
+# Coercion
+assert_eq (bool t) true
+assert_eq (str t) "true"
+assert_eq (dbg t) "true"
+
+# Bool ops
+assert (t & t)
+assert (!(t & f))
+assert (t | f)
+assert (!(f | f))
+assert (t ^ f)
+assert (!(t ^ t))
+assert (~f)
+
+# Comparison
+assert (t == t)
+assert (t == true)
+
+# Bool
+assert (bool t)
+assert (!(bool f))
+
+# Hash: two equal values must have equal hashes
+assert_eq (hash t) (hash (MyBool true))

@@ -1,0 +1,25 @@
+import shlex
+  fs:
+    - open
+
+def read_keys path
+  open $path do |file|
+    let res = {}
+    for line = file
+      let k v = line.split = limit: 1
+      res[k] = (shlex.split v).next()
+    res
+
+# Returns a dict of key/value pairs from `/etc/os-release`.
+#
+# Keys and values follow the [os-release](https://www.freedesktop.org/software/systemd/man/os-release.html)
+# specification. Values are unquoted (shell quoting is stripped).
+#
+# **Example:**
+# ```
+# import systemd
+# let rel = systemd.os_release()
+# echo $rel["NAME"]   # e.g. "Fedora Linux"
+# ```
+pub def os_release()
+  read_keys /etc/os-release

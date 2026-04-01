@@ -1,0 +1,11 @@
+import strand:
+  - redirect
+
+redirect input: ["foo", "bar", "baz"] do
+  for i
+    echo $i
+# output: END
+# foo
+# bar
+# baz
+# END

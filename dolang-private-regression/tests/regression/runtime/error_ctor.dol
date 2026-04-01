@@ -1,0 +1,101 @@
+import
+  std: error
+  std:
+    - UnsupportedError
+    - ImmutableError
+    - ConcurrencyError
+    - TypeError
+    - ValueError
+    - StateError
+    - IndexError
+    - FieldError
+    - UnexpectedPosError
+    - UnexpectedKeyError
+    - MissingPosError
+    - MissingKeyError
+    - OverflowError
+    - ZeroDivError
+    - CyclicImportError
+    - ImportError
+    - CompileError
+    - RuntimeError
+    - InterruptError
+    - BytecodeError
+    - CanceledError
+    - IterStop
+    - SinkStop
+
+def assert_ctor func type: ty :msg ...rest
+  let err = func ...rest
+  assert_eq (type err) $ty
+  assert_eq (str err) $msg
+
+def assert_ctor_fail func type: ty :msg ...rest
+  let res = try
+    func ...rest
+    false
+  catch e
+    assert (type e ty)
+    assert_eq (str e) $msg
+    true
+  assert $res
+
+let type_err = TypeError "bad"
+assert_eq (type type_err) $TypeError
+assert_eq (str type_err) "type error: bad"
+assert (type type_err RuntimeError)
+
+let value_err = ValueError "bad"
+assert_eq (type value_err) $ValueError
+assert_eq (str value_err) "value error: bad"
+assert (type value_err RuntimeError)
+
+let state_err = StateError "closed"
+assert_eq (type state_err) $StateError
+assert_eq (str state_err) "state error: closed"
+assert (type state_err RuntimeError)
+
+let field_err = FieldError "name"
+assert_eq (type field_err) $FieldError
+assert_eq (str field_err) "no such field: name"
+
+let sink_stop = SinkStop()
+assert_eq (type sink_stop) $SinkStop
+assert_eq (str sink_stop) "output iterator stopped"
+
+assert_ctor $UnsupportedError type: $UnsupportedError msg: "unsupported operation"
+assert_ctor $ImmutableError type: $ImmutableError msg: "object is immutable"
+assert_ctor $ConcurrencyError type: $ConcurrencyError msg: "concurrent access violation"
+assert_ctor $ConcurrencyError type: $ConcurrencyError msg: "concurrent access violation: shared" "shared"
+assert_ctor $TypeError type: $TypeError msg: "type error: expected int" "expected int"
+assert_ctor $ValueError type: $ValueError msg: "value error: expected mode" "expected mode"
+assert_ctor $StateError type: $StateError msg: "state error: closed" "closed"
+assert_ctor $IndexError type: $IndexError msg: "index out of range or invalid"
+assert_ctor $FieldError type: $FieldError msg: "no such field: name" "name"
+assert_ctor $FieldError type: $FieldError msg: "no such field: name" :name:
+assert_ctor $UnexpectedPosError type: $UnexpectedPosError msg: "unexpected positional item: 2" 2
+assert_ctor $UnexpectedKeyError type: $UnexpectedKeyError msg: "unexpected key item: key3" :key3:
+assert_ctor $MissingPosError type: $MissingPosError msg: "missing positional item: 3" 3
+assert_ctor $MissingKeyError type: $MissingKeyError msg: "missing key item: key4" :key4:
+assert_ctor $OverflowError type: $OverflowError msg: "numeric overflow"
+assert_ctor $ZeroDivError type: $ZeroDivError msg: "integer zero divisor"
+assert_ctor $IterStop type: $IterStop msg: "input iterator stopped"
+assert_ctor $SinkStop type: $SinkStop msg: "output iterator stopped"
+assert_ctor $CyclicImportError type: $CyclicImportError msg: "cycle detected importing module: pkg.mod" "pkg.mod"
+assert_ctor $ImportError type: $ImportError msg: "module not found: pkg.mod" "pkg.mod"
+assert_ctor $CompileError type: $CompileError msg: "compile error: invalid token" "invalid token"
+assert_ctor $RuntimeError type: $RuntimeError msg: "closed" "closed"
+assert_ctor $CanceledError type: $CanceledError msg: "strand canceled"
+
+assert_ctor_fail $MissingPosError type: $error.TypeError msg: "type error: expected int" "bad"
+assert_ctor_fail $UnexpectedPosError type: $error.TypeError msg: "type error: expected non-negative int" -1
+assert_ctor_fail $TypeError type: $error.TypeError msg: "type error: expected string" 123
+assert_ctor_fail $ValueError type: $error.TypeError msg: "type error: expected string" 123
+assert_ctor_fail $StateError type: $error.TypeError msg: "type error: expected string" 123
+assert_ctor_fail $FieldError type: $error.TypeError msg: "type error: expected string" 123
+assert_ctor_fail $ImportError type: $error.TypeError msg: "type error: expected string" 123
+assert_ctor_fail $CompileError type: $error.TypeError msg: "type error: expected string" 123
+assert_ctor_fail $RuntimeError type: $error.TypeError msg: "type error: expected string" 123
+
+assert_ctor_fail $InterruptError type: $error.TypeError msg: "type error: Interrupt is not instantiable" "stop"
+assert_ctor_fail $BytecodeError type: $error.TypeError msg: "type error: Bytecode is not instantiable" "bad"

@@ -1,0 +1,5 @@
+def invoke func
+  func 42
+
+let res = invoke do |x| (x // 2)
+assert_eq $res 21

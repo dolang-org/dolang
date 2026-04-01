@@ -1,0 +1,38 @@
+import sys
+import strand:
+  - pipeline
+import time:
+  - sleep
+
+if (sys.os == "windows")
+  log "not applicable"
+  return
+
+pub def yield()
+  sleep 0.01
+
+log "Deferred recv-pipe transition"
+let res = sub do pipeline
+  do run echo "foo"
+  do
+    yield()
+    run cat
+assert_eq $res foo
+
+log "Receive-side value flush"
+let res = sub do pipeline
+  do strand.put "foo"
+  do
+    yield()
+    run cat
+assert_eq $res foo
+
+log "Send-side value flush"
+let res = sub do pipeline
+  do
+    strand.put "foo"
+    run echo "foo"
+  do
+    yield()
+    run cat
+assert_eq $res "foo\nfoo"

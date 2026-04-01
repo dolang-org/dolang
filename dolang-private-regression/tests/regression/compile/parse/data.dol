@@ -1,0 +1,25 @@
+def id value
+  value
+let foo = true
+echo
+  foo: bar $foo baz
+  - one
+  url: https://google.com
+  - a (literal) [a,b] {c,d} "string"
+  - foo:bar
+  - $foo:bar
+  bar: (id 42)
+  - $foo
+  b: [1, 2]
+  ham:
+    - -not_a_sublist
+    - 1
+    - - 2
+      - 3
+    - foo: bar
+      "bar": foo
+  func: do
+    echo hi
+# output: END
+# foo: bar true baz one url: https://google.com a (literal) [a,b] {c,d} "string" foo:bar true:bar bar: 42 true b: [1, 2] ham: ["-not_a_sublist", 1, [2, 3], {foo: "bar", "bar": "foo"}] func: 2
+# END

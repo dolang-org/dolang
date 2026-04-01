@@ -1,0 +1,82 @@
+import std:
+  - Iterable
+  - Iter
+  - Sink
+  - Sinkable
+
+class MyIter: Iter
+  pub let inner = nil
+
+  def (init) self items
+    Iter.(init) self
+    self.inner = items.iter()
+
+  def (next) self
+    self.inner.next()
+
+  def (iter) self
+    self
+
+class MyEntryIter: Iter
+  pub let inner = nil
+
+  def (init) self items
+    Iter.(init) self
+    self.inner = items.iter()
+
+  def (next) self
+    self.inner.next()
+
+  def (iter) self
+    self
+
+class MySink: Sink
+  pub let inner = nil
+
+  def (init) self items
+    Sink.(init) self
+    self.inner = items.sink()
+
+  def (put) self value
+    self.inner.put $value
+
+  def (sink) self
+    self
+
+let my_iter = MyIter [1]
+assert (type my_iter Iter)
+assert (type my_iter Iterable)
+
+let my_entry_iter = MyEntryIter [["a", 1]]
+assert (type my_entry_iter Iter)
+assert (type my_entry_iter Iterable)
+
+let my_sink = MySink []
+assert (type my_sink Sink)
+assert (type my_sink Sinkable)
+
+let array = [1, 2, 3]
+assert (type array Iterable)
+assert_eq [...array.iter()] [1, 2, 3]
+
+let range = range start: 1 end: 4
+assert (type range Iterable)
+assert_eq [...range.iter()] [1, 2, 3]
+
+let dest = []
+assert (type dest Sinkable)
+let out = dest.sink()
+out.put 1
+out.put 2
+assert_eq $dest [1, 2]
+
+let duplex = []
+assert (type duplex Iterable)
+assert (type duplex Sinkable)
+let sink = duplex.sink()
+sink.put 3
+sink.put 4
+assert_eq [...duplex.iter()] [3, 4]
+
+let dict = {"a": 1}
+assert (type dict Iterable)

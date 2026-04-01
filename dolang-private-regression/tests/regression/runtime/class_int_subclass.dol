@@ -1,0 +1,51 @@
+import std:
+  - hash
+
+# Basic subclassing of Int
+class MyInt: int
+  def (init) self value
+    int.(init) $self $value
+
+let x = MyInt 21
+let y = MyInt 7
+
+# Coercion
+assert_eq (int x) 21
+assert_eq (str x) "21"
+assert_eq (dbg x) "21"
+
+# Arithmetic with MyInt on the left
+assert_eq (x + y) 28
+assert_eq (x - y) 14
+assert_eq (x * y) 147
+assert_eq (x / y) 3.0
+assert_eq (x // y) 3
+assert_eq (x % y) 0
+
+# Arithmetic with MyInt on the right (reversed ops)
+assert_eq (3 + x) 24
+assert_eq (28 - x) 7
+assert_eq (3 * x) 63
+assert_eq (147 // x) 7
+assert_eq (22 % x) 1
+
+# Unary
+assert_eq (-x) -21
+
+# Bitwise
+assert_eq (x & 15) 5
+assert_eq (x | 2) 23
+assert_eq (x ^ 4) 17
+assert_eq (~x) -22
+
+# Comparison
+assert (x == x)
+assert (y < x)
+assert (x == 21)
+
+# Bool
+assert (bool x)
+assert (!(bool (MyInt 0)))
+
+# Hash: two equal values must have equal hashes
+assert_eq (hash x) (hash (MyInt 21))

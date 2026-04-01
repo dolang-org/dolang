@@ -1,0 +1,2 @@
+let foo = [0]
+foo[0] = true

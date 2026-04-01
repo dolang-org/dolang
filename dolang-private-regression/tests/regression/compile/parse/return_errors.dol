@@ -1,0 +1,6 @@
+return(x)
+# error: expected space or indentation after `return`
+#   --> return_errors.dol:LL:LL
+#    |
+# LL | return(x)
+#    |       ^

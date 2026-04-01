@@ -1,0 +1,36 @@
+import std:
+  - hash
+
+# Basic subclassing of float
+class MyFloat: float
+  def (init) self value
+    float.(init) $self $value
+
+let x = MyFloat 2.5
+let y = MyFloat 0.5
+
+# Coercion
+assert_eq (float x) 2.5
+assert_eq (str x) "2.5"
+assert_eq (dbg x) "2.5"
+
+# Arithmetic with MyFloat on the left
+assert_eq (x + y) 3.0
+assert_eq (x - y) 2.0
+assert_eq (x * y) 1.25
+assert_eq (x / y) 5.0
+
+# Unary
+assert_eq (-x) -2.5
+
+# Comparison
+assert (x == x)
+assert (y < x)
+assert (x == 2.5)
+
+# Bool
+assert (bool x)
+assert (!(bool (MyFloat 0.0)))
+
+# Hash: two equal values must have equal hashes
+assert_eq (hash x) (hash (MyFloat 2.5))

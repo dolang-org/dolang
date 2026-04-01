@@ -1,0 +1,30 @@
+# Non-constant defaults are now supported
+
+# Simple non-constant default
+def add a b = (1 + 1)
+  (a + b)
+
+assert_eq (add 3) 5
+assert_eq (add 3 10) 13
+
+# Default referencing a prior parameter
+def add_offset a b = (a + 1)
+  (a + b)
+
+assert_eq (add_offset 3) 7
+assert_eq (add_offset 3 10) 13
+
+# Keyword non-constant default
+def kw_func :x = (2 * 3)
+  x
+
+assert_eq (kw_func()) 6
+assert_eq (kw_func x: 10) 10
+
+# Bind pattern with non-constant default
+bind {x: 10}
+  :x
+  :y = 5
+
+assert_eq $x 10
+assert_eq $y 5

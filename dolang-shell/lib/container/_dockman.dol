@@ -1,0 +1,978 @@
+import http digest progress json strand proc time
+  std:
+    - RuntimeError
+  strand:
+    - pipeline
+    - stream
+    - each
+  fs:
+    - Path
+    - with_temp_dir
+  url:
+    - Url
+  container:
+    - Vfs
+  container._common:
+    - runtime_dir
+    - agent_bin
+    - cache_dir
+    - cache_root
+
+let COPY_BLOCK_SIZE = 1048576
+let SOCKET_SPINS = 10
+let SOCKET_SLEEPS = 100
+let SOCKET_SLEEP = 0.10
+
+let SAVE_FORMATS =
+  "docker-archive": docker-archive
+  "oci-archive": oci-archive
+  "oci-dir": oci-dir
+  "docker-dir": docker-dir
+  "dir": dir
+
+let CONTAINER_STATES =
+  "created": :created:
+  "running": :running:
+  "paused": :paused:
+  "restarting": :restarting:
+  "removing": :removing:
+  "exited": :exited:
+  "dead": :dead:
+
+let MOUNT_TYPES =
+  "bind": :bind:
+  "volume": :volume:
+  "tmpfs": :tmpfs:
+  "image": :image:
+  "npipe": :npipe:
+  "cluster": :cluster:
+
+let PORT_PROTOCOLS =
+  "tcp": :tcp:
+  "udp": :udp:
+  "sctp": :sctp:
+
+let INVALID_IMAGE_REFERENCE_ERRORS =
+  - INVALID REFERENCE FORMAT
+
+let REGISTRY_AUTH_ERRORS =
+  - UNAUTHORIZED
+  - AUTHENTICATION REQUIRED
+  - REQUESTED ACCESS TO THE RESOURCE IS DENIED
+  - DENIED
+
+let NO_IMAGE_ERRORS =
+  - NO SUCH IMAGE
+  - IMAGE NOT KNOWN
+  - DOES NOT EXIST LOCALLY
+  - MANIFEST UNKNOWN
+  - NOT FOUND
+
+let ARCHIVE_ERRORS =
+  - ARCHIVE
+  - TAR
+  - PAYLOAD
+  - NO SUCH FILE
+  - CANNOT OPEN
+
+let PUSH_NO_IMAGE_ERRORS =
+  - TAG DOES NOT EXIST
+  - DOES NOT EXIST LOCALLY
+  - IMAGE NOT KNOWN
+  - NO SUCH IMAGE
+
+let NO_CONTAINER_ERRORS =
+  - NO SUCH CONTAINER
+  - NO CONTAINER WITH NAME OR ID
+  - CONTAINER NOT KNOWN
+  - NO CONTAINER FOUND
+
+pub class InvalidImageReferenceError: RuntimeError
+  pub let ref = nil
+
+  def (init) self ref
+    self.ref = ref
+
+  pub def (str) self
+    "invalid image reference: $(self.ref)"
+
+pub class RegistryAuthError: RuntimeError
+  pub let ref = nil
+
+  def (init) self ref
+    self.ref = ref
+
+  pub def (str) self
+    "registry authentication failed: $(self.ref)"
+
+pub class ArchiveError: RuntimeError
+  pub let source = nil
+
+  def (init) self source
+    self.source = source
+
+  pub def (str) self
+    "archive operation failed: $(self.source)"
+
+# Raised when an image reference cannot be found.
+#
+# ```
+# import container.docker: docker
+#
+# try
+#   docker.image "nonexistent:latest"
+# catch docker.NoImageError: e
+#   echo "not found: $e.ref"
+# ```
+pub class NoImageError: RuntimeError
+  # The image reference that was not found
+  pub let ref = nil
+
+  def (init) self ref
+    self.ref = ref
+
+  pub def (str) self
+    "image not found: $(self.ref)"
+
+  pub def (dbg) self
+    "<NoImageError ref: $(dbg self.ref)>"
+
+pub class NoContainerError: RuntimeError
+  pub let ref = nil
+
+  def (init) self ref
+    self.ref = ref
+
+  pub def (str) self
+    "container not found: $(self.ref)"
+
+  pub def (dbg) self
+    "<NoContainerError ref: $(dbg self.ref)>"
+
+def as_const value
+  if (type value str || type value sym)
+    str $value
+  else
+    throw "expected str or sym: $value"
+
+def normalize_known mapping value
+  mapping.get $as_const(value) else: do value
+
+def normalize_save_format runtime format
+  let cli = SAVE_FORMATS.get $as_const(format).replace("_", "-") else: do
+    throw "unsupported save format: $format"
+  if (runtime.id == :docker: && cli != "docker-archive")
+    throw "docker only supports docker_archive for save"
+  let file = (cli == "docker-archive" || cli == "oci-archive")
+  let multi = (cli == "docker-archive")
+  record :cli :file :multi
+
+def normalize_platform platform
+  if (platform == nil)
+    return nil
+  if (type platform str || type platform sym)
+    return str platform
+  let os = platform.get :os: default: nil
+  let arch = platform.get :arch: default: nil
+  let variant = platform.get :variant: default: nil
+  if !(os && arch)
+    throw "platform requires os and arch"
+  let platform = "$os/$arch"
+  if variant
+    platform = "$platform/$variant"
+  platform
+
+def output_lines output stderr
+  let lines = []
+  if output
+    for line = output.split "\n"
+      line = line.trim()
+      if line
+        lines.push $line
+  for line = stderr
+    line = line.trim()
+      if line
+        lines.push $line
+  lines
+
+def matches_any haystack needles
+  needles.iter().any do |needle| haystack.contains $needle
+
+def classify_image_error ref lines
+  for line = lines
+    let upper = line.upper()
+    if (matches_any upper INVALID_IMAGE_REFERENCE_ERRORS)
+      throw InvalidImageReferenceError $ref
+    if (matches_any upper REGISTRY_AUTH_ERRORS)
+      throw RegistryAuthError $ref
+    if (matches_any upper NO_IMAGE_ERRORS)
+      throw NoImageError $ref
+
+def classify_archive_error source lines
+  for line = lines
+    let upper = line.upper()
+    if (matches_any upper INVALID_IMAGE_REFERENCE_ERRORS)
+      throw InvalidImageReferenceError $source
+    if (matches_any upper ARCHIVE_ERRORS)
+      throw ArchiveError $source
+
+def classify_push_error ref lines
+  for line = lines
+    let upper = line.upper()
+    if (matches_any upper INVALID_IMAGE_REFERENCE_ERRORS)
+      throw InvalidImageReferenceError $ref
+    if (matches_any upper REGISTRY_AUTH_ERRORS)
+      throw RegistryAuthError $ref
+    if (matches_any upper PUSH_NO_IMAGE_ERRORS)
+      throw NoImageError $ref
+
+def classify_container_error ref lines
+  for line = lines
+    let upper = line.upper()
+    if (matches_any upper NO_CONTAINER_ERRORS)
+      throw NoContainerError $ref
+
+def parse_container_ports ports
+  let mapped = []
+  for key bindings = ports
+    let port proto = key.split "/" limit: 1
+    let protocol = normalize_known $PORT_PROTOCOLS $proto
+    let container_port = int $port
+    if (bindings == nil)
+      mapped.push $ record
+        :protocol
+        :container_port
+        host_ip: nil
+        host_port: nil
+    else
+      for binding = bindings
+        bind binding
+          "HostIp": host_ip = nil
+          "HostPort": host_port = nil
+          ...
+        mapped.push $ record
+          :protocol
+          :container_port
+          :host_ip
+          host_port: (host_port != nil && int host_port)
+  mapped
+
+def parse_container_mounts mounts
+  let mapped = []
+  for mount = mounts
+    bind mount
+      "Type": type = nil
+      "Source": source = nil
+      "Destination": target = nil
+      "Mode": mode = nil
+      "RW": rw = true
+      "Propagation": propagation = nil
+      "Name": name = nil
+      ...
+    mapped.push $ record
+      type: (type && normalize_known(MOUNT_TYPES, type))
+      source: (source && Path source)
+      target: (target && Path target)
+      readonly: (!rw)
+      :mode
+      :propagation
+      :name
+  mapped
+
+def parse_image_tags repo_tags
+  array $ repo_tags.iter().map do |tag|
+    let repo tag = tag.split ":" limit: 1
+    record :repo :tag
+
+def inspect_image runtime ref
+  let lines = []
+  let output = try
+    sub do runtime.cli inspect --type image $ref stderr: $lines
+  catch proc.Error: e
+    classify_image_error $ref $lines
+    throw e
+  (json.from_str output)[0]
+
+def inspect_container runtime ref
+  let lines = []
+  let output = try
+    sub do runtime.cli inspect --type container $ref stderr: $lines
+  catch proc.Error: e
+    classify_container_error $ref $lines
+    throw e
+  (json.from_str output)[0]
+
+def parse_loaded_refs output stderr
+  let refs = []
+  for line = output_lines $output $stderr
+    if (line.starts_with "Loaded image ID:")
+      let _ ref = line.split ":" limit: 1
+      refs.push $ref.trim()
+    else if (line.starts_with "Loaded image:")
+      let _ ref = line.split ":" limit: 1
+      refs.push $ref.trim()
+  refs
+
+def parse_pushed_digest output stderr
+  for line = output_lines $output $stderr
+    let upper = line.upper()
+    if (upper.contains "DIGEST:")
+      let rest = if (line.contains "digest:")
+        let _ rest = line.split "digest:" limit: 1
+        rest
+      else
+        let _ rest = line.split "Digest:" limit: 1
+        rest
+      let digest _ = rest.trim().split " " limit: 1
+      return digest
+  nil
+
+pub class Runtime
+  pub let id = nil
+
+  def (init) self id
+    self.id = id
+
+  pub def cli self ...args
+    let _ = [self, args]
+    throw "Runtime.cli not implemented"
+
+  pub def mount_uopt self
+    if (self.id == :podman:)
+      ",U"
+    else
+      ""
+
+  pub def with self ctr thunk
+    let ctr_subdir = Path /tmp/dolang-shell-vfs-dir
+    let ctr_socket = (ctr_subdir / "socket")
+    let ctr_agent = Path "/tmp/dolang-shell-vfs"
+    let agent_bin = agent_bin()
+    let uopt = self.mount_uopt()
+
+    with_temp_dir parent: $runtime_dir() do |subdir|
+      subdir.chmod 0o700
+      let socket = (subdir / "socket")
+      pipeline
+        do self.cli run --rm -i
+          --entrypoint $ctr_agent
+          -v $subdir:$ctr_subdir:rw,z$uopt
+          -v $agent_bin:$ctr_agent:ro,z$uopt
+          $ctr $ctr_socket
+        do
+          strand.next()
+          let agent = Vfs unix_socket: $socket
+          return agent $thunk
+
+  def run_direct self ctr cmd argv
+    self.cli run --rm -i $ctr $cmd ...argv
+
+  pub def run self ctr cmd ...args
+    self.#run_direct $ctr $cmd $args.pos()
+
+  pub def build self :pull = :missing: :mounts = [] :from ...args
+    with_temp_dir parent: $runtime_dir() do |subdir|
+      subdir.chmod 0o700
+      let b = Builder $self $subdir $agent_bin() $mounts
+      b.build $from :pull ...args
+
+  pub def images self :all = false :filter = nil
+    stream do pipeline
+      do self.cli images --no-trunc -q
+        if (filter != nil)
+          --filter $filter
+        if all
+          --all
+      do each do |id|
+        let data = json.from_str $ sub do self.cli inspect --type image $id
+        Image $self $data[0]
+
+  pub def containers self :all = false :filter = nil
+    stream do pipeline
+      do self.cli ps --no-trunc -q
+        if all
+          --all
+        if (filter != nil)
+          --filter $filter
+      do each do |id|
+        let data = inspect_container $self $id
+        Container $self $data
+
+  pub def image self ref
+    let data = inspect_image $self $ref
+    Image $self $data
+
+  pub def container self ref
+    let data = inspect_container $self $ref
+    Container $self $data
+
+  pub def save self target :format = :docker_archive: :platform = nil ...images
+    if (images.len == 0)
+      throw "save: expected at least one image"
+    let spec = normalize_save_format $self $format
+    if (!spec.multi && images.len > 1)
+      throw "save format does not support multiple images: $format"
+    let path_target = if spec.file
+      nil
+    else
+      Path $target
+    let platform = normalize_platform $platform
+    let refs = [...images.pos()]
+    let lines = []
+    try
+      self.cli save
+        if (self.id == :podman:)
+          --format $spec.cli
+        if !spec.file
+          --output $path_target
+        if (platform != nil)
+          --platform $platform
+        ...refs
+        if spec.file
+          stdout: $target
+        stderr: $lines
+    catch proc.Error: e
+      classify_image_error $refs[0] $lines
+      classify_archive_error $(spec.file && target || path_target) $lines
+      throw e
+    target
+
+  pub def load self source :platform = nil
+    let source = Path $source
+    let platform = normalize_platform $platform
+    let lines = []
+    let output = try
+      sub do self.cli load
+        --input $source
+        if (platform != nil)
+          --platform $platform
+        stderr: $lines
+    catch proc.Error: e
+      classify_archive_error $source $lines
+      throw e
+    let refs = parse_loaded_refs $output $lines
+    if (refs.len == 0)
+      throw ArchiveError $source
+    let loaded = []
+    let seen = set()
+    for ref = refs
+      let img = self.image $ref
+      if !(seen.contains img.id)
+        seen.add $img.id
+        loaded.push $img
+    loaded
+
+  pub def pull self ref :platform = nil
+    let platform = normalize_platform $platform
+    let lines = []
+    let output = try
+      sub do self.cli pull
+        if (platform != nil)
+          --platform $platform
+        $ref stderr: $lines
+    catch proc.Error: e
+      classify_image_error $ref $lines
+      throw e
+    for line = output_lines $output $lines
+      if (line.starts_with "sha256:")
+        return self.image $line
+    self.image $ref
+
+  pub def push self ref :platform = nil
+    let platform = normalize_platform $platform
+    let lines = []
+    let output = try
+      sub do self.cli push
+        if (platform != nil)
+          --platform $platform
+        $ref
+        stderr: $lines
+    catch proc.Error: e
+      classify_push_error $ref $lines
+      throw e
+    let digest = parse_pushed_digest $output $lines
+    record :ref :digest
+
+pub def mount_args mounts
+  let args = []
+  for m = mounts
+    bind m
+      :type :target
+      :id = nil
+      :source = nil
+      :readonly = nil
+      :size = nil
+      :chown = nil
+      :selinux = nil
+    if (type == "cache")
+      # Emulate cache mount with bind mount for Docker
+      source = str $ cache_dir (id || target)
+      type = "bind"
+    if (type == "bind")
+      let parts =
+        if readonly
+          - ro
+        else
+          - rw
+        if chown
+          - U
+        if (selinux == "shared")
+          - z
+        else if (selinux == "private")
+          - Z
+      args.push -v $source:$target:$(",".join parts)
+    else
+      let parts =
+        - type=$type
+        if target
+          - target=$target
+        if source
+          - source=$source
+        if readonly
+          - readonly
+        else
+          - rw
+        if size
+          - size=$size
+        if chown
+          - chown=$chown
+        if (selinux == "shared")
+          - z
+        else if (selinux == "private")
+          - Z
+      args.push --mount=$(",".join parts)
+  args
+
+def path_leaf path
+  let name = path.name
+  if !name
+    throw "path has no filename: $path"
+  name
+
+def url_leaf url
+  let name = url.name
+  if !name
+    throw "source URL has no filename: $url"
+  name
+
+def url_short url
+  (url.name || url)
+
+def parse_source source
+  if (type source str)
+    if (source.starts_with "http://" || source.starts_with "https://")
+      Url $source
+    else
+      Path $source
+  else
+    source
+
+class Cache
+  let downloads = nil
+  let client = nil
+
+  def (init) self
+    self.#client = http.Client()
+    self.#downloads = (cache_root() / "downloads")
+
+  def payload_path self url
+    (self.#downloads / digest.blake3(str url).hex())
+
+  pub def ensure self url
+    let payload = self.#payload_path $url
+    let cached = payload.exists()
+    let headers =
+      if cached
+        "if-modified-since": $payload.metadata().modified
+
+    progress.show message: (url_short url) units: bytes do |w|
+      self.#client.get $url :headers status: :ignore: do |resp|
+        if (cached && resp.status == 304)
+          return payload
+        resp.throw_for_status()
+        let total = resp.headers.get content-length
+        w.total = (total && int total)
+        payload.parent.create_dir all: true
+        let tmp = payload.add_ext tmp
+        try
+          tmp.open wb do |dest|
+            for chunk = resp.chunks()
+              dest.write $chunk
+              w.delta $chunk.len
+          tmp.rename $payload
+        finally
+          tmp.remove ignore: true
+        let modified = resp.headers.get last-modified
+        if modified
+          payload.set_timestamps :modified
+    payload
+
+  pub def path self url
+    let cache_payload = self.#payload_path $url
+    if !cache_payload.exists()
+      throw "cache entry missing for URL: $url"
+    cache_payload
+
+let cache = Cache()
+
+def prefetch_add_urls spec
+  let urls = set()
+  for add = spec.values(:add:).filter(do |add| add.contains :source:)
+    let source = parse_source $add[:source:]
+    if (type source Url)
+      urls.add $source
+  strand.fork limit: 4
+    for url = urls
+      do cache.ensure $url
+
+pub class Builder
+  let runtime = nil
+  let subdir = nil
+  let socket = nil
+  let ctr_subdir = nil
+  let ctr_socket = nil
+  let ctr_agent = nil
+  let bin = nil
+  let mounts = nil
+  let agent = nil
+  let ctr_id = nil
+
+  def (init) self runtime subdir bin mounts
+    self.#runtime = runtime
+    self.#subdir = subdir
+    self.#bin = bin
+    self.#mounts = mounts
+    self.#socket = (subdir / "socket")
+    self.#ctr_subdir = Path /tmp/dolang-shell-vfs-dir
+    self.#ctr_socket = (self.#ctr_subdir / "socket")
+    self.#ctr_agent = Path "/tmp/dolang-shell-vfs"
+
+  def wait_socket self
+    for _ = range $SOCKET_SPINS
+      if self.#socket.exists()
+        return
+    for _ = range $SOCKET_SLEEPS
+      if self.#socket.exists()
+        return
+      time.sleep $SOCKET_SLEEP
+    throw "timed out waiting for container agent"
+
+  def connect self img :pull = :never:
+    if self.#socket.exists()
+      self.#socket.remove()
+    let ctr_id = sub do self.#runtime.cli run -d --pull=$(str pull)
+      ...mount_args(self.#mounts)
+      --entrypoint env
+      -v $self.#subdir:$self.#ctr_subdir:rw,z$(self.#runtime.mount_uopt())
+      -v $self.#bin:$self.#ctr_agent:ro,z$(self.#runtime.mount_uopt())
+      $img DOLANG_SHELL_VFS=$self.#ctr_agent
+      $self.#ctr_agent $self.#ctr_socket
+    self.#wait_socket()
+    self.#ctr_id = ctr_id
+    self.#agent = Vfs unix_socket: $self.#socket
+
+  def cleanup self
+    if self.#agent
+      self.#agent.stop()
+      self.#agent = nil
+    if self.#ctr_id
+      proc.mute do self.#runtime.cli rm -f $self.#ctr_id
+      self.#ctr_id = nil
+
+  def step_run self thunk
+      self.#agent $thunk
+
+  def resolve_target self target leaf
+    target = Path $target
+    self.#agent do
+      if (target.exists() && target.metadata().type == :dir:)
+        (target / leaf)
+      else
+        target
+
+  def copy_to_target self target chmod copy_data
+    self.#agent do
+      target.parent.create_dir all: true
+      target.open wb do |dest|
+        copy_data $dest
+      if (chmod != nil)
+        target.chmod $chmod
+
+  def add_file self path target chmod
+    path.open rb do |src|
+      self.#copy_to_target $target $chmod do |dest|
+        while true
+          let chunk = src.read $COPY_BLOCK_SIZE
+          if (chunk.len == 0)
+            break
+          dest.write $chunk
+
+  def add_url self url target chmod
+    self.#add_file (cache.path url) $target $chmod
+
+  def add_content self content target chmod
+    self.#copy_to_target $target $chmod do |dest|
+      dest.write $content
+
+  def step_add self spec
+    bind spec
+      :target
+      :source = nil
+      :content = nil
+      :chmod = nil
+    if ((source == nil) == (content == nil))
+      throw "add: expected exactly one of source or content"
+    source = parse_source $source
+
+    if (content != nil)
+      self.#add_content $content (Path target) $chmod
+    else if (type source Url)
+      target = self.#resolve_target $target (url_leaf source)
+      self.#add_url $source $target $chmod
+    else if (type source Path)
+      target = self.#resolve_target $target (path_leaf source)
+      self.#add_file $source $target $chmod
+    else
+      throw "source: expected str, Path, or Url"
+
+  def step_commit self msg
+    progress.show message: "commit" do |_|
+      let img_id = sub do self.#runtime.cli commit
+        if msg
+          --message $msg
+        $self.#ctr_id
+      self.#agent.stop()
+      self.#agent = nil
+      sub do self.#runtime.cli rm $self.#ctr_id
+      self.#connect $img_id
+
+  def finish_image self tags
+    let img_id = progress.show message: "commit" do |_|
+      sub do self.#runtime.cli commit $self.#ctr_id
+    progress.show message: tag do |_|
+      for tag = tags
+        proc.mute do self.#runtime.cli tag $img_id $tag
+    self.#runtime.image $img_id
+
+  pub def build self from :pull = :missing: ...args
+    let spec = {...args}
+    let tags = [...spec.values :tag:]
+    spec.delete :tag:
+    let steps =
+      run: $self.#step_run
+      add: $self.#step_add
+      commit: $self.#step_commit
+
+    let label = if tags.len
+      tags[0]
+    else
+      from
+
+    progress.show message: $label icon: 🔨 do |w|
+      prefetch_add_urls $spec
+      w.total = (spec.len + 3)
+      try
+        progress.show message: "starting container" do |_|
+          self.#connect $from :pull
+        w.delta()
+        for key value = spec
+          let step = steps.get $key else: do throw "unrecognized step: $key: $value"
+          step $value
+          w.delta()
+        let img = self.#finish_image $tags
+        w.delta()
+        return img
+      finally
+        w.position = (w.total - 1)
+        progress.show message: "stopping container" do |_|
+          self.#cleanup()
+        w.delta()
+
+# A container image.
+pub class Image
+  # Full image ID (`sha256:...`)
+  pub let id = nil
+  # Creation timestamp
+  pub let created = nil
+  # Image size in bytes
+  pub let size = nil
+  # Array of layer digest strings
+  pub let layers = nil
+  # CPU architecture (e.g. `"amd64"`)
+  pub let architecture = nil
+  # Operating system (e.g. `"linux"`)
+  pub let os = nil
+  # Command (`array` of `str`)
+  pub let cmd = nil
+  # Entrypoint (`array` of `str`)
+  pub let entrypoint = nil
+  # Environment (a `dict`)
+  pub let env = nil
+  # Working directory (a `Path`)
+  pub let working_dir = nil
+  # User (`str`)
+  pub let user = nil
+  # Labels (`dict)`A
+  pub let labels = nil
+
+  let runtime = nil
+
+  def (init) self runtime data
+    self.#runtime = runtime
+
+    bind data
+      "Id": id
+      "Created": created
+      "Size": size
+      "Architecture": arch
+      "Os": os
+      "Config": config
+      "RootFS": root_fs
+      ...
+
+    self.id = id
+
+    self.created = created
+    self.size = size
+    self.architecture = arch
+    self.os = os
+    self.layers = root_fs.get "Layers" default: []
+
+    bind config
+      "Labels": labels = {}
+      "Cmd": cmd = nil
+      "Entrypoint": entrypoint = nil
+      "Env": env = []
+      "WorkingDir": working_dir = nil
+      "User": user = nil
+      ...
+
+    self.labels = labels
+    self.cmd = cmd
+    self.entrypoint = entrypoint
+    self.working_dir = (working_dir && Path working_dir)
+    self.user = user
+    self.env = dict $ env.iter().map do |e| e.split "=" limit: 1
+
+  pub def (str) self
+    self.id
+
+  # Current tags, or an empty array for untagged images.
+  pub def tags self
+    let data = inspect_image $self.#runtime $self.id
+    parse_image_tags (data.get "RepoTags"  default: [])
+
+  # Tag the image with a new name.
+  #
+  # ```
+  # img.tag "registry.example.com/myapp:v1.2"
+  # ```
+  pub def tag self new_tag
+    let ref = str $self
+    proc.mute do self.#runtime.cli tag $ref $new_tag
+
+  # Remove the image.
+  #
+  # - `force`: force removal even if the image is in use
+  #
+  # ```
+  # img.remove()
+  # img.remove force: true
+  # ```
+  pub def remove self :force = false
+    proc.mute do self.#runtime.cli rmi
+      if force
+        --force
+      $self.id
+
+  # Save the image to an archive or directory.
+  pub def save self target :format = :docker_archive: :platform = nil
+    self.#runtime.save $target :format :platform $self.id
+
+pub class Container
+  pub let id = nil
+  pub let image = nil
+  pub let image_id = nil
+  pub let created = nil
+  pub let cmd = nil
+  pub let entrypoint = nil
+  pub let labels = nil
+
+  let runtime = nil
+
+  def (init) self runtime data
+    self.#runtime = runtime
+
+    bind data
+      "Id": id
+      "Created": created = nil
+      "Image": image_id = nil
+      "Config": config = {}
+      ...
+
+    bind config
+      "Image": image = nil
+      "Cmd": cmd = nil
+      "Entrypoint": entrypoint = nil
+      "Labels": labels = {}
+      ...
+
+    self.id = id
+    self.image = image
+    self.image_id = image_id
+    self.created = created
+    self.cmd = cmd
+    self.entrypoint = entrypoint
+    self.labels = labels
+
+  pub def (str) self
+    self.id
+
+  # Current container state.
+  pub def state self
+    let data = inspect_container $self.#runtime $self.id
+    let name = data.get "Name"
+    let state = data.get "State" default: {}
+    let mounts = data.get "Mounts" default: []
+    let network = data.get "NetworkSettings" default: {}
+    let status = state.get "Status" default: nil
+    let live_name = if (name == nil)
+      nil
+    else if (name.starts_with "/")
+      let _ trimmed = name.split "/" limit: 1
+      trimmed
+    else
+      name
+    let live_state = (status && normalize_known(CONTAINER_STATES, status) || nil)
+    record
+      name: $live_name
+      state: $live_state
+      :status
+      ports: $parse_container_ports(network.get("Ports", default: {}))
+      mounts: $parse_container_mounts(mounts)
+
+  pub def stop self :timeout = nil
+    proc.mute do self.#runtime.cli stop
+      if (timeout != nil)
+        --time $timeout
+      $self.id
+
+  pub def start self
+    proc.mute do self.#runtime.cli start $self.id
+
+  pub def kill self
+    proc.mute do self.#runtime.cli kill $self.id
+
+  pub def restart self :timeout = nil
+    proc.mute do self.#runtime.cli restart
+      if (timeout != nil)
+        --time $timeout
+      $self.id
+
+  pub def remove self :force = false :volumes = false
+    proc.mute do self.#runtime.cli rm
+      if force
+        --force
+      if volumes
+        --volumes
+      $self.id

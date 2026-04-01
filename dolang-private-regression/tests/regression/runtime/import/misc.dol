@@ -1,0 +1,11 @@
+import math
+import math: bath
+import math:
+  - add
+import
+  math:
+    add: badd
+assert_eq (math.add 1 1) 2
+assert_eq (bath.add 1 1) 2
+assert_eq (add 1 1) 2
+assert_eq (badd 1 1) 2

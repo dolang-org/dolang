@@ -1,0 +1,11 @@
+assert_eq r"hello" "hello"
+assert_eq r#"hello "quoted""# "hello \"quoted\""
+assert_eq r##"a "# b"## "a \"# b"
+
+# Raw body EOF should leave parsing to report the missing raw quote.
+# error: got <eof>, expected: <raw quote>
+#   --> raw_string.dol:LL:LL
+#    |
+# LL | let _ = r#"unterminated
+#    |                        ^
+let _ = r#"unterminated

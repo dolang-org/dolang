@@ -1,0 +1,13 @@
+let res = type $ str $ range 10
+assert_eq $res $str
+let res = (type $ str $ range 10)
+assert_eq $res $str
+echo $
+  - a
+  - b
+  - c
+echo ok
+# output: END
+# ["a", "b", "c"]
+# ok
+# END

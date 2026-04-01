@@ -1,0 +1,611 @@
+import sys
+import fs:
+  - Path
+
+# ===========================================================================
+# Public: error type
+# ===========================================================================
+
+# Error thrown when argument parsing fails.
+#
+# `message` describes the specific problem (e.g. `unknown option: --foo`).
+# `hint` is an optional follow-up line (e.g. `Try 'prog --help' for more information.`).
+pub class Error
+  pub let message = nil
+  pub let hint = nil
+
+  def (init) self message hint = nil
+    self.message = message
+    self.hint = hint
+
+  pub def (str) self
+    self.message
+
+# Help requested during argument parsing.
+#
+# `message` contains the rendered help text chosen by `args.with`.
+pub class Help
+  pub let message = nil
+
+  def (init) self message
+    self.message = message
+
+  pub def (str) self
+    self.message
+
+# ===========================================================================
+# Param base class
+# ===========================================================================
+
+class Param
+  pub let name = nil
+  pub let help = nil
+  pub let collect = false
+  pub let default = :UNSET:
+  pub let type = nil
+  pub let sym = nil
+  pub let values = nil
+
+  def (init)
+    self :name
+    :help = nil
+    :collect = false
+    :default = :UNSET:
+    :type = nil
+    :values = nil
+  do
+    self.name = name
+    self.help = help
+    self.collect = collect
+    self.default = default
+    self.sym = sym $ name.replace "-" "_"
+    self.type = (type || str)
+    if (values != nil)
+      self.values = set $values
+
+  pub def coerce self value
+    if (self.values != nil && !self.values.contains value)
+      throw Error "unexpected value for $(self.name): $value" nil
+    self.type $value
+
+  pub def assign self rec value
+    let v = self.coerce $value
+    if self.collect
+      rec[self.sym].push $v
+    else
+      rec[self.sym] = v
+
+# ===========================================================================
+# Positional argument
+# ===========================================================================
+
+class Arg: Param
+
+# ===========================================================================
+# Named: common supertype for Opt and Flag
+# ===========================================================================
+
+class Named: Param
+  pub let long = nil
+  pub let short = nil
+  pub let env = nil
+
+  def (init)
+    self :name
+    :long = :UNSET:
+    :type = nil
+    :help = nil
+    :collect = false
+    :default = :UNSET:
+    :values = nil
+    :short = nil
+    :env = nil
+  do
+    Param.(init) $self :name :type :help :collect :default :values
+    self.long = if (long == :UNSET:)
+      name
+    else
+      long
+    self.short = short
+    self.env = env
+
+# ===========================================================================
+# Value-consuming named option
+# ===========================================================================
+
+class Opt: Named
+  pub let meta = nil
+
+  def (init)
+    self :name
+    :long = :UNSET:
+    :type = nil
+    :help = nil
+    :collect = false
+    :short = nil
+    :default = :UNSET:
+    :values = nil
+    :env = nil
+    :meta = nil
+  do
+    Named.(init) $self :name :long :type :help :collect :default :values :short :env
+    self.meta = meta
+
+# ===========================================================================
+# Boolean flag (no value consumed)
+# ===========================================================================
+
+class Flag: Named
+  def (init)
+    self :name
+    :long = :UNSET:
+    :help = nil
+    :short = nil
+    :default = :UNSET:
+    :env = nil
+  do
+    Named.(init) $self :name :long :help :default :short :env
+
+  pub def assign self rec _value
+    rec[self.sym] = true
+
+# ===========================================================================
+# Formatting helpers
+# ===========================================================================
+
+def pad_right s n
+  let p = (n - s.len)
+  if (p > 0)
+    "$s$(" ".repeat p)"
+  else
+    s
+
+def opt_col_str o
+  let meta = if (type o Flag)
+    ""
+  else
+    " $(o.meta || o.name.upper())"
+  if (o.short && o.long)
+    "-$(o.short), --$(o.long)$meta"
+  else if o.long
+    "    --$(o.long)$meta"
+  else
+    "-$(o.short)$meta"
+
+def default_value p
+  if (p.default == :UNSET:)
+    nil
+  else
+    p.default
+
+def has_default p
+  (p.default != :UNSET:)
+
+# ===========================================================================
+# Parser class
+# ===========================================================================
+
+class Parser
+  pub let name = nil
+  pub let help = nil
+  pub let handler = nil
+  let sym = nil
+  let opts = nil
+  let long_opts = nil
+  let short_opts = nil
+  let args = nil
+  let sub_cmds = nil
+  let usage_override = nil
+  let rec = nil
+  let arg_idx = nil
+
+  def (init) self :name :help = nil ...spec
+    self.name = name
+    self.#sym = sym $ name.replace "-" "_"
+    self.help = help
+    if (name != nil)
+      let cmd = nil
+      for part = name.split " "
+        cmd = part
+      if (cmd != nil)
+        self.#sym = sym $ cmd.replace "-" "_"
+    self.#opts = []
+    self.#long_opts = {}
+    self.#short_opts = {}
+    self.#args = []
+    self.#sub_cmds = {}
+    self.handler = nil
+    self.#usage_override = nil
+    for k v = spec
+      if (type k == int)
+        if (type v dict)
+          bind v
+            :opt = nil
+            :arg = nil
+            :cmd = nil
+            :flag = nil
+            ...rest
+          if (opt != nil)
+            let o = Opt name: $opt ...rest
+            self.#opts.push $o
+            if o.long
+              self.#long_opts[o.long] = o
+            if o.short
+              self.#short_opts[o.short] = o
+          else if (flag != nil)
+            let f = Flag name: $flag ...rest
+            self.#opts.push $f
+            if f.long
+              self.#long_opts[f.long] = f
+            if f.short
+              self.#short_opts[f.short] = f
+          else if (arg != nil)
+            self.#args.push (Arg name: arg ...rest)
+          else if (cmd != nil)
+            let sub = Parser name: $cmd ...rest
+            self.#sub_cmds[cmd] = sub
+          else
+            throw Error "spec item must have exactly one of opt:, flag:, arg:, or cmd:" nil
+        else
+          self.handler = v
+      else if (k == :help:)
+        self.help = v
+      else if (k == :usage:)
+        self.#usage_override = v
+      else
+        throw Error "unknown spec key: $k" nil
+
+  def err self msg
+    Error $msg "Try '$(self.name) --help' for more information."
+
+  pub def init_rec self
+    self.#arg_idx = 0
+    self.#rec = record()
+    let rec = self.#rec
+    rec.cmd = nil
+    rec.help = false
+    rec.handler = self.handler
+    for o = self.#opts
+      rec[o.sym] = if o.collect
+        []
+      else if (o.env != nil)
+        let ev = env.get $o.env default: nil
+        if (ev != nil)
+          ev
+        else if (type o Flag)
+          if (o.default == :UNSET:)
+            false
+          else
+            o.default
+        else
+          default_value $o
+      else if (type o Flag)
+        if (o.default == :UNSET:)
+          false
+        else
+          o.default
+      else
+        default_value $o
+    for p = self.#args
+      rec[p.sym] = if p.collect
+        []
+      else
+        default_value $p
+
+  def parse_long self tok argi
+    let inner = tok.without_prefix "--"
+    let name = nil
+    let value = nil
+    if inner.contains "="
+      let parts = [...(inner.split "=" limit: 1)]
+      name = parts[0]
+      value = inner.sub (name.len + 1)
+    else
+      name = inner
+    let opt = self.#long_opts.get $name else: do
+      throw self.#err "unknown option: --$name"
+    let value = if (type opt Flag)
+      true
+    else if (value != nil)
+      value
+    else
+      argi.next else: do
+        throw self.#err "option --$name requires an argument"
+    opt.assign $self.#rec $value
+
+  def parse_short self tok argi
+    let ch = tok.without_prefix "-"
+    if (ch.len > 1)
+      throw self.#err "invalid option: $tok"
+    let opt = self.#short_opts.get $ch else: do
+      throw self.#err "unknown option: -$ch"
+    let value = if (type opt Flag)
+      true
+    else
+      argi.next else: do
+        throw self.#err "option -$ch requires an argument"
+    opt.assign $self.#rec $value
+
+  def assign_arg self tok
+    let idx = self.#arg_idx
+    if (idx >= self.#args.len)
+      throw self.#err "unexpected argument: $tok"
+    let p = self.#args[idx]
+    p.assign $self.#rec $tok
+    if !p.collect
+      self.#arg_idx = (idx + 1)
+
+  def try_cmd self tok argi
+    let sub = self.#sub_cmds.get $tok default: nil
+    if (sub != nil)
+      sub.init_rec()
+      let sub_rec = sub.parse_impl $argi
+      self.#rec[sub.#sym] = sub_rec
+      self.#rec.cmd = sub.#sym
+      self.#rec.handler = sub_rec.handler
+      if sub_rec.help
+        self.#rec.help = true
+      else
+        sub.validate()
+      true
+    else
+      false
+
+  pub def parse_impl self argi
+    while true
+      let tok = argi.next default: nil
+      if (tok == nil)
+        break
+      if (tok == "--")
+        for rest = argi
+          self.#assign_arg $rest
+        break
+      else if (tok == "--help" || tok == "-h")
+        self.#rec.help = true
+        break
+      else if tok.starts_with "--"
+        self.#parse_long $tok $argi
+      else if (tok.starts_with "-" && tok.len > 1)
+        self.#parse_short $tok $argi
+      else if (self.#sub_cmds.len > 0)
+        if !(self.#try_cmd tok argi)
+          throw self.#err "unknown command: $tok"
+        if self.#rec.help
+          break
+      else
+        self.#assign_arg $tok
+    self.#rec
+
+  pub def validate self
+    if self.#rec.help
+      return
+    for o = self.#opts
+      if !(o.collect || has_default o || type o Flag)
+        let v = self.#rec[o.sym]
+        if (v == nil)
+          let flag = if o.long
+            "--$(o.long)"
+          else
+            "-$(o.short)"
+          throw self.#err "missing required option: $flag"
+    for p = self.#args
+      if !(p.collect || has_default p)
+        let v = self.#rec[p.sym]
+        if (v == nil)
+          throw self.#err "missing required argument: $(p.name.upper())"
+
+  pub def make_help self prog = nil
+    let lines = []
+    let prog = (prog || self.name)
+
+    let usage_str = if self.#usage_override
+      let u = self.#usage_override
+      "Usage: $prog $u"
+    else
+      let parts = [prog]
+      if (self.#opts.len > 0)
+        parts.push "[OPTIONS]"
+      if (self.#sub_cmds.len > 0)
+        parts.push "COMMAND"
+      for p = self.#args
+        if p.collect
+          parts.push "$(p.name.upper())..."
+        else
+          parts.push (p.name.upper())
+      let joined = (" ".join parts)
+      "Usage: $joined"
+    lines.push $usage_str
+
+    if self.help
+      lines.push ""
+      let h = self.help
+      lines.push "  $h"
+
+    if (self.#args.len > 0)
+      lines.push ""
+      lines.push "Arguments:"
+      let max_w = 0
+      for p = self.#args
+        if (p.name.len > max_w)
+          max_w = p.name.len
+      let col_w = (max_w + 2)
+      for p = self.#args
+        let pname = p.name.upper()
+        if p.help
+          lines.push "  $(pad_right pname col_w) $(p.help)"
+        else
+          lines.push "  $pname"
+
+    if (self.#opts.len > 0)
+      lines.push ""
+      lines.push "Options:"
+      let max_w = 8
+      for o = self.#opts
+        let cw = (opt_col_str o).len
+        if (cw > max_w)
+          max_w = cw
+      let col_w = (max_w + 2)
+      for o = self.#opts
+        let cs = opt_col_str $o
+        let col = "  $(pad_right cs col_w)"
+        if o.help
+          let h = o.help
+          if (has_default o && o.default != nil && !type o Flag)
+            lines.push "$col$h (default: $(o.default))"
+          else
+            lines.push "$col$h"
+        else
+          lines.push $col
+      let help_str = "-h, --help"
+      let help_col = "  $(pad_right help_str col_w)"
+      lines.push "$(help_col)Show this message and exit"
+
+    if (self.#sub_cmds.len > 0)
+      lines.push ""
+      lines.push "Commands:"
+      let max_w = 0
+      for name _sub = self.#sub_cmds
+        if (name.len > max_w)
+          max_w = name.len
+      let col_w = (max_w + 2)
+      for name sub = self.#sub_cmds
+        let col = "  $(pad_right name col_w)"
+        if sub.help
+          let h = sub.help
+          lines.push "$col$h"
+        else
+          lines.push $col
+
+    "\n".join $lines
+
+  pub def selected_help self rec
+    let prog = self.name
+    let sub = self
+    while (rec.cmd != nil)
+      let cmd = rec.cmd
+      rec = rec[cmd]
+      sub = sub.#sub_cmds.iter().map(do |p| p[1]).filter(do |s| s.#sym == cmd).next()
+      prog = "$prog $(sub.name)"
+    sub.make_help $prog
+
+  pub def parse self args
+    self.init_rec()
+    let rec = self.parse_impl (args.iter())
+    if rec.help
+      rec.help = self.selected_help $rec
+    self.validate()
+    self.#rec = nil
+    rec
+
+# ===========================================================================
+# Public API
+# ===========================================================================
+
+def prog_default()
+  let p = sys.program
+  if (p == nil)
+    "prog"
+  else if (type p Path)
+    (p.name || "prog").split(".").next()
+  else
+    p
+
+# Parse command-line arguments according to a spec.
+#
+# `args:` defaults to `sys.args`. `program:` is the program name shown in help
+# and error messages; defaults to `sys.program` — the stem of the script
+# filename for scripts, or the module name for modules.
+#
+# Returns a record whose keys are the declared option/argument names (with
+# hyphens converted to underscores). When a subcommand is matched, `p.cmd`
+# is set to the normalized symbol of the subcommand name (e.g. `:deploy:` or
+# `:build_docs:`), and the selected subcommand's fields are stored in a nested
+# record at `p[p.cmd]`. The selected handler is available as `p.handler`.
+# When help is requested, `p.help` is set to the rendered help text string and
+# parsing returns early.
+#
+# Throws `args.Error` on unknown options, missing required arguments, or
+# invalid values. `--help`/`-h` does not throw; callers must inspect `p.help`.
+#
+# See the spec declaration reference at the top of this page for the full
+# list of accepted keyword arguments.
+#
+# # Example
+#
+# ```
+# import args
+#
+# let p = args.parse
+#   - opt: format
+#     short: f
+#     default: gz
+#     help: Output compression format
+#   - arg: file
+#     help: Input file
+#
+# echo "format=$(p.format) file=$(p.file)"
+# ```
+pub def parse
+  :args = nil
+  :program = nil
+  ...spec
+do
+  let p = Parser name: (program || prog_default()) ...spec
+  p.parse (args || sys.args)
+
+# Parse arguments and dispatch to a handler, suitable for use at script top-level.
+#
+# Accepts the same spec declarations as `args.parse`. The subcommand or
+# top-level `cmd:` block's handler (positional `handler`) is called with the
+# parsed top-level record.
+#
+# When `exit: true` (default), an argument error or `--help` option is automatically
+# handled by printing to the terminal and exiting with an appropriate status code.
+# When false, `args.Error` or `args.Help` are thrown in these situations instead.
+#
+# # Example
+#
+# ```
+# import args
+#
+# args.with
+#   help: Deploy or roll back a service.
+#   - cmd: deploy
+#     - arg: service
+#       help: Service name
+#     do |p|
+#       echo "Deploying $(p.deploy.service)"
+#   - cmd: rollback
+#     - arg: service
+#     do |p|
+#       echo "Rolling back $(p.rollbox.service)"
+# ```
+pub def with
+  :args = nil
+  :exit = true
+  :program = nil
+  ...spec
+do
+  let p = Parser name: (program || prog_default()) ...spec
+  args = (args || sys.args)
+  try
+    let result = p.parse $args
+    if result.help
+      let msg = result.help
+      if !exit
+        throw Help $msg
+      echo $msg
+      sys.exit 0
+    let h = result.handler
+    if h
+      h $result
+    else
+      result
+  catch Error: e
+    if !exit
+      throw e
+    echo $e
+    let hint = e.hint
+    if hint
+      echo $hint
+    sys.exit 1

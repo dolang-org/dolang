@@ -1,0 +1,6 @@
+echo (@)
+# error: unexpected character in identifier
+#   --> full_expr_bad_ident.dol:LL:LL
+#    |
+# LL | echo (@)
+#    |       ^

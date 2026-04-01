@@ -1,0 +1,71 @@
+import std:
+  - Iter
+  - Sink
+
+# Trivial inheritance: abstract iterator types are pure_virtual,
+# so Do classes can subclass them without a native (init) call doing anything.
+
+class MyInput: Iter
+  pub let items = nil
+
+  def (init) self items
+    Iter.(init) self
+    self.items = items.iter()
+
+  pub def (next) self
+    self.items.next()
+
+  pub def (iter) self
+    self
+
+# op_get of (init) returns a bound method
+let f = Iter.(init)
+assert (type f func)
+
+# Subtype checks
+let src = MyInput [1, 2, 3]
+assert (type src MyInput)
+assert (type src Iter)
+
+# Works as an iterator
+let result = [...src]
+assert_eq $result [1, 2, 3]
+
+class MyOutput: Sink
+  pub let items = nil
+
+  def (init) self items
+    Sink.(init) self
+    self.items = items.sink()
+
+  pub def (put) self value
+    self.items.put $value
+
+  pub def (sink) self
+    self
+
+let out = []
+let dst = MyOutput $out
+dst.put 10
+dst.put 20
+assert_eq $out [10, 20]
+
+assert (type dst MyOutput)
+assert (type dst Sink)
+
+class MyPairInput: Iter
+  pub let pairs = nil
+
+  def (init) self pairs
+    Iter.(init) self
+    self.pairs = pairs.iter()
+
+  pub def (next) self
+    self.pairs.next()
+
+  pub def (iter) self
+    self
+
+let psrc = MyPairInput [["a", 1], ["b", 2]]
+assert (type psrc MyPairInput)
+assert (type psrc Iter)

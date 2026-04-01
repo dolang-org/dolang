@@ -1,0 +1,21 @@
+let x = 42
+return
+let _ = x + 1
+# warning: function call where expression may be intended
+#   --> binary_op_as_arg.dol:LL:LL
+#    |
+# LL | let _ = x + 1
+#    |         ^^-^^
+#    |           |
+#    |           this token is a literal string
+#    |
+# help: wrap entire expression in parentheses
+#    |
+# LL - let _ = x + 1
+# LL + let _ = (x + 1)
+#    |
+# warning: unreachable statement
+#   --> binary_op_as_arg.dol:LL:LL
+#    |
+# LL | let _ = x + 1
+#    | ^^^^^^^^^^^^^

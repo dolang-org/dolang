@@ -1,0 +1,8 @@
+echo
+  - "one"
+  - "two"
+echo three
+# output: END
+# one two
+# three
+# END

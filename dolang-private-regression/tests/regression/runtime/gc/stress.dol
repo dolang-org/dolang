@@ -1,0 +1,24 @@
+def make_cyclic len inner
+  let start = [inner]
+  let link = start
+  for _ = range $len
+    link = [link]
+  start.push $link
+  start
+
+let count = if MIRI
+  20
+else
+  200
+let keep_at = 10
+let clear_at = 5
+
+let last = nil
+let keep = []
+
+for len = range $count
+  last = make_cyclic $len $last
+  if (len % keep_at == 0)
+    keep.push $last
+  if (len % clear_at == 0)
+    last = nil

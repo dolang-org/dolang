@@ -1,0 +1,9 @@
+class A
+  pub def make_b _self
+    B()
+
+class B
+  pub let ok = true
+
+let b = A().make_b()
+assert $b.ok

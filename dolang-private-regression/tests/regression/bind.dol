@@ -1,0 +1,9 @@
+bind {1, foo: false, 2, bar: nil}
+  - a
+  - b
+  :foo
+  :bar
+assert_eq $a 1
+assert_eq $b 2
+assert_eq $foo false
+assert_eq $bar nil

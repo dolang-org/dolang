@@ -1,0 +1,29 @@
+# Test hex integer constants
+assert_eq 0x0 0
+assert_eq 0x10 16
+assert_eq 0xFF 255
+assert_eq 0xff 255
+assert_eq 0XAbCd 43981
+
+# Test octal integer constants  
+assert_eq 0o0 0
+assert_eq 0o10 8
+assert_eq 0o644 420
+assert_eq 0O755 493
+
+# Test binary integer constants
+assert_eq 0b0 0
+assert_eq 0b1 1
+assert_eq 0b10 2
+assert_eq 0b11111111 255
+assert_eq 0B1010 10
+
+# Test negative non-decimal constants
+assert_eq -0x10 -16
+assert_eq -0o10 -8
+assert_eq -0b10 -2
+
+# Test mixed case prefixes
+assert_eq 0Xa 10
+assert_eq 0O7 7
+assert_eq 0B1 1

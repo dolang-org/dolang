@@ -1,0 +1,12 @@
+def fun :msg
+  echo $msg
+  assert_eq $msg hello
+callme $fun msg: hello
+let foo = makefoo()
+echo $foo
+assert_eq $foo() 42
+assert_eq $foo.bar() bar
+# output: END
+# hello
+# foo
+# END

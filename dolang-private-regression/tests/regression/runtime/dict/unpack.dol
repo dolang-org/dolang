@@ -1,0 +1,26 @@
+let a b = {1, 2}
+assert_eq $a 1
+assert_eq $b 2
+
+let a foo: b = {foo: 2, 1}
+assert_eq $a 1
+assert_eq $b 2
+
+let a foo: b ...rest = {bar: 4, 1, foo: 2, 3}
+assert_eq $a 1
+assert_eq $b 2
+
+let a bar: b = rest
+assert_eq $a 3
+assert_eq $b 4
+
+# bind with ...rest should exclude already-extracted keyword keys
+bind {opt: "verbose", type: bool, short: "v"}
+  :opt = nil
+  :pos = nil
+  ...rest
+assert_eq $opt "verbose"
+assert_eq $pos nil
+let type: ty short: sh = rest
+assert_eq $ty $bool
+assert_eq $sh "v"

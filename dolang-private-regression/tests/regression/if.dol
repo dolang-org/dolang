@@ -1,0 +1,45 @@
+if true
+  echo yes
+
+if false
+  echo no
+
+if true
+  echo yes
+else
+  echo no
+
+if false
+  echo false
+else
+  echo yes
+
+if false
+  echo no
+else if true
+  echo yes
+else
+  echo no
+
+if true
+  echo yes
+else if false
+  echo no
+else
+  echo no
+
+if false
+  echo no
+else if false
+  echo no
+else
+  echo yes
+
+# output: END
+# yes
+# yes
+# yes
+# yes
+# yes
+# yes
+# END

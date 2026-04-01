@@ -1,0 +1,6 @@
+let foo = if true
+  42
+else
+  -1
+
+assert_eq $foo 42

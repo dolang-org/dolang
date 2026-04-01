@@ -1,0 +1,11 @@
+import std:
+  - arg
+
+def assert_eq_ext value as_value as_str
+  assert_eq $value $as_value
+  assert_eq (arg value) $as_str
+
+assert_eq_ext 001 (1) "001"
+assert_eq_ext -0 (0) "-0"
+assert_eq_ext 1. (1.0) "1."
+assert_eq_ext 1e0 (1.0) "1e0"

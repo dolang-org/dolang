@@ -1,0 +1,27 @@
+# Arithmetic
+let min = -9223372036854775808
+let max = 9223372036854775807
+assert_eq  (1 + 1)   2
+assert_eq  (2 - 1)   1
+assert_eq  (2 * 2)   4
+assert_eq  (4 / 2)   2
+assert_eq  (4 % 3)   1
+assert_eq  (-4 % 3)  2
+assert_eq  (- 0)     0
+assert_eq  (- 1)    -1
+assert_eq  (- -1)    1
+assert_eq  (5 / 2) 2.5
+# Boxed arithmetic
+assert_eq  (min - min) 0
+assert_eq  (max - max) 0
+assert_eq  (min + max) -1
+# Boxed/unboxed arithmetic
+assert_eq  (min + 1) -9223372036854775807
+assert_eq  (max - 1) 9223372036854775806
+assert_eq  (0 + min) $min
+assert_eq  (0 + max) $max
+assert_eq  (0 - max) -9223372036854775807
+assert_eq  (min // 8) -1152921504606846976
+assert_eq  (max // 8) 1152921504606846975
+assert_eq  (1 // min) 0
+assert_eq  (1 // max) 0

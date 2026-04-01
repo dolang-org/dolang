@@ -1,0 +1,22 @@
+let foo = 
+  if true
+    - 1
+    - 2
+
+assert_eq $foo [1, 2]
+
+let bar = 
+  if false
+    - 1
+    - 2
+
+assert_eq $bar []
+
+let baz =
+  if false
+    - false
+  else
+    - 1
+    - 2
+
+assert_eq $baz [1, 2]

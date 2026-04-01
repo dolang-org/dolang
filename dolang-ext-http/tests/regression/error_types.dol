@@ -1,0 +1,19 @@
+import http
+import std:
+  - RuntimeError
+import url:
+  - Url
+
+let redirect_url = ((Url TEST_URL) / "redirect-loop")
+
+let redirect_caught = try
+  http.get $redirect_url
+  false
+catch err
+  assert (type err http.Error)
+  assert (type err RuntimeError)
+  assert_eq ((err.url).path) "/redirect-loop"
+  assert ((str err).contains "redirect")
+  true
+
+assert $redirect_caught

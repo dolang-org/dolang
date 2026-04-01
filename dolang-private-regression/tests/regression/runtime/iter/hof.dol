@@ -1,0 +1,55 @@
+let m = [1, 2, 3, 4].iter().map (do |x| x * 2)
+assert_eq [...m] [2, 4, 6, 8]
+
+let acc = []
+let out = acc.sink().map (do |x| x * 2)
+out.put 1
+out.put 2
+out.put 3
+out.put 4
+assert_eq $acc [2, 4, 6, 8]
+
+let m = [1, 2, 3, 4].iter().filter (do |x| x % 2 == 0)
+assert_eq [...m] [2, 4]
+
+let acc = []
+let out = acc.sink().filter (do |x| x % 2 == 0)
+out.put 1
+out.put 2
+out.put 3
+out.put 4
+assert_eq $acc [2, 4]
+
+assert ([1, 2, 3].iter().all())
+assert (![1, 0, 3].iter().all())
+assert ([].iter().all())
+assert ([1, 2, 3].iter().all (do |x| x > 0))
+assert (![1, 2, 3].iter().all (do |x| x < 3))
+
+assert ([0, 0, 3].iter().any())
+assert (![0, false, nil].iter().any())
+assert (![].iter().any())
+assert ([1, 2, 3].iter().any (do |x| x > 2))
+assert (![1, 2, 3].iter().any (do |x| x > 5))
+
+let seen = []
+let ok = [1, 2, 3].iter().all do |x|
+  seen.push $x
+  (x < 2)
+assert !$ok
+assert_eq $seen [1, 2]
+
+seen = []
+ok = [1, 2, 3].iter().any do |x|
+  seen.push $x
+  (x > 1)
+assert $ok
+assert_eq $seen [1, 2]
+
+assert_eq ([1, 2, 3, 4].iter().count()) 4
+assert_eq ([1, 2, 3, 4].iter().filter (do |x| x % 2 == 0).count()) 2
+assert_eq ([1, 2, 3].pairs().count()) 3
+
+assert_eq ([1, 2, 3, 4].iter().fold 0 (do |acc x| acc + x)) 10
+assert_eq ([1, 2, 3, 4].iter().fold 1 (do |acc x| acc * x)) 24
+assert_eq ([].iter().fold 42 (do |acc x| acc + x)) 42

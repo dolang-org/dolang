@@ -1,0 +1,40 @@
+import regex:
+  - Regex
+
+# Test basic string replacement (all occurrences)
+let re = Regex r"\d+"
+assert_eq (re.replace "abc 123 def 456" "X") "abc X def X"
+
+# Test replace with limit
+assert_eq (re.replace "abc 123 def 456 ghi 789" "X" limit: 1) "abc X def 456 ghi 789"
+assert_eq (re.replace "abc 123 def 456 ghi 789" "X" limit: 2) "abc X def X ghi 789"
+
+# Test replace with limit: 0 (no replacements)
+assert_eq (re.replace "abc 123 def 456" "X" limit: 0) "abc 123 def 456"
+
+# Test replace with no matches
+assert_eq (re.replace "abc def" "X") "abc def"
+
+# Test backreferences in replacement string
+let date_re = Regex r"(\d{4})-(\d{2})-(\d{2})"
+assert_eq (date_re.replace "date: 2024-03-15" r"$2/$3/$1") "date: 03/15/2024"
+
+# Test named group backreferences
+let named_re = Regex r"(?<first>\w+)\s+(?<last>\w+)"
+assert_eq (named_re.replace "John Smith" r"${last}, ${first}") "Smith, John"
+
+# Test literal $$ in replacement
+assert_eq (re.replace "price: 42" r"$$$0") r"price: $42"
+
+# Test callback replacement
+let result = re.replace "abc 123 def 456" do |caps|
+  let n = int (str caps[0])
+  str (n * 2)
+assert_eq $result "abc 246 def 912"
+
+# Test callback replacement with limit
+let result = re.replace "abc 123 def 456 ghi 789" (do |_| "X") limit: 2
+assert_eq $result "abc X def X ghi 789"
+
+# Test replace on empty string
+assert_eq (re.replace "" "X") ""

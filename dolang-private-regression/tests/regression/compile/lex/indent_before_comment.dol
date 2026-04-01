@@ -1,0 +1,12 @@
+echo one
+# comment
+echo
+  # comment
+  - "two"
+  # comment
+  - "three"
+# comment
+# output: END
+# one
+# two three
+# END

@@ -1,0 +1,7 @@
+#            |
+echo helloworld
+# error: unexpected character after carriage return
+#   --> bad_cr.dol:LL:LL
+#    |
+# LL | echo hello␍world
+#    |            ^

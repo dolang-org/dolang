@@ -1,0 +1,14 @@
+import std:
+  - tuple
+# Basic subclassing of tuple
+class MyTuple: tuple
+  def (init) self
+    tuple.(init) $self
+
+let t = MyTuple()
+
+# Length
+assert_eq $t.len 0
+
+# Coercion
+assert_eq (str t) "()"

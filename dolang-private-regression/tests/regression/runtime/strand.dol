@@ -1,0 +1,7 @@
+import strand:
+  - spawn
+
+let ran = false;
+let handle = spawn do ran = true
+assert $ handle.join()
+assert $ran

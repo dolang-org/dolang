@@ -1,0 +1,90 @@
+import fs:
+  - open
+  - rename
+  - create_dir
+  - with_temp_dir
+
+import agent:
+  - with_and_without_agent
+
+with_and_without_agent "rename file" do with_temp_dir do |dir|
+  let old_path = (dir / "old_name.txt")
+  let new_path = (dir / "new_name.txt")
+
+  # Create file
+  open $old_path w do |f|
+    f.write "test content"
+
+  # Rename
+  rename $old_path $new_path
+
+  # Verify old path no longer exists
+  assert !$old_path.exists()
+
+  # Verify new path exists with correct content
+  open $new_path r do |f|
+    let contents = f.read()
+    assert_eq $contents "test content"
+
+with_and_without_agent "rename to different directory" do with_temp_dir do |dir|
+  let subdir = (dir / "subdir")
+  create_dir $subdir
+
+  let old_path = (dir / "file.txt")
+  let new_path = (subdir / "moved.txt")
+
+  # Create file
+  open $old_path w do |f|
+    f.write "moved content"
+
+  # Move to subdirectory
+  rename $old_path $new_path
+
+  # Verify moved
+  assert !$old_path.exists()
+  open $new_path r do |f|
+    let contents = f.read()
+    assert_eq $contents "moved content"
+
+with_and_without_agent "rename over existing file" do with_temp_dir do |dir|
+  let path1 = (dir / "file1.txt")
+  let path2 = (dir / "file2.txt")
+
+  open $path1 w do |f|
+    f.write "content1"
+
+  open $path2 w do |f|
+    f.write "content2"
+
+  # Rename file1 over file2
+  rename $path1 $path2
+
+  # Verify file1 is gone and file2 has content1
+  assert !$path1.exists()
+  open $path2 r do |f|
+    let contents = f.read()
+    assert_eq $contents "content1"
+
+with_and_without_agent "rename non-existent file fails" do with_temp_dir do |dir|
+  let src = (dir / "nonexistent.txt")
+  let dst = (dir / "dest.txt")
+
+  let res = try
+    rename $src $dst
+    false
+  catch _
+    true
+  assert $res
+
+with_and_without_agent "Path.rename method" do with_temp_dir do |dir|
+  let src = (dir / "source.txt")
+  let dst = (dir / "dest.txt")
+
+  open $src w do |f|
+    f.write "rename method"
+
+  src.rename $dst
+
+  assert !$src.exists()
+  open $dst r do |f|
+    assert_eq (f.read()) "rename method"

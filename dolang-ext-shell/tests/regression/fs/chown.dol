@@ -1,0 +1,114 @@
+import sys
+
+if (sys.os == "windows")
+  log "skipped on Windows"
+  return
+
+import
+  fs:
+    - Path
+    - chown
+    - open
+    - remove
+    - symlink
+  agent:
+    - with_and_without_agent
+  proc.run:
+    - id
+
+with_and_without_agent "chown by numeric id" do
+  let test_path = "test_chown_ids.txt"
+
+  open $test_path w do |f|
+    f.write "ownership"
+
+  let before = Path(test_path).metadata()
+  chown $test_path $before.uid group: $before.gid
+  let after = Path(test_path).metadata()
+  assert_eq $after.uid $before.uid
+  assert_eq $after.gid $before.gid
+
+  remove $test_path
+
+with_and_without_agent "chown by user and group name" do
+  let test_path = "test_chown_names.txt"
+
+  open $test_path w do |f|
+    f.write "ownership"
+
+  let before = Path(test_path).metadata()
+  let user = sub $id -un
+  let group = sub $id -gn
+  Path(test_path).chown $user group: $group
+  let after = Path(test_path).metadata()
+  assert_eq $after.uid $before.uid
+  assert_eq $after.gid $before.gid
+
+  remove $test_path
+
+with_and_without_agent "chown group only" do
+  let test_path = "test_chown_group.txt"
+
+  open $test_path w do |f|
+    f.write "ownership"
+
+  let before = Path(test_path).metadata()
+  chown $test_path group: $before.gid
+  let after = Path(test_path).metadata()
+  assert_eq $after.uid $before.uid
+  assert_eq $after.gid $before.gid
+
+  remove $test_path
+
+with_and_without_agent "chown requires user or group" do
+  let test_path = "test_chown_missing.txt"
+
+  open $test_path w do |f|
+    f.write "ownership"
+
+  let caught = try
+    chown $test_path
+    false
+  catch _err
+    true
+  assert $caught
+
+  remove $test_path
+
+with_and_without_agent "chown unknown user fails" do
+  let test_path = "test_chown_unknown.txt"
+
+  open $test_path w do |f|
+    f.write "ownership"
+
+  let caught = try
+    chown $test_path "__dolang_missing_user__"
+    false
+  catch _err
+    true
+  assert $caught
+
+  remove $test_path
+
+with_and_without_agent "chown follow controls symlink handling" do
+  let link_path = "test_chown_link"
+  let missing_target = "test_chown_missing_target"
+  let group = Path("Cargo.toml").metadata().gid
+
+  try
+    remove $link_path
+  catch _err
+    nil
+
+  symlink $missing_target $link_path
+
+  chown $link_path group: $group follow: false
+
+  let caught = try
+    chown $link_path group: $group follow: true
+    false
+  catch _err
+    true
+  assert $caught
+
+  remove $link_path

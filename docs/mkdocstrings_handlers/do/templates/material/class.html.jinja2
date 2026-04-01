@@ -1,0 +1,62 @@
+{% set heading_level = options.get("heading_level", 2) %}
+{% set show_private = options.get("show_private", false) %}
+{% set base_id = entity._identifier | replace(".", "--") %}
+
+{% if entity.doc %}
+{{ entity.doc | convert_markdown(heading_level, base_id) }}
+{% endif %}
+
+{% if entity.supers %}
+<p><strong>Inherits from:</strong>
+{% for sup in entity.supers %}
+  {% if sup is mapping %}
+    <code>{{ sup.module }}.{{ sup.item if sup.item is defined else "" }}</code>
+  {% else %}
+    <code>{{ sup }}</code>
+  {% endif %}
+  {% if not loop.last %}, {% endif %}
+{% endfor %}
+</p>
+{% endif %}
+
+{% set pub_members = entity.members | selectattr("pub") | list %}
+{% set special_members = entity.members | selectattr("special") | list %}
+{% set all_members = entity.members if show_private else (pub_members + special_members) | unique(attribute="name") | list %}
+
+{% set fields = all_members | selectattr("kind", "equalto", "field") | list %}
+{% set methods = all_members | selectattr("kind", "equalto", "method") | list %}
+
+{% if fields %}
+{{ "Fields" | heading(heading_level + 1, skip_inventory=true, id=base_id ~ "--fields") }}
+<dl>
+{% for field in fields %}
+  <dt><code>{{ field.name }}</code></dt>
+  {% if field.doc %}
+  <dd>{{ field.doc | convert_markdown(heading_level + 2, base_id ~ "--" ~ field.name) }}</dd>
+  {% else %}
+  <dd></dd>
+  {% endif %}
+{% endfor %}
+</dl>
+{% endif %}
+
+{% if methods %}
+{{ "Methods" | heading(heading_level + 1, skip_inventory=true, id=base_id ~ "--methods") }}
+{% for method in methods %}
+{% set method_id = base_id ~ "--" ~ method.name %}
+{% if method.params %}
+{% set sig_parts = [method.name] %}
+{% for p in method.params %}
+  {% if p.optional %}{% set _ = sig_parts.append(p.name ~ "?") %}
+  {% else %}{% set _ = sig_parts.append(p.name) %}{% endif %}
+{% endfor %}
+{% set sig = sig_parts | join(" ") %}
+{% else %}
+{% set sig = method.name ~ "()" %}
+{% endif %}
+{{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 2, role="method", id=method_id, toc_label=sig) }}
+{% if method.doc %}
+{{ method.doc | convert_markdown(heading_level + 3, method_id) }}
+{% endif %}
+{% endfor %}
+{% endif %}

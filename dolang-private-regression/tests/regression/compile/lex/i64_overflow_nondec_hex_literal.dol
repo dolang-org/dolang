@@ -1,0 +1,8 @@
+echo 0x8000000000000000
+# warning: overflow in constant; treated as literal
+#   --> i64_overflow_nondec_hex_literal.dol:LL:LL
+#    |
+# LL |   echo 0x8000000000000000
+#    |  ______^
+# LL | | # warning: overflow in constant; treated as literal
+#    | |_^

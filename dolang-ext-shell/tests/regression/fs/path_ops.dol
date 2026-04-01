@@ -1,0 +1,59 @@
+import fs:
+  - open
+  - create_dir
+  - symlink
+  - with_temp_dir
+
+import agent:
+  - with_and_without_agent
+
+with_and_without_agent "Path parent field" do with_temp_dir do |dir|
+  let child = (dir / "subdir" / "file.txt")
+  let parent = child.parent
+
+  assert_eq $parent (dir / "subdir")
+
+  let grandparent = parent.parent
+  assert_eq $grandparent $dir
+
+with_and_without_agent "Path exists method" do with_temp_dir do |dir|
+  let existing = (dir / "exists.txt")
+  let nonexistent = (dir / "nonexistent.txt")
+
+  open $existing w do |f|
+    f.write "test"
+
+  assert $existing.exists()
+  assert !$nonexistent.exists()
+
+with_and_without_agent "Path canonical method" do with_temp_dir do |dir|
+  let subdir = (dir / "subdir")
+  create_dir $subdir
+
+  let file = (subdir / "file.txt")
+  open $file w do |f|
+    f.write "test"
+
+  # Create a relative path
+  let relative = (dir / "subdir/../subdir/file.txt" )
+
+  # Canonicals should agree
+  assert_eq $relative.canonical() $file.canonical()
+
+with_and_without_agent "Path read_link method" do with_temp_dir do |dir|
+  let target = (dir / "target.txt")
+  let link = (dir / "link.txt")
+
+  open $target w do |f|
+    f.write "test"
+
+  symlink $target $link
+
+  let resolved = link.read_link()
+  assert_eq $resolved $target
+
+with_and_without_agent "Path division operator" do with_temp_dir do |dir|
+  let base = dir
+  let child = (base / "subdir" / "file.txt")
+
+  assert_eq $child (dir / "subdir" / "file.txt")

@@ -1,0 +1,26 @@
+let map = {0: "foo", 1: "bar"}
+let caught = try
+  for _ = map
+    map.clear()
+  false
+catch _
+  true
+assert $caught
+
+let values = map.values()
+let caught_values = try
+  map.insert 2 baz
+  values.next()
+  false
+catch _
+  true
+assert $caught_values
+
+let keys = map.keys()
+let caught_keys = try
+  map.insert 3 quux
+  keys.next()
+  false
+catch _
+  true
+assert $caught_keys

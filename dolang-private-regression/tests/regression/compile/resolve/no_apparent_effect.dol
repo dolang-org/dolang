@@ -1,0 +1,71 @@
+let x = 5
+let y = 10
+let arr = [1, 2, 3]
+let obj = record field: false
+
+# Arithmetic operations
+(x + y)
+# warning: statement with no apparent effect
+#   --> no_apparent_effect.dol:LL:LL
+#    |
+# LL | (x + y)
+#    | ^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (x + y)
+#    | +++++++
+
+# Indexing
+arr[0]
+# warning: statement with no apparent effect
+#   --> no_apparent_effect.dol:LL:LL
+#    |
+# LL | arr[0]
+#    | ^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = arr[0]
+#    | +++++++
+
+# Field access
+obj.field
+# warning: statement with no apparent effect
+#   --> no_apparent_effect.dol:LL:LL
+#    |
+# LL | obj.field
+#    | ^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = obj.field
+#    | +++++++
+
+# Unary operations
+(-x)
+# warning: statement with no apparent effect
+#   --> no_apparent_effect.dol:LL:LL
+#    |
+# LL | (-x)
+#    | ^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (-x)
+#    | +++++++
+
+# String concatenation with variable
+"hello $x"
+# warning: statement with no apparent effect
+#   --> no_apparent_effect.dol:LL:LL
+#    |
+# LL | "hello $x"
+#    | ^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = "hello $x"
+#    | +++++++
+
+echo()

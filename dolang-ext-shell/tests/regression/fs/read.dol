@@ -1,0 +1,75 @@
+import fs:
+  - open
+  - read
+  - write
+  - remove
+  - Path
+
+import agent:
+  - with_and_without_agent
+
+with_and_without_agent "read entire file" do
+  # Test reading entire file
+  open "Cargo.toml" "r" do |file|
+    let contents = file.read()
+    # Verify we got some string data
+    assert (contents.len > 0)
+    # Verify it's valid UTF-8 string content
+    assert (contents.starts_with("[package]"))
+    assert (contents.contains("dolang-ext-shell"))
+
+with_and_without_agent "read partial" do
+  # Test reading up to a specific number of bytes
+  open "Cargo.toml" "r" do |file|
+    let first_10 = file.read(10)
+    # read() returns up to n bytes, but may return fewer at EOF
+    # For text mode, returns complete UTF-8 characters
+    assert (first_10.len > 0)
+    # Should be valid UTF-8 string
+    assert (first_10.starts_with "[package]" )
+
+with_and_without_agent "read binary mode" do
+  # Test reading in binary mode
+  open "Cargo.toml" "rb" do |file|
+    let contents = file.read()
+    # Verify we got some binary data
+    assert $ type $contents $bin
+    assert (contents.len > 0)
+    # Binary mode returns bytes, check that we got a string representation
+    assert (contents.contains "[" )
+
+with_and_without_agent "read after close fails" do
+  # Test that reading from a closed file fails
+  let f = open "Cargo.toml" "r"
+  f.close()
+  let caught = try
+    let _ = f.read()
+    false  # Should not reach here
+  catch _err
+    true  # Expected to catch error
+  assert $caught
+
+with_and_without_agent "fs.read reads entire text file" do
+  let test_path = "test_fs_read.txt"
+  write $test_path "alpha\nbeta\n"
+  let contents = read $test_path
+  assert_eq $contents "alpha\nbeta\n"
+  assert_eq (read (Path test_path)) "alpha\nbeta\n"
+  remove $test_path
+
+with_and_without_agent "fs.read reads entire binary file" do
+  let test_path = "test_fs_read.bin"
+  let data = b"\x00\x01\x02\xff"
+  write $test_path $data
+  assert_eq (read test_path "b") $data
+  assert_eq ((Path test_path).read "b") $data
+  remove $test_path
+
+with_and_without_agent "fs.read rejects invalid mode" do
+  let caught = try
+    read "Cargo.toml" "rb"
+    false
+  catch err
+    assert_eq (str err) "type error: fs.read: mode must be `b`"
+    true
+  assert $caught

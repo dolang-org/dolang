@@ -1,0 +1,5 @@
+let foo = 42
+echo $foo
+# output: END
+# 42
+# END

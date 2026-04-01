@@ -1,0 +1,62 @@
+let min = -9223372036854775808
+let max = 9223372036854775807
+# Arithmetic equality
+assert     (1 == 1)
+assert_not (1 == 0)
+assert_not (0 == 1)
+# Arithmetic inequality
+assert_not (1 != 1)
+assert     (1 != 0)
+assert     (0 != 1)
+# Arithmetic comparisons
+assert_not (1 < 1)
+assert     (1 < 2)
+assert_not (2 < 1)
+assert_not (1 > 1)
+assert_not (1 > 2)
+assert     (2 > 1)
+assert     (1 <= 1)
+assert     (1 <= 2)
+assert_not (2 <= 1)
+assert     (1 >= 1)
+assert_not (1 >= 2)
+assert     (2 >= 1)
+# Boxed comparisons
+assert_eq  $min $min
+assert_eq  $max $max
+assert     (min < max)
+assert     (min <= max)
+assert_not (min > max)
+assert_not (min >= max)
+assert_not (max < min)
+assert_not (max <= min)
+assert     (max > min)
+assert     (max >= min)
+# Boxed/unboxed comparisons
+assert_ne  $min 0
+assert_ne  $max 0
+assert     (min < 0)
+assert     (min <= 0)
+assert_not (min > 0)
+assert_not (min >= 0)
+assert_not (0 < min)
+assert_not (0 <= min)
+assert     (0 > min)
+assert     (0 >= min)
+assert_not (max < 0)
+assert_not (max <= 0)
+assert     (max > 0)
+assert     (max >= 0)
+assert     (0 < max)
+assert     (0 <= max)
+assert_not (0 > max)
+assert_not (0 >= max)
+# Boolean equality
+assert_not (true == false)
+assert_not (false == true)
+assert     (true == true)
+# String equality
+assert_eq  foo foo
+assert_ne  foo bar
+# Nil equality
+assert_eq  nil nil

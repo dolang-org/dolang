@@ -1,0 +1,25 @@
+# These fail at runtime, so skip
+return
+
+42()
+# warning: attempt to call non-function value
+#   --> uncallable_expr.dol:LL:LL
+#    |
+# LL | 42()
+#    | --^^
+#    | |
+#    | this expression is never a function
+# warning: unreachable statement
+#   --> uncallable_expr.dol:LL:LL
+#    |
+# LL | 42()
+#    | ^^^^
+
+"hello"()
+# warning: attempt to call non-function value
+#   --> uncallable_expr.dol:LL:LL
+#    |
+# LL | "hello"()
+#    | -------^^
+#    | |
+#    | this expression is never a function

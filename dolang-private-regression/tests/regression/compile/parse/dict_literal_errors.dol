@@ -1,0 +1,6 @@
+echo ({a=1})
+# error: invalid expression in dict literal
+#   --> dict_literal_errors.dol:LL:LL
+#    |
+# LL | echo ({a=1})
+#    |         ^

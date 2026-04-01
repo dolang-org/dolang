@@ -1,0 +1,28 @@
+# Basic subclassing of dict
+class MyDict: dict
+  def (init) self
+    dict.(init) $self
+
+let d = MyDict()
+d.insert "a" 1
+d.insert "b" 2
+
+# Length
+assert_eq $d.len 2
+
+# Indexing
+assert_eq $d["a"] 1
+assert_eq $d["b"] 2
+
+# Contains
+assert (d.contains "a")
+assert (!(d.contains "c"))
+
+# Iteration
+let sum = 0
+for _ v = d
+  sum = (sum + v)
+assert_eq $sum 3
+
+# Coercion
+assert_eq (str d) r#"{"a": 1, "b": 2}"#

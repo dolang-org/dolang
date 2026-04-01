@@ -1,0 +1,9 @@
+for i = ["foo", "bar", "baz"]
+  echo $i
+for i = {"foo": 42, 42: "foo"}
+  assert (i[0] == "foo" && i[1] == 42 || i[0] == 42 && i[1] == "foo")
+# output: END
+# foo
+# bar
+# baz
+# END

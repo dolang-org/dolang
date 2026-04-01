@@ -1,0 +1,24 @@
+import std:
+  - args
+
+def foo :bar = "hello"
+  bar
+
+assert_eq $foo() hello
+assert_eq (foo bar: false) false
+
+bind {}
+  :foo = 42
+assert_eq $foo 42
+
+bind {foo: nil}
+  :foo = 42
+assert_eq $foo nil
+
+bind args()
+  :foo = 42
+assert_eq $foo 42
+
+bind args foo: nil
+  :foo = 42
+assert_eq $foo nil

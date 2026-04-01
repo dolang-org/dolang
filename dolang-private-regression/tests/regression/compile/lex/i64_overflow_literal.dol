@@ -1,0 +1,6 @@
+echo 999999999999999999999999
+# warning: overflow in constant; treated as literal
+#   --> i64_overflow_literal.dol:LL:LL
+#    |
+# LL | echo 999999999999999999999999
+#    |      ^^^^^^^^^^^^^^^^^^^^^^^^

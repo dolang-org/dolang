@@ -1,0 +1,9 @@
+echo foo:
+  - bar
+  - baz
+echo bar: do
+  echo hi
+# output: END
+# foo: ["bar", "baz"]
+# bar: 1
+# END

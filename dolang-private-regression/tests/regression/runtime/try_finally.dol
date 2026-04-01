@@ -1,0 +1,63 @@
+# Test 1: finally error takes priority over body error
+let result = try
+  try
+    throw "body error"
+  finally
+    throw "finally error"
+catch e
+  echo "caught: $e"
+  e
+assert_eq $result "finally error"
+
+# Test 2: finally error takes priority over handler error
+let result2 = try
+  try
+    throw "body"
+  catch _
+    throw "handler error"
+  finally
+    throw "finally wins"
+catch e
+  echo "caught: $e"
+  e
+assert_eq $result2 "finally wins"
+
+# Test 3: finally error takes priority over success
+let result3 = try
+  try
+    42
+  finally
+    throw "finally after success"
+catch e
+  echo "caught: $e"
+  99
+assert_eq $result3 99
+
+# Test 4: nested try-catch
+let result4 = try
+  let inner = try
+    throw "inner error"
+  catch e
+    echo "inner caught: $e"
+    10
+  (inner + 5)
+catch _
+  -1
+assert_eq $result4 15
+
+# Test 5: finally runs on success, its result is discarded
+let order = []
+let result5 = try
+  order.push body
+  42
+finally
+  order.push finally
+assert_eq $result5 42
+assert_eq $order ["body", "finally"]
+
+# output: EOF
+# caught: finally error
+# caught: finally wins
+# caught: finally after success
+# inner caught: inner error
+# EOF

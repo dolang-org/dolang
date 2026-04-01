@@ -1,0 +1,41 @@
+import
+  base64:
+    - encode
+    - decode
+  std: error
+
+def assert_err func type: ty :msg ...rest
+  let res = try
+    func ...rest
+    false
+  catch e
+    assert (type e ty)
+    assert_eq (str e) $msg
+    true
+  assert $res
+
+def assert_err_contains needle block
+  let res = try
+    block()
+    false
+  catch e
+    assert $ (str e).contains $needle
+    true
+  assert $res
+
+assert_eq (encode "") ""
+assert_eq (encode "hello") "aGVsbG8="
+assert_eq (encode b"hello") "aGVsbG8="
+assert_eq (encode b"\x00\x01\x02\xff") "AAEC/w=="
+
+assert_eq (decode "") b""
+assert_eq (decode "aGVsbG8=") b"hello"
+assert_eq (decode "AAEC/w==") b"\x00\x01\x02\xff"
+
+assert_eq (decode $ encode "hello") b"hello"
+assert_eq (decode $ encode b"hello") b"hello"
+
+assert_err $encode 123 type: $error.TypeError msg: "type error: expected str or bin"
+assert_err $decode 123 type: $error.TypeError msg: "type error: expected str"
+
+assert_err_contains "Invalid" do decode "%%%not base64%%%"

@@ -1,0 +1,19 @@
+return
+  prelude:
+    - _container
+    - sys
+    - proc
+    - proc.run
+    sys:
+      - echo
+      - env
+      - exit
+      - cd
+    proc:
+      - sub
+    - regression
+    regression:
+      - assert
+      - assert_eq
+      - assert_ne
+      - assert_not

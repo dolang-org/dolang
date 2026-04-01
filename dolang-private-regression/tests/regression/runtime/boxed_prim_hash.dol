@@ -1,0 +1,7 @@
+let bar =
+  a: 42
+  b: 2.5
+  42: a
+  2.5: b
+assert_eq $bar[42] a
+assert_eq $bar[2.5] b

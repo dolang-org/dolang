@@ -1,0 +1,7 @@
+let _foo = if true
+  # warning: `if` without `else` always evaluates to `nil`
+  #   --> let_if_no_else.dol:LL:LL
+  #    |
+  # LL | let _foo = if true
+  #    |            ^^
+  true

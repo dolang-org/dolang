@@ -1,0 +1,37 @@
+import std:
+  - Iterable
+
+def foo first ...rest
+  echo $first
+  echo {...rest}
+
+def capture a b foo: x bar: y
+  [a, b, x, y]
+
+def capture_rest a bar: y
+  [a, y]
+
+foo 0 1 2 3
+foo ...[0, 1, 2, 3]
+foo
+  - 0
+  ...[1, 2]
+  - 3
+foo ...{foo: 42, "a", bar: false}
+assert_eq (capture ...{"a", foo: 1, "b", bar: 2}) ["a", "b", 1, 2]
+assert_eq (capture ...({"a", foo: 1, "b", bar: 2}.iter())) ["a", "b", 1, 2]
+assert_eq (capture ...(Iterable.iter (record "a" foo: 1 "b" bar: 2))) ["a", "b", 1, 2]
+let _a foo: _x ...dict_rest = {"a", foo: 1, "b", bar: 2}
+assert_eq (capture_rest ...dict_rest) ["b", 2]
+let _a foo: _x ...record_rest = record("a", foo: 1, "b", bar: 2)
+assert_eq (capture_rest ...record_rest) ["b", 2]
+# output: END
+# 0
+# {1, 2, 3}
+# 0
+# {1, 2, 3}
+# 0
+# {1, 2, 3}
+# a
+# {foo: 42, bar: false}
+# END

@@ -1,0 +1,13 @@
+# |
+1 = true
+# error: expression isn't a valid assignment target
+#   --> bad_lvalue.dol:LL:LL
+#    |
+# LL | 1 = true
+#    | ^
+(1 + 1) = true
+# error: expression isn't a valid assignment target
+#   --> bad_lvalue.dol:LL:LL
+#    |
+# LL | (1 + 1) = true
+#    | ^^^^^^^

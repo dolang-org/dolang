@@ -1,0 +1,21 @@
+import std:
+  - Iter
+
+assert_eq [...[].iter().zip()] []
+assert_eq [...[1, 2, 3].iter().zip().map do |item| [item[0]]] [[1], [2], [3]]
+
+let pair_zip = [1, 2].iter().zip [3, 4]
+assert (type pair_zip Iter)
+assert_eq [...pair_zip.map do |pair| [pair[0], pair[1]]] [[1, 3], [2, 4]]
+
+let method = [1, 2].iter().zip [3, 4]
+assert_eq [...method.map do |pair| [pair[0], pair[1]]] [[1, 3], [2, 4]]
+
+let triple = [1, 2].iter().zip [3, 4] [5, 6]
+assert (type triple Iter)
+assert_eq [...triple.map do |item| [item[0], item[1], item[2]]] [[1, 3, 5], [2, 4, 6]]
+
+assert_eq [...[1, 2].iter().zip([3], [4, 5]).map do |item| [item[0], item[1], item[2]]] [[1, 3, 4]]
+
+let filtered = [1, 2, 3].iter().zip([4, 5, 6]).filter do |pair| (pair[0] % 2 == 1)
+assert_eq [...filtered.map do |pair| [pair[0], pair[1]]] [[1, 4], [3, 6]]

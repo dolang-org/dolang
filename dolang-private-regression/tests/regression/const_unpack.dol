@@ -1,0 +1,2 @@
+let "content-length": len = {"content-length": 42}
+assert_eq $len 42

@@ -1,0 +1,13 @@
+echo "\x41"
+# error: \x escapes are only valid in binary strings
+#   --> quoted_errors.dol:LL:LL
+#    |
+# LL | echo "\x41"
+#    |       ^^^^
+
+# error: expected closing `"`
+#   --> quoted_errors.dol:LL:LL
+#    |
+# LL | echo "unterminated
+#    |                   ^
+echo "unterminated

@@ -1,0 +1,87 @@
+import std: error
+import std:
+  - IterStop
+  - RuntimeError
+  - TypeError
+
+# Test 1: typed catch matches correct error type
+let result = try
+  (5 + "hello")
+catch TypeError: _
+  echo "type error"
+  42
+catch _
+  echo "other"
+  -1
+assert_eq $result 42
+
+# Test 2: typed catch falls through to next handler
+let result2 = try
+  (5 / 0)
+catch error.TypeError: _
+  echo "type"
+  -1
+catch error.ZeroDivError: _
+  echo "zerodiv"
+  99
+assert_eq $result2 99
+
+# Test 3: typed catch falls through to catch-all
+let result3 = try
+  throw "custom"
+catch error.TypeError: _
+  echo "type"
+  -1
+catch e
+  echo "catch-all: $e"
+  77
+assert_eq $result3 77
+
+# Test 4: no matching handler propagates error
+let outer = try
+  try
+    (5 / 0)
+  catch error.TypeError: _
+    echo "wrong handler"
+    -1
+catch e
+  echo "outer caught: $e"
+  55
+assert_eq $outer 55
+
+# Test 5: typed catch with finally
+let cleaned = false
+let result5 = try
+  (5 + "hello")
+catch error.TypeError: _
+  echo "typed with finally"
+  88
+finally
+  cleaned = true
+assert_eq $result5 88
+assert $cleaned
+
+# Test 6: RuntimeError catches ordinary runtime failures
+let result6 = try
+  (5 + "hello")
+catch RuntimeError: _
+  123
+assert_eq $result6 123
+
+# Test 7: RuntimeError does not catch iterator stop
+let result7 = try
+  try
+    throw IterStop()
+  catch RuntimeError: _
+    -1
+catch IterStop: _
+  321
+assert_eq $result7 321
+
+# output: EOF
+# type error
+# zerodiv
+# catch-all: custom
+# outer caught: integer zero divisor
+# typed with finally
+# EOF

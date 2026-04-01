@@ -1,0 +1,204 @@
+#![deny(warnings)]
+
+use std::{error::Error, path::PathBuf};
+
+use tokio::runtime::Builder;
+
+use clap::Parser;
+
+use dolang::{
+    compile,
+    extension::VmExt,
+    runtime::{
+        self, Output,
+        error::ErrorKind,
+        strand::Redirect,
+        value::{Empty, Root},
+        vm,
+    },
+};
+
+use dolang_ext_shell::Exit;
+
+use crate::batch::Action;
+use crate::interactive::{DYNAMIC_PRELUDE, DynamicPrelude};
+use crate::terminal_state::TerminalRestoreGuard;
+
+mod batch;
+mod bundled;
+mod diagnostic;
+mod interactive;
+mod load;
+mod terminal_state;
+
+#[derive(Parser)]
+#[clap(trailing_var_arg = true)]
+struct Cli {
+    /// Script path (or module name if -m is used)
+    path: Option<PathBuf>,
+    /// Import and run path as a module's main function
+    #[clap(short = 'm', long)]
+    module: bool,
+    /// Script arguments (appear in `shell.args`)
+    args: Vec<String>,
+    /// Check syntax without executing
+    #[clap(long, conflicts_with = "module")]
+    check: bool,
+    /// Compile to bytecode file
+    #[clap(long, value_name = "OUTPUT")]
+    compile: Option<PathBuf>,
+    /// Treat warnings as errors
+    #[clap(long)]
+    strict: bool,
+}
+
+fn get_action(cli: &Cli) -> Action {
+    if cli.check {
+        Action::Check
+    } else if let Some(output) = &cli.compile {
+        Action::Compile(output.clone())
+    } else {
+        Action::Run
+    }
+}
+
+/// Run the stock `dolang-shell` CLI and return its process exit code.
+///
+/// Custom binaries can call this after linking any additional extensions they
+/// want to register via `dolang::extension!`.
+pub fn main() -> i32 {
+    // Spawn a thread with a larger stack to avoid stack overflow in debug
+    // builds, where deep call stacks of uninlined frames can exceed the
+    // default stack size (particularly on Windows).
+    const STACK_SIZE: usize = 8 * 1024 * 1024;
+
+    std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(|| {
+            let _terminal_restore = TerminalRestoreGuard::capture_if_terminal();
+            run()
+        })
+        .expect("failed to spawn main thread")
+        .join()
+        .expect("main thread panicked")
+}
+
+fn run() -> i32 {
+    let mut cli = Cli::parse_from(wild::args_os());
+    let action = get_action(&cli);
+
+    let rt = Builder::new_current_thread().enable_all().build().unwrap();
+
+    rt.block_on(async move {
+        vm::Builder::build(async move |builder| {
+            for ext in builder.extensions() {
+                ext.apply(builder).unwrap();
+            }
+
+            if cli.path.is_none() && !cli.module {
+                let dynamic_prelude = builder.register_type::<DynamicPrelude>();
+                let mut root = Root::new(builder);
+                Output::set(builder, &mut root, Empty::Dict);
+                builder.module_object(DYNAMIC_PRELUDE, &dynamic_prelude, DynamicPrelude { root });
+            }
+
+            let strict_mode = cli.strict;
+            builder.importer(async move |strand, name, out| {
+                load::load(
+                    strand,
+                    &load::find_module_file(strand, name).await?,
+                    compile::Mode::Module { name },
+                    strict_mode,
+                    out,
+                )
+                .await
+            });
+
+            builder.importer(async |strand, name, mut out| {
+                if let Some(&bytes) = bundled::BUNDLED_MODULES
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map(|(_, b)| b)
+                {
+                    runtime::Bytecode::new(bytes).run(strand, &mut out).await
+                } else {
+                    Err(runtime::Error::import(strand, name))
+                }
+            });
+
+            let main = builder.sym("main");
+
+            builder
+                .enter_with_slots(async move |strand, [mut stdin, mut stdout]| {
+                    dolang_ext_shell::stdin(strand, &mut stdin);
+                    dolang_ext_shell::stdout(strand, &mut stdout);
+                    let ct = strand.cancel_token().clone();
+                    let res =
+                        Redirect::new(strand)
+                            .input(stdin)
+                            .output(stdout)
+                            .enter(async |strand| {
+                                dolang_ext_shell::set_args(strand, cli.args.drain(..)).await?;
+                                dolang_ext_shell::set_program(
+                                    strand,
+                                    cli.path.as_ref().map(|path| {
+                                        if cli.module {
+                                            dolang_ext_shell::ProgramSource::Module(
+                                                path.to_string_lossy().into_owned(),
+                                            )
+                                        } else {
+                                            dolang_ext_shell::ProgramSource::Path(path.clone())
+                                        }
+                                    }),
+                                )
+                                .await?;
+                                if let Some(path) = &cli.path {
+                                    batch::main(
+                                        strand,
+                                        path,
+                                        action,
+                                        if cli.module { Some(main) } else { None },
+                                        cli.strict,
+                                    )
+                                    .await
+                                } else {
+                                    interactive::main(strand, cli.strict).await
+                                }
+                            });
+
+                    let res = {
+                        tokio::pin!(res);
+
+                        loop {
+                            tokio::select! {
+                                res = (&mut res) => { break res }
+                                _ = tokio::signal::ctrl_c(), if !ct.is_canceled() => { ct.cancel() }
+                            }
+                        }
+                    };
+
+                    match res {
+                        Ok(()) => 0,
+                        Err(e) => {
+                            let exit_code = (e.kind() == ErrorKind::Interrupt)
+                                .then(|| {
+                                    e.source()
+                                        .and_then(|e| e.downcast_ref::<Exit>())
+                                        .map(|exit| exit.code)
+                                })
+                                .flatten();
+
+                            if let Some(exit_code) = exit_code {
+                                exit_code
+                            } else {
+                                diagnostic::print_backtrace(strand, e);
+                                1
+                            }
+                        }
+                    }
+                })
+                .await
+        })
+        .await
+    })
+}

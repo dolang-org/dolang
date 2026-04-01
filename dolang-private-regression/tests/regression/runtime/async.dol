@@ -1,0 +1,2 @@
+let foo = async 42
+assert_eq $foo 42

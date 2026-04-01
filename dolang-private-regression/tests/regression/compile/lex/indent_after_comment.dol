@@ -1,0 +1,14 @@
+# This is a comment
+echo hi
+# This is also a comment
+echo bye
+echo
+  # This is a 3rd comment
+  - "hi"
+  # This is a 4th comment
+  - "bye"
+# output: END
+# hi
+# bye
+# hi bye
+# END

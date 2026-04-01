@@ -1,0 +1,91 @@
+import
+  std:
+    - arg
+    - hash
+  fs:
+    - Path
+  - sys
+
+# Test path object creation
+let p = Path "foo/bar.txt"
+
+assert_eq (dbg p) "<Path \"foo/bar.txt\">"
+assert_eq (str p) "foo/bar.txt"
+if (sys.os == "windows")
+  assert_eq (arg p) "foo\\bar.txt"
+else
+  assert_eq (arg p) "foo/bar.txt"
+
+# Test path name field
+let path1 = Path "foo/bar/baz.txt"
+assert_eq $path1.name "baz.txt"
+
+let root_file = Path "file.txt"
+assert_eq $root_file.name "file.txt"
+
+# Test path extension field
+let ext1 = Path "file.txt"
+assert_eq $ext1.ext "txt"
+
+let ext2 = Path "archive.tar.gz"
+assert_eq $ext2.ext "gz"
+
+let no_ext = Path "Makefile"
+assert_eq $no_ext.ext nil
+
+# Test path stem field
+let stem1 = Path "file.txt"
+assert_eq $stem1.stem "file"
+
+let stem2 = Path "archive.tar.gz"
+assert_eq $stem2.stem "archive.tar"
+
+let stem3 = Path "Makefile"
+assert_eq $stem3.stem "Makefile"
+
+# Test add_ext method
+let add_ext1 = Path "file"
+assert_eq $add_ext1.add_ext("txt") (Path "file.txt")
+assert_eq $add_ext1 (Path "file")
+
+let add_ext2 = Path "archive.tar"
+assert_eq $add_ext2.add_ext("gz") (Path "archive.tar.gz")
+
+let add_ext3 = Path "dir/file"
+assert_eq $add_ext3.add_ext("log") (Path "dir/file.log")
+
+# Test path equality
+let eq1 = Path "foo/bar"
+let eq2 = Path "foo/bar"
+let eq3 = Path "foo/baz"
+
+assert_eq $eq1 $eq2
+assert_ne $eq1 $eq3
+
+# Test path comparison and hashing
+let lt1 = Path "foo/bar"
+let lt2 = Path "foo/baz"
+
+assert (lt1 < lt2)
+assert (lt2 > lt1)
+assert (lt1 <= eq2)
+assert (eq2 >= lt1)
+assert_eq (hash lt1) (hash eq2)
+assert_ne (hash lt1) (hash lt2)
+
+let d = {}
+d[lt1] = "first"
+assert_eq $d[eq2] "first"
+
+# Test path join operator
+let joined1 = Path.join "a" "b" "c"
+assert_eq $joined1 (Path "a/b/c")
+
+let joined2 = Path.join (Path "x") "y"
+assert_eq $joined2 (Path "x/y")
+
+# Test reverse division (string / Path)
+let base = Path "subdir"
+let full = ("parent" / base)
+
+assert_eq $full (Path "parent/subdir")

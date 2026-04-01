@@ -1,0 +1,54 @@
+def assert_err msg block
+  let res = try
+    block()
+    false
+  catch e
+    assert_eq (str e) $msg
+    true
+  assert $res
+
+assert_eq $"foo".len 3
+assert_eq ("foobar".sub 2) "obar"
+assert_eq ("foobar".sub 2 4) "ob"
+assert_eq ("foobar".sub 1 1) ""
+assert ("foobar".starts_with "foo")
+assert ("foobar".ends_with "bar")
+assert_eq ("foobar".without_prefix "foo") "bar"
+assert_eq ("foobar".without_prefix "bar") "foobar"
+assert_eq ("foobar".without_suffix "bar") "foo"
+assert_eq ("foobar".without_suffix "foo") "foobar"
+assert_eq ("  foobar  ".trim()) "foobar"
+assert_eq ("  foobar  ".trim_start()) "foobar  "
+assert_eq ("  foobar  ".trim_end()) "  foobar"
+assert_eq ("\r\n foobar \r\n".trim "\n\r") " foobar "
+assert_eq ("\r\n foobar \r\n".trim_start "\n\r") " foobar \r\n"
+assert_eq ("\r\n foobar \r\n".trim_end "\n\r") "\r\n foobar "
+assert_eq [..."a,b,c".split ","] ["a", "b", "c"]
+assert_eq [..."a,b,c".split "," limit: 1] ["a", "b,c"]
+assert_eq [..."a.b.tar.gz".split "." limit: -1] ["a.b.tar", "gz"]
+assert_eq [..."a.b.tar.gz".split "." limit: -2] ["a.b", "tar", "gz"]
+assert_eq [..."a,b,c".rsplit ","] ["c", "b", "a"]
+assert_eq [..."a,b,c".rsplit "," limit: 1] ["c", "a,b"]
+assert_eq [..."a,b,c".rsplit "," limit: -1] ["b,c", "a"]
+assert_eq (",".join ["a", "b", "c"]) "a,b,c"
+assert_eq ("foo bar foo".replace "foo" "baz") "baz bar baz"
+assert_eq ("banana".replace "na" "") "ba"
+assert_eq ("abc".replace "" "-") "-a-b-c-"
+assert_eq ("ab".repeat 3) "ababab"
+assert_eq ("ab".repeat 0) ""
+
+assert_eq $"foo".upper() FOO
+assert_eq $"FOO".lower() foo
+
+# contains tests
+assert ("foobar".contains "foo")
+assert ("foobar".contains "bar")
+assert ("foobar".contains "oba")
+assert ("foobar".contains "")
+assert (!"foobar".contains "baz")
+assert (!"foobar".contains "foobarbar")
+assert (!"".contains "foo")
+assert ("".contains "")
+
+assert_err "type error: str.len is a field, not a method" do "foo".len()
+assert_err "numeric overflow" do "ab".repeat -1

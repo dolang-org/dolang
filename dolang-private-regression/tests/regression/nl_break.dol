@@ -1,0 +1,13 @@
+def trampoline thunk
+  thunk()
+
+for i = [0, 1, 2]
+  trampoline do
+    echo $i
+    if (i == 1)
+      break
+
+# output: END
+# 0
+# 1
+# END

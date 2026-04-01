@@ -1,0 +1,39 @@
+import args progress http fs url strand
+
+def download client url
+  let name = url.name
+  if !name
+    throw "no identifiable file name: $url"
+  client.get $url do |resp|
+    let len = resp.headers.get content-length
+    let success = false
+    try
+      fs.open $name w do |file| progress.show
+        message: $name
+        total: (len && int len)
+        units: bytes
+        do |w| for chunk = resp.chunks()
+          file.write $chunk
+          w.delta $chunk.len
+      success = true
+    finally
+      if !success
+        # Remove incomplete file
+        fs.remove $name ignore: true
+
+args.with
+  help: Download files over HTTP(S)
+  - opt: limit
+    short: l
+    type: $int
+    help: Maximum concurrent downloads
+    default: 4
+  - arg: urls
+    collect: true
+    help: URLs to download
+    type: $url.Url
+  do |args| progress.with do
+    let client = http.Client()
+    strand.fork limit: $args.limit
+      for url = args.urls
+        do download $client $url

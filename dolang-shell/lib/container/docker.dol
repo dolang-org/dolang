@@ -1,0 +1,155 @@
+import
+  proc.run:
+    docker: docker_cli
+  sys:
+    - env
+  container._dockman: dockman
+
+pub let Image = dockman.Image
+pub let Container = dockman.Container
+pub let NoImageError = dockman.NoImageError
+pub let NoContainerError = dockman.NoContainerError
+pub let InvalidImageReferenceError = dockman.InvalidImageReferenceError
+pub let RegistryAuthError = dockman.RegistryAuthError
+pub let ArchiveError = dockman.ArchiveError
+
+class DockerRuntime: dockman.Runtime
+  def (init) self
+    dockman.Runtime.(init) $self :docker:
+
+  pub def cli _self ...args
+    env LC_ALL: C LANG: C do docker_cli ...args
+
+let docker = DockerRuntime()
+
+# Run a direct command in a temporary Docker container from `image`.
+#
+# Returns `nil`.
+pub def run image cmd ...args
+  docker.run $image $cmd ...args
+
+# Run a function in a temporary Docker container from `image`.
+#
+# Program execution and filesystem access will be redirected for the
+# duration of the function.
+#
+# # Returns
+#
+# The result of `func`
+pub def with image func
+  docker.with $image $func
+
+# Build a Docker image.
+#
+# # Base parameters
+#
+# - `from`: base image
+# - `pull`:
+#     - `:missing:` (default): only pull missing images
+#     - `:always:`: always attempt to pull images
+# - `tag`: output image tag; may be omitted or repeated
+#
+# # Optional parameters
+#
+# ## `mounts: <array>`
+#
+# Container mounts available for the entire build process.
+# Each element is a `dict` of the form:
+#
+# - `type`:
+#     - `cache`: Mount a persistent cache at `target`
+#     - `bind`: Bind mount `source` at `target`
+# - `target: <path | str>`: target mount path
+# - `source: <path | str>`: mount source (omit for `cache` mounts)
+# - `id` (optional): identifier for `cache` mounts; `target` used if omitted
+#
+# # Build steps
+#
+# ## `run: func`
+#
+# Run `func` (a callable) inside the container
+#
+# ## `add: <dict>`
+#
+# Add a file to the image:
+#
+# - `source: <path | url | str>`: source path or URL
+# - `content: <str | bin>`: content to write directly to `target`
+# - `target: <path | str>`: target path; if a directory, source file name will be appended for `source`, but not for `content`
+# - `chmod: mode` (optional): change target permissions
+#
+# ## `commit: msg`
+# 
+# Creates a layer with the given message
+#
+# # Example
+# # Returns
+#
+# The final `Image`
+#
+# ```
+# import container.docker: docker
+# let img = docker.build
+#   from: ubuntu:24.04
+#   run: do run apt install -y curl
+#   tag: my-image
+# assert_eq $img.tags()[0].tag my-image
+# ```
+pub def build
+  :pull = :missing:
+  :mounts = []
+  :from ...args
+do
+  docker.build :pull :mounts :from ...args
+
+# List images, returning an iterator of `Image` objects
+#
+# # Parameters
+#
+# - `all`: list all images
+# - `filter`: optional filter expression (e.g. `"reference=myapp*"`)
+#
+# # Returns
+#
+# An iterator of `Image` objects, one per repository:tag pair
+pub def images :all = false :filter = nil
+  docker.images :all :filter
+
+# Get a single image by reference
+#
+# # Parameters
+#
+# - `ref`: image reference (e.g. `"myapp:latest"`, `"sha256:abc..."`)
+#
+# # Returns
+#
+# An `Image` object
+pub def image ref
+  docker.image $ref
+
+# List containers.
+pub def containers :all = false :filter = nil
+  docker.containers :all :filter
+
+# Get a single container by ID or name.
+pub def container ref
+  docker.container $ref
+
+# Save one or more images to an archive.
+#
+# `format:` accepts either strings such as `docker_archive` or symbols such as
+# `:docker_archive:`.
+pub def save target :format = :docker_archive: :platform = nil ...images
+  docker.save $target :format :platform ...images
+
+# Load images from an archive.
+pub def load source :platform = nil
+  docker.load $source :platform
+
+# Pull an image from a registry.
+pub def pull ref :platform = nil
+  docker.pull $ref :platform
+
+# Push an image to a registry.
+pub def push ref :platform = nil
+  docker.push $ref :platform

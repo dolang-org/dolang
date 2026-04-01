@@ -1,0 +1,99 @@
+import regex:
+  - Regex
+
+# Test basic split (unlimited)
+let re = Regex r"[,\s]+"
+let parts = [...re.split "abc, def, ghi"]
+assert_eq $parts ["abc", "def", "ghi"]
+
+# Test split with no matches
+let parts = [...re.split "abcdefghi"]
+assert_eq $parts ["abcdefghi"]
+
+# Test split with positive limit
+let parts = [...re.split "abc, def, ghi, jkl" limit: 1]
+assert_eq $parts ["abc", "def, ghi, jkl"]
+
+let parts = [...re.split "abc, def, ghi, jkl" limit: 2]
+assert_eq $parts ["abc", "def", "ghi, jkl"]
+
+# Test split with negative limit (from rear)
+let parts = [...re.split "abc, def, ghi, jkl" limit: -1]
+assert_eq $parts ["abc, def, ghi", "jkl"]
+
+let parts = [...re.split "abc, def, ghi, jkl" limit: -2]
+assert_eq $parts ["abc, def", "ghi", "jkl"]
+
+# Test rsplit (reverse yield order)
+let parts = [...re.rsplit "abc, def, ghi"]
+assert_eq $parts ["ghi", "def", "abc"]
+
+# Test rsplit with positive limit
+let parts = [...re.rsplit "abc, def, ghi, jkl" limit: 1]
+assert_eq $parts ["jkl", "abc, def, ghi"]
+
+let parts = [...re.rsplit "abc, def, ghi, jkl" limit: 2]
+assert_eq $parts ["jkl", "ghi", "abc, def"]
+
+# Test rsplit with negative limit
+let parts = [...re.rsplit "abc, def, ghi, jkl" limit: -1]
+assert_eq $parts ["def, ghi, jkl", "abc"]
+
+let parts = [...re.rsplit "abc, def, ghi, jkl" limit: -2]
+assert_eq $parts ["ghi, jkl", "def", "abc"]
+
+# Test split on empty string
+let re2 = Regex r","
+let parts = [...re2.split ""]
+assert_eq $parts [""]
+
+# Test split yields empty strings between adjacent delimiters
+let parts = [...re2.split "a,,b"]
+assert_eq $parts ["a", "", "b"]
+
+# Test lazy iteration (for loop)
+let re3 = Regex r"\s+"
+let collected =
+  for part = re3.split "hello world foo"
+    - $part
+assert_eq $collected ["hello", "world", "foo"]
+
+# Test destructuring
+let first ...rest = re3.split "a b c d"
+assert_eq $first "a"
+let rest_parts = [...rest]
+assert_eq $rest_parts ["b", "c", "d"]
+
+# Test exhaustive unpack (exact match)
+let a b c = re3.split "x y z"
+assert_eq $a "x"
+assert_eq $b "y"
+assert_eq $c "z"
+
+# Test exhaustive unpack fails with too many items
+let failed = try
+  let _a _b = re3.split "x y z"
+  false
+catch _
+  true
+assert_eq $failed true
+
+# Test atomic unpack: iterator usable after failed unpack
+let iter = re3.split "a b c d"
+let failed = try
+  let _x _y = iter
+  false
+catch _
+  true
+assert_eq $failed true
+# Iterator should still have all items since unpack was atomic
+let items = [...iter]
+assert_eq $items ["a", "b", "c", "d"]
+
+# Test required positional fails when not enough items
+let failed = try
+  let _a _b _c = re3.split "x y"
+  false
+catch _
+  true
+assert_eq $failed true

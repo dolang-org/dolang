@@ -1,0 +1,6 @@
+let foo = true
+foo = 17
+echo $foo
+# output: END
+# 17
+# END

@@ -1,0 +1,18 @@
+{% set heading_level = options.get("heading_level", 2) %}
+{% set base_id = entity._identifier | replace(".", "--") %}
+{% if entity.params %}
+{% set sig_parts = [entity.name] %}
+{% for p in entity.params %}
+  {% if p.optional %}{% set _ = sig_parts.append(p.name ~ "?") %}
+  {% else %}{% set _ = sig_parts.append(p.name) %}{% endif %}
+{% endfor %}
+{% set sig = sig_parts | join(" ") %}
+{% else %}
+{% set sig = entity.name ~ "()" %}
+{% endif %}
+
+{{ ("<code>" ~ sig ~ "</code>") | heading(heading_level, role="function", id=base_id, toc_label=sig) }}
+
+{% if entity.doc %}
+{{ entity.doc | convert_markdown(heading_level + 1, base_id) }}
+{% endif %}

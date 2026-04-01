@@ -1,0 +1,78 @@
+class Animal
+  pub let name = nil
+  pub let species = "unknown"
+
+  def (init) self name species
+    self.name = name
+    self.species = species
+
+  pub def speak _self
+    "..."
+
+  pub def describe self
+    "$(self.name) is a $(self.species)"
+
+class Dog: Animal
+  pub let breed = nil
+
+  def (init) self name breed
+    # Call parent init to set up inherited fields
+    Animal.(init) $self $name dog
+    # Set up child-specific field
+    self.breed = breed
+
+  pub def speak _self
+    "woof!"
+
+  pub def describe self
+    "$(Animal.describe self) ($(self.breed))"
+
+let rex = Dog "Rex" "German Shepherd"
+
+# Field inheritance and shadowing
+assert_eq $rex.name "Rex"
+assert_eq $rex.species "dog"       # Child's default value, not parent's
+assert_eq $rex.breed "German Shepherd"
+
+# Method override
+assert_eq $rex.speak() "woof!"
+
+# Overridden method with superclass call
+assert_eq $rex.describe() "Rex is a dog (German Shepherd)"
+
+# Direct parent method call
+assert_eq (Animal.speak rex) "..."
+
+# Test explicit parent init call pattern
+class Cat: Animal
+  pub let indoor = false
+
+  def (init) self name indoor
+    Animal.(init) $self $name cat
+    self.indoor = indoor
+
+let whiskers = Cat "Whiskers" true
+assert_eq $whiskers.name "Whiskers"
+assert_eq $whiskers.species "cat"
+assert_eq $whiskers.indoor true
+
+# Subtype tests using 2-argument type builtin
+# type(value, class) returns true if value's type is a subtype of class
+
+# Reflexive: every type is a subtype of itself
+assert (type rex Dog)
+assert (type whiskers Cat)
+
+# Inheritance: child classes are subtypes of parent classes
+assert (type rex Animal)
+assert (type whiskers Animal)
+
+# Non-subtype: sibling classes are not subtypes of each other
+assert_not (type rex Cat)
+assert_not (type whiskers Dog)
+
+# Non-subtype: parent is not a subtype of child
+let generic_animal = Animal "Generic" "mammal"
+assert (type generic_animal Animal)
+assert_not (type generic_animal Dog)
+assert_not (type generic_animal Cat)

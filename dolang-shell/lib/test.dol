@@ -1,0 +1,177 @@
+import args compile diagnostic load progress
+  fs:
+    - Path
+  glob:
+    - Glob
+
+# Exception thrown to skip a test case.
+#
+# Throw this (or call `skip()`) from a test function to mark it as skipped
+# rather than failed.
+pub class Skip: std.RuntimeError
+  # Skip message, or `nil` is none specified
+  pub let message = nil
+
+  def (init) self message
+    self.message = message
+
+# Skip the current test with an optional message.
+pub def skip msg = nil
+  throw Skip $msg
+
+# Assert that `cond` is truthy, throwing an error with optional `msg` on failure.
+pub def assert cond msg = nil
+  if !cond
+    if msg
+      throw "assertion failed: $msg"
+    else
+      throw "assertion failed"
+
+# Assert that `cond` is falsy, throwing an error with optional `msg` on failure.
+pub def assert_not cond msg = nil
+  if !cond
+    if msg
+      throw "assertion failed: $msg"
+    else
+      throw "assertion failed"
+
+# Assert that `left == right`, throwing an error with optional `msg` on failure.
+pub def assert_eq left right msg = nil
+  if (left != right)
+    if msg
+      throw "assertion failed: $(dbg left) == $(dbg right): $msg"
+    else
+      throw "assertion failed: $(dbg left) == $(dbg right)"
+
+# Assert that `left != right`, throwing an error with optional `msg` on failure.
+pub def assert_ne left right msg = nil
+  if (left == right)
+    if msg
+      throw "assertion failed: $(dbg left) != $(dbg right): $msg"
+    else
+      throw "assertion failed: $(dbg left) != $(dbg right)"
+
+def parse_jobs value
+  let jobs = try
+    int $value
+  catch std.RuntimeError: _
+    throw args.Error "--jobs expects an integer"
+  if (jobs < 1)
+    throw args.Error "--jobs must be at least 1"
+  jobs
+
+class Harness
+  let jobs = nil
+  let filter = nil
+  let filter_glob = nil
+  let errors = nil
+  let success = 0
+  let total = 0
+
+  def (init) self :jobs :filter
+    self.#jobs = jobs
+    self.#errors = []
+    self.#filter = try
+        Glob $filter
+    catch std.RuntimeError: _
+        throw args.Error "invalid --filter glob: $filter"
+
+  def matches_filter self path test
+    self.#filter.matches $path.stem/$test
+
+  def record_test self
+    self.#total = (self.#total + 1)
+
+  def record_success self
+    self.#success = (self.#success + 1)
+
+  def record_error self err bt path test = nil
+    self.#errors.push [err, bt, path, test]
+
+  def run_test self path name func
+    self.#record_test()
+    try
+      func()
+      self.#record_success()
+    catch std.RuntimeError: e
+      self.#record_error $e $(strand.error_backtrace()) $path $name
+
+  def run_module self path module
+    let tests = []
+    for sym value = module
+      if str(sym).starts_with test_
+        let name = str(sym).without_prefix("test_")
+        if self.#matches_filter $path $name
+          tests.push [name, value]
+
+    progress.show message: $path.stem total: $tests.len do |w|
+      strand.fork limit: $self.#jobs
+        for name func = tests
+          do progress.show message: $name do |_|
+            self.#run_test $path $name $func
+            w.delta()
+
+  def run_file self path
+    let source = path.open rb do |file| file.read()
+    let compiled = compile.compile $path $source module: <test>
+    for diag = compiled.diagnostics
+      diagnostic.print_compile_diag $diag
+    if !compiled.ok
+      throw std.CompileError "failed to compile $(path.relative())"
+    let module = load.run $compiled.bytecode
+    self.#run_module $path $module
+
+  def report self
+    let rc = 0
+    for e bt path test = self.#errors
+      if (type e Skip)
+        if test
+          if e.message
+            echo "test skipped: $(path.stem)/$test ($(e.message))"
+          else
+            echo "test skipped: $(path.stem)/$test"
+        else
+          if e.message
+            echo "module skipped: $(path.stem) ($(e.message))"
+          else
+            echo "module skipped: $(path.stem)"
+      else
+        rc = 1
+        if test
+          echo "test failed: $(path.stem)/$test"
+        else
+          echo "module failed: $(path.stem)"
+        diagnostic.print_error $e backtrace: $bt
+    echo "tests passed: $(self.#success)/$(self.#total)"
+    rc
+
+  pub def run self files
+    progress.with do progress.show message: modules total: $files.len do |w|
+      for path = files
+        try
+          self.#run_file $path
+        catch std.RuntimeError: e
+          self.#record_error $e $(strand.error_backtrace()) $path
+        w.delta()
+    self.#report()
+
+pub def main()
+  args.with
+    help: Run Do unit test modules.
+    - opt: jobs
+      short: j
+      type: $parse_jobs
+      default: 8
+      meta: N
+      help: Max concurrent strands per module.
+    - opt: filter
+      default: **
+      help: Glob filter for test names in `stem/test` form
+    - arg: files
+      type: $Path
+      collect: true
+      help: Test files to run.
+    do |p|
+      let :filter :jobs :files ... = p
+      let harness = Harness :jobs :filter
+      exit $ harness.run $files

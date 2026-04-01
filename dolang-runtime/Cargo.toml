@@ -1,0 +1,27 @@
+[package]
+name = "dolang-runtime"
+version = "0.1.0"
+description = "Virtual machine and runtime for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bitvec = "1.0.1"
+bstr = "1.12.1"
+futures = "0.3.31"
+hex = "0.4.3"
+
+[dependencies.dolang-util]
+package = "dolang-private-util"
+path = "../dolang-private-util"
+version = "0.1.0"
+
+[dependencies.dolang-bytecode]
+path = "../dolang-bytecode"
+version = "0.1.0"
+
+[features]
+default = []
+debug = ["dolang-util/debug", "dolang-bytecode/debug"]

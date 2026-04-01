@@ -1,0 +1,24 @@
+import compile
+import std:
+  - hash
+
+let result = compile.compile "warn.dol" |-
+  def foo unused
+    nil
+  foo 1
+assert $result.ok
+assert_eq $result.diagnostics.len 1
+
+let diag = result.diagnostics[0]
+assert (type diag compile.Diagnostic)
+assert_eq $diag.severity :warning:
+assert (type diag.span compile.Span)
+assert (type diag.span.start compile.Pos)
+assert_eq $diag.span.start $diag.span.start
+assert_eq (hash diag.span.start) (hash diag.span.start)
+assert (diag.span.start <= diag.span.end)
+assert_eq $diag.span $diag.span
+assert_eq (hash diag.span) (hash diag.span)
+assert (diag.span <= diag.span)
+assert_eq $diag.patches.len 0
+assert_eq $diag.notes.len 0

@@ -1,0 +1,19 @@
+let foo = nil
+let _foo = nil
+let _ = nil
+let f1 = nil
+let f1_ = nil
+let z1 = nil
+let for1 = nil
+let form = nil
+let for_ = nil
+let A = nil
+let Ab_A0_0 = nil
+
+#        |
+let foo-bar = nil
+# error: invalid pattern
+#   --> ident.dol:LL:LL
+#    |
+# LL | let foo-bar = nil
+#    |        ^

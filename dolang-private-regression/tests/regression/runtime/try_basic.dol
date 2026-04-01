@@ -1,0 +1,60 @@
+# Basic try/catch/finally
+
+# Test 1: try with catch-all
+let result = try
+  throw "test error"
+catch e
+  echo "caught: $e"
+  42
+assert_eq $result 42
+
+# Test 2: try with finally (success)
+let cleanup = false
+let result2 = try
+  echo "body"
+  99
+finally
+  cleanup = true
+assert $cleanup
+assert_eq $result2 99
+
+# Test 3: try with catch and finally (error)
+let cleanup2 = false
+let result3 = try
+  throw "oops"
+catch e
+  echo "caught: $e"
+  100
+finally
+  cleanup2 = true
+assert $cleanup2
+assert_eq $result3 100
+
+# Test 4: try body succeeds, catch not invoked
+let result4 = try
+  7
+catch _
+  -1
+assert_eq $result4 7
+
+# Test 5: try as statement (not just RHS)
+try
+  throw "ignored"
+catch e
+  echo "statement catch: $e"
+
+# Test 6: finally runs even on success
+let ran = false
+try
+  echo "ok"
+finally
+  ran = true
+assert $ran
+
+# output: EOF
+# caught: test error
+# body
+# caught: oops
+# statement catch: ignored
+# ok
+# EOF

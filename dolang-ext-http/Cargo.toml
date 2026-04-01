@@ -1,0 +1,49 @@
+[package]
+name = "dolang-ext-http"
+version = "0.1.0"
+description = "HTTP client extension for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["json"]
+json = ["dep:dolang-ext-json"]
+
+[dependencies]
+bstr = "1.12.1"
+bytes = "1.5"
+futures = "0.3.31"
+httpdate = "1.0"
+tokio = { version = "1.48", features = ["sync"] }
+url = "2"
+
+[dependencies.dolang-ext-json]
+path = "../dolang-ext-json"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-url]
+path = "../dolang-ext-url"
+version = "0.1.0"
+
+[dependencies.reqwest]
+version = "0.13.1"
+default-features = false
+features = ["query", "stream", "native-tls", "http2", "cookies"]
+
+[build-dependencies]
+dolang-private-build = { path = "../dolang-private-build", version = "0.1.0" }
+
+[dev-dependencies]
+dolang-private-test = { path = "../dolang-private-test", version = "0.1.0" }
+wiremock = "0.6"
+
+[dependencies.dolang]
+path = "../dolang"
+version = "0.1.0"
+
+[dependencies.dolang-ext-shell]
+path = "../dolang-ext-shell"
+version = "0.1.0"

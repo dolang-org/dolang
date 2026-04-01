@@ -1,0 +1,58 @@
+# Test custom iterator using (next) special method
+import 
+  std:
+    - IterStop
+  strand:
+    - redirect
+    - put
+
+# Custom iterator that counts from start to stop
+class Counter
+  pub let current = 0
+  pub let stop = 0
+
+  def (init) self start stop
+    self.current = start
+    self.stop = stop
+
+  def (iter) self
+    # Return self as the iterator
+    self
+
+  def (next) self
+    if (self.current >= self.stop)
+      throw IterStop()
+    let value = self.current
+    self.current = (self.current + 1)
+    value
+
+# Test basic iteration with (next)
+let counter = Counter 0 5
+let results = [...counter]
+assert_eq $results [0, 1, 2, 3, 4]
+
+# Test empty range
+let empty = Counter 5 5
+assert_eq [...empty] []
+
+# Custom collector using (put) special method
+class Summer
+  pub let sum = 0
+
+  def (init) self
+    self.sum = 0
+
+  def (put) self value
+    self.sum = (self.sum + value)
+
+  def (sink) self
+    self
+
+# Test collecting with (put)
+let summer = Summer()
+redirect output: $summer do
+  put 1
+  put 2
+  put 3
+  put 4
+assert_eq $summer.sum 10

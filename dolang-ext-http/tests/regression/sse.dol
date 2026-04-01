@@ -1,0 +1,59 @@
+import http
+import std:
+  - hash
+
+def assert_err msg block
+  let actual = try
+    block()
+    nil
+  catch err
+    err
+
+  assert_eq (str actual) $msg
+
+let first = http.get $TEST_URL/events do |res|
+  [...res.events()][0]
+let same_first = http.get $TEST_URL/events do |res|
+  [...res.events()][0]
+
+assert_eq $first $same_first
+assert_eq (hash first) (hash same_first)
+let first_dict = {}
+first_dict[first] = "seen"
+assert_eq $first_dict[same_first] "seen"
+
+http.get $TEST_URL/events do |res|
+  let events =
+    for event = res.events()
+      - type: $event.type
+        data: $event.data
+        id: $event.id
+        retry: $event.retry
+
+  let expected =
+    - type: "token"
+      data: "hello\nworld"
+      id: "msg-1"
+      retry: 1500
+    - type: "message"
+      data: "plain"
+      id: nil
+      retry: nil
+    - type: "message"
+      data: "defaulted"
+      id: nil
+      retry: nil
+    - type: "message"
+      data: "tail"
+      id: nil
+      retry: nil
+
+  for e x = events.iter().zip(expected)
+    assert_eq $e $x
+
+let closed = http.get $TEST_URL/events
+closed.close()
+assert_err "state error: closed" do closed.events()
+
+let invalid = http.get $TEST_URL/events-invalid
+assert_err "invalid UTF-8" do invalid.events().next()

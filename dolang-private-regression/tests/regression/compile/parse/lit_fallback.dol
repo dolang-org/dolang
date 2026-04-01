@@ -1,0 +1,6 @@
+echo foo=bar one+two three-five /dev/null four%milk
+echo https://google.com
+# output: END
+# foo=bar one+two three-five /dev/null four%milk
+# https://google.com
+# END

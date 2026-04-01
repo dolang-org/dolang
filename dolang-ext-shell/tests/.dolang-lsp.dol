@@ -1,0 +1,18 @@
+return
+  prelude:
+    - shell
+    "shell.run": run
+    shell:
+      - echo
+      - env
+      - exit
+      - cd
+      - sub
+      - feed
+    - regression
+    regression:
+      - log
+      - assert
+      - assert_eq
+      - assert_ne
+      - assert_not

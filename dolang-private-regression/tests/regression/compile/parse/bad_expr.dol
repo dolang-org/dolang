@@ -1,0 +1,23 @@
+echo (1 ++ 1)
+# error: invalid unary operator
+#   --> bad_expr.dol:LL:LL
+#    |
+# LL | echo (1 ++ 1)
+#    |          ^
+
+echo (1 <=+ 2)
+# error: invalid unary operator
+#   --> bad_expr.dol:LL:LL
+#    |
+# LL | echo (1 <=+ 2)
+#    |           ^
+
+echo (1 <+ 2)
+# error: invalid unary operator
+#   --> bad_expr.dol:LL:LL
+#    |
+# LL | echo (1 <+ 2)
+#    |          ^
+
+# Is legal
+echo (1 <- 2)

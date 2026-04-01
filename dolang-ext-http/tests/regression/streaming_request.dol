@@ -1,0 +1,26 @@
+import http
+
+# Test backward compatibility with string body
+http.post $TEST_URL/post body: "simple string" do |res|
+  assert_eq $res.status 201
+  assert_eq $res.text() "simple string"
+
+# Test backward compatibility with binary body
+http.post $TEST_URL/post body: b"hello" do |res|
+  assert_eq $res.status 201
+  assert_eq $res.text() "hello"
+
+# Test streaming from array of strings using body (no delimiters added)
+http.post $TEST_URL/post body: ["hello", "world"] do |res|
+  assert_eq $res.status 201
+  assert_eq $res.text() "helloworld"
+
+# Test streaming from array of binary data (no delimiters)
+http.post $TEST_URL/post body: [b"hello", b"world"] do |res|
+  assert_eq $res.status 201
+  assert_eq $res.text() "helloworld"
+
+# Test streaming with lines parameter (adds newlines between items)
+http.post $TEST_URL/post lines: ["hello", "world"] do |res|
+  assert_eq $res.status 201
+  assert_eq $res.text() "hello\nworld\n"

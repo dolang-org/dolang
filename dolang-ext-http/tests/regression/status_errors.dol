@@ -1,0 +1,77 @@
+import http
+import std:
+  - RuntimeError
+
+let not_found_caught = try
+  http.get $TEST_URL/not-found
+  false
+catch err
+  assert (type err http.Status)
+  assert (type err http.Error)
+  assert (type err RuntimeError)
+  assert_eq $err.status 404
+  assert_eq $err.headers["x-error"] "missing"
+  assert_eq $err.text() "missing"
+  assert_eq $err.truncated false
+  true
+
+assert $not_found_caught
+
+if HAVE_JSON
+  let server_error_caught = try
+    http.get $TEST_URL/error
+    false
+  catch err
+    assert (type err http.Status)
+    assert_eq $err.status 500
+    assert_eq $err.headers["x-error"] "boom"
+    let data = err.json()
+    assert_eq $data["error"] "boom"
+    assert_eq $err.truncated false
+    true
+
+  assert $server_error_caught
+
+let not_modified_caught = try
+  http.get $TEST_URL/not-modified
+  false
+catch err
+  assert (type err http.Status)
+  assert_eq $err.status 304
+  assert_eq $err.truncated false
+  true
+
+assert $not_modified_caught
+
+let large_caught = try
+  http.get $TEST_URL/large-error
+  false
+catch err
+  assert (type err http.Status)
+  assert_eq $err.status 500
+  assert_eq $err.truncated true
+  assert_eq (err.body().len) 65536
+  assert_eq (err.text().len) 65536
+  true
+
+assert $large_caught
+
+http.get $TEST_URL/not-found status: :ignore: do |res|
+  assert_eq $res.status 404
+  let caught = try
+    res.throw_for_status()
+    false
+  catch err
+    assert (type err http.Status)
+    assert_eq $err.status 404
+    assert_eq $err.text() "missing"
+    true
+  assert $caught
+
+http.get $TEST_URL/get status: :ignore: do |res|
+  assert_eq (res.throw_for_status()) nil
+  assert_eq $res.status 200
+  assert_eq $res.text() "{\"status\":\"ok\"}"
+
+let ignored = http.get $TEST_URL/error status: ignore
+assert_eq $ignored.status 500

@@ -1,0 +1,103 @@
+# Whitespace behavior
+let doc = |
+  this is a doc 
+assert_eq $doc "this is a doc \n"
+doc = |-
+  this is a doc 
+assert_eq $doc "this is a doc "
+doc = |-
+  this is a doc
+
+  with blanks
+assert_eq $doc "this is a doc\n\nwith blanks"
+doc = |-
+  this is a doc
+   
+  with blanks
+
+assert_eq $doc "this is a doc\n \nwith blanks"
+
+doc = |-
+  this is a doc
+  # with comments
+assert_eq $doc "this is a doc\n# with comments"
+
+doc = |-
+  # this doc is a comment
+assert_eq $doc "# this doc is a comment"
+
+# Interpolation
+let foo = 42
+doc = |-
+  $foo $(foo + 1) \\\$foo
+# Neat
+assert_eq $doc r"42 43 \$foo"
+
+# Here docs in other syntactic contexts/positions
+def id x
+  x
+def key_id :key
+  key
+def array_id ...args
+  return
+    for _ v = args
+      - $v
+
+doc = id |-
+  a doc
+assert_eq $doc "a doc"
+
+doc = id
+  |-
+    a doc
+assert_eq $doc "a doc"
+
+doc = array_id
+  - |-
+      a doc
+  - |-
+      another doc
+assert_eq $doc ["a doc", "another doc"]
+
+doc = key_id key: |-
+  a doc
+assert_eq $doc "a doc"
+
+doc = key_id
+  key: |-
+    a doc
+assert_eq $doc "a doc"
+
+# Raw here docs: $ and \ are literal
+doc = r|
+  echo $name
+  path: C:\Users
+assert_eq $doc "echo \$name\npath: C:\\Users\n"
+
+# Raw strip mode
+doc = r|-
+  hello $name
+assert_eq $doc r"hello $name"
+
+# Raw here doc in call position
+doc = id r|
+  $foo \t
+assert_eq $doc "\$foo \\t\n"
+
+# Raw here doc in vertical layout
+doc = id
+  r|
+    line one
+    line two
+assert_eq $doc "line one\nline two\n"
+
+# Raw here doc as key argument
+doc = key_id key: r|
+  $value
+assert_eq $doc "\$value\n"
+
+# Raw here doc as key argument in vertical layout
+doc = key_id
+  key: r|
+    $value
+assert_eq $doc "\$value\n"

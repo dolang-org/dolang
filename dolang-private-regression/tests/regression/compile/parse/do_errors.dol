@@ -1,0 +1,6 @@
+let f = do =
+# error: invalid expression
+#   --> do_errors.dol:LL:LL
+#    |
+# LL | let f = do =
+#    |            ^

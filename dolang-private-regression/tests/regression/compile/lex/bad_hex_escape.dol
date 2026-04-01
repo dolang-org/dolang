@@ -1,0 +1,13 @@
+b"\x0"
+# error: unexpected escape sequence
+#   --> bad_hex_escape.dol:LL:LL
+#    |
+# LL | b"\x0"
+#    |   ^^^^
+
+b"\xGG"
+# error: unexpected escape sequence
+#   --> bad_hex_escape.dol:LL:LL
+#    |
+# LL | b"\xGG"
+#    |   ^^^

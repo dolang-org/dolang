@@ -1,0 +1,4 @@
+echo $echo
+# output: END
+# regression.echo
+# END

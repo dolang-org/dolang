@@ -1,0 +1,12 @@
+echo if else while for let = + - / %
+let rec = record true: true false: true nil: true while: true let: true
+rec[:do:] = true
+assert $rec.true
+assert $rec.false
+assert $rec.nil
+assert $rec.while
+assert $rec.let
+assert $rec.do
+# output: END
+# if else while for let = + - / %
+# END

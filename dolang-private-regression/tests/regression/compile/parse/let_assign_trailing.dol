@@ -1,0 +1,13 @@
+let foo =
+  - bar
+  - baz
+assert_eq $foo ["bar", "baz"]
+foo =
+  bar: 42
+  baz: false
+assert_eq $foo {bar: 42, baz: false}
+def return_data
+  return
+    - 1
+    - 2
+assert_eq $return_data() [1, 2]

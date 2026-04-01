@@ -1,0 +1,8 @@
+pub def foo pos :one two: kwarg
+  echo $pos $one $kwarg
+foo 0 two: 2 one: 1
+echo $foo
+# output: END
+# 0 1 2
+# foo
+# END

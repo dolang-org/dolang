@@ -1,0 +1,90 @@
+import sys proc
+import
+  std:
+    - RuntimeError
+  agent:
+    - with_and_without_agent
+  fs:
+    - with_temp_dir
+  proc.run:
+    - sh
+
+if (sys.os == "windows")
+  log "skipped on Windows"
+  return
+
+with_and_without_agent "missing file yields sys.Error" do with_temp_dir do |dir|
+  let missing = (dir / "missing.txt")
+  let caught = try
+    missing.read()
+    false
+  catch err
+    assert (type err sys.NotFoundError)
+    assert (type err sys.Error)
+    assert_eq $err.errno 2
+    true
+  assert $caught
+
+with_and_without_agent "sys.Error is caught by std.RuntimeError" do with_temp_dir do |dir|
+  let missing = (dir / "missing.txt")
+  let caught = try
+    missing.read()
+    false
+  catch RuntimeError: _
+    true
+  assert $caught
+
+with_and_without_agent "missing program yields sys.Error" do
+  let caught = try
+    run __dolang_missing_program__
+    false
+  catch err
+    assert (type err sys.NotFoundError)
+    assert (type err sys.Error)
+    assert_eq $err.errno 2
+    true
+  assert $caught
+
+with_and_without_agent "existing path yields sys.AlreadyExistsError" do with_temp_dir do |dir|
+  let path = (dir / "existing")
+  path.create_dir()
+  let caught = try
+    path.create_dir()
+    false
+  catch err
+    assert (type err sys.AlreadyExistsError)
+    assert (type err sys.Error)
+    true
+  assert $caught
+
+with_and_without_agent "non-zero exit yields proc.Error" do
+  let caught = try
+    sh -c "exit 42"
+    false
+  catch err
+    assert (type err proc.Error)
+    assert_eq $err.rc 42
+    assert_eq $err.signal nil
+    assert_eq (str err) "sh exited with status: 42"
+    true
+  assert $caught
+
+with_and_without_agent "signaled process yields proc.Error" do
+  let caught = try
+    sh -c r"kill -TERM $$"
+    false
+  catch err
+    assert (type err proc.Error)
+    assert_eq $err.rc nil
+    assert_eq $err.signal 15
+    assert_eq (str err) "sh terminated by signal: 15"
+    true
+  assert $caught
+
+with_and_without_agent "proc.Error is caught by std.RuntimeError" do
+  let caught = try
+    sh -c "exit 7"
+    false
+  catch RuntimeError: _
+    true
+  assert $caught

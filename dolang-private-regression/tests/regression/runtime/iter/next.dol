@@ -1,0 +1,35 @@
+import
+  std:
+    - UnexpectedKeyError
+  strand:
+    - next
+    - redirect
+
+def assert_err_type ty block
+  let res = try
+    block()
+    false
+  catch e
+    assert (type e ty)
+    true
+  assert $res
+
+let it = [1].iter()
+assert_eq (it.next()) 1
+assert_eq (it.next default: "done") "done"
+
+it = [].iter()
+assert_eq (it.next else: do "done") "done"
+
+it = [1].iter()
+assert_eq (it.next()) 1
+assert_eq (it.next default: "done") "done"
+
+it = [].iter()
+assert_eq (it.next else: do "done") "done"
+
+let implicit = redirect input: [] do next default: "done"
+assert_eq $implicit "done"
+
+assert_err_type $UnexpectedKeyError do [].iter().next default: "done" else: do "other"
+assert_err_type $UnexpectedKeyError do [].iter().next default: "done" else: do "other"

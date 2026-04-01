@@ -1,0 +1,6 @@
+echo $foo
+# error: unbound identifier
+#   --> unbound.dol:LL:LL
+#    |
+# LL | echo $foo
+#    |       ^^^

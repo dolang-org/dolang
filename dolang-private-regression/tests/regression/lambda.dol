@@ -1,0 +1,13 @@
+let foo = 42
+let thunk = do
+  assert_eq $foo 42
+  let bar = true
+  let chunk = do
+    assert_eq $foo 42
+    assert_eq $bar true
+    foo = false
+    bar = 0
+  chunk()
+  assert_eq $bar 0
+thunk()
+assert_eq $foo false

@@ -1,0 +1,110 @@
+import fs:
+  - open
+  - copy
+  - create_dir
+  - with_temp_dir
+
+import agent:
+  - with_and_without_agent
+
+with_and_without_agent "copy file" do with_temp_dir do |dir|
+  let src = (dir / "source.txt")
+  let dst = (dir / "dest.txt")
+
+  # Create source file
+  open $src w do |f|
+    f.write "hello world"
+
+  # Copy the file
+  copy $src $dst
+
+  # Verify destination exists and has correct content
+  open $dst r do |f|
+    let contents = f.read()
+    assert_eq $contents "hello world"
+
+with_and_without_agent "copy over existing file" do with_temp_dir do |dir|
+  let src = (dir / "source.txt")
+  let dst = (dir / "dest.txt")
+
+  # Create source file
+  open $src w do |f|
+    f.write "new content"
+
+  # Create destination with different content
+  open $dst w do |f|
+    f.write "old content"
+
+  # Copy should overwrite
+  copy $src $dst
+
+  # Verify destination has new content
+  open $dst r do |f|
+    let contents = f.read()
+    assert_eq $contents "new content"
+
+with_and_without_agent "copy non-existent file fails" do with_temp_dir do |dir|
+  let src = (dir / "nonexistent.txt")
+  let dst = (dir / "dest.txt")
+
+  let res = try
+    copy $src $dst
+    false
+  catch _
+    true
+  assert $res
+
+with_and_without_agent "copy directory requires all" do with_temp_dir do |dir|
+  let src = (dir / "src")
+  create_dir $src
+
+  let dst = (dir / "dst")
+
+  let res = try
+    copy $src $dst
+    false
+  catch _
+    true
+  assert $res
+
+with_and_without_agent "copy directory with all" do with_temp_dir do |dir|
+  let src = (dir / "src")
+  let nested = (src / "nested")
+  create_dir $nested all: true
+
+  open (nested / "file.txt") w do |f|
+    f.write "nested content"
+
+  let dst = (dir / "dst")
+  copy $src $dst all: true
+
+  open (dst / "nested" / "file.txt") r do |f|
+    let contents = f.read()
+    assert_eq $contents "nested content"
+
+with_and_without_agent "Path.copy method" do with_temp_dir do |dir|
+  let src = (dir / "source.txt")
+  let dst = (dir / "dest.txt")
+
+  open $src w do |f|
+    f.write "copied with method"
+
+  src.copy $dst
+
+  open $dst r do |f|
+    let contents = f.read()
+    assert_eq $contents "copied with method"
+
+with_and_without_agent "copy to non-existent directory fails" do with_temp_dir do |dir|
+  let src = (dir / "source.txt")
+  let dst = (dir / "nonexistent" / "dest.txt")
+
+  open $src w do |f|
+    f.write "test"
+
+  let res = try
+    copy $src $dst
+    false
+  catch _
+    true
+  assert $res

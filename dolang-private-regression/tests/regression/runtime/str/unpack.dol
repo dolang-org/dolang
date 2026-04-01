@@ -1,0 +1,73 @@
+def assert_err msg block
+  let res = try
+    block()
+    false
+  catch e
+    assert_eq (str e) $msg
+    true
+  assert $res
+
+# Basic unpack
+let a b c = "a,b,c".split ","
+assert_eq $a "a"
+assert_eq $b "b"
+assert_eq $c "c"
+
+# Unpack with variadic
+let a ...rest = "a,b,c".split ","
+assert_eq $a "a"
+let b c = rest
+assert_eq $b "b"
+assert_eq $c "c"
+
+# Unpack with optional (default) via bind
+bind "a,b".split ","
+  - a
+  - b
+  - c = "default"
+assert_eq $a "a"
+assert_eq $b "b"
+assert_eq $c "default"
+
+# Optional filled
+bind "a,b,c".split ","
+  - a
+  - b
+  - c = "default"
+assert_eq $a "a"
+assert_eq $b "b"
+assert_eq $c "c"
+
+# Spread into array
+assert_eq [..."a,b,c".split ","] ["a", "b", "c"]
+
+# split iterators support inherited Iter methods
+let split_it = "a,b".split ","
+assert_eq (split_it.next()) "a"
+assert_eq (split_it.next()) "b"
+assert_eq (split_it.next(default: "done")) "done"
+
+# Too few elements for required
+assert_err "missing positional item: 3" do let _ _ _ = "a,b".split ","
+
+# Single element: FIXME: syntax doesn't exist yet
+#let (a) = "hello".split ","
+#assert_eq $a "hello"
+
+# Empty parts
+let a b c = ",b,".split ","
+assert_eq $a ""
+assert_eq $b "b"
+assert_eq $c ""
+
+# split(limit: -N) unpack: slot 0 = leftmost segment (forward yield)
+let base ext = "archive.tar.gz".split "." limit: -1
+assert_eq $base "archive.tar"
+assert_eq $ext "gz"
+
+# rsplit unpack with variadic
+let c ...rest = "a,b,c".rsplit ","
+assert_eq $c "c"
+let b a = rest
+assert_eq $b "b"
+assert_eq $a "a"

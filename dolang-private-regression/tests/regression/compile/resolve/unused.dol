@@ -1,0 +1,30 @@
+import strand: alias
+# warning: unused variable
+#   --> unused.dol:LL:LL
+#    |
+# LL | import strand: alias
+#    |                ^^^^^
+
+import strand:
+  - fork
+# warning: unused variable
+#   --> unused.dol:LL:LL
+#    |
+# LL |   - fork
+#    |     ^^^^
+
+pub def foo unused
+  # warning: unused variable
+  #   --> unused.dol:LL:LL
+  #    |
+  # LL | pub def foo unused
+  #    |             ^^^^^^
+  nil
+
+def bar
+  # warning: unused variable
+  #   --> unused.dol:LL:LL
+  #    |
+  # LL | def bar
+  #    |     ^^^
+  nil

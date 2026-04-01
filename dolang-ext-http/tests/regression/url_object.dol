@@ -1,0 +1,15 @@
+import http
+import url:
+  - Url
+
+let base = Url $TEST_URL
+let get_url = (base / "get")
+
+http.get $get_url do |res|
+  assert_eq $res.status 200
+
+let client = http.Client()
+client.get $(base / "headers") do |res|
+  assert_eq $res.status 200
+  assert_eq $res.headers["x-custom"] "test-value"
+client.close()

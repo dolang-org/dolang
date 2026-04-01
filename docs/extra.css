@@ -1,0 +1,11 @@
+/* Make error tokens stand out */
+.highlight .err,
+.md-typeset .highlight .err {
+  color: #f44336 !important;
+  background-color: rgba(244, 67, 54, 0.12);
+  border-bottom: 1px dotted #f44336;
+}
+/* Reduce completely absurd column bloat */
+.md-typeset table:not([class]) th {
+    min-width: 0
+}

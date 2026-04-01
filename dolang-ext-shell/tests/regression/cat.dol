@@ -1,0 +1,5 @@
+import polyfill:
+  - cat
+
+let content = sub $cat Cargo.toml
+assert (content.starts_with "[package]")

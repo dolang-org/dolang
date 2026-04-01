@@ -1,0 +1,43 @@
+# Test: Pure constants should warn with "statement with no effect"
+
+# Pure integer literal
+42
+# warning: statement with no effect
+#   --> no_effect_constant.dol:LL:LL
+#    |
+# LL | 42
+#    | ^^
+#    |
+#    = help: considering removing this statement
+
+# Pure string literal  
+"hello"
+# warning: statement with no effect
+#   --> no_effect_constant.dol:LL:LL
+#    |
+# LL | "hello"
+#    | ^^^^^^^
+#    |
+#    = help: considering removing this statement
+
+# Pure boolean
+true
+# warning: statement with no effect
+#   --> no_effect_constant.dol:LL:LL
+#    |
+# LL | true
+#    | ^^^^
+#    |
+#    = help: considering removing this statement
+
+# Pure nil
+nil
+# warning: statement with no effect
+#   --> no_effect_constant.dol:LL:LL
+#    |
+# LL | nil
+#    | ^^^
+#    |
+#    = help: considering removing this statement
+
+echo()

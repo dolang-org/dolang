@@ -1,0 +1,69 @@
+import fs:
+  - Path
+
+def env_path name
+  let value = env.get $name
+  if (value == nil || value == "")
+    return nil
+  let path = Path $value
+  if path.is_absolute
+    path
+  else
+    nil
+
+def env_path_list name
+  let value = env.get $name
+  if (value == nil || value == "")
+    return nil
+
+  let paths = []
+  for path = value.split ":"
+    let path = Path $path
+    if path.is_absolute
+      paths.push $path
+  paths
+
+# Returns the XDG user data directory (`$XDG_DATA_HOME`).
+#
+# Falls back to `~/.local/share` if the variable is absent or empty.
+pub def data_home()
+  (env_path "XDG_DATA_HOME" || Path "$(env["HOME"])/.local/share")
+
+# Returns the XDG user configuration directory (`$XDG_CONFIG_HOME`).
+#
+# Falls back to `~/.config` if the variable is absent or empty.
+pub def config_home()
+  (env_path "XDG_CONFIG_HOME" || Path "$(env["HOME"])/.config")
+
+# Returns the XDG user state directory (`$XDG_STATE_HOME`).
+#
+# Falls back to `~/.local/state` if the variable is absent or empty.
+pub def state_home()
+  (env_path "XDG_STATE_HOME" || Path "$(env["HOME"])/.local/state")
+
+# Returns the XDG user cache directory (`$XDG_CACHE_HOME`).
+#
+# Falls back to `~/.cache` if the variable is absent or empty.
+pub def cache_home()
+  (env_path "XDG_CACHE_HOME" || Path "$(env["HOME"])/.cache")
+
+# Returns the XDG runtime directory (`$XDG_RUNTIME_DIR`), or `nil` if unset.
+#
+# Intended for user-specific non-persistent runtime files such as sockets and
+# named pipes. This directory may not exist on all systems.
+pub def runtime_dir()
+  env_path "XDG_RUNTIME_DIR"
+
+# Returns the system-wide XDG data search directories (`$XDG_DATA_DIRS`).
+#
+# Falls back to `[/usr/local/share, /usr/share]` if the variable is absent or
+# empty. Only absolute paths are included.
+pub def data_dirs()
+  (env_path_list "XDG_DATA_DIRS" || [Path "/usr/local/share", Path "/usr/share"])
+
+# Returns the system-wide XDG configuration search directories (`$XDG_CONFIG_DIRS`).
+#
+# Falls back to `[/etc/xdg]` if the variable is absent or empty. Only absolute
+# paths are included.
+pub def config_dirs()
+  (env_path_list "XDG_CONFIG_DIRS" || [Path "/etc/xdg"])

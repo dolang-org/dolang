@@ -1,0 +1,7 @@
+pub def func
+  pub let x = 1
+# error: `pub` may only be used at the top level
+#   --> inappropriate_pub.dol:LL:LL
+#    |
+# LL |   pub let x = 1
+#    |   ^^^

@@ -1,0 +1,19 @@
+for i = [0, 1, 2, 3, 4, 5]
+  try
+    if (i == 1)
+      continue
+    echo $i
+    if (i == 3)
+      break
+  finally
+    echo finally
+
+# output: END
+# 0
+# finally
+# finally
+# 2
+# finally
+# 3
+# finally
+# END

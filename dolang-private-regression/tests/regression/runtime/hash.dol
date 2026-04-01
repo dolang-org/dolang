@@ -1,0 +1,108 @@
+# Regression tests for hash, equality, and comparison on symbols, strings, arrays, and dicts
+import std:
+  - hash
+
+# Helper to test hash consistency (use dict keys to verify equality implies same hash)
+def test_hash_eq x y expect_eq
+  let d = {}
+  d[x] = "x"
+  d[y] = "y"
+  if expect_eq
+    assert_eq $d {$x: "y"}   # overwrote
+  else
+    assert_eq $d {$x: "x", $y: "y"}
+
+# Symbols: compare, equality, hash by string name
+
+let s1 = :apple:
+let s2 = :banana:
+let s3 = :apple:  # same as s1
+
+assert (s1 == s3)
+assert (s1 != s2)
+assert (s1 < s2)
+assert (s2 > s1)
+assert (s1 <= s3)
+assert (s1 >= s3)
+
+test_hash_eq $s1 $s3 true
+test_hash_eq $s1 $s2 false
+
+let s4 = :Host:
+let s5 = :host:
+assert (s4 < s5)  # case-sensitive
+
+# Strings: lexico compare, equality, hash
+
+let str1 = "apple"
+let str2 = "banana"
+let str3 = "apple"  # same as str1
+
+assert (str1 == str3)
+assert (str1 != str2)
+assert (str1 < str2)
+assert (str2 > str1)
+assert (str1 <= str3)
+assert (str1 >= str3)
+
+test_hash_eq $str1 $str3 true
+test_hash_eq $str1 $str2 false
+
+let str4 = "Host"
+let str5 = "host"
+assert (str4 < str5)  # case-sensitive
+
+# Arrays: compare, equality, hash by contents in order
+
+let arr1 = [1, 2, 3]
+let arr2 = [1, 2, 4]
+let arr3 = [1, 2, 3]  # same as arr1
+let arr4 = [1, 2]     # shorter
+
+assert (arr1 == arr3)
+assert (arr1 != arr2)
+assert (arr1 < arr2)
+assert (arr2 > arr1)
+assert (arr1 <= arr3)
+assert (arr1 >= arr3)
+assert (arr1 > arr4)  # longer is larger if prefix matches
+
+test_hash_eq $arr1 $arr3 true
+test_hash_eq $arr1 $arr2 false
+
+# Dicts: compare, equality, hash by insertion order (pairs in order)
+
+let d1 = { a: 1, b: 2 }
+let d2 = { a: 1, b: 3 }
+let d3 = { a: 1, b: 2 }  # same as d1
+let d4 = { b: 2, a: 1 }  # different order
+
+assert (d1 == d3)
+assert (d1 != d2)
+assert (d1 != d4)  # order matters
+assert (d1 < d2)
+assert (d2 > d1)
+assert (d1 <= d3)
+assert (d1 >= d3)
+assert (d1 < d4)  # lexico on pairs in order
+
+test_hash_eq $d1 $d3 true
+test_hash_eq $d1 $d2 false
+test_hash_eq $d1 $d4 false
+
+# Edge cases: empty
+let empty1 = {}
+let empty2 = {}
+assert (empty1 == empty2)
+test_hash_eq $empty1 $empty2 true
+
+let empty_arr1 = []
+let empty_arr2 = []
+assert (empty_arr1 == empty_arr2)
+test_hash_eq $empty_arr1 $empty_arr2 true
+
+# Mutation invalidates
+let mut_d = { a: 1, b: 2 }
+let before_hash = (hash mut_d)
+mut_d[:c:] = 3
+assert_ne (hash mut_d) $before_hash

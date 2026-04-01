@@ -1,0 +1,7 @@
+def f ...args :x = nil
+  # error: rest parameter must be trailing
+  #   --> rest_trailing.dol:LL:LL
+  #    |
+  # LL | def f ...args :x = nil
+  #    |       ^^^
+  nil

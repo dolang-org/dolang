@@ -1,0 +1,8 @@
+{% set heading_level = options.get("heading_level", 2) %}
+{% set base_id = entity._identifier | replace(".", "--") %}
+
+{{ ("<code>" ~ entity.name ~ "</code>") | heading(heading_level, role="data", id=base_id, toc_label=entity.name) }}
+
+{% if entity.doc %}
+{{ entity.doc | convert_markdown(heading_level + 1, base_id) }}
+{% endif %}

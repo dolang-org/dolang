@@ -1,0 +1,60 @@
+import std:
+  - Iter
+  - UnexpectedKeyError
+
+def assert_err_type ty block
+  let res = try
+    block()
+    false
+  catch e
+    assert_eq (type e) $ty
+    true
+  assert $res
+
+def collect_pos ...args
+  let pos = args.pos()
+  assert (type pos Iter)
+  [...pos]
+
+def unpack_pos ...args
+  let a b ...rest = args.pos()
+  [a, b, [...rest]]
+
+def spread_pos ...args
+  let pos = args.pos()
+  collect_pos ...pos
+
+def split_args ...args
+  let pos keyed = args.pos_keys()
+  [[...pos], [...keyed], args.next default: :done:]
+
+def consume_after_pos ...args
+  let pos = args.pos()
+  [[...pos], args.next default: :done:]
+
+assert (type (std.args 1 2) std.args)
+assert_eq (collect_pos 1 2 3) [1, 2, 3]
+assert_eq (unpack_pos 1 2 3 4) [1, 2, [3, 4]]
+assert_eq (spread_pos 4 5 6) [4, 5, 6]
+assert_eq (consume_after_pos 7 8 9) [[7, 8, 9], :done:]
+
+let split = split_args 1 left: 2 3 right: 4
+assert_eq $split[0] [1, 3]
+assert_eq $split[1][0][0] :left:
+assert_eq $split[1][0][1] 2
+assert_eq $split[1][1][0] :right:
+assert_eq $split[1][1][1] 4
+assert_eq $split[2] :done:
+
+split = split_args 1 2 3
+assert_eq $split[0] [1, 2, 3]
+assert_eq $split[1] []
+
+split = split_args left: 2 right: 4
+assert_eq $split[0] []
+assert_eq $split[1][0][0] :left:
+assert_eq $split[1][0][1] 2
+assert_eq $split[1][1][0] :right:
+assert_eq $split[1][1][1] 4
+
+assert_err_type $UnexpectedKeyError do collect_pos 1 left: 2

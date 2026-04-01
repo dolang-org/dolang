@@ -1,0 +1,24 @@
+def _
+  return
+  echo hi
+# warning: unreachable statement
+#   --> unreachable.dol:LL:LL
+#    |
+# LL |   echo hi
+#    |   ^^^^^^^
+while false
+  break
+  echo hi
+# warning: unreachable statement
+#   --> unreachable.dol:LL:LL
+#    |
+# LL |   echo hi
+#    |   ^^^^^^^
+while false
+  continue
+  echo hi
+# warning: unreachable statement
+#   --> unreachable.dol:LL:LL
+#    |
+# LL |   echo hi
+#    |   ^^^^^^^

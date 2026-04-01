@@ -1,0 +1,7 @@
+def g a ...rest b
+  # error: rest parameter must be trailing
+  #   --> rest_trailing_after_positional.dol:LL:LL
+  #    |
+  # LL | def g a ...rest b
+  #    |         ^^^
+  nil

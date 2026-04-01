@@ -1,0 +1,7 @@
+echo
+  for i = range end: 4
+    - $i
+    x: (i * 2)
+# output: END
+# 0 x: 0 1 x: 2 2 x: 4 3 x: 6
+# END

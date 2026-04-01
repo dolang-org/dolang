@@ -1,0 +1,8 @@
+# Accepted escapes
+echo "\r\n\t\$\0\\\""
+echo "\z"
+# error: unexpected escape sequence
+#   --> escape.dol:LL:LL
+#    |
+# LL | echo "\z"
+#    |       ^^

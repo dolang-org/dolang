@@ -1,0 +1,87 @@
+# Binary string literals and operations
+
+# Empty binary string
+assert_eq (b"".len) 0
+assert (!(bool b""))
+
+# Simple ASCII binary string
+assert_eq (b"hello".len) 5
+assert (bool b"hello")
+
+# Binary strings compare equal to themselves
+assert_eq b"hello" b"hello"
+assert (!(b"hello" == b"world"))
+
+# Ordering
+assert (b"abc" < b"abd")
+assert (!(b"abd" < b"abc"))
+
+# Hex escape: \x41 == 'A'
+assert_eq b"\x41\x42\x43" b"ABC"
+assert_eq (b"\x41\x42\x43".len) 3
+
+# Non-ASCII bytes
+assert_eq (b"\xff".len) 1
+assert_eq (b"\x00".len) 1
+
+# Concatenation via interpolation
+let prefix = b"foo"
+let suffix = b"bar"
+assert_eq b"$prefix$suffix" b"foobar"
+
+# Interpolation with text
+assert_eq b"hello $prefix" b"hello foo"
+
+# Nested hex escapes in interpolation
+assert_eq b"\x41$prefix\x42" b"AfooB"
+
+# Length field
+assert_eq (b"abc".len) 3
+
+# Sub method
+assert_eq (b"foobar".sub 2) b"obar"
+assert_eq (b"foobar".sub 2 4) b"ob"
+assert_eq (b"foobar".sub 1 1) b""
+
+# Starts/ends with
+assert (b"foobar".starts_with b"foo")
+assert (b"foobar".ends_with b"bar")
+assert (!(b"foobar".starts_with b"bar"))
+
+# Without prefix/suffix
+assert_eq (b"foobar".without_prefix b"foo") b"bar"
+assert_eq (b"foobar".without_prefix b"bar") b"foobar"
+assert_eq (b"foobar".without_suffix b"bar") b"foo"
+assert_eq (b"foobar".without_suffix b"foo") b"foobar"
+
+# Contains
+assert (b"foobar".contains b"foo")
+assert (b"foobar".contains b"bar")
+assert (b"foobar".contains b"oba")
+assert (b"foobar".contains b"")
+assert (!(b"foobar".contains b"baz"))
+
+# Split and join
+assert_eq [..."a,b,c".split ","] ["a", "b", "c"]
+assert_eq [...b"a,b,c".split b","] [b"a", b"b", b"c"]
+assert_eq [...b"a,b,c".split b"," limit: 1] [b"a", b"b,c"]
+assert_eq [...b"a.b.tar.gz".split b"." limit: -1] [b"a.b.tar", b"gz"]
+assert_eq [...b"a,b,c".rsplit b","] [b"c", b"b", b"a"]
+assert_eq [...b"a,b,c".rsplit b"," limit: 1] [b"c", b"a,b"]
+assert_eq [...b"a,b,c".rsplit b"," limit: -1] [b"b,c", b"a"]
+let parts = [b"hello", b"world"]
+assert_eq (b", ".join parts) b"hello, world"
+
+# Unpack into byte array
+let bytes = b"\x01\x02\x03".unpack()
+assert_eq [...bytes] [1, 2, 3]
+
+# Lowercase hex encoding
+assert_eq (b"ABC".hex()) "414243"
+assert_eq (b"\x00\x01\xff".hex()) "0001ff"
+
+# bin is not equal to str even when bytes match
+assert (!(b"hello" == "hello"))
+
+# type is bin
+assert_eq (type b"hello") $bin

@@ -1,0 +1,14 @@
+import time:
+  - DateTime
+  - sleep
+
+sleep 0
+sleep 0.0
+sleep (DateTime.from_unix(1) - DateTime.from_unix(1))
+
+let neg = try
+  sleep -1
+  false
+catch _
+  true
+assert $neg

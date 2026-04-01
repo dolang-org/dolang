@@ -1,0 +1,325 @@
+name: CI
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Reduce debug info (Windows only)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          echo "CARGO_PROFILE_DEV_DEBUG=0" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_TEST_DEBUG=0" >> "$GITHUB_ENV"
+
+      - name: Install LLVM (macOS only)
+        if: matrix.os == 'macos-latest'
+        run: brew install llvm
+
+      - name: Set LIBCLANG_PATH (macOS only)
+        if: matrix.os == 'macos-latest'
+        run: echo "LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib" >> "$GITHUB_ENV"
+
+      - name: Install Packages (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # Add Docker's official GPG key:
+          sudo apt update
+          sudo apt install ca-certificates curl
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+          # Add the repository to Apt sources:
+          sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
+          Types: deb
+          URIs: https://download.docker.com/linux/ubuntu
+          Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+          Components: stable
+          Signed-By: /etc/apt/keyrings/docker.asc
+          EOF
+
+          # Install packages
+          sudo apt update
+          sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin llvm libclang-dev
+
+      - name: Run cargo tests
+        run: cargo test
+
+      - name: Run integration tests (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cargo build --bin dolang-shell-vfs
+          env DOLANG_SHELL_VFS=target/debug/dolang-shell-vfs cargo run --bin dolang-shell -- -m test -- test/*.dol
+
+      - name: Run integration tests (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cargo build --bin dolang-shell-vfs
+          cargo run --bin dolang-shell -- -m test -- test/*.dol
+
+  extension:
+    name: VS Code Extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dolang-code/package-lock.json
+
+      - name: Install extension dependencies
+        working-directory: dolang-code
+        run: npm ci
+
+      - name: Build extension
+        working-directory: dolang-code
+        run: npm run compile
+
+      - name: Run extension tests
+        working-directory: dolang-code
+        run: xvfb-run -a npm test
+
+      - name: Build preview VSIX
+        working-directory: dolang-code
+        run: npm run package:vsix
+
+      - name: Upload preview VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: dolang-vsix-preview
+          path: dolang-code/*.vsix
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install docs dependencies
+        run: python -m pip install --requirement docs/requirements.txt
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build docs site
+        run: |
+          cargo build --release --bin dolang-highlight --bin dolang-doc
+          env \
+            DOLANG_HIGHLIGHT=target/release/dolang-highlight \
+            DOLANG_DOC=target/release/dolang-doc \
+            mkdocs build
+
+      - name: Upload docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dolang-docs-site
+          path: site
+
+  build-release:
+    name: Build Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: x86_64-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: x86_64-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: aarch64-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install LLVM (macOS only)
+        if: matrix.os == 'macos-latest'
+        run: brew install llvm
+
+      - name: Set LIBCLANG_PATH (macOS only)
+        if: matrix.os == 'macos-latest'
+        run: echo "LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib" >> "$GITHUB_ENV"
+
+      - name: Install musl target (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: rustup target add x86_64-unknown-linux-musl
+
+      - name: Install LLVM (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y llvm libclang-dev
+
+      - name: Build release binaries (Linux host target)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang-shell --bin dolang-lsp
+        env:
+          ZSTD_SYS_USE_PKG_CONFIG: "1"
+
+      - name: Build release binaries (Windows)
+        if: matrix.os == 'windows-latest'
+        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang-shell --bin dolang-lsp
+
+      - name: Build release binaries (macOS)
+        if: matrix.os == 'macos-latest'
+        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang-shell --bin dolang-lsp --bin dolang-shell-vfs
+
+      - name: Build dolang-shell-vfs (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo build --profile dist --target x86_64-unknown-linux-musl -p dolang-shell-vfs
+
+      - name: Extract version from tag
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+
+      - name: Package release (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          archive="dolang-${{ matrix.artifact_name }}.tar.gz"
+          mkdir release
+          cp target/${{ matrix.target }}/dist/dolang-shell release/
+          cp target/${{ matrix.target }}/dist/dolang-lsp release/
+          cp target/x86_64-unknown-linux-musl/dist/dolang-shell-vfs release/
+          tar -C release -czf "$archive" dolang-shell dolang-lsp dolang-shell-vfs
+
+      - name: Package release (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $archive = "dolang-${{ matrix.artifact_name }}.tar.gz"
+          New-Item -ItemType Directory -Path release | Out-Null
+          Copy-Item "target/${{ matrix.target }}/dist/dolang-shell.exe" -Destination release/
+          Copy-Item "target/${{ matrix.target }}/dist/dolang-lsp.exe" -Destination release/
+          7z a -ttar release.tar ./release/*
+          7z a -tgzip $archive release.tar
+
+      - name: Package release (macOS)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          archive="dolang-${{ matrix.artifact_name }}.tar.gz"
+          mkdir release
+          cp target/${{ matrix.target }}/dist/dolang-shell release/
+          cp target/${{ matrix.target }}/dist/dolang-lsp release/
+          cp target/${{ matrix.target }}/dist/dolang-shell-vfs release/
+          tar -C release -czf "$archive" dolang-shell dolang-lsp dolang-shell-vfs
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dolang-${{ matrix.artifact_name }}
+          path: dolang-${{ matrix.artifact_name }}.tar.gz
+
+  build-release-vsix:
+    name: Build Release VSIX
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dolang-code/package-lock.json
+
+      - name: Install extension dependencies
+        working-directory: dolang-code
+        run: npm ci
+
+      - name: Build release VSIX
+        working-directory: dolang-code
+        run: npm run package:vsix
+
+      - name: Upload release VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dolang-vsix
+          path: dolang-code/*.vsix
+
+  create-release:
+    name: Create Draft Release
+    needs: [test, extension, build-release, build-release-vsix]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Extract version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ env.VERSION }}
+          draft: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.vsix
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

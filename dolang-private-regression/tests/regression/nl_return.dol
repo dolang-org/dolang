@@ -1,0 +1,8 @@
+def trampoline thunk
+  thunk()
+  throw "uh-oh"
+
+def func value
+  trampoline do return value
+
+assert_eq (func 42) 42

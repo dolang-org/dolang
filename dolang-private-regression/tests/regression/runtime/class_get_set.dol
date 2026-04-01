@@ -1,0 +1,54 @@
+# Test (get) and (set) special method fallbacks
+
+class Dynamic
+  pub let data = {}
+
+  def (init) self
+    self.data = {}
+
+  def (get) self key
+    self.data[str(key)]
+
+  def (set) self key value
+    self.data[str(key)] = value
+
+let d = Dynamic()
+d.foo = 42
+d.bar = "hello"
+assert_eq $d.foo 42
+assert_eq $d.bar "hello"
+
+# Static pub fields are not routed through (get)/(set)
+class WithPub
+  pub let x = 0
+
+  def (init) self v
+    self.x = v
+
+  def (get) _self _key
+    "fallback"
+
+let w = WithPub 10
+assert_eq $w.x 10
+assert_eq $w.missing "fallback"
+
+# (get) also works as a fallback for method dispatch:
+# obj.method(args) calls (get) to get the callable, then calls it directly with args
+class Dispatcher
+  pub let data = {}
+
+  def (init) self
+    self.data = {}
+
+  def (get) self key
+    self.data[str(key)]
+
+  def (set) self key value
+    self.data[str(key)] = value
+
+def greet name
+  "hello $name"
+
+let dp = Dispatcher()
+dp.greet = greet
+assert_eq $dp.greet("world") "hello world"

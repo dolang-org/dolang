@@ -1,0 +1,14 @@
+def id arg
+  arg 
+
+def bad_nl
+  let bad_closure = id do return
+  bad_closure()
+
+let res = try
+  bad_nl()
+  false
+catch err
+  assert_eq (str err) "stale non-local branch"
+  true
+assert $res

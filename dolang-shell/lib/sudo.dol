@@ -1,0 +1,74 @@
+import xdg
+  container:
+    - Vfs
+  container._common:
+    - agent_bin
+  fs:
+    - with_temp_dir
+  proc.run:
+    - sudo
+  strand:
+    - pipeline
+
+def run_agent
+  thunk
+  :user = nil
+do
+  let runtime_dir = xdg.runtime_dir()
+  let agent = agent_bin()
+
+  with_temp_dir parent: $runtime_dir do |subdir|
+    subdir.chmod 0o700
+    let socket = (subdir / "socket")
+    pipeline
+      do env DOLANG_SHELL_VFS: $agent do sudo -E
+        if (user != nil)
+          -u $user
+        $agent $socket
+      do
+        strand.next()
+        let a = Vfs unix_socket: $socket
+        return a $thunk
+
+def run_command
+  cmd
+  :user = nil
+  ...args
+do
+  sudo
+    if (user != nil)
+      -u $user
+    --
+    $cmd ...args
+
+# Run a verbatim command through `sudo`.
+#
+# Pass `user` to run as a user other than root.
+#
+# **Example:**
+# ```
+# i
+pub def run
+  cmd
+  :user = nil
+  ...args
+do
+  run_command $cmd :user ...args.pos()
+
+# Run a function with elevated privileges via `sudo`.
+#
+# Filesystem access and spawned programs will be redirected for
+# the duration of the function.
+#
+# Pass `user` to run as a specific user instead of root.
+#
+# **Example:**
+# ```
+# import fs
+# let shadow = sudo.with do fs.read /etc/shadow
+# ```
+pub def with
+  func
+  :user = nil
+do
+  run_agent $func :user

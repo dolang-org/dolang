@@ -1,0 +1,28 @@
+[package]
+name = "dolang-compile"
+version = "0.1.0"
+description = "Parser, resolver, and bytecode compiler for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+phf = { version = "0.13.1", features = ["macros"] }
+
+[dependencies.dolang-util]
+package = "dolang-private-util"
+path = "../dolang-private-util"
+version = "0.1.0"
+
+[dependencies.dolang-bytecode]
+path = "../dolang-bytecode"
+version = "0.1.0"
+
+[dependencies.dot-writer]
+version = "0.1.4"
+optional = true
+
+[features]
+default = []
+debug = ["dolang-util/debug", "dolang-bytecode/debug", "dot-writer"]

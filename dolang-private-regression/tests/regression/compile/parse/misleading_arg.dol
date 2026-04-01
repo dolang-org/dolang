@@ -1,0 +1,27 @@
+(echo 1(2))
+# warning: juxtaposed argument is misleading
+#   --> misleading_arg.dol:LL:LL
+#    |
+# LL | (echo 1(2))
+#    |  ----  ^^^
+#    |  |
+#    |  expression is actually an argument to this function
+#    |
+# help: insert a space
+#    |
+# LL | (echo 1 (2))
+#    |        +
+
+(echo(1) 2)
+# warning: juxtaposed argument is misleading
+#   --> misleading_arg.dol:LL:LL
+#    |
+# LL | (echo(1) 2)
+#    |  ----    ^
+#    |  |
+#    |  expression is actually an argument to this function
+#    |
+# help: insert a space
+#    |
+# LL | (echo (1) 2)
+#    |      +

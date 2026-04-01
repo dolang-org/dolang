@@ -1,0 +1,142 @@
+import
+  std:
+    - Iter
+    - IterStop
+
+def assert_err msg block
+  let res = try
+    block()
+    false
+  catch e
+    assert_eq (str e) $msg
+    true
+  assert $res
+
+def assert_err_type ty block
+  let res = try
+    block()
+    false
+  catch e
+    assert_eq (type e) $ty
+    true
+  assert $res
+
+let foo = {"foo": 42, 42: "bar"}
+foo["bar"] = true
+assert_eq $foo["foo"] 42
+assert_eq $foo[42] bar
+assert_eq $foo["bar"] true
+foo["foo"] = nil
+assert_eq $foo["foo"] nil
+assert_eq (foo.get 42) bar
+assert_eq (foo.pop 42) bar
+assert_eq (foo.get 42) nil
+assert_eq (foo.get 42 default: "absent") absent
+assert_eq (foo.get 42 else: do "absent") absent
+assert_eq (foo.pop 42 default: "absent") absent
+assert_eq (foo.pop 42 else: do "absent") absent
+assert (foo.delete "foo")
+assert (!(foo.delete 42))
+
+# contains tests
+let d = {"a": 1, "b": 2, 42: "answer", "multi": "first"}
+d.insert multi second
+# Key-only checks
+assert (d.contains "a")
+assert (d.contains "b")
+assert (d.contains 42)
+assert (d.contains "multi")
+assert (!d.contains "z")
+assert (!d.contains 100)
+assert (!{}.contains "key")
+# Key+value checks
+assert (d.contains "a" 1)
+assert (d.contains "b" 2)
+assert (d.contains 42 "answer")
+assert (d.contains "multi" "first")
+assert (d.contains "multi" "second")
+assert (!d.contains "a" 999)
+assert (!d.contains "a" "wrong")
+assert (!d.contains "nonexistent" "value")
+
+# pop with instance tests
+let d2 = {x: "first"}
+d2.insert :x: second
+d2.insert :x: third
+assert_eq (d2.len) 3
+# Pop instance 1 (second)
+assert_eq (d2.pop :x: 1) "second"
+assert_eq (d2.len) 2
+# Pop instance 0 (first) - remaining are ["first", "third"]
+assert_eq (d2.pop :x: 0) "first"
+assert_eq (d2.len) 1
+# Pop last one
+assert_eq (d2.pop :x:) "third"
+assert_eq (d2.len) 0
+
+# values iterators
+let vals = {a: 1, b: 2, a: 3}.values()
+assert (type vals Iter)
+assert_eq [...vals] [1, 2, 3]
+
+let keys = {a: 1, b: 2, a: 3, c: 4, b: 5}.keys()
+assert (type keys Iter)
+assert_eq [...keys] [:a:, :b:, :c:]
+
+let keyed = {a: 1, b: 2, a: 3}.values :a:
+assert (type keyed Iter)
+assert_eq [...keyed] [1, 3]
+
+let counted = {a: 1, b: 2, a: 3, c: 4, b: 5}
+assert_eq $counted.len 5
+assert_eq (counted.count()) 3
+assert_eq (counted.count :a:) 2
+assert_eq (counted.count :b:) 2
+assert_eq (counted.count :missing:) 0
+
+assert_eq [...({a: 1}.values :missing:)] []
+
+let unpacked = {a: 1, b: 2, a: 3}.values()
+let first second ...rest = unpacked
+assert_eq $first 1
+assert_eq $second 2
+assert_eq [...rest] [3]
+
+bind {a: 1}.values()
+  - first
+  :missing = "fallback"
+assert_eq $first 1
+assert_eq $missing fallback
+
+bind {a: 1, b: 2, a: 3}.keys()
+  - first
+  - second
+  :missing = "fallback"
+assert_eq $first :a:
+assert_eq $second :b:
+assert_eq $missing fallback
+
+let failed_unpack = {a: 1}.values()
+let failed = try
+  let _x _y = failed_unpack
+  false
+catch _
+  true
+assert $failed
+assert_eq (failed_unpack.next()) 1
+assert_err_type $IterStop do failed_unpack.next()
+
+let failed_key_unpack = {a: 1}.keys()
+failed = try
+  let _x _y = failed_key_unpack
+  false
+catch _
+  true
+assert $failed
+assert_eq (failed_key_unpack.next()) :a:
+assert_err_type $IterStop do failed_key_unpack.next()
+
+let mapped = ({a: 1, b: 2, a: 3}.values()).map do |value| (value * 10)
+assert_eq [...mapped] [10, 20, 30]
+
+assert_err "type error: str.len is a field, not a method" do "foo".len()

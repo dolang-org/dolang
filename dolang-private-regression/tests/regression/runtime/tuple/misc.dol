@@ -1,0 +1,13 @@
+let tup = tuple([1, 2, 3, "hello", [1, 2], {"key": "value"}])
+assert (tup.contains 1)
+assert (tup.contains 2)
+assert (tup.contains 3)
+assert (tup.contains "hello")
+assert (!tup.contains 4)
+assert (!tup.contains "world")
+assert (!tup.contains nil)
+let nested_arr = [1, 2]
+assert (tup.contains nested_arr)
+let nested_dict = {"key": "value"}
+assert (tup.contains nested_dict)
+assert (!(tuple([]).contains 1))

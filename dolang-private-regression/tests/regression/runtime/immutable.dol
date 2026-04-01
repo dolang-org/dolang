@@ -1,0 +1,6 @@
+let caught = try
+  regression.foo = 1
+  false
+catch _
+  true
+assert $caught

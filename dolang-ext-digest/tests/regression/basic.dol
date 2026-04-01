@@ -1,0 +1,81 @@
+import
+  digest
+  std: error
+
+def assert_err func type: ty :msg ...rest
+  let res = try
+    func ...rest
+    false
+  catch e
+    assert (type e ty)
+    assert_eq (str e) $msg
+    true
+  assert $res
+
+def assert_state func ctor ty expected_abc
+  let state = ctor()
+  assert_eq (type state) $ty
+  assert (type state digest.State)
+  assert (type state ty)
+
+  let same = state.update "a"
+  assert_eq $same $state
+  state.update b"bc"
+  let first = state.digest()
+  let second = state.digest()
+  assert_eq $first $second
+  assert_eq (first.hex()) $expected_abc
+
+  state.update "def"
+  let third = state.digest()
+  assert_eq $third (func "abcdef")
+  assert_eq (third.hex()) ((func "abcdef").hex())
+
+  let sink = ctor()
+  sink.put "ab"
+  sink.put b"c"
+  assert_eq (sink.digest()) (func "abc")
+
+# blake3
+assert_eq ((digest.blake3 "").hex()) "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+assert_eq ((digest.blake3 "abc").hex()) "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+assert_eq (digest.blake3 b"abc") (digest.blake3 "abc")
+assert_eq ((digest.blake3 "abc").len) 32
+
+assert_state $digest.blake3 $digest.Blake3 $digest.Blake3 "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+
+# md5
+assert_eq ((digest.md5 "").hex()) "d41d8cd98f00b204e9800998ecf8427e"
+assert_eq ((digest.md5 "abc").hex()) "900150983cd24fb0d6963f7d28e17f72"
+assert_eq (digest.md5 b"abc") (digest.md5 "abc")
+assert_eq ((digest.md5 "abc").len) 16
+assert_state $digest.md5 $digest.Md5 $digest.Md5 "900150983cd24fb0d6963f7d28e17f72"
+
+# sha1
+assert_eq ((digest.sha1 "").hex()) "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+assert_eq ((digest.sha1 "abc").hex()) "a9993e364706816aba3e25717850c26c9cd0d89d"
+assert_eq (digest.sha1 b"abc") (digest.sha1 "abc")
+assert_eq ((digest.sha1 "abc").len) 20
+assert_state $digest.sha1 $digest.Sha1 $digest.Sha1 "a9993e364706816aba3e25717850c26c9cd0d89d"
+
+# sha256
+assert_eq ((digest.sha256 "").hex()) "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+assert_eq ((digest.sha256 "abc").hex()) "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+assert_eq (digest.sha256 b"abc") (digest.sha256 "abc")
+assert_eq ((digest.sha256 "abc").len) 32
+assert_state $digest.sha256 $digest.Sha256 $digest.Sha256 "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
+# sha512
+assert_eq ((digest.sha512 "").hex()) "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
+assert_eq ((digest.sha512 "abc").hex()) "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+assert_eq (digest.sha512 b"abc") (digest.sha512 "abc")
+assert_eq ((digest.sha512 "abc").len) 64
+assert_state $digest.sha512 $digest.Sha512 $digest.Sha512 "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+
+assert_err $digest.State type: $error.TypeError msg: "type error: not instantiable"
+let bad = digest.Blake3()
+assert_err $bad.update 123 type: $error.TypeError msg: "type error: update: expected str or bin"
+assert_err $digest.md5 123 type: $error.TypeError msg: "type error: expected str or bin"
+assert_err $digest.sha1 123 type: $error.TypeError msg: "type error: expected str or bin"
+assert_err $digest.sha256 123 type: $error.TypeError msg: "type error: expected str or bin"
+assert_err $digest.sha512 123 type: $error.TypeError msg: "type error: expected str or bin"

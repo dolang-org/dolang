@@ -1,0 +1,6 @@
+let caught = try
+  echo (9223372036854775807 + 1)
+  false
+catch _
+  true
+assert $caught

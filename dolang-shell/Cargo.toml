@@ -1,0 +1,142 @@
+[package]
+name = "dolang-shell"
+version = "0.1.0"
+description = "Command-line shell for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["base64", "digest", "json", "regex", "glob", "http", "zip", "sqlite", "xml", "yaml", "progress", "rand"]
+debug = ["dolang/debug"]
+base64 = ["dep:dolang-ext-base64"]
+digest = ["dep:dolang-ext-digest"]
+json = ["dep:dolang-ext-json", "dolang-ext-http?/json"]
+regex = ["dep:dolang-ext-regex"]
+glob = ["dep:dolang-ext-glob"]
+url = ["dep:dolang-ext-url"]
+http = ["dep:dolang-ext-http", "url"]
+zip = ["dep:dolang-ext-zip"]
+sqlite = ["dep:dolang-ext-sqlite"]
+xml = ["dep:dolang-ext-xml"]
+yaml = ["dep:dolang-ext-yaml"]
+progress = ["dep:dolang-ext-progress"]
+rand = ["dep:dolang-ext-rand"]
+
+[dependencies]
+anstyle = "1.0.14"
+blake3 = "1.8.2"
+console = "0.16.2"
+crossterm = "0.29.0"
+directories = "6.0.0"
+rustyline = "18.0.0"
+wild = "2.2.1"
+
+[dependencies.tokio]
+version = "1.48.0"
+features = ["macros", "rt", "io-std", "io-util", "fs", "process", "sync", "signal"]
+
+[dependencies.dolang]
+path = "../dolang"
+version = "0.1.0"
+
+[dependencies.dolang-ext-shell]
+path = "../dolang-ext-shell"
+version = "0.1.0"
+
+[dependencies.dolang-ext-digest]
+path = "../dolang-ext-digest"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-base64]
+path = "../dolang-ext-base64"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-compile]
+path = "../dolang-ext-compile"
+version = "0.1.0"
+
+[dependencies.dolang-ext-diagnostic]
+path = "../dolang-ext-diagnostic"
+version = "0.1.0"
+
+[dependencies.dolang-ext-load]
+path = "../dolang-ext-load"
+version = "0.1.0"
+
+[dependencies.dolang-ext-json]
+path = "../dolang-ext-json"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-regex]
+path = "../dolang-ext-regex"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-glob]
+path = "../dolang-ext-glob"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-http]
+path = "../dolang-ext-http"
+version = "0.1.0"
+optional = true
+default-features = false
+
+[dependencies.dolang-ext-url]
+path = "../dolang-ext-url"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-zip]
+path = "../dolang-ext-zip"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-sqlite]
+path = "../dolang-ext-sqlite"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-xml]
+path = "../dolang-ext-xml"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-yaml]
+path = "../dolang-ext-yaml"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-progress]
+path = "../dolang-ext-progress"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-rand]
+path = "../dolang-ext-rand"
+version = "0.1.0"
+optional = true
+
+[dependencies.clap]
+version = "4.5.53"
+features = ["derive"]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+
+[build-dependencies.dolang]
+path = "../dolang"
+version = "0.1.0"
+
+[build-dependencies.dolang-ext-shell]
+path = "../dolang-ext-shell"
+version = "0.1.0"

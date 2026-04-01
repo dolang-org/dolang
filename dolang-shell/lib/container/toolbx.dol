@@ -1,0 +1,85 @@
+import
+  container: 
+    - Vfs
+  container._common:
+    - runtime_dir
+    - agent_bin
+  proc.run:
+    - toolbox
+  strand:
+    - pipeline
+  fs
+
+def run_command
+  :name = nil
+  cd: cd_override = nil
+  env: env_override = nil
+  ...args
+do
+  toolbox run
+    if (name != nil)
+      --container $name
+    -- env -C
+    if (cd_override != nil)
+      $cd_override
+    else
+      $cd()
+    for k v = (env_override || {})
+      if (v == nil)
+        -u (str k)
+      else
+        $(str k)=$v
+    ...args
+
+def run_agent
+  thunk
+  :name = nil
+  cd: cd_override = nil
+  env: env_override = nil
+do
+  let socket = "$(runtime_dir())/toolbox-shell-vfs-$name"
+  let agent = agent_bin()
+  pipeline
+    do run_command
+      - $agent
+      - $socket
+      :name
+      cd: $cd_override
+      env:
+        ...(env_override || {})
+        DOLANG_SHELL_VFS: $agent
+    do
+      strand.next()
+      let agent = Vfs unix_socket: $socket
+      try
+        return agent $thunk
+      finally
+        fs.remove $socket
+
+pub def run
+  cmd
+  :name = nil
+  cd: cd_override = nil
+  env: env_override = nil
+  ...args
+do
+  run_command
+    :name
+    cd: $cd_override
+    env: $env_override
+    $cmd ...args.pos()
+
+# Run a callable inside a toolbox container.
+#
+# The block sees the toolbox filesystem and process environment.
+pub def with
+  thunk
+  :name = nil
+  cd: cd_override = nil
+  env: env_override = nil
+do
+  run_agent
+    $thunk
+    :name
+    cd: $cd_override
+    env: $env_override

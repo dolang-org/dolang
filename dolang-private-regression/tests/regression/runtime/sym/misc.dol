@@ -1,0 +1,9 @@
+import std:
+  - arg
+
+let foo = :foo:
+let bar = sym foo
+assert_eq $foo $bar
+assert_eq (str foo) "foo"
+assert_eq (arg foo) ":foo:"
+assert_eq (dbg foo) "<sym foo>"

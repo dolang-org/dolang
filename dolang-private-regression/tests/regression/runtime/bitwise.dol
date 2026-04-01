@@ -1,0 +1,35 @@
+let min = -9223372036854775808
+let max = 9223372036854775807
+# Booleans
+assert_eq (~false) true
+assert_eq (~true) false
+assert_eq (false & false) false
+assert_eq (true & false) false
+assert_eq (false & true) false
+assert_eq (true & true) true
+assert_eq (false | false) false
+assert_eq (true | false) true
+assert_eq (false | true) true
+assert_eq (true | true) true
+assert_eq (false ^ false) false
+assert_eq (true ^ false) true
+assert_eq (false ^ true) true
+assert_eq (true ^ true) false
+# Integers
+assert_eq (~0) -1
+assert_eq (~1) -2
+assert_eq (~min) $max
+assert_eq (~max) $min
+assert_eq (255 & 256) 0
+assert_eq (255 & 127) 127
+assert_eq (255 | 256) 511
+assert_eq (255 | 127) 255
+assert_eq (255 ^ 256) 511
+assert_eq (255 ^ 127) 128
+# Mixed
+assert_eq (255 & false) 0
+assert_eq (255 & true) 1
+assert_eq (0 | false) 0
+assert_eq (0 | true) 1
+assert_eq (0 ^ true) 1
+assert_eq (1 ^ true) 0

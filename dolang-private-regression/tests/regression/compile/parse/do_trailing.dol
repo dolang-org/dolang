@@ -1,0 +1,8 @@
+echo do
+  echo ok
+echo foo: do
+  echo alright
+# output: END
+# 1
+# foo: 2
+# END

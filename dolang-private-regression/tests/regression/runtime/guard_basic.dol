@@ -1,0 +1,28 @@
+# Basic guard functionality tests
+
+# Test 1: try with finally (success case)
+let cleanup_run = false
+let result = try
+  echo "operation successful"
+  42
+finally
+  cleanup_run = true
+  echo "cleanup executed"
+assert $cleanup_run
+assert_eq $result 42
+
+# Test 2: try with finally (error case - finally still runs)
+let cleanup_run2 = false
+let result2 = try
+  echo "about to fail"
+  throw "test error"
+catch err
+  assert_eq $err "test error"
+  echo "caught error: $err"
+  100
+finally
+  cleanup_run2 = true
+  echo "cleanup after error"
+
+assert $cleanup_run2
+assert_eq $result2 100

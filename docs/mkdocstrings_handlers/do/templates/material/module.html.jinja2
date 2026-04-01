@@ -1,0 +1,66 @@
+{% set heading_level = options.get("heading_level", 2) %}
+{% set show_private = options.get("show_private", false) %}
+
+{% set classes = [] %}
+{% set functions = [] %}
+{% set values = [] %}
+{% for entity in entities %}
+  {% if entity.kind == "class" and (entity.pub or show_private) %}
+    {% set _ = classes.append(entity) %}
+  {% elif entity.kind == "function" and (entity.pub or show_private) %}
+    {% set _ = functions.append(entity) %}
+  {% elif entity.kind == "value" and (entity.pub or show_private) %}
+    {% set _ = values.append(entity) %}
+  {% endif %}
+{% endfor %}
+
+{% set module_id = entity._module | replace(".", "--") %}
+
+{% if classes %}
+{{ "Types" | heading(heading_level, skip_inventory=true, id=module_id ~ "--types") }}
+<table>
+<thead><tr><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+{% for cls in classes %}
+{% set cls_id = cls._identifier | replace(".", "--") %}
+{% set first_line = cls.doc.split("\n")[0] if cls.doc else "" %}
+<tr>
+  <td><a href="#{{ cls_id }}"><code>{{ cls.name }}</code></a></td>
+  <td>{{ first_line }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+
+{% if functions %}
+{{ "Functions" | heading(heading_level, skip_inventory=true, id=module_id ~ "--functions") }}
+{% for entity in functions %}
+{% set base_id = entity._identifier | replace(".", "--") %}
+{% if entity.params %}
+{% set sig_parts = [entity.name] %}
+{% for p in entity.params %}
+  {% if p.optional %}{% set _ = sig_parts.append(p.name ~ "?") %}
+  {% else %}{% set _ = sig_parts.append(p.name) %}{% endif %}
+{% endfor %}
+{% set sig = sig_parts | join(" ") %}
+{% else %}
+{% set sig = entity.name ~ "()" %}
+{% endif %}
+{{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 1, role="function", id=base_id, toc_label=sig) }}
+{% if entity.doc %}
+{{ entity.doc | convert_markdown(heading_level + 2, base_id) }}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if values %}
+{{ "Values" | heading(heading_level, skip_inventory=true, id=module_id ~ "--values") }}
+{% for entity in values %}
+{% set base_id = entity._identifier | replace(".", "--") %}
+{{ ("<code>" ~ entity.name ~ "</code>") | heading(heading_level + 1, role="data", id=base_id, toc_label=entity.name) }}
+{% if entity.doc %}
+{{ entity.doc | convert_markdown(heading_level + 2, base_id) }}
+{% endif %}
+{% endfor %}
+{% endif %}

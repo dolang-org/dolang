@@ -1,0 +1,30 @@
+import sqlite
+import agent:
+  - with_and_without_agent
+import fs:
+  - with_temp_dir
+
+with_and_without_agent "basic" do
+  with_temp_dir do |dir|
+    sqlite.open (dir / "test.db") do |conn|
+      # Create table
+      conn.transaction do |tx|
+        conn.execute "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)"
+
+        # Insert with keyword arguments
+        conn.prepare "INSERT INTO test (name) VALUES (:name)" do |stmt|
+          let insert_count = stmt.execute name: "Alice"
+          assert_eq $insert_count 1
+
+          let insert_count = stmt.execute name: "Bob"
+          assert_eq $insert_count 1
+
+        tx.commit()
+
+      # Query with keyword arguments and verify data
+      conn.prepare "SELECT name FROM test WHERE name = :name" do |stmt|
+        let rows = [...stmt.query name: "Alice"]
+        assert_eq $rows.len 1
+        assert_eq $rows[0]["name"] "Alice"
+        let :name = rows[0]
+        assert_eq $name "Alice"

@@ -1,0 +1,101 @@
+import
+  fs:
+    - open
+    - remove
+  agent:
+    - with_and_without_agent
+  - sys
+  time:
+    - DateTime
+
+with_and_without_agent "file metadata basic" do
+  let test_path = "test_metadata.txt"
+
+  # Create test file with some content
+  open $test_path w do |f|
+    f.write "hello world"
+
+  # Get metadata
+  open $test_path r do |f|
+    let meta = f.metadata()
+    assert_eq $meta.len 11
+    assert_eq $meta.type :file:
+    assert (type meta.modified DateTime)
+    assert (meta.modified.seconds > 0)
+
+  # Cleanup
+  remove $test_path
+
+with_and_without_agent "metadata timestamps" do
+  let test_path = "test_metadata_time.txt"
+
+  # Create test file
+  open $test_path w do |f|
+    f.write "timestamp test"
+
+  # Get metadata
+  open $test_path r do |f|
+    let meta = f.metadata()
+    let modified = meta.modified
+    assert (type modified DateTime)
+    assert (modified.seconds > 0)  # positive timestamp
+
+  # Cleanup
+  remove $test_path
+
+with_and_without_agent "metadata on closed file fails" do
+  let test_path = "test_metadata_closed.txt"
+
+  open $test_path w do |f|
+    f.write "test content"
+    f.close()
+    let caught = try
+      f.metadata()
+      false
+    catch _err
+      true
+    assert $caught
+
+  remove $test_path
+
+with_and_without_agent "metadata Unix fields" do
+  # Only run on non-Windows platforms
+  if (sys.os == "windows")
+    log "skipping Unix-specific test on Windows"
+    return
+
+  let test_path = "test_metadata_unix.txt"
+
+  # Create test file
+  open $test_path w do |f|
+    f.write "unix metadata test"
+
+  # Get metadata and check Unix fields
+  open $test_path r do |f|
+    let meta = f.metadata()
+    assert (meta.mode > 0)
+    assert (meta.dev >= 0)
+    assert (meta.ino >= 0)
+    assert (meta.nlink >= 1)
+    assert (meta.uid >= 0)
+    assert (meta.gid >= 0)
+    assert (meta.rdev >= 0)
+    assert (meta.blksize >= 0)
+    assert (meta.blocks >= 0)
+
+  # Cleanup
+  remove $test_path
+
+with_and_without_agent "metadata len and type" do
+  # Test metadata returns correct len and type for a file
+  let test_path = "test_metadata_len.txt"
+
+  open $test_path w do |f|
+    f.write "test"
+
+  open $test_path r do |f|
+    let meta = f.metadata()
+    assert_eq $meta.len 4
+    assert_eq $meta.type :file:
+
+  remove $test_path

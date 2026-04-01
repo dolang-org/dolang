@@ -1,0 +1,20 @@
+def 123
+# error: expected function or special method
+#   --> decl_errors.dol:LL:LL
+#    |
+# LL | def 123
+#    |     ^^^
+
+class 123
+# error: expected class name after `class`
+#   --> decl_errors.dol:LL:LL
+#    |
+# LL | class 123
+#    |       ^^^
+
+class Foo =
+# error: expected indent or newline after class declaration
+#   --> decl_errors.dol:LL:LL
+#    |
+# LL | class Foo =
+#    |          ^

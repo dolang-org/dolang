@@ -1,0 +1,5 @@
+pub def map func things
+  let res = []
+  for thing = things
+    res.push (func thing)
+  res

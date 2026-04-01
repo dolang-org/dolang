@@ -1,0 +1,62 @@
+import
+  strand:
+    - fork
+    - redirect
+    - spawn
+  std:
+    - RuntimeError
+  test:
+    - assert_err
+
+let scoped_parent = if DEBUG
+  60
+else
+  900
+
+let scoped_child = if DEBUG
+  20
+else
+  200
+
+def recurse n
+  if (n == 0)
+    0
+  else
+    recurse (n - 1)
+
+def is_even_deep n
+  if (n == 0)
+    true
+  else
+    is_odd_deep (n - 1)
+
+def is_odd_deep n
+  if (n == 0)
+    false
+  else
+    is_even_deep (n - 1)
+
+def redirect_recurse n
+  if (n == 0)
+    0
+  else
+    redirect do redirect_recurse (n - 1)
+
+def scoped_overflow parent child
+  if (parent == 0)
+    fork do recurse $child
+  else
+    scoped_overflow (parent - 1) $child
+
+def background_ok n
+  if (n == 0)
+    let handle = spawn do recurse 20
+    handle.join()
+  else
+    background_ok (n - 1)
+
+assert_err $recurse type: $RuntimeError msg: "maximum call depth exceeded" 2000
+assert_err $is_even_deep type: $RuntimeError msg: "maximum call depth exceeded" 2000
+assert_err $redirect_recurse type: $RuntimeError msg: "maximum call depth exceeded" 2000
+assert_err $scoped_overflow type: $RuntimeError msg: "maximum call depth exceeded" $scoped_parent $scoped_child
+assert_eq (background_ok 40) 0

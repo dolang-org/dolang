@@ -1,0 +1,8 @@
+# Tabs can be used as whitespace in non-indent positions
+echo   tab "foo   bar"
+	echo bad
+# error: tabs are not accepted as indentation
+#   --> indent_tab.dol:LL:LL
+#    |
+# LL |     echo bad
+#    | ^^^^

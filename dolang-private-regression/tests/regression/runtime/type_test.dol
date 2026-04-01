@@ -1,0 +1,63 @@
+import std
+  std:
+    - FieldError
+    - ImportError
+    - IndexError
+    - Iter
+    - IterStop
+    - MissingPosError
+    - Nil
+    - Sink
+    - SinkStop
+    - TypeError
+    - ZeroDivError
+  strand:
+    - channel
+
+def assert_err_type ty block
+  let res = try
+    block()
+    false
+  catch e
+    assert (type e ty)
+    true
+  assert $res
+
+assert_eq (type 5) $int
+
+assert_eq (type 0.5) $float
+
+assert_eq (type "hello") $str
+
+assert_eq (type :sym:) $sym
+
+assert_eq (type nil) $Nil
+assert (type nil Nil)
+assert (!(type false Nil))
+assert_err_type $TypeError do Nil nil
+
+assert_eq (type false) $bool
+
+assert_eq (type []) $array
+
+assert_eq (type $ [].iter()) $Iter
+
+assert_eq (type $ [].sink()) $Sink
+
+assert_eq (type {}) $dict
+
+# Errors
+assert_err_type $TypeError do (5 + "hello")
+assert_err_type $ZeroDivError do (5 / 0)
+assert_err_type $FieldError do std.bad()
+assert_err_type $IndexError do [][0]
+assert_err_type $MissingPosError do type()
+assert_err_type $ImportError do import bad_module: _
+
+let pair = channel()
+pair[0].close()
+assert_err_type $IterStop do pair[1].next()
+
+pair = channel()
+pair[1].close()
+assert_err_type $SinkStop do pair[0].put 0

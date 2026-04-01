@@ -1,0 +1,50 @@
+def assert_err block msg
+  let res = try
+    block()
+    false
+  catch e
+    assert_eq (str e) $msg
+    true
+  assert $res
+
+# Bool conversions
+assert_eq  (bool nil) false
+assert_eq  (bool false) false
+assert_eq  (bool true) true
+assert_eq  (bool 0) false
+assert_eq  (bool 1) true
+assert_eq  (bool 0.0) false
+assert_eq  (bool 1.0) true
+assert_eq  (bool(0.0 / 0.0)) true
+assert_eq  (bool(1.0 / 0.0)) true
+assert_eq  (bool(-1.0 / 0.0)) true
+# Int conversions
+assert_err (do int nil) "type error: int: `nil` can't be converted"
+assert_eq  (int false) 0
+assert_eq  (int true) 1
+assert_eq  (int 5) 5
+assert_eq  (int 5.0) 5
+assert_eq  (int 2.5) 2
+assert_eq  (int "5") 5
+# Float conversions
+assert_err (do float nil) "type error: float: `nil` can't be converted"
+assert_eq  (float false) 0.0
+assert_eq  (float true) 1.0
+assert_eq  (float 5) 5.0
+assert_eq  (float 2.5) 2.5
+assert_eq  (float "2.5") 2.5
+assert_eq  (float ".5") 0.5
+assert_eq  (float "1.1e0") 1.1
+assert_eq  (float "1.1e-1") 0.11
+assert_eq  (float "1.1e+1") 11.0
+# Str conversions
+assert_eq  (str nil) "nil"
+assert_eq  (str false) "false"
+assert_eq  (str true) "true"
+assert_eq  (str 5) "5"
+assert_eq  (str -5) "-5"
+assert_eq  (str 2.5) "2.5"
+assert_eq  (str(1.0 / 0.0)) "inf"
+assert_eq  (str(-1.0 / 0.0)) "-inf"
+assert_eq  (str(0.0 / 0.0)) "NaN"
+assert_eq  (str "foo") "foo"

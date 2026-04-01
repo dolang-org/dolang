@@ -1,0 +1,91 @@
+# Test: ImplicitUpvarReturn warning
+# Non-local variables in return position may be intended as calls
+# Only warns for variables from Def or PreludeItem origins
+
+# Case 1: Non-local function reference in final position (SHOULD warn)
+def outer1()
+  def helper1()
+    42
+  def inner1()
+    helper1
+  # warning: variable in implicit return position may be intended as a call
+  #   --> implicit_upvar_return.dol:LL:LL
+  #    |
+  # LL |     helper1
+  #    |     ^^^^^^^
+  #    |
+  # help: add `()` to make this a call
+  #    |
+  # LL |     helper1()
+  #    |            ++
+  # help: add explicit `return`
+  #    |
+  # LL |     return helper1
+  #    |     ++++++
+  inner1()
+
+# Case 2: Nested function reference (SHOULD warn)
+def outer2()
+  def level1_func()
+    def level2_func()
+      100
+    def inner2()
+      level2_func
+    # warning: variable in implicit return position may be intended as a call
+    #   --> implicit_upvar_return.dol:LL:LL
+    #    |
+    # LL |       level2_func
+    #    |       ^^^^^^^^^^^
+    #    |
+    # help: add `()` to make this a call
+    #    |
+    # LL |       level2_func()
+    #    |                  ++
+    # help: add explicit `return`
+    #    |
+    # LL |       return level2_func
+    #    |       ++++++
+    inner2()
+  level1_func()
+
+# Case 4: Prelude item in return position (SHOULD warn)
+def outer4()
+  def inner4()
+    echo
+  # warning: variable in implicit return position may be intended as a call
+  #   --> implicit_upvar_return.dol:LL:LL
+  #    |
+  # LL |     echo
+  #    |     ^^^^
+  #    |
+  # help: add `()` to make this a call
+  #    |
+  # LL |     echo()
+  #    |         ++
+  # help: add explicit `return`
+  #    |
+  # LL |     return echo
+  #    |     ++++++
+  inner4()
+
+# Case 5: Non-local let binding - should NOT warn
+def outer5()
+  let local_var = 5
+  def inner5()
+    local_var
+  inner5()
+
+# Case 6: Parameter - should NOT warn
+def outer6 x
+  def inner6()
+    x
+  inner6()
+
+# Case 7: Pattern bind - should NOT warn
+def outer7()
+  let a _ = [1, 2]
+  def inner7()
+    a
+  inner7()
+
+let _ = [outer1, outer2, outer4, outer5, outer6, outer7]

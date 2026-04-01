@@ -1,0 +1,31 @@
+import
+  std: error
+  test:
+    - assert_err
+    - cases
+
+def func a b :key1 :key2
+  let _ = [a, b, key1, key2]
+  nil
+
+cases
+  do |:type :msg :args|
+    assert_err :type :msg $func ...args
+  - type: $error.MissingPosError
+    msg: "missing positional item: 0"
+    args: {}
+  - type: $error.MissingPosError
+    msg: "missing positional item: 1"
+    args: {0}
+  - type: $error.MissingKeyError
+    msg: "missing key item: key1"
+    args: {0, 1}
+  - type: $error.MissingKeyError
+    msg: "missing key item: key2"
+    args: {0, 1, key1: nil}
+  - type: $error.UnexpectedPosError
+    msg: "unexpected positional item: 2"
+    args: {0, 1, 2}
+  - type: $error.UnexpectedKeyError
+    msg: "unexpected key item: key3"
+    args: {0, 1, key1: nil, key2: nil, key3: nil}

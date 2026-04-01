@@ -1,0 +1,10 @@
+let thunks = []
+for i = ["foo", "bar", "baz"]
+  thunks.push do echo $i
+for thunk = thunks
+  thunk()
+# output: END
+# foo
+# bar
+# baz
+# END

@@ -1,0 +1,30 @@
+import 
+  fs:
+   - Path
+  proc.run:
+   - id
+  xdg
+
+pub def runtime_dir()
+  (xdg.runtime_dir() || Path "/run/user/$(sub id "-u")")
+
+pub def cache_home()
+  xdg.cache_home()
+
+pub def cache_root()
+  let path = (cache_home() / "dolang-container")
+  if !path.exists()
+    path.create_dir all: true
+  path
+
+pub def cache_dir id
+  let path = (cache_root() / "mounts" / id.replace "/" "_")
+  if !path.exists()
+    path.create_dir all: true
+  path
+
+pub def agent_bin()
+  let agent = (env.get "DOLANG_SHELL_VFS" || run["dolang-shell-vfs"].which())
+  if !agent
+    throw "couldn't find dolang-shell-vfs in DOLANG_SHELL_VFS or PATH"
+  (Path agent).canonical()

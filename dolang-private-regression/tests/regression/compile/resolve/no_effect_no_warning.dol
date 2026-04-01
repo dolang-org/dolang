@@ -1,0 +1,7 @@
+let x = 5
+
+# Function call - has side effects
+echo()
+
+# Final position in block - implicit return
+x

@@ -1,0 +1,23 @@
+[package]
+name = "dolang"
+version = "0.1.0"
+description = "Embeddable public API for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+linkme = "0.3.35"
+
+[dependencies.dolang-compile]
+path = "../dolang-compile"
+version = "0.1.0"
+
+[dependencies.dolang-runtime]
+path = "../dolang-runtime"
+version = "0.1.0"
+
+[features]
+default = []
+debug = ["dolang-runtime/debug", "dolang-compile/debug"]

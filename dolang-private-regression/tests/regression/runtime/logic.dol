@@ -1,0 +1,22 @@
+# Logical not
+assert     (!false)
+assert_not (!true)
+assert     (!nil)
+# Logical or
+assert     (true || false)
+assert     (true || true)
+assert     (false || true)
+assert_not (false || false)
+# Logical and
+assert     (true && true)
+assert_not (false && true)
+assert_not (true && false)
+assert_not (false && false)
+# Logical or short-circuiting behavior
+assert_eq  (5 || 1) 5
+assert_eq  (5 || 0) 5
+assert_eq  (0 || 5) 5
+# Logical and short-circuiting behavior
+assert_eq  (5 && 1) 1
+assert_eq  (5 && 0) 0
+assert_eq  (0 && 5) 0

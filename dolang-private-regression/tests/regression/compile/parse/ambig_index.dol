@@ -1,0 +1,24 @@
+let foo = [1]
+# Unambiguous
+echo (foo[0])
+# Unambiguous
+echo (echo [1, 2])
+# Also unambiguous
+echo (echo([0]))
+echo (foo [0])
+# warning: index separated by whitespace is misleading
+#   --> ambig_index.dol:LL:LL
+#    |
+# LL | echo (foo [0])
+#    |       ^^^^^^^
+#    |
+# help: remove space
+#    |
+# LL - echo (foo [0])
+# LL + echo (foo[0])
+#    |
+# help: wrap with parentheses to call with a singleton list
+#    |
+# LL - echo (foo [0])
+# LL + echo (foo ([0]))
+#    |

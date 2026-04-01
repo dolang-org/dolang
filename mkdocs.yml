@@ -1,0 +1,220 @@
+site_name: Do Language
+site_description: Documentation for the Do programming language
+
+hooks:
+  - docs/hooks/lexer_hook.py
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: do
+      handlers:
+        do:
+          options:
+            heading_level: 2
+            show_private: false
+            paths:
+              - dolang-shell/lib/
+
+extra_css:
+  - extra.css
+
+theme:
+  name: material
+  features:
+    - navigation.indexes
+  palette:
+    scheme: slate
+    primary: indigo
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      default_lang: dolang
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Language Guide:
+    - language/overview.md
+    - language/basic-types.md
+    - language/data-structures.md
+    - language/commands.md
+    - language/expressions.md
+    - language/variables.md
+    - language/flow-control.md
+    - language/vertical-layout.md
+    - language/functions.md
+    - language/destructuring.md
+    - language/modules.md
+    - language/classes.md
+    - language/error-handling.md
+    - language/concurrency.md
+    - language/misc.md
+    - language/prelude.md
+  - Shell Guide:
+    - shell/overview.md
+    - shell/modules.md
+    - shell/containers.md
+  - lsp.md
+  - examples.md
+  - Reference:
+    - args: api/args.md
+    - base64: api/base64.md
+    - compile:
+      - api/compile/index.md
+      - api/compile/result.md
+      - api/compile/diagnostic.md
+      - api/compile/span.md
+      - api/compile/pos.md
+      - api/compile/annotation.md
+      - api/compile/note.md
+      - api/compile/patch.md
+    - diagnostic: api/diagnostic.md
+    - container:
+      - api/container/index.md
+      - api/container/vfs.md
+    - container.docker:
+      - api/container/docker/index.md
+      - api/container/docker/container.md
+      - api/container/docker/image.md
+      - api/container/docker/noimageerror.md
+    - container.podman:
+      - api/container/podman/index.md
+      - api/container/podman/container.md
+      - api/container/podman/image.md
+      - api/container/podman/noimageerror.md
+    - container.toolbx: api/container/toolbx.md
+    - digest:
+      - api/digest/index.md
+      - api/digest/blake3.md
+      - api/digest/md5.md
+      - api/digest/sha1.md
+      - api/digest/sha256.md
+      - api/digest/sha512.md
+      - api/digest/state.md
+    - fs:
+      - api/fs/index.md
+      - api/fs/direntry.md
+      - api/fs/file.md
+      - api/fs/path.md
+    - glob:
+      - api/glob/index.md
+      - api/glob/glob.md
+    - progress:
+      - api/progress/index.md
+      - api/progress/indicator.md
+    - http:
+      - api/http/index.md
+      - api/http/client.md
+      - api/http/error.md
+      - api/http/event.md
+      - api/http/response.md
+      - api/http/status.md
+    - json: api/json.md
+    - load: api/load.md
+    - proc:
+      - api/proc/index.md
+      - api/proc/error.md
+    - proc.run: api/proc-run.md
+    - rand: api/rand.md
+    - regex:
+      - api/regex/index.md
+      - api/regex/captures.md
+      - api/regex/find.md
+      - api/regex/match.md
+      - api/regex/regex.md
+    - shlex: api/shlex.md
+    - sqlite:
+      - api/sqlite/index.md
+      - api/sqlite/busy.md
+      - api/sqlite/connection.md
+      - api/sqlite/error.md
+      - api/sqlite/row.md
+      - api/sqlite/rows.md
+      - api/sqlite/statement.md
+      - api/sqlite/transaction.md
+    - std:
+      - api/std/index.md
+      - api/std/args.md
+      - api/std/array.md
+      - api/std/bin.md
+      - api/std/bool.md
+      - api/std/bytecode-error.md
+      - api/std/canceled-error.md
+      - api/std/compile-error.md
+      - api/std/concurrency-error.md
+      - api/std/cyclic-import-error.md
+      - api/std/dict.md
+      - api/std/error.md
+      - api/std/field-error.md
+      - api/std/float.md
+      - api/std/func.md
+      - api/std/immutable-error.md
+      - api/std/import-error.md
+      - api/std/index-error.md
+      - api/std/interrupt-error.md
+      - api/std/int.md
+      - api/std/iterable.md
+      - api/std/iter.md
+      - api/std/iter-stop.md
+      - api/std/missing-key-error.md
+      - api/std/missing-pos-error.md
+      - api/std/nil.md
+      - api/std/overflow-error.md
+      - api/std/range.md
+      - api/std/record.md
+      - api/std/runtime-error.md
+      - api/std/set.md
+      - api/std/state-error.md
+      - api/std/sinkable.md
+      - api/std/sink.md
+      - api/std/sink-stop.md
+      - api/std/str.md
+      - api/std/sym.md
+      - api/std/tuple.md
+      - api/std/type-error.md
+      - api/std/type.md
+      - api/std/value-error.md
+      - api/std/value.md
+      - api/std/unexpected-key-error.md
+      - api/std/unexpected-pos-error.md
+      - api/std/unsupported-error.md
+      - api/std/zero-div-error.md
+    - strand:
+      - api/strand/index.md
+      - api/strand/strand.md
+      - api/strand/stream.md
+      - api/strand/sender.md
+      - api/strand/receiver.md
+    - sudo: api/sudo.md
+    - sys:
+      - api/sys/index.md
+      - api/sys/already-exists-error.md
+      - api/sys/error.md
+      - api/sys/not-found-error.md
+      - api/sys/permission-denied-error.md
+      - api/sys/timed-out-error.md
+    - systemd: api/systemd.md
+    - test:
+      - api/test/index.md
+      - api/test/skip.md
+    - time:
+      - api/time/index.md
+      - api/time/datetime.md
+      - api/time/duration.md
+    - url:
+      - api/url/index.md
+      - api/url/url.md
+    - xdg: api/xdg.md
+    - yaml: api/yaml.md
+    - xml:
+      - api/xml/index.md
+      - api/xml/node.md
+    - zip:
+      - api/zip/index.md
+      - api/zip/archive.md
+      - api/zip/entryiter.md
+      - api/zip/file.md

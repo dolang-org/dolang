@@ -1,0 +1,27 @@
+def func foo = 42 bar
+  # error: required positional items must precede any optional positional items
+  #   --> required_after_optional.dol:LL:LL
+  #    |
+  # LL | def func foo = 42 bar
+  #    |                   ^^^
+  nil
+
+def func
+  - foo = 42
+  - bar
+  # error: required positional items must precede any optional positional items
+  #   --> required_after_optional.dol:LL:LL
+  #    |
+  # LL |   - bar
+  #    |     ^^^
+do
+  nil
+
+bind []
+  - foo = 42
+  - bar
+# error: required positional items must precede any optional positional items
+#   --> required_after_optional.dol:LL:LL
+#    |
+# LL |   - bar
+#    |     ^^^

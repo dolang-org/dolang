@@ -1,0 +1,6 @@
+let caught = try
+  import cycle: _
+  false
+catch _
+  true
+assert $caught

@@ -1,0 +1,13 @@
+import
+  compile
+  diagnostic
+
+let result = compile.compile "bad.dol" "let =\n"
+let diag = result.diagnostics[0]
+
+let plain = diagnostic.render_compile_diag $diag color: :never:
+assert (plain.contains "error:")
+assert (plain.contains "bad.dol")
+
+let color = diagnostic.render_compile_diag $diag color: :always:
+assert_ne $color $plain

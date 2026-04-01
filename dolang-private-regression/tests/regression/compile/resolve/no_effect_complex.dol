@@ -1,0 +1,84 @@
+let x = 5
+let y = 10
+let arr = [record field: 1, 2, 3]
+let obj = record nested: (record field: false)
+
+# Chained operations
+(x + y * 2)
+# warning: statement with no apparent effect
+#   --> no_effect_complex.dol:LL:LL
+#    |
+# LL | (x + y * 2)
+#    | ^^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (x + y * 2)
+#    | +++++++
+
+# Nested field access
+(obj.nested.field)
+# warning: statement with no apparent effect
+#   --> no_effect_complex.dol:LL:LL
+#    |
+# LL | (obj.nested.field)
+#    | ^^^^^^^^^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (obj.nested.field)
+#    | +++++++
+
+# Array indexing then field access
+(arr[0].field)
+# warning: statement with no apparent effect
+#   --> no_effect_complex.dol:LL:LL
+#    |
+# LL | (arr[0].field)
+#    | ^^^^^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (arr[0].field)
+#    | +++++++
+
+# Grouped expression
+(x + y)
+# warning: statement with no apparent effect
+#   --> no_effect_complex.dol:LL:LL
+#    |
+# LL | (x + y)
+#    | ^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = (x + y)
+#    | +++++++
+
+# Complex arithmetic
+((x + y) * (x - y))
+# warning: statement with no apparent effect
+#   --> no_effect_complex.dol:LL:LL
+#    |
+# LL | ((x + y) * (x - y))
+#    | ^^^^^^^^^^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = ((x + y) * (x - y))
+#    | +++++++
+
+# Indexing with expression
+arr[x - 3]
+# warning: statement with no apparent effect
+#   --> no_effect_complex.dol:LL:LL
+#    |
+# LL | arr[x - 3]
+#    | ^^^^^^^^^^
+#    |
+# help: bind result to _ to suppress warning
+#    |
+# LL | let _ = arr[x - 3]
+#    | +++++++
+
+echo()

@@ -1,0 +1,114 @@
+import
+  std:
+    - Iter
+    - IterStop
+
+def assert_err_type ty block
+  let res = try
+    block()
+    false
+  catch e
+    assert_eq (type e) $ty
+    true
+  assert $res
+
+# record.contains tests - record.contains is a class method taking record as first arg
+let rec = record(1, 2, 3, a: "first", b: "second")
+record.insert $rec :a: second
+# Key-only checks
+assert (record.contains rec 0)
+assert (record.contains rec 1)
+assert (record.contains rec 2)
+assert (record.contains rec :a:)
+assert (record.contains rec :b:)
+assert (!record.contains rec 3)
+assert (!record.contains rec :z:)
+# Key+value checks
+assert (record.contains rec 0 1)
+assert (record.contains rec 1 2)
+assert (record.contains rec :a: "first")
+assert (record.contains rec :a: "second")
+assert (record.contains rec :b: "second")
+assert (!record.contains rec 0 999)
+assert (!record.contains rec :a: "wrong")
+assert (!record.contains rec :nonexistent: "value")
+# Empty record
+assert (!record.contains(record(), 0))
+
+# record.pop with instance tests
+let r = record x: "first"
+record.insert $r :x: "second"
+record.insert $r :x: "third"
+assert_eq (record.len r) 3
+# Pop instance 1 (second)
+assert_eq (record.pop r :x: 1) "second"
+assert_eq (record.len r) 2
+# Pop instance 0 (first) - remaining are ["first", "third"]
+assert_eq (record.pop r :x: 0) "first"
+assert_eq (record.len r) 1
+# Pop last one
+assert_eq (record.pop r :x:) "third"
+assert_eq (record.len r) 0
+
+# record.values iterators
+let vals = record.values(record(name: "Alice", age: 30, name: "Bob"))
+assert (type vals Iter)
+assert_eq [...vals] ["Alice", 30, "Bob"]
+
+let keys = record.keys(record(name: "Alice", age: 30, name: "Bob", title: "Dr.", age: 31))
+assert (type keys Iter)
+assert_eq [...keys] [:name:, :age:, :title:]
+
+let keyed = record.values(record(name: "Alice", age: 30, name: "Bob") :name:)
+assert (type keyed Iter)
+assert_eq [...keyed] ["Alice", "Bob"]
+
+let counted = record(name: "Alice", age: 30, name: "Bob", 1, 2, age: 31)
+assert_eq (record.len counted) 6
+assert_eq (record.count counted) 4
+assert_eq (record.count counted :name:) 2
+assert_eq (record.count counted :age:) 2
+assert_eq (record.count counted 0) 1
+assert_eq (record.count counted :missing:) 0
+
+assert_eq [...record.values(record(name: "Alice") :missing:)] []
+
+let unpacked = record.values(record(name: "Alice", age: 30, name: "Bob"))
+let first second ...rest = unpacked
+assert_eq $first "Alice"
+assert_eq $second 30
+assert_eq [...rest] ["Bob"]
+
+bind record.values(record(name: "Alice"))
+  - first
+  :missing = "fallback"
+assert_eq $first "Alice"
+assert_eq $missing fallback
+
+bind record.keys(record(name: "Alice", age: 30, name: "Bob"))
+  - first
+  - second
+  :missing = "fallback"
+assert_eq $first :name:
+assert_eq $second :age:
+assert_eq $missing fallback
+
+let failed_unpack = record.values(record(name: "Alice"))
+let failed = try
+  let _x _y = failed_unpack
+  false
+catch _
+  true
+assert $failed
+assert_eq (failed_unpack.next()) "Alice"
+assert_err_type $IterStop do failed_unpack.next()
+
+let failed_key_unpack = record.keys(record(name: "Alice"))
+failed = try
+  let _x _y = failed_key_unpack
+  false
+catch _
+  true
+assert $failed
+assert_eq (failed_key_unpack.next()) :name:
+assert_err_type $IterStop do failed_key_unpack.next()

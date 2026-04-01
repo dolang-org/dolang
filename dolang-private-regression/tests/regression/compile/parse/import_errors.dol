@@ -1,0 +1,14 @@
+import foo.=
+# error: invalid module name
+#   --> import_errors.dol:LL:LL
+#    |
+# LL | import foo.=
+#    |            ^
+
+import foo:
+  - 123
+# error: invalid import item
+#   --> import_errors.dol:LL:LL
+#    |
+# LL |   - 123
+#    |     ^^^

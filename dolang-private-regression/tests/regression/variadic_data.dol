@@ -1,0 +1,22 @@
+let data =
+  - 1
+  ...[2, 3]
+  - 4
+assert_eq $data [1, ...[2, 3], 4]
+assert_eq $data [1, 2, 3, 4]
+
+data =
+  - 1
+  foo: bar
+  ...{bar: 42}
+  - 4
+assert_eq $data {1, foo: "bar", ...{bar: 42}, 4}
+assert_eq $data {1, foo: "bar", bar: 42, 4}
+
+let mapped = ["foo=bar", "baz=qux"].iter().map do |e| e.split "="
+assert_eq {...mapped} {"foo": "bar", "baz": "qux"}
+
+let items = [1, 2, 3].iter()
+assert_eq (array items) [1, 2, 3]
+let entries = (["foo=bar", "baz=qux"].iter().map do |e| e.split "=")
+assert_eq (dict entries) {"foo": "bar", "baz": "qux"}

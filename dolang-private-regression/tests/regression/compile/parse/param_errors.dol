@@ -1,0 +1,7 @@
+def f ...a ...b
+  nil
+# error: duplicate rest parameter
+#   --> param_errors.dol:LL:LL
+#    |
+# LL | def f ...a ...b
+#    |            ^^^

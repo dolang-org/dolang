@@ -1,0 +1,166 @@
+{
+    "name": "dolang",
+    "displayName": "dolang",
+    "description": "Do Language Support",
+    "version": "0.1.0",
+    "license": "Apache-2.0 OR MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/bkoropoff/dolang.git"
+    },
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "configuration": {
+        "title": "Do Language",
+        "properties": {
+            "dolang.runInTerminal": {
+                "type": "boolean",
+                "default": true,
+                "description": "Run Do scripts in integrated terminal (recommended for interactive scripts and user input)"
+            },
+            "dolang.autoSaveBeforeRun": {
+                "type": "boolean",
+                "default": true,
+                "description": "Automatically save Do script files before running them"
+            },
+            "dolang.keepTerminalOpen": {
+                "type": "boolean",
+                "default": true,
+                "description": "Keep terminal open after script execution to view output"
+            },
+            "dolang.shell.path": {
+                "type": "string",
+                "default": "",
+                "description": "Absolute path to the `dolang-shell` executable. When unset, the extension tries PATH and then downloads a GitHub release bundle."
+            },
+            "dolang.shellVfs.path": {
+                "type": "string",
+                "default": "",
+                "description": "Absolute path to the `dolang-shell-vfs` executable. When unset, the extension tries PATH and then downloads a GitHub release bundle."
+            },
+            "dolang.lsp.path": {
+                "type": "string",
+                "default": "",
+                "description": "Absolute path to the `dolang-lsp` executable. When unset, the extension tries PATH and then downloads a GitHub release bundle."
+            }
+        }
+    },
+    "main": "./dist/extension.js",
+    "activationEvents": [
+        "onLanguage:dolang",
+        "onCommand:dolang.runScript",
+        "onCommand:dolang.runScriptFile",
+        "onCommand:dolang.openInteractiveShell"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "dolang",
+                "aliases": [
+                    "Do",
+                    "dolang"
+                ],
+                "extensions": [
+                    ".dol"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "dolang",
+                "scopeName": "source.dol",
+                "path": "./syntaxes/dolang.tmLanguage.json"
+            }
+        ],
+        "commands": [
+            {
+                "command": "dolang.runScript",
+                "title": "Run Do Script",
+                "icon": "$(play)"
+            },
+            {
+                "command": "dolang.runScriptFile",
+                "title": "Run Do Script",
+                "icon": "$(play)"
+            },
+            {
+                "command": "dolang.openInteractiveShell",
+                "title": "Open Do Interactive Shell",
+                "icon": "$(terminal)"
+            }
+        ],
+        "menus": {
+            "editor/title": [
+                {
+                    "command": "dolang.runScript",
+                    "when": "resourceLangId == dolang",
+                    "group": "navigation"
+                }
+            ],
+            "editor/context": [
+                {
+                    "command": "dolang.runScriptFile",
+                    "when": "resourceLangId == dolang",
+                    "group": "navigation"
+                }
+            ],
+            "explorer/context": [
+                {
+                    "command": "dolang.runScriptFile",
+                    "when": "resourceLangId == dolang",
+                    "group": "navigation"
+                }
+            ],
+            "commandPalette": [
+                {
+                    "command": "dolang.runScript",
+                    "when": "resourceLangId == dolang"
+                },
+                {
+                    "command": "dolang.runScriptFile",
+                    "when": "resourceLangId == dolang"
+                }
+            ]
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run package",
+        "compile": "npm run check-types && npm run lint && node esbuild.js",
+        "watch": "npm-run-all -p watch:*",
+        "watch:esbuild": "node esbuild.js --watch",
+        "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+        "package": "npm run check-types && npm run lint && node esbuild.js --production",
+        "compile-tests": "tsc -p . --outDir out",
+        "watch-tests": "tsc -p . -w --outDir out",
+        "pretest": "npm run compile-tests && npm run compile && npm run lint",
+        "check-types": "tsc --noEmit",
+        "lint": "eslint src",
+        "format": "prettier --write .",
+        "package:vsix": "vsce package",
+        "test": "vscode-test"
+    },
+    "dependencies": {
+        "tar": "^7.4.3",
+        "vscode-languageclient": "^8.0.0"
+    },
+    "devDependencies": {
+        "@types/mocha": "^10.0.0",
+        "@types/node": "20.x",
+        "@types/vscode": "^1.75.0",
+        "@typescript-eslint/eslint-plugin": "^7.0.0",
+        "@typescript-eslint/parser": "^7.0.0",
+        "@vscode/vsce": "^3.6.2",
+        "@vscode/test-cli": "^0.0.8",
+        "@vscode/test-electron": "^2.3.0",
+        "esbuild": "^0.20.0",
+        "eslint": "^8.56.0",
+        "npm-run-all": "^4.1.5",
+        "prettier": "^3.7.4",
+        "typescript": "^5.3.0"
+    }
+}

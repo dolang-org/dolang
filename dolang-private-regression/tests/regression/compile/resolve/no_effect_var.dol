@@ -1,0 +1,14 @@
+let x = 5
+# |
+x
+# warning: statement with no effect
+#   --> no_effect_var.dol:LL:LL
+#    |
+# LL | x
+#    | ^
+#    |
+# help: add () to make this a call
+#    |
+# LL | x()
+#    |  ++
+echo $x

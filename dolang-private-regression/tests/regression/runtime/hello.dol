@@ -1,0 +1,4 @@
+echo hello world
+# output: END
+# hello world
+# END

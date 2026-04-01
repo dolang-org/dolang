@@ -1,0 +1,16 @@
+# Basic subclassing of record
+class MyRecord: record
+def (init) self
+  # error: special methods are only valid in a class body
+  #   --> class_record_subclass.dol:LL:LL
+  #    |
+  # LL | def (init) self
+  #    |      ^^^^
+  record.(init) $self
+
+let r = MyRecord()
+r.name = "Alice"
+r.age = 30
+
+assert_eq $r.name "Alice"
+assert_eq $r.age 30

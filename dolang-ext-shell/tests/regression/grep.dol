@@ -1,0 +1,12 @@
+import util:
+ - map
+
+import polyfill:
+ - grep
+
+let res = map (do |x| x.trim_end "\r") $ (sub grep "\\[depend" "Cargo.toml").split "\n"
+assert_eq $res $
+  - "[dependencies]"
+  - "[dependencies.tokio]"
+  - "[dependencies.dolang]"
+  - "[dependencies.dolang-shell-vfs]"

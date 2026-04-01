@@ -1,0 +1,11 @@
+return
+  prelude:
+    - shell
+    - shell.program
+    shell:
+      - echo
+      - env
+      - exit
+      - cd
+      - capture
+      - feed

@@ -1,0 +1,11 @@
+def func
+  - foo
+  :baz
+  - bar
+do
+  echo $foo $baz $bar
+
+func a c baz: b
+# output: END
+# a b c
+# END

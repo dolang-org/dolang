@@ -1,0 +1,11 @@
+[package]
+name = "dolang-private-build"
+version = "0.1.0"
+description = "Build script helpers for Do language crates."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# No dependencies - this crate is meant to be used in build.rs
+# without pulling in the full dolang dependency tree

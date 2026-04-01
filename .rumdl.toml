@@ -1,0 +1,17 @@
+[global]
+disable = ["MD040"]
+
+[MD007]
+indent = 4 # Unordered list indentation
+
+[MD013]
+line-length = 80
+code-blocks = false
+reflow = true
+reflow-mode = "default"
+
+[MD060]
+enabled = true
+style = "aligned"
+max-width = 0
+column-align = "auto"

@@ -1,0 +1,19 @@
+[package]
+name = "dolang-private-regression"
+version = "0.1.0"
+description = "Regression test suite for the Do language crates."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+dolang = { path = "../dolang", version = "0.1.0" }
+dolang-runtime = { path = "../dolang-runtime", version = "0.1.0" }
+dolang-private-test = { path = "../dolang-private-test", version = "0.1.0" }
+futures = "0.3.31"
+
+[build-dependencies]
+dolang-private-build = { path = "../dolang-private-build", version = "0.1.0" }
+

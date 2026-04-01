@@ -1,0 +1,12 @@
+[package]
+name = "dolang-private-util"
+version = "0.1.0"
+description = "Shared utilities for Do language crates."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+debug = []

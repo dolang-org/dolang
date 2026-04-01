@@ -1,0 +1,26 @@
+[package]
+name = "dolang-bytecode"
+version = "0.1.0"
+description = "Bytecode format and verification for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies.postcard]
+version = "1.0"
+default-features = false
+features = ["use-std"]
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
+[dependencies.dolang-util]
+package = "dolang-private-util"
+path = "../dolang-private-util"
+version = "0.1.0"
+
+[features]
+default = []
+debug = []

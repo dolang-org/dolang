@@ -1,0 +1,25 @@
+# Test non-exhaustive pattern matching with ... (discard mode)
+
+# Function with discard - extra positional args are allowed but ignored
+def foo a b ...
+  echo $a $b
+
+# Exact arguments
+foo 1 2
+
+# Extra arguments (should be discarded)
+foo 10 20 30 40
+
+# Pattern destructuring with discard
+let x y ... = [100, 200, 300, 400]
+echo $x $y
+
+let bar = do |x y ...| echo $x $y
+bar 1 2 3 4
+
+# output: END
+# 1 2
+# 10 20
+# 100 200
+# 1 2
+# END

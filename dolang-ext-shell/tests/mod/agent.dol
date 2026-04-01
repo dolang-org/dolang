@@ -1,0 +1,39 @@
+import
+  strand:
+    - pipeline
+  proc.run:
+    - cargo
+    - mktemp
+    - rm
+  - sys
+
+let agent_bin = "../target/debug/dolang-shell-vfs"
+
+let Vfs = nil
+if (sys.os != "windows")
+  import container:
+    Vfs: it
+  Vfs = it
+
+  cd ../ $env RUSTFLAGS: nil $cargo -q build -p dolang-shell-vfs
+
+pub def with_agent block
+  let runtime = sub $mktemp -d /tmp/test-dolang-agent.XXXXXX
+  let socket = "$runtime/socket"
+
+  pipeline
+    do run $agent_bin $socket
+    do
+      strand.next()
+      let agent = Vfs unix_socket: $socket
+      try
+        return agent $block
+      finally
+        rm -rf $runtime
+
+pub def with_and_without_agent test block
+  log "$test: without agent"
+  block()
+  if (sys.os != "windows")
+      log "$test: with agent"
+      with_agent $block

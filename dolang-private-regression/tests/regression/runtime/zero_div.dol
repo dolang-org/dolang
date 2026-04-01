@@ -1,0 +1,6 @@
+let caught = try
+  echo (5 / 0)
+  false
+catch _
+  true
+assert $caught

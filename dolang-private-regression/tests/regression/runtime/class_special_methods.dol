@@ -1,0 +1,71 @@
+# Test special methods for classes
+import strand:
+  - put
+  - redirect
+
+# Test (unpack) special method - forwards to a dict
+class Point
+  pub let x = 0
+  pub let y = 0
+
+  def (init) self x y
+    self.x = x
+    self.y = y
+
+  def (unpack) self
+    # Return a dict as proxy for unpacking
+    return {x: self.x, y: self.y}
+
+let p = Point 3 4
+let :x :y = p
+assert_eq $x 3
+assert_eq $y 4
+
+# Test (iter) special method - forwards to a list
+class NumberRange
+  pub let start = 0
+  pub let end = 0
+
+  def (init) self start end
+    self.start = start
+    self.end = end
+
+  def (iter) self
+    # Return a range as proxy for iteration
+    (range start: self.start end: self.end).iter()
+
+let r = NumberRange 0 5
+assert_eq [...r] [0, 1, 2, 3, 4]
+
+# Test (sink) special method - forwards to a list
+class ListCollector
+  pub let items = nil
+
+  def (init) self
+    self.items = []
+
+  def (sink) self
+    self.items.sink()
+
+let collector = ListCollector()
+redirect output: $collector do
+  put 0
+  put 1
+  put 2
+assert_eq (collector.items) [0, 1, 2]
+
+# Test (call) special method - makes the instance callable
+class Multiplier
+  pub let factor = 1
+
+  def (init) self factor
+    self.factor = factor
+
+  def (call) self x
+    return (x * self.factor)
+
+let double = Multiplier 2
+let triple = Multiplier 3
+
+assert_eq (double 5) 10
+assert_eq (triple 5) 15

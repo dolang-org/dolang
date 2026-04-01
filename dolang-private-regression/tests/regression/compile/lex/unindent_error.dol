@@ -1,0 +1,15 @@
+ echo one
+echo two
+# error: inconsistent indentation
+#   --> unindent_error.dol:LL:LL
+#    |
+# LL | echo two
+#    | ^
+echo three
+  - four
+ - five
+# error: inconsistent indentation
+#   --> unindent_error.dol:LL:LL
+#    |
+# LL |  - five
+#    | ^

@@ -1,0 +1,32 @@
+# Basic subclassing of array
+class MyArray: array
+  def (init) self
+    array.(init) $self
+
+let a = MyArray()
+a.push 1
+a.push 2
+a.push 3
+
+# Length
+assert_eq $a.len 3
+
+# Indexing
+assert_eq $a[0] 1
+assert_eq $a[2] 3
+
+# Iteration
+let sum = 0
+for v = a
+  sum = (sum + v)
+assert_eq $sum 6
+
+# Coercion
+assert_eq (str a) "[1, 2, 3]"
+
+# Comparison
+let b = MyArray()
+b.push 1
+b.push 2
+b.push 3
+assert (a == b)

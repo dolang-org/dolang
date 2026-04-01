@@ -1,0 +1,7 @@
+import math
+let caught = try
+  echo $math.foobar
+  false
+catch _
+  true
+assert $caught

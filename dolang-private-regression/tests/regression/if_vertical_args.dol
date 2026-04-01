@@ -1,0 +1,21 @@
+echo
+  if true
+    - 1
+    - 2
+echo
+  if false
+    - 1
+    - 2
+
+echo
+  if false
+    - false
+  else
+    - 1
+    - 2
+
+# output: END
+# 1 2
+# 
+# 1 2
+# END

@@ -1,0 +1,13 @@
+if false
+  continue
+# error: continue outside of loop
+#   --> invalid_continue_break.dol:LL:LL
+#    |
+# LL |   continue
+#    |   ^^^^^^^^
+break
+# error: break outside of loop
+#   --> invalid_continue_break.dol:LL:LL
+#    |
+# LL | break
+#    | ^^^^^

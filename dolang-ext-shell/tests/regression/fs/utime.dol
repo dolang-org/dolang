@@ -1,0 +1,71 @@
+import
+  fs:
+    - Path
+    - metadata
+    - open
+    - remove
+    - set_timestamps
+  agent:
+    - with_and_without_agent
+  - sys
+  time:
+    - DateTime
+
+with_and_without_agent "set_timestamps updates timestamps" do
+  let test_path = "test_utime.txt"
+  let first_modified = DateTime.from_unix(1234)
+  let first_accessed = DateTime.from_unix(2345)
+  let second_modified = DateTime.from_unix(3456)
+  let second_accessed = DateTime.from_unix(4567)
+  let first_created = DateTime.from_unix(1111)
+  let second_created = DateTime.from_unix(2222)
+
+  open $test_path w do |f|
+    f.write "set_timestamps test"
+
+  if (sys.os == "windows")
+    if (env.get "WINEPREFIX")
+      log "skipping Windows created timestamp test under wine"
+      remove $test_path
+      return
+
+    set_timestamps $test_path modified: $first_modified accessed: $first_accessed created: $first_created
+    let meta = metadata(test_path)
+    assert_eq $meta.modified.seconds 1234
+    assert_eq $meta.modified.nanoseconds 0
+    assert_eq $meta.accessed.seconds 2345
+    assert_eq $meta.accessed.nanoseconds 0
+    assert_eq $meta.created.seconds 1111
+    assert_eq $meta.created.nanoseconds 0
+
+    Path(test_path).set_timestamps modified: $second_modified accessed: $second_accessed created: $second_created
+    let meta = Path(test_path).metadata()
+    assert_eq $meta.modified.seconds 3456
+    assert_eq $meta.modified.nanoseconds 0
+    assert_eq $meta.accessed.seconds 4567
+    assert_eq $meta.accessed.nanoseconds 0
+    assert_eq $meta.created.seconds 2222
+    assert_eq $meta.created.nanoseconds 0
+  else
+    set_timestamps $test_path modified: $first_modified accessed: $first_accessed
+    let meta = metadata(test_path)
+    assert_eq $meta.modified.seconds 1234
+    assert_eq $meta.modified.nanoseconds 0
+    assert_eq $meta.accessed.seconds 2345
+    assert_eq $meta.accessed.nanoseconds 0
+
+    Path(test_path).set_timestamps modified: $second_modified accessed: $second_accessed
+    let meta = Path(test_path).metadata()
+    assert_eq $meta.modified.seconds 3456
+    assert_eq $meta.modified.nanoseconds 0
+    assert_eq $meta.accessed.seconds 4567
+    assert_eq $meta.accessed.nanoseconds 0
+
+    let caught = try
+      set_timestamps $test_path created: $first_created
+      false
+    catch _err
+      true
+    assert $caught
+
+  remove $test_path

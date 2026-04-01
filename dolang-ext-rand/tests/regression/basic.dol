@@ -1,0 +1,101 @@
+import
+  rand:
+    - int
+    - string
+    - pick
+    - shuffle
+  std: error
+
+def assert_err func type: ty :msg ...rest
+  let res = try
+    func ...rest
+    false
+  catch e
+    assert (type e ty)
+    assert_eq (str e) $msg
+    true
+  assert $res
+
+def assert_msg func msg ...rest
+  let res = try
+    func ...rest
+    false
+  catch e
+    assert_eq (str e) $msg
+    true
+  assert $res
+
+let zero = int 0 1
+assert_eq $zero 0
+
+for _ = range 200
+  let n = int 10
+  assert ((n >= 0) && (n < 10))
+
+for _ = range 200
+  let n = int -5 5
+  assert ((n >= -5) && (n < 5))
+
+assert_msg $int "value error: expected end to be greater than start" 0
+assert_msg $int "value error: expected end to be greater than start" 3 2
+assert_err $int a type: $error.TypeError msg: "type error: expected `int`"
+assert_err $int 0 b type: $error.TypeError msg: "type error: expected `int`"
+
+assert_eq (string 0 alphabet: "abc") ""
+let token = string 8
+assert_eq $token.len 8
+
+for _ = range 50
+  let s = string 12 alphabet: a
+  assert_eq $s.len 12
+  assert_eq $s "aaaaaaaaaaaa"
+
+for _ = range 50
+  let s = string 6 alphabet: "å"
+  assert_eq $s "åååååå"
+
+assert_msg $string "value error: expected len to be non-negative" -1 alphabet: abc
+assert_msg $string "value error: expected alphabet to be non-empty" 4 alphabet: ""
+assert_err $string foo alphabet: abc type: $error.TypeError msg: "type error: expected `int`"
+assert_err $string 4 alphabet: 123 type: $error.TypeError msg: "type error: expected `str`"
+
+let items = [10, 20, 30]
+for _ = range 50
+  assert (items.contains (pick items))
+
+assert_msg $pick "value error: expected non-empty array" []
+assert_err $pick 123 type: $error.TypeError msg: "type error: expected array"
+
+let empty = []
+assert_eq (shuffle empty) nil
+assert_eq $empty []
+
+let one = [42]
+assert_eq (shuffle one) nil
+assert_eq $one [42]
+
+let values = [1, 2, 3, 4, 5]
+let before = [...values]
+assert_eq (shuffle values) nil
+let after = [...values]
+before.sort()
+after.sort()
+assert_eq $after $before
+
+let seq = [1, 2, 3, 4, 5]
+let original = [...seq]
+let alias = seq
+let changed = false
+for _ = range 100
+  shuffle $alias
+  if (seq != original)
+    changed = true
+    break
+
+assert $changed
+let seq_sorted = [...seq]
+seq_sorted.sort()
+original.sort()
+assert_eq $seq_sorted $original
+
+assert_err $shuffle 123 type: $error.TypeError msg: "type error: expected array"

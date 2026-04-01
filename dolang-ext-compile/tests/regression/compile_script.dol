@@ -1,0 +1,3 @@
+# Test basic compile functionality
+import compile
+compile.compile "test.dol" "(1 + 1)"

@@ -1,0 +1,2 @@
+assert_eq b"\xAF" b"\xaf"
+assert_eq b"\x0A" b"\n"

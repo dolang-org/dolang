@@ -1,0 +1,24 @@
+let foo = 42
+def _dummy()
+  echo $foo
+for i = ["a", "b", "c", "d"]
+  def _dummy2()
+    echo $i
+  if (i == "a")
+    continue
+  echo $i
+  if (i == "c")
+    break
+
+# Test break in loop in position with discarded statement result
+def fun()
+  for i = [0, 1, 2]
+    if (i == 1)
+      break
+  "done"
+
+fun()
+# output: END
+# b
+# c
+# END
