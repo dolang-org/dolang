@@ -2,7 +2,11 @@ use std::{
     any::Any,
     collections::HashMap,
     io,
-    os::unix::{io::OwnedFd, net::UnixStream as StdUnixStream, process::ExitStatusExt},
+    os::unix::{
+        io::{AsFd, OwnedFd},
+        net::UnixStream as StdUnixStream,
+        process::ExitStatusExt,
+    },
     path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
@@ -16,13 +20,13 @@ use tokio::{
 use tokio_unix_ipc::{Receiver, Sender, serde::Handle};
 
 use crate::{
-    LockedSender,
+    Child, ChownIdentity, Command, LockedSender, Metadata, Permissions, PipeRecv, PipeSend, Vfs,
     protocol::{
-        AccessRequest, CanonicalizeRequest, ChownIdentity, ChownRequest, CopyRequest,
-        CreateDirRequest, GlobRequest, Metadata, MetadataRequest, MoveRequest, OpenRequest,
-        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
-        Response, ResponseKind, SetPermissionsRequest, SpawnRequest, SymlinkRequest, Timestamp,
-        UnixStreamSocketRequest, UtimeRequest,
+        AccessRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
+        GlobRequest, MetadataRequest, MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest,
+        RemoveRequest, RenameRequest, Request, RequestKind, Response, ResponseKind,
+        SetPermissionsRequest, SpawnRequest, SymlinkRequest, Timestamp, UnixStreamSocketRequest,
+        UtimeRequest,
     },
 };
 
@@ -84,65 +88,6 @@ pub struct Query {
     pub cwd: PathBuf,
 }
 
-/// Representation of file permissions.
-///
-/// This struct mimics [`std::fs::Permissions`] and provides access to
-/// file permission bits, including Unix-specific mode bits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Permissions {
-    mode: u32,
-}
-
-impl Permissions {
-    /// Creates a new `Permissions` from the given mode bits.
-    pub fn from_mode(mode: u32) -> Self {
-        Self { mode }
-    }
-
-    /// Returns the underlying mode bits.
-    ///
-    /// On Unix, this returns the full mode including file type and permissions.
-    pub fn mode(&self) -> u32 {
-        self.mode
-    }
-
-    /// Sets the mode bits.
-    ///
-    /// On Unix, this sets the full mode including file type and permissions.
-    pub fn set_mode(&mut self, mode: u32) {
-        self.mode = mode;
-    }
-
-    /// Returns true if these permissions describe a readonly file.
-    ///
-    /// On Unix, this checks if any write bits are set for owner, group, or others.
-    pub fn readonly(&self) -> bool {
-        // Check if any write bits are set (owner: 0o200, group: 0o020, others: 0o002)
-        self.mode & 0o222 == 0
-    }
-
-    /// Sets the readonly flag.
-    ///
-    /// If `readonly` is true, clears all write permission bits.
-    /// If `readonly` is false, sets write permission for the owner.
-    pub fn set_readonly(&mut self, readonly: bool) {
-        if readonly {
-            // Clear all write bits
-            self.mode &= !0o222;
-        } else {
-            // Set owner write bit
-            self.mode |= 0o200;
-        }
-    }
-}
-
-impl Metadata {
-    /// Returns the file permissions.
-    pub fn permissions(&self) -> Permissions {
-        Permissions::from_mode(self.mode)
-    }
-}
-
 /// Client for connecting to the agent daemon and spawning processes.
 pub struct Client {
     inner: Arc<ClientInner>,
@@ -184,16 +129,6 @@ impl Client {
         Ok(Self::from_channel(sender, receiver))
     }
 
-    /// Create a spawn request for the given program.
-    pub fn command(&self, program: impl AsRef<Path>) -> CommandBuilder<'_> {
-        CommandBuilder::new(self, program)
-    }
-
-    /// Create an open options builder for opening files.
-    pub fn open_options(&self) -> OpenOptions<'_> {
-        OpenOptions::new(self)
-    }
-
     /// Create a Unix stream socket in the agent namespace and return its descriptor.
     ///
     /// If `bind` is provided, the socket is bound to that pathname first. If `connect`
@@ -231,287 +166,6 @@ impl Client {
         }
     }
 
-    /// Remove a path.
-    pub async fn remove(
-        &self,
-        path: impl AsRef<Path>,
-        all: bool,
-        ignore: bool,
-    ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Remove(RemoveRequest {
-                        path: path.as_ref().to_path_buf(),
-                        all,
-                        ignore,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Get file metadata at the given path.
-    pub async fn metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Metadata(MetadataRequest {
-                        path: path.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Create a directory at the given path.
-    pub async fn create_dir(&self, path: impl AsRef<Path>, all: bool) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::CreateDir(CreateDirRequest {
-                        path: path.as_ref().to_path_buf(),
-                        all,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Remove a directory, optionally pruning empty subdirectories.
-    pub async fn remove_dir(
-        &self,
-        path: impl AsRef<Path>,
-        all: bool,
-        ignore: bool,
-    ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::RemoveDir(RemoveDirRequest {
-                        path: path.as_ref().to_path_buf(),
-                        ignore,
-                        all,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Copy a filesystem entry from one location to another.
-    pub async fn copy(
-        &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
-        all: bool,
-    ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Copy(CopyRequest {
-                        from: from.as_ref().to_path_buf(),
-                        to: to.as_ref().to_path_buf(),
-                        all,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Rename a file or directory.
-    pub async fn rename(
-        &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
-    ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Rename(RenameRequest {
-                        from: from.as_ref().to_path_buf(),
-                        to: to.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Move a filesystem entry from one location to another.
-    pub async fn move_(
-        &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
-        all: bool,
-    ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Move(MoveRequest {
-                        from: from.as_ref().to_path_buf(),
-                        to: to.as_ref().to_path_buf(),
-                        all,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Create a symlink at dst pointing to src.
-    pub async fn symlink(
-        &self,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
-    ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Symlink(SymlinkRequest {
-                        src: src.as_ref().to_path_buf(),
-                        dst: dst.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Get symlink metadata at the given path (does not follow symlinks).
-    pub async fn symlink_metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::SymlinkMetadata(MetadataRequest {
-                        path: path.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Get the canonical form of a path.
-    pub async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Canonicalize(CanonicalizeRequest {
-                        path: path.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Read the target of a symlink.
-    pub async fn read_link(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::ReadLink(ReadLinkRequest {
-                        path: path.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
     /// Check file accessibility.
     ///
     /// Mode is a bitmask of accessibility flags from [`AccessFlags`](crate::AccessFlags):
@@ -535,106 +189,6 @@ impl Client {
                     kind: RequestKind::Access(AccessRequest {
                         path: path.as_ref().to_path_buf(),
                         mode: mode.bits(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Execute a glob pattern and return matching paths.
-    ///
-    /// # Arguments
-    ///
-    /// * `pattern` - The glob pattern to match
-    /// * `cwd` - Optional working directory to start the search from
-    /// * `follow_symlinks` - Whether to follow symbolic links when traversing directories
-    /// * `max_depth` - Optional maximum depth to traverse
-    ///
-    /// # Returns
-    ///
-    /// A vector of matching paths, or an I/O error.
-    pub async fn glob(
-        &self,
-        pattern: impl Into<String>,
-        root: &Path,
-        follow_symlinks: bool,
-        max_depth: Option<usize>,
-    ) -> Result<Vec<PathBuf>, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Glob(GlobRequest {
-                        pattern: pattern.into(),
-                        root: root.to_path_buf(),
-                        follow_symlinks,
-                        max_depth,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Changes the permissions found on a file or a directory.
-    ///
-    /// This is an async version of [`std::fs::set_permissions`].
-    pub async fn set_permissions(
-        &self,
-        path: impl AsRef<Path>,
-        perm: Permissions,
-    ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::SetPermissions(SetPermissionsRequest {
-                        path: path.as_ref().to_path_buf(),
-                        mode: perm.mode(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-
-    /// Change file access and modification times.
-    pub async fn utime(
-        &self,
-        path: impl AsRef<Path>,
-        accessed: Option<(i64, u32)>,
-        modified: Option<(i64, u32)>,
-    ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Utime(UtimeRequest {
-                        path: path.as_ref().to_path_buf(),
-                        accessed: accessed.map(|(secs, nanos)| Timestamp { secs, nanos }),
-                        modified: modified.map(|(secs, nanos)| Timestamp { secs, nanos }),
                     }),
                 };
                 alive.sender.send(request).await?;
@@ -733,37 +287,6 @@ impl Client {
             ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
         }
     }
-
-    /// Change file ownership at the given path.
-    pub async fn chown(
-        &self,
-        path: impl AsRef<Path>,
-        user: Option<ChownIdentity>,
-        group: Option<ChownIdentity>,
-        follow: bool,
-    ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Chown(ChownRequest {
-                        path: path.as_ref().to_path_buf(),
-                        user,
-                        group,
-                        follow,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
 }
 
 impl TryFrom<OwnedFd> for Client {
@@ -797,7 +320,7 @@ impl Clone for Client {
 ///     .env_remove("DEBUG")
 ///     .current_dir("/home")
 ///     .stdin(fd)
-///     .status()
+///     .spawn()
 ///     .await?;
 /// ```
 pub struct CommandBuilder<'a> {
@@ -809,6 +332,12 @@ pub struct CommandBuilder<'a> {
     stdin_fd: Option<OwnedFd>,
     stdout_fd: Option<OwnedFd>,
     stderr_fd: Option<OwnedFd>,
+}
+
+pub struct ClientChild<'a> {
+    client: &'a Client,
+    request_id: u64,
+    inner: Option<oneshot::Receiver<Result<ExitStatus, io::Error>>>,
 }
 
 impl<'a> CommandBuilder<'a> {
@@ -824,75 +353,131 @@ impl<'a> CommandBuilder<'a> {
             stderr_fd: None,
         }
     }
+}
 
-    /// Add a command-line argument.
-    pub fn arg(&mut self, arg: impl Into<String>) -> &mut Self {
-        self.args.push(arg.into());
+impl Child for ClientChild<'_> {
+    async fn wait(&mut self) -> Result<ExitStatus, io::Error> {
+        let result = match self.inner.as_mut() {
+            Some(inner) => inner.await.expect("oneshot sender dropped"),
+            None => return Err(io::Error::other("child already waited")),
+        };
+        self.inner = None;
+        result
+    }
+
+    async fn terminate(self) -> Result<ExitStatus, io::Error> {
+        let inner = self.inner;
+        if inner.is_none() {
+            return Err(io::Error::other("child already waited"));
+        }
+        let mut state = self.client.inner.state.lock().await;
+        if let ClientState::Alive(alive) = &mut *state {
+            let _ = alive
+                .sender
+                .send(Request {
+                    id: self.request_id,
+                    kind: RequestKind::Cancel,
+                })
+                .await;
+        }
+        drop(state);
+
+        if let Some(inner) = inner {
+            return inner.await.expect("oneshot sender dropped");
+        }
+        Err(io::Error::other("child already waited"))
+    }
+}
+
+impl<'a> Command for CommandBuilder<'a> {
+    type Child = ClientChild<'a>;
+
+    fn arg(&mut self, arg: &str) -> &mut Self {
+        self.args.push(arg.to_owned());
         self
     }
 
-    /// Add multiple command-line arguments.
-    pub fn args(&mut self, args: impl IntoIterator<Item = String>) -> &mut Self {
-        self.args.extend(args);
+    fn env(&mut self, key: &str, val: &str) -> &mut Self {
+        self.env.insert(key.to_owned(), Some(val.to_owned()));
         self
     }
 
-    /// Set an environment variable. Use `env_remove` to unset.
-    pub fn env(&mut self, key: impl Into<String>, val: impl Into<String>) -> &mut Self {
-        self.env.insert(key.into(), Some(val.into()));
+    fn env_remove(&mut self, key: &str) -> &mut Self {
+        self.env.insert(key.to_owned(), None);
         self
     }
 
-    /// Remove an environment variable.
-    pub fn env_remove(&mut self, key: impl Into<String>) -> &mut Self {
-        self.env.insert(key.into(), None);
+    fn current_dir(&mut self, dir: &Path) -> &mut Self {
+        self.cwd = Some(dir.to_path_buf());
         self
     }
 
-    /// Set the working directory for the spawned process.
-    pub fn current_dir(&mut self, dir: impl AsRef<Path>) -> &mut Self {
-        self.cwd = Some(dir.as_ref().to_path_buf());
+    fn stdin_pipe(&mut self, pipe: PipeRecv) -> io::Result<&mut Self> {
+        self.stdin_fd = Some(pipe.into_blocking_fd()?);
+        Ok(self)
+    }
+
+    fn stdout_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
+        self.stdout_fd = Some(pipe.into_blocking_fd()?);
+        Ok(self)
+    }
+
+    fn stdin_inherit(&mut self) -> io::Result<&mut Self> {
+        self.stdin_fd = Some(std::io::stdin().as_fd().try_clone_to_owned()?);
+        Ok(self)
+    }
+
+    fn stdout_inherit(&mut self) -> io::Result<&mut Self> {
+        self.stdout_fd = Some(std::io::stdout().as_fd().try_clone_to_owned()?);
+        Ok(self)
+    }
+
+    fn stdin_fd(&mut self, fd: OwnedFd) -> &mut Self {
+        self.stdin_fd = Some(fd);
         self
     }
 
-    /// Redirect stdin from the given file descriptor.
-    pub fn stdin(&mut self, fd: impl Into<OwnedFd>) -> &mut Self {
-        self.stdin_fd = Some(fd.into());
+    fn stdout_fd(&mut self, fd: OwnedFd) -> &mut Self {
+        self.stdout_fd = Some(fd);
         self
     }
 
-    /// Redirect stdin from `/dev/null`.
-    pub fn stdin_null(&mut self) -> &mut Self {
+    fn stdin_null(&mut self) -> &mut Self {
         self.stdin_fd = None;
         self
     }
 
-    /// Redirect stdout to the given file descriptor.
-    pub fn stdout(&mut self, fd: impl Into<OwnedFd>) -> &mut Self {
-        self.stdout_fd = Some(fd.into());
-        self
-    }
-
-    /// Redirect stdout to `/dev/null`.
-    pub fn stdout_null(&mut self) -> &mut Self {
+    fn stdout_null(&mut self) -> &mut Self {
         self.stdout_fd = None;
         self
     }
 
-    /// Redirect stderr to the given file descriptor.
-    pub fn stderr(&mut self, fd: impl Into<OwnedFd>) -> &mut Self {
-        self.stderr_fd = Some(fd.into());
+    fn stderr_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
+        self.stderr_fd = Some(pipe.into_blocking_fd()?);
+        Ok(self)
+    }
+
+    fn stderr_inherit(&mut self) -> io::Result<&mut Self> {
+        self.stderr_fd = Some(std::io::stderr().as_fd().try_clone_to_owned()?);
+        Ok(self)
+    }
+
+    fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self> {
+        self.stderr_fd = Some(std::io::stdout().as_fd().try_clone_to_owned()?);
+        Ok(self)
+    }
+
+    fn stderr_fd(&mut self, fd: OwnedFd) -> &mut Self {
+        self.stderr_fd = Some(fd);
         self
     }
 
-    /// Redirect stderr to `/dev/null`.
-    pub fn stderr_null(&mut self) -> &mut Self {
+    fn stderr_null(&mut self) -> &mut Self {
         self.stderr_fd = None;
         self
     }
 
-    /// Spawn the process and wait for it to exit.
-    pub async fn status(self) -> Result<ExitStatus, io::Error> {
+    async fn spawn(self) -> io::Result<Self::Child> {
         let req = SpawnRequest {
             program: self.program,
             args: self.args,
@@ -902,23 +487,32 @@ impl<'a> CommandBuilder<'a> {
             stdout_fd: self.stdout_fd.map(Handle::new),
             stderr_fd: self.stderr_fd.map(Handle::new),
         };
-
-        let mut state = self.client.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Spawn(req),
-                };
-                let _ = alive.sender.send(request).await;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
+        let client = self.client;
+        let (id, rx) = {
+            let mut state = client.inner.state.lock().await;
+            match &mut *state {
+                ClientState::Alive(alive) => {
+                    let (tx, rx) = oneshot::channel();
+                    let id = alive.next_id();
+                    alive.insert_pending(id, tx);
+                    alive
+                        .sender
+                        .send(Request {
+                            id,
+                            kind: RequestKind::Spawn(req),
+                        })
+                        .await?;
+                    (id, rx)
+                }
+                ClientState::Dead(msg) => return Err(io::Error::other(msg.clone())),
             }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
+        };
+
+        Ok(ClientChild {
+            client,
+            request_id: id,
+            inner: Some(rx),
+        })
     }
 }
 
@@ -1015,6 +609,447 @@ impl<'a> OpenOptions<'a> {
                 let request = Request {
                     id,
                     kind: RequestKind::Open(req),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+}
+
+impl crate::OpenOptions for OpenOptions<'_> {
+    fn read(&mut self, read: bool) -> &mut Self {
+        self.read(read)
+    }
+
+    fn write(&mut self, write: bool) -> &mut Self {
+        self.write(write)
+    }
+
+    fn append(&mut self, append: bool) -> &mut Self {
+        self.append(append)
+    }
+
+    fn create(&mut self, create: bool) -> &mut Self {
+        self.create(create)
+    }
+
+    fn create_new(&mut self, create_new: bool) -> &mut Self {
+        self.create_new(create_new)
+    }
+
+    fn truncate(&mut self, truncate: bool) -> &mut Self {
+        self.truncate(truncate)
+    }
+
+    async fn open(&self, path: impl AsRef<Path>) -> Result<File, io::Error> {
+        self.open(path).await
+    }
+}
+
+impl Vfs for Client {
+    type OpenOptions<'a>
+        = OpenOptions<'a>
+    where
+        Self: 'a;
+    type Command<'a>
+        = CommandBuilder<'a>
+    where
+        Self: 'a;
+
+    fn open_options(&self) -> Self::OpenOptions<'_> {
+        OpenOptions::new(self)
+    }
+
+    fn command(&self, program: impl AsRef<Path>) -> Self::Command<'_> {
+        CommandBuilder::new(self, program)
+    }
+
+    async fn remove(
+        &self,
+        path: impl AsRef<Path>,
+        all: bool,
+        ignore: bool,
+    ) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Remove(RemoveRequest {
+                        path: path.as_ref().to_path_buf(),
+                        all,
+                        ignore,
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Metadata(MetadataRequest {
+                        path: path.as_ref().to_path_buf(),
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn create_dir(&self, path: impl AsRef<Path>, all: bool) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::CreateDir(CreateDirRequest {
+                        path: path.as_ref().to_path_buf(),
+                        all,
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn remove_dir(
+        &self,
+        path: impl AsRef<Path>,
+        all: bool,
+        ignore: bool,
+    ) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::RemoveDir(RemoveDirRequest {
+                        path: path.as_ref().to_path_buf(),
+                        ignore,
+                        all,
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn copy(
+        &self,
+        from: impl AsRef<Path>,
+        to: impl AsRef<Path>,
+        all: bool,
+    ) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Copy(CopyRequest {
+                        from: from.as_ref().to_path_buf(),
+                        to: to.as_ref().to_path_buf(),
+                        all,
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Rename(RenameRequest {
+                        from: from.as_ref().to_path_buf(),
+                        to: to.as_ref().to_path_buf(),
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn move_(
+        &self,
+        from: impl AsRef<Path>,
+        to: impl AsRef<Path>,
+        all: bool,
+    ) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Move(MoveRequest {
+                        from: from.as_ref().to_path_buf(),
+                        to: to.as_ref().to_path_buf(),
+                        all,
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn symlink(&self, src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Symlink(SymlinkRequest {
+                        src: src.as_ref().to_path_buf(),
+                        dst: dst.as_ref().to_path_buf(),
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn symlink_dir(
+        &self,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+    ) -> Result<(), io::Error> {
+        self.symlink(src, dst).await
+    }
+
+    async fn symlink_file(
+        &self,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+    ) -> Result<(), io::Error> {
+        self.symlink(src, dst).await
+    }
+
+    async fn symlink_metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::SymlinkMetadata(MetadataRequest {
+                        path: path.as_ref().to_path_buf(),
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Canonicalize(CanonicalizeRequest {
+                        path: path.as_ref().to_path_buf(),
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn read_link(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::ReadLink(ReadLinkRequest {
+                        path: path.as_ref().to_path_buf(),
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn glob(
+        &self,
+        pattern: impl Into<String>,
+        root: &Path,
+        follow_symlinks: bool,
+        max_depth: Option<usize>,
+    ) -> Result<Vec<PathBuf>, io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Glob(GlobRequest {
+                        pattern: pattern.into(),
+                        root: root.to_path_buf(),
+                        follow_symlinks,
+                        max_depth,
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn set_permissions(
+        &self,
+        path: impl AsRef<Path>,
+        perm: Permissions,
+    ) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::SetPermissions(SetPermissionsRequest {
+                        path: path.as_ref().to_path_buf(),
+                        mode: perm.mode(),
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn utime(
+        &self,
+        path: impl AsRef<Path>,
+        accessed: Option<(i64, u32)>,
+        modified: Option<(i64, u32)>,
+    ) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Utime(UtimeRequest {
+                        path: path.as_ref().to_path_buf(),
+                        accessed: accessed.map(|(secs, nanos)| Timestamp { secs, nanos }),
+                        modified: modified.map(|(secs, nanos)| Timestamp { secs, nanos }),
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn chown(
+        &self,
+        path: impl AsRef<Path>,
+        user: Option<ChownIdentity>,
+        group: Option<ChownIdentity>,
+        follow: bool,
+    ) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Chown(ChownRequest {
+                        path: path.as_ref().to_path_buf(),
+                        user,
+                        group,
+                        follow,
+                    }),
                 };
                 alive.sender.send(request).await?;
                 drop(state);

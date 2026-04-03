@@ -1,23 +1,1208 @@
 #![deny(warnings)]
+#![allow(async_fn_in_trait)]
 
+use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::os::fd::OwnedFd;
 use std::{
     io,
     path::{Path, PathBuf},
+    process::ExitStatus,
 };
 use tokio::fs;
-use wax::{
-    Glob,
-    walk::{DepthBehavior, DepthMax, Entry, LinkBehavior, WalkBehavior},
-};
 
 #[cfg(unix)]
 mod client;
+mod direct;
+mod pipe;
 #[cfg(unix)]
 mod protocol;
 #[cfg(unix)]
 mod server;
 #[cfg(unix)]
 mod service;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FileType {
+    File,
+    Dir,
+    Symlink,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Permissions {
+    mode: u32,
+}
+
+impl Permissions {
+    pub fn from_mode(mode: u32) -> Self {
+        Self { mode }
+    }
+
+    pub fn mode(&self) -> u32 {
+        self.mode
+    }
+
+    pub fn set_mode(&mut self, mode: u32) {
+        self.mode = mode;
+    }
+
+    pub fn readonly(&self) -> bool {
+        self.mode & 0o222 == 0
+    }
+
+    pub fn set_readonly(&mut self, readonly: bool) {
+        if readonly {
+            self.mode &= !0o222;
+        } else {
+            self.mode |= 0o200;
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Metadata {
+    pub len: u64,
+    pub file_type: FileType,
+    pub atime: i64,
+    pub atime_nsec: i64,
+    pub mtime: i64,
+    pub mtime_nsec: i64,
+    pub ctime: i64,
+    pub ctime_nsec: i64,
+    pub mode: u32,
+    pub dev: u64,
+    pub ino: u64,
+    pub nlink: u64,
+    pub uid: u32,
+    pub gid: u32,
+    pub rdev: u64,
+    pub blksize: u64,
+    pub blocks: u64,
+}
+
+impl Metadata {
+    pub fn permissions(&self) -> Permissions {
+        Permissions::from_mode(self.mode)
+    }
+}
+
+pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        let file_type = if metadata.is_file() {
+            crate::FileType::File
+        } else if metadata.is_dir() {
+            crate::FileType::Dir
+        } else if metadata.file_type().is_symlink() {
+            crate::FileType::Symlink
+        } else {
+            crate::FileType::Unknown
+        };
+
+        Metadata {
+            len: metadata.len(),
+            file_type,
+            atime: metadata.atime(),
+            atime_nsec: metadata.atime_nsec(),
+            mtime: metadata.mtime(),
+            mtime_nsec: metadata.mtime_nsec(),
+            ctime: metadata.ctime(),
+            ctime_nsec: metadata.ctime_nsec(),
+            mode: metadata.mode(),
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            nlink: metadata.nlink(),
+            uid: metadata.uid(),
+            gid: metadata.gid(),
+            rdev: metadata.rdev(),
+            blksize: metadata.blksize(),
+            blocks: metadata.blocks(),
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let file_type = if metadata.is_file() {
+            crate::FileType::File
+        } else if metadata.is_dir() {
+            crate::FileType::Dir
+        } else if metadata.file_type().is_symlink() {
+            crate::FileType::Symlink
+        } else {
+            crate::FileType::Unknown
+        };
+
+        Metadata {
+            len: metadata.len(),
+            file_type,
+            atime: system_time_to_parts(metadata.accessed().ok()).0,
+            atime_nsec: i64::from(system_time_to_parts(metadata.accessed().ok()).1),
+            mtime: system_time_to_parts(metadata.modified().ok()).0,
+            mtime_nsec: i64::from(system_time_to_parts(metadata.modified().ok()).1),
+            ctime: system_time_to_parts(metadata.created().ok()).0,
+            ctime_nsec: i64::from(system_time_to_parts(metadata.created().ok()).1),
+            mode: metadata
+                .permissions()
+                .readonly()
+                .then_some(0o444)
+                .unwrap_or(0o666),
+            dev: 0,
+            ino: 0,
+            nlink: 0,
+            uid: 0,
+            gid: 0,
+            rdev: 0,
+            blksize: 0,
+            blocks: 0,
+        }
+    }
+}
+
+#[cfg(windows)]
+fn system_time_to_parts(time: Option<std::time::SystemTime>) -> (i64, u32) {
+    use std::time::UNIX_EPOCH;
+
+    let Some(time) = time else {
+        return (0, 0);
+    };
+
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(duration) => (
+            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
+            duration.subsec_nanos(),
+        ),
+        Err(err) => {
+            let duration = err.duration();
+            let secs = i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
+            if duration.subsec_nanos() == 0 {
+                (-secs, 0)
+            } else {
+                (-secs - 1, 1_000_000_000 - duration.subsec_nanos())
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChownIdentity {
+    Id(u32),
+    Name(String),
+}
+
+#[allow(async_fn_in_trait)]
+pub trait OpenOptions {
+    fn read(&mut self, read: bool) -> &mut Self;
+    fn write(&mut self, write: bool) -> &mut Self;
+    fn append(&mut self, append: bool) -> &mut Self;
+    fn create(&mut self, create: bool) -> &mut Self;
+    fn create_new(&mut self, create_new: bool) -> &mut Self;
+    fn truncate(&mut self, truncate: bool) -> &mut Self;
+    async fn open(&self, path: impl AsRef<Path>) -> Result<fs::File, io::Error>;
+}
+
+#[allow(async_fn_in_trait)]
+pub trait Child {
+    async fn wait(&mut self) -> Result<ExitStatus, io::Error>;
+    async fn terminate(self) -> Result<ExitStatus, io::Error>
+    where
+        Self: Sized;
+}
+
+#[allow(async_fn_in_trait)]
+pub trait Command {
+    type Child: Child;
+
+    fn arg(&mut self, arg: &str) -> &mut Self;
+    fn env(&mut self, key: &str, val: &str) -> &mut Self;
+    fn env_remove(&mut self, key: &str) -> &mut Self;
+    fn current_dir(&mut self, dir: &Path) -> &mut Self;
+    fn stdin_pipe(&mut self, pipe: PipeRecv) -> io::Result<&mut Self>;
+    fn stdout_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self>;
+    fn stdin_inherit(&mut self) -> io::Result<&mut Self>;
+    fn stdout_inherit(&mut self) -> io::Result<&mut Self>;
+    #[cfg(unix)]
+    fn stdin_fd(&mut self, fd: OwnedFd) -> &mut Self;
+    #[cfg(unix)]
+    fn stdout_fd(&mut self, fd: OwnedFd) -> &mut Self;
+    fn stdin_null(&mut self) -> &mut Self;
+    fn stdout_null(&mut self) -> &mut Self;
+    fn stderr_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self>;
+    fn stderr_inherit(&mut self) -> io::Result<&mut Self>;
+    fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self>;
+    #[cfg(unix)]
+    fn stderr_fd(&mut self, fd: OwnedFd) -> &mut Self;
+    fn stderr_null(&mut self) -> &mut Self;
+    async fn spawn(self) -> io::Result<Self::Child>;
+}
+
+#[allow(async_fn_in_trait)]
+pub trait Vfs {
+    type OpenOptions<'a>: OpenOptions
+    where
+        Self: 'a;
+    type Command<'a>: Command
+    where
+        Self: 'a;
+
+    fn open_options(&self) -> Self::OpenOptions<'_>;
+    fn command(&self, program: impl AsRef<Path>) -> Self::Command<'_>;
+    async fn file_metadata(&self, file: &fs::File) -> Result<Metadata, io::Error> {
+        file.metadata().await.map(metadata_from_std)
+    }
+
+    async fn remove(
+        &self,
+        path: impl AsRef<Path>,
+        all: bool,
+        ignore: bool,
+    ) -> Result<(), io::Error>;
+    async fn metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error>;
+    async fn create_dir(&self, path: impl AsRef<Path>, all: bool) -> Result<(), io::Error>;
+    async fn remove_dir(
+        &self,
+        path: impl AsRef<Path>,
+        all: bool,
+        ignore: bool,
+    ) -> Result<(), io::Error>;
+    async fn copy(
+        &self,
+        from: impl AsRef<Path>,
+        to: impl AsRef<Path>,
+        all: bool,
+    ) -> Result<(), io::Error>;
+    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), io::Error>;
+    async fn move_(
+        &self,
+        from: impl AsRef<Path>,
+        to: impl AsRef<Path>,
+        all: bool,
+    ) -> Result<(), io::Error>;
+    async fn symlink(&self, src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), io::Error>;
+    async fn symlink_dir(
+        &self,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+    ) -> Result<(), io::Error>;
+    async fn symlink_file(
+        &self,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+    ) -> Result<(), io::Error>;
+    async fn symlink_metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error>;
+    async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error>;
+    async fn read_link(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error>;
+    async fn glob(
+        &self,
+        pattern: impl Into<String>,
+        root: &Path,
+        follow_symlinks: bool,
+        max_depth: Option<usize>,
+    ) -> Result<Vec<PathBuf>, io::Error>;
+    async fn set_permissions(
+        &self,
+        path: impl AsRef<Path>,
+        perm: Permissions,
+    ) -> Result<(), io::Error>;
+    async fn utime(
+        &self,
+        path: impl AsRef<Path>,
+        accessed: Option<(i64, u32)>,
+        modified: Option<(i64, u32)>,
+    ) -> Result<(), io::Error>;
+    async fn chown(
+        &self,
+        path: impl AsRef<Path>,
+        user: Option<ChownIdentity>,
+        group: Option<ChownIdentity>,
+        follow: bool,
+    ) -> Result<(), io::Error>;
+}
+
+pub use direct::{Direct, DirectOpenOptions};
+pub use pipe::{PipeRecv, PipeSend, pipe};
+
+#[cfg(unix)]
+pub enum ClientOrDirectOpenOptions<'a> {
+    Client(client::OpenOptions<'a>),
+    Direct(DirectOpenOptions),
+}
+
+#[cfg(unix)]
+impl OpenOptions for ClientOrDirectOpenOptions<'_> {
+    fn read(&mut self, read: bool) -> &mut Self {
+        match self {
+            Self::Client(opts) => {
+                opts.read(read);
+            }
+            Self::Direct(opts) => {
+                opts.read(read);
+            }
+        }
+        self
+    }
+
+    fn write(&mut self, write: bool) -> &mut Self {
+        match self {
+            Self::Client(opts) => {
+                opts.write(write);
+            }
+            Self::Direct(opts) => {
+                opts.write(write);
+            }
+        }
+        self
+    }
+
+    fn append(&mut self, append: bool) -> &mut Self {
+        match self {
+            Self::Client(opts) => {
+                opts.append(append);
+            }
+            Self::Direct(opts) => {
+                opts.append(append);
+            }
+        }
+        self
+    }
+
+    fn create(&mut self, create: bool) -> &mut Self {
+        match self {
+            Self::Client(opts) => {
+                opts.create(create);
+            }
+            Self::Direct(opts) => {
+                opts.create(create);
+            }
+        }
+        self
+    }
+
+    fn create_new(&mut self, create_new: bool) -> &mut Self {
+        match self {
+            Self::Client(opts) => {
+                opts.create_new(create_new);
+            }
+            Self::Direct(opts) => {
+                opts.create_new(create_new);
+            }
+        }
+        self
+    }
+
+    fn truncate(&mut self, truncate: bool) -> &mut Self {
+        match self {
+            Self::Client(opts) => {
+                opts.truncate(truncate);
+            }
+            Self::Direct(opts) => {
+                opts.truncate(truncate);
+            }
+        }
+        self
+    }
+
+    async fn open(&self, path: impl AsRef<Path>) -> Result<fs::File, io::Error> {
+        match self {
+            Self::Client(opts) => opts.open(path).await,
+            Self::Direct(opts) => opts.open(path).await,
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub struct ClientOrDirectOpenOptions<'a> {
+    inner: DirectOpenOptions,
+    _marker: std::marker::PhantomData<&'a ()>,
+}
+
+#[cfg(not(unix))]
+impl OpenOptions for ClientOrDirectOpenOptions<'_> {
+    fn read(&mut self, read: bool) -> &mut Self {
+        self.inner.read(read);
+        self
+    }
+
+    fn write(&mut self, write: bool) -> &mut Self {
+        self.inner.write(write);
+        self
+    }
+
+    fn append(&mut self, append: bool) -> &mut Self {
+        self.inner.append(append);
+        self
+    }
+
+    fn create(&mut self, create: bool) -> &mut Self {
+        self.inner.create(create);
+        self
+    }
+
+    fn create_new(&mut self, create_new: bool) -> &mut Self {
+        self.inner.create_new(create_new);
+        self
+    }
+
+    fn truncate(&mut self, truncate: bool) -> &mut Self {
+        self.inner.truncate(truncate);
+        self
+    }
+
+    async fn open(&self, path: impl AsRef<Path>) -> Result<fs::File, io::Error> {
+        self.inner.open(path).await
+    }
+}
+
+#[cfg(unix)]
+pub enum ClientOrDirectCommand<'a> {
+    Client(client::CommandBuilder<'a>),
+    Direct(direct::DirectCommand),
+}
+
+#[cfg(unix)]
+pub enum ClientOrDirectChild<'a> {
+    Client(client::ClientChild<'a>),
+    Direct(direct::DirectChild),
+}
+
+#[cfg(unix)]
+#[cfg(unix)]
+impl Child for ClientOrDirectChild<'_> {
+    async fn wait(&mut self) -> Result<ExitStatus, io::Error> {
+        match self {
+            Self::Client(child) => child.wait().await,
+            Self::Direct(child) => child.wait().await,
+        }
+    }
+
+    async fn terminate(self) -> Result<ExitStatus, io::Error> {
+        match self {
+            Self::Client(child) => child.terminate().await,
+            Self::Direct(child) => child.terminate().await,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl<'a> Command for ClientOrDirectCommand<'a> {
+    type Child = ClientOrDirectChild<'a>;
+
+    fn arg(&mut self, arg: &str) -> &mut Self {
+        match self {
+            Self::Client(builder) => {
+                builder.arg(arg);
+            }
+            Self::Direct(builder) => {
+                builder.arg(arg);
+            }
+        }
+        self
+    }
+
+    fn env(&mut self, key: &str, val: &str) -> &mut Self {
+        match self {
+            Self::Client(builder) => {
+                builder.env(key, val);
+            }
+            Self::Direct(builder) => {
+                builder.env(key, val);
+            }
+        }
+        self
+    }
+
+    fn env_remove(&mut self, key: &str) -> &mut Self {
+        match self {
+            Self::Client(builder) => {
+                builder.env_remove(key);
+            }
+            Self::Direct(builder) => {
+                builder.env_remove(key);
+            }
+        }
+        self
+    }
+
+    fn current_dir(&mut self, dir: &Path) -> &mut Self {
+        match self {
+            Self::Client(builder) => {
+                builder.current_dir(dir);
+            }
+            Self::Direct(builder) => {
+                builder.current_dir(dir);
+            }
+        }
+        self
+    }
+
+    fn stdin_pipe(&mut self, pipe: PipeRecv) -> io::Result<&mut Self> {
+        match self {
+            Self::Client(builder) => {
+                builder.stdin_pipe(pipe)?;
+            }
+            Self::Direct(builder) => {
+                builder.stdin_pipe(pipe)?;
+            }
+        }
+        Ok(self)
+    }
+
+    fn stdout_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
+        match self {
+            Self::Client(builder) => {
+                builder.stdout_pipe(pipe)?;
+            }
+            Self::Direct(builder) => {
+                builder.stdout_pipe(pipe)?;
+            }
+        }
+        Ok(self)
+    }
+
+    fn stdin_inherit(&mut self) -> io::Result<&mut Self> {
+        match self {
+            Self::Client(builder) => {
+                builder.stdin_inherit()?;
+            }
+            Self::Direct(builder) => {
+                builder.stdin_inherit()?;
+            }
+        }
+        Ok(self)
+    }
+
+    fn stdout_inherit(&mut self) -> io::Result<&mut Self> {
+        match self {
+            Self::Client(builder) => {
+                builder.stdout_inherit()?;
+            }
+            Self::Direct(builder) => {
+                builder.stdout_inherit()?;
+            }
+        }
+        Ok(self)
+    }
+
+    #[cfg(unix)]
+    fn stdin_fd(&mut self, fd: OwnedFd) -> &mut Self {
+        match self {
+            Self::Client(builder) => {
+                builder.stdin_fd(fd);
+            }
+            Self::Direct(builder) => {
+                builder.stdin_fd(fd);
+            }
+        }
+        self
+    }
+
+    #[cfg(unix)]
+    fn stdout_fd(&mut self, fd: OwnedFd) -> &mut Self {
+        match self {
+            Self::Client(builder) => {
+                builder.stdout_fd(fd);
+            }
+            Self::Direct(builder) => {
+                builder.stdout_fd(fd);
+            }
+        }
+        self
+    }
+
+    fn stdin_null(&mut self) -> &mut Self {
+        match self {
+            Self::Client(builder) => {
+                builder.stdin_null();
+            }
+            Self::Direct(builder) => {
+                builder.stdin_null();
+            }
+        }
+        self
+    }
+
+    fn stdout_null(&mut self) -> &mut Self {
+        match self {
+            Self::Client(builder) => {
+                builder.stdout_null();
+            }
+            Self::Direct(builder) => {
+                builder.stdout_null();
+            }
+        }
+        self
+    }
+
+    fn stderr_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
+        match self {
+            Self::Client(builder) => {
+                builder.stderr_pipe(pipe)?;
+            }
+            Self::Direct(builder) => {
+                builder.stderr_pipe(pipe)?;
+            }
+        }
+        Ok(self)
+    }
+
+    fn stderr_inherit(&mut self) -> io::Result<&mut Self> {
+        match self {
+            Self::Client(builder) => {
+                builder.stderr_inherit()?;
+            }
+            Self::Direct(builder) => {
+                builder.stderr_inherit()?;
+            }
+        }
+        Ok(self)
+    }
+
+    fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self> {
+        match self {
+            Self::Client(builder) => {
+                builder.stderr_inherit_stdout()?;
+            }
+            Self::Direct(builder) => {
+                builder.stderr_inherit_stdout()?;
+            }
+        }
+        Ok(self)
+    }
+
+    #[cfg(unix)]
+    fn stderr_fd(&mut self, fd: OwnedFd) -> &mut Self {
+        match self {
+            Self::Client(builder) => {
+                builder.stderr_fd(fd);
+            }
+            Self::Direct(builder) => {
+                builder.stderr_fd(fd);
+            }
+        }
+        self
+    }
+
+    fn stderr_null(&mut self) -> &mut Self {
+        match self {
+            Self::Client(builder) => {
+                builder.stderr_null();
+            }
+            Self::Direct(builder) => {
+                builder.stderr_null();
+            }
+        }
+        self
+    }
+
+    async fn spawn(self) -> io::Result<Self::Child> {
+        match self {
+            Self::Client(builder) => builder.spawn().await.map(ClientOrDirectChild::Client),
+            Self::Direct(builder) => builder.spawn().await.map(ClientOrDirectChild::Direct),
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub struct ClientOrDirectCommand<'a> {
+    inner: direct::DirectCommand,
+    _marker: std::marker::PhantomData<&'a ()>,
+}
+
+#[cfg(not(unix))]
+pub struct ClientOrDirectChild<'a> {
+    inner: direct::DirectChild,
+    _marker: std::marker::PhantomData<&'a ()>,
+}
+
+#[cfg(not(unix))]
+#[cfg(not(unix))]
+impl Child for ClientOrDirectChild<'_> {
+    async fn wait(&mut self) -> Result<ExitStatus, io::Error> {
+        self.inner.wait().await
+    }
+
+    async fn terminate(self) -> Result<ExitStatus, io::Error> {
+        self.inner.terminate().await
+    }
+}
+
+#[cfg(not(unix))]
+impl<'a> Command for ClientOrDirectCommand<'a> {
+    type Child = ClientOrDirectChild<'a>;
+
+    fn arg(&mut self, arg: &str) -> &mut Self {
+        self.inner.arg(arg);
+        self
+    }
+
+    fn env(&mut self, key: &str, val: &str) -> &mut Self {
+        self.inner.env(key, val);
+        self
+    }
+
+    fn env_remove(&mut self, key: &str) -> &mut Self {
+        self.inner.env_remove(key);
+        self
+    }
+
+    fn current_dir(&mut self, dir: &Path) -> &mut Self {
+        self.inner.current_dir(dir);
+        self
+    }
+
+    fn stdin_pipe(&mut self, pipe: PipeRecv) -> io::Result<&mut Self> {
+        self.inner.stdin_pipe(pipe)?;
+        Ok(self)
+    }
+
+    fn stdout_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
+        self.inner.stdout_pipe(pipe)?;
+        Ok(self)
+    }
+
+    fn stdin_inherit(&mut self) -> io::Result<&mut Self> {
+        self.inner.stdin_inherit()?;
+        Ok(self)
+    }
+
+    fn stdout_inherit(&mut self) -> io::Result<&mut Self> {
+        self.inner.stdout_inherit()?;
+        Ok(self)
+    }
+
+    fn stdin_null(&mut self) -> &mut Self {
+        self.inner.stdin_null();
+        self
+    }
+
+    fn stdout_null(&mut self) -> &mut Self {
+        self.inner.stdout_null();
+        self
+    }
+
+    fn stderr_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
+        self.inner.stderr_pipe(pipe)?;
+        Ok(self)
+    }
+
+    fn stderr_inherit(&mut self) -> io::Result<&mut Self> {
+        self.inner.stderr_inherit()?;
+        Ok(self)
+    }
+
+    fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self> {
+        self.inner.stderr_inherit_stdout()?;
+        Ok(self)
+    }
+
+    fn stderr_null(&mut self) -> &mut Self {
+        self.inner.stderr_null();
+        self
+    }
+
+    async fn spawn(self) -> io::Result<Self::Child> {
+        Ok(ClientOrDirectChild {
+            inner: self.inner.spawn().await?,
+            _marker: std::marker::PhantomData,
+        })
+    }
+}
+
+#[cfg(unix)]
+#[derive(Clone)]
+pub enum ClientOrDirect {
+    Client(client::Client),
+    Direct(Direct),
+}
+
+#[cfg(not(unix))]
+#[derive(Clone, Copy, Default)]
+pub struct ClientOrDirect(Direct);
+
+#[cfg(unix)]
+impl Default for ClientOrDirect {
+    fn default() -> Self {
+        Self::Direct(Direct)
+    }
+}
+
+#[cfg(unix)]
+impl From<client::Client> for ClientOrDirect {
+    fn from(value: client::Client) -> Self {
+        Self::Client(value)
+    }
+}
+
+impl From<Direct> for ClientOrDirect {
+    fn from(value: Direct) -> Self {
+        #[cfg(unix)]
+        {
+            Self::Direct(value)
+        }
+        #[cfg(not(unix))]
+        {
+            Self(value)
+        }
+    }
+}
+
+#[cfg(unix)]
+impl ClientOrDirect {
+    pub fn as_client(&self) -> Option<&client::Client> {
+        match self {
+            Self::Client(client) => Some(client),
+            Self::Direct(_) => None,
+        }
+    }
+
+    pub fn into_client(self) -> Option<client::Client> {
+        match self {
+            Self::Client(client) => Some(client),
+            Self::Direct(_) => None,
+        }
+    }
+}
+
+impl Vfs for ClientOrDirect {
+    type OpenOptions<'a>
+        = ClientOrDirectOpenOptions<'a>
+    where
+        Self: 'a;
+    type Command<'a>
+        = ClientOrDirectCommand<'a>
+    where
+        Self: 'a;
+
+    fn open_options(&self) -> Self::OpenOptions<'_> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => ClientOrDirectOpenOptions::Client(client.open_options()),
+                Self::Direct(direct) => ClientOrDirectOpenOptions::Direct(direct.open_options()),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            ClientOrDirectOpenOptions {
+                inner: self.0.open_options(),
+                _marker: std::marker::PhantomData,
+            }
+        }
+    }
+
+    fn command(&self, program: impl AsRef<Path>) -> Self::Command<'_> {
+        let program = program.as_ref().to_path_buf();
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => ClientOrDirectCommand::Client(client.command(&program)),
+                Self::Direct(direct) => ClientOrDirectCommand::Direct(direct.command(&program)),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            ClientOrDirectCommand {
+                inner: self.0.command(&program),
+                _marker: std::marker::PhantomData,
+            }
+        }
+    }
+
+    async fn remove(
+        &self,
+        path: impl AsRef<Path>,
+        all: bool,
+        ignore: bool,
+    ) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.remove(path, all, ignore).await,
+                Self::Direct(direct) => direct.remove(path, all, ignore).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.remove(path, all, ignore).await
+        }
+    }
+
+    async fn metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.metadata(path).await,
+                Self::Direct(direct) => direct.metadata(path).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.metadata(path).await
+        }
+    }
+
+    async fn create_dir(&self, path: impl AsRef<Path>, all: bool) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.create_dir(path, all).await,
+                Self::Direct(direct) => direct.create_dir(path, all).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.create_dir(path, all).await
+        }
+    }
+
+    async fn remove_dir(
+        &self,
+        path: impl AsRef<Path>,
+        all: bool,
+        ignore: bool,
+    ) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.remove_dir(path, all, ignore).await,
+                Self::Direct(direct) => direct.remove_dir(path, all, ignore).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.remove_dir(path, all, ignore).await
+        }
+    }
+
+    async fn copy(
+        &self,
+        from: impl AsRef<Path>,
+        to: impl AsRef<Path>,
+        all: bool,
+    ) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.copy(from, to, all).await,
+                Self::Direct(direct) => direct.copy(from, to, all).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.copy(from, to, all).await
+        }
+    }
+
+    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.rename(from, to).await,
+                Self::Direct(direct) => direct.rename(from, to).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.rename(from, to).await
+        }
+    }
+
+    async fn move_(
+        &self,
+        from: impl AsRef<Path>,
+        to: impl AsRef<Path>,
+        all: bool,
+    ) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.move_(from, to, all).await,
+                Self::Direct(direct) => direct.move_(from, to, all).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.move_(from, to, all).await
+        }
+    }
+
+    async fn symlink(&self, src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.symlink(src, dst).await,
+                Self::Direct(direct) => direct.symlink(src, dst).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.symlink(src, dst).await
+        }
+    }
+
+    async fn symlink_dir(
+        &self,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+    ) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.symlink_dir(src, dst).await,
+                Self::Direct(direct) => direct.symlink_dir(src, dst).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.symlink_dir(src, dst).await
+        }
+    }
+
+    async fn symlink_file(
+        &self,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+    ) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.symlink_file(src, dst).await,
+                Self::Direct(direct) => direct.symlink_file(src, dst).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.symlink_file(src, dst).await
+        }
+    }
+
+    async fn symlink_metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.symlink_metadata(path).await,
+                Self::Direct(direct) => direct.symlink_metadata(path).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.symlink_metadata(path).await
+        }
+    }
+
+    async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.canonicalize(path).await,
+                Self::Direct(direct) => direct.canonicalize(path).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.canonicalize(path).await
+        }
+    }
+
+    async fn read_link(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.read_link(path).await,
+                Self::Direct(direct) => direct.read_link(path).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.read_link(path).await
+        }
+    }
+
+    async fn glob(
+        &self,
+        pattern: impl Into<String>,
+        root: &Path,
+        follow_symlinks: bool,
+        max_depth: Option<usize>,
+    ) -> Result<Vec<PathBuf>, io::Error> {
+        let pattern = pattern.into();
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => {
+                    client.glob(pattern, root, follow_symlinks, max_depth).await
+                }
+                Self::Direct(direct) => {
+                    direct.glob(pattern, root, follow_symlinks, max_depth).await
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.glob(pattern, root, follow_symlinks, max_depth).await
+        }
+    }
+
+    async fn set_permissions(
+        &self,
+        path: impl AsRef<Path>,
+        perm: Permissions,
+    ) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.set_permissions(path, perm).await,
+                Self::Direct(direct) => direct.set_permissions(path, perm).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.set_permissions(path, perm).await
+        }
+    }
+
+    async fn utime(
+        &self,
+        path: impl AsRef<Path>,
+        accessed: Option<(i64, u32)>,
+        modified: Option<(i64, u32)>,
+    ) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.utime(path, accessed, modified).await,
+                Self::Direct(direct) => direct.utime(path, accessed, modified).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.utime(path, accessed, modified).await
+        }
+    }
+
+    async fn chown(
+        &self,
+        path: impl AsRef<Path>,
+        user: Option<ChownIdentity>,
+        group: Option<ChownIdentity>,
+        follow: bool,
+    ) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.chown(path, user, group, follow).await,
+                Self::Direct(direct) => direct.chown(path, user, group, follow).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.chown(path, user, group, follow).await
+        }
+    }
+}
 
 #[cfg(unix)]
 mod unix {
@@ -27,20 +1212,10 @@ mod unix {
     pub use client::Client;
     /// Builder for constructing spawn requests.
     pub use client::CommandBuilder;
-    /// Builder for opening files with configurable options.
-    pub use client::OpenOptions;
-    /// Representation of file permissions.
-    pub use client::Permissions;
     /// Query result containing the daemon's environment and working directory.
     pub use client::Query;
     /// Access permission flags for the `access` method.
     pub use nix::unistd::AccessFlags;
-    /// Identity passed to `chown`, either by numeric ID or by account/group name.
-    pub use protocol::ChownIdentity;
-    /// Type of file entry in metadata.
-    pub use protocol::FileType;
-    /// File metadata returned by the `metadata` method.
-    pub use protocol::Metadata;
     /// Agent server that accepts connections and handles spawn requests.
     pub use server::Server;
     /// Daemonization errors.
@@ -67,254 +1242,3 @@ mod unix {
 
 #[cfg(unix)]
 pub use unix::*;
-
-fn directory_requires_all_error() -> io::Error {
-    #[cfg(unix)]
-    {
-        io::Error::from_raw_os_error(libc::EISDIR)
-    }
-    #[cfg(not(unix))]
-    {
-        io::Error::new(
-            io::ErrorKind::IsADirectory,
-            "directory operations require all: true",
-        )
-    }
-}
-
-fn directory_not_empty_error() -> io::Error {
-    #[cfg(unix)]
-    {
-        io::Error::from_raw_os_error(libc::ENOTEMPTY)
-    }
-    #[cfg(not(unix))]
-    {
-        io::Error::from(io::ErrorKind::DirectoryNotEmpty)
-    }
-}
-
-fn not_a_directory_error() -> io::Error {
-    #[cfg(unix)]
-    {
-        io::Error::from_raw_os_error(libc::ENOTDIR)
-    }
-    #[cfg(not(unix))]
-    {
-        io::Error::from(io::ErrorKind::NotADirectory)
-    }
-}
-
-#[cfg(unix)]
-async fn create_symlink(src: &Path, dst: &Path) -> io::Result<()> {
-    fs::symlink(src, dst).await
-}
-
-#[cfg(windows)]
-async fn create_symlink(src: &Path, dst: &Path) -> io::Result<()> {
-    let metadata = fs::metadata(src).await?;
-    if metadata.is_dir() {
-        fs::symlink_dir(src, dst).await
-    } else {
-        fs::symlink_file(src, dst).await
-    }
-}
-
-async fn copy_symlink(src: &Path, dst: &Path) -> io::Result<()> {
-    let target = fs::read_link(src).await?;
-    create_symlink(&target, dst).await
-}
-
-/// Copy a filesystem entry locally.
-///
-/// Files and symlinks are copied directly. Directories require `all: true`
-/// and are copied recursively.
-pub async fn copy_local(from: &Path, to: &Path, all: bool) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(from).await?;
-
-    if metadata.is_dir() {
-        if !all {
-            return Err(directory_requires_all_error());
-        }
-
-        fs::create_dir(to).await?;
-        let mut stack = vec![(from.to_path_buf(), to.to_path_buf())];
-        while let Some((src_dir, dst_dir)) = stack.pop() {
-            let mut entries = fs::read_dir(&src_dir).await?;
-            while let Some(entry) = entries.next_entry().await? {
-                let src_path = entry.path();
-                let dst_path = dst_dir.join(entry.file_name());
-                let metadata = fs::symlink_metadata(&src_path).await?;
-                if metadata.is_dir() {
-                    fs::create_dir(&dst_path).await?;
-                    stack.push((src_path, dst_path));
-                } else if metadata.is_file() {
-                    fs::copy(&src_path, &dst_path).await?;
-                } else if metadata.file_type().is_symlink() {
-                    copy_symlink(&src_path, &dst_path).await?;
-                } else {
-                    return Err(io::Error::other("unsupported file type"));
-                }
-            }
-        }
-    } else if metadata.is_file() {
-        fs::copy(from, to).await?;
-    } else if metadata.file_type().is_symlink() {
-        copy_symlink(from, to).await?;
-    } else {
-        return Err(io::Error::other("unsupported file type"));
-    }
-
-    Ok(())
-}
-
-/// Move a filesystem entry locally.
-///
-/// Files and symlinks are moved directly. Directories require `all: true`.
-/// Cross-filesystem moves fall back to copy-and-delete.
-pub async fn move_local(from: &Path, to: &Path, all: bool) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(from).await?;
-    let is_dir = metadata.is_dir();
-
-    if is_dir && !all {
-        return Err(directory_requires_all_error());
-    }
-
-    match fs::rename(from, to).await {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == io::ErrorKind::CrossesDevices => {
-            copy_local(from, to, all).await?;
-            if is_dir {
-                fs::remove_dir_all(from).await
-            } else {
-                fs::remove_file(from).await
-            }
-        }
-        Err(err) => Err(err),
-    }
-}
-
-async fn read_dir_paths(path: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut read_dir = fs::read_dir(path).await?;
-    let mut paths = Vec::new();
-    while let Some(entry) = read_dir.next_entry().await? {
-        paths.push(entry.path());
-    }
-    Ok(paths)
-}
-
-/// Remove a directory tree, but only where each removed directory is empty of
-/// non-directory entries.
-///
-/// Returns `true` if the requested root directory itself was removed.
-pub async fn remove_dir_empty_tree_local(path: &Path, ignore: bool) -> io::Result<bool> {
-    let metadata = fs::symlink_metadata(path).await?;
-    if !metadata.is_dir() {
-        return Err(not_a_directory_error());
-    }
-
-    struct Frame {
-        path: PathBuf,
-        entries: Vec<PathBuf>,
-        next: usize,
-        removable: bool,
-    }
-
-    let mut stack = vec![Frame {
-        path: path.to_owned(),
-        entries: read_dir_paths(path).await?,
-        next: 0,
-        removable: true,
-    }];
-    let mut last_result = None;
-
-    while let Some(frame) = stack.last_mut() {
-        if let Some(child_removed) = last_result.take() {
-            frame.removable &= child_removed;
-        }
-
-        if frame.next == frame.entries.len() {
-            let removable = frame.removable;
-            let path = frame.path.clone();
-            stack.pop();
-            if removable {
-                fs::remove_dir(&path).await?;
-            }
-            last_result = Some(removable);
-            continue;
-        }
-
-        let child_path = frame.entries[frame.next].clone();
-        frame.next += 1;
-        let metadata = fs::symlink_metadata(&child_path).await?;
-        if metadata.is_dir() {
-            stack.push(Frame {
-                path: child_path.clone(),
-                entries: read_dir_paths(&child_path).await?,
-                next: 0,
-                removable: true,
-            });
-        } else if ignore {
-            frame.removable = false;
-        } else {
-            return Err(directory_not_empty_error());
-        }
-    }
-
-    Ok(last_result.unwrap_or(false))
-}
-
-/// Execute a glob pattern locally.
-///
-/// This function executes a glob operation directly using the `wax` crate
-/// without requiring an agent server connection.
-///
-/// # Arguments
-///
-/// * `pattern` - The glob pattern to match
-/// * `cwd` - Optional working directory to start the search from
-/// * `follow_symlinks` - Whether to follow symbolic links when traversing directories
-/// * `max_depth` - Optional maximum depth to traverse
-///
-/// # Returns
-///
-/// A vector of matching paths, or an I/O error.
-pub async fn glob_local(
-    pattern: impl Into<String>,
-    root: &Path,
-    follow_symlinks: bool,
-    max_depth: Option<usize>,
-) -> io::Result<Vec<PathBuf>> {
-    let pattern = pattern.into();
-
-    let root = root.to_owned();
-
-    tokio::task::spawn_blocking(move || {
-        let (prefix, glob) = Glob::new(&pattern)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid glob pattern"))?
-            .partition();
-        let walk_root = root.join(&prefix);
-
-        let mut behavior = WalkBehavior::default();
-        if follow_symlinks {
-            behavior.link = LinkBehavior::ReadTarget;
-        }
-        if let Some(depth) = max_depth {
-            behavior.depth =
-                DepthBehavior::Max(DepthMax(depth.saturating_sub(prefix.components().count())));
-        }
-
-        let mut paths = Vec::new();
-        let walk = match glob {
-            Some(g) => g.walk_with_behavior(&walk_root, behavior),
-            None => Glob::tree().walk_with_behavior(&walk_root, behavior),
-        };
-
-        for entry in walk {
-            paths.push(prefix.join(entry?.root_relative_paths().1))
-        }
-
-        Ok(paths)
-    })
-    .await
-    .unwrap_or_else(|e| Err(io::Error::other(e)))
-}

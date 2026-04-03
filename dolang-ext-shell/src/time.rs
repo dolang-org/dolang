@@ -201,17 +201,6 @@ fn coerce_sleep_duration<'v, 's>(
     ))
 }
 
-fn create_datetime_from_type<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    date_time: dolang::runtime::Type<'v, DateTime>,
-    time: SystemTime,
-    out: impl Output<'v>,
-) -> Result<'v, 's, ()> {
-    let annex = DateTimeAnnex::from_system_time(time).into_do(strand)?;
-    date_time.create_with_annex(strand, DateTime, annex, out);
-    Ok(())
-}
-
 pub(crate) fn datetime_to_system_time<'v, 's>(
     strand: &mut Strand<'v, 's>,
     date_time: dolang::runtime::Type<'v, DateTime>,
@@ -223,13 +212,20 @@ pub(crate) fn datetime_to_system_time<'v, 's>(
     datetime.annex().to_system_time().into_do(strand)
 }
 
-pub(crate) fn create_datetime_with_global<'v, 's>(
+pub(crate) fn create_datetime<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    time: SystemTime,
+    secs: i64,
+    nanos: i64,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    create_datetime_from_type(strand, global.types.date_time, time, out)
+    let annex = DateTimeAnnex::from_unix_parts(secs, nanos)
+        .ok_or_else(|| Error::runtime(strand, "invalid DateTime"))?;
+    global
+        .types
+        .date_time
+        .create_with_annex(strand, DateTime, annex, out);
+    Ok(())
 }
 
 impl<'v> Object<'v> for DateTime {

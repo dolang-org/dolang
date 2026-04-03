@@ -1,5 +1,6 @@
 #![deny(warnings)]
 #![cfg(unix)]
+use dolang_shell_vfs::{Child, Command, Vfs};
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -181,7 +182,8 @@ async fn multiple_clients() {
             .expect("failed to connect");
 
             let cmd = client.command("true");
-            let status = cmd.status().await.expect("failed to get status");
+            let mut child = cmd.spawn().await.expect("failed to spawn");
+            let status = child.wait().await.expect("failed to get status");
 
             assert!(status.success());
             status

@@ -5,17 +5,16 @@ use std::{
     path::{self, Component, PathBuf},
 };
 
-use dolang::runtime::{
-    Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
-    error::ResultExt, object::TypeBuilder, unpack,
-};
-use tokio::fs;
-
 use crate::{
     error::ResultExt as _,
     fs::{path_absolute, path_relative},
     global::Global,
 };
+use dolang::runtime::{
+    Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    error::ResultExt, object::TypeBuilder, unpack,
+};
+use dolang_shell_vfs::Vfs;
 
 use super::file::File;
 
@@ -299,13 +298,8 @@ impl<'v> Object<'v> for Path {
                 let global = annex.global;
                 let local = global.local.get(strand);
                 let path = local.cwd().as_ref().join(&annex.inner);
-                let container = local.container();
-                let target = if let Some(context) = container.as_ref() {
-                    context.client().read_link(&path).await
-                } else {
-                    fs::read_link(&path).await
-                }
-                .into_sys(strand)?;
+                let vfs = local.vfs();
+                let target = vfs.read_link(&path).await.into_sys(strand)?;
                 global.types.path.create_with_annex(
                     strand,
                     Path,

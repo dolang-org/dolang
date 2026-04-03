@@ -3,14 +3,13 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     env, mem,
-    ops::{Deref, DerefMut},
+    ops::Deref,
     path::{Path, PathBuf},
     rc::Rc,
 };
 
 use dolang::runtime::{Strand, strand};
-
-use crate::container::Context;
+use dolang_shell_vfs::ClientOrDirect;
 
 #[derive(Clone)]
 pub(crate) struct Env {
@@ -87,7 +86,7 @@ impl Env {
 pub(crate) struct Local {
     cwd: RefCell<PathBuf>,
     env: RefCell<Rc<Env>>,
-    agent: RefCell<Option<Context>>,
+    vfs: RefCell<ClientOrDirect>,
     binary_mode: Cell<bool>,
 }
 
@@ -96,7 +95,7 @@ impl<'v> strand::Local<'v> for Local {
         Self {
             cwd: RefCell::new(env::current_dir().unwrap()),
             env: RefCell::new(Rc::new(Env::root())),
-            agent: RefCell::new(None),
+            vfs: RefCell::new(ClientOrDirect::default()),
             binary_mode: Cell::new(false),
         }
     }
@@ -105,7 +104,7 @@ impl<'v> strand::Local<'v> for Local {
         Self {
             cwd: self.cwd.clone(),
             env: self.env.clone(),
-            agent: self.agent.clone(),
+            vfs: self.vfs.clone(),
             binary_mode: Cell::new(self.binary_mode.get()),
         }
     }
@@ -128,15 +127,14 @@ impl Local {
         mem::replace(&mut *self.env.borrow_mut(), env)
     }
 
-    pub(crate) fn container(&self) -> impl Deref<Target = Option<Context>> {
-        self.agent.borrow()
+    pub(crate) fn replace_vfs(&self, vfs: ClientOrDirect) -> ClientOrDirect {
+        mem::replace(&mut *self.vfs.borrow_mut(), vfs)
     }
 
-    pub(crate) fn container_mut(&self) -> impl DerefMut<Target = Option<Context>> {
-        self.agent.borrow_mut()
+    pub(crate) fn vfs(&self) -> ClientOrDirect {
+        self.vfs.borrow().clone()
     }
 
-    #[cfg(unix)]
     pub(crate) fn binary_mode(&self) -> bool {
         self.binary_mode.get()
     }

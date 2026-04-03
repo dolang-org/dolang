@@ -1,18 +1,13 @@
-#![cfg(unix)]
-
 use std::{
     cell::RefCell,
     collections::VecDeque,
     future, io, mem,
     ops::{Deref, DerefMut},
-    os::fd::{AsFd, OwnedFd},
     rc::Rc,
     task::{Poll, Waker},
 };
 
-use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::unix::pipe;
 
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value, Vm,
@@ -20,6 +15,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, TypeObject},
 };
+use dolang_shell_vfs::{PipeRecv, PipeSend};
 
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
@@ -102,8 +98,8 @@ struct PipeChannelShared {
     /// Whether PipeReceiver's GC slot 0 is logically occupied, and if so how it was written.
     buffered: BufferedValue,
     state: PipeState,
-    send_end: EndState<pipe::Sender>,
-    recv_end: EndState<BufReader<pipe::Receiver>>,
+    send_end: EndState<PipeSend>,
+    recv_end: EndState<BufReader<PipeRecv>>,
     send_closed: bool,
     recv_closed: bool,
     send_wakers: VecDeque<Waker>,
@@ -202,7 +198,7 @@ impl PipeChannelShared {
         self.wake_negotiators();
     }
 
-    fn restore_send_end(&mut self, sender: pipe::Sender) {
+    fn restore_send_end(&mut self, sender: PipeSend) {
         if self.send_closed {
             drop(sender);
             self.wake_senders();
@@ -223,14 +219,14 @@ impl PipeChannelShared {
         }
     }
 
-    fn receiver(&self) -> Option<&pipe::Receiver> {
+    fn receiver(&self) -> Option<&PipeRecv> {
         match (&self.state, &self.recv_end) {
             (PipeState::RecvPipe | PipeState::Direct, EndState::Present(fd)) => Some(fd.get_ref()),
             _ => None,
         }
     }
 
-    fn sender(&self) -> Option<&pipe::Sender> {
+    fn sender(&self) -> Option<&PipeSend> {
         match &self.state {
             PipeState::RecvPipe | PipeState::SendPipe | PipeState::Direct => self.send_end.as_ref(),
             PipeState::Draining | PipeState::Value => None,
@@ -246,19 +242,7 @@ impl PipeChannelShared {
     }
 }
 
-fn dup_fd_blocking(fd: impl AsFd) -> io::Result<OwnedFd> {
-    let owned = fd.as_fd().try_clone_to_owned()?;
-    let flags = fcntl(&owned, FcntlArg::F_GETFL).map_err(io::Error::other)?;
-    let mut flags = OFlag::from_bits_truncate(flags);
-    flags.remove(OFlag::O_NONBLOCK);
-    fcntl(&owned, FcntlArg::F_SETFL(flags)).map_err(io::Error::other)?;
-    Ok(owned)
-}
-
-async fn drain_pipe(
-    mut reader: BufReader<pipe::Receiver>,
-    send_end: &mut pipe::Sender,
-) -> io::Result<()> {
+async fn drain_pipe(mut reader: BufReader<PipeRecv>, send_end: &mut PipeSend) -> io::Result<()> {
     let mut buf = [0u8; 8192];
     loop {
         let n = reader.read(&mut buf).await?;
@@ -292,11 +276,11 @@ fn take_buffered_bytes<'v, 's>(
 
 struct SendEndGuard {
     shared: Rc<RefCell<PipeChannelShared>>,
-    end: Option<pipe::Sender>,
+    end: Option<PipeSend>,
 }
 
 impl SendEndGuard {
-    fn new(shared: Rc<RefCell<PipeChannelShared>>, end: pipe::Sender) -> Self {
+    fn new(shared: Rc<RefCell<PipeChannelShared>>, end: PipeSend) -> Self {
         Self {
             shared,
             end: Some(end),
@@ -316,20 +300,20 @@ impl SendEndGuard {
     }
 }
 
-impl AsRef<pipe::Sender> for SendEndGuard {
-    fn as_ref(&self) -> &pipe::Sender {
+impl AsRef<PipeSend> for SendEndGuard {
+    fn as_ref(&self) -> &PipeSend {
         self.end.as_ref().unwrap()
     }
 }
 
-impl AsMut<pipe::Sender> for SendEndGuard {
-    fn as_mut(&mut self) -> &mut pipe::Sender {
+impl AsMut<PipeSend> for SendEndGuard {
+    fn as_mut(&mut self) -> &mut PipeSend {
         self.end.as_mut().unwrap()
     }
 }
 
 impl Deref for SendEndGuard {
-    type Target = pipe::Sender;
+    type Target = PipeSend;
 
     fn deref(&self) -> &Self::Target {
         self.as_ref()
@@ -352,7 +336,7 @@ impl Drop for SendEndGuard {
 
 struct RecvEndGuard {
     shared: Rc<RefCell<PipeChannelShared>>,
-    end: Option<BufReader<pipe::Receiver>>,
+    end: Option<BufReader<PipeRecv>>,
 }
 
 impl RecvEndGuard {
@@ -373,20 +357,20 @@ impl RecvEndGuard {
     }
 }
 
-impl AsRef<BufReader<pipe::Receiver>> for RecvEndGuard {
-    fn as_ref(&self) -> &BufReader<pipe::Receiver> {
+impl AsRef<BufReader<PipeRecv>> for RecvEndGuard {
+    fn as_ref(&self) -> &BufReader<PipeRecv> {
         self.end.as_ref().unwrap()
     }
 }
 
-impl AsMut<BufReader<pipe::Receiver>> for RecvEndGuard {
-    fn as_mut(&mut self) -> &mut BufReader<pipe::Receiver> {
+impl AsMut<BufReader<PipeRecv>> for RecvEndGuard {
+    fn as_mut(&mut self) -> &mut BufReader<PipeRecv> {
         self.end.as_mut().unwrap()
     }
 }
 
 impl Deref for RecvEndGuard {
-    type Target = BufReader<pipe::Receiver>;
+    type Target = BufReader<PipeRecv>;
 
     fn deref(&self) -> &Self::Target {
         self.as_ref()
@@ -432,12 +416,12 @@ pub(crate) struct RecvGuard {
 }
 
 impl RecvGuard {
-    pub(crate) fn fd(&self) -> io::Result<OwnedFd> {
+    pub(crate) fn recv_pipe(&self) -> io::Result<PipeRecv> {
         let inner = self.shared.borrow();
         inner
             .receiver()
             .ok_or_else(|| io::Error::other("pipe: consumer end closed"))
-            .and_then(dup_fd_blocking)
+            .and_then(PipeRecv::try_clone)
     }
 }
 
@@ -452,12 +436,12 @@ pub(crate) struct SendGuard {
 }
 
 impl SendGuard {
-    pub(crate) fn fd(&self) -> io::Result<OwnedFd> {
+    pub(crate) fn send_pipe(&self) -> io::Result<PipeSend> {
         let inner = self.shared.borrow();
         inner
             .sender()
             .ok_or_else(|| io::Error::other("pipe: producer end closed"))
-            .and_then(dup_fd_blocking)
+            .and_then(PipeSend::try_clone)
     }
 }
 
@@ -513,7 +497,7 @@ pub(crate) async fn negotiate_recv<'v, 's>(
         match &mut inner.state {
             PipeState::Value => {
                 let stale_bytes = take_buffered_bytes(inst, strand, &mut inner)?;
-                let (w, r) = pipe::pipe().into_sys(strand)?;
+                let (w, r) = dolang_shell_vfs::pipe().into_sys(strand)?;
                 inner.recv_end.set_present(BufReader::new(r));
                 inner.send_end = EndState::Taken;
                 inner.state = PipeState::RecvPipe;
@@ -534,7 +518,7 @@ pub(crate) async fn negotiate_recv<'v, 's>(
                     (None, None, None)
                 } else {
                     let old_recv_end = inner.recv_end.take().unwrap();
-                    let (w, r) = pipe::pipe().into_sys(strand)?;
+                    let (w, r) = dolang_shell_vfs::pipe().into_sys(strand)?;
                     inner.recv_end.set_present(BufReader::new(r));
                     inner.send_end = EndState::Taken;
                     inner.state = PipeState::RecvPipe;
@@ -608,7 +592,7 @@ pub(crate) async fn negotiate_send<'v, 's>(
                 drop(inner);
                 inner = shared.borrow_mut();
                 drop(send_borrow);
-                let (w, r) = pipe::pipe().into_sys(strand)?;
+                let (w, r) = dolang_shell_vfs::pipe().into_sys(strand)?;
                 inner.send_end = EndState::Taken;
                 inner.recv_end.set_present(BufReader::new(r));
                 inner.state = PipeState::SendPipe;
@@ -623,7 +607,7 @@ pub(crate) async fn negotiate_send<'v, 's>(
             }
             PipeState::Draining => {
                 let old_recv_end = inner.recv_end.take().unwrap();
-                let (w, r) = pipe::pipe().into_sys(strand)?;
+                let (w, r) = dolang_shell_vfs::pipe().into_sys(strand)?;
                 inner.send_end = EndState::Taken;
                 inner.recv_end.set_present(BufReader::new(r));
                 inner.state = PipeState::SendPipe;

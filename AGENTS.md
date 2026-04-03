@@ -30,8 +30,8 @@ Extensions (`dolang-ext-*`): registered via the `extension!` macro, linked in
 via `linkme`. Each crate name describes its domain (shell, http, json, sqlite,
 regex, zip, compile, load, progress).
 
-Tests: `dolang-private-regression/tests/` (core language), `dolang-ext-*/tests/` (per-extension
-tests), `tests/` (full integration tests).
+Tests: `dolang-private-regression/tests/` (core language), `dolang-ext-*/tests/`
+(per-extension tests), `tests/` (full integration tests).
 
 Crates may have `ARCHITECTURE.md` files with detailed design notes.
 
