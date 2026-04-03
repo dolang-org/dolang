@@ -1,11 +1,13 @@
 use dolang::runtime::{
     Arg, Error, Output, Result, Slot, State, Strand, call, method, unpack, vm::Builder,
 };
+#[cfg(unix)]
+use dolang_shell_vfs::OpenOptions;
+use dolang_shell_vfs::{FileType, Metadata, Vfs};
 use std::{io, io::ErrorKind, path::PathBuf, time};
-use tokio::{
-    fs,
-    io::{AsyncReadExt, AsyncWriteExt},
-};
+#[cfg(not(unix))]
+use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use rand::RngExt;
 use rand::distr::Alphanumeric;
@@ -23,367 +25,25 @@ use crate::{
         readdir::{DirEntryIter, DirEntryIterAnnex},
     },
     global::Global,
-    time::{create_datetime_with_global, datetime_to_system_time},
+    time::{create_datetime, datetime_to_system_time},
 };
 
 use glob::{GlobIter, GlobIterAnnex};
 
-/// Trait abstracting over OpenOptions implementations.
-pub(crate) trait OpenOptionsLike {
-    fn read(&mut self, read: bool) -> &mut Self;
-    fn write(&mut self, write: bool) -> &mut Self;
-    fn append(&mut self, append: bool) -> &mut Self;
-    fn create(&mut self, create: bool) -> &mut Self;
-    fn truncate(&mut self, truncate: bool) -> &mut Self;
-    async fn open(&mut self, path: &std::path::Path) -> io::Result<fs::File>;
-}
-
-/// Trait abstracting over file type types.
-pub(crate) trait FileTypeLike {
-    fn is_file(&self) -> bool;
-    fn is_dir(&self) -> bool;
-    fn is_symlink(&self) -> bool;
-}
-
-/// Trait abstracting over metadata types.
-pub(crate) trait MetadataLike {
-    fn len(&self) -> u64;
-    fn file_type(&self) -> impl FileTypeLike;
-    fn modified(&self) -> io::Result<time::SystemTime>;
-    fn accessed(&self) -> io::Result<time::SystemTime>;
-    fn created(&self) -> io::Result<time::SystemTime>;
-    fn is_file(&self) -> bool {
-        self.file_type().is_file()
-    }
-    fn is_dir(&self) -> bool {
-        self.file_type().is_dir()
-    }
-    fn is_symlink(&self) -> bool {
-        self.file_type().is_symlink()
-    }
-}
-
-impl OpenOptionsLike for fs::OpenOptions {
-    fn read(&mut self, read: bool) -> &mut Self {
-        fs::OpenOptions::read(self, read);
-        self
-    }
-
-    fn write(&mut self, write: bool) -> &mut Self {
-        fs::OpenOptions::write(self, write);
-        self
-    }
-
-    fn append(&mut self, append: bool) -> &mut Self {
-        fs::OpenOptions::append(self, append);
-        self
-    }
-
-    fn create(&mut self, create: bool) -> &mut Self {
-        fs::OpenOptions::create(self, create);
-        self
-    }
-
-    fn truncate(&mut self, truncate: bool) -> &mut Self {
-        fs::OpenOptions::truncate(self, truncate);
-        self
-    }
-
-    async fn open(&mut self, path: &std::path::Path) -> io::Result<fs::File> {
-        fs::OpenOptions::open(self, path).await
-    }
-}
-
 #[cfg(unix)]
 pub(crate) mod unix {
     use super::*;
-
     use dolang::runtime::Value;
-    use dolang_shell_vfs as agent;
-    use nix::{
-        errno::Errno,
-        fcntl::AT_FDCWD,
-        sys::{
-            stat::{UtimensatFlags, utimensat},
-            time::{TimeSpec, TimeValLike},
-        },
-        unistd::{Gid, Group, Uid, User, chown},
-    };
-    use std::os::unix::fs::MetadataExt;
-    use std::{ffi::CString, os::unix::ffi::OsStrExt};
-
-    fn system_time_from_unix_parts(secs: i64, nanos: i64) -> io::Result<time::SystemTime> {
-        let carry = nanos.div_euclid(1_000_000_000);
-        let nanos = nanos.rem_euclid(1_000_000_000);
-        let secs = secs
-            .checked_add(carry)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid timestamp"))?;
-
-        if secs >= 0 {
-            time::UNIX_EPOCH
-                .checked_add(time::Duration::new(secs as u64, nanos as u32))
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid timestamp"))
-        } else {
-            let secs_abs = secs.unsigned_abs();
-            let duration = if nanos == 0 {
-                time::Duration::new(secs_abs, 0)
-            } else {
-                time::Duration::new(secs_abs - 1, 1_000_000_000u32 - nanos as u32)
-            };
-            time::UNIX_EPOCH
-                .checked_sub(duration)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid timestamp"))
-        }
-    }
-
-    fn unix_timespec(time: Option<(i64, u32)>) -> io::Result<TimeSpec> {
-        match time {
-            Some((secs, nanos)) => secs
-                .checked_mul(1_000_000_000)
-                .and_then(|secs| secs.checked_add(i64::from(nanos)))
-                .map(TimeSpec::nanoseconds)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid timestamp")),
-            None => Ok(TimeSpec::UTIME_OMIT),
-        }
-    }
-
-    /// Unix-specific metadata extension trait.
-    #[cfg(unix)]
-    pub(crate) trait MetadataExtLike {
-        fn mode(&self) -> u32;
-        fn dev(&self) -> u64;
-        fn ino(&self) -> u64;
-        fn nlink(&self) -> u64;
-        fn uid(&self) -> u32;
-        fn gid(&self) -> u32;
-        fn rdev(&self) -> u64;
-        fn blksize(&self) -> u64;
-        fn blocks(&self) -> u64;
-        #[expect(dead_code)]
-        fn atime(&self) -> i64;
-        #[expect(dead_code)]
-        fn atime_nsec(&self) -> i64;
-        #[expect(dead_code)]
-        fn mtime(&self) -> i64;
-        #[expect(dead_code)]
-        fn mtime_nsec(&self) -> i64;
-        #[expect(dead_code)]
-        fn ctime(&self) -> i64;
-        #[expect(dead_code)]
-        fn ctime_nsec(&self) -> i64;
-    }
-
-    impl FileTypeLike for agent::FileType {
-        fn is_file(&self) -> bool {
-            matches!(self, agent::FileType::File)
-        }
-
-        fn is_dir(&self) -> bool {
-            matches!(self, agent::FileType::Dir)
-        }
-
-        fn is_symlink(&self) -> bool {
-            matches!(self, agent::FileType::Symlink)
-        }
-    }
-
-    impl<'a> OpenOptionsLike for agent::OpenOptions<'a> {
-        fn read(&mut self, read: bool) -> &mut Self {
-            agent::OpenOptions::read(self, read);
-            self
-        }
-
-        fn write(&mut self, write: bool) -> &mut Self {
-            agent::OpenOptions::write(self, write);
-            self
-        }
-
-        fn append(&mut self, append: bool) -> &mut Self {
-            agent::OpenOptions::append(self, append);
-            self
-        }
-
-        fn create(&mut self, create: bool) -> &mut Self {
-            agent::OpenOptions::create(self, create);
-            self
-        }
-
-        fn truncate(&mut self, truncate: bool) -> &mut Self {
-            agent::OpenOptions::truncate(self, truncate);
-            self
-        }
-
-        async fn open(&mut self, path: &std::path::Path) -> io::Result<fs::File> {
-            agent::OpenOptions::open(self, path).await
-        }
-    }
-    impl MetadataLike for agent::Metadata {
-        fn len(&self) -> u64 {
-            self.len
-        }
-
-        fn file_type(&self) -> impl FileTypeLike {
-            self.file_type
-        }
-
-        fn modified(&self) -> io::Result<time::SystemTime> {
-            system_time_from_unix_parts(self.mtime, self.mtime_nsec)
-        }
-
-        fn accessed(&self) -> io::Result<time::SystemTime> {
-            system_time_from_unix_parts(self.atime, self.atime_nsec)
-        }
-
-        fn created(&self) -> io::Result<time::SystemTime> {
-            system_time_from_unix_parts(self.ctime, self.ctime_nsec)
-        }
-
-        fn is_file(&self) -> bool {
-            self.file_type.is_file()
-        }
-
-        fn is_dir(&self) -> bool {
-            self.file_type.is_dir()
-        }
-
-        fn is_symlink(&self) -> bool {
-            self.file_type.is_symlink()
-        }
-    }
-
-    impl MetadataExtLike for std::fs::Metadata {
-        fn mode(&self) -> u32 {
-            MetadataExt::mode(self)
-        }
-
-        fn dev(&self) -> u64 {
-            MetadataExt::dev(self)
-        }
-
-        fn ino(&self) -> u64 {
-            MetadataExt::ino(self)
-        }
-
-        fn nlink(&self) -> u64 {
-            MetadataExt::nlink(self)
-        }
-
-        fn uid(&self) -> u32 {
-            MetadataExt::uid(self)
-        }
-
-        fn gid(&self) -> u32 {
-            MetadataExt::gid(self)
-        }
-
-        fn rdev(&self) -> u64 {
-            MetadataExt::rdev(self)
-        }
-
-        fn blksize(&self) -> u64 {
-            MetadataExt::blksize(self)
-        }
-
-        fn blocks(&self) -> u64 {
-            MetadataExt::blocks(self)
-        }
-
-        fn atime(&self) -> i64 {
-            MetadataExt::atime(self)
-        }
-
-        fn atime_nsec(&self) -> i64 {
-            MetadataExt::atime_nsec(self)
-        }
-
-        fn mtime(&self) -> i64 {
-            MetadataExt::mtime(self)
-        }
-
-        fn mtime_nsec(&self) -> i64 {
-            MetadataExt::mtime_nsec(self)
-        }
-
-        fn ctime(&self) -> i64 {
-            MetadataExt::ctime(self)
-        }
-
-        fn ctime_nsec(&self) -> i64 {
-            MetadataExt::ctime_nsec(self)
-        }
-    }
-
-    impl MetadataExtLike for agent::Metadata {
-        fn mode(&self) -> u32 {
-            self.mode
-        }
-
-        fn dev(&self) -> u64 {
-            self.dev
-        }
-
-        fn ino(&self) -> u64 {
-            self.ino
-        }
-
-        fn nlink(&self) -> u64 {
-            self.nlink
-        }
-
-        fn uid(&self) -> u32 {
-            self.uid
-        }
-
-        fn gid(&self) -> u32 {
-            self.gid
-        }
-
-        fn rdev(&self) -> u64 {
-            self.rdev
-        }
-
-        fn blksize(&self) -> u64 {
-            self.blksize
-        }
-
-        fn blocks(&self) -> u64 {
-            self.blocks
-        }
-
-        fn atime(&self) -> i64 {
-            self.atime
-        }
-
-        fn atime_nsec(&self) -> i64 {
-            self.atime_nsec
-        }
-
-        fn mtime(&self) -> i64 {
-            self.mtime
-        }
-
-        fn mtime_nsec(&self) -> i64 {
-            self.mtime_nsec
-        }
-
-        fn ctime(&self) -> i64 {
-            self.ctime
-        }
-
-        fn ctime_nsec(&self) -> i64 {
-            self.ctime_nsec
-        }
-    }
 
     pub(crate) async fn unix_metadata_to_record<'v, 's>(
         strand: &mut Strand<'v, 's>,
         global: State<'v, Global<'v>>,
         record: &Value<'v>,
-        metadata: &impl MetadataExtLike,
+        metadata: &Metadata,
     ) -> Result<'v, 's, ()> {
         use libc::{S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG, S_IFSOCK};
 
-        let mode = metadata.mode() as libc::mode_t;
+        let mode = metadata.mode as libc::mode_t;
         let file_type = match mode & S_IFMT {
             S_IFREG => global.syms.file,
             S_IFDIR => global.syms.dir,
@@ -396,98 +56,15 @@ pub(crate) mod unix {
         };
         record.set(strand, global.syms.ty, file_type)?;
         record.set(strand, global.syms.mode, mode as i64)?;
-        record.set(strand, global.syms.dev, metadata.dev() as i64)?;
-        record.set(strand, global.syms.ino, metadata.ino() as i64)?;
-        record.set(strand, global.syms.nlink, metadata.nlink() as i64)?;
-        record.set(strand, global.syms.uid, metadata.uid() as i64)?;
-        record.set(strand, global.syms.gid, metadata.gid() as i64)?;
-        record.set(strand, global.syms.rdev, metadata.rdev() as i64)?;
-        record.set(strand, global.syms.blksize, metadata.blksize() as i64)?;
-        record.set(strand, global.syms.blocks, metadata.blocks() as i64)?;
+        record.set(strand, global.syms.dev, metadata.dev as i64)?;
+        record.set(strand, global.syms.ino, metadata.ino as i64)?;
+        record.set(strand, global.syms.nlink, metadata.nlink as i64)?;
+        record.set(strand, global.syms.uid, metadata.uid as i64)?;
+        record.set(strand, global.syms.gid, metadata.gid as i64)?;
+        record.set(strand, global.syms.rdev, metadata.rdev as i64)?;
+        record.set(strand, global.syms.blksize, metadata.blksize as i64)?;
+        record.set(strand, global.syms.blocks, metadata.blocks as i64)?;
         Ok(())
-    }
-
-    fn resolve_user(user: Option<agent::ChownIdentity>) -> std::result::Result<Option<Uid>, Errno> {
-        match user {
-            None => Ok(None),
-            Some(agent::ChownIdentity::Id(id)) => Ok(Some(Uid::from_raw(id))),
-            Some(agent::ChownIdentity::Name(name)) => match User::from_name(&name)? {
-                Some(user) => Ok(Some(user.uid)),
-                None => Err(Errno::ENOENT),
-            },
-        }
-    }
-
-    fn resolve_group(
-        group: Option<agent::ChownIdentity>,
-    ) -> std::result::Result<Option<Gid>, Errno> {
-        match group {
-            None => Ok(None),
-            Some(agent::ChownIdentity::Id(id)) => Ok(Some(Gid::from_raw(id))),
-            Some(agent::ChownIdentity::Name(name)) => match Group::from_name(&name)? {
-                Some(group) => Ok(Some(group.gid)),
-                None => Err(Errno::ENOENT),
-            },
-        }
-    }
-
-    fn lchown_path(
-        path: &std::path::Path,
-        user: Option<Uid>,
-        group: Option<Gid>,
-    ) -> std::result::Result<(), Errno> {
-        let path = CString::new(path.as_os_str().as_bytes()).map_err(|_| Errno::EINVAL)?;
-        Errno::result(unsafe {
-            libc::lchown(
-                path.as_ptr(),
-                user.map_or(!0, |user| user.as_raw()) as libc::uid_t,
-                group.map_or(!0, |group| group.as_raw()) as libc::gid_t,
-            )
-        })
-        .map(drop)
-    }
-
-    pub(crate) async fn chown_path(
-        path: PathBuf,
-        user: Option<agent::ChownIdentity>,
-        group: Option<agent::ChownIdentity>,
-        follow: bool,
-    ) -> io::Result<()> {
-        tokio::task::spawn_blocking(move || {
-            let user =
-                resolve_user(user).map_err(|err| io::Error::from_raw_os_error(err as i32))?;
-            let group =
-                resolve_group(group).map_err(|err| io::Error::from_raw_os_error(err as i32))?;
-            let result = if follow {
-                chown(&path, user, group)
-            } else {
-                lchown_path(&path, user, group)
-            };
-            result.map_err(|err| io::Error::from_raw_os_error(err as i32))
-        })
-        .await
-        .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))
-    }
-
-    pub(crate) async fn utime_path(
-        path: PathBuf,
-        accessed: Option<(i64, u32)>,
-        modified: Option<(i64, u32)>,
-    ) -> io::Result<()> {
-        tokio::task::spawn_blocking(move || {
-            let atime = unix_timespec(accessed)?;
-            let mtime = unix_timespec(modified)?;
-            utimensat(
-                AT_FDCWD,
-                &path,
-                &atime,
-                &mtime,
-                UtimensatFlags::FollowSymlink,
-            )
-            .map_err(io::Error::from)
-        })
-        .await
-        .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))
     }
 }
 
@@ -522,72 +99,21 @@ pub(crate) mod windows {
     }
 }
 
-impl FileTypeLike for std::fs::FileType {
-    fn is_file(&self) -> bool {
-        std::fs::FileType::is_file(self)
-    }
-
-    fn is_dir(&self) -> bool {
-        std::fs::FileType::is_dir(self)
-    }
-
-    fn is_symlink(&self) -> bool {
-        std::fs::FileType::is_symlink(self)
-    }
-}
-
-impl MetadataLike for std::fs::Metadata {
-    fn len(&self) -> u64 {
-        std::fs::Metadata::len(self)
-    }
-
-    fn file_type(&self) -> impl FileTypeLike {
-        std::fs::Metadata::file_type(self)
-    }
-
-    fn modified(&self) -> io::Result<time::SystemTime> {
-        std::fs::Metadata::modified(self)
-    }
-
-    fn accessed(&self) -> io::Result<time::SystemTime> {
-        std::fs::Metadata::accessed(self)
-    }
-
-    fn created(&self) -> io::Result<time::SystemTime> {
-        std::fs::Metadata::created(self)
-    }
-
-    fn is_file(&self) -> bool {
-        std::fs::Metadata::is_file(self)
-    }
-
-    fn is_dir(&self) -> bool {
-        std::fs::Metadata::is_dir(self)
-    }
-
-    fn is_symlink(&self) -> bool {
-        std::fs::Metadata::is_symlink(self)
-    }
-}
-
 async fn metadata_to_record<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    metadata: &impl MetadataLike,
+    metadata: &Metadata,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     strand
         .with_slots(async |strand, [mut std_mod, mut record, mut tmp]| {
             strand.import("std", &mut std_mod).await?;
 
-            let file_type = if metadata.is_file() {
-                global.syms.file
-            } else if metadata.is_dir() {
-                global.syms.dir
-            } else if metadata.is_symlink() {
-                global.syms.symlink
-            } else {
-                global.syms.unknown
+            let file_type = match metadata.file_type {
+                FileType::File => global.syms.file,
+                FileType::Dir => global.syms.dir,
+                FileType::Symlink => global.syms.symlink,
+                _ => global.syms.unknown,
             };
 
             let len = global.syms.len;
@@ -596,26 +122,47 @@ async fn metadata_to_record<'v, 's>(
 
             method!(
                 strand, std_mod, record_sym, &mut record,
-                len: metadata.len() as i64,
+                len: metadata.len as i64,
                 ty: file_type
             )
             .await?;
 
             let modified = global.syms.modified;
-            if let Ok(time) = metadata.modified() {
-                create_datetime_with_global(strand, global, time, &mut tmp)?;
+            if create_datetime(
+                strand,
+                global,
+                metadata.mtime,
+                metadata.mtime_nsec,
+                &mut tmp,
+            )
+            .is_ok()
+            {
                 record.set(strand, modified, &mut tmp)?;
             }
 
             let accessed = global.syms.accessed;
-            if let Ok(time) = metadata.accessed() {
-                create_datetime_with_global(strand, global, time, &mut tmp)?;
+            if create_datetime(
+                strand,
+                global,
+                metadata.atime,
+                metadata.atime_nsec,
+                &mut tmp,
+            )
+            .is_ok()
+            {
                 record.set(strand, accessed, &mut tmp)?;
             }
 
             let created = global.syms.created;
-            if let Ok(time) = metadata.created() {
-                create_datetime_with_global(strand, global, time, &mut tmp)?;
+            if create_datetime(
+                strand,
+                global,
+                metadata.ctime,
+                metadata.ctime_nsec,
+                &mut tmp,
+            )
+            .is_ok()
+            {
                 record.set(strand, created, &mut tmp)?;
             }
 
@@ -636,33 +183,17 @@ async fn metadata<'v, 's>(
         .with_slots(async move |strand, [mut record]| {
             let local = global.local.get(strand);
             let path = local.cwd().as_ref().join(&path);
-            let container = local.container();
-            if let Some(context) = container.as_ref() {
-                let client = context.client();
-                let metadata = if follow {
-                    client.metadata(&path).await
-                } else {
-                    client.symlink_metadata(&path).await
-                }
-                .into_sys(strand)?;
-                drop(container);
-                metadata_to_record(strand, global, &metadata, &mut record).await?;
-
-                #[cfg(unix)]
-                unix::unix_metadata_to_record(strand, global, &record, &metadata).await?;
+            let vfs = local.vfs();
+            let metadata = if follow {
+                vfs.metadata(&path).await
             } else {
-                drop(container);
-                let metadata = if follow {
-                    fs::metadata(&path).await
-                } else {
-                    fs::symlink_metadata(&path).await
-                }
-                .into_sys(strand)?;
-                metadata_to_record(strand, global, &metadata, &mut record).await?;
-
-                #[cfg(unix)]
-                unix::unix_metadata_to_record(strand, global, &record, &metadata).await?;
+                vfs.symlink_metadata(&path).await
             }
+            .into_sys(strand)?;
+            metadata_to_record(strand, global, &metadata, &mut record).await?;
+
+            #[cfg(unix)]
+            unix::unix_metadata_to_record(strand, global, &record, &metadata).await?;
 
             Output::set(strand, out, record);
             Ok(())
@@ -679,41 +210,18 @@ async fn remove<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let path = local.cwd().as_ref().join(&path);
+    let vfs = local.vfs();
 
     let result = if all {
-        let container = local.container();
-        if let Some(context) = container.as_ref() {
-            match context.client().symlink_metadata(&path).await {
-                Ok(metadata) if metadata.is_dir() => {
-                    context.client().remove(&path, true, ignore).await
-                }
-                Ok(_) => context
-                    .client()
-                    .remove(&path, false, ignore)
-                    .await
-                    .map(|_| ()),
-                Err(e) => Err(e),
+        match vfs.symlink_metadata(&path).await {
+            Ok(metadata) if metadata.file_type == FileType::Dir => {
+                vfs.remove(&path, true, ignore).await
             }
-        } else {
-            drop(container);
-            match fs::symlink_metadata(&path).await {
-                Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path).await,
-                Ok(_) => fs::remove_file(&path).await,
-                Err(e) => Err(e),
-            }
+            Ok(_) => vfs.remove(&path, false, ignore).await.map(|_| ()),
+            Err(e) => Err(e),
         }
     } else {
-        let container = local.container();
-        if let Some(context) = container.as_ref() {
-            context
-                .client()
-                .remove(&path, false, ignore)
-                .await
-                .map(|_| ())
-        } else {
-            drop(container);
-            fs::remove_file(&path).await
-        }
+        vfs.remove(&path, false, ignore).await.map(|_| ())
     };
 
     match result {
@@ -731,13 +239,8 @@ async fn exists<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let path = local.cwd().as_ref().join(&path);
-    let container = local.container();
-    let res = if let Some(context) = container.as_ref() {
-        context.client().metadata(&path).await.map(|_| ())
-    } else {
-        drop(container);
-        fs::metadata(&path).await.map(|_| ())
-    };
+    let vfs = local.vfs();
+    let res = vfs.metadata(&path).await.map(|_| ());
     Output::set(
         strand,
         out,
@@ -762,18 +265,13 @@ async fn entries<'v, 's>(
 
         let local = global.local.get(strand);
         let path = local.cwd().as_ref().join(&path);
-        let container = local.container();
-        let file = if let Some(context) = container.as_ref() {
-            context
-                .client()
-                .open_options()
-                .read(true)
-                .open(&path)
-                .await
-                .into_sys(strand)?
-        } else {
-            fs::File::open(&path).await.into_sys(strand)?
-        };
+        let vfs = local.vfs();
+        let file = vfs
+            .open_options()
+            .read(true)
+            .open(&path)
+            .await
+            .into_sys(strand)?;
 
         ReadDir::from_fd(file.into_std().await.into()).into_sys(strand)?
     };
@@ -857,18 +355,8 @@ async fn copy<'v, 's>(
     let local = global.local.get(strand);
     let from_path = local.cwd().as_ref().join(&from);
     let to_path = local.cwd().as_ref().join(&to);
-    let container = local.container();
-    if let Some(context) = container.as_ref() {
-        context
-            .client()
-            .copy(&from_path, &to_path, all)
-            .await
-            .into_sys(strand)?;
-    } else {
-        dolang_shell_vfs::copy_local(&from_path, &to_path, all)
-            .await
-            .into_sys(strand)?;
-    }
+    let vfs = local.vfs();
+    vfs.copy(&from_path, &to_path, all).await.into_sys(strand)?;
     Ok(())
 }
 
@@ -882,18 +370,10 @@ async fn move_<'v, 's>(
     let local = global.local.get(strand);
     let from_path = local.cwd().as_ref().join(&from);
     let to_path = local.cwd().as_ref().join(&to);
-    let container = local.container();
-    if let Some(context) = container.as_ref() {
-        context
-            .client()
-            .move_(&from_path, &to_path, all)
-            .await
-            .into_sys(strand)?;
-    } else {
-        dolang_shell_vfs::move_local(&from_path, &to_path, all)
-            .await
-            .into_sys(strand)?;
-    }
+    let vfs = local.vfs();
+    vfs.move_(&from_path, &to_path, all)
+        .await
+        .into_sys(strand)?;
     Ok(())
 }
 
@@ -906,16 +386,8 @@ async fn rename<'v, 's>(
     let local = global.local.get(strand);
     let from_path = local.cwd().as_ref().join(&from);
     let to_path = local.cwd().as_ref().join(&to);
-    let container = local.container();
-    if let Some(context) = container.as_ref() {
-        context
-            .client()
-            .rename(&from_path, &to_path)
-            .await
-            .into_sys(strand)?;
-    } else {
-        fs::rename(&from_path, &to_path).await.into_sys(strand)?;
-    }
+    let vfs = local.vfs();
+    vfs.rename(&from_path, &to_path).await.into_sys(strand)?;
     Ok(())
 }
 
@@ -928,37 +400,8 @@ async fn symlink<'v, 's>(
     let local = global.local.get(strand);
     let src_path = local.cwd().as_ref().join(&src);
     let dst_path = local.cwd().as_ref().join(&dst);
-    let container = local.container();
-    if let Some(context) = container.as_ref() {
-        context
-            .client()
-            .symlink(&src_path, &dst_path)
-            .await
-            .into_sys(strand)?;
-    } else {
-        #[cfg(unix)]
-        fs::symlink(&src_path, &dst_path).await.into_sys(strand)?;
-        #[cfg(windows)]
-        {
-            use std::io::{self, ErrorKind};
-            let metadata = fs::symlink_metadata(&src_path).await.into_sys(strand)?;
-            if metadata.is_dir() {
-                fs::symlink_dir(&src_path, &dst_path)
-                    .await
-                    .into_sys(strand)?;
-            } else if metadata.is_file() {
-                fs::symlink_file(&src_path, &dst_path)
-                    .await
-                    .into_sys(strand)?;
-            } else {
-                return Err(io::Error::new(
-                    ErrorKind::InvalidInput,
-                    "cannot determine if symlink target is a file or directory",
-                )
-                .into_sys(strand));
-            }
-        }
-    }
+    let vfs = local.vfs();
+    vfs.symlink(&src_path, &dst_path).await.into_sys(strand)?;
     Ok(())
 }
 
@@ -971,21 +414,10 @@ async fn symlink_dir<'v, 's>(
     let local = global.local.get(strand);
     let src_path = local.cwd().as_ref().join(&src);
     let dst_path = local.cwd().as_ref().join(&dst);
-    let container = local.container();
-    if let Some(context) = container.as_ref() {
-        context
-            .client()
-            .symlink(&src_path, &dst_path)
-            .await
-            .into_sys(strand)?;
-    } else {
-        #[cfg(unix)]
-        fs::symlink(&src_path, &dst_path).await.into_sys(strand)?;
-        #[cfg(windows)]
-        fs::symlink_dir(&src_path, &dst_path)
-            .await
-            .into_sys(strand)?;
-    }
+    let vfs = local.vfs();
+    vfs.symlink_dir(&src_path, &dst_path)
+        .await
+        .into_sys(strand)?;
     Ok(())
 }
 
@@ -998,21 +430,10 @@ async fn symlink_file<'v, 's>(
     let local = global.local.get(strand);
     let src_path = local.cwd().as_ref().join(&src);
     let dst_path = local.cwd().as_ref().join(&dst);
-    let container = local.container();
-    if let Some(context) = container.as_ref() {
-        context
-            .client()
-            .symlink(&src_path, &dst_path)
-            .await
-            .into_sys(strand)?;
-    } else {
-        #[cfg(unix)]
-        fs::symlink(&src_path, &dst_path).await.into_sys(strand)?;
-        #[cfg(windows)]
-        fs::symlink_file(&src_path, &dst_path)
-            .await
-            .into_sys(strand)?;
-    }
+    let vfs = local.vfs();
+    vfs.symlink_file(&src_path, &dst_path)
+        .await
+        .into_sys(strand)?;
     Ok(())
 }
 
@@ -1024,15 +445,8 @@ async fn create_dir<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let path = local.cwd().as_ref().join(&path);
-    let container = local.container();
-    if let Some(context) = container.as_ref() {
-        let client = context.client();
-        client.create_dir(&path, all).await.into_sys(strand)?;
-    } else if all {
-        fs::create_dir_all(&path).await.into_sys(strand)?;
-    } else {
-        fs::create_dir(&path).await.into_sys(strand)?;
-    }
+    let vfs = local.vfs();
+    vfs.create_dir(&path, all).await.into_sys(strand)?;
     Ok(())
 }
 
@@ -1045,17 +459,8 @@ async fn remove_dir<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let path = local.cwd().as_ref().join(&path);
-    let container = local.container();
-    let result = if let Some(context) = container.as_ref() {
-        let client = context.client();
-        client.remove_dir(&path, all, ignore).await
-    } else if all {
-        dolang_shell_vfs::remove_dir_empty_tree_local(&path, ignore)
-            .await
-            .map(|_| ())
-    } else {
-        fs::remove_dir(&path).await
-    };
+    let vfs = local.vfs();
+    let result = vfs.remove_dir(&path, all, ignore).await;
     match result {
         Ok(()) => Ok(()),
         Err(e) if ignore && e.kind() == ErrorKind::NotFound => Ok(()),
@@ -1073,19 +478,9 @@ async fn chmod<'v, 's>(
     {
         let local = global.local.get(strand);
         let path = local.cwd().as_ref().join(&path);
-        let container = local.container();
-        if let Some(context) = container.as_ref() {
-            let client = context.client();
-            let perm = dolang_shell_vfs::Permissions::from_mode(mode);
-            client.set_permissions(&path, perm).await.into_sys(strand)?;
-        } else {
-            drop(container);
-            use std::os::unix::fs::PermissionsExt;
-            let permissions = std::fs::Permissions::from_mode(mode);
-            fs::set_permissions(&path, permissions)
-                .await
-                .into_sys(strand)?;
-        }
+        let vfs = local.vfs();
+        let perm = dolang_shell_vfs::Permissions::from_mode(mode);
+        vfs.set_permissions(&path, perm).await.into_sys(strand)?;
         Ok(())
     }
     #[cfg(not(unix))]
@@ -1169,19 +564,10 @@ async fn set_timestamps<'v, 's>(
         }
         let local = global.local.get(strand);
         let path = local.cwd().as_ref().join(&path);
-        let container = local.container();
-        if let Some(context) = container.as_ref() {
-            context
-                .client()
-                .utime(&path, accessed, modified)
-                .await
-                .into_sys(strand)?;
-        } else {
-            drop(container);
-            unix::utime_path(path, accessed, modified)
-                .await
-                .into_sys(strand)?;
-        }
+        let vfs = local.vfs();
+        vfs.utime(&path, accessed, modified)
+            .await
+            .into_sys(strand)?;
         Ok(())
     }
     #[cfg(windows)]
@@ -1297,19 +683,10 @@ async fn chown<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let path = local.cwd().as_ref().join(path);
-    let container = local.container();
-    if let Some(context) = container.as_ref() {
-        context
-            .client()
-            .chown(&path, user, group, follow)
-            .await
-            .into_sys(strand)?;
-    } else {
-        drop(container);
-        unix::chown_path(path, user, group, follow)
-            .await
-            .into_sys(strand)?;
-    }
+    let vfs = local.vfs();
+    vfs.chown(&path, user, group, follow)
+        .await
+        .into_sys(strand)?;
     Ok(())
 }
 
@@ -1368,23 +745,8 @@ pub(crate) async fn path_canonical<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let absolute = local.cwd().as_ref().join(path);
-    let container = local.container();
-    let canonical = if let Some(context) = container.as_ref() {
-        context.client().canonicalize(&absolute).await
-    } else {
-        #[cfg(target_os = "windows")]
-        {
-            use dolang::runtime::error::ResultExt;
-            tokio::task::spawn_blocking(move || dunce::canonicalize(&absolute))
-                .await
-                .into_do(strand)?
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            fs::canonicalize(&absolute).await
-        }
-    }
-    .into_sys(strand)?;
+    let vfs = local.vfs();
+    let canonical = vfs.canonicalize(&absolute).await.into_sys(strand)?;
     global
         .types
         .path
@@ -1422,29 +784,17 @@ async fn glob<'v, 's>(
 
     let local = global.local.get(strand);
     let cwd = local.cwd();
-    let container = local.container();
+    let vfs = local.vfs();
 
-    let paths = if let Some(context) = container.as_ref() {
-        context
-            .client()
-            .glob(
-                pattern,
-                root.unwrap_or_else(|| cwd.as_ref()),
-                follow,
-                max_depth,
-            )
-            .await
-            .into_sys(strand)?
-    } else {
-        dolang_shell_vfs::glob_local(
+    let paths = vfs
+        .glob(
             pattern,
             root.unwrap_or_else(|| cwd.as_ref()),
             follow,
             max_depth,
         )
         .await
-        .into_sys(strand)?
-    };
+        .into_sys(strand)?;
 
     global.types.glob_iter.create_with_annex(
         strand,
@@ -1466,18 +816,14 @@ async fn create_temp_dir<'v, 's>(
     parent: PathBuf,
 ) -> std::result::Result<PathBuf, io::Error> {
     let mut rng = rand::rng();
-    let container = global.local.get(strand).container();
+    let vfs = global.local.get(strand).vfs();
     for attempt in 0..1000 {
         let random_suffix: String = (0..16)
             .map(|_| rng.sample(Alphanumeric))
             .map(char::from)
             .collect();
         let temp_path = parent.join(format!("tmp_{}", random_suffix));
-        let result = if let Some(context) = container.as_ref() {
-            context.client().create_dir(&temp_path, false).await
-        } else {
-            fs::create_dir(&temp_path).await
-        };
+        let result = vfs.create_dir(&temp_path, false).await;
         match result {
             Ok(()) => return Ok(temp_path),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempt < 999 => continue,
@@ -1767,13 +1113,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 let _ = strand
                     .with_cancel_mask(true, async move |strand| {
                         let local = global.local.get(strand);
-                        let container = local.container();
-                        if let Some(context) = container.as_ref() {
-                            let client = context.client();
-                            client.remove(&temp_path, true, false).await
-                        } else {
-                            fs::remove_dir_all(&temp_path).await
-                        }
+                        let vfs = local.vfs();
+                        vfs.remove(&temp_path, true, false).await
                     })
                     .await;
                 result

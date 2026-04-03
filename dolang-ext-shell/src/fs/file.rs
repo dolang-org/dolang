@@ -11,6 +11,7 @@ use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, call, error::ResultExt, method,
     object::TypeBuilder, unpack, value::TypeObject,
 };
+use dolang_shell_vfs::{OpenOptions, Vfs};
 use tokio::{
     fs,
     io::{AsyncReadExt, AsyncWriteExt},
@@ -21,10 +22,10 @@ use crate::{
     global::Global,
 };
 
-use super::{OpenOptionsLike, path::PathOrStr, readdir};
+use super::{path::PathOrStr, readdir};
 
 /// Configure OpenOptions based on mode string (supports 'b' suffix for binary mode).
-fn configure_options<O: OpenOptionsLike>(opts: &mut O, mode: &str) {
+fn configure_options(opts: &mut impl OpenOptions, mode: &str) {
     // Strip 'b' suffix for binary mode - it doesn't affect file opening
     match mode.strip_suffix('b').unwrap_or(mode) {
         "r" => {
@@ -84,17 +85,10 @@ pub(crate) async fn open<'v, 's>(
 ) -> io::Result<fs::File> {
     let local = global.local.get(strand);
     let path = local.cwd().as_ref().join(path);
-
-    if let Some(context) = local.container().as_ref() {
-        let client = context.client();
-        let mut opts = client.open_options();
-        configure_options(&mut opts, mode);
-        OpenOptionsLike::open(&mut opts, &path).await
-    } else {
-        let mut opts = fs::OpenOptions::new();
-        configure_options(&mut opts, mode);
-        OpenOptionsLike::open(&mut opts, &path).await
-    }
+    let vfs = local.vfs();
+    let mut opts = vfs.open_options();
+    configure_options(&mut opts, mode);
+    opts.open(&path).await
 }
 
 impl File {
@@ -347,7 +341,13 @@ impl File {
             .as_mut()
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
 
-        let metadata = file_ref.metadata().await.into_sys(strand)?;
+        let metadata = global
+            .local
+            .get(strand)
+            .vfs()
+            .file_metadata(file_ref)
+            .await
+            .into_sys(strand)?;
 
         super::metadata_to_record(strand, global, &metadata, &mut out).await?;
         #[cfg(unix)]

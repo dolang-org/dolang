@@ -1067,6 +1067,7 @@ name = "dolang-shell-vfs"
 version = "0.1.0"
 dependencies = [
  "dolang-private-ipc",
+ "dunce",
  "futures",
  "libc",
  "nix",

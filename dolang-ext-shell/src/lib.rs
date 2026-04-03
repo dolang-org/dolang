@@ -105,11 +105,6 @@ pub fn as_path<'v, 'a>(vm: &Vm<'v>, value: &'a Value<'v>) -> Option<impl AsRef<p
     }
 }
 
-/// Execute a glob pattern locally.
-///
-/// This is a re-export of `dolang_shell_vfs::glob_local` for convenience.
-pub use dolang_shell_vfs::glob_local;
-
 /// Open file; container-aware
 pub async fn open<'v, 's>(
     strand: &mut Strand<'v, 's>,
@@ -128,7 +123,7 @@ pub async fn open<'v, 's>(
 pub fn vfs<'v, 's, 'a>(strand: &'a Strand<'v, 's>) -> Option<Client> {
     let global = strand.state::<Global<'v>>();
     let local = global.local.get(strand);
-    local.container().as_ref().map(|c| c.client().clone())
+    local.vfs().into_client()
 }
 
 /// Returns whether stderr is a terminal.

@@ -1,16 +1,11 @@
 use std::{
     fmt::{self},
-    future::Future,
     io,
-    path::{Path, PathBuf},
-    process::{ExitStatus, Stdio},
+    path::PathBuf,
 };
 
 use futures::future::MaybeDone;
-use tokio::{
-    io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    process::Command,
-};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
 use dolang::runtime::{
     Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Value,
@@ -21,156 +16,25 @@ use dolang::runtime::{
     value::{Nil, Singleton},
     vm::Builder,
 };
+use dolang_shell_vfs::{Child as _, Command, Vfs as _, pipe};
 
-#[cfg(unix)]
-use crate::container::Context;
-use crate::pipe_channel::{self, RecvGuard, SendGuard};
-#[cfg(unix)]
-use std::os::fd::{AsFd, OwnedFd};
+use crate::{
+    error::{self, ErrorExt as _, ResultExt as _},
+    fs::{
+        file::{self, File},
+        path::{PathAnnex, PathOrStr},
+    },
+    global::Global,
+    pipe_channel::{self, RecvGuard, SendGuard},
+};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
-#[cfg(unix)]
-use tokio::net::unix::pipe;
-
-use crate::error::{self, ErrorExt as _, ResultExt as _};
-use crate::fs::{
-    file::{self, File},
-    path::{PathAnnex, PathOrStr},
-};
-use crate::global::Global;
 
 pub(crate) struct Program;
 
 pub(crate) struct ProgramAnnex<'v> {
     name: String,
     global: State<'v, Global<'v>>,
-}
-
-/// Trait for command builders that support common configuration operations.
-pub trait CommandBuilder {
-    /// Add a command-line argument.
-    fn arg(&mut self, arg: &str) -> &mut Self;
-
-    /// Set an environment variable.
-    fn env(&mut self, key: &str, val: &str) -> &mut Self;
-
-    /// Remove an environment variable.
-    fn env_remove(&mut self, key: &str) -> &mut Self;
-
-    /// Set the working directory.
-    fn current_dir(&mut self, dir: &Path) -> &mut Self;
-
-    #[cfg(unix)]
-    /// Redirect stdin from the given file descriptor.
-    fn stdin_fd(&mut self, fd: OwnedFd) -> &mut Self;
-
-    #[cfg(unix)]
-    /// Redirect stdout to the given file descriptor.
-    fn stdout_fd(&mut self, fd: OwnedFd) -> &mut Self;
-
-    /// Redirect stdin from the null device.
-    fn stdin_null(&mut self) -> &mut Self;
-
-    /// Redirect stdout to the null device.
-    fn stdout_null(&mut self) -> &mut Self;
-
-    #[cfg(unix)]
-    /// Redirect stderr to the given file descriptor.
-    fn stderr_fd(&mut self, fd: OwnedFd) -> &mut Self;
-
-    /// Redirect stderr to the null device.
-    fn stderr_null(&mut self) -> &mut Self;
-}
-
-impl CommandBuilder for Command {
-    fn arg(&mut self, arg: &str) -> &mut Self {
-        Command::arg(self, arg)
-    }
-
-    fn env(&mut self, key: &str, val: &str) -> &mut Self {
-        Command::env(self, key, val)
-    }
-
-    fn env_remove(&mut self, key: &str) -> &mut Self {
-        Command::env_remove(self, key)
-    }
-
-    fn current_dir(&mut self, dir: &Path) -> &mut Self {
-        Command::current_dir(self, dir)
-    }
-
-    #[cfg(unix)]
-    fn stdin_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        Command::stdin(self, Stdio::from(fd))
-    }
-
-    #[cfg(unix)]
-    fn stdout_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        Command::stdout(self, Stdio::from(fd))
-    }
-
-    fn stdin_null(&mut self) -> &mut Self {
-        Command::stdin(self, Stdio::null())
-    }
-
-    fn stdout_null(&mut self) -> &mut Self {
-        Command::stdout(self, Stdio::null())
-    }
-
-    #[cfg(unix)]
-    fn stderr_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        Command::stderr(self, Stdio::from(fd))
-    }
-
-    fn stderr_null(&mut self) -> &mut Self {
-        Command::stderr(self, Stdio::null())
-    }
-}
-
-#[cfg(unix)]
-impl CommandBuilder for dolang_shell_vfs::CommandBuilder<'_> {
-    fn arg(&mut self, arg: &str) -> &mut Self {
-        dolang_shell_vfs::CommandBuilder::arg(self, arg)
-    }
-
-    fn env(&mut self, key: &str, val: &str) -> &mut Self {
-        dolang_shell_vfs::CommandBuilder::env(self, key, val)
-    }
-
-    fn env_remove(&mut self, key: &str) -> &mut Self {
-        dolang_shell_vfs::CommandBuilder::env_remove(self, key)
-    }
-
-    fn current_dir(&mut self, dir: &Path) -> &mut Self {
-        dolang_shell_vfs::CommandBuilder::current_dir(self, dir)
-    }
-
-    #[cfg(unix)]
-    fn stdin_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        dolang_shell_vfs::CommandBuilder::stdin(self, fd)
-    }
-
-    #[cfg(unix)]
-    fn stdout_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        dolang_shell_vfs::CommandBuilder::stdout(self, fd)
-    }
-
-    fn stdin_null(&mut self) -> &mut Self {
-        dolang_shell_vfs::CommandBuilder::stdin_null(self)
-    }
-
-    fn stdout_null(&mut self) -> &mut Self {
-        dolang_shell_vfs::CommandBuilder::stdout_null(self)
-    }
-
-    #[cfg(unix)]
-    fn stderr_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        dolang_shell_vfs::CommandBuilder::stderr(self, fd)
-    }
-
-    fn stderr_null(&mut self) -> &mut Self {
-        dolang_shell_vfs::CommandBuilder::stderr_null(self)
-    }
 }
 
 async fn resolve_io<'v, 's, 'a>(
@@ -294,61 +158,42 @@ async fn cleanup_io<'v, 's>(
         .await
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
 async fn configure_negotiated_input<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    command: &mut impl CommandBuilder,
+    command: &mut impl Command,
     input: &Value<'v>,
 ) -> Result<'v, 's, Option<RecvGuard>> {
-    #[cfg(unix)]
-    {
-        let recv_result = pipe_channel::negotiate_recv(input, strand, global).await?;
-        if let Some(guard) = recv_result {
-            let fd = guard.fd().into_sys(strand)?;
-            command.stdin_fd(fd);
-            Ok(Some(guard))
-        } else {
-            Ok(None)
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = command;
-        pipe_channel::negotiate_recv(input, strand, global).await
+    let recv_result = pipe_channel::negotiate_recv(input, strand, global).await?;
+    if let Some(guard) = recv_result {
+        let pipe = guard.recv_pipe().into_sys(strand)?;
+        command.stdin_pipe(pipe).into_sys(strand)?;
+        Ok(Some(guard))
+    } else {
+        Ok(None)
     }
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
 async fn configure_negotiated_output<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    command: &mut impl CommandBuilder,
+    command: &mut impl Command,
     output: &Value<'v>,
 ) -> Result<'v, 's, Option<SendGuard>> {
-    #[cfg(unix)]
-    {
-        let send_result = pipe_channel::negotiate_send(output, strand, global).await?;
-        if let Some(guard) = send_result {
-            let fd = guard.fd().into_sys(strand)?;
-            command.stdout_fd(fd);
-            Ok(Some(guard))
-        } else {
-            Ok(None)
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = command;
-        pipe_channel::negotiate_send(output, strand, global).await
+    let send_result = pipe_channel::negotiate_send(output, strand, global).await?;
+    if let Some(guard) = send_result {
+        let pipe = guard.send_pipe().into_sys(strand)?;
+        command.stdout_pipe(pipe).into_sys(strand)?;
+        Ok(Some(guard))
+    } else {
+        Ok(None)
     }
 }
 
-#[cfg(unix)]
 fn configure_direct_input<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    command: &mut impl CommandBuilder,
+    command: &mut impl Command,
     input: &Value<'v>,
 ) -> Result<'v, 's, bool> {
     if input.is_nil() || input.eq(strand, Singleton::IterNull) {
@@ -356,14 +201,10 @@ fn configure_direct_input<'v, 's>(
         return Ok(true);
     }
     if global.types.stdin.downcast(input).is_some() {
-        command.stdin_fd(
-            std::io::stdin()
-                .as_fd()
-                .try_clone_to_owned()
-                .into_sys(strand)?,
-        );
+        command.stdin_inherit().into_sys(strand)?;
         return Ok(true);
     }
+    #[cfg(unix)]
     if let Some(file) = global.types.file.downcast(input)
         && let Some(fd) = File::fd(file, strand)?
     {
@@ -373,29 +214,10 @@ fn configure_direct_input<'v, 's>(
     Ok(false)
 }
 
-#[cfg(not(unix))]
-fn configure_direct_input<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    command: &mut Command,
-    input: &Value<'v>,
-) -> Result<'v, 's, bool> {
-    if input.is_nil() || input.eq(strand, Singleton::IterNull) {
-        command.stdin_null();
-        return Ok(true);
-    }
-    if global.types.stdin.downcast(input).is_some() {
-        command.stdin(Stdio::inherit());
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-#[cfg(unix)]
 fn configure_direct_output<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    command: &mut impl CommandBuilder,
+    command: &mut impl Command,
     output: &Value<'v>,
 ) -> Result<'v, 's, bool> {
     if output.is_nil() || output.eq(strand, Singleton::IterNull) {
@@ -406,14 +228,10 @@ fn configure_direct_output<'v, 's>(
         if global.terminal.redirected.get() && global.terminal.stdout_is_terminal {
             return Ok(false);
         }
-        command.stdout_fd(
-            std::io::stdout()
-                .as_fd()
-                .try_clone_to_owned()
-                .into_sys(strand)?,
-        );
+        command.stdout_inherit().into_sys(strand)?;
         return Ok(true);
     }
+    #[cfg(unix)]
     if let Some(file) = global.types.file.downcast(output)
         && let Some(fd) = File::fd(file, strand)?
     {
@@ -423,32 +241,10 @@ fn configure_direct_output<'v, 's>(
     Ok(false)
 }
 
-#[cfg(not(unix))]
-fn configure_direct_output<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    command: &mut Command,
-    output: &Value<'v>,
-) -> Result<'v, 's, bool> {
-    if output.is_nil() || output.eq(strand, Singleton::IterNull) {
-        command.stdout_null();
-        return Ok(true);
-    }
-    if global.types.stdout.downcast(output).is_some() {
-        if global.terminal.redirected.get() && global.terminal.stdout_is_terminal {
-            return Ok(false);
-        }
-        command.stdout(Stdio::inherit());
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-#[cfg(unix)]
 fn configure_direct_stderr<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    command: &mut impl CommandBuilder,
+    command: &mut impl Command,
     stderr: &Value<'v>,
 ) -> Result<'v, 's, bool> {
     if stderr.is_nil() || stderr.eq(strand, Singleton::IterNull) {
@@ -459,14 +255,10 @@ fn configure_direct_stderr<'v, 's>(
         if global.terminal.redirected.get() && global.terminal.stdout_is_terminal {
             return Ok(false);
         }
-        command.stderr_fd(
-            std::io::stdout()
-                .as_fd()
-                .try_clone_to_owned()
-                .into_sys(strand)?,
-        );
+        command.stderr_inherit_stdout().into_sys(strand)?;
         return Ok(true);
     }
+    #[cfg(unix)]
     if let Some(file) = global.types.file.downcast(stderr)
         && let Some(fd) = File::fd(file, strand)?
     {
@@ -476,31 +268,10 @@ fn configure_direct_stderr<'v, 's>(
     Ok(false)
 }
 
-#[cfg(not(unix))]
-fn configure_direct_stderr<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    command: &mut Command,
-    stderr: &Value<'v>,
-) -> Result<'v, 's, bool> {
-    if stderr.is_nil() || stderr.eq(strand, Singleton::IterNull) {
-        command.stderr_null();
-        return Ok(true);
-    }
-    if global.types.stdout.downcast(stderr).is_some() {
-        if global.terminal.redirected.get() && global.terminal.stdout_is_terminal {
-            return Ok(false);
-        }
-        command.stderr(Stdio::inherit());
-        return Ok(true);
-    }
-    Ok(false)
-}
-
 fn apply_env_and_cwd<'v, 's>(
     global: State<'v, Global<'v>>,
     strand: &Strand<'v, 's>,
-    command: &mut impl CommandBuilder,
+    command: &mut impl Command,
 ) {
     let local = global.local.get(strand);
     local.env().visit(&mut |k, v| {
@@ -516,7 +287,7 @@ fn apply_env_and_cwd<'v, 's>(
 fn apply_args<'v, 's, 'a>(
     strand: &mut Strand<'v, 's>,
     args: Args<'v, 'a>,
-    command: &mut impl CommandBuilder,
+    command: &mut impl Command,
 ) -> Result<'v, 's, ()> {
     for arg in args {
         match arg {
@@ -583,14 +354,14 @@ where
 #[expect(clippy::too_many_arguments)]
 async fn run_monitor<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    process: impl Future<Output = io::Result<ExitStatus>>,
+    process: &mut impl dolang_shell_vfs::Child,
     name: &str,
     input: &Value<'v>,
     output: &Value<'v>,
     stderr_output: Option<&Value<'v>>,
-    stdin: Option<impl AsyncWrite + Unpin>,
-    stdout: Option<impl AsyncBufRead + Unpin>,
-    stderr: Option<impl AsyncBufRead + Unpin>,
+    stdin: Option<Box<dyn AsyncWrite + Unpin>>,
+    stdout: Option<Box<dyn AsyncBufRead + Unpin>>,
+    stderr: Option<Box<dyn AsyncBufRead + Unpin>>,
 ) -> Result<'v, 's, ()> {
     // Create pumps
     let ipump = match stdin {
@@ -622,17 +393,17 @@ async fn run_monitor<'v, 's>(
     let mut odone = false;
     let mut edone = false;
 
+    let wait = process.wait();
+    tokio::pin!(wait);
     tokio::pin!(ipump);
     tokio::pin!(opump);
     tokio::pin!(epump);
-    tokio::pin!(process);
-
     // Wait for everything to complete
     while res.is_none() || !idone || !odone || !edone {
         tokio::select! {
             biased;
 
-            status = (&mut process), if res.is_none() => {
+            status = &mut wait, if res.is_none() => {
                 res = Some(status.into_sys(strand)?);
                 // Don't wait for input pump any longer, it might be stuck trying to receive on the
                 // input iterator and hasn't noticed that the pipe was closed by the process
@@ -682,122 +453,16 @@ fn resolve_program<'v, 's>(
     which::which_in(name, paths.as_deref(), cwd.as_ref()).ok()
 }
 
-#[cfg(unix)]
 fn configure_default_stderr<'v, 's>(
-    strand: &mut Strand<'v, 's>,
+    _strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    command: &mut impl CommandBuilder,
+    command: &mut impl Command,
 ) -> Result<'v, 's, bool> {
     if global.terminal.redirected.get() {
         return Ok(false);
     }
-    command.stderr_fd(
-        std::io::stderr()
-            .as_fd()
-            .try_clone_to_owned()
-            .into_sys(strand)?,
-    );
+    command.stderr_inherit().into_sys(_strand)?;
     Ok(true)
-}
-
-#[cfg(unix)]
-#[expect(clippy::too_many_arguments)]
-async fn run_container<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    name: &str,
-    args: Args<'v, '_>,
-    global: State<'v, Global<'v>>,
-    context: &Context,
-    input: &Value<'v>,
-    output: &Value<'v>,
-    stderr: &Value<'v>,
-) -> Result<'v, 's, ()> {
-    let mut command = context.client().command(name);
-    let mut stdin_pipe = None;
-    let mut stdout_pipe = None;
-    let mut stderr_pipe = None;
-    let stderr_inherit = stderr.is_nil();
-    let stderr_merge = !stderr_inherit && stderr.eq(strand, output);
-
-    configure_default_stderr(strand, global, &mut command)?;
-
-    let recv_guard = configure_negotiated_input(strand, global, &mut command, input).await?;
-    let send_guard = configure_negotiated_output(strand, global, &mut command, output).await?;
-    let stderr_guard = if stderr_inherit || stderr_merge {
-        None
-    } else {
-        configure_negotiated_output(strand, global, &mut command, stderr).await?
-    };
-
-    if recv_guard.is_none() && !configure_direct_input(strand, global, &mut command, input)? {
-        let (sender, receiver) = pipe::pipe().into_sys(strand)?;
-        command.stdin_fd(receiver.into_blocking_fd().into_sys(strand)?);
-        stdin_pipe = Some(sender);
-    }
-
-    let stdout_direct =
-        send_guard.is_some() || configure_direct_output(strand, global, &mut command, output)?;
-    if stderr_merge {
-        if let Some(guard) = send_guard.as_ref() {
-            command.stderr_fd(guard.fd().into_sys(strand)?);
-        } else if stdout_direct {
-            if output.is_nil() || output.eq(strand, Singleton::IterNull) {
-                command.stderr_null();
-            } else if global.types.stdout.downcast(output).is_some() {
-                command.stderr_fd(
-                    std::io::stdout()
-                        .as_fd()
-                        .try_clone_to_owned()
-                        .into_sys(strand)?,
-                );
-            } else if let Some(file) = global.types.file.downcast(output)
-                && let Some(fd) = File::fd(file, strand)?
-            {
-                command.stderr_fd(fd);
-            } else {
-                unreachable!("stdout direct path should have been direct-fd capable")
-            }
-        } else {
-            let (sender, receiver) = pipe::pipe().into_sys(strand)?;
-            let stdout_fd = sender.into_blocking_fd().into_sys(strand)?;
-            let stderr_fd = stdout_fd.as_fd().try_clone_to_owned().into_sys(strand)?;
-            command.stdout_fd(stdout_fd);
-            command.stderr_fd(stderr_fd);
-            stdout_pipe = Some(receiver);
-        }
-    } else if !stdout_direct {
-        let (sender, receiver) = pipe::pipe().into_sys(strand)?;
-        command.stdout_fd(sender.into_blocking_fd().into_sys(strand)?);
-        stdout_pipe = Some(receiver);
-    }
-
-    if !stderr_inherit
-        && !stderr_merge
-        && stderr_guard.is_none()
-        && !configure_direct_stderr(strand, global, &mut command, stderr)?
-    {
-        let (sender, receiver) = pipe::pipe().into_sys(strand)?;
-        command.stderr_fd(sender.into_blocking_fd().into_sys(strand)?);
-        stderr_pipe = Some(receiver);
-    }
-
-    apply_env_and_cwd(global, strand, &mut command);
-    apply_args(strand, args, &mut command)?;
-
-    let proc = command.status();
-
-    run_monitor(
-        strand,
-        proc,
-        name,
-        input,
-        output,
-        (!stderr_inherit && !stderr_merge).then_some(stderr),
-        stdin_pipe,
-        stdout_pipe.map(BufReader::new),
-        stderr_pipe.map(BufReader::new),
-    )
-    .await
 }
 
 async fn run<'v, 's>(
@@ -809,26 +474,37 @@ async fn run<'v, 's>(
     output: &Value<'v>,
     stderr: &Value<'v>,
 ) -> Result<'v, 's, ()> {
-    let path = resolve_program(global, strand, name).ok_or_else(|| {
+    let local = global.local.get(strand);
+    let vfs = local.vfs();
+    let program = {
         #[cfg(unix)]
-        let err = io::Error::from_raw_os_error(libc::ENOENT);
+        {
+            if vfs.as_client().is_some() {
+                PathBuf::from(name)
+            } else {
+                resolve_program(global, strand, name)
+                    .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT).into_sys(strand))?
+            }
+        }
         #[cfg(not(unix))]
-        let err = io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("program not found: {}", name),
-        );
-        err.into_sys(strand)
-    })?;
-    let mut command = Command::new(&path);
-    if !global.terminal.redirected.get() {
-        command.stderr(Stdio::inherit());
-    }
-    #[cfg(unix)]
+        {
+            resolve_program(global, strand, name).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("program not found: {}", name),
+                )
+                .into_sys(strand)
+            })?
+        }
+    };
+    let mut command = vfs.command(&program);
+    configure_default_stderr(strand, global, &mut command)?;
+    let mut stdin_pipe = None;
     let mut stdout_pipe = None;
+    let mut stderr_pipe = None;
     let stderr_inherit = stderr.is_nil();
     let stderr_merge = !stderr_inherit && stderr.eq(strand, output);
 
-    #[cfg(unix)]
     let (
         stdin_negotiated,
         stdout_negotiated,
@@ -849,56 +525,44 @@ async fn run<'v, 's>(
         let sn_err = stderr_guard.is_some();
         (sn_in, sn_out, sn_err, recv_guard, send_guard, stderr_guard)
     };
-    #[cfg(not(unix))]
-    let (stdin_negotiated, stdout_negotiated, stderr_negotiated) = (false, false, false);
 
     if !stdin_negotiated && !configure_direct_input(strand, global, &mut command, input)? {
-        command.stdin(Stdio::piped());
+        let (parent_stdin, child_stdin) = pipe().into_sys(strand)?;
+        command.stdin_pipe(child_stdin).into_sys(strand)?;
+        stdin_pipe = Some(parent_stdin);
     }
 
     let stdout_direct =
         stdout_negotiated || configure_direct_output(strand, global, &mut command, output)?;
-    #[cfg(unix)]
     if stderr_merge {
         if stdout_negotiated {
-            command.stderr_fd(send_guard.as_ref().unwrap().fd().into_sys(strand)?);
+            command
+                .stderr_pipe(send_guard.as_ref().unwrap().send_pipe().into_sys(strand)?)
+                .into_sys(strand)?;
         } else if stdout_direct {
             if output.is_nil() || output.eq(strand, Singleton::IterNull) {
-                command.stderr(Stdio::null());
+                command.stderr_null();
             } else if global.types.stdout.downcast(output).is_some() {
-                command.stderr(Stdio::inherit());
-            } else if let Some(file) = global.types.file.downcast(output) {
-                command.stderr(Stdio::from(File::fd(file, strand)?.unwrap()));
+                command.stderr_inherit_stdout().into_sys(strand)?;
             } else {
-                unreachable!("stdout direct path should have been direct-fd capable")
+                #[cfg(unix)]
+                if let Some(file) = global.types.file.downcast(output) {
+                    command.stderr_fd(File::fd(file, strand)?.unwrap());
+                } else {
+                    unreachable!("stdout direct path should have been direct-fd capable")
+                }
             }
         } else {
-            let (sender, receiver) = pipe::pipe().into_sys(strand)?;
-            let stdout_fd = sender.into_blocking_fd().into_sys(strand)?;
-            let stderr_fd = stdout_fd.as_fd().try_clone_to_owned().into_sys(strand)?;
-            command.stdout(Stdio::from(stdout_fd));
-            command.stderr(Stdio::from(stderr_fd));
-            stdout_pipe = Some(receiver);
+            let (child_stdout, parent_stdout) = pipe().into_sys(strand)?;
+            let child_stderr = child_stdout.try_clone().into_sys(strand)?;
+            command.stdout_pipe(child_stdout).into_sys(strand)?;
+            command.stderr_pipe(child_stderr).into_sys(strand)?;
+            stdout_pipe = Some(parent_stdout);
         }
     } else if !stdout_direct {
-        command.stdout(Stdio::piped());
-    }
-    #[cfg(not(unix))]
-    if stderr_merge {
-        if stdout_direct {
-            if output.is_nil() || output.eq(strand, Singleton::IterNull) {
-                command.stderr(Stdio::null());
-            } else if global.types.stdout.downcast(output).is_some() {
-                command.stderr(Stdio::inherit());
-            } else {
-                command.stderr(Stdio::inherit());
-            }
-        } else {
-            command.stdout(Stdio::piped());
-            command.stderr(Stdio::inherit());
-        }
-    } else if !stdout_direct {
-        command.stdout(Stdio::piped());
+        let (child_stdout, parent_stdout) = pipe().into_sys(strand)?;
+        command.stdout_pipe(child_stdout).into_sys(strand)?;
+        stdout_pipe = Some(parent_stdout);
     }
 
     if !stderr_inherit
@@ -906,82 +570,44 @@ async fn run<'v, 's>(
         && !stderr_negotiated
         && !configure_direct_stderr(strand, global, &mut command, stderr)?
     {
-        command.stderr(Stdio::piped());
+        let (child_stderr, parent_stderr) = pipe().into_sys(strand)?;
+        command.stderr_pipe(child_stderr).into_sys(strand)?;
+        stderr_pipe = Some(parent_stderr);
     }
 
     apply_env_and_cwd(global, strand, &mut command);
     apply_args(strand, args, &mut command)?;
 
-    let mut proc = command.spawn().into_sys(strand)?;
-
-    let stdin = proc.stdin.take();
-    #[cfg(unix)]
-    let stdout = match stdout_pipe {
-        Some(stdout_pipe) => {
-            Some(Box::new(BufReader::new(stdout_pipe)) as Box<dyn AsyncBufRead + Unpin>)
-        }
-        None => proc
-            .stdout
-            .take()
-            .map(|stdout| Box::new(BufReader::new(stdout)) as Box<dyn AsyncBufRead + Unpin>),
-    };
-    #[cfg(not(unix))]
-    let stdout = proc
-        .stdout
-        .take()
-        .map(|stdout| Box::new(BufReader::new(stdout)) as Box<dyn AsyncBufRead + Unpin>);
-    let stderr_pipe = proc
-        .stderr
-        .take()
-        .map(|stderr| Box::new(BufReader::new(stderr)) as Box<dyn AsyncBufRead + Unpin>);
-    let wait = proc.wait();
-
-    let res = strand
-        .cancel_guard(async move |strand| {
-            run_monitor(
-                strand,
-                wait,
-                name,
-                input,
-                output,
-                (!stderr_inherit && !stderr_merge).then_some(stderr),
-                stdin,
-                stdout,
-                stderr_pipe,
-            )
-            .await
-        })
-        .await;
-
-    // Perform final cleanup of the process
-    if res.is_err()
-        && let Some(_pid) = proc.id()
-    {
-        // Avoid being dropped while we await process
-        let _ = strand
-            .with_cancel_mask(true, async move |_strand| {
-                #[cfg(unix)]
-                {
-                    use nix::{
-                        sys::signal::{self, Signal},
-                        unistd::Pid,
-                    };
-                    use std::time::Duration;
-                    use tokio::time::timeout;
-
-                    signal::kill(Pid::from_raw(_pid as i32), Signal::SIGTERM).into_do(_strand)?;
-                    let res = timeout(Duration::from_millis(500), proc.wait()).await;
-                    if res.is_ok() {
-                        Ok(())
-                    } else {
-                        proc.kill().await.into_sys(_strand)
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = proc.kill().await;
-                }
+    let mut proc = command.spawn().await.into_sys(strand)?;
+    let stdin = stdin_pipe.map(|pipe| Box::new(pipe) as Box<dyn AsyncWrite + Unpin>);
+    let stdout = stdout_pipe
+        .map(BufReader::new)
+        .map(|pipe| Box::new(pipe) as Box<dyn AsyncBufRead + Unpin>);
+    let stderr_pipe = stderr_pipe
+        .map(BufReader::new)
+        .map(|pipe| Box::new(pipe) as Box<dyn AsyncBufRead + Unpin>);
+    let res = {
+        strand
+            .cancel_guard(async |strand| {
+                run_monitor(
+                    strand,
+                    &mut proc,
+                    name,
+                    input,
+                    output,
+                    (!stderr_inherit && !stderr_merge).then_some(stderr),
+                    stdin,
+                    stdout,
+                    stderr_pipe,
+                )
+                .await
             })
+            .await
+    };
+
+    if res.is_err() {
+        let _ = strand
+            .with_cancel_mask(true, async move |_strand| proc.terminate().await)
             .await;
     }
 
@@ -1005,22 +631,6 @@ async fn dispatch_run<'v, 's>(
                 Slot::reborrow(&mut stderr),
             )
             .await?;
-
-            #[cfg(unix)]
-            {
-                let local = global.local.get(strand);
-                let container = local.container();
-                let handle = container.as_ref().cloned();
-                drop(container);
-                if let Some(handle) = handle {
-                    let res = run_container(
-                        strand, name, args, global, &handle, &input, &output, &stderr,
-                    )
-                    .await;
-                    cleanup_io(strand, global, &input, &output, &stderr, cleanup).await;
-                    return res;
-                }
-            }
 
             let res = run(strand, name, args, global, &input, &output, &stderr).await;
             cleanup_io(strand, global, &input, &output, &stderr, cleanup).await;
@@ -1061,9 +671,8 @@ impl<'v> Object<'v> for Program {
             let resolved = {
                 #[cfg(unix)]
                 {
-                    if let Some(handle) = local.container().as_ref() {
-                        handle
-                            .client()
+                    if let Some(client) = local.vfs().into_client() {
+                        client
                             .which(name, paths.as_deref(), Some(cwd.as_ref()))
                             .await
                             .into_sys(strand)?

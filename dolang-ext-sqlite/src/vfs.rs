@@ -34,7 +34,7 @@ use sqlite_plugin::{
     vfs::{RegisterOpts, Vfs, VfsHandle, VfsResult, register_static},
 };
 
-use dolang_shell_vfs::Client;
+use dolang_shell_vfs::{Client, Vfs as _};
 
 // Shadow libc's F_RDLCK/F_WRLCK/F_UNLCK with i32 versions.
 // On Linux these constants are already i32; on macOS they are i16.

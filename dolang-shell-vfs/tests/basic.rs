@@ -1,6 +1,6 @@
 #![deny(warnings)]
 #![cfg(unix)]
-use dolang_shell_vfs::{AccessFlags, ChownIdentity, Client, FileType, glob_local};
+use dolang_shell_vfs::{AccessFlags, Child, ChownIdentity, Client, Command, Direct, FileType, Vfs};
 use nix::unistd::{Group, User, getgid, getuid};
 use std::os::unix::fs::FileTypeExt;
 use std::{
@@ -33,7 +33,8 @@ async fn basic_spawn() {
     let client = connect_client(&socket_path).await;
     let mut command = client.command("echo");
     command.arg("hello");
-    let status = command.status().await.unwrap();
+    let mut child = command.spawn().await.unwrap();
+    let status = child.wait().await.unwrap();
 
     assert!(status.success());
     assert_eq!(status.code(), Some(0));
@@ -56,7 +57,8 @@ async fn client_from_owned_fd() {
     let fd: OwnedFd = stream.into_std().unwrap().into();
     let client = Client::try_from(fd).unwrap();
 
-    let status = client.command("true").status().await.unwrap();
+    let mut child = client.command("true").spawn().await.unwrap();
+    let status = child.wait().await.unwrap();
 
     assert!(status.success());
 
@@ -72,7 +74,12 @@ async fn spawn_failure() {
     let server_task = start_server(&socket_path).await;
 
     let client = connect_client(&socket_path).await;
-    let result = client.command("nonexistent_command_12345").status().await;
+    let mut child = client
+        .command("nonexistent_command_12345")
+        .spawn()
+        .await
+        .unwrap();
+    let result = child.wait().await;
 
     assert!(result.is_err());
 
@@ -90,7 +97,8 @@ async fn exit_code() {
     let client = connect_client(&socket_path).await;
     let mut command = client.command("sh");
     command.arg("-c").arg("exit 42");
-    let status = command.status().await.unwrap();
+    let mut child = command.spawn().await.unwrap();
+    let status = child.wait().await.unwrap();
 
     assert!(!status.success());
     assert_eq!(status.code(), Some(42));
@@ -112,7 +120,8 @@ async fn env_vars() {
         .arg("-c")
         .arg("echo $TEST_VAR")
         .env("TEST_VAR", "value");
-    let status = command.status().await.unwrap();
+    let mut child = command.spawn().await.unwrap();
+    let status = child.wait().await.unwrap();
 
     assert!(status.success());
 
@@ -261,11 +270,13 @@ async fn fd_passing() {
     let mut command = client.command("echo");
     command
         .arg("hello_world")
-        .stdout(file.as_fd().try_clone_to_owned().unwrap());
-    let status = command.status().await.unwrap();
+        .stdout_fd(file.as_fd().try_clone_to_owned().unwrap());
+    let mut child = command.spawn().await.unwrap();
+    let status = child.wait().await.unwrap();
 
     assert!(status.success());
 
+    drop(child);
     drop(client);
 
     let content = std::fs::read_to_string(file.path()).unwrap();
@@ -937,7 +948,7 @@ async fn glob_invalid_pattern() {
     let _ = server_task.await;
 }
 
-// Tests for glob_local (free function, no server required)
+// Tests for direct glob behavior (no server required)
 
 #[tokio::test]
 async fn glob_local_basic_matching() {
@@ -949,7 +960,7 @@ async fn glob_local_basic_matching() {
     std::fs::write(dir.path().join("file.rs"), "content3").unwrap();
 
     // Test glob matching *.txt files
-    let paths = glob_local("*.txt", dir.path(), false, None).await.unwrap();
+    let paths = Direct.glob("*.txt", dir.path(), false, None).await.unwrap();
 
     assert_eq!(paths.len(), 2);
     assert!(paths.iter().any(|p| p.file_name().unwrap() == "file1.txt"));
@@ -967,7 +978,8 @@ async fn glob_local_recursive() {
     std::fs::write(subdir.join("nested.txt"), "nested").unwrap();
 
     // Test recursive glob with **
-    let paths = glob_local("**/*.txt", dir.path(), false, None)
+    let paths = Direct
+        .glob("**/*.txt", dir.path(), false, None)
         .await
         .unwrap();
 
@@ -989,7 +1001,8 @@ async fn glob_local_max_depth() {
     std::fs::write(level2.join("level2.txt"), "level2").unwrap();
 
     // Test glob with max_depth=1 (should only find root.txt)
-    let paths = glob_local("**/*.txt", dir.path(), false, Some(1))
+    let paths = Direct
+        .glob("**/*.txt", dir.path(), false, Some(1))
         .await
         .unwrap();
 
@@ -1004,7 +1017,7 @@ async fn glob_local_no_matches() {
     std::fs::write(dir.path().join("file.txt"), "content").unwrap();
 
     // Test glob with pattern that matches nothing
-    let paths = glob_local("*.rs", dir.path(), false, None).await.unwrap();
+    let paths = Direct.glob("*.rs", dir.path(), false, None).await.unwrap();
 
     assert!(paths.is_empty());
 }
@@ -1014,7 +1027,7 @@ async fn glob_local_invalid_pattern() {
     let dir = tempdir().unwrap();
 
     // Test glob with invalid pattern (should return error)
-    let result = glob_local("[invalid", dir.path(), false, None).await;
+    let result = Direct.glob("[invalid", dir.path(), false, None).await;
 
     assert!(result.is_err());
 }

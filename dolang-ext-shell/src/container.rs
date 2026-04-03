@@ -7,15 +7,7 @@ use std::{
 };
 
 #[cfg(not(unix))]
-use std::{
-    env,
-    fs::Metadata,
-    path::{Path, PathBuf},
-    rc::Rc,
-};
-
-#[cfg(not(unix))]
-use tokio::{fs::OpenOptions, io};
+use std::{env, rc::Rc};
 
 #[cfg(unix)]
 use dolang::runtime::{
@@ -27,93 +19,12 @@ use dolang::runtime::{
 use dolang::runtime::{Arg, Error, State, vm::Builder};
 
 #[cfg(unix)]
-use dolang_shell_vfs::{Client, Query};
+use dolang_shell_vfs::{Client, ClientOrDirect, Query};
 
 use crate::{global::Global, local::Env};
 
 #[cfg(unix)]
 use crate::error;
-
-#[cfg(not(unix))]
-#[derive(Clone)]
-pub(crate) struct Client;
-
-#[cfg(not(unix))]
-impl Client {
-    pub(crate) fn open_options(&self) -> OpenOptions {
-        unreachable!()
-    }
-
-    pub(crate) async fn metadata(&self, _path: &Path) -> io::Result<Metadata> {
-        unreachable!()
-    }
-
-    pub(crate) async fn symlink_metadata(&self, _path: &Path) -> io::Result<Metadata> {
-        unreachable!()
-    }
-
-    pub(crate) async fn copy(&self, _from: &Path, _to: &Path, _all: bool) -> io::Result<()> {
-        unreachable!()
-    }
-
-    pub(crate) async fn rename(&self, _from: &Path, _to: &Path) -> io::Result<()> {
-        unreachable!()
-    }
-
-    pub(crate) async fn move_(&self, _from: &Path, _to: &Path, _all: bool) -> io::Result<()> {
-        unreachable!()
-    }
-
-    pub(crate) async fn symlink(&self, _src: &Path, _dst: &Path) -> io::Result<()> {
-        unreachable!()
-    }
-
-    pub(crate) async fn canonicalize(&self, _path: &Path) -> io::Result<PathBuf> {
-        unreachable!()
-    }
-
-    pub(crate) async fn read_link(&self, _path: &Path) -> io::Result<PathBuf> {
-        unreachable!()
-    }
-
-    pub(crate) async fn create_dir(&self, _path: &Path, _all: bool) -> io::Result<()> {
-        unreachable!()
-    }
-
-    pub(crate) async fn remove(&self, _path: &Path, _all: bool, _ignore: bool) -> io::Result<()> {
-        unreachable!()
-    }
-
-    pub(crate) async fn remove_dir(
-        &self,
-        _path: &Path,
-        _all: bool,
-        _ignore: bool,
-    ) -> io::Result<()> {
-        unreachable!()
-    }
-
-    pub(crate) async fn glob(
-        &self,
-        _pattern: &str,
-        _root: &Path,
-        _follow: bool,
-        _max_depth: Option<usize>,
-    ) -> io::Result<Vec<PathBuf>> {
-        unreachable!()
-    }
-}
-
-#[cfg(not(unix))]
-#[derive(Clone)]
-pub(crate) struct Context;
-
-#[cfg(not(unix))]
-impl Context {
-    pub(crate) fn client(&self) -> &Client {
-        unreachable!()
-    }
-}
 
 #[cfg(unix)]
 #[derive(Clone)]
@@ -132,12 +43,12 @@ impl Context {
         f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> R,
     ) -> R {
         let local = global.local.get(strand);
-        let orig = (*local.container_mut()).replace(self.clone());
+        let orig = local.replace_vfs(ClientOrDirect::from(self.client.clone()));
         let orig_cwd = local.replace_cwd(self.cwd.clone());
         let orig_env = local.replace_env(Rc::new(Env::derived(self.env.clone(), HashMap::new())));
         let res = f(strand).await;
         let local = global.local.get(strand);
-        *local.container_mut() = orig;
+        local.replace_vfs(orig);
         local.replace_cwd(orig_cwd);
         local.replace_env(orig_env);
         res
@@ -194,10 +105,7 @@ impl<'v> Object<'v> for Vfs {
 
         let parent_client = {
             let local = global.local.get(strand);
-            local
-                .container()
-                .as_ref()
-                .map(|context| context.client().clone())
+            local.vfs().into_client()
         };
 
         let client = if let Some(parent_client) = parent_client {
@@ -272,7 +180,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         let local = global.local.get(strand);
 
         // Save current state
-        let orig_agent = (*local.container_mut()).take();
+        let orig_vfs = local.replace_vfs(Default::default());
         let orig_cwd = local.replace_cwd(env::current_dir().unwrap());
         let orig_env = local.replace_env(Rc::new(Env::root()));
 
@@ -281,7 +189,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
 
         // Restore original state
         let local = global.local.get(strand);
-        *local.container_mut() = orig_agent;
+        local.replace_vfs(orig_vfs);
         local.replace_cwd(orig_cwd);
         local.replace_env(orig_env);
 

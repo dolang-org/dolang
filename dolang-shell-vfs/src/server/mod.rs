@@ -4,7 +4,6 @@ use std::{
     os::unix::io::OwnedFd,
     os::unix::process::ExitStatusExt,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
 };
 
@@ -13,19 +12,17 @@ use tokio::{
     fs::OpenOptions,
     io,
     net::{UnixListener, UnixStream, unix::SocketAddr},
-    process::Command,
     sync::{Mutex, oneshot, watch},
 };
 use tokio_unix_ipc::{Receiver, channel_from_std, serde::Handle};
 
 use crate::{
-    LockedSender,
+    Child as _, Command as _, Direct, LockedSender, Permissions, Vfs,
     protocol::{
-        AccessRequest, CanonicalizeRequest, ChownIdentity, ChownRequest, CopyRequest,
-        CreateDirRequest, GlobRequest, MetadataRequest, MoveRequest, OpenRequest, ReadLinkRequest,
-        RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind, Response,
-        ResponseKind, SetPermissionsRequest, SpawnRequest, SymlinkRequest, Timestamp,
-        UnixStreamSocketRequest, UtimeRequest,
+        AccessRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
+        GlobRequest, MetadataRequest, MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest,
+        RemoveRequest, RenameRequest, Request, RequestKind, Response, ResponseKind,
+        SetPermissionsRequest, SpawnRequest, SymlinkRequest, UnixStreamSocketRequest, UtimeRequest,
     },
 };
 
@@ -171,6 +168,10 @@ impl Server {
 }
 
 impl Connection {
+    fn io_result<T>(result: io::Result<T>) -> Result<T, i32> {
+        result.map_err(|e| e.raw_os_error().unwrap_or(libc::EIO))
+    }
+
     async fn run(self: Arc<Self>, receiver: Receiver<Request>) {
         let receiver = receiver;
 
@@ -323,8 +324,10 @@ impl Connection {
             }
         };
 
-        let mut cmd = Command::new(&resolved_program);
-        cmd.args(&req.args);
+        let mut cmd = Direct.command(&resolved_program);
+        for arg in &req.args {
+            cmd.arg(arg);
+        }
 
         if let Some(cwd) = &req.cwd {
             cmd.current_dir(cwd);
@@ -332,28 +335,32 @@ impl Connection {
 
         for (k, v) in &req.env {
             match v {
-                Some(val) => cmd.env(k, val),
-                None => cmd.env_remove(k),
+                Some(val) => {
+                    cmd.env(k, val);
+                }
+                None => {
+                    cmd.env_remove(k);
+                }
             };
         }
 
         if let Some(fd) = req.stdin_fd {
-            cmd.stdin(Stdio::from(fd.into_inner()));
+            cmd.stdin_fd(fd.into_inner());
         } else {
-            cmd.stdin(Stdio::null());
+            cmd.stdin_null();
         }
         if let Some(fd) = req.stdout_fd {
-            cmd.stdout(Stdio::from(fd.into_inner()));
+            cmd.stdout_fd(fd.into_inner());
         } else {
-            cmd.stdout(Stdio::null());
+            cmd.stdout_null();
         }
         if let Some(fd) = req.stderr_fd {
-            cmd.stderr(Stdio::from(fd.into_inner()));
+            cmd.stderr_fd(fd.into_inner());
         } else {
-            cmd.stderr(Stdio::null());
+            cmd.stderr_null();
         }
 
-        let mut child = match cmd.spawn() {
+        let mut child = match cmd.spawn().await {
             Ok(child) => child,
             Err(e) => {
                 let errno = e.raw_os_error().unwrap_or(libc::EIO);
@@ -370,23 +377,25 @@ impl Connection {
 
         self.in_flight.lock().await.insert(id, cancel_tx);
 
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = cancel_rx => {
-                    let _ = child.kill().await;
-                }
-                exit = child.wait() => {
-                    let code = match exit {
-                        Ok(status) => status.into_raw(),
-                        Err(_) => -1
-                    };
-                    let _ = self.sender.send(Response {
-                        id,
-                        kind: ResponseKind::Spawn(Ok(code))
-                    }).await;
-                }
-            }
-        });
+        let exit = tokio::select! {
+            _ = cancel_rx => child.terminate().await,
+            exit = child.wait() => exit,
+        };
+
+        self.in_flight.lock().await.remove(&id);
+
+        let code = match exit {
+            Ok(status) => status.into_raw(),
+            Err(_) => -1,
+        };
+
+        let _ = self
+            .sender
+            .send(Response {
+                id,
+                kind: ResponseKind::Spawn(Ok(code)),
+            })
+            .await;
     }
 
     async fn handle_cancel(&self, id: u64) {
@@ -473,256 +482,80 @@ impl Connection {
     }
 
     async fn handle_remove(&self, id: u64, req: RemoveRequest) {
-        let result = if req.all {
-            match tokio::fs::symlink_metadata(&req.path).await {
-                Ok(metadata) if metadata.is_dir() => {
-                    match tokio::fs::remove_dir_all(&req.path).await {
-                        Ok(()) => ResponseKind::Remove(Ok(())),
-                        Err(e) => {
-                            let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                            ResponseKind::Remove(Err(errno))
-                        }
-                    }
-                }
-                Ok(_) => match tokio::fs::remove_file(&req.path).await {
-                    Ok(()) => ResponseKind::Remove(Ok(())),
-                    Err(e) => {
-                        let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                        ResponseKind::Remove(Err(errno))
-                    }
-                },
-                Err(e) if req.ignore && e.kind() == io::ErrorKind::NotFound => {
-                    ResponseKind::Remove(Ok(()))
-                }
-                Err(e) => {
-                    let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                    ResponseKind::Remove(Err(errno))
-                }
-            }
-        } else {
-            match tokio::fs::remove_file(&req.path).await {
-                Ok(()) => ResponseKind::Remove(Ok(())),
-                Err(e) if req.ignore && e.kind() == io::ErrorKind::NotFound => {
-                    ResponseKind::Remove(Ok(()))
-                }
-                Err(e) => {
-                    let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                    ResponseKind::Remove(Err(errno))
-                }
-            }
-        };
+        let result = ResponseKind::Remove(Self::io_result(
+            Direct.remove(&req.path, req.all, req.ignore).await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_metadata(&self, id: u64, req: MetadataRequest) {
-        use std::os::unix::fs::MetadataExt;
-
-        let result = match tokio::fs::metadata(&req.path).await {
-            Ok(metadata) => {
-                let file_type = if metadata.is_file() {
-                    crate::protocol::FileType::File
-                } else if metadata.is_dir() {
-                    crate::protocol::FileType::Dir
-                } else if metadata.is_symlink() {
-                    crate::protocol::FileType::Symlink
-                } else {
-                    crate::protocol::FileType::Unknown
-                };
-
-                let metadata_struct = crate::protocol::Metadata {
-                    len: metadata.len(),
-                    file_type,
-                    atime: metadata.atime(),
-                    atime_nsec: metadata.atime_nsec(),
-                    mtime: metadata.mtime(),
-                    mtime_nsec: metadata.mtime_nsec(),
-                    ctime: metadata.ctime(),
-                    ctime_nsec: metadata.ctime_nsec(),
-                    mode: metadata.mode(),
-                    dev: metadata.dev(),
-                    ino: metadata.ino(),
-                    nlink: metadata.nlink(),
-                    uid: metadata.uid(),
-                    gid: metadata.gid(),
-                    rdev: metadata.rdev(),
-                    blksize: metadata.blksize(),
-                    blocks: metadata.blocks(),
-                };
-                ResponseKind::Metadata(Ok(metadata_struct))
-            }
-            Err(e) => {
-                let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                ResponseKind::Metadata(Err(errno))
-            }
-        };
+        let result = ResponseKind::Metadata(Self::io_result(Direct.metadata(&req.path).await));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_create_dir(&self, id: u64, req: CreateDirRequest) {
-        let result = if req.all {
-            match tokio::fs::create_dir_all(&req.path).await {
-                Ok(()) => ResponseKind::CreateDir(Ok(())),
-                Err(e) => {
-                    let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                    ResponseKind::CreateDir(Err(errno))
-                }
-            }
-        } else {
-            match tokio::fs::create_dir(&req.path).await {
-                Ok(()) => ResponseKind::CreateDir(Ok(())),
-                Err(e) => {
-                    let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                    ResponseKind::CreateDir(Err(errno))
-                }
-            }
-        };
+        let result =
+            ResponseKind::CreateDir(Self::io_result(Direct.create_dir(&req.path, req.all).await));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_remove_dir(&self, id: u64, req: RemoveDirRequest) {
-        let result = if req.all {
-            match crate::remove_dir_empty_tree_local(&req.path, req.ignore).await {
-                Ok(_) => ResponseKind::RemoveDir(Ok(())),
-                Err(e) if req.ignore && e.kind() == io::ErrorKind::NotFound => {
-                    ResponseKind::RemoveDir(Ok(()))
-                }
-                Err(e) => {
-                    let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                    ResponseKind::RemoveDir(Err(errno))
-                }
-            }
-        } else {
-            match tokio::fs::remove_dir(&req.path).await {
-                Ok(()) => ResponseKind::RemoveDir(Ok(())),
-                Err(e) if req.ignore && e.kind() == io::ErrorKind::NotFound => {
-                    ResponseKind::RemoveDir(Ok(()))
-                }
-                Err(e) => {
-                    let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                    ResponseKind::RemoveDir(Err(errno))
-                }
-            }
-        };
+        let result = ResponseKind::RemoveDir(Self::io_result(
+            Direct.remove_dir(&req.path, req.all, req.ignore).await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_copy(&self, id: u64, req: CopyRequest) {
-        let result = match crate::copy_local(&req.from, &req.to, req.all).await {
-            Ok(()) => ResponseKind::Copy(Ok(())),
-            Err(e) => {
-                let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                ResponseKind::Copy(Err(errno))
-            }
-        };
+        let result = ResponseKind::Copy(Self::io_result(
+            Direct.copy(&req.from, &req.to, req.all).await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_rename(&self, id: u64, req: RenameRequest) {
-        let result = match tokio::fs::rename(&req.from, &req.to).await {
-            Ok(()) => ResponseKind::Rename(Ok(())),
-            Err(e) => {
-                let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                ResponseKind::Rename(Err(errno))
-            }
-        };
+        let result = ResponseKind::Rename(Self::io_result(Direct.rename(&req.from, &req.to).await));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_move(&self, id: u64, req: MoveRequest) {
-        let result = match crate::move_local(&req.from, &req.to, req.all).await {
-            Ok(()) => ResponseKind::Move(Ok(())),
-            Err(e) => {
-                let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                ResponseKind::Move(Err(errno))
-            }
-        };
+        let result = ResponseKind::Move(Self::io_result(
+            Direct.move_(&req.from, &req.to, req.all).await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_symlink(&self, id: u64, req: SymlinkRequest) {
-        let result = match tokio::fs::symlink(&req.src, &req.dst).await {
-            Ok(()) => ResponseKind::Symlink(Ok(())),
-            Err(e) => {
-                let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                ResponseKind::Symlink(Err(errno))
-            }
-        };
+        let result =
+            ResponseKind::Symlink(Self::io_result(Direct.symlink(&req.src, &req.dst).await));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_symlink_metadata(&self, id: u64, req: MetadataRequest) {
-        use std::os::unix::fs::MetadataExt;
-
-        let result = match tokio::fs::symlink_metadata(&req.path).await {
-            Ok(metadata) => {
-                let file_type = if metadata.is_file() {
-                    crate::protocol::FileType::File
-                } else if metadata.is_dir() {
-                    crate::protocol::FileType::Dir
-                } else if metadata.is_symlink() {
-                    crate::protocol::FileType::Symlink
-                } else {
-                    crate::protocol::FileType::Unknown
-                };
-
-                let metadata_struct = crate::protocol::Metadata {
-                    len: metadata.len(),
-                    file_type,
-                    atime: metadata.atime(),
-                    atime_nsec: metadata.atime_nsec(),
-                    mtime: metadata.mtime(),
-                    mtime_nsec: metadata.mtime_nsec(),
-                    ctime: metadata.ctime(),
-                    ctime_nsec: metadata.ctime_nsec(),
-                    mode: metadata.mode(),
-                    dev: metadata.dev(),
-                    ino: metadata.ino(),
-                    nlink: metadata.nlink(),
-                    uid: metadata.uid(),
-                    gid: metadata.gid(),
-                    rdev: metadata.rdev(),
-                    blksize: metadata.blksize(),
-                    blocks: metadata.blocks(),
-                };
-                ResponseKind::SymlinkMetadata(Ok(metadata_struct))
-            }
-            Err(e) => {
-                let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                ResponseKind::SymlinkMetadata(Err(errno))
-            }
-        };
+        let result = ResponseKind::SymlinkMetadata(Self::io_result(
+            Direct.symlink_metadata(&req.path).await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_canonicalize(&self, id: u64, req: CanonicalizeRequest) {
-        let result = match tokio::fs::canonicalize(&req.path).await {
-            Ok(path) => ResponseKind::Canonicalize(Ok(path)),
-            Err(e) => {
-                let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                ResponseKind::Canonicalize(Err(errno))
-            }
-        };
+        let result =
+            ResponseKind::Canonicalize(Self::io_result(Direct.canonicalize(&req.path).await));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_read_link(&self, id: u64, req: ReadLinkRequest) {
-        let result = match tokio::fs::read_link(&req.path).await {
-            Ok(path) => ResponseKind::ReadLink(Ok(path)),
-            Err(e) => {
-                let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                ResponseKind::ReadLink(Err(errno))
-            }
-        };
+        let result = ResponseKind::ReadLink(Self::io_result(Direct.read_link(&req.path).await));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
@@ -747,145 +580,45 @@ impl Connection {
     }
 
     async fn handle_glob(&self, id: u64, req: GlobRequest) {
-        let result =
-            match crate::glob_local(req.pattern, &req.root, req.follow_symlinks, req.max_depth)
-                .await
-            {
-                Ok(paths) => ResponseKind::Glob(Ok(paths)),
-                Err(e) => ResponseKind::Glob(Err(e.raw_os_error().unwrap_or(libc::EIO))),
-            };
+        let result = ResponseKind::Glob(Self::io_result(
+            Direct
+                .glob(req.pattern, &req.root, req.follow_symlinks, req.max_depth)
+                .await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_set_permissions(&self, id: u64, req: SetPermissionsRequest) {
-        use std::os::unix::fs::PermissionsExt;
-
-        let result = tokio::task::spawn_blocking(move || {
-            let permissions = std::fs::Permissions::from_mode(req.mode);
-            match std::fs::set_permissions(&req.path, permissions) {
-                Ok(()) => ResponseKind::SetPermissions(Ok(())),
-                Err(e) => ResponseKind::SetPermissions(Err(e.raw_os_error().unwrap_or(libc::EIO))),
-            }
-        })
-        .await
-        .unwrap_or(ResponseKind::SetPermissions(Err(libc::EIO)));
+        let result = ResponseKind::SetPermissions(Self::io_result(
+            Direct
+                .set_permissions(&req.path, Permissions::from_mode(req.mode))
+                .await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_utime(&self, id: u64, req: UtimeRequest) {
-        use nix::{
-            fcntl::AT_FDCWD,
-            sys::{
-                stat::{UtimensatFlags, utimensat},
-                time::{TimeSpec, TimeValLike},
-            },
-        };
-
-        fn make_timespec(timestamp: Option<Timestamp>) -> Option<TimeSpec> {
-            match timestamp {
-                Some(timestamp) => timestamp
-                    .secs
-                    .checked_mul(1_000_000_000)
-                    .and_then(|secs| secs.checked_add(i64::from(timestamp.nanos)))
-                    .map(TimeSpec::nanoseconds),
-                None => Some(TimeSpec::UTIME_OMIT),
-            }
-        }
-
-        let result = tokio::task::spawn_blocking(move || {
-            let atime = match make_timespec(req.accessed) {
-                Some(atime) => atime,
-                None => return ResponseKind::Utime(Err(libc::EINVAL)),
-            };
-            let mtime = match make_timespec(req.modified) {
-                Some(mtime) => mtime,
-                None => return ResponseKind::Utime(Err(libc::EINVAL)),
-            };
-            match utimensat(
-                AT_FDCWD,
-                &req.path,
-                &atime,
-                &mtime,
-                UtimensatFlags::FollowSymlink,
-            ) {
-                Ok(()) => ResponseKind::Utime(Ok(())),
-                Err(errno) => ResponseKind::Utime(Err(errno as i32)),
-            }
-        })
-        .await
-        .unwrap_or(ResponseKind::Utime(Err(libc::EIO)));
+        let accessed = req
+            .accessed
+            .map(|timestamp| (timestamp.secs, timestamp.nanos));
+        let modified = req
+            .modified
+            .map(|timestamp| (timestamp.secs, timestamp.nanos));
+        let result = ResponseKind::Utime(Self::io_result(
+            Direct.utime(&req.path, accessed, modified).await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_chown(&self, id: u64, req: ChownRequest) {
-        use nix::{
-            errno::Errno,
-            unistd::{Gid, Group, Uid, User, chown},
-        };
-        use std::{ffi::CString, os::unix::ffi::OsStrExt};
-
-        fn lchown_path(
-            path: &std::path::Path,
-            user: Option<Uid>,
-            group: Option<Gid>,
-        ) -> Result<(), Errno> {
-            let path = CString::new(path.as_os_str().as_bytes()).map_err(|_| Errno::EINVAL)?;
-            Errno::result(unsafe {
-                libc::lchown(
-                    path.as_ptr(),
-                    user.map_or(!0, |user| user.as_raw()) as libc::uid_t,
-                    group.map_or(!0, |group| group.as_raw()) as libc::gid_t,
-                )
-            })
-            .map(drop)
-        }
-
-        fn resolve_user(user: Option<ChownIdentity>) -> Result<Option<Uid>, Errno> {
-            match user {
-                None => Ok(None),
-                Some(ChownIdentity::Id(id)) => Ok(Some(Uid::from_raw(id))),
-                Some(ChownIdentity::Name(name)) => match User::from_name(&name)? {
-                    Some(user) => Ok(Some(user.uid)),
-                    None => Err(Errno::ENOENT),
-                },
-            }
-        }
-
-        fn resolve_group(group: Option<ChownIdentity>) -> Result<Option<Gid>, Errno> {
-            match group {
-                None => Ok(None),
-                Some(ChownIdentity::Id(id)) => Ok(Some(Gid::from_raw(id))),
-                Some(ChownIdentity::Name(name)) => match Group::from_name(&name)? {
-                    Some(group) => Ok(Some(group.gid)),
-                    None => Err(Errno::ENOENT),
-                },
-            }
-        }
-
-        let result = tokio::task::spawn_blocking(move || {
-            let user = match resolve_user(req.user) {
-                Ok(user) => user,
-                Err(err) => return ResponseKind::Chown(Err(err as i32)),
-            };
-            let group = match resolve_group(req.group) {
-                Ok(group) => group,
-                Err(err) => return ResponseKind::Chown(Err(err as i32)),
-            };
-            let result = if req.follow {
-                chown(&req.path, user, group)
-            } else {
-                lchown_path(&req.path, user, group)
-            };
-            match result {
-                Ok(()) => ResponseKind::Chown(Ok(())),
-                Err(err) => ResponseKind::Chown(Err(err as i32)),
-            }
-        })
-        .await
-        .unwrap_or(ResponseKind::Chown(Err(libc::EIO)));
+        let result = ResponseKind::Chown(Self::io_result(
+            Direct
+                .chown(&req.path, req.user, req.group, req.follow)
+                .await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }

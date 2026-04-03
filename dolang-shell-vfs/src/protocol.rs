@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tokio_unix_ipc::serde::Handle;
 
+pub(crate) use crate::{ChownIdentity, Metadata};
+
 pub(crate) type RequestId = u64;
 
 #[derive(Serialize, Deserialize)]
@@ -143,47 +145,12 @@ pub(crate) struct UtimeRequest {
     pub(crate) modified: Option<Timestamp>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum ChownIdentity {
-    Id(u32),
-    Name(String),
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct ChownRequest {
     pub(crate) path: PathBuf,
     pub(crate) user: Option<ChownIdentity>,
     pub(crate) group: Option<ChownIdentity>,
     pub(crate) follow: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileType {
-    File,
-    Dir,
-    Symlink,
-    Unknown,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Metadata {
-    pub len: u64,
-    pub file_type: FileType,
-    pub atime: i64,
-    pub atime_nsec: i64,
-    pub mtime: i64,
-    pub mtime_nsec: i64,
-    pub ctime: i64,
-    pub ctime_nsec: i64,
-    pub mode: u32,
-    pub dev: u64,
-    pub ino: u64,
-    pub nlink: u64,
-    pub uid: u32,
-    pub gid: u32,
-    pub rdev: u64,
-    pub blksize: u64,
-    pub blocks: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
