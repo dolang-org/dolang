@@ -18,7 +18,7 @@ if (sys.os != "windows")
   Vfs = it
 
   if !Path(agent_bin).exists()
-    cd ../ $env RUSTFLAGS: nil $cargo -q build -p dolang-shell-vfs
+    cd ../ $env RUSTFLAGS: nil $cargo -q build --bin dolang-shell-vfs
 
 pub def with_agent block
   let runtime = sub $mktemp -d /tmp/test-dolang-agent.XXXXXX
