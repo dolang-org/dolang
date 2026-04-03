@@ -83,6 +83,18 @@ cargo build --release
 ./target/release/dolang-shell example/cow.dol
 ```
 
+## Acknowledgements
+
+Do builds on a lot of excellent Rust ecosystem work.
+
+- Vendored code: `hashbrown`; `tokio-unix-ipc` by Armin Ronacher (`mitsuhiko`)
+- Implementation inspiration: `vint64` by Tony Arcieri; `tiny-sort-rs` by Lukas
+  Bergdoll
+- Major building blocks: `tokio`, `reqwest`, `sqlite-plugin`, `libsqlite3-sys`,
+  `linkme`, `annotate-snippets`, `tower-lsp`
+
+Thanks to the authors and maintainers of these projects.
+
 ## Project Structure
 
 This is a Cargo workspace. Core crates:
