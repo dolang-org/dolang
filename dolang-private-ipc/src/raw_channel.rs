@@ -179,7 +179,7 @@ fn recv_impl(
             fd_size
         }
     };
-    let mut cmsgspace = vec![0u8; msgspace_size as usize];
+    let mut cmsgspace = vec![0u8; msgspace_size];
 
     let msg = nix_eintr!(recvmsg::<()>(fd, &mut iov, Some(&mut cmsgspace), MSG_FLAGS))?;
     if msg.flags.contains(MsgFlags::MSG_CTRUNC) {

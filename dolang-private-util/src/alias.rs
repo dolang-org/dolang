@@ -48,8 +48,11 @@ impl<T> Box<T> {
 }
 
 impl<T> From<Vec<T>> for Box<[T]> {
-    fn from(value: Vec<T>) -> Self {
-        let (ptr, len, cap) = value.into_raw_parts();
+    fn from(mut value: Vec<T>) -> Self {
+        let len = value.len();
+        let cap = value.capacity();
+        let ptr = value.as_mut_ptr();
+        mem::forget(value);
 
         unsafe {
             let ptr = if mem::size_of::<T>() == 0 {
@@ -101,8 +104,11 @@ impl<T> FromIterator<T> for Box<[T]> {
 }
 
 impl From<String> for Box<str> {
-    fn from(value: String) -> Self {
-        let (ptr, len, cap) = value.into_raw_parts();
+    fn from(mut value: String) -> Self {
+        let len = value.len();
+        let cap = value.capacity();
+        let ptr = value.as_mut_ptr();
+        mem::forget(value);
 
         unsafe {
             let ptr = if len == 0 {
