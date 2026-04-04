@@ -95,53 +95,6 @@ Do builds on a lot of excellent Rust ecosystem work.
 
 Thanks to the authors and maintainers of these projects.
 
-## Project Structure
-
-This is a Cargo workspace. Core crates:
-
-- **`dolang`** - Public API facade for embedding Do in Rust applications
-- **`dolang-bytecode`** - Bytecode format, instruction set, and verification
-- **`dolang-compile`** - Lexer, parser, name resolution, and bytecode emitter
-- **`dolang-runtime`** - VM, garbage collector, strand concurrency, standard
-  library
-- **`dolang-private-util`** - Shared utilities (string interning, arena
-  allocator, etc.)
-
-Tooling:
-
-- **`dolang-shell`** - Command-line shell and script executor with REPL
-- **`dolang-lsp`** - Language Server Protocol server for editor integration
-- **`dolang-highlight`** - Syntax highlighting tool
-
-Extensions:
-
-- **`dolang-ext-shell`** - Process execution, filesystem, environment,
-  containers
-- **`dolang-ext-http`** - HTTP client (reqwest)
-- **`dolang-ext-url`** - URL parsing and construction
-- **`dolang-ext-json`** - JSON serialization/deserialization (serde\_json)
-- **`dolang-ext-xml`** - XML parsing (quick-xml)
-- **`dolang-ext-yaml`** - YAML parsing
-- **`dolang-ext-sqlite`** - SQLite database access (libsqlite3-sys)
-- **`dolang-ext-regex`** - Regular expressions
-- **`dolang-ext-base64`** - Base64 encoding and decoding
-- **`dolang-ext-digest`** - Cryptographic hashing (blake3, sha2, md5)
-- **`dolang-ext-progress`** - Progress indicators (indicatif)
-- **`dolang-ext-zip`** - ZIP archive reading
-- **`dolang-ext-compile`** - Runtime compilation support
-- **`dolang-ext-load`** - Dynamic module loading
-
-Standard libraries (implemented in Do):
-
-- **`args`** - Command-line argument parsing with help generation
-- **`test`** - Test framework with assertions
-- **`xdg`** - XDG Base Directory support
-- **`systemd`** - systemd integration (os-release)
-- **`sudo`** - Privileged execution helpers
-- **`container.docker`** - Docker container building and execution
-- **`container.podman`** - Podman container building and execution
-- **`container.toolbx`** - Toolbox container execution
-
 ## License
 
 Do is available under either of:
