@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, hash_map::Entry},
     mem,
     ops::ControlFlow,
@@ -7,10 +8,10 @@ use std::{
 };
 
 use tokio::sync::{Mutex, oneshot};
-use tower_lsp::{
+use tower_lsp_server::{
     Client, ClientSocket, LanguageServer, LspService,
     jsonrpc::{self, Result},
-    lsp_types::*,
+    ls_types::*,
 };
 
 use dolang_compile::{Compiler, Context, Origin, Token, diag};
@@ -126,7 +127,7 @@ struct Config {
 #[derive(Debug)]
 pub(crate) struct Backend {
     client: Client,
-    documents: Mutex<HashMap<Url, Arc<Mutex<Document>>>>,
+    documents: Mutex<HashMap<Uri, Arc<Mutex<Document>>>>,
     config: Mutex<Config>,
     position_encoding: RwLock<PositionEncodingKind>,
     vm: vm::Vm,
@@ -302,8 +303,11 @@ impl Backend {
             }
         };
         let mut diags = Vec::new();
+        let Some(path) = uri_to_file_path(&uri) else {
+            return;
+        };
         {
-            let settings = self.find_settings(Path::new(uri.path())).await;
+            let settings = self.find_settings(&path).await;
 
             let mut guard = document.lock().await;
             guard.content = text;
@@ -313,7 +317,7 @@ impl Backend {
 
             let content = guard.content.as_str();
             let index = DocumentIndex::new(content, self.position_encoding());
-            let mut compiler = Compiler::new(Path::new(uri.path()), content.as_bytes());
+            let mut compiler = Compiler::new(&path, content.as_bytes());
             if let Some(settings) = settings {
                 let mut prelude = compiler.prelude();
                 for import in settings.prelude.iter() {
@@ -461,13 +465,17 @@ impl Backend {
     }
 }
 
-#[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         let position_encoding = Self::choose_position_encoding(&params);
         {
             let mut guard = self.config.lock().await;
-            guard.root = params.root_uri.as_ref().map(|u| PathBuf::from(u.path()));
+            guard.root = params
+                .workspace_folders
+                .as_ref()
+                .and_then(|folders| folders.first())
+                .and_then(|workspace| uri_to_file_path(&workspace.uri))
+                .map(Cow::into_owned);
             if let Some(root) = guard.root.as_deref() {
                 log::info!("project root: {}", root.display())
             } else {
@@ -478,7 +486,7 @@ impl LanguageServer for Backend {
                 .as_ref()
                 .unwrap_or(&vec![])
                 .iter()
-                .map(|w| PathBuf::from(w.uri.path()))
+                .filter_map(|w| uri_to_file_path(&w.uri).map(Cow::into_owned))
                 .collect();
             for workspace in guard.workspaces.iter() {
                 log::info!("workspace: {}", workspace.display())
@@ -490,6 +498,8 @@ impl LanguageServer for Backend {
             .expect("position encoding lock poisoned") = position_encoding.clone();
         Ok(InitializeResult {
             server_info: None,
+            offset_encoding: (position_encoding == PositionEncodingKind::UTF8)
+                .then(|| "utf-8".to_owned()),
             capabilities: ServerCapabilities {
                 position_encoding: Some(position_encoding),
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
@@ -693,6 +703,12 @@ pub(crate) fn build_service() -> (LspService<Backend>, ClientSocket) {
     LspService::new(Backend::new)
 }
 
+fn uri_to_file_path(uri: &Uri) -> Option<Cow<'_, Path>> {
+    (uri.scheme().as_str() == "file")
+        .then_some(())
+        .and_then(|()| uri.to_file_path())
+}
+
 fn range_contains_position(range: Range, position: Position) -> bool {
     (range.start.line < position.line
         || (range.start.line == position.line && range.start.character <= position.character))
@@ -708,9 +724,9 @@ mod tests {
     use serde::{Serialize, de::DeserializeOwned};
     use serde_json::{Value, json};
     use tower::{Service, ServiceExt};
-    use tower_lsp::jsonrpc::{Request, Response};
-    use tower_lsp::lsp_types::{notification, request};
-    use tower_lsp::lsp_types::{notification::Notification as _, request::Request as _};
+    use tower_lsp_server::jsonrpc::{Request, Response};
+    use tower_lsp_server::ls_types::{notification, request};
+    use tower_lsp_server::ls_types::{notification::Notification as _, request::Request as _};
 
     use super::*;
 
@@ -812,7 +828,7 @@ mod tests {
             result
         }
 
-        async fn open(&mut self, uri: Url, text: &str, version: i32) -> PublishDiagnosticsParams {
+        async fn open(&mut self, uri: Uri, text: &str, version: i32) -> PublishDiagnosticsParams {
             self.send_notification::<notification::DidOpenTextDocument>(
                 DidOpenTextDocumentParams {
                     text_document: TextDocumentItem {
@@ -929,7 +945,7 @@ mod tests {
     async fn did_open_publishes_diagnostics() {
         let mut harness = Harness::new();
         harness.initialize(vec![PositionEncodingKind::UTF16]).await;
-        let uri = Url::parse("file:///diagnostic-test.dol").unwrap();
+        let uri: Uri = "file:///diagnostic-test.dol".parse().unwrap();
         let diagnostics = harness.open(uri, "\"\\q\"", 1).await;
 
         assert_eq!(diagnostics.diagnostics.len(), 1);
@@ -946,7 +962,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn semantic_tokens_use_utf8_and_utf16_lengths() {
         let source = "# 😀\n";
-        let uri = Url::parse("file:///semantic-token-test.dol").unwrap();
+        let uri: Uri = "file:///semantic-token-test.dol".parse().unwrap();
 
         let mut utf8 = Harness::new();
         utf8.initialize(vec![PositionEncodingKind::UTF8]).await;
@@ -968,7 +984,7 @@ mod tests {
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
                 text_document: TextDocumentIdentifier {
-                    uri: Url::parse("file:///semantic-token-test.dol").unwrap(),
+                    uri: "file:///semantic-token-test.dol".parse().unwrap(),
                 },
             })
             .await
@@ -993,7 +1009,7 @@ mod tests {
     async fn goto_definition_and_code_action_round_trip() {
         let mut harness = Harness::new();
         harness.initialize(vec![PositionEncodingKind::UTF16]).await;
-        let uri = Url::parse("file:///definition-code-action-test.dol").unwrap();
+        let uri: Uri = "file:///definition-code-action-test.dol".parse().unwrap();
         let source = "let x = 5\nx\necho $x\n";
         let diagnostics = harness.open(uri.clone(), source, 1).await;
 
@@ -1058,7 +1074,7 @@ mod tests {
     async fn did_save_requests_semantic_token_refresh() {
         let mut harness = Harness::new();
         harness.initialize(vec![PositionEncodingKind::UTF16]).await;
-        let uri = Url::parse("file:///save-refresh-test.dol").unwrap();
+        let uri: Uri = "file:///save-refresh-test.dol".parse().unwrap();
         harness.open(uri.clone(), "def foo = 42\n", 1).await;
 
         let request = Request::build(notification::DidSaveTextDocument::METHOD)

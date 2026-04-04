@@ -3,7 +3,7 @@
 use std::{fs, path::PathBuf};
 
 use backtrace::Backtrace;
-use tower_lsp::Server;
+use tower_lsp_server::Server;
 
 mod backend;
 mod vm;
