@@ -97,17 +97,18 @@ impl Metadata {
 pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
     #[cfg(unix)]
     {
+        use nix::sys::stat::{SFlag, mode_t};
         use std::os::unix::fs::MetadataExt;
 
         let mode = metadata.mode();
-        let file_type = match mode & libc::S_IFMT {
-            libc::S_IFREG => crate::FileType::File,
-            libc::S_IFDIR => crate::FileType::Dir,
-            libc::S_IFLNK => crate::FileType::Symlink,
-            libc::S_IFIFO => crate::FileType::Fifo,
-            libc::S_IFCHR => crate::FileType::CharacterDevice,
-            libc::S_IFBLK => crate::FileType::BlockDevice,
-            libc::S_IFSOCK => crate::FileType::Socket,
+        let file_type = match SFlag::from_bits_truncate(mode as mode_t) & SFlag::S_IFMT {
+            SFlag::S_IFREG => crate::FileType::File,
+            SFlag::S_IFDIR => crate::FileType::Dir,
+            SFlag::S_IFLNK => crate::FileType::Symlink,
+            SFlag::S_IFIFO => crate::FileType::Fifo,
+            SFlag::S_IFCHR => crate::FileType::CharacterDevice,
+            SFlag::S_IFBLK => crate::FileType::BlockDevice,
+            SFlag::S_IFSOCK => crate::FileType::Socket,
             _ => crate::FileType::Unknown,
         };
 
