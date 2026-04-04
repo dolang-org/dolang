@@ -1,5 +1,6 @@
 site_name: Do Language
 site_description: Documentation for the Do programming language
+repo_url: https://github.com/bkoropoff/dolang
 
 hooks:
   - docs/hooks/lexer_hook.py
