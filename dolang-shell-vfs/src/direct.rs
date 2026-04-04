@@ -1,7 +1,9 @@
 use std::{
+    collections::HashMap,
     io,
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
+    sync::Arc,
 };
 #[cfg(windows)]
 use std::{os::windows::io::AsHandle, time::SystemTime};
@@ -11,6 +13,7 @@ use tokio::time::timeout;
 use tokio::{
     fs::{self, File, OpenOptions},
     process::Command as TokioCommand,
+    sync::Mutex,
     time::Duration,
 };
 use wax::{
@@ -23,8 +26,10 @@ use std::os::fd::{AsFd, OwnedFd};
 
 use crate::{Child, ChownIdentity, Command, Metadata, Permissions, PipeRecv, PipeSend, Vfs};
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Direct;
+#[derive(Debug, Clone)]
+pub struct Direct {
+    path_cache: Arc<PathCache>,
+}
 
 #[derive(Debug, Default)]
 pub struct DirectOpenOptions {
@@ -36,18 +41,112 @@ pub struct DirectOpenOptions {
     truncate: bool,
 }
 
-pub struct DirectCommand {
-    inner: TokioCommand,
+pub struct DirectCommand<'a> {
+    direct: &'a Direct,
+    program: PathBuf,
+    args: Vec<String>,
+    env: HashMap<String, Option<String>>,
+    cwd: Option<PathBuf>,
+    stdin: Option<Stdio>,
+    stdout: Option<Stdio>,
+    stderr: Option<Stdio>,
 }
 
 pub struct DirectChild {
     inner: tokio::process::Child,
 }
 
-impl DirectCommand {
-    fn new(program: impl AsRef<Path>) -> Self {
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct CacheKey {
+    program: PathBuf,
+    path: Option<String>,
+    cwd: Option<PathBuf>,
+}
+
+#[derive(Debug, Default)]
+struct PathCache {
+    map: Mutex<HashMap<CacheKey, PathBuf>>,
+}
+
+impl PathCache {
+    fn new() -> Self {
         Self {
-            inner: TokioCommand::new(program.as_ref()),
+            map: Mutex::new(HashMap::new()),
+        }
+    }
+
+    async fn resolve(
+        &self,
+        program: &Path,
+        path: Option<&str>,
+        cwd: Option<&Path>,
+    ) -> Option<PathBuf> {
+        let key = CacheKey {
+            program: program.to_path_buf(),
+            path: path.map(|p| p.to_string()),
+            cwd: cwd.map(|p| p.to_path_buf()),
+        };
+
+        let cached = {
+            let map = self.map.lock().await;
+            map.get(&key).cloned()
+        };
+
+        if let Some(cached) = cached {
+            return Some(cached);
+        }
+
+        let path_env = path
+            .map(|p| p.into())
+            .or_else(|| std::env::var_os("PATH"))
+            .unwrap_or_else(|| "".into());
+
+        let program = program.to_path_buf();
+        let cwd = cwd.map(|p| p.to_path_buf());
+
+        let resolved = tokio::task::spawn_blocking(move || {
+            which::which_in(
+                &program,
+                Some(path_env),
+                cwd.as_deref().unwrap_or(Path::new("")),
+            )
+            .ok()
+        })
+        .await
+        .unwrap_or(None);
+
+        if let Some(ref resolved_path) = resolved {
+            let mut map = self.map.lock().await;
+            map.insert(key, resolved_path.clone());
+        }
+
+        resolved
+    }
+
+    async fn clear(&self) {
+        self.map.lock().await.clear();
+    }
+}
+
+impl Default for Direct {
+    fn default() -> Self {
+        Self {
+            path_cache: Arc::new(PathCache::new()),
+        }
+    }
+}
+
+impl<'a> DirectCommand<'a> {
+    fn new(direct: &'a Direct, program: impl AsRef<Path>) -> Self {
+        Self {
+            direct,
+            program: program.as_ref().to_path_buf(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            cwd: None,
+            stdin: None,
+            stdout: None,
+            stderr: None,
         }
     }
 }
@@ -96,90 +195,89 @@ impl Child for DirectChild {
     }
 }
 
-impl Command for DirectCommand {
+impl Command for DirectCommand<'_> {
     type Child = DirectChild;
 
     fn arg(&mut self, arg: &str) -> &mut Self {
-        self.inner.arg(arg);
+        self.args.push(arg.to_owned());
         self
     }
 
     fn env(&mut self, key: &str, val: &str) -> &mut Self {
-        self.inner.env(key, val);
+        self.env.insert(key.to_owned(), Some(val.to_owned()));
         self
     }
 
     fn env_remove(&mut self, key: &str) -> &mut Self {
-        self.inner.env_remove(key);
+        self.env.insert(key.to_owned(), None);
         self
     }
 
     fn current_dir(&mut self, dir: &Path) -> &mut Self {
-        self.inner.current_dir(dir);
+        self.cwd = Some(dir.to_path_buf());
         self
     }
 
     fn stdin_pipe(&mut self, pipe: PipeRecv) -> io::Result<&mut Self> {
-        self.inner.stdin(pipe.into_stdio()?);
+        self.stdin = Some(pipe.into_stdio()?);
         Ok(self)
     }
 
     fn stdout_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
-        self.inner.stdout(pipe.into_stdio()?);
+        self.stdout = Some(pipe.into_stdio()?);
         Ok(self)
     }
 
     fn stdin_inherit(&mut self) -> io::Result<&mut Self> {
-        self.inner.stdin(Stdio::inherit());
+        self.stdin = Some(Stdio::inherit());
         Ok(self)
     }
 
     fn stdout_inherit(&mut self) -> io::Result<&mut Self> {
-        self.inner.stdout(Stdio::inherit());
+        self.stdout = Some(Stdio::inherit());
         Ok(self)
     }
 
     #[cfg(unix)]
     fn stdin_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        self.inner.stdin(Stdio::from(fd));
+        self.stdin = Some(Stdio::from(fd));
         self
     }
 
     #[cfg(unix)]
     fn stdout_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        self.inner.stdout(Stdio::from(fd));
+        self.stdout = Some(Stdio::from(fd));
         self
     }
 
     fn stdin_null(&mut self) -> &mut Self {
-        self.inner.stdin(Stdio::null());
+        self.stdin = Some(Stdio::null());
         self
     }
 
     fn stdout_null(&mut self) -> &mut Self {
-        self.inner.stdout(Stdio::null());
+        self.stdout = Some(Stdio::null());
         self
     }
 
     fn stderr_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
-        self.inner.stderr(pipe.into_stdio()?);
+        self.stderr = Some(pipe.into_stdio()?);
         Ok(self)
     }
 
     fn stderr_inherit(&mut self) -> io::Result<&mut Self> {
-        self.inner.stderr(Stdio::inherit());
+        self.stderr = Some(Stdio::inherit());
         Ok(self)
     }
 
     fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self> {
         #[cfg(unix)]
         {
-            self.inner
-                .stderr(Stdio::from(std::io::stdout().as_fd().try_clone_to_owned()?));
+            self.stderr = Some(Stdio::from(std::io::stdout().as_fd().try_clone_to_owned()?));
         }
         #[cfg(windows)]
         {
-            self.inner.stderr(Stdio::from(
+            self.stderr = Some(Stdio::from(
                 std::io::stdout().as_handle().try_clone_to_owned()?,
             ));
         }
@@ -188,17 +286,64 @@ impl Command for DirectCommand {
 
     #[cfg(unix)]
     fn stderr_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        self.inner.stderr(Stdio::from(fd));
+        self.stderr = Some(Stdio::from(fd));
         self
     }
 
     fn stderr_null(&mut self) -> &mut Self {
-        self.inner.stderr(Stdio::null());
+        self.stderr = Some(Stdio::null());
         self
     }
 
-    async fn spawn(mut self) -> io::Result<Self::Child> {
-        self.inner.spawn().map(DirectChild::new)
+    async fn spawn(self) -> io::Result<Self::Child> {
+        let path_override = self
+            .env
+            .get("PATH")
+            .map(|path| path.as_deref().unwrap_or(""));
+        let resolved = self
+            .direct
+            .which(&self.program, path_override, self.cwd.as_deref())
+            .await?;
+        let resolved = resolved.ok_or_else(|| {
+            #[cfg(unix)]
+            {
+                io::Error::from_raw_os_error(libc::ENOENT)
+            }
+            #[cfg(not(unix))]
+            {
+                io::Error::from(io::ErrorKind::NotFound)
+            }
+        })?;
+
+        let mut command = TokioCommand::new(&resolved);
+        command.args(&self.args);
+
+        if let Some(cwd) = &self.cwd {
+            command.current_dir(cwd);
+        }
+
+        for (k, v) in self.env {
+            match v {
+                Some(val) => {
+                    command.env(k, val);
+                }
+                None => {
+                    command.env_remove(k);
+                }
+            }
+        }
+
+        if let Some(stdin) = self.stdin {
+            command.stdin(stdin);
+        }
+        if let Some(stdout) = self.stdout {
+            command.stdout(stdout);
+        }
+        if let Some(stderr) = self.stderr {
+            command.stderr(stderr);
+        }
+
+        command.spawn().map(DirectChild::new)
     }
 }
 
@@ -525,7 +670,7 @@ impl Vfs for Direct {
     where
         Self: 'a;
     type Command<'a>
-        = DirectCommand
+        = DirectCommand<'a>
     where
         Self: 'a;
 
@@ -534,7 +679,21 @@ impl Vfs for Direct {
     }
 
     fn command(&self, program: impl AsRef<Path>) -> Self::Command<'_> {
-        DirectCommand::new(program)
+        DirectCommand::new(self, program)
+    }
+
+    async fn which(
+        &self,
+        program: impl AsRef<Path>,
+        path: Option<&str>,
+        cwd: Option<&Path>,
+    ) -> Result<Option<PathBuf>, io::Error> {
+        Ok(self.path_cache.resolve(program.as_ref(), path, cwd).await)
+    }
+
+    async fn clear_cache(&self) -> Result<(), io::Error> {
+        self.path_cache.clear().await;
+        Ok(())
     }
 
     async fn remove(

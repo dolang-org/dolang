@@ -38,10 +38,11 @@ fn successful_command() -> (&'static str, [&'static str; 2]) {
 
 #[tokio::test]
 async fn direct_open_options_round_trip() {
+    let direct = Direct::default();
     let dir = tempdir().unwrap();
     let path = dir.path().join("file.txt");
 
-    let mut options = Direct.open_options();
+    let mut options = direct.open_options();
     let mut file = options
         .write(true)
         .create(true)
@@ -61,20 +62,22 @@ async fn direct_open_options_round_trip() {
 
 #[tokio::test]
 async fn direct_symlink_metadata_and_read_link() {
+    let direct = Direct::default();
     let dir = tempdir().unwrap();
     let target = dir.path().join("target.txt");
     let link = dir.path().join("link.txt");
     tokio::fs::write(&target, "hello").await.unwrap();
 
-    Direct.symlink(&target, &link).await.unwrap();
+    direct.symlink(&target, &link).await.unwrap();
 
-    let metadata = Direct.symlink_metadata(&link).await.unwrap();
+    let metadata = direct.symlink_metadata(&link).await.unwrap();
     assert_eq!(metadata.file_type, FileType::Symlink);
-    assert_eq!(Direct.read_link(&link).await.unwrap(), target);
+    assert_eq!(direct.read_link(&link).await.unwrap(), target);
 }
 
 #[tokio::test]
 async fn direct_copy_move_and_glob() {
+    let direct = Direct::default();
     let dir = tempdir().unwrap();
     let src = dir.path().join("src");
     let nested = src.join("nested");
@@ -86,7 +89,7 @@ async fn direct_copy_move_and_glob() {
         .await
         .unwrap();
 
-    Direct.copy(&src, &copied, true).await.unwrap();
+    direct.copy(&src, &copied, true).await.unwrap();
     assert_eq!(
         tokio::fs::read_to_string(copied.join("nested").join("file.txt"))
             .await
@@ -94,10 +97,10 @@ async fn direct_copy_move_and_glob() {
         "hello"
     );
 
-    Direct.move_(&copied, &moved, true).await.unwrap();
+    direct.move_(&copied, &moved, true).await.unwrap();
     assert!(!copied.exists());
 
-    let matches = Direct
+    let matches = direct
         .glob("**/*.txt", dir.path(), false, None)
         .await
         .unwrap();
@@ -113,6 +116,7 @@ async fn direct_copy_move_and_glob() {
 
 #[tokio::test]
 async fn direct_remove_dir_ignore_prunes_empty_branches() {
+    let direct = Direct::default();
     let dir = tempdir().unwrap();
     let root = dir.path().join("root");
     tokio::fs::create_dir_all(root.join("keep").join("child"))
@@ -125,7 +129,7 @@ async fn direct_remove_dir_ignore_prunes_empty_branches() {
         .await
         .unwrap();
 
-    Direct.remove_dir(&root, true, true).await.unwrap();
+    direct.remove_dir(&root, true, true).await.unwrap();
 
     assert!(root.exists());
     assert!(root.join("keep").exists());
@@ -134,8 +138,9 @@ async fn direct_remove_dir_ignore_prunes_empty_branches() {
 
 #[tokio::test]
 async fn direct_basic_spawn() {
+    let direct = Direct::default();
     let (program, args) = successful_command();
-    let mut command = Direct.command(program);
+    let mut command = direct.command(program);
     command.arg(args[0]).arg(args[1]);
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
@@ -144,14 +149,16 @@ async fn direct_basic_spawn() {
 
 #[tokio::test]
 async fn direct_spawn_failure() {
-    let result = Direct.command("nonexistent_command_12345").spawn().await;
+    let direct = Direct::default();
+    let result = direct.command("nonexistent_command_12345").spawn().await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn direct_exit_code() {
+    let direct = Direct::default();
     let (program, args) = failing_exit_command();
-    let mut command = Direct.command(program);
+    let mut command = direct.command(program);
     command.arg(args[0]).arg(args[1]);
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
@@ -161,8 +168,9 @@ async fn direct_exit_code() {
 
 #[tokio::test]
 async fn direct_env_vars() {
+    let direct = Direct::default();
     let (program, args) = env_forwarding_command();
-    let mut command = Direct.command(program);
+    let mut command = direct.command(program);
     command.arg(args[0]).arg(args[1]).env("TEST_VAR", "value");
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();

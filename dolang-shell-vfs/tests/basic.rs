@@ -952,6 +952,7 @@ async fn glob_invalid_pattern() {
 
 #[tokio::test]
 async fn glob_local_basic_matching() {
+    let direct = Direct::default();
     let dir = tempdir().unwrap();
 
     // Create test files
@@ -960,7 +961,7 @@ async fn glob_local_basic_matching() {
     std::fs::write(dir.path().join("file.rs"), "content3").unwrap();
 
     // Test glob matching *.txt files
-    let paths = Direct.glob("*.txt", dir.path(), false, None).await.unwrap();
+    let paths = direct.glob("*.txt", dir.path(), false, None).await.unwrap();
 
     assert_eq!(paths.len(), 2);
     assert!(paths.iter().any(|p| p.file_name().unwrap() == "file1.txt"));
@@ -969,6 +970,7 @@ async fn glob_local_basic_matching() {
 
 #[tokio::test]
 async fn glob_local_recursive() {
+    let direct = Direct::default();
     let dir = tempdir().unwrap();
 
     // Create nested directory structure
@@ -978,7 +980,7 @@ async fn glob_local_recursive() {
     std::fs::write(subdir.join("nested.txt"), "nested").unwrap();
 
     // Test recursive glob with **
-    let paths = Direct
+    let paths = direct
         .glob("**/*.txt", dir.path(), false, None)
         .await
         .unwrap();
@@ -990,6 +992,7 @@ async fn glob_local_recursive() {
 
 #[tokio::test]
 async fn glob_local_max_depth() {
+    let direct = Direct::default();
     let dir = tempdir().unwrap();
 
     // Create nested directory structure
@@ -1001,7 +1004,7 @@ async fn glob_local_max_depth() {
     std::fs::write(level2.join("level2.txt"), "level2").unwrap();
 
     // Test glob with max_depth=1 (should only find root.txt)
-    let paths = Direct
+    let paths = direct
         .glob("**/*.txt", dir.path(), false, Some(1))
         .await
         .unwrap();
@@ -1012,22 +1015,24 @@ async fn glob_local_max_depth() {
 
 #[tokio::test]
 async fn glob_local_no_matches() {
+    let direct = Direct::default();
     let dir = tempdir().unwrap();
 
     std::fs::write(dir.path().join("file.txt"), "content").unwrap();
 
     // Test glob with pattern that matches nothing
-    let paths = Direct.glob("*.rs", dir.path(), false, None).await.unwrap();
+    let paths = direct.glob("*.rs", dir.path(), false, None).await.unwrap();
 
     assert!(paths.is_empty());
 }
 
 #[tokio::test]
 async fn glob_local_invalid_pattern() {
+    let direct = Direct::default();
     let dir = tempdir().unwrap();
 
     // Test glob with invalid pattern (should return error)
-    let result = Direct.glob("[invalid", dir.path(), false, None).await;
+    let result = direct.glob("[invalid", dir.path(), false, None).await;
 
     assert!(result.is_err());
 }

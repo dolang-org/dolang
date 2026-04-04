@@ -1,8 +1,4 @@
-use std::{
-    fmt::{self},
-    io,
-    path::PathBuf,
-};
+use std::fmt;
 
 use futures::future::MaybeDone;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
@@ -19,7 +15,7 @@ use dolang::runtime::{
 use dolang_shell_vfs::{Child as _, Command, Vfs as _, pipe};
 
 use crate::{
-    error::{self, ErrorExt as _, ResultExt as _},
+    error::{self, ResultExt as _},
     fs::{
         file::{self, File},
         path::{PathAnnex, PathOrStr},
@@ -441,18 +437,6 @@ async fn run_monitor<'v, 's>(
     }
 }
 
-fn resolve_program<'v, 's>(
-    global: State<'v, Global<'v>>,
-    strand: &Strand<'v, 's>,
-    name: &str,
-) -> Option<PathBuf> {
-    let local = global.local.get(strand);
-    let env = local.env();
-    let paths = env.get("PATH");
-    let cwd = local.cwd();
-    which::which_in(name, paths.as_deref(), cwd.as_ref()).ok()
-}
-
 fn configure_default_stderr<'v, 's>(
     _strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
@@ -476,28 +460,7 @@ async fn run<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let vfs = local.vfs();
-    let program = {
-        #[cfg(unix)]
-        {
-            if vfs.as_client().is_some() {
-                PathBuf::from(name)
-            } else {
-                resolve_program(global, strand, name)
-                    .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT).into_sys(strand))?
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            resolve_program(global, strand, name).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("program not found: {}", name),
-                )
-                .into_sys(strand)
-            })?
-        }
-    };
-    let mut command = vfs.command(&program);
+    let mut command = vfs.command(name);
     configure_default_stderr(strand, global, &mut command)?;
     let mut stdin_pipe = None;
     let mut stdout_pipe = None;
@@ -668,23 +631,11 @@ impl<'v> Object<'v> for Program {
             let paths = env.get("PATH");
             let cwd = local.cwd();
 
-            let resolved = {
-                #[cfg(unix)]
-                {
-                    if let Some(client) = local.vfs().into_client() {
-                        client
-                            .which(name, paths.as_deref(), Some(cwd.as_ref()))
-                            .await
-                            .into_sys(strand)?
-                    } else {
-                        which::which_in(name, paths.as_deref(), cwd.as_ref()).ok()
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    which::which_in(name, paths.as_deref(), cwd.as_ref()).ok()
-                }
-            };
+            let resolved = local
+                .vfs()
+                .which(name, paths.as_deref(), Some(cwd.as_ref()))
+                .await
+                .into_sys(strand)?;
 
             if let Some(path) = resolved {
                 global.types.path.create_with_annex(

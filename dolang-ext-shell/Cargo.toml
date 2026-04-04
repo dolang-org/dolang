@@ -13,7 +13,6 @@ debug = ["dolang/debug"]
 
 [dependencies]
 linkme = "0.3.35"
-which = "8.0.0"
 futures = "0.3.31"
 rand = "0.10"
 bstr = "1.12.1"

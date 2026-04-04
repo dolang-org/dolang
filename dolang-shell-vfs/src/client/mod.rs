@@ -667,6 +667,19 @@ impl Vfs for Client {
         CommandBuilder::new(self, program)
     }
 
+    async fn which(
+        &self,
+        program: impl AsRef<Path>,
+        path: Option<&str>,
+        cwd: Option<&Path>,
+    ) -> Result<Option<PathBuf>, io::Error> {
+        Client::which(self, program, path, cwd).await
+    }
+
+    async fn clear_cache(&self) -> Result<(), io::Error> {
+        Client::clear_cache(self).await
+    }
+
     async fn remove(
         &self,
         path: impl AsRef<Path>,

@@ -1,10 +1,6 @@
 use std::{
-    collections::HashMap,
-    os::fd::AsRawFd,
-    os::unix::io::OwnedFd,
-    os::unix::process::ExitStatusExt,
-    path::{Path, PathBuf},
-    sync::Arc,
+    collections::HashMap, os::fd::AsRawFd, os::unix::io::OwnedFd, os::unix::process::ExitStatusExt,
+    path::Path, sync::Arc,
 };
 
 use nix::sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, bind, connect, socket};
@@ -32,80 +28,9 @@ struct Connection {
     server: Arc<ServerState>,
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
-struct CacheKey {
-    program: PathBuf,
-    path: Option<String>,
-    cwd: Option<PathBuf>,
-}
-
-struct PathCache {
-    map: Mutex<HashMap<CacheKey, PathBuf>>,
-}
-
-impl PathCache {
-    fn new() -> Self {
-        Self {
-            map: Mutex::new(HashMap::new()),
-        }
-    }
-
-    async fn resolve(
-        &self,
-        program: &Path,
-        path: Option<&str>,
-        cwd: Option<&Path>,
-    ) -> Option<PathBuf> {
-        let key = CacheKey {
-            program: program.to_path_buf(),
-            path: path.map(|p| p.to_string()),
-            cwd: cwd.map(|p| p.to_path_buf()),
-        };
-
-        let cached = {
-            let map = self.map.lock().await;
-            map.get(&key).cloned()
-        };
-
-        if let Some(cached) = cached {
-            return Some(cached);
-        }
-
-        let path_env = path
-            .map(|p| p.into())
-            .or_else(|| std::env::var_os("PATH"))
-            .unwrap_or_else(|| "".into());
-
-        let program = program.to_path_buf();
-        let cwd = cwd.map(|p| p.to_path_buf());
-
-        let resolved = tokio::task::spawn_blocking(move || {
-            which::which_in(
-                &program,
-                Some(path_env),
-                cwd.as_deref().unwrap_or(Path::new("")),
-            )
-            .ok()
-        })
-        .await
-        .unwrap_or(None);
-
-        if let Some(ref resolved_path) = resolved {
-            let mut map = self.map.lock().await;
-            map.insert(key, resolved_path.clone());
-        }
-
-        resolved
-    }
-
-    async fn clear(&self) {
-        self.map.lock().await.clear();
-    }
-}
-
 struct ServerState {
+    direct: Direct,
     shutdown_tx: watch::Sender<()>,
-    path_cache: PathCache,
 }
 
 /// Agent server that accepts connections and handles spawn requests.
@@ -128,8 +53,8 @@ impl Server {
         Self {
             listener,
             shared: Arc::new(ServerState {
+                direct: Direct::default(),
                 shutdown_tx,
-                path_cache: PathCache::new(),
             }),
         }
     }
@@ -206,7 +131,7 @@ impl Connection {
                         let _ = this.server.shutdown_tx.send(());
                     }
                     RequestKind::ClearCache => {
-                        this.server.path_cache.clear().await;
+                        let _ = this.server.direct.clear_cache().await;
                         let _ = this
                             .sender
                             .send(Response {
@@ -277,21 +202,21 @@ impl Connection {
     async fn handle_which(
         &self,
         id: u64,
-        program: PathBuf,
+        program: std::path::PathBuf,
         path: Option<String>,
-        cwd: Option<PathBuf>,
+        cwd: Option<std::path::PathBuf>,
     ) {
         let resolved = self
             .server
-            .path_cache
-            .resolve(&program, path.as_deref(), cwd.as_deref())
+            .direct
+            .which(&program, path.as_deref(), cwd.as_deref())
             .await;
 
         let _ = self
             .sender
             .send(Response {
                 id,
-                kind: ResponseKind::Which(resolved),
+                kind: ResponseKind::Which(resolved.unwrap_or(None)),
             })
             .await;
     }
@@ -299,32 +224,7 @@ impl Connection {
     async fn handle_spawn(self: Arc<Self>, id: u64, req: SpawnRequest) {
         let (cancel_tx, cancel_rx) = oneshot::channel();
 
-        let path_override = req
-            .env
-            .get("PATH")
-            .map(|path| path.as_deref().unwrap_or(""));
-
-        let resolved_program = self
-            .server
-            .path_cache
-            .resolve(&req.program, path_override, req.cwd.as_deref())
-            .await;
-
-        let resolved_program = match resolved_program {
-            Some(p) => p,
-            None => {
-                let _ = self
-                    .sender
-                    .send(Response {
-                        id,
-                        kind: ResponseKind::Spawn(Err(2)),
-                    })
-                    .await;
-                return;
-            }
-        };
-
-        let mut cmd = Direct.command(&resolved_program);
+        let mut cmd = self.server.direct.command(&req.program);
         for arg in &req.args {
             cmd.arg(arg);
         }
@@ -483,28 +383,37 @@ impl Connection {
 
     async fn handle_remove(&self, id: u64, req: RemoveRequest) {
         let result = ResponseKind::Remove(Self::io_result(
-            Direct.remove(&req.path, req.all, req.ignore).await,
+            self.server
+                .direct
+                .remove(&req.path, req.all, req.ignore)
+                .await,
         ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_metadata(&self, id: u64, req: MetadataRequest) {
-        let result = ResponseKind::Metadata(Self::io_result(Direct.metadata(&req.path).await));
+        let result = ResponseKind::Metadata(Self::io_result(
+            self.server.direct.metadata(&req.path).await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_create_dir(&self, id: u64, req: CreateDirRequest) {
-        let result =
-            ResponseKind::CreateDir(Self::io_result(Direct.create_dir(&req.path, req.all).await));
+        let result = ResponseKind::CreateDir(Self::io_result(
+            self.server.direct.create_dir(&req.path, req.all).await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_remove_dir(&self, id: u64, req: RemoveDirRequest) {
         let result = ResponseKind::RemoveDir(Self::io_result(
-            Direct.remove_dir(&req.path, req.all, req.ignore).await,
+            self.server
+                .direct
+                .remove_dir(&req.path, req.all, req.ignore)
+                .await,
         ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
@@ -512,50 +421,56 @@ impl Connection {
 
     async fn handle_copy(&self, id: u64, req: CopyRequest) {
         let result = ResponseKind::Copy(Self::io_result(
-            Direct.copy(&req.from, &req.to, req.all).await,
+            self.server.direct.copy(&req.from, &req.to, req.all).await,
         ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_rename(&self, id: u64, req: RenameRequest) {
-        let result = ResponseKind::Rename(Self::io_result(Direct.rename(&req.from, &req.to).await));
+        let result = ResponseKind::Rename(Self::io_result(
+            self.server.direct.rename(&req.from, &req.to).await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_move(&self, id: u64, req: MoveRequest) {
         let result = ResponseKind::Move(Self::io_result(
-            Direct.move_(&req.from, &req.to, req.all).await,
+            self.server.direct.move_(&req.from, &req.to, req.all).await,
         ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_symlink(&self, id: u64, req: SymlinkRequest) {
-        let result =
-            ResponseKind::Symlink(Self::io_result(Direct.symlink(&req.src, &req.dst).await));
+        let result = ResponseKind::Symlink(Self::io_result(
+            self.server.direct.symlink(&req.src, &req.dst).await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_symlink_metadata(&self, id: u64, req: MetadataRequest) {
         let result = ResponseKind::SymlinkMetadata(Self::io_result(
-            Direct.symlink_metadata(&req.path).await,
+            self.server.direct.symlink_metadata(&req.path).await,
         ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_canonicalize(&self, id: u64, req: CanonicalizeRequest) {
-        let result =
-            ResponseKind::Canonicalize(Self::io_result(Direct.canonicalize(&req.path).await));
+        let result = ResponseKind::Canonicalize(Self::io_result(
+            self.server.direct.canonicalize(&req.path).await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
     async fn handle_read_link(&self, id: u64, req: ReadLinkRequest) {
-        let result = ResponseKind::ReadLink(Self::io_result(Direct.read_link(&req.path).await));
+        let result = ResponseKind::ReadLink(Self::io_result(
+            self.server.direct.read_link(&req.path).await,
+        ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
@@ -581,7 +496,8 @@ impl Connection {
 
     async fn handle_glob(&self, id: u64, req: GlobRequest) {
         let result = ResponseKind::Glob(Self::io_result(
-            Direct
+            self.server
+                .direct
                 .glob(req.pattern, &req.root, req.follow_symlinks, req.max_depth)
                 .await,
         ));
@@ -591,7 +507,8 @@ impl Connection {
 
     async fn handle_set_permissions(&self, id: u64, req: SetPermissionsRequest) {
         let result = ResponseKind::SetPermissions(Self::io_result(
-            Direct
+            self.server
+                .direct
                 .set_permissions(&req.path, Permissions::from_mode(req.mode))
                 .await,
         ));
@@ -607,7 +524,10 @@ impl Connection {
             .modified
             .map(|timestamp| (timestamp.secs, timestamp.nanos));
         let result = ResponseKind::Utime(Self::io_result(
-            Direct.utime(&req.path, accessed, modified).await,
+            self.server
+                .direct
+                .utime(&req.path, accessed, modified)
+                .await,
         ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
@@ -615,7 +535,8 @@ impl Connection {
 
     async fn handle_chown(&self, id: u64, req: ChownRequest) {
         let result = ResponseKind::Chown(Self::io_result(
-            Direct
+            self.server
+                .direct
                 .chown(&req.path, req.user, req.group, req.follow)
                 .await,
         ));

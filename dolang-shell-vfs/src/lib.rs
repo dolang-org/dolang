@@ -250,6 +250,13 @@ pub trait Vfs {
 
     fn open_options(&self) -> Self::OpenOptions<'_>;
     fn command(&self, program: impl AsRef<Path>) -> Self::Command<'_>;
+    async fn which(
+        &self,
+        program: impl AsRef<Path>,
+        path: Option<&str>,
+        cwd: Option<&Path>,
+    ) -> Result<Option<PathBuf>, io::Error>;
+    async fn clear_cache(&self) -> Result<(), io::Error>;
     async fn file_metadata(&self, file: &fs::File) -> Result<Metadata, io::Error> {
         file.metadata().await.map(metadata_from_std)
     }
@@ -459,7 +466,7 @@ impl OpenOptions for ClientOrDirectOpenOptions<'_> {
 #[cfg(unix)]
 pub enum ClientOrDirectCommand<'a> {
     Client(client::CommandBuilder<'a>),
-    Direct(direct::DirectCommand),
+    Direct(direct::DirectCommand<'a>),
 }
 
 #[cfg(unix)]
@@ -707,7 +714,7 @@ impl<'a> Command for ClientOrDirectCommand<'a> {
 
 #[cfg(not(unix))]
 pub struct ClientOrDirectCommand<'a> {
-    inner: direct::DirectCommand,
+    inner: direct::DirectCommand<'a>,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
@@ -819,13 +826,13 @@ pub enum ClientOrDirect {
 }
 
 #[cfg(not(unix))]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct ClientOrDirect(Direct);
 
 #[cfg(unix)]
 impl Default for ClientOrDirect {
     fn default() -> Self {
-        Self::Direct(Direct)
+        Self::Direct(Direct::default())
     }
 }
 
@@ -908,6 +915,40 @@ impl Vfs for ClientOrDirect {
                 inner: self.0.command(&program),
                 _marker: std::marker::PhantomData,
             }
+        }
+    }
+
+    async fn which(
+        &self,
+        program: impl AsRef<Path>,
+        path: Option<&str>,
+        cwd: Option<&Path>,
+    ) -> Result<Option<PathBuf>, io::Error> {
+        let program = program.as_ref().to_path_buf();
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.which(&program, path, cwd).await,
+                Self::Direct(direct) => direct.which(&program, path, cwd).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.which(&program, path, cwd).await
+        }
+    }
+
+    async fn clear_cache(&self) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.clear_cache().await,
+                Self::Direct(direct) => direct.clear_cache().await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.clear_cache().await
         }
     }
 
