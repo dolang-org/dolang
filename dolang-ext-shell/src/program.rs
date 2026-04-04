@@ -119,7 +119,7 @@ async fn resolve_io_file<'v, 's>(
     let file = file::open(strand, global, path.as_ref(), mode)
         .await
         .into_sys(strand)?;
-    let (file, annex) = File::create(global, file, mode.contains('b'), path.as_ref().to_owned());
+    let (file, annex) = File::create(global, file, mode.contains('b'));
     global
         .types
         .file

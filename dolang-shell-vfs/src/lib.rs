@@ -2,6 +2,7 @@
 #![allow(async_fn_in_trait)]
 
 use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
 #[cfg(unix)]
 use std::os::fd::OwnedFd;
 use std::{
@@ -17,6 +18,7 @@ mod direct;
 mod pipe;
 #[cfg(unix)]
 mod protocol;
+mod read_dir;
 #[cfg(unix)]
 mod server;
 #[cfg(unix)]
@@ -27,6 +29,10 @@ pub enum FileType {
     File,
     Dir,
     Symlink,
+    Fifo,
+    CharacterDevice,
+    BlockDevice,
+    Socket,
     Unknown,
 }
 
@@ -93,14 +99,16 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
     {
         use std::os::unix::fs::MetadataExt;
 
-        let file_type = if metadata.is_file() {
-            crate::FileType::File
-        } else if metadata.is_dir() {
-            crate::FileType::Dir
-        } else if metadata.file_type().is_symlink() {
-            crate::FileType::Symlink
-        } else {
-            crate::FileType::Unknown
+        let mode = metadata.mode();
+        let file_type = match mode & libc::S_IFMT {
+            libc::S_IFREG => crate::FileType::File,
+            libc::S_IFDIR => crate::FileType::Dir,
+            libc::S_IFLNK => crate::FileType::Symlink,
+            libc::S_IFIFO => crate::FileType::Fifo,
+            libc::S_IFCHR => crate::FileType::CharacterDevice,
+            libc::S_IFBLK => crate::FileType::BlockDevice,
+            libc::S_IFSOCK => crate::FileType::Socket,
+            _ => crate::FileType::Unknown,
         };
 
         Metadata {
@@ -112,7 +120,7 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
             mtime_nsec: metadata.mtime_nsec(),
             ctime: metadata.ctime(),
             ctime_nsec: metadata.ctime_nsec(),
-            mode: metadata.mode(),
+            mode,
             dev: metadata.dev(),
             ino: metadata.ino(),
             nlink: metadata.nlink(),
@@ -193,6 +201,29 @@ pub enum ChownIdentity {
     Name(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirEntry {
+    file_name: OsString,
+    ino: u64,
+    file_type: FileType,
+}
+
+impl DirEntry {
+    pub fn file_name(&self) -> &std::ffi::OsStr {
+        &self.file_name
+    }
+
+    pub fn ino(&self) -> u64 {
+        self.ino
+    }
+
+    pub fn file_type(&self) -> FileType {
+        self.file_type
+    }
+}
+
+pub use read_dir::ReadDir;
+
 #[allow(async_fn_in_trait)]
 pub trait OpenOptions {
     fn read(&mut self, read: bool) -> &mut Self;
@@ -250,6 +281,7 @@ pub trait Vfs {
 
     fn open_options(&self) -> Self::OpenOptions<'_>;
     fn command(&self, program: impl AsRef<Path>) -> Self::Command<'_>;
+    async fn read_dir(&self, path: impl AsRef<Path>) -> Result<ReadDir, io::Error>;
     async fn which(
         &self,
         program: impl AsRef<Path>,
@@ -915,6 +947,20 @@ impl Vfs for ClientOrDirect {
                 inner: self.0.command(&program),
                 _marker: std::marker::PhantomData,
             }
+        }
+    }
+
+    async fn read_dir(&self, path: impl AsRef<Path>) -> Result<ReadDir, io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.read_dir(path).await,
+                Self::Direct(direct) => direct.read_dir(path).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.read_dir(path).await
         }
     }
 

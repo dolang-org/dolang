@@ -1,10 +1,6 @@
 #[cfg(unix)]
 use std::os::fd::{AsFd, OwnedFd};
-use std::{
-    io,
-    path::{self, PathBuf},
-    result, str,
-};
+use std::{io, path, result, str};
 
 use bstr::ByteSlice;
 use dolang::runtime::{
@@ -22,7 +18,7 @@ use crate::{
     global::Global,
 };
 
-use super::{path::PathOrStr, readdir};
+use super::path::PathOrStr;
 
 /// Configure OpenOptions based on mode string (supports 'b' suffix for binary mode).
 fn configure_options(opts: &mut impl OpenOptions, mode: &str) {
@@ -74,7 +70,6 @@ pub(crate) struct File {
 pub(crate) struct FileAnnex<'v> {
     global: State<'v, Global<'v>>,
     is_binary: bool,
-    path: PathBuf,
 }
 
 pub(crate) async fn open<'v, 's>(
@@ -96,18 +91,13 @@ impl File {
         global: State<'v, Global<'v>>,
         file: fs::File,
         is_binary: bool,
-        path: PathBuf,
     ) -> (Self, FileAnnex<'v>) {
         (
             File {
                 file: Some(file),
                 buf: Default::default(),
             },
-            FileAnnex {
-                global,
-                is_binary,
-                path,
-            },
+            FileAnnex { global, is_binary },
         )
     }
 
@@ -185,7 +175,6 @@ impl File {
                         FileAnnex {
                             global,
                             is_binary: mode.contains('b'),
-                            path: path.to_owned(),
                         },
                         &mut handle,
                     );
@@ -210,7 +199,6 @@ impl File {
                 FileAnnex {
                     global,
                     is_binary: mode.contains('b'),
-                    path: path.to_owned(),
                 },
                 out,
             );
@@ -352,63 +340,6 @@ impl File {
         super::metadata_to_record(strand, global, &metadata, &mut out).await?;
         #[cfg(unix)]
         super::unix::unix_metadata_to_record(strand, global, &out, &metadata).await?;
-        Ok(())
-    }
-
-    async fn read_dir<'v, 's, 'a>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let annex = this.annex();
-        let global = annex.global;
-        let path = annex.path.clone();
-
-        #[cfg(unix)]
-        {
-            use std::os::fd::{AsRawFd, BorrowedFd};
-
-            use crate::fs::readdir::{DirEntryIter, DirEntryIterAnnex};
-
-            let borrow = this.borrow_mut(strand)?;
-            let file_ref = borrow
-                .file
-                .as_ref()
-                .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-            let fd = file_ref.as_raw_fd();
-            let owned_fd = unsafe { BorrowedFd::borrow_raw(fd) }
-                .try_clone_to_owned()
-                .into_sys(strand)?;
-            drop(borrow);
-
-            let read_dir = readdir::ReadDir::from_fd(owned_fd).into_sys(strand)?;
-
-            global.types.dir_entry_iter.create_with_annex(
-                strand,
-                DirEntryIter { read_dir, path },
-                DirEntryIterAnnex { global },
-                out,
-            );
-        }
-
-        #[cfg(not(unix))]
-        {
-            let borrow = this.borrow_mut(strand)?;
-            borrow
-                .file
-                .as_ref()
-                .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-
-            let read_dir = fs::read_dir(&path).await.into_sys(strand)?;
-
-            global.types.dir_entry_iter.create_with_annex(
-                strand,
-                readdir::DirEntryIter { read_dir, path },
-                readdir::DirEntryIterAnnex { global },
-                out,
-            );
-        }
-
         Ok(())
     }
 }
@@ -603,9 +534,6 @@ impl<'v> Object<'v> for File {
                 this.borrow_mut(strand)?
                     .metadata(strand, this.annex().global, out)
                     .await
-            })
-            .method("entries", async move |this, strand, _args, out| {
-                File::read_dir(this, strand, out).await
             })
     }
 }

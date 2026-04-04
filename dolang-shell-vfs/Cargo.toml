@@ -23,7 +23,7 @@ tempfile = "3"
 tokio-unix-ipc = { package = "dolang-private-ipc", path = "../dolang-private-ipc", version = "0.1.0" }
 tokio = { version = "1.48.0", features = ["process", "time", "signal"] }
 libc = "0.2"
-nix = { version = "0.31", features = ["fs", "user", "socket"] }
+nix = { version = "0.31", features = ["dir", "fs", "user", "socket"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 futures = "0.3"

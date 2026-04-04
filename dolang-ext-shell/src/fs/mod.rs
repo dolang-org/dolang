@@ -1,12 +1,8 @@
 use dolang::runtime::{
     Arg, Error, Output, Result, Slot, State, Strand, call, method, unpack, vm::Builder,
 };
-#[cfg(unix)]
-use dolang_shell_vfs::OpenOptions;
 use dolang_shell_vfs::{FileType, Metadata, Vfs};
 use std::{io, io::ErrorKind, path::PathBuf, time};
-#[cfg(not(unix))]
-use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use rand::RngExt;
@@ -259,25 +255,12 @@ async fn entries<'v, 's>(
     path: PathOrStr<'v, '_>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    #[cfg(unix)]
-    let read_dir = {
-        use crate::fs::readdir::ReadDir;
-
-        let local = global.local.get(strand);
-        let path = local.cwd().as_ref().join(&path);
-        let vfs = local.vfs();
-        let file = vfs
-            .open_options()
-            .read(true)
-            .open(&path)
-            .await
-            .into_sys(strand)?;
-
-        ReadDir::from_fd(file.into_std().await.into()).into_sys(strand)?
-    };
-
-    #[cfg(not(unix))]
-    let read_dir = fs::read_dir(&path).await.into_sys(strand)?;
+    let local = global.local.get(strand);
+    let read_dir = local
+        .vfs()
+        .read_dir(local.cwd().as_ref().join(&path))
+        .await
+        .into_sys(strand)?;
 
     global.types.dir_entry_iter.create_with_annex(
         strand,

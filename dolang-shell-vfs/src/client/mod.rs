@@ -20,7 +20,8 @@ use tokio::{
 use tokio_unix_ipc::{Receiver, Sender, serde::Handle};
 
 use crate::{
-    Child, ChownIdentity, Command, LockedSender, Metadata, Permissions, PipeRecv, PipeSend, Vfs,
+    Child, ChownIdentity, Command, LockedSender, Metadata, Permissions, PipeRecv, PipeSend,
+    ReadDir, Vfs,
     protocol::{
         AccessRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
         GlobRequest, MetadataRequest, MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest,
@@ -665,6 +666,11 @@ impl Vfs for Client {
 
     fn command(&self, program: impl AsRef<Path>) -> Self::Command<'_> {
         CommandBuilder::new(self, program)
+    }
+
+    async fn read_dir(&self, path: impl AsRef<Path>) -> Result<ReadDir, io::Error> {
+        let file = self.open_options().read(true).open(path.as_ref()).await?;
+        ReadDir::from_fd(file.into_std().await.into())
     }
 
     async fn which(

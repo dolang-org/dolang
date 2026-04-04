@@ -94,13 +94,9 @@ pub(crate) struct Syms<'v> {
     pub(crate) blksize: Sym<'v, 'v>,
     #[cfg(unix)]
     pub(crate) blocks: Sym<'v, 'v>,
-    #[cfg(unix)]
     pub(crate) fifo: Sym<'v, 'v>,
-    #[cfg(unix)]
     pub(crate) char_device: Sym<'v, 'v>,
-    #[cfg(unix)]
     pub(crate) block_device: Sym<'v, 'v>,
-    #[cfg(unix)]
     pub(crate) socket: Sym<'v, 'v>,
     #[cfg(unix)]
     pub(crate) unix_socket: Sym<'v, 'v>,
@@ -221,13 +217,9 @@ impl<'v> Global<'v> {
                 blksize: builder.sym("blksize"),
                 #[cfg(unix)]
                 blocks: builder.sym("blocks"),
-                #[cfg(unix)]
                 fifo: builder.sym("fifo"),
-                #[cfg(unix)]
                 char_device: builder.sym("char_device"),
-                #[cfg(unix)]
                 block_device: builder.sym("block_device"),
-                #[cfg(unix)]
                 socket: builder.sym("socket"),
                 #[cfg(unix)]
                 unix_socket: builder.sym("unix_socket"),

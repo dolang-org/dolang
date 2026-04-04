@@ -24,7 +24,9 @@ use wax::{
 #[cfg(unix)]
 use std::os::fd::{AsFd, OwnedFd};
 
-use crate::{Child, ChownIdentity, Command, Metadata, Permissions, PipeRecv, PipeSend, Vfs};
+use crate::{
+    Child, ChownIdentity, Command, Metadata, Permissions, PipeRecv, PipeSend, ReadDir, Vfs,
+};
 
 #[derive(Debug, Clone)]
 pub struct Direct {
@@ -680,6 +682,10 @@ impl Vfs for Direct {
 
     fn command(&self, program: impl AsRef<Path>) -> Self::Command<'_> {
         DirectCommand::new(self, program)
+    }
+
+    async fn read_dir(&self, path: impl AsRef<Path>) -> Result<ReadDir, io::Error> {
+        ReadDir::open(path.as_ref()).await
     }
 
     async fn which(
