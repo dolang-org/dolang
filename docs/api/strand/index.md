@@ -121,21 +121,22 @@ ambient input and output connected to the stream's channels, so it can use
 | ------ | ------ | ----------------------- |
 | `func` | `func` | the callable to execute |
 
-**Returns:** [Stream](./stream.md) -- a handle that is both an input and output
-iterator
+**Returns:** [Stream](./stream.md)
 
 ```
 let s = stream do each do |x| (x * 2)
+let input = s.sink()
+let output = s.iter()
 
 let results = fork
   do
-    s.put 1
-    s.put 2
-    s.put 3
+    input.put 1
+    input.put 2
+    input.put 3
   do
-    let r1 = s.next()
-    let r2 = s.next()
-    let r3 = s.next()
+    let r1 = output.next()
+    let r2 = output.next()
+    let r3 = output.next()
     [r1, r2, r3]
 
 s.join()

@@ -24,6 +24,7 @@ use super::{
 
 enum RecvResult<'v> {
     Ok(Value<'v>),
+    Poisoned(Value<'v>, Value<'v>),
     Pending,
     Closed,
     Stop,
@@ -60,6 +61,7 @@ pub(crate) struct Receiver<'v> {
     receivers: VecDeque<Waker>,
     send_closed: bool,
     recv_closed: bool,
+    poison: Option<(Value<'v>, Value<'v>)>,
     limit: usize,
 }
 
@@ -73,7 +75,10 @@ impl<'v> Receiver<'v> {
             }
             RecvResult::Ok(value)
         } else if self.send_closed {
-            RecvResult::Stop
+            match &self.poison {
+                Some((value, backtrace)) => RecvResult::Poisoned(value.dup(), backtrace.dup()),
+                None => RecvResult::Stop,
+            }
         } else {
             if let Some(cx) = cx {
                 self.receivers.push_back(cx.waker().clone());
@@ -119,6 +124,12 @@ impl<'v, 's, 'a> Future for RecvFuture<'v, 's, 'a> {
                         out.store(value);
                         Poll::Ready(Ok(true))
                     }
+                    RecvResult::Poisoned(value, backtrace) => Poll::Ready(Err(
+                        match Error::from_value_backtrace_raw(strand, value, backtrace) {
+                            Ok(err) => err,
+                            Err(err) => err,
+                        },
+                    )),
                     RecvResult::Pending => Poll::Pending,
                     RecvResult::Stop => Poll::Ready(Ok(false)),
                     RecvResult::Closed => {
@@ -168,6 +179,10 @@ unsafe impl<'v> Collect for Receiver<'v> {
         for item in self.queue.iter() {
             item.accept(visit)?
         }
+        if let Some((value, backtrace)) = &self.poison {
+            value.accept(visit)?;
+            backtrace.accept(visit)?;
+        }
         ControlFlow::Continue(())
     }
 
@@ -175,6 +190,7 @@ unsafe impl<'v> Collect for Receiver<'v> {
         self.queue.clear();
         self.send_closed = true;
         self.recv_closed = true;
+        self.poison = None;
         for wake in self.senders.drain(0..).chain(self.receivers.drain(0..)) {
             wake.wake();
         }
@@ -229,6 +245,10 @@ impl<'v> Protocol<'v> for Receiver<'v> {
                 out.store(value);
                 RecvFuture::Ready(Ok(true))
             }
+            RecvResult::Poisoned(value, backtrace) => {
+                RecvFuture::Ready(Err(Error::from_value_backtrace(strand, &value, &backtrace)
+                    .expect("invalid backtrace")))
+            }
             RecvResult::Pending => RecvFuture::Pend {
                 strand: strand.inner,
                 recv: this.receiver,
@@ -259,10 +279,11 @@ impl<'v> Protocol<'v> for Receiver<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::CLOSE => {
-                let _ = unpack!(strand, args, 0, 0)?;
+                let ([], []) = unpack!(strand, args, 0, 0)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.recv_closed = true;
                 borrow.queue.clear();
+                borrow.poison = None;
                 for wake in borrow.senders.drain(0..) {
                     wake.wake()
                 }
@@ -375,7 +396,19 @@ impl<'v> Protocol<'v> for Sender<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::CLOSE => {
-                let _ = unpack!(strand, args, 0, 0)?;
+                let backtrace_key = Sym::well_known(sym::BACKTRACE);
+                let ([], [err, backtrace]) = unpack!(strand, args, 0, 1, backtrace_key = None)?;
+                let poison_backtrace = match backtrace {
+                    Some(backtrace) => {
+                        let Some(_) = backtrace.downcast_ref(strand.builtin_types().backtrace)
+                        else {
+                            return Err(Error::type_error(strand, "expected strand.Backtrace"));
+                        };
+                        Some(backtrace)
+                    }
+                    None => None,
+                };
+                let poison_err = err.map(|mut err| err.take());
                 let borrow = this.borrow(strand)?;
                 let receiver = borrow.receiver.clone();
                 mem::drop(borrow);
@@ -384,6 +417,12 @@ impl<'v> Protocol<'v> for Sender<'v> {
                     .borrow_mut()
                     .ok_or_else(|| Error::concurrency(strand))?;
                 borrow.send_closed = true;
+                if let Some(poison_err) = poison_err {
+                    borrow.poison = Some((
+                        poison_err,
+                        poison_backtrace.map(|mut s| s.take()).unwrap_or(Value::NIL),
+                    ));
+                }
                 for wake in borrow.receivers.drain(0..) {
                     wake.wake()
                 }
@@ -419,6 +458,7 @@ pub(crate) fn pair<'v>(
         receivers: VecDeque::new(),
         send_closed: false,
         recv_closed: false,
+        poison: None,
         limit,
     };
     let receiver = GcObj::new(vm.arena(), vm.builtin_types().channel_recv, receiver);

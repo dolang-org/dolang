@@ -23,15 +23,25 @@ send.put "hello"
 
 ## Methods
 
-### `close()`
+### `close error? :backtrace?`
 
 Closes the sender, signaling EOF to receivers. After closing:
 
 - Sends will fail
 - Receivers will eventually see no more values
+- If `error` is provided, the receiver re-raises it from `.next()` once any
+  buffered values have been drained
+
+**Parameters:**
+
+| Name        | Type                               | Description                         |
+| ----------- | ---------------------------------- | ----------------------------------- |
+| `error`     |                                    | Optional error value to propagate   |
+| `backtrace` | [`strand.Backtrace`](./index.md)?  | Optional backtrace for that error   |
 
 ```
 send.close()
+send.close "boom"
 ```
 
 ## Example

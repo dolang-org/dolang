@@ -657,6 +657,13 @@ impl<'v, 's> Error<'v, 's> {
         Self::new_info(strand.inner, Boxed::Type(msg.into()))
     }
 
+    pub(crate) fn type_error_raw(
+        strand: &'s StrandInner<'v>,
+        msg: impl Into<Cow<'v, str>>,
+    ) -> Self {
+        Self::new_info(strand, Boxed::Type(msg.into()))
+    }
+
     /// Create error: invalid value with otherwise acceptable type
     pub fn value(strand: &Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
         Self::new_info(strand.inner, Boxed::Value(msg.into()))
@@ -885,17 +892,44 @@ impl<'v, 's> Error<'v, 's> {
         Self::from_pair(strand, pair.0.dup(), pair.1.clone())
     }
 
-    pub(crate) fn from_backtrace_value(
+    pub fn from_value_backtrace(
         strand: &Strand<'v, 's>,
         err: impl Input<'v>,
         backtrace: impl Input<'v>,
     ) -> Result<'v, 's, Self> {
         let backtrace = Value::from_input(strand, backtrace);
+        let Some(backtrace) = backtrace::entries_from_value(strand, &backtrace) else {
+            return Err(Error::type_error(strand, "expected strand.Backtrace"));
+        };
         Ok(Self::from_pair(
             strand,
             Value::from_input(strand, err),
-            backtrace::entries_from_value(strand, &backtrace)?,
+            backtrace,
         ))
+    }
+
+    pub(crate) fn from_value_backtrace_raw(
+        strand: &'s StrandInner<'v>,
+        err: Value<'v>,
+        backtrace: Value<'v>,
+    ) -> Result<'v, 's, Self> {
+        let backtrace = if !backtrace.is_nil() {
+            backtrace::entries_from_value(strand.vm(), &backtrace)
+                .ok_or_else(|| Error::type_error_raw(strand, "expected strand.Backtrace"))?
+        } else {
+            Vec::new()
+        };
+        Ok(Self {
+            inner: Variant::Boxed(
+                FloatingRoot::new(strand, err),
+                Box::new(ErrorMeta {
+                    vm: strand.vm(),
+                    backtrace,
+                    sticky: Vec::new(),
+                }),
+            ),
+            phantom: PhantomData,
+        })
     }
 
     pub(crate) fn push_backtrace(&mut self, inner: &'s StrandInner<'v>, entry: UnwindEntry<'v>) {

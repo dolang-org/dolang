@@ -2,7 +2,7 @@ use std::{fmt, future, ops::ControlFlow, rc::Rc, task::Poll, task::Waker};
 
 use crate::{
     arg::Args,
-    error::{Error, ErrorKind, ErrorPair, Result, ResultExt},
+    error::{Error, ErrorPair, Result, ResultExt},
     gc::{Collect, arena::Visit},
     method,
     strand::{CancelToken, Strand, StrandInner},
@@ -105,12 +105,8 @@ impl<'v> Protocol<'v> for Handle<'v> {
         let is_sinkable = borrow
             .as_ref()
             .is_some_and(|borrow| !borrow.stream_input.is_nil());
-        (is_iterable
-            && (supertype.eq(strand, &strand.vm().singletons().iterable)
-                || supertype.eq(strand, &strand.vm().singletons().input_iter)))
-            || (is_sinkable
-                && (supertype.eq(strand, &strand.vm().singletons().sinkable)
-                    || supertype.eq(strand, &strand.vm().singletons().output_iter)))
+        (is_iterable && supertype.eq(strand, &strand.vm().singletons().iterable))
+            || (is_sinkable && supertype.eq(strand, &strand.vm().singletons().sinkable))
             || supertype.eq(strand, &strand.vm().singletons().strand)
             || supertype.eq(strand, TypeObject::Value)
     }
@@ -208,72 +204,6 @@ impl<'v> Protocol<'v> for Handle<'v> {
                 })
                 .await
             }
-            sym::CLOSE => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                // Close stream channels first to prevent deadlock when the strand
-                // is blocked on I/O from the handle side.
-                let (stream_input, stream_output) = {
-                    let borrow = this.borrow(strand)?;
-                    (borrow.stream_input.dup(), borrow.stream_output.dup())
-                };
-                let close = Sym::well_known(sym::CLOSE);
-                if !stream_input.is_nil() {
-                    strand
-                        .with_slots(async move |strand, [mut tmp]| {
-                            let _ = method!(strand, &stream_input, close, &mut tmp).await;
-                        })
-                        .await;
-                }
-                if !stream_output.is_nil() {
-                    strand
-                        .with_slots(async move |strand, [mut tmp]| {
-                            let _ = method!(strand, &stream_output, close, &mut tmp).await;
-                        })
-                        .await;
-                }
-                Ok(())
-            }
-            sym::MAP | sym::FILTER => {
-                strand
-                    .with_slots(async move |strand, [mut delegator]| {
-                        let is_stream = {
-                            let borrow = this.borrow(strand)?;
-                            !borrow.stream_input.is_nil() && !borrow.stream_output.is_nil()
-                        };
-                        if !is_stream {
-                            return Err(Error::field(strand, method));
-                        }
-                        delegator.store(Value::from_object(this.to_strong()));
-                        if method.tag() == sym::MAP {
-                            let ([func], []) = unpack!(strand, args, 1, 0)?;
-                            iter::create_map(strand, &delegator, func, true, true, out).await
-                        } else {
-                            let ([pred], []) = unpack!(strand, args, 1, 0)?;
-                            iter::create_filter(strand, &delegator, pred, true, true, out).await
-                        }
-                    })
-                    .await
-            }
-            sym::NEXT | sym::CHAIN | sym::ZIP | sym::MIN | sym::MAX => {
-                let is_stream = {
-                    let borrow = this.borrow(strand)?;
-                    !borrow.stream_input.is_nil() && !borrow.stream_output.is_nil()
-                };
-                if !is_stream {
-                    return Err(Error::field(strand, method));
-                }
-                iter::iter_mcall(strand, &this, method, args, out).await
-            }
-            sym::PUT => {
-                let is_stream = {
-                    let borrow = this.borrow(strand)?;
-                    !borrow.stream_input.is_nil() && !borrow.stream_output.is_nil()
-                };
-                if !is_stream {
-                    return Err(Error::field(strand, method));
-                }
-                iter::sink_mcall(strand, &this, method, args, out).await
-            }
             sym::DONE => Err(Error::type_error(strand, "`done` is a field, not a method")),
             sym::ITER => {
                 let is_stream = {
@@ -283,7 +213,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
                 if !is_stream {
                     return Err(Error::field(strand, method));
                 }
-                iter::iter_mcall(strand, &this, method, args, out).await
+                iter::iterable_mcall(strand, &this, method, args, out).await
             }
             sym::SINK => {
                 let is_stream = {
@@ -304,45 +234,12 @@ impl<'v> Protocol<'v> for Handle<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let is_stream = !this.borrow(strand)?.stream_output.is_nil();
-        if !is_stream {
+        let borrow = this.borrow(strand)?;
+        if borrow.stream_output.is_nil() {
             return Err(Error::type_error(strand, "strand is not a stream"));
         }
-        Output::set(strand, out, &this);
+        Output::set(strand, out, &borrow.stream_output);
         Ok(())
-    }
-
-    async fn op_next<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        strand
-            .with_slots(async move |strand, [mut receiver]| {
-                let borrow = this.borrow(strand)?;
-                if borrow.stream_input.is_nil() {
-                    return Err(Error::type_error(strand, "strand is not a stream"));
-                }
-                receiver.store(borrow.stream_output.dup());
-                drop(borrow);
-                if !receiver.op_next(strand, out).await? {
-                    // Reraise strand error when the output channel stops
-                    let pair = {
-                        let borrow = this.borrow(strand)?;
-                        match borrow.result.as_ref() {
-                            Some(Completion::Err(pair)) => Some((pair.0.dup(), pair.1.clone())),
-                            _ => None,
-                        }
-                    };
-                    if let Some((value, backtrace)) = pair {
-                        return Err(Error::from_pair(strand, value, backtrace));
-                    }
-                    Ok(false)
-                } else {
-                    Ok(true)
-                }
-            })
-            .await
     }
 
     async fn op_sink<'a, 's>(
@@ -350,65 +247,26 @@ impl<'v> Protocol<'v> for Handle<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let is_stream = !this.borrow(strand)?.stream_input.is_nil();
-        if !is_stream {
+        let borrow = this.borrow(strand)?;
+        if borrow.stream_input.is_nil() {
             return Err(Error::type_error(strand, "strand is not a stream"));
         }
-        Output::set(strand, out, &this);
+        Output::set(strand, out, &borrow.stream_input);
         Ok(())
-    }
-
-    async fn op_put<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        item: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        strand
-            .with_slots(async move |strand, [mut sender]| {
-                let borrow = this.borrow(strand)?;
-                if borrow.stream_input.is_nil() {
-                    return Err(Error::type_error(strand, "strand is not a stream"));
-                }
-                sender.store(borrow.stream_input.dup());
-                drop(borrow);
-                match sender.op_put(strand, item).await {
-                    Ok(()) => Ok(()),
-                    Err(e) if e.kind() == ErrorKind::SinkStop => {
-                        // Prefer strand exception over SinkStop
-                        let pair = {
-                            let borrow = this.borrow(strand)?;
-                            match borrow.result.as_ref() {
-                                Some(Completion::Err(pair)) => Some((pair.0.dup(), pair.1.clone())),
-                                _ => None,
-                            }
-                        };
-                        if let Some((value, backtrace)) = pair {
-                            return Err(Error::from_pair(strand, value, backtrace));
-                        }
-                        Err(e)
-                    }
-                    Err(e) => Err(e),
-                }
-            })
-            .await
     }
 
     fn op_get<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         field: Sym<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let is_stream = {
             let borrow = this.borrow(strand)?;
             !borrow.stream_input.is_nil() && !borrow.stream_output.is_nil()
         };
         match field.tag() {
-            sym::JOIN | sym::CANCEL | sym::WAIT | sym::CLOSE => {
-                super::BoundMethod::create(strand, &this, field, out);
-                Ok(())
-            }
-            sym::MAP | sym::FILTER | sym::PUT if is_stream => {
+            sym::JOIN | sym::CANCEL | sym::WAIT => {
                 super::BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
@@ -416,13 +274,8 @@ impl<'v> Protocol<'v> for Handle<'v> {
                 Output::set(strand, out, this.borrow(strand)?.result.is_some());
                 Ok(())
             }
-            _ if is_stream => {
-                if let Ok(()) = iter::iter_get(strand, &this, field, Slot::reborrow(&mut out)) {
-                    Ok(())
-                } else {
-                    iter::sinkable_get(strand, &this, field, out)
-                }
-            }
+            sym::ITER if is_stream => iter::iterable_get(strand, &this, field, out),
+            sym::SINK if is_stream => iter::sinkable_get(strand, &this, field, out),
             _ => Err(Error::field(strand, field)),
         }
     }

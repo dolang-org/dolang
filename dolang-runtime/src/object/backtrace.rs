@@ -21,14 +21,12 @@ pub(crate) fn create<'v>(vm: &Vm<'v>, entries: Vec<UnwindEntry<'v>>, mut out: im
     )));
 }
 
-pub(crate) fn entries_from_value<'v, 's>(
-    strand: &Strand<'v, 's>,
+pub(crate) fn entries_from_value<'v>(
+    vm: &Vm<'v>,
     value: &Value<'v>,
-) -> Result<'v, 's, Vec<UnwindEntry<'v>>> {
-    let Some(backtrace) = value.downcast_ref(strand.builtin_types().backtrace) else {
-        return Err(Error::type_error(strand, "expected strand.Backtrace"));
-    };
-    Ok(backtrace.get().entries.to_vec())
+) -> Option<Vec<UnwindEntry<'v>>> {
+    let backtrace = value.downcast_ref(vm.builtin_types().backtrace)?;
+    Some(backtrace.get().entries.to_vec())
 }
 
 pub(crate) fn iter_from_value<'v, 'a>(

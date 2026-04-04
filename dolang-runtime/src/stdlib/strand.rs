@@ -98,7 +98,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .function_without_frame("throw", async move |strand, args, _| {
             let ([value], [backtrace]) = unpack!(strand, args, 1, 0, backtrace_key = None)?;
             let err = if let Some(backtrace) = backtrace {
-                Error::from_backtrace_value(strand, value, backtrace)?
+                Error::from_value_backtrace(strand, value, backtrace)?
             } else {
                 Error::from_value(strand, value)
             };

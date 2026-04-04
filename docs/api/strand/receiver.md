@@ -27,7 +27,9 @@ for value = recv
 let value = recv.next()
 ```
 
-When the channel is closed and empty, `.next()` raises an `IterStop` error.
+When the channel is closed and empty, `.next()` raises `IterStop`.
+If the sender was closed with an error, `.next()` re-raises that error once any
+buffered values have been drained.
 
 ## Methods
 

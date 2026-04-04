@@ -703,7 +703,7 @@ fn encode_value<'v, 's>(
 impl<'v> Object<'v> for PipeReceiver {
     const MODULE: &'v str = "proc";
     const NAME: &'v str = "PipeReceiver";
-    const SLOTS: usize = 1;
+    const SLOTS: usize = 3;
     type Annex = PipeAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
@@ -757,7 +757,22 @@ impl<'v> Object<'v> for PipeReceiver {
                             return Ok(true);
                         }
                         if send_closed {
-                            return Ok(false);
+                            let borrow = this.borrow(strand)?;
+                            if Ref::slot::<1>(&borrow).is_nil() {
+                                return Ok(false);
+                            }
+                            let err = if Ref::slot::<2>(&borrow).is_nil() {
+                                Error::from_value(strand, Ref::slot::<1>(&borrow))
+                            } else {
+                                Error::from_value_backtrace(
+                                    strand,
+                                    Ref::slot::<1>(&borrow),
+                                    Ref::slot::<2>(&borrow),
+                                )
+                                .expect("invalid backtrace")
+                            };
+                            drop(borrow);
+                            return Err(err);
                         }
                         None
                     }
@@ -872,12 +887,33 @@ impl<'v> Object<'v> for PipeSender {
     type Type = ();
     type TypeAnnex = ();
 
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let backtrace_sym = builder.sym("backtrace");
         builder.supertype(TypeObject::Sink).method(
             "close",
             async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let ([], [err, backtrace]) = unpack!(strand, args, 0, 1, backtrace_sym = None)?;
                 let shared = &this.annex().shared;
+                let send_borrow = this.borrow(strand)?;
+                let recv_inst = this
+                    .annex()
+                    .global
+                    .types
+                    .pipe_receiver
+                    .downcast(Ref::slot::<0>(&send_borrow))
+                    .unwrap();
+                let mut recv_borrow = recv_inst.borrow_mut(strand)?;
+                if let Some(err) = err {
+                    if let Some(backtrace) = backtrace {
+                        if backtrace.as_backtrace(strand.vm()).is_none() {
+                            return Err(Error::type_error(strand, "expected strand.Backtrace"));
+                        }
+                        Output::set(strand, Mut::slot_mut::<2>(&mut recv_borrow), backtrace);
+                    } else {
+                        Output::set(strand, Mut::slot_mut::<2>(&mut recv_borrow), Nil);
+                    }
+                    Output::set(strand, Mut::slot_mut::<1>(&mut recv_borrow), err);
+                }
                 shared.borrow_mut().close_send();
                 Ok(())
             },

@@ -6,14 +6,16 @@ import strand:
 
 # Test 1: basic stream — each branch doubles values
 let s = stream do each do |x| (x * 2)
+let s_input = s.sink()
+let s_output = s.iter()
 
 # Producer and consumer run concurrently (channels are size-1)
 let results = fork
   do 
-    s.put 1
-    s.put 2
-    s.put 3
-  do [s.next(), s.next(), s.next()]
+    s_input.put 1
+    s_input.put 2
+    s_input.put 3
+  do [s_output.next(), s_output.next(), s_output.next()]
 
 # join closes the input channel (strand's each exits) and waits for completion
 s.join()
@@ -24,31 +26,33 @@ assert_eq $results[1] [2, 4, 6]
 let s2 = stream do
   put 42
   throw "next error"
-let v = s2.next()
+let s2_output = s2.iter()
+let v = s2_output.next()
 assert_eq $v 42
 let err2 = try
-  s2.next()
+  s2_output.next()
 catch e
   e
 s2.wait()
 assert_eq $err2 "next error"
 
-# Test 3: strand error propagates to producer via put
-# The strand exits immediately; eventually put sees SinkStop and re-raises the strand error.
+# Test 3: producer observes plain SinkStop when the consumer strand fails.
 let s3 = stream do throw "put error"
+let s3_input = s3.sink()
 let err3 = try
-  s3.put 1
-  s3.put 2
+  s3_input.put 1
+  s3_input.put 2
 catch e
   e
 s3.wait()
-assert_eq $err3 "put error"
+assert_eq (str err3) "output iterator stopped"
 
-# Test 4: mapped streams preserve both input and output behavior
+# Test 4: iter()/sink() expose ordinary channel endpoints.
 let s4 = stream do each do |x| x
-let mapped = s4.map (do |x| x + 1)
+let mapped = s4.iter().map (do |x| x + 1)
+let s4_input = s4.sink()
 let results4 = fork
-  do mapped.put 1
+  do s4_input.put 1
   do mapped.next()
 s4.join()
-assert_eq $results4[1] 3
+assert_eq $results4[1] 2

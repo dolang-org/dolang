@@ -18,6 +18,7 @@ use crate::{
     gc::arena::Visit,
     method,
     object::{
+        backtrace,
         protocol::GcObj,
         strand::{Completion, Handle},
     },
@@ -1097,6 +1098,13 @@ impl<'v, 's> Strand<'v, 's> {
                         Ok(()) => Completion::Ok(out.take()),
                         Err(e) => Completion::Err(e.into_pair(strand)),
                     };
+                    let poison = match &result {
+                        Completion::Err((value, backtrace_entries)) => {
+                            backtrace::create(strand, backtrace_entries.clone(), &mut out);
+                            Some((value.dup(), out.take()))
+                        }
+                        Completion::Ok(_) => None,
+                    };
 
                     // Store result in Handle via weak reference
                     if let Some(handle) = weak_handle.upgrade() {
@@ -1109,15 +1117,21 @@ impl<'v, 's> Strand<'v, 's> {
                     }
 
                     if close_on_exit {
+                        let close = Sym::well_known(sym::CLOSE);
+                        let backtrace_key = Sym::well_known(sym::BACKTRACE);
                         tmp.store(strand.inner.mutable.borrow_mut().input.take());
                         if !tmp.is_nil() {
                             let _ =
-                                method!(strand, &tmp, Sym::well_known(sym::CLOSE), &mut out).await;
+                                method!(strand, &tmp, close, &mut out).await;
                         }
                         tmp.store(strand.inner.mutable.borrow_mut().output.take());
                         if !tmp.is_nil() {
-                            let _ =
-                                method!(strand, &tmp, Sym::well_known(sym::CLOSE), &mut out).await;
+                            let _ = if let Some((err, backtrace)) = &poison {
+                                method!(strand, &tmp, close, &mut out, err, backtrace_key: backtrace)
+                                    .await
+                            } else {
+                                method!(strand, &tmp, close, &mut out).await
+                            };
                         }
                     }
                 })

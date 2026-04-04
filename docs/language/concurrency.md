@@ -137,18 +137,20 @@ Channels have a fixed capacity (default 1).
 
 The [`strand.stream`](../api/strand/index.md#stream-func) function creates a
 background strand with channels pre-wired to its input and output, returning a
-[Stream](../api/strand/stream.md) handle. A Stream acts as both an input
-iterator (you can read values it produces) and an output iterator (you can feed
-values into it), making it easy to bridge background processing with the rest
-of your program without manually creating and threading channels.
+[Stream](../api/strand/stream.md) handle. A Stream implements `Iterable` for
+its output side and `Sinkable` for its input side, making it easy to bridge
+background processing with the rest of your program without manually creating
+and threading channels.
 
 ```
 import strand
 
 let s = strand.stream do strand.each do |x| (x * 2)
+let input = s.sink()
+let output = s.iter()
 
-s.put 21
-assert_eq (s.next()) 42
+input.put 21
+assert_eq (output.next()) 42
 s.join()
 ```
 

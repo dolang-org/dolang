@@ -1,5 +1,6 @@
 import
   std:
+    - SinkStop
     - StateError
   strand:
     - spawn
@@ -117,8 +118,9 @@ assert_eq $joined_receivers[1] "boom_outer"
 
 # Stream next preserves the originating backtrace.
 let next_stream = stream do boom_outer()
+let next_iter = next_stream.iter()
 let next_bt = try
-  next_stream.next()
+  next_iter.next()
 catch e
   assert_eq $e "boom"
   strand.error_backtrace()
@@ -127,15 +129,20 @@ let next_receivers = receivers $next_bt
 assert_eq $next_receivers[0] "boom_inner"
 assert_eq $next_receivers[1] "boom_outer"
 
-# Stream put preserves the originating backtrace.
+# Stream put yields SinkStop; join preserves the originating backtrace.
 let put_stream = stream do boom_outer()
+let put_sink = put_stream.sink()
+let put_err = try
+  put_sink.put 1
+  put_sink.put 2
+catch e
+  e
+assert (type put_err SinkStop)
 let put_bt = try
-  put_stream.put 1
-  put_stream.put 2
+  put_stream.join()
 catch e
   assert_eq $e "boom"
   strand.error_backtrace()
-put_stream.wait()
 let put_receivers = receivers $put_bt
 assert_eq $put_receivers[0] "boom_inner"
 assert_eq $put_receivers[1] "boom_outer"

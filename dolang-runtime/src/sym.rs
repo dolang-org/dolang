@@ -54,6 +54,7 @@ well_known_symbols! {
     (All, "all", ALL),
     (Any, "any", ANY),
     (Add, "add", ADD),
+    (Backtrace, "backtrace", BACKTRACE),
     (Cancel, "cancel", CANCEL),
     (CallMethod, "(call)", CALL_METHOD),
     (Chain, "chain", CHAIN),
