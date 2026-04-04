@@ -12,15 +12,16 @@ cov_ignore := "(dolang-private-util/src/hashbrown|dolang-private-doc|dolang-priv
 test-asan *args:
     env \
         RUSTFLAGS="-Z sanitizer=address" \
-        cargo +nightly test --profile asan --target {{asan_target}} \
-        -Z build-std "$@"
-    env \
-        RUSTFLAGS="-Z sanitizer=address" \
         cargo +nightly build --profile asan --target {{asan_target}} \
         --bin dolang-shell-vfs -Z build-std "$@"
     env \
         RUSTFLAGS="-Z sanitizer=address" \
-        DOLANG_SHELL_VFS={{shell_vfs}} \
+        DOLANG_SHELL_VFS="{{justfile_directory()}}/target/{{asan_target}}/asan/dolang-shell-vfs" \
+        cargo +nightly test --profile asan --target {{asan_target}} \
+        -Z build-std "$@"
+    env \
+        RUSTFLAGS="-Z sanitizer=address" \
+        DOLANG_SHELL_VFS="{{justfile_directory()}}/target/{{asan_target}}/asan/dolang-shell-vfs" \
         cargo +nightly run --profile asan --bin dolang-shell --target {{asan_target}} \
         -Z build-std "$@" -- {{shell_test_args}}
 
@@ -36,20 +37,23 @@ test-miri *args:
         -p dolang "$@"
 
 test *args:
-    cargo test "$@"
     cargo build --bin dolang-shell-vfs "$@"
     env \
-        DOLANG_SHELL_VFS={{shell_vfs}} \
+        DOLANG_SHELL_VFS="{{justfile_directory()}}/target/debug/dolang-shell-vfs" \
+        cargo test "$@"
+    env \
+        DOLANG_SHELL_VFS="{{justfile_directory()}}/{{shell_vfs}}" \
         cargo run --bin dolang-shell "$@" -- {{shell_test_args}}
 
 cov *args:
     cargo llvm-cov clean
-    env \
-        DO_EXPORT_DOT=`pwd`/dot \
-        cargo llvm-cov --no-report test --all-features "$@"
     cargo llvm-cov --no-report run --ignore-run-fail --bin dolang-shell-vfs --all-features "$@"
     env \
-        DOLANG_SHELL_VFS={{llvm_cov_shell_vfs}} \
+        DO_EXPORT_DOT=`pwd`/dot \
+        DOLANG_SHELL_VFS="{{justfile_directory()}}/{{llvm_cov_shell_vfs}}" \
+        cargo llvm-cov --no-report test --all-features "$@"
+    env \
+        DOLANG_SHELL_VFS="{{justfile_directory()}}/{{llvm_cov_shell_vfs}}" \
         cargo llvm-cov run --no-report --bin dolang-shell --all-features "$@" -- \
         {{shell_test_args}}
 

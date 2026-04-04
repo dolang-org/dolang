@@ -99,7 +99,7 @@ jobs:
       - name: Run integration tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          env DOLANG_SHELL_VFS=target/x86_64-unknown-linux-musl/dist/dolang-shell-vfs \
+          env DOLANG_SHELL_VFS="${{ github.workspace }}/target/x86_64-unknown-linux-musl/dist/dolang-shell-vfs" \
             cargo run --profile dist --target ${{ matrix.target }} --bin dolang-shell -- -m test -- test/*.dol
         env:
           ZSTD_SYS_USE_PKG_CONFIG: "1"
@@ -112,7 +112,7 @@ jobs:
       - name: Run integration tests (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          env DOLANG_SHELL_VFS=target/${{ matrix.target }}/dist/dolang-shell-vfs \
+          env DOLANG_SHELL_VFS="${{ github.workspace }}/target/${{ matrix.target }}/dist/dolang-shell-vfs" \
             cargo run --profile dist --target ${{ matrix.target }} --bin dolang-shell -- -m test -- test/*.dol
 
       - name: Package release (Linux)
