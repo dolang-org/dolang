@@ -58,11 +58,13 @@ pub(crate) struct Types<'v> {
 
 pub(crate) struct Syms<'v> {
     pub(crate) accessed: Sym<'v, 'v>,
+    pub(crate) chunk: Sym<'v, 'v>,
     pub(crate) close: Sym<'v, 'v>,
     pub(crate) created: Sym<'v, 'v>,
     pub(crate) dir: Sym<'v, 'v>,
     pub(crate) file: Sym<'v, 'v>,
     pub(crate) len: Sym<'v, 'v>,
+    pub(crate) line: Sym<'v, 'v>,
     pub(crate) modified: Sym<'v, 'v>,
     pub(crate) path: Sym<'v, 'v>,
     pub(crate) record: Sym<'v, 'v>,
@@ -181,11 +183,13 @@ impl<'v> Global<'v> {
             },
             syms: Syms {
                 accessed: builder.sym("accessed"),
+                chunk: builder.sym("chunk"),
                 close: builder.sym("close"),
                 created: builder.sym("created"),
                 dir: builder.sym("dir"),
                 file: builder.sym("file"),
                 len: builder.sym("len"),
+                line: builder.sym("line"),
                 modified: builder.sym("modified"),
                 path: builder.sym("path"),
                 record: builder.sym("record"),

@@ -1,0 +1,45 @@
+import sys
+  strand:
+    - collect
+    - pipeline
+  proc:
+    - io_mode
+  proc.run:
+    - cat
+    - echo
+
+if (sys.os == "windows")
+  log "skipping on Windows"
+  return
+
+log "Pumps use the spawner strand mode"
+let out = []
+io_mode :line: do cat stdin: ["foo", "bar"] stdout: $out
+assert_eq $out ["foo", "bar"]
+
+out = []
+sub do io_mode :chunk: do cat stdin: ["foo", "bar"] stdout: $out
+assert_eq $out [b"foobar"]
+
+log "Pipe edges use the strand mode on that edge"
+let res = pipeline
+  do io_mode :line: do strand.put "foo"
+  do cat()
+  do io_mode :chunk: do collect()
+assert_eq $res [b"foo\n"]
+
+let res = pipeline
+  do io_mode :chunk: do strand.put "foo"
+  do cat()
+  do io_mode :chunk: do collect()
+assert_eq $res [b"foo"]
+
+let res = pipeline
+  do echo foo
+  do io_mode :line: do collect()
+assert_eq $res ["foo"]
+
+let res = pipeline
+  do echo foo
+  do io_mode :chunk: do collect()
+assert_eq $res [b"foo\n"]

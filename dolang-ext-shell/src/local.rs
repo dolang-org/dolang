@@ -11,6 +11,12 @@ use std::{
 use dolang::runtime::{Strand, strand};
 use dolang_shell_vfs::ClientOrDirect;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChannelMode {
+    Line,
+    Chunk,
+}
+
 #[derive(Clone)]
 pub(crate) struct Env {
     parent: Option<Rc<Env>>,
@@ -87,7 +93,7 @@ pub(crate) struct Local {
     cwd: RefCell<PathBuf>,
     env: RefCell<Rc<Env>>,
     vfs: RefCell<ClientOrDirect>,
-    binary_mode: Cell<bool>,
+    channel_mode: Cell<ChannelMode>,
 }
 
 impl<'v> strand::Local<'v> for Local {
@@ -96,7 +102,7 @@ impl<'v> strand::Local<'v> for Local {
             cwd: RefCell::new(env::current_dir().unwrap()),
             env: RefCell::new(Rc::new(Env::root())),
             vfs: RefCell::new(ClientOrDirect::default()),
-            binary_mode: Cell::new(false),
+            channel_mode: Cell::new(ChannelMode::Line),
         }
     }
 
@@ -105,7 +111,7 @@ impl<'v> strand::Local<'v> for Local {
             cwd: self.cwd.clone(),
             env: self.env.clone(),
             vfs: self.vfs.clone(),
-            binary_mode: Cell::new(self.binary_mode.get()),
+            channel_mode: Cell::new(self.channel_mode.get()),
         }
     }
 }
@@ -135,11 +141,11 @@ impl Local {
         self.vfs.borrow().clone()
     }
 
-    pub(crate) fn binary_mode(&self) -> bool {
-        self.binary_mode.get()
+    pub(crate) fn channel_mode(&self) -> ChannelMode {
+        self.channel_mode.get()
     }
 
-    pub(crate) fn set_binary_mode(&self, v: bool) {
-        self.binary_mode.set(v);
+    pub(crate) fn set_channel_mode(&self, v: ChannelMode) {
+        self.channel_mode.set(v);
     }
 }

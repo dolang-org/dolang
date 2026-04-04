@@ -20,6 +20,7 @@ use dolang_shell_vfs::{PipeRecv, PipeSend};
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
     global::Global,
+    local::ChannelMode,
 };
 
 // ---------------------------------------------------------------------------
@@ -86,8 +87,8 @@ enum PipeState {
 
 enum BufferedValue {
     Empty,
-    Text,
-    Binary,
+    Line,
+    Chunk,
 }
 
 // ---------------------------------------------------------------------------
@@ -258,15 +259,15 @@ fn take_buffered_bytes<'v, 's>(
     strand: &mut Strand<'v, 's>,
     inner: &mut PipeChannelShared,
 ) -> Result<'v, 's, Option<Vec<u8>>> {
-    let binary_mode = match inner.buffered {
+    let channel_mode = match inner.buffered {
         BufferedValue::Empty => return Ok(None),
-        BufferedValue::Text => false,
-        BufferedValue::Binary => true,
+        BufferedValue::Line => ChannelMode::Line,
+        BufferedValue::Chunk => ChannelMode::Chunk,
     };
 
     let mut recv_borrow = recv_inst.borrow_mut(strand)?;
     let mut slot = Mut::slot_mut::<0>(&mut recv_borrow);
-    let bytes = encode_value(strand, Slot::reborrow(&mut slot), binary_mode)?;
+    let bytes = encode_value(strand, Slot::reborrow(&mut slot), channel_mode)?;
     Output::set(strand, slot, Nil);
     inner.buffered = BufferedValue::Empty;
     inner.wake_senders();
@@ -679,11 +680,11 @@ pub(crate) fn make_pair<'v>(vm: &Vm<'v>, mut out_send: Slot<'v, '_>, mut out_rec
 fn encode_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: Slot<'v, '_>,
-    binary_mode: bool,
+    channel_mode: ChannelMode,
 ) -> Result<'v, 's, Vec<u8>> {
     if let Some(s) = value.as_str(strand) {
         let mut bytes = s.as_bytes().to_vec();
-        if !binary_mode {
+        if channel_mode == ChannelMode::Line {
             bytes.push(b'\n');
         }
         Ok(bytes)
@@ -692,7 +693,7 @@ fn encode_value<'v, 's>(
     } else {
         let s = value.to_string(strand)?;
         let mut bytes = s.as_bytes().to_vec();
-        if !binary_mode {
+        if channel_mode == ChannelMode::Line {
             bytes.push(b'\n');
         }
         Ok(bytes)
@@ -733,7 +734,7 @@ impl<'v> Object<'v> for PipeReceiver {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let shared = &this.annex().shared;
-        let binary_mode = this.annex().global.local.get(strand).binary_mode();
+        let channel_mode = this.annex().global.local.get(strand).channel_mode();
 
         loop {
             let recv_end = {
@@ -790,47 +791,50 @@ impl<'v> Object<'v> for PipeReceiver {
             };
 
             if let Some(mut reader) = recv_end {
-                if binary_mode {
-                    let mut buf = vec![0u8; 8192];
-                    match reader.read(&mut buf).await {
-                        Ok(0) => {
-                            reader.discard();
-                            let mut inner = shared.borrow_mut();
-                            inner.state = PipeState::Value;
-                            inner.wake_senders();
-                            inner.wake_receivers();
-                            inner.wake_negotiators();
-                            continue;
-                        }
-                        Ok(n) => {
-                            buf.truncate(n);
-                            Output::set(strand, out, buf.as_slice());
-                            return Ok(true);
-                        }
-                        Err(e) => {
-                            return Err(e.into_sys(strand));
+                match channel_mode {
+                    ChannelMode::Chunk => {
+                        let mut buf = vec![0u8; 8192];
+                        match reader.read(&mut buf).await {
+                            Ok(0) => {
+                                reader.discard();
+                                let mut inner = shared.borrow_mut();
+                                inner.state = PipeState::Value;
+                                inner.wake_senders();
+                                inner.wake_receivers();
+                                inner.wake_negotiators();
+                                continue;
+                            }
+                            Ok(n) => {
+                                buf.truncate(n);
+                                Output::set(strand, out, buf.as_slice());
+                                return Ok(true);
+                            }
+                            Err(e) => {
+                                return Err(e.into_sys(strand));
+                            }
                         }
                     }
-                }
-
-                let mut line = String::new();
-                match reader.read_line(&mut line).await {
-                    Ok(0) => {
-                        reader.discard();
-                        let mut inner = shared.borrow_mut();
-                        inner.state = PipeState::Value;
-                        inner.wake_senders();
-                        inner.wake_receivers();
-                        inner.wake_negotiators();
-                        continue;
-                    }
-                    Ok(_) => {
-                        let trimmed = line.trim_end_matches(['\r', '\n']).to_owned();
-                        Output::set(strand, out, trimmed.as_str());
-                        return Ok(true);
-                    }
-                    Err(e) => {
-                        return Err(e.into_sys(strand));
+                    ChannelMode::Line => {
+                        let mut line = String::new();
+                        match reader.read_line(&mut line).await {
+                            Ok(0) => {
+                                reader.discard();
+                                let mut inner = shared.borrow_mut();
+                                inner.state = PipeState::Value;
+                                inner.wake_senders();
+                                inner.wake_receivers();
+                                inner.wake_negotiators();
+                                continue;
+                            }
+                            Ok(_) => {
+                                let trimmed = line.trim_end_matches(['\r', '\n']).to_owned();
+                                Output::set(strand, out, trimmed.as_str());
+                                return Ok(true);
+                            }
+                            Err(e) => {
+                                return Err(e.into_sys(strand));
+                            }
+                        }
                     }
                 }
             }
@@ -896,7 +900,7 @@ impl<'v> Object<'v> for PipeSender {
     ) -> Result<'v, 's, ()> {
         let shared = &this.annex().shared;
         let global = this.annex().global;
-        let binary_mode = global.local.get(strand).binary_mode();
+        let channel_mode = global.local.get(strand).channel_mode();
 
         loop {
             let send_end = {
@@ -912,10 +916,10 @@ impl<'v> Object<'v> for PipeSender {
                         if !matches!(inner.buffered, BufferedValue::Empty) {
                             None
                         } else {
-                            inner.buffered = if binary_mode {
-                                BufferedValue::Binary
+                            inner.buffered = if channel_mode == ChannelMode::Chunk {
+                                BufferedValue::Chunk
                             } else {
-                                BufferedValue::Text
+                                BufferedValue::Line
                             };
                             drop(inner);
                             let send_borrow = this.borrow(strand)?;
@@ -948,7 +952,7 @@ impl<'v> Object<'v> for PipeSender {
             };
 
             if let Some(mut writer) = send_end {
-                let bytes = encode_value(strand, value, binary_mode)?;
+                let bytes = encode_value(strand, value, channel_mode)?;
                 match writer.write_all(&bytes).await {
                     Ok(()) => {
                         return Ok(());

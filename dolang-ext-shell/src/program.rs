@@ -1,7 +1,7 @@
 use std::fmt;
 
 use futures::future::MaybeDone;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
 use dolang::runtime::{
     Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Value,
@@ -21,6 +21,7 @@ use crate::{
         path::{PathAnnex, PathOrStr},
     },
     global::Global,
+    local::ChannelMode,
     pipe_channel::{self, RecvGuard, SendGuard},
 };
 #[cfg(unix)]
@@ -306,18 +307,38 @@ async fn input_pump<'v, 's, W>(
 where
     W: AsyncWrite + Unpin,
 {
+    let channel_mode = strand
+        .vm()
+        .state::<Global<'v>>()
+        .local
+        .get(strand)
+        .channel_mode();
     strand
         .with_slots(async move |strand, [mut inval]| {
             while input.next(strand, &mut inval).await? {
-                if let Some(str) = inval.as_str(strand) {
-                    writer.write_all(str.as_bytes()).await.into_sys(strand)?;
-                    writer.write_all(b"\n").await.into_sys(strand)?;
-                } else if let Some(slice) = inval.as_u8_slice(strand) {
-                    writer.write_all(slice).await.into_sys(strand)?;
-                } else {
-                    let s = inval.to_arg(strand)?;
-                    writer.write_all(s.as_bytes()).await.into_sys(strand)?;
-                    writer.write_all(b"\n").await.into_sys(strand)?;
+                match channel_mode {
+                    ChannelMode::Line => {
+                        if let Some(str) = inval.as_str(strand) {
+                            writer.write_all(str.as_bytes()).await.into_sys(strand)?;
+                            writer.write_all(b"\n").await.into_sys(strand)?;
+                        } else if let Some(slice) = inval.as_u8_slice(strand) {
+                            writer.write_all(slice).await.into_sys(strand)?;
+                        } else {
+                            let s = inval.to_arg(strand)?;
+                            writer.write_all(s.as_bytes()).await.into_sys(strand)?;
+                            writer.write_all(b"\n").await.into_sys(strand)?;
+                        }
+                    }
+                    ChannelMode::Chunk => {
+                        if let Some(str) = inval.as_str(strand) {
+                            writer.write_all(str.as_bytes()).await.into_sys(strand)?;
+                        } else if let Some(slice) = inval.as_u8_slice(strand) {
+                            writer.write_all(slice).await.into_sys(strand)?;
+                        } else {
+                            let s = inval.to_arg(strand)?;
+                            writer.write_all(s.as_bytes()).await.into_sys(strand)?;
+                        }
+                    }
                 }
             }
             Ok(())
@@ -331,15 +352,37 @@ async fn output_pump<'v, 's, R>(
     mut reader: R,
 ) -> Result<'v, 's, ()>
 where
-    R: AsyncBufRead + Unpin,
+    R: AsyncRead + Unpin,
 {
+    let channel_mode = strand
+        .vm()
+        .state::<Global<'v>>()
+        .local
+        .get(strand)
+        .channel_mode();
     strand
         .with_slots(async move |strand, [mut outval]| {
-            let mut line = String::new();
-            while reader.read_line(&mut line).await.into_sys(strand)? != 0 {
-                Output::set(strand, &mut outval, line.trim_end_matches(['\r', '\n']));
-                line.clear();
-                output.put(strand, &mut outval).await?;
+            match channel_mode {
+                ChannelMode::Line => {
+                    let mut reader = BufReader::new(reader);
+                    let mut line = String::new();
+                    while reader.read_line(&mut line).await.into_sys(strand)? != 0 {
+                        Output::set(strand, &mut outval, line.trim_end_matches(['\r', '\n']));
+                        line.clear();
+                        output.put(strand, &mut outval).await?;
+                    }
+                }
+                ChannelMode::Chunk => {
+                    let mut buf = [0u8; 8192];
+                    loop {
+                        let n = reader.read(&mut buf).await.into_sys(strand)?;
+                        if n == 0 {
+                            break;
+                        }
+                        Output::set(strand, &mut outval, &buf[..n]);
+                        output.put(strand, &mut outval).await?;
+                    }
+                }
             }
             Ok(())
         })
@@ -356,8 +399,8 @@ async fn run_monitor<'v, 's>(
     output: &Value<'v>,
     stderr_output: Option<&Value<'v>>,
     stdin: Option<Box<dyn AsyncWrite + Unpin>>,
-    stdout: Option<Box<dyn AsyncBufRead + Unpin>>,
-    stderr: Option<Box<dyn AsyncBufRead + Unpin>>,
+    stdout: Option<Box<dyn AsyncRead + Unpin>>,
+    stderr: Option<Box<dyn AsyncRead + Unpin>>,
 ) -> Result<'v, 's, ()> {
     // Create pumps
     let ipump = match stdin {
@@ -543,12 +586,8 @@ async fn run<'v, 's>(
 
     let mut proc = command.spawn().await.into_sys(strand)?;
     let stdin = stdin_pipe.map(|pipe| Box::new(pipe) as Box<dyn AsyncWrite + Unpin>);
-    let stdout = stdout_pipe
-        .map(BufReader::new)
-        .map(|pipe| Box::new(pipe) as Box<dyn AsyncBufRead + Unpin>);
-    let stderr_pipe = stderr_pipe
-        .map(BufReader::new)
-        .map(|pipe| Box::new(pipe) as Box<dyn AsyncBufRead + Unpin>);
+    let stdout = stdout_pipe.map(|pipe| Box::new(pipe) as Box<dyn AsyncRead + Unpin>);
+    let stderr_pipe = stderr_pipe.map(|pipe| Box::new(pipe) as Box<dyn AsyncRead + Unpin>);
     let res = {
         strand
             .cancel_guard(async |strand| {

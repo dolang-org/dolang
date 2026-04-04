@@ -3,7 +3,7 @@ use std::fmt;
 use dolang::{
     compile::Compiler,
     runtime::{
-        Instance, Object, Output, Result, Slot, State, Strand, call,
+        Error, Instance, Object, Output, Result, Slot, State, Strand,
         error::ResultExt,
         object::TypeBuilder,
         strand::Redirect,
@@ -14,6 +14,7 @@ use dolang::{
 };
 
 use crate::global::Global;
+use crate::local::ChannelMode;
 
 /// Capture output from a subprocess.
 pub(crate) struct Capture(String);
@@ -89,11 +90,21 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
 
     builder
         .module("proc")
-        .function("binary_mode", async move |strand, args, out| {
-            let ([func], []) = unpack!(strand, args, 1, 0)?;
-            global.local.get(strand).set_binary_mode(true);
-            let res = call!(strand, func, out).await;
-            global.local.get(strand).set_binary_mode(false);
+        .function("io_mode", async move |strand, args, out| {
+            let ([mode, func], [], rest) = unpack!(strand, args, 2, 0, ...)?;
+            let mode = match mode.as_sym(strand) {
+                Some(sym) if sym == global.syms.line => ChannelMode::Line,
+                Some(sym) if sym == global.syms.chunk => ChannelMode::Chunk,
+                _ => return Err(Error::value(strand, "mode must be :line: or :chunk:")),
+            };
+            let old_mode = {
+                let local = global.local.get(strand);
+                let old_mode = local.channel_mode();
+                local.set_channel_mode(mode);
+                old_mode
+            };
+            let res = func.call(strand, rest, out).await;
+            global.local.get(strand).set_channel_mode(old_mode);
             res
         })
         .function("mute", async move |strand, args, out| {
