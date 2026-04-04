@@ -1,13 +1,10 @@
 import
   strand:
     - pipeline
-  fs:
-    - Path
   proc.run:
     - cargo
-    - mktemp
-    - rm
   - sys
+  - fs
 
 let agent_bin = "../target/debug/dolang-shell-vfs"
 
@@ -17,22 +14,19 @@ if (sys.os != "windows")
     Vfs: it
   Vfs = it
 
-  if !Path(agent_bin).exists()
-    cd ../ $env RUSTFLAGS: nil $cargo -q build --bin dolang-shell-vfs
+  cd ../ $env RUSTFLAGS: nil $cargo -q build --bin dolang-shell-vfs
 
 pub def with_agent block
-  let runtime = sub $mktemp -d /tmp/test-dolang-agent.XXXXXX
-  let socket = "$runtime/socket"
+  fs.with_temp_dir do |dir|
+    dir.chmod 0o700
+    let socket = (dir / "socket")
 
-  pipeline
-    do run $agent_bin $socket
-    do
-      strand.next()
-      let agent = Vfs unix_socket: $socket
-      try
+    pipeline
+      do run $agent_bin $socket
+      do
+        strand.next()
+        let agent = Vfs unix_socket: $socket
         return agent $block
-      finally
-        rm -rf $runtime
 
 pub def with_and_without_agent test block
   log "$test: without agent"
