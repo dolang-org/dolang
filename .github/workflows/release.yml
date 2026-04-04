@@ -1,18 +1,20 @@
-name: CI
+name: Release
 
 on:
   push:
     tags: ["v*"]
-  pull_request:
-    branches: [master]
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
-  test:
-    name: Test
+  test-release:
+    name: Test Release
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -34,13 +36,6 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
-
-      - name: Reduce debug info (Windows only)
-        if: matrix.os == 'windows-latest'
-        shell: bash
-        run: |
-          echo "CARGO_PROFILE_DEV_DEBUG=0" >> "$GITHUB_ENV"
-          echo "CARGO_PROFILE_TEST_DEBUG=0" >> "$GITHUB_ENV"
 
       - name: Install LLVM (macOS only)
         if: matrix.os == 'macos-latest'
@@ -73,95 +68,27 @@ jobs:
           sudo apt update
           sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin llvm libclang-dev
 
+      - name: Build dolang-shell-vfs
+        if: matrix.os != 'windows-latest'
+        run: cargo build --profile dist --bin dolang-shell-vfs
+
       - name: Run cargo tests
-        run: |
-          cargo build --bin dolang-shell-vfs
-          cargo test
+        run: cargo test --profile dist
 
       - name: Run integration tests (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          env DOLANG_SHELL_VFS=target/debug/dolang-shell-vfs cargo run --bin dolang-shell -- -m test -- test/*.dol
+          env DOLANG_SHELL_VFS=target/dist/dolang-shell-vfs cargo run --profile dist --bin dolang-shell -- -m test -- test/*.dol
 
       - name: Run integration tests (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          cargo run --bin dolang-shell -- -m test -- test/*.dol
-
-  extension:
-    name: VS Code Extension
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: dolang-code/package-lock.json
-
-      - name: Install extension dependencies
-        working-directory: dolang-code
-        run: npm ci
-
-      - name: Build extension
-        working-directory: dolang-code
-        run: npm run compile
-
-      - name: Run extension tests
-        working-directory: dolang-code
-        run: xvfb-run -a npm test
-
-      - name: Build preview VSIX
-        working-directory: dolang-code
-        run: npm run package:vsix
-
-      - name: Upload preview VSIX
-        uses: actions/upload-artifact@v6
-        with:
-          name: dolang-vsix-preview
-          path: dolang-code/*.vsix
-
-  docs:
-    name: Docs
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install docs dependencies
-        run: python -m pip install --requirement docs/requirements.txt
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build docs site
-        run: |
-          cargo build --release --bin dolang-highlight --bin dolang-doc
-          env \
-            DOLANG_HIGHLIGHT=target/release/dolang-highlight \
-            DOLANG_DOC=target/release/dolang-doc \
-            mkdocs build
-
-      - name: Upload docs artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: dolang-docs-site
-          path: site
+          cargo run --profile dist --bin dolang-shell -- -m test -- test/*.dol
 
   build-release:
     name: Build Release
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: test-release
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -221,10 +148,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo build --profile dist --target x86_64-unknown-linux-musl -p dolang-shell-vfs
 
-      - name: Extract version from tag
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
-
       - name: Package release (Linux)
         if: matrix.os == 'ubuntu-latest'
         shell: bash
@@ -267,6 +190,7 @@ jobs:
   build-release-vsix:
     name: Build Release VSIX
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: test-release
     runs-on: ubuntu-latest
 
     steps:
@@ -283,6 +207,14 @@ jobs:
         working-directory: dolang-code
         run: npm ci
 
+      - name: Build extension
+        working-directory: dolang-code
+        run: npm run compile
+
+      - name: Run extension tests
+        working-directory: dolang-code
+        run: xvfb-run -a npm test
+
       - name: Build release VSIX
         working-directory: dolang-code
         run: npm run package:vsix
@@ -295,8 +227,8 @@ jobs:
 
   create-release:
     name: Create Draft Release
-    needs: [test, extension, build-release, build-release-vsix]
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-release, build-release-vsix]
     runs-on: ubuntu-latest
     permissions:
       contents: write
