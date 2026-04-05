@@ -81,4 +81,5 @@ compile "test.dol" source
 
 - [`diagnostic`](../diagnostic.md) -- Render compiler diagnostics and runtime
   errors
-- [`load`](../load/index.md) -- Run compiled bytecode and register import handlers
+- [`load`](../load/index.md) -- Run compiled bytecode and register import
+  handlers

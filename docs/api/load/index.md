@@ -41,8 +41,8 @@ To decline a module name, raise
 
 **Parameters:**
 
-| Name       | Type                  | Description                          |
-| ---------- | --------------------- | ------------------------------------ |
+| Name       | Type                     | Description                           |
+| ---------- | ------------------------ | ------------------------------------- |
 | `callback` | [`func`](../std/func.md) | Called with the requested module name |
 
 **Returns:** [`ImportHandler`](./importhandler.md)
