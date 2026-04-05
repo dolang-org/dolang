@@ -77,6 +77,63 @@ impl Env {
         self.vars.insert(key, value);
     }
 
+    fn baseline(&self) -> &HashMap<String, Option<String>> {
+        if self.baseline {
+            &self.vars
+        } else {
+            self.parent
+                .as_ref()
+                .expect("derived env missing parent")
+                .baseline()
+        }
+    }
+
+    fn flatten_delta_into(&self, out: &mut HashMap<String, Option<String>>) {
+        if self.baseline {
+            return;
+        }
+        if let Some(parent) = &self.parent {
+            parent.flatten_delta_into(out);
+        }
+        out.extend(self.vars.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
+
+    pub(crate) fn flatten_delta(&self) -> HashMap<String, Option<String>> {
+        let mut out = HashMap::new();
+        self.flatten_delta_into(&mut out);
+        out
+    }
+
+    pub(crate) fn effective_map(&self) -> HashMap<String, String> {
+        let baseline = self.baseline();
+        let delta = self.flatten_delta();
+        let mut out = HashMap::new();
+
+        for (key, value) in baseline {
+            match delta.get(key) {
+                Some(Some(value)) => {
+                    out.insert(key.clone(), value.clone());
+                }
+                Some(None) => {}
+                None => {
+                    if let Some(value) = value {
+                        out.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+
+        for (key, value) in delta {
+            if let Some(value) = value
+                && !baseline.contains_key(&key)
+            {
+                out.insert(key, value);
+            }
+        }
+
+        out
+    }
+
     pub(crate) fn visit(&self, f: &mut impl FnMut(&str, Option<&str>)) {
         if !self.baseline {
             if let Some(parent) = &self.parent {
@@ -100,7 +157,10 @@ impl<'v> strand::Local<'v> for Local {
     fn init() -> Self {
         Self {
             cwd: RefCell::new(env::current_dir().unwrap()),
-            env: RefCell::new(Rc::new(Env::root())),
+            env: RefCell::new(Rc::new(Env::derived(
+                Rc::new(Env::root()),
+                Default::default(),
+            ))),
             vfs: RefCell::new(ClientOrDirect::default()),
             channel_mode: Cell::new(ChannelMode::Line),
         }

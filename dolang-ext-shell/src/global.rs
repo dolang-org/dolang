@@ -15,6 +15,7 @@ use tokio::{
     sync::Mutex,
 };
 
+use crate::env::EnvIter;
 use crate::pipe_channel::{PipeReceiver, PipeSender};
 use crate::{
     error::{
@@ -40,6 +41,7 @@ pub(crate) struct Types<'v> {
     pub(crate) glob_iter: Type<'v, crate::fs::glob::GlobIter>,
     pub(crate) program: Type<'v, Program>,
     pub(crate) stdin: Type<'v, Stdin>,
+    pub(crate) env_iter: Type<'v, EnvIter>,
     pub(crate) stdout: Type<'v, Stdout>,
     pub(crate) stderr: Type<'v, Stderr>,
     pub(crate) date_time: Type<'v, DateTime>,
@@ -154,6 +156,7 @@ impl<'v> Global<'v> {
                 glob_iter: builder.register_type(),
                 program: builder.register_type(),
                 stdin: builder.register_type(),
+                env_iter: builder.register_type(),
                 stdout: builder.register_type(),
                 stderr: builder.register_type(),
                 date_time: builder.register_type::<DateTime>(),
