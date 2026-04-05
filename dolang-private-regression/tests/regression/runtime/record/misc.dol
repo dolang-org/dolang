@@ -40,14 +40,17 @@ let r = record x: "first"
 record.insert $r :x: "second"
 record.insert $r :x: "third"
 assert_eq (record.len r) 3
+assert_eq (record.get r :x: -1) "third"
+assert_eq (record.get r :x: -2) "second"
+assert_eq (record.get r :x: -4) nil
 # Pop instance 1 (second)
 assert_eq (record.pop r :x: 1) "second"
 assert_eq (record.len r) 2
-# Pop instance 0 (first) - remaining are ["first", "third"]
-assert_eq (record.pop r :x: 0) "first"
+# Pop instance -1 (third) - remaining is ["first"]
+assert_eq (record.pop r :x: -1) "third"
 assert_eq (record.len r) 1
 # Pop last one
-assert_eq (record.pop r :x:) "third"
+assert_eq (record.pop r :x:) "first"
 assert_eq (record.len r) 0
 
 # record.values iterators

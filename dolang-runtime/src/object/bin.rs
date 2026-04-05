@@ -19,7 +19,7 @@ use crate::{
 };
 
 use super::{
-    BoundMethod, iter,
+    BoundMethod, index, iter,
     protocol::{Inspect, Protocol, Recv, dispatch_native_method},
 };
 
@@ -345,12 +345,19 @@ impl<'v> Protocol<'v> for [u8] {
             sym::SUB => {
                 let me = this.receiver.get();
                 let ([start], [end]) = unpack!(strand, args, 1, 1)?;
+                let start = start.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                let start = index::position(me.len(), start).ok_or_else(|| Error::index(strand))?;
                 Output::set(
                     strand.vm(),
                     out,
                     match end {
-                        None => me.get(start.to_index(strand)?..),
-                        Some(end) => me.get(start.to_index(strand)?..end.to_index(strand)?),
+                        None => me.get(start..),
+                        Some(end) => {
+                            let end = end.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                            let end = index::position(me.len(), end)
+                                .ok_or_else(|| Error::index(strand))?;
+                            me.get(start..end)
+                        }
                     }
                     .ok_or_else(|| Error::index(strand))?,
                 );

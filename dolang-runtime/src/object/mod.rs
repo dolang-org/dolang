@@ -8,6 +8,7 @@ pub(crate) mod dict;
 pub(crate) mod error;
 pub(crate) mod float;
 pub(crate) mod function;
+pub(crate) mod index;
 pub(crate) mod int;
 pub(crate) mod iter;
 pub(crate) mod kv;

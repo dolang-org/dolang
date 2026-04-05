@@ -1,4 +1,10 @@
 let tup = tuple([1, 2, 3, "hello", [1, 2], {"key": "value"}])
+assert_eq $tup[0] 1
+assert_eq $tup[-1] {"key": "value"}
+assert_eq $tup[-2] [1, 2]
+assert_eq (tup.get -1) {"key": "value"}
+assert_eq (tup.get -99) nil
+assert_eq (tup.get -99 default: "default") default
 assert (tup.contains 1)
 assert (tup.contains 2)
 assert (tup.contains 3)

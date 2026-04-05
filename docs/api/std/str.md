@@ -255,7 +255,8 @@ assert_eq ("abc".replace "" "-") "-a-b-c-"
 ### `sub start end?`
 
 Returns a substring from `start` to `end` (exclusive). If `end` is omitted,
-returns from `start` to the end of the string.
+returns from `start` to the end of the string. Negative indexes count from the
+end using byte offsets.
 
 **Parameters:**
 
@@ -269,6 +270,8 @@ returns from `start` to the end of the string.
 ```
 assert_eq ("foobar".sub 3) "bar"
 assert_eq ("foobar".sub 2 4) "ob"
+assert_eq ("foobar".sub -3) "bar"
+assert_eq ("foobar".sub 1 -1) "ooba"
 ```
 
 ### `upper`

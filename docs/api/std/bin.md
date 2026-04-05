@@ -217,7 +217,7 @@ assert (b"hello".contains b""))
 ### `sub start end?`
 
 Returns a slice from `start` to `end` (exclusive). If `end` is omitted,
-returns from `start` to the end.
+returns from `start` to the end. Negative indexes count from the end.
 
 **Parameters:**
 
@@ -231,6 +231,8 @@ returns from `start` to the end.
 ```
 assert_eq (b"hello".sub 2) b"llo"
 assert_eq (b"hello".sub 1 4) b"ell"
+assert_eq (b"hello".sub -2) b"lo"
+assert_eq (b"hello".sub 1 -1) b"ell"
 ```
 
 ### `unpack`

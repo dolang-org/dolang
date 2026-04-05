@@ -41,7 +41,7 @@ Returns the number of elements.
 ### `get index :default? :else?`
 
 Retrieves the value at the given index. Returns `nil` if out of bounds and no
-alternative is provided.
+alternative is provided. Negative indexes count from the end.
 
 **Parameters:**
 
@@ -79,6 +79,7 @@ Returns an iterator yielding `[index, value]` pairs.
 let pair = {name: "Alice"}.pairs().next()
 assert_eq $pair[0] :name:
 assert_eq $pair[1] "Alice"
+assert_eq $pair[-1] "Alice"
 ```
 
 Tuples are immutable; indexed assignment is not supported.

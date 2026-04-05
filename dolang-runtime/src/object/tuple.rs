@@ -16,7 +16,7 @@ use crate::{
 };
 
 use super::{
-    BoundMethod, iter,
+    BoundMethod, index, iter,
     protocol::{GcObj, Header, Inspect, Spread, SpreadContext, dispatch_native_method},
 };
 
@@ -175,7 +175,8 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        match this.get().get(index.to_index(strand)?) {
+        let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+        match index::element(this.get().len(), index).and_then(|index| this.get().get(index)) {
             Some(value) => {
                 Output::set(strand, out, value);
                 Ok(())
@@ -243,7 +244,9 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
-                match this.borrow(strand)?.get(index.to_index(strand)?) {
+                let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                let borrow = this.borrow(strand)?;
+                match index::element(borrow.len(), index).and_then(|index| borrow.get(index)) {
                     Some(value) => out.store(value.dup()),
                     None => {
                         if let Some(mut default) = default {

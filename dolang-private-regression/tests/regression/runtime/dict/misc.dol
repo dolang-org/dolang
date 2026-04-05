@@ -64,14 +64,17 @@ let d2 = {x: "first"}
 d2.insert :x: second
 d2.insert :x: third
 assert_eq (d2.len) 3
+assert_eq (d2.get :x: -1) "third"
+assert_eq (d2.get :x: -2) "second"
+assert_eq (d2.get :x: -4) nil
 # Pop instance 1 (second)
 assert_eq (d2.pop :x: 1) "second"
 assert_eq (d2.len) 2
-# Pop instance 0 (first) - remaining are ["first", "third"]
-assert_eq (d2.pop :x: 0) "first"
+# Pop instance -1 (third) - remaining is ["first"]
+assert_eq (d2.pop :x: -1) "third"
 assert_eq (d2.len) 1
 # Pop last one
-assert_eq (d2.pop :x:) "third"
+assert_eq (d2.pop :x:) "first"
 assert_eq (d2.len) 0
 
 # values iterators

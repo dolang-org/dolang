@@ -35,6 +35,7 @@ assert_eq $arr [1, 2, 3]
 ### `insert index ...values`
 
 Inserts one or more values at the specified index, shifting existing elements.
+Negative indexes count from the end; `-1` inserts before the last element.
 
 **Parameters:**
 
@@ -47,12 +48,14 @@ Inserts one or more values at the specified index, shifting existing elements.
 let arr = [1, 2, 3]
 arr.insert 1 42
 assert_eq $arr [1, 42, 2, 3]
+arr.insert -1 99
+assert_eq $arr [1, 42, 99, 2, 3]
 ```
 
 ### `get index :default? :else?`
 
 Retrieves the value at the given index. Returns `nil` if out of bounds and no
-alternative is provided.
+alternative is provided. Negative indexes count from the end.
 
 **Parameters:**
 
@@ -67,6 +70,7 @@ alternative is provided.
 ```
 let arr = [10, 20, 30]
 assert_eq (arr.get 0) 10
+assert_eq (arr.get -1) 30
 assert_eq (arr.get 5 default: "missing") "missing"
 assert_eq (arr.get 5 else: do "computed") "computed"
 ```
@@ -75,7 +79,7 @@ assert_eq (arr.get 5 else: do "computed") "computed"
 
 Removes and returns the last element, or the element at `index` if provided.
 Raises an error if the selected element does not exist and no alternative is
-provided.
+provided. Negative indexes count from the end.
 
 **Parameters:**
 
@@ -100,6 +104,7 @@ assert_eq (empty.pop default: "none") "none"
 ### `delete index`
 
 Deletes the element at `index` if it exists.
+Negative indexes count from the end.
 
 Out-of-bounds indexes are ignored.
 
@@ -108,8 +113,9 @@ Out-of-bounds indexes are ignored.
 ```
 let arr = [10, 20, 30]
 assert (arr.delete 1)
+assert (arr.delete -1)
 assert (!(arr.delete 99))
-assert_eq $arr [10, 30]
+assert_eq $arr [10]
 ```
 
 ### `clear`
@@ -185,8 +191,11 @@ for i v = [10, 20, 30].pairs()
 ```
 let arr = [10, 20, 30]
 assert_eq $arr[0] 10
+assert_eq $arr[-1] 30
 arr[0] = 99
+arr[-1] = 77
 assert_eq $arr[0] 99
+assert_eq $arr[-1] 77
 ```
 
 Out-of-bounds access raises an error; use `get` if you wish to avoid this.

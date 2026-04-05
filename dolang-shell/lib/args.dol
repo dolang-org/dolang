@@ -294,14 +294,10 @@ class Parser
 
   def parse_long self tok argi
     let inner = tok.without_prefix "--"
-    let name = nil
-    let value = nil
-    if inner.contains "="
-      let parts = [...(inner.split "=" limit: 1)]
-      name = parts[0]
-      value = inner.sub (name.len + 1)
+    let name value = if inner.contains "="
+      inner.split "=" limit: 1
     else
-      name = inner
+      [inner, nil]
     let opt = self.#long_opts.get $name else: do
       throw self.#err "unknown option: --$name"
     let value = if (type opt Flag)

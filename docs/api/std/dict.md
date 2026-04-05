@@ -21,7 +21,8 @@ parameter:
 - **Plain assignment** (`d[key] = value`) replaces all values for a key
 - **`insert`** adds a new value without removing existing ones for that key
 - **`get`** and **`pop`** accept an `instance` parameter to access specific
-  values by their position (0-indexed) among values for that key
+  values by their position (0-indexed) among values for that key; negative
+  instance indexes count from the end
 
 ## Fields
 
@@ -59,22 +60,23 @@ Adds a key-value pair. Does **not** remove existing values for the same key
 ### `get key instance? :default? :else?`
 
 Retrieves the value for a key. Returns `nil` if the key is missing and no
-alternative is provided.
+alternative is provided. Negative `instance` indexes count from the end.
 
 **Parameters:**
 
-| Name       | Type                | Description                                                                       |
-| ---------- | ------------------- | --------------------------------------------------------------------------------- |
-| `key`      |                     | the key to look up                                                                |
-| `instance` | [`int`](./index.md) | which value to retrieve when a key has multiple values (0-indexed, default: last) |
-| `default:` |                     | value to return if missing                                                        |
-| `else:`    |                     | callable to invoke if missing                                                     |
+| Name       | Type                | Description                                                                                                 |
+| ---------- | ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `key`      |                     | the key to look up                                                                                          |
+| `instance` | [`int`](./index.md) | which value to retrieve when a key has multiple values (0-indexed; negative counts from end; default: last) |
+| `default:` |                     | value to return if missing                                                                                  |
+| `else:`    |                     | callable to invoke if missing                                                                               |
 
 **Returns:** The value, or the default/else result.
 
 ```
 let d = {name: "Alice"}
 assert_eq (d.get :name:) "Alice"
+assert_eq ({name: "Alice", name: "Bob"}.get :name: -1) "Bob"
 assert_eq (d.get :missing: default: "unknown") "unknown"
 ```
 
@@ -82,16 +84,17 @@ assert_eq (d.get :missing: default: "unknown") "unknown"
 
 Removes and returns a value for a key. Raises an error if the key is missing
 and no alternative is provided. Supports `instance` for multi-map access to
-remove a specific value by its position among values for that key.
+remove a specific value by its position among values for that key. Negative
+`instance` indexes count from the end.
 
 **Parameters:**
 
-| Name       | Type  | Description                                                                     |
-| ---------- | ----- | ------------------------------------------------------------------------------- |
-| `key`      |       | the key to remove                                                               |
-| `instance` | `int` | which value to remove when a key has multiple values (0-indexed, default: last) |
-| `default:` |       | value to return if missing                                                      |
-| `else:`    |       | callable to invoke if missing                                                   |
+| Name       | Type  | Description                                                                                               |
+| ---------- | ----- | --------------------------------------------------------------------------------------------------------- |
+| `key`      |       | the key to remove                                                                                         |
+| `instance` | `int` | which value to remove when a key has multiple values (0-indexed; negative counts from end; default: last) |
+| `default:` |       | value to return if missing                                                                                |
+| `else:`    |       | callable to invoke if missing                                                                             |
 
 **Returns:** The removed value, or the default/else result.
 

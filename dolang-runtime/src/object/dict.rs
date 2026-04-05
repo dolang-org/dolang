@@ -63,7 +63,7 @@ impl<'v> Dict<'v> {
         &self,
         strand: &mut Strand<'v, 's>,
         index: &Value<'v>,
-        instance: Option<usize>,
+        instance: Option<i64>,
     ) -> Result<'v, 's, Option<&Value<'v>>> {
         self.0.get(strand, index, instance)
     }

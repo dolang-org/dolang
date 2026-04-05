@@ -42,6 +42,10 @@ assert_eq (b"abc".len) 3
 assert_eq (b"foobar".sub 2) b"obar"
 assert_eq (b"foobar".sub 2 4) b"ob"
 assert_eq (b"foobar".sub 1 1) b""
+assert_eq (b"foobar".sub -3) b"bar"
+assert_eq (b"foobar".sub 1 -1) b"ooba"
+assert_eq (b"foobar".sub -4 -1) b"oba"
+assert_eq (b"foobar".sub -6 6) b"foobar"
 
 # Starts/ends with
 assert (b"foobar".starts_with b"foo")
@@ -85,3 +89,15 @@ assert (!(b"hello" == "hello"))
 
 # type is bin
 assert_eq (type b"hello") $bin
+
+def assert_err msg block
+  let res = try
+    block()
+    false
+  catch e
+    assert_eq (str e) $msg
+    true
+  assert $res
+
+assert_err "index out of range or invalid" do b"foobar".sub -99
+assert_err "index out of range or invalid" do b"foobar".sub 0 -99

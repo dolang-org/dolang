@@ -11,35 +11,51 @@ let foo = [0, 1, 2]
 assert_eq $foo[0] 0
 assert_eq $foo[1] 1
 assert_eq $foo[2] 2
+assert_eq $foo[-1] 2
+assert_eq $foo[-2] 1
 assert_eq $foo [0, 1, 2]
 foo.push 3
 assert_eq $foo[3] 3
+assert_eq $foo[-1] 3
 assert_eq $foo.get(3) 3
+assert_eq $foo.get(-1) 3
 foo[0] = "hello"
+foo[-1] = "goodbye"
 assert_eq $foo[0] hello
+assert_eq $foo[-1] goodbye
 assert_eq $foo.len 4
-assert_eq $foo ["hello", 1, 2, 3]
+assert_eq $foo ["hello", 1, 2, "goodbye"]
 echo $foo
-assert_eq $foo.pop() 3
+assert_eq $foo.pop() goodbye
+assert_eq (foo.pop -1) 2
 foo.insert 1 -1 0
-foo.insert 5 3
-assert_eq $foo ["hello", -1, 0, 1, 2, 3]
-assert_eq (foo.pop 1) -1
-assert_eq $foo ["hello", 0, 1, 2, 3]
+foo.insert -1 9
+foo.insert -5 8
+foo.insert 6 3
+assert_eq $foo [8, "hello", -1, 0, 9, 1, 3]
+assert_eq (foo.pop 1) hello
+assert_eq $foo [8, -1, 0, 9, 1, 3]
 assert_eq (foo.pop 99 default: "missing") missing
+assert_eq (foo.pop -99 default: "missing") missing
 assert_eq (foo.pop 99 else: do "computed") computed
+assert (foo.delete -2)
+assert_eq $foo [8, -1, 0, 9, 3]
+assert (!(foo.delete -99))
 assert (foo.delete 1)
-assert_eq $foo ["hello", 1, 2, 3]
+assert_eq $foo [8, 0, 9, 3]
 assert (!(foo.delete 99))
-assert_eq $foo ["hello", 1, 2, 3]
+assert_eq $foo [8, 0, 9, 3]
 foo.clear()
 assert_eq $foo.len 0
 assert_eq (foo.pop default: "default") default
 assert_eq (foo.pop else: do "default") default
 assert_err "index out of range or invalid" do foo.pop 0
+assert_err "index out of range or invalid" do foo[-1]
 assert_eq (foo.get 0) nil
+assert_eq (foo.get -1) nil
 assert_eq (foo.get 2) nil
 assert_eq (foo.get 0 default: "default") default
+assert_eq (foo.get -1 default: "default") default
 assert_eq (foo.get 2 else: do "default") default
 assert_eq $foo []
 echo $foo
@@ -80,6 +96,6 @@ assert_err "type error: reverse: expected bool" do
 
 assert_err "type error: array.len is a field, not a method" do [].len()
 # output: END
-# ["hello", 1, 2, 3]
+# ["hello", 1, 2, "goodbye"]
 # []
 # END

@@ -77,12 +77,13 @@ Sets a field. Key must be a symbol or integer.
 ### `record.get rec key :instance? :default? :else?`
 
 Gets a field value with optional default. Supports `instance:` for multi-map
-access.
+access. Negative `instance:` indexes count from the end.
 
 ### `record.pop rec key :instance? :default? :else?`
 
 Removes and returns a value for a field. Supports `instance:` for multi-map
 access to remove a specific value by its position among values for that field.
+Negative `instance:` indexes count from the end.
 
 ### `record.delete rec key`
 

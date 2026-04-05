@@ -17,7 +17,7 @@ use crate::{
 };
 
 use super::{
-    BoundMethod, iter,
+    BoundMethod, index, iter,
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, default_spread,
         dispatch_native_method,
@@ -619,7 +619,11 @@ impl<'v> Protocol<'v> for Array<'v> {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        match this.borrow(strand)?.inner.get(index.to_index(strand)?) {
+        let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+        let borrow = this.borrow(strand)?;
+        let index =
+            index::element(borrow.inner.len(), index).ok_or_else(|| Error::index(strand))?;
+        match borrow.inner.get(index) {
             Some(value) => {
                 value::Output::set(strand, out, value);
                 Ok(())
@@ -634,11 +638,11 @@ impl<'v> Protocol<'v> for Array<'v> {
         index: Slot<'v, 'a>,
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        match this
-            .borrow_mut(strand)?
-            .inner
-            .get_mut(index.to_index(strand)?)
-        {
+        let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+        let mut borrow = this.borrow_mut(strand)?;
+        let index =
+            index::element(borrow.inner.len(), index).ok_or_else(|| Error::index(strand))?;
+        match borrow.inner.get_mut(index) {
             Some(slot) => {
                 *slot = value.take();
                 Ok(())
@@ -683,7 +687,9 @@ impl<'v> Protocol<'v> for Array<'v> {
                     }
                     Some(Arg::Pos(slot)) => slot,
                 };
-                let i = index.to_index(strand)?;
+                let i = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                let i =
+                    index::position(borrow.inner.len(), i).ok_or_else(|| Error::index(strand))?;
                 if i > borrow.inner.len() {
                     return Err(Error::index(strand));
                 }
@@ -717,7 +723,11 @@ impl<'v> Protocol<'v> for Array<'v> {
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
-                match this.borrow(strand)?.inner.get(index.to_index(strand)?) {
+                let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                let borrow = this.borrow(strand)?;
+                match index::element(borrow.inner.len(), index)
+                    .and_then(|index| borrow.inner.get(index))
+                {
                     Some(value) => out.store(value.dup()),
                     None => {
                         if let Some(mut default) = default {
@@ -741,12 +751,9 @@ impl<'v> Protocol<'v> for Array<'v> {
                     let mut borrow = this.borrow_mut(strand)?;
                     match index {
                         Some(index) => {
-                            let index = index.to_index(strand)?;
-                            if index < borrow.inner.len() {
-                                Some(borrow.inner.remove(index))
-                            } else {
-                                None
-                            }
+                            let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                            index::element(borrow.inner.len(), index)
+                                .map(|index| borrow.inner.remove(index))
                         }
                         None => borrow.inner.pop(),
                     }
@@ -769,10 +776,10 @@ impl<'v> Protocol<'v> for Array<'v> {
             }
             sym::DELETE => {
                 let ([index], []) = unpack!(strand, args, 1, 0)?;
-                let index = index.to_index(strand)?;
+                let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
                 let mut borrow = this.borrow_mut(strand)?;
-                let deleted = index < borrow.inner.len();
-                if index < borrow.inner.len() {
+                let deleted = index::element(borrow.inner.len(), index).is_some();
+                if let Some(index) = index::element(borrow.inner.len(), index) {
                     borrow.inner.remove(index);
                 }
                 value::Output::set(strand, out, deleted);

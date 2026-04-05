@@ -19,9 +19,9 @@ use crate::{
     value::{Output, Slot, Slots, Value},
 };
 
-use super::iter;
 use super::protocol::{GcObj, GcObjBorrow, Protocol, Recv, Spread, SpreadContext};
 use super::tuple;
+use super::{index, iter};
 
 use dolang_util::hashbrown::raw::{Bucket, RawTable};
 
@@ -113,13 +113,20 @@ impl<'v> Inner<'v> {
         &self,
         strand: &mut Strand<'v, 's>,
         index: &Value<'v>,
-        instance: Option<usize>,
+        instance: Option<i64>,
     ) -> Result<'v, 's, Option<&Value<'v>>> {
         let hash = hash(strand, index)?;
         Ok(self
             .inner
             .find(hash, eq(strand, index))
-            .and_then(|pair| unsafe { pair.as_ref().value.get(instance) }))
+            .and_then(|pair| unsafe {
+                let pair = pair.as_ref();
+                let instance = match instance {
+                    Some(instance) => Some(index::element(pair.value.len(), instance)?),
+                    None => None,
+                };
+                pair.value.get(instance)
+            }))
     }
 
     pub(crate) fn next_index<'a>(
@@ -1101,7 +1108,11 @@ impl<'v> Inner<'v> {
             let hv = hash(strand, &key_value)?;
             let seen = skip.add(strand, &key_value, hv);
 
-            if let Some(value) = inner.get(strand, &key_value, Some(seen))? {
+            if let Some(value) = inner.get(
+                strand,
+                &key_value,
+                Some(i64::try_from(seen).map_err(|_| Error::overflow(strand))?),
+            )? {
                 out.at(sig.required + i).store(value.dup())
             } else if let Some(default) = &key.default {
                 out.at(sig.required + i).store(default.dup())
@@ -1242,7 +1253,9 @@ impl<'v> Inner<'v> {
         if default.is_some() && or_else.is_some() {
             return Err(Error::unexpected_key(strand, else_key));
         }
-        let subindex = subindex.map(|s| s.to_index(strand)).transpose()?;
+        let subindex = subindex
+            .map(|s| s.as_i64(strand).ok_or_else(|| Error::index(strand)))
+            .transpose()?;
         if let Some(value) = (*this.borrow(strand)?)
             .as_ref()
             .get(strand, &key, subindex)?
@@ -1274,7 +1287,9 @@ impl<'v> Inner<'v> {
         if default.is_some() && or_else.is_some() {
             return Err(Error::unexpected_key(strand, else_key));
         }
-        let subindex = subindex.map(|s| s.to_index(strand)).transpose()?;
+        let subindex = subindex
+            .map(|s| s.as_i64(strand).ok_or_else(|| Error::index(strand)))
+            .transpose()?;
         {
             let mut borrow = this.borrow_mut(strand)?;
             let inner = borrow.as_mut();
@@ -1282,7 +1297,11 @@ impl<'v> Inner<'v> {
                 unsafe {
                     match &mut bucket.as_mut().value {
                         EntryValue::Single { index, .. } => {
-                            if subindex.unwrap_or(0) == 0 {
+                            let subindex = match subindex {
+                                Some(subindex) => index::element(1, subindex),
+                                None => Some(0),
+                            };
+                            if subindex == Some(0) {
                                 inner.total_pairs -= 1;
                                 *inner.index.get_unchecked_mut(*index) = None;
                                 let bucket = inner.inner.remove(bucket).0;
@@ -1295,8 +1314,11 @@ impl<'v> Inner<'v> {
                             }
                         }
                         EntryValue::Multi(items) => {
-                            let subindex = subindex.unwrap_or(items.len().saturating_sub(1));
-                            if subindex < items.len() {
+                            let subindex = match subindex {
+                                Some(subindex) => index::element(items.len(), subindex),
+                                None => Some(items.len().saturating_sub(1)),
+                            };
+                            if let Some(subindex) = subindex {
                                 inner.total_pairs -= 1;
                                 let (value, index) = items.remove(subindex);
                                 *inner.index.get_unchecked_mut(index) = None;
@@ -1622,7 +1644,11 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
             // Mutate CLONE instead of original
             let seen = temp_skip.add(strand, &key_value, hv);
 
-            if let Some(value) = inner.get(strand, &key_value, Some(seen))? {
+            if let Some(value) = inner.get(
+                strand,
+                &key_value,
+                Some(i64::try_from(seen).map_err(|_| Error::overflow(strand))?),
+            )? {
                 out.at(sig.required + i).store(value.dup())
             } else if let Some(default) = &key.default {
                 out.at(sig.required + i).store(default.dup())
