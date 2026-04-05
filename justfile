@@ -36,11 +36,15 @@ test-miri *args:
         -p dolang-private-util \
         -p dolang "$@"
 
-test *args:
+cargo-test *args:
     cargo build --bin dolang-shell-vfs "$@"
     env \
         DOLANG_SHELL_VFS="{{justfile_directory()}}/target/debug/dolang-shell-vfs" \
         cargo test "$@"
+
+test *args:
+    just cargo-test "$@"
+    cargo build --bin dolang-shell-vfs "$@"
     env \
         DOLANG_SHELL_VFS="{{justfile_directory()}}/{{shell_vfs}}" \
         cargo run --bin dolang-shell "$@" -- {{shell_test_args}}

@@ -1,0 +1,26 @@
+import
+  load
+  std:
+    - ImportError
+
+let seen = []
+
+let first = load.import_handler do |name|
+  seen.push $name
+  throw ImportError(name)
+
+let second = load.import_handler do |name|
+  seen.push $name
+  if (name == "synthetic_fallback")
+    record answer: 7
+  else
+    throw ImportError(name)
+
+import synthetic_fallback: synthetic
+
+assert_eq $synthetic (record answer: 7)
+assert_eq $seen.len 2
+assert_eq $seen[0] "synthetic_fallback"
+assert_eq $seen[1] "synthetic_fallback"
+second.unregister()
+first.unregister()

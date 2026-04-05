@@ -10,6 +10,8 @@ use dolang::{
     runtime::vm::Builder,
 };
 
+use crate::global::Global;
+
 /// Load extension
 pub struct LoadExt;
 
@@ -39,7 +41,9 @@ impl Extension for LoadExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        crate::load::configure(builder);
+        let global = Global::new(builder);
+        let global = builder.register_state(global);
+        crate::load::configure(builder, global);
         Ok(())
     }
 }

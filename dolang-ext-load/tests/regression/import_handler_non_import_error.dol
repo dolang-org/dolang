@@ -1,0 +1,30 @@
+import
+  load
+  std:
+    - ImportError
+    - TypeError
+
+let first = load.import_handler do |name|
+  if (name == "existing_module")
+    throw TypeError("boom")
+  else
+    throw ImportError(name)
+
+let second = load.import_handler do |name|
+  if (name == "existing_module")
+    record answer: 99
+  else
+    throw ImportError(name)
+
+let ok = try
+  import existing_module:
+    - answer
+  assert_eq $answer 99
+  false
+catch TypeError: err
+  assert_eq (str err) "type error: boom"
+  true
+
+assert $ok
+second.unregister()
+first.unregister()

@@ -1,0 +1,15 @@
+import
+  load
+  std:
+    - ImportError
+
+let handle = load.import_handler do |name|
+  if (name == "synthetic_basic")
+    record answer: 42
+  else
+    throw ImportError(name)
+
+import synthetic_basic: synthetic
+
+assert_eq $synthetic (record answer: 42)
+assert_eq (type handle) (type handle)

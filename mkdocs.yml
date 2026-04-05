@@ -115,7 +115,9 @@ nav:
       - api/http/response.md
       - api/http/status.md
     - json: api/json.md
-    - load: api/load.md
+    - load:
+      - api/load/index.md
+      - api/load/importhandler.md
     - proc:
       - api/proc/index.md
       - api/proc/error.md

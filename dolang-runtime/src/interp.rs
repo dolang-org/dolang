@@ -7,7 +7,7 @@ use crate::{
     arg::{Arg, Args, OwnedItem},
     bytecode::UnsafeInstDecoder,
     call,
-    error::{Error, Result},
+    error::{Error, ErrorKind, Result},
     frame::{CallFrame, Upvars},
     gc::Gc,
     object::{
@@ -133,8 +133,11 @@ impl<'v> Vm<'v> {
                 // Drop borrow before calling importer
             }
             if let Err(e) = call!(strand, importer, Slot::reborrow(&mut out), name).await {
-                err = e;
-                continue;
+                if e.kind() == ErrorKind::Import {
+                    err = e;
+                    continue;
+                }
+                return Err(e);
             }
             let mut borrow = self.import_cache.borrow_mut();
             borrow.insert(name.to_owned(), Some(out.downgrade()));
