@@ -120,35 +120,24 @@ def read_key ctr path key
 echo $ read_key ubuntu:24.04 /etc/os-release PRETTY_NAME
 ```
 
-## What You Get
+## Included Features
 
-**Automation toolkit** — run external programs as functions
+**Automation** — run external programs as functions
 ([`proc.run`](./api/proc-run.md)), manage files ([`fs`](./api/fs/index.md)),
 build and run containers ([podman](./api/container/podman/index.md),
-[docker](./api/container/docker/index.md), [toolbx](./api/container/toolbx.md)),
-parse CLI arguments ([`args`](./api/args.md)), elevate privileges
-([`sudo`](./api/sudo.md)), read system configuration
-([`systemd`](./api/systemd.md), [`xdg`](./api/xdg.md))
+[docker](./api/container/docker/index.md),
+[toolbx](./api/container/toolbx.md)), parse CLI arguments
+([`args`](./api/args.md)), elevate privileges ([`sudo`](./api/sudo.md)), read
+system configuration ([`systemd`](./api/systemd.md), [`xdg`](./api/xdg.md)),
+and show friendly [progress indicators](./api/progress/index.md).
 
-**Data and APIs** — [HTTP client](./api/http/index.md) (backed by reqwest),
-[JSON](./api/json.md) (serde\_json),
-[XML](./api/xml/index.md) (quick-xml),
-[YAML](./api/yaml.md) (saphyr),
-[SQLite](./api/sqlite/index.md) (libsqlite3-sys),
-[regex](./api/regex/index.md),
-[base64](./api/base64.md),
-[cryptographic hashes](./api/digest/index.md) (blake3, RustCrypto),
-[zip archives](./api/zip/index.md)
+**Data and protocols** — [HTTP](./api/http/index.md), [JSON](./api/json.md),
+[XML](./api/xml/index.md), [YAML](./api/yaml.md),
+[SQLite](./api/sqlite/index.md), [regex](./api/regex/index.md),
+[base64](./api/base64.md), [hashing](./api/digest/index.md),
+[zip](./api/zip/index.md)
 
-**Core language** — [strand-based concurrency](./language/concurrency.md),
-first-class functions with closures, structured error handling
-([try/catch/finally](./language/error-handling.md)),
-[classes](./language/classes.md) with inheritance,
-[and data destructuring](./language/destructuring.md)
-
-**Tooling** — [LSP server](./lsp.md) for editor integration, REPL
-for interactive development, [progress indicators](./api/progress/index.md) for
-long-running tasks (backed by indicatif), clear error messages with backtraces.
+**Tooling** — [LSP server](./lsp.md), REPL
 
 ## Get Started
 
@@ -156,10 +145,3 @@ long-running tasks (backed by indicatif), clear error messages with backtraces.
 
 **Learn by example?** Check out [Examples](./examples.md) showing real-world use
 cases.
-
-**Building something specific?**
-
-- [Container automation](./shell/containers.md)
-- [HTTP APIs](./api/http/index.md)
-- [Concurrency patterns](./api/strand/index.md)
-- [Error handling](./language/error-handling.md)
