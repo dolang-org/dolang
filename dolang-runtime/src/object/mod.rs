@@ -24,12 +24,12 @@ pub(crate) mod sym;
 pub(crate) mod tuple;
 pub(crate) mod types;
 
-use std::{fmt, ops::ControlFlow};
+use std::{fmt, ops::ControlFlow, ptr::NonNull};
 
 use crate::{
     arg::Args,
     error::{ErrorKind, Result, ResultExt},
-    gc::{Collect, arena::Visit},
+    gc::{self, Collect, arena::Visit},
     object::protocol::Recv,
     strand::Strand,
     sym::Sym,
@@ -37,7 +37,56 @@ use crate::{
     vm::Vm,
 };
 
+use dolang_util::alias;
 use protocol::{GcObj, Protocol, TypeHandle};
+
+type VtblEntry = (NonNull<()>, unsafe fn(NonNull<()>));
+
+pub(crate) struct TypeTable<'v> {
+    entries: Vec<VtblEntry>,
+    _phantom: std::marker::PhantomData<&'v ()>,
+}
+
+impl<'v> TypeTable<'v> {
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Register any vtbl-like value and get a `'v`-lived reference to it.
+    ///
+    /// The value must be `repr(C)` with `arena::Vtbl` as its (transitive) first field so that
+    /// the GC header's vtbl pointer remains valid.
+    #[inline(never)]
+    pub(crate) fn register<V: 'v>(&mut self, vtbl: V) -> NonNull<V> {
+        let ptr = alias::Box::into_non_null(alias::Box::new(vtbl));
+        self.entries.push((ptr.cast(), |ptr| unsafe {
+            drop(alias::Box::<V>::from_non_null(ptr.cast()))
+        }));
+        // Safety: the allocation lives until TypeTable is dropped (within 'v).
+        ptr
+    }
+
+    /// Register a protocol vtbl for type `T` and return a type-safe handle.
+    pub(crate) fn register_type_handle<T>(&mut self) -> TypeHandle<'v, T>
+    where
+        T: ?Sized + gc::Boxable<protocol::Header> + Protocol<'v>,
+    {
+        let registered = self.register(protocol::Vtbl::new::<T>());
+        // Safety: the vtbl was created for T.
+        unsafe { TypeHandle::new(registered) }
+    }
+}
+
+impl<'v> Drop for TypeTable<'v> {
+    fn drop(&mut self) {
+        for (ptr, free) in self.entries.drain(..) {
+            unsafe { free(ptr) }
+        }
+    }
+}
 
 pub(crate) struct BuiltinTypes<'v> {
     pub(crate) arg_iter: TypeHandle<'v, arg::ArgIter<'v>>,
@@ -125,6 +174,96 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) module_type: TypeHandle<'v, module::Type>,
     pub(crate) strand_type: TypeHandle<'v, strand::Type>,
     pub(crate) args_type: TypeHandle<'v, types::ArgsType>,
+}
+
+impl<'v> BuiltinTypes<'v> {
+    pub(crate) fn new(types: &mut TypeTable<'v>) -> Self {
+        Self {
+            arg_iter: types.register_type_handle(),
+            pos_arg_iter: types.register_type_handle(),
+            array_iter: types.register_type_handle(),
+            array_sink: types.register_type_handle(),
+            array_pairs: types.register_type_handle(),
+            array: types.register_type_handle(),
+            backtrace: types.register_type_handle(),
+            backtrace_iter: types.register_type_handle(),
+            backtrace_frame: types.register_type_handle(),
+            bin: types.register_type_handle(),
+            bin_class: types.register_type_handle(),
+            bin_split: types.register_type_handle(),
+            bound_method: types.register_type_handle(),
+            channel_recv: types.register_type_handle(),
+            channel_send: types.register_type_handle(),
+            class_object: types.register_type_handle(),
+            class_instance: types.register_type_handle(),
+            dict_iter: types.register_type_handle(),
+            dict_keys: types.register_type_handle(),
+            dict_values: types.register_type_handle(),
+            dict_key_values: types.register_type_handle(),
+            dict: types.register_type_handle(),
+            dict_unpack: types.register_type_handle(),
+            set_iter: types.register_type_handle(),
+            set: types.register_type_handle(),
+            strand_handle: types.register_type_handle(),
+            error: types.register_type_handle(),
+            f64: types.register_type_handle(),
+            function: types.register_type_handle(),
+            native_function: types.register_type_handle(),
+            i64: types.register_type_handle(),
+            module_iter: types.register_type_handle(),
+            module: types.register_type_handle(),
+            native_module: types.register_type_handle(),
+            namespace: types.register_type_handle(),
+            range_iter: types.register_type_handle(),
+            range: types.register_type_handle(),
+            record: types.register_type_handle(),
+            record_class: types.register_type_handle(),
+            record_iter: types.register_type_handle(),
+            record_keys: types.register_type_handle(),
+            record_values: types.register_type_handle(),
+            record_key_values: types.register_type_handle(),
+            record_unpack: types.register_type_handle(),
+            str_split: types.register_type_handle(),
+            str: types.register_type_handle(),
+            sym: types.register_type_handle(),
+            tuple_iter: types.register_type_handle(),
+            tuple_pairs: types.register_type_handle(),
+            tuple: types.register_type_handle(),
+            verbatim_f64: types.register_type_handle(),
+            verbatim_i64: types.register_type_handle(),
+            value_type: types.register_type_handle(),
+            type_type: types.register_type_handle(),
+            iterable: types.register_type_handle(),
+            sinkable: types.register_type_handle(),
+            int_type: types.register_type_handle(),
+            float_type: types.register_type_handle(),
+            bool_type: types.register_type_handle(),
+            str_type: types.register_type_handle(),
+            sym_type: types.register_type_handle(),
+            array_type: types.register_type_handle(),
+            dict_type: types.register_type_handle(),
+            set_type: types.register_type_handle(),
+            tuple_type: types.register_type_handle(),
+            func_type: types.register_type_handle(),
+            range_type: types.register_type_handle(),
+            backtrace_type: types.register_type_handle(),
+            error_type: types.register_type_handle(),
+            error_variant_type: types.register_type_handle(),
+            module_type: types.register_type_handle(),
+            strand_type: types.register_type_handle(),
+            args_type: types.register_type_handle(),
+            input_iter: types.register_type_handle(),
+            output_iter: types.register_type_handle(),
+            null: types.register_type_handle(),
+            chain_iter: types.register_type_handle(),
+            zip_iter: types.register_type_handle(),
+            map_iter: types.register_type_handle(),
+            filter_iter: types.register_type_handle(),
+            map_type: types.register_type_handle(),
+            filter_type: types.register_type_handle(),
+            nil_type: types.register_type_handle(),
+        }
+    }
 }
 
 pub(crate) struct Singletons<'v> {
