@@ -459,81 +459,6 @@ impl Patch for DiscardedComputation {
     }
 }
 
-#[derive(Clone)]
-struct ImplicitUpvarReturn {
-    span: Span,
-    expr_span: Span,
-}
-
-impl Diagnose for ImplicitUpvarReturn {
-    fn severity(&self) -> Severity {
-        Severity::Warning
-    }
-
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(
-            w,
-            "variable in implicit return position may be intended as a call"
-        )
-    }
-
-    fn span(&self) -> Span {
-        self.span
-    }
-
-    fn patches(&self) -> Box<dyn Iterator<Item = Box<dyn Patch>>> {
-        Box::new(
-            [
-                Box::new(ImplicitUpvarReturnCallPatch {
-                    span: self.expr_span,
-                }) as Box<dyn Patch>,
-                Box::new(ImplicitUpvarReturnExplicitPatch {
-                    span: self.expr_span,
-                }) as Box<dyn Patch>,
-            ]
-            .into_iter(),
-        )
-    }
-}
-
-struct ImplicitUpvarReturnCallPatch {
-    span: Span,
-}
-
-impl Patch for ImplicitUpvarReturnCallPatch {
-    fn span(&self) -> Span {
-        self.span
-    }
-
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "add `()` to make this a call")
-    }
-
-    fn sub(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        let original = compiler.file.str(self.span);
-        write!(w, "{}()", original)
-    }
-}
-
-struct ImplicitUpvarReturnExplicitPatch {
-    span: Span,
-}
-
-impl Patch for ImplicitUpvarReturnExplicitPatch {
-    fn span(&self) -> Span {
-        self.span
-    }
-
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "add explicit `return`")
-    }
-
-    fn sub(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        let original = compiler.file.str(self.span);
-        write!(w, "return {}", original)
-    }
-}
-
 struct SpecialMethodOutsideClass(Span);
 
 impl Diagnose for SpecialMethodOutsideClass {
@@ -2015,24 +1940,7 @@ impl<'a> Elaborater<'a> {
                     }
                 }
                 // Visit the expression first (this resolves variable references)
-                self.visit_expr(scope, cmd, false)?;
-                // Post-visit check: if this is the final statement and it's a non-local variable,
-                // warn that it might be intended as a call
-                if is_final
-                    && let Expr::Ident(ident) = cmd
-                    && let Some(res) = &ident.res
-                    && res.depth > 0
-                    && matches!(
-                        self.origintab[res.origin],
-                        Origin::Def { .. } | Origin::PreludeItem { .. }
-                    )
-                {
-                    self.diags.push(ImplicitUpvarReturn {
-                        span: cmd.span(),
-                        expr_span: cmd.span(),
-                    });
-                }
-                Ok(())
+                self.visit_expr(scope, cmd, false)
             }
             PrimStmt::If(node) => self.visit_if(scope, node),
             PrimStmt::Try(node) => self.visit_try(scope, node),
