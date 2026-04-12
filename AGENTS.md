@@ -625,8 +625,8 @@ apply):
   state the function/type's purpose directly, not narrate it.
     - Good: `Computes the BLAKE3 digest.`
     - Bad: `Computes the BLAKE3 digest of a string or binary value and returns
-    the raw digest bytes.` (the signature already says what it takes and
-    returns)
+      the raw digest bytes.` (the signature already says what it takes and
+      returns)
 - **Don't restate what the type signature shows.** If parameters and return
   types are in a table, the prose shouldn't repeat them.
 - **Don't list interface methods on every concrete type.** If `Blake3`

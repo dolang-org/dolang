@@ -368,8 +368,9 @@ impl<'a, I: Iterator<Item = u8>> RawLexer<'a, I> {
     }
 
     fn advance(&mut self) -> Option<u8> {
-        self.offset += 1;
-        self.iter.next()
+        let res = self.iter.next();
+        self.offset += res.is_some() as u32;
+        res
     }
 
     fn defer(&mut self, defer: Defer) {
