@@ -41,7 +41,7 @@ pub(crate) struct Var {
 
 impl Var {
     pub(crate) fn is_emitted(&self, origintab: &origin::Table) -> bool {
-        !self.captured || !self.is_prelude(origintab) || self.used || self.exported
+        !self.is_prelude(origintab) || self.used || self.exported
     }
     pub(crate) fn is_prelude(&self, origintab: &origin::Table) -> bool {
         matches!(
