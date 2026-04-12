@@ -34,7 +34,9 @@ test-miri *args:
         -p dolang-compile \
         -p dolang-runtime \
         -p dolang-private-util \
-        -p dolang "$@"
+        -p dolang \
+        -p dolang-private-regression \
+        "$@"
 
 cargo-test *args:
     cargo build --bin dolang-shell-vfs "$@"
