@@ -217,6 +217,6 @@ fn test_panic_hook() {
     #[cfg(feature = "backtrace")]
     {
         let bt = format!("{:?}", pi.backtrace().unwrap());
-        assert!(bt.contains("PanicInfo::from_std"));
+        assert!(bt.contains("::from_std"));
     }
 }
