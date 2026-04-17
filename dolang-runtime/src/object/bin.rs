@@ -86,7 +86,7 @@ impl<'v> Protocol<'v> for [u8] {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{:?}", BStr::new(this.receiver.get())).into_do(strand)
+        write!(w, "b{:?}", BStr::new(this.receiver.get())).into_do(strand)
     }
 
     fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &'a mut Strand<'v, 's>) -> bool {
