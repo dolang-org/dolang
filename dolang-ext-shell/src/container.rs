@@ -120,7 +120,7 @@ impl<'v> Object<'v> for Vfs {
             error::io_result(strand, Client::connect(&path).await)?
         };
         let Query { env, cwd } = error::io_result(strand, client.query().await)?;
-        let env = Rc::new(Env::new(None, true, env.into_iter()));
+        let env = Rc::new(Env::new(None, true, env));
 
         global.types.vfs.create_with_annex(
             strand,

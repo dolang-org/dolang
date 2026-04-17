@@ -917,7 +917,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
             };
 
             // Merge state into each sucessor block,
-            for sid in next.into_iter().chain(branch.into_iter()) {
+            for sid in next.into_iter().chain(branch) {
                 let succ = &mut self.blocks[sid];
                 if cert.is_some() {
                     // Certificate check case

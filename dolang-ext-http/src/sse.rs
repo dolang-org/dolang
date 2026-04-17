@@ -76,11 +76,7 @@ impl SseParser {
             return Ok(Some(event));
         }
 
-        loop {
-            let Some(line_end) = find_line_end(&self.buffer) else {
-                break;
-            };
-
+        while let Some(line_end) = find_line_end(&self.buffer) {
             let mut line = self.buffer[..line_end].to_vec();
             let consumed = line_end + line_ending_len(&self.buffer[line_end..]);
             self.buffer.drain(..consumed);
@@ -126,15 +122,12 @@ impl SseParser {
         match field {
             "event" => self.current.event_type = Some(value.to_owned()),
             "data" => self.current.data_lines.push(value.to_owned()),
-            "id" => {
-                if !value.contains('\0') {
-                    self.current.id = Some(value.to_owned());
-                }
+            "id" if !value.contains('\0') => {
+                self.current.id = Some(value.to_owned());
             }
-            "retry" => {
-                if !value.is_empty() && value.as_bytes().iter().all(u8::is_ascii_digit) {
-                    self.current.retry = value.parse().ok();
-                }
+            "id" => {}
+            "retry" if !value.is_empty() && value.as_bytes().iter().all(u8::is_ascii_digit) => {
+                self.current.retry = value.parse().ok();
             }
             _ => {}
         }

@@ -234,7 +234,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                         ));
                         last_recv = recv.unwrap_or(Value::NIL);
                     }
-                    for (i, res) in join_all(strands.into_iter()).await.into_iter().enumerate() {
+                    for (i, res) in join_all(strands).await.into_iter().enumerate() {
                         if let Err(e) = res {
                             // Suppress Input/SinkStop errors (broken pipe) or cancellation from all
                             // but the final element
@@ -411,7 +411,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                         ));
                     }
                     let mut first_err: Option<Error<'v, '_>> = None;
-                    for res in join_all(strands.into_iter()).await {
+                    for res in join_all(strands).await {
                         if let Err(e) = res
                             && first_err.as_ref().is_none_or(|prev| {
                                 prev.kind() == ErrorKind::Canceled

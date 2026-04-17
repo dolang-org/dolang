@@ -189,24 +189,23 @@ fn recv_impl(
     let mut received_fds = false;
     for cmsg in msg.cmsgs()? {
         match cmsg {
-            ControlMessageOwned::ScmRights(new_fds) => {
-                if !new_fds.is_empty() {
-                    #[cfg(target_os = "macos")]
-                    unsafe {
-                        for &fd in &new_fds {
-                            // as per documentation this does not ever fail
-                            // with EINTR
-                            libc::ioctl(fd, libc::FIOCLEX);
-                        }
+            ControlMessageOwned::ScmRights(new_fds) if !new_fds.is_empty() => {
+                #[cfg(target_os = "macos")]
+                unsafe {
+                    for &fd in &new_fds {
+                        // as per documentation this does not ever fail
+                        // with EINTR
+                        libc::ioctl(fd, libc::FIOCLEX);
                     }
-                    fds.extend(
-                        new_fds
-                            .into_iter()
-                            .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) }),
-                    );
-                    received_fds = true;
                 }
+                fds.extend(
+                    new_fds
+                        .into_iter()
+                        .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) }),
+                );
+                received_fds = true;
             }
+            ControlMessageOwned::ScmRights(_) => {}
             #[cfg(any(target_os = "android", target_os = "linux"))]
             ControlMessageOwned::ScmCredentials(c) => {
                 creds = Some(c.into());
