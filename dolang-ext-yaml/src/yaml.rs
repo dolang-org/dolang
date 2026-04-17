@@ -350,7 +350,7 @@ fn scalar_into_slot<'v, 's>(
 }
 
 fn error_at<'v, 's>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     span: Span,
     message: impl Into<String>,
 ) -> Error<'v, 's> {
@@ -377,7 +377,7 @@ fn parse_bool(value: &str) -> Option<bool> {
     }
 }
 
-fn parse_int<'v, 's>(strand: &Strand<'v, 's>, value: &str) -> Result<'v, 's, Option<i64>> {
+fn parse_int<'v, 's>(strand: &mut Strand<'v, 's>, value: &str) -> Result<'v, 's, Option<i64>> {
     let normalized = value.replace('_', "");
     let text = normalized.as_str();
     if text.is_empty() {

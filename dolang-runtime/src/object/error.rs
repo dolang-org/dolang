@@ -84,8 +84,8 @@ impl<'v> Display for Boxed<'v> {
         match self {
             Unsupported => write!(f, "unsupported operation"),
             Immutable => write!(f, "object is immutable"),
-            Concurrency(None) => write!(f, "concurrent access violation"),
-            Concurrency(Some(msg)) => write!(f, "concurrent access violation: {msg}"),
+            Concurrency(None) => write!(f, "conflicting concurrent operation"),
+            Concurrency(Some(msg)) => write!(f, "conflicting concurrent operation: {msg}"),
             Type(msg) => write!(f, "type error: {msg}"),
             Value(msg) => write!(f, "value error: {msg}"),
             State(msg) => write!(f, "state error: {msg}"),

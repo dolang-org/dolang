@@ -490,7 +490,8 @@ impl<'v> Protocol<'v> for Dict<'v> {
             }
             sym::KEYS => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let epoch = this.borrow(strand)?.0.epoch;
+                let borrow = this.borrow(strand)?;
+                let epoch = borrow.0.epoch;
                 let dict = this.to_strong();
                 out.store(Value::from_object(GcObj::new(
                     strand.arena(),
@@ -498,7 +499,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     kv::Keys {
                         index: Cell::new(0),
                         epoch,
-                        visited: RefCell::new(bitbox![0; this.borrow(strand)?.0.inner.buckets()]),
+                        visited: RefCell::new(bitbox![0; borrow.0.inner.buckets()]),
                         container: dict,
                     },
                 )));
@@ -559,7 +560,8 @@ impl<'v> Protocol<'v> for Dict<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                value::Output::set(strand, out, this.borrow(strand)?.0.total_pairs as i64);
+                let input = this.borrow(strand)?.0.total_pairs as i64;
+                value::Output::set(strand, out, input);
                 Ok(())
             }
             sym::CLEAR
@@ -583,14 +585,15 @@ impl<'v> Protocol<'v> for Dict<'v> {
         strand: &'a mut Strand<'v, 's>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        let iter = Iter {
+            index: Cell::new(0),
+            dict: this.to_strong(),
+            epoch: this.borrow(strand)?.0.epoch,
+        };
         out.store(Value::from_object(GcObj::new(
             strand.arena(),
             strand.builtin_types().dict_iter,
-            Iter {
-                index: Cell::new(0),
-                dict: this.to_strong(),
-                epoch: this.borrow(strand)?.0.epoch,
-            },
+            iter,
         )));
         Ok(())
     }

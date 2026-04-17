@@ -21,7 +21,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Case, Input, InputBy, Output, Slot, Slots, TypeObject, Value, private::Sealed},
-    vm::{Builder, Vm},
+    vm::{Alloc, Builder, Vm},
 };
 
 use super::{
@@ -441,7 +441,7 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
 
     /// Borrow content immutably
     #[inline]
-    pub fn borrow<'s>(&self, strand: &Strand<'v, 's>) -> Result<'v, 's, Ref<'v, 'a, T>> {
+    pub fn borrow<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, Ref<'v, 'a, T>> {
         Ok(Ref(self
             .receiver
             .borrow()
@@ -456,7 +456,7 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
 
     /// Borrow content mutably
     #[inline]
-    pub fn borrow_mut<'s>(&self, strand: &Strand<'v, 's>) -> Result<'v, 's, Mut<'v, 'a, T>> {
+    pub fn borrow_mut<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, Mut<'v, 'a, T>> {
         Ok(Mut(self
             .receiver
             .borrow_mut()
@@ -1209,7 +1209,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if let Some((sym, entry)) = this.vtbl().entry_with_sym(method) {
-            let name = sym.as_str(strand.vm());
+            let name = sym.as_str(strand);
             Strand::async_for_native_frame(
                 strand,
                 Cow::Borrowed(T::MODULE),
@@ -1223,7 +1223,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
                     },
                     Entry::Delegate(idx) => {
                         let supertype =
-                            instance_supertype::<T>(Recv::new(this.receiver), strand.vm(), *idx);
+                            instance_supertype::<T>(Recv::new(this.receiver), strand, *idx);
                         strand
                             .with_slots(async |strand, [mut delegator]| {
                                 delegator.store(Value::from_object(Base::upcast(
@@ -1253,7 +1253,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if let Some((sym, entry)) = this.vtbl().entry_with_sym(method) {
-            let name = sym.as_str(strand.vm());
+            let name = sym.as_str(strand);
             Strand::async_for_native_frame(
                 strand,
                 Cow::Borrowed(T::MODULE),
@@ -1267,7 +1267,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
                     },
                     Entry::Delegate(idx) => {
                         let supertype =
-                            instance_supertype::<T>(Recv::new(this.receiver), strand.vm(), *idx);
+                            instance_supertype::<T>(Recv::new(this.receiver), strand, *idx);
                         supertype
                             .op_dcall(strand, delegator, method, args, out)
                             .await
@@ -1973,21 +1973,23 @@ impl<'v, T: Object<'v>> Type<'v, T> {
     }
 
     /// Instantiates a native object and places it into the provided output
-    pub fn create(&self, vm: &Vm<'v>, value: T, mut out: impl Output<'v>)
+    pub fn create(&self, alloc: &mut impl Alloc<'v>, value: T, mut out: impl Output<'v>)
     where
         T::Annex: Default,
     {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         Slot::from_output(&mut out).store(self.create_raw(vm, value, Default::default()))
     }
 
     /// Instantiates a native object with an annex and places it into the provided output
     pub fn create_with_annex(
         &self,
-        vm: &Vm<'v>,
+        alloc: &mut impl Alloc<'v>,
         value: T,
         annex: T::Annex,
         mut out: impl Output<'v>,
     ) {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         Slot::from_output(&mut out).store(self.create_raw(vm, value, annex))
     }
 
@@ -2026,7 +2028,7 @@ impl<'v, T: Object<'v>> Type<'v, T> {
     }
 
     /// Runtime shared borrow of `T::Type`.
-    pub fn borrow<'s>(&self, strand: &Strand<'v, 's>) -> Result<'v, 's, TypeRef<'v, T>> {
+    pub fn borrow<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, TypeRef<'v, T>> {
         Ok(TypeRef(
             self.type_borrow_impl(strand)
                 .borrow()
@@ -2044,7 +2046,7 @@ impl<'v, T: Object<'v>> Type<'v, T> {
     }
 
     /// Runtime exclusive borrow of `T::Type`.
-    pub fn borrow_mut<'s>(&self, strand: &Strand<'v, 's>) -> Result<'v, 's, TypeMut<'v, T>> {
+    pub fn borrow_mut<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, TypeMut<'v, T>> {
         Ok(TypeMut(
             self.type_borrow_impl(strand.vm())
                 .borrow_mut()
@@ -2935,7 +2937,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if let Some((sym, entry)) = this.vtbl().entry_with_sym(method) {
-            let name = sym.as_str(strand.vm());
+            let name = sym.as_str(strand);
             Strand::async_for_native_frame(
                 strand,
                 Cow::Borrowed(T::MODULE),
@@ -2963,12 +2965,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                     let ty = this.ty();
                     T::new(ty, strand, trailing, Slot::reborrow(&mut out)).await?;
                     let native = out.take();
-                    inst.op_fill(strand, this.singleton(strand.vm()), native)
+                    let singleton = this.singleton(strand.vm());
+                    inst.op_fill(strand, singleton, native)
                 },
             )
             .await
         } else if let Some((sym, entry)) = this.inst_vtbl().entry_with_sym(method) {
-            let name = sym.as_str(strand.vm());
+            let name = sym.as_str(strand);
             Strand::async_for_native_frame(
                 strand,
                 Cow::Borrowed(T::MODULE),
@@ -2981,7 +2984,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                         // and invoke the handler directly.
                         let ([inst], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
                         let inst = inst
-                            .downcast_native(strand.vm(), unsafe {
+                            .downcast_native(strand, unsafe {
                                 TypeHandle::<ObjectWrap<'v, T>>::new(this.vtbl().inst_vtbl.cast())
                             })
                             .ok_or_else(|| {
@@ -3002,7 +3005,8 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
             // Fall through to dispatch_native_method for protocol/special
             // methods (str, dbg, bool, hash, arithmetic, comparison, etc.).
             // It will error for unsupported operations.
-            dispatch_native_method(strand, this.singleton(strand.vm()), method, args, out).await
+            let singleton = this.singleton(strand.vm());
+            dispatch_native_method(strand, singleton, method, args, out).await
         }
     }
 
@@ -3124,7 +3128,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
             return true;
         }
         let ty = this.ty();
-        let annex = ty.type_borrow_impl(strand.vm()).annex();
+        let annex = ty.type_borrow_impl(strand).annex();
         annex
             .supertypes
             .iter()

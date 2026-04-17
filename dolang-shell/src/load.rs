@@ -36,7 +36,7 @@ impl Display for Stop {
 impl error::Error for Stop {}
 
 pub(crate) fn compile<'v, 's, 'a>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     path: &'a Path,
     source: &'a str,
     dynamic: Option<&[String]>,
@@ -122,12 +122,12 @@ async fn file_is_newer(older: &Path, newer: &Path) -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn dirs<'v, 's>(strand: &Strand<'v, 's>) -> Result<'v, 's, ProjectDirs> {
+pub(crate) fn dirs<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, ProjectDirs> {
     ProjectDirs::from("", "", "dolang-shell")
         .ok_or_else(|| Error::runtime(strand, "can't locate application directories"))
 }
 
-fn get_module_search_paths<'v, 's>(strand: &Strand<'v, 's>) -> Result<'v, 's, Vec<PathBuf>> {
+fn get_module_search_paths<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, Vec<PathBuf>> {
     let mut paths = Vec::new();
 
     // Add default site directory
@@ -146,7 +146,7 @@ fn get_module_search_paths<'v, 's>(strand: &Strand<'v, 's>) -> Result<'v, 's, Ve
 }
 
 pub(crate) async fn find_module_file<'v, 's>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     name: &str,
 ) -> Result<'v, 's, PathBuf> {
     let search_paths = get_module_search_paths(strand)?;

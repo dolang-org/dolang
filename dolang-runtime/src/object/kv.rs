@@ -1069,10 +1069,8 @@ impl<'v> Inner<'v> {
         let inner: &Inner<'v> = (*borrow).as_ref();
         let pos_count = sig.required + sig.optional.len();
         for i in 0..pos_count {
-            let key = Value::from_i64(
-                strand,
-                i64::try_from(i).map_err(|_| Error::overflow(strand))?,
-            );
+            let value = i64::try_from(i).map_err(|_| Error::overflow(strand))?;
+            let key = Value::from_i64(strand, value);
             if let Some(value) = inner.get(strand, &key, Some(0))? {
                 out.at(i).store(value.dup());
             } else if i >= sig.required
@@ -1083,16 +1081,10 @@ impl<'v> Inner<'v> {
                 return Err(Error::missing_positional(strand, i));
             }
         }
+        let value = i64::try_from(pos_count).map_err(|_| Error::overflow(strand))?;
         if sig.variadic == Variadic::None
             && inner
-                .get(
-                    strand,
-                    &Value::from_i64(
-                        strand,
-                        i64::try_from(pos_count).map_err(|_| Error::overflow(strand))?,
-                    ),
-                    Some(0),
-                )?
+                .get(strand, &Value::from_i64(strand, value), Some(0))?
                 .is_some()
         {
             return Err(Error::unexpected_positional(strand, sig.required));
@@ -1108,11 +1100,8 @@ impl<'v> Inner<'v> {
             let hv = hash(strand, &key_value)?;
             let seen = skip.add(strand, &key_value, hv);
 
-            if let Some(value) = inner.get(
-                strand,
-                &key_value,
-                Some(i64::try_from(seen).map_err(|_| Error::overflow(strand))?),
-            )? {
+            let instance = i64::try_from(seen).map_err(|_| Error::overflow(strand))?;
+            if let Some(value) = inner.get(strand, &key_value, Some(instance))? {
                 out.at(sig.required + i).store(value.dup())
             } else if let Some(default) = &key.default {
                 out.at(sig.required + i).store(default.dup())
@@ -1215,7 +1204,7 @@ impl<'v> Inner<'v> {
 
     pub(crate) fn mcall_clear<'a, 's>(
         this: Recv<'v, 'a, impl AsMut<Inner<'v>> + Protocol<'v>>,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let mut borrow = this.borrow_mut(strand)?;
         let inner = borrow.as_mut();
@@ -1447,10 +1436,8 @@ impl<'v> Inner<'v> {
         } else {
             inner.inner.len()
         };
-        out.store(Value::from_i64(
-            strand,
-            i64::try_from(count).map_err(|_| Error::overflow(strand))?,
-        ));
+        let value = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
+        out.store(Value::from_i64(strand, value));
         Ok(())
     }
 }
@@ -1595,13 +1582,11 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
 
         let pos_count = sig.required + sig.optional.len();
         for i in 0..pos_count {
-            let key = Value::from_i64(
-                strand,
-                i64::try_from(i)
-                    .ok()
-                    .and_then(|i| i.checked_add(int))
-                    .ok_or_else(|| Error::overflow(strand))?,
-            );
+            let value = i64::try_from(i)
+                .ok()
+                .and_then(|i| i.checked_add(int))
+                .ok_or_else(|| Error::overflow(strand))?;
+            let key = Value::from_i64(strand, value);
             if let Some(value) = inner.get(strand, &key, Some(0))? {
                 out.at(i).store(value.dup());
             } else if i >= sig.required
@@ -1613,19 +1598,13 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
                 return Err(Error::missing_positional(strand, i));
             }
         }
+        let value = i64::try_from(pos_count)
+            .ok()
+            .and_then(|i| i.checked_add(int))
+            .ok_or_else(|| Error::overflow(strand))?;
         if sig.variadic == Variadic::None
             && inner
-                .get(
-                    strand,
-                    &Value::from_i64(
-                        strand,
-                        i64::try_from(pos_count)
-                            .ok()
-                            .and_then(|i| i.checked_add(int))
-                            .ok_or_else(|| Error::overflow(strand))?,
-                    ),
-                    Some(0),
-                )?
+                .get(strand, &Value::from_i64(strand, value), Some(0))?
                 .is_some()
         {
             // Error during validation - temp_skip discarded, original untouched
@@ -1644,11 +1623,8 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
             // Mutate CLONE instead of original
             let seen = temp_skip.add(strand, &key_value, hv);
 
-            if let Some(value) = inner.get(
-                strand,
-                &key_value,
-                Some(i64::try_from(seen).map_err(|_| Error::overflow(strand))?),
-            )? {
+            let instance = i64::try_from(seen).map_err(|_| Error::overflow(strand))?;
+            if let Some(value) = inner.get(strand, &key_value, Some(instance))? {
                 out.at(sig.required + i).store(value.dup())
             } else if let Some(default) = &key.default {
                 out.at(sig.required + i).store(default.dup())

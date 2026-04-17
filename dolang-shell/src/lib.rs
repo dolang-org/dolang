@@ -104,9 +104,10 @@ fn run() -> i32 {
 
             let strict_mode = cli.strict;
             builder.importer(async move |strand, name, out| {
+                let path = load::find_module_file(strand, name).await?;
                 load::load(
                     strand,
-                    &load::find_module_file(strand, name).await?,
+                    &path,
                     compile::Mode::Module { name },
                     strict_mode,
                     out,

@@ -234,12 +234,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                         .ok_or_else(|| Error::type_error(strand, "exit: not an integer"))?,
                     None => 0i64,
                 };
-                Err(Error::interrupt(
-                    strand,
-                    Exit {
-                        code: rc.try_into().map_err(|_| Error::overflow(strand))?,
-                    },
-                ))
+                let code = rc.try_into().map_err(|_| Error::overflow(strand))?;
+                Err(Error::interrupt(strand, Exit { code }))
             },
         )
         .function("echo", async move |strand, args, _| {
@@ -343,11 +339,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
 
             let dir = match args.next() {
                 None => {
-                    let cwd = global.local.get(strand).cwd();
+                    let cwd = global.local.get(strand).cwd().as_ref().to_owned();
                     global.types.path.create_with_annex(
                         strand,
                         Path,
-                        PathAnnex::new(cwd.as_ref().to_owned(), global),
+                        PathAnnex::new(cwd, global),
                         out,
                     );
                     return Ok(());

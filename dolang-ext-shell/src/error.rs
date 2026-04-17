@@ -111,7 +111,7 @@ fn classify_io_error_kind(kind: io::ErrorKind) -> SysErrorClass {
 }
 
 fn create_sys_error<'v, 's, T: SysErrorType<'v>>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     ty: Type<'v, SysErrorObject<T>>,
     error: io::Error,
 ) -> Error<'v, 's> {
@@ -197,7 +197,7 @@ impl<'v> Object<'v> for ProcError {
     }
 }
 
-pub(crate) fn io_error<'v, 's>(strand: &Strand<'v, 's>, error: io::Error) -> Error<'v, 's> {
+pub(crate) fn io_error<'v, 's>(strand: &mut Strand<'v, 's>, error: io::Error) -> Error<'v, 's> {
     let global = strand.state::<Global<'v>>();
     match classify_io_error_kind(error.kind()) {
         SysErrorClass::Error => create_sys_error::<SysError>(strand, global.types.sys_error, error),
@@ -217,34 +217,34 @@ pub(crate) fn io_error<'v, 's>(strand: &Strand<'v, 's>, error: io::Error) -> Err
 }
 
 pub(crate) trait ErrorExt {
-    fn into_sys<'v, 's>(self, strand: &Strand<'v, 's>) -> Error<'v, 's>;
+    fn into_sys<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's>;
 }
 
 impl ErrorExt for io::Error {
-    fn into_sys<'v, 's>(self, strand: &Strand<'v, 's>) -> Error<'v, 's> {
+    fn into_sys<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
         io_error(strand, self)
     }
 }
 
 pub(crate) fn io_result<'v, 's, T>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     result: io::Result<T>,
 ) -> Result<'v, 's, T> {
     result.map_err(|error| io_error(strand, error))
 }
 
 pub(crate) trait ResultExt<T> {
-    fn into_sys<'v, 's>(self, strand: &Strand<'v, 's>) -> Result<'v, 's, T>;
+    fn into_sys<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
 }
 
 impl<T> ResultExt<T> for io::Result<T> {
-    fn into_sys<'v, 's>(self, strand: &Strand<'v, 's>) -> Result<'v, 's, T> {
+    fn into_sys<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
         io_result(strand, self)
     }
 }
 
 pub(crate) fn proc_status_error<'v, 's>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     name: &str,
     status: ExitStatus,
 ) -> Error<'v, 's> {

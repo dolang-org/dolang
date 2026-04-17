@@ -256,11 +256,8 @@ async fn entries<'v, 's>(
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let read_dir = local
-        .vfs()
-        .read_dir(local.cwd().as_ref().join(&path))
-        .await
-        .into_sys(strand)?;
+    let full = local.cwd().as_ref().join(&path);
+    let read_dir = local.vfs().read_dir(full).await.into_sys(strand)?;
 
     global.types.dir_entry_iter.create_with_annex(
         strand,
@@ -765,17 +762,13 @@ async fn glob<'v, 's>(
         None => false,
     };
 
-    let local = global.local.get(strand);
-    let cwd = local.cwd();
-    let vfs = local.vfs();
+    let (cwd, vfs) = {
+        let local = global.local.get(strand);
+        (local.cwd().as_ref().to_owned(), local.vfs())
+    };
 
     let paths = vfs
-        .glob(
-            pattern,
-            root.unwrap_or_else(|| cwd.as_ref()),
-            follow,
-            max_depth,
-        )
+        .glob(pattern, root.unwrap_or(cwd.as_ref()), follow, max_depth)
         .await
         .into_sys(strand)?;
 

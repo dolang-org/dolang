@@ -232,7 +232,7 @@ impl AsyncWrite for MultiProgressWriter {
 
 // --- Helpers ---
 
-fn check_closed<'v, 's>(strand: &Strand<'v, 's>, closed: &Cell<bool>) -> Result<'v, 's, ()> {
+fn check_closed<'v, 's>(strand: &mut Strand<'v, 's>, closed: &Cell<bool>) -> Result<'v, 's, ()> {
     if closed.get() {
         Err(Error::state_error(strand, "closed"))
     } else {
@@ -241,7 +241,7 @@ fn check_closed<'v, 's>(strand: &Strand<'v, 's>, closed: &Cell<bool>) -> Result<
 }
 
 fn parse_units<'v, 's>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     units_val: Option<&Value<'v>>,
 ) -> Result<'v, 's, Option<Units>> {
     match units_val {
@@ -270,7 +270,7 @@ fn parse_units<'v, 's>(
 }
 
 fn parse_icon<'v, 's>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     icon_val: Option<&Value<'v>>,
 ) -> Result<'v, 's, String> {
     match icon_val {
@@ -283,7 +283,7 @@ fn parse_icon<'v, 's>(
 }
 
 fn apply_message<'v, 's>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     pb: &ix::ProgressBar,
     message: Option<&Value<'v>>,
 ) -> Result<'v, 's, ()> {
@@ -296,7 +296,7 @@ fn apply_message<'v, 's>(
     Ok(())
 }
 
-fn to_u64<'v, 's>(strand: &Strand<'v, 's>, v: i64) -> Result<'v, 's, u64> {
+fn to_u64<'v, 's>(strand: &mut Strand<'v, 's>, v: i64) -> Result<'v, 's, u64> {
     u64::try_from(v).map_err(|_| Error::overflow(strand))
 }
 
@@ -318,7 +318,7 @@ fn parse_tick<'v, 's>(
 /// Get the multi from shared state, returning an error if the progress context
 /// has been closed (e.g. background strand outlived progress.with).
 fn get_multi<'v, 's>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     state: &RefCell<ProgressState>,
 ) -> Result<'v, 's, MultiProgress> {
     state
@@ -457,6 +457,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 }
                 Some(state_rc) => {
                     let multi = get_multi(strand, &state_rc)?;
+                    let local = global.local.get(strand);
                     let depth = local.depth.get();
                     let parent_id = local.parent_id.get();
 

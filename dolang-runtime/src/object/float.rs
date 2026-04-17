@@ -35,26 +35,22 @@ fn binop<'v, 's>(
     strand: &mut Strand<'v, 's>,
     left: f64,
     right: &Value<'v>,
-    op: fn(&Prim, &Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
+    op: fn(&Prim, &mut Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
 ) -> Result<'v, 's, Value<'v>> {
     let prim = right.to_prim(strand)?;
-    Ok(Value::from_prim(
-        strand,
-        op(&Prim::from(left), strand, &prim)?,
-    ))
+    let value = op(&Prim::from(left), strand, &prim)?;
+    Ok(Value::from_prim(strand, value))
 }
 
 fn rbinop<'v, 's>(
     strand: &mut Strand<'v, 's>,
     left: f64,
     right: &Value<'v>,
-    op: fn(&Prim, &Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
+    op: fn(&Prim, &mut Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
 ) -> Result<'v, 's, Value<'v>> {
     let prim = right.to_prim(strand)?;
-    Ok(Value::from_prim(
-        strand,
-        op(&prim, strand, &Prim::from(left))?,
-    ))
+    let value = op(&prim, strand, &Prim::from(left))?;
+    Ok(Value::from_prim(strand, value))
 }
 
 impl<'v> Protocol<'v> for f64 {

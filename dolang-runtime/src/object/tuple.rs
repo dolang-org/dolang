@@ -283,7 +283,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                         break;
                     }
                 }
-                Output::set(strand.vm(), out, found);
+                Output::set(strand, out, found);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(
@@ -551,15 +551,10 @@ fn unpack_from<'v, 's>(
         .enumerate()
     {
         if pair {
+            let value = i64::try_from(i).map_err(|_| Error::overflow(strand))?;
             out.at(i).store(Value::from_object(tuple(
                 strand,
-                [
-                    Value::from_i64(
-                        strand,
-                        i64::try_from(i).map_err(|_| Error::overflow(strand))?,
-                    ),
-                    elem.dup(),
-                ],
+                [Value::from_i64(strand, value), elem.dup()],
             )))
         } else {
             out.at(i).store(elem.dup())

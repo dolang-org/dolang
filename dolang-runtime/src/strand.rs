@@ -24,7 +24,7 @@ use crate::{
     },
     sym::{self, Sym},
     value::{Input, Output, Slot, Value},
-    vm::Vm,
+    vm::{Alloc, Vm},
 };
 
 use crate::call;
@@ -971,8 +971,8 @@ impl<'v, 's> Strand<'v, 's> {
     /// Check for interrupt without running garbage collection.
     /// Safe to call while holding GC object borrows.  Host-provided functions that
     /// perform CPU-bound work without significant allocation should use this.
-    pub fn check_interrupt(&self) -> Result<'v, 's, ()> {
-        self.as_ref().check_interrupt(self)
+    pub fn check_interrupt(&mut self) -> Result<'v, 's, ()> {
+        self.vm().check_interrupt(self)
     }
 
     /// Check for interrupt and run GC if the collection threshold is exceeded.
@@ -980,8 +980,8 @@ impl<'v, 's> Strand<'v, 's> {
     /// objects whose reference counts drop to zero during trial deletion.
     /// Host-provided functions that allocate or iterate over potentially large
     /// structures should use this.
-    pub fn check_interrupt_gc(&self) -> Result<'v, 's, ()> {
-        self.as_ref().check_interrupt_gc(self)
+    pub fn check_interrupt_gc(&mut self) -> Result<'v, 's, ()> {
+        self.vm().check_interrupt_gc(self)
     }
 
     /// Get current input iterator.
@@ -1051,7 +1051,6 @@ impl<'v, 's> Strand<'v, 's> {
         cancel: CancelToken<'v>,
         stream: Option<(Value<'v>, Value<'v>)>,
     ) -> Result<'v, 's, GcObj<'v, Handle<'v>>> {
-        let vm = self.vm();
         let close_on_exit = stream.is_some();
 
         // Create StrandInner derived from current strand
@@ -1067,6 +1066,7 @@ impl<'v, 's> Strand<'v, 's> {
         }
 
         let inner = Rc::new(inner);
+        let vm = self.vm();
 
         // Create JoinHandle GcObj
         let handle = GcObj::new(
@@ -1209,6 +1209,12 @@ impl<'v, 'a> Deref for Strand<'v, 'a> {
 
 impl<'v, 'a> AsRef<Vm<'v>> for Strand<'v, 'a> {
     fn as_ref(&self) -> &Vm<'v> {
+        self
+    }
+}
+
+impl<'v, 'a> Alloc<'v> for Strand<'v, 'a> {
+    fn alloc_vm(&mut self, _: crate::vm::private::Sealed) -> &Vm<'v> {
         self
     }
 }

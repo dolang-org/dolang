@@ -148,54 +148,43 @@ impl<'v> Protocol<'v> for str {
         match method.tag() {
             sym::STARTS_WITH => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
-                Output::set(
-                    strand.vm(),
-                    out,
+                let input =
                     this.get().starts_with(prefix.as_str(strand).ok_or_else(|| {
                         Error::type_error(strand, "str.starts_with: not a string")
-                    })?),
-                );
+                    })?);
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::WITHOUT_PREFIX => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.get();
-                Output::set(
-                    strand.vm(),
-                    out,
-                    this.get()
-                        .strip_prefix(prefix.as_str(strand).ok_or_else(|| {
-                            Error::type_error(strand, "str.without_prefix: not a string")
-                        })?)
-                        .unwrap_or(borrow),
-                );
+                let input = borrow
+                    .strip_prefix(prefix.as_str(strand).ok_or_else(|| {
+                        Error::type_error(strand, "str.without_prefix: not a string")
+                    })?)
+                    .unwrap_or(borrow);
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::ENDS_WITH => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    this.get().ends_with(
-                        suffix.as_str(strand).ok_or_else(|| {
-                            Error::type_error(strand, "str.ends_with: not a string")
-                        })?,
-                    ),
+                let input = this.get().ends_with(
+                    suffix
+                        .as_str(strand)
+                        .ok_or_else(|| Error::type_error(strand, "str.ends_with: not a string"))?,
                 );
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::WITHOUT_SUFFIX => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.get();
-                Output::set(
-                    strand.vm(),
-                    out,
-                    this.get()
-                        .strip_suffix(suffix.as_str(strand).ok_or_else(|| {
-                            Error::type_error(strand, "str.without_suffix: not a string")
-                        })?)
-                        .unwrap_or(borrow),
-                );
+                let input = borrow
+                    .strip_suffix(suffix.as_str(strand).ok_or_else(|| {
+                        Error::type_error(strand, "str.without_suffix: not a string")
+                    })?)
+                    .unwrap_or(borrow);
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::SPLIT | sym::RSPLIT => {
@@ -301,47 +290,38 @@ impl<'v> Protocol<'v> for str {
             }
             sym::TRIM => {
                 let ([], [chars]) = unpack!(strand, args, 0, 1)?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    match chars {
-                        None => me.trim(),
-                        Some(chars) => {
-                            let pattern = value_to_pattern(strand, &chars).await?;
-                            me.trim_matches(pattern.as_slice())
-                        }
-                    },
-                );
+                let trimmed = match chars {
+                    None => me.trim(),
+                    Some(chars) => {
+                        let pattern = value_to_pattern(strand, &chars).await?;
+                        me.trim_matches(pattern.as_slice())
+                    }
+                };
+                Output::set(strand, out, trimmed);
                 Ok(())
             }
             sym::TRIM_START => {
                 let ([], [chars]) = unpack!(strand, args, 0, 1)?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    match chars {
-                        None => me.trim_start(),
-                        Some(chars) => {
-                            let pattern = value_to_pattern(strand, &chars).await?;
-                            me.trim_start_matches(pattern.as_slice())
-                        }
-                    },
-                );
+                let trimmed = match chars {
+                    None => me.trim_start(),
+                    Some(chars) => {
+                        let pattern = value_to_pattern(strand, &chars).await?;
+                        me.trim_start_matches(pattern.as_slice())
+                    }
+                };
+                Output::set(strand, out, trimmed);
                 Ok(())
             }
             sym::TRIM_END => {
                 let ([], [chars]) = unpack!(strand, args, 0, 1)?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    match chars {
-                        None => me.trim_end(),
-                        Some(chars) => {
-                            let pattern = value_to_pattern(strand, &chars).await?;
-                            me.trim_end_matches(pattern.as_slice())
-                        }
-                    },
-                );
+                let trimmed = match chars {
+                    None => me.trim_end(),
+                    Some(chars) => {
+                        let pattern = value_to_pattern(strand, &chars).await?;
+                        me.trim_end_matches(pattern.as_slice())
+                    }
+                };
+                Output::set(strand, out, trimmed);
                 Ok(())
             }
             sym::SUB => {
@@ -349,46 +329,37 @@ impl<'v> Protocol<'v> for str {
                 let start = start.as_i64(strand).ok_or_else(|| Error::index(strand))?;
                 let start = index::position(me.len(), start)
                     .ok_or_else(|| Error::runtime(strand, "invalid UTF-8 substring boundaries"))?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    match end {
-                        None => me.get(start..),
-                        Some(end) => {
-                            let end = end.as_i64(strand).ok_or_else(|| Error::index(strand))?;
-                            let end = index::position(me.len(), end).ok_or_else(|| {
-                                Error::runtime(strand, "invalid UTF-8 substring boundaries")
-                            })?;
-                            me.get(start..end)
-                        }
+                let slice = match end {
+                    None => me.get(start..),
+                    Some(end) => {
+                        let end = end.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                        let end = index::position(me.len(), end).ok_or_else(|| {
+                            Error::runtime(strand, "invalid UTF-8 substring boundaries")
+                        })?;
+                        me.get(start..end)
                     }
-                    .ok_or_else(|| Error::runtime(strand, "invalid UTF-8 substring boundaries"))?,
-                );
+                }
+                .ok_or_else(|| Error::runtime(strand, "invalid UTF-8 substring boundaries"))?;
+                Output::set(strand, out, slice);
                 Ok(())
             }
             sym::UPPER => {
-                Output::set(strand.vm(), out, me.to_uppercase().as_str());
+                Output::set(strand, out, me.to_uppercase().as_str());
                 Ok(())
             }
             sym::LOWER => {
-                Output::set(strand.vm(), out, me.to_lowercase().as_str());
+                Output::set(strand, out, me.to_lowercase().as_str());
                 Ok(())
             }
             sym::REPLACE => {
                 let ([from, to], []) = unpack!(strand, args, 2, 0)?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    me.replace(
-                        from.as_str(strand).ok_or_else(|| {
-                            Error::type_error(strand, "str.replace: old value is not a string")
-                        })?,
-                        to.as_str(strand).ok_or_else(|| {
-                            Error::type_error(strand, "str.replace: new value is not a string")
-                        })?,
-                    )
-                    .as_str(),
-                );
+                let from = from
+                    .as_str(strand)
+                    .ok_or_else(|| Error::type_error(strand, "old value is not a string"))?;
+                let to = to
+                    .as_str(strand)
+                    .ok_or_else(|| Error::type_error(strand, "new value is not a string"))?;
+                Output::set(strand, out, me.replace(from, to).as_str());
                 Ok(())
             }
             sym::REPEAT => {
@@ -401,20 +372,17 @@ impl<'v> Protocol<'v> for str {
                 if len > isize::MAX as usize {
                     return Err(Error::overflow(strand));
                 }
-                Output::set(strand.vm(), out, me.repeat(count).as_str());
+                Output::set(strand, out, me.repeat(count).as_str());
                 Ok(())
             }
             sym::CONTAINS => {
                 let ([needle], []) = unpack!(strand, args, 1, 0)?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    this.get().contains(
-                        needle.as_str(strand).ok_or_else(|| {
-                            Error::type_error(strand, "str.contains: not a string")
-                        })?,
-                    ),
+                let input = this.get().contains(
+                    needle
+                        .as_str(strand)
+                        .ok_or_else(|| Error::type_error(strand, "not a string"))?,
                 );
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(

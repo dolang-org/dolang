@@ -473,22 +473,16 @@ impl<'v> Object<'v> for Captures {
         builder
             .get("start", |this, strand, out| {
                 let annex = this.annex();
-                Output::set(
-                    strand,
-                    out,
-                    TryInto::<i64>::try_into(annex.caps.get_match().start())
-                        .map_err(|_| Error::overflow(strand))?,
-                );
+                let input = TryInto::<i64>::try_into(annex.caps.get_match().start())
+                    .map_err(|_| Error::overflow(strand))?;
+                Output::set(strand, out, input);
                 Ok(())
             })
             .get("end", |this, strand, out| {
                 let annex = this.annex();
-                Output::set(
-                    strand,
-                    out,
-                    TryInto::<i64>::try_into(annex.caps.get_match().end())
-                        .map_err(|_| Error::overflow(strand))?,
-                );
+                let input = TryInto::<i64>::try_into(annex.caps.get_match().end())
+                    .map_err(|_| Error::overflow(strand))?;
+                Output::set(strand, out, input);
                 Ok(())
             })
     }
@@ -523,22 +517,16 @@ impl<'v> Object<'v> for Match {
         builder
             .get("start", |this, strand, out| {
                 let annex = this.annex();
-                Output::set(
-                    strand,
-                    out,
-                    TryInto::<i64>::try_into(annex.match_.start())
-                        .map_err(|_| Error::overflow(strand))?,
-                );
+                let input = TryInto::<i64>::try_into(annex.match_.start())
+                    .map_err(|_| Error::overflow(strand))?;
+                Output::set(strand, out, input);
                 Ok(())
             })
             .get("end", |this, strand, out| {
                 let annex = this.annex();
-                Output::set(
-                    strand,
-                    out,
-                    TryInto::<i64>::try_into(annex.match_.end())
-                        .map_err(|_| Error::overflow(strand))?,
-                );
+                let input = TryInto::<i64>::try_into(annex.match_.end())
+                    .map_err(|_| Error::overflow(strand))?;
+                Output::set(strand, out, input);
                 Ok(())
             })
     }

@@ -136,58 +136,48 @@ impl<'v> Protocol<'v> for [u8] {
         match method.tag() {
             sym::STARTS_WITH => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
-                Output::set(
-                    strand.vm(),
-                    out,
+                let input =
                     this.borrow(strand)?
                         .starts_with(prefix.as_u8_slice(strand).ok_or_else(|| {
                             let msg = "not binary data: unknown".to_string();
                             Error::type_error(strand, msg)
-                        })?),
-                );
+                        })?);
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::WITHOUT_PREFIX => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    this.borrow(strand)?
-                        .strip_prefix(prefix.as_u8_slice(strand).ok_or_else(|| {
-                            let msg = "not binary data: unknown".to_string();
-                            Error::type_error(strand, msg)
-                        })?)
-                        .unwrap_or(&*borrow),
-                );
+                let input = borrow
+                    .strip_prefix(prefix.as_u8_slice(strand).ok_or_else(|| {
+                        let msg = "not binary data: unknown".to_string();
+                        Error::type_error(strand, msg)
+                    })?)
+                    .unwrap_or(&*borrow);
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::ENDS_WITH => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    this.borrow(strand)?
-                        .ends_with(suffix.as_u8_slice(strand).ok_or_else(|| {
-                            let msg = "not binary data: unknown".to_string();
-                            Error::type_error(strand, msg)
-                        })?),
-                );
+                let input = this
+                    .borrow(strand)?
+                    .ends_with(suffix.as_u8_slice(strand).ok_or_else(|| {
+                        let msg = "not binary data: unknown".to_string();
+                        Error::type_error(strand, msg)
+                    })?);
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::WITHOUT_SUFFIX => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    this.borrow(strand)?
-                        .strip_suffix(suffix.as_u8_slice(strand).ok_or_else(|| {
-                            let msg = "not binary data: unknown".to_string();
-                            Error::type_error(strand, msg)
-                        })?)
-                        .unwrap_or(&*borrow),
-                );
+                let input = borrow
+                    .strip_suffix(suffix.as_u8_slice(strand).ok_or_else(|| {
+                        let msg = "not binary data: unknown".to_string();
+                        Error::type_error(strand, msg)
+                    })?)
+                    .unwrap_or(&*borrow);
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::SPLIT | sym::RSPLIT => {
@@ -297,49 +287,40 @@ impl<'v> Protocol<'v> for [u8] {
             sym::TRIM => {
                 let me = this.receiver.get();
                 let ([], [chars]) = unpack!(strand, args, 0, 1)?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    match chars {
-                        None => me.trim(),
-                        Some(chars) => {
-                            let pattern = value_to_pattern(strand, &chars).await?;
-                            me.trim_with(|b| pattern.contains(&b))
-                        }
-                    },
-                );
+                let trimmed = match chars {
+                    None => me.trim(),
+                    Some(chars) => {
+                        let pattern = value_to_pattern(strand, &chars).await?;
+                        me.trim_with(|b| pattern.contains(&b))
+                    }
+                };
+                Output::set(strand, out, trimmed);
                 Ok(())
             }
             sym::TRIM_START => {
                 let me = this.receiver.get();
                 let ([], [chars]) = unpack!(strand, args, 0, 1)?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    match chars {
-                        None => me.trim_start(),
-                        Some(chars) => {
-                            let pattern = value_to_pattern(strand, &chars).await?;
-                            me.trim_start_with(|b| pattern.contains(&b))
-                        }
-                    },
-                );
+                let trimmed = match chars {
+                    None => me.trim_start(),
+                    Some(chars) => {
+                        let pattern = value_to_pattern(strand, &chars).await?;
+                        me.trim_start_with(|b| pattern.contains(&b))
+                    }
+                };
+                Output::set(strand, out, trimmed);
                 Ok(())
             }
             sym::TRIM_END => {
                 let me = this.receiver.get();
                 let ([], [chars]) = unpack!(strand, args, 0, 1)?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    match chars {
-                        None => me.trim_end(),
-                        Some(chars) => {
-                            let pattern = value_to_pattern(strand, &chars).await?;
-                            me.trim_end_with(|b| pattern.contains(&b))
-                        }
-                    },
-                );
+                let trimmed = match chars {
+                    None => me.trim_end(),
+                    Some(chars) => {
+                        let pattern = value_to_pattern(strand, &chars).await?;
+                        me.trim_end_with(|b| pattern.contains(&b))
+                    }
+                };
+                Output::set(strand, out, trimmed);
                 Ok(())
             }
             sym::SUB => {
@@ -347,33 +328,28 @@ impl<'v> Protocol<'v> for [u8] {
                 let ([start], [end]) = unpack!(strand, args, 1, 1)?;
                 let start = start.as_i64(strand).ok_or_else(|| Error::index(strand))?;
                 let start = index::position(me.len(), start).ok_or_else(|| Error::index(strand))?;
-                Output::set(
-                    strand.vm(),
-                    out,
-                    match end {
-                        None => me.get(start..),
-                        Some(end) => {
-                            let end = end.as_i64(strand).ok_or_else(|| Error::index(strand))?;
-                            let end = index::position(me.len(), end)
-                                .ok_or_else(|| Error::index(strand))?;
-                            me.get(start..end)
-                        }
+                let slice = match end {
+                    None => me.get(start..),
+                    Some(end) => {
+                        let end = end.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                        let end =
+                            index::position(me.len(), end).ok_or_else(|| Error::index(strand))?;
+                        me.get(start..end)
                     }
-                    .ok_or_else(|| Error::index(strand))?,
-                );
+                }
+                .ok_or_else(|| Error::index(strand))?;
+                Output::set(strand, out, slice);
                 Ok(())
             }
             sym::CONTAINS => {
                 let ([needle], []) = unpack!(strand, args, 1, 0)?;
-                Output::set(
-                    strand.vm(),
-                    out,
+                let input =
                     this.borrow(strand)?
                         .contains_str(needle.as_u8_slice(strand).ok_or_else(|| {
                             let msg = "not binary data: unknown".to_string();
                             Error::type_error(strand, msg)
-                        })?),
-                );
+                        })?);
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::UNPACK => {

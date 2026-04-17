@@ -34,7 +34,7 @@ use crate::{
     strand::Strand,
     sym::Sym,
     value::{Input, Slot, Value},
-    vm::Vm,
+    vm::Alloc,
 };
 
 use dolang_util::alias;
@@ -513,11 +513,12 @@ impl<'v> Protocol<'v> for BoundMethod<'v> {
 
 impl<'v> BoundMethod<'v> {
     pub(crate) fn create(
-        vm: &Vm<'v>,
+        alloc: &mut impl Alloc<'v>,
         rcvr: impl Input<'v>,
         method: Sym<'v, '_>,
         mut out: Slot<'v, '_>,
     ) {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         out.store(Value::from_object(protocol::GcObj::new(
             vm.arena(),
             vm.builtin_types().bound_method,

@@ -423,14 +423,15 @@ impl<'v> Protocol<'v> for Record<'v> {
         strand: &'a mut Strand<'v, 's>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        let iter = Iter {
+            index: Cell::new(0),
+            record: this.to_strong(),
+            epoch: this.borrow(strand)?.0.epoch,
+        };
         out.store(Value::from_object(GcObj::new(
             strand.arena(),
             strand.builtin_types().record_iter,
-            Iter {
-                index: Cell::new(0),
-                record: this.to_strong(),
-                epoch: this.borrow(strand)?.0.epoch,
-            },
+            iter,
         )));
         Ok(())
     }
@@ -474,7 +475,7 @@ pub(crate) struct Class;
 
 impl Class {
     fn downcast<'v, 's, 'a>(
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         value: &'a Value<'v>,
     ) -> Result<'v, 's, GcObjBorrow<'v, 'a, Record<'v>>> {
         if let Some(borrow) = value.downcast_ref(strand.builtin_types().record) {
@@ -567,15 +568,12 @@ impl<'v> Protocol<'v> for Class {
             sym::LEN => {
                 let ([record], []) = unpack!(strand, args, 1, 0)?;
                 let record = Self::downcast(strand, &record)?;
-                Output::set(
-                    strand,
-                    out,
-                    record
-                        .borrow()
-                        .ok_or_else(|| Error::concurrency(strand))?
-                        .0
-                        .total_pairs as i64,
-                );
+                let input = record
+                    .borrow()
+                    .ok_or_else(|| Error::concurrency(strand))?
+                    .0
+                    .total_pairs as i64;
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::CLEAR => {

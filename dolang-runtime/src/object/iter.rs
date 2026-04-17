@@ -164,10 +164,8 @@ async fn iter_count<'v, 'a, 's>(
                     strand.check_interrupt_gc()?;
                 }
             }
-            out.store(Value::from_i64(
-                strand,
-                i64::try_from(count).map_err(|_| Error::overflow(strand))?,
-            ));
+            let value = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
+            out.store(Value::from_i64(strand, value));
             Ok(())
         })
         .await

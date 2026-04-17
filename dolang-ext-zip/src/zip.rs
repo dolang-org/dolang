@@ -408,7 +408,8 @@ impl<'v> Object<'v> for File {
                 let mut archive_borrow = archive.borrow_mut(strand)?;
                 archive_borrow.state = FileState::Read(inner);
                 drop(archive_borrow);
-                Output::set(strand, out, res.into_do(strand)?.as_slice());
+                let input = res.into_do(strand)?;
+                Output::set(strand, out, input.as_slice());
                 Ok(())
             })
             .method("write", async move |this, strand, args, _out| {

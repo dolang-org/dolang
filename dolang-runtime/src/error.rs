@@ -242,6 +242,7 @@ enum Variant<'v, 's> {
     SinkStop,
     IterStop,
     Canceled,
+    Concurrency,
     NonLocalJump(u8, gc::Weak<'v, frame::Upvars<'v>>),
     Boxed(FloatingRoot<'v, 's>, Box<ErrorMeta<'v>>),
 }
@@ -422,6 +423,7 @@ impl<'v, 's> fmt::Display for Error<'v, 's> {
             Variant::SinkStop => write!(f, "output iterator stopped"),
             Variant::IterStop => write!(f, "input iterator stopped"),
             Variant::Canceled => write!(f, "strand canceled"),
+            Variant::Concurrency => write!(f, "conflicting concurrent operation"),
             Variant::NonLocalJump(..) => write!(f, "non-local jump"),
             Variant::Boxed(root, info) => {
                 let val = root.get();
@@ -511,18 +513,20 @@ impl<'v, 's> Error<'v, 's> {
             Variant::SinkStop => Self::new_info(inner, Boxed::SinkStop).inner,
             Variant::IterStop => Self::new_info(inner, Boxed::IterStop).inner,
             Variant::Canceled => Self::new_info(inner, Boxed::Canceled).inner,
+            Variant::Concurrency => Self::new_info(inner, Boxed::Concurrency(None)).inner,
             Variant::NonLocalJump(..) => unreachable!("non-local jump should never be boxed"),
             Variant::Boxed(..) => return,
         }
     }
 
     /// Get error as a Do `Value`, performing internal conversion if necessary
-    pub fn get_value<'a>(&'a mut self, strand: &Strand<'v, 's>, output: impl Output<'v>) {
+    pub fn get_value<'a>(&'a mut self, strand: &mut Strand<'v, 's>, output: impl Output<'v>) {
         loop {
             match self.inner {
                 Variant::Boxed(ref root, ..) => {
                     let val = root.get();
-                    Output::set(strand, output, &val);
+                    let mut output = output;
+                    Output::as_slot(&mut output, crate::value::private::Sealed).store(val.dup());
                     break;
                 }
                 _ => self.expand(strand.inner),
@@ -531,23 +535,23 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     /// Create error: operation not supported
-    pub fn not_supported(#[allow(unused_variables)] strand: &Strand<'v, 's>) -> Self {
+    pub fn not_supported(#[allow(unused_variables)] strand: &mut Strand<'v, 's>) -> Self {
         Self::new_variant(Variant::Unsupported)
     }
 
     /// Create error: immutable structure
-    pub fn immutable(#[allow(unused_variables)] strand: &Strand<'v, 's>) -> Self {
+    pub fn immutable(#[allow(unused_variables)] strand: &mut Strand<'v, 's>) -> Self {
         Self::new_variant(Variant::Immutable)
     }
 
     /// Create error: concurrent access violation
-    pub fn concurrency(#[allow(unused_variables)] strand: &Strand<'v, 's>) -> Self {
-        Self::new_info(strand.inner, Boxed::Concurrency(None))
+    pub fn concurrency(#[allow(unused_variables)] strand: &mut Strand<'v, 's>) -> Self {
+        Self::new_variant(Variant::Concurrency)
     }
 
     /// Create error: concurrent access violation (with message)
     pub fn concurrency_msg(
-        #[allow(unused_variables)] strand: &Strand<'v, 's>,
+        #[allow(unused_variables)] strand: &mut Strand<'v, 's>,
         msg: impl Into<Cow<'v, str>>,
     ) -> Self {
         Self::new_info(strand.inner, Boxed::Concurrency(Some(msg.into())))
@@ -558,27 +562,27 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     /// Create error: field does not exist
-    pub fn field(strand: &Strand<'v, 's>, key: Sym<'v, '_>) -> Self {
+    pub fn field(strand: &mut Strand<'v, 's>, key: Sym<'v, '_>) -> Self {
         Self::new_info(strand.inner, Boxed::Field(key.as_str(strand).into()))
     }
 
     /// Create error: field does not exist
-    pub fn field_name(strand: &Strand<'v, 's>, key: impl Into<String>) -> Self {
+    pub fn field_name(strand: &mut Strand<'v, 's>, key: impl Into<String>) -> Self {
         Self::new_info(strand.inner, Boxed::Field(key.into().into()))
     }
 
     /// Create error: absent or invalid index
-    pub fn index(strand: &Strand<'v, 's>) -> Self {
+    pub fn index(strand: &mut Strand<'v, 's>) -> Self {
         Self::new_info(strand.inner, Boxed::Index)
     }
 
     /// Create error: unexpected positional item.
-    pub fn unexpected_positional(strand: &Strand<'v, 's>, index: usize) -> Self {
+    pub fn unexpected_positional(strand: &mut Strand<'v, 's>, index: usize) -> Self {
         Self::new_info(strand.inner, Boxed::UnexpectedPos(index))
     }
 
     /// Create error: unexpected key item.
-    pub fn unexpected_key(strand: &Strand<'v, 's>, key: impl Input<'v>) -> Self {
+    pub fn unexpected_key(strand: &mut Strand<'v, 's>, key: impl Input<'v>) -> Self {
         let value = Value::from_input(strand, key);
         let str = if let Some(sym) = value.as_sym(strand) {
             sym.as_str(strand).to_string()
@@ -593,12 +597,12 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     /// Create error: missing positional item.
-    pub fn missing_positional(strand: &Strand<'v, 's>, index: usize) -> Self {
+    pub fn missing_positional(strand: &mut Strand<'v, 's>, index: usize) -> Self {
         Self::new_info(strand.inner, Boxed::MissingPos(index))
     }
 
     /// Create error: missing key argument.
-    pub fn missing_key(strand: &Strand<'v, 's>, key: impl Input<'v>) -> Self {
+    pub fn missing_key(strand: &mut Strand<'v, 's>, key: impl Input<'v>) -> Self {
         let value = Value::from_input(strand, key);
         let str = if let Some(sym) = value.as_sym(strand) {
             sym.as_str(strand).to_string()
@@ -629,17 +633,17 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     /// Create error: numeric overflow
-    pub fn overflow(#[allow(unused_variables)] strand: &Strand<'v, 's>) -> Self {
+    pub fn overflow(#[allow(unused_variables)] strand: &mut Strand<'v, 's>) -> Self {
         Self::new_variant(Variant::Overflow)
     }
 
     /// Create error: zero divisor
-    pub fn zero_div(#[allow(unused_variables)] strand: &Strand<'v, 's>) -> Self {
+    pub fn zero_div(#[allow(unused_variables)] strand: &mut Strand<'v, 's>) -> Self {
         Self::new_variant(Variant::ZeroDiv)
     }
 
     /// Create error: output stopped
-    pub fn sink_stop(#[allow(unused_variables)] strand: &Strand<'v, 's>) -> Self {
+    pub fn sink_stop(#[allow(unused_variables)] strand: &mut Strand<'v, 's>) -> Self {
         Self::new_variant(Variant::SinkStop)
     }
 
@@ -648,12 +652,12 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     /// Create error: input stopped
-    pub fn iter_stop(#[allow(unused_variables)] strand: &Strand<'v, 's>) -> Self {
+    pub fn iter_stop(#[allow(unused_variables)] strand: &mut Strand<'v, 's>) -> Self {
         Self::new_variant(Variant::IterStop)
     }
 
     /// Create error: misuse of value according to type
-    pub fn type_error(strand: &Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
+    pub fn type_error(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
         Self::new_info(strand.inner, Boxed::Type(msg.into()))
     }
 
@@ -665,41 +669,41 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     /// Create error: invalid value with otherwise acceptable type
-    pub fn value(strand: &Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
+    pub fn value(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
         Self::new_info(strand.inner, Boxed::Value(msg.into()))
     }
 
     /// Create error: invalid operation for the current state
-    pub fn state_error(strand: &Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
+    pub fn state_error(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
         Self::new_info(strand.inner, Boxed::State(msg.into()))
     }
 
     /// Create error: compilation failed
-    pub fn compile(strand: &Strand<'v, 's>, err: impl Into<Box<dyn error::Error>>) -> Self {
+    pub fn compile(strand: &mut Strand<'v, 's>, err: impl Into<Box<dyn error::Error>>) -> Self {
         Self::new_info(strand.inner, Boxed::Compile(err.into()))
     }
 
     /// Create error: module could not be imported
-    pub fn import(strand: &Strand<'v, 's>, name: &str) -> Self {
+    pub fn import(strand: &mut Strand<'v, 's>, name: &str) -> Self {
         Self::new_info(strand.inner, Boxed::Import(name.into()))
     }
 
     /// Create error: cyclic module import detected
-    pub fn cyclic_import(strand: &Strand<'v, 's>, name: &str) -> Self {
+    pub fn cyclic_import(strand: &mut Strand<'v, 's>, name: &str) -> Self {
         Self::new_info(strand.inner, Boxed::CyclicImport(name.into()))
     }
 
-    pub(crate) fn bytecode(strand: &Strand<'v, 's>, err: bytecode::Error) -> Self {
+    pub(crate) fn bytecode(strand: &mut Strand<'v, 's>, err: bytecode::Error) -> Self {
         Self::new_info(strand.inner, Boxed::Bytecode(err.into()))
     }
 
     /// Create error: generic runtime error
-    pub fn runtime(strand: &Strand<'v, 's>, err: impl Into<Box<dyn error::Error>>) -> Self {
+    pub fn runtime(strand: &mut Strand<'v, 's>, err: impl Into<Box<dyn error::Error>>) -> Self {
         Self::new_info(strand.inner, Boxed::Runtime(err.into()))
     }
 
     /// Create error: generic value
-    pub fn from_value(strand: &Strand<'v, 's>, err: impl Input<'v>) -> Self {
+    pub fn from_value(strand: &mut Strand<'v, 's>, err: impl Input<'v>) -> Self {
         let val = Value::from_input(strand, err);
         Self {
             inner: Variant::Boxed(
@@ -711,7 +715,7 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     /// Constuct error from `self` which indicates it was caused by `cause`.
-    pub fn caused_by(self, strand: &Strand<'v, 's>, cause: Error<'v, 's>) -> Self {
+    pub fn caused_by(self, strand: &mut Strand<'v, 's>, cause: Error<'v, 's>) -> Self {
         match (self.inner, cause.inner) {
             (Variant::Boxed(left, mut left_bt), Variant::Boxed(right, right_bt))
                 if left.get().repr_eq(strand, &right.get()) =>
@@ -731,7 +735,7 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     /// Create error: object
-    pub fn object<T: Object<'v>>(strand: &Strand<'v, 's>, ty: Type<'v, T>, value: T) -> Self
+    pub fn object<T: Object<'v>>(strand: &mut Strand<'v, 's>, ty: Type<'v, T>, value: T) -> Self
     where
         T::Annex: Default,
     {
@@ -747,7 +751,7 @@ impl<'v, 's> Error<'v, 's> {
 
     /// Create error: object with annex
     pub fn object_with_annex<T: Object<'v>>(
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         ty: Type<'v, T>,
         value: T,
         annex: T::Annex,
@@ -775,12 +779,12 @@ impl<'v, 's> Error<'v, 's> {
 
     /// Create error: interrupt.  Interrupt errors are usually not catchable by
     /// Do programs.
-    pub fn interrupt(strand: &Strand<'v, 's>, err: impl Into<Box<dyn error::Error>>) -> Self {
+    pub fn interrupt(strand: &mut Strand<'v, 's>, err: impl Into<Box<dyn error::Error>>) -> Self {
         Self::new_info(strand.inner, Boxed::Interrupt(err.into()))
     }
 
     /// Create error: canceled.
-    pub fn canceled(#[allow(unused_variables)] strand: &Strand<'v, 's>) -> Self {
+    pub fn canceled(#[allow(unused_variables)] strand: &mut Strand<'v, 's>) -> Self {
         Self::new_variant(Variant::Canceled)
     }
 
@@ -809,6 +813,7 @@ impl<'v, 's> Error<'v, 's> {
             Variant::SinkStop => ErrorKind::SinkStop,
             Variant::IterStop => ErrorKind::IterStop,
             Variant::Canceled => ErrorKind::Canceled,
+            Variant::Concurrency => ErrorKind::Concurrency,
             Variant::NonLocalJump(..) => ErrorKind::Runtime,
             Variant::Boxed(root, info) => {
                 let val = root.get();
@@ -844,7 +849,7 @@ impl<'v, 's> Error<'v, 's> {
         }
     }
 
-    pub(crate) fn clone_backtrace(&mut self, strand: &Strand<'v, 's>) -> Vec<UnwindEntry<'v>> {
+    pub(crate) fn clone_backtrace(&mut self, strand: &mut Strand<'v, 's>) -> Vec<UnwindEntry<'v>> {
         if self.as_nl_branch().is_some() {
             return Vec::new();
         }
@@ -856,7 +861,7 @@ impl<'v, 's> Error<'v, 's> {
         }
     }
 
-    pub(crate) fn into_pair(mut self, strand: &Strand<'v, 's>) -> ErrorPair<'v> {
+    pub(crate) fn into_pair(mut self, strand: &mut Strand<'v, 's>) -> ErrorPair<'v> {
         assert!(
             self.as_nl_branch().is_none(),
             "non-local jumps cannot be paired"
@@ -871,7 +876,7 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     pub(crate) fn from_pair(
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         value: Value<'v>,
         backtrace: Vec<UnwindEntry<'v>>,
     ) -> Self {
@@ -888,12 +893,12 @@ impl<'v, 's> Error<'v, 's> {
         }
     }
 
-    pub(crate) fn from_pair_ref(strand: &Strand<'v, 's>, pair: &ErrorPair<'v>) -> Self {
+    pub(crate) fn from_pair_ref(strand: &mut Strand<'v, 's>, pair: &ErrorPair<'v>) -> Self {
         Self::from_pair(strand, pair.0.dup(), pair.1.clone())
     }
 
     pub fn from_value_backtrace(
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         err: impl Input<'v>,
         backtrace: impl Input<'v>,
     ) -> Result<'v, 's, Self> {
@@ -973,6 +978,7 @@ impl<'v, 's> Error<'v, 's> {
                 Variant::SinkStop => Variant::SinkStop,
                 Variant::IterStop => Variant::IterStop,
                 Variant::Canceled => Variant::Canceled,
+                Variant::Concurrency => Variant::Concurrency,
                 Variant::NonLocalJump(i, w) => Variant::NonLocalJump(i, w),
             },
             phantom: PhantomData,
@@ -983,11 +989,11 @@ impl<'v, 's> Error<'v, 's> {
 /// [`std::error::Error`] extension trait.
 pub trait ErrorExt {
     /// Convert into Do runtime error ([`Error::runtime`]).
-    fn into_do<'v, 's>(self, strand: &Strand<'v, 's>) -> Error<'v, 's>;
+    fn into_do<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's>;
 }
 
 impl<T: Into<Box<dyn error::Error + 'static>>> ErrorExt for T {
-    fn into_do<'v, 's>(self, strand: &Strand<'v, 's>) -> Error<'v, 's> {
+    fn into_do<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
         Error::runtime(strand, self)
     }
 }
@@ -995,11 +1001,11 @@ impl<T: Into<Box<dyn error::Error + 'static>>> ErrorExt for T {
 /// [`std::result::Result`] extension trait.
 pub trait ResultExt<T> {
     /// Convert error into Do runtime error ([`Error::runtime`]).
-    fn into_do<'v, 's>(self, strand: &Strand<'v, 's>) -> Result<'v, 's, T>;
+    fn into_do<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
 }
 
 impl<T, E: ErrorExt> ResultExt<T> for result::Result<T, E> {
-    fn into_do<'v, 's>(self, strand: &Strand<'v, 's>) -> Result<'v, 's, T> {
+    fn into_do<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
         self.map_err(|e| e.into_do(strand))
     }
 }

@@ -403,12 +403,9 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(
-                    strand,
-                    out,
-                    i64::try_from(this.borrow(strand)?.inner.len())
-                        .map_err(|_| Error::overflow(strand))?,
-                );
+                let input = i64::try_from(this.borrow(strand)?.inner.len())
+                    .map_err(|_| Error::overflow(strand))?;
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::PUSH => {

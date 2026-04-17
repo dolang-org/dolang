@@ -495,7 +495,8 @@ impl<'v> Protocol<'v> for Set<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(strand, out, this.borrow(strand)?.0.len() as i64);
+                let input = this.borrow(strand)?.0.len() as i64;
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::ADD
@@ -693,14 +694,15 @@ impl<'v> Protocol<'v> for Set<'v> {
         strand: &'a mut Strand<'v, 's>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        let iter = Iter {
+            index: Cell::new(0),
+            epoch: this.borrow(strand)?.0.epoch,
+            set: this.to_strong(),
+        };
         out.store(Value::from_object(GcObj::new(
             strand.arena(),
             strand.builtin_types().set_iter,
-            Iter {
-                index: Cell::new(0),
-                epoch: this.borrow(strand)?.0.epoch,
-                set: this.to_strong(),
-            },
+            iter,
         )));
         Ok(())
     }

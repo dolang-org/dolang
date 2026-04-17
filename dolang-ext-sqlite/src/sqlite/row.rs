@@ -277,11 +277,8 @@ unsafe fn unpack_row<'v, 's, 'a>(
                         }
                     }
                     // No more columns available
-                    Output::set(
-                        strand,
-                        slot,
-                        default.ok_or_else(|| Error::missing_positional(strand, count))?,
-                    );
+                    let input = default.ok_or_else(|| Error::missing_positional(strand, count))?;
+                    Output::set(strand, slot, input);
                 }
                 UnpackItem::SymKey {
                     key,
@@ -292,11 +289,8 @@ unsafe fn unpack_row<'v, 's, 'a>(
                     let idx = column_for_name(raw, name);
                     if idx < 0 || consumed[idx as usize] {
                         // Column not found or already consumed
-                        Output::set(
-                            strand,
-                            slot,
-                            default.ok_or_else(|| Error::missing_key(strand, key))?,
-                        );
+                        let input = default.ok_or_else(|| Error::missing_key(strand, key))?;
+                        Output::set(strand, slot, input);
                     } else {
                         consumed[idx as usize] = true;
                         let found = get(
@@ -327,11 +321,8 @@ unsafe fn unpack_row<'v, 's, 'a>(
                     };
 
                     if idx < 0 || consumed[idx as usize] {
-                        Output::set(
-                            strand,
-                            slot,
-                            default.ok_or_else(|| Error::missing_key(strand, key))?,
-                        );
+                        let input = default.ok_or_else(|| Error::missing_key(strand, key))?;
+                        Output::set(strand, slot, input);
                     } else {
                         consumed[idx as usize] = true;
                         let found = !get(

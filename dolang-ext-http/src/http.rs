@@ -159,7 +159,7 @@ fn status_message(status: reqwest::StatusCode, url: Option<&url::Url>) -> String
     message
 }
 
-fn invalid_status_policy<'v, 's>(strand: &Strand<'v, 's>) -> Error<'v, 's> {
+fn invalid_status_policy<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
     Error::type_error(strand, r#"status: expected :ignore: or "ignore""#)
 }
 
@@ -234,7 +234,7 @@ async fn status_error<'v, 's>(
 }
 
 fn status_text<'v, 's, 'a>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     annex: &'a StatusAnnex,
 ) -> Result<'v, 's, &'a str> {
     str::from_utf8(&annex.body).map_err(|_| Error::runtime(strand, "invalid UTF-8"))
@@ -320,7 +320,8 @@ impl<'v> Object<'v> for StatusObject {
             })
             .method("text", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                Output::set(strand, out, status_text(strand, this.annex())?);
+                let input = status_text(strand, this.annex())?;
+                Output::set(strand, out, input);
                 Ok(())
             })
     }
@@ -344,7 +345,7 @@ impl<'v> Object<'v> for StatusObject {
     }
 }
 
-fn reqwest_error<'v, 's>(strand: &Strand<'v, 's>, error: reqwest::Error) -> Error<'v, 's> {
+fn reqwest_error<'v, 's>(strand: &mut Strand<'v, 's>, error: reqwest::Error) -> Error<'v, 's> {
     let global = strand.state::<Global<'v>>();
     Error::object_with_annex(
         strand,
@@ -355,21 +356,21 @@ fn reqwest_error<'v, 's>(strand: &Strand<'v, 's>, error: reqwest::Error) -> Erro
 }
 
 trait ErrorExt {
-    fn into_http<'v, 's>(self, strand: &Strand<'v, 's>) -> Error<'v, 's>;
+    fn into_http<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's>;
 }
 
 impl ErrorExt for reqwest::Error {
-    fn into_http<'v, 's>(self, strand: &Strand<'v, 's>) -> Error<'v, 's> {
+    fn into_http<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
         reqwest_error(strand, self)
     }
 }
 
 pub(crate) trait ResultExt<T> {
-    fn into_http<'v, 's>(self, strand: &Strand<'v, 's>) -> Result<'v, 's, T>;
+    fn into_http<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
 }
 
 impl<T> ResultExt<T> for std::result::Result<T, reqwest::Error> {
-    fn into_http<'v, 's>(self, strand: &Strand<'v, 's>) -> Result<'v, 's, T> {
+    fn into_http<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
         self.map_err(|error| error.into_http(strand))
     }
 }
@@ -739,14 +740,10 @@ impl<'v> Object<'v> for Client {
         if let Some(func) = func {
             strand
                 .with_slots(async move |strand, [mut client, tmp]| {
-                    this.create_with_annex(
-                        strand,
-                        Client {
-                            inner: Some(builder.build().into_http(strand)?),
-                        },
-                        ClientAnnex { global },
-                        &mut client,
-                    );
+                    let value = Client {
+                        inner: Some(builder.build().into_http(strand)?),
+                    };
+                    this.create_with_annex(strand, value, ClientAnnex { global }, &mut client);
                     let res = call!(strand, func, out, &client).await;
                     let _ = strand
                         .with_cancel_mask(true, async move |strand| {
@@ -757,14 +754,10 @@ impl<'v> Object<'v> for Client {
                 })
                 .await
         } else {
-            this.create_with_annex(
-                strand,
-                Client {
-                    inner: Some(builder.build().into_http(strand)?),
-                },
-                ClientAnnex { global },
-                out,
-            );
+            let value = Client {
+                inner: Some(builder.build().into_http(strand)?),
+            };
+            this.create_with_annex(strand, value, ClientAnnex { global }, out);
             Ok(())
         }
     }
@@ -1102,12 +1095,9 @@ impl<'v> Object<'v> for LineIter {
                 let mut borrow = this.borrow_mut(strand)?;
                 if let Some((line, _)) = borrow.buffer.split_once_str(b"\n") {
                     let len = line.len() + 1;
-                    Output::set(
-                        strand,
-                        out,
-                        str::from_utf8(line.strip_suffix(b"\r").unwrap_or(line))
-                            .map_err(|_| Error::runtime(strand, "invalid UTF-8"))?,
-                    );
+                    let input = str::from_utf8(line.strip_suffix(b"\r").unwrap_or(line))
+                        .map_err(|_| Error::runtime(strand, "invalid UTF-8"))?;
+                    Output::set(strand, out, input);
                     borrow.buffer.drain(..len);
                     return Ok(true);
                 }
@@ -1144,12 +1134,9 @@ impl<'v> Object<'v> for LineIter {
                     // End of stream - return any remaining data as the last line
                     let mut borrow = this.borrow_mut(strand)?;
                     if !borrow.buffer.is_empty() {
-                        Output::set(
-                            strand,
-                            out,
-                            str::from_utf8(&borrow.buffer)
-                                .map_err(|_| Error::runtime(strand, "invalid UTF-8"))?,
-                        );
+                        let input = str::from_utf8(&borrow.buffer)
+                            .map_err(|_| Error::runtime(strand, "invalid UTF-8"))?;
+                        Output::set(strand, out, input);
                         borrow.buffer.clear();
                         return Ok(true);
                     }

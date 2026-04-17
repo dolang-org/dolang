@@ -52,7 +52,7 @@ fn get_sym<'a, 'v>(
 }
 
 fn get_value_key<'a, 'v, 's>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     items: &'a HashMap<String, String>,
     key: &Value<'v>,
 ) -> std::result::Result<Option<(&'a str, &'a str)>, Error<'v, 's>> {
@@ -303,7 +303,8 @@ impl<'v> Object<'v> for EnvIter {
         strand: &'a mut Strand<'v, 's>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        take_any(strand, &mut this.borrow_mut(strand)?.items, &mut out)
+        let items = &mut this.borrow_mut(strand)?.items;
+        take_any(strand, items, &mut out)
     }
 
     async fn unpack<'a, 's>(

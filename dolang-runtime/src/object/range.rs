@@ -147,7 +147,7 @@ impl<'v> Protocol<'v> for Range<'v> {
                     // Empty range: start == end, nothing is contained
                     false
                 };
-                Output::set(strand.vm(), out, contained);
+                Output::set(strand, out, contained);
                 Ok(())
             }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
@@ -357,6 +357,9 @@ impl<'v> Protocol<'v> for Type {
         } else if pos1.is_some() {
             return Err(Error::unexpected_positional(strand, 0));
         }
+        let end = end
+            .ok_or_else(|| Error::missing_key(strand, Sym::well_known(sym::END)))?
+            .take();
         out.store(Value::from_object(GcObj::new(
             strand.arena(),
             strand.builtin_types().range,
@@ -365,8 +368,7 @@ impl<'v> Protocol<'v> for Type {
                     .as_mut()
                     .map(Slot::take)
                     .unwrap_or_else(|| Value::from_i64(strand, 0)),
-                end.ok_or_else(|| Error::missing_key(strand, Sym::well_known(sym::END)))?
-                    .take(),
+                end,
                 step.as_mut()
                     .map(Slot::take)
                     .unwrap_or_else(|| Value::from_i64(strand, 1)),

@@ -402,71 +402,80 @@ async fn run_monitor<'v, 's>(
     stdout: Option<Box<dyn AsyncRead + Unpin>>,
     stderr: Option<Box<dyn AsyncRead + Unpin>>,
 ) -> Result<'v, 's, ()> {
-    // Create pumps
-    let ipump = match stdin {
-        None => MaybeDone::Done(Ok(())),
-        Some(writer) => MaybeDone::Future(strand.spawn_scoped(None, async move |strand| {
-            input_pump(strand, input, writer).await
-        })),
-    };
+    let (res, ires, ores, eres) = {
+        // Create pumps
+        let ipump = match stdin {
+            None => MaybeDone::Done(Ok(())),
+            Some(writer) => MaybeDone::Future(strand.spawn_scoped(None, async move |strand| {
+                input_pump(strand, input, writer).await
+            })),
+        };
 
-    let opump = match stdout {
-        None => MaybeDone::Done(Ok(())),
-        Some(reader) => MaybeDone::Future(strand.spawn_scoped(None, async move |strand| {
-            output_pump(strand, output, reader).await
-        })),
-    };
-
-    let epump = match (stderr_output, stderr) {
-        (Some(output), Some(reader)) => {
-            MaybeDone::Future(strand.spawn_scoped(None, async move |strand| {
+        let opump = match stdout {
+            None => MaybeDone::Done(Ok(())),
+            Some(reader) => MaybeDone::Future(strand.spawn_scoped(None, async move |strand| {
                 output_pump(strand, output, reader).await
-            }))
-        }
-        _ => MaybeDone::Done(Ok(())),
-    };
+            })),
+        };
 
-    // Wait for completion
-    let mut res = None;
-    let mut idone = false;
-    let mut odone = false;
-    let mut edone = false;
-
-    let wait = process.wait();
-    tokio::pin!(wait);
-    tokio::pin!(ipump);
-    tokio::pin!(opump);
-    tokio::pin!(epump);
-    // Wait for everything to complete
-    while res.is_none() || !idone || !odone || !edone {
-        tokio::select! {
-            biased;
-
-            status = &mut wait, if res.is_none() => {
-                res = Some(status.into_sys(strand)?);
-                // Don't wait for input pump any longer, it might be stuck trying to receive on the
-                // input iterator and hasn't noticed that the pipe was closed by the process
-                // exiting.
-                idone = true;
+        let epump = match (stderr_output, stderr) {
+            (Some(output), Some(reader)) => {
+                MaybeDone::Future(strand.spawn_scoped(None, async move |strand| {
+                    output_pump(strand, output, reader).await
+                }))
             }
-            () = (&mut ipump), if !idone => idone = true,
-            () = (&mut opump), if !odone => odone = true,
-            () = (&mut epump), if !edone => edone = true,
-        }
-    }
+            _ => MaybeDone::Done(Ok(())),
+        };
 
+        // Wait for completion
+        let mut res = None;
+        let mut idone = false;
+        let mut odone = false;
+        let mut edone = false;
+
+        let wait = process.wait();
+        tokio::pin!(wait);
+        tokio::pin!(ipump);
+        tokio::pin!(opump);
+        tokio::pin!(epump);
+        // Wait for everything to complete
+        while res.is_none() || !idone || !odone || !edone {
+            tokio::select! {
+                biased;
+
+                status = &mut wait, if res.is_none() => {
+                    res = Some(status);
+                    // Don't wait for input pump any longer, it might be stuck trying to receive on the
+                    // input iterator and hasn't noticed that the pipe was closed by the process
+                    // exiting.
+                    idone = true;
+                }
+                () = (&mut ipump), if !idone => idone = true,
+                () = (&mut opump), if !odone => odone = true,
+                () = (&mut epump), if !edone => edone = true,
+            }
+        }
+
+        (
+            res.unwrap(),
+            ipump.take_output(),
+            opump.take_output(),
+            epump.take_output(),
+        )
+    };
     // Check results
-    let res = res.unwrap();
+    let res = res.into_sys(strand)?;
     if res.success() {
         // Check pump results if they exited, but don't block as they could be stuck on a pending
         // input/output iterator receive/send.  They'll get canceled on scope exit in this case.
-        if let Some(res) = ipump.take_output() {
+        if let Some(res) = ires {
             res?;
         }
-        if let Some(res) = opump.take_output() {
+        if let Some(res) = ores {
             res?;
         }
-        if let Some(res) = epump.take_output() {
+        if let Some(res) = eres {
+            // Check results
             res?;
         }
         Ok(())
@@ -665,13 +674,17 @@ impl<'v> Object<'v> for Program {
             let borrow = this.annex();
             let global = borrow.global;
             let name = &borrow.name;
-            let local = global.local.get(strand);
-            let env = local.env();
-            let paths = env.get("PATH");
-            let cwd = local.cwd();
+            let (vfs, paths, cwd) = {
+                let local = global.local.get(strand);
+                let env = local.env();
+                (
+                    local.vfs(),
+                    env.get("PATH").as_deref().map(ToOwned::to_owned),
+                    local.cwd().as_ref().to_owned(),
+                )
+            };
 
-            let resolved = local
-                .vfs()
+            let resolved = vfs
                 .which(name, paths.as_deref(), Some(cwd.as_ref()))
                 .await
                 .into_sys(strand)?;
@@ -704,7 +717,7 @@ struct Run<'v> {
 }
 
 impl<'v> Run<'v> {
-    fn get(&self, strand: &Strand<'v, '_>, name: &str, out: Slot<'v, '_>) {
+    fn get(&self, strand: &mut Strand<'v, '_>, name: &str, out: Slot<'v, '_>) {
         self.global.types.program.create_with_annex(
             strand,
             Program,
@@ -740,11 +753,8 @@ impl<'v> Object<'v> for Run<'v> {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        this.borrow(strand)?.get(
-            strand,
-            index.as_str(strand).ok_or_else(|| Error::index(strand))?,
-            out,
-        );
+        let name = index.as_str(strand).ok_or_else(|| Error::index(strand))?;
+        this.borrow(strand)?.get(strand, name, out);
         Ok(())
     }
 

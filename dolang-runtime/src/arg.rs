@@ -237,7 +237,7 @@ impl<'v, 'a> Args<'v, 'a> {
         const VAR: bool,
     >(
         mut self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         kparam: [Sym<'v, 'a>; K],
         koparam: [Sym<'v, 'a>; KO],
     ) -> Result<'v, 's, ([Slot<'v, 'a>; M], [Option<Slot<'v, 'a>>; MO], Option<Self>)> {

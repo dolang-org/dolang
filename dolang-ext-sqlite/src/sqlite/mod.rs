@@ -46,7 +46,7 @@ unsafe fn sqlite_error_message(raw: *mut sqlite3) -> String {
 }
 
 unsafe fn map_sqlite_error<'v, 's>(
-    strand: &Strand<'v, 's>,
+    strand: &mut Strand<'v, 's>,
     rc: i32,
     raw: *mut sqlite3,
 ) -> Error<'v, 's> {
@@ -70,7 +70,7 @@ unsafe fn sqlite_error_string(rc: i32) -> String {
     }
 }
 
-fn map_sqlite_errcode<'v, 's>(strand: &Strand<'v, 's>, rc: i32) -> Error<'v, 's> {
+fn map_sqlite_errcode<'v, 's>(strand: &mut Strand<'v, 's>, rc: i32) -> Error<'v, 's> {
     let global = strand.state::<Global<'v>>();
     let msg = unsafe { sqlite_error_string(rc) };
     if matches!(rc, SQLITE_BUSY | SQLITE_LOCKED) {

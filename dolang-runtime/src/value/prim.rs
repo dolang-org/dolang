@@ -62,7 +62,7 @@ impl Display for Prim {
 
 impl Prim {
     #[inline]
-    pub(crate) fn op_bool(self, _strand: &Strand) -> bool {
+    pub(crate) fn op_bool(self, _strand: &mut Strand) -> bool {
         match self {
             Prim::Nil => false,
             Prim::F64(v) => v != 0.0,
@@ -72,7 +72,7 @@ impl Prim {
     }
 
     #[inline]
-    pub(crate) fn to_index<'v, 's>(self, strand: &Strand<'v, 's>) -> Result<'v, 's, usize> {
+    pub(crate) fn to_index<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
         match self {
             Prim::I64(v) => Ok(usize::try_from(v).map_err(|_| Error::overflow(strand))?),
             _ => Err(Error::type_error(
@@ -83,7 +83,7 @@ impl Prim {
     }
 
     #[inline]
-    pub(crate) fn op_neg<'v, 's>(&self, strand: &Strand<'v, 's>) -> Result<'v, 's, Self> {
+    pub(crate) fn op_neg<'v, 's>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, Self> {
         match self {
             Prim::I64(v) => v
                 .checked_neg()
@@ -95,7 +95,7 @@ impl Prim {
     }
 
     #[inline]
-    pub(crate) fn op_bnot<'v, 's>(&self, strand: &Strand<'v, 's>) -> Result<'v, 's, Self> {
+    pub(crate) fn op_bnot<'v, 's>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, Self> {
         match self {
             Prim::I64(v) => Ok(Prim::from(!v)),
             Prim::Bool(v) => Ok(Prim::from(!v)),
@@ -107,7 +107,7 @@ impl Prim {
     }
 
     #[inline]
-    pub(crate) fn op_eq<'v, 's>(&self, _strand: &Strand<'v, 's>, other: &Self) -> bool {
+    pub(crate) fn op_eq<'v, 's>(&self, _strand: &mut Strand<'v, 's>, other: &Self) -> bool {
         match (self, other) {
             (Prim::Nil, Prim::Nil) => true,
             (Prim::Bool(l), Prim::Bool(r)) => l == r,
@@ -124,14 +124,14 @@ impl Prim {
     }
 
     #[inline]
-    pub(crate) fn op_ne<'v, 's>(&self, _strand: &Strand<'v, 's>, other: &Self) -> bool {
+    pub(crate) fn op_ne<'v, 's>(&self, _strand: &mut Strand<'v, 's>, other: &Self) -> bool {
         !self.op_eq(_strand, other)
     }
 
     #[inline]
     pub(crate) fn op_band<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         match (self, other) {
@@ -149,7 +149,7 @@ impl Prim {
     #[inline]
     pub(crate) fn op_bor<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         match (self, other) {
@@ -167,7 +167,7 @@ impl Prim {
     #[inline]
     pub(crate) fn op_bxor<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         match (self, other) {
@@ -185,7 +185,7 @@ impl Prim {
     #[inline]
     pub(crate) fn op_add<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         match (self, other) {
@@ -203,7 +203,7 @@ impl Prim {
     #[inline]
     pub(crate) fn op_sub<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         match (self, other) {
@@ -221,7 +221,7 @@ impl Prim {
     #[inline]
     pub(crate) fn op_mul<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         match (self, other) {
@@ -242,7 +242,7 @@ impl Prim {
     #[inline]
     pub(crate) fn op_ediv<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         match (self, other) {
@@ -263,7 +263,7 @@ impl Prim {
     #[inline]
     pub(crate) fn op_div<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         match (self, other) {
@@ -284,7 +284,7 @@ impl Prim {
     #[inline]
     pub(crate) fn op_mod<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         match (self, other) {
@@ -307,7 +307,7 @@ impl Prim {
     #[inline]
     pub(crate) fn op_rsub<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         // other - self
@@ -326,7 +326,7 @@ impl Prim {
     #[inline]
     pub(crate) fn op_rdiv<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         // other / self
@@ -348,7 +348,7 @@ impl Prim {
     #[inline]
     pub(crate) fn op_rediv<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         // other ediv self
@@ -370,7 +370,7 @@ impl Prim {
     #[inline]
     pub(crate) fn op_rmod<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         // other % self
@@ -442,7 +442,7 @@ impl Prim {
     #[inline]
     fn cmpop<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
         iop: fn(i64, i64) -> bool,
         fop: fn(f64, f64) -> bool,
@@ -465,7 +465,7 @@ impl Prim {
 
     pub(crate) fn op_lt<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         self.cmpop(
@@ -480,7 +480,7 @@ impl Prim {
 
     pub(crate) fn op_lte<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         self.cmpop(
@@ -505,7 +505,7 @@ impl Prim {
 
     pub(crate) fn op_gt<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         self.cmpop(
@@ -520,7 +520,7 @@ impl Prim {
 
     pub(crate) fn op_gte<'v, 's>(
         &self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         other: &Self,
     ) -> Result<'v, 's, Self> {
         self.cmpop(
@@ -543,7 +543,7 @@ impl Prim {
         )
     }
 
-    pub(crate) fn op_hash<'v, 's>(&self, _strand: &Strand<'v, 's>, hasher: &mut DefaultHasher) {
+    pub(crate) fn op_hash<'v, 's>(&self, _strand: &mut Strand<'v, 's>, hasher: &mut DefaultHasher) {
         mem::discriminant(self).hash(hasher);
         match self {
             Prim::Nil => 0u8.hash(hasher),

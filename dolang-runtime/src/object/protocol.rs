@@ -67,7 +67,7 @@ pub(crate) async fn default_spread<'v, 's>(
     strand
         .with_slots(
             async move |strand, [mut root, mut iter, mut item, mut key, mut val]| {
-                Output::set(strand.vm(), Slot::reborrow(&mut root), value);
+                Output::set(strand, Slot::reborrow(&mut root), value);
                 root.op_iter(strand, Slot::reborrow(&mut iter)).await?;
                 match context {
                     SpreadContext::Sequence | SpreadContext::Args => {
@@ -849,7 +849,10 @@ impl<'v, 'a, T: ?Sized + Boxable<Header>> Recv<'v, 'a, T> {
         self.receiver.get()
     }
 
-    pub(crate) fn borrow<'s>(&'a self, strand: &Strand<'v, 's>) -> Result<'v, 's, Ref<'v, 'a, T>> {
+    pub(crate) fn borrow<'s>(
+        &'a self,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, Ref<'v, 'a, T>> {
         self.receiver
             .borrow()
             .ok_or_else(|| Error::concurrency(strand))
@@ -857,7 +860,7 @@ impl<'v, 'a, T: ?Sized + Boxable<Header>> Recv<'v, 'a, T> {
 
     pub(crate) fn borrow_mut<'s>(
         &'a self,
-        strand: &Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, Mut<'v, 'a, T>> {
         self.receiver
             .borrow_mut()

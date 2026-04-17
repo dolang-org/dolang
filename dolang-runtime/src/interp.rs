@@ -579,14 +579,14 @@ impl<'v> Vm<'v> {
             .await
     }
 
-    pub(crate) fn check_interrupt<'s>(&self, strand: &Strand<'v, 's>) -> Result<'v, 's, ()> {
+    pub(crate) fn check_interrupt<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
         if let Some(int) = self.interrupt.as_ref() {
             int(strand)?
         }
         Ok(())
     }
 
-    pub(crate) fn check_interrupt_gc<'s>(&self, strand: &Strand<'v, 's>) -> Result<'v, 's, ()> {
+    pub(crate) fn check_interrupt_gc<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
         if self.arena.collect() {
             self.sym_gc();
         }

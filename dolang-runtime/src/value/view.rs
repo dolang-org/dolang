@@ -17,15 +17,10 @@ use crate::{
     strand::Strand,
     sym::Sym,
     value::{Input, Output, Value},
-    vm::Vm,
+    vm::Alloc,
 };
 
-// ── ObjectId ────────────────────────────────────────────────────────────────
-
-/// Opaque GC-object identity for cycle detection.
-///
-/// Holds a phantom reference to guarantee it cannot outlive the live GC
-/// reference that pins the object's address in memory.
+/// Object identifier
 pub struct ObjectId<'v, 'a>(NonNull<Header>, PhantomData<(&'v mut &'v (), &'a ())>);
 
 impl<'v, 'a> ObjectId<'v, 'a> {
@@ -56,12 +51,7 @@ impl<'v, 'a> Hash for ObjectId<'v, 'a> {
     }
 }
 
-// ── ObjectView ───────────────────────────────────────────────────────────────
-
-/// Opaque view of a GC object that is not one of the standard collection types.
-///
-/// This type is a placeholder that can be extended in the future to expose
-/// more information about non-primitive objects.
+/// View of a value that is not one of the standard types.
 pub struct ObjectView<'v, 'a> {
     ptr: NonNull<Header>,
     phantom: PhantomData<(&'v mut &'v (), &'a Header)>,
@@ -81,13 +71,11 @@ impl<'v, 'a> ObjectView<'v, 'a> {
     }
 }
 
-// ── ArrayHandle ──────────────────────────────────────────────────────────────
-
-/// Lightweight handle to a GC-managed array value.
+/// Array view
 pub struct Array<'v, 'a>(pub(crate) GcObjBorrow<'v, 'a, array::Array<'v>>);
 
 impl<'v, 'a> Array<'v, 'a> {
-    pub(crate) unsafe fn from_borrow(borrow: gc::Borrow<'v, 'a, Header, array::Array<'v>>) -> Self {
+    pub(crate) fn from_borrow(borrow: gc::Borrow<'v, 'a, Header, array::Array<'v>>) -> Self {
         Self(borrow)
     }
 
@@ -186,11 +174,11 @@ impl<'v, 'a> Array<'v, 'a> {
     }
 }
 
-/// Lightweight handle to a GC-managed dict value.
+/// Dict view
 pub struct Dict<'v, 'a>(pub(crate) GcObjBorrow<'v, 'a, dict::Dict<'v>>);
 
 impl<'v, 'a> Dict<'v, 'a> {
-    pub(crate) unsafe fn from_borrow(borrow: gc::Borrow<'v, 'a, Header, dict::Dict<'v>>) -> Self {
+    pub(crate) fn from_borrow(borrow: gc::Borrow<'v, 'a, Header, dict::Dict<'v>>) -> Self {
         Self(borrow)
     }
 
@@ -235,13 +223,11 @@ impl<'v, 'a> Dict<'v, 'a> {
     }
 }
 
-// ── RecordHandle ─────────────────────────────────────────────────────────────
-
-/// Lightweight handle to a GC-managed record value.
+/// Record view
 pub struct Record<'v, 'a>(gc::Borrow<'v, 'a, Header, record::Record<'v>>);
 
 impl<'v, 'a> Record<'v, 'a> {
-    pub(crate) unsafe fn from_borrow(borrow: GcObjBorrow<'v, 'a, record::Record<'v>>) -> Self {
+    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, record::Record<'v>>) -> Self {
         Self(borrow)
     }
 
@@ -268,13 +254,11 @@ impl<'v, 'a> Record<'v, 'a> {
     }
 }
 
-// ── TupleHandle ──────────────────────────────────────────────────────────────
-
-/// Lightweight handle to a GC-managed tuple value.
+/// Tuple view
 pub struct Tuple<'v, 'a>(gc::Borrow<'v, 'a, Header, [Value<'v>]>);
 
 impl<'v, 'a> Tuple<'v, 'a> {
-    pub(crate) unsafe fn from_borrow(borrow: gc::Borrow<'v, 'a, Header, [Value<'v>]>) -> Self {
+    pub(crate) fn from_borrow(borrow: gc::Borrow<'v, 'a, Header, [Value<'v>]>) -> Self {
         Self(borrow)
     }
 
@@ -288,7 +272,6 @@ impl<'v, 'a> Tuple<'v, 'a> {
         self.0.get().len()
     }
 
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -310,37 +293,42 @@ impl<'v, 'a> Tuple<'v, 'a> {
     }
 }
 
-// ── ValueView ────────────────────────────────────────────────────────────────
-
 /// Type-discriminating view of a [`crate::value::Value`].
 pub enum View<'v, 'a> {
+    /// Nil
     Nil,
+    /// Bool
     Bool(bool),
-    /// Covers both immediate and boxed/verbatim `i64`.
+    /// Int
     Int(i64),
-    /// Covers both immediate and boxed/verbatim `f64`.
+    /// Float
     Float(f64),
+    /// String
     Str(&'a str),
+    /// Binary data
     Bin(&'a [u8]),
+    /// Symbol
     Sym(Sym<'v, 'a>),
+    /// Array
     Array(Array<'v, 'a>),
+    /// Dict
     Dict(Dict<'v, 'a>),
+    /// Record
     Record(Record<'v, 'a>),
+    /// Tuple
     Tuple(Tuple<'v, 'a>),
-    /// Any GC object that does not match the standard types above.
+    /// Any value which not match the standard types above.
     Object(ObjectView<'v, 'a>),
 }
 
-// ── DictPairs ────────────────────────────────────────────────────────────────
-
-/// Stateful cursor for iterating insertion-order key-value pairs of a [`Dict`].
+/// Iterator over a [`Dict`].
 pub struct DictPairs<'v, 'a> {
     borrow: gc::Borrow<'v, 'a, Header, dict::Dict<'v>>,
     pos: usize,
 }
 
 impl<'v, 'a> DictPairs<'v, 'a> {
-    /// Write the next key-value pair to the outputs, advancing the cursor.
+    /// Get the next key/value pair.
     /// Returns `false` when all pairs have been yielded.
     pub fn next<'s>(
         &mut self,
@@ -352,26 +340,18 @@ impl<'v, 'a> DictPairs<'v, 'a> {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
         };
-        Ok(kv_next_pair(
-            &borrow.0,
-            &mut self.pos,
-            strand.vm(),
-            key,
-            value,
-        ))
+        Ok(kv_next_pair(&borrow.0, &mut self.pos, strand, key, value))
     }
 }
 
-// ── RecordPairs ───────────────────────────────────────────────────────────────
-
-/// Stateful cursor for iterating insertion-order key-value pairs of a `Record`.
+/// Iterator over a [`Record`].
 pub struct RecordPairs<'v, 'a> {
     borrow: GcObjBorrow<'v, 'a, record::Record<'v>>,
     pos: usize,
 }
 
 impl<'v, 'a> RecordPairs<'v, 'a> {
-    /// Write the next key-value pair to the outputs, advancing the cursor.
+    /// Get the next key/value pair.
     /// Returns `false` when all pairs have been yielded.
     pub fn next<'s>(
         &mut self,
@@ -383,42 +363,24 @@ impl<'v, 'a> RecordPairs<'v, 'a> {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
         };
-        Ok(kv_next_pair(
-            &borrow.0,
-            &mut self.pos,
-            strand.vm(),
-            key,
-            value,
-        ))
+        Ok(kv_next_pair(&borrow.0, &mut self.pos, strand, key, value))
     }
 }
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
-
-/// Advance `pos` through `inner.index` skipping holes, write the next live
-/// key-value pair to the outputs, and return `true`.  Returns `false` when
-/// the index is exhausted.
-///
-/// The caller must hold the interior borrow on the GC object for the duration
-/// of this call.
 fn kv_next_pair<'v>(
     inner: &kv::Inner<'v>,
     pos: &mut usize,
-    vm: &Vm<'v>,
+    alloc: &mut impl Alloc<'v>,
     key: impl Output<'v>,
     value: impl Output<'v>,
 ) -> bool {
     while let Some(slot) = inner.index.get(*pos) {
         *pos += 1;
         if let Some((bucket, subindex)) = slot {
-            // Safety: the interior borrow (BaseRef) held by the caller
-            // prevents concurrent modification of the table; the bucket
-            // pointer was set up correctly during insertion and remains
-            // valid for the duration of the borrow.
             let entry: &Entry<'v> = unsafe { bucket.as_ref() };
-            Output::set(vm, key, &entry.key);
+            Output::set(alloc, key, &entry.key);
             Output::set(
-                vm,
+                alloc,
                 value,
                 match &entry.value {
                     EntryValue::Single { value, .. } => value,

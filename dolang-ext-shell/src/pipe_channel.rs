@@ -10,7 +10,7 @@ use std::{
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value, Vm,
+    Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
     object::{Mut, Ref, TypeBuilder},
     unpack,
     value::{Nil, TypeObject},
@@ -638,8 +638,8 @@ pub(crate) async fn negotiate_send<'v, 's>(
 }
 
 pub(crate) fn install<'v>(builder: &mut dolang::runtime::vm::Builder<'v>) {
-    builder.pipe_handler(move |vm, out_send, out_recv| {
-        make_pair(vm, out_send, out_recv);
+    builder.pipe_handler(move |strand, out_send, out_recv| {
+        make_pair(strand, out_send, out_recv);
     });
 }
 
@@ -647,7 +647,12 @@ pub(crate) fn install<'v>(builder: &mut dolang::runtime::vm::Builder<'v>) {
 // Constructor
 // ---------------------------------------------------------------------------
 
-pub(crate) fn make_pair<'v>(vm: &Vm<'v>, mut out_send: Slot<'v, '_>, mut out_recv: Slot<'v, '_>) {
+pub(crate) fn make_pair<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    mut out_send: Slot<'v, '_>,
+    mut out_recv: Slot<'v, '_>,
+) {
+    let vm = strand.vm();
     let inner = Rc::new(RefCell::new(PipeChannelShared::new()));
     let global = vm.state::<Global<'v>>();
     let recv_annex = PipeAnnex {
@@ -660,13 +665,13 @@ pub(crate) fn make_pair<'v>(vm: &Vm<'v>, mut out_send: Slot<'v, '_>, mut out_rec
     };
 
     global.types.pipe_receiver.create_with_annex(
-        vm,
+        strand,
         PipeReceiver,
         recv_annex,
         Slot::reborrow(&mut out_recv),
     );
     global.types.pipe_sender.create_with_annex(
-        vm,
+        strand,
         PipeSender,
         send_annex,
         Slot::reborrow(&mut out_send),
@@ -674,7 +679,7 @@ pub(crate) fn make_pair<'v>(vm: &Vm<'v>, mut out_send: Slot<'v, '_>, mut out_rec
 
     let send_inst = global.types.pipe_sender.downcast(&out_send).unwrap();
     let mut send_borrow = send_inst.borrow_mut_unwrap();
-    Output::set(vm, Mut::slot_mut::<0>(&mut send_borrow), &out_recv);
+    Output::set(strand, Mut::slot_mut::<0>(&mut send_borrow), &out_recv);
 }
 
 fn encode_value<'v, 's>(

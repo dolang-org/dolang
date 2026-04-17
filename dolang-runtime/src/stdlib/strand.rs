@@ -8,22 +8,27 @@ use crate::{
     error::{Error, ErrorKind},
     method,
     object::{array::Array, backtrace, channel, protocol::GcObj, tuple},
-    strand::{CancelToken, Redirect},
+    strand::{CancelToken, Redirect, Strand},
     unpack,
     value::{Output, Slot, Value},
-    vm::{Builder, Vm},
+    vm::Builder,
 };
 
 /// Creates a channel pair using the VM's registered factory if set,
 /// otherwise falls back to the default internal channel implementation.
-fn pipe_pair<'v>(vm: &Vm<'v>, mut send: impl Output<'v>, mut recv: impl Output<'v>) {
-    if let Some(pipe) = &vm.pipe_handler {
+fn pipe_pair<'v>(
+    strand: &mut Strand<'v, '_>,
+    mut send: impl Output<'v>,
+    mut recv: impl Output<'v>,
+) {
+    if let Some(pipe) = strand.vm().pipe_handler.as_ref() {
         pipe(
-            vm,
+            strand,
             Slot::from_output(&mut send),
             Slot::from_output(&mut recv),
         );
     } else {
+        let vm = strand.vm();
         let (s, r) = channel::pair(vm, 1);
         Slot::from_output(&mut send).store(Value::from_object(s));
         Slot::from_output(&mut recv).store(Value::from_object(r));
@@ -168,13 +173,18 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     let mut last_recv = Value::NIL;
                     let mut out = Some(out);
                     let mut strands = Vec::new();
+                    let mut pipes = Vec::with_capacity(count.saturating_sub(1));
                     let cancel = strand.cancel_token().nested();
+                    for _ in 0..count.saturating_sub(1) {
+                        let mut send = Value::NIL;
+                        let mut recv = Value::NIL;
+                        pipe_pair(strand, Slot::new(&mut send), Slot::new(&mut recv));
+                        pipes.push(Some((send, recv)));
+                    }
                     for (i, thunk) in thunks.into_iter().enumerate() {
                         let (send, recv, mut out, redir_output) = if i < count - 1 {
-                            let mut s = Value::NIL;
-                            let mut r = Value::NIL;
-                            pipe_pair(strand, Slot::new(&mut s), Slot::new(&mut r));
-                            (Some(s), Some(r), None, None)
+                            let (send, recv) = pipes[i].take().unwrap();
+                            (Some(send), Some(recv), None, None)
                         } else {
                             (None, None, out.take(), redir_output.take())
                         };

@@ -31,7 +31,7 @@ use crate::{
     sig::Unpack,
     strand::Strand,
     sym::{self, Sym},
-    vm::Vm,
+    vm::{Alloc, Vm},
 };
 
 use prim::Prim;
@@ -462,7 +462,10 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
         match &self.case() {
-            Case::Prim(prim) => Ok(Value::from_prim(strand, prim.op_bnot(strand)?)),
+            Case::Prim(prim) => {
+                let value = prim.op_bnot(strand)?;
+                Ok(Value::from_prim(strand, value))
+            }
             Case::Object(object) => object.op_bnot(strand),
         }
     }
@@ -471,7 +474,7 @@ impl<'v> Value<'v> {
         &'a self,
         strand: &'a mut Strand<'v, 's>,
         other: &'a Value<'v>,
-        prim: fn(&Prim, &Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
+        prim: fn(&Prim, &mut Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
         lobj: for<'b> fn(
             &BaseBorrow<'v, 'b, Header>,
             &'b mut Strand<'v, 's>,
@@ -511,7 +514,7 @@ impl<'v> Value<'v> {
         &'a self,
         strand: &'a mut Strand<'v, 's>,
         other: &'a Value<'v>,
-        prim: fn(&Prim, &Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
+        prim: fn(&Prim, &mut Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
         obj: for<'b> fn(
             &BaseBorrow<'v, 'b, Header>,
             &'b mut Strand<'v, 's>,
@@ -1002,8 +1005,13 @@ impl<'v> Value<'v> {
     /// Create a bound method object with `self` as the receiver.
     /// Note that this succeeds even if `method` isn't a valid method for the receiver;
     /// an error will be raised on invocation.
-    pub fn bind_method(&self, vm: &Vm<'v>, method: Sym<'v, '_>, mut out: impl Output<'v>) {
-        BoundMethod::create(vm, self, method, Slot::from_output(&mut out));
+    pub fn bind_method(
+        &self,
+        alloc: &mut impl Alloc<'v>,
+        method: Sym<'v, '_>,
+        mut out: impl Output<'v>,
+    ) {
+        BoundMethod::create(alloc, self, method, Slot::from_output(&mut out));
     }
 
     /// Invoke callable.
@@ -1311,19 +1319,19 @@ impl<'v> Value<'v> {
                 }
                 // Array
                 if let Some(arr) = self.downcast_native(vm, bt.array) {
-                    return View::Array(unsafe { Array::from_borrow(arr) });
+                    return View::Array(Array::from_borrow(arr));
                 }
                 // Dict
                 if let Some(dict) = self.downcast_native(vm, bt.dict) {
-                    return View::Dict(unsafe { Dict::from_borrow(dict) });
+                    return View::Dict(Dict::from_borrow(dict));
                 }
                 // Record
                 if let Some(record) = self.downcast_native(vm, bt.record) {
-                    return View::Record(unsafe { Record::from_borrow(record) });
+                    return View::Record(Record::from_borrow(record));
                 }
                 // Tuple
                 if let Some(tuple) = self.downcast_native(vm, bt.tuple) {
-                    return View::Tuple(unsafe { Tuple::from_borrow(tuple) });
+                    return View::Tuple(Tuple::from_borrow(tuple));
                 }
                 // Fallback: unknown GC object
                 View::Object(unsafe { ObjectView::from_ptr(obj.into_raw()) })
@@ -1432,8 +1440,11 @@ pub trait Output<'v>: Sized {
     fn as_slot(this: &mut Self, _: private::Sealed) -> Slot<'v, '_>;
 
     /// Set output to input.
-    fn set(vm: &Vm<'v>, mut this: Self, input: impl Input<'v>) {
-        Output::as_slot(&mut this, private::Sealed).store(Value::from_input(vm, input))
+    fn set(alloc: &mut impl Alloc<'v>, mut this: Self, input: impl Input<'v>) {
+        Output::as_slot(&mut this, private::Sealed).store(Value::from_input(
+            alloc.alloc_vm(crate::vm::private::Sealed),
+            input,
+        ))
     }
 
     /// Swap with another output.
@@ -1623,7 +1634,8 @@ pub struct Root<'v>(Gc<'v, RootInner<'v>>);
 impl<'v> Root<'v> {
     /// Create new root.
     #[inline]
-    pub fn new(vm: &Vm<'v>) -> Self {
+    pub fn new(alloc: &mut impl Alloc<'v>) -> Self {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         Self(Gc::new(vm.arena(), RootInner(Value::NIL)))
     }
 }

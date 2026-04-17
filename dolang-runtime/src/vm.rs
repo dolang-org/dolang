@@ -59,6 +59,10 @@ pub trait Stateful<'v>: 'v {
     type Tag: 'static;
 }
 
+pub(crate) mod private {
+    pub struct Sealed;
+}
+
 /// VM-scoped global state.
 pub struct State<'v, T: 'v>(NonNull<T>, PhantomData<(&'v mut T, &'v mut &'v ())>);
 
@@ -84,8 +88,14 @@ impl<'v, T: 'v> AsRef<T> for State<'v, T> {
     }
 }
 
-type Interrupt<'v> = dyn for<'s> Fn(&Strand<'v, 's>) -> Result<'v, 's, ()> + 'v;
-type ChannelFactory<'v> = dyn Fn(&Vm<'v>, Slot<'v, '_>, Slot<'v, '_>) + 'v;
+/// Capability to allocate or otherwise perturb GC state in controlled ways.
+pub trait Alloc<'v> {
+    #[doc(hidden)]
+    fn alloc_vm(&mut self, _: private::Sealed) -> &Vm<'v>;
+}
+
+type Interrupt<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v;
+type ChannelFactory<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot<'v, '_>) + 'v;
 
 /// VM handle.
 ///
@@ -717,6 +727,12 @@ pub struct Builder<'v> {
     pub(crate) inner: Vm<'v>,
 }
 
+impl<'v> Alloc<'v> for Builder<'v> {
+    fn alloc_vm(&mut self, _: private::Sealed) -> &Vm<'v> {
+        &self.inner
+    }
+}
+
 impl<'v> Deref for Builder<'v> {
     type Target = Vm<'v>;
 
@@ -914,7 +930,7 @@ impl<'v> Builder<'v> {
     #[doc(hidden)]
     pub fn pipe_handler(
         &mut self,
-        factory: impl Fn(&Vm<'v>, Slot<'v, '_>, Slot<'v, '_>) + 'v,
+        factory: impl for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot<'v, '_>) + 'v,
     ) -> &mut Self {
         self.inner.pipe_handler = Some(Box::new(factory));
         self
@@ -990,7 +1006,7 @@ impl<'v> Builder<'v> {
     /// unbounded work on behalf of Do programs without periodic interrupt checks.
     pub fn interrupt(
         &mut self,
-        interrupt: impl for<'s> Fn(&Strand<'v, 's>) -> Result<'v, 's, ()> + 'v,
+        interrupt: impl for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v,
     ) -> &mut Self {
         self.inner.interrupt = Some(Box::new(interrupt));
         self

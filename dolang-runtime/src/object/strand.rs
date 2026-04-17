@@ -271,7 +271,8 @@ impl<'v> Protocol<'v> for Handle<'v> {
                 Ok(())
             }
             sym::DONE => {
-                Output::set(strand, out, this.borrow(strand)?.result.is_some());
+                let input = this.borrow(strand)?.result.is_some();
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::ITER if is_stream => iter::iterable_get(strand, &this, field, out),

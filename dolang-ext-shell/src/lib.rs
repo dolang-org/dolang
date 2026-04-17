@@ -37,15 +37,15 @@ use crate::fs::path::PathOrStr;
 use crate::global::Global;
 
 /// Instantiate wrapper input iterator around stdin
-pub fn stdin<'v>(vm: &Vm<'v>, out: impl Output<'v>) {
-    let global = vm.state::<Global<'v>>();
-    global.types.stdin.create(vm, sys::Stdin::new(), out)
+pub fn stdin<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
+    let global = strand.state::<Global<'v>>();
+    global.types.stdin.create(strand, sys::Stdin::new(), out)
 }
 
 /// Instantiate wrapper output iterator around stdout
-pub fn stdout<'v>(vm: &Vm<'v>, out: impl Output<'v>) {
-    let global = vm.state::<Global<'v>>();
-    global.types.stdout.create(vm, sys::Stdout::new(), out)
+pub fn stdout<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
+    let global = strand.state::<Global<'v>>();
+    global.types.stdout.create(strand, sys::Stdout::new(), out)
 }
 
 pub fn as_datetime<'v>(vm: &Vm<'v>, value: &Value<'v>) -> Option<std::time::SystemTime> {
@@ -55,16 +55,16 @@ pub fn as_datetime<'v>(vm: &Vm<'v>, value: &Value<'v>) -> Option<std::time::Syst
 }
 
 pub fn datetime<'v>(
-    vm: &Vm<'v>,
+    strand: &mut Strand<'v, '_>,
     time: std::time::SystemTime,
     out: impl Output<'v>,
 ) -> io::Result<()> {
-    let global = vm.state::<Global<'v>>();
+    let global = strand.state::<Global<'v>>();
     let annex = time::DateTimeAnnex::from_system_time(time)?;
     global
         .types
         .date_time
-        .create_with_annex(vm, time::DateTime, annex, out);
+        .create_with_annex(strand, time::DateTime, annex, out);
     Ok(())
 }
 
