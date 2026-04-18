@@ -29,8 +29,10 @@ use dolang_ext_url::{create_url, value_to_url};
 use futures::stream::Stream;
 use tokio::sync::mpsc;
 
-use crate::global::Global;
-use crate::sse::{EventIter, SseParser};
+use crate::{
+    global::Global,
+    sse::{EventIter, SseParser},
+};
 
 /// Custom error type for body streaming errors
 #[derive(Debug)]

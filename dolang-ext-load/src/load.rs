@@ -1,6 +1,5 @@
-use dolang::runtime::error::ErrorKind;
 use dolang::runtime::{
-    Error, Object, State, call, method, object::TypeBuilder, unpack, vm::Builder,
+    Error, Object, State, call, error::ErrorKind, method, object::TypeBuilder, unpack, vm::Builder,
 };
 
 use crate::global::Global;

@@ -1,11 +1,11 @@
-use std::cell::Cell;
-use std::cell::RefCell;
-use std::fmt;
-use std::io;
-use std::pin::Pin;
-use std::rc::Rc;
-use std::task::{Context as TaskContext, Poll};
-use std::time::Duration;
+use std::{
+    cell::{Cell, RefCell},
+    fmt, io,
+    pin::Pin,
+    rc::Rc,
+    task::{Context as TaskContext, Poll},
+    time::Duration,
+};
 
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, State, Strand, Value, call,
@@ -20,8 +20,10 @@ use indicatif as ix;
 use ix::MultiProgress;
 use tokio::io::AsyncWrite;
 
-use crate::global::Global;
-use crate::style::{self, DEFAULT_ICON, Mode, Style, StyleKeys, Units};
+use crate::{
+    global::Global,
+    style::{self, DEFAULT_ICON, Mode, Style, StyleKeys, Units},
+};
 
 // --- Strand-local state ---
 

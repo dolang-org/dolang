@@ -14,15 +14,14 @@ mod shlex;
 mod sys;
 mod time;
 
-use std::io::{self, IsTerminal};
-use std::path;
-use std::path::PathBuf;
-use std::pin::Pin;
+use std::{
+    io::{self, IsTerminal},
+    path::{self, PathBuf},
+    pin::Pin,
+};
 
 #[cfg(unix)]
-use std::io::stderr;
-#[cfg(unix)]
-use std::os::fd::AsFd;
+use std::{io::stderr, os::fd::AsFd};
 
 pub use crate::global::ProgramSource;
 use dolang::runtime::{Error, Output, Result, Strand, Value, Vm};

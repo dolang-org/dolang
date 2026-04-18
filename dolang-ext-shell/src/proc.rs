@@ -13,8 +13,7 @@ use dolang::{
     },
 };
 
-use crate::global::Global;
-use crate::local::ChannelMode;
+use crate::{global::Global, local::ChannelMode};
 
 /// Capture output from a subprocess.
 pub(crate) struct Capture(String);

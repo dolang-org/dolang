@@ -5,8 +5,7 @@ use dolang_shell_vfs::{FileType, Metadata, Vfs};
 use std::{io, io::ErrorKind, path::PathBuf, time};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use rand::RngExt;
-use rand::distr::Alphanumeric;
+use rand::{RngExt, distr::Alphanumeric};
 
 pub(crate) mod file;
 pub(crate) mod glob;
