@@ -442,7 +442,7 @@ impl<'v> Protocol<'v> for Verbatim {
 }
 
 fn coerce_to_i64<'v, 's>(value: &Value<'v>, strand: &mut Strand<'v, 's>) -> Result<'v, 's, i64> {
-    if let Some(str) = value.as_str(strand) {
+    if let Some(str) = value.as_str_raw(strand) {
         str.parse::<i64>().map_err(|e| match e.kind() {
             IntErrorKind::Zero => unreachable!(),
             IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => Error::overflow(strand),

@@ -12,7 +12,7 @@ use crate::{
     arg::Args,
     error::{Error, Result, ResultExt},
     gc::{
-        self, Annex, Base, Collect,
+        self, Base, Collect,
         arena::{self, Upcast, Visit},
     },
     object::protocol::{GcObjBorrow, Recv, Vtbl},
@@ -40,7 +40,7 @@ pub(crate) struct ObjectAnnex<'v, T: Object<'v>> {
     inner: T::Annex,
 }
 
-impl<'v, T: Object<'v>> Annex for ObjectAnnex<'v, T> {
+impl<'v, T: Object<'v>> gc::Annex for ObjectAnnex<'v, T> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         if T::SLOTS != 0 {
             unsafe {
@@ -416,6 +416,22 @@ impl<'v, 'a, T: Object<'v>> AsRef<T> for Mut<'v, 'a, T> {
     }
 }
 
+pub struct Annex<'v, 'a, T: Object<'v>>(&'a T::Annex);
+
+impl<'v, 'a, T: Object<'v>> Deref for Annex<'v, 'a, T> {
+    type Target = T::Annex;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl<'v, 'a, T: Object<'v>> AsRef<T::Annex> for Annex<'v, 'a, T> {
+    fn as_ref(&self) -> &T::Annex {
+        self
+    }
+}
+
 impl<'v, 'a, T: Object<'v>> Input<'v> for Instance<'v, 'a, T> {
     #[allow(private_interfaces)]
     #[inline]
@@ -471,8 +487,8 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
 
     /// Get immutable annex
     #[inline]
-    pub fn annex(&self) -> &'a T::Annex {
-        &self.receiver.annex().inner
+    pub fn annex(&self) -> Annex<'v, 'a, T> {
+        Annex(&self.receiver.annex().inner)
     }
 }
 
@@ -2792,7 +2808,7 @@ pub(crate) struct TypeAnnexInner<'v, T: Object<'v>> {
     pub(crate) nominal_supertypes: alias::Box<[Value<'v>]>,
 }
 
-impl<'v, T: Object<'v>> Annex for TypeAnnexInner<'v, T> {
+impl<'v, T: Object<'v>> gc::Annex for TypeAnnexInner<'v, T> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         for supertype in self.supertypes.iter() {
             supertype.accept(visit)?;

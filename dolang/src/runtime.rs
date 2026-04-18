@@ -9,7 +9,10 @@ pub use dolang_runtime::{
 pub mod value {
     pub use dolang_runtime::value::{
         Empty, Input, Nil, Output, Root, Singleton, Slot, TypeObject, Value,
-        view::{Array, Dict, DictPairs, ObjectId, ObjectView, Record, RecordPairs, Tuple, View},
+        view::{
+            Array, Bin, Dict, DictPairs, ObjectId, ObjectView, PinBin, PinStr, Record, RecordPairs,
+            Str, Tuple, View,
+        },
     };
 }
 

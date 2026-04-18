@@ -112,7 +112,7 @@ impl VmInner {
             None => None,
             Some(k) => match k.view(vm) {
                 View::Sym(sym) => Some(sym.as_str(vm).to_owned()),
-                View::Str(s) => Some(s.to_owned()),
+                View::Str(s) => Some(s.into()),
                 View::Int(_) => None, // numeric index → positional
                 _ => return Err("item in prelude was of unexpected type".to_owned()),
             },
@@ -120,7 +120,7 @@ impl VmInner {
 
         // Resolve binding target from value
         let bind = match value.view(vm) {
-            View::Str(s) => s.to_owned(),
+            View::Str(s) => s.into(),
             View::Sym(sym) => sym.as_str(vm).to_owned(),
             _ => return Err("item in prelude was of unexpected type".to_owned()),
         };
@@ -144,7 +144,7 @@ impl VmInner {
             None => None,
             Some(k) => match k.view(vm) {
                 View::Sym(sym) => Some(sym.as_str(vm).to_owned()),
-                View::Str(s) => Some(s.to_owned()),
+                View::Str(s) => Some(s.into()),
                 View::Int(_) => None, // numeric index → positional
                 _ => return Err("module in prelude was of unexpected type".to_owned()),
             },
@@ -154,7 +154,7 @@ impl VmInner {
             None => {
                 // Positional: value is the module name itself
                 let module = match value.view(vm) {
-                    View::Str(s) => s.to_owned(),
+                    View::Str(s) => s.into(),
                     View::Sym(sym) => sym.as_str(vm).to_owned(),
                     _ => return Err("module in prelude was of unexpected type".to_owned()),
                 };
@@ -162,7 +162,7 @@ impl VmInner {
             }
             Some(module) => match value.view(vm) {
                 // "module": "bind-as"
-                View::Str(bind) => Ok(vec![Import::ModuleAs(module, bind.to_owned())]),
+                View::Str(bind) => Ok(vec![Import::ModuleAs(module, bind.into())]),
                 View::Sym(bind) => Ok(vec![Import::ModuleAs(module, bind.as_str(vm).to_owned())]),
                 // "module": [item, ...]
                 View::Array(handle) => {
@@ -233,7 +233,7 @@ impl VmInner {
                         .map_err(|_| "concurrent access to settings".to_owned())?
                     {
                         let key_str = match k.view(strand.vm()) {
-                            View::Str(s) => s.to_owned(),
+                            View::Str(s) => s.into(),
                             View::Sym(sym) => sym.as_str(strand.vm()).to_owned(),
                             _ => return Err("settings key was not a string".to_owned()),
                         };

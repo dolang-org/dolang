@@ -312,7 +312,7 @@ unsafe fn unpack_row<'v, 's, 'a>(
                     let idx = if let Some(i) = key.as_i64(strand) {
                         i.try_into().map_err(|_| Error::overflow(strand))?
                     } else if let Some(name) = key.as_str(strand) {
-                        column_for_name(raw, name)
+                        strand.access(|x| column_for_name(raw, name.as_str(x)))
                     } else {
                         return Err(Error::type_error(
                             strand,
@@ -400,7 +400,8 @@ impl<'v> Object<'v> for Row {
         let mut consumed = vec![false; count];
 
         unsafe {
-            let rest_slot = unpack_row(strand, annex, stmt_annex, raw, &mut unpack, &mut consumed)?;
+            let rest_slot =
+                unpack_row(strand, &annex, &stmt_annex, raw, &mut unpack, &mut consumed)?;
 
             if let Some(slot) = rest_slot {
                 // Create RowIter with remaining columns
@@ -474,7 +475,7 @@ impl<'v> Object<'v> for Row {
             let idx = if let Some(i) = index.as_i64(strand) {
                 i as i32
             } else if let Some(name) = index.as_str(strand) {
-                column_for_name(raw, name)
+                strand.access(|x| column_for_name(raw, name.as_str(x)))
             } else {
                 return Err(Error::type_error(
                     strand,
@@ -486,7 +487,7 @@ impl<'v> Object<'v> for Row {
                 return Err(Error::index(strand));
             }
 
-            if !get(strand, annex, stmt_annex, raw, idx, out)? {
+            if !get(strand, &annex, &stmt_annex, raw, idx, out)? {
                 return Err(Error::index(strand));
             }
         }
@@ -562,8 +563,8 @@ impl<'v> Object<'v> for RowIter {
                 unsafe {
                     let rest_slot = unpack_row(
                         strand,
-                        row_annex,
-                        stmt_annex,
+                        &row_annex,
+                        &stmt_annex,
                         raw,
                         &mut unpack,
                         &mut borrow.consumed,
@@ -621,8 +622,8 @@ impl<'v> Object<'v> for RowIter {
                             // Get the column value
                             let found = get(
                                 strand,
-                                row_annex,
-                                stmt_annex,
+                                &row_annex,
+                                &stmt_annex,
                                 raw,
                                 (current + i) as i32,
                                 Slot::reborrow(&mut out),

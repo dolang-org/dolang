@@ -197,6 +197,22 @@ impl<'v> LocalRootKey<'v> {
     }
 }
 
+/// Token permitting short-lived interior borrows of values.
+///
+/// This is only constructible through [`Strand::access`].
+pub struct Access<'v, 's> {
+    vm: &'v Vm<'v>,
+    phantom: PhantomData<&'s mut &'v ()>,
+}
+
+impl<'v, 's> Deref for Access<'v, 's> {
+    type Target = Vm<'v>;
+
+    fn deref(&self) -> &Self::Target {
+        self.vm
+    }
+}
+
 /// Ring of descendant strands in a group.
 /// Separate struct avoids infinite type recursion with StrandInner.
 pub(crate) struct StrandGroup {
@@ -804,8 +820,21 @@ impl<'v, 's> Strand<'v, 's> {
 
     /// Get reference to underlying VM
     #[inline]
-    pub fn vm(&self) -> &'s Vm<'v> {
-        self.inner.vm()
+    pub fn vm(&self) -> &'v Vm<'v> {
+        self.inner.vm
+    }
+
+    /// Access value interiors.
+    ///
+    /// The provided closure is invoked with an [`Access`] token which can be used to
+    /// access the interiors of values such as `str`s and `bin`s.
+    #[inline]
+    pub fn access<R>(&mut self, f: impl for<'a> FnOnce(&'a Access<'v, 's>) -> R) -> R {
+        let access = Access {
+            vm: self.inner.vm,
+            phantom: PhantomData,
+        };
+        f(&access)
     }
 
     /// Call an async function with the requested number of scratch [`Slot`]s, usually inferred

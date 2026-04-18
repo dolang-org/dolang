@@ -22,7 +22,7 @@ impl Display for Severity {
 }
 
 /// Source code position
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Pos {
     offset: usize,
     line: u32,
@@ -77,7 +77,7 @@ impl Pos {
 }
 
 /// Source code span
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Span {
     start: Pos,
     end: Pos,
@@ -107,6 +107,7 @@ impl Span {
 }
 
 /// Compiler diagnostic
+#[derive(Clone)]
 pub struct Diag {
     severity: Severity,
     span: Span,
@@ -118,6 +119,7 @@ pub struct Diag {
 
 /// Annotation kind
 #[non_exhaustive]
+#[derive(Clone)]
 pub enum AnnotationKind {
     /// The primary cause of the diagnostic
     Primary,
@@ -135,6 +137,7 @@ impl AnnotationKind {
 }
 
 /// Source annotation.
+#[derive(Clone)]
 pub struct Annotation {
     pub(crate) kind: AnnotationKind,
     pub(crate) span: Span,
@@ -160,6 +163,7 @@ impl Annotation {
 
 /// Kind of note
 #[non_exhaustive]
+#[derive(Clone)]
 pub enum NoteKind {
     /// Additional information
     Info,
@@ -177,6 +181,7 @@ impl NoteKind {
 }
 
 /// Additional diagnostic note
+#[derive(Clone)]
 pub struct Note {
     pub(crate) kind: NoteKind,
     pub(crate) message: String,
@@ -195,6 +200,7 @@ impl Note {
 }
 
 /// Suggested change to source code
+#[derive(Clone)]
 pub struct Patch {
     pub(crate) span: Span,
     pub(crate) message: String,

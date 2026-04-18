@@ -33,7 +33,6 @@ use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
 pub use sys::Exit;
 use tokio::io::AsyncWrite;
 
-use crate::fs::path::PathOrStr;
 use crate::global::Global;
 
 /// Instantiate wrapper input iterator around stdin
@@ -99,9 +98,9 @@ pub async fn set_program<'v, 's>(
 pub fn as_path<'v, 'a>(vm: &Vm<'v>, value: &'a Value<'v>) -> Option<impl AsRef<path::Path> + 'a> {
     let global = vm.state::<Global<'v>>();
     if let Some(path) = global.types.path.downcast(value) {
-        Some(PathOrStr::Path(path))
+        Some(path.annex().inner.clone())
     } else {
-        value.as_str(vm).map(PathOrStr::Str)
+        value.as_str(vm).map(|s| PathBuf::from(s.to_string()))
     }
 }
 

@@ -16,7 +16,7 @@ use dolang::{
 use crate::{
     env::Env,
     error::ErrorExt as ShellErrorExt,
-    fs::path::{Path, PathAnnex},
+    fs::path::{Path, PathAnnex, path_from_value},
     global::{Global, ProgramSource},
 };
 
@@ -335,7 +335,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             },
         )
         .function("cd", async move |strand, mut args, out| {
-            use crate::fs::path::{Path, PathAnnex, PathOrStr};
+            use crate::fs::path::{Path, PathAnnex};
 
             let dir = match args.next() {
                 None => {
@@ -351,7 +351,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 Some(Arg::Pos(slot)) => slot,
                 Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
             };
-            let dir = PathOrStr::new(strand, global, &dir)?;
+            let dir = path_from_value(strand, global, &dir)?;
             let local = global.local.get(strand);
 
             let path = local.cwd().as_ref().join(&dir);

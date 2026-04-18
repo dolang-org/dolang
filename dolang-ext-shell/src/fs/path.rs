@@ -1,7 +1,6 @@
 use std::{
     fmt,
     hash::{Hash, Hasher},
-    ops::Deref,
     path::{self, Component, PathBuf},
 };
 
@@ -25,41 +24,17 @@ pub(crate) struct PathAnnex<'v> {
     pub(crate) global: State<'v, Global<'v>>,
 }
 
-pub(crate) enum PathOrStr<'v, 'a> {
-    Path(Instance<'v, 'a, Path>),
-    Str(&'a str),
-}
-
-impl<'v, 'a> PathOrStr<'v, 'a> {
-    pub(crate) fn new<'s>(
-        strand: &mut Strand<'v, 's>,
-        global: State<'v, Global<'v>>,
-        value: &'a Value<'v>,
-    ) -> Result<'v, 's, Self> {
-        if let Some(path) = global.types.path.downcast(value) {
-            Ok(Self::Path(path))
-        } else if let Some(str) = value.as_str(strand) {
-            Ok(Self::Str(str))
-        } else {
-            Err(Error::type_error(strand, "expected Path or str"))
-        }
-    }
-}
-
-impl<'v, 'a> Deref for PathOrStr<'v, 'a> {
-    type Target = path::Path;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            PathOrStr::Path(path) => &path.annex().inner,
-            PathOrStr::Str(str) => path::Path::new(str),
-        }
-    }
-}
-
-impl<'v, 'a> AsRef<path::Path> for PathOrStr<'v, 'a> {
-    fn as_ref(&self) -> &path::Path {
-        self
+pub(crate) fn path_from_value<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    value: &Value<'v>,
+) -> Result<'v, 's, PathBuf> {
+    if let Some(path) = global.types.path.downcast(value) {
+        Ok(path.annex().inner.clone())
+    } else if let Some(str) = value.as_str(strand) {
+        Ok(strand.access(|x| path::Path::new(str.as_str(x)).to_owned()))
+    } else {
+        Err(Error::type_error(strand, "expected Path or str"))
     }
 }
 
@@ -124,7 +99,7 @@ impl<'v> Object<'v> for Path {
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Global<'v>>();
         let ([path], []) = unpack!(strand, args, 1, 0)?;
-        let path = PathOrStr::new(strand, global, &path)?.to_owned();
+        let path = path_from_value(strand, global, &path)?.to_owned();
         this.create_with_annex(strand, Path, PathAnnex::new(path, global), out);
         Ok(())
     }
@@ -207,7 +182,7 @@ impl<'v> Object<'v> for Path {
                 File::open(
                     strand,
                     this.annex().global,
-                    PathOrStr::Path(this),
+                    this.annex().inner.clone(),
                     opt1,
                     opt2,
                     out,
@@ -225,7 +200,7 @@ impl<'v> Object<'v> for Path {
                 super::metadata(
                     strand,
                     this.annex().global,
-                    PathOrStr::Path(this),
+                    &this.annex().inner,
                     follow,
                     out,
                 )
@@ -233,29 +208,15 @@ impl<'v> Object<'v> for Path {
             })
             .method("exists", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                super::exists(strand, this.annex().global, PathOrStr::Path(this), out).await
+                super::exists(strand, this.annex().global, &this.annex().inner, out).await
             })
             .method("read", async move |this, strand, args, out| {
                 let ([], [mode]) = unpack!(strand, args, 0, 1)?;
-                super::read(
-                    strand,
-                    this.annex().global,
-                    PathOrStr::Path(this),
-                    mode,
-                    out,
-                )
-                .await
+                super::read(strand, this.annex().global, &this.annex().inner, mode, out).await
             })
             .method("write", async move |this, strand, args, out| {
                 let ([data], []) = unpack!(strand, args, 1, 0)?;
-                super::write(
-                    strand,
-                    this.annex().global,
-                    PathOrStr::Path(this),
-                    data,
-                    out,
-                )
-                .await
+                super::write(strand, this.annex().global, &this.annex().inner, data, out).await
             })
             .method("copy", async move |this, strand, args, _out| {
                 let ([to], [all]) = unpack!(strand, args, 1, 0, all = None)?;
@@ -265,13 +226,13 @@ impl<'v> Object<'v> for Path {
                         .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
                     None => false,
                 };
-                let to = PathOrStr::new(strand, this.annex().global, &to)?;
-                super::copy(strand, this.annex().global, PathOrStr::Path(this), to, all).await
+                let to = path_from_value(strand, this.annex().global, &to)?;
+                super::copy(strand, this.annex().global, &this.annex().inner, &to, all).await
             })
             .method("rename", async move |this, strand, args, _out| {
                 let ([to], []) = unpack!(strand, args, 1, 0)?;
-                let to = PathOrStr::new(strand, this.annex().global, &to)?;
-                super::rename(strand, this.annex().global, PathOrStr::Path(this), to).await
+                let to = path_from_value(strand, this.annex().global, &to)?;
+                super::rename(strand, this.annex().global, &this.annex().inner, &to).await
             })
             .method("move", async move |this, strand, args, _out| {
                 let ([to], [all]) = unpack!(strand, args, 1, 0, all = None)?;
@@ -281,12 +242,12 @@ impl<'v> Object<'v> for Path {
                         .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
                     None => false,
                 };
-                let to = PathOrStr::new(strand, this.annex().global, &to)?;
-                super::move_(strand, this.annex().global, PathOrStr::Path(this), to, all).await
+                let to = path_from_value(strand, this.annex().global, &to)?;
+                super::move_(strand, this.annex().global, &this.annex().inner, &to, all).await
             })
             .method("entries", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                super::entries(strand, this.annex().global, PathOrStr::Path(this), out).await
+                super::entries(strand, this.annex().global, this.annex().inner.clone(), out).await
             })
             .method("canonical", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
@@ -325,7 +286,7 @@ impl<'v> Object<'v> for Path {
                 super::remove(
                     strand,
                     this.annex().global,
-                    PathOrStr::Path(this),
+                    &this.annex().inner,
                     all,
                     ignore,
                 )
@@ -339,7 +300,7 @@ impl<'v> Object<'v> for Path {
                         .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
                     None => false,
                 };
-                super::create_dir(strand, this.annex().global, PathOrStr::Path(this), all).await
+                super::create_dir(strand, this.annex().global, &this.annex().inner, all).await
             })
             .method("remove_dir", async move |this, strand, args, _out| {
                 let ([], [all, ignore]) = unpack!(strand, args, 0, 0, all = None, ignore = None)?;
@@ -358,7 +319,7 @@ impl<'v> Object<'v> for Path {
                 super::remove_dir(
                     strand,
                     this.annex().global,
-                    PathOrStr::Path(this),
+                    &this.annex().inner,
                     all,
                     ignore,
                 )
@@ -370,7 +331,7 @@ impl<'v> Object<'v> for Path {
                     .as_i64(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected int"))?
                     as u32;
-                super::chmod(strand, this.annex().global, PathOrStr::Path(this), mode).await
+                super::chmod(strand, this.annex().global, &this.annex().inner, mode).await
             })
             .method("set_timestamps", async move |this, strand, args, _out| {
                 let ([], [modified, accessed, created]) = unpack!(
@@ -385,7 +346,7 @@ impl<'v> Object<'v> for Path {
                 super::set_timestamps(
                     strand,
                     this.annex().global,
-                    PathOrStr::Path(this),
+                    &this.annex().inner,
                     modified,
                     accessed,
                     created,
@@ -397,7 +358,7 @@ impl<'v> Object<'v> for Path {
             let global = this.annex().global;
             let (path, user, group, follow) =
                 super::parse_chown_common(strand, global, args, Some(this.annex().inner.clone()))?;
-            super::chown(strand, global, path, user, group, follow).await
+            super::chown(strand, global, &path, user, group, follow).await
         });
         builder
             .method("glob", async move |this, strand, args, out| {
@@ -437,7 +398,8 @@ impl<'v> Object<'v> for Path {
                 let ([ext], []) = unpack!(strand, args, 1, 0)?;
                 let ext = ext
                     .as_str(strand)
-                    .ok_or_else(|| Error::type_error(strand, "expected str"))?;
+                    .ok_or_else(|| Error::type_error(strand, "expected str"))?
+                    .to_string();
                 let path = this.annex().inner.with_added_extension(ext);
                 this.annex().global.types.path.create_with_annex(
                     strand,
@@ -452,7 +414,7 @@ impl<'v> Object<'v> for Path {
                 let mut buf = PathBuf::new();
                 for arg in args {
                     match arg {
-                        Arg::Pos(slot) => buf.push(&PathOrStr::new(strand, global, &slot)?),
+                        Arg::Pos(slot) => buf.push(&path_from_value(strand, global, &slot)?),
                         Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
                     }
                 }
@@ -506,7 +468,7 @@ impl<'v> Object<'v> for Path {
     ) -> Result<'v, 's, ()> {
         let borrow = this.annex();
         let global = borrow.global;
-        if let Ok(other) = PathOrStr::new(strand, global, other) {
+        if let Ok(other) = path_from_value(strand, global, other) {
             global.types.path.create_with_annex(
                 strand,
                 Path,
@@ -527,7 +489,7 @@ impl<'v> Object<'v> for Path {
     ) -> Result<'v, 's, ()> {
         let borrow = this.annex();
         let global = borrow.global;
-        if let Ok(other) = PathOrStr::new(strand, global, other) {
+        if let Ok(other) = path_from_value(strand, global, other) {
             global.types.path.create_with_annex(
                 strand,
                 Path,

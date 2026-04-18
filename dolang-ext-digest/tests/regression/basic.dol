@@ -74,7 +74,7 @@ assert_state $digest.sha512 $digest.Sha512 $digest.Sha512 "ddaf35a193617abacc417
 
 assert_err $digest.State type: $error.TypeError msg: "type error: not instantiable"
 let bad = digest.Blake3()
-assert_err $bad.update 123 type: $error.TypeError msg: "type error: update: expected str or bin"
+assert_err $bad.update 123 type: $error.TypeError msg: "type error: expected str or bin"
 assert_err $digest.md5 123 type: $error.TypeError msg: "type error: expected str or bin"
 assert_err $digest.sha1 123 type: $error.TypeError msg: "type error: expected str or bin"
 assert_err $digest.sha256 123 type: $error.TypeError msg: "type error: expected str or bin"

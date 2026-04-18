@@ -1,7 +1,9 @@
 use std::{
+    fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
     marker::PhantomData,
     num::NonZero,
+    ops::Deref,
     ptr::NonNull,
 };
 
@@ -14,7 +16,7 @@ use crate::{
         protocol::{GcObjBorrow, Header},
         record,
     },
-    strand::Strand,
+    strand::{Access, Strand},
     sym::Sym,
     value::{Input, Output, Value},
     vm::Alloc,
@@ -48,6 +50,144 @@ impl<'v, 'a> Eq for ObjectId<'v, 'a> {}
 impl<'v, 'a> Hash for ObjectId<'v, 'a> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.0.hash(state);
+    }
+}
+
+/// Typed witness for a `str` value.
+#[derive(Clone, Copy)]
+pub struct Str<'v, 'a> {
+    value: &'a str,
+    phantom: PhantomData<&'v mut &'v ()>,
+}
+
+#[derive(Clone)]
+pub struct PinStr<'v, 'a> {
+    value: &'a str,
+    phantom: PhantomData<&'v mut &'v ()>,
+}
+
+impl<'v, 'a> Str<'v, 'a> {
+    pub(crate) fn from_value(value: &'a str) -> Self {
+        Self {
+            value,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn as_str<'s, 'x, 'b>(&self, access: &'x Access<'v, 's>) -> &'b str
+    where
+        'a: 'b,
+        'x: 'b,
+    {
+        let _ = access;
+        self.value
+    }
+
+    pub fn len(&self) -> usize {
+        self.value.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn pin(&self) -> PinStr<'v, 'a> {
+        PinStr {
+            value: self.value,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'v, 'a> Display for Str<'v, 'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(self.value, f)
+    }
+}
+
+impl<'v, 'a> Deref for PinStr<'v, 'a> {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.value
+    }
+}
+
+impl<'v, 'a> Drop for PinStr<'v, 'a> {
+    fn drop(&mut self) {}
+}
+
+impl<'v, 'a> From<Str<'v, 'a>> for String {
+    fn from(value: Str<'v, 'a>) -> Self {
+        value.value.to_owned()
+    }
+}
+
+/// Typed witness for a `bin` value.
+#[derive(Clone, Copy)]
+pub struct Bin<'v, 'a> {
+    value: &'a [u8],
+    phantom: PhantomData<&'v mut &'v ()>,
+}
+
+#[derive(Clone)]
+pub struct PinBin<'v, 'a> {
+    value: &'a [u8],
+    phantom: PhantomData<&'v mut &'v ()>,
+}
+
+impl<'v, 'a> Bin<'v, 'a> {
+    pub(crate) fn from_value(value: &'a [u8]) -> Self {
+        Self {
+            value,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn as_slice<'s, 'x, 'b>(&self, access: &'x Access<'v, 's>) -> &'b [u8]
+    where
+        'a: 'b,
+        'x: 'b,
+    {
+        let _ = access;
+        self.value
+    }
+
+    pub fn len(&self) -> usize {
+        self.value.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.value.to_owned()
+    }
+
+    pub fn pin(&self) -> PinBin<'v, 'a> {
+        PinBin {
+            value: self.value,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'v, 'a> Deref for PinBin<'v, 'a> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.value
+    }
+}
+
+impl<'v, 'a> Drop for PinBin<'v, 'a> {
+    fn drop(&mut self) {}
+}
+
+impl<'v, 'a> From<Bin<'v, 'a>> for Vec<u8> {
+    fn from(value: Bin<'v, 'a>) -> Self {
+        value.value.to_vec()
     }
 }
 
@@ -304,9 +444,9 @@ pub enum View<'v, 'a> {
     /// Float
     Float(f64),
     /// String
-    Str(&'a str),
+    Str(Str<'v, 'a>),
     /// Binary data
-    Bin(&'a [u8]),
+    Bin(Bin<'v, 'a>),
     /// Symbol
     Sym(Sym<'v, 'a>),
     /// Array

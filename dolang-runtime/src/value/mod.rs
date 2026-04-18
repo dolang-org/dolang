@@ -36,7 +36,7 @@ use crate::{
 
 use prim::Prim;
 use repr::{Decode, Repr};
-use view::{Array, Dict, ObjectView, Record, Tuple, View};
+use view::{Array, Bin, Dict, ObjectView, Record, Str, Tuple, View};
 
 pub(crate) enum Case<'v, 'a> {
     Prim(Prim),
@@ -1220,9 +1220,15 @@ impl<'v> Value<'v> {
     /// - [`None`]: Not a `str` value
     /// - [`Some(value)`](Some): The value as a `str`
     #[inline]
-    pub fn as_str(&self, vm: &Vm<'v>) -> Option<&str> {
+    pub(crate) fn as_str_raw(&self, vm: &Vm<'v>) -> Option<&str> {
         self.downcast_native(vm, vm.builtin_types().str)
             .map(|s| s.get())
+    }
+
+    /// Downcast to a `str` witness.
+    #[inline]
+    pub fn as_str<'a>(&'a self, vm: &Vm<'v>) -> Option<Str<'v, 'a>> {
+        Some(Str::from_value(self.as_str_raw(vm)?))
     }
 
     /// Downcast to `bin` ([`&[u8]`])
@@ -1231,9 +1237,15 @@ impl<'v> Value<'v> {
     /// - [`None`]: Not a `bin` value
     /// - [`Some(value)`](Some): The value as a `bin`
     #[inline]
-    pub fn as_bin(&self, vm: &Vm<'v>) -> Option<&[u8]> {
+    pub(crate) fn as_bin_raw(&self, vm: &Vm<'v>) -> Option<&[u8]> {
         self.downcast_native(vm, vm.builtin_types().bin)
             .map(|s| s.get())
+    }
+
+    /// Downcast to a `bin` witness.
+    #[inline]
+    pub fn as_bin<'a>(&'a self, vm: &Vm<'v>) -> Option<Bin<'v, 'a>> {
+        Some(Bin::from_value(self.as_bin_raw(vm)?))
     }
 
     /// Downcast to [`&[u8]`].  This works for both `str` and `bin` types.
@@ -1242,10 +1254,10 @@ impl<'v> Value<'v> {
     /// - [`None`]: Not a `&[u8]` value
     /// - [`Some(value)`](Some): The value as a `&[u8]`
     #[inline]
-    pub fn as_u8_slice(&self, vm: &Vm<'v>) -> Option<&[u8]> {
+    pub(crate) fn as_u8_slice_raw(&self, vm: &Vm<'v>) -> Option<&[u8]> {
         // FIXME: there should probably be a "buffer" protocol to make this generic
-        self.as_bin(vm)
-            .or_else(|| self.as_str(vm).map(str::as_bytes))
+        self.as_bin_raw(vm)
+            .or_else(|| self.as_str_raw(vm).map(str::as_bytes))
     }
 
     /// Downcast to symbol
@@ -1280,7 +1292,7 @@ impl<'v> Value<'v> {
         backtrace::iter_from_value(vm, self)
     }
 
-    /// Synchronously inspect this value without taking any long-lived interior borrows.
+    /// Inspect typed view of value
     pub fn view<'a>(&'a self, vm: &Vm<'v>) -> View<'v, 'a> {
         match self.case() {
             Case::Prim(Prim::Nil) => View::Nil,

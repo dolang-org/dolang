@@ -11,16 +11,16 @@ use dolang::runtime::{
     call,
     error::{ErrorKind, ResultExt as _},
     method,
-    object::TypeBuilder,
-    object::{Mut, Ref},
+    object::{Mut, Ref, TypeBuilder},
     unpack,
-    value::{Empty, TypeObject},
+    value::{Empty, TypeObject, View},
     vm::Builder,
 };
 use dolang_ext_shell::{as_datetime, datetime};
 use reqwest::{
     Method,
     header::{HeaderMap, HeaderName, HeaderValue},
+    tls::{Certificate, Identity},
 };
 
 use bstr::ByteSlice;
@@ -168,7 +168,11 @@ fn parse_status_policy<'v, 's>(
     global: State<'v, Global<'v>>,
     value: &Value<'v>,
 ) -> Result<'v, 's, StatusPolicy> {
-    if value.as_sym(strand) == Some(global.syms.ignore) || value.as_str(strand) == Some("ignore") {
+    if value.as_sym(strand) == Some(global.syms.ignore) {
+        Ok(StatusPolicy::Ignore)
+    } else if let Some(str) = value.as_str(strand)
+        && strand.access(|x| str.as_str(x) == "ignore")
+    {
         Ok(StatusPolicy::Ignore)
     } else {
         Err(invalid_status_policy(strand))
@@ -290,7 +294,8 @@ impl<'v> Object<'v> for StatusObject {
         let builder =
             builder.method_with_slots("json", async move |this, strand, args, out, [mut json]| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let text = status_text(strand, this.annex())?;
+                let annex = this.annex();
+                let text = status_text(strand, &annex)?;
                 strand.import("json", &mut json).await?;
                 method!(strand, json, from_str, out, text).await
             });
@@ -320,7 +325,8 @@ impl<'v> Object<'v> for StatusObject {
             })
             .method("text", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let input = status_text(strand, this.annex())?;
+                let annex = this.annex();
+                let input = status_text(strand, &annex)?;
                 Output::set(strand, out, input);
                 Ok(())
             })
@@ -512,7 +518,7 @@ async fn request<'v, 's>(
                 // Try direct conversions first (backward compatibility)
                 if let Some(slice) = body.as_bin(st) {
                     // Direct binary - no streaming needed
-                    builder = builder.body(slice.to_owned());
+                    builder = builder.body(slice.to_vec());
                 } else if let Some(str) = body.as_str(st) {
                     // Direct string - no streaming needed
                     builder = builder.body(str.to_string());
@@ -670,7 +676,8 @@ impl<'v> Object<'v> for Client {
                 builder.unix_socket(
                     unix_socket
                         .as_str(strand)
-                        .ok_or_else(|| Error::type_error(strand, "unix_socket: expected str"))?,
+                        .ok_or_else(|| Error::type_error(strand, "unix_socket: expected str"))?
+                        .to_string(),
                 )
             }
             #[cfg(not(unix))]
@@ -700,25 +707,29 @@ impl<'v> Object<'v> for Client {
         }
 
         if let Some(ca_cert) = ca_cert {
-            let bytes = ca_cert
-                .as_u8_slice(strand.vm())
-                .ok_or_else(|| Error::type_error(strand, "ca_cert: expected str or bin"))?;
-            let cert = reqwest::tls::Certificate::from_pem(bytes).into_http(strand)?;
+            let cert = match ca_cert.view(strand) {
+                View::Str(s) => strand.access(|x| Certificate::from_pem(s.as_str(x).as_bytes())),
+                View::Bin(b) => strand.access(|x| Certificate::from_pem(b.as_slice(x))),
+                _ => return Err(Error::type_error(strand, "ca_cert: expected str or bin")),
+            }
+            .into_http(strand)?;
             builder = builder.add_root_certificate(cert);
         }
 
         if let Some(identity) = identity {
             let id_bytes = identity
-                .as_u8_slice(strand.vm())
+                .as_bin(strand)
                 .ok_or_else(|| Error::type_error(strand, "identity: expected str or bin"))?;
             let pass = match password {
                 Some(p) => p
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "password: expected str"))?
-                    .to_owned(),
+                    .to_string(),
                 None => String::new(),
             };
-            let id = reqwest::tls::Identity::from_pkcs12_der(id_bytes, &pass).into_http(strand)?;
+            let id = strand
+                .access(|x| Identity::from_pkcs12_der(id_bytes.as_slice(x), &pass))
+                .into_http(strand)?;
             builder = builder.identity(id);
         } else if password.is_some() {
             return Err(Error::value(strand, "password requires identity"));

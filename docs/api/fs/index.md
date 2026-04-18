@@ -144,7 +144,7 @@ string first.
 | Name      | Type                                      | Description               |
 | --------- | ----------------------------------------- | ------------------------- |
 | `path`    | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file to write |
-| `content` | any                                       | Value to write            |
+| `content` | `str`\|`bin`                              | Value to write            |
 
 **Returns:** [`int`](../std/int.md) - Number of bytes written
 

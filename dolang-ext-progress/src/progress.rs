@@ -252,8 +252,8 @@ fn parse_units<'v, 's>(
                     "bytes" => Ok(Some(Units::Bytes)),
                     _ => Err(Error::value(strand, "units: expected :count: or :bytes:")),
                 }
-            } else if let Some(s) = v.as_str(strand) {
-                match s {
+            } else if let Some(s) = v.as_str(strand).map(|m| m.to_string()) {
+                match s.as_str() {
                     "count" => Ok(Some(Units::Count)),
                     "bytes" => Ok(Some(Units::Bytes)),
                     _ => Err(Error::value(
@@ -277,7 +277,7 @@ fn parse_icon<'v, 's>(
         Some(v) => Ok(v
             .as_str(strand)
             .ok_or_else(|| Error::type_error(strand, "icon: expected `str`"))?
-            .to_owned()),
+            .into()),
         None => Ok(DEFAULT_ICON.to_owned()),
     }
 }
@@ -290,8 +290,9 @@ fn apply_message<'v, 's>(
     if let Some(msg) = message {
         let msg = msg
             .as_str(strand)
-            .ok_or_else(|| Error::type_error(strand, "message: expected `str`"))?;
-        pb.set_message(msg.to_owned());
+            .ok_or_else(|| Error::type_error(strand, "message: expected `str`"))?
+            .to_string();
+        pb.set_message(msg);
     }
     Ok(())
 }
@@ -600,16 +601,18 @@ impl<'v> Object<'v> for Indicator {
                 check_closed(strand, &this.annex().closed)?;
                 let msg = value
                     .as_str(strand)
-                    .ok_or_else(|| Error::type_error(strand, "message: expected `str`"))?;
-                this.annex().bar.set_message(msg.to_owned());
+                    .ok_or_else(|| Error::type_error(strand, "message: expected `str`"))?
+                    .to_string();
+                this.annex().bar.set_message(msg);
                 Ok(())
             })
             .set("icon", |this, strand, value| {
                 check_closed(strand, &this.annex().closed)?;
                 let icon = value
                     .as_str(strand)
-                    .ok_or_else(|| Error::type_error(strand, "icon: expected `str`"))?;
-                this.annex().bar.set_prefix(icon.to_owned());
+                    .ok_or_else(|| Error::type_error(strand, "icon: expected `str`"))?
+                    .to_string();
+                this.annex().bar.set_prefix(icon);
                 Ok(())
             })
             .set("total", |this, strand, value| {

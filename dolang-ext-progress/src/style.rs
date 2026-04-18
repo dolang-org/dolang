@@ -398,9 +398,10 @@ fn parse_element_style<'v, 's>(
         if cat.index(strand, keys.fg, &mut slot).is_ok() && !slot.is_nil() {
             let s = slot
                 .as_str(strand)
-                .ok_or_else(|| Error::type_error(strand, "style: fg: expected `str`"))?;
+                .ok_or_else(|| Error::type_error(strand, "style: fg: expected `str`"))?
+                .to_string();
             es.fg = Some(
-                Color::try_from(s)
+                Color::try_from(s.as_str())
                     .map_err(|e| Error::runtime(strand, format!("style: fg: {e}")))?,
             );
         }
@@ -408,9 +409,10 @@ fn parse_element_style<'v, 's>(
         if cat.index(strand, keys.bg, &mut slot).is_ok() && !slot.is_nil() {
             let s = slot
                 .as_str(strand)
-                .ok_or_else(|| Error::type_error(strand, "style: bg: expected `str`"))?;
+                .ok_or_else(|| Error::type_error(strand, "style: bg: expected `str`"))?
+                .to_string();
             es.bg = Some(
-                Color::try_from(s)
+                Color::try_from(s.as_str())
                     .map_err(|e| Error::runtime(strand, format!("style: bg: {e}")))?,
             );
         }
@@ -425,10 +427,13 @@ fn parse_element_style<'v, 's>(
             for i in 0..len {
                 strand.with_slots_sync(|strand, [mut elem]| {
                     arr.get(strand, i, &mut elem)?;
-                    let s = elem.as_str(strand).ok_or_else(|| {
-                        Error::type_error(strand, "style: attrs: expected `str` element")
-                    })?;
-                    let attr = Attr::try_from(s)
+                    let s = elem
+                        .as_str(strand)
+                        .ok_or_else(|| {
+                            Error::type_error(strand, "style: attrs: expected `str` element")
+                        })?
+                        .to_string();
+                    let attr = Attr::try_from(s.as_str())
                         .map_err(|e| Error::runtime(strand, format!("style: attrs: {e}")))?;
                     es.attrs.push(attr);
                     Ok(())

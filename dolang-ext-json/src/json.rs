@@ -35,7 +35,7 @@ impl<'v, 's, 'a> Serialize for SerializeValue<'v, 's, 'a> {
             View::Bool(b) => serializer.serialize_bool(b),
             View::Int(i) => serializer.serialize_i64(i),
             View::Float(f) => serializer.serialize_f64(f),
-            View::Str(s) => serializer.serialize_str(s),
+            View::Str(s) => strand.access(|access| serializer.serialize_str(s.as_str(access))),
             View::Bin(_) => Err(ser::Error::custom(
                 "binary values are not JSON-representable",
             )),
@@ -277,10 +277,11 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         })
         .function("from_str", async move |strand, args, out| {
             let ([arg], []) = unpack!(strand, args, 1, 0)?;
-            let mut dejson = serde_json::Deserializer::from_str(
-                arg.as_str(strand)
-                    .ok_or_else(|| Error::type_error(strand, "expected str"))?,
-            );
+            let src = arg
+                .as_str(strand.vm())
+                .ok_or_else(|| Error::type_error(strand, "expected str"))?
+                .pin();
+            let mut dejson = serde_json::Deserializer::from_str(&src);
             Seed(strand, out).deserialize(&mut dejson).into_do(strand)
         })
         .commit();

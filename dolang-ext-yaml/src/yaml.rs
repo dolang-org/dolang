@@ -18,9 +18,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .function("from_str", async move |strand, args, out| {
             let ([arg], []) = unpack!(strand, args, 1, 0)?;
             let src = arg
-                .as_str(strand)
+                .as_str(strand.vm())
                 .ok_or_else(|| Error::type_error(strand, "expected str"))?
-                .to_owned();
+                .pin();
 
             parse_yaml(strand, &src, out)
         })
@@ -47,7 +47,7 @@ fn value_to_yaml<'v, 's>(
         View::Bool(b) => Ok(Yaml::Value(Scalar::Boolean(b))),
         View::Int(i) => Ok(Yaml::Value(Scalar::Integer(i))),
         View::Float(f) => Ok(Yaml::Value(Scalar::FloatingPoint(OrderedFloat(f)))),
-        View::Str(s) => Ok(Yaml::Value(Scalar::String(Cow::Owned(s.to_owned())))),
+        View::Str(s) => Ok(Yaml::Value(Scalar::String(Cow::Owned(s.into())))),
         View::Sym(sym) => Ok(Yaml::Value(Scalar::String(Cow::Owned(
             sym.as_str(strand.vm()).to_owned(),
         )))),

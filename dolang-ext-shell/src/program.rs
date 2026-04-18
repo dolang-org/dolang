@@ -18,7 +18,7 @@ use crate::{
     error::{self, ResultExt as _},
     fs::{
         file::{self, File},
-        path::{PathAnnex, PathOrStr},
+        path::{PathAnnex, path_from_value},
     },
     global::Global,
     local::ChannelMode,
@@ -113,7 +113,7 @@ async fn resolve_io_file<'v, 's>(
     mode: &str,
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, bool> {
-    let Ok(path) = PathOrStr::new(strand, global, arg) else {
+    let Ok(path) = path_from_value(strand, global, arg) else {
         return Ok(false);
     };
 
@@ -319,10 +319,13 @@ where
                 match channel_mode {
                     ChannelMode::Line => {
                         if let Some(str) = inval.as_str(strand) {
-                            writer.write_all(str.as_bytes()).await.into_sys(strand)?;
+                            writer
+                                .write_all(str.pin().as_bytes())
+                                .await
+                                .into_sys(strand)?;
                             writer.write_all(b"\n").await.into_sys(strand)?;
-                        } else if let Some(slice) = inval.as_u8_slice(strand) {
-                            writer.write_all(slice).await.into_sys(strand)?;
+                        } else if let Some(bin) = inval.as_bin(strand) {
+                            writer.write_all(&bin.pin()).await.into_sys(strand)?;
                         } else {
                             let s = inval.to_arg(strand)?;
                             writer.write_all(s.as_bytes()).await.into_sys(strand)?;
@@ -331,9 +334,12 @@ where
                     }
                     ChannelMode::Chunk => {
                         if let Some(str) = inval.as_str(strand) {
-                            writer.write_all(str.as_bytes()).await.into_sys(strand)?;
-                        } else if let Some(slice) = inval.as_u8_slice(strand) {
-                            writer.write_all(slice).await.into_sys(strand)?;
+                            writer
+                                .write_all(str.pin().as_bytes())
+                                .await
+                                .into_sys(strand)?;
+                        } else if let Some(bin) = inval.as_bin(strand) {
+                            writer.write_all(&bin.pin()).await.into_sys(strand)?;
                         } else {
                             let s = inval.to_arg(strand)?;
                             writer.write_all(s.as_bytes()).await.into_sys(strand)?;
@@ -717,12 +723,12 @@ struct Run<'v> {
 }
 
 impl<'v> Run<'v> {
-    fn get(&self, strand: &mut Strand<'v, '_>, name: &str, out: Slot<'v, '_>) {
+    fn get(&self, strand: &mut Strand<'v, '_>, name: String, out: Slot<'v, '_>) {
         self.global.types.program.create_with_annex(
             strand,
             Program,
             ProgramAnnex {
-                name: name.to_string(),
+                name,
                 global: self.global,
             },
             out,
@@ -743,7 +749,8 @@ impl<'v> Object<'v> for Run<'v> {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        this.borrow(strand)?.get(strand, field.as_str(strand), out);
+        this.borrow(strand)?
+            .get(strand, field.as_str(strand).into(), out);
         Ok(())
     }
 
@@ -753,7 +760,10 @@ impl<'v> Object<'v> for Run<'v> {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let name = index.as_str(strand).ok_or_else(|| Error::index(strand))?;
+        let name = index
+            .as_str(strand)
+            .ok_or_else(|| Error::index(strand))?
+            .to_string();
         this.borrow(strand)?.get(strand, name, out);
         Ok(())
     }

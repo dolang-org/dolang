@@ -246,7 +246,7 @@ impl<'v> Object<'v> for Connection {
                         .as_str(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected string"))?;
 
-                    let stmt = create_statement(strand, this.annex(), sql).await?;
+                    let stmt = create_statement(strand, &this.annex(), &sql.pin()).await?;
 
                     wrap_statement(this, strand, stmt, Slot::reborrow(&mut wrapper));
 
@@ -276,7 +276,7 @@ impl<'v> Object<'v> for Connection {
                         .as_str(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected string"))?;
 
-                    let stmt = create_statement(strand, this.annex(), sql).await?;
+                    let stmt = create_statement(strand, &this.annex(), &sql.pin()).await?;
 
                     wrap_statement(this, strand, stmt, Slot::reborrow(&mut wrapper));
                     let res = wrapper.method(strand, execute, args, out).await;

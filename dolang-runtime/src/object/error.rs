@@ -472,7 +472,7 @@ fn expect_string_like<'v, 's>(
     if let Some(sym) = value.as_sym(strand) {
         return Ok(sym.as_str(strand).to_owned());
     }
-    if let Some(str) = value.as_str(strand) {
+    if let Some(str) = value.as_str_raw(strand) {
         return Ok(str.to_owned());
     }
     Err(Error::type_error(strand, "expected string"))

@@ -144,7 +144,7 @@ impl<'v> Protocol<'v> for Type {
         if value.as_sym(strand).is_some() {
             Output::set(strand, out, value);
             Ok(())
-        } else if let Some(str) = value.as_str(strand) {
+        } else if let Some(str) = value.as_str_raw(strand) {
             // FIXME: don't do this every time, move it to an interrupt
             strand.sym_gc();
             out.store(Value::from_object(strand.sym_register_obj(str)));

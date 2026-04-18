@@ -164,11 +164,11 @@ fn severity<'v>(global: State<'v, Global<'v>>, severity: compile::Severity) -> S
     }
 }
 
-pub fn extract_diagnostic<'v, 's, 'a>(
+pub fn extract_diagnostic<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    value: &'a Value<'v>,
+    value: &Value<'v>,
     out: Slot<'v, '_>,
-) -> Result<'v, 's, (&'a Diag, &'a str)> {
+) -> Result<'v, 's, (Diag, String)> {
     let global = strand.state::<Global<'v>>();
     let Some(diag) = global.types.diagnostic.downcast(value) else {
         return Err(Error::type_error(strand, "expected compile.Diagnostic"));
@@ -176,7 +176,7 @@ pub fn extract_diagnostic<'v, 's, 'a>(
     let borrow = diag.borrow(strand)?;
     Output::set(strand, out, Ref::slot::<DIAG_SOURCE>(&borrow));
     let annex = diag.annex();
-    Ok((&annex.diag, annex.path.as_str()))
+    Ok((annex.diag.clone(), annex.path.clone()))
 }
 
 fn create_pos<'v>(
@@ -263,7 +263,7 @@ fn create_diagnostic<'v, 's>(
     global: State<'v, Global<'v>>,
     strand: &mut Strand<'v, 's>,
     path: &str,
-    source: &dolang::runtime::Value<'v>,
+    source: &Value<'v>,
     diag: Diag,
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
@@ -389,7 +389,7 @@ fn apply_prelude_module_items<'v, 's>(
             |strand, [mut elem]| -> std::result::Result<_, Error<'v, 's>> {
                 arr.get(strand, i, &mut elem)?;
                 match elem.view(vm) {
-                    View::Str(s) => Ok(s.to_owned()),
+                    View::Str(s) => Ok(s.into()),
                     View::Sym(sym) => Ok(sym.as_str(vm).to_owned()),
                     _ => Err(Error::type_error(strand, "prelude item must be str or sym")),
                 }
@@ -423,8 +423,8 @@ fn apply_prelude_dict_items<'v, 's>(
                 }
 
                 let item_name = match k.view(vm) {
-                    View::Str(s) => s,
-                    View::Sym(sym) => sym.as_str(vm),
+                    View::Str(s) => s.into(),
+                    View::Sym(sym) => sym.as_str(vm).to_owned(),
                     _ => {
                         return Err(Error::type_error(
                             strand,
@@ -433,8 +433,8 @@ fn apply_prelude_dict_items<'v, 's>(
                     }
                 };
                 let bind_name = match v.view(vm) {
-                    View::Str(s) => s,
-                    View::Sym(sym) => sym.as_str(vm),
+                    View::Str(s) => s.into(),
+                    View::Sym(sym) => sym.as_str(vm).to_owned(),
                     _ => {
                         return Err(Error::type_error(
                             strand,
@@ -446,7 +446,7 @@ fn apply_prelude_dict_items<'v, 's>(
                     items_builder
                         .take()
                         .unwrap()
-                        .item_with_name(item_name, bind_name),
+                        .item_with_name(&item_name, &bind_name),
                 );
             }
             Ok(())
@@ -462,12 +462,12 @@ fn apply_prelude_dict_items<'v, 's>(
 fn apply_prelude_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
     compiler: &mut Compiler,
-    value: &dolang::runtime::Value<'v>,
-) -> std::result::Result<(), Error<'v, 's>> {
+    value: &Value<'v>,
+) -> Result<'v, 's, ()> {
     strand.with_slots_sync(|strand, [mut elem, mut k, mut v]| {
-        match value.view(strand) {
+        match value.view(strand.vm()) {
             View::Str(module) => {
-                compiler.prelude().import_module(module);
+                strand.access(|access| compiler.prelude().import_module(module.as_str(access)));
             }
             View::Sym(sym) => {
                 compiler.prelude().import_module(sym.as_str(strand));
@@ -477,7 +477,7 @@ fn apply_prelude_value<'v, 's>(
                 for i in 0..len {
                     arr.get(strand, i, &mut elem)?;
                     let name = match elem.view(strand) {
-                        View::Str(s) => s.to_owned(),
+                        View::Str(s) => s.into(),
                         View::Sym(sym) => sym.as_str(strand).to_owned(),
                         _ => {
                             return Err(Error::type_error(
@@ -498,25 +498,28 @@ fn apply_prelude_value<'v, 's>(
                     }
 
                     let module = match k.view(strand) {
-                        View::Str(s) => s,
-                        View::Sym(sym) => sym.as_str(strand),
+                        View::Str(s) => s.into(),
+                        View::Sym(sym) => sym.as_str(strand).to_owned(),
                         _ => {
                             return Err(Error::type_error(
                                 strand,
                                 "prelude module key must be str or sym",
                             ));
                         }
-                    }
-                    .to_owned();
+                    };
 
-                    match v.view(strand) {
+                    match v.view(strand.vm()) {
                         View::Str(bind) => {
-                            compiler.prelude().import_module_with_name(module, bind);
+                            strand.access(|access| {
+                                compiler
+                                    .prelude()
+                                    .import_module_with_name(&module, bind.as_str(access));
+                            });
                         }
                         View::Sym(bind) => {
                             compiler
                                 .prelude()
-                                .import_module_with_name(module, bind.as_str(strand));
+                                .import_module_with_name(&module, bind.as_str(strand));
                         }
                         View::Array(arr) => {
                             apply_prelude_module_items(strand, compiler, &module, &arr)?;
@@ -841,19 +844,25 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
             let ([path, source], [module, prelude]) =
                 unpack!(strand, args, 2, 0, module = None, prelude = None)?;
 
-            let source_value = source;
-            let source = source_value
-                .as_u8_slice(strand)
-                .ok_or_else(|| Error::type_error(strand, "source: expected str or bin"))?;
+            let module = module
+                .as_ref()
+                .map(|m| {
+                    m.as_str(strand)
+                        .ok_or_else(|| Error::type_error(strand, "module: expected `str`"))
+                        .map(|m| m.to_string())
+                })
+                .transpose()?;
+
+            let source_vec = match source.view(strand) {
+                View::Str(s) => s.to_string().into(),
+                View::Bin(b) => b.to_vec(),
+                _ => return Err(Error::type_error(strand, "source: expected `str` or `bin`")),
+            };
 
             let path = path.to_string(strand)?;
-            let mut compiler = Compiler::new(Path::new(&path), source);
+            let mut compiler = Compiler::new(Path::new(&path), &source_vec);
             compiler.mode(if let Some(module) = &module {
-                Mode::Module {
-                    name: module
-                        .as_str(strand)
-                        .ok_or_else(|| Error::type_error(strand, "expected str for module"))?,
-                }
+                Mode::Module { name: module }
             } else {
                 Mode::Script
             });
@@ -883,7 +892,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
                 global,
                 strand,
                 &path,
-                source_value,
+                source,
                 bytecode,
                 diagnostics,
                 &mut out,

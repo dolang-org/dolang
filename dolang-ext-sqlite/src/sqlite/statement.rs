@@ -301,14 +301,18 @@ unsafe fn bind_keyword_params<'v, 's>(
                     } else if let Some(f) = value.as_f64(strand) {
                         sqlite3_bind_double(raw, idx, f)
                     } else if let Some(s) = value.as_str(strand) {
-                        if s.len() > i32::MAX as usize || s.contains('\0') {
+                        if s.len() > i32::MAX as usize
+                            || strand.access(|x| s.as_str(x).contains('\0'))
+                        {
                             return Err(Error::runtime(strand, "invalid string"));
                         }
                         let ptr = libc::malloc(s.len() + 1) as *mut u8;
                         if ptr.is_null() {
                             handle_alloc_error(Layout::from_size_align(s.len() + 1, 1).unwrap());
                         }
-                        std::ptr::copy_nonoverlapping(s.as_ptr(), ptr, s.len());
+                        strand.access(|x| {
+                            ptr::copy_nonoverlapping(s.as_str(x).as_ptr(), ptr, s.len())
+                        });
                         *ptr.add(s.len()) = b'\0';
                         let rc = sqlite3_bind_text(raw, idx, ptr as *const _, -1, Some(free_data));
                         if rc != SQLITE_OK {
@@ -322,7 +326,9 @@ unsafe fn bind_keyword_params<'v, 's>(
                         if ptr.is_null() {
                             handle_alloc_error(Layout::from_size_align(b.len(), 1).unwrap());
                         }
-                        std::ptr::copy_nonoverlapping(b.as_ptr(), ptr, b.len());
+                        strand.access(|x| {
+                            ptr::copy_nonoverlapping(b.as_slice(x).as_ptr(), ptr, b.len())
+                        });
                         let rc = sqlite3_bind_blob(
                             raw,
                             idx,

@@ -24,7 +24,7 @@ use dolang_shell_vfs::{Client, ClientOrDirect, Query};
 use crate::{global::Global, local::Env};
 
 #[cfg(unix)]
-use crate::error;
+use crate::{error, fs::path::path_from_value};
 
 #[cfg(unix)]
 #[derive(Clone)]
@@ -94,14 +94,11 @@ impl<'v> Object<'v> for Vfs {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        use crate::fs::path::PathOrStr;
-
         let global = strand.vm().state::<Global<'v>>();
         let unix_socket = global.syms.unix_socket;
 
         let ([path], []) = unpack!(strand, args, 0, 0, unix_socket)?;
-        let path = PathOrStr::new(strand, global, &path)?;
-        let path = path.to_owned();
+        let path = path_from_value(strand, global, &path)?;
 
         let parent_client = {
             let local = global.local.get(strand);

@@ -26,9 +26,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, state: State<'v, Global<'
         .function("from_str", async move |strand, args, mut out| {
             let ([arg], []) = unpack!(strand, args, 1, 0)?;
             let src = arg
-                .as_str(strand)
+                .as_str(strand.vm())
                 .ok_or_else(|| Error::type_error(strand, "expected str"))?
-                .to_owned();
+                .pin();
 
             let mut reader = Reader::from_str(&src);
             reader.config_mut().trim_text(false);
@@ -205,10 +205,11 @@ fn serialize_node<'v, 's>(
         })
     } else {
         let str = value
-            .as_str(strand)
-            .ok_or_else(|| Error::type_error(strand, "expected xml.Node or str"))?;
+            .as_str(strand.vm())
+            .ok_or_else(|| Error::type_error(strand, "expected xml.Node or str"))?
+            .pin();
         writer
-            .write_event(Event::Text(BytesText::new(str)))
+            .write_event(Event::Text(BytesText::new(&str)))
             .into_do(strand)
     }
 }

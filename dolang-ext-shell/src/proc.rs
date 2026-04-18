@@ -66,7 +66,7 @@ impl<'v> Object<'v> for Capture {
     ) -> Result<'v, 's, ()> {
         let mut capture = this.borrow_mut(strand)?;
         if let Some(str) = value.as_str(strand) {
-            capture.0.push_str(str);
+            strand.access(|x| capture.0.push_str(str.as_str(x)));
         } else {
             capture.0.push_str(&value.to_string(strand)?);
         }

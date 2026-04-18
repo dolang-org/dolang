@@ -10,7 +10,7 @@ use dolang::runtime::{
     method,
     object::{Mut, Ref, TypeBuilder},
     unpack,
-    value::TypeObject,
+    value::{TypeObject, View},
     vm::Builder,
 };
 use tokio::task;
@@ -415,10 +415,11 @@ impl<'v> Object<'v> for File {
             .method("write", async move |this, strand, args, _out| {
                 let global = *this.annex();
                 let ([data], []) = unpack!(strand, args, 1, 0)?;
-                let data = data
-                    .as_u8_slice(strand.vm())
-                    .ok_or_else(|| Error::type_error(strand, "expected bytes"))?
-                    .to_owned();
+                let data = match data.view(strand) {
+                    View::Str(s) => s.to_string().into(),
+                    View::Bin(b) => b.to_vec(),
+                    _ => return Err(Error::type_error(strand, "expected bytes")),
+                };
 
                 // Get the archive reference from slot 0
                 let borrow = this.borrow(strand)?;
@@ -508,12 +509,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 .map(|m| {
                     m.as_str(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected `str` for `mode`"))
+                        .map(|m| m.to_string())
                 })
                 .transpose()?
-                .unwrap_or("r");
+                .unwrap_or_else(|| "r".to_owned());
 
             // Open the archive based on mode
-            let inner = match mode {
+            let inner = match mode.as_str() {
                 "r" => {
                     // Read mode
                     let file = dolang_ext_shell::open(strand, path.as_ref(), "r")

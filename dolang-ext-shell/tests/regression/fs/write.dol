@@ -82,22 +82,6 @@ with_and_without_agent "write after close fails" do
   # Cleanup
   remove $test_path
 
-with_and_without_agent "write non-string value" do
-  # Test writing a non-string value (should convert to string)
-  let test_path = "test_write_number.txt"
-
-  open $test_path w do |f|
-    let written = f.write 12345
-    assert (written > 0)
-
-  # Read it back
-  open $test_path r do |f|
-    let contents = f.read()
-    assert_eq $contents "12345"
-
-  # Cleanup
-  remove $test_path
-
 with_and_without_agent "remove file" do
   # Test removing a file
   let test_path = "test_remove.txt"
@@ -158,12 +142,6 @@ with_and_without_agent "fs.write writes binary data" do
   let test_path = "test_fs_write_binary.bin"
   assert_eq (write test_path b"Hello") 5
   assert_eq ((Path test_path).read "b") b"Hello"
-  remove $test_path
-
-with_and_without_agent "Path.write stringifies non-binary values" do
-  let test_path = Path "test_path_write_value.txt"
-  assert_eq (test_path.write 12345) 5
-  assert_eq (read test_path) "12345"
   remove $test_path
 
 with_and_without_agent "Path.remove supports all and ignore" do

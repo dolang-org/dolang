@@ -40,16 +40,18 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             let len = require_i64(strand, &len, "expected `int`")?;
             let len = usize::try_from(len)
                 .map_err(|_| Error::value(strand, "expected len to be non-negative"))?;
-            let alphabet = match &alphabet {
-                Some(alphabet) => alphabet
-                    .as_str(strand)
-                    .ok_or_else(|| Error::type_error(strand, "expected `str`"))?,
-                None => DEFAULT_ALPHABET,
+            let chars = match &alphabet {
+                Some(alphabet) => {
+                    let alphabet = alphabet
+                        .as_str(strand)
+                        .ok_or_else(|| Error::type_error(strand, "expected `str`"))?;
+                    strand.access(|x| alphabet.as_str(x).chars().collect::<Vec<_>>())
+                }
+                None => DEFAULT_ALPHABET.chars().collect(),
             };
-            if alphabet.is_empty() {
+            if chars.is_empty() {
                 return Err(Error::value(strand, "expected alphabet to be non-empty"));
             }
-            let chars = alphabet.chars().collect::<Vec<_>>();
             let mut rng = rand::rng();
             let text = (0..len)
                 .map(|_| chars[rng.random_range(0..chars.len())])

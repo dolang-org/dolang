@@ -4,8 +4,12 @@ use std::{io, path, result, str};
 
 use bstr::ByteSlice;
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, call, error::ResultExt, method,
-    object::TypeBuilder, unpack, value::TypeObject,
+    Error, Instance, Object, Output, Result, Slot, State, Strand, call,
+    error::ResultExt,
+    method,
+    object::TypeBuilder,
+    unpack,
+    value::{TypeObject, View},
 };
 use dolang_shell_vfs::{OpenOptions, Vfs};
 use tokio::{
@@ -17,8 +21,6 @@ use crate::{
     error::{ErrorExt as _, ResultExt as _},
     global::Global,
 };
-
-use super::path::PathOrStr;
 
 /// Configure OpenOptions based on mode string (supports 'b' suffix for binary mode).
 fn configure_options(opts: &mut impl OpenOptions, mode: &str) {
@@ -124,20 +126,20 @@ impl File {
     pub(crate) async fn open<'v, 's>(
         strand: &mut Strand<'v, 's>,
         global: State<'v, Global<'v>>,
-        path: PathOrStr<'v, '_>,
+        path: path::PathBuf,
         opt1: Option<Slot<'v, '_>>,
         opt2: Option<Slot<'v, '_>>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         // Determine mode and block
         let (mode, block) = match (&opt1, &opt2) {
-            (None, None) => ("r", None),
+            (None, None) => ("r".to_string(), None),
             (Some(slot), None) => {
                 // Single arg: check if it's a mode string or block callable
                 if let Some(mode) = slot.as_str(strand) {
-                    (mode, None)
+                    (mode.to_string(), None)
                 } else {
-                    ("r", Some(slot))
+                    ("r".to_string(), Some(slot))
                 }
             }
 
@@ -145,14 +147,15 @@ impl File {
                 // Two args: first must be mode, second is block
                 let mode = slot1
                     .as_str(strand)
-                    .ok_or_else(|| Error::type_error(strand, "mode must be a string"))?;
+                    .ok_or_else(|| Error::type_error(strand, "mode must be a string"))?
+                    .to_string();
                 (mode, Some(slot2))
             }
             (None, Some(_)) => unreachable!(),
         };
 
         // Validate mode string (strip 'b' suffix for validation)
-        let base_mode = mode.strip_suffix('b').unwrap_or(mode);
+        let base_mode = mode.strip_suffix('b').unwrap_or(&mode);
         match base_mode {
             "r" | "w" | "a" | "r+" | "w+" | "a+" => {}
             _ => {
@@ -160,7 +163,7 @@ impl File {
             }
         }
 
-        let file = open(strand, global, &path, mode).await.into_sys(strand)?;
+        let file = open(strand, global, &path, &mode).await.into_sys(strand)?;
 
         if let Some(block) = block {
             strand
@@ -300,19 +303,23 @@ impl File {
         strand: &mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let file_ref = self
+        let file = self
             .file
             .as_mut()
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
 
-        let bytes_written: usize = if let Some(slice) = data.as_u8_slice(strand) {
-            file_ref.write_all(slice).await.into_sys(strand)?;
-            slice.len()
-        } else {
-            let s = data.to_string(strand)?;
-            file_ref.write_all(s.as_bytes()).await.into_sys(strand)?;
-            s.len()
-        };
+        let bytes_written = match data.view(strand) {
+            View::Str(s) => {
+                let s = s.pin();
+                file.write_all(s.as_bytes()).await.map(|_| s.len())
+            }
+            View::Bin(b) => {
+                let b = b.pin();
+                file.write_all(&b).await.map(|_| b.len())
+            }
+            _ => return Err(Error::type_error(strand, "expected `str` or `bin`")),
+        }
+        .into_sys(strand)?;
 
         Output::set(strand, out, bytes_written as i64);
         Ok(())
@@ -464,29 +471,29 @@ impl<'v> Object<'v> for File {
     ) -> Result<'v, 's, ()> {
         let mut borrow = this.borrow_mut(strand)?;
         let is_binary = this.annex().is_binary;
-        let file_ref = borrow
+        let file = borrow
             .file
             .as_mut()
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
 
         if is_binary {
             // Binary mode: write bytes directly
-            if let Some(slice) = value.as_u8_slice(strand) {
-                file_ref.write_all(slice).await.into_sys(strand)?;
+            if let Some(s) = value.as_str(strand) {
+                file.write_all(s.pin().as_bytes()).await.into_sys(strand)?;
             } else {
                 let s = value.to_string(strand)?;
-                file_ref.write_all(s.as_bytes()).await.into_sys(strand)?;
+                file.write_all(s.as_bytes()).await.into_sys(strand)?;
             }
         } else {
             // Text mode: check if value is binary
-            if let Some(bin) = value.as_bin(strand) {
+            if let Some(b) = value.as_bin(strand) {
                 // It's binary data, write as-is
-                file_ref.write_all(bin).await.into_sys(strand)?;
+                file.write_all(&b.pin()).await.into_sys(strand)?;
             } else {
                 // Not binary, convert to string and add newline
                 let s = value.to_string(strand)?;
-                file_ref.write_all(s.as_bytes()).await.into_sys(strand)?;
-                file_ref.write_all(b"\n").await.into_sys(strand)?;
+                file.write_all(s.as_bytes()).await.into_sys(strand)?;
+                file.write_all(b"\n").await.into_sys(strand)?;
             }
         }
         Ok(())

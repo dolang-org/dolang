@@ -43,7 +43,7 @@ async fn value_to_pattern<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Result<'v, 's, Vec<char>> {
-    if let Some(slice) = value.as_str(strand) {
+    if let Some(slice) = value.as_str_raw(strand) {
         return Ok(slice.chars().collect());
     }
 
@@ -53,7 +53,7 @@ async fn value_to_pattern<'v, 's>(
             value.iter(strand, &mut input).await?;
             while input.next(strand, &mut elem).await? {
                 acc.extend(
-                    elem.as_str(strand)
+                    elem.as_str_raw(strand)
                         .ok_or_else(|| Error::type_error(strand, "invalid pattern: binary"))?
                         .chars(),
                 );
@@ -138,7 +138,7 @@ impl<'v> Protocol<'v> for [u8] {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
                 let input =
                     this.borrow(strand)?
-                        .starts_with(prefix.as_u8_slice(strand).ok_or_else(|| {
+                        .starts_with(prefix.as_u8_slice_raw(strand).ok_or_else(|| {
                             let msg = "not binary data: unknown".to_string();
                             Error::type_error(strand, msg)
                         })?);
@@ -149,7 +149,7 @@ impl<'v> Protocol<'v> for [u8] {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
                 let input = borrow
-                    .strip_prefix(prefix.as_u8_slice(strand).ok_or_else(|| {
+                    .strip_prefix(prefix.as_u8_slice_raw(strand).ok_or_else(|| {
                         let msg = "not binary data: unknown".to_string();
                         Error::type_error(strand, msg)
                     })?)
@@ -159,12 +159,12 @@ impl<'v> Protocol<'v> for [u8] {
             }
             sym::ENDS_WITH => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
-                let input = this
-                    .borrow(strand)?
-                    .ends_with(suffix.as_u8_slice(strand).ok_or_else(|| {
-                        let msg = "not binary data: unknown".to_string();
-                        Error::type_error(strand, msg)
-                    })?);
+                let input =
+                    this.borrow(strand)?
+                        .ends_with(suffix.as_u8_slice_raw(strand).ok_or_else(|| {
+                            let msg = "not binary data: unknown".to_string();
+                            Error::type_error(strand, msg)
+                        })?);
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -172,7 +172,7 @@ impl<'v> Protocol<'v> for [u8] {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
                 let input = borrow
-                    .strip_suffix(suffix.as_u8_slice(strand).ok_or_else(|| {
+                    .strip_suffix(suffix.as_u8_slice_raw(strand).ok_or_else(|| {
                         let msg = "not binary data: unknown".to_string();
                         Error::type_error(strand, msg)
                     })?)
@@ -267,14 +267,14 @@ impl<'v> Protocol<'v> for [u8] {
                         }
                         let mut acc = Vec::new();
                         if input.next(strand, &mut value).await? {
-                            let slice = value.as_u8_slice(strand).ok_or_else(|| {
+                            let slice = value.as_u8_slice_raw(strand).ok_or_else(|| {
                                 Error::type_error(strand, "element was not binary data")
                             })?;
                             acc.extend(slice);
                         }
                         while input.next(strand, &mut value).await? {
                             acc.extend(this.receiver.get());
-                            let slice = value.as_u8_slice(strand).ok_or_else(|| {
+                            let slice = value.as_u8_slice_raw(strand).ok_or_else(|| {
                                 Error::type_error(strand, "element was not binary data")
                             })?;
                             acc.extend(slice);
@@ -345,7 +345,7 @@ impl<'v> Protocol<'v> for [u8] {
                 let ([needle], []) = unpack!(strand, args, 1, 0)?;
                 let input =
                     this.borrow(strand)?
-                        .contains_str(needle.as_u8_slice(strand).ok_or_else(|| {
+                        .contains_str(needle.as_u8_slice_raw(strand).ok_or_else(|| {
                             let msg = "not binary data: unknown".to_string();
                             Error::type_error(strand, msg)
                         })?);
@@ -644,7 +644,7 @@ impl<'v> Protocol<'v> for Class {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([value], []) = unpack!(strand, args, 1, 0)?;
-        if let Some(slice) = value.as_u8_slice(strand) {
+        if let Some(slice) = value.as_u8_slice_raw(strand) {
             Output::set(strand, out, slice)
         } else {
             let str = value.to_string(strand)?;
@@ -692,7 +692,7 @@ impl<'v> Protocol<'v> for Class {
         match method.tag() {
             sym::INIT_METHOD => {
                 let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
-                let native = if let Some(slice) = value.as_u8_slice(strand) {
+                let native = if let Some(slice) = value.as_u8_slice_raw(strand) {
                     Value::from_u8_slice(strand, slice)
                 } else {
                     let s = value.to_string(strand)?;
@@ -723,7 +723,7 @@ impl<'v> Protocol<'v> for Class {
             sym::UNPACK => {
                 let ([obj], []) = unpack!(strand, args, 1, 0)?;
                 let slice = obj
-                    .as_u8_slice(strand)
+                    .as_u8_slice_raw(strand)
                     .ok_or_else(|| Error::type_error(strand, "not convertible to binary data"))?;
                 Output::set(strand, &mut out, Empty::Array);
                 let array = out.as_array(strand).unwrap();

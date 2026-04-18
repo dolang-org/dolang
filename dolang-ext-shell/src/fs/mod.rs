@@ -1,5 +1,5 @@
 use dolang::runtime::{
-    Arg, Error, Output, Result, Slot, State, Strand, call, method, unpack, vm::Builder,
+    Arg, Error, Output, Result, Slot, State, Strand, call, method, unpack, value::View, vm::Builder,
 };
 use dolang_shell_vfs::{FileType, Metadata, Vfs};
 use std::{io, io::ErrorKind, path::PathBuf, time};
@@ -17,7 +17,7 @@ use crate::{
     error::{ErrorExt as _, ResultExt as _},
     fs::{
         file::File,
-        path::{Path, PathAnnex, PathOrStr, normalize_path},
+        path::{Path, PathAnnex, normalize_path, path_from_value},
         readdir::{DirEntryIter, DirEntryIterAnnex},
     },
     global::Global,
@@ -171,14 +171,14 @@ async fn metadata_to_record<'v, 's>(
 async fn metadata<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: PathOrStr<'v, '_>,
+    path: &std::path::Path,
     follow: bool,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     strand
         .with_slots(async move |strand, [mut record]| {
             let local = global.local.get(strand);
-            let path = local.cwd().as_ref().join(&path);
+            let path = local.cwd().as_ref().join(path);
             let vfs = local.vfs();
             let metadata = if follow {
                 vfs.metadata(&path).await
@@ -200,12 +200,12 @@ async fn metadata<'v, 's>(
 async fn remove<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: PathOrStr<'v, '_>,
+    path: &std::path::Path,
     all: bool,
     ignore: bool,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let path = local.cwd().as_ref().join(&path);
+    let path = local.cwd().as_ref().join(path);
     let vfs = local.vfs();
 
     let result = if all {
@@ -230,11 +230,11 @@ async fn remove<'v, 's>(
 async fn exists<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: PathOrStr<'v, '_>,
+    path: &std::path::Path,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let path = local.cwd().as_ref().join(&path);
+    let path = local.cwd().as_ref().join(path);
     let vfs = local.vfs();
     let res = vfs.metadata(&path).await.map(|_| ());
     Output::set(
@@ -252,7 +252,7 @@ async fn exists<'v, 's>(
 async fn entries<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: PathOrStr<'v, '_>,
+    path: PathBuf,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
@@ -261,10 +261,7 @@ async fn entries<'v, 's>(
 
     global.types.dir_entry_iter.create_with_annex(
         strand,
-        DirEntryIter {
-            read_dir,
-            path: path.as_ref().to_owned(),
-        },
+        DirEntryIter { read_dir, path },
         DirEntryIterAnnex { global },
         out,
     );
@@ -274,20 +271,20 @@ async fn entries<'v, 's>(
 async fn read<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: PathOrStr<'v, '_>,
+    path: &std::path::Path,
     mode: Option<Slot<'v, '_>>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let mode = match mode {
         None => "r",
         Some(mode) => match mode.as_str(strand) {
-            Some("b") => "rb",
+            Some(s) if s.to_string() == "b" => "rb",
             Some(_) => return Err(Error::type_error(strand, "fs.read: mode must be `b`")),
             None => return Err(Error::type_error(strand, "fs.read: mode must be a string")),
         },
     };
     let is_binary = mode == "rb";
-    let mut file = file::open(strand, global, path.as_ref(), mode)
+    let mut file = file::open(strand, global, path, mode)
         .await
         .into_sys(strand)?;
     let mut buf = Vec::new();
@@ -305,21 +302,26 @@ async fn read<'v, 's>(
 async fn write<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: PathOrStr<'v, '_>,
+    path: &std::path::Path,
     data: Slot<'v, '_>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let mut file = file::open(strand, global, path.as_ref(), "w")
+    let mut file = file::open(strand, global, path, "w")
         .await
         .into_sys(strand)?;
-    let bytes_written = if let Some(slice) = data.as_u8_slice(strand) {
-        file.write_all(slice).await.into_sys(strand)?;
-        slice.len()
-    } else {
-        let text = data.to_string(strand)?;
-        file.write_all(text.as_bytes()).await.into_sys(strand)?;
-        text.len()
-    };
+    let bytes_written = match data.view(strand) {
+        View::Str(s) => {
+            let s = s.pin();
+            file.write_all(s.as_bytes()).await.map(|_| s.len())
+        }
+        View::Bin(b) => {
+            let b = b.pin();
+            file.write_all(&b).await.map(|_| b.len())
+        }
+        _ => return Err(Error::type_error(strand, "expected `str` or `bin`")),
+    }
+    .into_sys(strand)?;
+
     file.flush().await.into_sys(strand)?;
     Output::set(strand, out, bytes_written as i64);
     Ok(())
@@ -328,13 +330,13 @@ async fn write<'v, 's>(
 async fn copy<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    from: PathOrStr<'v, '_>,
-    to: PathOrStr<'v, '_>,
+    from: &std::path::Path,
+    to: &std::path::Path,
     all: bool,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let from_path = local.cwd().as_ref().join(&from);
-    let to_path = local.cwd().as_ref().join(&to);
+    let from_path = local.cwd().as_ref().join(from);
+    let to_path = local.cwd().as_ref().join(to);
     let vfs = local.vfs();
     vfs.copy(&from_path, &to_path, all).await.into_sys(strand)?;
     Ok(())
@@ -343,13 +345,13 @@ async fn copy<'v, 's>(
 async fn move_<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    from: PathOrStr<'v, '_>,
-    to: PathOrStr<'v, '_>,
+    from: &std::path::Path,
+    to: &std::path::Path,
     all: bool,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let from_path = local.cwd().as_ref().join(&from);
-    let to_path = local.cwd().as_ref().join(&to);
+    let from_path = local.cwd().as_ref().join(from);
+    let to_path = local.cwd().as_ref().join(to);
     let vfs = local.vfs();
     vfs.move_(&from_path, &to_path, all)
         .await
@@ -360,12 +362,12 @@ async fn move_<'v, 's>(
 async fn rename<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    from: PathOrStr<'v, '_>,
-    to: PathOrStr<'v, '_>,
+    from: &std::path::Path,
+    to: &std::path::Path,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let from_path = local.cwd().as_ref().join(&from);
-    let to_path = local.cwd().as_ref().join(&to);
+    let from_path = local.cwd().as_ref().join(from);
+    let to_path = local.cwd().as_ref().join(to);
     let vfs = local.vfs();
     vfs.rename(&from_path, &to_path).await.into_sys(strand)?;
     Ok(())
@@ -374,12 +376,12 @@ async fn rename<'v, 's>(
 async fn symlink<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    src: PathOrStr<'v, '_>,
-    dst: PathOrStr<'v, '_>,
+    src: &std::path::Path,
+    dst: &std::path::Path,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let src_path = local.cwd().as_ref().join(&src);
-    let dst_path = local.cwd().as_ref().join(&dst);
+    let src_path = local.cwd().as_ref().join(src);
+    let dst_path = local.cwd().as_ref().join(dst);
     let vfs = local.vfs();
     vfs.symlink(&src_path, &dst_path).await.into_sys(strand)?;
     Ok(())
@@ -388,12 +390,12 @@ async fn symlink<'v, 's>(
 async fn symlink_dir<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    src: PathOrStr<'v, '_>,
-    dst: PathOrStr<'v, '_>,
+    src: &std::path::Path,
+    dst: &std::path::Path,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let src_path = local.cwd().as_ref().join(&src);
-    let dst_path = local.cwd().as_ref().join(&dst);
+    let src_path = local.cwd().as_ref().join(src);
+    let dst_path = local.cwd().as_ref().join(dst);
     let vfs = local.vfs();
     vfs.symlink_dir(&src_path, &dst_path)
         .await
@@ -404,12 +406,12 @@ async fn symlink_dir<'v, 's>(
 async fn symlink_file<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    src: PathOrStr<'v, '_>,
-    dst: PathOrStr<'v, '_>,
+    src: &std::path::Path,
+    dst: &std::path::Path,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let src_path = local.cwd().as_ref().join(&src);
-    let dst_path = local.cwd().as_ref().join(&dst);
+    let src_path = local.cwd().as_ref().join(src);
+    let dst_path = local.cwd().as_ref().join(dst);
     let vfs = local.vfs();
     vfs.symlink_file(&src_path, &dst_path)
         .await
@@ -420,11 +422,11 @@ async fn symlink_file<'v, 's>(
 async fn create_dir<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: PathOrStr<'v, '_>,
+    path: &std::path::Path,
     all: bool,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let path = local.cwd().as_ref().join(&path);
+    let path = local.cwd().as_ref().join(path);
     let vfs = local.vfs();
     vfs.create_dir(&path, all).await.into_sys(strand)?;
     Ok(())
@@ -433,12 +435,12 @@ async fn create_dir<'v, 's>(
 async fn remove_dir<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: PathOrStr<'v, '_>,
+    path: &std::path::Path,
     all: bool,
     ignore: bool,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let path = local.cwd().as_ref().join(&path);
+    let path = local.cwd().as_ref().join(path);
     let vfs = local.vfs();
     let result = vfs.remove_dir(&path, all, ignore).await;
     match result {
@@ -451,13 +453,13 @@ async fn remove_dir<'v, 's>(
 async fn chmod<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: PathOrStr<'v, '_>,
+    path: &std::path::Path,
     mode: u32,
 ) -> Result<'v, 's, ()> {
     #[cfg(unix)]
     {
         let local = global.local.get(strand);
-        let path = local.cwd().as_ref().join(&path);
+        let path = local.cwd().as_ref().join(path);
         let vfs = local.vfs();
         let perm = dolang_shell_vfs::Permissions::from_mode(mode);
         vfs.set_permissions(&path, perm).await.into_sys(strand)?;
@@ -524,7 +526,7 @@ fn system_time_to_unix_timestamp<'v, 's>(
 async fn set_timestamps<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: PathOrStr<'v, '_>,
+    path: &std::path::Path,
     modified: Option<Slot<'v, '_>>,
     accessed: Option<Slot<'v, '_>>,
     created: Option<Slot<'v, '_>>,
@@ -543,7 +545,7 @@ async fn set_timestamps<'v, 's>(
             ));
         }
         let local = global.local.get(strand);
-        let path = local.cwd().as_ref().join(&path);
+        let path = local.cwd().as_ref().join(path);
         let vfs = local.vfs();
         vfs.utime(&path, accessed, modified)
             .await
@@ -622,7 +624,7 @@ fn parse_chown_common<'v, 's, 'a>(
         match arg {
             Arg::Pos(slot) => {
                 if path.is_none() {
-                    path = Some(PathOrStr::new(strand, global, &slot)?.to_path_buf());
+                    path = Some(path_from_value(strand, global, &slot)?);
                 } else if user.is_none() {
                     user = Some(parse_chown_identity(strand, &slot, "user")?);
                 } else {
@@ -656,7 +658,7 @@ fn parse_chown_common<'v, 's, 'a>(
 async fn chown<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: PathBuf,
+    path: &std::path::Path,
     user: Option<dolang_shell_vfs::ChownIdentity>,
     group: Option<dolang_shell_vfs::ChownIdentity>,
     follow: bool,
@@ -699,7 +701,7 @@ pub(crate) fn path_relative<'v, 's>(
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let relative = match base {
-        Some(b) => path.strip_prefix(&PathOrStr::new(strand, global, &b)?),
+        Some(b) => path.strip_prefix(&path_from_value(strand, global, &b)?),
         None => path.strip_prefix(global.local.get(strand).cwd().as_ref()),
     };
     global.types.path.create_with_annex(
@@ -745,7 +747,8 @@ async fn glob<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let pattern = pattern
         .as_str(strand)
-        .ok_or_else(|| Error::type_error(strand, "pattern: expected str"))?;
+        .ok_or_else(|| Error::type_error(strand, "pattern: expected str"))?
+        .to_string();
     let max_depth = match max_depth {
         Some(v) => Some(
             v.as_i64(strand)
@@ -789,8 +792,8 @@ async fn glob<'v, 's>(
 async fn create_temp_dir<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    parent: PathBuf,
-) -> std::result::Result<PathBuf, io::Error> {
+    parent: &std::path::Path,
+) -> io::Result<PathBuf> {
     let mut rng = rand::rng();
     let vfs = global.local.get(strand).vfs();
     for attempt in 0..1000 {
@@ -825,7 +828,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .module("fs")
         .function("open", async move |strand, args, out| {
             let ([path], [opt1, opt2]) = unpack!(strand, args, 1, 2)?;
-            let path = PathOrStr::new(strand, global, &path)?;
+            let path = path_from_value(strand, global, &path)?;
             File::open(strand, global, path, opt1, opt2, out).await
         })
         .function("remove", async move |strand, args, _out| {
@@ -846,8 +849,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             for path in paths {
                 match path {
                     Arg::Pos(path) => {
-                        let path = PathOrStr::new(strand, global, &path)?;
-                        remove(strand, global, path, all, ignore).await?;
+                        let path = path_from_value(strand, global, &path)?;
+                        remove(strand, global, &path, all, ignore).await?;
                     }
                     Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
                 }
@@ -856,40 +859,40 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         })
         .function("metadata", async move |strand, args, out| {
             let ([path], [follow]) = unpack!(strand, args, 1, 1)?;
-            let path = PathOrStr::new(strand, global, &path)?;
+            let path = path_from_value(strand, global, &path)?;
             let follow = match follow {
                 Some(v) => v
                     .as_bool(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
                 None => true,
             };
-            metadata(strand, global, path, follow, out).await
+            metadata(strand, global, &path, follow, out).await
         })
         .function("exists", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
-            let path = PathOrStr::new(strand, global, &path)?;
-            exists(strand, global, path, out).await
+            let path = path_from_value(strand, global, &path)?;
+            exists(strand, global, &path, out).await
         })
         .function("read", async move |strand, args, out| {
             let ([path], [mode]) = unpack!(strand, args, 1, 1)?;
-            let path = PathOrStr::new(strand, global, &path)?;
-            read(strand, global, path, mode, out).await
+            let path = path_from_value(strand, global, &path)?;
+            read(strand, global, &path, mode, out).await
         })
         .function("write", async move |strand, args, out| {
             let ([path, data], []) = unpack!(strand, args, 2, 0)?;
-            let path = PathOrStr::new(strand, global, &path)?;
-            write(strand, global, path, data, out).await
+            let path = path_from_value(strand, global, &path)?;
+            write(strand, global, &path, data, out).await
         })
         .function("is_absolute", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
-            let path = PathOrStr::new(strand, global, &path)?;
+            let path = path_from_value(strand, global, &path)?;
             Output::set(strand, out, path.is_absolute());
             Ok(())
         })
         .function("copy", async move |strand, args, out| {
             let ([from, to], [all]) = unpack!(strand, args, 2, 0, all = None)?;
-            let from = PathOrStr::new(strand, global, &from)?;
-            let to = PathOrStr::new(strand, global, &to)?;
+            let from = path_from_value(strand, global, &from)?;
+            let to = path_from_value(strand, global, &to)?;
             let all = match all {
                 Some(v) => v
                     .as_bool(strand)
@@ -897,47 +900,47 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 None => false,
             };
             let _ = out;
-            copy(strand, global, from, to, all).await
+            copy(strand, global, &from, &to, all).await
         })
         .function("rename", async move |strand, args, _out| {
             let ([from, to], []) = unpack!(strand, args, 2, 0)?;
-            let from = PathOrStr::new(strand, global, &from)?;
-            let to = PathOrStr::new(strand, global, &to)?;
-            rename(strand, global, from, to).await
+            let from = path_from_value(strand, global, &from)?;
+            let to = path_from_value(strand, global, &to)?;
+            rename(strand, global, &from, &to).await
         })
         .function("move", async move |strand, args, _out| {
             let ([from, to], [all]) = unpack!(strand, args, 2, 0, all = None)?;
-            let from = PathOrStr::new(strand, global, &from)?;
-            let to = PathOrStr::new(strand, global, &to)?;
+            let from = path_from_value(strand, global, &from)?;
+            let to = path_from_value(strand, global, &to)?;
             let all = match all {
                 Some(v) => v
                     .as_bool(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
                 None => false,
             };
-            move_(strand, global, from, to, all).await
+            move_(strand, global, &from, &to, all).await
         })
         .function("symlink", async move |strand, args, _out| {
             let ([src, dst], []) = unpack!(strand, args, 2, 0)?;
-            let src = PathOrStr::new(strand, global, &src)?;
-            let dst = PathOrStr::new(strand, global, &dst)?;
-            symlink(strand, global, src, dst).await
+            let src = path_from_value(strand, global, &src)?;
+            let dst = path_from_value(strand, global, &dst)?;
+            symlink(strand, global, &src, &dst).await
         })
         .function("symlink_dir", async move |strand, args, _out| {
             let ([src, dst], []) = unpack!(strand, args, 2, 0)?;
-            let src = PathOrStr::new(strand, global, &src)?;
-            let dst = PathOrStr::new(strand, global, &dst)?;
-            symlink_dir(strand, global, src, dst).await
+            let src = path_from_value(strand, global, &src)?;
+            let dst = path_from_value(strand, global, &dst)?;
+            symlink_dir(strand, global, &src, &dst).await
         })
         .function("symlink_file", async move |strand, args, _out| {
             let ([src, dst], []) = unpack!(strand, args, 2, 0)?;
-            let src = PathOrStr::new(strand, global, &src)?;
-            let dst = PathOrStr::new(strand, global, &dst)?;
-            symlink_file(strand, global, src, dst).await
+            let src = path_from_value(strand, global, &src)?;
+            let dst = path_from_value(strand, global, &dst)?;
+            symlink_file(strand, global, &src, &dst).await
         })
         .function("entries", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
-            let path = PathOrStr::new(strand, global, &path)?;
+            let path = path_from_value(strand, global, &path)?;
             entries(strand, global, path, out).await
         })
         .function("glob", async move |strand, args, out| {
@@ -947,14 +950,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         })
         .function("create_dir", async move |strand, args, _out| {
             let ([path], [all]) = unpack!(strand, args, 1, 0, all = None)?;
-            let path = PathOrStr::new(strand, global, &path)?;
+            let path = path_from_value(strand, global, &path)?;
             let all = match all {
                 Some(v) => v
                     .as_bool(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
                 None => false,
             };
-            create_dir(strand, global, path, all).await
+            create_dir(strand, global, &path, all).await
         })
         .function("remove_dir", async move |strand, args, _out| {
             let ([], [all, ignore], paths) =
@@ -974,8 +977,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             for path in paths {
                 match path {
                     Arg::Pos(path) => {
-                        let path = PathOrStr::new(strand, global, &path)?;
-                        remove_dir(strand, global, path, all, ignore).await?;
+                        let path = path_from_value(strand, global, &path)?;
+                        remove_dir(strand, global, &path, all, ignore).await?;
                     }
                     Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
                 }
@@ -984,12 +987,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         })
         .function("chmod", async move |strand, args, _out| {
             let ([path, mode], []) = unpack!(strand, args, 2, 0)?;
-            let path = PathOrStr::new(strand, global, &path)?;
+            let path = path_from_value(strand, global, &path)?;
             let mode = mode
                 .as_i64(strand)
                 .ok_or_else(|| Error::type_error(strand, "expected int"))?
                 as u32;
-            chmod(strand, global, path, mode).await
+            chmod(strand, global, &path, mode).await
         })
         .function("set_timestamps", async move |strand, args, _out| {
             let ([path], [modified, accessed, created]) = unpack!(
@@ -1001,18 +1004,18 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 accessed = None,
                 created = None
             )?;
-            let path = PathOrStr::new(strand, global, &path)?;
-            set_timestamps(strand, global, path, modified, accessed, created).await
+            let path = path_from_value(strand, global, &path)?;
+            set_timestamps(strand, global, &path, modified, accessed, created).await
         });
     #[cfg(unix)]
     let module = module.function("chown", async move |strand, args, _out| {
         let (path, user, group, follow) = parse_chown_common(strand, global, args, None)?;
-        chown(strand, global, path, user, group, follow).await
+        chown(strand, global, &path, user, group, follow).await
     });
     module
         .function("normal", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
-            let path = PathOrStr::new(strand, global, &path)?;
+            let path = path_from_value(strand, global, &path)?;
             let normalized = normalize_path(&path);
             global.types.path.create_with_annex(
                 strand,
@@ -1024,14 +1027,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         })
         .function("absolute", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
-            let path = PathOrStr::new(strand, global, &path)?;
+            let path = path_from_value(strand, global, &path)?;
             path_absolute(strand, global, &path, out)
         })
         .function("relative", async move |strand, args, out| {
             let ([path], [base]) = unpack!(strand, args, 1, 1)?;
-            let path = PathOrStr::new(strand, global, &path)?;
+            let path = path_from_value(strand, global, &path)?;
             let base_path = match base {
-                Some(slot) => PathOrStr::new(strand, global, &slot)?.to_path_buf(),
+                Some(slot) => path_from_value(strand, global, &slot)?.to_path_buf(),
                 None => {
                     let local = global.local.get(strand);
                     local.cwd().as_ref().to_path_buf()
@@ -1051,7 +1054,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         })
         .function("canonical", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
-            let path = PathOrStr::new(strand, global, &path)?;
+            let path = path_from_value(strand, global, &path)?;
             path_canonical(strand, global, &path, out).await
         })
         .function_with_slots(
@@ -1060,7 +1063,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 let ([callable], [parent]) = unpack!(strand, args, 1, 0, parent = None)?;
                 let parent = match parent {
                     Some(p) => {
-                        let p = PathOrStr::new(strand, global, &p)?;
+                        let p = path_from_value(strand, global, &p)?;
                         let local = global.local.get(strand);
                         local.cwd().as_ref().join(&p)
                     }
@@ -1076,7 +1079,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                         }
                     }
                 };
-                let temp_path = create_temp_dir(strand, global, parent)
+                let temp_path = create_temp_dir(strand, global, &parent)
                     .await
                     .into_sys(strand)?;
                 global.types.path.create_with_annex(

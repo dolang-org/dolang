@@ -21,7 +21,7 @@ use crate::{
     },
     strand::{Strand, StrandInner, StrandMut},
     sym::Sym,
-    value::{Case, Input, Output, Value},
+    value::{Case, Input, Output, Value, view::View},
     vm::Vm,
 };
 
@@ -584,14 +584,16 @@ impl<'v, 's> Error<'v, 's> {
     /// Create error: unexpected key item.
     pub fn unexpected_key(strand: &mut Strand<'v, 's>, key: impl Input<'v>) -> Self {
         let value = Value::from_input(strand, key);
-        let str = if let Some(sym) = value.as_sym(strand) {
-            sym.as_str(strand).to_string()
-        } else if let Some(str) = value.as_str(strand) {
-            format!("{:?}", str)
-        } else if let Case::Prim(prim) = value.case() {
-            format!("{:?}", prim)
-        } else {
-            "<unknown>".to_string()
+        let str = match value.view(strand.vm()) {
+            View::Sym(sym) => sym.as_str(strand).to_string(),
+            View::Str(str) => strand.access(|access| format!("{:?}", str.as_str(access))),
+            _ => {
+                if let Case::Prim(prim) = value.case() {
+                    format!("{:?}", prim)
+                } else {
+                    "<unknown>".to_string()
+                }
+            }
         };
         Self::new_info(strand.inner, Boxed::UnexpectedKey(str.into()))
     }
@@ -604,14 +606,16 @@ impl<'v, 's> Error<'v, 's> {
     /// Create error: missing key argument.
     pub fn missing_key(strand: &mut Strand<'v, 's>, key: impl Input<'v>) -> Self {
         let value = Value::from_input(strand, key);
-        let str = if let Some(sym) = value.as_sym(strand) {
-            sym.as_str(strand).to_string()
-        } else if let Some(str) = value.as_str(strand) {
-            format!("{:?}", str)
-        } else if let Case::Prim(prim) = value.case() {
-            format!("{:?}", prim)
-        } else {
-            "<unknown>".to_string()
+        let str = match value.view(strand.vm()) {
+            View::Sym(sym) => sym.as_str(strand).to_string(),
+            View::Str(str) => strand.access(|access| format!("{:?}", str.as_str(access))),
+            _ => {
+                if let Case::Prim(prim) = value.case() {
+                    format!("{:?}", prim)
+                } else {
+                    "<unknown>".to_string()
+                }
+            }
         };
         Self::new_info(strand.inner, Boxed::MissingKey(str.into()))
     }

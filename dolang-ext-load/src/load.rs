@@ -41,7 +41,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
                 bytecode
                     .as_bin(strand)
                     .ok_or_else(|| Error::type_error(strand, "bytecode: expected bin"))?
-                    .to_owned(),
+                    .to_vec(),
             );
             bytecode.run(strand, out).await
         })
@@ -87,7 +87,8 @@ impl<'v> Object<'v> for ImportHandler {
             "unregister",
             async move |this, strand, args, _out, [tmp]| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                method!(strand, &this.annex().global.handlers, delete, tmp, this).await?;
+                let annex = this.annex();
+                method!(strand, &annex.global.handlers, delete, tmp, this).await?;
                 Ok(())
             },
         )

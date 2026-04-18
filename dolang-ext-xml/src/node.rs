@@ -37,15 +37,15 @@ impl<'v> Object<'v> for Node {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([tag], []) = unpack!(strand, args, 1, 0)?;
-        let tag_str = tag
+        let tag = tag
             .as_str(strand)
             .ok_or_else(|| Error::type_error(strand, "expected str"))?
-            .to_owned();
+            .to_string();
         let state = strand.state::<Global<'v>>();
         this.create_with_annex(
             strand,
             Node {
-                tag: tag_str,
+                tag,
                 attrs: Vec::new(),
             },
             NodeAnnex { global: state },
@@ -75,7 +75,10 @@ impl<'v> Object<'v> for Node {
             .as_str(strand)
             .ok_or_else(|| Error::type_error(strand, "index: expected str"))?;
         let borrow = this.borrow(strand)?;
-        if let Some((_, val)) = borrow.attrs.iter().find(|(k, _)| k == key) {
+        if let Some((_, val)) = strand.access(|x| {
+            let key = key.as_str(x);
+            borrow.attrs.iter().find(|(k, _)| k == key)
+        }) {
             Output::set(strand, out, val.as_str());
             Ok(())
         } else {
@@ -92,11 +95,11 @@ impl<'v> Object<'v> for Node {
         let key = index
             .as_str(strand)
             .ok_or_else(|| Error::type_error(strand, "index: expected str"))?
-            .to_owned();
+            .to_string();
         let val = value
             .as_str(strand)
             .ok_or_else(|| Error::type_error(strand, "value: expected str"))?
-            .to_owned();
+            .to_string();
         let mut borrow = this.borrow_mut(strand)?;
         if let Some(pair) = borrow.attrs.iter_mut().find(|(k, _)| k == &key) {
             pair.1 = val;
@@ -117,7 +120,7 @@ impl<'v> Object<'v> for Node {
                 this.borrow_mut(strand)?.tag = value
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "tag: expected str"))?
-                    .to_owned();
+                    .to_string();
                 Ok(())
             })
             .method("attrs", async move |this, strand, args, out| {

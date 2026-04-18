@@ -186,7 +186,8 @@ impl<'v> Object<'v> for Env<'v> {
     ) -> Result<'v, 's, ()> {
         let me = this.borrow(strand)?;
         let env = me.global.local.get(strand).env();
-        if let Some(value) = env.get(index.as_str(strand).ok_or_else(|| Error::index(strand))?) {
+        let index = index.as_str(strand).ok_or_else(|| Error::index(strand))?;
+        if let Some(value) = strand.access(|x| env.get(index.as_str(x))) {
             Output::set(strand, out, value.as_ref());
             Ok(())
         } else {
@@ -202,7 +203,8 @@ impl<'v> Object<'v> for Env<'v> {
                 unpack!(strand, args, 1, 0, else_sym = None, default = None)?;
             let borrow = this.borrow(strand)?;
             let env = borrow.global.local.get(strand).env();
-            if let Some(value) = env.get(key.as_str(strand).ok_or_else(|| Error::index(strand))?) {
+            let key = key.as_str(strand).ok_or_else(|| Error::index(strand))?;
+            if let Some(value) = strand.access(|x| env.get(key.as_str(x))) {
                 Output::set(strand, out, value.as_ref());
                 return Ok(());
             }

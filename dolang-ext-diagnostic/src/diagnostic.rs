@@ -8,7 +8,9 @@ use anstyle::{AnsiColor, Style};
 use console::Term;
 use dolang::{
     compile::{self, Diag},
-    runtime::{Error, Frame, Output, Result, Slot, Strand, Value, unpack, vm::Builder},
+    runtime::{
+        Error, Frame, Output, Result, Slot, Strand, Value, unpack, value::View, vm::Builder,
+    },
 };
 
 #[derive(Clone, Copy)]
@@ -295,12 +297,24 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     &diag,
                     Slot::reborrow(&mut source),
                 )?;
-                let source = source
-                    .as_u8_slice(strand)
-                    .ok_or_else(|| Error::type_error(strand, "source: expected str or bin"))?;
-                let source = std::str::from_utf8(source)
-                    .map_err(|_| Error::type_error(strand, "source: expected valid utf-8"))?;
-                print_compile_diag_stderr(path, source, diag, color);
+                let source = source.view(strand.vm());
+                match source {
+                    View::Str(_) => (),
+                    View::Bin(b) => {
+                        if strand.access(|x| std::str::from_utf8(b.as_slice(x)).is_err()) {
+                            return Err(Error::type_error(strand, "source: expected valid utf-8"));
+                        }
+                    }
+                    _ => return Err(Error::type_error(strand, "source: expected `str` or `bin`")),
+                }
+                strand.access(|x| {
+                    let source = match source {
+                        View::Str(s) => s.as_str(x),
+                        View::Bin(b) => std::str::from_utf8(b.as_slice(x)).unwrap(),
+                        _ => unreachable!(),
+                    };
+                    print_compile_diag_stderr(&path, source, &diag, color);
+                });
                 Ok(())
             })
         })
@@ -313,12 +327,24 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     &diag,
                     Slot::reborrow(&mut source),
                 )?;
-                let source = source
-                    .as_u8_slice(strand)
-                    .ok_or_else(|| Error::type_error(strand, "source: expected str or bin"))?;
-                let source = std::str::from_utf8(source)
-                    .map_err(|_| Error::type_error(strand, "source: expected valid utf-8"))?;
-                let rendered = render_compile_diag(path, source, diag, color);
+                let source = source.view(strand.vm());
+                match source {
+                    View::Str(_) => (),
+                    View::Bin(b) => {
+                        if strand.access(|x| std::str::from_utf8(b.as_slice(x)).is_err()) {
+                            return Err(Error::type_error(strand, "source: expected valid utf-8"));
+                        }
+                    }
+                    _ => return Err(Error::type_error(strand, "source: expected `str` or `bin`")),
+                }
+                let rendered = strand.access(|x| {
+                    let source = match source {
+                        View::Str(s) => s.as_str(x),
+                        View::Bin(b) => std::str::from_utf8(b.as_slice(x)).unwrap(),
+                        _ => unreachable!(),
+                    };
+                    render_compile_diag(&path, source, &diag, color)
+                });
                 Output::set(strand, out, rendered.as_str());
                 Ok(())
             })

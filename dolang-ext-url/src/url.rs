@@ -8,7 +8,7 @@ use dolang::runtime::{
     error::ResultExt,
     object::TypeBuilder,
     unpack,
-    value::{Nil, TypeObject},
+    value::{Nil, Str, TypeObject},
     vm::Builder,
 };
 use percent_encoding::percent_decode_str;
@@ -24,7 +24,7 @@ pub(crate) struct UrlAnnex<'v> {
 
 enum UrlOrStr<'v, 'a> {
     Url(Instance<'v, 'a, Url>),
-    Str(&'a str),
+    Str(Str<'v, 'a>),
 }
 
 impl<'v, 'a> UrlOrStr<'v, 'a> {
@@ -45,7 +45,9 @@ impl<'v, 'a> UrlOrStr<'v, 'a> {
     fn to_url<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, url::Url> {
         match self {
             Self::Url(url) => Ok(url.annex().inner.clone()),
-            Self::Str(str) => url::Url::parse(str).into_do(strand),
+            Self::Str(str) => strand
+                .access(|x| url::Url::parse(str.as_str(x)))
+                .into_do(strand),
         }
     }
 }
@@ -169,7 +171,8 @@ impl<'v> Object<'v> for Url {
                 Ok(())
             })
             .get("username", |this, strand, out| {
-                let username = this.annex().inner.username();
+                let annex = this.annex();
+                let username = annex.inner.username();
                 if username.is_empty() {
                     Output::set(strand, out, Nil);
                 } else {
@@ -254,11 +257,10 @@ impl<'v> Object<'v> for Url {
                 if query.is_nil() {
                     url.set_query(None);
                 } else {
-                    url.set_query(Some(
-                        query
-                            .as_str(strand)
-                            .ok_or_else(|| Error::type_error(strand, "expected str or nil"))?,
-                    ));
+                    let query = query
+                        .as_str(strand)
+                        .ok_or_else(|| Error::type_error(strand, "expected str or nil"))?;
+                    strand.access(|x| url.set_query(Some(query.as_str(x))))
                 }
                 create_url_with_global(this.annex().global, strand, url, out);
                 Ok(())
@@ -269,11 +271,10 @@ impl<'v> Object<'v> for Url {
                 if fragment.is_nil() {
                     url.set_fragment(None);
                 } else {
-                    url.set_fragment(Some(
-                        fragment
-                            .as_str(strand)
-                            .ok_or_else(|| Error::type_error(strand, "expected str or nil"))?,
-                    ));
+                    let fragment = fragment
+                        .as_str(strand)
+                        .ok_or_else(|| Error::type_error(strand, "expected str or nil"))?;
+                    strand.access(|x| url.set_fragment(Some(fragment.as_str(x))));
                 }
                 create_url_with_global(this.annex().global, strand, url, out);
                 Ok(())
@@ -340,14 +341,15 @@ impl<'v> Object<'v> for Url {
     ) -> Result<'v, 's, ()> {
         let segment = other
             .as_str(strand)
-            .ok_or_else(|| Error::not_supported(strand))?;
+            .ok_or_else(|| Error::type_error(strand, "expected `str`"))?
+            .to_string();
         let mut url = this.annex().inner.clone();
         if segment.starts_with('/') {
-            url = url.join(segment).into_do(strand)?;
+            url = url.join(&segment).into_do(strand)?;
         } else {
             url.path_segments_mut()
                 .map_err(|_| Error::runtime(strand, "URL cannot be extended with path segments"))?
-                .push(segment);
+                .push(&segment);
         }
         create_url_with_global(this.annex().global, strand, url, out);
         Ok(())

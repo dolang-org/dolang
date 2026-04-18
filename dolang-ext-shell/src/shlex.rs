@@ -8,16 +8,23 @@ use std::mem;
 use dolang::{
     compile::Compiler,
     runtime::{
-        Error, Instance, Object, Output, Result, Slot, Strand, error::ResultExt, object::Mut,
-        object::TypeBuilder, unpack, value::TypeObject, vm::Builder,
+        Error, Instance, Object, Output, Result, Slot, Strand,
+        error::ResultExt,
+        object::{Mut, TypeBuilder},
+        unpack,
+        value::{PinStr, TypeObject},
+        vm::Builder,
     },
 };
 use shlex::Shlex;
 
 // Transmuted to `'static` lifetime with the string kept alive by a GC slot
-pub(crate) struct Iter(Shlex<'static>);
+pub(crate) struct Iter<'v> {
+    shlex: Shlex<'static>,
+    _pin: PinStr<'v, 'static>,
+}
 
-impl<'v> Object<'v> for Iter {
+impl<'v> Object<'v> for Iter<'v> {
     const NAME: &'v str = "Iter";
     const MODULE: &'v str = "shlex";
     // Slot 0: string being iterated
@@ -47,14 +54,14 @@ impl<'v> Object<'v> for Iter {
         let mut borrow = this.borrow_mut(strand)?;
 
         // Get the next token
-        match borrow.0.next() {
+        match borrow.shlex.next() {
             Some(token) => {
                 Output::set(strand, out, token.as_str());
                 Ok(true)
             }
             None => {
                 // Check if there was an error
-                if borrow.0.had_error {
+                if borrow.shlex.had_error {
                     return Err(Error::runtime(strand, "parse error"));
                 }
                 Ok(false)
@@ -88,8 +95,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>) {
                 .ok_or_else(|| Error::type_error(strand, "expected `str`"))?;
 
             // SAFETY: the string will be kept alive as long as this iterator object exists.
-            let shlex = unsafe { mem::transmute::<Shlex<'_>, Shlex<'static>>(Shlex::new(s)) };
-            iter.create(strand, Iter(shlex), &mut out);
+            let pin = unsafe { mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(s.pin()) };
+            let shlex = Shlex::new(unsafe { mem::transmute::<&str, &'static str>(&*pin) });
+            iter.create(strand, Iter { shlex, _pin: pin }, &mut out);
             Output::set(
                 strand,
                 Mut::slot_mut::<0>(&mut iter.downcast(&out).unwrap().borrow_mut_unwrap()),

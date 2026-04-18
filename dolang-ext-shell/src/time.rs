@@ -272,8 +272,9 @@ impl<'v> Object<'v> for DateTime {
                 let ([text], []) = unpack!(strand, args, 1, 0)?;
                 let text = text
                     .as_str(strand)
-                    .ok_or_else(|| Error::type_error(strand, "parse_rfc3339: expected string"))?;
-                let datetime = OffsetDateTime::parse(text, &Rfc3339)
+                    .ok_or_else(|| Error::type_error(strand, "parse_rfc3339: expected string"))?
+                    .to_string();
+                let datetime = OffsetDateTime::parse(&text, &Rfc3339)
                     .map_err(|err| Error::runtime(strand, err))?;
                 let nanos = datetime.unix_timestamp_nanos();
                 let secs = nanos.div_euclid(NANOS_PER_SEC_I128);
@@ -286,7 +287,7 @@ impl<'v> Object<'v> for DateTime {
             })
             .method("rfc3339", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let formatted = format_datetime_rfc3339(strand, this.annex())?;
+                let formatted = format_datetime_rfc3339(strand, &this.annex())?;
                 Output::set(strand, out, formatted.as_str());
                 Ok(())
             })
@@ -297,7 +298,7 @@ impl<'v> Object<'v> for DateTime {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        let formatted = format_datetime_rfc3339(strand, this.annex())?;
+        let formatted = format_datetime_rfc3339(strand, &this.annex())?;
         write!(w, "{}", formatted).into_do(strand)
     }
 

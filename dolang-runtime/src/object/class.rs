@@ -463,7 +463,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 Some(ClassEntry::Method(v)) => strand.with_slots_sync(|strand, [mut result]| {
                     strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
                     let result = result
-                        .as_str(strand)
+                        .as_str_raw(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected str result"))?;
                     write!(w, "{result}").into_do(strand)?;
                     Ok(false)
@@ -495,7 +495,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut result]| {
                 strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
                 let result = result
-                    .as_str(strand)
+                    .as_str_raw(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected str result"))?;
                 write!(w, "{result}").into_do(strand)
             }),
@@ -534,7 +534,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     strand.with_slots_sync(move |strand, [mut result]| {
                         strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
                         let result = result
-                            .as_str(strand)
+                            .as_str_raw(strand)
                             .ok_or_else(|| Error::type_error(strand, "expected str result"))?;
                         write!(w, "{result}").into_do(strand)?;
                         Ok(false)

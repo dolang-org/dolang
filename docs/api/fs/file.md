@@ -12,9 +12,9 @@ Writes data to the file.
 
 **Parameters:**
 
-| Name   | Type | Description                                                                                                                                      |
-| ------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `data` |      | Data to write. Strings are written as UTF-8 text. Binary data (for example `b"..."`) is written as bytes. Other values are converted to strings. |
+| Name   | Type         | Description                                       |
+| ------ | ------------ | ------------------------------------------------- |
+| `data` | `str`\|`bin` | Data to write. Strings are written as UTF-8 text. |
 
 **Returns:** [`int`](../std/index.md) (number of bytes written)
 

@@ -41,7 +41,7 @@ async fn value_to_pattern<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Result<'v, 's, Vec<char>> {
-    if let Some(str) = value.as_str(strand) {
+    if let Some(str) = value.as_str_raw(strand) {
         return Ok(str.chars().collect());
     }
 
@@ -51,7 +51,7 @@ async fn value_to_pattern<'v, 's>(
             value.iter(strand, &mut input).await?;
             while input.next(strand, &mut elem).await? {
                 acc.extend(
-                    elem.as_str(strand)
+                    elem.as_str_raw(strand)
                         .ok_or_else(|| Error::type_error(strand, "invalid pattern: not a string"))?
                         .chars(),
                 );
@@ -149,9 +149,10 @@ impl<'v> Protocol<'v> for str {
             sym::STARTS_WITH => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
                 let input =
-                    this.get().starts_with(prefix.as_str(strand).ok_or_else(|| {
-                        Error::type_error(strand, "str.starts_with: not a string")
-                    })?);
+                    this.get()
+                        .starts_with(prefix.as_str_raw(strand).ok_or_else(|| {
+                            Error::type_error(strand, "str.starts_with: not a string")
+                        })?);
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -159,7 +160,7 @@ impl<'v> Protocol<'v> for str {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.get();
                 let input = borrow
-                    .strip_prefix(prefix.as_str(strand).ok_or_else(|| {
+                    .strip_prefix(prefix.as_str_raw(strand).ok_or_else(|| {
                         Error::type_error(strand, "str.without_prefix: not a string")
                     })?)
                     .unwrap_or(borrow);
@@ -170,7 +171,7 @@ impl<'v> Protocol<'v> for str {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
                 let input = this.get().ends_with(
                     suffix
-                        .as_str(strand)
+                        .as_str_raw(strand)
                         .ok_or_else(|| Error::type_error(strand, "str.ends_with: not a string"))?,
                 );
                 Output::set(strand, out, input);
@@ -180,7 +181,7 @@ impl<'v> Protocol<'v> for str {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.get();
                 let input = borrow
-                    .strip_suffix(suffix.as_str(strand).ok_or_else(|| {
+                    .strip_suffix(suffix.as_str_raw(strand).ok_or_else(|| {
                         Error::type_error(strand, "str.without_suffix: not a string")
                     })?)
                     .unwrap_or(borrow);
@@ -354,10 +355,10 @@ impl<'v> Protocol<'v> for str {
             sym::REPLACE => {
                 let ([from, to], []) = unpack!(strand, args, 2, 0)?;
                 let from = from
-                    .as_str(strand)
+                    .as_str_raw(strand)
                     .ok_or_else(|| Error::type_error(strand, "old value is not a string"))?;
                 let to = to
-                    .as_str(strand)
+                    .as_str_raw(strand)
                     .ok_or_else(|| Error::type_error(strand, "new value is not a string"))?;
                 Output::set(strand, out, me.replace(from, to).as_str());
                 Ok(())
@@ -379,7 +380,7 @@ impl<'v> Protocol<'v> for str {
                 let ([needle], []) = unpack!(strand, args, 1, 0)?;
                 let input = this.get().contains(
                     needle
-                        .as_str(strand)
+                        .as_str_raw(strand)
                         .ok_or_else(|| Error::type_error(strand, "not a string"))?,
                 );
                 Output::set(strand, out, input);

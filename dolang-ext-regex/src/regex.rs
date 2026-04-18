@@ -1,11 +1,11 @@
-use std::{fmt, mem};
+use std::{borrow::Cow, fmt, mem};
 
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value, call,
     error::ResultExt,
     object::{Mut, Ref, TypeBuilder, Unpack, UnpackItem},
     unpack,
-    value::{Nil, TypeObject},
+    value::{Nil, PinStr, TypeObject},
     vm::Builder,
 };
 use regex as rx;
@@ -41,9 +41,10 @@ impl<'v> Object<'v> for Regex {
     ) -> Result<'v, 's, ()> {
         let ([pattern], []) = unpack!(strand, args, 1, 0)?;
         let pattern = pattern
-            .as_str(strand)
-            .ok_or_else(|| Error::type_error(strand, "pattern: expected str"))?;
-        let regex = rx::Regex::new(pattern).into_do(strand)?;
+            .as_str(strand.vm())
+            .ok_or_else(|| Error::type_error(strand, "pattern: expected str"))?
+            .pin();
+        let regex = rx::Regex::new(&pattern).into_do(strand)?;
         let global = strand.state::<Global<'v>>();
         this.create_with_annex(strand, Regex, RegexAnnex { global, regex }, out);
         Ok(())
@@ -54,21 +55,26 @@ impl<'v> Object<'v> for Regex {
         builder
             .method("match", async move |this, strand, args, mut out| {
                 let annex = this.annex();
-                let ([haystack], []) = unpack!(strand, args, 1, 0)?;
-                match annex.regex.captures(
-                    haystack
-                        .as_str(strand)
-                        .ok_or_else(|| Error::type_error(strand, "expected `str`"))?,
-                ) {
+                let ([haystack_value], []) = unpack!(strand, args, 1, 0)?;
+                let haystack = haystack_value
+                    .as_str(strand.vm())
+                    .ok_or_else(|| Error::type_error(strand, "expected `str`"))?.pin();
+                match annex.regex.captures(&haystack) {
                     Some(caps) => {
                         // SAFETY: We transmute the captures to have 'static lifetime.
-                        // The haystack GC object is stored in slot 0 to keep it alive.
+                        // The haystack GC object is stored in slot 0 to keep it alive, and
+                        // the transmuted pin guard is owned by the Captures object.
                         annex.global.types.captures.create_with_annex(
                             strand,
                             Captures,
                             CapturesAnnex {
                                 caps: unsafe {
                                     mem::transmute::<rx::Captures<'_>, rx::Captures<'static>>(caps)
+                                },
+                                _haystack: unsafe {
+                                    mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(
+                                        haystack,
+                                    )
                                 },
                                 global: annex.global,
                             },
@@ -83,7 +89,7 @@ impl<'v> Object<'v> for Regex {
                             .downcast(&out)
                             .unwrap()
                             .borrow_mut_unwrap();
-                        Output::set(strand, Mut::slot_mut::<0>(&mut captures), haystack);
+                        Output::set(strand, Mut::slot_mut::<0>(&mut captures), haystack_value);
                     }
                     None => {
                         Output::set(strand, out, Nil);
@@ -93,16 +99,16 @@ impl<'v> Object<'v> for Regex {
             })
             .method("find", async move |this, strand, args, mut out| {
                 let annex = this.annex();
-                let ([haystack], []) = unpack!(strand, args, 1, 0)?;
+                let ([haystack_value], []) = unpack!(strand, args, 1, 0)?;
+                let haystack = haystack_value
+                    .as_str(strand.vm())
+                    .ok_or_else(|| Error::type_error(strand, "expected `str`"))?.pin();
                 // Create the captures iterator
-                let iter = annex.regex.captures_iter(
-                    haystack
-                        .as_str(strand)
-                        .ok_or_else(|| Error::type_error(strand, "expected `str`"))?,
-                );
+                let iter = annex.regex.captures_iter(&haystack);
 
                 // SAFETY: We transmute the iterator to have 'static lifetime.
-                // The regex is stored in slot 0 and haystack in slot 1 to keep them alive.
+                // The regex is stored in slot 0, haystack in slot 1, and the pin guard
+                // is owned by the Find object.
                 let iter = unsafe {
                     mem::transmute::<rx::CaptureMatches<'_, '_>, rx::CaptureMatches<'static, 'static>>(
                         iter,
@@ -111,7 +117,12 @@ impl<'v> Object<'v> for Regex {
 
                 annex.global.types.find.create_with_annex(
                     strand,
-                    Find { iter },
+                    Find {
+                        iter,
+                        _haystack: unsafe {
+                            mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(haystack)
+                        },
+                    },
                     FindAnnex {
                         global: annex.global,
                     },
@@ -127,7 +138,7 @@ impl<'v> Object<'v> for Regex {
                     .unwrap()
                     .borrow_mut_unwrap();
                 Output::set(strand, Mut::slot_mut::<0>(&mut iter), this);
-                Output::set(strand, Mut::slot_mut::<1>(&mut iter), haystack);
+                Output::set(strand, Mut::slot_mut::<1>(&mut iter), haystack_value);
                 Ok(())
             })
             .method_with_slots(
@@ -135,11 +146,12 @@ impl<'v> Object<'v> for Regex {
                 async move |this, strand, args, out, [mut caps_slot, mut cb_out]| {
                     let annex = this.annex();
 
-                    let ([haystack, replacement], [limit]) =
+                    let ([haystack_value, replacement], [limit]) =
                         unpack!(strand, args, 2, 0, limit_sym = None)?;
-                    let hay = haystack
-                        .as_str(strand)
+                    let haystack = haystack_value
+                        .as_str(strand.vm())
                         .ok_or_else(|| Error::type_error(strand, "expected `str`"))?;
+                    let haystack = haystack.pin();
                     let limit_val = limit
                         .map(|l| {
                             l.as_i64(strand)
@@ -150,9 +162,9 @@ impl<'v> Object<'v> for Regex {
                     if let Some(rep) = replacement.as_str(strand) {
                         // String replacement: delegate to regex crate
                         let result = match limit_val {
-                            None => annex.regex.replace_all(hay, rep),
-                            Some(0) => std::borrow::Cow::Borrowed(hay),
-                            Some(n) if n > 0 => annex.regex.replacen(hay, n as usize, rep),
+                            None => strand.access(|x| annex.regex.replace_all(&haystack, rep.as_str(x))),
+                            Some(0) => Cow::Borrowed(&*haystack),
+                            Some(n) if n > 0 => strand.access(|x| annex.regex.replacen(&haystack, n as usize, rep.as_str(x))),
                             Some(_) => {
                                 return Err(Error::value(strand, "limit must be >= 0"))
                             }
@@ -170,12 +182,17 @@ impl<'v> Object<'v> for Regex {
                         };
                         let mut result = String::new();
                         let mut last_end = 0;
-                        for (count, caps) in annex.regex.captures_iter(hay).enumerate() {
+                        for (count, caps) in annex.regex.captures_iter(&haystack).enumerate() {
                             if count >= max {
                                 break;
                             }
                             let m = caps.get(0).unwrap();
-                            result.push_str(&hay[last_end..m.start()]);
+                            result.push_str(&haystack[last_end..m.start()]);
+                            let callback_haystack = unsafe {
+                                mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(
+                                    haystack.clone()
+                                )
+                            };
 
                             // Create Captures object for the callback
                             annex.global.types.captures.create_with_annex(
@@ -187,6 +204,7 @@ impl<'v> Object<'v> for Regex {
                                             caps,
                                         )
                                     },
+                                    _haystack: callback_haystack,
                                     global: annex.global,
                                 },
                                 &mut caps_slot,
@@ -202,14 +220,14 @@ impl<'v> Object<'v> for Regex {
                             Output::set(
                                 strand,
                                 Mut::slot_mut::<0>(&mut captures_mut),
-                                &haystack,
+                                &haystack_value,
                             );
                             drop(captures_mut);
 
                             // Call the replacement function with the Captures
                             call!(strand, &replacement, &mut cb_out, &caps_slot).await?;
 
-                            let rep_str = cb_out
+                            let rep = cb_out
                                 .as_str(strand)
                                 .ok_or_else(|| {
                                     Error::type_error(
@@ -217,11 +235,11 @@ impl<'v> Object<'v> for Regex {
                                         "replacement callback must return `str`",
                                     )
                                 })?;
-                            result.push_str(rep_str);
+                            strand.access(|x| result.push_str(rep.as_str(x)));
 
                             last_end = m.end();
                         }
-                        result.push_str(&hay[last_end..]);
+                        result.push_str(&haystack[last_end..]);
                         Output::set(strand, out, result.as_str());
                     }
                     Ok(())
@@ -229,10 +247,11 @@ impl<'v> Object<'v> for Regex {
             )
             .method("split", async move |this, strand, args, mut out| {
                 let annex = this.annex();
-                let ([haystack], [limit]) = unpack!(strand, args, 1, 0, limit_sym = None)?;
-                let hay = haystack
-                    .as_str(strand)
+                let ([haystack_value], [limit]) = unpack!(strand, args, 1, 0, limit_sym = None)?;
+                let haystack = haystack_value
+                    .as_str(strand.vm())
                     .ok_or_else(|| Error::type_error(strand, "expected `str`"))?;
+                let haystack = haystack.pin();
                 let limit_i64 = limit
                     .map(|l| {
                         l.as_i64(strand)
@@ -244,27 +263,26 @@ impl<'v> Object<'v> for Regex {
                     Some(l) if l < 0 => {
                         // Negative limit: N splits from the rear, yield forward
                         let n = l.unsigned_abs() as usize;
-                        let matches: Vec<rx::Match<'_>> =
-                            annex.regex.find_iter(hay).collect();
+                        let matches: Vec<_> = annex.regex.find_iter(&haystack).collect();
                         let skip = matches.len().saturating_sub(n);
                         let splits = &matches[skip..];
                         let mut segs = Vec::with_capacity(splits.len() + 1);
                         let mut pos = 0;
                         // First segment: everything before the first kept split
                         if let Some(first) = splits.first() {
-                            segs.push(hay[..first.start()].to_string());
+                            segs.push(haystack[..first.start()].to_string());
                             pos = first.end();
                         }
                         // Remaining segments between kept splits
                         for m in splits.iter().skip(1) {
-                            segs.push(hay[pos..m.start()].to_string());
+                            segs.push(haystack[pos..m.start()].to_string());
                             pos = m.end();
                         }
                         // Final segment: everything after last split
                         if !splits.is_empty() {
-                            segs.push(hay[pos..].to_string());
+                            segs.push(haystack[pos..].to_string());
                         } else {
-                            segs.push(hay.to_string());
+                            segs.push(haystack.to_string());
                         }
                         RegexSplitInner::Buffered {
                             segments: segs,
@@ -281,7 +299,7 @@ impl<'v> Object<'v> for Regex {
                             .unwrap_or(usize::MAX);
                         if limit_usize == usize::MAX {
                             // Unlimited: use rx::Regex::split
-                            let iter = annex.regex.split(hay);
+                            let iter = annex.regex.split(&haystack);
                             // SAFETY: transmute to 'static; haystack kept alive in slot 0
                             let iter = unsafe {
                                 mem::transmute::<rx::Split<'_, '_>, rx::Split<'static, 'static>>(
@@ -291,7 +309,7 @@ impl<'v> Object<'v> for Regex {
                             RegexSplitInner::Lazy(iter)
                         } else {
                             // Limited: use rx::Regex::splitn
-                            let iter = annex.regex.splitn(hay, limit_usize + 1);
+                            let iter = annex.regex.splitn(&haystack, limit_usize + 1);
                             // SAFETY: transmute to 'static; haystack kept alive in slot 0
                             let iter = unsafe {
                                 mem::transmute::<
@@ -306,7 +324,12 @@ impl<'v> Object<'v> for Regex {
 
                 annex.global.types.split.create_with_annex(
                     strand,
-                    RegexSplit { inner },
+                    RegexSplit {
+                        inner,
+                        _haystack: unsafe {
+                            mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(haystack)
+                        },
+                    },
                     RegexSplitAnnex,
                     &mut out,
                 );
@@ -320,15 +343,16 @@ impl<'v> Object<'v> for Regex {
                     .unwrap()
                     .borrow_mut_unwrap();
                 Output::set(strand, Mut::slot_mut::<0>(&mut borrow), this);
-                Output::set(strand, Mut::slot_mut::<1>(&mut borrow), haystack);
+                Output::set(strand, Mut::slot_mut::<1>(&mut borrow), haystack_value);
                 Ok(())
             })
             .method("rsplit", async move |this, strand, args, mut out| {
                 let annex = this.annex();
-                let ([haystack], [limit]) = unpack!(strand, args, 1, 0, limit_sym = None)?;
-                let hay = haystack
-                    .as_str(strand)
+                let ([haystack_value], [limit]) = unpack!(strand, args, 1, 0, limit_sym = None)?;
+                let haystack = haystack_value
+                    .as_str(strand.vm())
                     .ok_or_else(|| Error::type_error(strand, "expected `str`"))?;
+                let haystack = haystack.pin();
                 let limit_i64 = limit
                     .map(|l| {
                         l.as_i64(strand)
@@ -337,9 +361,8 @@ impl<'v> Object<'v> for Regex {
                     .transpose()?;
 
                 let inner = {
-                    let matches: Vec<rx::Match<'_>> =
-                        annex.regex.find_iter(hay).collect();
-                    let selected: &[rx::Match<'_>] = match limit_i64 {
+                    let matches: Vec<_> = annex.regex.find_iter(&haystack).collect();
+                    let selected = match limit_i64 {
                         Some(l) if l < 0 => {
                             // Negative limit: N splits from front, yield backward
                             let n = l.unsigned_abs() as usize;
@@ -356,10 +379,10 @@ impl<'v> Object<'v> for Regex {
                     let mut segs = Vec::with_capacity(selected.len() + 1);
                     let mut pos = 0;
                     for m in selected {
-                        segs.push(hay[pos..m.start()].to_string());
+                        segs.push(haystack[pos..m.start()].to_string());
                         pos = m.end();
                     }
-                    segs.push(hay[pos..].to_string());
+                    segs.push(haystack[pos..].to_string());
                     segs.reverse();
                     RegexSplitInner::Buffered {
                         segments: segs,
@@ -369,7 +392,12 @@ impl<'v> Object<'v> for Regex {
 
                 annex.global.types.split.create_with_annex(
                     strand,
-                    RegexSplit { inner },
+                    RegexSplit {
+                        inner,
+                        _haystack: unsafe {
+                            mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(haystack)
+                        },
+                    },
                     RegexSplitAnnex,
                     &mut out,
                 );
@@ -383,7 +411,7 @@ impl<'v> Object<'v> for Regex {
                     .unwrap()
                     .borrow_mut_unwrap();
                 Output::set(strand, Mut::slot_mut::<0>(&mut borrow), this);
-                Output::set(strand, Mut::slot_mut::<1>(&mut borrow), haystack);
+                Output::set(strand, Mut::slot_mut::<1>(&mut borrow), haystack_value);
                 Ok(())
             })
     }
@@ -393,9 +421,9 @@ pub(crate) struct Captures;
 
 pub(crate) struct CapturesAnnex<'v> {
     // SAFETY: The captures has 'static lifetime but actually borrows from the haystack
-    // stored in slot 0. This is safe as long as the haystack is not modified and
-    // the Captures object is dropped before the haystack slot is cleared.
+    // stored in slot 0 and pinned by `haystack`.
     caps: rx::Captures<'static>,
+    _haystack: PinStr<'v, 'static>,
     global: State<'v, Global<'v>>,
 }
 
@@ -428,7 +456,7 @@ impl<'v> Object<'v> for Captures {
                 .caps
                 .get(idx.try_into().map_err(|_| Error::overflow(strand))?)
         } else if let Some(name) = index.as_str(strand) {
-            annex.caps.name(name)
+            strand.access(|x| annex.caps.name(name.as_str(x)))
         } else {
             return Err(Error::type_error(strand, "expected `int` or `str`"));
         };
@@ -440,12 +468,20 @@ impl<'v> Object<'v> for Captures {
                 let m = unsafe { mem::transmute::<rx::Match<'_>, rx::Match<'static>>(m) };
 
                 let borrow = this.borrow(strand)?;
+                let haystack = unsafe {
+                    mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(
+                        Ref::slot::<0>(&borrow).as_str(strand.vm()).unwrap().pin(),
+                    )
+                };
 
                 // Create the Match object directly in out
                 annex.global.types.match_.create_with_annex(
                     strand,
                     Match,
-                    MatchAnnex { match_: m },
+                    MatchAnnex {
+                        match_: m,
+                        _haystack: haystack,
+                    },
                     &mut out,
                 );
 
@@ -490,18 +526,18 @@ impl<'v> Object<'v> for Captures {
 
 pub(crate) struct Match;
 
-pub(crate) struct MatchAnnex {
+pub(crate) struct MatchAnnex<'v> {
     // SAFETY: The match has 'static lifetime but actually borrows from the haystack
-    // stored in slot 0. This is safe as long as the haystack is not modified and
-    // the Match object is dropped before the haystack slot is cleared.
+    // stored in slot 0 and pinned by `haystack`.
     match_: rx::Match<'static>,
+    _haystack: PinStr<'v, 'static>,
 }
 
 impl<'v> Object<'v> for Match {
     const NAME: &'v str = "Match";
     const MODULE: &'v str = "regex";
     const SLOTS: usize = 1;
-    type Annex = MatchAnnex;
+    type Annex = MatchAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
 
@@ -532,18 +568,19 @@ impl<'v> Object<'v> for Match {
     }
 }
 
-pub(crate) struct Find {
+pub(crate) struct Find<'v> {
     // SAFETY: The iterator has 'static lifetime but actually borrows from the regex
-    // (stored in slot 0) and the haystack (stored in slot 1). This is safe as long
-    // as both are kept alive and the Find object is dropped before the slots are cleared.
+    // (stored in slot 0) and the haystack (stored in slot 1). The haystack is
+    // also pinned by `haystack`.
     iter: rx::CaptureMatches<'static, 'static>,
+    _haystack: PinStr<'v, 'static>,
 }
 
 pub(crate) struct FindAnnex<'v> {
     global: State<'v, Global<'v>>,
 }
 
-impl<'v> Object<'v> for Find {
+impl<'v> Object<'v> for Find<'v> {
     const NAME: &'v str = "Find";
     const MODULE: &'v str = "regex";
     // Slot 0: Regex instance
@@ -577,11 +614,17 @@ impl<'v> Object<'v> for Find {
         let mut borrow = this.borrow_mut(strand)?;
         match borrow.iter.next() {
             Some(caps) => {
+                let haystack = unsafe {
+                    mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(
+                        Mut::slot::<1>(&borrow).as_str(strand.vm()).unwrap().pin(),
+                    )
+                };
                 annex.global.types.captures.create_with_annex(
                     strand,
                     Captures,
                     CapturesAnnex {
                         caps,
+                        _haystack: haystack,
                         global: annex.global,
                     },
                     &mut out,
@@ -655,13 +698,14 @@ impl RegexSplitInner {
     }
 }
 
-pub(crate) struct RegexSplit {
+pub(crate) struct RegexSplit<'v> {
     inner: RegexSplitInner,
+    _haystack: PinStr<'v, 'static>,
 }
 
 pub(crate) struct RegexSplitAnnex;
 
-impl<'v> Object<'v> for RegexSplit {
+impl<'v> Object<'v> for RegexSplit<'v> {
     const NAME: &'v str = "RegexSplit";
     const MODULE: &'v str = "regex";
     // Slot 0: Regex instance

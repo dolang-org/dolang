@@ -372,7 +372,7 @@ impl<'v> Protocol<'v> for Verbatim {
 }
 
 fn coerce_to_f64<'v, 's>(value: &Value<'v>, strand: &mut Strand<'v, 's>) -> Result<'v, 's, f64> {
-    if let Some(str) = value.as_str(strand) {
+    if let Some(str) = value.as_str_raw(strand) {
         str.parse::<f64>()
             .map_err(|_| Error::type_error(strand, format!("float: not a valid float: {:?}", str)))
     } else {

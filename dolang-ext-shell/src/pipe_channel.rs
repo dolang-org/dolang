@@ -13,7 +13,7 @@ use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
     object::{Mut, Ref, TypeBuilder},
     unpack,
-    value::{Nil, TypeObject},
+    value::{Nil, TypeObject, View},
 };
 use dolang_shell_vfs::{PipeRecv, PipeSend};
 
@@ -687,21 +687,24 @@ fn encode_value<'v, 's>(
     value: Slot<'v, '_>,
     channel_mode: ChannelMode,
 ) -> Result<'v, 's, Vec<u8>> {
-    if let Some(s) = value.as_str(strand) {
-        let mut bytes = s.as_bytes().to_vec();
-        if channel_mode == ChannelMode::Line {
-            bytes.push(b'\n');
+    match value.view(strand) {
+        View::Str(s) => {
+            let str: String = s.into();
+            let mut bytes: Vec<u8> = str.into();
+            if channel_mode == ChannelMode::Line {
+                bytes.push(b'\n');
+            }
+            Ok(bytes)
         }
-        Ok(bytes)
-    } else if let Some(slice) = value.as_u8_slice(strand) {
-        Ok(slice.to_vec())
-    } else {
-        let s = value.to_string(strand)?;
-        let mut bytes = s.as_bytes().to_vec();
-        if channel_mode == ChannelMode::Line {
-            bytes.push(b'\n');
+        View::Bin(s) => Ok(s.into()),
+        _ => {
+            let s = value.to_string(strand)?;
+            let mut bytes = s.as_bytes().to_vec();
+            if channel_mode == ChannelMode::Line {
+                bytes.push(b'\n');
+            }
+            Ok(bytes)
         }
-        Ok(bytes)
     }
 }
 

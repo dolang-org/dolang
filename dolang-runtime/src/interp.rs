@@ -167,7 +167,7 @@ impl<'v> Vm<'v> {
             _ => return Err(Error::missing_key(strand, Sym::well_known(sym::GET))),
         };
         let name = name
-            .as_str(strand)
+            .as_str_raw(strand)
             .ok_or_else(|| Error::type_error(strand, "import must be a string"))?;
         let components: Vec<_> = name.split('.').collect();
         strand
@@ -281,7 +281,7 @@ impl<'v> Vm<'v> {
                 Arg::Pos(mut slot) => slot.take(),
                 Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
             };
-            let bytes = value.as_u8_slice(strand).ok_or_else(|| {
+            let bytes = value.as_u8_slice_raw(strand).ok_or_else(|| {
                 Error::type_error(strand, "expected binary or string value in binary concat")
             })?;
             acc.extend_from_slice(bytes);
@@ -340,7 +340,7 @@ impl<'v> Vm<'v> {
 
         // Extract class name
         let name: alias::Box<str> = name
-            .as_str(strand)
+            .as_str_raw(strand)
             .ok_or_else(|| Error::type_error(strand, "class_create: expected string name"))?
             .into();
 

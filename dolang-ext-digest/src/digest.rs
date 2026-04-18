@@ -1,6 +1,9 @@
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value, object::TypeBuilder,
-    unpack, value::TypeObject, vm::Builder,
+    Args, Error, Instance, Object, Output, Result, Slot, Strand, Type,
+    object::TypeBuilder,
+    unpack,
+    value::{TypeObject, View},
+    vm::Builder,
 };
 
 pub(crate) struct DigestState;
@@ -28,23 +31,16 @@ impl Algorithm for sha2::Sha512 {
     const TYPE_NAME: &'static str = "Sha512";
 }
 
-fn bytes_arg<'v, 'a, 's>(
-    strand: &mut Strand<'v, 's>,
-    value: &'a Value<'v>,
-    msg: &'v str,
-) -> Result<'v, 's, &'a [u8]> {
-    value
-        .as_u8_slice(strand)
-        .ok_or_else(|| Error::type_error(strand, msg))
-}
-
 fn digest_single<'v, 's, T: Algorithm>(
     strand: &mut Strand<'v, 's>,
     value: Slot<'v, '_>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let bytes = bytes_arg(strand, &value, "expected str or bin")?;
-    let digest = T::digest(bytes);
+    let digest = match value.view(strand.vm()) {
+        View::Str(str) => strand.access(|access| T::digest(str.as_str(access).as_bytes())),
+        View::Bin(bin) => strand.access(|access| T::digest(bin.as_slice(access))),
+        _ => return Err(Error::type_error(strand, "expected str or bin")),
+    };
     Output::set(strand, out, digest.as_slice());
     Ok(())
 }
@@ -54,8 +50,17 @@ fn digest_update<'v, 's, T: Algorithm>(
     this: Instance<'v, '_, Digestible<T>>,
     value: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let bytes = bytes_arg(strand, &value, "update: expected str or bin")?;
-    this.borrow_mut(strand)?.0.update(bytes);
+    match value.view(strand.vm()) {
+        View::Str(str) => {
+            let bytes = strand.access(|access| str.as_str(access).as_bytes().to_vec());
+            this.borrow_mut(strand)?.0.update(&bytes);
+        }
+        View::Bin(bin) => {
+            let bytes: Vec<u8> = bin.into();
+            this.borrow_mut(strand)?.0.update(&bytes);
+        }
+        _ => return Err(Error::type_error(strand, "expected str or bin")),
+    }
     Ok(())
 }
 
@@ -64,8 +69,11 @@ fn blake3_single<'v, 's>(
     value: Slot<'v, '_>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let bytes = bytes_arg(strand, &value, "expected str or bin")?;
-    let digest = blake3::hash(bytes);
+    let digest = match value.view(strand.vm()) {
+        View::Str(str) => strand.access(|access| blake3::hash(str.as_str(access).as_bytes())),
+        View::Bin(bin) => strand.access(|access| blake3::hash(bin.as_slice(access))),
+        _ => return Err(Error::type_error(strand, "expected str or bin")),
+    };
     Output::set(strand, out, digest.as_slice());
     Ok(())
 }
@@ -75,8 +83,17 @@ fn blake3_update<'v, 's>(
     this: Instance<'v, '_, Blake3State>,
     value: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let bytes = bytes_arg(strand, &value, "update: expected str or bin")?;
-    this.borrow_mut(strand)?.0.update(bytes);
+    match value.view(strand.vm()) {
+        View::Str(str) => {
+            let bytes = strand.access(|access| str.as_str(access).as_bytes().to_vec());
+            this.borrow_mut(strand)?.0.update(&bytes);
+        }
+        View::Bin(bin) => {
+            let bytes: Vec<u8> = bin.into();
+            this.borrow_mut(strand)?.0.update(&bytes);
+        }
+        _ => return Err(Error::type_error(strand, "expected str or bin")),
+    }
     Ok(())
 }
 
