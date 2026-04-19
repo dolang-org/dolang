@@ -827,7 +827,8 @@ impl<'v, 's> Strand<'v, 's> {
     /// Access value interiors.
     ///
     /// The provided closure is invoked with an [`Access`] token which can be used to
-    /// access the interiors of values such as `str`s and `bin`s.
+    /// access the interiors of values such as [`Str`](crate::value::view::Str) and
+    /// [`Bin`](crate::value::view::Bin)
     #[inline]
     pub fn access<R>(&mut self, f: impl for<'a> FnOnce(&'a Access<'v, 's>) -> R) -> R {
         let access = Access {

@@ -53,13 +53,17 @@ impl<'v, 'a> Hash for ObjectId<'v, 'a> {
     }
 }
 
-/// Typed witness for a `str` value.
+/// Typed view of a `str` value.
 #[derive(Clone, Copy)]
 pub struct Str<'v, 'a> {
     value: &'a str,
     phantom: PhantomData<&'v mut &'v ()>,
 }
 
+/// Pinned `str` view
+///
+/// The underlying string slice is guaranteed to remain address-stable for
+/// the lifetime of this struct.
 #[derive(Clone)]
 pub struct PinStr<'v, 'a> {
     value: &'a str,
@@ -74,6 +78,9 @@ impl<'v, 'a> Str<'v, 'a> {
         }
     }
 
+    /// Get underlying string slice.
+    ///
+    /// This requires a token from [`Strand::access`].
     pub fn as_str<'s, 'x, 'b>(&self, access: &'x Access<'v, 's>) -> &'b str
     where
         'a: 'b,
@@ -83,14 +90,17 @@ impl<'v, 'a> Str<'v, 'a> {
         self.value
     }
 
+    /// Get length of string
     pub fn len(&self) -> usize {
         self.value.len()
     }
 
+    /// Is string empty?
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Get pinned view of string
     pub fn pin(&self) -> PinStr<'v, 'a> {
         PinStr {
             value: self.value,
@@ -123,13 +133,17 @@ impl<'v, 'a> From<Str<'v, 'a>> for String {
     }
 }
 
-/// Typed witness for a `bin` value.
+/// Typed view of a `bin` value.
 #[derive(Clone, Copy)]
 pub struct Bin<'v, 'a> {
     value: &'a [u8],
     phantom: PhantomData<&'v mut &'v ()>,
 }
 
+/// Pinned `bin` view
+///
+/// The underlying byte slice is guaranteed to remain address-stable for
+/// the lifetime of this struct.
 #[derive(Clone)]
 pub struct PinBin<'v, 'a> {
     value: &'a [u8],
@@ -144,6 +158,9 @@ impl<'v, 'a> Bin<'v, 'a> {
         }
     }
 
+    /// Get underlying byte slice.
+    ///
+    /// This requires a token from [`Strand::access`].
     pub fn as_slice<'s, 'x, 'b>(&self, access: &'x Access<'v, 's>) -> &'b [u8]
     where
         'a: 'b,
@@ -153,18 +170,22 @@ impl<'v, 'a> Bin<'v, 'a> {
         self.value
     }
 
+    /// Get length of `bin`
     pub fn len(&self) -> usize {
         self.value.len()
     }
 
+    /// Is the the `bin` empty?
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Convert to owned [`Vec`]
     pub fn to_vec(&self) -> Vec<u8> {
         self.value.to_owned()
     }
 
+    /// Get pinned view of `bin`
     pub fn pin(&self) -> PinBin<'v, 'a> {
         PinBin {
             value: self.value,
@@ -433,7 +454,7 @@ impl<'v, 'a> Tuple<'v, 'a> {
     }
 }
 
-/// Type-discriminating view of a [`crate::value::Value`].
+/// Type-discriminating view of a [`Value`].
 pub enum View<'v, 'a> {
     /// Nil
     Nil,

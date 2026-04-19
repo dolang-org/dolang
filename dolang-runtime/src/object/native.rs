@@ -416,6 +416,9 @@ impl<'v, 'a, T: Object<'v>> AsRef<T> for Mut<'v, 'a, T> {
     }
 }
 
+/// Annex guard.
+///
+/// Allows access to the immutable annex of an [`Object`] [`Instance`].
 pub struct Annex<'v, 'a, T: Object<'v>>(&'a T::Annex);
 
 impl<'v, 'a, T: Object<'v>> Deref for Annex<'v, 'a, T> {
@@ -2079,7 +2082,7 @@ impl<'v, T: Object<'v>> Type<'v, T> {
         )
     }
 
-    /// Immutable annex
+    /// Get immutable annex
     pub fn annex(&self, vm: &Vm<'v>) -> &'v T::TypeAnnex {
         &self.type_borrow_impl(vm).annex().inner
     }
