@@ -1099,54 +1099,61 @@ impl<'a> Parser<'a> {
         use TokenInfo::*;
 
         let mut exprs = Vec::new();
-        self.with_mode(lex::Mode::Heredoc, |this| {
-            loop {
-                match this.peek()? {
-                    None => unreachable!("heredoc always closed by Dedent before EOF"),
-                    Some(token!(Dedent)) => {
-                        this.advance();
-                        break;
-                    }
-                    Some(token!(Dollar)) if !raw => {
-                        this.advance();
-                        match this.peek()? {
-                            Some(token!(Key)) => {
-                                let span = this.advance();
-                                exprs.push(Expr::Ident(Ident::new(span)));
-                                exprs.push(Expr::Literal(span.after_right_char()));
+        self.with_mode(
+            if raw {
+                lex::Mode::RawHeredoc
+            } else {
+                lex::Mode::Heredoc
+            },
+            |this| {
+                loop {
+                    match this.peek()? {
+                        None => unreachable!("heredoc always closed by Dedent before EOF"),
+                        Some(token!(Dedent)) => {
+                            this.advance();
+                            break;
+                        }
+                        Some(token!(Dollar)) if !raw => {
+                            this.advance();
+                            match this.peek()? {
+                                Some(token!(Key)) => {
+                                    let span = this.advance();
+                                    exprs.push(Expr::Ident(Ident::new(span)));
+                                    exprs.push(Expr::Literal(span.after_right_char()));
+                                }
+                                _ => exprs.push(this.parse_expr_primary(scope, ExprMode::Compact)?),
                             }
-                            _ => exprs.push(this.parse_expr_primary(scope, ExprMode::Compact)?),
                         }
+                        Some(token!(Literal)) => {
+                            let span = this.advance();
+                            exprs.push(Expr::Literal(span));
+                        }
+                        Some(_) => match decay_string!(this.next()?) {
+                            Some(token!(Literal, span)) => exprs.push(Expr::Literal(span)),
+                            Some(token!(Key, span)) => {
+                                exprs.push(Expr::Literal(span | span.after_right_char()))
+                            }
+                            Some(token!(DittoKey, span)) => {
+                                exprs.push(Expr::Literal(span.before_left_char() | span))
+                            }
+                            Some(token!(Sym, span)) => exprs.push(Expr::Literal(
+                                span.before_left_char() | span.after_right_char(),
+                            )),
+                            Some(token!(Escape('$'), span)) if !raw => {
+                                exprs.push(Expr::Escape('$', span))
+                            }
+                            Some(token!(Escape('\\'), span)) if !raw => {
+                                exprs.push(Expr::Escape('\\', span))
+                            }
+                            Some(token!(Escape(_), span)) => exprs.push(Expr::Literal(span)),
+                            Some(token!(Dollar, span)) => exprs.push(Expr::Literal(span)),
+                            _ => unreachable!(),
+                        },
                     }
-                    Some(token!(Literal)) => {
-                        let span = this.advance();
-                        exprs.push(Expr::Literal(span));
-                    }
-                    Some(_) => match decay_string!(this.next()?) {
-                        Some(token!(Literal, span)) => exprs.push(Expr::Literal(span)),
-                        Some(token!(Key, span)) => {
-                            exprs.push(Expr::Literal(span | span.after_right_char()))
-                        }
-                        Some(token!(DittoKey, span)) => {
-                            exprs.push(Expr::Literal(span.before_left_char() | span))
-                        }
-                        Some(token!(Sym, span)) => exprs.push(Expr::Literal(
-                            span.before_left_char() | span.after_right_char(),
-                        )),
-                        Some(token!(Escape('$'), span)) if !raw => {
-                            exprs.push(Expr::Escape('$', span))
-                        }
-                        Some(token!(Escape('\\'), span)) if !raw => {
-                            exprs.push(Expr::Escape('\\', span))
-                        }
-                        Some(token!(Escape(_), span)) => exprs.push(Expr::Literal(span)),
-                        Some(token!(Dollar, span)) => exprs.push(Expr::Literal(span)),
-                        _ => unreachable!(),
-                    },
                 }
-            }
-            Ok(())
-        })?;
+                Ok(())
+            },
+        )?;
         if strip && let Some(Expr::Literal(span)) = exprs.last_mut() {
             let slice = self.file.slice(*span);
             if slice.ends_with(b"\n") {

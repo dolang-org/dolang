@@ -68,6 +68,12 @@ doc = key_id
     a doc
 assert_eq $doc "a doc"
 
+# Escaping of `$` and `\`
+doc = |
+  foo\$bar-\\
+  foo \$bar \\
+assert_eq $doc "foo\$bar-\\\nfoo \$bar \\\n"
+
 # Raw here docs: $ and \ are literal
 doc = r|
   echo $name

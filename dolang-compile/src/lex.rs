@@ -206,6 +206,7 @@ pub(crate) enum Mode {
     FullExpr,
     String,
     Heredoc,
+    RawHeredoc,
 }
 
 #[derive(Debug)]
@@ -491,13 +492,18 @@ impl<'a, I: Iterator<Item = u8>> RawLexer<'a, I> {
 
         self.state = match (self.mode, mode, self.state) {
             // Shell/String/Heredoc to expr transitions
-            (Mode::Shell | Mode::String | Mode::Heredoc, Mode::FullExpr, _) => self.state,
+            (Mode::Shell | Mode::String | Mode::Heredoc | Mode::RawHeredoc, Mode::FullExpr, _) => {
+                self.state
+            }
             // Expr to shell/string/heredoc transitions
-            (Mode::FullExpr, Mode::Shell | Mode::String | Mode::Heredoc, _) => self.state,
+            (Mode::FullExpr, Mode::Shell | Mode::String | Mode::Heredoc | Mode::RawHeredoc, _) => {
+                self.state
+            }
             // Shell-shell transitions
             (Mode::Shell, Mode::String, _) => self.state,
             (Mode::String, Mode::Shell, _) => self.state,
-            (Mode::Shell, Mode::Heredoc, _) | (Mode::Heredoc, Mode::Shell, _) => self.state,
+            (Mode::Shell, Mode::Heredoc | Mode::RawHeredoc, _)
+            | (Mode::Heredoc | Mode::RawHeredoc, Mode::Shell, _) => self.state,
             // End/error transitions always succeed
             (_, _, End | Error) => self.state,
             _ => panic!(
@@ -555,7 +561,7 @@ macro_rules! lex {
                 Some(b' ' | b'\t') => return $self.token($token, Space),
                 Some(b'\r') => return $self.token($token, Cr),
                 Some(b'\n') => return $self.token($token, Indent),
-                Some(b'\\') if $self.mode == Mode::String => return $self.token($token, Escape)
+                Some(b'\\') if matches!($self.mode, Mode::String | Mode::Heredoc) => return $self.token($token, Escape)
             };
             { $($rest)* }
         }
@@ -709,7 +715,7 @@ macro_rules! symbol {
                 enum symbol_reserved(token),
                 match Some(_) => match $self.mode {
                     Mode::FullExpr => return $self.error(ErrorDiagKind::BadIdent),
-                    Mode::Shell | Mode::String | Mode::Heredoc => $self.trans(Literal),
+                    Mode::Shell | Mode::String | Mode::Heredoc | Mode::RawHeredoc => $self.trans(Literal),
                 },
             }
         }
@@ -775,10 +781,10 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                     let token = match (self.state, self.mode) {
                         (Empty, _) => None,
                         (Init, _) => Some(RawToken::Indent),
-                        (Indent, Mode::Shell | Mode::String | Mode::Heredoc) => {
+                        (Indent, Mode::Shell | Mode::String | Mode::Heredoc | Mode::RawHeredoc) => {
                             Some(RawToken::NewlineIndent)
                         }
-                        (Space, Mode::Shell | Mode::String | Mode::Heredoc) => {
+                        (Space, Mode::Shell | Mode::String | Mode::Heredoc | Mode::RawHeredoc) => {
                             Some(RawToken::Space)
                         }
                         (Space | Indent, Mode::FullExpr) => None,
@@ -787,7 +793,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                     lex! {
                         self: token => {
                             match None => self.skip(End),
-                            match Some(b'\n') => if self.mode == Mode::Heredoc {
+                            match Some(b'\n') => if matches!(self.mode, Mode::Heredoc | Mode::RawHeredoc) {
                                 self.trans(Indent)
                             } else {
                                 self.skip(Indent)
@@ -817,7 +823,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                             enum symbol_free(emit),
                             enum symbol_reserved(emit),
                             match Some(_) => match self.mode {
-                                Mode::Shell | Mode::String | Mode::Heredoc => {
+                                Mode::Shell | Mode::String | Mode::Heredoc | Mode::RawHeredoc => {
                                     emit!(self.emit, token, Literal)
                                 }
                                 Mode::FullExpr => return self.error(ErrorDiagKind::BadIdent),
@@ -834,7 +840,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                 }, {
                     match Some(b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_') => (),
                     match Some(_) => match self.mode {
-                        Mode::Shell | Mode::String | Mode::Heredoc => self.trans(Literal),
+                        Mode::Shell | Mode::String | Mode::Heredoc | Mode::RawHeredoc => self.trans(Literal),
                         _ => return self.error(ErrorDiagKind::BadIdent),
                     },
                 }),
@@ -1200,11 +1206,13 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                     }
                     _ => return self.error(ErrorDiagKind::BadEscape),
                 },
-                Comment if self.mode == Mode::Heredoc => match self.advance() {
-                    None => return self.token(RawToken::Literal, End),
-                    Some(b'\n') => return self.token(RawToken::Literal, Indent),
-                    _ => (),
-                },
+                Comment if matches!(self.mode, Mode::Heredoc | Mode::RawHeredoc) => {
+                    match self.advance() {
+                        None => return self.token(RawToken::Literal, End),
+                        Some(b'\n') => return self.token(RawToken::Literal, Indent),
+                        _ => (),
+                    }
+                }
                 Comment => match self.advance() {
                     None => self.comment(End),
                     Some(b'\r') => self.comment(Cr),
@@ -1468,7 +1476,7 @@ pub(crate) struct Lexer<'a> {
     span: Span,
     // Byte offset of last newline
     nl: Offset,
-    // Heredoc content baseline indentation level (meaningful when raw.mode() == Heredoc)
+    // Heredoc content baseline indentation level (meaningful when raw.mode() is *Heredoc)
     heredoc_baseline: Offset,
     // Remaining span to drain when heredoc_pending is true (start advances as tokens are emitted)
     heredoc_ws: Span,
@@ -1497,7 +1505,7 @@ impl<'a> Lexer<'a> {
 
     pub(crate) fn set_mode(&mut self, mode: Mode) -> Mode {
         let prev = self.raw.set_mode(mode);
-        if mode == Mode::Heredoc {
+        if matches!(mode, Mode::Heredoc | Mode::RawHeredoc) {
             self.heredoc_baseline = self.current;
         }
         prev
@@ -1539,7 +1547,7 @@ impl<'a> Lexer<'a> {
 
     // Called when we get a newline + indent token
     fn newline(&mut self, span: Span) -> Option<Result<Token, Error>> {
-        if self.raw.mode == Mode::Heredoc {
+        if matches!(self.raw.mode, Mode::Heredoc | Mode::RawHeredoc) {
             return self.heredoc_newline(span);
         }
         // Record offset of most recent newline
@@ -1622,7 +1630,7 @@ impl<'a> Lexer<'a> {
         }
 
         // Suppress normal indent logic while inside an active heredoc
-        if self.raw.mode == Mode::Heredoc {
+        if matches!(self.raw.mode, Mode::Heredoc | Mode::RawHeredoc) {
             return None;
         }
 
