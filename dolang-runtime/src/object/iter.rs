@@ -29,6 +29,10 @@ fn iter_members<'v, 'a>() -> Vec<Sym<'v, 'a>> {
         Sym::well_known(sym::FILTER),
         Sym::well_known(sym::CHAIN),
         Sym::well_known(sym::ZIP),
+        Sym::well_known(sym::TAKE),
+        Sym::well_known(sym::SKIP),
+        Sym::well_known(sym::ENUMERATE),
+        Sym::well_known(sym::FIND),
         Sym::well_known(sym::MIN),
         Sym::well_known(sym::MAX),
     ]
@@ -68,6 +72,10 @@ pub(crate) fn iter_get<'v, 'a, 's>(
         | sym::FILTER
         | sym::CHAIN
         | sym::ZIP
+        | sym::TAKE
+        | sym::SKIP
+        | sym::ENUMERATE
+        | sym::FIND
         | sym::MIN
         | sym::MAX => {
             BoundMethod::create(strand, rcvr, field, out);
@@ -191,6 +199,56 @@ async fn iter_fold<'v, 'a, 's>(
                 }
                 out.store(acc.take());
                 Ok(())
+            },
+        )
+        .await
+}
+
+fn nonnegative_count<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+) -> Result<'v, 's, usize> {
+    let count = value
+        .as_i64(strand)
+        .ok_or_else(|| Error::type_error(strand, "expected int"))?;
+    if count < 0 {
+        return Err(Error::value(strand, "expected non-negative int"));
+    }
+    usize::try_from(count).map_err(|_| Error::overflow(strand))
+}
+
+async fn iter_find<'v, 'a, 's>(
+    strand: &'a mut Strand<'v, 's>,
+    obj: &Value<'v>,
+    mut pred: Slot<'v, 'a>,
+    default: Option<Slot<'v, 'a>>,
+    or_else: Option<Slot<'v, 'a>>,
+    mut out: Slot<'v, 'a>,
+) -> Result<'v, 's, ()> {
+    if default.is_some() && or_else.is_some() {
+        return Err(Error::unexpected_key(strand, Sym::well_known(sym::ELSE)));
+    }
+    strand
+        .with_slots(
+            async move |strand, [mut iter, mut item, mut pred_fn, mut pred_out]| {
+                obj.iter(strand, &mut iter).await?;
+                pred_fn.store(pred.take());
+                while iter.next(strand, &mut item).await? {
+                    call!(strand, &pred_fn, &mut pred_out, &item).await?;
+                    if pred_out.to_bool(strand) {
+                        out.store(item.take());
+                        return Ok(());
+                    }
+                    strand.check_interrupt_gc()?;
+                }
+                if let Some(mut default) = default {
+                    out.store(default.take());
+                    return Ok(());
+                }
+                if let Some(or_else) = or_else {
+                    return call!(strand, or_else, out).await;
+                }
+                Err(Error::runtime(strand, "find: no matching item"))
             },
         )
         .await
@@ -754,6 +812,281 @@ impl<'v> Protocol<'v> for Zip<'v> {
     }
 }
 
+pub(crate) struct Take<'v> {
+    source: Value<'v>,
+    remaining: usize,
+}
+
+pub(crate) struct Skip<'v> {
+    source: Value<'v>,
+    remaining: usize,
+}
+
+pub(crate) struct Enumerate<'v> {
+    source: Value<'v>,
+    index: i64,
+}
+
+unsafe impl<'v> Collect for Take<'v> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = false;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.source.accept(visit)?;
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {
+        self.source.clear();
+        self.remaining = 0;
+    }
+}
+
+unsafe impl<'v> Collect for Skip<'v> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = false;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.source.accept(visit)?;
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {
+        self.source.clear();
+        self.remaining = 0;
+    }
+}
+
+unsafe impl<'v> Collect for Enumerate<'v> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = false;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.source.accept(visit)?;
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {
+        self.source.clear();
+        self.index = 0;
+    }
+}
+
+impl<'v> Protocol<'v> for Take<'v> {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut out: Slot<'v, 'a>,
+    ) {
+        out.store(strand.singletons().input_iter.dup())
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn fmt::Write,
+    ) -> Result<'v, 's, ()> {
+        write!(w, "<std.iter.Take>").into_do(strand)
+    }
+
+    async fn op_iter<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, &this);
+        Ok(())
+    }
+
+    async fn op_next<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        let source = {
+            let borrow = this.borrow(strand)?;
+            if borrow.remaining == 0 {
+                return Ok(false);
+            }
+            borrow.source.dup()
+        };
+        if !source.next(strand, out).await? {
+            return Ok(false);
+        }
+        this.borrow_mut(strand)?.remaining -= 1;
+        Ok(true)
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        iter_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        iter_mcall(strand, &this, method, args, out).await
+    }
+}
+
+impl<'v> Protocol<'v> for Skip<'v> {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut out: Slot<'v, 'a>,
+    ) {
+        out.store(strand.singletons().input_iter.dup())
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn fmt::Write,
+    ) -> Result<'v, 's, ()> {
+        write!(w, "<std.iter.Skip>").into_do(strand)
+    }
+
+    async fn op_iter<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, &this);
+        Ok(())
+    }
+
+    async fn op_next<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        strand
+            .with_slots(async move |strand, [mut item]| {
+                loop {
+                    let (source, skipping) = {
+                        let mut borrow = this.borrow_mut(strand)?;
+                        let skipping = borrow.remaining > 0;
+                        if skipping {
+                            borrow.remaining -= 1;
+                        }
+                        (borrow.source.dup(), skipping)
+                    };
+                    if !skipping {
+                        return source.next(strand, out).await;
+                    }
+                    if !source.next(strand, &mut item).await? {
+                        return Ok(false);
+                    }
+                    strand.check_interrupt_gc()?;
+                }
+            })
+            .await
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        iter_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        iter_mcall(strand, &this, method, args, out).await
+    }
+}
+
+impl<'v> Protocol<'v> for Enumerate<'v> {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut out: Slot<'v, 'a>,
+    ) {
+        out.store(strand.singletons().input_iter.dup())
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn fmt::Write,
+    ) -> Result<'v, 's, ()> {
+        write!(w, "<std.iter.Enumerate>").into_do(strand)
+    }
+
+    async fn op_iter<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, &this);
+        Ok(())
+    }
+
+    async fn op_next<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        strand
+            .with_slots(async move |strand, [mut item]| {
+                let (source, index) = {
+                    let borrow = this.borrow(strand)?;
+                    (borrow.source.dup(), borrow.index)
+                };
+                if !source.next(strand, &mut item).await? {
+                    return Ok(false);
+                }
+                let next_index = index
+                    .checked_add(1)
+                    .ok_or_else(|| Error::overflow(strand))?;
+                out.store(Value::from_object(tuple::tuple(
+                    strand,
+                    vec![Value::from_i64(strand, index), item.take()],
+                )));
+                this.borrow_mut(strand)?.index = next_index;
+                Ok(true)
+            })
+            .await
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        iter_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        iter_mcall(strand, &this, method, args, out).await
+    }
+}
+
 impl<'v> Protocol<'v> for Iter {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -847,6 +1180,28 @@ impl<'v> Protocol<'v> for Iter {
             }
             sym::CHAIN => create_chain_from_args(strand, args, out).await,
             sym::ZIP => create_zip_from_args(strand, args, out).await,
+            sym::TAKE => {
+                let ([obj, count], []) = unpack!(strand, args, 2, 0)?;
+                let count = nonnegative_count(strand, &count)?;
+                create_take(strand, obj.dup(), count, out);
+                Ok(())
+            }
+            sym::SKIP => {
+                let ([obj, count], []) = unpack!(strand, args, 2, 0)?;
+                let count = nonnegative_count(strand, &count)?;
+                create_skip(strand, obj.dup(), count, out);
+                Ok(())
+            }
+            sym::ENUMERATE => {
+                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                create_enumerate(strand, obj.dup(), out);
+                Ok(())
+            }
+            sym::FIND => {
+                let ([obj, pred], [default, or_else]) =
+                    unpack!(strand, args, 2, 0, default = None, else_key = None)?;
+                iter_find(strand, &obj, pred, default, or_else, out).await
+            }
             sym::MIN => {
                 let ([obj], [default]) = unpack!(strand, args, 1, 0, default = None)?;
                 iter_extrema(strand, &obj, default, out, true).await
@@ -1436,6 +1791,43 @@ pub(crate) fn create_zip<'v>(vm: &Vm<'v>, sources: Vec<Value<'v>>, mut out: impl
         vm.arena(),
         vm.builtin_types().zip_iter,
         Zip { sources },
+        (),
+    )));
+}
+
+pub(crate) fn create_take<'v>(
+    vm: &Vm<'v>,
+    source: Value<'v>,
+    remaining: usize,
+    mut out: impl Output<'v>,
+) {
+    Slot::from_output(&mut out).store(Value::from_object(GcObj::new_annex(
+        vm.arena(),
+        vm.builtin_types().take_iter,
+        Take { source, remaining },
+        (),
+    )));
+}
+
+pub(crate) fn create_skip<'v>(
+    vm: &Vm<'v>,
+    source: Value<'v>,
+    remaining: usize,
+    mut out: impl Output<'v>,
+) {
+    Slot::from_output(&mut out).store(Value::from_object(GcObj::new_annex(
+        vm.arena(),
+        vm.builtin_types().skip_iter,
+        Skip { source, remaining },
+        (),
+    )));
+}
+
+pub(crate) fn create_enumerate<'v>(vm: &Vm<'v>, source: Value<'v>, mut out: impl Output<'v>) {
+    Slot::from_output(&mut out).store(Value::from_object(GcObj::new_annex(
+        vm.arena(),
+        vm.builtin_types().enumerate_iter,
+        Enumerate { source, index: 0 },
         (),
     )));
 }

@@ -18,10 +18,10 @@ Returns the next value from the iterator.
 
 **Parameters:**
 
-| Name       | Type | Description                                 |
-| ---------- | ---- | ------------------------------------------- |
-| `default:` |      | value to return if the iterator is empty    |
-| `else:`    |      | callable to invoke if the iterator is empty |
+| Name      | Type | Description                                 |
+| --------- | ---- | ------------------------------------------- |
+| `default` |      | value to return if the iterator is empty    |
+| `else`    |      | callable to invoke if the iterator is empty |
 
 **Errors:** Raises [`IterStop`](./iter-stop.md) when exhausted and no fallback
 is provided.
@@ -63,6 +63,38 @@ Returns an iterator that yields one tuple for each step across this iterator
 and the additional iterables.
 The zipped iterator stops as soon as any input is exhausted.
 
+### `take n`
+
+Returns an iterator that yields at most `n` values.
+
+**Parameters:**
+
+| Name | Type | Description             |
+| ---- | ---- | ----------------------- |
+| `n`  | int  | maximum values to yield |
+
+**Errors:** Raises [`TypeError`](./type-error.md) if `n` is not an `int`.
+Raises [`ValueError`](./value-error.md) if `n` is negative.
+
+### `skip n`
+
+Returns an iterator that discards the first `n` values, then yields the rest.
+
+**Parameters:**
+
+| Name | Type | Description         |
+| ---- | ---- | ------------------- |
+| `n`  | int  | values to discard   |
+
+**Errors:** Raises [`TypeError`](./type-error.md) if `n` is not an `int`.
+Raises [`ValueError`](./value-error.md) if `n` is negative.
+
+### `enumerate`
+
+Returns an iterator that yields `[index, value]` tuples.
+
+The first index is `0`.
+
 ### `map func`
 
 Creates a wrapper `Iter` which yields `func(value)` for each `value` yielded by
@@ -72,6 +104,21 @@ the wrapper iterator.
 
 Creates a wrapper `Iter` which yields each `value` from the wrapper iterator
 only if `pred(value)` is truthy.
+
+### `find pred :default? :else?`
+
+Consumes the iterator and returns the first value where `pred(value)` is truthy.
+
+**Parameters:**
+
+| Name      | Type | Description                              |
+| --------- | ---- | ---------------------------------------- |
+| `pred`    |      | callable used to test values             |
+| `default` |      | value to return if no value matches      |
+| `else`    |      | callable to invoke if no value matches   |
+
+**Errors:** Raises [`RuntimeError`](./runtime-error.md) if no value matches and
+no fallback is provided.
 
 ### `min :default?`
 

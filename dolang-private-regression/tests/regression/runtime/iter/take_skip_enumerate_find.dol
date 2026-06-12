@@ -1,0 +1,78 @@
+import
+  std:
+    - Iter
+    - RuntimeError
+    - TypeError
+    - UnexpectedKeyError
+    - ValueError
+
+def assert_err_type ty block
+  let res = try
+    block()
+    false
+  catch e
+    assert (type e ty)
+    true
+  assert $res
+
+assert_eq [...[1, 2, 3].iter().take 0] []
+assert_eq [...[1, 2, 3].iter().take 2] [1, 2]
+assert_eq [...[1, 2, 3].iter().take 3] [1, 2, 3]
+assert_eq [...[1, 2, 3].iter().take 5] [1, 2, 3]
+
+assert_eq [...[1, 2, 3].iter().skip 0] [1, 2, 3]
+assert_eq [...[1, 2, 3].iter().skip 2] [3]
+assert_eq [...[1, 2, 3].iter().skip 3] []
+assert_eq [...[1, 2, 3].iter().skip 5] []
+
+assert_eq [...[1, 2, 3, 4].iter().map(do |x| x * 2).take 2] [2, 4]
+assert_eq [...[1, 2, 3, 4].iter().filter(do |x| x % 2 == 0).skip 1] [4]
+assert_eq [...[1, 2].iter().take(1).chain([3, 4])] [1, 3, 4]
+
+let enumerated = [...["a", "b"].iter().enumerate()]
+assert_eq $enumerated[0][0] 0
+assert_eq $enumerated[0][1] "a"
+assert_eq $enumerated[1][0] 1
+assert_eq $enumerated[1][1] "b"
+
+enumerated = [...[10, 20, 30].iter().skip(1).enumerate()]
+assert_eq $enumerated[0][0] 0
+assert_eq $enumerated[0][1] 20
+assert_eq $enumerated[1][0] 1
+assert_eq $enumerated[1][1] 30
+
+let it = [1, 2, 3, 4].iter()
+let seen = []
+let found = it.find do |x|
+  seen.push $x
+  (x > 2)
+assert_eq $found 3
+assert_eq $seen [1, 2, 3]
+assert_eq (it.next()) 4
+
+assert_eq ([1, 2].iter().find (do |x| x > 5) default: 42) 42
+assert_eq ([1, 2].iter().find (do |x| x > 5) else: do 43) 43
+
+assert_err_type $RuntimeError do [1, 2].iter().find do |x| (x > 5)
+assert_err_type $UnexpectedKeyError do [1, 2].iter().find (do |_| false) default: 1 else: do 2
+
+assert_err_type $TypeError do [1, 2].iter().take "bad"
+assert_err_type $TypeError do [1, 2].iter().skip "bad"
+assert_err_type $ValueError do [1, 2].iter().take (0 - 1)
+assert_err_type $ValueError do [1, 2].iter().skip (0 - 1)
+
+class MyInput: Iter
+  pub let inner = nil
+
+  def (init) self items
+    Iter.(init) self
+    self.inner = items.iter()
+
+  def (next) self
+    self.inner.next()
+
+  def (iter) self
+    self
+
+let custom = MyInput [1, 2, 3]
+assert_eq [...custom.skip(1).take(1)] [2]
