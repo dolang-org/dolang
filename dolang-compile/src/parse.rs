@@ -341,6 +341,47 @@ impl Diagnose for InvalidCompactOp {
     }
 }
 
+#[derive(Copy, Clone)]
+struct ImplicitDelimitedConcat {
+    span: Span,
+    insert: Span,
+}
+
+impl Patch for ImplicitDelimitedConcat {
+    fn span(&self) -> Span {
+        Span {
+            start: self.insert.start,
+            end: self.insert.start,
+        }
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "insert `$`")
+    }
+
+    fn sub(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "$")
+    }
+}
+
+impl Diagnose for ImplicitDelimitedConcat {
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "implicit concatenation requires `$`")
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn patches(&self) -> Box<dyn Iterator<Item = Box<dyn Patch>>> {
+        Box::new([Box::new(*self) as Box<dyn Patch>].into_iter())
+    }
+}
+
 struct AmbigIndex(Span, Span);
 
 enum AmbigIndexPatchKind {
@@ -3047,6 +3088,113 @@ impl<'a> Parser<'a> {
         self.parse_expr(scope, ExprMode::Compact)
     }
 
+    fn parse_cmd_arg_expr(
+        &mut self,
+        scope: &mut Scope,
+        allow_trailing: bool,
+    ) -> Result<(Expr, bool)> {
+        use self::{Keyword, Op};
+        use TokenInfo::*;
+
+        match self.peek()? {
+            Some(token!(Dollar)) => {
+                let span = self.advance();
+                match self.peek()? {
+                    Some(token!(ArgSep)) => {
+                        self.advance();
+                        return Ok((
+                            Expr::Group {
+                                expr: Box::new(self.parse_cmd_or_expr(scope, allow_trailing)?),
+                                delim: Some(GroupDelim::Dollar(span)),
+                            },
+                            // This consumed the rest of the statement
+                            true,
+                        ));
+                    }
+                    Some(token!(Indent)) if allow_trailing => {
+                        self.advance();
+                        return Ok((
+                            Expr::Group {
+                                expr: Box::new(self.parse_data(scope, vec![])?),
+                                delim: Some(GroupDelim::Dollar(span)),
+                            },
+                            // This consumed the rest of the statement
+                            true,
+                        ));
+                    }
+                    _ => (),
+                };
+                let expr = self.parse_expr(scope, ExprMode::Compact)?;
+                Ok((
+                    Expr::Group {
+                        expr: Box::new(self.parse_implicit_concat(
+                            scope,
+                            Some(expr),
+                            UnquotedMode::Shell,
+                        )?),
+                        delim: Some(GroupDelim::Dollar(span)),
+                    },
+                    false,
+                ))
+            }
+            Some(token!(Keyword(Keyword::Do))) => {
+                Ok((self.parse_do_block(scope, allow_trailing)?, true))
+            }
+            Some(token!(Op(Op::Bar))) => {
+                let pipe_span = self.advance();
+                let (intro_span, strip) = self.parse_heredoc_intro(pipe_span)?;
+                if let Some(token!(Indent)) = self.peek()? {
+                    self.advance();
+                    return Ok((self.parse_heredoc(scope, intro_span, strip, false)?, true));
+                }
+                Ok((
+                    self.parse_implicit_concat(
+                        scope,
+                        Some(Expr::Literal(intro_span)),
+                        UnquotedMode::Shell,
+                    )?,
+                    false,
+                ))
+            }
+            Some(token!(RBar)) => {
+                let rbar_span = self.advance();
+                let (intro_span, strip) = self.parse_heredoc_intro(rbar_span)?;
+                if let Some(token!(Indent)) = self.peek()? {
+                    self.advance();
+                    return Ok((self.parse_heredoc(scope, intro_span, strip, true)?, true));
+                }
+                Ok((
+                    self.parse_implicit_concat(
+                        scope,
+                        Some(Expr::Literal(intro_span)),
+                        UnquotedMode::Shell,
+                    )?,
+                    false,
+                ))
+            }
+            Some(token!(LeftParen | LeftBracket | LeftBrace | DQuote | RawQuote | BQuote)) => {
+                let expr = self.parse_expr(scope, ExprMode::Shell)?;
+                if !matches!(
+                    self.peek()?,
+                    None | Some(token!(Indent | Dedent | ArgSep | StmtSep))
+                ) {
+                    let token = self.consume();
+                    self.fail = true;
+                    self.diags.push(ImplicitDelimitedConcat {
+                        span: token.span,
+                        insert: expr.span(),
+                    });
+                    return Err(Error);
+                }
+                Ok((expr, false))
+            }
+            _ => Ok((
+                self.parse_implicit_concat(scope, None, UnquotedMode::Shell)?,
+                false,
+            )),
+        }
+    }
+
     fn parse_cmd_arg(
         &mut self,
         scope: &mut Scope,
@@ -3054,163 +3202,33 @@ impl<'a> Parser<'a> {
         allow_trailing: bool,
         args: &mut Vec<Arg>,
     ) -> Result<bool> {
-        use self::{Ident, Key, Keyword, Op};
+        use self::{Ident, Key};
         use TokenInfo::*;
 
         match self.peek()? {
-            None | Some(token!(StmtSep | Dedent)) => return Ok(true),
-            Some(token!(Dollar)) => {
-                let span = self.advance();
-                match self.peek()? {
-                    Some(token!(ArgSep)) => {
-                        self.advance();
-                        let expr = Expr::Group {
-                            expr: Box::new(self.parse_cmd_or_expr(scope, allow_trailing)?),
-                            delim: Some(GroupDelim::Dollar(span)),
-                        };
-                        args.push(Arg::Pos(Single {
-                            expr,
-                            delim_span: None,
-                        }));
-                        // This consumed the rest of the statement
-                        return Ok(true);
-                    }
-                    Some(token!(Indent)) if allow_trailing => {
-                        self.advance();
-                        let expr = self.parse_data(scope, vec![])?;
-                        let expr = Expr::Group {
-                            expr: Box::new(expr),
-                            delim: Some(GroupDelim::Dollar(span)),
-                        };
-                        args.push(Arg::Pos(Single {
-                            expr,
-                            delim_span: None,
-                        }));
-                        // This consumed the rest of the statement
-                        return Ok(true);
-                    }
-                    _ => (),
-                };
-                let expr = match self.peek()? {
-                    Some(token!(Key)) => {
-                        let span = self.advance();
-                        self.parse_implicit_concat(
-                            scope,
-                            Some(Expr::Concat {
-                                exprs: vec![
-                                    Expr::Ident(Ident::new(span)),
-                                    Expr::Literal(span.after_right_char()),
-                                ],
-                                delim_span: None,
-                                arg: true,
-                            }),
-                            UnquotedMode::Shell,
-                        )?
-                    }
-                    _ => {
-                        let expr = self.parse_expr(scope, ExprMode::Compact)?;
-                        self.parse_implicit_concat(scope, Some(expr), UnquotedMode::Shell)?
-                    }
-                };
-                args.push(Arg::Pos(Single {
-                    expr: Expr::Group {
-                        expr: Box::new(expr),
-                        delim: Some(GroupDelim::Dollar(span)),
-                    },
-                    delim_span: None,
-                }));
-            }
+            None | Some(token!(StmtSep | Dedent)) => Ok(true),
             Some(token!(ArgSep)) => {
                 self.advance();
+                Ok(false)
             }
             Some(token!(Indent)) => {
                 if allow_trailing {
                     self.advance();
                     self.parse_cmd_vert_args(scope, args, true)?;
                 }
-                return Ok(true);
-            }
-            Some(token!(Keyword(Keyword::Do))) => {
-                args.push(Arg::Pos(Single {
-                    expr: self.parse_do_block(scope, allow_trailing)?,
-                    delim_span: None,
-                }));
-                return Ok(true);
+                Ok(true)
             }
             Some(token!(Key, span)) if allow_keys => {
                 let span = *span;
                 self.advance();
-                let expr = match self.peek()? {
+                let (expr, consumed) = match self.peek()? {
                     Some(token!(Indent)) if allow_trailing => {
                         self.advance();
-                        args.push(Arg::Key(Key {
-                            key_span: span,
-                            colon_span: span.after_right_char(),
-                            expr: self.parse_data(scope, vec![])?,
-                            delim_span: None,
-                        }));
-                        return Ok(true);
+                        (self.parse_data(scope, vec![])?, true)
                     }
                     Some(token!(ArgSep)) => {
                         self.advance();
-                        match self.peek()? {
-                            Some(token!(Keyword(Keyword::Do))) => {
-                                args.push(Arg::Key(Key {
-                                    key_span: span,
-                                    colon_span: span.after_right_char(),
-                                    expr: self.parse_do_block(scope, allow_trailing)?,
-                                    delim_span: None,
-                                }));
-                                return Ok(true);
-                            }
-                            Some(token!(Op(Op::Bar))) => {
-                                let pipe_span = self.advance();
-                                let (intro_span, strip) = self.parse_heredoc_intro(pipe_span)?;
-                                if let Some(token!(Indent)) = self.peek()? {
-                                    self.advance();
-                                    let expr =
-                                        self.parse_heredoc(scope, intro_span, strip, false)?;
-                                    args.push(Arg::Key(Key {
-                                        key_span: span,
-                                        colon_span: span.after_right_char(),
-                                        expr,
-                                        delim_span: None,
-                                    }));
-                                    return Ok(true);
-                                }
-                                self.parse_implicit_concat(
-                                    scope,
-                                    Some(Expr::Literal(intro_span)),
-                                    UnquotedMode::Shell,
-                                )?
-                            }
-                            Some(token!(RBar)) => {
-                                let rbar_span = self.advance();
-                                let (intro_span, strip) = self.parse_heredoc_intro(rbar_span)?;
-                                if let Some(token!(Indent)) = self.peek()? {
-                                    self.advance();
-                                    let expr =
-                                        self.parse_heredoc(scope, intro_span, strip, true)?;
-                                    args.push(Arg::Key(Key {
-                                        key_span: span,
-                                        colon_span: span.after_right_char(),
-                                        expr,
-                                        delim_span: None,
-                                    }));
-                                    return Ok(true);
-                                }
-                                self.parse_implicit_concat(
-                                    scope,
-                                    Some(Expr::Literal(intro_span)),
-                                    UnquotedMode::Shell,
-                                )?
-                            }
-                            Some(token!(Op(Op::Period))) => {
-                                self.advance();
-                                Expr::Ident(Ident::new(span))
-                            }
-                            _ => self.parse_implicit_concat(scope, None, UnquotedMode::Shell)?,
-                        }
+                        self.parse_cmd_arg_expr(scope, allow_trailing)?
                     }
                     _ => {
                         args.push(Arg::Pos(Single {
@@ -3233,7 +3251,8 @@ impl<'a> Parser<'a> {
                     colon_span: span.after_right_char(),
                     expr,
                     delim_span: None,
-                }))
+                }));
+                Ok(consumed)
             }
             Some(token!(DittoKey)) => {
                 let span = self.advance();
@@ -3243,6 +3262,7 @@ impl<'a> Parser<'a> {
                     expr: Expr::Ident(Ident::new(span)),
                     delim_span: None,
                 }));
+                Ok(false)
             }
             Some(token!(Ellipsis)) => {
                 let ellipsis_span = self.advance();
@@ -3251,56 +3271,18 @@ impl<'a> Parser<'a> {
                     expr,
                     ellipsis_span,
                     delim_span: None,
-                }))
+                }));
+                Ok(false)
             }
-            Some(token!(Op(Op::Bar))) => {
-                let pipe_span = self.advance();
-                let (intro_span, strip) = self.parse_heredoc_intro(pipe_span)?;
-                if let Some(token!(Indent)) = self.peek()? {
-                    self.advance();
-                    let expr = self.parse_heredoc(scope, intro_span, strip, false)?;
-                    args.push(Arg::Pos(Single {
-                        expr,
-                        delim_span: None,
-                    }));
-                    return Ok(true);
-                }
+            _ => {
+                let (expr, consumed) = self.parse_cmd_arg_expr(scope, allow_trailing)?;
                 args.push(Arg::Pos(Single {
-                    expr: self.parse_implicit_concat(
-                        scope,
-                        Some(Expr::Literal(intro_span)),
-                        UnquotedMode::Shell,
-                    )?,
+                    expr,
                     delim_span: None,
                 }));
+                Ok(consumed)
             }
-            Some(token!(RBar)) => {
-                let rbar_span = self.advance();
-                let (intro_span, strip) = self.parse_heredoc_intro(rbar_span)?;
-                if let Some(token!(Indent)) = self.peek()? {
-                    self.advance();
-                    let expr = self.parse_heredoc(scope, intro_span, strip, true)?;
-                    args.push(Arg::Pos(Single {
-                        expr,
-                        delim_span: None,
-                    }));
-                    return Ok(true);
-                }
-                args.push(Arg::Pos(Single {
-                    expr: self.parse_implicit_concat(
-                        scope,
-                        Some(Expr::Literal(intro_span)),
-                        UnquotedMode::Shell,
-                    )?,
-                    delim_span: None,
-                }));
-            }
-            _ => args.push(Arg::Pos(Single {
-                expr: self.parse_implicit_concat(scope, None, UnquotedMode::Shell)?,
-                delim_span: None,
-            })),
         }
-        Ok(false)
     }
 
     fn parse_cmd_args(

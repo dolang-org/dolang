@@ -41,8 +41,8 @@ with_and_without_agent "with_temp_dir cleans up files" do
       f.write "content2"
 
     # Verify files exist
-    assert (dir / "file1.txt").exists()
-    assert (dir / "file2.txt").exists()
+    assert $(dir / "file1.txt").exists()
+    assert $(dir / "file2.txt").exists()
 
   # Everything should be cleaned up
   assert $!temp_path.exists()
