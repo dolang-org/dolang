@@ -42,8 +42,8 @@ with_and_without_agent "create_dir all creates nested directories" do with_temp_
   create_dir $nested all: true
 
   # All directories should exist
-  assert (dir / "a").exists()
-  assert (dir / "a" / "b").exists()
+  assert $(dir / "a").exists()
+  assert $(dir / "a" / "b").exists()
   assert $nested.exists()
 
 with_and_without_agent "Path.create_dir method" do with_temp_dir do |dir|
