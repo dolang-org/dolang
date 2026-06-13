@@ -341,6 +341,47 @@ impl Diagnose for InvalidCompactOp {
     }
 }
 
+#[derive(Copy, Clone)]
+struct ImplicitDelimitedConcat {
+    span: Span,
+    insert: Span,
+}
+
+impl Patch for ImplicitDelimitedConcat {
+    fn span(&self) -> Span {
+        Span {
+            start: self.insert.start,
+            end: self.insert.start,
+        }
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "insert `$`")
+    }
+
+    fn sub(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "$")
+    }
+}
+
+impl Diagnose for ImplicitDelimitedConcat {
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "implicit concatenation requires `$`")
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn patches(&self) -> Box<dyn Iterator<Item = Box<dyn Patch>>> {
+        Box::new([Box::new(*self) as Box<dyn Patch>].into_iter())
+    }
+}
+
 struct AmbigIndex(Span, Span);
 
 enum AmbigIndexPatchKind {
@@ -3130,6 +3171,22 @@ impl<'a> Parser<'a> {
                     )?,
                     false,
                 ))
+            }
+            Some(token!(LeftParen | LeftBracket | LeftBrace | DQuote | RawQuote | BQuote)) => {
+                let expr = self.parse_expr(scope, ExprMode::Shell)?;
+                if !matches!(
+                    self.peek()?,
+                    None | Some(token!(Indent | Dedent | ArgSep | StmtSep))
+                ) {
+                    let token = self.consume();
+                    self.fail = true;
+                    self.diags.push(ImplicitDelimitedConcat {
+                        span: token.span,
+                        insert: expr.span(),
+                    });
+                    return Err(Error);
+                }
+                Ok((expr, false))
             }
             _ => Ok((
                 self.parse_implicit_concat(scope, None, UnquotedMode::Shell)?,
