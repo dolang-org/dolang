@@ -356,7 +356,10 @@ impl Patch for ImplicitDelimitedConcat {
     }
 
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "insert `$`")
+        write!(
+            w,
+            "insert `$` if you intended for the entire argument to be an expression"
+        )
     }
 
     fn sub(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
@@ -366,7 +369,10 @@ impl Patch for ImplicitDelimitedConcat {
 
 impl Diagnose for ImplicitDelimitedConcat {
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "implicit concatenation requires `$`")
+        write!(
+            w,
+            "implicit concatenation not permitted after delimited expression"
+        )
     }
 
     fn severity(&self) -> Severity {

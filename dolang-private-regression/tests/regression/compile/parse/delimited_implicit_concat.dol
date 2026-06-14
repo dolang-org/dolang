@@ -1,23 +1,23 @@
 echo [1, 2]bar
-# error: implicit concatenation requires `$`
+# error: implicit concatenation not permitted after delimited expression
 #   --> delimited_implicit_concat.dol:LL:LL
 #    |
 # LL | echo [1, 2]bar
 #    |            ^^^
 #    |
-# help: insert `$`
+# help: insert `$` if you intended for the entire argument to be an expression
 #    |
 # LL | echo $[1, 2]bar
 #    |      +
 
 echo {a: 1}bar
-# error: implicit concatenation requires `$`
+# error: implicit concatenation not permitted after delimited expression
 #   --> delimited_implicit_concat.dol:LL:LL
 #    |
 # LL | echo {a: 1}bar
 #    |            ^^^
 #    |
-# help: insert `$`
+# help: insert `$` if you intended for the entire argument to be an expression
 #    |
 # LL | echo ${a: 1}bar
 #    |      +
@@ -26,37 +26,37 @@ def capture :key
   key
 
 capture key: (1 + 2)bar
-# error: implicit concatenation requires `$`
+# error: implicit concatenation not permitted after delimited expression
 #   --> delimited_implicit_concat.dol:LL:LL
 #    |
 # LL | capture key: (1 + 2)bar
 #    |                     ^^^
 #    |
-# help: insert `$`
+# help: insert `$` if you intended for the entire argument to be an expression
 #    |
 # LL | capture key: $(1 + 2)bar
 #    |              +
 
 echo (1 + 2)bar
-# error: implicit concatenation requires `$`
+# error: implicit concatenation not permitted after delimited expression
 #   --> delimited_implicit_concat.dol:LL:LL
 #    |
 # LL | echo (1 + 2)bar
 #    |             ^^^
 #    |
-# help: insert `$`
+# help: insert `$` if you intended for the entire argument to be an expression
 #    |
 # LL | echo $(1 + 2)bar
 #    |      +
 
 echo "x"bar
-# error: implicit concatenation requires `$`
+# error: implicit concatenation not permitted after delimited expression
 #   --> delimited_implicit_concat.dol:LL:LL
 #    |
 # LL | echo "x"bar
 #    |         ^^^
 #    |
-# help: insert `$`
+# help: insert `$` if you intended for the entire argument to be an expression
 #    |
 # LL | echo $"x"bar
 #    |      +
