@@ -21,12 +21,12 @@ version = "0.1.0"
 path = "../dolang-ext-shell"
 version = "0.1.0"
 
+[target.'cfg(unix)'.dependencies]
+sqlite-plugin= "0.10"
+
 [target.'cfg(unix)'.dependencies.dolang-shell-vfs]
 path = "../dolang-shell-vfs"
 version = "0.1.0"
-
-[target.'cfg(unix)'.dependencies.sqlite-plugin]
-version = "0.9"
 
 [build-dependencies]
 dolang-private-build = { path = "../dolang-private-build", version = "0.1.0" }
