@@ -1,7 +1,7 @@
 use std::str;
 
 use quick_xml::{
-    Reader, Writer,
+    Reader, Writer, XmlVersion,
     escape::{escape, resolve_predefined_entity},
     events::{BytesEnd, BytesStart, BytesText, Event},
 };
@@ -81,7 +81,10 @@ fn create_node<'v, 's>(
         let key = str::from_utf8(attr.key.into_inner())
             .into_do(strand)?
             .to_owned();
-        let val = attr.unescape_value().into_do(strand)?.into_owned();
+        let val = attr
+            .normalized_value(XmlVersion::Implicit1_0)
+            .into_do(strand)?
+            .into_owned();
         attrs.push((key, val));
     }
     create_node_inner(strand, tag, attrs, state, out)
@@ -137,7 +140,10 @@ fn parse_element<'v, 's>(
                     arr.push(strand, &mut child)?
                 }
                 Event::Text(t) => {
-                    let text = t.xml_content().into_do(strand)?.into_owned();
+                    let text = t
+                        .xml_content(XmlVersion::Implicit1_0)
+                        .into_do(strand)?
+                        .into_owned();
                     if !text.is_empty() {
                         arr.push(strand, text.as_str())?;
                     }

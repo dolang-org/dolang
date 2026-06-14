@@ -8,7 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-quick-xml = "0.39"
+quick-xml = "0.40"
 
 [dependencies.dolang]
 path = "../dolang"
