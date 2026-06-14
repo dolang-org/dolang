@@ -21,7 +21,8 @@ Updates the digest state with the bytes of `data`.
 
 ```
 let state = Blake3()
-state.update "ab".update b"c"
+state.update "ab"
+state.update b"c"
 assert_eq $state.digest().hex()
   6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85
 

@@ -11,8 +11,8 @@ Returns the byte length of the binary data.
 **Type:** [`int`](./index.md)
 
 ```
-assert_eq b"hello".len 5
-assert_eq b"".len 0
+assert_eq (b"hello".len) 5
+assert_eq (b"".len) 0
 ```
 
 ## Instance Methods
@@ -159,7 +159,7 @@ Removes bytes (or specified characters) from both ends.
 **Returns:** [`bin`](./bin.md)
 
 ```
-assert_eq b"  hello  ".trim() b"hello"
+assert_eq (b"  hello  ".trim()) b"hello"
 assert_eq (b"xxhelloxx".trim b"x") b"hello"
 ```
 
@@ -176,7 +176,7 @@ Removes bytes (or specified characters) from the start.
 **Returns:** [`bin`](./bin.md)
 
 ```
-assert_eq b"  hello  ".trim_start() b"hello  "
+assert_eq (b"  hello  ".trim_start()) b"hello  "
 ```
 
 ### `trim_end chars?`
@@ -192,7 +192,7 @@ Removes bytes (or specified characters) from the end.
 **Returns:** [`bin`](./bin.md)
 
 ```
-assert_eq b"  hello  ".trim_end() b"  hello"
+assert_eq (b"  hello  ".trim_end()) b"  hello"
 ```
 
 ### `contains needle`
@@ -209,9 +209,9 @@ Tests whether the binary data contains the given bytes.
 
 ```
 assert (b"hello".contains b"ell")
-assert (b"hello".contains b"lo"))
+assert (b"hello".contains b"lo")
 assert (!(b"hello".contains b"world"))
-assert (b"hello".contains b""))
+assert (b"hello".contains b"")
 ```
 
 ### `sub start end?`

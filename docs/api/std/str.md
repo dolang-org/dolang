@@ -281,8 +281,8 @@ Returns the string converted to uppercase.
 **Returns:** [`str`](./str.md)
 
 ```
-assert_eq "hello".upper "HELLO"
-assert_eq "Hello World".upper "HELLO WORLD"
+assert_eq ("hello".upper()) "HELLO"
+assert_eq ("Hello World".upper()) "HELLO WORLD"
 ```
 
 ### `lower`
@@ -292,8 +292,8 @@ Returns the string converted to lowercase.
 **Returns:** [`str`](./str.md)
 
 ```
-assert_eq "HELLO".lower "hello"
-assert_eq "Hello World".lower "hello world"
+assert_eq ("HELLO".lower()) "hello"
+assert_eq ("Hello World".lower()) "hello world"
 ```
 
 ### `repeat count`
