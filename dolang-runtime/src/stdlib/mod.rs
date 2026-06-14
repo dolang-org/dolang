@@ -2,9 +2,11 @@ use std::hash::{DefaultHasher, Hasher};
 
 use crate::{arg::Arg, error::Error, unpack, value::Output, vm::Builder};
 
+mod property;
 mod strand;
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
+    let property = property::register(builder);
     let bc = builder.singletons();
 
     // Core types
@@ -78,6 +80,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("tuple", &tuple)
         .value("func", &func)
         .value("range", &range)
+        .value("property", property)
         .value("module", &module)
         .value("record", &record)
         .value("bin", &bin)
