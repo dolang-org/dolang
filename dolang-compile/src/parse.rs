@@ -1043,7 +1043,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_quoted_string(&mut self, scope: &mut Scope, open: Span, bin: bool) -> Result<Expr> {
-        use self::Ident;
         use TokenInfo::*;
 
         let expr = self.with_mode(lex::Mode::String, |this| {
@@ -1058,14 +1057,7 @@ impl<'a> Parser<'a> {
                     }
                     Some(token!(Dollar)) => {
                         this.advance();
-                        match this.peek()? {
-                            Some(token!(Key)) => {
-                                let span = this.advance();
-                                exprs.push(Expr::Ident(Ident::new(span)));
-                                Expr::Literal(span.after_right_char())
-                            }
-                            _ => this.parse_expr_primary(scope, ExprMode::Compact)?,
-                        }
+                        this.parse_expr_primary(scope, ExprMode::Compact)?
                     }
                     Some(token!(DQuote)) => break this.advance(),
                     Some(_) => match decay_string!(this.next()?) {
@@ -1307,20 +1299,7 @@ impl<'a> Parser<'a> {
 
         match self.next()? {
             Some(token!(Dollar, span)) if matches!(mode, ExprMode::Shell) => Ok(Expr::Group {
-                expr: Box::new(match self.peek()? {
-                    Some(token!(Key)) => {
-                        let span = self.advance();
-                        Expr::Concat {
-                            exprs: vec![
-                                Expr::Ident(Ident::new(span)),
-                                Expr::Literal(span.after_right_char()),
-                            ],
-                            delim_span: None,
-                            arg: true,
-                        }
-                    }
-                    _ => self.parse_expr(scope, ExprMode::Compact)?,
-                }),
+                expr: Box::new(self.parse_expr(scope, ExprMode::Compact)?),
                 delim: Some(GroupDelim::Dollar(span)),
             }),
             Some(token!(Sym, span)) => Ok(Expr::Sym(span)),
@@ -2494,39 +2473,29 @@ impl<'a> Parser<'a> {
             }
             Some(token!(Dollar)) => {
                 self.advance();
-                let (key, colon_span) = if let Some(token!(Key)) = self.peek()? {
-                    let key = self.advance();
-                    (Expr::Ident(Ident::new(key)), key.after_right_char())
-                } else {
-                    let key = self.parse_expr(scope, ExprMode::Compact)?;
-                    if let Some(token!(Colon)) = self.peek()? {
-                        (key, self.advance())
+                let key = self.parse_expr(scope, ExprMode::Compact)?;
+                if let Some(token!(Colon)) = self.peek()? {
+                    let colon_span = self.advance();
+                    let value = if let Some(token!(Indent)) = self.peek()? {
+                        self.advance();
+                        self.parse_data(scope, vec![])?
                     } else {
-                        args.push(Arg::Pos(Single {
-                            expr: self.parse_implicit_concat(
-                                scope,
-                                Some(key),
-                                UnquotedMode::Shell,
-                            )?,
-                            delim_span: None,
-                        }));
-                        self.parse_cmd_args(scope, false, false, args)?;
-                        return Ok(());
-                    }
-                };
-                let value = if let Some(token!(Indent)) = self.peek()? {
-                    self.advance();
-                    self.parse_data(scope, vec![])?
+                        self.expect(scope, &[ExpectKind::ArgSep])?;
+                        self.parse_cmd_vert_line_expr(scope)?
+                    };
+                    args.push(Arg::DynamicKey(Pair {
+                        key,
+                        value,
+                        colon_span: Some(colon_span),
+                        delim_span: None,
+                    }));
                 } else {
-                    self.expect(scope, &[ExpectKind::ArgSep])?;
-                    self.parse_cmd_vert_line_expr(scope)?
+                    args.push(Arg::Pos(Single {
+                        expr: self.parse_implicit_concat(scope, Some(key), UnquotedMode::Shell)?,
+                        delim_span: None,
+                    }));
+                    self.parse_cmd_args(scope, false, false, args)?;
                 };
-                args.push(Arg::DynamicKey(Pair {
-                    key,
-                    value,
-                    colon_span: Some(colon_span),
-                    delim_span: None,
-                }));
                 Ok(())
             }
             Some(token!(Keyword(Keyword::Do))) => {
