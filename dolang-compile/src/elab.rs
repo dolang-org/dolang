@@ -2081,6 +2081,9 @@ impl<'a> Elaborater<'a> {
             self.diags.push(InappropriatePub(span));
             self.fail = true;
         }
+        for decorator in &mut def.decorators {
+            self.visit_expr(scope, &mut decorator.expr, false)?;
+        }
         // All scope insertion is handled by visit_body_pre; just visit the body.
         self.visit_function(scope, &mut def.func, None)
     }
@@ -2221,6 +2224,10 @@ impl<'a> Elaborater<'a> {
         {
             self.diags.push(InappropriatePub(span));
             self.fail = true;
+        }
+
+        for decorator in &mut class.decorators {
+            self.visit_expr(scope, &mut decorator.expr, false)?;
         }
 
         // Resolve superclass expressions BEFORE inserting the class name

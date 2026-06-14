@@ -1,0 +1,45 @@
+let calls = []
+
+def wrap label
+  do |fn|
+    do |...args|
+      calls.push $label
+      fn ...args
+
+def make_wrap label
+  calls.push "eval $label"
+  wrap $label
+
+#[make_wrap "outer"]
+#[make_wrap "inner"]
+def decorated x
+  (x + 1)
+
+assert_eq $calls ["eval outer", "eval inner"]
+assert_eq (decorated 4) 5
+assert_eq $calls ["eval outer", "eval inner", "outer", "inner"]
+
+def class_tag cls
+  calls.push "class-decorated"
+  cls
+
+#[class_tag]
+class Thing
+  pub let value = 0
+
+  def (init) self value
+    self.value = value
+
+assert_eq $calls ["eval outer", "eval inner", "outer", "inner", "class-decorated"]
+let thing = Thing 42
+assert_eq $thing.value 42
+
+#[wrap "pub-fn"]
+pub def exported_fn x
+  (x * 2)
+
+#[class_tag]
+pub class ExportedThing
+
+assert_eq (exported_fn 3) 6
+assert_eq $calls ["eval outer", "eval inner", "outer", "inner", "class-decorated", "class-decorated", "pub-fn"]

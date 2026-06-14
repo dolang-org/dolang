@@ -1,0 +1,33 @@
+#[decorator]
+let x = 1
+# error: decorators are only valid before `def` or `class`
+#   --> decorator_errors.dol:LL:LL
+#    |
+# LL | let x = 1
+#    | ^^^
+
+#[decorator]
+echo bad
+# error: decorators are only valid before `def` or `class`
+#   --> decorator_errors.dol:LL:LL
+#    |
+# LL | echo bad
+#    | ^^^^
+
+pub #[decorator]
+def bad_pub
+  nil
+# error: `pub` must follow decorators
+#   --> decorator_errors.dol:LL:LL
+#    |
+# LL | pub #[decorator]
+#    |     ^^
+
+#[decorator
+def missing_close
+  nil
+# error: invalid expression
+#   --> decorator_errors.dol:LL:LL
+#    |
+# LL | def missing_close
+#    | ^^^

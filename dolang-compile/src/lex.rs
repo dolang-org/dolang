@@ -211,6 +211,7 @@ pub(crate) enum Mode {
 
 #[derive(Debug)]
 enum RawToken {
+    DecoratorOpen,
     Dollar,
     DQuote,
     Escape(char),
@@ -298,6 +299,7 @@ enum RawState {
     Zero,
     SignedZero,
     Hex,
+    Hash,
     SignedHex,
     Octal,
     SignedOctal,
@@ -807,7 +809,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                                 emit!(self.emit, token, Space)
                             },
                             match Some(b'#') if self.mode != Mode::String => {
-                                emit!(self.emit, token, Comment)
+                                emit!(self.emit, token, Hash)
                             },
                             match Some(b':') => emit!(self.emit, token, Colon),
                             match Some(b'\\') if matches!(self.mode, Mode::String | Mode::Heredoc) => {
@@ -1206,6 +1208,13 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                     }
                     _ => return self.error(ErrorDiagKind::BadEscape),
                 },
+                Hash => match self.advance() {
+                    Some(b'[') => return self.token(RawToken::DecoratorOpen, Empty),
+                    None => self.comment(End),
+                    Some(b'\r') => self.comment(Cr),
+                    Some(b'\n') => self.comment(Indent),
+                    _ => self.trans(Comment),
+                },
                 Comment if matches!(self.mode, Mode::Heredoc | Mode::RawHeredoc) => {
                     match self.advance() {
                         None => return self.token(RawToken::Literal, End),
@@ -1388,6 +1397,7 @@ pub(crate) struct Error;
 pub(crate) enum TokenInfo {
     ArgSep,
     Bool(bool),
+    DecoratorOpen,
     Dedent,
     Dollar,
     DQuote,
@@ -1756,6 +1766,7 @@ impl<'a> Iterator for Lexer<'a> {
                     self.set_indent(span);
                     continue;
                 }
+                Ok((DecoratorOpen, span)) => self.token(TokenInfo::DecoratorOpen, span),
                 Ok((Dollar, span)) => self.token(TokenInfo::Dollar, span),
                 Ok((DQuote, span)) => self.token(TokenInfo::DQuote, span),
                 Ok((Escape(c), span)) => self.token(TokenInfo::Escape(c), span),
