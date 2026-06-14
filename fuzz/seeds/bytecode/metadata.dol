@@ -1,0 +1,7 @@
+def choose a b = 2 :flag = false ..._
+  if flag
+    (a + b)
+  else
+    b
+
+choose 1 flag: true

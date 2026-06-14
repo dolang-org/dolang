@@ -1,0 +1,6 @@
+let n = 3
+let result = if (n > 1)
+  (n + 10)
+else
+  0
+result
