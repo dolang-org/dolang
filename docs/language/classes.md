@@ -54,6 +54,40 @@ class Counter
     self.count
 ```
 
+## Computed Fields with `property`
+
+Fields can be backed by descriptor objects instead of stored per-instance
+state. The built-in [`property`](../api/std/property.md) helper is the common
+way to define a computed field:
+
+```
+class Config
+  let _port = 8080
+  pub let port = property do |obj| obj.#_port
+
+  #[port.setter]
+  pub def port obj value
+    obj.#_port = value
+```
+
+Reads and writes still use ordinary field syntax:
+
+```
+let cfg = Config()
+assert_eq $cfg.port 8080
+cfg.port = 9000
+assert_eq $cfg.port 9000
+```
+
+`property` is a built-in subtype of
+[`Descriptor`](../api/std/descriptor.md). A class field is treated as a
+descriptor-backed field only when its class-body value is a nominal subtype of
+`Descriptor`.
+
+Use `#[field.setter]` to attach a setter method to an existing property value
+in the class body. Decorators can also be applied to classes and methods more
+generally; see [Functions](./functions.md#decorators) for the syntax.
+
 ## Visibility
 
 By default, all fields and methods of a class are **private** — they can only
@@ -247,13 +281,17 @@ defined with the method name in parentheses.
 | `(unpack)` | `let :x :y = instance`                     | Destructuring                              |
 | `(index)`  | `instance[key]`                            | Index                                      |
 | `(assign)` | `instance[key] = val`                      | Index assign                               |
-| `(get)`    | `instance.missing_field`                   | Dynamic field/method fallback              |
-| `(set)`    | `instance.missing_field = val`             | Dynamic field assignment fallback          |
+| `(get)`    | `instance.missing_field`                   | Dynamic missing-field fallback             |
+| `(set)`    | `instance.missing_field = val`             | Dynamic missing-field assignment fallback  |
 | `(hash)`   | `std.hash(instance)`, dict key             | Hash code (must be consistent with `(eq)`) |
 | `(iter)`   | `for x = instance`, `[...instance]`        | Input iteration                            |
 | `(next)`   | iteration protocol                         | Advance input iterator                     |
 | `(sink)`   | `redirect output: $instance`               | Output iteration                           |
 | `(put)`    | output protocol                            | Advance output iterator                    |
+
+`(get)` and `(set)` only run when ordinary field lookup misses. They are
+separate from descriptor-backed fields such as
+[`property`](../api/std/property.md).
 
 **Operators:**
 

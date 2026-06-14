@@ -16,6 +16,7 @@ The following items are available globally in every Do program without any
 | [`func`](../api/std/func.md)                    | [`func`](../api/std/func.md) type     |
 | [`int`](../api/std/int.md)                      | [`int`](../api/std/int.md) type       |
 | [`module`](../api/std/index.md)                 | Module type                           |
+| [`property`](../api/std/property.md)            | Built-in descriptor helper            |
 | [`range`](../api/std/range.md)                  | [`range`](../api/std/range.md) type   |
 | [`record`](../api/std/record.md)                | [`record`](../api/std/record.md) type |
 | [`set`](../api/std/set.md)                      | [`set`](../api/std/set.md) type       |

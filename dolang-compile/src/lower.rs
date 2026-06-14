@@ -7,10 +7,10 @@ use dolang_bytecode::builtin;
 use crate::{
     Mode, PreludeImport,
     ast::{
-        Arg, ArrayElem, Assign, Bind, Block, Class, Const, Def, DefVariant, DictElem, Expand, Expr,
-        For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key, LValue, Let,
-        NlGuard, Pair, Param, ParamDefault, Pattern, PrimStmt, Res, Return, Single, Stmt, Try,
-        Unit, While, visit::Node,
+        Arg, ArrayElem, Assign, Bind, Block, Class, Const, Decorator, Def, DefVariant, DictElem,
+        Expand, Expr, For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key,
+        LValue, Let, NlGuard, Pair, Param, ParamDefault, Pattern, PrimStmt, Res, Return, Single,
+        Stmt, Try, Unit, While, visit::Node,
     },
     cfg::{self, BlockRefMut, Inst, InstInfo, Term, TermInfo},
     constant::{self, ConstantExt},
@@ -1879,6 +1879,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     }
 
     fn lower_def(&mut self, node: &'a Def, want_result: bool) -> Result<()> {
+        self.lower_decorator_exprs(&node.decorators)?;
         let unpack = self.lower_params(&node.func.params)?;
         let (name, res) = match &node.variant {
             DefVariant::Normal(ident) => (ident.span, &ident.res),
@@ -1917,6 +1918,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.block
             .insts
             .push(Inst(InstInfo::Close(fid), node.def_span));
+        self.apply_decorators(&node.decorators);
         let res = res.as_ref().expect("unresolved assignment lhs");
         let var = self.resolve_var(res.index, res.depth);
         if want_result {
@@ -1935,8 +1937,30 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         Ok(())
     }
 
+    fn lower_decorator_exprs(&mut self, decorators: &'a [Decorator]) -> Result<()> {
+        for decorator in decorators {
+            self.lower_expr(&decorator.expr)?;
+        }
+        Ok(())
+    }
+
+    fn apply_decorators(&mut self, decorators: &'a [Decorator]) {
+        if decorators.is_empty() {
+            return;
+        }
+        let sig = sig::Pack::new([sig::Arg::Value].into_iter());
+        let sig = self.packtab.id(&sig);
+        for decorator in decorators.iter().rev() {
+            self.block
+                .insts
+                .push(Inst(InstInfo::Call(sig), decorator.open_span));
+        }
+    }
+
     fn lower_class(&mut self, node: &'a Class, want_result: bool) -> Result<()> {
         let span = node.class_span;
+
+        self.lower_decorator_exprs(&node.decorators)?;
 
         // Push class name as a string constant (first arg to CLASS_CREATE)
         let name = self.file.str(node.ident.span).to_owned();
@@ -1997,6 +2021,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             InstInfo::Builtin(builtin::CLASS_CREATE, class_sig),
             span,
         ));
+        self.apply_decorators(&node.decorators);
 
         // Store class object into the class name variable
         let res = node.ident.res.as_ref().expect("unresolved class name");

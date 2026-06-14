@@ -933,14 +933,16 @@ impl<'s> Scope<'s> {
         }
     }
 
-    fn class_private_mut(&mut self) -> Option<&mut HashMap<String, sym::Id>> {
+    fn insert_private_field(&mut self, name: String, sym: sym::Id) {
         match self {
             Scope::Nested {
                 kind: ScopeKind::Class { .. },
                 class_private,
                 ..
-            } => Some(class_private),
-            _ => None,
+            } => {
+                class_private.insert(name, sym);
+            }
+            _ => unreachable!("private field insert outside class scope"),
         }
     }
 
@@ -975,11 +977,20 @@ impl<'s> Scope<'s> {
     }
 
     fn insert(&mut self, sym: sym::Id, origin: origin::Id, epoch: Epoch, exported: bool) -> usize {
+        self.insert_with_lookup(sym, sym, origin, epoch, exported)
+    }
+
+    fn insert_with_lookup(
+        &mut self,
+        lookup_sym: sym::Id,
+        sym: sym::Id,
+        origin: origin::Id,
+        epoch: Epoch,
+        exported: bool,
+    ) -> usize {
         match self {
             Self::Base => panic!("Can't insert into base scope"),
-            Self::Nested {
-                kind, vars, index, ..
-            } => {
+            Self::Nested { vars, index, .. } => {
                 let i = vars.len();
                 vars.push(Cell::new((
                     Var {
@@ -991,10 +1002,7 @@ impl<'s> Scope<'s> {
                     },
                     epoch,
                 )));
-                // Class-scope vars are not lexically accessible — only via self.field
-                if !matches!(kind, ScopeKind::Class { .. }) {
-                    index.insert(sym, i);
-                }
+                index.insert(lookup_sym, i);
                 i
             }
         }
@@ -1026,9 +1034,9 @@ impl<'s> Scope<'s> {
         capture: bool,
         promote: Option<origin::Id>,
         epoch: Epoch,
-    ) -> Result<Res> {
+    ) -> result::Result<Res, ResolveError> {
         match self {
-            Scope::Base => Err(Error),
+            Scope::Base => Err(ResolveError::Unbound),
             Scope::Nested {
                 kind,
                 parent,
@@ -1037,6 +1045,18 @@ impl<'s> Scope<'s> {
                 ..
             } => {
                 if let Some(&index) = index.get(&id) {
+                    if capture && matches!(kind, ScopeKind::Class { .. }) {
+                        let Res {
+                            index,
+                            depth,
+                            origin,
+                        } = parent.resolve_inner(id, capture, promote, epoch)?;
+                        return Ok(Res {
+                            index,
+                            depth: depth + 1,
+                            origin,
+                        });
+                    }
                     vars[index].update(|(var, _)| {
                         let mut var = var;
                         if capture {
@@ -1087,11 +1107,16 @@ impl<'s> Scope<'s> {
         }
     }
 
-    fn resolve(&self, id: sym::Id, epoch: Epoch) -> Result<Res> {
+    fn resolve(&self, id: sym::Id, epoch: Epoch) -> result::Result<Res, ResolveError> {
         self.resolve_inner(id, false, None, epoch)
     }
 
-    fn promote(&self, id: sym::Id, origin: origin::Id, epoch: Epoch) -> Result<Res> {
+    fn promote(
+        &self,
+        id: sym::Id,
+        origin: origin::Id,
+        epoch: Epoch,
+    ) -> result::Result<Res, ResolveError> {
         self.resolve_inner(id, false, Some(origin), epoch)
     }
 
@@ -1117,6 +1142,10 @@ impl<'s> Scope<'s> {
 pub(crate) struct Error;
 
 pub(crate) type Result<T> = result::Result<T, Error>;
+
+enum ResolveError {
+    Unbound,
+}
 
 impl<'a> Elaborater<'a> {
     // Bump epoch, returning *prior* value
@@ -1148,7 +1177,7 @@ impl<'a> Elaborater<'a> {
             .id(&self.bintab.id_str(self.file.str(node.span)));
         match scope.resolve(id, self.epoch) {
             Ok(res) => node.res = Some(res),
-            Err(Error) => {
+            Err(ResolveError::Unbound) => {
                 node.res = None;
                 // Handle error but leave a diagnostic and fail later
                 self.fail = true;
@@ -1666,7 +1695,8 @@ impl<'a> Elaborater<'a> {
                 span: ident.span,
                 class: scope.class_span(),
             });
-            let index = scope.insert(sym, origin, self.epoch, true);
+            let lookup_sym = self.symtab.id(&self.bintab.id_str(name));
+            let index = scope.insert_with_lookup(lookup_sym, sym, origin, self.epoch, true);
             ident.res = Some(Res {
                 index,
                 depth: 0,
@@ -2072,6 +2102,60 @@ impl<'a> Elaborater<'a> {
         Ok(())
     }
 
+    fn insert_class_def(&mut self, scope: &mut Scope<'_>, node: &mut Def) {
+        let (lookup_sym, effective_sym, origin) = match &node.variant {
+            DefVariant::Normal(ident) => {
+                let name = self.file.str(ident.span);
+                let lookup_sym = self.symtab.id(&self.bintab.id_str(name));
+                let effective_sym = if node.pub_span.is_none() {
+                    scope
+                        .lookup_private_field(name)
+                        .expect("private sym should exist from pre-scan")
+                } else {
+                    lookup_sym
+                };
+                let origin = self.origintab.id(&Origin::Def {
+                    span: ident.span,
+                    class: scope.class_span(),
+                });
+                (lookup_sym, effective_sym, origin)
+            }
+            DefVariant::Special(method, span, _) => {
+                let sym = self.symtab.id(&self.bintab.id_str(method.sym()));
+                let origin = self.origintab.id(&Origin::Def {
+                    span: *span,
+                    class: scope.class_span(),
+                });
+                (sym, sym, origin)
+            }
+        };
+        let index = scope.insert_with_lookup(lookup_sym, effective_sym, origin, self.epoch, true);
+        let res = match &mut node.variant {
+            DefVariant::Normal(ident) => &mut ident.res,
+            DefVariant::Special(_, _, res) => res,
+        };
+        *res = Some(Res {
+            index,
+            depth: 0,
+            origin,
+        });
+    }
+
+    fn insert_class_class(&mut self, scope: &mut Scope<'_>, node: &mut Class) {
+        let sym = self
+            .symtab
+            .id(&self.bintab.id_str(self.file.str(node.ident.span)));
+        let origin = self.origintab.id(&Origin::Class {
+            span: node.ident.span,
+        });
+        let index = scope.insert(sym, origin, self.epoch, true);
+        node.ident.res = Some(Res {
+            index,
+            depth: 0,
+            origin,
+        });
+    }
+
     fn visit_def(&mut self, scope: &mut Scope<'_>, def: &mut Def) -> Result<()> {
         // Check pub validity
         if let Some(span) = def.pub_span
@@ -2081,7 +2165,12 @@ impl<'a> Elaborater<'a> {
             self.diags.push(InappropriatePub(span));
             self.fail = true;
         }
-        // All scope insertion is handled by visit_body_pre; just visit the body.
+        for decorator in &mut def.decorators {
+            self.visit_expr(scope, &mut decorator.expr, false)?;
+        }
+        if scope.is_class() {
+            self.insert_class_def(scope, def);
+        }
         self.visit_function(scope, &mut def.func, None)
     }
 
@@ -2094,72 +2183,17 @@ impl<'a> Elaborater<'a> {
                         if let ast::Pattern::Ident(ident) = &node.bind {
                             let name = self.file.str(ident.span).to_owned();
                             let private_sym = self.symtab.fresh(self.bintab.id_str(&name));
-                            scope.class_private_mut().unwrap().insert(name, private_sym);
+                            scope.insert_private_field(name, private_sym);
                         }
                     }
                     Stmt::Def(node) => {
-                        // Register private sym for non-pub Normal def before inserting,
-                        // so lookup_private_field finds it when computing effective_sym.
                         if node.pub_span.is_none()
                             && let DefVariant::Normal(ident) = &node.variant
                         {
                             let name = self.file.str(ident.span).to_owned();
                             let private_sym = self.symtab.fresh(self.bintab.id_str(&name));
-                            scope.class_private_mut().unwrap().insert(name, private_sym);
+                            scope.insert_private_field(name, private_sym);
                         }
-                        // Insert the def. All class members are exported; private Normal
-                        // defs use their unique sym.
-                        let (sym, origin) = match &node.variant {
-                            DefVariant::Normal(ident) => (
-                                self.symtab
-                                    .id(&self.bintab.id_str(self.file.str(ident.span))),
-                                self.origintab.id(&Origin::Def {
-                                    span: ident.span,
-                                    class: scope.class_span(),
-                                }),
-                            ),
-                            DefVariant::Special(method, span, _) => (
-                                self.symtab.id(&self.bintab.id_str(method.sym())),
-                                self.origintab.id(&Origin::Def {
-                                    span: *span,
-                                    class: scope.class_span(),
-                                }),
-                            ),
-                        };
-                        let effective_sym = if node.pub_span.is_none() {
-                            if let DefVariant::Normal(ident) = &node.variant {
-                                let name = self.file.str(ident.span).to_owned();
-                                scope.lookup_private_field(&name).unwrap_or(sym)
-                            } else {
-                                sym
-                            }
-                        } else {
-                            sym
-                        };
-                        let index = scope.insert(effective_sym, origin, self.epoch, true);
-                        let res = match &mut node.variant {
-                            DefVariant::Normal(ident) => &mut ident.res,
-                            DefVariant::Special(_, _, res) => res,
-                        };
-                        *res = Some(Res {
-                            index,
-                            depth: 0,
-                            origin,
-                        });
-                    }
-                    Stmt::Class(node) => {
-                        let sym = self
-                            .symtab
-                            .id(&self.bintab.id_str(self.file.str(node.ident.span)));
-                        let origin = self.origintab.id(&Origin::Class {
-                            span: node.ident.span,
-                        });
-                        let index = scope.insert(sym, origin, self.epoch, true);
-                        node.ident.res = Some(Res {
-                            index,
-                            depth: 0,
-                            origin,
-                        });
                     }
                     _ => {}
                 }
@@ -2223,10 +2257,18 @@ impl<'a> Elaborater<'a> {
             self.fail = true;
         }
 
+        for decorator in &mut class.decorators {
+            self.visit_expr(scope, &mut decorator.expr, false)?;
+        }
+
         // Resolve superclass expressions BEFORE inserting the class name
         // (the class name should not be available in its own superclass expressions)
         for super_expr in &mut class.super_exprs {
             self.visit_expr(scope, super_expr, false)?;
+        }
+
+        if scope.is_class() {
+            self.insert_class_class(scope, class);
         }
 
         assert!(

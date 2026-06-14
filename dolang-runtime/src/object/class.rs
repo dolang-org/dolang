@@ -8,9 +8,10 @@ use crate::{
     call,
     error::{Error, ErrorKind, Result, ResultExt},
     gc::{self, Annex, Collect, arena::Visit},
+    method,
     object::{
         BoundMethod,
-        protocol::{Recv, Spread, SpreadContext, default_spread},
+        protocol::{Inspect, Recv, Spread, SpreadContext, default_spread},
     },
     sig::Unpack,
     strand::Strand,
@@ -22,12 +23,53 @@ use crate::{
 
 use super::protocol::{GcObj, GcObjBorrow, Protocol};
 
+pub(crate) struct Descriptor;
+
+unsafe impl Collect for Descriptor {
+    const CYCLIC: bool = false;
+    const IMMUTABLE: bool = true;
+    type Annex = ();
+
+    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> Protocol<'v> for Descriptor {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut out: Slot<'v, 'a>,
+    ) {
+        out.store(strand.singletons().type_obj.dup())
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn fmt::Write,
+    ) -> Result<'v, 's, ()> {
+        write!(w, "<type Descriptor>").into_do(strand)
+    }
+
+    fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
+        Some(Inspect {
+            is_abstract: true,
+            members: vec![Sym::well_known(sym::GET), Sym::well_known(sym::SET)],
+        })
+    }
+}
+
 /// A single entry in a class's unified symbol table.
 pub(crate) enum ClassEntry<'v> {
     /// Index into `field_defaults` / instance `fields`.
     Field(usize),
     /// A Do function value (method).
     Method(Value<'v>),
+    /// A descriptor object whose `get`/`set` methods mediate instance access.
+    Descriptor(Value<'v>),
     /// Native delegation: index into instance `natives`.
     Delegate(usize),
     /// Abstract delegation: the type-object singleton to dispatch to.
@@ -91,7 +133,9 @@ unsafe impl<'v> Collect for ClassObject<'v> {
         }
         for (_, entry) in self.entries.iter() {
             match entry {
-                ClassEntry::Method(v) | ClassEntry::Abstract(v) => v.accept(visit)?,
+                ClassEntry::Method(v) | ClassEntry::Descriptor(v) | ClassEntry::Abstract(v) => {
+                    v.accept(visit)?
+                }
                 _ => {}
             }
         }
@@ -110,7 +154,9 @@ unsafe impl<'v> Collect for ClassObject<'v> {
         }
         for (_, entry) in self.entries.iter_mut() {
             match entry {
-                ClassEntry::Method(v) | ClassEntry::Abstract(v) => *v = Value::NIL,
+                ClassEntry::Method(v) | ClassEntry::Descriptor(v) | ClassEntry::Abstract(v) => {
+                    *v = Value::NIL
+                }
                 _ => {}
             }
         }
@@ -342,48 +388,6 @@ where
     }
 }
 
-fn class_sync_get_fallback<'v, 'a, 's>(
-    this: Recv<'v, 'a, ClassInstance<'v>>,
-    strand: &mut Strand<'v, 's>,
-    field: Sym<'v, 'a>,
-    out: Slot<'v, 'a>,
-) -> Result<'v, 's, ()> {
-    let annex = this.annex();
-    match annex.class.entry_by_tag(sym::GET_METHOD) {
-        Some(ClassEntry::Method(v)) => {
-            strand.sync(async |strand| call!(strand, v, out, &this, field).await)
-        }
-        Some(ClassEntry::Delegate(slot)) => {
-            let native = annex.natives[*slot]
-                .get()
-                .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-            strand.sync(async |strand| native.op_get(strand, field, out))
-        }
-        _ => Err(Error::field(strand, field)),
-    }
-}
-
-fn class_sync_set_fallback<'v, 'a, 's>(
-    this: Recv<'v, 'a, ClassInstance<'v>>,
-    strand: &mut Strand<'v, 's>,
-    field: Sym<'v, 'a>,
-    value: Slot<'v, 'a>,
-) -> Result<'v, 's, ()> {
-    let annex = this.annex();
-    match annex.class.entry_by_tag(sym::SET_METHOD) {
-        Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut tmp]| {
-            strand.sync(async |strand| call!(strand, v, &mut tmp, &this, field, &value).await)
-        }),
-        Some(ClassEntry::Delegate(slot)) => {
-            let native = annex.natives[*slot]
-                .get()
-                .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-            strand.sync(async |strand| native.op_set(strand, field, value))
-        }
-        _ => Err(Error::field(strand, field)),
-    }
-}
-
 fn class_sync_unary_op<'v, 'a, 's, F>(
     this: Recv<'v, 'a, ClassInstance<'v>>,
     strand: &mut Strand<'v, 's>,
@@ -568,22 +572,34 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             Some(ClassEntry::Field(slot_idx)) => {
                 let borrow = this.borrow(strand)?;
                 out.store(borrow.fields[*slot_idx].dup());
-                return Ok(());
+                Ok(())
             }
+            Some(ClassEntry::Descriptor(descriptor)) => strand.sync(async |strand| {
+                method!(strand, descriptor, Sym::well_known(sym::GET), out, &this).await
+            }),
             Some(ClassEntry::Method(_) | ClassEntry::Abstract(_)) => {
                 BoundMethod::create(strand, &this, field, out);
-                return Ok(());
+                Ok(())
             }
             Some(ClassEntry::Delegate(slot)) => {
                 let native = annex.natives[*slot]
                     .get()
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                return strand.sync(async |strand| native.op_get(strand, field, out));
+                strand.sync(async |strand| native.op_get(strand, field, out))
             }
-            _ => {}
+            _ => match annex.class.entry_by_tag(sym::GET_METHOD) {
+                Some(ClassEntry::Method(v)) => {
+                    strand.sync(async |strand| call!(strand, v, out, &this, field).await)
+                }
+                Some(ClassEntry::Delegate(slot)) => {
+                    let native = annex.natives[*slot]
+                        .get()
+                        .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
+                    strand.sync(async |strand| native.op_get(strand, field, out))
+                }
+                _ => Err(Error::field(strand, field)),
+            },
         }
-
-        class_sync_get_fallback(this, strand, field, out)
     }
 
     fn op_set<'a, 's>(
@@ -592,30 +608,45 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         field: Sym<'v, 'a>,
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        enum SetAction {
-            Field(usize),
-            Delegate(usize),
-            Fallback,
-        }
-
         let annex = this.annex();
-        let action = match annex.class.entry(field) {
-            Some(ClassEntry::Field(slot_idx)) => SetAction::Field(*slot_idx),
-            Some(ClassEntry::Delegate(slot)) => SetAction::Delegate(*slot),
-            _ => SetAction::Fallback,
-        };
-
-        match action {
-            SetAction::Field(slot_idx) => {
+        match annex.class.entry(field) {
+            Some(ClassEntry::Field(slot_idx)) => {
                 let mut borrow = this.borrow_mut(strand)?;
-                borrow.fields[slot_idx] = value.take();
+                borrow.fields[*slot_idx] = value.take();
                 Ok(())
             }
-            SetAction::Delegate(slot) => annex.natives[slot]
+            Some(ClassEntry::Descriptor(descriptor)) => {
+                strand.with_slots_sync(move |strand, [mut tmp]| {
+                    strand.sync(async |strand| {
+                        method!(
+                            strand,
+                            descriptor,
+                            Sym::well_known(sym::SET),
+                            &mut tmp,
+                            &this,
+                            &value
+                        )
+                        .await
+                    })
+                })
+            }
+            Some(ClassEntry::Delegate(slot)) => annex.natives[*slot]
                 .get()
                 .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?
                 .op_set(strand, field, value),
-            SetAction::Fallback => class_sync_set_fallback(this, strand, field, value),
+            _ => match annex.class.entry_by_tag(sym::SET_METHOD) {
+                Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut tmp]| {
+                    strand
+                        .sync(async |strand| call!(strand, v, &mut tmp, &this, field, &value).await)
+                }),
+                Some(ClassEntry::Delegate(slot)) => {
+                    let native = annex.natives[*slot]
+                        .get()
+                        .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
+                    strand.sync(async |strand| native.op_set(strand, field, value))
+                }
+                _ => Err(Error::field(strand, field)),
+            },
         }
     }
 
@@ -638,6 +669,21 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     borrow.fields[*slot_idx].dup()
                 };
                 return func.op_call(strand, args, out).await;
+            }
+            Some(ClassEntry::Descriptor(descriptor)) => {
+                return strand
+                    .with_slots(async move |strand, [mut callable]| {
+                        method!(
+                            strand,
+                            descriptor,
+                            Sym::well_known(sym::GET),
+                            &mut callable,
+                            &this
+                        )
+                        .await?;
+                        callable.op_call(strand, args, out).await
+                    })
+                    .await;
             }
             Some(ClassEntry::Delegate(slot)) => {
                 let native = this.annex().natives[*slot]

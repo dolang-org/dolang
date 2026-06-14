@@ -8,10 +8,11 @@ use std::{
 use crate::{
     Compiler,
     ast::{
-        Arg, ArrayElem, Assign, Bind, Block, CatchHandler, Class, Const, Def, DefVariant, DictElem,
-        Expand, Expr, ExprBody, For, Function, GetVariant, GroupDelim, Ident, If, IfBranch, Import,
-        ImportElement, ImportItem, Key, Let, Pair, Param, ParamDefault, Pattern, PrimStmt, Return,
-        Single, SpecialMethod, Stmt, Throw, Try, Unit, While, visit::Node,
+        Arg, ArrayElem, Assign, Bind, Block, CatchHandler, Class, Const, Decorator, Def,
+        DefVariant, DictElem, Expand, Expr, ExprBody, For, Function, GetVariant, GroupDelim, Ident,
+        If, IfBranch, Import, ImportElement, ImportItem, Key, Let, Pair, Param, ParamDefault,
+        Pattern, PrimStmt, Return, Single, SpecialMethod, Stmt, Throw, Try, Unit, While,
+        visit::Node,
     },
     diag::{AnnotationKind, NoteKind, Severity},
     lex::{self, Keyword, Lexer, Mode, Op, Token, TokenInfo},
@@ -166,6 +167,7 @@ macro_rules! decay_string {
 pub(crate) enum ExpectKind {
     ArgSep,
     Const,
+    DecoratorOpen,
     Dedent,
     Dollar,
     DQuote,
@@ -209,6 +211,7 @@ impl Display for ExpectKind {
         match self {
             ArgSep => &"<whitespace>",
             Const => &"constant",
+            DecoratorOpen => &"#[",
             Dedent => &"<unindent>",
             Dollar => &"$",
             DQuote => &"\"",
@@ -250,6 +253,7 @@ impl From<&TokenInfo> for ExpectKind {
         match value {
             ArgSep => ExpectKind::ArgSep,
             Bool(_) | I64(_) | F64 | Keyword(Keyword::Nil) => ExpectKind::Const,
+            DecoratorOpen => ExpectKind::DecoratorOpen,
             Dedent => ExpectKind::Dedent,
             Dollar => ExpectKind::Dollar,
             DQuote => ExpectKind::DQuote,
@@ -3602,7 +3606,31 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_def(&mut self, scope: &mut Scope, pub_span: Option<Span>) -> Result<Def> {
+    fn parse_decorators(&mut self, scope: &mut Scope) -> Result<Vec<Decorator>> {
+        let mut decorators = Vec::new();
+        while let Some(token!(TokenInfo::DecoratorOpen)) = self.peek()? {
+            let open_span = self.expect(scope, &[ExpectKind::DecoratorOpen])?;
+            let expr = self.with_mode(lex::Mode::FullExpr, |this| {
+                let expr = this.parse_expr(scope, ExprMode::Full)?;
+                let close_span = this.expect_matching(scope, ExpectKind::RightBracket, open_span);
+                Ok(Decorator {
+                    open_span,
+                    expr,
+                    close_span,
+                })
+            })?;
+            decorators.push(expr);
+            self.expect(scope, &[ExpectKind::StmtSep])?;
+        }
+        Ok(decorators)
+    }
+
+    fn parse_def(
+        &mut self,
+        scope: &mut Scope,
+        pub_span: Option<Span>,
+        decorators: Vec<Decorator>,
+    ) -> Result<Def> {
         let def_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Def)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
         let variant = match self.next()? {
@@ -3635,13 +3663,19 @@ impl<'a> Parser<'a> {
         self.expect(scope, &[ExpectKind::Dedent])?;
         Ok(Def {
             def_span,
+            decorators,
             variant,
             func: Function { params, body },
             pub_span,
         })
     }
 
-    fn parse_class(&mut self, scope: &mut Scope, pub_span: Option<Span>) -> Result<Class> {
+    fn parse_class(
+        &mut self,
+        scope: &mut Scope,
+        pub_span: Option<Span>,
+        decorators: Vec<Decorator>,
+    ) -> Result<Class> {
         let class_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Class)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
 
@@ -3697,6 +3731,7 @@ impl<'a> Parser<'a> {
 
         Ok(Class {
             class_span,
+            decorators,
             ident,
             colon_span,
             super_exprs,
@@ -3960,16 +3995,25 @@ impl<'a> Parser<'a> {
         use Keyword::*;
         use TokenInfo::*;
 
+        let decorators = self.parse_decorators(scope)?;
+
         // Check for pub modifier
         let pub_span = if let Some(token!(Keyword(Pub))) = self.peek()? {
             let span = self.advance();
             self.expect(scope, &[ExpectKind::ArgSep])?;
             match self.peek()? {
                 Some(token!(Keyword(Let | Def | Class))) => (),
+                Some(token!(DecoratorOpen)) => {
+                    let token = self.peek()?.cloned();
+                    return Err(self.syntax_error(scope, token, "`pub` must follow decorators"));
+                }
                 other => {
                     let other = other.cloned();
-                    let _ =
-                        self.syntax_error(scope, other, "`pub` is only valid before `let`, `def`");
+                    let _ = self.syntax_error(
+                        scope,
+                        other,
+                        "`pub` is only valid before `let`, `def`, or `class`",
+                    );
                 }
             }
             Some(span)
@@ -3977,10 +4021,23 @@ impl<'a> Parser<'a> {
             None
         };
 
+        if !decorators.is_empty() && !matches!(self.peek()?, Some(token!(Keyword(Def | Class)))) {
+            let token = self.peek()?.cloned();
+            return Err(self.syntax_error(
+                scope,
+                token,
+                "decorators are only valid before `def` or `class`",
+            ));
+        }
+
         match self.peek()? {
             Some(token!(Keyword(Let))) => Ok(Stmt::Let(self.parse_let(scope, pub_span)?)),
-            Some(token!(Keyword(Def))) => Ok(Stmt::Def(self.parse_def(scope, pub_span)?)),
-            Some(token!(Keyword(Class))) => Ok(Stmt::Class(self.parse_class(scope, pub_span)?)),
+            Some(token!(Keyword(Def))) => {
+                Ok(Stmt::Def(self.parse_def(scope, pub_span, decorators)?))
+            }
+            Some(token!(Keyword(Class))) => {
+                Ok(Stmt::Class(self.parse_class(scope, pub_span, decorators)?))
+            }
             Some(token!(Keyword(If))) => Ok(Stmt::Prim(PrimStmt::If(self.parse_if(scope)?))),
             Some(token!(Keyword(Try))) => Ok(Stmt::Prim(PrimStmt::Try(self.parse_try(scope)?))),
             Some(token!(Keyword(While))) => self.parse_while(scope),

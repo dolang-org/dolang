@@ -128,6 +128,7 @@ pub enum NodeKind {
     Break,
     Class,
     Continue,
+    Decorator,
     Def,
     For,
     If,

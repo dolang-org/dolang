@@ -1578,9 +1578,28 @@ pub(crate) enum DefVariant {
     Special(SpecialMethod, Span, Option<Res>),
 }
 
+pub(crate) struct Decorator {
+    pub(crate) open_span: Span,
+    pub(crate) expr: Expr,
+    pub(crate) close_span: Span,
+}
+
+impl Node for Decorator {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        visit.token(Token::Delim, self.open_span, None)?;
+        visit.node(&self.expr)?;
+        visit.token(Token::Delim, self.close_span, None)
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::Decorator
+    }
+}
+
 pub(crate) struct Def {
     // Span of the `def` keyword
     pub(crate) def_span: Span,
+    pub(crate) decorators: Vec<Decorator>,
     // Defined identifier or special method
     pub(crate) variant: DefVariant,
     // Function
@@ -1590,6 +1609,7 @@ pub(crate) struct Def {
 
 impl Node for Def {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        self.decorators.accept(visit)?;
         if let Some(span) = self.pub_span {
             visit.token(Token::Keyword, span, None)?;
         }
@@ -1692,6 +1712,7 @@ impl SpecialMethod {
 pub(crate) struct Class {
     // Span of the `class` keyword
     pub(crate) class_span: Span,
+    pub(crate) decorators: Vec<Decorator>,
     // Class name identifier
     pub(crate) ident: Ident,
     // Span of the `:` delimiter (if superclasses are present)
@@ -1705,6 +1726,7 @@ pub(crate) struct Class {
 
 impl Node for Class {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        self.decorators.accept(visit)?;
         if let Some(span) = self.pub_span {
             visit.token(Token::Keyword, span, None)?;
         }
