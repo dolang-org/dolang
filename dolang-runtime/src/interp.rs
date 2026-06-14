@@ -398,6 +398,7 @@ impl<'v> Vm<'v> {
                             ClassEntry::Field(new_slot)
                         }
                         ClassEntry::Method(v) => ClassEntry::Method(v.dup()),
+                        ClassEntry::Descriptor(v) => ClassEntry::Descriptor(v.dup()),
                         ClassEntry::Delegate(parent_slot) => {
                             // Remap via parent's native_supers → our native_supers.
                             let type_obj = &cls.native_supers[*parent_slot];
@@ -449,13 +450,14 @@ impl<'v> Vm<'v> {
             .downcast_ref(strand.builtin_types().module)
             .ok_or_else(|| Error::type_error(strand, "class_create: expected module"))?;
         let module = module.get();
-        let program = module.loaded.clone();
         for (sym, value) in module.entries() {
             let entry = if value
                 .downcast_ref(strand.builtin_types().function)
                 .is_some()
             {
                 ClassEntry::Method(value)
+            } else if value.is_instance_of(strand, &strand.vm().singletons().descriptor) {
+                ClassEntry::Descriptor(value)
             } else {
                 let slot = field_defaults.len();
                 field_defaults.push(value);
@@ -469,7 +471,7 @@ impl<'v> Vm<'v> {
         entries.sort_by_key(|(s, _)| *s);
 
         let class_obj = ClassObject {
-            program,
+            program: module.loaded.clone(),
             name,
             supers: supers.into(),
             entries: entries.into(),
