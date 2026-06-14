@@ -1,0 +1,5 @@
+def make_adder x
+  do |y| (x + y)
+
+let add_two = make_adder 2
+add_two 40

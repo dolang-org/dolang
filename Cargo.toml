@@ -1,5 +1,5 @@
 [workspace]
-members = ["dolang", "dolang-private-build", "dolang-private-test", "dolang-private-regression", "dolang-shell-vfs", "dolang-bytecode", "dolang-compile", "dolang-lsp", "dolang-runtime", "dolang-shell", "dolang-private-util", "dolang-ext-shell", "dolang-ext-http", "dolang-ext-url", "dolang-ext-zip", "dolang-ext-sqlite", "dolang-ext-regex", "dolang-ext-glob", "dolang-private-highlight", "dolang-ext-json", "dolang-ext-compile", "dolang-ext-diagnostic", "dolang-ext-load", "dolang-ext-xml", "dolang-ext-yaml", "dolang-ext-digest", "dolang-ext-base64", "dolang-ext-progress", "dolang-ext-rand", "dolang-private-doc", "dolang-private-ipc"]
+members = ["dolang", "dolang-private-build", "dolang-private-test", "dolang-private-regression", "dolang-shell-vfs", "dolang-bytecode", "dolang-compile", "dolang-lsp", "dolang-runtime", "dolang-shell", "dolang-private-util", "dolang-ext-shell", "dolang-ext-http", "dolang-ext-url", "dolang-ext-zip", "dolang-ext-sqlite", "dolang-ext-regex", "dolang-ext-glob", "dolang-private-highlight", "dolang-ext-json", "dolang-ext-compile", "dolang-ext-diagnostic", "dolang-ext-load", "dolang-ext-xml", "dolang-ext-yaml", "dolang-ext-digest", "dolang-ext-base64", "dolang-ext-progress", "dolang-ext-rand", "dolang-private-doc", "dolang-private-ipc", "fuzz"]
 resolver = "3"
 
 [workspace.package]

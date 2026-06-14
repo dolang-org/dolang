@@ -44,6 +44,18 @@ cargo-test *args:
         DOLANG_SHELL_VFS="{{justfile_directory()}}/target/debug/dolang-shell-vfs" \
         cargo test "$@"
 
+gen-bytecode-fuzz-seeds:
+    cargo run --manifest-path fuzz/Cargo.toml --bin gen-bytecode-seeds
+
+fuzz-bytecode *args:
+    just gen-bytecode-fuzz-seeds
+    cargo +nightly fuzz run bytecode_deserialize \
+        {{justfile_directory()}}/target/fuzz-corpus/bytecode_deserialize \
+        "$@"
+
+fuzz-bytecode-smoke:
+    just fuzz-bytecode -- -runs=1000 -max_len=1048576
+
 test *args:
     just cargo-test "$@"
     cargo build --bin dolang-shell-vfs "$@"
