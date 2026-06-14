@@ -10,7 +10,7 @@ rust-version.workspace = true
 [dependencies]
 libc = "0.2"
 nix = { version = "0.31", features = ["fs"] }
-libsqlite3-sys = { version = "0.37", features = ["bundled-windows"] }
+libsqlite3-sys = { version = "0.38", features = ["bundled-windows"] }
 tokio = { version = "1.48", features = ["rt", "time"] }
 
 [dependencies.dolang]
