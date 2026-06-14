@@ -16,6 +16,27 @@ greet Alice
 # prints: Hello, Alice!
 ```
 
+### Decorators
+
+Definitions may be preceded by one or more decorators using `#[expr]` syntax:
+
+```
+#[memoize]
+def fib n
+  if (n < 2)
+    n
+  else
+    (fib(n - 1) + fib(n - 2))
+```
+
+Each decorator expression is evaluated in the surrounding scope. After the
+function value is created, decorators are applied from bottom to top, with each
+decorator receiving the current value and returning a replacement.
+
+The same syntax also applies to `class` definitions. See
+[Classes](./classes.md#computed-fields-with-property) for the common
+`#[field.setter]` property pattern.
+
 ## Implicit Return
 
 A function returns the result of its statement or block implicitly. Every

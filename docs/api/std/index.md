@@ -16,6 +16,7 @@ The `std` module provides core language facilities.
 | [`ConcurrencyError`](./concurrency-error.md)      | Concurrent access violation                |
 | [`CyclicImportError`](./cyclic-import-error.md)   | Cyclic module dependency                   |
 | [`dict`](./dict.md)                               | Mutable ordered dictionary                 |
+| [`Descriptor`](./descriptor.md)                   | Abstract descriptor protocol type          |
 | [`set`](./set.md)                                 | Mutable ordered set                        |
 | [`Error`](./error.md)                             | Abstract base error type                   |
 | [`FieldError`](./field-error.md)                  | Nonexistent field access                   |
@@ -33,6 +34,7 @@ The `std` module provides core language facilities.
 | [`MissingPosError`](./missing-pos-error.md)       | Required positional argument not provided  |
 | [`Nil`](./nil.md)                                 | Type object for `nil`                      |
 | [`OverflowError`](./overflow-error.md)            | Integer overflow                           |
+| [`property`](./property.md)                       | Descriptor helper for computed fields      |
 | [`range`](./range.md)                             | Numeric range for iteration                |
 | [`record`](./record.md)                           | Record with dot-syntax access              |
 | [`RuntimeError`](./runtime-error.md)              | Ordinary runtime failure supertype         |
