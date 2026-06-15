@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tokio_unix_ipc::serde::Handle;
 
-pub(crate) use crate::{ChownIdentity, Metadata};
+pub(crate) use crate::{ChownIdentity, Metadata, WellKnownPath};
 
 pub(crate) type RequestId = u64;
 
@@ -127,6 +127,12 @@ pub(crate) struct GlobRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct WellKnownPathRequest {
+    pub(crate) key: WellKnownPath,
+    pub(crate) env: HashMap<String, Option<String>>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct SetPermissionsRequest {
     pub(crate) path: PathBuf,
     pub(crate) mode: u32,
@@ -163,6 +169,7 @@ pub(crate) enum RequestKind {
         path: Option<String>,
         cwd: Option<PathBuf>,
     },
+    WellKnownPath(WellKnownPathRequest),
     Stop,
     ClearCache,
     Open(OpenRequest),
@@ -200,6 +207,7 @@ pub(crate) enum ResponseKind {
         cwd: PathBuf,
     },
     Which(Option<PathBuf>),
+    WellKnownPath(Result<PathBuf, i32>),
     Stop,
     ClearCache,
     Open(Result<Handle<OwnedFd>, i32>),
@@ -233,6 +241,9 @@ impl std::fmt::Debug for ResponseKind {
                 .field("cwd", cwd)
                 .finish(),
             ResponseKind::Which(path) => f.debug_tuple("Which").field(path).finish(),
+            ResponseKind::WellKnownPath(result) => {
+                f.debug_tuple("WellKnownPath").field(result).finish()
+            }
             ResponseKind::Stop => f.debug_struct("Stop").finish(),
             ResponseKind::ClearCache => f.debug_struct("ClearCache").finish(),
             ResponseKind::Open(result) => f

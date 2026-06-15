@@ -179,6 +179,33 @@ if !is_absolute "./config.txt"
   echo "Relative path"
 ```
 
+### `home_dir()`
+
+Returns the current user's home directory as a [`Path`](path.md).
+
+**Platform behavior:**
+
+| Platform | Result                                                         |
+| -------- | -------------------------------------------------------------- |
+| Unix     | `env["HOME"]`, or home directory from passwd database if unset |
+| Windows  | `FOLDERID_Profile`, typically `C:\Users\<user>`                |
+
+**Returns:** [`Path`](path.md)
+
+### `cache_dir()`
+
+Returns the platform-native user cache directory as a [`Path`](path.md).
+
+**Platform behavior:**
+
+| Platform       | Result                                                                |
+| -------------- | --------------------------------------------------------------------- |
+| Non-macOS Unix | `env["XDG_CACHE_HOME"]`, or `home_dir() / ".cache"` if unset          |
+| macOS          | `home_dir() / "Library" / "Caches"`                                   |
+| Windows        | `FOLDERID_LocalAppData`, typically `home_dir() / "AppData" / "Local"` |
+
+**Returns:** [`Path`](path.md)
+
 ### `metadata path :follow = true`
 
 Gets file metadata for the given path.

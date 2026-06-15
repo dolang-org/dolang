@@ -2,6 +2,7 @@
 #![allow(async_fn_in_trait)]
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::ffi::OsString;
 #[cfg(unix)]
 use std::os::fd::OwnedFd;
@@ -92,6 +93,12 @@ impl Metadata {
     pub fn permissions(&self) -> Permissions {
         Permissions::from_mode(self.mode)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WellKnownPath {
+    HomeDir,
+    CacheDir,
 }
 
 pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
@@ -289,6 +296,11 @@ pub trait Vfs {
         path: Option<&str>,
         cwd: Option<&Path>,
     ) -> Result<Option<PathBuf>, io::Error>;
+    async fn well_known_path(
+        &self,
+        key: WellKnownPath,
+        env: &HashMap<String, Option<String>>,
+    ) -> Result<PathBuf, io::Error>;
     async fn clear_cache(&self) -> Result<(), io::Error>;
     async fn file_metadata(&self, file: &fs::File) -> Result<Metadata, io::Error> {
         file.metadata().await.map(metadata_from_std)
@@ -982,6 +994,24 @@ impl Vfs for ClientOrDirect {
         #[cfg(not(unix))]
         {
             self.0.which(&program, path, cwd).await
+        }
+    }
+
+    async fn well_known_path(
+        &self,
+        key: WellKnownPath,
+        env: &HashMap<String, Option<String>>,
+    ) -> Result<PathBuf, io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.well_known_path(key, env).await,
+                Self::Direct(direct) => direct.well_known_path(key, env).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.well_known_path(key, env).await
         }
     }
 

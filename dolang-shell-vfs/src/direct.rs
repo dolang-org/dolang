@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    ffi::OsString,
     io,
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
@@ -23,9 +24,12 @@ use wax::{
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, OwnedFd};
+#[cfg(windows)]
+use std::os::windows::ffi::OsStringExt;
 
 use crate::{
     Child, ChownIdentity, Command, Metadata, Permissions, PipeRecv, PipeSend, ReadDir, Vfs,
+    WellKnownPath,
 };
 
 #[derive(Debug, Clone)]
@@ -134,6 +138,128 @@ impl Default for Direct {
     fn default() -> Self {
         Self {
             path_cache: Arc::new(PathCache::new()),
+        }
+    }
+}
+
+impl Direct {
+    #[cfg(unix)]
+    fn override_or_env(env: &HashMap<String, Option<String>>, key: &str) -> Option<OsString> {
+        match env.get(key) {
+            Some(Some(value)) => Some(OsString::from(value)),
+            Some(None) => None,
+            None => std::env::var_os(key),
+        }
+    }
+
+    #[cfg(unix)]
+    fn absolute_env_path(
+        env: &HashMap<String, Option<String>>,
+        key: &str,
+    ) -> Result<Option<PathBuf>, io::Error> {
+        match Self::override_or_env(env, key) {
+            Some(value) => {
+                let path = PathBuf::from(value);
+                if path.is_absolute() {
+                    Ok(Some(path))
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("{key} must be an absolute path"),
+                    ))
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    #[cfg(unix)]
+    fn home_dir_unix(env: &HashMap<String, Option<String>>) -> Result<PathBuf, io::Error> {
+        if let Some(home) = Self::absolute_env_path(env, "HOME")? {
+            return Ok(home);
+        }
+
+        let uid = nix::unistd::getuid();
+        let user = nix::unistd::User::from_uid(uid)
+            .map_err(io::Error::other)?
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "could not resolve home directory")
+            })?;
+        let home = user.dir;
+        if home.is_absolute() {
+            Ok(home)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "resolved home directory is not absolute",
+            ))
+        }
+    }
+
+    #[cfg(windows)]
+    fn known_folder(folder_id: &windows_sys::core::GUID) -> Result<PathBuf, io::Error> {
+        use std::slice;
+        use windows_sys::Win32::Foundation::S_OK;
+        use windows_sys::Win32::System::Com::CoTaskMemFree;
+        use windows_sys::Win32::UI::Shell::{KF_FLAG_DONT_VERIFY, SHGetKnownFolderPath};
+
+        unsafe extern "C" {
+            fn wcslen(buf: *const u16) -> usize;
+        }
+
+        unsafe {
+            let mut path = std::ptr::null_mut();
+            let result = SHGetKnownFolderPath(
+                folder_id,
+                KF_FLAG_DONT_VERIFY as u32,
+                std::ptr::null_mut(),
+                &mut path,
+            );
+            if result == S_OK {
+                let path_slice = slice::from_raw_parts(path, wcslen(path));
+                let out = PathBuf::from(OsString::from_wide(path_slice));
+                CoTaskMemFree(path.cast());
+                Ok(out)
+            } else {
+                CoTaskMemFree(path.cast());
+                Err(io::Error::from_raw_os_error(result))
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn home_dir_windows(_env: &HashMap<String, Option<String>>) -> Result<PathBuf, io::Error> {
+        Self::known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Profile)
+    }
+
+    fn home_dir_local(env: &HashMap<String, Option<String>>) -> Result<PathBuf, io::Error> {
+        #[cfg(unix)]
+        {
+            Self::home_dir_unix(env)
+        }
+        #[cfg(windows)]
+        {
+            Self::home_dir_windows(env)
+        }
+    }
+
+    fn cache_dir_local(env: &HashMap<String, Option<String>>) -> Result<PathBuf, io::Error> {
+        #[cfg(target_os = "macos")]
+        {
+            Ok(Self::home_dir_local(env)?.join("Library").join("Caches"))
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            if let Some(cache) = Self::absolute_env_path(env, "XDG_CACHE_HOME")? {
+                Ok(cache)
+            } else {
+                Ok(Self::home_dir_local(env)?.join(".cache"))
+            }
+        }
+        #[cfg(windows)]
+        {
+            let _ = env;
+            Self::known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_LocalAppData)
         }
     }
 }
@@ -695,6 +821,17 @@ impl Vfs for Direct {
         cwd: Option<&Path>,
     ) -> Result<Option<PathBuf>, io::Error> {
         Ok(self.path_cache.resolve(program.as_ref(), path, cwd).await)
+    }
+
+    async fn well_known_path(
+        &self,
+        key: WellKnownPath,
+        env: &HashMap<String, Option<String>>,
+    ) -> Result<PathBuf, io::Error> {
+        match key {
+            WellKnownPath::HomeDir => Self::home_dir_local(env),
+            WellKnownPath::CacheDir => Self::cache_dir_local(env),
+        }
     }
 
     async fn clear_cache(&self) -> Result<(), io::Error> {
