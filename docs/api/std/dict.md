@@ -210,6 +210,8 @@ d[:age:] = 30
 Missing keys raise an error on access. Assignment replaces all values for the
 key.
 
+[`range`](./range.md) values are treated as ordinary keys, not as slices.
+
 ### Iteration
 
 Iterating over a dictionary yields `[key, value]` pairs:

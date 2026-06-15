@@ -1,0 +1,48 @@
+let arr = [0, 1, 2, 3]
+assert_eq $arr[1..3] [1, 2]
+assert_eq $arr[..2] [0, 1]
+assert_eq $arr[2..] [2, 3]
+assert_eq $arr[..] [0, 1, 2, 3]
+assert_eq $arr[-2..] [2, 3]
+assert_eq $arr[..-1] [0, 1, 2]
+assert_eq $arr[-3..-1] [1, 2]
+
+let tup = tuple([0, 1, 2, 3])
+assert_eq $tup[1..3] (tuple [1, 2])
+assert_eq $tup[..2] (tuple [0, 1])
+assert_eq $tup[2..] (tuple [2, 3])
+assert_eq $tup[..] (tuple [0, 1, 2, 3])
+assert_eq $tup[-2..] (tuple [2, 3])
+assert_eq $tup[..-1] (tuple [0, 1, 2])
+assert_eq $tup[-3..-1] (tuple [1, 2])
+
+let text = "abcd"
+assert_eq $text[1..3] bc
+assert_eq $text[..2] ab
+assert_eq $text[2..] cd
+assert_eq $text[..] abcd
+assert_eq $text[-2..] cd
+assert_eq $text[..-1] abc
+assert_eq $text[-3..-1] bc
+
+let data = b"abcd"
+assert_eq $data[1..3] b"bc"
+assert_eq $data[..2] b"ab"
+assert_eq $data[2..] b"cd"
+assert_eq $data[..] b"abcd"
+assert_eq $data[-2..] b"cd"
+assert_eq $data[..-1] b"abc"
+assert_eq $data[-3..-1] b"bc"
+
+let values = []
+for i = 2..
+  if (i >= 5)
+    break
+  values.push $i
+assert_eq $values [2, 3, 4]
+
+let d = {}
+d[1..3] = "hit"
+assert_eq $d[1..3] "hit"
+let same = 1..3
+assert_eq $d[same] "hit"

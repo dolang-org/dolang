@@ -17,6 +17,7 @@ use crate::{
         dict::Dict,
         module::{Module, Namespace},
         protocol::{GcObj, Spread, SpreadContext},
+        range,
     },
     sig::{self, Pack},
     strand::{Strand, StrandInner},
@@ -232,6 +233,26 @@ impl<'v> Vm<'v> {
             self.arena(),
             self.builtin_types().dict,
             Dict::from_builtin_args(strand, args).await?,
+        )));
+        Ok(())
+    }
+
+    async fn range<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        args: Args<'v, 'a>,
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let ([mut start, mut end, mut step], []) = unpack!(strand, args, 3, 0)?;
+        let step = if step.is_nil() {
+            Value::from_i64(strand, 1)
+        } else {
+            step.take()
+        };
+        out.store(Value::from_object(GcObj::new(
+            self.arena(),
+            self.builtin_types().range,
+            range::Range::new(start.take(), end.take(), step),
         )));
         Ok(())
     }
@@ -930,6 +951,7 @@ impl<'v> Vm<'v> {
                         }
                         builtin::ARRAY => self.array(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::DICT => self.dict(strand, args, Slot::reborrow(&mut res)).await,
+                        builtin::RANGE => self.range(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::ITER => self.iter(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::CONCAT_STR => {
                             self.concat_str(strand, args, Slot::reborrow(&mut res))

@@ -21,6 +21,7 @@ use crate::{
 use super::{
     BoundMethod, index, iter,
     protocol::{Inspect, Protocol, Recv, dispatch_native_method},
+    range,
 };
 
 use bstr::{BStr, ByteSlice};
@@ -123,6 +124,21 @@ impl<'v> Protocol<'v> for [u8] {
         hasher: &mut DefaultHasher,
     ) -> Result<'v, 's, ()> {
         this.borrow(strand)?.hash(hasher);
+        Ok(())
+    }
+
+    fn op_index<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        index: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let me = this.receiver.get();
+        let Some((start, end)) = range::slice_bounds(index, strand, me.len())? else {
+            return Err(Error::index(strand));
+        };
+        let slice = me.get(start..end).ok_or_else(|| Error::index(strand))?;
+        Output::set(strand, out, slice);
         Ok(())
     }
 

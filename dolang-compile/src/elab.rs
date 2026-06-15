@@ -1400,6 +1400,15 @@ impl<'a> Elaborater<'a> {
                 self.visit_expr(scope, &mut exprs[0], is_arg)?;
                 self.visit_expr(scope, &mut exprs[1], is_arg)
             }
+            Expr::Range { exprs, .. } => {
+                if let Some(start) = &mut exprs[0] {
+                    self.visit_expr(scope, start, is_arg)?;
+                }
+                if let Some(end) = &mut exprs[1] {
+                    self.visit_expr(scope, end, is_arg)?;
+                }
+                Ok(())
+            }
             Expr::Lambda { func, do_span, .. } => self.visit_lambda(
                 scope,
                 func,

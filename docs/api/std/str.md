@@ -312,3 +312,20 @@ Returns the string repeated `count` times.
 assert_eq ("ab".repeat 3) "ababab"
 assert_eq ("ab".repeat 0) ""
 ```
+
+## Operations
+
+### Indexing
+
+Strings accept [`range`](./range.md) values for slicing by byte position:
+
+```
+assert_eq $"abcd"[1..3] "bc"
+assert_eq $"abcd"[..2] "ab"
+assert_eq $"abcd"[2..] "cd"
+assert_eq $"abcd"[..] "abcd"
+```
+
+This returns a new string. Slice boundaries must still fall on valid UTF-8
+boundaries. Omitted `start` means `0`, omitted `end` means the string length,
+and negative endpoints count from the end.

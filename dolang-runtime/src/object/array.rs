@@ -22,7 +22,7 @@ use super::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, default_spread,
         dispatch_native_method,
     },
-    tuple,
+    range, tuple,
 };
 
 pub(crate) struct Iter<'v> {
@@ -617,10 +617,24 @@ impl<'v> Protocol<'v> for Array<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         index: &Value<'v>,
-        out: Slot<'v, 'a>,
+        mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
         let borrow = this.borrow(strand)?;
+        if let Some((start, end)) = range::slice_bounds(index, strand, borrow.inner.len())? {
+            let slice = borrow
+                .inner
+                .get(start..end)
+                .ok_or_else(|| Error::index(strand))?;
+            let mut array = Array::new();
+            array.inner.extend(slice.iter().map(Value::dup));
+            out.store(Value::from_object(GcObj::new(
+                strand.arena(),
+                strand.builtin_types().array,
+                array,
+            )));
+            return Ok(());
+        }
+        let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
         let index =
             index::element(borrow.inner.len(), index).ok_or_else(|| Error::index(strand))?;
         match borrow.inner.get(index) {

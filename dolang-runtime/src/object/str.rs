@@ -21,6 +21,7 @@ use crate::{
 use super::{
     BoundMethod, index, iter,
     protocol::{Inspect, Protocol, Recv, dispatch_native_method},
+    range,
 };
 
 unsafe impl Collect for str {
@@ -133,6 +134,23 @@ impl<'v> Protocol<'v> for str {
         hasher: &mut DefaultHasher,
     ) -> Result<'v, 's, ()> {
         this.get().hash(hasher);
+        Ok(())
+    }
+
+    fn op_index<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        index: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let me = this.get();
+        let Some((start, end)) = range::slice_bounds(index, strand, me.len())? else {
+            return Err(Error::index(strand));
+        };
+        let slice = me
+            .get(start..end)
+            .ok_or_else(|| Error::runtime(strand, "invalid UTF-8 substring boundaries"))?;
+        Output::set(strand, out, slice);
         Ok(())
     }
 

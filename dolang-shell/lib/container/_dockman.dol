@@ -648,10 +648,10 @@ pub class Builder
     self.#ctr_agent = Path "/tmp/dolang-shell-vfs"
 
   def wait_socket self
-    for _ = range $SOCKET_SPINS
+    for _ = 0..SOCKET_SPINS
       if self.#socket.exists()
         return
-    for _ = range $SOCKET_SLEEPS
+    for _ = 0..SOCKET_SLEEPS
       if self.#socket.exists()
         return
       time.sleep $SOCKET_SLEEP
