@@ -21,13 +21,13 @@ use tokio_unix_ipc::{Receiver, Sender, serde::Handle};
 
 use crate::{
     Child, ChownIdentity, Command, LockedSender, Metadata, Permissions, PipeRecv, PipeSend,
-    ReadDir, Vfs,
+    ReadDir, Vfs, WellKnownPath,
     protocol::{
         AccessRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
         GlobRequest, MetadataRequest, MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest,
         RemoveRequest, RenameRequest, Request, RequestKind, Response, ResponseKind,
         SetPermissionsRequest, SpawnRequest, SymlinkRequest, Timestamp, UnixStreamSocketRequest,
-        UtimeRequest,
+        UtimeRequest, WellKnownPathRequest,
     },
 };
 
@@ -240,6 +240,32 @@ impl Client {
                         path: path.map(|p| p.to_string()),
                         cwd: cwd.map(|p| p.to_path_buf()),
                     },
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    pub async fn well_known_path(
+        &self,
+        key: WellKnownPath,
+        env: &HashMap<String, Option<String>>,
+    ) -> Result<PathBuf, io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::WellKnownPath(WellKnownPathRequest {
+                        key,
+                        env: env.clone(),
+                    }),
                 };
                 alive.sender.send(request).await?;
                 drop(state);
@@ -682,6 +708,14 @@ impl Vfs for Client {
         Client::which(self, program, path, cwd).await
     }
 
+    async fn well_known_path(
+        &self,
+        key: WellKnownPath,
+        env: &HashMap<String, Option<String>>,
+    ) -> Result<PathBuf, io::Error> {
+        Client::well_known_path(self, key, env).await
+    }
+
     async fn clear_cache(&self) -> Result<(), io::Error> {
         Client::clear_cache(self).await
     }
@@ -1102,6 +1136,9 @@ async fn receive_loop(receiver: Receiver<Response>, inner: Arc<ClientInner>) {
                     alive.complete(response.id, Ok(Query { env, cwd }))
                 }
                 ResponseKind::Which(result) => alive.complete(response.id, Ok(result)),
+                ResponseKind::WellKnownPath(result) => {
+                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
+                }
                 ResponseKind::Stop => alive.complete(response.id, Ok(())),
                 ResponseKind::ClearCache => alive.complete(response.id, Ok(())),
                 ResponseKind::Open(result) => {

@@ -1,6 +1,7 @@
 #![deny(warnings)]
 #![cfg(unix)]
 use dolang_shell_vfs::{Child, Command, Vfs};
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -256,6 +257,37 @@ async fn client_which() {
     assert!(ls_path.is_some(), "ls should be found");
     let path = ls_path.unwrap();
     assert!(path.ends_with("ls"), "path should end with ls");
+    stop_daemon(&socket_path).await;
+}
+
+#[tokio::test]
+async fn client_well_known_path() {
+    let (_dir, socket_path) = find_free_socket_path();
+
+    let mut child = std::process::Command::new(AGENT_BIN)
+        .arg(&socket_path)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn agent");
+
+    wait_for_ready_from_stdout(&mut child).expect("failed to read READY");
+
+    let client = timeout(
+        Duration::from_secs(5),
+        dolang_shell_vfs::Client::connect(&socket_path),
+    )
+    .await
+    .expect("timeout connecting")
+    .expect("failed to connect");
+
+    let env = HashMap::from([(String::from("HOME"), Some(String::from("/tmp/test-home")))]);
+    let path = client
+        .well_known_path(dolang_shell_vfs::WellKnownPath::HomeDir, &env)
+        .await
+        .expect("well-known path should succeed");
+
+    assert_eq!(path, std::path::Path::new("/tmp/test-home"));
+
     stop_daemon(&socket_path).await;
 }
 

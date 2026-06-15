@@ -19,6 +19,7 @@ use crate::{
         GlobRequest, MetadataRequest, MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest,
         RemoveRequest, RenameRequest, Request, RequestKind, Response, ResponseKind,
         SetPermissionsRequest, SpawnRequest, SymlinkRequest, UnixStreamSocketRequest, UtimeRequest,
+        WellKnownPathRequest,
     },
 };
 
@@ -120,6 +121,9 @@ impl Connection {
                     RequestKind::Which { program, path, cwd } => {
                         this.handle_which(msg.id, program, path, cwd).await;
                     }
+                    RequestKind::WellKnownPath(path_request) => {
+                        this.handle_well_known_path(msg.id, path_request).await;
+                    }
                     RequestKind::Stop => {
                         let _ = this
                             .sender
@@ -217,6 +221,20 @@ impl Connection {
             .send(Response {
                 id,
                 kind: ResponseKind::Which(resolved.unwrap_or(None)),
+            })
+            .await;
+    }
+
+    async fn handle_well_known_path(&self, id: u64, req: WellKnownPathRequest) {
+        let result = self.server.direct.well_known_path(req.key, &req.env).await;
+
+        let _ = self
+            .sender
+            .send(Response {
+                id,
+                kind: ResponseKind::WellKnownPath(
+                    result.map_err(|e| e.raw_os_error().unwrap_or(libc::EIO)),
+                ),
             })
             .await;
     }

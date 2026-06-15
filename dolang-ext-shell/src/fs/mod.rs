@@ -1,7 +1,7 @@
 use dolang::runtime::{
     Arg, Error, Output, Result, Slot, State, Strand, call, method, unpack, value::View, vm::Builder,
 };
-use dolang_shell_vfs::{FileType, Metadata, Vfs};
+use dolang_shell_vfs::{FileType, Metadata, Vfs, WellKnownPath};
 use std::{io, io::ErrorKind, path::PathBuf, time};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -691,6 +691,23 @@ pub(crate) fn path_absolute<'v, 's>(
     Ok(())
 }
 
+async fn well_known_path<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    key: WellKnownPath,
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    let local = global.local.get(strand);
+    let vfs = local.vfs();
+    let env = local.env().flatten_delta();
+    let path = vfs.well_known_path(key, &env).await.into_sys(strand)?;
+    global
+        .types
+        .path
+        .create_with_annex(strand, Path, PathAnnex::new(path, global), out);
+    Ok(())
+}
+
 /// Shared implementation for `fs.relative` and `Path.relative`.
 pub(crate) fn path_relative<'v, 's>(
     strand: &mut Strand<'v, 's>,
@@ -887,6 +904,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let path = path_from_value(strand, global, &path)?;
             Output::set(strand, out, path.is_absolute());
             Ok(())
+        })
+        .function("home_dir", async move |strand, args, out| {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            well_known_path(strand, global, WellKnownPath::HomeDir, out).await
+        })
+        .function("cache_dir", async move |strand, args, out| {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            well_known_path(strand, global, WellKnownPath::CacheDir, out).await
         })
         .function("copy", async move |strand, args, out| {
             let ([from, to], [all]) = unpack!(strand, args, 2, 0, all = None)?;

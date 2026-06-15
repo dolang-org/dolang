@@ -1,5 +1,8 @@
 #![deny(warnings)]
 
+#[cfg(unix)]
+use std::collections::HashMap;
+
 use dolang_shell_vfs::{Child, Command, Direct, FileType, OpenOptions, Vfs};
 use tempfile::tempdir;
 
@@ -175,4 +178,89 @@ async fn direct_env_vars() {
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
     assert!(status.success());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn direct_well_known_home_dir_prefers_absolute_home_override() {
+    let direct = Direct::default();
+    let env = HashMap::from([(String::from("HOME"), Some(String::from("/tmp/test-home")))]);
+
+    let path = direct
+        .well_known_path(dolang_shell_vfs::WellKnownPath::HomeDir, &env)
+        .await
+        .unwrap();
+
+    assert_eq!(path, std::path::Path::new("/tmp/test-home"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn direct_well_known_home_dir_rejects_relative_home_override() {
+    let direct = Direct::default();
+    let env = HashMap::from([(String::from("HOME"), Some(String::from("relative-home")))]);
+
+    let err = direct
+        .well_known_path(dolang_shell_vfs::WellKnownPath::HomeDir, &env)
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[tokio::test]
+async fn direct_well_known_cache_dir_prefers_xdg_override() {
+    let direct = Direct::default();
+    let env = HashMap::from([
+        (
+            String::from("XDG_CACHE_HOME"),
+            Some(String::from("/tmp/test-cache")),
+        ),
+        (String::from("HOME"), Some(String::from("/tmp/test-home"))),
+    ]);
+
+    let path = direct
+        .well_known_path(dolang_shell_vfs::WellKnownPath::CacheDir, &env)
+        .await
+        .unwrap();
+
+    assert_eq!(path, std::path::Path::new("/tmp/test-cache"));
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[tokio::test]
+async fn direct_well_known_cache_dir_falls_back_to_home() {
+    let direct = Direct::default();
+    let env = HashMap::from([
+        (String::from("HOME"), Some(String::from("/tmp/test-home"))),
+        (String::from("XDG_CACHE_HOME"), None),
+    ]);
+
+    let path = direct
+        .well_known_path(dolang_shell_vfs::WellKnownPath::CacheDir, &env)
+        .await
+        .unwrap();
+
+    assert_eq!(path, std::path::Path::new("/tmp/test-home/.cache"));
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn direct_well_known_cache_dir_uses_macos_convention() {
+    let direct = Direct::default();
+    let env = HashMap::from([
+        (String::from("HOME"), Some(String::from("/tmp/test-home"))),
+        (
+            String::from("XDG_CACHE_HOME"),
+            Some(String::from("/tmp/test-cache")),
+        ),
+    ]);
+
+    let path = direct
+        .well_known_path(dolang_shell_vfs::WellKnownPath::CacheDir, &env)
+        .await
+        .unwrap();
+
+    assert_eq!(path, std::path::Path::new("/tmp/test-home/Library/Caches"));
 }
