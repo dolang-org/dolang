@@ -1,0 +1,4 @@
+# output: EOF
+# hi
+# EOF
+echo hi

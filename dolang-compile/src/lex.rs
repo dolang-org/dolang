@@ -209,7 +209,7 @@ pub(crate) enum Mode {
     RawHeredoc,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum RawToken {
     DecoratorOpen,
     Dollar,
@@ -436,8 +436,8 @@ impl<'a, I: Iterator<Item = u8>> RawLexer<'a, I> {
         token: RawToken,
         state: RawState,
     ) -> Option<Result<(RawToken, Span), ErrorDiag>> {
-        let (start_adj, end_adj) = match (&token, &state) {
-            // FIXME: this hack has to go, needs to be handled in parser
+        // FIXME: this hack has to go, needs to be handled at each call site
+        let (start_adj, mut end_adj) = match (&token, &state) {
             (RawToken::Key, _) => (0, -2),
             (RawToken::Escape(_), _) => (0, 0),
             (RawToken::Sym, _) => (1, -1),
@@ -445,20 +445,22 @@ impl<'a, I: Iterator<Item = u8>> RawLexer<'a, I> {
             (_, RawState::Empty) => (0, 0),
             _ => (0, -1),
         };
+        if end_adj < 0 && state == RawState::End {
+            end_adj += 1;
+        }
         let res = self.token_adj(token, state, start_adj, end_adj);
-        if end_adj == -2 {
+        if token == RawToken::Key {
             self.start += 1;
         }
         res
     }
 
     fn trans(&mut self, state: RawState) {
-        // If there's a pending detour, exchange with it
         self.state = state;
     }
 
     fn skip(&mut self, state: RawState) {
-        self.start = self.offset - 1;
+        self.start = self.offset.saturating_sub(1);
         self.state = state;
         self.defer = None;
     }
@@ -1786,7 +1788,7 @@ impl<'a> Iterator for Lexer<'a> {
         loop {
             let t = match self.raw.next() {
                 Some(item) => item,
-                None => return self.end(self.raw.offset - 1),
+                None => return self.end(self.raw.offset.saturating_sub(1)),
             };
             break Some(Ok(match t {
                 Err(e) => {
