@@ -418,6 +418,10 @@ pub(crate) enum Expr {
         exprs: Box<[Expr; 2]>,
         op_span: Span,
     },
+    Range {
+        exprs: Box<[Option<Expr>; 2]>,
+        op_span: Span,
+    },
     Call {
         arg0: Box<Expr>,
         args: Vec<Arg>,
@@ -659,6 +663,14 @@ impl Expr {
                 Self::combine_effects(exprs[0].side_effect(), exprs[1].side_effect()).unlikely()
             }
 
+            Expr::Range { exprs, .. } => Self::combine_iter(
+                exprs
+                    .iter()
+                    .filter_map(Option::as_ref)
+                    .map(|expr| expr.side_effect()),
+            )
+            .unlikely(),
+
             // Field access - check object, mark as Unlikely (could invoke complex attribute getter)
             // Note: Discarded remains Discarded (pointless processing of side-effectful result)
             Expr::Get { object, .. } => object.side_effect().unlikely(),
@@ -861,6 +873,16 @@ impl Node for Expr {
                 visit.token(Token::Operator, *op_span, None)?;
                 visit.node(&exprs[1])
             }
+            Expr::Range { exprs, op_span } => {
+                if let Some(start) = &exprs[0] {
+                    visit.node(start)?;
+                }
+                visit.token(Token::Operator, *op_span, None)?;
+                if let Some(end) = &exprs[1] {
+                    visit.node(end)?;
+                }
+                ControlFlow::Continue(())
+            }
             Expr::Call { arg0, args, delim } => {
                 match delim {
                     None => (),
@@ -956,6 +978,7 @@ impl Node for Expr {
             Expr::Group { .. } => NodeKind::Group,
             Expr::Unary { .. } => NodeKind::Unary,
             Expr::Binary { .. } => NodeKind::Binary,
+            Expr::Range { .. } => NodeKind::Range,
             Expr::Call { .. } => NodeKind::Call,
             Expr::Lambda { .. } => NodeKind::Lambda,
             Expr::Get { .. } => NodeKind::Field,

@@ -82,8 +82,8 @@ pub(crate) enum Op {
     LtEq,
     Minus,
     Percent,
-    Period,
-    PeriodHash,
+    Dot,
+    DotHash,
     Plus,
     Slash,
     SlashSlash,
@@ -113,8 +113,8 @@ impl Display for Op {
                 LtEq => "<=",
                 Minus => "-",
                 Percent => "%",
-                Period => ".",
-                PeriodHash => ".#",
+                Dot => ".",
+                DotHash => ".#",
                 Plus => "+",
                 Slash => "/",
                 SlashSlash => "//",
@@ -234,6 +234,7 @@ enum RawToken {
     RightBrace,
     Comma,
     Colon,
+    DotDot,
     Ellipsis,
     DittoKey,
     Sym,
@@ -281,10 +282,10 @@ enum RawState {
     LtEq,
     Minus,
     Percent,
-    Period,
-    PeriodHash,
-    PeriodPeriod,
-    PeriodPeriodPeriod,
+    Dot,
+    DotHash,
+    DotDot,
+    DotDotDot,
     Plus,
     RightBrace,
     RightBracket,
@@ -294,8 +295,11 @@ enum RawState {
     SlashSlash,
     Space,
     Star,
+    EmitDotDot,
     Tilde,
+    SignedDot,
     Unsigned,
+    UnsignedDot,
     Zero,
     SignedZero,
     Hex,
@@ -618,7 +622,7 @@ macro_rules! lex {
                 Some(b'%') => emit!($self.$method, $token, Percent),
                 // Pattern may be superseded by floating point token
                 #[allow(unreachable_patterns)]
-                Some(b'.') => emit!($self.$method, $token, Period),
+                Some(b'.') => emit!($self.$method, $token, Dot),
                 Some(b'[') => emit!($self.$method, $token, LeftBracket),
                 Some(b']') => emit!($self.$method, $token, RightBracket),
                 Some(b',') => emit!($self.$method, $token, Comma),
@@ -907,16 +911,17 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                     match Some(b'&') => self.trans(AmpAmp),
                 }),
                 AmpAmp => symbol!(self, RawToken::Op(Op::AmpAmp), {}),
-                Period => symbol!(self, RawToken::Op(Op::Period), {
+                Dot => symbol!(self, RawToken::Op(Op::Dot), {
                     match Some(b'0'..=b'9') => self.trans(Float),
-                    match Some(b'.') => self.trans(PeriodPeriod),
-                    match Some(b'#') => self.trans(PeriodHash),
+                    match Some(b'.') => self.trans(DotDot),
+                    match Some(b'#') => self.trans(DotHash),
                 }),
-                PeriodHash => symbol!(self, RawToken::Op(Op::PeriodHash), {}),
-                PeriodPeriod => symbol!(self, RawToken::Literal, {
-                    match Some(b'.') => self.trans(PeriodPeriodPeriod),
+                DotHash => symbol!(self, RawToken::Op(Op::DotHash), {}),
+                DotDot => symbol!(self, RawToken::DotDot, {
+                    match Some(b'.') => self.trans(DotDotDot),
                 }),
-                PeriodPeriodPeriod => return self.token(RawToken::Ellipsis, Empty),
+                DotDotDot => return self.token(RawToken::Ellipsis, Empty),
+                EmitDotDot => return self.token(RawToken::DotDot, Empty),
                 Tilde => symbol!(self, RawToken::Op(Op::Tilde), {}),
                 Caret => symbol!(self, RawToken::Op(Op::Caret), {}),
                 Literal => literal!(self, RawToken::Literal, {
@@ -968,7 +973,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                         },
                         match Some(b'.') => {
                             self.defer = None;
-                            self.trans(Float)
+                            self.trans(if self.state == Signed { SignedDot } else { UnsignedDot } )
                         },
                         match Some(b'e') => {
                             self.defer = None;
@@ -1002,7 +1007,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                         },
                         match Some(b'.') => {
                             self.defer = None;
-                            self.trans(Float)
+                            self.trans(if signed { SignedDot } else { UnsignedDot })
                         },
                         match Some(b'e') => {
                             self.defer = None;
@@ -1012,6 +1017,38 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                         match Some(..) => {
                             self.trans(Literal)
                         },
+                    })
+                }
+                UnsignedDot | SignedDot => {
+                    let signed = self.state == SignedDot;
+                    number!(self, RawToken::F64, {
+                        match Some(b'.') => {
+                            return self.token_adj(
+                                match if signed {
+                                    0i64.checked_sub_unsigned(self.acc)
+                                } else {
+                                    i64::try_from(self.acc).ok()
+                                } {
+                                    Some(v) => RawToken::I64(v),
+                                    None => {
+                                        if self.mode == Mode::FullExpr {
+                                            return self.error(ErrorDiagKind::Overflow)
+                                        }
+                                        if self.mode != Mode::String {
+                                            self.warn(WarnDiagKind::OverflowLit);
+                                        }
+                                        RawToken::Literal
+                                    }
+                                },
+                                EmitDotDot,
+                                0,
+                                -2,
+                            );
+                        },
+                    }, {
+                        match Some(b'0'..=b'9') => self.trans(Float),
+                        match Some(b'e') => self.trans(ExponentStart),
+                        match Some(..) => self.trans(Literal),
                     })
                 }
                 Hex | SignedHex => {
@@ -1421,6 +1458,7 @@ pub(crate) enum TokenInfo {
     RightBrace,
     Comma,
     Colon,
+    DotDot,
     Ellipsis,
     DittoKey,
     Sym,
@@ -1793,6 +1831,7 @@ impl<'a> Iterator for Lexer<'a> {
                 Ok((RightBrace, span)) => self.token(TokenInfo::RightBrace, span),
                 Ok((Comma, span)) => self.token(TokenInfo::Comma, span),
                 Ok((Colon, span)) => self.token(TokenInfo::Colon, span),
+                Ok((DotDot, span)) => self.token(TokenInfo::DotDot, span),
                 Ok((Ellipsis, span)) => self.token(TokenInfo::Ellipsis, span),
                 Ok((DittoKey, span)) => self.token(TokenInfo::DittoKey, span),
                 Ok((Sym, span)) => self.token(TokenInfo::Sym, span),

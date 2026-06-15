@@ -1,4 +1,4 @@
-use std::{fmt, ops::ControlFlow};
+use std::{fmt, hash::DefaultHasher, ops::ControlFlow};
 
 use crate::{
     arg::Args,
@@ -42,6 +42,50 @@ impl<'v> Range<'v> {
     pub(crate) fn new(start: Value<'v>, end: Value<'v>, step: Value<'v>) -> Self {
         Self { start, end, step }
     }
+
+    fn slice_bounds<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        len: usize,
+    ) -> Result<'v, 's, (usize, usize)> {
+        if !self.step.is_nil() && self.step.as_i64(strand) != Some(1) {
+            return Err(Error::index(strand));
+        }
+        let start = if self.start.is_nil() {
+            0
+        } else {
+            crate::object::index::position(
+                len,
+                self.start
+                    .as_i64(strand)
+                    .ok_or_else(|| Error::index(strand))?,
+            )
+            .ok_or_else(|| Error::index(strand))?
+        };
+        let end = if self.end.is_nil() {
+            len
+        } else {
+            crate::object::index::position(
+                len,
+                self.end
+                    .as_i64(strand)
+                    .ok_or_else(|| Error::index(strand))?,
+            )
+            .ok_or_else(|| Error::index(strand))?
+        };
+        Ok((start, end))
+    }
+}
+
+pub(crate) fn slice_bounds<'v, 's>(
+    index: &Value<'v>,
+    strand: &mut Strand<'v, 's>,
+    len: usize,
+) -> Result<'v, 's, Option<(usize, usize)>> {
+    let Some(range) = index.downcast_ref(strand.builtin_types().range) else {
+        return Ok(None);
+    };
+    range.get().slice_bounds(strand, len).map(Some)
 }
 
 impl<'v> Protocol<'v> for Range<'v> {
@@ -90,13 +134,49 @@ impl<'v> Protocol<'v> for Range<'v> {
         write!(w, ">").into_do(strand)
     }
 
+    fn op_eq<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let Some(other) = other.downcast_ref(strand.builtin_types().range) else {
+            return Ok(Value::FALSE);
+        };
+        let left = this.get();
+        let right = other.get();
+        Ok(Value::from_bool(
+            left.start.op_eq(strand, &right.start).to_bool(strand)
+                && left.end.op_eq(strand, &right.end).to_bool(strand)
+                && left.step.op_eq(strand, &right.step).to_bool(strand),
+        ))
+    }
+
+    fn op_hash<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        hasher: &mut DefaultHasher,
+    ) -> Result<'v, 's, ()> {
+        let this = this.get();
+        this.start.op_hash(strand, hasher)?;
+        this.end.op_hash(strand, hasher)?;
+        this.step.op_hash(strand, hasher)
+    }
+
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
-        let direction = if borrow.start.op_lt(strand, &borrow.end)?.to_bool(strand) {
+        if borrow.start.is_nil() {
+            return Err(Error::runtime(
+                strand,
+                "cannot iterate range without a start",
+            ));
+        }
+        let direction = if borrow.end.is_nil() {
+            Direction::Unbounded
+        } else if borrow.start.op_lt(strand, &borrow.end)?.to_bool(strand) {
             Direction::Increasing
         } else if borrow.start.op_gt(strand, &borrow.end)?.to_bool(strand) {
             Direction::Decreasing
@@ -186,6 +266,7 @@ enum Direction {
     Empty,
     Increasing,
     Decreasing,
+    Unbounded,
 }
 
 pub(crate) struct Iter<'v> {
@@ -257,6 +338,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
             Direction::Empty => false,
             Direction::Increasing => borrow.cur.op_lt(strand, &borrow.end)?.op_bool(strand),
             Direction::Decreasing => borrow.cur.op_gt(strand, &borrow.end)?.op_bool(strand),
+            Direction::Unbounded => true,
         };
         if res {
             Output::set(strand, out, &borrow.cur);

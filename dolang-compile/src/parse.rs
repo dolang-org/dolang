@@ -94,6 +94,7 @@ macro_rules! decay_literal {
             | TokenInfo::LeftBrace
             | TokenInfo::RightBrace
             | TokenInfo::Comma
+            | TokenInfo::DotDot
             | TokenInfo::Ellipsis
             | TokenInfo::Keyword(
                 Keyword::Catch
@@ -136,6 +137,24 @@ macro_rules! expr_start {
     };
 }
 
+macro_rules! expr_tail_break {
+    () => {
+        TokenInfo::RightParen
+            | TokenInfo::RightBracket
+            | TokenInfo::RightBrace
+            | TokenInfo::Dollar
+            | TokenInfo::Comma
+            | TokenInfo::Colon
+            | TokenInfo::ArgSep
+            | TokenInfo::StmtSep
+            | TokenInfo::Indent
+            | TokenInfo::Dedent
+            | TokenInfo::Literal
+            | TokenInfo::Equal
+            | TokenInfo::Escape(_)
+    };
+}
+
 macro_rules! decay_string {
     ($token: expr) => {
         decay!($token,
@@ -154,6 +173,7 @@ macro_rules! decay_string {
             | TokenInfo::RightParen
             | TokenInfo::Comma
             | TokenInfo::Colon
+            | TokenInfo::DotDot
             | TokenInfo::Ellipsis
             | TokenInfo::DQuote
             | TokenInfo::RawQuote
@@ -190,6 +210,7 @@ pub(crate) enum ExpectKind {
     RightBrace,
     Comma,
     Colon,
+    DotDot,
     Ellipsis,
     DittoKey,
     Sym,
@@ -234,6 +255,7 @@ impl Display for ExpectKind {
             RightBrace => &"}",
             Comma => &",",
             Colon => &":",
+            DotDot => &"..",
             Ellipsis => &"...",
             DittoKey => &"<ditto key>",
             Sym => &"<symbol>",
@@ -275,6 +297,7 @@ impl From<&TokenInfo> for ExpectKind {
             RightBrace => ExpectKind::RightBrace,
             Comma => ExpectKind::Comma,
             Colon => ExpectKind::Colon,
+            DotDot => ExpectKind::DotDot,
             Ellipsis => ExpectKind::Ellipsis,
             DittoKey => ExpectKind::DittoKey,
             Sym => ExpectKind::Sym,
@@ -816,6 +839,7 @@ struct Prec(
 impl Prec {
     const INDEX: Self = Self(Assoc::Left, 2100);
     const CALL: Self = Self(Assoc::Left, 2000);
+    const RANGE: Self = Self(Assoc::Left, 1150);
     const DOLLAR_CALL: Self = Self(Assoc::Right, 500);
 
     fn terminate(&self, min: &Option<Prec>) -> bool {
@@ -847,7 +871,7 @@ impl Op {
     }
 
     fn is_compact_binary(&self) -> bool {
-        matches!(self, Op::Period | Op::PeriodHash)
+        matches!(self, Op::Dot | Op::DotHash)
     }
 
     fn binary_prec(&self) -> Option<Prec> {
@@ -860,7 +884,7 @@ impl Op {
             Op::EqEq | Op::BangEq => Prec(Assoc::Left, 1100),
             Op::Plus | Op::Minus => Prec(Assoc::Left, 1200),
             Op::Percent | Op::Star | Op::Slash | Op::SlashSlash => Prec(Assoc::Left, 1300),
-            Op::Period | Op::PeriodHash => Prec(Assoc::Left, 2200),
+            Op::Dot | Op::DotHash => Prec(Assoc::Left, 2200),
             _ => return None,
         })
     }
@@ -936,6 +960,13 @@ impl<'a> Parser<'a> {
         let res = f(self);
         self.lex.set_mode(prev);
         res
+    }
+
+    fn parse_range_tail(&mut self, scope: &mut Scope, mode: ExprMode) -> Result<Option<Expr>> {
+        Ok(match self.peek()? {
+            None | Some(token!(expr_tail_break!())) => None,
+            _ => Some(self.parse_expr_prec(scope, mode, Some(Prec::RANGE))?),
+        })
     }
 
     fn peek(&mut self) -> Result<Option<&mut Token>> {
@@ -1337,6 +1368,10 @@ impl<'a> Parser<'a> {
             Some(token!(LeftBracket, left)) => self.parse_array_literal(scope, left, None),
             Some(token!(LeftBrace, left)) => self.parse_dict_literal(scope, left),
             Some(token!(Keyword(Keyword::Do), span)) => Ok(self.parse_lambda(scope, span)?),
+            Some(token!(DotDot, span)) if !matches!(mode, ExprMode::Shell) => Ok(Expr::Range {
+                exprs: Box::new([None, self.parse_range_tail(scope, mode)?]),
+                op_span: span,
+            }),
             Some(token!(Key, span)) => {
                 self.push_colon(span.after_right_char());
                 if matches!(mode, ExprMode::Full | ExprMode::Compact) {
@@ -1709,6 +1744,18 @@ impl<'a> Parser<'a> {
 
         loop {
             match self.peek()? {
+                Some(token!(TokenInfo::DotDot, span)) if !matches!(mode, ExprMode::Shell) => {
+                    let prec = Prec::RANGE;
+                    if prec.terminate(&min_prec) {
+                        break;
+                    }
+                    let span = *span;
+                    self.advance();
+                    lhs = Expr::Range {
+                        exprs: Box::new([Some(lhs), self.parse_range_tail(scope, mode)?]),
+                        op_span: span,
+                    };
+                }
                 Some(token!(TokenInfo::Op(op), span)) if op.is_binary() => {
                     if mode == ExprMode::Compact && !op.is_compact_binary() {
                         break;
@@ -1720,10 +1767,10 @@ impl<'a> Parser<'a> {
                         break;
                     }
                     self.advance();
-                    if matches!(op, Op::Period | Op::PeriodHash) {
+                    if matches!(op, Op::Dot | Op::DotHash) {
                         let field = match decay_field!(self.next()?) {
                             Some(token!(TokenInfo::Ident, field)) => {
-                                if op == Op::Period {
+                                if op == Op::Dot {
                                     GetVariant::Normal(field)
                                 } else {
                                     GetVariant::Private {
@@ -1732,7 +1779,7 @@ impl<'a> Parser<'a> {
                                     }
                                 }
                             }
-                            Some(token!(TokenInfo::LeftParen, left)) if op == Op::Period => {
+                            Some(token!(TokenInfo::LeftParen, left)) if op == Op::Dot => {
                                 let span = self.expect(scope, &[ExpectKind::Ident])?;
                                 let right = self.expect(scope, &[ExpectKind::RightParen])?;
                                 let method = self.special_method(scope, span)?;
@@ -1744,7 +1791,7 @@ impl<'a> Parser<'a> {
                             }
                             Some(token!(TokenInfo::Key, span)) => {
                                 self.push_colon(span.after_right_char());
-                                if op == Op::Period {
+                                if op == Op::Dot {
                                     GetVariant::Normal(span)
                                 } else {
                                     GetVariant::Private { span, res: None }
@@ -2087,24 +2134,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
-                None
-                | Some(
-                    token!(
-                        TokenInfo::RightParen
-                            | TokenInfo::RightBracket
-                            | TokenInfo::RightBrace
-                            | TokenInfo::Dollar
-                            | TokenInfo::Comma
-                            | TokenInfo::Colon
-                            | TokenInfo::ArgSep
-                            | TokenInfo::StmtSep
-                            | TokenInfo::Indent
-                            | TokenInfo::Dedent
-                            | TokenInfo::Literal
-                            | TokenInfo::Equal
-                            | TokenInfo::Escape(_)
-                    ),
-                ) => break,
+                None | Some(token!(expr_tail_break!())) => break,
                 _ => {
                     let token = self.consume();
                     return Err(self.syntax_error(scope, Some(token), "invalid expression"));
@@ -3777,7 +3807,7 @@ impl<'a> Parser<'a> {
         };
 
         loop {
-            if let Some(token!(Op(Op::Period))) = self.peek()? {
+            if let Some(token!(Op(Op::Dot))) = self.peek()? {
                 self.advance();
                 match self.next()? {
                     Some(token!(Ident, span)) => result = result | span,

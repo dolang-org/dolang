@@ -1,7 +1,23 @@
 # range
 
 Ranges represent a sequence of numbers from start to end (exclusive) with a
-step. They are primarily used for iteration.
+step. They are used for iteration and for slicing sequence types.
+
+Range values can be created either with `..` syntax or by calling the `range`
+type object directly.
+
+## Range Expressions
+
+```
+let bounded = (1..5)
+let from_start = (..5)
+let to_end = (1..)
+let all = (..)
+```
+
+`a..b` is half-open: it includes `a` and excludes `b`.
+
+Open-ended forms keep the missing endpoint as `nil` internally.
 
 ## Creating Ranges
 
@@ -18,6 +34,12 @@ let r = range 0 10
 
 # With step
 let r = range 0 20 2
+
+# Explicitly open-ended end
+let r = range 1 nil
+
+# Fully open descriptor
+let r = range nil nil
 ```
 
 ### Keyword Arguments
@@ -53,15 +75,18 @@ let r = range 0 end: 20 step: 5
 | `end`   | `int` | ending value (exclusive)    | 1        |
 | `step`  | `int` | step size (default: 1)      | 2        |
 
+Passing `nil` leaves `start` or `end` open instead of applying the usual
+default. In contrast, omitting positional `start` still defaults it to `0`.
+
 ## Fields
 
 ### `start`
 
-The starting value.
+The starting value, or `nil` for open-start ranges.
 
 ### `end`
 
-The endping value (exclusive).
+The ending value (exclusive), or `nil` for open-end ranges.
 
 ### `step`
 
@@ -84,6 +109,35 @@ for i = range start: 1 end: 10 step: 3
   echo $i
 # 1, 4, 7
 ```
+
+Open-ended ranges with a concrete start are also iterable:
+
+```
+let values = []
+for i = 2..
+  if (i >= 5)
+    break
+  values.push $i
+assert_eq $values [2, 3, 4]
+```
+
+`..b` and `..` are not iterable.
+
+## Indexing
+
+Some collection types interpret ranges as slices when used in indexing:
+
+- [`array`](./array.md)
+- [`tuple`](./tuple.md)
+- [`str`](./str.md)
+- [`bin`](./bin.md)
+
+These slices return new values rather than views.
+
+For slice indexing, omitted `start` means `0`, omitted `end` means the
+collection length, and negative endpoints count from the end.
+
+Other mappings such as [`dict`](./dict.md) treat ranges as ordinary keys.
 
 ## Methods
 

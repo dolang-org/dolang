@@ -312,3 +312,19 @@ Unpacks any value that can be converted to binary into an array of byte values.
 ```
 assert_eq (bin.unpack b"hello") [104, 101, 108, 108, 111]
 ```
+
+## Operations
+
+### Indexing
+
+Binary data accepts [`range`](./range.md) values for slicing by byte position:
+
+```
+assert_eq $b"abcd"[1..3] b"bc"
+assert_eq $b"abcd"[..2] b"ab"
+assert_eq $b"abcd"[2..] b"cd"
+assert_eq $b"abcd"[..] b"abcd"
+```
+
+This returns a new `bin`. Omitted `start` means `0`, omitted `end` means the
+byte length, and negative endpoints count from the end.

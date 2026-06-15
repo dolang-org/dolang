@@ -18,6 +18,7 @@ use crate::{
 use super::{
     BoundMethod, index, iter,
     protocol::{GcObj, Header, Inspect, Spread, SpreadContext, dispatch_native_method},
+    range,
 };
 
 pub(crate) fn tuple<'v, I: IntoIterator<Item = Value<'v>>>(
@@ -173,8 +174,19 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         index: &Value<'v>,
-        out: Slot<'v, 'a>,
+        mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if let Some((start, end)) = range::slice_bounds(index, strand, this.get().len())? {
+            let slice = this
+                .get()
+                .get(start..end)
+                .ok_or_else(|| Error::index(strand))?;
+            out.store(Value::from_object(tuple(
+                strand.vm(),
+                slice.iter().map(Value::dup),
+            )));
+            return Ok(());
+        }
         let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
         match index::element(this.get().len(), index).and_then(|index| this.get().get(index)) {
             Some(value) => {

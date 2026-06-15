@@ -200,6 +200,20 @@ assert_eq $arr[-1] 77
 
 Out-of-bounds access raises an error; use `get` if you wish to avoid this.
 
+Arrays also accept [`range`](./range.md) values for slicing:
+
+```
+let arr = [0, 1, 2, 3]
+assert_eq $arr[1..3] [1, 2]
+assert_eq $arr[..2] [0, 1]
+assert_eq $arr[2..] [2, 3]
+assert_eq $arr[..] [0, 1, 2, 3]
+```
+
+Slice indexing returns a new array. Slice assignment is not supported.
+Omitted `start` means `0`, omitted `end` means the array length, and negative
+`start` and `end` values count from the end.
+
 ### Iteration
 
 ```

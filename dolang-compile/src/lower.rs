@@ -505,10 +505,28 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         Op::Amp => InstInfo::BitAnd,
                         Op::Tilde => InstInfo::BitNot,
                         Op::Caret => InstInfo::BitXor,
-                        Op::Bang | Op::AmpAmp | Op::BarBar | Op::Period | Op::PeriodHash => {
+                        Op::Bang | Op::AmpAmp | Op::BarBar | Op::Dot | Op::DotHash => {
                             unreachable!()
                         }
                     },
+                    *op_span,
+                ));
+            }
+            Expr::Range { exprs, op_span } => {
+                if let Some(start) = &exprs[0] {
+                    self.lower_expr(start)?;
+                } else {
+                    self.lower_load_nil(*op_span);
+                }
+                if let Some(end) = &exprs[1] {
+                    self.lower_expr(end)?;
+                } else {
+                    self.lower_load_nil(*op_span);
+                }
+                self.lower_load_nil(*op_span);
+                let sig = sig::Pack::new(std::iter::repeat_n(sig::Arg::Value, 3));
+                self.block.insts.push(Inst(
+                    InstInfo::Builtin(builtin::RANGE, self.packtab.id(&sig)),
                     *op_span,
                 ));
             }

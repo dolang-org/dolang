@@ -274,6 +274,7 @@ pub enum Builtin {
     Guard,
     Throw,
     ConcatBin,
+    Range,
     _LEN,
 }
 
@@ -282,6 +283,7 @@ pub mod builtin {
     pub const IMPORT: usize = Import as usize;
     pub const ARRAY: usize = Array as usize;
     pub const DICT: usize = Dict as usize;
+    pub const RANGE: usize = Range as usize;
     pub const ITER: usize = Iter as usize;
     pub const CONCAT_STR: usize = ConcatStr as usize;
     pub const CONCAT_ARG: usize = ConcatArg as usize;
@@ -296,6 +298,7 @@ pub const BUILTINS: [&str; Builtin::_LEN as usize] = [
     "import",
     "array",
     "dict",
+    "range",
     "iter",
     "concat_str",
     "concat_arg",

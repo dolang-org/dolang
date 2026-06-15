@@ -84,6 +84,20 @@ assert_eq $pair[-1] "Alice"
 
 Tuples are immutable; indexed assignment is not supported.
 
+Tuples also accept [`range`](./range.md) values for slicing:
+
+```
+let tup = tuple([0, 1, 2, 3])
+assert_eq $tup[1..3] (tuple [1, 2])
+assert_eq $tup[..2] (tuple [0, 1])
+assert_eq $tup[2..] (tuple [2, 3])
+assert_eq $tup[..] (tuple [0, 1, 2, 3])
+```
+
+Slice indexing returns a new tuple.
+Omitted `start` means `0`, omitted `end` means the tuple length, and negative
+`start` and `end` values count from the end.
+
 ### Unpacking
 
 ```

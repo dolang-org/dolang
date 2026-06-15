@@ -20,6 +20,7 @@ Full expressions support:
 - Comparison operators: `==`, `!=`, `<`, `<=`, `>`, `>=`
 - Logical operators: `&&`, `||`, `!`
 - Bitwise operators: `&`, `|`, `^`, `~`, `<<`, `>>`
+- Range expressions: `a..b`, `..b`, `a..`, `..`
 - Function calls:
     - Juxtaposition: `echo "hello" "world"`
     - C-style: `echo("hello", "world")`, `func()`
@@ -61,6 +62,32 @@ return their operands (as in Lua or Python), so you can write:
 let label = (condition && "yes" || "no")
 ```
 
+### Range Expressions
+
+`..` constructs a [`range`](../api/std/range.md) value.
+
+```
+let bounded = 1..5
+let from_start = ..5
+let to_end = 1..
+let all = ..
+```
+
+`a..b` is half-open: it includes `a` and excludes `b`.
+
+Open-ended forms are primarily used for slicing:
+
+```
+let arr = [0, 1, 2, 3]
+assert_eq $arr[1..3] [1, 2]
+assert_eq $arr[..2] [0, 1]
+assert_eq $arr[2..] [2, 3]
+assert_eq $arr[..] [0, 1, 2, 3]
+```
+
+Bounded ranges are iterable. `a..` is also iterable and unbounded. `..b` and
+`..` are not iterable because they have no starting value.
+
 ## Compact Expressions
 
 The `$` prefix introduces a compact expression at statement level. It supports:
@@ -68,6 +95,7 @@ The `$` prefix introduces a compact expression at statement level. It supports:
 - Variable access: `$name`
 - Field access: `$person.name`
 - Indexing: `$arr[0]`
+- Range expressions: `$start..end`, `$start..`, `$..end`, `$..`
 - C-style calls: `$func(arg1, arg2)`
 - Chaining: `$obj.method(arg).field[0]`
 - Boolean not: `$!flag`
