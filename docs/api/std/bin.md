@@ -214,27 +214,6 @@ assert (!(b"hello".contains b"world"))
 assert (b"hello".contains b"")
 ```
 
-### `sub start end?`
-
-Returns a slice from `start` to `end` (exclusive). If `end` is omitted,
-returns from `start` to the end. Negative indexes count from the end.
-
-**Parameters:**
-
-| Name    | Type                | Description                   |
-| ------- | ------------------- | ----------------------------- |
-| `start` | [`int`](./index.md) | starting byte index           |
-| `end`   | [`int`](./index.md) | ending byte index (exclusive) |
-
-**Returns:** [`bin`](./bin.md)
-
-```
-assert_eq (b"hello".sub 2) b"llo"
-assert_eq (b"hello".sub 1 4) b"ell"
-assert_eq (b"hello".sub -2) b"lo"
-assert_eq (b"hello".sub 1 -1) b"ell"
-```
-
 ### `unpack`
 
 Unpacks binary data into an array of byte values (integers from 0-255).
@@ -256,6 +235,24 @@ Returns the binary data as a lowercase hexadecimal string.
 assert_eq (b"ABC".hex()) "414243"
 assert_eq (b"\x00\x01\xff".hex()) "0001ff"
 ```
+
+## Operations
+
+### Indexing
+
+Binary data accepts [`range`](./range.md) values for slicing by byte position:
+
+```
+assert_eq (b"abcd"[1..3]) b"bc"
+assert_eq (b"abcd"[..2]) b"ab"
+assert_eq (b"abcd"[2..]) b"cd"
+assert_eq (b"abcd"[..]) b"abcd"
+assert_eq (b"foobar"[-3..]) b"bar"
+```
+
+This returns a new binary value. Slice boundaries must still fall on valid byte
+positions. Omitted `start` means `0`, omitted `end` means the binary length,
+and negative endpoints count from the end.
 
 ## Constructors
 

@@ -38,14 +38,14 @@ assert_eq b"\x41$prefix\x42" b"AfooB"
 # Length field
 assert_eq (b"abc".len) 3
 
-# Sub method
-assert_eq (b"foobar".sub 2) b"obar"
-assert_eq (b"foobar".sub 2 4) b"ob"
-assert_eq (b"foobar".sub 1 1) b""
-assert_eq (b"foobar".sub -3) b"bar"
-assert_eq (b"foobar".sub 1 -1) b"ooba"
-assert_eq (b"foobar".sub -4 -1) b"oba"
-assert_eq (b"foobar".sub -6 6) b"foobar"
+# Slice indexing
+assert_eq (b"foobar"[2..]) b"obar"
+assert_eq (b"foobar"[2..4]) b"ob"
+assert_eq (b"foobar"[1..1]) b""
+assert_eq (b"foobar"[-3..]) b"bar"
+assert_eq (b"foobar"[1..-1]) b"ooba"
+assert_eq (b"foobar"[-4..-1]) b"oba"
+assert_eq (b"foobar"[-6..6]) b"foobar"
 
 # Starts/ends with
 assert (b"foobar".starts_with b"foo")
@@ -99,5 +99,5 @@ def assert_err msg block
     true
   assert $res
 
-assert_err "index out of range or invalid" do b"foobar".sub -99
-assert_err "index out of range or invalid" do b"foobar".sub 0 -99
+assert_err "index out of range or invalid" do b"foobar"[-99..]
+assert_err "index out of range or invalid" do b"foobar"[0..-99]

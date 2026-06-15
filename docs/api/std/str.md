@@ -252,28 +252,6 @@ assert_eq ("banana".replace "na" "") "ba"
 assert_eq ("abc".replace "" "-") "-a-b-c-"
 ```
 
-### `sub start end?`
-
-Returns a substring from `start` to `end` (exclusive). If `end` is omitted,
-returns from `start` to the end of the string. Negative indexes count from the
-end using byte offsets.
-
-**Parameters:**
-
-| Name    | Type                | Description                   |
-| ------- | ------------------- | ----------------------------- |
-| `start` | [`int`](./index.md) | starting byte index           |
-| `end`   | [`int`](./index.md) | ending byte index (exclusive) |
-
-**Returns:** [`str`](./str.md)
-
-```
-assert_eq ("foobar".sub 3) "bar"
-assert_eq ("foobar".sub 2 4) "ob"
-assert_eq ("foobar".sub -3) "bar"
-assert_eq ("foobar".sub 1 -1) "ooba"
-```
-
 ### `upper`
 
 Returns the string converted to uppercase.
@@ -324,6 +302,7 @@ assert_eq $"abcd"[1..3] "bc"
 assert_eq $"abcd"[..2] "ab"
 assert_eq $"abcd"[2..] "cd"
 assert_eq $"abcd"[..] "abcd"
+assert_eq $"foobar"[-3..] "bar"
 ```
 
 This returns a new string. Slice boundaries must still fall on valid UTF-8

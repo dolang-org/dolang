@@ -98,6 +98,6 @@ Computes the SHA-512 digest.
 **Returns:** [`bin`](../std/bin.md) - 64-byte digest
 
 ```
-assert_eq $sha512("abc").hex().sub 0 10
+assert_eq $sha512("abc").hex()[..10]
   ddaf35a193
 ```

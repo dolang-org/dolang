@@ -8,13 +8,13 @@ def assert_err msg block
   assert $res
 
 assert_eq $"foo".len 3
-assert_eq ("foobar".sub 2) "obar"
-assert_eq ("foobar".sub 2 4) "ob"
-assert_eq ("foobar".sub 1 1) ""
-assert_eq ("foobar".sub -3) "bar"
-assert_eq ("foobar".sub 1 -1) "ooba"
-assert_eq ("foobar".sub -4 -1) "oba"
-assert_eq ("foobar".sub -6 6) "foobar"
+assert_eq ("foobar"[2..]) "obar"
+assert_eq ("foobar"[2..4]) "ob"
+assert_eq ("foobar"[1..1]) ""
+assert_eq ("foobar"[-3..]) "bar"
+assert_eq ("foobar"[1..-1]) "ooba"
+assert_eq ("foobar"[-4..-1]) "oba"
+assert_eq ("foobar"[-6..6]) "foobar"
 assert ("foobar".starts_with "foo")
 assert ("foobar".ends_with "bar")
 assert_eq ("foobar".without_prefix "foo") "bar"
@@ -56,6 +56,6 @@ assert ("".contains "")
 
 assert_err "type error: str.len is a field, not a method" do "foo".len()
 assert_err "numeric overflow" do "ab".repeat -1
-assert_err "invalid UTF-8 substring boundaries" do "foobar".sub -99
-assert_err "invalid UTF-8 substring boundaries" do "foobar".sub 0 -99
-assert_err "invalid UTF-8 substring boundaries" do "é".sub 0 -1
+assert_err "index out of range or invalid" do "foobar"[-99..]
+assert_err "index out of range or invalid" do "foobar"[0..-99]
+assert_err "invalid UTF-8 substring boundaries" do "é"[0..1]
