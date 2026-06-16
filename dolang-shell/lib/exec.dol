@@ -1,0 +1,142 @@
+import compile diagnostic digest fs load std sys
+
+# Convenience helpers for the common “compile if needed, cache, then execute”
+# workflow.
+#
+# Cached bytecode is stored under `fs.cache_dir()`, scoped by application name.
+# If `app:` is omitted, the scope is derived from `sys.program`.
+
+# Derive a default cache application name from `sys.program`.
+#
+# - script path: basename without the last extension
+# - `-m` module: module name string
+# - unset / REPL: `dolang`
+def default_app()
+  let p = sys.program
+  if (p == nil)
+    "dolang"
+  else if (type p fs.Path)
+    (p.stem || p.name || "dolang")
+  else
+    p
+
+def normalize_app app
+  app = (app || default_app()).replace("/", "_").replace("\\", "_")
+  if (app == "")
+    throw std.RuntimeError "cache app name must not be empty"
+  app
+
+def module_name path name
+  if (name != nil)
+    name
+  else
+    let stem = path.stem
+    if (stem == nil)
+      throw std.RuntimeError "can't derive module name from path: $path"
+    stem
+
+def prelude_key prelude
+  if (prelude == nil)
+    ""
+  else
+    str $prelude
+
+def cache_key path mode name prelude
+  let state = digest.Blake3()
+  state.update $ str $ path.absolute().normal()
+  state.update "\n"
+  state.update $mode
+  state.update "\n"
+  state.update (name || "")
+  state.update "\n"
+  state.update $ prelude_key $prelude
+  state.digest().hex()
+
+def cache_root app
+  let path = (fs.cache_dir() / normalize_app app  / "bytecode")
+  path.create_dir all: true
+  path
+
+def cache_path path mode name app prelude
+  let key = cache_key $path $mode $name $prelude
+  (cache_root app / "$key.dolc")
+
+def cache_usable cache path
+  (cache.exists() && path.metadata().modified < cache.metadata().modified)
+
+def compile_script path prelude
+  let source = path.read()
+  if (prelude == nil)
+    compile.compile $path $source
+  else
+    compile.compile $path $source prelude: $prelude
+
+def compile_module path name prelude
+  let source = path.read()
+  if (prelude == nil)
+    compile.compile $path $source module: $name
+  else
+    compile.compile $path $source module: $name prelude: $prelude
+
+def compile_cached path mode name cache prelude
+  let compiled = if (mode == "script")
+    compile_script $path $prelude
+  else
+    compile_module $path $name $prelude
+  for diag = compiled.diagnostics
+    diagnostic.print_compile_diag $diag
+  if !compiled.ok
+    throw std.CompileError "failed to compile $(path.relative())"
+  cache.write $compiled.bytecode
+  load.run $compiled.bytecode
+
+def exec_cached path mode name app prelude
+  let path = fs.Path(path)
+  let cache = cache_path $path $mode $name $app $prelude
+  if cache_usable $cache $path
+    try
+      return load.run $ cache.read "b"
+    catch std.BytecodeError: _
+      nil
+  compile_cached $path $mode $name $cache $prelude
+
+# Compile `path` in script mode if needed, cache the bytecode, and execute it.
+#
+# `app` scopes the cache directory under `fs.cache_dir()`. When omitted, the
+# scope defaults from `sys.program`.
+#
+# `prelude` is passed through to `compile.compile`.
+#
+# # Example
+#
+# ```
+# import exec
+#
+# exec.run "./tool.dol"
+# exec.run "./tool.dol" app: "my-tool"
+# ```
+pub def run path :app = nil :prelude = nil
+  exec_cached $path script nil $app $prelude
+
+# Compile `path` in module mode if needed, cache the bytecode, and return the
+# loaded module object.
+#
+# `name` defaults to the source file stem when omitted.
+#
+# `app` scopes the cache directory under `fs.cache_dir()`. When omitted, the
+# scope defaults from `sys.program`.
+#
+# `prelude` is passed through to `compile.compile`.
+#
+# # Example
+#
+# ```
+# import exec
+#
+# let mod = exec.module "./lib/build.dol"
+# mod.main()
+#
+# let plugin = exec.module "./plugin.dol" name: "plugins.build"
+# ```
+pub def module path :name = nil :app = nil :prelude = nil
+  exec_cached $path module (module_name (fs.Path path) name) $app $prelude
