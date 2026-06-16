@@ -74,6 +74,8 @@ nav:
       - api/compile/note.md
       - api/compile/patch.md
     - diagnostic: api/diagnostic.md
+    - exec:
+      - api/exec/index.md
     - container:
       - api/container/index.md
       - api/container/vfs.md

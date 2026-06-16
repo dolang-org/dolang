@@ -1,0 +1,48 @@
+import exec fs
+  test:
+    - assert
+    - assert_eq
+    - assert_ne
+
+def app_name prefix dir
+  "$prefix-$(dir.name)"
+
+pub def test_run_uses_app_scoped_cache()
+  fs.with_temp_dir do |dir|
+    let app = app_name exec-regression $dir
+    let script = (dir / "script.dol")
+    script.write "41\n"
+    let cache_root = (fs.cache_dir() / app / "bytecode")
+    cache_root.remove all: true ignore: true
+
+    try
+      assert_eq (exec.run script app: app) 41
+      assert $cache_root.exists()
+      assert_eq ([...cache_root.entries()].len) 1
+      assert_eq (cache_root.entries().next().path.ext) dolc
+    finally
+      cache_root.remove all: true ignore: true
+
+pub def test_module_defaults_app_from_program_module_name()
+  fs.with_temp_dir do |dir|
+    let mod_path = (dir / "demo_mod.dol")
+    mod_path.write "pub let answer = 42\n"
+    let m = exec.module $mod_path
+    assert_eq $m.answer 42
+
+pub def test_run_rebuilds_invalid_cached_bytecode()
+  fs.with_temp_dir do |dir|
+    let app = app_name exec-corrupt $dir
+    let script = (dir / "script.dol")
+    script.write "99\n"
+    let cache_root = (fs.cache_dir() / app / "bytecode")
+    cache_root.remove all: true ignore: true
+
+    try
+      assert_eq (exec.run script app: app) 99
+      let file = cache_root.entries().next().path
+      file.write b"bad bytecode"
+      assert_eq (exec.run script app: app) 99
+      assert_ne (file.read "b") b"bad bytecode"
+    finally
+      cache_root.remove all: true ignore: true

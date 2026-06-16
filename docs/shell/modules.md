@@ -44,3 +44,9 @@ mode, with a `.dolc` extension. The cache is automatically invalidated when the
 source file is newer than the cached bytecode.
 
 This happens automatically and requires no configuration.
+
+For programmatic loading from Do code, use the [`exec`](../api/exec/index.md)
+module. It wraps [`compile`](../api/compile/index.md) and
+[`load`](../api/load/index.md) and stores cached bytecode under an
+application-scoped subdirectory of
+[`fs.cache_dir()`](../api/fs/index.md#cache_dir).
