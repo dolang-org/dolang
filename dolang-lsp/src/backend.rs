@@ -306,6 +306,9 @@ impl Backend {
         let Some(path) = uri_to_file_path(&uri) else {
             return;
         };
+        if !is_dolang_source(&path) {
+            return;
+        }
         {
             let settings = self.find_settings(&path).await;
 
@@ -564,6 +567,12 @@ impl LanguageServer for Backend {
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        let Some(path) = uri_to_file_path(&params.text_document.uri) else {
+            return;
+        };
+        if !is_dolang_source(&path) {
+            return;
+        }
         if let Some(text) = params.text {
             let item = TextDocumentItem {
                 language_id: "dol".to_owned(),
@@ -580,13 +589,15 @@ impl LanguageServer for Backend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        let document = self
+        let Some(document) = self
             .documents
             .lock()
             .await
             .get(&params.text_document.uri)
-            .unwrap()
-            .clone();
+            .cloned()
+        else {
+            return Ok(None);
+        };
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             data: document.lock().await.tokens.clone(),
             ..Default::default()
@@ -707,6 +718,10 @@ fn uri_to_file_path(uri: &Uri) -> Option<Cow<'_, Path>> {
     (uri.scheme().as_str() == "file")
         .then_some(())
         .and_then(|()| uri.to_file_path())
+}
+
+fn is_dolang_source(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()) == Some("dol")
 }
 
 fn range_contains_position(range: Range, position: Position) -> bool {
@@ -1105,6 +1120,34 @@ mod tests {
                 .send(Response::from_ok(id.unwrap(), Value::Null))
                 .await
                 .unwrap();
+        };
+
+        let (save, ()) = tokio::join!(save, observe);
+        assert_eq!(save, None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn did_save_ignores_non_dolang_files() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let request = Request::build(notification::DidSaveTextDocument::METHOD)
+            .params(json!(DidSaveTextDocumentParams {
+                text: Some("# heading\n".to_owned()),
+                text_document: TextDocumentIdentifier {
+                    uri: "file:///note.md".parse().unwrap(),
+                },
+            }))
+            .finish();
+
+        let service = &mut harness.service;
+        let socket = &mut harness.socket;
+        let save = async move { service.ready().await.unwrap().call(request).await.unwrap() };
+        let observe = async move {
+            assert!(
+                tokio::time::timeout(Duration::from_millis(250), socket.next())
+                    .await
+                    .is_err()
+            );
         };
 
         let (save, ()) = tokio::join!(save, observe);
