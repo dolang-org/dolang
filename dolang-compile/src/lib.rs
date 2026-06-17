@@ -215,7 +215,7 @@ impl<'a, 'b, 'e, B> visit::Visit for CallIdentAdapter<'a, 'b, 'e, B> {
     type Break = B;
 
     fn node<T: Node + ?Sized>(&mut self, node: &T) -> ControlFlow<Self::Break> {
-        node.accept(self.0)
+        self.0.node(node)
     }
 
     fn token(
@@ -235,7 +235,7 @@ impl<'a, 'b, 'e, B> visit::Visit for MethodAdapter<'a, 'b, 'e, B> {
     type Break = B;
 
     fn node<T: Node + ?Sized>(&mut self, node: &T) -> ControlFlow<Self::Break> {
-        node.accept(self.0)
+        self.0.node(node)
     }
 
     fn token(
