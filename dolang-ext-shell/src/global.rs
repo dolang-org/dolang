@@ -25,12 +25,12 @@ use crate::{
     fs::{file::File, path::Path},
     local::Local,
     program::Program,
-    sys::{Stderr, Stdin, Stdout},
+    shell::{Stderr, Stdin, Stdout},
     time::{DateTime, Duration},
 };
 
 #[cfg(unix)]
-use crate::container::Vfs;
+use crate::shell::Vfs;
 
 use crate::fs::readdir::DirEntryIter;
 

@@ -10,7 +10,7 @@ import http digest progress json strand proc time
     - with_temp_dir
   url:
     - Url
-  container:
+  shell:
     - Vfs
   container._common:
     - runtime_dir

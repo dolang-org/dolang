@@ -60,7 +60,7 @@ with_and_without_agent "metadata on closed file fails" do
 
 with_and_without_agent "metadata Unix fields" do
   # Only run on non-Windows platforms
-  if (sys.os == "windows")
+  if (sys.os().archetype == :windows:)
     log "skipping Unix-specific test on Windows"
     return
 

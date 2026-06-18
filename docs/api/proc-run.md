@@ -72,9 +72,9 @@ echo "Kernel: $kernel"
 
 ### Environment
 
-Programs inherit the current environment from [`sys.env`](sys/index.md#env). Use
-the [`env`](sys/index.md#env) function to set variables for a specific
-invocation:
+Programs inherit the current environment from [`shell.env`](shell/index.md#env).
+Use the [`shell.env`](shell/index.md#env) function to set variables for a
+specific invocation:
 
 ```
 env LANG: C do

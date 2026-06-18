@@ -107,7 +107,7 @@ for entry = entries ./src
 for entry = entries .
   echo "Name: $(entry.name)"
 
-  if (sys.os != "windows")
+  if (sys.os().archetype != :windows:)
     # Type is Unix-only and may be nil
     if (entry.type != nil)
       echo "Type: $(entry.type)"

@@ -29,11 +29,11 @@ Both paths implement the same abstract `CommandBuilder` trait (program name,
 env, cwd, FD redirection), so the rest of the execution pipeline (stdin pump,
 stdout line splitting, exit code handling) is shared.
 
-The container context (`Context` in `container.rs`) holds a shell VFS `Client`,
+The container context (`Context` in `shell.rs`) holds a shell VFS `Client`,
 container-local cwd, and a scoped `Env`. It is stored in `Local` and accessed
 via `local.container()`. `container::host()` temporarily clears the context to
-force local execution for a closure. The `container.Vfs()` constructor
-connects to the shell VFS Unix socket and queries its environment/cwd.
+force local execution for a closure. The `shell.Vfs()` constructor connects to
+the shell VFS Unix socket and queries its environment/cwd.
 
 ## Pipe Channels (Unix)
 

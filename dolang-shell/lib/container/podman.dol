@@ -1,8 +1,6 @@
 import
   proc.run:
     podman: podman_cli
-  sys:
-    - env
   container._dockman: dockman
 
 pub let Image = dockman.Image

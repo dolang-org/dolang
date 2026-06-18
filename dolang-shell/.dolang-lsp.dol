@@ -1,11 +1,15 @@
 return
   prelude:
     - shell
-    - shell.program
+    - sys
+    - proc
+    "proc.run": run
     shell:
       - echo
       - env
       - exit
       - cd
-      - capture
-      - feed
+      - program
+      - host
+    proc:
+      - sub

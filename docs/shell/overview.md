@@ -31,9 +31,9 @@ Scripts can use a shebang for direct execution:
 echo Hello from Do!
 ```
 
-Arguments after the script path are available as `sys.args`.
-The executed script path is available as `sys.program`; when using `-m`, it is
-the module name instead. In the REPL, `sys.program` is `nil`.
+Arguments after the script path are available as `shell.args`.
+The executed script path is available as `shell.program`; when using `-m`, it is
+the module name instead. In the REPL, `shell.program` is `nil`.
 
 ## REPL
 
@@ -51,16 +51,16 @@ within a session.
 
 The shell automatically imports a set of functions and objects into scope.
 
-### `sys`
+### `shell`
 
-| Name                                     | Description                                             |
-| ---------------------------------------- | ------------------------------------------------------- |
-| [`echo`](../api/sys/index.md#echo-args)  | Print arguments to terminal, separated by spaces        |
-| [`exit`](../api/sys/index.md#exit-code)  | Exit with a status code (default: 0)                    |
-| [`cd`](../api/sys/index.md#cd-path-func) | Change directory; optionally run func in new dir        |
-| [`env`](../api/sys/index.md#env)         | Access environment variables                            |
-| [`args`](../api/sys/index.md#args)       | Command-line arguments ([`array`](../api/std/array.md)) |
-| [`program`](../api/sys/index.md#program) | Script [`Path`](../api/fs/path.md) or `-m` module name  |
+| Name                                       | Description                                             |
+| ------------------------------------------ | ------------------------------------------------------- |
+| [`echo`](../api/shell/index.md#echo-args)  | Print arguments to terminal, separated by spaces        |
+| [`exit`](../api/shell/index.md#exit-code)  | Exit with a status code (default: 0)                    |
+| [`cd`](../api/shell/index.md#cd-path-func) | Change directory; optionally run func in new dir        |
+| [`env`](../api/shell/index.md#env)         | Access environment variables                            |
+| [`args`](../api/shell/index.md#args)       | Command-line arguments ([`array`](../api/std/array.md)) |
+| [`program`](../api/shell/index.md#program) | Script [`Path`](../api/fs/path.md) or `-m` module name  |
 
 ### `proc`
 

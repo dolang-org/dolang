@@ -9,7 +9,7 @@ import
   proc.run:
     - sh
 
-if (sys.os == "windows")
+if (sys.os().archetype == :windows:)
   log "skipped on Windows"
   return
 

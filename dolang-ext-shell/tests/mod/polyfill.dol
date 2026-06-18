@@ -4,7 +4,7 @@ pub let echo = nil
 pub let grep = nil
 pub let cat = nil
 
-if (sys.os == "windows")
+if (sys.os().archetype == :windows:)
   let cmd = run.cmd
   cat = do |...args| for arg = args.pos()
     cmd /c type $arg

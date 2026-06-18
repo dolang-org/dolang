@@ -1,6 +1,5 @@
 #![deny(warnings)]
 
-mod container;
 mod env;
 mod error;
 mod extension;
@@ -10,6 +9,7 @@ mod local;
 mod pipe_channel;
 mod proc;
 mod program;
+mod shell;
 mod shlex;
 mod sys;
 mod time;
@@ -29,7 +29,7 @@ use dolang::runtime::{Error, Output, Result, Strand, Value, Vm};
 use dolang_shell_vfs::Client;
 #[cfg(unix)]
 use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
-pub use sys::Exit;
+pub use shell::Exit;
 use tokio::io::AsyncWrite;
 
 use crate::global::Global;
@@ -37,13 +37,16 @@ use crate::global::Global;
 /// Instantiate wrapper input iterator around stdin
 pub fn stdin<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
     let global = strand.state::<Global<'v>>();
-    global.types.stdin.create(strand, sys::Stdin::new(), out)
+    global.types.stdin.create(strand, shell::Stdin::new(), out)
 }
 
 /// Instantiate wrapper output iterator around stdout
 pub fn stdout<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
     let global = strand.state::<Global<'v>>();
-    global.types.stdout.create(strand, sys::Stdout::new(), out)
+    global
+        .types
+        .stdout
+        .create(strand, shell::Stdout::new(), out)
 }
 
 pub fn as_datetime<'v>(vm: &Vm<'v>, value: &Value<'v>) -> Option<std::time::SystemTime> {
@@ -72,7 +75,7 @@ pub fn cwd<'v>(strand: &Strand<'v, '_>) -> PathBuf {
     global.local.get(strand).cwd().as_ref().into()
 }
 
-/// Set arguments for `sys.args` object
+/// Set arguments for `shell.args` object
 pub async fn set_args<'v, 's>(
     strand: &mut Strand<'v, 's>,
     args: impl IntoIterator<Item = impl AsRef<str>>,
@@ -84,7 +87,7 @@ pub async fn set_args<'v, 's>(
     Ok(())
 }
 
-/// Set source program for `sys.program`.
+/// Set source program for `shell.program`.
 pub async fn set_program<'v, 's>(
     strand: &mut Strand<'v, 's>,
     program: Option<impl Into<ProgramSource>>,

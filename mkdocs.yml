@@ -78,7 +78,6 @@ nav:
       - api/exec/index.md
     - container:
       - api/container/index.md
-      - api/container/vfs.md
     - container.docker:
       - api/container/docker/index.md
       - api/container/docker/container.md
@@ -131,6 +130,9 @@ nav:
       - api/regex/find.md
       - api/regex/match.md
       - api/regex/regex.md
+    - shell:
+      - api/shell/index.md
+      - api/shell/vfs.md
     - shlex: api/shlex.md
     - sqlite:
       - api/sqlite/index.md
