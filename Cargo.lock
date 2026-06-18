@@ -1032,7 +1032,6 @@ version = "0.1.0"
 dependencies = [
  "anstyle",
  "blake3",
- "clap",
  "console",
  "crossterm",
  "directories",
@@ -1057,7 +1056,7 @@ dependencies = [
  "libc",
  "rustyline",
  "tokio",
- "wild",
+ "wax",
  "windows-sys 0.61.2",
 ]
 
@@ -3451,15 +3450,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81995fafaaaf6ae47a7d0cc83c67caf92aeb7e5331650ae6ff856f7c0c60c459"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "wild"
-version = "2.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3131afc8c575281e1e80f36ed6a092aa502c08b18ed7524e86fbbb12bb410e1"
-dependencies = [
- "glob",
 ]
 
 [[package]]

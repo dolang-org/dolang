@@ -1,10 +1,8 @@
 #![deny(warnings)]
 
-use std::{error::Error, path::PathBuf};
+use std::error::Error;
 
 use tokio::runtime::Builder;
-
-use clap::Parser;
 
 use dolang::{
     compile,
@@ -21,36 +19,17 @@ use dolang::{
 use dolang_ext_shell::Exit;
 
 use crate::batch::Action;
+use crate::cli::{Cli, ParseOutcome};
 use crate::interactive::{DYNAMIC_PRELUDE, DynamicPrelude};
 use crate::terminal_state::TerminalRestoreGuard;
 
 mod batch;
 mod bundled;
+mod cli;
 mod diagnostic;
 mod interactive;
 mod load;
 mod terminal_state;
-
-#[derive(Parser)]
-#[clap(trailing_var_arg = true)]
-struct Cli {
-    /// Script path (or module name if -m is used)
-    path: Option<PathBuf>,
-    /// Import and run path as a module's main function
-    #[clap(short = 'm', long)]
-    module: bool,
-    /// Script arguments (appear in `shell.args`)
-    args: Vec<String>,
-    /// Check syntax without executing
-    #[clap(long, conflicts_with = "module")]
-    check: bool,
-    /// Compile to bytecode file
-    #[clap(long, value_name = "OUTPUT")]
-    compile: Option<PathBuf>,
-    /// Treat warnings as errors
-    #[clap(long)]
-    strict: bool,
-}
 
 fn get_action(cli: &Cli) -> Action {
     if cli.check {
@@ -84,7 +63,17 @@ pub fn main() -> i32 {
 }
 
 fn run() -> i32 {
-    let mut cli = Cli::parse_from(wild::args_os());
+    let mut cli = match cli::parse_from(std::env::args_os()) {
+        ParseOutcome::Run(cli) => cli,
+        ParseOutcome::Help(help) => {
+            println!("{help}");
+            return 0;
+        }
+        ParseOutcome::Error(error) => {
+            eprintln!("{error}");
+            return 2;
+        }
+    };
     let action = get_action(&cli);
 
     let rt = Builder::new_current_thread().enable_all().build().unwrap();
