@@ -1,4 +1,6 @@
 import exec fs
+  std:
+    - TypeError
   test:
     - assert
     - assert_eq
@@ -46,3 +48,67 @@ pub def test_run_rebuilds_invalid_cached_bytecode()
       assert_ne (file.read "b") b"bad bytecode"
     finally
       cache_root.remove all: true ignore: true
+
+pub def test_run_injects_globals()
+  fs.with_temp_dir do |dir|
+    let script = (dir / "script.dol")
+    script.write "answer\n"
+    assert_eq (exec.run script inject: {answer: 41}) 41
+
+pub def test_module_injects_globals_during_init()
+  fs.with_temp_dir do |dir|
+    let mod_path = (dir / "demo_mod.dol")
+    mod_path.write "pub let answer = answer\n"
+    let m = exec.module $mod_path inject: {answer: 42}
+    assert_eq $m.answer 42
+
+pub def test_run_merges_dict_prelude_with_inject()
+  fs.with_temp_dir do |dir|
+    let script = (dir / "script.dol")
+    script.write r|
+      assert_eq $answer 41
+      answer
+    assert_eq (
+      exec.run script
+        prelude: {test: [:assert_eq:]}
+        inject: {answer: 41}
+    ) 41
+
+pub def test_run_reuses_cache_when_inject_values_change()
+  fs.with_temp_dir do |dir|
+    let app = app_name exec-inject-cache $dir
+    let script = (dir / "script.dol")
+    script.write "answer\n"
+    let cache_root = (fs.cache_dir() / app / "bytecode")
+    cache_root.remove all: true ignore: true
+
+    try
+      assert_eq (exec.run script app: app inject: {answer: 1}) 1
+      assert_eq (exec.run script app: app inject: {answer: 2}) 2
+      assert_eq ([...cache_root.entries()].len) 1
+    finally
+      cache_root.remove all: true ignore: true
+
+pub def test_run_rejects_non_dict_inject()
+  fs.with_temp_dir do |dir|
+    let script = (dir / "script.dol")
+    script.write "0\n"
+    let ok = try
+      exec.run $script inject: 1
+      false
+    catch TypeError: err
+      assert_eq (str err) "type error: inject: expected `dict`"
+      true
+    assert $ok
+
+pub def test_run_rejects_non_symbol_inject_key()
+  fs.with_temp_dir do |dir|
+    let script = (dir / "script.dol")
+    script.write "0\n"
+    let ok = try
+      exec.run $script inject: {"answer": 1}
+      false
+    catch TypeError: err
+      assert_eq (str err) "type error: inject key: expected `sym`"
+      true
+    assert $ok

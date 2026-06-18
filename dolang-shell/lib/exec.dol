@@ -35,21 +35,23 @@ def module_name path name
       throw std.RuntimeError "can't derive module name from path: $path"
     stem
 
-def prelude_key prelude
-  if (prelude == nil)
-    ""
-  else
-    str $prelude
+def inject_keys inject
+  let keys = [...inject.keys()]
+  if !(keys.iter().all do |k| type k sym)
+    throw std.TypeError "inject key: expected `sym`"
+  keys
 
-def cache_key path mode name prelude
+def cache_key path mode name prelude inject
   let state = digest.Blake3()
   state.update $ str $ path.absolute().normal()
-  state.update "\n"
+  state.update "\0"
   state.update $mode
-  state.update "\n"
+  state.update "\0"
   state.update (name || "")
-  state.update "\n"
-  state.update $ prelude_key $prelude
+  state.update "\0"
+  state.update (str prelude)
+  state.update "\0"
+  state.update (str $ inject_keys inject)
   state.digest().hex()
 
 def cache_root app
@@ -57,48 +59,78 @@ def cache_root app
   path.create_dir all: true
   path
 
-def cache_path path mode name app prelude
-  let key = cache_key $path $mode $name $prelude
+def cache_path path mode name app prelude inject
+  let key = cache_key $path $mode $name $prelude $inject
   (cache_root app / "$key.dolc")
+
+def synthetic_module_name key
+  "\$$key\$"
 
 def cache_usable cache path
   (cache.exists() && path.metadata().modified < cache.metadata().modified)
 
-def compile_script path prelude
+def compile_prelude prelude synthetic inject
+  {...prelude, $synthetic: inject_keys inject}
+
+def compile_script path prelude synthetic inject
   let source = path.read()
+  let prelude = compile_prelude $prelude $synthetic $inject
   if (prelude == nil)
     compile.compile $path $source
   else
     compile.compile $path $source prelude: $prelude
 
-def compile_module path name prelude
+def compile_module path name prelude synthetic inject
   let source = path.read()
+  let prelude = compile_prelude $prelude $synthetic $inject
   if (prelude == nil)
     compile.compile $path $source module: $name
   else
     compile.compile $path $source module: $name prelude: $prelude
 
-def compile_cached path mode name cache prelude
-  let compiled = if (mode == "script")
-    compile_script $path $prelude
+def injected_module inject
+  record ...inject
+
+def run_loaded bytecode synthetic inject
+  if (synthetic == nil)
+    load.run $bytecode
   else
-    compile_module $path $name $prelude
+    let module = injected_module $inject
+    let handle = load.import_handler do |name|
+      if (name == synthetic)
+        module
+      else
+        throw std.ImportError(name)
+    try
+      load.run $bytecode
+    finally
+      handle.unregister()
+
+def compile_cached path mode name cache prelude synthetic inject
+  let compiled = if (mode == "script")
+    compile_script $path $prelude $synthetic $inject
+  else
+    compile_module $path $name $prelude $synthetic $inject
   for diag = compiled.diagnostics
     diagnostic.print_compile_diag $diag
   if !compiled.ok
     throw std.CompileError "failed to compile $(path.relative())"
   cache.write $compiled.bytecode
-  load.run $compiled.bytecode
+  run_loaded $compiled.bytecode $synthetic $inject
 
-def exec_cached path mode name app prelude
-  let path = fs.Path(path)
-  let cache = cache_path $path $mode $name $app $prelude
+def exec_cached path mode name app prelude inject
+  if !(type inject dict)
+    throw std.TypeError "inject: expected `dict`"
+  path = fs.Path $path
+  let key = cache_key $path $mode $name $prelude $inject
+  let cache = cache_path $path $mode $name $app $prelude $inject
+  let synthetic = synthetic_module_name $key
   if cache_usable $cache $path
     try
-      return load.run $ cache.read "b"
+      return run_loaded (cache.read "b") $synthetic $inject
     catch std.BytecodeError: _
       nil
-  compile_cached $path $mode $name $cache $prelude
+  compile_cached $path $mode $name $cache $prelude $synthetic $inject
 
 # Compile `path` in script mode if needed, cache the bytecode, and execute it.
 #
@@ -107,6 +139,9 @@ def exec_cached path mode name app prelude
 #
 # `prelude` is passed through to `compile.compile`.
 #
+# `inject` supplies globally scoped symbol/value bindings during compilation
+# and execution.
+#
 # # Example
 #
 # ```
@@ -114,9 +149,10 @@ def exec_cached path mode name app prelude
 #
 # exec.run "./tool.dol"
 # exec.run "./tool.dol" app: "my-tool"
+# exec.run "./tool.dol" inject: {answer: 42}
 # ```
-pub def run path :app = nil :prelude = nil
-  exec_cached $path script nil $app $prelude
+pub def run path :app = nil :prelude = {} :inject = {}
+  exec_cached $path script nil $app $prelude $inject
 
 # Compile `path` in module mode if needed, cache the bytecode, and return the
 # loaded module object.
@@ -128,6 +164,9 @@ pub def run path :app = nil :prelude = nil
 #
 # `prelude` is passed through to `compile.compile`.
 #
+# `inject` supplies globally scoped symbol/value bindings during compilation
+# and execution.
+#
 # # Example
 #
 # ```
@@ -137,6 +176,7 @@ pub def run path :app = nil :prelude = nil
 # mod.main()
 #
 # let plugin = exec.module "./plugin.dol" name: "plugins.build"
+# let injected = exec.module "./plugin.dol" inject: {answer: 42}
 # ```
-pub def module path :name = nil :app = nil :prelude = nil
-  exec_cached $path module (module_name (fs.Path path) name) $app $prelude
+pub def module path :name = nil :app = nil :prelude = {} :inject = {}
+  exec_cached $path module (module_name (fs.Path path) name) $app $prelude $inject
