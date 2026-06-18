@@ -4,10 +4,7 @@ use std::{
 };
 
 #[cfg(windows)]
-use wax::{
-    Glob,
-    walk::Entry as _,
-};
+use wax::{Glob, walk::Entry as _};
 
 #[derive(Debug)]
 pub(crate) struct Cli {
