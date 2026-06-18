@@ -97,7 +97,7 @@ async fn resolve_io<'v, 's, 'a>(
         global
             .types
             .stderr
-            .create(strand, crate::sys::Stderr, &mut stderr);
+            .create(strand, crate::shell::Stderr, &mut stderr);
         false
     } else {
         false

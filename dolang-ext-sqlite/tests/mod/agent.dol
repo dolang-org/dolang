@@ -9,8 +9,8 @@ import
 let agent_bin = "../target/debug/dolang-shell-vfs"
 
 let Vfs = nil
-if (sys.os != "windows")
-  import container:
+if (sys.os().archetype != :windows:)
+  import shell:
     Vfs: it
   Vfs = it
 
@@ -31,6 +31,6 @@ pub def with_agent block
 pub def with_and_without_agent test block
   log "$test: without agent"
   block()
-  if (sys.os != "windows")
+  if (sys.os().archetype != :windows:)
       log "$test: with agent"
       with_agent $block

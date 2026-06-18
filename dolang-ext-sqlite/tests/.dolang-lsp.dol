@@ -1,14 +1,18 @@
 return
   prelude:
     - shell
-    "shell.run": run
+    - sys
+    - proc
+    "proc.run": run
     shell:
       - echo
       - env
       - exit
       - cd
+      - program
+      - host
+    proc:
       - sub
-      - feed
     - regression
     regression:
       - log

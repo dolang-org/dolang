@@ -1,18 +1,18 @@
-import compile diagnostic digest fs load std sys
+import compile diagnostic digest fs load std shell
 
 # Convenience helpers for the common “compile if needed, cache, then execute”
 # workflow.
 #
 # Cached bytecode is stored under `fs.cache_dir()`, scoped by application name.
-# If `app:` is omitted, the scope is derived from `sys.program`.
+# If `app:` is omitted, the scope is derived from `shell.program`.
 
-# Derive a default cache application name from `sys.program`.
+# Derive a default cache application name from `shell.program`.
 #
 # - script path: basename without the last extension
 # - `-m` module: module name string
 # - unset / REPL: `dolang`
 def default_app()
-  let p = sys.program
+  let p = shell.program
   if (p == nil)
     "dolang"
   else if (type p fs.Path)
@@ -103,7 +103,7 @@ def exec_cached path mode name app prelude
 # Compile `path` in script mode if needed, cache the bytecode, and execute it.
 #
 # `app` scopes the cache directory under `fs.cache_dir()`. When omitted, the
-# scope defaults from `sys.program`.
+# scope defaults from `shell.program`.
 #
 # `prelude` is passed through to `compile.compile`.
 #
@@ -124,7 +124,7 @@ pub def run path :app = nil :prelude = nil
 # `name` defaults to the source file stem when omitted.
 #
 # `app` scopes the cache directory under `fs.cache_dir()`. When omitted, the
-# scope defaults from `sys.program`.
+# scope defaults from `shell.program`.
 #
 # `prelude` is passed through to `compile.compile`.
 #

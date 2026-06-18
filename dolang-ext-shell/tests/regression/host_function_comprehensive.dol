@@ -1,13 +1,13 @@
 import sys
 
-if (sys.os == "windows")
+if (sys.os().archetype == :windows:)
   log "skipped on Windows"
   return
 
 import agent:
   - with_and_without_agent
 
-import container:
+import shell:
   - host
 
 with_and_without_agent "host function resets context to defaults" do

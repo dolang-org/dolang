@@ -30,7 +30,7 @@ stdin/stdout/stderr to be piped between host and container.
 3. **Connect from Do code:**
 
     ```
-    import container: Vfs
+    import shell: Vfs
 
     let a = Vfs unix_socket: $vfsdir/socket
     a do
@@ -42,18 +42,19 @@ stdin/stdout/stderr to be piped between host and container.
 
 Within the VFS context (the block passed to it):
 
-- `env` reads and writes the container's environment (modifications do not
-  persist after leaving context)
-- `cd` changes the container's working directory (modifications also not
-  persistent)
+- [`shell.env`](../api/shell/index.md#env) reads and writes the container's
+  environment (modifications do not persist after leaving context)
+- [`shell.cd`](../api/shell/index.md#cd-path-func) changes the container's
+  working directory (modifications also not persistent)
 - Launched external programs run inside the container
 - Filesystem operations are redirected to the container
 
 ## Returning to Host Context
 
-The `host` function provides a way to temporarily return to the host environment
-from within a VFS context. This is useful when you need to access host
-resources or execute commands that should not run inside the container.
+The [`shell.host`](../api/shell/index.md#host-func-args) function provides a way
+to temporarily return to the host environment from within a VFS context. This is
+useful when you need to access host resources or execute commands that should
+not run inside the container.
 
 ### When to Use `host()`
 
@@ -75,7 +76,7 @@ The `host()` function always creates a "fresh" host context:
 ### Example
 
 ```
-import container:
+import shell:
   - Vfs
   - host
 

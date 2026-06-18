@@ -89,12 +89,12 @@ returns early.
 
 ### `args: <array>`
 
-The argument list to parse. Defaults to `sys.args`.
+The argument list to parse. Defaults to `shell.args`.
 
 ### `program: <str>`
 
 The program name used in `--help` output and error messages. Derived from
-`sys.program` by default — the stem of the script filename for scripts, or the
+`shell.program` by default — the stem of the script filename for scripts, or the
 module name for modules.
 
 ### `help: <str>`

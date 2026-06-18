@@ -8,7 +8,7 @@ import sys
     - cat
     - echo
 
-if (sys.os == "windows")
+if (sys.os().archetype == :windows:)
   log "skipping on Windows"
   return
 

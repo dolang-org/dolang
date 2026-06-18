@@ -1,8 +1,7 @@
 # Vfs
 
-Vfs objects are created by the [`Vfs`](./index.md#vfs) class constructor
-and provide methods for container interaction. All operations on closed Vfs
-fail.
+Vfs objects are created by the `Vfs` constructor and provide methods for
+container interaction.
 
 ## Creating a Vfs
 
@@ -27,8 +26,9 @@ a do
 Entering a Vfs context affects all system interactions:
 
 - External programs run inside the container
-- [`sys.env`](../sys/index.md#env) reads and writes the container's environment
-- [`sys.cd`](../sys/index.md#cd-path-func) changes the container's working
+- [`shell.env`](../shell/index.md#env) reads and writes the container's
+  environment
+- [`shell.cd`](../shell/index.md#cd-path-func) changes the container's working
   directory
 - [`fs`](../fs/index.md) operations (open, remove, read, write) access the
   container's filesystem

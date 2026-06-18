@@ -153,7 +153,7 @@ fn unpack_items<'v, 's>(
 
 impl<'v> Object<'v> for Env<'v> {
     const NAME: &'v str = "env";
-    const MODULE: &'v str = "sys";
+    const MODULE: &'v str = "shell";
     type Annex = ();
     type Type = ();
     type TypeAnnex = ();
@@ -282,7 +282,7 @@ impl<'v> Object<'v> for Env<'v> {
 
 impl<'v> Object<'v> for EnvIter {
     const NAME: &'v str = "EnvIter";
-    const MODULE: &'v str = "sys";
+    const MODULE: &'v str = "shell";
     type Annex = ();
     type Type = ();
     type TypeAnnex = ();

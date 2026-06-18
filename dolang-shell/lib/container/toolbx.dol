@@ -1,5 +1,5 @@
 import
-  container: 
+  shell:
     - Vfs
   container._common:
     - runtime_dir

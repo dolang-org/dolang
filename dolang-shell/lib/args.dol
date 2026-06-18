@@ -1,4 +1,4 @@
-import sys
+import shell
 import fs:
   - Path
 
@@ -498,7 +498,7 @@ class Parser
 # ===========================================================================
 
 def prog_default()
-  let p = sys.program
+  let p = shell.program
   if (p == nil)
     "prog"
   else if (type p Path)
@@ -508,8 +508,8 @@ def prog_default()
 
 # Parse command-line arguments according to a spec.
 #
-# `args:` defaults to `sys.args`. `program:` is the program name shown in help
-# and error messages; defaults to `sys.program` — the stem of the script
+# `args:` defaults to `shell.args`. `program:` is the program name shown in help
+# and error messages; defaults to `shell.program` — the stem of the script
 # filename for scripts, or the module name for modules.
 #
 # Returns a record whose keys are the declared option/argument names (with
@@ -547,7 +547,7 @@ pub def parse
   ...spec
 do
   let p = Parser name: (program || prog_default()) ...spec
-  p.parse (args || sys.args)
+  p.parse (args || shell.args)
 
 # Parse arguments and dispatch to a handler, suitable for use at script top-level.
 #
@@ -583,7 +583,7 @@ pub def with
   ...spec
 do
   let p = Parser name: (program || prog_default()) ...spec
-  args = (args || sys.args)
+  args = (args || shell.args)
   try
     let result = p.parse $args
     if result.help
@@ -591,7 +591,7 @@ do
       if !exit
         throw Help $msg
       echo $msg
-      sys.exit 0
+      shell.exit 0
     let h = result.handler
     if h
       h $result
@@ -604,4 +604,4 @@ do
     let hint = e.hint
     if hint
       echo $hint
-    sys.exit 1
+    shell.exit 1

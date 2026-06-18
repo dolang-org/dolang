@@ -255,12 +255,15 @@ impl Backend {
         }
         Some(Arc::new(Settings {
             prelude: vec![
+                Import::Module("shell".into()),
+                Import::Module("sys".into()),
+                Import::Item("shell".into(), "cd".into()),
+                Import::Item("shell".into(), "echo".into()),
+                Import::Item("shell".into(), "env".into()),
+                Import::Item("shell".into(), "exit".into()),
+                Import::Item("shell".into(), "host".into()),
+                Import::Item("shell".into(), "print".into()),
                 Import::Item("proc".into(), "sub".into()),
-                Import::Item("sys".into(), "cd".into()),
-                Import::Item("sys".into(), "echo".into()),
-                Import::Item("sys".into(), "env".into()),
-                Import::Item("sys".into(), "exit".into()),
-                Import::Item("sys".into(), "print".into()),
                 Import::ModuleAs("proc.run".into(), "run".into()),
             ],
         }))
