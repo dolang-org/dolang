@@ -18,10 +18,7 @@ use crate::{
 
 use super::{
     BoundMethod, index, iter,
-    protocol::{
-        GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, default_spread,
-        dispatch_native_method,
-    },
+    protocol::{GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, dispatch_native_method},
     range, tuple,
 };
 
@@ -46,18 +43,26 @@ impl<'a, 'v, 's> Spread<'v, 's> for ArraySpread<'a, 'v> {
         &mut self,
         strand: &mut Strand<'v, 's>,
         key: Sym<'v, '_>,
-        _value: Slot<'v, '_>,
+        mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::unexpected_key(strand, key))
+        self.0.push(Value::from_object(tuple::tuple(
+            strand,
+            [Value::from_object(strand.sym_obj(key)), value.take()],
+        )));
+        Ok(())
     }
 
     fn keyed(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        key: Slot<'v, '_>,
-        _value: Slot<'v, '_>,
+        mut key: Slot<'v, '_>,
+        mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::unexpected_key(strand, key))
+        self.0.push(Value::from_object(tuple::tuple(
+            strand,
+            [key.take(), value.take()],
+        )));
+        Ok(())
     }
 }
 
@@ -900,20 +905,15 @@ impl<'v> Protocol<'v> for Array<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        match context {
-            SpreadContext::Sequence => {
-                let borrow = this.borrow(strand)?;
-                for item in borrow.inner.iter() {
-                    let mut tmp = item.dup();
-                    sink.positional(strand, Slot::new(&mut tmp))?;
-                }
-                Ok(())
-            }
-            _ => default_spread(strand, this.clone(), context, sink).await,
+        let borrow = this.borrow(strand)?;
+        for item in borrow.inner.iter() {
+            let mut tmp = item.dup();
+            sink.positional(strand, Slot::new(&mut tmp))?;
         }
+        Ok(())
     }
 
     async fn op_unpack<'a, 's>(

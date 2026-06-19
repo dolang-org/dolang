@@ -53,18 +53,26 @@ impl<'a, 'v, 's> Spread<'v, 's> for TupleSpread<'a, 'v> {
         &mut self,
         strand: &mut Strand<'v, 's>,
         key: Sym<'v, '_>,
-        _value: Slot<'v, '_>,
+        mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::unexpected_key(strand, key))
+        self.0.push(Value::from_object(tuple(
+            strand.vm(),
+            [Value::from_object(strand.sym_obj(key)), value.take()],
+        )));
+        Ok(())
     }
 
     fn keyed(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        key: Slot<'v, '_>,
-        _value: Slot<'v, '_>,
+        mut key: Slot<'v, '_>,
+        mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::unexpected_key(strand, key))
+        self.0.push(Value::from_object(tuple(
+            strand.vm(),
+            [key.take(), value.take()],
+        )));
+        Ok(())
     }
 }
 
@@ -236,6 +244,20 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                     index,
                 },
             )));
+        }
+        Ok(())
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        let borrow = this.get();
+        for item in borrow.iter() {
+            let mut tmp = item.dup();
+            sink.positional(strand, Slot::new(&mut tmp))?;
         }
         Ok(())
     }
