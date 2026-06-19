@@ -1,0 +1,8 @@
+echo
+  - foo: bar
+      c d
+# error: unexpected indent in vertical data
+#   --> data_unexpected_indent.dol:LL:LL
+#    |
+# LL |       c d
+#    | ^^^^^^
