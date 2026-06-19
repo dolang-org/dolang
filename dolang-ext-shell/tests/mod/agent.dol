@@ -7,7 +7,7 @@ import
 let agent_bin = nil
 let Vfs = nil
 
-if (sys.os().archetype != :windows:)
+if (sys.os_info().family != :windows:)
   import shell:
     Vfs: it
   Vfs = it
@@ -30,6 +30,6 @@ pub def with_agent block
 pub def with_and_without_agent test block
   log "$test: without agent"
   block()
-  if (sys.os().archetype != :windows:)
+  if (sys.os_info().family != :windows:)
       log "$test: with agent"
       with_agent $block

@@ -10,18 +10,18 @@ pub(crate) fn configure_compiler<'a>(compiler: &mut Compiler<'a>) {
 }
 
 pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
-    let kind_sym = builder.sym("kind");
-    let archetype_sym = builder.sym("archetype");
-    let os_kind = builder.sym(std::env::consts::OS);
-    let os_archetype = if std::env::consts::OS == "windows" {
-        builder.sym("windows")
-    } else {
-        builder.sym("unix")
-    };
+    let os_sym = builder.sym("os");
+    let family_sym = builder.sym("family");
+    let arch_sym = builder.sym("arch");
+    let logical_count_sym = builder.sym("logical_count");
+    let os = builder.sym(std::env::consts::OS);
+    let family = builder.sym(std::env::consts::FAMILY);
+    let arch = builder.sym(std::env::consts::ARCH);
+    let logical_count = std::thread::available_parallelism().map_or(1, |count| count.get()) as i64;
 
     builder
         .module("sys")
-        .function("os", async move |strand, args, out| {
+        .function("os_info", async move |strand, args, out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
             strand
                 .with_slots(async move |strand, [mut std_mod, mut record]| {
@@ -29,8 +29,25 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     let record_sym = global.syms.record;
                     method!(
                         strand, std_mod, record_sym, &mut record,
-                        kind_sym: os_kind,
-                        archetype_sym: os_archetype,
+                        os_sym: os,
+                        family_sym: family,
+                    )
+                    .await?;
+                    Output::set(strand, out, record);
+                    Ok(())
+                })
+                .await
+        })
+        .function("cpu_info", async move |strand, args, out| {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            strand
+                .with_slots(async move |strand, [mut std_mod, mut record]| {
+                    strand.import("std", &mut std_mod).await?;
+                    let record_sym = global.syms.record;
+                    method!(
+                        strand, std_mod, record_sym, &mut record,
+                        arch_sym: arch,
+                        logical_count_sym: logical_count,
                     )
                     .await?;
                     Output::set(strand, out, record);

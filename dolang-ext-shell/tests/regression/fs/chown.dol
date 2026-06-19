@@ -1,6 +1,6 @@
 import sys
 
-if (sys.os().archetype == :windows:)
+if (sys.os_info().family == :windows:)
   log "skipped on Windows"
   return
 
