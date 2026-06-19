@@ -11,7 +11,7 @@ let p = Path "foo/bar.txt"
 
 assert_eq (dbg p) "<Path \"foo/bar.txt\">"
 assert_eq (str p) "foo/bar.txt"
-if (sys.os().archetype == :windows:)
+if (sys.os_info().family == :windows:)
   assert_eq (arg p) "foo\\bar.txt"
 else
   assert_eq (arg p) "foo/bar.txt"

@@ -11,14 +11,14 @@ with_and_without_agent "fs.home_dir and fs.cache_dir return absolute paths" do
   assert $fs.cache_dir().is_absolute
 
 with_and_without_agent "fs.home_dir respects scoped HOME on Unix" do
-  if (sys.os().archetype == :windows:)
+  if (sys.os_info().family == :windows:)
     return
 
   env HOME: /tmp/dolang-home do
     assert_eq (fs.home_dir()) (Path "/tmp/dolang-home")
 
 with_and_without_agent "fs.home_dir rejects relative HOME on Unix" do
-  if (sys.os().archetype == :windows:)
+  if (sys.os_info().family == :windows:)
     return
 
   let failed = try
@@ -31,11 +31,11 @@ with_and_without_agent "fs.home_dir rejects relative HOME on Unix" do
   assert $failed
 
 with_and_without_agent "fs.cache_dir follows platform conventions" do
-  if (sys.os().archetype == :windows:)
+  if (sys.os_info().family == :windows:)
     return
 
   env HOME: /tmp/dolang-home XDG_CACHE_HOME: /tmp/dolang-cache do
-    if (sys.os().kind == :macos:)
+    if (sys.os_info().os == :macos:)
       assert_eq (fs.cache_dir()) (Path "/tmp/dolang-home/Library/Caches")
     else
       assert_eq (fs.cache_dir()) (Path "/tmp/dolang-cache")

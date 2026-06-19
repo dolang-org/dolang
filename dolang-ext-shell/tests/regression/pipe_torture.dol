@@ -4,7 +4,7 @@ import strand:
 import time:
   - sleep
 
-if (sys.os().archetype == :windows:)
+if (sys.os_info().family == :windows:)
   log "not applicable"
   return
 

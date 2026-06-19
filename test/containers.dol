@@ -6,7 +6,7 @@ import sys sqlite systemd
     - assert
     - assert_eq
 
-if (sys.os().kind != :linux:)
+if (sys.os_info().os != :linux:)
   skip "not supported on this system"
 
 let runtime = if run.docker.which()

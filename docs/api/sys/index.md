@@ -15,17 +15,39 @@ types.
 
 ## Functions
 
-### `os()`
+### `os_info()`
 
 Returns a record describing the current operating system target.
 
-The record includes:
+The record includes values from Rust's
+[`std::env::consts`](https://doc.rust-lang.org/std/env/consts/index.html)
+module:
 
-- `kind`: the platform name reported by the Rust standard library, such as
-  `:linux:`, `:macos:`, or `:windows:`
-- `archetype`: `:unix:` on Unix-like targets, `:windows:` on Windows targets
+| Field    | Meaning                   | Typical values                    |
+| -------- | ------------------------- | --------------------------------- |
+| `os`     | Specific operating system | `:linux:`, `:macos:`, `:windows:` |
+| `family` | Operating system family   | `:unix:`, `:windows:`             |
 
 ```
-if (sys.os().archetype == :windows:)
+if (sys.os_info().family == :windows:)
   echo "running on Windows"
+```
+
+### `cpu_info()`
+
+Returns a record describing the current CPU target.
+
+The record includes values from Rust's
+[`std::env::consts`](https://doc.rust-lang.org/std/env/consts/index.html) module
+and
+[`std::thread::available_parallelism`](https://doc.rust-lang.org/std/thread/fn.available_parallelism.html).
+
+| Field           | Meaning             | Typical values          |
+| --------------- | ------------------- | ----------------------- |
+| `arch`          | Target architecture | `:x86_64:`, `:aarch64:` |
+| `logical_count` | Logical CPU count   | >= 1                    |
+
+```
+let info = sys.cpu_info()
+echo "running on $info.arch with $info.logical_count logical CPUs"
 ```

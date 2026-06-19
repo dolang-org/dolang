@@ -23,7 +23,7 @@ with_and_without_agent "set_timestamps updates timestamps" do
   open $test_path w do |f|
     f.write "set_timestamps test"
 
-  if (sys.os().archetype == :windows:)
+  if (sys.os_info().family == :windows:)
     if (env.get "WINEPREFIX")
       log "skipping Windows created timestamp test under wine"
       remove $test_path
