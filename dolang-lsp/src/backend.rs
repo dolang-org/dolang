@@ -253,20 +253,26 @@ impl Backend {
             guard.settings.insert(path.to_owned(), settings.clone());
             return Some(settings);
         }
-        Some(Arc::new(Settings {
-            prelude: vec![
-                Import::Module("shell".into()),
-                Import::Module("sys".into()),
-                Import::Item("shell".into(), "cd".into()),
-                Import::Item("shell".into(), "echo".into()),
-                Import::Item("shell".into(), "env".into()),
-                Import::Item("shell".into(), "exit".into()),
-                Import::Item("shell".into(), "host".into()),
-                Import::Item("shell".into(), "print".into()),
-                Import::Item("proc".into(), "sub".into()),
-                Import::ModuleAs("proc.run".into(), "run".into()),
-            ],
-        }))
+        Some(Arc::new(Self::default_settings(path)))
+    }
+
+    fn default_settings(path: &Path) -> Settings {
+        let mut prelude = vec![
+            Import::Module("shell".into()),
+            Import::Module("sys".into()),
+            Import::Item("shell".into(), "cd".into()),
+            Import::Item("shell".into(), "echo".into()),
+            Import::Item("shell".into(), "env".into()),
+            Import::Item("shell".into(), "exit".into()),
+            Import::Item("shell".into(), "host".into()),
+            Import::Item("shell".into(), "print".into()),
+            Import::Item("proc".into(), "sub".into()),
+            Import::ModuleAs("proc.run".into(), "run".into()),
+        ];
+        if path.file_name().is_some_and(|name| name == "dodo.dol") {
+            prelude.push(Import::ItemAs("dodo".into(), "dodo".into(), "dodo".into()));
+        }
+        Settings { prelude }
     }
 
     fn choose_position_encoding(params: &InitializeParams) -> PositionEncodingKind {

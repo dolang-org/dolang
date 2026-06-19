@@ -1,0 +1,329 @@
+import sys
+  fs:
+    - Path
+    - glob
+    - remove
+
+let MIRI_CRATES =
+  - dolang-bytecode
+  - dolang-compile
+  - dolang-runtime
+  - dolang-private-util
+  - dolang
+  - dolang-private-regression
+
+let COV_IGNORE =
+  - dolang-private-util/src/hashbrown
+  - dolang-private-doc
+  - dolang-private-highlight
+  - dolang-private-build
+
+let MKDOCS_BINS =
+  - dolang-highlight
+  - dolang-doc
+
+let PUBLISH_CRATES =
+  - dolang-private-build
+  - dolang-private-util
+  - dolang-private-ipc
+  - dolang-bytecode
+  - dolang-compile
+  - dolang-runtime
+  - dolang
+  - dolang-private-test
+  - dolang-shell-vfs
+  - dolang-ext-compile
+  - dolang-ext-json
+  - dolang-ext-url
+  - dolang-ext-regex
+  - dolang-ext-glob
+  - dolang-ext-base64
+  - dolang-ext-digest
+  - dolang-ext-rand
+  - dolang-ext-xml
+  - dolang-ext-yaml
+  - dolang-ext-shell
+  - dolang-ext-http
+  - dolang-ext-zip
+  - dolang-ext-sqlite
+  - dolang-ext-progress
+  - dolang-ext-diagnostic
+  - dolang-ext-load
+  - dolang-shell
+  - dolang-lsp
+
+let TARGETS =
+  "x86_64-linux":
+    tuple: x86_64-unknown-linux-gnu
+  "x86_64-windows":
+    tuple: x86_64-pc-windows-msvc
+    exe: true
+  "x86_64-windows-cross":
+    tuple: x86_64-pc-windows-gnullvm
+    exe: true
+  "aarch64-macos":
+    tuple: aarch64-apple-darwin
+
+def default_target()
+  let target = "$(sys.cpu_info().arch)-$(sys.os_info().os)"
+  if !(TARGETS.contains target)
+    throw "unsupported host target: $target"
+  target
+
+def show ...cmd
+  echo "+" ...cmd
+  run ...cmd
+
+class Spec
+  pub let target = nil
+  pub let tuple = nil
+  pub let profile = nil
+  pub let channel = nil
+  pub let target_dir = nil
+  let extra = nil
+
+  def (init)
+    self args
+    :profile = nil
+    :variant = nil
+    :tuple = nil
+    :channel = nil
+    :extra = []
+  do
+    self.target = TARGETS[args.target || default_target()]
+    self.tuple = (tuple || self.target[:tuple:])
+    self.profile = (profile || "debug")
+    self.channel = channel
+    self.#extra = extra
+    self.target_dir = if variant
+      (Path("target") / self.tuple / variant / self.profile)
+    else
+      (Path("target") / self.tuple / self.profile)
+
+  pub def bin self name
+    let exe = self.target.get :exe:
+    let path = (self.target_dir / name).absolute()
+    if exe
+      path.add_ext $exe
+    else
+      path
+
+  pub def with_vfs self func
+    env DOLANG_SHELL_VFS: $self.bin("dolang-shell-vfs") $func
+
+  pub def cargo self cmd ...rest
+    self.with_vfs do
+      show cargo
+        if self.channel
+          +$self.channel
+        $cmd --target $self.tuple
+        if (self.profile == "release")
+          --$self.profile
+        else if (self.profile != "debug")
+          --profile $self.profile
+        ...self.#extra ...rest
+
+  pub def cargo_vfs self ...rest
+    self.cargo build --bin dolang-shell-vfs
+    self.cargo ...rest
+
+def default_shell_tests()
+  glob "test/*.dol"
+
+def mkdocs_build_tools spec
+  spec.cargo build
+    for bin = MKDOCS_BINS
+      --bin $bin
+
+def with_mkdocs spec func
+  env
+    DOLANG_HIGHLIGHT: $spec.bin("dolang-highlight")
+    DOLANG_DOC: $spec.bin("dolang-doc")
+    $func
+
+def cargo_test spec rest
+  spec.cargo_vfs test ...rest
+
+def shell_test spec tests
+  spec.cargo_vfs run --bin dolang-shell -- -m test ...(tests || default_shell_tests())
+
+def both_test spec
+  cargo_test $spec []
+  shell_test $spec nil
+
+return
+  common:
+    - opt: target
+      help: target platform
+      default: nil
+      values: [...TARGETS.keys()]
+  default: cargo-test
+
+  "test-asan":
+    help: run tests with AddressSanitizer
+    - arg: args
+      help: "arguments to nightly cargo build/test/run"
+      collect: true
+    do |args|
+      let spec = Spec $args
+        channel: nightly
+        profile: asan
+        extra:
+          -Z build-std
+      env RUSTFLAGS: "-Z sanitizer=address" do both_test $spec
+
+  "test-miri":
+    help: run tests with miri
+    - arg: args
+      help: arguments to `cargo +nightly miri test`
+      collect: true
+    do |args|
+      env MIRIFLAGS: -Zmiri-disable-isolation do
+        show cargo +nightly miri test
+          for crate = MIRI_CRATES
+            -p $crate
+          ...args.args
+
+  "cargo-test":
+    help: run cargo tests
+    - arg: args
+      help: "arguments to `cargo test`"
+      collect: true
+    do |args|
+      cargo_test (Spec args) $args.args
+
+  "shell-test":
+    help: run shell integration tests
+    - arg: tests
+      help: tests to run (default: test/*.dol)
+      collect: true
+    do |args|
+      shell_test (Spec args) $args.tests
+
+  "test":
+    help: run all tests
+    do |args|
+      both_test (Spec args)
+
+  "gen-bytecode-fuzz-seeds":
+    help: generate bytecode fuzz seeds
+    do |_|
+      run cargo run --bin gen-bytecode-seeds
+
+  "fuzz-bytecode":
+    help: run the bytecode fuzzer
+    - arg: args
+      help: "arguments to `cargo +nightly fuzz run`"
+      collect: true
+    do |args|
+      dodo gen-bytecode-fuzz-seeds
+      show cargo +nightly fuzz run bytecode_deserialize
+        target/fuzz-corpus/bytecode_deserialize
+        ...args.args
+
+  "fuzz-bytecode-smoke":
+    help: run a short bytecode fuzz smoke test
+    do |_|
+      dodo fuzz-bytecode -- -runs=1000 -max_len=1048576
+
+  cov:
+    help: run coverage collection
+    do |args|
+      let spec = Spec $args
+        variant: llvm-cov-target
+        extra:
+          --all-features
+      spec.cargo llvm-cov clean
+      spec.cargo llvm-cov --no-report run --ignore-run-fail --bin dolang-shell-vfs
+      env DO_EXPORT_DOT: $Path("dot").absolute() VFS: (spec.bin "dolang-shell-vfs") do
+        spec.cargo llvm-cov --no-report test
+        spec.cargo llvm-cov run --no-report --bin dolang-shell -- -m test
+          ...default_shell_tests()
+
+  "cov-dump":
+    help: write coverage summaries to disk
+    do |args|
+      let spec = Spec $args
+      let ignore = "($("|".join COV_IGNORE))"
+      spec.cargo llvm-cov report --json --summary-only --output-path cov.json
+        --ignore-filename-regex $ignore
+      spec.cargo llvm-cov report --json --output-path cov.full.json
+        --ignore-filename-regex $ignore
+      spec.cargo llvm-cov report --text --output-path cov.full.txt
+        --ignore-filename-regex $ignore
+
+  "serve-cov":
+    help: build and serve the HTML coverage report
+    do |args|
+      let spec = Spec $args
+      let ignore = "($("|".join COV_IGNORE))"
+      spec.cargo llvm-cov report --html --ignore-filename-regex $ignore
+      show python3 -m http.server 8080 -d target/llvm-cov/html/ -b localhost
+
+  rustdoc:
+    help: build selected rustdoc packages
+    do |_|
+      show cargo doc -p dolang-runtime -p dolang-compile -p dolang-ext-shell --no-deps
+
+  "serve-rustdoc":
+    help: build and serve rustdoc locally
+    do |_|
+      show cargo doc --package dolang --package dolang-ext-shell --no-deps
+      show python3 -m http.server 8080 -d target/doc -b localhost
+
+  "serve-mkdocs":
+    help: build and serve the MkDocs site
+    do |args|
+      let spec = Spec $args profile: release
+      mkdocs_build_tools $spec
+      with_mkdocs $spec do show mkdocs serve
+
+  mkdocs:
+    help: build the MkDocs site
+    do |args|
+      let spec = Spec $args profile: release
+      mkdocs_build_tools $spec
+      with_mkdocs $spec do show mkdocs build
+
+  fmt:
+    help: format Rust and Markdown
+    do |_|
+      show cargo fmt
+      show rumdl fmt
+
+  clean:
+    help: remove build artifacts and generated docs
+    do |_|
+      show cargo clean
+      remove site dot all: true ignore: true
+
+  install:
+    help: install dolang binaries
+    - arg: args
+      help: "arguments to `cargo install`"
+      collect: true
+    do |args|
+      let spec = Spec $args profile: dist
+      let is_linux = spec.tuple.ends_with "-linux-gnu"
+      if is_linux
+        env ZSTD_SYS_USE_PKG_CONFIG: 1 do
+          spec.cargo install --path dolang-shell ...args.args
+      else
+        spec.cargo install --path dolang-shell ...args.args
+      spec.cargo install --path dolang-lsp ...args.args
+      if is_linux
+        let spec = Spec $args
+          profile: dist
+          tuple: $(spec.tuple.without_suffix "-gnu")-musl
+        spec.cargo install
+          --path dolang-shell-vfs
+          ...args.args
+
+  publish:
+    help: publish workspace crates in dependency order
+    - arg: args
+      help: "arguments to `cargo publish`"
+      collect: true
+    do |args|
+      for crate = PUBLISH_CRATES
+        show cargo publish -p $crate ...args.args
