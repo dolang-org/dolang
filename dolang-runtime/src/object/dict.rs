@@ -26,6 +26,53 @@ use super::{
 
 // ── Dict newtype ────────────────────────────────────────────────────
 
+struct DictPairs<'b, 'v> {
+    int: i64,
+    dict: &'b mut Dict<'v>,
+}
+
+impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
+    fn positional(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        mut value: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let key = Value::from_i64(strand, self.int);
+        let hv = kv::hash(strand, &key).unwrap();
+        self.dict.0.insert(strand, key, value.take(), hv, false);
+        self.int = self
+            .int
+            .checked_add(1)
+            .ok_or_else(|| Error::overflow(strand))?;
+        Ok(())
+    }
+
+    fn symbol(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        key: Sym<'v, '_>,
+        mut value: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let key = Value::from_object(strand.sym_obj(key));
+        let hv = kv::hash(strand, &key).unwrap();
+        self.dict.0.insert(strand, key, value.take(), hv, false);
+        Ok(())
+    }
+
+    fn keyed(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        mut key: Slot<'v, '_>,
+        mut value: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let hv = kv::hash(strand, &key)?;
+        self.dict
+            .0
+            .insert(strand, key.take(), value.take(), hv, false);
+        Ok(())
+    }
+}
+
 pub(crate) struct Dict<'v>(pub(crate) Inner<'v>);
 
 impl<'v> AsRef<Inner<'v>> for Dict<'v> {
@@ -87,6 +134,11 @@ impl<'v> Dict<'v> {
         let mut counter = 1;
         let mut index = 0;
 
+        let mut sink = DictPairs {
+            int: 0,
+            dict: &mut this,
+        };
+
         loop {
             if counter % crate::INTERRUPT_INTERVAL == 0 {
                 strand.check_interrupt_gc()?
@@ -97,7 +149,7 @@ impl<'v> Dict<'v> {
                 Some(Arg::Key(sym, mut value)) if sym.tag() == sym::INT => {
                     let key = Value::from_i64(strand, index);
                     let hv = kv::hash(strand, &key).unwrap();
-                    this.0.insert(
+                    sink.dict.insert(
                         strand,
                         Value::from_i64(strand, index),
                         value.take(),
@@ -108,49 +160,6 @@ impl<'v> Dict<'v> {
                     continue;
                 }
                 Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
-                    struct DictPairs<'b, 'v> {
-                        dict: &'b mut Dict<'v>,
-                    }
-
-                    impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
-                        fn positional(
-                            &mut self,
-                            strand: &mut Strand<'v, 's>,
-                            _value: Slot<'v, '_>,
-                        ) -> Result<'v, 's, ()> {
-                            Err(Error::type_error(
-                                strand,
-                                "dict spread expects key/value pairs",
-                            ))
-                        }
-
-                        fn symbol(
-                            &mut self,
-                            strand: &mut Strand<'v, 's>,
-                            key: Sym<'v, '_>,
-                            mut value: Slot<'v, '_>,
-                        ) -> Result<'v, 's, ()> {
-                            let key = Value::from_object(strand.sym_obj(key));
-                            let hv = kv::hash(strand, &key).unwrap();
-                            self.dict.0.insert(strand, key, value.take(), hv, false);
-                            Ok(())
-                        }
-
-                        fn keyed(
-                            &mut self,
-                            strand: &mut Strand<'v, 's>,
-                            mut key: Slot<'v, '_>,
-                            mut value: Slot<'v, '_>,
-                        ) -> Result<'v, 's, ()> {
-                            let hv = kv::hash(strand, &key)?;
-                            self.dict
-                                .0
-                                .insert(strand, key.take(), value.take(), hv, false);
-                            Ok(())
-                        }
-                    }
-
-                    let mut sink = DictPairs { dict: &mut this };
                     expand
                         .op_spread(strand, SpreadContext::Pairs, &mut sink)
                         .await?;
@@ -165,7 +174,8 @@ impl<'v> Dict<'v> {
                 None => return Err(Error::missing_positional(strand, counter)),
             };
             let hv = kv::hash(strand, &key)?;
-            this.0.insert(strand, key.take(), value.take(), hv, false)
+            sink.dict
+                .insert(strand, key.take(), value.take(), hv, false)
         }
 
         Ok(this)
@@ -657,51 +667,12 @@ impl<'v> Protocol<'v> for Type {
         let ([items], []) = unpack!(strand, args, 1, 0)?;
         let mut dict = Dict::new();
 
-        struct DictPairs<'b, 'v> {
-            dict: &'b mut Dict<'v>,
-        }
-
-        impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
-            fn positional(
-                &mut self,
-                strand: &mut Strand<'v, 's>,
-                _value: Slot<'v, '_>,
-            ) -> Result<'v, 's, ()> {
-                Err(Error::type_error(
-                    strand,
-                    "dict spread expects key/value pairs",
-                ))
-            }
-
-            fn symbol(
-                &mut self,
-                strand: &mut Strand<'v, 's>,
-                key: Sym<'v, '_>,
-                mut value: Slot<'v, '_>,
-            ) -> Result<'v, 's, ()> {
-                let key = Value::from_object(strand.sym_obj(key));
-                let hv = kv::hash(strand, &key).unwrap();
-                self.dict.0.insert(strand, key, value.take(), hv, false);
-                Ok(())
-            }
-
-            fn keyed(
-                &mut self,
-                strand: &mut Strand<'v, 's>,
-                mut key: Slot<'v, '_>,
-                mut value: Slot<'v, '_>,
-            ) -> Result<'v, 's, ()> {
-                let hv = kv::hash(strand, &key)?;
-                self.dict
-                    .0
-                    .insert(strand, key.take(), value.take(), hv, false);
-                Ok(())
-            }
-        }
-
         // FIXME: `dict` is not GC-scannable, but then again if it were it would also
         // be mutably borrowed, which would inhibit GC.  This needs a resolution.
-        let mut sink = DictPairs { dict: &mut dict };
+        let mut sink = DictPairs {
+            int: 0,
+            dict: &mut dict,
+        };
         items
             .op_spread(strand, SpreadContext::Pairs, &mut sink)
             .await?;

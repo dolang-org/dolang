@@ -18,10 +18,8 @@ use crate::{
 
 use super::{
     BoundMethod, iter, kv,
-    protocol::{
-        GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, default_spread,
-        dispatch_native_method,
-    },
+    protocol::{GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, dispatch_native_method},
+    tuple,
 };
 
 use dolang_util::hashbrown::raw::{Bucket, RawTable};
@@ -285,18 +283,27 @@ impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
         &mut self,
         strand: &mut Strand<'v, 's>,
         key: Sym<'v, '_>,
-        _value: Slot<'v, '_>,
+        mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::unexpected_key(strand, key))
+        let pair = Value::from_object(tuple::tuple(
+            strand,
+            [Value::from_object(strand.sym_obj(key)), value.take()],
+        ));
+        let hash = kv::hash(strand, &pair)?;
+        self.0.0.insert(strand, pair, hash)?;
+        Ok(())
     }
 
     fn keyed(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        key: Slot<'v, '_>,
-        _value: Slot<'v, '_>,
+        mut key: Slot<'v, '_>,
+        mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::unexpected_key(strand, key))
+        let pair = Value::from_object(tuple::tuple(strand, [key.take(), value.take()]));
+        let hash = kv::hash(strand, &pair)?;
+        self.0.0.insert(strand, pair, hash)?;
+        Ok(())
     }
 }
 
@@ -757,7 +764,9 @@ impl<'v> Protocol<'v> for Type {
             let mut spread = SetSpread(&mut set);
             // FIXME: `set` is not GC-scannable, but then again if it were it would also
             // be mutably borrowed, which would inhibit GC.  This needs a resolution.
-            default_spread(strand, items, SpreadContext::Sequence, &mut spread).await?;
+            items
+                .op_spread(strand, SpreadContext::Sequence, &mut spread)
+                .await?;
             set
         } else {
             Set::new()
