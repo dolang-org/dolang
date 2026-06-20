@@ -2632,15 +2632,17 @@ impl<'a> Parser<'a> {
             let res = (|| -> Result<bool> {
                 match self.peek()? {
                     None | Some(token!(Dedent)) => return Ok(true),
-                    token@Some(token!(Indent)) => if bin_pack {
-                        return Ok(true)
-                    } else {
-                        let token = token.cloned();
-                        return Err(self.syntax_error(
+                    token @ Some(token!(Indent)) => {
+                        if bin_pack {
+                            return Ok(true);
+                        } else {
+                            let token = token.cloned();
+                            return Err(self.syntax_error(
                                 scope,
                                 token,
                                 "unexpected indent in vertical data",
-                        ));
+                            ));
+                        }
                     }
                     Some(token!(StmtSep)) => {
                         self.advance();
