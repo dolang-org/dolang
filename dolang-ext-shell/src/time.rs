@@ -175,14 +175,15 @@ fn coerce_sleep_duration<'v, 's>(
         return duration.annex().to_std_duration(strand);
     }
 
-    if let Some(i) = value.as_i64(strand) {
+    if let Some(i) = value.as_int(strand) {
         if i < 0 {
             return Err(Error::runtime(
                 strand,
                 "sleep duration must be non-negative",
             ));
         }
-        return Ok(std::time::Duration::from_secs(i as u64));
+        let secs = u64::try_from(i).map_err(|_| Error::overflow(strand))?;
+        return Ok(std::time::Duration::from_secs(secs));
     }
 
     if let Some(f) = value.as_f64(strand) {
@@ -254,10 +255,10 @@ impl<'v> Object<'v> for DateTime {
             .type_method("from_unix", async move |this, strand, args, out| {
                 let ([secs], [nanos]) = unpack!(strand, args, 1, 1)?;
                 let secs = secs
-                    .as_i64(strand)
-                    .ok_or_else(|| Error::type_error(strand, "from_unix: expected int seconds"))?;
+                    .to_i64(strand)
+                    .map_err(|_| Error::type_error(strand, "from_unix: expected int seconds"))?;
                 let nanos = match nanos {
-                    Some(value) => value.as_i64(strand).ok_or_else(|| {
+                    Some(value) => value.to_i64(strand).map_err(|_| {
                         Error::type_error(strand, "from_unix: expected int nanoseconds")
                     })?,
                     None => 0,

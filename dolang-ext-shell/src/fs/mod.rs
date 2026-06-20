@@ -579,7 +579,7 @@ fn parse_chown_identity<'v, 's>(
     value: &dolang::runtime::Value<'v>,
     field: &'static str,
 ) -> Result<'v, 's, dolang_shell_vfs::ChownIdentity> {
-    if let Some(value) = value.as_i64(strand) {
+    if let Some(value) = value.as_int(strand) {
         let value = u32::try_from(value)
             .map_err(|_| Error::type_error(strand, "expected non-negative int or str"))?;
         Ok(dolang_shell_vfs::ChownIdentity::Id(value))
@@ -766,12 +766,7 @@ async fn glob<'v, 's>(
         .ok_or_else(|| Error::type_error(strand, "pattern: expected str"))?
         .to_string();
     let max_depth = match max_depth {
-        Some(v) => Some(
-            v.as_i64(strand)
-                .ok_or_else(|| Error::type_error(strand, "max_depth: expected int"))?
-                .try_into()
-                .map_err(|_| Error::overflow(strand))?,
-        ),
+        Some(v) => Some(v.to_usize(strand)?),
         None => None,
     };
     let follow = match follow {
@@ -1012,10 +1007,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .function("chmod", async move |strand, args, _out| {
             let ([path, mode], []) = unpack!(strand, args, 2, 0)?;
             let path = path_from_value(strand, global, &path)?;
-            let mode = mode
-                .as_i64(strand)
-                .ok_or_else(|| Error::type_error(strand, "expected int"))?
-                as u32;
+            let mode = mode.to_u32(strand)?;
             chmod(strand, global, &path, mode).await
         })
         .function("set_timestamps", async move |strand, args, _out| {

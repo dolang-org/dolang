@@ -364,7 +364,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if index.as_i64(strand).is_none() && index.as_sym(strand).is_none() {
+        if !index.is_int(strand) && index.as_sym(strand).is_none() {
             return Err(Error::type_error(
                 strand,
                 "records only support symbol and integer keys",
@@ -379,7 +379,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         key: Slot<'v, 'a>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if key.as_i64(strand).is_none() && key.as_sym(strand).is_none() {
+        if !key.is_int(strand) && key.as_sym(strand).is_none() {
             return Err(Error::type_error(
                 strand,
                 "records only support symbol and integer keys",
@@ -672,7 +672,7 @@ impl<'v> Protocol<'v> for Class {
                     .epoch;
                 let container = Recv::new(record).to_strong();
                 let value = if let Some(key) = key {
-                    if key.as_i64(strand).is_none() && key.as_sym(strand).is_none() {
+                    if !key.is_int(strand) && key.as_sym(strand).is_none() {
                         return Err(Error::type_error(
                             strand,
                             "records only support symbol and integer keys",

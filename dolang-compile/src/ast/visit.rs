@@ -102,8 +102,8 @@ pub trait Visit {
 pub enum NodeKind {
     Literal,
     Ident,
-    I64,
-    VerbatimI64,
+    Int,
+    VerbatimInt,
     F64,
     VerbatimF64,
     Bool,

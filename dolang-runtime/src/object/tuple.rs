@@ -191,7 +191,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
             )));
             return Ok(());
         }
-        let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+        let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
         match index::element(this.get().len(), index).and_then(|index| this.get().get(index)) {
             Some(value) => {
                 Output::set(strand, out, value);
@@ -274,7 +274,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
-                let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
                 let borrow = this.borrow(strand)?;
                 match index::element(borrow.len(), index).and_then(|index| borrow.get(index)) {
                     Some(value) => out.store(value.dup()),

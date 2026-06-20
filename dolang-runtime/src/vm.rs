@@ -324,11 +324,11 @@ impl<'v> Vm<'v> {
             .iter()
             .map(|c| match c {
                 file::Const::Nil => Value::NIL,
-                file::Const::I64(v) => Value::from_i64(self, *v),
-                file::Const::VerbatimI64(v, file::StrId { start, end }) => {
+                file::Const::Int(v) => Value::from_int(self, *v),
+                file::Const::VerbatimInt(v, file::StrId { start, end }) => {
                     let s = std::str::from_utf8(&verified.bintab.content[*start..*end])
                         .expect("verified UTF-8");
-                    Value::from_i64_verbatim(self, *v, s)
+                    Value::from_int_verbatim(self, *v, s)
                 }
                 file::Const::F64(v) => Value::from_f64(self, *v),
                 file::Const::VerbatimF64(v, file::StrId { start, end }) => {

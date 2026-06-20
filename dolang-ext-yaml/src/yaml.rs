@@ -45,7 +45,9 @@ fn value_to_yaml<'v, 's>(
     match value.view(strand.vm()) {
         View::Nil => Ok(Yaml::Value(Scalar::Null)),
         View::Bool(b) => Ok(Yaml::Value(Scalar::Boolean(b))),
-        View::Int(i) => Ok(Yaml::Value(Scalar::Integer(i))),
+        View::Int(i) => Ok(Yaml::Value(Scalar::Integer(
+            i64::try_from(i).map_err(|_| Error::overflow(strand))?,
+        ))),
         View::Float(f) => Ok(Yaml::Value(Scalar::FloatingPoint(OrderedFloat(f)))),
         View::Str(s) => Ok(Yaml::Value(Scalar::String(Cow::Owned(s.into())))),
         View::Sym(sym) => Ok(Yaml::Value(Scalar::String(Cow::Owned(
@@ -377,7 +379,7 @@ fn parse_bool(value: &str) -> Option<bool> {
     }
 }
 
-fn parse_int<'v, 's>(strand: &mut Strand<'v, 's>, value: &str) -> Result<'v, 's, Option<i64>> {
+fn parse_int<'v, 's>(strand: &mut Strand<'v, 's>, value: &str) -> Result<'v, 's, Option<i128>> {
     let normalized = value.replace('_', "");
     let text = normalized.as_str();
     if text.is_empty() {
@@ -420,19 +422,14 @@ fn parse_int<'v, 's>(strand: &mut Strand<'v, 's>, value: &str) -> Result<'v, 's,
     }
 
     let unsigned = if negative {
-        i64::from_str_radix(digits, radix)
-            .map(i128::from)
+        i128::from_str_radix(digits, radix)
             .map(|value| -value)
             .map_err(|_| Error::type_error(strand, "numeric overflow"))?
     } else {
-        i64::from_str_radix(digits, radix)
-            .map(i128::from)
+        i128::from_str_radix(digits, radix)
             .map_err(|_| Error::type_error(strand, "numeric overflow"))?
     };
-
-    let signed =
-        i64::try_from(unsigned).map_err(|_| Error::type_error(strand, "numeric overflow"))?;
-    Ok(Some(signed))
+    Ok(Some(unsigned))
 }
 
 fn parse_float(value: &str) -> Option<f64> {

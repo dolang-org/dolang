@@ -461,7 +461,7 @@ pub enum View<'v, 'a> {
     /// Bool
     Bool(bool),
     /// Int
-    Int(i64),
+    Int(i128),
     /// Float
     Float(f64),
     /// String

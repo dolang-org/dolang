@@ -377,7 +377,7 @@ fn coerce_to_f64<'v, 's>(value: &Value<'v>, strand: &mut Strand<'v, 's>) -> Resu
             .map_err(|_| Error::type_error(strand, format!("float: not a valid float: {:?}", str)))
     } else {
         match value.to_prim(strand)? {
-            Prim::I64(v) => Ok(v as f64),
+            Prim::Int(v) => Ok(v as f64),
             Prim::F64(v) => Ok(v),
             Prim::Bool(v) => Ok(v as i64 as f64),
             Prim::Nil => Err(Error::type_error(strand, "float: `nil` can't be converted")),

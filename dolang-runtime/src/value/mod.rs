@@ -102,7 +102,7 @@ impl<'v> Value<'v> {
     pub(crate) fn from_prim(vm: &Vm<'v>, value: Prim) -> Self {
         match value {
             Prim::Nil => Value::NIL,
-            Prim::I64(v) => Value::from_i64(vm, v),
+            Prim::Int(v) => Value::from_int(vm, v),
             Prim::F64(v) => Value::from_f64(vm, v),
             Prim::Bool(v) => Value::from_bool(v),
         }
@@ -112,12 +112,19 @@ impl<'v> Value<'v> {
         if value { Value::TRUE } else { Value::FALSE }
     }
 
-    pub(crate) fn from_i64(vm: &Vm<'v>, value: i64) -> Self {
-        if let Some(repr) = Repr::from_i64(value) {
+    pub(crate) fn from_int(vm: &Vm<'v>, value: i128) -> Self {
+        if let Ok(value) = i64::try_from(value)
+            && let Some(repr) = Repr::from_i64(value)
+        {
             Self(repr, PhantomData)
         } else {
-            Value::from_object(GcObj::new(vm.arena(), vm.builtin_types().i64, value))
+            Value::from_object(GcObj::new(vm.arena(), vm.builtin_types().int, value))
         }
+    }
+
+    #[inline]
+    pub(crate) fn from_i64(vm: &Vm<'v>, value: i64) -> Self {
+        Self::from_int(vm, value.into())
     }
 
     pub(crate) fn from_f64(vm: &Vm<'v>, value: f64) -> Self {
@@ -128,10 +135,10 @@ impl<'v> Value<'v> {
         }
     }
 
-    pub(crate) fn from_i64_verbatim(vm: &Vm<'v>, value: i64, text: &str) -> Self {
+    pub(crate) fn from_int_verbatim(vm: &Vm<'v>, value: i128, text: &str) -> Self {
         Value::from_object(GcObj::new(
             vm.arena(),
-            vm.builtin_types().verbatim_i64,
+            vm.builtin_types().verbatim_int,
             object::int::Verbatim::new(value, text),
         ))
     }
@@ -338,7 +345,7 @@ impl<'v> Value<'v> {
                 let builtin = strand.singletons();
                 out.store(match prim {
                     Prim::Nil => builtin.nil.dup(),
-                    Prim::I64(_) => builtin.int.dup(),
+                    Prim::Int(_) => builtin.int.dup(),
                     Prim::F64(_) => builtin.float.dup(),
                     Prim::Bool(_) => builtin.bool.dup(),
                 })
@@ -357,7 +364,7 @@ impl<'v> Value<'v> {
                 // Primitives are only subtypes of themselves
                 let self_type = match prim {
                     Prim::Nil => strand.singletons().nil.dup(),
-                    Prim::I64(_) => strand.singletons().int.dup(),
+                    Prim::Int(_) => strand.singletons().int.dup(),
                     Prim::F64(_) => strand.singletons().float.dup(),
                     Prim::Bool(_) => strand.singletons().bool.dup(),
                 };
@@ -393,39 +400,39 @@ impl<'v> Value<'v> {
             Case::Prim(p) => Ok(*p),
             Case::Object(_) => {
                 let bt = strand.builtin_types();
-                let vtbl_i64 = bt.i64;
+                let vtbl_int = bt.int;
                 let vtbl_f64 = bt.f64;
-                let vtbl_vi64 = bt.verbatim_i64;
+                let vtbl_vint = bt.verbatim_int;
                 let vtbl_vf64 = bt.verbatim_f64;
                 let vtbl_ci = bt.class_instance;
                 // Direct downcasts for the four boxed primitive types.
-                if let Some(b) = self.downcast_ref(vtbl_i64) {
+                if let Some(b) = self.downcast_ref(vtbl_int) {
                     return Ok((*b.get()).into());
                 }
                 if let Some(b) = self.downcast_ref(vtbl_f64) {
                     return Ok((*b.get()).into());
                 }
-                if let Some(b) = self.downcast_ref(vtbl_vi64) {
+                if let Some(b) = self.downcast_ref(vtbl_vint) {
                     return Ok(b.get().value.into());
                 }
                 if let Some(b) = self.downcast_ref(vtbl_vf64) {
                     return Ok(b.get().value.into());
                 }
                 // For ClassInstance subclasses of numeric types, check each native slot.
-                // i64/int::Verbatim share a type object (Int), as do f64/float::Verbatim
+                // int/int::Verbatim share a type object (Int), as do f64/float::Verbatim
                 // (Float), so both verbatim and non-verbatim may appear in the same slot.
                 if let Some(ci) = self.downcast_ref(vtbl_ci) {
                     for slot_val in iter_natives(ci) {
                         match slot_val.case() {
                             Case::Prim(p) => return Ok(p),
                             Case::Object(_) => {
-                                if let Some(b) = slot_val.downcast_ref(vtbl_i64) {
+                                if let Some(b) = slot_val.downcast_ref(vtbl_int) {
                                     return Ok((*b.get()).into());
                                 }
                                 if let Some(b) = slot_val.downcast_ref(vtbl_f64) {
                                     return Ok((*b.get()).into());
                                 }
-                                if let Some(b) = slot_val.downcast_ref(vtbl_vi64) {
+                                if let Some(b) = slot_val.downcast_ref(vtbl_vint) {
                                     return Ok(b.get().value.into());
                                 }
                                 if let Some(b) = slot_val.downcast_ref(vtbl_vf64) {
@@ -1191,17 +1198,90 @@ impl<'v> Value<'v> {
         self.op_put(strand, slot).await
     }
 
-    /// Downcast to [`i64`]
+    /// Downcast to `int` ([`i128`]).
+    ///
+    /// # Errors
+    /// Returns a type error if the value is not an integer.
+    #[inline]
+    pub fn to_int<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, i128> {
+        match self.to_prim(strand)? {
+            Prim::Int(v) => Ok(v),
+            _ => Err(Error::type_error(strand, "expected int")),
+        }
+    }
+
+    /// Convert an integer value to [`i32`].
+    ///
+    /// # Errors
+    /// Returns a type error if the value is not an integer, or a value error if
+    /// the integer is out of range for [`i32`].
+    #[inline]
+    pub fn to_i32<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, i32> {
+        let value = self.to_int(strand)?;
+        i32::try_from(value).map_err(|_| Error::value(strand, "int out of range for i32"))
+    }
+
+    /// Convert an integer value to [`u64`].
+    ///
+    /// # Errors
+    /// Returns a type error if the value is not an integer, or a value error if
+    /// the integer is out of range for [`u64`].
+    #[inline]
+    pub fn to_u32<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, u32> {
+        let value = self.to_int(strand)?;
+        u32::try_from(value).map_err(|_| Error::value(strand, "int out of range for u32"))
+    }
+
+    /// Convert an integer value to [`i64`].
+    ///
+    /// # Errors
+    /// Returns a type error if the value is not an integer, or a value error if
+    /// the integer is out of range for [`i64`].
+    #[inline]
+    pub fn to_i64<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, i64> {
+        let value = self.to_int(strand)?;
+        i64::try_from(value).map_err(|_| Error::value(strand, "int out of range for i64"))
+    }
+
+    /// Convert an integer value to [`u64`].
+    ///
+    /// # Errors
+    /// Returns a type error if the value is not an integer, or a value error if
+    /// the integer is out of range for [`u64`].
+    #[inline]
+    pub fn to_u64<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, u64> {
+        let value = self.to_int(strand)?;
+        u64::try_from(value).map_err(|_| Error::value(strand, "int out of range for u64"))
+    }
+
+    /// Convert an integer value to [`usize`].
+    ///
+    /// # Errors
+    /// Returns a type error if the value is not an integer, or a value error if
+    /// the integer is out of range for [`usize`].
+    #[inline]
+    pub fn to_usize<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
+        let value = self.to_int(strand)?;
+        usize::try_from(value).map_err(|_| Error::value(strand, "int out of range for usize"))
+    }
+
+    /// Downcast to `int` ([`i128`]).
     ///
     /// # Returns
-    /// - [`None`]: Not an `i64` value
-    /// - [`Some(value)`](Some): The value as an `i64`
+    /// - [`None`]: Not an `int` value
+    /// - [`Some(value)`](Some): The value as an [`i128`]
     #[inline]
-    pub fn as_i64(&self, strand: &mut Strand<'v, '_>) -> Option<i64> {
+    pub fn as_int(&self, strand: &mut Strand<'v, '_>) -> Option<i128> {
         match self.to_prim(strand) {
-            Ok(Prim::I64(v)) => Some(v),
+            Ok(Prim::Int(v)) => Some(v),
             _ => None,
         }
+    }
+
+    /// Test whether the value is an `int`.
+    #[inline]
+    pub fn is_int(&self, strand: &mut Strand<'v, '_>) -> bool {
+        self.as_int(strand).is_some()
     }
 
     /// Downcast to [`f64`]
@@ -1317,16 +1397,16 @@ impl<'v> Value<'v> {
         match self.case() {
             Case::Prim(Prim::Nil) => View::Nil,
             Case::Prim(Prim::Bool(b)) => View::Bool(b),
-            Case::Prim(Prim::I64(i)) => View::Int(i),
+            Case::Prim(Prim::Int(i)) => View::Int(i),
             Case::Prim(Prim::F64(f)) => View::Float(f),
             Case::Object(obj) => {
                 let bt = vm.builtin_types();
-                // Boxed i64
-                if let Some(v) = self.downcast_native(vm, bt.i64) {
+                // Boxed int
+                if let Some(v) = self.downcast_native(vm, bt.int) {
                     return View::Int(*v.get());
                 }
-                // Verbatim i64
-                if let Some(v) = self.downcast_native(vm, bt.verbatim_i64) {
+                // Verbatim int
+                if let Some(v) = self.downcast_native(vm, bt.verbatim_int) {
                     return View::Int(v.get().value);
                 }
                 // Boxed f64
@@ -1576,6 +1656,20 @@ impl<'v> Input<'v> for i64 {
     #[allow(private_interfaces)]
     fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
         InputBy::Value(Value::from_i64(vm, *self), None)
+    }
+}
+
+impl<'v> Input<'v> for i32 {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_i64(vm, (*self).into()), None)
+    }
+}
+
+impl<'v> Input<'v> for i128 {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_int(vm, *self), None)
     }
 }
 

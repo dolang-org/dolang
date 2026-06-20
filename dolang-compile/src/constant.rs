@@ -16,12 +16,13 @@ use std::fmt::{self, Write};
 pub(crate) struct Tag;
 
 pub(crate) type Id = intern::Id<Tag>;
+pub(crate) type Int = i128;
 
 #[derive(Clone)]
 pub(crate) enum Const {
     Nil,
-    I64(i64),
-    VerbatimI64(i64, StrId),
+    Int(Int),
+    VerbatimInt(Int, StrId),
     F64(f64),
     VerbatimF64(f64, StrId),
     Bool(bool),
@@ -35,7 +36,7 @@ impl Hash for Const {
         mem::discriminant(self).hash(state);
         match self {
             Const::Nil => 0u8.hash(state),
-            Const::I64(v) => v.hash(state),
+            Const::Int(v) => v.hash(state),
             Const::F64(v) => {
                 if v.is_nan() {
                     f64::NAN.to_bits().hash(state)
@@ -44,7 +45,7 @@ impl Hash for Const {
                 }
             }
             Const::Bool(v) => v.hash(state),
-            Const::Str(id) | Const::VerbatimI64(_, id) | Const::VerbatimF64(_, id) => {
+            Const::Str(id) | Const::VerbatimInt(_, id) | Const::VerbatimF64(_, id) => {
                 id.hash(state)
             }
             Const::Sym(id) => id.hash(state),
@@ -56,8 +57,8 @@ impl Hash for Const {
 impl PartialEq for Const {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::I64(l), Self::I64(r)) => l == r,
-            (Self::VerbatimI64(_, l), Self::VerbatimI64(_, r)) => l == r,
+            (Self::Int(l), Self::Int(r)) => l == r,
+            (Self::VerbatimInt(_, l), Self::VerbatimInt(_, r)) => l == r,
             // We need to be able to locate NaN if it really ends up in the table
             (Self::F64(l), Self::F64(r)) => l.is_nan() && r.is_nan() || l == r,
             (Self::Bool(l), Self::Bool(r)) => l == r,
@@ -76,8 +77,8 @@ impl Const {
     pub(crate) fn dump(&self, compiler: &Compiler, w: &mut impl Write) -> fmt::Result {
         match self {
             Const::Nil => write!(w, "nil"),
-            Const::I64(v) => write!(w, "{}", v),
-            Const::VerbatimI64(v, id) => write!(w, "{}«{}»", v, &compiler.bintab[*id]),
+            Const::Int(v) => write!(w, "{}", v),
+            Const::VerbatimInt(v, id) => write!(w, "{}«{}»", v, &compiler.bintab[*id]),
             Const::F64(v) => write!(w, "{}", v),
             Const::VerbatimF64(v, id) => write!(w, "{}«{}»", v, &compiler.bintab[*id]),
             Const::Bool(v) => write!(w, "{}", v),
@@ -91,8 +92,8 @@ impl Const {
 pub(crate) type Table = intern::Table<Const, Tag>;
 
 pub(crate) trait ConstantExt {
-    fn i64(&mut self, value: i64) -> Id;
-    fn verbatim_i64(&mut self, value: i64, text: StrId) -> Id;
+    fn int(&mut self, value: Int) -> Id;
+    fn verbatim_int(&mut self, value: Int, text: StrId) -> Id;
     fn f64(&mut self, value: f64) -> Id;
     fn verbatim_f64(&mut self, value: f64, text: StrId) -> Id;
     fn str(&mut self, value: StrId) -> Id;
@@ -103,12 +104,12 @@ pub(crate) trait ConstantExt {
 }
 
 impl ConstantExt for Table {
-    fn i64(&mut self, value: i64) -> Id {
-        self.id(&Const::I64(value))
+    fn int(&mut self, value: Int) -> Id {
+        self.id(&Const::Int(value))
     }
 
-    fn verbatim_i64(&mut self, value: i64, text: StrId) -> Id {
-        self.id(&Const::VerbatimI64(value, text))
+    fn verbatim_int(&mut self, value: Int, text: StrId) -> Id {
+        self.id(&Const::VerbatimInt(value, text))
     }
 
     fn f64(&mut self, value: f64) -> Id {

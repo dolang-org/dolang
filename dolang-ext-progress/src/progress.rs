@@ -299,10 +299,6 @@ fn apply_message<'v, 's>(
     Ok(())
 }
 
-fn to_u64<'v, 's>(strand: &mut Strand<'v, 's>, v: i64) -> Result<'v, 's, u64> {
-    u64::try_from(v).map_err(|_| Error::overflow(strand))
-}
-
 fn parse_tick<'v, 's>(
     strand: &mut Strand<'v, 's>,
     tick_val: Option<&Value<'v>>,
@@ -428,12 +424,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
 
             // Determine mode and total from the total kwarg
             let (mode, total_n) = match &total_val {
-                Some(v) => {
-                    let n = v
-                        .as_i64(strand)
-                        .ok_or_else(|| Error::type_error(strand, "total: expected `int`"))?;
-                    (Mode::Bar, Some(to_u64(strand, n)?))
-                }
+                Some(v) => (Mode::Bar, Some(v.to_u64(strand)?)),
                 None => (Mode::Spinner, None),
             };
 
@@ -641,11 +632,7 @@ impl<'v> Object<'v> for Indicator {
                         }
                     }
                 } else {
-                    let n = value.as_i64(strand).ok_or_else(|| {
-                        Error::type_error(strand, "total: expected `int` or `nil`")
-                    })?;
-                    let n = to_u64(strand, n)?;
-                    annex.bar.set_length(n);
+                    annex.bar.set_length(value.to_u64(strand)?);
                     if let Some(state_rc) = &annex.state_rc {
                         let mut state = state_rc.borrow_mut();
                         if let Some(idx) = state.find_widget_idx(annex.widget_id)
@@ -661,11 +648,7 @@ impl<'v> Object<'v> for Indicator {
             })
             .set("position", |this, strand, value| {
                 check_closed(strand, &this.annex().closed)?;
-                let pos = value
-                    .as_i64(strand)
-                    .ok_or_else(|| Error::type_error(strand, "position: expected `int`"))?;
-                let pos = to_u64(strand, pos)?;
-                this.annex().bar.set_position(pos);
+                this.annex().bar.set_position(value.to_u64(strand)?);
                 Ok(())
             })
             // --- Methods ---
@@ -674,8 +657,8 @@ impl<'v> Object<'v> for Indicator {
                 let ([], [amount]) = unpack!(strand, args, 0, 1)?;
                 let n = match amount {
                     Some(v) => v
-                        .as_i64(strand)
-                        .ok_or_else(|| Error::type_error(strand, "expected `int`"))?,
+                        .to_i64(strand)
+                        .map_err(|_| Error::type_error(strand, "expected `int`"))?,
                     None => 1,
                 };
                 if n >= 0 {

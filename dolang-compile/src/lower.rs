@@ -435,13 +435,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         .push(Inst(InstInfo::LoadUpvar(index, depth), ident.span)),
                 }
             }
-            Expr::I64(v, span) => {
-                let cid = self.consttab.i64(*v);
+            Expr::Int(v, span) => {
+                let cid = self.consttab.int(*v);
                 self.block.insts.push(Inst(InstInfo::LoadConst(cid), *span));
             }
-            Expr::VerbatimI64(v, span) => {
+            Expr::VerbatimInt(v, span) => {
                 let id = self.bintab.id_str(self.file.str(*span));
-                let cid = self.consttab.verbatim_i64(*v, id);
+                let cid = self.consttab.verbatim_int(*v, id);
                 self.block.insts.push(Inst(InstInfo::LoadConst(cid), *span));
             }
             Expr::F64(v, span) => {
@@ -1887,7 +1887,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         match node {
             Const::Str(str) => self.consttab.str(self.bintab.id_str(str)),
             Const::Bin(bytes) => self.consttab.bin(self.bintab.id(bytes)),
-            Const::I64(v) => self.consttab.i64(*v),
+            Const::Int(v) => self.consttab.int(*v),
             Const::F64(v) => self.consttab.f64(*v),
             Const::Bool(v) => self.consttab.bool(*v),
             Const::Nil => self.consttab.nil(),
@@ -2528,7 +2528,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 if !is_last {
                     // Test: Dup indicator, load constant, Eq, If
                     self.block.insts.push(Inst(InstInfo::Dup, span));
-                    let cid = self.consttab.i64(indicator_val);
+                    let cid = self.consttab.int(indicator_val.into());
                     self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
                     self.block.insts.push(Inst(InstInfo::Eq, span));
 

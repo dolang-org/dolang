@@ -221,7 +221,7 @@ enum RawToken {
     Escape(char),
     EscapeByte(u8),
     Equal,
-    I64(i64),
+    Int(i128),
     F64,
     Ident,
     Indent,
@@ -349,7 +349,7 @@ struct RawLexer<'a, I: Iterator<Item = u8>> {
     offset: Offset,
     defer: Option<Defer>,
     iter: I,
-    acc: u64,
+    acc: u128,
     diags: &'a Diags,
     comment: Option<&'a mut dyn Comment>,
     // Raw string tracking fields
@@ -390,15 +390,17 @@ impl<'a, I: Iterator<Item = u8>> RawLexer<'a, I> {
         self.defer = Some(defer);
     }
 
-    fn error(&mut self, e: ErrorDiagKind) -> Option<Result<(RawToken, Span), ErrorDiag>> {
-        self.state = RawState::Error;
-        let span = (self.start..self.offset).into();
-        Some(Err(ErrorDiag(e, span)))
+    fn warn_adj(&self, w: WarnDiagKind, adjust_start: i32, adjust_end: i32) {
+        self.diags.push(WarnDiag(
+            w,
+            (self.start.strict_add_signed(adjust_start)..self.offset.strict_add_signed(adjust_end))
+                .into(),
+        ));
     }
 
+    #[expect(unused)]
     fn warn(&self, w: WarnDiagKind) {
-        self.diags
-            .push(WarnDiag(w, (self.start..self.offset).into()));
+        self.warn_adj(w, 0, 0)
     }
 
     fn error_adj(
@@ -415,6 +417,10 @@ impl<'a, I: Iterator<Item = u8>> RawLexer<'a, I> {
         )))
     }
 
+    fn error(&mut self, e: ErrorDiagKind) -> Option<Result<(RawToken, Span), ErrorDiag>> {
+        self.error_adj(e, 0, 0)
+    }
+
     fn token_adj(
         &mut self,
         token: RawToken,
@@ -425,9 +431,7 @@ impl<'a, I: Iterator<Item = u8>> RawLexer<'a, I> {
         if let Some(defer) = self.defer.take() {
             match defer {
                 Defer::Error(e) => return self.error_adj(e, 0, -1),
-                Defer::Warn(w) => self
-                    .diags
-                    .push(WarnDiag(w, (self.start..self.offset - 1).into())),
+                Defer::Warn(w) => self.warn_adj(w, 0, -1),
             }
         }
         let start = self.start.checked_add_signed(adjust_start).unwrap();
@@ -596,7 +600,7 @@ macro_rules! lex {
                 }
                 #[allow(unreachable_patterns)]
                 Some(c @ b'1'..=b'9') => {
-                    $self.acc = (c - b'0') as u64;
+                    $self.acc = (c - b'0') as u128;
                     emit!($self.$method, $token, Unsigned);
                 }
             };
@@ -871,7 +875,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                         self.trans(SignedZero)
                     },
                     match Some(c@b'1'..=b'9') => {
-                        self.acc = (c - b'0') as u64;
+                        self.acc = (c - b'0') as u128;
                         self.trans(Signed)
                     },
                 }),
@@ -943,34 +947,34 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                 }),
                 Unsigned | Signed => number!(self,
                     if self.state == Unsigned {
-                        match i64::try_from(self.acc) {
-                            Ok(v) => RawToken::I64(v),
+                        match i128::try_from(self.acc) {
+                            Ok(v) => RawToken::Int(v),
                             Err(_) => {
                                 if self.mode == Mode::FullExpr {
-                                    return self.error(ErrorDiagKind::Overflow)
+                                    return self.error_adj(ErrorDiagKind::Overflow, 0, -1)
                                 }
                                 if self.mode != Mode::String {
-                                    self.warn(WarnDiagKind::OverflowLit);
+                                    self.warn_adj(WarnDiagKind::OverflowLit, 0, -1);
                                 }
                                 RawToken::Literal
                             }
                         }
                     } else {
-                        match 0i64.checked_sub_unsigned(self.acc) {
-                            Some(v) => RawToken::I64(v),
+                        match 0i128.checked_sub_unsigned(self.acc) {
+                            Some(v) => RawToken::Int(v),
                             None => {
                                 if self.mode == Mode::FullExpr {
-                                    return self.error(ErrorDiagKind::Overflow)
+                                    return self.error_adj(ErrorDiagKind::Overflow, 0, -1)
                                 }
                                 if self.mode != Mode::String {
-                                    self.warn(WarnDiagKind::OverflowLit);
+                                    self.warn_adj(WarnDiagKind::OverflowLit, 0, -1);
                                 }
                                 RawToken::Literal
                             }
                         }
                     }, {
                         match Some(c@b'0'..=b'9') => {
-                            match self.acc.checked_mul(10).and_then(|v| v.checked_add((c - b'0') as u64)) {
+                            match self.acc.checked_mul(10).and_then(|v| v.checked_add((c - b'0') as u128)) {
                                 Some(v) => self.acc = v,
                                 None => {
                                     if self.mode == Mode::FullExpr {
@@ -1002,7 +1006,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                 ),
                 Zero | SignedZero => {
                     let signed = self.state == SignedZero;
-                    number!(self, RawToken::I64(0), {
+                    number!(self, RawToken::Int(0), {
                         match Some(b'x' | b'X') => {
                             self.acc = 0;
                             self.trans(if signed { SignedHex } else { Hex })
@@ -1016,7 +1020,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                             self.trans(if signed { SignedBinary } else { Binary })
                         },
                         match Some(c @ b'0'..=b'9') => {
-                            self.acc = (c - b'0') as u64;
+                            self.acc = (c - b'0') as u128;
                             self.trans(if signed { Signed } else { Unsigned })
                         },
                         match Some(b'.') => {
@@ -1039,17 +1043,17 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                         match Some(b'.') => {
                             return self.token_adj(
                                 match if signed {
-                                    0i64.checked_sub_unsigned(self.acc)
+                                    0i128.checked_sub_unsigned(self.acc)
                                 } else {
-                                    i64::try_from(self.acc).ok()
+                                    i128::try_from(self.acc).ok()
                                 } {
-                                    Some(v) => RawToken::I64(v),
+                                    Some(v) => RawToken::Int(v),
                                     None => {
                                         if self.mode == Mode::FullExpr {
-                                            return self.error(ErrorDiagKind::Overflow)
+                                            return self.error_adj(ErrorDiagKind::Overflow, 0, -1)
                                         }
                                         if self.mode != Mode::String {
-                                            self.warn(WarnDiagKind::OverflowLit);
+                                            self.warn_adj(WarnDiagKind::OverflowLit, 0, -1);
                                         }
                                         RawToken::Literal
                                     }
@@ -1069,20 +1073,20 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                     let signed = self.state == SignedHex;
                     number!(self,
                         if signed {
-                            match 0i64.checked_sub_unsigned(self.acc) {
-                                Some(v) => RawToken::I64(v),
+                            match 0i128.checked_sub_unsigned(self.acc) {
+                                Some(v) => RawToken::Int(v),
                                 None => {
                                     if self.mode == Mode::FullExpr {
-                                        return self.error(ErrorDiagKind::Overflow)
+                                        return self.error_adj(ErrorDiagKind::Overflow, 0, -1)
                                     }
                                     if self.mode != Mode::String {
-                                        self.warn(WarnDiagKind::OverflowLit);
+                                        self.warn_adj(WarnDiagKind::OverflowLit, 0, -1);
                                     }
                                     RawToken::Literal
                                 }
                             }
                         } else {
-                            RawToken::I64(self.acc as i64)
+                            RawToken::Int(self.acc as i128)
                         }, {
                             match Some(c) if c.is_ascii_hexdigit() => {
                                 let digit = match c {
@@ -1091,7 +1095,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                                     b'A'..=b'F' => c - b'A' + 10,
                                     _ => unreachable!(),
                                 };
-                                match self.acc.checked_mul(16).and_then(|v| v.checked_add(digit as u64)) {
+                                match self.acc.checked_mul(16).and_then(|v| v.checked_add(digit as u128)) {
                                     Some(v) => self.acc = v,
                                     None => {
                                         if self.mode == Mode::FullExpr {
@@ -1118,21 +1122,21 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                     let signed = self.state == SignedOctal;
                     number!(self,
                         if signed {
-                            match 0i64.checked_sub_unsigned(self.acc) {
-                                Some(v) => RawToken::I64(v),
+                            match 0i128.checked_sub_unsigned(self.acc) {
+                                Some(v) => RawToken::Int(v),
                                 None => {
                                     if self.mode == Mode::FullExpr {
-                                        return self.error(ErrorDiagKind::Overflow)
+                                        return self.error_adj(ErrorDiagKind::Overflow, 0, -1)
                                     }
-                                    self.warn(WarnDiagKind::OverflowLit);
+                                    self.warn_adj(WarnDiagKind::OverflowLit, 0, -1);
                                     RawToken::Literal
                                 }
                             }
                         } else {
-                            RawToken::I64(self.acc as i64)
+                            RawToken::Int(self.acc as i128)
                         }, {
                             match Some(c @ b'0'..=b'7') => {
-                                let digit = (c - b'0') as u64;
+                                let digit = (c - b'0') as u128;
                                 match self.acc.checked_mul(8).and_then(|v| v.checked_add(digit)) {
                                     Some(v) => self.acc = v,
                                     None => {
@@ -1160,23 +1164,23 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                     let signed = self.state == SignedBinary;
                     number!(self,
                         if signed {
-                            match 0i64.checked_sub_unsigned(self.acc) {
-                                Some(v) => RawToken::I64(v),
+                            match 0i128.checked_sub_unsigned(self.acc) {
+                                Some(v) => RawToken::Int(v),
                                 None => {
                                     if self.mode == Mode::FullExpr {
-                                        return self.error(ErrorDiagKind::Overflow)
+                                        return self.error_adj(ErrorDiagKind::Overflow, 0, -1)
                                     }
                                     if self.mode != Mode::String {
-                                        self.warn(WarnDiagKind::OverflowLit);
+                                        self.warn_adj(WarnDiagKind::OverflowLit, 0, -1);
                                     }
                                     RawToken::Literal
                                 }
                             }
                         } else {
-                            RawToken::I64(self.acc as i64)
+                            RawToken::Int(self.acc as i128)
                         }, {
                             match Some(c @ b'0'..=b'1') => {
-                                let digit = (c - b'0') as u64;
+                                let digit = (c - b'0') as u128;
                                 match self.acc.checked_mul(2).and_then(|v| v.checked_add(digit)) {
                                     Some(v) => self.acc = v,
                                     None => {
@@ -1379,7 +1383,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                             b'A'..=b'F' => c - b'A' + 10,
                             _ => unreachable!(),
                         };
-                        self.acc = nibble as u64;
+                        self.acc = nibble as u128;
                         self.trans(EscapeHex1);
                     }
                     _ => return self.error(ErrorDiagKind::BadEscape),
@@ -1424,7 +1428,7 @@ pub(crate) enum TokenInfo {
     Escape(char),
     EscapeByte(u8),
     Equal,
-    I64(i64),
+    Int(i128),
     F64,
     Ident,
     Indent,
@@ -1793,7 +1797,7 @@ impl<'a> Iterator for Lexer<'a> {
                 Ok((Escape(c), span)) => self.token(TokenInfo::Escape(c), span),
                 Ok((EscapeByte(b), span)) => self.token(TokenInfo::EscapeByte(b), span),
                 Ok((Equal, span)) => self.token(TokenInfo::Equal, span),
-                Ok((I64(v), span)) => self.token(TokenInfo::I64(v), span),
+                Ok((Int(v), span)) => self.token(TokenInfo::Int(v), span),
                 Ok((F64, span)) => self.token(TokenInfo::F64, span),
                 Ok((Ident, span)) => self.token(
                     KEYWORDS

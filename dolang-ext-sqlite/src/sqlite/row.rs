@@ -309,7 +309,7 @@ unsafe fn unpack_row<'v, 's, 'a>(
                     mut slot,
                     default,
                 } => {
-                    let idx = if let Some(i) = key.as_i64(strand) {
+                    let idx = if let Ok(i) = key.to_i64(strand) {
                         i.try_into().map_err(|_| Error::overflow(strand))?
                     } else if let Some(name) = key.as_str(strand) {
                         strand.access(|x| column_for_name(raw, name.as_str(x)))
@@ -472,7 +472,7 @@ impl<'v> Object<'v> for Row {
         }
 
         unsafe {
-            let idx = if let Some(i) = index.as_i64(strand) {
+            let idx = if let Ok(i) = index.to_i64(strand) {
                 i as i32
             } else if let Some(name) = index.as_str(strand) {
                 strand.access(|x| column_for_name(raw, name.as_str(x)))

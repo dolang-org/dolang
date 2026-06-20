@@ -636,7 +636,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             )));
             return Ok(());
         }
-        let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+        let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
         let index =
             index::element(borrow.inner.len(), index).ok_or_else(|| Error::index(strand))?;
         match borrow.inner.get(index) {
@@ -654,7 +654,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         index: Slot<'v, 'a>,
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+        let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
         let mut borrow = this.borrow_mut(strand)?;
         let index =
             index::element(borrow.inner.len(), index).ok_or_else(|| Error::index(strand))?;
@@ -703,7 +703,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                     }
                     Some(Arg::Pos(slot)) => slot,
                 };
-                let i = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                let i = index.to_i64(strand).map_err(|_| Error::index(strand))?;
                 let i =
                     index::position(borrow.inner.len(), i).ok_or_else(|| Error::index(strand))?;
                 if i > borrow.inner.len() {
@@ -739,7 +739,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
-                let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
                 let borrow = this.borrow(strand)?;
                 match index::element(borrow.inner.len(), index)
                     .and_then(|index| borrow.inner.get(index))
@@ -767,7 +767,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                     let mut borrow = this.borrow_mut(strand)?;
                     match index {
                         Some(index) => {
-                            let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                            let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
                             index::element(borrow.inner.len(), index)
                                 .map(|index| borrow.inner.remove(index))
                         }
@@ -792,7 +792,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             }
             sym::DELETE => {
                 let ([index], []) = unpack!(strand, args, 1, 0)?;
-                let index = index.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
                 let mut borrow = this.borrow_mut(strand)?;
                 let deleted = index::element(borrow.inner.len(), index).is_some();
                 if let Some(index) = index::element(borrow.inner.len(), index) {

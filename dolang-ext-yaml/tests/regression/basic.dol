@@ -66,7 +66,7 @@ assert_err_contains "no YAML document" do from_str ""
 assert_err_contains "single document" do from_str "---\n1\n---\n2\n"
 assert_err_contains "YAML tags are not supported" do from_str "!!str hello"
 assert_err_contains "YAML aliases are not supported" do from_str "a: &anchor 1\nb: *anchor\n"
-assert_err_contains "numeric overflow" do from_str "9223372036854775808"
+assert_eq (from_str "9223372036854775808") 9223372036854775808
 
 # Serialization: scalar round-trips
 assert_eq (from_str $ to_str nil) nil
@@ -74,6 +74,7 @@ assert_eq (from_str $ to_str true) true
 assert_eq (from_str $ to_str false) false
 assert_eq (from_str $ to_str 42) 42
 assert_eq (from_str $ to_str -1) -1
+assert_eq (from_str $ to_str 9223372036854775807) 9223372036854775807
 assert_eq (from_str $ to_str 3.14) 3.14
 assert_eq (from_str $ to_str "hello") "hello"
 
@@ -101,5 +102,6 @@ assert_eq $rt["items"] [1, 2]
 assert_eq $rt["meta"]["key"] "val"
 
 # Serialization: error cases
+assert_err_contains "numeric overflow" do to_str 9223372036854775808
 assert_err_contains "YAML-representable" do to_str $ b"\x01\x02"
 assert_err_contains "unsupported YAML type" do to_str $ range 10

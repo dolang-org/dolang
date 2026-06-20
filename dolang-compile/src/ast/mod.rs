@@ -355,7 +355,7 @@ impl Node for DictElem {
 pub(crate) enum Const {
     Str(String),
     Bin(Vec<u8>),
-    I64(i64),
+    Int(i128),
     F64(f64),
     Bool(bool),
     Nil,
@@ -385,8 +385,8 @@ pub(crate) enum GetVariant {
 pub(crate) enum Expr {
     Literal(Span),
     Ident(Ident),
-    I64(i64, Span),
-    VerbatimI64(i64, Span),
+    Int(i128, Span),
+    VerbatimInt(i128, Span),
     F64(f64, Span),
     VerbatimF64(f64, Span),
     Bool(bool, Span),
@@ -483,7 +483,7 @@ impl Const {
         match self {
             Const::Str(v) => Some(v.clone()),
             Const::Bin(v) => Some(std::str::from_utf8(v).ok()?.to_owned()),
-            Const::I64(v) => Some(v.to_string()),
+            Const::Int(v) => Some(v.to_string()),
             Const::F64(v) => Some(v.to_string()),
             Const::Bool(v) => Some(v.to_string()),
             Const::Nil => Some("nil".to_owned()),
@@ -505,7 +505,7 @@ impl Expr {
     pub(crate) fn fold(&self, file: &File<'_>) -> Option<Const> {
         match self {
             Expr::Literal(span) => Some(Const::Str(file.str(*span).to_owned())),
-            Expr::I64(v, _) | Expr::VerbatimI64(v, _) => Some(Const::I64(*v)),
+            Expr::Int(v, _) | Expr::VerbatimInt(v, _) => Some(Const::Int(*v)),
             Expr::F64(v, _) | Expr::VerbatimF64(v, _) => Some(Const::F64(*v)),
             Expr::Bool(v, _) => Some(Const::Bool(*v)),
             Expr::Nil(_) => Some(Const::Nil),
@@ -571,7 +571,7 @@ impl Expr {
                             }
                         }
                         Expr::Literal(span) => Self::concat(&mut acc, &mut new_exprs, span),
-                        Expr::VerbatimI64(_, span) | Expr::VerbatimF64(_, span) if external => {
+                        Expr::VerbatimInt(_, span) | Expr::VerbatimF64(_, span) if external => {
                             Self::concat(&mut acc, &mut new_exprs, span)
                         }
                         Expr::Sym(span) if external => Self::concat(
@@ -639,8 +639,8 @@ impl Expr {
         match self {
             // Literals - definitely no side effects
             Expr::Literal(_)
-            | Expr::I64(_, _)
-            | Expr::VerbatimI64(_, _)
+            | Expr::Int(_, _)
+            | Expr::VerbatimInt(_, _)
             | Expr::F64(_, _)
             | Expr::VerbatimF64(_, _)
             | Expr::Bool(_, _)
@@ -819,8 +819,8 @@ impl Node for Expr {
         match self {
             Expr::Literal(span) => visit.token(Token::Literal, *span, None),
             Expr::Ident(ident) => ident.accept(visit),
-            Expr::I64(_, span) => visit.token(Token::Number, *span, None),
-            Expr::VerbatimI64(_, span) => visit.token(Token::Number, *span, None),
+            Expr::Int(_, span) => visit.token(Token::Number, *span, None),
+            Expr::VerbatimInt(_, span) => visit.token(Token::Number, *span, None),
             Expr::F64(_, span) => visit.token(Token::Number, *span, None),
             Expr::VerbatimF64(_, span) => visit.token(Token::Number, *span, None),
             Expr::Bool(_, span) => visit.token(Token::Constant, *span, None),
@@ -964,8 +964,8 @@ impl Node for Expr {
         match self {
             Expr::Literal(_) => NodeKind::Literal,
             Expr::Ident(_) => NodeKind::Ident,
-            Expr::I64(_, _) => NodeKind::I64,
-            Expr::VerbatimI64(_, _) => NodeKind::VerbatimI64,
+            Expr::Int(_, _) => NodeKind::Int,
+            Expr::VerbatimInt(_, _) => NodeKind::VerbatimInt,
             Expr::F64(_, _) => NodeKind::F64,
             Expr::VerbatimF64(_, _) => NodeKind::VerbatimF64,
             Expr::Bool(_, _) => NodeKind::Bool,

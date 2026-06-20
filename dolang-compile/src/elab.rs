@@ -1442,8 +1442,8 @@ impl<'a> Elaborater<'a> {
                         });
                     }
                 } else if let Expr::Literal(_)
-                | Expr::I64(_, _)
-                | Expr::VerbatimI64(_, _)
+                | Expr::Int(_, _)
+                | Expr::VerbatimInt(_, _)
                 | Expr::F64(_, _)
                 | Expr::VerbatimF64(_, _)
                 | Expr::Bool(_, _)

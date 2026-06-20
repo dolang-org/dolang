@@ -209,8 +209,8 @@ fn nonnegative_count<'v, 's>(
     value: &Value<'v>,
 ) -> Result<'v, 's, usize> {
     let count = value
-        .as_i64(strand)
-        .ok_or_else(|| Error::type_error(strand, "expected int"))?;
+        .to_i64(strand)
+        .map_err(|_| Error::type_error(strand, "expected int"))?;
     if count < 0 {
         return Err(Error::value(strand, "expected non-negative int"));
     }

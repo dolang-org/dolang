@@ -154,8 +154,8 @@ impl<'v> Object<'v> for Regex {
                     let haystack = haystack.pin();
                     let limit_val = limit
                         .map(|l| {
-                            l.as_i64(strand)
-                                .ok_or_else(|| Error::type_error(strand, "limit: expected `int`"))
+                            l.to_i64(strand)
+                                .map_err(|_| Error::type_error(strand, "limit: expected `int`"))
                         })
                         .transpose()?;
 
@@ -254,8 +254,8 @@ impl<'v> Object<'v> for Regex {
                 let haystack = haystack.pin();
                 let limit_i64 = limit
                     .map(|l| {
-                        l.as_i64(strand)
-                            .ok_or_else(|| Error::type_error(strand, "limit: expected `int`"))
+                        l.to_i64(strand)
+                            .map_err(|_| Error::type_error(strand, "limit: expected `int`"))
                     })
                     .transpose()?;
 
@@ -355,8 +355,8 @@ impl<'v> Object<'v> for Regex {
                 let haystack = haystack.pin();
                 let limit_i64 = limit
                     .map(|l| {
-                        l.as_i64(strand)
-                            .ok_or_else(|| Error::type_error(strand, "limit: expected `int`"))
+                        l.to_i64(strand)
+                            .map_err(|_| Error::type_error(strand, "limit: expected `int`"))
                     })
                     .transpose()?;
 
@@ -451,7 +451,7 @@ impl<'v> Object<'v> for Captures {
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
 
-        let cap = if let Some(idx) = index.as_i64(strand) {
+        let cap = if let Ok(idx) = index.to_i64(strand) {
             annex
                 .caps
                 .get(idx.try_into().map_err(|_| Error::overflow(strand))?)

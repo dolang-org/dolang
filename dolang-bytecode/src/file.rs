@@ -10,7 +10,7 @@ use super::{
 use dolang_util::verified::Verified;
 
 const MAGIC: [u8; 8] = *b"\xffdobytec";
-const VERSION: [u8; 3] = [0, 0, 1];
+const VERSION: [u8; 3] = [0, 0, 2];
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -46,8 +46,8 @@ pub type BinId = Range<usize>;
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub enum Const {
     Nil,
-    I64(i64),
-    VerbatimI64(i64, StrId),
+    Int(i128),
+    VerbatimInt(i128, StrId),
     F64(f64),
     VerbatimF64(f64, StrId),
     Bool(bool),

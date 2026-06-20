@@ -356,7 +356,7 @@ impl<'v> Inner<'v> {
         if context == SpreadContext::Sequence {
             value = Value::from_object(tuple::tuple(strand, [key, value]));
             sink.positional(strand, Slot::new(&mut value))
-        } else if key.as_i64(strand) == Some(*next_pos) {
+        } else if key.to_i64(strand).ok() == Some(*next_pos) {
             *next_pos += 1;
             sink.positional(strand, Slot::new(&mut value))
         } else if let Some(sym) = key.as_sym(strand) {
@@ -879,7 +879,7 @@ impl<'v> Inner<'v> {
                     write!(w, "{separator}").into_do(strand)?;
                 }
                 if let (Some(int_key), Some(expected)) =
-                    (bucket.as_ref().key.as_i64(strand), next_int_key)
+                    (bucket.as_ref().key.to_i64(strand).ok(), next_int_key)
                 {
                     if int_key == expected {
                         next_int_key = Some(expected + 1);
@@ -1246,7 +1246,7 @@ impl<'v> Inner<'v> {
             return Err(Error::unexpected_key(strand, else_key));
         }
         let subindex = subindex
-            .map(|s| s.as_i64(strand).ok_or_else(|| Error::index(strand)))
+            .map(|s| s.to_i64(strand).map_err(|_| Error::index(strand)))
             .transpose()?;
         if let Some(value) = (*this.borrow(strand)?)
             .as_ref()
@@ -1280,7 +1280,7 @@ impl<'v> Inner<'v> {
             return Err(Error::unexpected_key(strand, else_key));
         }
         let subindex = subindex
-            .map(|s| s.as_i64(strand).ok_or_else(|| Error::index(strand)))
+            .map(|s| s.to_i64(strand).map_err(|_| Error::index(strand)))
             .transpose()?;
         {
             let mut borrow = this.borrow_mut(strand)?;
@@ -1729,7 +1729,7 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
                             let bucket = unsafe { bucket.as_ref() };
                             let key = &bucket.key;
                             let hv = hash(strand, key)?;
-                            let key = if (*subindex == 0 && key.as_i64(strand).is_some())
+                            let key = if (*subindex == 0 && key.is_int(strand))
                                 || skip.add(strand, key, hv) >= bucket.value.len()
                             {
                                 continue;
@@ -1759,7 +1759,9 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
                             let bucket = unsafe { bucket.as_ref() };
                             let key = &bucket.key;
                             let hv = bucket.hash;
-                            let key = if let Some(int_key) = key.as_i64(strand) {
+                            let key = if let Some(int_key) =
+                                key.as_int(strand).and_then(|x| i64::try_from(x).ok())
+                            {
                                 if int_key == *int {
                                     *int += 1;
                                     key.dup()
@@ -1859,7 +1861,7 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
                     let bucket = unsafe { bucket.as_ref() };
                     let key = &bucket.key;
                     let hv = bucket.hash;
-                    if (*subindex == 0 && key.as_i64(strand).is_some())
+                    if (*subindex == 0 && key.is_int(strand))
                         || skip.add(strand, key, hv) >= bucket.value.len()
                     {
                         continue;
@@ -1889,7 +1891,9 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
                     let bucket = unsafe { bucket.as_ref() };
                     let key = &bucket.key;
                     let hv = bucket.hash;
-                    let key = if let Some(int_key) = key.as_i64(strand) {
+                    let key = if let Some(int_key) =
+                        key.as_int(strand).and_then(|x| i64::try_from(x).ok())
+                    {
                         if int_key == *int {
                             let key = key.dup();
                             *int += 1;

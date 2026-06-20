@@ -209,8 +209,8 @@ impl Repr {
         let this = self.0;
         let tag = this.addr().get() & tag::MASK;
         match tag {
-            tag::I64 => Decode::Prim(Prim::I64(
-                ((this.addr().get() as isize) >> tag::WIDTH) as i64,
+            tag::I64 => Decode::Prim(Prim::Int(
+                ((this.addr().get() as isize) >> tag::WIDTH) as i64 as i128,
             )),
             #[cfg(target_pointer_width = "64")]
             tag::F64 => {
@@ -353,7 +353,7 @@ mod test {
             let value = hasher.finish() as i64;
             if let Some(repr) = Repr::from_i64(value) {
                 let out = match repr.decode() {
-                    Decode::Prim(Prim::I64(out)) => out,
+                    Decode::Prim(Prim::Int(out)) => out as i64,
                     _ => panic!("not an i64"),
                 };
                 assert_eq!(value, out)
@@ -363,13 +363,15 @@ mod test {
 
     #[test]
     fn encode_decode_i64_extremes() {
+        let imin = IMIN as i128;
+        let imax = IMAX as i128;
         assert!(matches!(
             Repr::from_i64(IMIN).unwrap().decode(),
-            Decode::Prim(Prim::I64(IMIN))
+            Decode::Prim(Prim::Int(v)) if v == imin
         ));
         assert!(matches!(
             Repr::from_i64(IMAX).unwrap().decode(),
-            Decode::Prim(Prim::I64(IMAX))
+            Decode::Prim(Prim::Int(v)) if v == imax
         ));
     }
 }

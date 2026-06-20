@@ -17,7 +17,7 @@ use crate::{
     vm::Vm,
 };
 
-unsafe impl Collect for i64 {
+unsafe impl Collect for i128 {
     const CYCLIC: bool = false;
     const IMMUTABLE: bool = true;
     type Annex = ();
@@ -33,7 +33,7 @@ unsafe impl Collect for i64 {
 
 fn binop<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    left: i64,
+    left: i128,
     right: &Value<'v>,
     op: fn(&Prim, &mut Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
 ) -> Result<'v, 's, Value<'v>> {
@@ -44,7 +44,7 @@ fn binop<'v, 's>(
 
 fn rbinop<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    left: i64,
+    left: i128,
     right: &Value<'v>,
     op: fn(&Prim, &mut Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
 ) -> Result<'v, 's, Value<'v>> {
@@ -53,7 +53,7 @@ fn rbinop<'v, 's>(
     Ok(Value::from_prim(strand, value))
 }
 
-impl<'v> Protocol<'v> for i64 {
+impl<'v> Protocol<'v> for i128 {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -90,14 +90,14 @@ impl<'v> Protocol<'v> for i64 {
         this.get()
             .checked_neg()
             .ok_or_else(|| Error::overflow(strand))
-            .map(|v| Value::from_i64(strand, v))
+            .map(|v| Value::from_int(strand, v))
     }
 
     fn op_bnot<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_i64(strand, !*this.get()))
+        Ok(Value::from_int(strand, !*this.get()))
     }
 
     fn op_band<'a, 's>(
@@ -241,12 +241,12 @@ impl<'v> Protocol<'v> for i64 {
 }
 
 pub(crate) struct Verbatim {
-    pub(crate) value: i64,
+    pub(crate) value: i128,
     text: alias::Box<str>,
 }
 
 impl Verbatim {
-    pub(crate) fn new(value: i64, text: &str) -> Self {
+    pub(crate) fn new(value: i128, text: &str) -> Self {
         Self {
             value,
             text: text.into(),
@@ -323,14 +323,14 @@ impl<'v> Protocol<'v> for Verbatim {
             .value
             .checked_neg()
             .ok_or_else(|| Error::overflow(strand))
-            .map(|v| Value::from_i64(strand, v))
+            .map(|v| Value::from_int(strand, v))
     }
 
     fn op_bnot<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_i64(strand, !this.get().value))
+        Ok(Value::from_int(strand, !this.get().value))
     }
 
     fn op_band<'a, 's>(
@@ -473,9 +473,9 @@ impl<'v> Protocol<'v> for Verbatim {
     }
 }
 
-fn coerce_to_i64<'v, 's>(value: &Value<'v>, strand: &mut Strand<'v, 's>) -> Result<'v, 's, i64> {
+fn coerce_to_int<'v, 's>(value: &Value<'v>, strand: &mut Strand<'v, 's>) -> Result<'v, 's, i128> {
     if let Some(str) = value.as_str_raw(strand) {
-        str.parse::<i64>().map_err(|e| match e.kind() {
+        str.parse::<i128>().map_err(|e| match e.kind() {
             IntErrorKind::Zero => unreachable!(),
             IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => Error::overflow(strand),
             IntErrorKind::Empty | IntErrorKind::InvalidDigit | _ => {
@@ -484,9 +484,9 @@ fn coerce_to_i64<'v, 's>(value: &Value<'v>, strand: &mut Strand<'v, 's>) -> Resu
         })
     } else {
         match value.to_prim(strand)? {
-            Prim::I64(v) => Ok(v),
-            Prim::F64(v) => Ok(v as i64),
-            Prim::Bool(v) => Ok(v as i64),
+            Prim::Int(v) => Ok(v),
+            Prim::F64(v) => Ok(v as i128),
+            Prim::Bool(v) => Ok(v as i128),
             Prim::Nil => Err(Error::type_error(strand, "int: `nil` can't be converted")),
         }
     }
@@ -599,7 +599,7 @@ impl<'v> Protocol<'v> for Int {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([value], _) = unpack!(strand, args, 1, 0)?;
-        let coerced = coerce_to_i64(&value, strand)?;
+        let coerced = coerce_to_int(&value, strand)?;
         Output::set(strand, out, coerced);
         Ok(())
     }
@@ -614,8 +614,8 @@ impl<'v> Protocol<'v> for Int {
         match method.tag() {
             sym::INIT_METHOD => {
                 let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
-                let coerced = coerce_to_i64(&value, strand)?;
-                let native = Value::from_i64(strand, coerced);
+                let coerced = coerce_to_int(&value, strand)?;
+                let native = Value::from_int(strand, coerced);
                 self_val.op_fill(strand, &strand.vm().singletons().int, native)?;
                 Ok(())
             }

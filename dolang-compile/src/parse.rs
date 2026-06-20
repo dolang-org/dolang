@@ -124,7 +124,7 @@ macro_rules! expr_start_not_left_bracket {
             | TokenInfo::RawQuote
             | TokenInfo::BQuote
             | TokenInfo::Sym
-            | TokenInfo::I64(_)
+            | TokenInfo::Int(_)
             | TokenInfo::F64
             | TokenInfo::Bool(_)
             | TokenInfo::Keyword(Keyword::Nil)
@@ -159,7 +159,7 @@ macro_rules! decay_string {
     ($token: expr) => {
         decay!($token,
             TokenInfo::Equal
-            | TokenInfo::I64(_)
+            | TokenInfo::Int(_)
             | TokenInfo::Bool(_)
             | TokenInfo::F64
             | TokenInfo::Ident
@@ -274,7 +274,7 @@ impl From<&TokenInfo> for ExpectKind {
 
         match value {
             ArgSep => ExpectKind::ArgSep,
-            Bool(_) | I64(_) | F64 | Keyword(Keyword::Nil) => ExpectKind::Const,
+            Bool(_) | Int(_) | F64 | Keyword(Keyword::Nil) => ExpectKind::Const,
             DecoratorOpen => ExpectKind::DecoratorOpen,
             Dedent => ExpectKind::Dedent,
             Dollar => ExpectKind::Dollar,
@@ -1390,11 +1390,11 @@ impl<'a> Parser<'a> {
                 Some(token!(Literal, span)) => Ok(Expr::Literal(span)),
                 Some(token!(Escape(c), span)) => Ok(Expr::Escape(c, span)),
                 Some(token!(Ident, span)) => Ok(Expr::Ident(Ident::new(span))),
-                Some(token!(I64(v), span)) => {
+                Some(token!(Int(v), span)) => {
                     if matches!(mode, ExprMode::Shell) {
-                        Ok(Expr::VerbatimI64(v, span))
+                        Ok(Expr::VerbatimInt(v, span))
                     } else {
-                        Ok(Expr::I64(v, span))
+                        Ok(Expr::Int(v, span))
                     }
                 }
                 Some(token!(F64, span)) => {
