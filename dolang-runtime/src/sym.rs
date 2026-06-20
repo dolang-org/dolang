@@ -99,7 +99,7 @@ well_known_symbols! {
     (Sink, "sink", SINK),
     (Pack, "pack", PACK),
     (Pairs, "pairs", PAIRS),
-    (Pos, "pos", POS),
+    (PosOnly, "pos_only", POS_ONLY),
     (PosKeys, "pos_keys", POS_KEYS),
     (Pop, "pop", POP),
     (Put, "put", PUT),

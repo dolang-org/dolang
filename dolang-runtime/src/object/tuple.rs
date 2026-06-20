@@ -53,26 +53,18 @@ impl<'a, 'v, 's> Spread<'v, 's> for TupleSpread<'a, 'v> {
         &mut self,
         strand: &mut Strand<'v, 's>,
         key: Sym<'v, '_>,
-        mut value: Slot<'v, '_>,
+        _value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        self.0.push(Value::from_object(tuple(
-            strand.vm(),
-            [Value::from_object(strand.sym_obj(key)), value.take()],
-        )));
-        Ok(())
+        Err(Error::unexpected_key(strand, key))
     }
 
     fn keyed(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        mut key: Slot<'v, '_>,
-        mut value: Slot<'v, '_>,
+        key: Slot<'v, '_>,
+        _value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        self.0.push(Value::from_object(tuple(
-            strand.vm(),
-            [key.take(), value.take()],
-        )));
-        Ok(())
+        Err(Error::unexpected_key(strand, key))
     }
 }
 

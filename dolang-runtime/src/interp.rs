@@ -11,7 +11,7 @@ use crate::{
     frame::{CallFrame, Upvars},
     gc::Gc,
     object::{
-        arg::ArgIter,
+        arg::ArgPack,
         array::Array,
         class::{ClassEntry, ClassObject},
         dict::Dict,
@@ -335,11 +335,11 @@ impl<'v> Vm<'v> {
         args: Args<'v, '_>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let arg_iter = ArgIter::from_args(strand, args);
+        let arg_pack = ArgPack::from_args(strand, args);
         out.store(Value::from_object(GcObj::new(
             strand.vm().arena(),
-            strand.vm().builtin_types().arg_iter,
-            arg_iter,
+            strand.vm().builtin_types().arg_pack,
+            arg_pack,
         )));
         Ok(())
     }

@@ -350,9 +350,13 @@ impl<'v> Inner<'v> {
         next_pos: &mut i64,
         mut key: Value<'v>,
         mut value: Value<'v>,
+        context: SpreadContext,
         sink: &mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        if key.as_i64(strand) == Some(*next_pos) {
+        if context == SpreadContext::Sequence {
+            value = Value::from_object(tuple::tuple(strand, [key, value]));
+            sink.positional(strand, Slot::new(&mut value))
+        } else if key.as_i64(strand) == Some(*next_pos) {
             *next_pos += 1;
             sink.positional(strand, Slot::new(&mut value))
         } else if let Some(sym) = key.as_sym(strand) {
@@ -527,7 +531,7 @@ impl<'v> Inner<'v> {
         epoch: u64,
         container: &GcObj<'v, T>,
         strand: &mut Strand<'v, 's>,
-        _context: SpreadContext,
+        context: SpreadContext,
         sink: &mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let container_borrow = container
@@ -553,6 +557,7 @@ impl<'v> Inner<'v> {
                     &mut next_pos,
                     bucket.key.dup(),
                     bucket.value.at(*subindex).dup(),
+                    context,
                     sink,
                 )?;
             }
@@ -1169,7 +1174,7 @@ impl<'v> Inner<'v> {
     pub(crate) async fn op_spread<'a, 's, T: AsRef<Inner<'v>> + Protocol<'v> + 'v>(
         this: Recv<'v, 'a, T>,
         strand: &'a mut Strand<'v, 's>,
-        _context: SpreadContext,
+        context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
@@ -1191,6 +1196,7 @@ impl<'v> Inner<'v> {
                     &mut next_pos,
                     bucket.key.dup(),
                     bucket.value.at(*subindex).dup(),
+                    context,
                     sink,
                 )?;
                 i += 1;
@@ -1787,7 +1793,7 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
     pub(crate) fn op_spread<'s>(
         this: Recv<'v, '_, impl AsMut<Self> + Protocol<'v>>,
         strand: &mut Strand<'v, 's>,
-        _context: SpreadContext,
+        context: SpreadContext,
         sink: &mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let mut borrow = this.borrow_mut(strand)?;
@@ -1822,7 +1828,14 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
                     .as_ref()
                     .get(strand, &key, Some(0))?
                     {
-                        Inner::spread_key_value(strand, &mut next_pos, key, value.dup(), sink)?;
+                        Inner::spread_key_value(
+                            strand,
+                            &mut next_pos,
+                            key,
+                            value.dup(),
+                            context,
+                            sink,
+                        )?;
                         *int += 1;
                     } else {
                         borrow.state = UnpackState::Resume {
@@ -1856,6 +1869,7 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
                         &mut next_pos,
                         key.dup(),
                         bucket.value.at(*subindex).dup(),
+                        context,
                         sink,
                     )?;
                     break;
@@ -1898,6 +1912,7 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
                         &mut next_pos,
                         key,
                         bucket.value.at(*subindex).dup(),
+                        context,
                         sink,
                     )?;
                     break;

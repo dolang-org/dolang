@@ -53,7 +53,7 @@ pub def run
   :user = nil
   ...args
 do
-  run_command $cmd :user ...args.pos()
+  run_command $cmd :user ...args.pos_only()
 
 # Run a function with elevated privileges via `sudo`.
 #

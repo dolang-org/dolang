@@ -6,7 +6,7 @@ The `std` module provides core language facilities.
 
 | Name                                              | Description                                |
 | ------------------------------------------------- | ------------------------------------------ |
-| [`args`](./args.md)                               | Iterator over an argument pack             |
+| [`args`](./args.md)                               | Immutable argument pack                    |
 | [`array`](./array.md)                             | Mutable ordered sequence                   |
 | [`bin`](./bin.md)                                 | Immutable binary data                      |
 | [`BytecodeError`](./bytecode-error.md)            | Bytecode verification error                |

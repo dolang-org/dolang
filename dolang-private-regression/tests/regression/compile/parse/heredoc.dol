@@ -39,9 +39,7 @@ def id x
 def key_id :key
   key
 def array_id ...args
-  return
-    for _ v = args
-      - $v
+  [...args.pos_only()]
 
 doc = id |-
   a doc

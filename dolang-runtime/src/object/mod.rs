@@ -89,8 +89,8 @@ impl<'v> Drop for TypeTable<'v> {
 }
 
 pub(crate) struct BuiltinTypes<'v> {
+    pub(crate) arg_pack: TypeHandle<'v, arg::ArgPack<'v>>,
     pub(crate) arg_iter: TypeHandle<'v, arg::ArgIter<'v>>,
-    pub(crate) pos_arg_iter: TypeHandle<'v, arg::PosArgIter<'v>>,
     pub(crate) array_iter: TypeHandle<'v, array::Iter<'v>>,
     pub(crate) array_sink: TypeHandle<'v, array::Sink<'v>>,
     pub(crate) array_pairs: TypeHandle<'v, array::Pairs<'v>>,
@@ -183,8 +183,8 @@ pub(crate) struct BuiltinTypes<'v> {
 impl<'v> BuiltinTypes<'v> {
     pub(crate) fn new(types: &mut TypeTable<'v>) -> Self {
         Self {
+            arg_pack: types.register_type_handle(),
             arg_iter: types.register_type_handle(),
-            pos_arg_iter: types.register_type_handle(),
             array_iter: types.register_type_handle(),
             array_sink: types.register_type_handle(),
             array_pairs: types.register_type_handle(),

@@ -54,7 +54,8 @@ assert $caught
 let pair_set = set {1, foo: "bar"}
 assert_eq $pair_set.len 2
 let pair_items = [...pair_set]
-assert_eq $pair_items[0] 1
+assert_eq $pair_items[0][0] 0
+assert_eq $pair_items[0][1] 1
 assert_eq $pair_items[1][0] :foo:
 assert_eq $pair_items[1][1] "bar"
 

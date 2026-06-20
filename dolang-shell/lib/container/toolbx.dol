@@ -67,7 +67,7 @@ do
     :name
     cd: $cd_override
     env: $env_override
-    $cmd ...args.pos()
+    $cmd ...args.pos_only()
 
 # Run a callable inside a toolbox container.
 #

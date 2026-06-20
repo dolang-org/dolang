@@ -8,7 +8,7 @@ use crate::{
     gc::{Collect, arena::Visit},
     object::{
         BoundMethod,
-        arg::ArgIter,
+        arg::ArgPack,
         protocol::{GcObj, Inspect, Protocol, Recv, dispatch_native_method},
     },
     strand::Strand,
@@ -267,7 +267,6 @@ impl<'v> Protocol<'v> for ArgsType {
         let sings = strand.vm().singletons();
         supertype.eq(strand, &this)
             || supertype.eq(strand, TypeObject::Value)
-            || sings.input_iter.eq(strand, supertype)
             || sings.iterable.eq(strand, supertype)
     }
 
@@ -287,8 +286,8 @@ impl<'v> Protocol<'v> for ArgsType {
     ) -> Result<'v, 's, ()> {
         out.store(DoValue::from_object(GcObj::new(
             strand.arena(),
-            strand.builtin_types().arg_iter,
-            ArgIter::from_args(strand, args),
+            strand.builtin_types().arg_pack,
+            ArgPack::from_args(strand, args),
         )));
         Ok(())
     }

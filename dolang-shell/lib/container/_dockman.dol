@@ -368,7 +368,7 @@ pub class Runtime
     self.cli run --rm -i $ctr $cmd ...argv
 
   pub def run self ctr cmd ...args
-    self.#run_direct $ctr $cmd $args.pos()
+    self.#run_direct $ctr $cmd $args.pos_only()
 
   pub def build self :pull = :missing: :mounts = [] :from ...args
     with_temp_dir parent: $runtime_dir() do |subdir|
@@ -417,7 +417,7 @@ pub class Runtime
     else
       Path $target
     let platform = normalize_platform $platform
-    let refs = [...images.pos()]
+    let refs = [...images.pos_only()]
     let lines = []
     try
       self.cli save
