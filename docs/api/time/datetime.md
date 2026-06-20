@@ -1,6 +1,6 @@
 # DateTime
 
-A UTC instant represented as Unix seconds + nanoseconds.
+A UTC instant represented as Unix nanoseconds.
 
 ## Type Methods
 
@@ -12,19 +12,22 @@ Returns the current UTC time.
 echo $DateTime.now()
 ```
 
-### `from_unix seconds :nanoseconds?`
+### `from_unix seconds? :nanos?`
 
-Creates a `DateTime` from Unix epoch components.
+Creates a `DateTime` from a Unix timestamp.
 
 **Parameters:**
 
-| Name          | Type                   | Description                               |
-| ------------- | ---------------------- | ----------------------------------------- |
-| `seconds`     | [`int`](../std/int.md) | Whole seconds since Unix epoch            |
-| `nanoseconds` | [`int`](../std/int.md) | Optional fractional nanoseconds component |
+| Name      | Type                                                | Description                                            |
+| --------- | --------------------------------------------------- | ------------------------------------------------------ |
+| `seconds` | [`int`](../std/int.md)\|[`float`](../std/float.md)? | Optional seconds since Unix epoch                      |
+| `nanos`   | [`int`](../std/int.md)?                             | Optional nanoseconds since Unix epoch or offset to add |
 
 ```
-echo $ DateTime.from_unix 1700000000 123000000 
+echo $ DateTime.from_unix 1700000000
+echo $ DateTime.from_unix 1.25
+echo $ DateTime.from_unix nanos: 1700000000123000000
+echo $ DateTime.from_unix 1700000000 nanos: 123000000
 ```
 
 ### `parse_rfc3339 text`
@@ -50,10 +53,10 @@ echo $dt.rfc3339()
 
 ## Fields
 
-| Field         | Type                   | Description                               |
-| ------------- | ---------------------- | ----------------------------------------- |
-| `seconds`     | [`int`](../std/int.md) | Whole Unix seconds                        |
-| `nanoseconds` | [`int`](../std/int.md) | Nanoseconds in range `[0, 1_000_000_000)` |
+| Field        | Type                       | Description                   |
+| ------------ | -------------------------- | ----------------------------- |
+| `unix_secs`  | [`float`](../std/float.md) | Approximate Unix seconds view |
+| `unix_nanos` | [`int`](../std/int.md)     | Exact Unix nanoseconds view   |
 
 ## Operators
 

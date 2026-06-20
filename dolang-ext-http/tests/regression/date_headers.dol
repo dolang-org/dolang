@@ -8,6 +8,6 @@ http.get $TEST_URL/date-headers headers: {"if-modified-since": sent} do |res|
   assert_eq $res.status 200
   let headers = res.headers
   assert (type headers["last-modified"] DateTime)
-  assert_eq $headers["last-modified"].seconds 1000
-  assert_eq $headers["last-modified"].nanoseconds 0
+  assert_eq $headers["last-modified"].unix_secs 1000.0
+  assert_eq $headers["last-modified"].unix_nanos 1000000000000
   assert_eq $headers["x-test"] "ok"

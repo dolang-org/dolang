@@ -31,35 +31,35 @@ with_and_without_agent "set_timestamps updates timestamps" do
 
     set_timestamps $test_path modified: $first_modified accessed: $first_accessed created: $first_created
     let meta = metadata(test_path)
-    assert_eq $meta.modified.seconds 1234
-    assert_eq $meta.modified.nanoseconds 0
-    assert_eq $meta.accessed.seconds 2345
-    assert_eq $meta.accessed.nanoseconds 0
-    assert_eq $meta.created.seconds 1111
-    assert_eq $meta.created.nanoseconds 0
+    assert_eq $meta.modified.unix_secs 1234.0
+    assert_eq $meta.modified.unix_nanos 1234000000000
+    assert_eq $meta.accessed.unix_secs 2345.0
+    assert_eq $meta.accessed.unix_nanos 2345000000000
+    assert_eq $meta.created.unix_secs 1111.0
+    assert_eq $meta.created.unix_nanos 1111000000000
 
     Path(test_path).set_timestamps modified: $second_modified accessed: $second_accessed created: $second_created
     let meta = Path(test_path).metadata()
-    assert_eq $meta.modified.seconds 3456
-    assert_eq $meta.modified.nanoseconds 0
-    assert_eq $meta.accessed.seconds 4567
-    assert_eq $meta.accessed.nanoseconds 0
-    assert_eq $meta.created.seconds 2222
-    assert_eq $meta.created.nanoseconds 0
+    assert_eq $meta.modified.unix_secs 3456.0
+    assert_eq $meta.modified.unix_nanos 3456000000000
+    assert_eq $meta.accessed.unix_secs 4567.0
+    assert_eq $meta.accessed.unix_nanos 4567000000000
+    assert_eq $meta.created.unix_secs 2222.0
+    assert_eq $meta.created.unix_nanos 2222000000000
   else
     set_timestamps $test_path modified: $first_modified accessed: $first_accessed
     let meta = metadata(test_path)
-    assert_eq $meta.modified.seconds 1234
-    assert_eq $meta.modified.nanoseconds 0
-    assert_eq $meta.accessed.seconds 2345
-    assert_eq $meta.accessed.nanoseconds 0
+    assert_eq $meta.modified.unix_secs 1234.0
+    assert_eq $meta.modified.unix_nanos 1234000000000
+    assert_eq $meta.accessed.unix_secs 2345.0
+    assert_eq $meta.accessed.unix_nanos 2345000000000
 
     Path(test_path).set_timestamps modified: $second_modified accessed: $second_accessed
     let meta = Path(test_path).metadata()
-    assert_eq $meta.modified.seconds 3456
-    assert_eq $meta.modified.nanoseconds 0
-    assert_eq $meta.accessed.seconds 4567
-    assert_eq $meta.accessed.nanoseconds 0
+    assert_eq $meta.modified.unix_secs 3456.0
+    assert_eq $meta.modified.unix_nanos 3456000000000
+    assert_eq $meta.accessed.unix_secs 4567.0
+    assert_eq $meta.accessed.unix_nanos 4567000000000
 
     let caught = try
       set_timestamps $test_path created: $first_created

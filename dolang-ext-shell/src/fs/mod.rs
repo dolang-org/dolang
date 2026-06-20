@@ -25,6 +25,8 @@ use crate::{
 
 use glob::{GlobIter, GlobIterAnnex};
 
+const NANOS_PER_SEC_I128: i128 = 1_000_000_000;
+
 #[cfg(unix)]
 pub(crate) mod unix {
     use super::*;
@@ -123,41 +125,29 @@ async fn metadata_to_record<'v, 's>(
             .await?;
 
             let modified = global.syms.modified;
-            if create_datetime(
-                strand,
-                global,
-                metadata.mtime,
-                metadata.mtime_nsec,
-                &mut tmp,
-            )
-            .is_ok()
-            {
+            let modified_nanos = i128::from(metadata.mtime)
+                .checked_mul(NANOS_PER_SEC_I128)
+                .and_then(|secs| secs.checked_add(i128::from(metadata.mtime_nsec)));
+            if let Some(modified_nanos) = modified_nanos {
+                create_datetime(strand, global, modified_nanos, &mut tmp)?;
                 record.set(strand, modified, &mut tmp)?;
             }
 
             let accessed = global.syms.accessed;
-            if create_datetime(
-                strand,
-                global,
-                metadata.atime,
-                metadata.atime_nsec,
-                &mut tmp,
-            )
-            .is_ok()
-            {
+            let accessed_nanos = i128::from(metadata.atime)
+                .checked_mul(NANOS_PER_SEC_I128)
+                .and_then(|secs| secs.checked_add(i128::from(metadata.atime_nsec)));
+            if let Some(accessed_nanos) = accessed_nanos {
+                create_datetime(strand, global, accessed_nanos, &mut tmp)?;
                 record.set(strand, accessed, &mut tmp)?;
             }
 
             let created = global.syms.created;
-            if create_datetime(
-                strand,
-                global,
-                metadata.ctime,
-                metadata.ctime_nsec,
-                &mut tmp,
-            )
-            .is_ok()
-            {
+            let created_nanos = i128::from(metadata.ctime)
+                .checked_mul(NANOS_PER_SEC_I128)
+                .and_then(|secs| secs.checked_add(i128::from(metadata.ctime_nsec)));
+            if let Some(created_nanos) = created_nanos {
+                create_datetime(strand, global, created_nanos, &mut tmp)?;
                 record.set(strand, created, &mut tmp)?;
             }
 

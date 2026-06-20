@@ -21,7 +21,7 @@ with_and_without_agent "file metadata basic" do
     assert_eq $meta.len 11
     assert_eq $meta.type :file:
     assert (type meta.modified DateTime)
-    assert (meta.modified.seconds > 0)
+    assert (meta.modified.unix_secs > 0.0)
 
   # Cleanup
   remove $test_path
@@ -38,7 +38,7 @@ with_and_without_agent "metadata timestamps" do
     let meta = f.metadata()
     let modified = meta.modified
     assert (type modified DateTime)
-    assert (modified.seconds > 0)  # positive timestamp
+    assert (modified.unix_secs > 0.0)  # positive timestamp
 
   # Cleanup
   remove $test_path

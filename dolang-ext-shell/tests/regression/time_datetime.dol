@@ -4,25 +4,38 @@ import time:
 
 let now = DateTime.now()
 assert (type now DateTime)
-assert (type now.seconds int)
-assert (type now.nanoseconds int)
+assert (type now.unix_secs float)
+assert (type now.unix_nanos int)
 
 assert $str(now).contains(":")
 assert_eq (str now) (now.rfc3339())
 
 let zero = (now - now)
 assert (type zero Duration)
-assert_eq $zero.seconds 0
-assert_eq $zero.nanoseconds 0
+assert_eq $zero.secs 0.0
+assert_eq $zero.nanos 0
 assert_eq (str zero) "0s"
 
 let parsed = DateTime.parse_rfc3339("2024-01-02T03:04:05.123456789Z")
 assert (type parsed DateTime)
 assert_eq (parsed.rfc3339()) "2024-01-02T03:04:05.123456789Z"
+assert_eq $parsed.unix_nanos 1704164645123456789
 assert_eq (str parsed) (parsed.rfc3339())
 
 let offset = DateTime.parse_rfc3339("2024-01-02T03:04:05+02:30")
 assert_eq (offset.rfc3339()) "2024-01-02T00:34:05Z"
+
+let from_secs = DateTime.from_unix(1.25)
+assert_eq (from_secs.rfc3339()) "1970-01-01T00:00:01.25Z"
+assert_eq $from_secs.unix_nanos 1250000000
+
+let from_nanos = DateTime.from_unix(nanos: -1)
+assert_eq (from_nanos.rfc3339()) "1969-12-31T23:59:59.999999999Z"
+assert_eq $from_nanos.unix_nanos -1
+
+let combined = DateTime.from_unix(1, nanos: 250000000)
+assert_eq (combined.rfc3339()) "1970-01-01T00:00:01.25Z"
+assert_eq $combined.unix_nanos 1250000000
 
 let invalid = try
   DateTime.parse_rfc3339("not-a-timestamp")
