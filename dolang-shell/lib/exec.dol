@@ -43,7 +43,7 @@ def inject_keys inject
 
 def cache_key path mode name prelude inject
   let state = digest.Blake3()
-  state.update $ str $ path.absolute().normal()
+  state.update $ str $ path.absolute().normalize()
   state.update "\0"
   state.update $mode
   state.update "\0"

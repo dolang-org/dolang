@@ -57,3 +57,10 @@ with_and_without_agent "Path division operator" do with_temp_dir do |dir|
   let child = (base / "subdir" / "file.txt")
 
   assert_eq $child (dir / "subdir" / "file.txt")
+
+with_and_without_agent "Path components absolute path" do with_temp_dir do |dir|
+  let path = (dir / "subdir" / "file.txt")
+  let parts = [...path.components()]
+
+  assert_eq $parts[(parts.len - 2)] "subdir"
+  assert_eq $parts[(parts.len - 1)] "file.txt"

@@ -22,7 +22,10 @@ use crate::{
         AlreadyExistsError, NotFoundError, PermissionDeniedError, ProcError, SysError,
         SysErrorObject, TimedOutError,
     },
-    fs::{file::File, path::Path},
+    fs::{
+        file::File,
+        path::{Path, PathComponentsIter},
+    },
     local::Local,
     program::Program,
     shell::{Stderr, Stdin, Stdout},
@@ -36,6 +39,7 @@ use crate::fs::readdir::DirEntryIter;
 
 pub(crate) struct Types<'v> {
     pub(crate) path: Type<'v, Path>,
+    pub(crate) path_components_iter: Type<'v, PathComponentsIter>,
     pub(crate) file: Type<'v, File>,
     pub(crate) dir_entry_iter: Type<'v, DirEntryIter>,
     pub(crate) glob_iter: Type<'v, crate::fs::glob::GlobIter>,
@@ -152,6 +156,7 @@ impl<'v> Global<'v> {
             types: Types {
                 file: builder.register_type(),
                 path: builder.register_type(),
+                path_components_iter: builder.register_type(),
                 dir_entry_iter: builder.register_type(),
                 glob_iter: builder.register_type(),
                 program: builder.register_type(),

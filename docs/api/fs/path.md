@@ -324,6 +324,21 @@ let file = Path "report"
 echo file.add_ext "txt"  # report.txt
 ```
 
+### `components()`
+
+Returns an iterator over the lexical components of the path.
+
+**Returns:** Iterator of [`str`](../std/str.md)
+
+```
+let path = Path "alpha/beta/gamma"
+assert_eq [...path.components()] ["alpha", "beta", "gamma"]
+
+let first ...rest = path.components()
+assert_eq $first "alpha"
+assert_eq [...rest] ["beta", "gamma"]
+```
+
 ### `canonical()`
 
 Returns the canonical, absolute form of the path with all intermediate
@@ -354,6 +369,78 @@ be read.
 let link = Path "my_link"
 let target = link.read_link()
 echo "Link points to: $target"
+```
+
+### `without_ext()`
+
+Returns a new path with the final extension removed.
+
+**Returns:** [Path](path.md)
+
+```
+let path = Path "archive.tar.gz"
+echo path.without_ext()  # archive.tar
+
+let plain = Path "Makefile"
+echo plain.without_ext()  # Makefile
+```
+
+### `with_ext ext`
+
+Returns a new path with the final extension replaced.
+
+**Parameters:**
+
+| Name  | Type                   | Description             |
+| ----- | ---------------------- | ----------------------- |
+| `ext` | [`str`](../std/str.md) | Replacement extension   |
+
+**Returns:** [Path](path.md)
+
+```
+let path = Path "archive.tar.gz"
+echo path.with_ext "zip"  # archive.tar.zip
+
+let plain = Path "Makefile"
+echo plain.with_ext "txt"  # Makefile.txt
+```
+
+### `with_name name`
+
+Returns a new path with the final component replaced.
+
+**Parameters:**
+
+| Name   | Type                   | Description                 |
+| ------ | ---------------------- | --------------------------- |
+| `name` | [`str`](../std/str.md) | Replacement final component |
+
+**Returns:** [Path](path.md)
+
+```
+let path = Path "src/main.rs"
+echo path.with_name "lib.rs"  # src/lib.rs
+```
+
+### `with_stem stem`
+
+Returns a new path with the final stem replaced, preserving the final
+extension when present.
+
+**Parameters:**
+
+| Name   | Type                   | Description         |
+| ------ | ---------------------- | ------------------- |
+| `stem` | [`str`](../std/str.md) | Replacement stem    |
+
+**Returns:** [Path](path.md)
+
+```
+let path = Path "archive.tar.gz"
+echo path.with_stem "bundle"  # bundle.gz
+
+let plain = Path "Makefile"
+echo plain.with_stem "Dockerfile"  # Dockerfile
 ```
 
 ### `remove :all? :ignore?`
@@ -526,7 +613,7 @@ let link = Path "current"
 link.chown group: 33 follow: false
 ```
 
-### `normal()`
+### `normalize()`
 
 Returns a normalized path with `.` and `..` components resolved without
 accessing the filesystem.
@@ -537,7 +624,7 @@ accessing the filesystem.
 
 ```
 let messy = Path "./foo/../bar/./baz"
-let clean = messy.normal()
+let clean = messy.normalize()
 echo $clean  # bar/baz
 ```
 
