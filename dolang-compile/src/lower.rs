@@ -2852,10 +2852,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.lower_non_const_defaults(params, span)?;
         }
 
-        self.block.insts.push(Inst(InstInfo::Dup, span));
-
-        let push = self.symtab.id(&self.bintab.id_str("push"));
-        let mut sig = Vec::new();
+        let mut sig = vec![sig::Arg::Pack];
         // End prologue
         for arg in body.iter() {
             sig.push(self.lower_arg(arg)?);
@@ -2865,8 +2862,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
         self.block
             .insts
-            .push(Inst(InstInfo::MethodCall(push, sig), span));
-        self.block.insts.push(Inst(InstInfo::Pop, span));
+            .push(Inst(InstInfo::Builtin(builtin::ARGS, sig), span));
 
         // Epilogue
         if scope.has_upvars() {
@@ -2920,10 +2916,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.lower_non_const_defaults(params, span)?;
         }
 
-        self.block.insts.push(Inst(InstInfo::Dup, span));
-
-        let push = self.symtab.id(&self.bintab.id_str("push"));
-        let mut sig = Vec::new();
+        let mut sig = vec![sig::Arg::Pack];
         // End prologue
         for elem in body.iter() {
             sig.push(self.lower_array_elem(elem)?);
@@ -2933,8 +2926,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
         self.block
             .insts
-            .push(Inst(InstInfo::MethodCall(push, sig), span));
-        self.block.insts.push(Inst(InstInfo::Pop, span));
+            .push(Inst(InstInfo::Builtin(builtin::ARGS, sig), span));
 
         // Epilogue
         if scope.has_upvars() {
@@ -2988,10 +2980,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.lower_non_const_defaults(params, span)?;
         }
 
-        self.block.insts.push(Inst(InstInfo::Dup, span));
-
-        let push = self.symtab.id(&self.bintab.id_str("push"));
-        let mut sig = Vec::new();
+        let mut sig = vec![sig::Arg::Pack];
         // End prologue
         for elem in body.iter() {
             let (arg1, arg2) = self.lower_dict_elem(elem)?;
@@ -3005,8 +2994,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
         self.block
             .insts
-            .push(Inst(InstInfo::MethodCall(push, sig), span));
-        self.block.insts.push(Inst(InstInfo::Pop, span));
+            .push(Inst(InstInfo::Builtin(builtin::ARGS, sig), span));
 
         // Epilogue
         if scope.has_upvars() {

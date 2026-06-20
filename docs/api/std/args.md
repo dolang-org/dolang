@@ -1,16 +1,17 @@
 # args
 
-Iterator over an argument pack.
+Immutable argument pack.
 
 `args` values are returned by variadic captures such as `...rest` and by
 calling the `args` type object. Iterating an `args` value yields `[key, value]`
-pairs. Positional items use their positional index as the key.
+pairs. Positional items use their positional index as the key. Iterating or
+spreading a pack does not consume it.
 
 ## Constructor
 
 ### `args ...`
 
-Creates an argument-pack iterator from positional and keyed arguments.
+Creates an argument pack from positional and keyed arguments.
 
 **Returns:** `args`
 
@@ -23,49 +24,40 @@ assert_eq [...pack] [[0, 1], [:name:, "Alice"], [1, 2]]
 
 ### `len`
 
-Number of remaining items in the argument pack.
+Number of items in the argument pack.
 
 ```
-let rest = args 1 2 name: Alice
-assert_eq $rest.len 3
+let pack = args 1 2 name: Alice
+assert_eq $pack.len 3
 ```
 
 ## Methods
 
-### `push ...args`
+### `pos_only`
 
-Appends arguments to the end of the pack.
+Returns an iterator over positional values.
 
-```
-let rest = args 1
-rest.push 2 name: Alice
-assert_eq [...rest] [[0, 1], [1, 2], [:name:, "Alice"]]
-```
-
-### `pos`
-
-Consumes the remaining pack and returns an iterator over positional values.
-
-Raises [`UnexpectedKeyError`](./unexpected-key-error.md) if any remaining item
-is keyed.
+Raises [`UnexpectedKeyError`](./unexpected-key-error.md) if the pack contains
+any keyed items.
 
 ```
-let rest = args 1 2 3
-let pos = rest.pos()
+let pack = args 1 2 3
+let pos = pack.pos_only()
 assert_eq [...pos] [1, 2, 3]
-assert_eq (rest.next default: :done:) :done:
+assert_eq [...pack] [[0, 1], [1, 2], [2, 3]]
 ```
 
 ### `pos_keys`
 
-Consumes the remaining pack and returns a tuple of positional values and keyed
-arguments.
+Returns a tuple of positional values and keyed entries.
 
 The first item is an iterator over positional values. The second item is an
-`args` value containing only keyed items.
+iterator over keyed `[key, value]` pairs.
 
 ```
-let pos keyed = (args 1 left: 2 3 right: 4).pos_keys()
+let pack = args 1 left: 2 3 right: 4
+let pos keyed = pack.pos_keys()
 assert_eq [...pos] [1, 3]
 assert_eq [...keyed] [[:left:, 2], [:right:, 4]]
+assert_eq [...pack] [[0, 1], [:left:, 2], [1, 3], [:right:, 4]]
 ```

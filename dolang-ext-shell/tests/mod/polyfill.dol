@@ -6,7 +6,7 @@ pub let cat = nil
 
 if (sys.os_info().family == :windows:)
   let cmd = run.cmd
-  cat = do |...args| for arg = args.pos()
+  cat = do |...args| for arg = args.pos_only()
     cmd /c type $arg
   echo = do |...args| if (args.len == 0)
     cmd /c echo.

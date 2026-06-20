@@ -22,19 +22,25 @@ let entries = (["foo=bar", "baz=qux"].iter().map do |e| e.split "=")
 assert_eq (dict entries) {"foo": "bar", "baz": "qux"}
 
 let arr = [...{1, foo: "bar", 2}]
-assert_eq $arr[0] 1
+assert_eq $arr[0][0] 0
+assert_eq $arr[0][1] 1
 assert_eq $arr[1][0] :foo:
 assert_eq $arr[1][1] "bar"
-assert_eq $arr[2] 2
+assert_eq $arr[2][0] 1
+assert_eq $arr[2][1] 2
 
 arr = array {1, foo: "bar", 2}
-assert_eq $arr[0] 1
+assert_eq $arr[0][0] 0
+assert_eq $arr[0][1] 1
 assert_eq $arr[1][0] :foo:
 assert_eq $arr[1][1] "bar"
-assert_eq $arr[2] 2
+assert_eq $arr[2][0] 1
+assert_eq $arr[2][1] 2
 
 let tup = tuple({1, foo: "bar", 2})
-assert_eq $tup[0] 1
+assert_eq $tup[0][0] 0
+assert_eq $tup[0][1] 1
 assert_eq $tup[1][0] :foo:
 assert_eq $tup[1][1] "bar"
-assert_eq $tup[2] 2
+assert_eq $tup[2][0] 1
+assert_eq $tup[2][1] 2

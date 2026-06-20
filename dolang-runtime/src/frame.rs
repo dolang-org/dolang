@@ -197,13 +197,13 @@ impl<'v> CallFrame<'v> {
                 Ok(Ok(())) => (),
             };
             if let Some(rest) = rest {
-                let args = arg::ArgIter::new(rest);
+                let args = arg::ArgPack::new(rest.into_iter().flatten().collect());
                 (*slots
                     .get_unchecked(offset + pos_count + unpack.keys.len())
                     .get())
                 .store(Value::from_object(GcObj::new(
                     inner.vm().arena(),
-                    inner.vm().builtin_types().arg_iter,
+                    inner.vm().builtin_types().arg_pack,
                     args,
                 )));
             }

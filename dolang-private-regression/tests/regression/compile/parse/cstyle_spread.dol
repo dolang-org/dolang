@@ -1,5 +1,5 @@
 def capture ...args
-  [...args.pos()]
+  [...args.pos_only()]
 
 assert_eq (capture(...[1, 2])) [1, 2]
 assert_eq (capture(0, ...[1, 2], 3)) [0, 1, 2, 3]
