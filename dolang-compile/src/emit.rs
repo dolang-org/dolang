@@ -492,8 +492,8 @@ impl<'a> Emitter<'a> {
             .iter()
             .map(|(_, c)| match c {
                 Const::Nil => file::Const::Nil,
-                Const::I64(v) => file::Const::I64(*v),
-                Const::VerbatimI64(v, id) => file::Const::VerbatimI64(
+                Const::Int(v) => file::Const::Int(*v),
+                Const::VerbatimInt(v, id) => file::Const::VerbatimInt(
                     *v,
                     file::StrId {
                         start: id.start(),

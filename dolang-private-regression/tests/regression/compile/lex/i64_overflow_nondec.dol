@@ -1,6 +1,0 @@
-echo (0x10000000000000000)
-# error: overflow in constant
-#   --> i64_overflow_nondec.dol:LL:LL
-#    |
-# LL | echo (0x10000000000000000)
-#    |       ^^^^^^^^^^^^^^^^^^^

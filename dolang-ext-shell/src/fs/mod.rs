@@ -25,6 +25,8 @@ use crate::{
 
 use glob::{GlobIter, GlobIterAnnex};
 
+const NANOS_PER_SEC_I128: i128 = 1_000_000_000;
+
 #[cfg(unix)]
 pub(crate) mod unix {
     use super::*;
@@ -123,41 +125,29 @@ async fn metadata_to_record<'v, 's>(
             .await?;
 
             let modified = global.syms.modified;
-            if create_datetime(
-                strand,
-                global,
-                metadata.mtime,
-                metadata.mtime_nsec,
-                &mut tmp,
-            )
-            .is_ok()
-            {
+            let modified_nanos = i128::from(metadata.mtime)
+                .checked_mul(NANOS_PER_SEC_I128)
+                .and_then(|secs| secs.checked_add(i128::from(metadata.mtime_nsec)));
+            if let Some(modified_nanos) = modified_nanos {
+                create_datetime(strand, global, modified_nanos, &mut tmp)?;
                 record.set(strand, modified, &mut tmp)?;
             }
 
             let accessed = global.syms.accessed;
-            if create_datetime(
-                strand,
-                global,
-                metadata.atime,
-                metadata.atime_nsec,
-                &mut tmp,
-            )
-            .is_ok()
-            {
+            let accessed_nanos = i128::from(metadata.atime)
+                .checked_mul(NANOS_PER_SEC_I128)
+                .and_then(|secs| secs.checked_add(i128::from(metadata.atime_nsec)));
+            if let Some(accessed_nanos) = accessed_nanos {
+                create_datetime(strand, global, accessed_nanos, &mut tmp)?;
                 record.set(strand, accessed, &mut tmp)?;
             }
 
             let created = global.syms.created;
-            if create_datetime(
-                strand,
-                global,
-                metadata.ctime,
-                metadata.ctime_nsec,
-                &mut tmp,
-            )
-            .is_ok()
-            {
+            let created_nanos = i128::from(metadata.ctime)
+                .checked_mul(NANOS_PER_SEC_I128)
+                .and_then(|secs| secs.checked_add(i128::from(metadata.ctime_nsec)));
+            if let Some(created_nanos) = created_nanos {
+                create_datetime(strand, global, created_nanos, &mut tmp)?;
                 record.set(strand, created, &mut tmp)?;
             }
 
@@ -579,7 +569,7 @@ fn parse_chown_identity<'v, 's>(
     value: &dolang::runtime::Value<'v>,
     field: &'static str,
 ) -> Result<'v, 's, dolang_shell_vfs::ChownIdentity> {
-    if let Some(value) = value.as_i64(strand) {
+    if let Some(value) = value.as_int(strand) {
         let value = u32::try_from(value)
             .map_err(|_| Error::type_error(strand, "expected non-negative int or str"))?;
         Ok(dolang_shell_vfs::ChownIdentity::Id(value))
@@ -766,12 +756,7 @@ async fn glob<'v, 's>(
         .ok_or_else(|| Error::type_error(strand, "pattern: expected str"))?
         .to_string();
     let max_depth = match max_depth {
-        Some(v) => Some(
-            v.as_i64(strand)
-                .ok_or_else(|| Error::type_error(strand, "max_depth: expected int"))?
-                .try_into()
-                .map_err(|_| Error::overflow(strand))?,
-        ),
+        Some(v) => Some(v.to_usize(strand)?),
         None => None,
     };
     let follow = match follow {
@@ -1012,10 +997,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .function("chmod", async move |strand, args, _out| {
             let ([path, mode], []) = unpack!(strand, args, 2, 0)?;
             let path = path_from_value(strand, global, &path)?;
-            let mode = mode
-                .as_i64(strand)
-                .ok_or_else(|| Error::type_error(strand, "expected int"))?
-                as u32;
+            let mode = mode.to_u32(strand)?;
             chmod(strand, global, &path, mode).await
         })
         .function("set_timestamps", async move |strand, args, _out| {

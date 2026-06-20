@@ -1,6 +1,6 @@
 # Arithmetic
-let min = -9223372036854775808
-let max = 9223372036854775807
+let min = -170141183460469231731687303715884105728
+let max = 170141183460469231731687303715884105727
 assert_eq  (1 + 1)   2
 assert_eq  (2 - 1)   1
 assert_eq  (2 * 2)   4
@@ -16,13 +16,13 @@ assert_eq  (min - min) 0
 assert_eq  (max - max) 0
 assert_eq  (min + max) -1
 # Boxed/unboxed arithmetic
-assert_eq  (min + 1) -9223372036854775807
-assert_eq  (max - 1) 9223372036854775806
+assert_eq  (min + 1) -170141183460469231731687303715884105727
+assert_eq  (max - 1) 170141183460469231731687303715884105726
 assert_eq  (0 + min) $min
 assert_eq  (0 + max) $max
-assert_eq  (0 - max) -9223372036854775807
-assert_eq  (min // 8) -1152921504606846976
-assert_eq  (max // 8) 1152921504606846975
+assert_eq  (0 - max) -170141183460469231731687303715884105727
+assert_eq  (min // 8) -21267647932558653966460912964485513216
+assert_eq  (max // 8) 21267647932558653966460912964485513215
 assert_eq  (1 // min) 0
 assert_eq  (1 // max) 0
 assert_eq  (8 << 1) 16
@@ -37,7 +37,7 @@ catch _
 assert $caught
 
 let caught = try
-  (8 >> 64)
+  (8 >> 128)
 catch _
   true
 assert $caught

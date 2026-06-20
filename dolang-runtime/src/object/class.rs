@@ -1099,7 +1099,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 Some(ClassEntry::Method(v)) => {
                     strand.with_slots_sync(move |strand, [mut result]| {
                         strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
-                        let v = result.as_i64(strand).ok_or_else(|| {
+                        let v = result.to_int(strand).map_err(|_| {
                             Error::type_error(strand, "expected int result from (hash)")
                         })?;
                         v.hash(hasher);

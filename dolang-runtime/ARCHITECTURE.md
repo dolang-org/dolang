@@ -13,7 +13,7 @@ etc.
 ## Value Representation
 
 Values use a tagged pointer scheme where LSB bits encode type tags. Primitives
-(nil, i64, f64, bool) are immediate; strings, objects, and numeric values that
+(nil, int, f64, bool) are immediate; strings, objects, and numeric values that
 don't fit in the immediate encoding are heap-allocated. Storage abstractions
 (`Slot`, `Input`, `Output`) prevent external code from holding raw `Value`
 instances to uphold GC invariants.

@@ -110,24 +110,24 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
 
             // Parse retry configuration with defaults
             let busy_retries = if let Some(v) = retries {
-                v.as_i64(strand)
-                    .ok_or_else(|| Error::type_error(strand, "busy_retries: expected int"))?
+                v.to_i64(strand)
+                    .map_err(|_| Error::type_error(strand, "busy_retries: expected int"))?
                     .try_into()
                     .map_err(|_| Error::overflow(strand))?
             } else {
                 connection::DEFAULT_RETRIES
             };
             let busy_min_wait = if let Some(v) = min_wait {
-                v.as_i64(strand)
-                    .ok_or_else(|| Error::type_error(strand, "busy_min_wait: expected int"))?
+                v.to_i64(strand)
+                    .map_err(|_| Error::type_error(strand, "busy_min_wait: expected int"))?
                     .try_into()
                     .map_err(|_| Error::overflow(strand))?
             } else {
                 connection::DEFAULT_MIN_WAIT
             };
             let busy_max_wait = if let Some(v) = max_wait {
-                v.as_i64(strand)
-                    .ok_or_else(|| Error::type_error(strand, "busy_max_wait: expected int"))?
+                v.to_i64(strand)
+                    .map_err(|_| Error::type_error(strand, "busy_max_wait: expected int"))?
                     .try_into()
                     .map_err(|_| Error::overflow(strand))?
             } else {

@@ -100,7 +100,7 @@ open data.txt r do |file|
   echo "Size: $(meta.len)"
   echo "Type: $(meta.type)"
   echo "Modified: $(meta.modified)"
-  echo "Modified seconds: $(meta.modified.seconds)"
+  echo "Modified seconds: $(meta.modified.unix_secs)"
 
   # Unix-specific metadata
   if (meta.mode != nil)

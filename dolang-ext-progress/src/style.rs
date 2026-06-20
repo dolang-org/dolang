@@ -483,8 +483,8 @@ pub(crate) fn parse_style<'v, 's>(
             if style_val.index(strand, key, &mut cat).is_ok() && !cat.is_nil() {
                 if cat.index(strand, keys.width, &mut val).is_ok() && !val.is_nil() {
                     let n = val
-                        .as_i64(strand)
-                        .ok_or_else(|| Error::type_error(strand, "style: width: expected `int`"))?;
+                        .to_i64(strand)
+                        .map_err(|_| Error::type_error(strand, "style: width: expected `int`"))?;
                     *wc.width = n as u16;
                 }
                 parse_element_style(strand, &cat, keys, wc.es)?;

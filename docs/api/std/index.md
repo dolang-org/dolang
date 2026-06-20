@@ -25,7 +25,7 @@ The `std` module provides core language facilities.
 | [`ImmutableError`](./immutable-error.md)          | Mutation of an immutable value             |
 | [`ImportError`](./import-error.md)                | Module import failure                      |
 | [`IndexError`](./index-error.md)                  | Out-of-bounds index access                 |
-| [`int`](./int.md)                                 | 64-bit signed integer                      |
+| [`int`](./int.md)                                 | 128-bit signed integer                     |
 | [`InterruptError`](./interrupt-error.md)          | External interruption                      |
 | [`Iter`](./iter.md)                               | Abstract iterator type                     |
 | [`Iterable`](./iterable.md)                       | Abstract iterable type                     |

@@ -515,7 +515,8 @@ impl<'v> Object<'v> for File {
                 let ([], [size]) = unpack!(strand, args, 0, 1)?;
                 let size: Option<usize> = size
                     .map(|s| {
-                        s.as_i64(strand)
+                        s.to_i64(strand)
+                            .ok()
                             .and_then(|n| usize::try_from(n).ok())
                             .ok_or_else(|| {
                                 Error::type_error(strand, "size must be a non-negative integer")

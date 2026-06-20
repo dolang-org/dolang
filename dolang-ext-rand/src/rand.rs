@@ -9,8 +9,8 @@ fn require_i64<'v, 's>(
     msg: &'static str,
 ) -> Result<'v, 's, i64> {
     value
-        .as_i64(strand)
-        .ok_or_else(|| Error::type_error(strand, msg))
+        .to_i64(strand)
+        .map_err(|_| Error::type_error(strand, msg))
 }
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {

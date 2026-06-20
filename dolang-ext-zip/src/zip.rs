@@ -369,8 +369,8 @@ impl<'v> Object<'v> for File {
                 let global = *this.annex();
                 let ([size], []) = unpack!(strand, args, 1, 0)?;
                 let size: usize = size
-                    .as_i64(strand)
-                    .ok_or_else(|| Error::type_error(strand, "expected integer"))?
+                    .to_i64(strand)
+                    .map_err(|_| Error::type_error(strand, "expected integer"))?
                     .try_into()
                     .map_err(|_| Error::overflow(strand))?;
 

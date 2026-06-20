@@ -5,7 +5,7 @@ hold any type.
 
 ## Integers (`int`)
 
-64-bit signed integers.
+128-bit signed integers.
 
 ```
 let x = 42

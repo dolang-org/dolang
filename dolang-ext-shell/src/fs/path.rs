@@ -454,8 +454,8 @@ impl<'v> Object<'v> for Path {
             .method("chmod", async move |this, strand, args, _out| {
                 let ([mode], []) = unpack!(strand, args, 1, 0)?;
                 let mode = mode
-                    .as_i64(strand)
-                    .ok_or_else(|| Error::type_error(strand, "expected int"))?
+                    .to_i64(strand)
+                    .map_err(|_| Error::type_error(strand, "expected int"))?
                     as u32;
                 super::chmod(strand, this.annex().global, &this.annex().inner, mode).await
             })

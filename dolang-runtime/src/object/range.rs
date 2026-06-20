@@ -48,7 +48,7 @@ impl<'v> Range<'v> {
         strand: &'a mut Strand<'v, 's>,
         len: usize,
     ) -> Result<'v, 's, (usize, usize)> {
-        if !self.step.is_nil() && self.step.as_i64(strand) != Some(1) {
+        if !self.step.is_nil() && self.step.to_i64(strand).ok() != Some(1) {
             return Err(Error::index(strand));
         }
         let start = if self.start.is_nil() {
@@ -57,8 +57,8 @@ impl<'v> Range<'v> {
             crate::object::index::position(
                 len,
                 self.start
-                    .as_i64(strand)
-                    .ok_or_else(|| Error::index(strand))?,
+                    .to_i64(strand)
+                    .map_err(|_| Error::index(strand))?,
             )
             .ok_or_else(|| Error::index(strand))?
         };
@@ -67,9 +67,7 @@ impl<'v> Range<'v> {
         } else {
             crate::object::index::position(
                 len,
-                self.end
-                    .as_i64(strand)
-                    .ok_or_else(|| Error::index(strand))?,
+                self.end.to_i64(strand).map_err(|_| Error::index(strand))?,
             )
             .ok_or_else(|| Error::index(strand))?
         };

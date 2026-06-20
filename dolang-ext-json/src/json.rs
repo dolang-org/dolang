@@ -33,7 +33,9 @@ impl<'v, 's, 'a> Serialize for SerializeValue<'v, 's, 'a> {
         match self.value.view(strand.vm()) {
             View::Nil => serializer.serialize_none(),
             View::Bool(b) => serializer.serialize_bool(b),
-            View::Int(i) => serializer.serialize_i64(i),
+            View::Int(i) => serializer.serialize_i64(i64::try_from(i).map_err(|_| {
+                ser::Error::custom("JSON integers outside i64 range are not supported")
+            })?),
             View::Float(f) => serializer.serialize_f64(f),
             View::Str(s) => strand.access(|access| serializer.serialize_str(s.as_str(access))),
             View::Bin(_) => Err(ser::Error::custom(
@@ -182,6 +184,14 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
+        Output::set(self.0, &mut self.1, i128::from(v));
+        Ok(())
+    }
+
+    fn visit_i128<E>(mut self, v: i128) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
         Output::set(self.0, &mut self.1, v);
         Ok(())
     }
@@ -190,11 +200,8 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(
-            self.0,
-            &mut self.1,
-            TryInto::<i64>::try_into(v).map_err(|_| de::Error::custom("numeric overflow"))?,
-        );
+        let value = i64::try_from(v).map_err(|_| de::Error::custom("numeric overflow"))?;
+        Output::set(self.0, &mut self.1, value);
         Ok(())
     }
 

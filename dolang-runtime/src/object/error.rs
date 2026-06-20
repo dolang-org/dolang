@@ -460,8 +460,8 @@ fn is_runtime_superkind(kind: ErrorKind) -> bool {
 
 fn expect_index<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, usize> {
     let index = value
-        .as_i64(strand)
-        .ok_or_else(|| Error::type_error(strand, "expected int"))?;
+        .to_i64(strand)
+        .map_err(|_| Error::type_error(strand, "expected int"))?;
     usize::try_from(index).map_err(|_| Error::type_error(strand, "expected non-negative int"))
 }
 

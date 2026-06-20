@@ -2,6 +2,15 @@ import json:
   - to_str
   - from_str
 
+def assert_err_contains needle block
+  let res = try
+    block()
+    false
+  catch e
+    assert $ (str e).contains $needle
+    true
+  assert $res
+
 # Primitives
 assert_eq (from_str "null") nil
 assert_eq (from_str "true") true
@@ -80,9 +89,10 @@ assert_eq $parsed["key"] "test"
 assert_eq (from_str $ to_str []) []
 assert_eq (from_str $ to_str {}) {}
 
-# Large numbers (within i64 range)
+# Large integers
 assert_eq (from_str "9223372036854775807") 9223372036854775807
 assert_eq (from_str "-9223372036854775808") -9223372036854775808
+assert_err_contains "outside i64 range" do to_str 170141183460469231731687303715884105727
 
 # Floating point preservation
 assert_eq (from_str "1.5") 1.5

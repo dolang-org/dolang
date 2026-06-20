@@ -1,6 +1,6 @@
 # int
 
-64-bit signed integers.
+128-bit signed integers.
 
 ## Constructor
 

@@ -296,7 +296,7 @@ unsafe fn bind_keyword_params<'v, 's>(
                     let idx = sqlite3_bind_parameter_index(raw, name.as_ptr());
                     if value.is_nil() {
                         sqlite3_bind_null(raw, idx)
-                    } else if let Some(i) = value.as_i64(strand) {
+                    } else if let Ok(i) = value.to_i64(strand) {
                         sqlite3_bind_int64(raw, idx, i)
                     } else if let Some(f) = value.as_f64(strand) {
                         sqlite3_bind_double(raw, idx, f)

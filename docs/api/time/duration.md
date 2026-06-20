@@ -4,10 +4,10 @@ A signed time span with nanosecond precision.
 
 ## Fields
 
-| Field         | Type                   | Description                                   |
-| ------------- | ---------------------- | --------------------------------------------- |
-| `seconds`     | [`int`](../std/int.md) | Floor-divided whole seconds component         |
-| `nanoseconds` | [`int`](../std/int.md) | Non-negative fractional nanoseconds component |
+| Field   | Type                       | Description                  |
+| ------- | -------------------------- | ---------------------------- |
+| `secs`  | [`float`](../std/float.md) | Approximate seconds view     |
+| `nanos` | [`int`](../std/int.md)     | Exact total nanoseconds view |
 
 ## String Form
 

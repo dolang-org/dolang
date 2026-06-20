@@ -389,8 +389,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 let (_, [code]) = unpack!(strand, args, 0, 1)?;
                 let rc = match code {
                     Some(slot) => slot
-                        .as_i64(strand)
-                        .ok_or_else(|| Error::type_error(strand, "exit: not an integer"))?,
+                        .to_i64(strand)
+                        .map_err(|_| Error::type_error(strand, "exit: not an integer"))?,
                     None => 0i64,
                 };
                 let code = rc.try_into().map_err(|_| Error::overflow(strand))?;

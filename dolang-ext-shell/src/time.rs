@@ -11,14 +11,13 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::global::Global;
 
-const NANOS_PER_SEC_I64: i64 = 1_000_000_000;
 const NANOS_PER_SEC_I128: i128 = 1_000_000_000;
+const NANOS_PER_SEC_F64: f64 = 1_000_000_000.0;
 
 pub(crate) struct DateTime;
 
 pub(crate) struct DateTimeAnnex {
-    secs: i64,
-    nanos: u32,
+    total_nanos: i128,
 }
 
 pub(crate) struct Duration;
@@ -28,71 +27,56 @@ pub(crate) struct DurationAnnex {
 }
 
 impl DateTimeAnnex {
-    fn normalize_unix_parts(secs: i64, nanos: i64) -> Option<(i64, u32)> {
-        let carry = nanos.div_euclid(NANOS_PER_SEC_I64);
-        let nanos = nanos.rem_euclid(NANOS_PER_SEC_I64) as u32;
-        let secs = secs.checked_add(carry)?;
-        Some((secs, nanos))
-    }
-
-    fn from_unix_parts(secs: i64, nanos: i64) -> Option<Self> {
-        let (secs, nanos) = Self::normalize_unix_parts(secs, nanos)?;
-        Some(Self { secs, nanos })
+    fn from_total_nanos(total_nanos: i128) -> Self {
+        Self { total_nanos }
     }
 
     fn total_nanos(&self) -> i128 {
-        i128::from(self.secs) * NANOS_PER_SEC_I128 + i128::from(self.nanos)
+        self.total_nanos
     }
 
     pub(crate) fn from_system_time(time: SystemTime) -> io::Result<Self> {
         match time.duration_since(SystemTime::UNIX_EPOCH) {
             Ok(duration) => {
-                let secs = i64::try_from(duration.as_secs()).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflow")
-                })?;
-                Ok(Self {
-                    secs,
-                    nanos: duration.subsec_nanos(),
-                })
+                let total_nanos = i128::from(duration.as_secs())
+                    .checked_mul(NANOS_PER_SEC_I128)
+                    .and_then(|secs| secs.checked_add(i128::from(duration.subsec_nanos())))
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflow")
+                    })?;
+                Ok(Self { total_nanos })
             }
             Err(err) => {
                 let duration = err.duration();
-                let secs = i64::try_from(duration.as_secs()).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflow")
-                })?;
-                if duration.subsec_nanos() == 0 {
-                    let secs = 0i64.checked_sub(secs).ok_or_else(|| {
+                let total_nanos = i128::from(duration.as_secs())
+                    .checked_mul(NANOS_PER_SEC_I128)
+                    .and_then(|secs| secs.checked_add(i128::from(duration.subsec_nanos())))
+                    .and_then(|total_nanos| total_nanos.checked_neg())
+                    .ok_or_else(|| {
                         io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflow")
                     })?;
-                    Ok(Self { secs, nanos: 0 })
-                } else {
-                    let secs = 0i64
-                        .checked_sub(secs)
-                        .and_then(|v| v.checked_sub(1))
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflow")
-                        })?;
-                    Ok(Self {
-                        secs,
-                        nanos: 1_000_000_000u32 - duration.subsec_nanos(),
-                    })
-                }
+                Ok(Self { total_nanos })
             }
         }
     }
 
     pub(crate) fn to_system_time(&self) -> io::Result<SystemTime> {
-        if self.secs >= 0 {
+        if self.total_nanos >= 0 {
+            let total_nanos = self.total_nanos as u128;
+            let secs = total_nanos / (NANOS_PER_SEC_I128 as u128);
+            let nanos = (total_nanos % (NANOS_PER_SEC_I128 as u128)) as u32;
+            let secs = u64::try_from(secs)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflow"))?;
             SystemTime::UNIX_EPOCH
-                .checked_add(std::time::Duration::new(self.secs as u64, self.nanos))
+                .checked_add(std::time::Duration::new(secs, nanos))
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflow"))
         } else {
-            let secs_abs = self.secs.unsigned_abs();
-            let duration = if self.nanos == 0 {
-                std::time::Duration::new(secs_abs, 0)
-            } else {
-                std::time::Duration::new(secs_abs - 1, 1_000_000_000u32 - self.nanos)
-            };
+            let total_nanos = self.total_nanos.unsigned_abs();
+            let secs = total_nanos / (NANOS_PER_SEC_I128 as u128);
+            let nanos = (total_nanos % (NANOS_PER_SEC_I128 as u128)) as u32;
+            let secs = u64::try_from(secs)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflow"))?;
+            let duration = std::time::Duration::new(secs, nanos);
             SystemTime::UNIX_EPOCH
                 .checked_sub(duration)
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflow"))
@@ -105,11 +89,8 @@ impl DurationAnnex {
         Self { total_nanos }
     }
 
-    fn parts_floor(&self) -> Option<(i64, i64)> {
-        let secs = self.total_nanos.div_euclid(NANOS_PER_SEC_I128);
-        let nanos = self.total_nanos.rem_euclid(NANOS_PER_SEC_I128);
-        let secs = i64::try_from(secs).ok()?;
-        Some((secs, nanos as i64))
+    fn secs(&self) -> f64 {
+        self.total_nanos as f64 / NANOS_PER_SEC_F64
     }
 
     fn write_seconds(&self, w: &mut dyn fmt::Write) -> fmt::Result {
@@ -155,6 +136,47 @@ impl DurationAnnex {
     }
 }
 
+fn float_seconds_to_nanos<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: f64,
+    context: &str,
+) -> Result<'v, 's, i128> {
+    if !value.is_finite() {
+        return Err(Error::type_error(
+            strand,
+            format!("{context}: expected finite float seconds"),
+        ));
+    }
+
+    let scaled = value * NANOS_PER_SEC_F64;
+    if !scaled.is_finite() || scaled < i128::MIN as f64 || scaled > i128::MAX as f64 {
+        return Err(Error::overflow(strand));
+    }
+
+    Ok(scaled.round() as i128)
+}
+
+fn value_to_unix_seconds_nanos<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &dolang::runtime::Value<'v>,
+    context: &str,
+) -> Result<'v, 's, i128> {
+    if let Some(value) = value.as_int(strand) {
+        return value
+            .checked_mul(NANOS_PER_SEC_I128)
+            .ok_or_else(|| Error::overflow(strand));
+    }
+
+    if let Some(value) = value.as_f64(strand) {
+        return float_seconds_to_nanos(strand, value, context);
+    }
+
+    Err(Error::type_error(
+        strand,
+        format!("{context}: expected int or float seconds"),
+    ))
+}
+
 fn format_datetime_rfc3339<'v, 's>(
     strand: &mut Strand<'v, 's>,
     datetime: &DateTimeAnnex,
@@ -175,14 +197,15 @@ fn coerce_sleep_duration<'v, 's>(
         return duration.annex().to_std_duration(strand);
     }
 
-    if let Some(i) = value.as_i64(strand) {
+    if let Some(i) = value.as_int(strand) {
         if i < 0 {
             return Err(Error::runtime(
                 strand,
                 "sleep duration must be non-negative",
             ));
         }
-        return Ok(std::time::Duration::from_secs(i as u64));
+        let secs = u64::try_from(i).map_err(|_| Error::overflow(strand))?;
+        return Ok(std::time::Duration::from_secs(secs));
     }
 
     if let Some(f) = value.as_f64(strand) {
@@ -215,12 +238,10 @@ pub(crate) fn datetime_to_system_time<'v, 's>(
 pub(crate) fn create_datetime<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    secs: i64,
-    nanos: i64,
+    total_nanos: i128,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let annex = DateTimeAnnex::from_unix_parts(secs, nanos)
-        .ok_or_else(|| Error::runtime(strand, "invalid DateTime"))?;
+    let annex = DateTimeAnnex::from_total_nanos(total_nanos);
     global
         .types
         .date_time
@@ -235,14 +256,19 @@ impl<'v> Object<'v> for DateTime {
     type Type = ();
     type TypeAnnex = ();
 
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let nanos_sym = builder.sym("nanos");
         builder
-            .get("seconds", |this, strand, out| {
-                Output::set(strand, out, this.annex().secs);
+            .get("unix_secs", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    this.annex().total_nanos() as f64 / NANOS_PER_SEC_F64,
+                );
                 Ok(())
             })
-            .get("nanoseconds", |this, strand, out| {
-                Output::set(strand, out, i64::from(this.annex().nanos));
+            .get("unix_nanos", |this, strand, out| {
+                Output::set(strand, out, this.annex().total_nanos());
                 Ok(())
             })
             .type_method("now", async move |this, strand, args, out| {
@@ -252,20 +278,32 @@ impl<'v> Object<'v> for DateTime {
                 Ok(())
             })
             .type_method("from_unix", async move |this, strand, args, out| {
-                let ([secs], [nanos]) = unpack!(strand, args, 1, 1)?;
-                let secs = secs
-                    .as_i64(strand)
-                    .ok_or_else(|| Error::type_error(strand, "from_unix: expected int seconds"))?;
-                let nanos = match nanos {
-                    Some(value) => value.as_i64(strand).ok_or_else(|| {
-                        Error::type_error(strand, "from_unix: expected int nanoseconds")
-                    })?,
-                    None => 0,
+                let ([], [secs, nanos]) = unpack!(strand, args, 0, 1, nanos_sym = None)?;
+                let nanos = nanos.map_or(Ok(None), |value| {
+                    value
+                        .as_int(strand)
+                        .ok_or_else(|| Error::type_error(strand, "from_unix: expected int nanos"))
+                        .map(Some)
+                })?;
+                let total_nanos = if let Some(secs) = secs {
+                    let secs_nanos = value_to_unix_seconds_nanos(strand, &secs, "from_unix")?;
+                    secs_nanos
+                        .checked_add(nanos.unwrap_or(0))
+                        .ok_or_else(|| Error::overflow(strand))?
+                } else if let Some(nanos) = nanos {
+                    nanos
+                } else {
+                    return Err(Error::type_error(
+                        strand,
+                        "from_unix: expected seconds, nanos, or both",
+                    ));
                 };
-                let Some(annex) = DateTimeAnnex::from_unix_parts(secs, nanos) else {
-                    return Err(Error::overflow(strand));
-                };
-                this.create_with_annex(strand, DateTime, annex, out);
+                this.create_with_annex(
+                    strand,
+                    DateTime,
+                    DateTimeAnnex::from_total_nanos(total_nanos),
+                    out,
+                );
                 Ok(())
             })
             .type_method("parse_rfc3339", async move |this, strand, args, out| {
@@ -276,12 +314,7 @@ impl<'v> Object<'v> for DateTime {
                     .to_string();
                 let datetime = OffsetDateTime::parse(&text, &Rfc3339)
                     .map_err(|err| Error::runtime(strand, err))?;
-                let nanos = datetime.unix_timestamp_nanos();
-                let secs = nanos.div_euclid(NANOS_PER_SEC_I128);
-                let nanos = nanos.rem_euclid(NANOS_PER_SEC_I128);
-                let secs = i64::try_from(secs).map_err(|_| Error::overflow(strand))?;
-                let annex = DateTimeAnnex::from_unix_parts(secs, nanos as i64)
-                    .ok_or_else(|| Error::overflow(strand))?;
+                let annex = DateTimeAnnex::from_total_nanos(datetime.unix_timestamp_nanos());
                 this.create_with_annex(strand, DateTime, annex, out);
                 Ok(())
             })
@@ -319,7 +352,7 @@ impl<'v> Object<'v> for DateTime {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Global<'v>>();
         if let Some(other) = global.types.date_time.downcast(other) {
-            Ok(this.annex().total_nanos() == other.annex().total_nanos())
+            Ok(this.annex().total_nanos == other.annex().total_nanos)
         } else {
             Err(Error::not_supported(strand))
         }
@@ -332,7 +365,7 @@ impl<'v> Object<'v> for DateTime {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Global<'v>>();
         if let Some(other) = global.types.date_time.downcast(other) {
-            Ok(this.annex().total_nanos() < other.annex().total_nanos())
+            Ok(this.annex().total_nanos < other.annex().total_nanos)
         } else {
             Err(Error::not_supported(strand))
         }
@@ -346,8 +379,8 @@ impl<'v> Object<'v> for DateTime {
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Global<'v>>();
         if let Some(other) = global.types.date_time.downcast(other) {
-            let left = this.annex().total_nanos();
-            let right = other.annex().total_nanos();
+            let left = this.annex().total_nanos;
+            let right = other.annex().total_nanos;
             global.types.duration.create_with_annex(
                 strand,
                 Duration,
@@ -370,18 +403,12 @@ impl<'v> Object<'v> for Duration {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
-            .get("seconds", |this, strand, out| {
-                let Some((secs, _)) = this.annex().parts_floor() else {
-                    return Err(Error::overflow(strand));
-                };
-                Output::set(strand, out, secs);
+            .get("secs", |this, strand, out| {
+                Output::set(strand, out, this.annex().secs());
                 Ok(())
             })
-            .get("nanoseconds", |this, strand, out| {
-                let Some((_, nanos)) = this.annex().parts_floor() else {
-                    return Err(Error::overflow(strand));
-                };
-                Output::set(strand, out, nanos);
+            .get("nanos", |this, strand, out| {
+                Output::set(strand, out, this.annex().total_nanos);
                 Ok(())
             })
     }

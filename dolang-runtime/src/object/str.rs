@@ -212,8 +212,8 @@ impl<'v> Protocol<'v> for str {
                 let ([delim], [limit]) = unpack!(strand, args, 1, 0, limit = None)?;
                 let limit_i64 = limit
                     .map(|l| {
-                        l.as_i64(strand)
-                            .ok_or_else(|| Error::type_error(strand, "limit: expected `int`"))
+                        l.to_i64(strand)
+                            .map_err(|_| Error::type_error(strand, "limit: expected `int`"))
                     })
                     .transpose()?;
                 let delim_gc = delim
@@ -345,13 +345,13 @@ impl<'v> Protocol<'v> for str {
             }
             sym::SUB => {
                 let ([start], [end]) = unpack!(strand, args, 1, 1)?;
-                let start = start.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                let start = start.to_i64(strand).map_err(|_| Error::index(strand))?;
                 let start = index::position(me.len(), start)
                     .ok_or_else(|| Error::runtime(strand, "invalid UTF-8 substring boundaries"))?;
                 let slice = match end {
                     None => me.get(start..),
                     Some(end) => {
-                        let end = end.as_i64(strand).ok_or_else(|| Error::index(strand))?;
+                        let end = end.to_i64(strand).map_err(|_| Error::index(strand))?;
                         let end = index::position(me.len(), end).ok_or_else(|| {
                             Error::runtime(strand, "invalid UTF-8 substring boundaries")
                         })?;
