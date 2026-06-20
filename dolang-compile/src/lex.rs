@@ -85,9 +85,11 @@ pub(crate) enum Op {
     Dot,
     DotHash,
     Plus,
+    LtLt,
     Slash,
     SlashSlash,
     Star,
+    GtGt,
     Tilde,
 }
 
@@ -116,9 +118,11 @@ impl Display for Op {
                 Dot => ".",
                 DotHash => ".#",
                 Plus => "+",
+                LtLt => "<<",
                 Slash => "/",
                 SlashSlash => "//",
                 Star => "*",
+                GtGt => ">>",
                 Tilde => "~",
             }
         )
@@ -309,6 +313,8 @@ enum RawState {
     SignedOctal,
     Binary,
     SignedBinary,
+    LtLt,
+    GtGt,
     R,
     B,
     // Raw string states
@@ -630,7 +636,9 @@ macro_rules! lex {
                 Some(b',') => emit!($self.$method, $token, Comma),
                 Some(b'~') => emit!($self.$method, $token, Tilde),
                 Some(b'^') => emit!($self.$method, $token, Caret),
+                #[allow(unreachable_patterns)]
                 Some(b'<') => emit!($self.$method, $token, Lt),
+                #[allow(unreachable_patterns)]
                 Some(b'>') => emit!($self.$method, $token, Gt),
                 // Pattern may be superseded by ||
                 #[allow(unreachable_patterns)]
@@ -899,12 +907,16 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                 }),
                 Lt => symbol!(self, RawToken::Op(Op::Lt), {
                     match Some(b'=') => self.trans(LtEq),
+                    match Some(b'<') => self.trans(LtLt),
                 }),
                 Gt => symbol!(self, RawToken::Op(Op::Gt), {
                     match Some(b'=') => self.trans(GtEq),
+                    match Some(b'>') => self.trans(GtGt),
                 }),
                 LtEq => symbol!(self, RawToken::Op(Op::LtEq), {}),
                 GtEq => symbol!(self, RawToken::Op(Op::GtEq), {}),
+                LtLt => symbol!(self, RawToken::Op(Op::LtLt), {}),
+                GtGt => symbol!(self, RawToken::Op(Op::GtGt), {}),
                 Bar => symbol!(self, RawToken::Op(Op::Bar), {
                     match Some(b'|') => self.trans(BarBar),
                 }),
@@ -1070,18 +1082,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                                 }
                             }
                         } else {
-                            match i64::try_from(self.acc) {
-                                Ok(v) => RawToken::I64(v),
-                                Err(_) => {
-                                    if self.mode == Mode::FullExpr {
-                                        return self.error(ErrorDiagKind::Overflow)
-                                    }
-                                    if self.mode != Mode::String {
-                                        self.warn(WarnDiagKind::OverflowLit);
-                                    }
-                                    RawToken::Literal
-                                }
-                            }
+                            RawToken::I64(self.acc as i64)
                         }, {
                             match Some(c) if c.is_ascii_hexdigit() => {
                                 let digit = match c {
@@ -1128,16 +1129,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                                 }
                             }
                         } else {
-                            match i64::try_from(self.acc) {
-                                Ok(v) => RawToken::I64(v),
-                                Err(_) => {
-                                    if self.mode == Mode::FullExpr {
-                                        return self.error(ErrorDiagKind::Overflow)
-                                    }
-                                    self.warn(WarnDiagKind::OverflowLit);
-                                    RawToken::Literal
-                                }
-                            }
+                            RawToken::I64(self.acc as i64)
                         }, {
                             match Some(c @ b'0'..=b'7') => {
                                 let digit = (c - b'0') as u64;
@@ -1181,18 +1173,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                                 }
                             }
                         } else {
-                            match i64::try_from(self.acc) {
-                                Ok(v) => RawToken::I64(v),
-                                Err(_) => {
-                                    if self.mode == Mode::FullExpr {
-                                        return self.error(ErrorDiagKind::Overflow)
-                                    }
-                                    if self.mode != Mode::String {
-                                        self.warn(WarnDiagKind::OverflowLit);
-                                    }
-                                    RawToken::Literal
-                                }
-                            }
+                            RawToken::I64(self.acc as i64)
                         }, {
                             match Some(c @ b'0'..=b'1') => {
                                 let digit = (c - b'0') as u64;

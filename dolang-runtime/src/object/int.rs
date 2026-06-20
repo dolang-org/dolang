@@ -124,6 +124,22 @@ impl<'v> Protocol<'v> for i64 {
         binop(strand, *this.get(), other, Prim::op_bxor)
     }
 
+    fn op_shl<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        binop(strand, *this.get(), other, Prim::op_shl)
+    }
+
+    fn op_shr<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        binop(strand, *this.get(), other, Prim::op_shr)
+    }
+
     fn op_add<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -341,6 +357,22 @@ impl<'v> Protocol<'v> for Verbatim {
         binop(strand, this.get().value, other, Prim::op_bxor)
     }
 
+    fn op_shl<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        binop(strand, this.get().value, other, Prim::op_shl)
+    }
+
+    fn op_shr<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        binop(strand, this.get().value, other, Prim::op_shr)
+    }
+
     fn op_add<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -510,6 +542,8 @@ impl<'v> Protocol<'v> for Int {
                 Sym::well_known(sym::BAND_METHOD),
                 Sym::well_known(sym::BOR_METHOD),
                 Sym::well_known(sym::BXOR_METHOD),
+                Sym::well_known(sym::SHL_METHOD),
+                Sym::well_known(sym::SHR_METHOD),
                 Sym::well_known(sym::NEG_METHOD),
                 Sym::well_known(sym::BNOT_METHOD),
                 Sym::well_known(sym::EQ_METHOD),
@@ -543,6 +577,8 @@ impl<'v> Protocol<'v> for Int {
             | sym::BAND_METHOD
             | sym::BOR_METHOD
             | sym::BXOR_METHOD
+            | sym::SHL_METHOD
+            | sym::SHR_METHOD
             | sym::NEG_METHOD
             | sym::BNOT_METHOD
             | sym::EQ_METHOD

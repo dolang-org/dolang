@@ -64,6 +64,8 @@ pub(crate) enum InstInfo {
     BitAnd,
     BitOr,
     BitXor,
+    Shl,
+    Shr,
     #[expect(dead_code)]
     Nop,
     Pop,

@@ -103,6 +103,8 @@ impl Inst {
             BitAnd => write!(w, "band"),
             BitOr => write!(w, "bor"),
             BitXor => write!(w, "bxor"),
+            Shl => write!(w, "shl"),
+            Shr => write!(w, "shr"),
             LoadConst(id) => {
                 write!(w, "ldc ")?;
                 compiler.consttab[*id].dump(compiler, w)

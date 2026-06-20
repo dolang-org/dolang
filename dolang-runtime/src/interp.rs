@@ -994,8 +994,8 @@ impl<'v> Vm<'v> {
                     });
                     frame.push(value);
                 }
-                inst @ (BitAnd | BitOr | BitXor | Add | Sub | Mul | Div | Ediv | Mod | Eq | Ne
-                | Lt | Gt | Lte | Gte) => {
+                inst @ (BitAnd | BitOr | BitXor | Shl | Shr | Add | Sub | Mul | Div | Ediv
+                | Mod | Eq | Ne | Lt | Gt | Lte | Gte) => {
                     frame.pc = reader.offset();
                     let mut left = frame.scratch1();
                     let mut right = frame.scratch2();
@@ -1005,6 +1005,8 @@ impl<'v> Vm<'v> {
                         BitAnd => left.op_band(strand, &right),
                         BitOr => left.op_bor(strand, &right),
                         BitXor => left.op_bxor(strand, &right),
+                        Shl => left.op_shl(strand, &right),
+                        Shr => left.op_shr(strand, &right),
                         Add => left.op_add(strand, &right),
                         Div => left.op_div(strand, &right),
                         Ediv => left.op_ediv(strand, &right),

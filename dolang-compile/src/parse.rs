@@ -839,6 +839,7 @@ struct Prec(
 impl Prec {
     const INDEX: Self = Self(Assoc::Left, 2100);
     const CALL: Self = Self(Assoc::Left, 2000);
+    const SHIFT: Self = Self(Assoc::Left, 1175);
     const RANGE: Self = Self(Assoc::Left, 1150);
     const DOLLAR_CALL: Self = Self(Assoc::Right, 500);
 
@@ -882,6 +883,7 @@ impl Op {
             Op::Amp => Prec(Assoc::Left, 900),
             Op::Lt | Op::LtEq | Op::Gt | Op::GtEq => Prec(Assoc::Left, 1000),
             Op::EqEq | Op::BangEq => Prec(Assoc::Left, 1100),
+            Op::LtLt | Op::GtGt => Prec::SHIFT,
             Op::Plus | Op::Minus => Prec(Assoc::Left, 1200),
             Op::Percent | Op::Star | Op::Slash | Op::SlashSlash => Prec(Assoc::Left, 1300),
             Op::Dot | Op::DotHash => Prec(Assoc::Left, 2200),
@@ -2170,6 +2172,8 @@ impl<'a> Parser<'a> {
             "band" => SpecialMethod::Band,
             "bor" => SpecialMethod::Bor,
             "bxor" => SpecialMethod::Bxor,
+            "shl" => SpecialMethod::Shl,
+            "shr" => SpecialMethod::Shr,
             "neg" => SpecialMethod::Neg,
             "bnot" => SpecialMethod::Bnot,
             "eq" => SpecialMethod::Eq,

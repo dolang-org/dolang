@@ -256,6 +256,22 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         Err(Error::not_supported(strand))
     }
 
+    fn op_shl<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        _other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        Err(Error::not_supported(strand))
+    }
+
+    fn op_shr<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        _other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        Err(Error::not_supported(strand))
+    }
+
     fn op_add<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -485,6 +501,8 @@ enum BinOp {
     Band,
     Bor,
     Bxor,
+    Shl,
+    Shr,
     Add,
     Sub,
     Rsub,
@@ -1027,6 +1045,8 @@ fn op_bin_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
             BinOp::Band => T::op_band(this, strand, other),
             BinOp::Bor => T::op_bor(this, strand, other),
             BinOp::Bxor => T::op_bxor(this, strand, other),
+            BinOp::Shl => T::op_shl(this, strand, other),
+            BinOp::Shr => T::op_shr(this, strand, other),
             BinOp::Add => T::op_add(this, strand, other),
             BinOp::Sub => T::op_sub(this, strand, other),
             BinOp::Rsub => T::op_rsub(this, strand, other),
@@ -1355,6 +1375,18 @@ pub(crate) trait Dispatch<'v, 'a> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>>;
 
+    fn op_shl<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>>;
+
+    fn op_shr<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>>;
+
     fn op_add<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
@@ -1650,6 +1682,22 @@ impl<'v, 'a, T: AsHeader> Dispatch<'v, 'a> for T {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         unsafe { invoke!(self, op_bin, strand, BinOp::Bxor, other) }
+    }
+
+    fn op_shl<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Shl, other) }
+    }
+
+    fn op_shr<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Shr, other) }
     }
 
     fn op_add<'s>(
@@ -1971,6 +2019,14 @@ pub(crate) async fn dispatch_native_method<'v, 's>(
         sym::BXOR_METHOD => {
             let ([other], []) = unpack!(strand, trailing, 1, 0)?;
             out.store(this.op_bxor(strand, &other)?);
+        }
+        sym::SHL_METHOD => {
+            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            out.store(this.op_shl(strand, &other)?);
+        }
+        sym::SHR_METHOD => {
+            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            out.store(this.op_shr(strand, &other)?);
         }
         _ => {
             this.op_mcall(strand, method, trailing, out).await?;

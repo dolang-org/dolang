@@ -981,6 +981,22 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         class_sync_binary_op(this, strand, sym::BXOR_METHOD, other, Value::op_bxor)
     }
 
+    fn op_shl<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_binary_op(this, strand, sym::SHL_METHOD, other, Value::op_shl)
+    }
+
+    fn op_shr<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_binary_op(this, strand, sym::SHR_METHOD, other, Value::op_shr)
+    }
+
     fn op_neg<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
