@@ -408,6 +408,13 @@ impl<'v> Protocol<'v> for Dict<'v> {
         kv::Inner::op_debug(this, strand, w, "{", "}", ", ")
     }
 
+    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
+        let Ok(borrow) = this.borrow(strand) else {
+            return true;
+        };
+        borrow.0.total_pairs != 0
+    }
+
     fn op_hash<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

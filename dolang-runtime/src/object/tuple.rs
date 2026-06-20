@@ -104,6 +104,10 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         write!(w, ")").into_do(strand)
     }
 
+    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
+        !this.get().is_empty()
+    }
+
     fn op_hash<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

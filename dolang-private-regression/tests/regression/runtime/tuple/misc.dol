@@ -1,3 +1,6 @@
+assert (!(bool (tuple([]))))
+assert (bool (tuple([1])))
+
 let tup = tuple([1, 2, 3, "hello", [1, 2], {"key": "value"}])
 assert_eq $tup[0] 1
 assert_eq $tup[-1] {"key": "value"}

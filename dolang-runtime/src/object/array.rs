@@ -532,6 +532,11 @@ impl<'v> Protocol<'v> for Array<'v> {
         write!(w, "]").into_do(strand)
     }
 
+    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
+        let borrow = this.borrow(strand).expect("conflicting borrow");
+        !borrow.inner.is_empty()
+    }
+
     fn op_hash<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

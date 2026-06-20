@@ -547,7 +547,11 @@ pub def parse
   ...spec
 do
   let p = Parser name: (program || prog_default()) ...spec
-  p.parse (args || shell.args)
+  p.parse
+    if (args != nil)
+      $args
+    else
+      $shell.args
 
 # Parse arguments and dispatch to a handler, suitable for use at script top-level.
 #
@@ -583,9 +587,12 @@ pub def with
   ...spec
 do
   let p = Parser name: (program || prog_default()) ...spec
-  args = (args || shell.args)
   try
-    let result = p.parse $args
+    let result = p.parse
+      if (args != nil)
+        $args
+      else
+        $shell.args
     if result.help
       let msg = result.help
       if !exit

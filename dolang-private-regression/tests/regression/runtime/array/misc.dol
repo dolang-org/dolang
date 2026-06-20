@@ -8,6 +8,8 @@ def assert_err msg block
   assert $res
 
 let foo = [0, 1, 2]
+assert (!(bool([])))
+assert (bool([1]))
 assert_eq $foo[0] 0
 assert_eq $foo[1] 1
 assert_eq $foo[2] 2

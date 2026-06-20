@@ -13,6 +13,9 @@ def assert_err_type ty block
   assert $res
 
 # record.contains tests - record.contains is a class method taking record as first arg
+assert (!(bool (record())))
+assert (bool (record(a: 1)))
+
 let rec = record(1, 2, 3, a: "first", b: "second")
 record.insert $rec :a: second
 # Key-only checks
