@@ -104,7 +104,7 @@ class Spec
     let exe = self.target.get :exe:
     let path = (self.target_dir / name).absolute()
     if exe
-      path.add_ext $exe
+      path.add_ext exe
     else
       path
 
