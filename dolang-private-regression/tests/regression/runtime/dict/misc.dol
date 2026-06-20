@@ -22,6 +22,8 @@ def assert_err_type ty block
   assert $res
 
 let foo = {"foo": 42, 42: "bar"}
+assert (!(bool {}))
+assert (bool {a: 1})
 foo["bar"] = true
 assert_eq $foo["foo"] 42
 assert_eq $foo[42] bar

@@ -3,6 +3,9 @@ import
     - hash
     - set
 
+assert (!(bool(set())))
+assert (bool(set([1])))
+
 let empty = set()
 assert_eq $empty.len 0
 assert_eq [...empty] []
