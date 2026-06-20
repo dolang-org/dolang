@@ -2,9 +2,19 @@ import
   std:
     - arg
     - hash
+    - TypeError
   fs:
     - Path
   - sys
+
+def assert_err_type ty block
+  let res = try
+    block()
+    false
+  catch e
+    assert_eq (type e) $ty
+    true
+  assert $res
 
 # Test path object creation
 let p = Path "foo/bar.txt"
@@ -42,6 +52,47 @@ assert_eq $stem2.stem "archive.tar"
 
 let stem3 = Path "Makefile"
 assert_eq $stem3.stem "Makefile"
+
+# Test components iterator
+let components = (Path "alpha/beta/gamma").components()
+assert_eq [...components] ["alpha", "beta", "gamma"]
+
+let unpacked = (Path "alpha/beta/gamma").components()
+let first ...rest = unpacked
+assert_eq $first "alpha"
+assert_eq [...rest] ["beta", "gamma"]
+assert_eq (unpacked.next default: :done:) :done:
+
+# Test extension rewrite methods
+let without_ext1 = Path "file.txt"
+assert_eq $without_ext1.without_ext() (Path "file")
+
+let without_ext2 = Path "archive.tar.gz"
+assert_eq $without_ext2.without_ext() (Path "archive.tar")
+
+let without_ext3 = Path "Makefile"
+assert_eq $without_ext3.without_ext() (Path "Makefile")
+
+let with_ext1 = Path "file.txt"
+assert_eq $with_ext1.with_ext("md") (Path "file.md")
+
+let with_ext2 = Path "Makefile"
+assert_eq $with_ext2.with_ext("txt") (Path "Makefile.txt")
+
+let with_name1 = Path "dir/file.txt"
+assert_eq $with_name1.with_name("other.md") (Path "dir/other.md")
+
+let with_name2 = Path "file.txt"
+assert_eq $with_name2.with_name("report.txt") (Path "report.txt")
+
+let with_stem1 = Path "dir/file.txt"
+assert_eq $with_stem1.with_stem("report") (Path "dir/report.txt")
+
+let with_stem2 = Path "archive.tar.gz"
+assert_eq $with_stem2.with_stem("bundle") (Path "bundle.gz")
+
+let with_stem3 = Path "Makefile"
+assert_eq $with_stem3.with_stem("Dockerfile") (Path "Dockerfile")
 
 # Test add_ext method
 let add_ext1 = Path "file"
@@ -89,3 +140,12 @@ let base = Path "subdir"
 let full = ("parent" / base)
 
 assert_eq $full (Path "parent/subdir")
+
+# Test normalize rename
+let messy = Path "./foo/../bar/./baz"
+assert_eq $messy.normalize() (Path "bar/baz")
+
+# Test type errors on new string-taking methods
+assert_err_type $TypeError do with_ext1.with_ext 1
+assert_err_type $TypeError do with_name1.with_name 1
+assert_err_type $TypeError do with_stem1.with_stem 1

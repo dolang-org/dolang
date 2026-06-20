@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     fmt,
     hash::{Hash, Hasher},
     path::{self, Component, PathBuf},
@@ -11,13 +12,20 @@ use crate::{
 };
 use dolang::runtime::{
     Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
-    error::ResultExt, object::TypeBuilder, unpack,
+    error::ResultExt,
+    object::{TypeBuilder, Unpack, UnpackItem},
+    unpack,
+    value::TypeObject,
 };
 use dolang_shell_vfs::Vfs;
 
 use super::file::File;
 
 pub(crate) struct Path;
+
+pub(crate) struct PathComponentsIter {
+    components: VecDeque<String>,
+}
 
 pub(crate) struct PathAnnex<'v> {
     pub(crate) inner: path::PathBuf,
@@ -36,6 +44,49 @@ pub(crate) fn path_from_value<'v, 's>(
     } else {
         Err(Error::type_error(strand, "expected Path or str"))
     }
+}
+
+fn create_path<'v, 'a, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    path: PathBuf,
+    out: Slot<'v, 'a>,
+) {
+    global
+        .types
+        .path
+        .create_with_annex(strand, Path, PathAnnex::new(path, global), out);
+}
+
+fn expect_str<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, String> {
+    value
+        .as_str(strand)
+        .map(|value| value.to_string())
+        .ok_or_else(|| Error::type_error(strand, "expected str"))
+}
+
+fn rewrite_path<'v, 'a, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    path: &path::Path,
+    out: Slot<'v, 'a>,
+    rewrite: impl FnOnce(&mut PathBuf),
+) {
+    let mut path = path.to_owned();
+    rewrite(&mut path);
+    create_path(strand, global, path, out);
+}
+
+fn with_stem_path(path: &path::Path, stem: &str) -> PathBuf {
+    let mut path = path.to_owned();
+    let ext = path
+        .extension()
+        .map(|ext| ext.to_string_lossy().into_owned());
+    match ext {
+        Some(ext) => path.set_file_name(format!("{stem}.{ext}")),
+        None => path.set_file_name(stem),
+    }
+    path
 }
 
 impl<'v> PathAnnex<'v> {
@@ -82,6 +133,86 @@ pub(crate) fn normalize_path(path: &std::path::Path) -> PathBuf {
     let mut res = PathBuf::new();
     res.extend(acc);
     res
+}
+
+impl<'v> Object<'v> for PathComponentsIter {
+    const NAME: &'v str = "PathComponentsIter";
+    const MODULE: &'v str = "fs";
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.supertype(TypeObject::Iter)
+    }
+
+    async fn input<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, this);
+        Ok(())
+    }
+
+    async fn next<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        match this.borrow_mut(strand)?.components.pop_front() {
+            Some(component) => {
+                Output::set(strand, out, component.as_str());
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    async fn unpack<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut unpack: Unpack<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        if let Some(key) = unpack.first_required_key() {
+            return Err(Error::missing_key(strand, key));
+        }
+
+        let required_pos = unpack.required();
+        let optional_pos = unpack.optional();
+        let total_pos = required_pos + optional_pos;
+        let available = this.borrow(strand)?.components.len();
+
+        if available < required_pos {
+            return Err(Error::missing_positional(strand, available));
+        }
+
+        if unpack.exhaustive() && available > total_pos {
+            return Err(Error::unexpected_positional(strand, total_pos));
+        }
+
+        let mut pos_index = 0usize;
+        for item in unpack.iter() {
+            match item {
+                UnpackItem::Pos { mut slot, default } => {
+                    if pos_index < available {
+                        if !Self::next(this, strand, Slot::reborrow(&mut slot)).await? {
+                            unreachable!("checked availability above")
+                        }
+                    } else {
+                        Output::set(strand, slot, default.unwrap());
+                    }
+                    pos_index += 1;
+                }
+                UnpackItem::SymKey { slot, default, .. }
+                | UnpackItem::ConstKey { slot, default, .. } => {
+                    Output::set(strand, slot, default.unwrap());
+                }
+                UnpackItem::Rest { slot } => Output::set(strand, slot, this),
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<'v> Object<'v> for Path {
@@ -156,12 +287,7 @@ impl<'v> Object<'v> for Path {
             .get("parent", |this, strand, out| {
                 let borrow = this.annex();
                 if let Some(path) = borrow.inner.parent() {
-                    borrow.global.types.path.create_with_annex(
-                        strand,
-                        Path,
-                        PathAnnex::new(path.to_owned(), borrow.global),
-                        out,
-                    );
+                    create_path(strand, borrow.global, path.to_owned(), out);
                 }
                 Ok(())
             })
@@ -361,6 +487,21 @@ impl<'v> Object<'v> for Path {
             super::chown(strand, global, &path, user, group, follow).await
         });
         builder
+            .method("components", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let components = this
+                    .annex()
+                    .inner
+                    .components()
+                    .map(|component| component.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                this.annex().global.types.path_components_iter.create(
+                    strand,
+                    PathComponentsIter { components },
+                    out,
+                );
+                Ok(())
+            })
             .method("glob", async move |this, strand, args, out| {
                 let ([pattern], [max_depth, follow]) =
                     unpack!(strand, args, 1, 0, max_depth = None, follow = None)?;
@@ -375,15 +516,10 @@ impl<'v> Object<'v> for Path {
                 )
                 .await
             })
-            .method("normal", async move |this, strand, args, out| {
+            .method("normalize", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let normalized = normalize_path(&this.annex().inner);
-                this.annex().global.types.path.create_with_annex(
-                    strand,
-                    Path,
-                    PathAnnex::new(normalized, this.annex().global),
-                    out,
-                );
+                create_path(strand, this.annex().global, normalized, out);
                 Ok(())
             })
             .method("absolute", async move |this, strand, args, out| {
@@ -396,17 +532,55 @@ impl<'v> Object<'v> for Path {
             })
             .method("add_ext", async move |this, strand, args, out| {
                 let ([ext], []) = unpack!(strand, args, 1, 0)?;
-                let ext = ext
-                    .as_str(strand)
-                    .ok_or_else(|| Error::type_error(strand, "expected str"))?
-                    .to_string();
+                let ext = expect_str(strand, &ext)?;
                 let path = this.annex().inner.with_added_extension(ext);
-                this.annex().global.types.path.create_with_annex(
+                create_path(strand, this.annex().global, path, out);
+                Ok(())
+            })
+            .method("without_ext", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                rewrite_path(
                     strand,
-                    Path,
-                    PathAnnex::new(path, this.annex().global),
+                    this.annex().global,
+                    &this.annex().inner,
                     out,
+                    |path| {
+                        let _ = path.set_extension("");
+                    },
                 );
+                Ok(())
+            })
+            .method("with_ext", async move |this, strand, args, out| {
+                let ([ext], []) = unpack!(strand, args, 1, 0)?;
+                let ext = expect_str(strand, &ext)?;
+                rewrite_path(
+                    strand,
+                    this.annex().global,
+                    &this.annex().inner,
+                    out,
+                    |path| {
+                        let _ = path.set_extension(ext);
+                    },
+                );
+                Ok(())
+            })
+            .method("with_name", async move |this, strand, args, out| {
+                let ([name], []) = unpack!(strand, args, 1, 0)?;
+                let name = expect_str(strand, &name)?;
+                rewrite_path(
+                    strand,
+                    this.annex().global,
+                    &this.annex().inner,
+                    out,
+                    |path| path.set_file_name(name),
+                );
+                Ok(())
+            })
+            .method("with_stem", async move |this, strand, args, out| {
+                let ([stem], []) = unpack!(strand, args, 1, 0)?;
+                let stem = expect_str(strand, &stem)?;
+                let path = with_stem_path(&this.annex().inner, &stem);
+                create_path(strand, this.annex().global, path, out);
                 Ok(())
             })
             .type_method("join", async move |this, strand, args, out| {
