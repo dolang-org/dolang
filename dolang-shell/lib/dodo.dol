@@ -31,6 +31,7 @@ pub def main()
     - arg: task
       type: $str
       help: task to run
+      divider: true
       default: default
     - arg: args
       type: $str
