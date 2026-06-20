@@ -136,6 +136,8 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
                 BitAnd => BcInst::BitAnd,
                 BitOr => BcInst::BitOr,
                 BitXor => BcInst::BitXor,
+                Shl => BcInst::Shl,
+                Shr => BcInst::Shr,
                 Pop => BcInst::Pop,
                 Eq => BcInst::Eq,
                 Ne => BcInst::Ne,

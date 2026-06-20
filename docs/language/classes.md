@@ -618,8 +618,8 @@ assert_eq $t["x"] 10
 
 ### Operator Overloading
 
-Arithmetic, bitwise, and comparison operators are dispatched to special methods.
-Define the method corresponding to the operator:
+Arithmetic, shift, bitwise, and comparison operators are dispatched to special
+methods. Define the method corresponding to the operator:
 
 ```
 class Vec2
@@ -639,6 +639,12 @@ class Vec2
   def (mul) self scalar
     Vec2 (self.x * scalar) (self.y * scalar)
 
+  def (shl) self count
+    Vec2 (self.x << count) (self.y << count)
+
+  def (shr) self count
+    Vec2 (self.x >> count) (self.y >> count)
+
   def (neg) self
     Vec2 (0 - self.x) (0 - self.y)
 
@@ -650,6 +656,8 @@ let b = Vec2 3 4
 assert_eq (a + b) (Vec2 4 6)
 assert_eq (b - a) (Vec2 2 2)
 assert_eq (a * 3) (Vec2 3 6)
+assert_eq (a << 1) (Vec2 2 4)
+assert_eq (a >> 1) (Vec2 0 1)
 assert_eq (-a) (Vec2 -1 -2)
 assert (a == Vec2 1 2)
 ```
@@ -665,6 +673,9 @@ for this operand type, falls back to `myobj.(rmul)`:
 | `(div)`  | `(rdiv)`  | `/`      |
 | `(ediv)` | `(rediv)` | `//`     |
 | `(mod)`  | `(rmod)`  | `%`      |
+
+Shift operators do not have reverse variants. Use `(shl)` for `<<` and `(shr)`
+for `>>`.
 
 **Ordering:** Defining `(lt)` and `(eq)` is sufficient for all four comparison
 operators. `<=`, `>`, and `>=` are derived automatically:

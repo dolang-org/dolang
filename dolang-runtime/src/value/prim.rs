@@ -183,6 +183,50 @@ impl Prim {
     }
 
     #[inline]
+    pub(crate) fn op_shl<'v, 's>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        other: &Self,
+    ) -> Result<'v, 's, Self> {
+        let count = match other {
+            Prim::I64(v) => match u32::try_from(*v) {
+                Ok(count) if count < i64::BITS => count,
+                _ => return Err(Error::overflow(strand)),
+            },
+            _ => return Err(Error::type_error(strand, "left shift by non-integer")),
+        };
+        match self {
+            Prim::I64(v) => v
+                .checked_shl(count)
+                .map(Prim::from)
+                .ok_or_else(|| Error::overflow(strand)),
+            _ => Err(Error::type_error(strand, "left shift of non-integer")),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn op_shr<'v, 's>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        other: &Self,
+    ) -> Result<'v, 's, Self> {
+        let count = match other {
+            Prim::I64(v) => match u32::try_from(*v) {
+                Ok(count) if count < i64::BITS => count,
+                _ => return Err(Error::overflow(strand)),
+            },
+            _ => return Err(Error::type_error(strand, "right shift by non-integer")),
+        };
+        match self {
+            Prim::I64(v) => v
+                .checked_shr(count)
+                .map(Prim::from)
+                .ok_or_else(|| Error::overflow(strand)),
+            _ => Err(Error::type_error(strand, "right shift of non-integer")),
+        }
+    }
+
+    #[inline]
     pub(crate) fn op_add<'v, 's>(
         &self,
         strand: &mut Strand<'v, 's>,

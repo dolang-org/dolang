@@ -1034,6 +1034,38 @@ pub trait Object<'v>: Sized + 'v {
         ))
     }
 
+    /// Computes the left shift of this object and another.
+    /// # Default
+    /// Returns a type error
+    #[allow(unused_variables)]
+    fn shl<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::type_error(
+            strand,
+            format!("left shift not supported: {}", Self::NAME),
+        ))
+    }
+
+    /// Computes the right shift of this object and another.
+    /// # Default
+    /// Returns a type error
+    #[allow(unused_variables)]
+    fn shr<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::type_error(
+            strand,
+            format!("right shift not supported: {}", Self::NAME),
+        ))
+    }
+
     /// Compares this object to another for less-than ordering.
     /// # Default
     /// Returns a type error
@@ -1589,6 +1621,52 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(bxor)")),
             |strand| {
                 T::bxor(
+                    Instance::new(this.receiver),
+                    strand,
+                    other,
+                    Slot::new(&mut out),
+                )
+            },
+        )?;
+        Ok(out)
+    }
+
+    fn op_shl<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let mut out = Value::NIL;
+        Strand::for_native_frame(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(shl)")),
+            |strand| {
+                T::shl(
+                    Instance::new(this.receiver),
+                    strand,
+                    other,
+                    Slot::new(&mut out),
+                )
+            },
+        )?;
+        Ok(out)
+    }
+
+    fn op_shr<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let mut out = Value::NIL;
+        Strand::for_native_frame(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(shr)")),
+            |strand| {
+                T::shr(
                     Instance::new(this.receiver),
                     strand,
                     other,

@@ -555,6 +555,26 @@ impl<'v> Value<'v> {
         })
     }
 
+    pub(crate) fn op_shl<'a, 's>(
+        &'a self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &'a Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop_comm(strand, other, Prim::op_shl, |this, strand, other| {
+            this.op_shl(strand, other)
+        })
+    }
+
+    pub(crate) fn op_shr<'a, 's>(
+        &'a self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &'a Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop_comm(strand, other, Prim::op_shr, |this, strand, other| {
+            this.op_shr(strand, other)
+        })
+    }
+
     pub(crate) fn op_add<'a, 's>(
         &'a self,
         strand: &'a mut Strand<'v, 's>,

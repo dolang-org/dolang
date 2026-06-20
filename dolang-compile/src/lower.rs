@@ -503,6 +503,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         Op::GtEq => InstInfo::Gte,
                         Op::Bar => InstInfo::BitOr,
                         Op::Amp => InstInfo::BitAnd,
+                        Op::LtLt => InstInfo::Shl,
+                        Op::GtGt => InstInfo::Shr,
                         Op::Tilde => InstInfo::BitNot,
                         Op::Caret => InstInfo::BitXor,
                         Op::Bang | Op::AmpAmp | Op::BarBar | Op::Dot | Op::DotHash => {

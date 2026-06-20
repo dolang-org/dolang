@@ -1,8 +1,1 @@
-echo 0o1000000000000000000000
-# warning: overflow in constant; treated as literal
-#   --> i64_overflow_nondec_octal_literal.dol:LL:LL
-#    |
-# LL |   echo 0o1000000000000000000000
-#    |  ______^
-# LL | | # warning: overflow in constant; treated as literal
-#    | |_^
+assert_eq 0o1000000000000000000000 -9223372036854775808

@@ -25,3 +25,19 @@ assert_eq  (min // 8) -1152921504606846976
 assert_eq  (max // 8) 1152921504606846975
 assert_eq  (1 // min) 0
 assert_eq  (1 // max) 0
+assert_eq  (8 << 1) 16
+assert_eq  (8 >> 1) 4
+assert_eq  (8 << 0) 8
+assert_eq  (8 >> 0) 8
+
+let caught = try
+  (8 << (0 - 1))
+catch _
+  true
+assert $caught
+
+let caught = try
+  (8 >> 64)
+catch _
+  true
+assert $caught

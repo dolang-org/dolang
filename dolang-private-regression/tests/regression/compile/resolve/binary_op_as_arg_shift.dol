@@ -1,0 +1,31 @@
+def noop ..._args
+  nil
+
+let _ = noop << 1
+# warning: function call where expression may be intended
+#   --> binary_op_as_arg_shift.dol:LL:LL
+#    |
+# LL | let _ = noop << 1
+#    |         ^^^^^--^^
+#    |              |
+#    |              this token is a literal string
+#    |
+# help: wrap entire expression in parentheses
+#    |
+# LL - let _ = noop << 1
+# LL + let _ = (noop << 1)
+#    |
+let _ = noop >> 1
+# warning: function call where expression may be intended
+#   --> binary_op_as_arg_shift.dol:LL:LL
+#    |
+# LL | let _ = noop >> 1
+#    |         ^^^^^--^^
+#    |              |
+#    |              this token is a literal string
+#    |
+# help: wrap entire expression in parentheses
+#    |
+# LL - let _ = noop >> 1
+# LL + let _ = (noop >> 1)
+#    |

@@ -154,6 +154,8 @@ well_known_symbols! {
     (BandMethod, "(band)", BAND_METHOD),
     (BorMethod, "(bor)", BOR_METHOD),
     (BxorMethod, "(bxor)", BXOR_METHOD),
+    (ShlMethod, "(shl)", SHL_METHOD),
+    (ShrMethod, "(shr)", SHR_METHOD),
     (NegMethod, "(neg)", NEG_METHOD),
     (BnotMethod, "(bnot)", BNOT_METHOD),
     (EqMethod, "(eq)", EQ_METHOD),

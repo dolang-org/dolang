@@ -409,8 +409,8 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
             match inst {
                 // Nothing to validate syntactically
                 Add | Div | Ediv | Dup | Mod | Mul | Neg | Not | BitNot | BitAnd | BitOr
-                | BitXor | Pop | Eq | Ne | Gt | Lt | Gte | Lte | Sub | Ret | PopUpvars | Index
-                | Assign | Next => (),
+                | BitXor | Shl | Shr | Pop | Eq | Ne | Gt | Lt | Gte | Lte | Sub | Ret
+                | PopUpvars | Index | Assign | Next => (),
                 // Must wait for data flow to interpret these immediates
                 LoadUpvar(_, _) | StoreUpvar(_, _) | PushUpvars(_) => (),
                 // Disallow swaps that don't do anything, in case the implementation is unsafe with
@@ -653,8 +653,8 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
                 block.pop()?;
                 block.push()
             }
-            Add | Div | Ediv | Mod | Mul | BitAnd | BitOr | BitXor | Eq | Ne | Gt | Lt | Gte
-            | Lte | Sub => {
+            Add | Div | Ediv | Mod | Mul | BitAnd | BitOr | BitXor | Shl | Shr | Eq | Ne | Gt
+            | Lt | Gte | Lte | Sub => {
                 block.pop()?;
                 block.pop()?;
                 block.push()
