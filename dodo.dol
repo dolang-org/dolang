@@ -157,7 +157,7 @@ return
       help: target platform
       default: nil
       values: [...TARGETS.keys()]
-  default: cargo-test
+  default: test
 
   "test-asan":
     help: run tests with AddressSanitizer
