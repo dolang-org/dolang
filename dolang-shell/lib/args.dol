@@ -45,6 +45,7 @@ class Param
   pub let type = nil
   pub let sym = nil
   pub let values = nil
+  pub let divider = false
 
   def (init)
     self :name
@@ -53,6 +54,7 @@ class Param
     :default = :UNSET:
     :type = nil
     :values = nil
+    :divider = false
   do
     self.name = name
     self.help = help
@@ -60,6 +62,7 @@ class Param
     self.default = default
     self.sym = sym $ name.replace "-" "_"
     self.type = (type || str)
+    self.divider = divider
     if (values != nil)
       self.values = set $values
 
@@ -97,11 +100,12 @@ class Named: Param
     :help = nil
     :collect = false
     :default = :UNSET:
+    :divider = false
     :values = nil
     :short = nil
     :env = nil
   do
-    Param.(init) $self :name :type :help :collect :default :values
+    Param.(init) $self :name :type :help :collect :default :divider :values
     self.long = if (long == :UNSET:)
       name
     else
@@ -124,11 +128,13 @@ class Opt: Named
     :collect = false
     :short = nil
     :default = :UNSET:
+    :divider = false
     :values = nil
     :env = nil
     :meta = nil
   do
-    Named.(init) $self :name :long :type :help :collect :default :values :short :env
+    Named.(init) $self :name :long :type :help :collect
+      :default :divider :values :short :env
     self.meta = meta
 
 # ===========================================================================
@@ -142,9 +148,10 @@ class Flag: Named
     :help = nil
     :short = nil
     :default = :UNSET:
+    :divider = false
     :env = nil
   do
-    Named.(init) $self :name :long :help :default :short :env
+    Named.(init) $self :name :long :help :default :divider :short :env
 
   pub def assign self rec _value
     rec[self.sym] = true
@@ -198,6 +205,7 @@ class Parser
   let usage_override = nil
   let rec = nil
   let arg_idx = nil
+  let drain = false
 
   def (init) self :name :help = nil ...spec
     self.name = name
@@ -260,6 +268,7 @@ class Parser
 
   pub def init_rec self
     self.#arg_idx = 0
+    self.#drain = false
     self.#rec = record()
     let rec = self.#rec
     rec.cmd = nil
@@ -308,6 +317,8 @@ class Parser
       argi.next else: do
         throw self.#err "option --$name requires an argument"
     opt.assign $self.#rec $value
+    if opt.divider
+      self.#drain = true
 
   def parse_short self tok argi
     let ch = tok.without_prefix "-"
@@ -321,6 +332,8 @@ class Parser
       argi.next else: do
         throw self.#err "option -$ch requires an argument"
     opt.assign $self.#rec $value
+    if opt.divider
+      self.#drain = true
 
   def assign_arg self tok
     let idx = self.#arg_idx
@@ -330,6 +343,8 @@ class Parser
     p.assign $self.#rec $tok
     if !p.collect
       self.#arg_idx = (idx + 1)
+    if p.divider
+      self.#drain = true
 
   def try_cmd self tok argi
     let sub = self.#sub_cmds.get $tok default: nil
@@ -352,10 +367,12 @@ class Parser
       let tok = argi.next default: nil
       if (tok == nil)
         break
+      if self.#drain
+        self.#assign_arg $tok
+        continue
       if (tok == "--")
-        for rest = argi
-          self.#assign_arg $rest
-        break
+        self.#drain = true
+        continue
       else if (tok == "--help" || tok == "-h")
         self.#rec.help = true
         break

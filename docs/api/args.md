@@ -32,6 +32,7 @@ to `false`. Additional settings:
 - `short:` — single-character shorthand (e.g. `v` → `-v`)
 - `default:` — override the default value (rarely needed; must be `true` or
   `false`)
+- `divider: true` — don't interpret subsequent arguments as options or flags
 - `env:` — environment variable name to use as fallback when the flag is
   not provided on the command line
 - `help:` — description shown in `--help` output
@@ -48,6 +49,7 @@ A value-consuming named option. Additional settings:
 - `type:` — 1-argument coercion callable applied to the raw string value
 - `short:` — single-character shorthand (e.g. `f` → `-f`)
 - `default:` — default value; omitting `default:` makes the option required
+- `divider: true` — don't interpret subsequent arguments as options or flags
 - `env:` — environment variable name to use as fallback when the option is
   not provided on the command line
 - `collect: true` — accept the option multiple times; result is an array
@@ -65,6 +67,7 @@ A positional argument. Additional settings:
 
 - `type:` — 1-argument coercion callable applied to the raw string value
 - `default:` — default value; omitting `default:` makes the argument required
+- `divider: true` — don't interpret subsequent arguments as options or flags
 - `collect: true` — absorb all remaining positional arguments into an array;
   only the last `arg:` may have `collect: true`
 - `values:` — array of allowed values
