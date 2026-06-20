@@ -1,20 +1,19 @@
 import
   strand:
     - pipeline
-  proc.run:
-    - cargo
   - sys
   - fs
 
-let agent_bin = "../target/debug/dolang-shell-vfs"
-
+let agent_bin = nil
 let Vfs = nil
+
 if (sys.os_info().family != :windows:)
   import shell:
     Vfs: it
   Vfs = it
-
-  cd ../ $env RUSTFLAGS: nil $cargo -q build --bin dolang-shell-vfs
+  agent_bin = env.get DOLANG_SHELL_VFS
+  if !agent_bin
+    throw "couldn't find dolang-shell-vfs in DOLANG_SHELL_VFS"
 
 pub def with_agent block
   fs.with_temp_dir do |dir|
