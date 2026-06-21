@@ -155,6 +155,25 @@ write "message.txt" "hello"
 write "data.bin" b"\x01\x02\x03"
 ```
 
+### `set_len path size`
+
+Truncates the file at the given path to the specified byte length, creating it
+if needed.
+
+**Parameters:**
+
+| Name   | Type                                      | Description              |
+| ------ | ----------------------------------------- | ------------------------ |
+| `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file         |
+| `size` | [`int`](../std/index.md)                  | New file length in bytes |
+
+**Example:**
+
+```
+set_len "output.txt" 0
+set_len (Path "archive.bin") 1024
+```
+
 ### `is_absolute path`
 
 Checks whether a path is absolute.

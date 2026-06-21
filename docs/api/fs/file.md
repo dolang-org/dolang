@@ -30,6 +30,26 @@ open output.txt w do |file|
   file.write binary
 ```
 
+### `set_len size`
+
+Truncates the file to the given byte length.
+
+If the file has buffered unread data, the logical cursor position is preserved
+after truncation.
+
+**Parameters:**
+
+| Name   | Type                     | Description                 |
+| ------ | ------------------------ | --------------------------- |
+| `size` | [`int`](../std/index.md) | New file length in bytes    |
+
+**Example:**
+
+```
+open data.bin r+ do |file|
+  file.set_len 8
+```
+
 ### `read :size?`
 
 Reads data from the file.
@@ -106,6 +126,89 @@ open data.txt r do |file|
   if (meta.mode != nil)
     echo "Mode: $(meta.mode)"
     echo "Owner: UID=$(meta.uid), GID=$(meta.gid)"
+```
+
+### `seek offset`
+
+Moves the file cursor by a relative byte offset.
+
+Buffered unread data is discarded before the seek so subsequent reads use the
+new cursor position.
+
+**Parameters:**
+
+| Name     | Type                     | Description                       |
+| -------- | ------------------------ | --------------------------------- |
+| `offset` | [`int`](../std/index.md) | Relative byte offset from current |
+
+**Returns:** [`int`](../std/index.md) - New absolute byte position
+
+**Example:**
+
+```
+open data.bin rb do |file|
+  file.seek 10
+  file.seek (0 - 4)
+```
+
+### `seek start: ofs`
+
+Moves the file cursor to an absolute byte offset from the start of the file.
+
+Buffered unread data is discarded before the seek so subsequent reads use the
+new cursor position.
+
+**Parameters:**
+
+| Name  | Type                     | Description                          |
+| ----- | ------------------------ | ------------------------------------ |
+| `ofs` | [`int`](../std/index.md) | Absolute byte offset from file start |
+
+**Returns:** [`int`](../std/index.md) - New absolute byte position
+
+**Example:**
+
+```
+open data.bin rb do |file|
+  file.seek start: 10
+  let pos = file.tell()
+```
+
+### `seek end: ofs`
+
+Moves the file cursor to a byte offset relative to the end of the file.
+
+Buffered unread data is discarded before the seek so subsequent reads use the
+new cursor position.
+
+**Parameters:**
+
+| Name  | Type                     | Description                      |
+| ----- | ------------------------ | -------------------------------- |
+| `ofs` | [`int`](../std/index.md) | Byte offset relative to file end |
+
+**Returns:** [`int`](../std/index.md) - New absolute byte position
+
+**Example:**
+
+```
+open data.bin rb do |file|
+  file.seek end: (0 - 1)
+```
+
+### `tell()`
+
+Returns the current file cursor position in bytes.
+
+**Returns:** [`int`](../std/index.md)
+
+**Example:**
+
+```
+open data.txt r do |file|
+  assert_eq (file.tell()) 0
+  file.read 5
+  assert_eq (file.tell()) 5
 ```
 
 ### `close()`

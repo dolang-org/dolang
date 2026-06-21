@@ -1,0 +1,30 @@
+import fs:
+  - open
+  - read
+  - set_len
+  - write
+  - with_temp_dir
+  - Path
+
+import agent:
+  - with_and_without_agent
+
+with_and_without_agent "File.set_len preserves buffered cursor" do with_temp_dir do |dir|
+  let path = (dir / "test_set_len_file.txt")
+  write $path "alpha\nbeta\n"
+  open $path r+ do |file|
+    assert_eq (file.next()) "alpha"
+    assert_eq (file.tell()) 6
+    file.set_len 2
+    assert_eq (file.tell()) 6
+    assert_eq (file.read()) ""
+
+with_and_without_agent "Path.set_len and fs.set_len adjust file length" do with_temp_dir do |dir|
+  let path = (dir / "test_set_len_path.bin")
+  write $path b"abc"
+
+  (Path path).set_len 5
+  assert_eq (read path "b") b"abc\0\0"
+
+  set_len $path 2
+  assert_eq (read (Path path) "b") b"ab"

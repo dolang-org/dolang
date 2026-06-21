@@ -1,6 +1,6 @@
 #[cfg(unix)]
 use std::os::fd::{AsFd, OwnedFd};
-use std::{io, path, result, str};
+use std::{io, io::SeekFrom, path, result, str};
 
 use bstr::ByteSlice;
 use dolang::runtime::{
@@ -14,7 +14,7 @@ use dolang::runtime::{
 use dolang_shell_vfs::{OpenOptions, Vfs};
 use tokio::{
     fs,
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
 };
 
 use crate::{
@@ -121,6 +121,33 @@ impl File {
             .try_clone_to_owned()
             .map(Some)
             .into_sys(strand)
+    }
+
+    async fn logical_position<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, u64> {
+        let file_ref = self
+            .file
+            .as_mut()
+            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+        let pos = file_ref.stream_position().await.into_sys(strand)?;
+        pos.checked_sub(self.buf.len() as u64)
+            .ok_or_else(|| Error::runtime(strand, "file cursor is before buffered data"))
+    }
+
+    async fn seek_to<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        seek_from: SeekFrom,
+    ) -> Result<'v, 's, u64> {
+        let file_ref = self
+            .file
+            .as_mut()
+            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+        let pos = file_ref.seek(seek_from).await.into_sys(strand)?;
+        self.buf.clear();
+        Ok(pos)
     }
 
     pub(crate) async fn open<'v, 's>(
@@ -499,7 +526,9 @@ impl<'v> Object<'v> for File {
         Ok(())
     }
 
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let start_sym = builder.sym("start");
+        let end_sym = builder.sym("end");
         builder
             .supertype(TypeObject::Iter)
             .supertype(TypeObject::Sink)
@@ -538,10 +567,78 @@ impl<'v> Object<'v> for File {
                 let ([data], []) = unpack!(strand, args, 1, 0)?;
                 this.borrow_mut(strand)?.write(data, strand, out).await
             })
+            .method("set_len", async move |this, strand, args, _out| {
+                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                let size = size.to_i64(strand).map_err(|_| {
+                    Error::type_error(strand, "size must be a non-negative integer")
+                })?;
+                let size = u64::try_from(size).map_err(|_| {
+                    Error::type_error(strand, "size must be a non-negative integer")
+                })?;
+
+                let mut borrow = this.borrow_mut(strand)?;
+                let pos = borrow.logical_position(strand).await?;
+                {
+                    let file = borrow
+                        .file
+                        .as_mut()
+                        .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+                    file.set_len(size).await.into_sys(strand)?;
+                }
+                borrow.seek_to(strand, SeekFrom::Start(pos)).await?;
+                Ok(())
+            })
             .method("metadata", async move |this, strand, _args, out| {
                 this.borrow_mut(strand)?
                     .metadata(strand, this.annex().global, out)
                     .await
+            })
+            .method("tell", async move |this, strand, _args, out| {
+                let mut borrow = this.borrow_mut(strand)?;
+                let pos = borrow.logical_position(strand).await?;
+                Output::set(strand, out, i128::from(pos));
+                Ok(())
+            })
+            .method("seek", async move |this, strand, args, out| {
+                let ([], [offset, start, end]) =
+                    unpack!(strand, args, 0, 1, start_sym = None, end_sym = None)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                let seek_from = match (offset, start, end) {
+                    (Some(offset), None, None) => {
+                        let offset = offset.to_i64(strand).map_err(|_| {
+                            Error::type_error(strand, "seek offset must be an integer")
+                        })?;
+                        let buffered = i64::try_from(borrow.buf.len()).map_err(|_| {
+                            Error::runtime(strand, "file buffer is too large to seek")
+                        })?;
+                        SeekFrom::Current(offset - buffered)
+                    }
+                    (None, Some(start), None) => {
+                        let start = start
+                            .to_i64(strand)
+                            .map_err(|_| Error::type_error(strand, "start must be an integer"))?;
+                        SeekFrom::Start(u64::try_from(start).map_err(|_| {
+                            Error::runtime(strand, "start offset must be non-negative")
+                        })?)
+                    }
+                    (None, None, Some(end)) => SeekFrom::End(
+                        end.to_i64(strand)
+                            .map_err(|_| Error::type_error(strand, "end must be an integer"))?,
+                    ),
+                    (None, None, None) => {
+                        return Err(Error::missing_positional(strand, 0));
+                    }
+                    (Some(_), Some(_), _) => {
+                        return Err(Error::unexpected_key(strand, start_sym));
+                    }
+                    (Some(_), None, Some(_)) | (None, Some(_), Some(_)) => {
+                        return Err(Error::unexpected_key(strand, end_sym));
+                    }
+                };
+                let pos = borrow.seek_to(strand, seek_from).await?;
+
+                Output::set(strand, out, i128::from(pos));
+                Ok(())
             })
     }
 }
