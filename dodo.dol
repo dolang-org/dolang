@@ -18,6 +18,11 @@ let COV_IGNORE =
   - dolang-private-highlight
   - dolang-private-build
 
+let MAIN_BINS =
+  - dolang-shell
+  - dolang-shell-vfs
+  - dolang-lsp
+
 let MKDOCS_BINS =
   - dolang-highlight
   - dolang-doc
@@ -157,7 +162,7 @@ return
       help: target platform
       default: nil
       values: [...TARGETS.keys()]
-  default: test
+  default: build
 
   "test-asan":
     help: run tests with AddressSanitizer
@@ -183,6 +188,18 @@ return
           for crate = MIRI_CRATES
             -p $crate
           ...args.args
+
+  build:
+    help: build main artifacts
+    - arg: args
+      help: arguments to `cargo build`
+      collect: true
+    do |args|
+      let spec = Spec $args
+      spec.cargo build
+        for bin = MAIN_BINS
+          --bin $bin
+        ...args.args
 
   "cargo-test":
     help: run cargo tests
