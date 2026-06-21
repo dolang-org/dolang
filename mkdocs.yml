@@ -15,7 +15,7 @@ plugins:
             heading_level: 2
             show_private: false
             paths:
-              - dolang-shell/lib/
+              - stdlib/
 
 extra_css:
   - extra.css

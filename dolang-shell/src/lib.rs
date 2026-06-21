@@ -24,7 +24,7 @@ use crate::interactive::{DYNAMIC_PRELUDE, DynamicPrelude};
 use crate::terminal_state::TerminalRestoreGuard;
 
 mod batch;
-mod bundled;
+mod bundle;
 mod cli;
 mod diagnostic;
 mod interactive;
@@ -105,11 +105,7 @@ fn run() -> i32 {
             });
 
             builder.importer(async |strand, name, mut out| {
-                if let Some(&bytes) = bundled::BUNDLED_MODULES
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .map(|(_, b)| b)
-                {
+                if let Some(bytes) = bundle::module(name) {
                     runtime::Bytecode::new(bytes).run(strand, &mut out).await
                 } else {
                     Err(runtime::Error::import(strand, name))

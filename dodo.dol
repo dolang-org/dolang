@@ -18,8 +18,7 @@ let COV_IGNORE =
   - dolang-private-highlight
   - dolang-private-build
 
-let MAIN_BINS =
-  - dolang
+let EXTRA_BINS =
   - dolang-shell-vfs
   - dolang-lsp
 
@@ -87,6 +86,7 @@ class Spec
   pub let profile = nil
   pub let channel = nil
   pub let target_dir = nil
+  pub let dist_dir = nil
   let extra = nil
 
   def (init)
@@ -103,9 +103,10 @@ class Spec
     self.channel = channel
     self.#extra = extra
     self.target_dir = if variant
-      (Path("target") / self.tuple / variant / self.profile)
+      (Path "target" / self.tuple / variant / self.profile)
     else
-      (Path("target") / self.tuple / self.profile)
+      (Path "target" / self.tuple / self.profile)
+    self.dist_dir = (Path "dist" / self.tuple / self.profile).absolute()
 
   pub def bin self name
     let exe = self.target.get :exe:
@@ -115,8 +116,25 @@ class Spec
     else
       path
 
+  pub def dist_bin self name
+    let exe = self.target.get :exe:
+    let path = (self.dist_dir / name).absolute()
+    if exe
+      path.add_ext exe
+    else
+      path
+
+  pub def run_path self path ...args
+    show
+      if (self.tuple.contains "-windows-" && sys.os_info().family != :windows:)
+        env WINEDEBUG=fixme-all wine
+      (str path) ...args
+
+  pub def run_dist self name ...args
+    self.run_path (self.dist_bin name) ...args
+
   pub def with_vfs self func
-    env DOLANG_SHELL_VFS: $self.bin("dolang-shell-vfs") $func
+    env DOLANG_SHELL_VFS: (self.bin "dolang-shell-vfs") $func
 
   pub def cargo self cmd ...rest
     self.with_vfs do
@@ -151,8 +169,21 @@ def with_mkdocs spec func
 def cargo_test spec rest
   spec.cargo_vfs test ...rest
 
+def shell_build spec ...rest
+  spec.cargo build --bin dolang ...rest
+  let source = spec.bin "dolang"
+  let output = spec.dist_bin "dolang"
+  env
+    DOLANG_SHELL_VFS: $spec.bin("dolang-shell-vfs")
+    DOLANG_MODULE_PATH: $Path("stdlib").absolute()
+    do spec.run_path $source tools/bundle-stdlib.dol $source $output stdlib
+  output
+
 def shell_test spec tests
-  spec.cargo_vfs run --bin dolang -- -m test ...(tests || default_shell_tests())
+  spec.cargo build --bin dolang-shell-vfs
+  let _ = shell_build $spec
+  spec.with_vfs do
+    spec.run_dist dolang -m test ...(tests || default_shell_tests())
 
 def both_test spec
   cargo_test $spec []
@@ -198,8 +229,9 @@ return
       collect: true
     do |args|
       let spec = Spec $args
+      shell_build $spec ...args.args
       spec.cargo build
-        for bin = MAIN_BINS
+        for bin = EXTRA_BINS
           --bin $bin
         ...args.args
 
@@ -256,8 +288,8 @@ return
       spec.cargo llvm-cov --no-report run --ignore-run-fail --bin dolang-shell-vfs
       env DO_EXPORT_DOT: $Path("dot").absolute() VFS: (spec.bin "dolang-shell-vfs") do
         spec.cargo llvm-cov --no-report test
-        spec.cargo llvm-cov run --no-report --bin dolang -- -m test
-          ...default_shell_tests()
+        let shell = shell_build $spec
+        show $shell -m test ...default_shell_tests()
 
   "cov-dump":
     help: write coverage summaries to disk
@@ -314,29 +346,32 @@ return
     help: remove build artifacts and generated docs
     do |_|
       show cargo clean
-      remove site dot all: true ignore: true
+      remove site dot dist all: true ignore: true
 
   install:
-    help: install dolang binaries
-    - arg: args
-      help: "arguments to `cargo install`"
-      collect: true
+    help: build all artifacts and copy them into PREFIX
+    - opt: prefix
+      type: $Path
+      help: installation root directory
     do |args|
       let spec = Spec $args profile: dist
-      let is_linux = spec.tuple.ends_with "-linux-gnu"
-      if is_linux
-        env ZSTD_SYS_USE_PKG_CONFIG: 1 do
-          spec.cargo install --path dolang-shell --bin dolang ...args.args
-      else
-        spec.cargo install --path dolang-shell --bin dolang ...args.args
-      spec.cargo install --path dolang-lsp ...args.args
-      if is_linux
-        let spec = Spec $args
+      let bin_dir = (args.prefix / "bin")
+      bin_dir.create_dir all: true
+
+      let shell = shell_build $spec
+      shell.copy (bin_dir / shell.name)
+
+      spec.cargo build --bin dolang-lsp
+      let lsp = spec.bin "dolang-lsp"
+      lsp.copy (bin_dir / lsp.name)
+
+      if (spec.tuple.contains "-linux-")
+        let vfs_spec = Spec $args
           profile: dist
           tuple: $(spec.tuple.without_suffix "-gnu")-musl
-        spec.cargo install
-          --path dolang-shell-vfs
-          ...args.args
+        vfs_spec.cargo build --bin dolang-shell-vfs
+        let vfs = vfs_spec.bin "dolang-shell-vfs"
+        vfs.copy $(bin_dir / vfs.name)
 
   publish:
     help: publish workspace crates in dependency order

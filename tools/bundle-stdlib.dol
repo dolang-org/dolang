@@ -1,0 +1,129 @@
+import args compile diagnostic fs zip
+  std:
+    - CompileError
+    - RuntimeError
+
+let bundle_magic = b"DZLBUNDL"
+let bundle_footer_len = 16
+
+def module_name path lib_root
+  let relative = (path.relative lib_root)
+  let rel = (str relative).replace("\\", "/")
+  let parts = [...rel.split "/"]
+  if (parts.len == 0)
+    throw RuntimeError "can't derive module name from $path"
+
+  let last = parts.pop()
+  if !(last.ends_with ".dol")
+    throw RuntimeError "expected .dol source file: $path"
+  parts.push $last.without_suffix(".dol")
+
+  if (parts.len > 1 && parts[parts.len - 1] == "mod")
+    parts.pop()
+
+  ".".join $parts
+
+def module_entry name
+  "module/$name.dolc"
+
+def compile_module path lib_root
+  let name = module_name $path $lib_root
+  let source = path.read()
+  let result = compile.compile $path $source module: $name
+  for diag = result.diagnostics
+    diagnostic.print_compile_diag $diag
+  if (result.diagnostics.len > 0 || !result.ok || result.bytecode == nil)
+    throw CompileError "failed to compile $(path.relative lib_root)"
+  [name, result.bytecode]
+
+def bundle_zip zip_path lib_root
+  lib_root = lib_root.absolute()
+  if zip_path.parent
+    zip_path.parent.create_dir all: true
+  let files = [...lib_root.glob "**/*.dol"]
+  files.sort key: (do |p| str p)
+  if (files.len == 0)
+    throw RuntimeError "no stdlib sources found under $lib_root"
+
+  let entries = []
+  zip.open $zip_path "w" do |archive|
+    for path = files
+      let name bytecode = compile_module $path $lib_root
+      let entry = module_entry $name
+      entries.push $entry
+      archive.open $entry do |file|
+        file.write $bytecode
+  entries
+
+def pack_u64_le value
+  bin.pack $(0..8).iter().map(do |i| (value >> (i * 8)) & 0xff)
+
+def unpack_u64_le bytes
+  bytes.unpack().iter().enumerate().map(do |p| p[1] << (p[0] * 8)).fold 0 do |x y| (x | y)
+
+def read_bundle_footer output_exe
+  let meta = output_exe.metadata()
+  if (meta.len < bundle_footer_len)
+    return nil
+
+  output_exe.open "rb" do |file|
+    file.seek end: (-bundle_footer_len)
+    file.read $bundle_footer_len
+
+def strip_bundle output_exe
+  let footer = read_bundle_footer $output_exe
+  if (!footer || footer[8..] != bundle_magic)
+    return false
+
+  let footer_start = (output_exe.metadata().len - bundle_footer_len)
+  let offset = unpack_u64_le (footer[..8])
+  if (offset < 0 || offset > footer_start)
+    throw RuntimeError "invalid bundle footer in $output_exe"
+
+  output_exe.set_len $offset
+  true
+
+def copy_source source_exe output_exe
+  if output_exe.parent
+    output_exe.parent.create_dir all: true
+  source_exe.copy $output_exe
+
+def append_zip output_exe zip_path
+  let zip_bytes = zip_path.read "b"
+  let zip_offset = (output_exe.metadata().len)
+  output_exe.open "ab" do |file|
+    file.write $zip_bytes
+    file.write $ pack_u64_le $zip_offset
+    file.write $bundle_magic
+
+args.with
+  help: compile stdlib modules to bytecode and append them to a copied executable
+  - arg: source_exe
+    type: $fs.Path
+    help: source executable to copy
+  - arg: output_exe
+    type: $fs.Path
+    help: bundled executable output path
+  - arg: lib_root
+    type: $fs.Path
+    default: stdlib
+    help: stdlib source root
+  do |p|
+    let source_exe = p.source_exe
+    let output_exe = p.output_exe
+    let lib_root = p.lib_root
+    if !source_exe.exists()
+      throw RuntimeError "source executable does not exist: $source_exe"
+    if !lib_root.exists()
+      throw RuntimeError "stdlib root does not exist: $lib_root"
+
+    let zip_path = output_exe.add_ext "zip.tmp"
+    echo "Copying $source_exe to $output_exe"
+    copy_source $source_exe $output_exe
+    if strip_bundle $output_exe
+      echo "Removed existing bundle from $output_exe"
+    echo "Compiling stdlib into $zip_path"
+    let entries = bundle_zip $zip_path $lib_root
+    echo "Appending ZIP to $output_exe"
+    append_zip $output_exe $zip_path
+    echo "Bundled $(entries.len) modules into $output_exe"
