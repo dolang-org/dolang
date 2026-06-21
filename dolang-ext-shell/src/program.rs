@@ -34,6 +34,29 @@ pub(crate) struct ProgramAnnex<'v> {
     global: State<'v, Global<'v>>,
 }
 
+fn program_name_from_value<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    value: &Value<'v>,
+) -> Result<'v, 's, String> {
+    if let Some(path) = global.types.path.downcast(value) {
+        let path = path.annex().inner.clone();
+        let path = if path.is_absolute() {
+            path
+        } else {
+            global.local.get(strand).cwd().as_ref().join(path)
+        };
+        Ok(path.to_string_lossy().into_owned())
+    } else if let Some(name) = value.as_str(strand) {
+        Ok(name.to_string())
+    } else {
+        Err(Error::type_error(
+            strand,
+            "program must be a string or Path",
+        ))
+    }
+}
+
 async fn resolve_io<'v, 's, 'a>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
@@ -760,10 +783,8 @@ impl<'v> Object<'v> for Run<'v> {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let name = index
-            .as_str(strand)
-            .ok_or_else(|| Error::index(strand))?
-            .to_string();
+        let global = this.borrow(strand)?.global;
+        let name = program_name_from_value(strand, global, index)?;
         this.borrow(strand)?.get(strand, name, out);
         Ok(())
     }
@@ -788,10 +809,7 @@ impl<'v> Object<'v> for Run<'v> {
     ) -> Result<'v, 's, ()> {
         let global = this.borrow(strand)?.global;
         let ([name], [], args) = unpack!(strand, args, 1, 0, ...)?;
-        let name = name
-            .as_str(strand)
-            .ok_or_else(|| Error::type_error(strand, "program must be a string"))?
-            .to_string();
+        let name = program_name_from_value(strand, global, &name)?;
         dispatch_run(strand, &name, args, global).await
     }
 }
