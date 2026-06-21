@@ -61,10 +61,12 @@ let TARGETS =
   "x86_64-linux":
     tuple: x86_64-unknown-linux-gnu
   "x86_64-windows":
-    tuple: x86_64-pc-windows-msvc
-    exe: true
-  "x86_64-windows-cross":
-    tuple: x86_64-pc-windows-gnullvm
+    if (sys.os_info().family == :windows:)
+      # Native target
+      tuple: x86_64-pc-windows-msvc
+    else
+      # Cross target
+      tuple: x86_64-pc-windows-gnullvm
     exe: true
   "aarch64-macos":
     tuple: aarch64-apple-darwin
