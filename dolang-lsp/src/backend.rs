@@ -730,7 +730,10 @@ fn uri_to_file_path(uri: &Uri) -> Option<Cow<'_, Path>> {
 }
 
 fn is_dolang_source(path: &Path) -> bool {
-    path.extension().and_then(|ext| ext.to_str()) == Some("dol")
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        None | Some("dol")
+    )
 }
 
 fn range_contains_position(range: Range, position: Position) -> bool {
