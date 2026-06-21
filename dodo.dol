@@ -189,6 +189,12 @@ def both_test spec
   cargo_test $spec []
   shell_test $spec nil
 
+def install_file src dstdir
+  let dst = (dstdir / src.name)
+  let tmp = dst.add_ext tmp
+  src.copy $tmp
+  tmp.move $dst
+
 return
   common:
     - opt: target
@@ -358,20 +364,17 @@ return
       let bin_dir = (args.prefix / "bin")
       bin_dir.create_dir all: true
 
-      let shell = shell_build $spec
-      shell.copy (bin_dir / shell.name)
+      install_file (shell_build spec) $bin_dir
 
       spec.cargo build --bin dolang-lsp
-      let lsp = spec.bin "dolang-lsp"
-      lsp.copy (bin_dir / lsp.name)
+      install_file (spec.bin "dolang-lsp") $bin_dir
 
       if (spec.tuple.contains "-linux-")
         let vfs_spec = Spec $args
           profile: dist
           tuple: $(spec.tuple.without_suffix "-gnu")-musl
         vfs_spec.cargo build --bin dolang-shell-vfs
-        let vfs = vfs_spec.bin "dolang-shell-vfs"
-        vfs.copy $(bin_dir / vfs.name)
+        install_file (vfs_spec.bin "dolang-shell-vfs") $bin_dir
 
   publish:
     help: publish workspace crates in dependency order
