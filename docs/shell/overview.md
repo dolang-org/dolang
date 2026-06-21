@@ -1,7 +1,7 @@
 # Overview
 
-The `dolang-shell` crate provides a script executor and REPL for the Do
-language. It extends the core language with shell-oriented features like
+The `dolang-shell` crate provides the `dolang` script executor and REPL for
+the Do language. It extends the core language with shell-oriented features like
 process spawning, environment variable access, and file I/O.
 
 ## Running Scripts
@@ -9,14 +9,14 @@ process spawning, environment variable access, and file I/O.
 Run a Do script from the command line:
 
 ```bash
-dolang-shell script.dol
+dolang script.dol
 ```
 
 With the `--strict` flag, compiler warnings are treated as errors (runtime
 errors always propagate if uncaught, regardless of this flag):
 
 ```bash
-dolang-shell --strict script.dol
+dolang --strict script.dol
 ```
 
 Other flags:
@@ -27,7 +27,7 @@ Other flags:
 Scripts can use a shebang for direct execution:
 
 ```
-#!/usr/bin/env -S dolang-shell --strict
+#!/usr/bin/env -S dolang --strict
 echo Hello from Do!
 ```
 
@@ -40,7 +40,7 @@ the module name instead. In the REPL, `shell.program` is `nil`.
 Launch an interactive REPL with no arguments:
 
 ```bash
-dolang-shell
+dolang
 ```
 
 The REPL provides an interactive environment where you can evaluate Do

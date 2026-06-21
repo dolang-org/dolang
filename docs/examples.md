@@ -26,7 +26,7 @@ echo "On branch: $branch"
 with the results installed:
 
 ```
-#!/usr/bin/env -S dolang-shell --strict
+#!/usr/bin/env -S dolang --strict
 import xml progress container.docker: docker
 import proc.run:
   - zypper

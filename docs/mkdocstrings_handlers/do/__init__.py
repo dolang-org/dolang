@@ -31,7 +31,7 @@ def get_handler(
 
 
 def _resolve_module(module_name: str, search_dirs: list[str]) -> str | None:
-    """Find the .dol source file for a module name using the same resolution logic as dolang-shell.
+    """Find the .dol source file for a module name using the same resolution logic as dolang.
 
     For a module name like ``foo.bar``, tries in each search directory:
       1. ``<dir>/foo/bar.dol``
@@ -70,7 +70,7 @@ class DoHandler(BaseHandler):
     def collect(self, identifier: str, options: dict) -> dict:
         """Collect documentation for an identifier.
 
-        ``paths`` may be a list of search directories (resolved like dolang-shell)
+        ``paths`` may be a list of search directories (resolved like dolang)
         or a dict mapping module names to explicit file paths — or both together.
 
         Identifier formats:

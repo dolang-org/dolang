@@ -115,7 +115,7 @@ fn program_name(program: Option<&OsStr>) -> String {
         .and_then(|program| Path::new(program).file_name())
         .and_then(OsStr::to_str)
         .filter(|program| !program.is_empty())
-        .unwrap_or("dolang-shell")
+        .unwrap_or("dolang")
         .to_owned()
 }
 
@@ -263,16 +263,16 @@ mod tests {
 
     #[test]
     fn shell_help_before_target_exits() {
-        let outcome = parse_from(args(["dolang-shell", "--help"]));
+        let outcome = parse_from(args(["dolang", "--help"]));
         let ParseOutcome::Help(help) = outcome else {
             panic!("expected shell help");
         };
-        assert!(help.contains("Usage: dolang-shell"));
+        assert!(help.contains("Usage: dolang"));
     }
 
     #[test]
     fn help_after_script_target_is_forwarded() {
-        let cli = parse_ok(["dolang-shell", "file.dol", "--help"]);
+        let cli = parse_ok(["dolang", "file.dol", "--help"]);
         assert_eq!(cli.path, Some(PathBuf::from("file.dol")));
         assert!(!cli.module);
         assert_eq!(cli.args, ["--help"]);
@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn help_after_module_target_is_forwarded() {
-        let cli = parse_ok(["dolang-shell", "-m", "pkg.tool", "--help"]);
+        let cli = parse_ok(["dolang", "-m", "pkg.tool", "--help"]);
         assert_eq!(cli.path, Some(PathBuf::from("pkg.tool")));
         assert!(cli.module);
         assert_eq!(cli.args, ["--help"]);
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn shell_flags_before_target_still_apply() {
-        let cli = parse_ok(["dolang-shell", "--check", "--strict", "file.dol", "--help"]);
+        let cli = parse_ok(["dolang", "--check", "--strict", "file.dol", "--help"]);
         assert!(cli.check);
         assert!(cli.strict);
         assert_eq!(cli.path, Some(PathBuf::from("file.dol")));
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn unknown_option_before_target_errors() {
-        let ParseOutcome::Error(error) = parse_from(args(["dolang-shell", "--wat"])) else {
+        let ParseOutcome::Error(error) = parse_from(args(["dolang", "--wat"])) else {
             panic!("expected error");
         };
         assert!(error.contains("unexpected argument '--wat'"));
@@ -305,13 +305,13 @@ mod tests {
 
     #[test]
     fn unknown_option_after_target_is_forwarded() {
-        let cli = parse_ok(["dolang-shell", "file.dol", "--wat"]);
+        let cli = parse_ok(["dolang", "file.dol", "--wat"]);
         assert_eq!(cli.args, ["--wat"]);
     }
 
     #[test]
     fn module_requires_target() {
-        let ParseOutcome::Error(error) = parse_from(args(["dolang-shell", "-m"])) else {
+        let ParseOutcome::Error(error) = parse_from(args(["dolang", "-m"])) else {
             panic!("expected error");
         };
         assert!(error.contains("expected a target after '--module'"));
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn compile_requires_output() {
-        let ParseOutcome::Error(error) = parse_from(args(["dolang-shell", "--compile"])) else {
+        let ParseOutcome::Error(error) = parse_from(args(["dolang", "--compile"])) else {
             panic!("expected error");
         };
         assert!(error.contains("a value is required for '--compile <OUTPUT>'"));
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn check_and_module_conflict() {
-        let ParseOutcome::Error(error) = parse_from(args(["dolang-shell", "--check", "-m", "mod"]))
+        let ParseOutcome::Error(error) = parse_from(args(["dolang", "--check", "-m", "mod"]))
         else {
             panic!("expected error");
         };
@@ -336,20 +336,14 @@ mod tests {
 
     #[test]
     fn option_terminator_forces_next_token_to_be_target() {
-        let cli = parse_ok(["dolang-shell", "--", "--help", "--check"]);
+        let cli = parse_ok(["dolang", "--", "--help", "--check"]);
         assert_eq!(cli.path, Some(PathBuf::from("--help")));
         assert_eq!(cli.args, ["--check"]);
     }
 
     #[test]
     fn compile_and_check_preserve_current_precedence() {
-        let cli = parse_ok([
-            "dolang-shell",
-            "--compile",
-            "out.dolc",
-            "--check",
-            "file.dol",
-        ]);
+        let cli = parse_ok(["dolang", "--compile", "out.dolc", "--check", "file.dol"]);
         assert!(cli.check);
         assert_eq!(cli.compile, Some(PathBuf::from("out.dolc")));
     }

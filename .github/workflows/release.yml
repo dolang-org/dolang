@@ -80,17 +80,17 @@ jobs:
 
       - name: Build release binaries (Linux host target)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang-shell --bin dolang-lsp
+        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang --bin dolang-lsp
         env:
           ZSTD_SYS_USE_PKG_CONFIG: "1"
 
       - name: Build release binaries (Windows)
         if: matrix.os == 'windows-latest'
-        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang-shell --bin dolang-lsp
+        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang --bin dolang-lsp
 
       - name: Build release binaries (macOS)
         if: matrix.os == 'macos-latest'
-        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang-shell --bin dolang-lsp --bin dolang-shell-vfs
+        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang --bin dolang-lsp --bin dolang-shell-vfs
 
       - name: Build dolang-shell-vfs (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -100,20 +100,20 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           env DOLANG_SHELL_VFS="${{ github.workspace }}/target/x86_64-unknown-linux-musl/dist/dolang-shell-vfs" \
-            cargo run --profile dist --target ${{ matrix.target }} --bin dolang-shell -- -m test -- test/*.dol
+            cargo run --profile dist --target ${{ matrix.target }} --bin dolang -- -m test -- test/*.dol
         env:
           ZSTD_SYS_USE_PKG_CONFIG: "1"
 
       - name: Run integration tests (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          cargo run --profile dist --target ${{ matrix.target }} --bin dolang-shell -- -m test -- test/*.dol
+          cargo run --profile dist --target ${{ matrix.target }} --bin dolang -- -m test -- test/*.dol
 
       - name: Run integration tests (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           env DOLANG_SHELL_VFS="${{ github.workspace }}/target/${{ matrix.target }}/dist/dolang-shell-vfs" \
-            cargo run --profile dist --target ${{ matrix.target }} --bin dolang-shell -- -m test -- test/*.dol
+            cargo run --profile dist --target ${{ matrix.target }} --bin dolang -- -m test -- test/*.dol
 
       - name: Package release (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -121,10 +121,10 @@ jobs:
         run: |
           archive="dolang-${{ matrix.artifact_name }}.tar.gz"
           mkdir release
-          cp target/${{ matrix.target }}/dist/dolang-shell release/
+          cp target/${{ matrix.target }}/dist/dolang release/
           cp target/${{ matrix.target }}/dist/dolang-lsp release/
           cp target/x86_64-unknown-linux-musl/dist/dolang-shell-vfs release/
-          tar -C release -czf "$archive" dolang-shell dolang-lsp dolang-shell-vfs
+          tar -C release -czf "$archive" dolang dolang-lsp dolang-shell-vfs
 
       - name: Package release (Windows)
         if: matrix.os == 'windows-latest'
@@ -132,7 +132,7 @@ jobs:
         run: |
           $archive = "dolang-${{ matrix.artifact_name }}.tar.gz"
           New-Item -ItemType Directory -Path release | Out-Null
-          Copy-Item "target/${{ matrix.target }}/dist/dolang-shell.exe" -Destination release/
+          Copy-Item "target/${{ matrix.target }}/dist/dolang.exe" -Destination release/
           Copy-Item "target/${{ matrix.target }}/dist/dolang-lsp.exe" -Destination release/
           7z a -ttar release.tar ./release/*
           7z a -tgzip $archive release.tar
@@ -143,10 +143,10 @@ jobs:
         run: |
           archive="dolang-${{ matrix.artifact_name }}.tar.gz"
           mkdir release
-          cp target/${{ matrix.target }}/dist/dolang-shell release/
+          cp target/${{ matrix.target }}/dist/dolang release/
           cp target/${{ matrix.target }}/dist/dolang-lsp release/
           cp target/${{ matrix.target }}/dist/dolang-shell-vfs release/
-          tar -C release -czf "$archive" dolang-shell dolang-lsp dolang-shell-vfs
+          tar -C release -czf "$archive" dolang dolang-lsp dolang-shell-vfs
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

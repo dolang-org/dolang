@@ -21,7 +21,7 @@ suite("Tool Resolution", () => {
         const resolved = await resolveTool("shell", {
             context: createContext(root),
             configuration: createConfiguration({
-                "shell.path": configured
+                "path": configured
             }),
             pathEnv: path.dirname(onPath)
         });

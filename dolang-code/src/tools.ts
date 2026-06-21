@@ -33,13 +33,13 @@ const TOOL_METADATA: Record<
     }
 > = {
     shell: {
-        binaryName: "dolang-shell",
-        settingKey: "shell.path",
-        displayName: "dolang-shell"
+        binaryName: "dolang",
+        settingKey: "path",
+        displayName: "dolang"
     },
     "shell-vfs": {
         binaryName: "dolang-shell-vfs",
-        settingKey: "shellVfs.path",
+        settingKey: "vfs.path",
         displayName: "dolang-shell-vfs"
     },
     lsp: {

@@ -3,7 +3,7 @@
 ## Module Resolution
 
 The core Do language only supports built-in modules (like `base64`, `json`, and
-`strand`). Filesystem-based module importing is provided by `dolang-shell`.
+`strand`). Filesystem-based module importing is provided by `dolang`.
 
 When a script imports a module, the shell resolves it by searching configured
 module paths. The **current directory is not searched by default**.
@@ -13,9 +13,9 @@ module paths. The **current directory is not searched by default**.
 Modules are resolved in this order:
 
 1. **Site directory**:
-   - `~/.local/share/dolang-shell/site/` (Unix)
-   - `%APPDATA%\dolang-shell\site\` (Windows)
-2. **`DOLANG_SHELL_MODULE_PATH` environment variable**: additional paths,
+   - `~/.local/share/dolang/site/` (Unix)
+   - `%APPDATA%\dolang\site\` (Windows)
+2. **`DOLANG_MODULE_PATH` environment variable**: additional paths,
    separated by `:` on Unix or `;` on Windows
 
 ### File Resolution
@@ -36,8 +36,8 @@ import mylib
 The shell caches compiled bytecode to speed up subsequent loads. The cache is
 stored in a central location:
 
-- Linux/macOS: `~/.cache/dolang-shell/bytecode/`
-- Windows: `%LOCALAPPDATA%\dolang-shell\bytecode\`
+- Linux/macOS: `~/.cache/dolang/bytecode/`
+- Windows: `%LOCALAPPDATA%\dolang\bytecode\`
 
 Cache files are named by a Blake3 hash of the source file path and compilation
 mode, with a `.dolc` extension. The cache is automatically invalidated when the

@@ -6,6 +6,11 @@ edition = "2024"
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+autobins = false
+
+[[bin]]
+name = "dolang"
+path = "src/main.rs"
 
 [features]
 default = ["base64", "digest", "json", "regex", "glob", "http", "zip", "sqlite", "xml", "yaml", "progress", "rand"]

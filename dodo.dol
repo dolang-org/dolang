@@ -19,7 +19,7 @@ let COV_IGNORE =
   - dolang-private-build
 
 let MAIN_BINS =
-  - dolang-shell
+  - dolang
   - dolang-shell-vfs
   - dolang-lsp
 
@@ -152,7 +152,7 @@ def cargo_test spec rest
   spec.cargo_vfs test ...rest
 
 def shell_test spec tests
-  spec.cargo_vfs run --bin dolang-shell -- -m test ...(tests || default_shell_tests())
+  spec.cargo_vfs run --bin dolang -- -m test ...(tests || default_shell_tests())
 
 def both_test spec
   cargo_test $spec []
@@ -256,7 +256,7 @@ return
       spec.cargo llvm-cov --no-report run --ignore-run-fail --bin dolang-shell-vfs
       env DO_EXPORT_DOT: $Path("dot").absolute() VFS: (spec.bin "dolang-shell-vfs") do
         spec.cargo llvm-cov --no-report test
-        spec.cargo llvm-cov run --no-report --bin dolang-shell -- -m test
+        spec.cargo llvm-cov run --no-report --bin dolang -- -m test
           ...default_shell_tests()
 
   "cov-dump":
@@ -326,9 +326,9 @@ return
       let is_linux = spec.tuple.ends_with "-linux-gnu"
       if is_linux
         env ZSTD_SYS_USE_PKG_CONFIG: 1 do
-          spec.cargo install --path dolang-shell ...args.args
+          spec.cargo install --path dolang-shell --bin dolang ...args.args
       else
-        spec.cargo install --path dolang-shell ...args.args
+        spec.cargo install --path dolang-shell --bin dolang ...args.args
       spec.cargo install --path dolang-lsp ...args.args
       if is_linux
         let spec = Spec $args

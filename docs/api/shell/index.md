@@ -89,13 +89,13 @@ shell invocation.
 
 ### `program`
 
-Identifies what `dolang-shell` is executing.
+Identifies what `dolang` is executing.
 
-- For `dolang-shell script.dol`, this is an [`fs.Path`](../fs/path.md) for
+- For `dolang script.dol`, this is an [`fs.Path`](../fs/path.md) for
   `script.dol`.
-- For `dolang-shell -m foo.bar`, this is the string `"foo.bar"`.
+- For `dolang -m foo.bar`, this is the string `"foo.bar"`.
 - In the REPL, this is `nil`.
 
 ### `exe`
 
-The path to the current `dolang-shell` executable.
+The path to the current `dolang` executable.

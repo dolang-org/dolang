@@ -41,7 +41,7 @@ fn get_action(cli: &Cli) -> Action {
     }
 }
 
-/// Run the stock `dolang-shell` CLI and return its process exit code.
+/// Run the stock `dolang` CLI and return its process exit code.
 ///
 /// Custom binaries can call this after linking any additional extensions they
 /// want to register via `dolang::extension!`.

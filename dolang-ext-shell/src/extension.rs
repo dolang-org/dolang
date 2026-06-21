@@ -28,7 +28,7 @@ impl error::Error for Infallible {}
 
 impl Extension for Shell {
     type Error = Infallible;
-    const NAME: &str = "dolang-shell";
+    const NAME: &str = "shell";
     const VERSION: Version = Version {
         major: 0,
         minor: 1,

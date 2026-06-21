@@ -123,7 +123,7 @@ async fn file_is_newer(older: &Path, newer: &Path) -> bool {
 }
 
 pub(crate) fn dirs<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, ProjectDirs> {
-    ProjectDirs::from("", "", "dolang-shell")
+    ProjectDirs::from("", "", "dolang")
         .ok_or_else(|| Error::runtime(strand, "can't locate application directories"))
 }
 
@@ -134,7 +134,7 @@ fn get_module_search_paths<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's
     paths.push(dirs(strand)?.data_dir().join("site"));
 
     // Add environment variable paths
-    if let Ok(module_path) = std::env::var("DOLANG_SHELL_MODULE_PATH") {
+    if let Ok(module_path) = std::env::var("DOLANG_MODULE_PATH") {
         for path in module_path.split(PATH_SEPARATOR) {
             if !path.is_empty() {
                 paths.push(PathBuf::from(path));
