@@ -344,6 +344,16 @@ impl<'v> Object<'v> for Path {
                 let ([data], []) = unpack!(strand, args, 1, 0)?;
                 super::write(strand, this.annex().global, &this.annex().inner, data, out).await
             })
+            .method("set_len", async move |this, strand, args, _out| {
+                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                let size = size.to_i64(strand).map_err(|_| {
+                    Error::type_error(strand, "size must be a non-negative integer")
+                })?;
+                let size = u64::try_from(size).map_err(|_| {
+                    Error::type_error(strand, "size must be a non-negative integer")
+                })?;
+                super::set_len(strand, this.annex().global, &this.annex().inner, size).await
+            })
             .method("copy", async move |this, strand, args, _out| {
                 let ([to], [all]) = unpack!(strand, args, 1, 0, all = None)?;
                 let all = match all {

@@ -211,6 +211,26 @@ let path = Path "output.txt"
 path.write "hello"
 ```
 
+### `set_len size`
+
+Truncates the file at this path to the given byte length, creating it if
+needed.
+
+Equivalent to [`set_len`](index.md#set_len-path-size).
+
+**Parameters:**
+
+| Name   | Type                     | Description              |
+| ------ | ------------------------ | ------------------------ |
+| `size` | [`int`](../std/index.md) | New file length in bytes |
+
+**Example:**
+
+```
+let path = Path "output.txt"
+path.set_len 0
+```
+
 ### `copy to :all?`
 
 Copies this filesystem entry to `to`.

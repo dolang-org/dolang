@@ -1,7 +1,7 @@
 use dolang::runtime::{
     Arg, Error, Output, Result, Slot, State, Strand, call, method, unpack, value::View, vm::Builder,
 };
-use dolang_shell_vfs::{FileType, Metadata, Vfs, WellKnownPath};
+use dolang_shell_vfs::{FileType, Metadata, OpenOptions, Vfs, WellKnownPath};
 use std::{io, io::ErrorKind, path::PathBuf, time};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -313,6 +313,27 @@ async fn write<'v, 's>(
 
     file.flush().await.into_sys(strand)?;
     Output::set(strand, out, bytes_written as i64);
+    Ok(())
+}
+
+async fn set_len<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    path: &std::path::Path,
+    size: u64,
+) -> Result<'v, 's, ()> {
+    let local = global.local.get(strand);
+    let path = local.cwd().as_ref().join(path);
+    let vfs = local.vfs();
+    let file = vfs
+        .open_options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&path)
+        .await
+        .into_sys(strand)?;
+    file.set_len(size).await.into_sys(strand)?;
     Ok(())
 }
 
@@ -883,6 +904,16 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let ([path, data], []) = unpack!(strand, args, 2, 0)?;
             let path = path_from_value(strand, global, &path)?;
             write(strand, global, &path, data, out).await
+        })
+        .function("set_len", async move |strand, args, _out| {
+            let ([path, size], []) = unpack!(strand, args, 2, 0)?;
+            let path = path_from_value(strand, global, &path)?;
+            let size = size
+                .to_i64(strand)
+                .map_err(|_| Error::type_error(strand, "size must be a non-negative integer"))?;
+            let size = u64::try_from(size)
+                .map_err(|_| Error::type_error(strand, "size must be a non-negative integer"))?;
+            set_len(strand, global, &path, size).await
         })
         .function("is_absolute", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
