@@ -10,6 +10,7 @@ Use `proc.run` as a namespace to access programs by name:
 run.ls -la
 run.git status
 run["/bin/echo"] hello world
+run[Path "tools/build.sh"] --help
 ```
 
 Or import specific programs:
