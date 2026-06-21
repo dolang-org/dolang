@@ -46,17 +46,17 @@ return
 
 ### Default Prelude
 
-When no `.dolang-lsp.dol` is found, the LSP defaults to the `dolang-shell`
+When no `.dolang-lsp.dol` is found, the LSP defaults to the `dolang`
 prelude, which also includes the core language prelude.
 
 ### When to Use This
 
-The config file is primarily useful for **non-`dolang-shell` projects** -- for
+The config file is primarily useful for **non-`dolang` projects** -- for
 example, when Do is embedded in a Rust application with custom native
 functions. It tells the LSP what names your embedding provides so diagnostics
 don't report false "unbound variable" errors.
 
-For `dolang-shell` projects, the default prelude is correct and no
+For `dolang` projects, the default prelude is correct and no
 configuration file is needed.
 
 ### Execution Environment

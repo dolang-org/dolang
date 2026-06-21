@@ -68,4 +68,4 @@ Only `pub` definitions are visible when a module is imported.
 
 Modules are resolved according to the host application. See the [Shell
 Guide](../shell/modules.md) for details on module path configuration for
-`dolang-shell`.
+`dolang`.

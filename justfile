@@ -22,7 +22,7 @@ test-asan *args:
     env \
         RUSTFLAGS="-Z sanitizer=address" \
         DOLANG_SHELL_VFS="{{justfile_directory()}}/target/{{asan_target}}/asan/dolang-shell-vfs" \
-        cargo +nightly run --profile asan --bin dolang-shell --target {{asan_target}} \
+        cargo +nightly run --profile asan --bin dolang --target {{asan_target}} \
         -Z build-std "$@" -- {{shell_test_args}}
 
 # Run tests with miri (VERY SLOW)
@@ -61,7 +61,7 @@ test *args:
     cargo build --bin dolang-shell-vfs "$@"
     env \
         DOLANG_SHELL_VFS="{{justfile_directory()}}/{{shell_vfs}}" \
-        cargo run --bin dolang-shell "$@" -- {{shell_test_args}}
+        cargo run --bin dolang "$@" -- {{shell_test_args}}
 
 cov *args:
     cargo llvm-cov clean
@@ -72,7 +72,7 @@ cov *args:
         cargo llvm-cov --no-report test --all-features "$@"
     env \
         DOLANG_SHELL_VFS="{{justfile_directory()}}/{{llvm_cov_shell_vfs}}" \
-        cargo llvm-cov run --no-report --bin dolang-shell --all-features "$@" -- \
+        cargo llvm-cov run --no-report --bin dolang --all-features "$@" -- \
         {{shell_test_args}}
 
 cov-dump:
@@ -118,9 +118,9 @@ clean:
 install *args:
     @if [ "$(uname)" = "Linux" ]; then \
         env ZSTD_SYS_USE_PKG_CONFIG=1 \
-            cargo install --profile dist --path dolang-shell "$@"; \
+            cargo install --profile dist --path dolang-shell --bin dolang "$@"; \
     else \
-        cargo install --profile dist --path dolang-shell "$@"; \
+        cargo install --profile dist --path dolang-shell --bin dolang "$@"; \
     fi
     cargo install --profile dist --path dolang-lsp "$@"
     # Install dolang-shell-vfs with musl target on Linux

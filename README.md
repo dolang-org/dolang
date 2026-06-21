@@ -77,10 +77,10 @@ progress.with do podman.build
 cargo build --release
 
 # Run the shell
-./target/release/dolang-shell
+./target/release/dolang
 
 # Or run a script
-./target/release/dolang-shell example/cow.dol
+./target/release/dolang example/cow.dol
 ```
 
 ## Acknowledgements

@@ -68,7 +68,7 @@ not run inside the container.
 The `host()` function always creates a "fresh" host context:
 
 - Working directory is reset to the original startup working directory of
-  `dolang-shell`
+  `dolang`
 - Environment variables are reset to their startup values
 - Any active VFS context is temporarily suspended
 - After completion, the previous context is restored
