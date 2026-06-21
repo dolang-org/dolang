@@ -2,6 +2,7 @@ pub(crate) mod arg;
 pub(crate) mod array;
 pub(crate) mod backtrace;
 pub(crate) mod bin;
+pub(crate) mod binary_int;
 pub(crate) mod channel;
 pub(crate) mod class;
 pub(crate) mod dict;

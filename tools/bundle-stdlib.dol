@@ -55,12 +55,6 @@ def bundle_zip zip_path lib_root
         file.write $bytecode
   entries
 
-def pack_u64_le value
-  bin.pack $(0..8).iter().map(do |i| (value >> (i * 8)) & 0xff)
-
-def unpack_u64_le bytes
-  bytes.unpack().iter().enumerate().map(do |p| p[1] << (p[0] * 8)).fold 0 do |x y| (x | y)
-
 def read_bundle_footer output_exe
   let meta = output_exe.metadata()
   if (meta.len < bundle_footer_len)
@@ -76,7 +70,7 @@ def strip_bundle output_exe
     return false
 
   let footer_start = (output_exe.metadata().len - bundle_footer_len)
-  let offset = unpack_u64_le (footer[..8])
+  let offset = int.from_u64_le (footer[..8])
   if (offset < 0 || offset > footer_start)
     throw RuntimeError "invalid bundle footer in $output_exe"
 
@@ -93,7 +87,7 @@ def append_zip output_exe zip_path
   let zip_offset = (output_exe.metadata().len)
   output_exe.open "ab" do |file|
     file.write $zip_bytes
-    file.write $ pack_u64_le $zip_offset
+    file.write (bin.from_u64_le zip_offset)
     file.write $bundle_magic
 
 args.with

@@ -47,6 +47,48 @@ assert_eq (b"foobar"[1..-1]) b"ooba"
 assert_eq (b"foobar"[-4..-1]) b"oba"
 assert_eq (b"foobar"[-6..6]) b"foobar"
 
+# Scalar indexing
+assert_eq (b"\x12\x34"[0]) 18
+assert_eq (b"\x12\x34"[1]) 52
+assert_eq (b"\x12\x34"[-1]) 52
+assert_eq (b"\x12\x34"[-2]) 18
+
+# Fixed-width integer codecs
+assert_eq (int.from_u8(b"\xff")) 255
+assert_eq (bin.from_u8(255)) b"\xff"
+assert_eq (int.from_i8(b"\xff")) -1
+assert_eq (bin.from_i8(-1)) b"\xff"
+
+assert_eq (int.from_u16_le(b"\x34\x12")) 0x1234
+assert_eq (int.from_u16_be(b"\x12\x34")) 0x1234
+assert_eq (bin.from_u16_le(0x1234)) b"\x34\x12"
+assert_eq (bin.from_u16_be(0x1234)) b"\x12\x34"
+
+assert_eq (int.from_i16_le(b"\xcc\xed")) -0x1234
+assert_eq (int.from_i16_be(b"\xed\xcc")) -0x1234
+assert_eq (bin.from_i16_le(-0x1234)) b"\xcc\xed"
+assert_eq (bin.from_i16_be(-0x1234)) b"\xed\xcc"
+
+assert_eq (int.from_u32_le(b"\x78\x56\x34\x12")) 0x12345678
+assert_eq (int.from_u32_be(b"\x12\x34\x56\x78")) 0x12345678
+assert_eq (bin.from_u32_le(0x12345678)) b"\x78\x56\x34\x12"
+assert_eq (bin.from_u32_be(0x12345678)) b"\x12\x34\x56\x78"
+
+assert_eq (int.from_i32_le(b"\x88\xa9\xcb\xed")) -0x12345678
+assert_eq (int.from_i32_be(b"\xed\xcb\xa9\x88")) -0x12345678
+assert_eq (bin.from_i32_le(-0x12345678)) b"\x88\xa9\xcb\xed"
+assert_eq (bin.from_i32_be(-0x12345678)) b"\xed\xcb\xa9\x88"
+
+assert_eq (int.from_u64_le(b"\xef\xcd\xab\x89\x67\x45\x23\x01")) 0x0123456789abcdef
+assert_eq (int.from_u64_be(b"\x01\x23\x45\x67\x89\xab\xcd\xef")) 0x0123456789abcdef
+assert_eq (bin.from_u64_le(0x0123456789abcdef)) b"\xef\xcd\xab\x89\x67\x45\x23\x01"
+assert_eq (bin.from_u64_be(0x0123456789abcdef)) b"\x01\x23\x45\x67\x89\xab\xcd\xef"
+
+assert_eq (int.from_i64_le(b"\x11\x32\x54\x76\x98\xba\xdc\xfe")) -0x0123456789abcdef
+assert_eq (int.from_i64_be(b"\xfe\xdc\xba\x98\x76\x54\x32\x11")) -0x0123456789abcdef
+assert_eq (bin.from_i64_le(-0x0123456789abcdef)) b"\x11\x32\x54\x76\x98\xba\xdc\xfe"
+assert_eq (bin.from_i64_be(-0x0123456789abcdef)) b"\xfe\xdc\xba\x98\x76\x54\x32\x11"
+
 # Starts/ends with
 assert (b"foobar".starts_with b"foo")
 assert (b"foobar".ends_with b"bar")
@@ -101,3 +143,6 @@ def assert_err msg block
 
 assert_err "index out of range or invalid" do b"foobar"[-99..]
 assert_err "index out of range or invalid" do b"foobar"[0..-99]
+assert_err "index out of range or invalid" do b"foobar"[99]
+assert_err "type error: expected `bin` of length 2" do int.from_u16_le(b"\x12")
+assert_err "numeric overflow" do bin.from_u8(256)

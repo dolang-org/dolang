@@ -166,6 +166,20 @@ well_known_symbols! {
     (GetMethod, "(get)", GET_METHOD),
     (SetMethod, "(set)", SET_METHOD),
     (HashMethod, "(hash)", HASH_METHOD),
+    (FromU8, "from_u8", FROM_U8),
+    (FromI8, "from_i8", FROM_I8),
+    (FromU16Le, "from_u16_le", FROM_U16_LE),
+    (FromU16Be, "from_u16_be", FROM_U16_BE),
+    (FromI16Le, "from_i16_le", FROM_I16_LE),
+    (FromI16Be, "from_i16_be", FROM_I16_BE),
+    (FromU32Le, "from_u32_le", FROM_U32_LE),
+    (FromU32Be, "from_u32_be", FROM_U32_BE),
+    (FromI32Le, "from_i32_le", FROM_I32_LE),
+    (FromI32Be, "from_i32_be", FROM_I32_BE),
+    (FromU64Le, "from_u64_le", FROM_U64_LE),
+    (FromU64Be, "from_u64_be", FROM_U64_BE),
+    (FromI64Le, "from_i64_le", FROM_I64_LE),
+    (FromI64Be, "from_i64_be", FROM_I64_BE),
 }
 
 /// A symbol

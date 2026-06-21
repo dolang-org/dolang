@@ -9,6 +9,7 @@ use crate::{
     bytecode::Variadic,
     error::{Error, Result, ResultExt},
     gc::{Collect, arena::Visit},
+    object::binary_int,
     object::protocol::GcObj,
     sig,
     strand::Strand,
@@ -135,7 +136,10 @@ impl<'v> Protocol<'v> for [u8] {
     ) -> Result<'v, 's, ()> {
         let me = this.receiver.get();
         let Some((start, end)) = range::slice_bounds(index, strand, me.len())? else {
-            return Err(Error::index(strand));
+            let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
+            let index = index::element(me.len(), index).ok_or_else(|| Error::index(strand))?;
+            Output::set(strand, out, me[index] as i64);
+            return Ok(());
         };
         let slice = me.get(start..end).ok_or_else(|| Error::index(strand))?;
         Output::set(strand, out, slice);
@@ -384,7 +388,17 @@ impl<'v> Protocol<'v> for [u8] {
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(strand, "len is a field, not a method")),
-            _ => Err(Error::field(strand, method)),
+            tag => {
+                if let Some(format) = binary_int::format_for_method(tag) {
+                    let ([value], []) = unpack!(strand, args, 1, 0)?;
+                    let value = value.to_int(strand)?;
+                    let encoded = binary_int::encode(strand, value, format)?;
+                    Output::set(strand, out, encoded.as_slice());
+                    Ok(())
+                } else {
+                    Err(Error::field(strand, method))
+                }
+            }
         }
     }
 
@@ -411,7 +425,21 @@ impl<'v> Protocol<'v> for [u8] {
             | sym::TRIM_START
             | sym::TRIM_END
             | sym::CONTAINS
-            | sym::HEX => {
+            | sym::HEX
+            | sym::FROM_U8
+            | sym::FROM_I8
+            | sym::FROM_U16_LE
+            | sym::FROM_U16_BE
+            | sym::FROM_I16_LE
+            | sym::FROM_I16_BE
+            | sym::FROM_U32_LE
+            | sym::FROM_U32_BE
+            | sym::FROM_I32_LE
+            | sym::FROM_I32_BE
+            | sym::FROM_U64_LE
+            | sym::FROM_U64_BE
+            | sym::FROM_I64_LE
+            | sym::FROM_I64_BE => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
@@ -748,6 +776,13 @@ impl<'v> Protocol<'v> for Class {
                 }
                 Ok(())
             }
+            tag if let Some(format) = binary_int::format_for_method(tag) => {
+                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                let value = value.to_int(strand)?;
+                let encoded = binary_int::encode(strand, value, format)?;
+                Output::set(strand, out, encoded.as_slice());
+                Ok(())
+            }
             _ => {
                 dispatch_native_method(strand, &strand.vm().singletons().bin, method, args, out)
                     .await
@@ -784,7 +819,21 @@ impl<'v> Protocol<'v> for Class {
             | sym::TRIM_START
             | sym::TRIM_END
             | sym::SUB
-            | sym::CONTAINS => {
+            | sym::CONTAINS
+            | sym::FROM_U8
+            | sym::FROM_I8
+            | sym::FROM_U16_LE
+            | sym::FROM_U16_BE
+            | sym::FROM_I16_LE
+            | sym::FROM_I16_BE
+            | sym::FROM_U32_LE
+            | sym::FROM_U32_BE
+            | sym::FROM_I32_LE
+            | sym::FROM_I32_BE
+            | sym::FROM_U64_LE
+            | sym::FROM_U64_BE
+            | sym::FROM_I64_LE
+            | sym::FROM_I64_BE => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }

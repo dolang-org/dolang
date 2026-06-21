@@ -8,6 +8,7 @@ use crate::{
     gc::{Collect, arena::Visit},
     object::{
         BoundMethod,
+        binary_int::{self, BinaryIntFormat},
         protocol::{Inspect, Protocol, Recv, dispatch_native_method},
     },
     strand::Strand,
@@ -492,6 +493,17 @@ fn coerce_to_int<'v, 's>(value: &Value<'v>, strand: &mut Strand<'v, 's>) -> Resu
     }
 }
 
+fn decode_binary_int<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+    format: BinaryIntFormat,
+) -> Result<'v, 's, i128> {
+    let bytes = value
+        .as_bin_raw(strand.vm())
+        .ok_or_else(|| Error::type_error(strand, "expected `bin`"))?;
+    binary_int::decode(strand, bytes, format)
+}
+
 pub(crate) struct Int;
 
 unsafe impl Collect for Int {
@@ -524,33 +536,34 @@ impl<'v> Protocol<'v> for Int {
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
+        let members = vec![
+            Sym::well_known(sym::STR_METHOD),
+            Sym::well_known(sym::DBG_METHOD),
+            Sym::well_known(sym::ADD_METHOD),
+            Sym::well_known(sym::SUB_METHOD),
+            Sym::well_known(sym::RSUB_METHOD),
+            Sym::well_known(sym::MUL_METHOD),
+            Sym::well_known(sym::DIV_METHOD),
+            Sym::well_known(sym::RDIV_METHOD),
+            Sym::well_known(sym::EDIV_METHOD),
+            Sym::well_known(sym::REDIV_METHOD),
+            Sym::well_known(sym::MOD_METHOD),
+            Sym::well_known(sym::RMOD_METHOD),
+            Sym::well_known(sym::BAND_METHOD),
+            Sym::well_known(sym::BOR_METHOD),
+            Sym::well_known(sym::BXOR_METHOD),
+            Sym::well_known(sym::SHL_METHOD),
+            Sym::well_known(sym::SHR_METHOD),
+            Sym::well_known(sym::NEG_METHOD),
+            Sym::well_known(sym::BNOT_METHOD),
+            Sym::well_known(sym::EQ_METHOD),
+            Sym::well_known(sym::LT_METHOD),
+            Sym::well_known(sym::BOOL_METHOD),
+            Sym::well_known(sym::HASH_METHOD),
+        ];
         Some(Inspect {
             is_abstract: false,
-            members: vec![
-                Sym::well_known(sym::STR_METHOD),
-                Sym::well_known(sym::DBG_METHOD),
-                Sym::well_known(sym::ADD_METHOD),
-                Sym::well_known(sym::SUB_METHOD),
-                Sym::well_known(sym::RSUB_METHOD),
-                Sym::well_known(sym::MUL_METHOD),
-                Sym::well_known(sym::DIV_METHOD),
-                Sym::well_known(sym::RDIV_METHOD),
-                Sym::well_known(sym::EDIV_METHOD),
-                Sym::well_known(sym::REDIV_METHOD),
-                Sym::well_known(sym::MOD_METHOD),
-                Sym::well_known(sym::RMOD_METHOD),
-                Sym::well_known(sym::BAND_METHOD),
-                Sym::well_known(sym::BOR_METHOD),
-                Sym::well_known(sym::BXOR_METHOD),
-                Sym::well_known(sym::SHL_METHOD),
-                Sym::well_known(sym::SHR_METHOD),
-                Sym::well_known(sym::NEG_METHOD),
-                Sym::well_known(sym::BNOT_METHOD),
-                Sym::well_known(sym::EQ_METHOD),
-                Sym::well_known(sym::LT_METHOD),
-                Sym::well_known(sym::BOOL_METHOD),
-                Sym::well_known(sym::HASH_METHOD),
-            ],
+            members,
         })
     }
 
@@ -584,7 +597,21 @@ impl<'v> Protocol<'v> for Int {
             | sym::EQ_METHOD
             | sym::LT_METHOD
             | sym::BOOL_METHOD
-            | sym::HASH_METHOD => {
+            | sym::HASH_METHOD
+            | sym::FROM_U8
+            | sym::FROM_I8
+            | sym::FROM_U16_LE
+            | sym::FROM_U16_BE
+            | sym::FROM_I16_LE
+            | sym::FROM_I16_BE
+            | sym::FROM_U32_LE
+            | sym::FROM_U32_BE
+            | sym::FROM_I32_LE
+            | sym::FROM_I32_BE
+            | sym::FROM_U64_LE
+            | sym::FROM_U64_BE
+            | sym::FROM_I64_LE
+            | sym::FROM_I64_BE => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
@@ -619,9 +646,16 @@ impl<'v> Protocol<'v> for Int {
                 self_val.op_fill(strand, &strand.vm().singletons().int, native)?;
                 Ok(())
             }
-            _ => {
-                dispatch_native_method(strand, &strand.vm().singletons().int, method, args, out)
-                    .await
+            tag => {
+                if let Some(format) = binary_int::format_for_method(tag) {
+                    let ([value], []) = unpack!(strand, args, 1, 0)?;
+                    let native = decode_binary_int(strand, &value, format)?;
+                    Output::set(strand, out, native);
+                    Ok(())
+                } else {
+                    dispatch_native_method(strand, &strand.vm().singletons().int, method, args, out)
+                        .await
+                }
             }
         }
     }
