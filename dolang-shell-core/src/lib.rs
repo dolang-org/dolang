@@ -1,6 +1,6 @@
 #![deny(warnings)]
 
-use std::error::Error;
+use std::{error::Error, sync::Arc};
 
 use tokio::runtime::Builder;
 
@@ -24,12 +24,27 @@ use crate::interactive::{DYNAMIC_PRELUDE, DynamicPrelude};
 use crate::terminal_state::TerminalRestoreGuard;
 
 mod batch;
-mod bundle;
 mod cli;
 mod diagnostic;
 mod interactive;
 mod load;
 mod terminal_state;
+
+pub trait Config: Send + Sync + 'static {
+    fn bundled_module(&self, name: &str) -> Option<&'static [u8]> {
+        let _ = name;
+        None
+    }
+
+    fn bundled_entrypoint(&self, name: &str) -> Option<&'static [u8]> {
+        let _ = name;
+        None
+    }
+
+    fn default_entrypoint(&self) -> Option<&str> {
+        None
+    }
+}
 
 fn get_action(cli: &Cli) -> Action {
     if cli.check {
@@ -41,29 +56,35 @@ fn get_action(cli: &Cli) -> Action {
     }
 }
 
-/// Run the stock `dolang` CLI and return its process exit code.
+/// Run a `dolang`-compatible CLI and return its process exit code.
 ///
 /// Custom binaries can call this after linking any additional extensions they
 /// want to register via `dolang::extension!`.
-pub fn main() -> i32 {
+pub fn main(config: impl Config) -> i32 {
     // Spawn a thread with a larger stack to avoid stack overflow in debug
     // builds, where deep call stacks of uninlined frames can exceed the
     // default stack size (particularly on Windows).
     const STACK_SIZE: usize = 8 * 1024 * 1024;
+    let config = Arc::new(config);
 
     std::thread::Builder::new()
         .stack_size(STACK_SIZE)
-        .spawn(|| {
+        .spawn(move || {
             let _terminal_restore = TerminalRestoreGuard::capture_if_terminal();
-            run()
+            run(config)
         })
         .expect("failed to spawn main thread")
         .join()
         .expect("main thread panicked")
 }
 
-fn run() -> i32 {
-    let mut cli = match cli::parse_from(std::env::args_os()) {
+fn run(config: Arc<dyn Config>) -> i32 {
+    let argv: Vec<_> = std::env::args_os().collect();
+    let implicit_main =
+        cli::infer_implicit_entrypoint(argv.first().map(|arg| arg.as_os_str()), |name| {
+            config.bundled_entrypoint(name).is_some()
+        });
+    let mut cli = match cli::parse_from(argv, implicit_main) {
         ParseOutcome::Run(cli) => cli,
         ParseOutcome::Help(help) => {
             println!("{help}");
@@ -84,7 +105,7 @@ fn run() -> i32 {
                 ext.apply(builder).unwrap();
             }
 
-            if cli.path.is_none() && !cli.module {
+            if cli.path.is_none() && !cli.main {
                 let dynamic_prelude = builder.register_type::<DynamicPrelude>();
                 let mut root = Root::new(builder);
                 Output::set(builder, &mut root, Empty::Dict);
@@ -104,16 +125,16 @@ fn run() -> i32 {
                 .await
             });
 
-            builder.importer(async |strand, name, mut out| {
-                if let Some(bytes) = bundle::module(name) {
+            let importer_config = Arc::clone(&config);
+            builder.importer(async move |strand, name, mut out| {
+                if let Some(bytes) = importer_config.bundled_module(name) {
                     runtime::Bytecode::new(bytes).run(strand, &mut out).await
                 } else {
                     Err(runtime::Error::import(strand, name))
                 }
             });
 
-            let main = builder.sym("main");
-
+            let batch_config = Arc::clone(&config);
             builder
                 .enter_with_slots(async move |strand, [mut stdin, mut stdout]| {
                     dolang_ext_shell::stdin(strand, &mut stdin);
@@ -128,7 +149,7 @@ fn run() -> i32 {
                                 dolang_ext_shell::set_program(
                                     strand,
                                     cli.path.as_ref().map(|path| {
-                                        if cli.module {
+                                        if cli.main {
                                             dolang_ext_shell::ProgramSource::Module(
                                                 path.to_string_lossy().into_owned(),
                                             )
@@ -139,14 +160,24 @@ fn run() -> i32 {
                                 )
                                 .await?;
                                 if let Some(path) = &cli.path {
-                                    batch::main(
-                                        strand,
-                                        path,
-                                        action,
-                                        if cli.module { Some(main) } else { None },
-                                        cli.strict,
-                                    )
-                                    .await
+                                    let entrypoint = if cli.main {
+                                        let name = path.to_string_lossy();
+                                        Some(
+                                            batch_config
+                                                .bundled_entrypoint(name.as_ref())
+                                                .ok_or_else(|| {
+                                                    runtime::Error::runtime(
+                                                        strand,
+                                                        format!(
+                                                            "unknown bundled entrypoint: {name}"
+                                                        ),
+                                                    )
+                                                })?,
+                                        )
+                                    } else {
+                                        None
+                                    };
+                                    batch::main(strand, path, action, entrypoint, cli.strict).await
                                 } else {
                                     interactive::main(strand, cli.strict).await
                                 }
@@ -187,4 +218,24 @@ fn run() -> i32 {
         })
         .await
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    struct EmptyConfig;
+
+    impl Config for EmptyConfig {
+        fn bundled_module(&self, _name: &str) -> Option<&'static [u8]> {
+            None
+        }
+    }
+
+    #[test]
+    fn config_defaults_have_no_bundled_entrypoint_policy() {
+        let config = EmptyConfig;
+        assert!(config.bundled_entrypoint("main").is_none());
+        assert!(config.default_entrypoint().is_none());
+    }
 }

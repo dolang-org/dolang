@@ -2,6 +2,8 @@
 
 use std::process;
 
+mod stock_config;
+
 extern crate dolang_ext_compile;
 extern crate dolang_ext_load;
 
@@ -31,5 +33,5 @@ extern crate dolang_ext_yaml;
 extern crate dolang_ext_zip;
 
 fn main() {
-    process::exit(dolang_shell::main());
+    process::exit(dolang_shell_core::main(stock_config::StockConfig));
 }

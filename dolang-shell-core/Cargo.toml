@@ -1,0 +1,51 @@
+[package]
+name = "dolang-shell-core"
+version = "0.1.0"
+description = "Reusable shell/interpreter core for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+debug = ["dolang/debug"]
+
+[dependencies]
+anstyle = "1.0.14"
+blake3 = "1.8.2"
+console = "0.16.2"
+crossterm = "0.29.0"
+directories = "6.0.0"
+rustyline = "18.0.0"
+wax = { version = "0.7", features = ["walk"] }
+
+[dependencies.tokio]
+version = "1.48.0"
+features = ["macros", "rt", "io-std", "io-util", "fs", "process", "sync", "signal"]
+
+[dependencies.dolang]
+path = "../dolang"
+version = "0.1.0"
+
+[dependencies.dolang-ext-shell]
+path = "../dolang-ext-shell"
+version = "0.1.0"
+
+[dependencies.dolang-ext-compile]
+path = "../dolang-ext-compile"
+version = "0.1.0"
+
+[dependencies.dolang-ext-diagnostic]
+path = "../dolang-ext-diagnostic"
+version = "0.1.0"
+
+[dependencies.dolang-ext-load]
+path = "../dolang-ext-load"
+version = "0.1.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }

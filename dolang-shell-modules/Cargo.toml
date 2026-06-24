@@ -1,0 +1,14 @@
+[package]
+name = "dolang-shell-modules"
+version = "0.1.0"
+description = "Stock embedded Do modules for the shell."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[build-dependencies]
+dolang-private-bundle = { path = "../dolang-private-bundle", version = "0.1.0" }
+dolang-ext-shell = { path = "../dolang-ext-shell", version = "0.1.0" }

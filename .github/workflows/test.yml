@@ -90,31 +90,12 @@ jobs:
       - name: Run integration tests (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          cargo build --bin dolang
-          mkdir -p dist/${{ matrix.target }}/debug
-          env DOLANG_SHELL_VFS="${{ github.workspace }}/target/debug/dolang-shell-vfs" \
-            DOLANG_MODULE_PATH="${{ github.workspace }}/stdlib" \
-            "${{ github.workspace }}/target/debug/dolang" \
-              tools/bundle-stdlib.dol \
-              target/debug/dolang \
-              dist/${{ matrix.target }}/debug/dolang \
-              stdlib
-          env DOLANG_SHELL_VFS="${{ github.workspace }}/target/debug/dolang-shell-vfs" \
-            "${{ github.workspace }}/dist/${{ matrix.target }}/debug/dolang" -m test -- test/*.dol
+          env DOLANG_SHELL_VFS="${{ github.workspace }}/target/debug/dolang-shell-vfs" cargo run --bin dolang -- -m test -- test/*.dol
 
       - name: Run integration tests (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          cargo build --bin dolang
-          New-Item -ItemType Directory -Force -Path "dist/${{ matrix.target }}/debug" | Out-Null
-          $env:DOLANG_MODULE_PATH = "${{ github.workspace }}/stdlib"
-          & "${{ github.workspace }}/target/debug/dolang.exe" `
-            tools/bundle-stdlib.dol `
-            target/debug/dolang.exe `
-            dist/${{ matrix.target }}/debug/dolang.exe `
-            stdlib
-          $env:DOLANG_SHELL_VFS = "${{ github.workspace }}/target/debug/dolang-shell-vfs.exe"
-          & "${{ github.workspace }}/dist/${{ matrix.target }}/debug/dolang.exe" -m test -- test/*.dol
+          cargo run --bin dolang -- -m test -- test/*.dol
 
   extension:
     name: VS Code Extension
