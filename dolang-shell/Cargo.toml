@@ -1,7 +1,7 @@
 [package]
 name = "dolang-shell"
 version = "0.1.0"
-description = "Command-line shell for the Do language."
+description = "Stock command-line shell binary for the Do language."
 edition = "2024"
 license.workspace = true
 repository.workspace = true
@@ -14,7 +14,7 @@ path = "src/main.rs"
 
 [features]
 default = ["base64", "digest", "json", "regex", "glob", "http", "zip", "sqlite", "xml", "yaml", "progress", "rand"]
-debug = ["dolang/debug"]
+debug = ["dolang-shell-core/debug"]
 base64 = ["dep:dolang-ext-base64"]
 digest = ["dep:dolang-ext-digest"]
 json = ["dep:dolang-ext-json", "dolang-ext-http?/json"]
@@ -30,25 +30,16 @@ progress = ["dep:dolang-ext-progress"]
 rand = ["dep:dolang-ext-rand"]
 
 [dependencies]
-anstyle = "1.0.14"
-blake3 = "1.8.2"
-console = "0.16.2"
-crossterm = "0.29.0"
-directories = "6.0.0"
-rustyline = "18.0.0"
-wax = { version = "0.7", features = ["walk"] }
-zip = { version = "8", default-features = false, features = ["deflate"] }
+[dependencies.dolang-shell-core]
+path = "../dolang-shell-core"
+version = "0.1.0"
 
-[dependencies.tokio]
-version = "1.48.0"
-features = ["macros", "rt", "io-std", "io-util", "fs", "process", "sync", "signal"]
+[dependencies.dolang-shell-modules]
+path = "../dolang-shell-modules"
+version = "0.1.0"
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
-
-[dependencies.dolang-ext-shell]
-path = "../dolang-ext-shell"
 version = "0.1.0"
 
 [dependencies.dolang-ext-digest]
@@ -129,8 +120,5 @@ path = "../dolang-ext-rand"
 version = "0.1.0"
 optional = true
 
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+[build-dependencies]
+dolang-private-bundle = { path = "../dolang-private-bundle", version = "0.1.0" }

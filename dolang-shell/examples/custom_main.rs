@@ -29,6 +29,14 @@ impl Extension for ExampleExtension {
 
 dolang::extension!(ExampleExtension);
 
+struct ExampleConfig;
+
+impl dolang_shell_core::Config for ExampleConfig {
+    fn bundled_module(&self, name: &str) -> Option<&'static [u8]> {
+        dolang_shell_modules::get(name)
+    }
+}
+
 fn main() -> Result<(), Box<dyn error::Error>> {
-    std::process::exit(dolang_shell::main());
+    std::process::exit(dolang_shell_core::main(ExampleConfig));
 }

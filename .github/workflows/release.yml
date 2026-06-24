@@ -96,61 +96,24 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo build --profile dist --target x86_64-unknown-linux-musl -p dolang-shell-vfs
 
-      - name: Bundle stdlib into release dolang (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          mkdir -p dist/${{ matrix.target }}/dist
-          env DOLANG_SHELL_VFS="${{ github.workspace }}/target/x86_64-unknown-linux-musl/dist/dolang-shell-vfs" \
-            DOLANG_MODULE_PATH="${{ github.workspace }}/stdlib" \
-            "${{ github.workspace }}/target/${{ matrix.target }}/dist/dolang" \
-              tools/bundle-stdlib.dol \
-              target/${{ matrix.target }}/dist/dolang \
-              dist/${{ matrix.target }}/dist/dolang \
-              stdlib
-        env:
-          ZSTD_SYS_USE_PKG_CONFIG: "1"
-
-      - name: Bundle stdlib into release dolang (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          New-Item -ItemType Directory -Force -Path "dist/${{ matrix.target }}/dist" | Out-Null
-          $env:DOLANG_MODULE_PATH = "${{ github.workspace }}/stdlib"
-          & "${{ github.workspace }}/target/${{ matrix.target }}/dist/dolang.exe" `
-            tools/bundle-stdlib.dol `
-            target/${{ matrix.target }}/dist/dolang.exe `
-            dist/${{ matrix.target }}/dist/dolang.exe `
-            stdlib
-
-      - name: Bundle stdlib into release dolang (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          mkdir -p dist/${{ matrix.target }}/dist
-          env DOLANG_SHELL_VFS="${{ github.workspace }}/target/${{ matrix.target }}/dist/dolang-shell-vfs" \
-            DOLANG_MODULE_PATH="${{ github.workspace }}/stdlib" \
-            "${{ github.workspace }}/target/${{ matrix.target }}/dist/dolang" \
-              tools/bundle-stdlib.dol \
-              target/${{ matrix.target }}/dist/dolang \
-              dist/${{ matrix.target }}/dist/dolang \
-              stdlib
-
       - name: Run integration tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           env DOLANG_SHELL_VFS="${{ github.workspace }}/target/x86_64-unknown-linux-musl/dist/dolang-shell-vfs" \
-            "${{ github.workspace }}/dist/${{ matrix.target }}/dist/dolang" -m test -- test/*.dol
+            cargo run --profile dist --target ${{ matrix.target }} --bin dolang -- -m test -- test/*.dol
         env:
           ZSTD_SYS_USE_PKG_CONFIG: "1"
 
       - name: Run integration tests (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          & "${{ github.workspace }}/dist/${{ matrix.target }}/dist/dolang.exe" -m test -- test/*.dol
+          cargo run --profile dist --target ${{ matrix.target }} --bin dolang -- -m test -- test/*.dol
 
       - name: Run integration tests (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           env DOLANG_SHELL_VFS="${{ github.workspace }}/target/${{ matrix.target }}/dist/dolang-shell-vfs" \
-            "${{ github.workspace }}/dist/${{ matrix.target }}/dist/dolang" -m test -- test/*.dol
+            cargo run --profile dist --target ${{ matrix.target }} --bin dolang -- -m test -- test/*.dol
 
       - name: Package release (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -158,7 +121,7 @@ jobs:
         run: |
           archive="dolang-${{ matrix.artifact_name }}.tar.gz"
           mkdir release
-          cp dist/${{ matrix.target }}/dist/dolang release/
+          cp target/${{ matrix.target }}/dist/dolang release/
           cp target/${{ matrix.target }}/dist/dolang-lsp release/
           cp target/x86_64-unknown-linux-musl/dist/dolang-shell-vfs release/
           tar -C release -czf "$archive" dolang dolang-lsp dolang-shell-vfs
@@ -169,7 +132,7 @@ jobs:
         run: |
           $archive = "dolang-${{ matrix.artifact_name }}.tar.gz"
           New-Item -ItemType Directory -Path release | Out-Null
-          Copy-Item "dist/${{ matrix.target }}/dist/dolang.exe" -Destination release/
+          Copy-Item "target/${{ matrix.target }}/dist/dolang.exe" -Destination release/
           Copy-Item "target/${{ matrix.target }}/dist/dolang-lsp.exe" -Destination release/
           7z a -ttar release.tar ./release/*
           7z a -tgzip $archive release.tar
@@ -180,7 +143,7 @@ jobs:
         run: |
           archive="dolang-${{ matrix.artifact_name }}.tar.gz"
           mkdir release
-          cp dist/${{ matrix.target }}/dist/dolang release/
+          cp target/${{ matrix.target }}/dist/dolang release/
           cp target/${{ matrix.target }}/dist/dolang-lsp release/
           cp target/${{ matrix.target }}/dist/dolang-shell-vfs release/
           tar -C release -czf "$archive" dolang dolang-lsp dolang-shell-vfs

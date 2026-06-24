@@ -9,7 +9,7 @@ use wax::{Glob, walk::Entry as _};
 #[derive(Debug)]
 pub(crate) struct Cli {
     pub(crate) path: Option<PathBuf>,
-    pub(crate) module: bool,
+    pub(crate) main: bool,
     pub(crate) args: Vec<String>,
     pub(crate) check: bool,
     pub(crate) compile: Option<PathBuf>,
@@ -23,12 +23,35 @@ pub(crate) enum ParseOutcome {
     Error(String),
 }
 
-pub(crate) fn parse_from(args: impl IntoIterator<Item = OsString>) -> ParseOutcome {
+pub(crate) fn parse_from(
+    args: impl IntoIterator<Item = OsString>,
+    implicit_main: Option<String>,
+) -> ParseOutcome {
     let mut args = args.into_iter();
-    let program = program_name(args.next().as_deref());
+    let program = args.next();
+    let program = program_name(program.as_deref());
+
+    if let Some(implicit_main) = implicit_main {
+        let args = match args
+            .into_iter()
+            .map(into_string)
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(args) => args,
+            Err(message) => return ParseOutcome::Error(argument_error(&program, message)),
+        };
+        return ParseOutcome::Run(Cli {
+            path: Some(PathBuf::from(implicit_main)),
+            main: true,
+            args,
+            check: false,
+            compile: None,
+            strict: false,
+        });
+    }
 
     let mut path = None;
-    let mut module = false;
+    let mut main = false;
     let mut check = false;
     let mut compile = None;
     let mut strict = false;
@@ -48,20 +71,23 @@ pub(crate) fn parse_from(args: impl IntoIterator<Item = OsString>) -> ParseOutco
                     continue;
                 }
                 Some("-h" | "--help") => return ParseOutcome::Help(help(&program)),
-                Some("-m" | "--module") => {
+                Some("-m" | "--main") => {
                     if check {
+                        return ParseOutcome::Error(conflict_error(&program, "--check", "--main"));
+                    }
+                    if compile.is_some() {
                         return ParseOutcome::Error(conflict_error(
-                            &program, "--check", "--module",
+                            &program,
+                            "--compile",
+                            "--main",
                         ));
                     }
-                    module = true;
+                    main = true;
                     continue;
                 }
                 Some("--check") => {
-                    if module {
-                        return ParseOutcome::Error(conflict_error(
-                            &program, "--check", "--module",
-                        ));
+                    if main {
+                        return ParseOutcome::Error(conflict_error(&program, "--check", "--main"));
                     }
                     check = true;
                     continue;
@@ -73,6 +99,13 @@ pub(crate) fn parse_from(args: impl IntoIterator<Item = OsString>) -> ParseOutco
                             "--compile <OUTPUT>",
                         ));
                     };
+                    if main {
+                        return ParseOutcome::Error(conflict_error(
+                            &program,
+                            "--compile",
+                            "--main",
+                        ));
+                    }
                     compile = Some(PathBuf::from(output));
                     continue;
                 }
@@ -91,8 +124,8 @@ pub(crate) fn parse_from(args: impl IntoIterator<Item = OsString>) -> ParseOutco
         path = Some(PathBuf::from(arg));
     }
 
-    if module && path.is_none() {
-        return ParseOutcome::Error(missing_target_error(&program, "--module"));
+    if main && path.is_none() {
+        return ParseOutcome::Error(missing_target_error(&program, "--main"));
     }
 
     let args = match expand_trailing_args(trailing) {
@@ -102,7 +135,7 @@ pub(crate) fn parse_from(args: impl IntoIterator<Item = OsString>) -> ParseOutco
 
     ParseOutcome::Run(Cli {
         path,
-        module,
+        main,
         args,
         check,
         compile,
@@ -119,17 +152,29 @@ fn program_name(program: Option<&OsStr>) -> String {
         .to_owned()
 }
 
+pub(crate) fn infer_implicit_entrypoint(
+    program: Option<&OsStr>,
+    has_entrypoint: impl Fn(&str) -> bool,
+) -> Option<String> {
+    let stem = Path::new(program?).file_stem()?.to_str()?;
+    let stem = stem.strip_prefix("dolang-").unwrap_or(stem);
+    if stem == "dolang" || stem.is_empty() {
+        return None;
+    }
+    has_entrypoint(stem).then(|| stem.to_owned())
+}
+
 fn help(program: &str) -> String {
     format!(
         "\
 Usage: {program} [OPTIONS] [PATH] [ARGS]...
 
 Arguments:
-  [PATH]     Script path (or module name if -m is used)
+  [PATH]     Script path (or bundled entrypoint name if -m is used)
   [ARGS]...  Script arguments (appear in `shell.args`)
 
 Options:
-  -m, --module            Import and run path as a module's main function
+  -m, --main              Run a bundled main entrypoint
       --check             Check syntax without executing
       --compile <OUTPUT>  Compile to bytecode file
       --strict            Treat warnings as errors
@@ -257,13 +302,16 @@ fn looks_like_glob(pattern: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::OsString, path::PathBuf};
+    use std::{
+        ffi::{OsStr, OsString},
+        path::PathBuf,
+    };
 
-    use super::{Cli, ParseOutcome, parse_from};
+    use super::{Cli, ParseOutcome, infer_implicit_entrypoint, parse_from};
 
     #[test]
     fn shell_help_before_target_exits() {
-        let outcome = parse_from(args(["dolang", "--help"]));
+        let outcome = parse_from(args(["dolang", "--help"]), None);
         let ParseOutcome::Help(help) = outcome else {
             panic!("expected shell help");
         };
@@ -274,15 +322,15 @@ mod tests {
     fn help_after_script_target_is_forwarded() {
         let cli = parse_ok(["dolang", "file.dol", "--help"]);
         assert_eq!(cli.path, Some(PathBuf::from("file.dol")));
-        assert!(!cli.module);
+        assert!(!cli.main);
         assert_eq!(cli.args, ["--help"]);
     }
 
     #[test]
-    fn help_after_module_target_is_forwarded() {
+    fn help_after_main_target_is_forwarded() {
         let cli = parse_ok(["dolang", "-m", "pkg.tool", "--help"]);
         assert_eq!(cli.path, Some(PathBuf::from("pkg.tool")));
-        assert!(cli.module);
+        assert!(cli.main);
         assert_eq!(cli.args, ["--help"]);
     }
 
@@ -297,7 +345,7 @@ mod tests {
 
     #[test]
     fn unknown_option_before_target_errors() {
-        let ParseOutcome::Error(error) = parse_from(args(["dolang", "--wat"])) else {
+        let ParseOutcome::Error(error) = parse_from(args(["dolang", "--wat"]), None) else {
             panic!("expected error");
         };
         assert!(error.contains("unexpected argument '--wat'"));
@@ -310,28 +358,71 @@ mod tests {
     }
 
     #[test]
-    fn module_requires_target() {
-        let ParseOutcome::Error(error) = parse_from(args(["dolang", "-m"])) else {
+    fn main_requires_target() {
+        let ParseOutcome::Error(error) = parse_from(args(["dolang", "-m"]), None) else {
             panic!("expected error");
         };
-        assert!(error.contains("expected a target after '--module'"));
+        assert!(error.contains("expected a target after '--main'"));
     }
 
     #[test]
     fn compile_requires_output() {
-        let ParseOutcome::Error(error) = parse_from(args(["dolang", "--compile"])) else {
+        let ParseOutcome::Error(error) = parse_from(args(["dolang", "--compile"]), None) else {
             panic!("expected error");
         };
         assert!(error.contains("a value is required for '--compile <OUTPUT>'"));
     }
 
     #[test]
-    fn check_and_module_conflict() {
-        let ParseOutcome::Error(error) = parse_from(args(["dolang", "--check", "-m", "mod"]))
+    fn check_and_main_conflict() {
+        let ParseOutcome::Error(error) = parse_from(args(["dolang", "--check", "-m", "mod"]), None)
         else {
             panic!("expected error");
         };
-        assert!(error.contains("cannot be used with '--module'"));
+        assert!(error.contains("cannot be used with '--main'"));
+    }
+
+    #[test]
+    fn compile_and_main_conflict() {
+        let ParseOutcome::Error(error) = parse_from(
+            args(["dolang", "--compile", "out.dolc", "--main", "test"]),
+            None,
+        ) else {
+            panic!("expected error");
+        };
+        assert!(error.contains("cannot be used with '--main'"));
+    }
+
+    #[test]
+    fn implicit_entrypoint_disables_shell_flag_parsing() {
+        let cli = parse_ok_with(
+            ["dolang-test", "--help", "--strict", "file.dol"],
+            Some("test".to_owned()),
+        );
+        assert_eq!(cli.path, Some(PathBuf::from("test")));
+        assert!(cli.main);
+        assert_eq!(cli.args, ["--help", "--strict", "file.dol"]);
+        assert!(!cli.strict);
+        assert!(!cli.check);
+    }
+
+    #[test]
+    fn infer_implicit_entrypoint_from_dolang_prefix() {
+        let inferred =
+            infer_implicit_entrypoint(Some(OsStr::new("/tmp/dolang-test")), |name| name == "test");
+        assert_eq!(inferred.as_deref(), Some("test"));
+    }
+
+    #[test]
+    fn infer_implicit_entrypoint_from_plain_stem() {
+        let inferred = infer_implicit_entrypoint(Some(OsStr::new("test")), |name| name == "test");
+        assert_eq!(inferred.as_deref(), Some("test"));
+    }
+
+    #[test]
+    fn dolang_stem_does_not_trigger_implicit_entrypoint() {
+        let inferred = infer_implicit_entrypoint(Some(OsStr::new("dolang")), |_| true);
+        assert!(inferred.is_none());
     }
 
     #[test]
@@ -349,7 +440,14 @@ mod tests {
     }
 
     fn parse_ok(argv: impl IntoIterator<Item = &'static str>) -> Cli {
-        let ParseOutcome::Run(cli) = parse_from(os_args(argv)) else {
+        parse_ok_with(argv, None)
+    }
+
+    fn parse_ok_with(
+        argv: impl IntoIterator<Item = &'static str>,
+        implicit_main: Option<String>,
+    ) -> Cli {
+        let ParseOutcome::Run(cli) = parse_from(os_args(argv), implicit_main) else {
             panic!("expected parsed command");
         };
         cli
