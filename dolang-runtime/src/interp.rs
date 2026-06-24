@@ -112,18 +112,11 @@ impl<'v> Vm<'v> {
         }
         match self.import_cache.borrow().get(name) {
             Some(None) => return Err(Error::cyclic_import(strand, name)),
-            Some(Some(weak)) => {
-                if let Some(strong) = weak.upgrade() {
-                    out.store(strong);
-                    return Ok(());
-                }
+            Some(Some(value)) => {
+                out.store(value.dup());
+                return Ok(());
             }
             _ => {}
-        }
-        // Take this opportunity to clean import cache
-        {
-            let mut borrow = self.import_cache.borrow_mut();
-            borrow.retain(|_, w| w.as_ref().is_none_or(|w| !w.is_released()));
         }
         let mut err = Error::not_supported(strand);
         for importer in self.importers.iter() {
@@ -141,7 +134,7 @@ impl<'v> Vm<'v> {
                 return Err(e);
             }
             let mut borrow = self.import_cache.borrow_mut();
-            borrow.insert(name.to_owned(), Some(out.downgrade()));
+            borrow.insert(name.to_owned(), Some(out.dup()));
             return Ok(());
         }
         Err(err)

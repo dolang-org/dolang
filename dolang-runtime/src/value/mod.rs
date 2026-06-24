@@ -95,6 +95,7 @@ impl<'v> Value<'v> {
         Self(self.0.clone(), PhantomData)
     }
 
+    #[expect(dead_code)]
     pub(crate) fn downgrade(&self) -> Weak<'v> {
         Weak::from_value(self)
     }
@@ -1479,6 +1480,7 @@ impl<'v> Weak<'v> {
         Self(self.0.clone(), PhantomData)
     }
 
+    #[expect(dead_code)]
     pub(crate) fn upgrade(&self) -> Option<Value<'v>> {
         if unsafe {
             match self.0.decode() {
@@ -1492,6 +1494,7 @@ impl<'v> Weak<'v> {
         }
     }
 
+    #[expect(dead_code)]
     pub(crate) fn is_released(&self) -> bool {
         unsafe {
             match self.0.decode() {

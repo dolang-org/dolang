@@ -38,7 +38,7 @@ use crate::{
     strand::{Local, LocalKey, LocalRootKey, LocalVtbl, Strand, StrandGroup, StrandInner},
     sym::{self, Sym},
     unpack,
-    value::{Input, Output, Slot, Value, Weak as WeakValue},
+    value::{Input, Output, Slot, Value},
 };
 
 /// A spawned background strand future.
@@ -106,7 +106,7 @@ type ChannelFactory<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot
 /// - [`Strand`]
 pub struct Vm<'v> {
     pub(crate) loaded: RefCell<Vec<Weak<'v, Program<'v>>>>,
-    pub(crate) import_cache: RefCell<HashMap<String, Option<WeakValue<'v>>>>,
+    pub(crate) import_cache: RefCell<HashMap<String, Option<Value<'v>>>>,
     pub(crate) next_loaded_id: Cell<u32>,
     pub(crate) native_modules: HashMap<&'v str, Value<'v>>,
     pub(crate) importers: Vec<Value<'v>>,
@@ -155,6 +155,13 @@ impl<'v> Drop for Vm<'v> {
 }
 
 impl<'v> Vm<'v> {
+    #[doc(hidden)]
+    // For internal use only. Extensions may need to invalidate importer-provided
+    // modules when their backing provider is unregistered.
+    pub fn evict_import_cache(&self, name: &str) {
+        self.import_cache.borrow_mut().remove(name);
+    }
+
     /// Spawn a background task on the VM event loop.
     ///
     /// The task is polled alongside the main future passed to [`Builder::enter`]
