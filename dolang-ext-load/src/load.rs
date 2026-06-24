@@ -1,3 +1,5 @@
+use std::{collections::HashSet, mem};
+
 use dolang::runtime::{
     Error, Object, State, call, error::ErrorKind, method, object::TypeBuilder, unpack, vm::Builder,
 };
@@ -20,7 +22,15 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
                     }
 
                     match call!(strand, &callback, &mut out, name).await {
-                        Ok(()) => return Ok(()),
+                        Ok(()) => {
+                            let handler = global
+                                .types
+                                .import_handler
+                                .downcast(&key)
+                                .expect("load handler registry key must be an ImportHandler");
+                            handler.borrow_mut(strand)?.loaded.insert(name.to_owned());
+                            return Ok(());
+                        }
                         Err(e) if e.kind() == ErrorKind::Import => (),
                         Err(e) => return Err(e),
                     }
@@ -49,7 +59,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
 
             global.types.import_handler.create_with_annex(
                 strand,
-                ImportHandler,
+                ImportHandler {
+                    loaded: HashSet::new(),
+                },
                 ImportHandlerAnnex { global },
                 &mut out,
             );
@@ -67,7 +79,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
         .commit();
 }
 
-pub(crate) struct ImportHandler;
+pub(crate) struct ImportHandler {
+    loaded: HashSet<String>,
+}
 
 pub(crate) struct ImportHandlerAnnex<'v> {
     global: State<'v, Global<'v>>,
@@ -86,8 +100,15 @@ impl<'v> Object<'v> for ImportHandler {
             "unregister",
             async move |this, strand, args, _out, [tmp]| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
+                let loaded = {
+                    let mut this = this.borrow_mut(strand)?;
+                    mem::take(&mut this.loaded)
+                };
                 let annex = this.annex();
                 method!(strand, &annex.global.handlers, delete, tmp, this).await?;
+                for name in loaded {
+                    strand.vm().evict_import_cache(&name);
+                }
                 Ok(())
             },
         )
