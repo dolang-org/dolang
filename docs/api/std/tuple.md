@@ -92,11 +92,13 @@ assert_eq $tup[1..3] (tuple [1, 2])
 assert_eq $tup[..2] (tuple [0, 1])
 assert_eq $tup[2..] (tuple [2, 3])
 assert_eq $tup[..] (tuple [0, 1, 2, 3])
+assert_eq $tup[range 0 4 2] (tuple [0, 2])
+assert_eq $tup[range nil nil -1] (tuple [3, 2, 1, 0])
 ```
 
 Slice indexing returns a new tuple.
 Omitted `start` means `0`, omitted `end` means the tuple length, and negative
-`start` and `end` values count from the end.
+`start` and `end` values count from the end. Negative steps reverse the slice.
 
 ### Unpacking
 
