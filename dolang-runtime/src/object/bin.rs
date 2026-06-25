@@ -134,11 +134,19 @@ impl<'v> Protocol<'v> for [u8] {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let me = this.receiver.get();
-        let Some((start, end)) = range::slice_bounds(index, strand, me.len())? else {
+        let Some(slice) = range::slice(index, strand, me.len())? else {
             return Err(Error::index(strand));
         };
-        let slice = me.get(start..end).ok_or_else(|| Error::index(strand))?;
-        Output::set(strand, out, slice);
+        match slice {
+            range::Slice::Contiguous { start, end } => {
+                let slice = me.get(start..end).ok_or_else(|| Error::index(strand))?;
+                Output::set(strand, out, slice);
+            }
+            range::Slice::Stepped(indices) => {
+                let bytes: Vec<u8> = indices.into_iter().map(|i| me[i]).collect();
+                Output::set(strand, out, bytes.as_slice());
+            }
+        }
         Ok(())
     }
 

@@ -208,11 +208,31 @@ assert_eq $arr[1..3] [1, 2]
 assert_eq $arr[..2] [0, 1]
 assert_eq $arr[2..] [2, 3]
 assert_eq $arr[..] [0, 1, 2, 3]
+assert_eq $arr[range 0 4 2] [0, 2]
+assert_eq $arr[range nil nil -1] [3, 2, 1, 0]
 ```
 
-Slice indexing returns a new array. Slice assignment is not supported.
+Slice indexing returns a new array.
 Omitted `start` means `0`, omitted `end` means the array length, and negative
-`start` and `end` values count from the end.
+`start` and `end` values count from the end. Negative steps reverse the slice.
+
+Contiguous slices also support assignment:
+
+```
+let arr = [0, 1, 2, 3]
+arr[1..3] = [9, 9]
+assert_eq $arr [0, 9, 9, 3]
+
+arr[1..1] = (tuple [4, 5])
+assert_eq $arr [0, 4, 5, 9, 9, 3]
+
+arr[2..4] = range 7 10
+assert_eq $arr [0, 4, 7, 8, 9, 3]
+```
+
+Slice assignment accepts any sequence-spreadable value, including arrays,
+tuples, and ranges. Stepped slices are read-only; assignment with a non-unity
+step is rejected.
 
 ### Iteration
 

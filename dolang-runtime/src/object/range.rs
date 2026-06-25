@@ -73,6 +73,95 @@ impl<'v> Range<'v> {
         };
         Ok((start, end))
     }
+
+    fn slice<'a, 's>(&self, strand: &'a mut Strand<'v, 's>, len: usize) -> Result<'v, 's, Slice> {
+        let step = if self.step.is_nil() {
+            1
+        } else {
+            self.step.to_i64(strand).map_err(|_| Error::index(strand))?
+        };
+        if step == 0 {
+            return Err(Error::index(strand));
+        }
+        if step == 1 {
+            let (start, end) = self.slice_bounds(strand, len)?;
+            return Ok(Slice::Contiguous { start, end });
+        }
+
+        let len_i64 = i64::try_from(len).map_err(|_| Error::overflow(strand))?;
+        let mut indices = Vec::new();
+        if step > 0 {
+            let start = if self.start.is_nil() {
+                0
+            } else {
+                self.start
+                    .to_i64(strand)
+                    .map_err(|_| Error::index(strand))?
+            };
+            let end = if self.end.is_nil() {
+                len_i64
+            } else {
+                self.end.to_i64(strand).map_err(|_| Error::index(strand))?
+            };
+            let start =
+                crate::object::index::position(len, start).ok_or_else(|| Error::index(strand))?;
+            let end =
+                crate::object::index::position(len, end).ok_or_else(|| Error::index(strand))?;
+            let mut i = i64::try_from(start).map_err(|_| Error::overflow(strand))?;
+            let end = i64::try_from(end).map_err(|_| Error::overflow(strand))?;
+            while i < end {
+                indices.push(usize::try_from(i).map_err(|_| Error::overflow(strand))?);
+                i = i.checked_add(step).ok_or_else(|| Error::overflow(strand))?;
+            }
+        } else {
+            let start = if self.start.is_nil() {
+                len_i64.checked_sub(1).unwrap_or(-1)
+            } else {
+                self.start
+                    .to_i64(strand)
+                    .map_err(|_| Error::index(strand))?
+            };
+            let end = if self.end.is_nil() {
+                -1
+            } else {
+                self.end.to_i64(strand).map_err(|_| Error::index(strand))?
+            };
+            let start = reverse_index(len_i64, start).ok_or_else(|| Error::index(strand))?;
+            let end = reverse_bound(len_i64, end).ok_or_else(|| Error::index(strand))?;
+            let mut i = start;
+            while i > end {
+                indices.push(usize::try_from(i).map_err(|_| Error::overflow(strand))?);
+                i = i.checked_add(step).ok_or_else(|| Error::overflow(strand))?;
+            }
+        }
+        Ok(Slice::Stepped(indices))
+    }
+}
+
+fn reverse_index(len: i64, index: i64) -> Option<i64> {
+    let index = if index < 0 {
+        len.checked_add(index)?
+    } else {
+        index
+    };
+    (0..len).contains(&index).then_some(index)
+}
+
+fn reverse_bound(len: i64, index: i64) -> Option<i64> {
+    if index == -1 {
+        return Some(-1);
+    }
+    let index = if index < 0 {
+        len.checked_add(index)?
+    } else {
+        index
+    };
+    (0..len).contains(&index).then_some(index)
+}
+
+pub(crate) enum Slice {
+    Contiguous { start: usize, end: usize },
+    Stepped(Vec<usize>),
 }
 
 pub(crate) fn slice_bounds<'v, 's>(
@@ -84,6 +173,17 @@ pub(crate) fn slice_bounds<'v, 's>(
         return Ok(None);
     };
     range.get().slice_bounds(strand, len).map(Some)
+}
+
+pub(crate) fn slice<'v, 's>(
+    index: &Value<'v>,
+    strand: &mut Strand<'v, 's>,
+    len: usize,
+) -> Result<'v, 's, Option<Slice>> {
+    let Some(range) = index.downcast_ref(strand.builtin_types().range) else {
+        return Ok(None);
+    };
+    range.get().slice(strand, len).map(Some)
 }
 
 impl<'v> Protocol<'v> for Range<'v> {

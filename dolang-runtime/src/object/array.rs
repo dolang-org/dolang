@@ -622,13 +622,22 @@ impl<'v> Protocol<'v> for Array<'v> {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        if let Some((start, end)) = range::slice_bounds(index, strand, borrow.inner.len())? {
-            let slice = borrow
-                .inner
-                .get(start..end)
-                .ok_or_else(|| Error::index(strand))?;
+        if let Some(slice) = range::slice(index, strand, borrow.inner.len())? {
             let mut array = Array::new();
-            array.inner.extend(slice.iter().map(Value::dup));
+            match slice {
+                range::Slice::Contiguous { start, end } => {
+                    let slice = borrow
+                        .inner
+                        .get(start..end)
+                        .ok_or_else(|| Error::index(strand))?;
+                    array.inner.extend(slice.iter().map(Value::dup));
+                }
+                range::Slice::Stepped(indices) => {
+                    array
+                        .inner
+                        .extend(indices.into_iter().map(|i| borrow.inner[i].dup()));
+                }
+            }
             out.store(Value::from_object(GcObj::new(
                 strand.arena(),
                 strand.builtin_types().array,
@@ -654,6 +663,77 @@ impl<'v> Protocol<'v> for Array<'v> {
         index: Slot<'v, 'a>,
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        let len = this.borrow(strand)?.inner.len();
+        if let Some(slice) = range::slice(&index, strand, len)? {
+            let range::Slice::Contiguous { start, end } = slice else {
+                return Err(Error::index(strand));
+            };
+            if let Some(source) = value.downcast_native(strand, strand.builtin_types().array) {
+                let source = source.to_strong();
+                let source_borrow = source.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                if let Some(mut target_borrow) = this.receiver.borrow_mut() {
+                    target_borrow
+                        .inner
+                        .splice(start..end, source_borrow.inner.iter().map(Value::dup));
+                    return Ok(());
+                }
+                drop(source_borrow);
+                let snapshot = {
+                    let source_borrow =
+                        source.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                    tuple::tuple(strand.vm(), source_borrow.inner.iter().map(Value::dup))
+                };
+                let snapshot = snapshot
+                    .borrow()
+                    .ok_or_else(|| Error::concurrency(strand))?;
+                this.borrow_mut(strand)?
+                    .inner
+                    .splice(start..end, snapshot.iter().map(Value::dup));
+                return Ok(());
+            }
+            if let Some(source) = value.downcast_ref(strand.builtin_types().tuple) {
+                let source_borrow = source.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                this.borrow_mut(strand)?
+                    .inner
+                    .splice(start..end, source_borrow.iter().map(Value::dup));
+                return Ok(());
+            }
+            return strand.with_slots_sync(|strand, [mut replacement]| {
+                strand.sync(async |strand| {
+                    call!(
+                        strand,
+                        &strand.vm().singletons().array,
+                        &mut replacement,
+                        &value
+                    )
+                    .await
+                })?;
+                let source = replacement
+                    .downcast_native(strand, strand.builtin_types().array)
+                    .expect("array() produced non-array");
+                let source = source.to_strong();
+                let source_borrow = source.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                if let Some(mut target_borrow) = this.receiver.borrow_mut() {
+                    target_borrow
+                        .inner
+                        .splice(start..end, source_borrow.inner.iter().map(Value::dup));
+                    return Ok(());
+                }
+                drop(source_borrow);
+                let snapshot = {
+                    let source_borrow =
+                        source.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                    tuple::tuple(strand.vm(), source_borrow.inner.iter().map(Value::dup))
+                };
+                let snapshot = snapshot
+                    .borrow()
+                    .ok_or_else(|| Error::concurrency(strand))?;
+                this.borrow_mut(strand)?
+                    .inner
+                    .splice(start..end, snapshot.iter().map(Value::dup));
+                Ok(())
+            });
+        }
         let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
         let mut borrow = this.borrow_mut(strand)?;
         let index =

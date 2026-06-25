@@ -180,15 +180,25 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         index: &Value<'v>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if let Some((start, end)) = range::slice_bounds(index, strand, this.get().len())? {
-            let slice = this
-                .get()
-                .get(start..end)
-                .ok_or_else(|| Error::index(strand))?;
-            out.store(Value::from_object(tuple(
-                strand.vm(),
-                slice.iter().map(Value::dup),
-            )));
+        if let Some(slice) = range::slice(index, strand, this.get().len())? {
+            match slice {
+                range::Slice::Contiguous { start, end } => {
+                    let slice = this
+                        .get()
+                        .get(start..end)
+                        .ok_or_else(|| Error::index(strand))?;
+                    out.store(Value::from_object(tuple(
+                        strand.vm(),
+                        slice.iter().map(Value::dup),
+                    )));
+                }
+                range::Slice::Stepped(indices) => {
+                    out.store(Value::from_object(tuple(
+                        strand.vm(),
+                        indices.into_iter().map(|i| this.get()[i].dup()),
+                    )));
+                }
+            }
             return Ok(());
         }
         let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;

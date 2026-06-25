@@ -248,11 +248,13 @@ assert_eq (b"abcd"[..2]) b"ab"
 assert_eq (b"abcd"[2..]) b"cd"
 assert_eq (b"abcd"[..]) b"abcd"
 assert_eq (b"foobar"[-3..]) b"bar"
+assert_eq (b"abcd"[range 0 4 2]) b"ac"
+assert_eq (b"abcd"[range nil nil -1]) b"dcba"
 ```
 
 This returns a new binary value. Slice boundaries must be in bounds. Omitted
 `start` means `0`, omitted `end` means the binary length, and negative
-endpoints count from the end.
+endpoints count from the end. Negative steps reverse the slice.
 
 ## Constructors
 

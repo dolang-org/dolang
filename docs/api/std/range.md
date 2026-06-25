@@ -129,13 +129,18 @@ Some collection types interpret ranges as slices when used in indexing:
 
 - [`array`](./array.md)
 - [`tuple`](./tuple.md)
-- [`str`](./str.md)
 - [`bin`](./bin.md)
+- [`str`](./str.md)
 
 These slices return new values rather than views.
 
 For slice indexing, omitted `start` means `0`, omitted `end` means the
 collection length, and negative endpoints count from the end.
+
+`array`, `tuple`, and `bin` also accept non-unity integer steps. Positive steps
+skip elements; negative steps produce reversed slices. For negative steps,
+omitted bounds default to the end of the collection and to just before the
+start, respectively. `str` remains contiguous-only.
 
 Other mappings such as [`dict`](./dict.md) treat ranges as ordinary keys.
 
