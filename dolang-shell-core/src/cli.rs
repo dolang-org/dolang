@@ -32,11 +32,7 @@ pub(crate) fn parse_from(
     let program = program_name(program.as_deref());
 
     if let Some(implicit_main) = implicit_main {
-        let args = match args
-            .into_iter()
-            .map(into_string)
-            .collect::<Result<Vec<_>, _>>()
-        {
+        let args = match args.map(into_string).collect::<Result<Vec<_>, _>>() {
             Ok(args) => args,
             Err(message) => return ParseOutcome::Error(argument_error(&program, message)),
         };
