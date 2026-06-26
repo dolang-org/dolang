@@ -401,7 +401,7 @@ impl<'v> Array<'v> {
         loop {
             counter += 1;
             if counter % crate::INTERRUPT_INTERVAL == 0 {
-                strand.check_interrupt_gc()?;
+                strand.check_trap_gc()?;
             }
             match args.next() {
                 Some(Arg::Pos(mut item)) => this.inner.push(item.take()),
@@ -444,7 +444,7 @@ impl<'v> Array<'v> {
                     {
                         for (i, value) in borrow.inner.iter().enumerate() {
                             if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                                strand.check_interrupt_gc()?;
+                                strand.check_trap_gc()?;
                             }
                             let out = slots.at(i);
                             call!(strand, &key_fn, out, value).await?;
@@ -463,7 +463,7 @@ impl<'v> Array<'v> {
                     pairsort::sort_by(keys, borrow.inner.as_mut_slice(), |lhs, rhs| {
                         compare_count += 1;
                         if compare_count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                            strand.check_interrupt()?;
+                            strand.check_trap()?;
                         }
                         let result = if reverse {
                             rhs.op_lt(strand, lhs)?
@@ -484,7 +484,7 @@ impl<'v> Array<'v> {
                 |lhs, rhs| {
                     compare_count += 1;
                     if compare_count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                        strand.check_interrupt()?;
+                        strand.check_trap()?;
                     }
                     let result = if reverse {
                         rhs.op_lt(strand, lhs)?
@@ -523,7 +523,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             first.op_debug(strand, w)?;
             for i in 1..inner.len() {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                    strand.check_interrupt()?;
+                    strand.check_trap()?;
                 }
                 write!(w, ", ").into_do(strand)?;
                 unsafe { inner.get_unchecked(i) }.op_debug(strand, w)?;
@@ -546,7 +546,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         let inner = &borrow.inner;
         for i in 0..inner.len() {
             if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                strand.check_interrupt()?;
+                strand.check_trap()?;
             }
             let elem = unsafe { inner.get_unchecked(i) };
             elem.op_hash(strand, hasher)?;
@@ -574,7 +574,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         }
         for i in 0..left.len() {
             if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                strand.check_interrupt()?;
+                strand.check_trap()?;
             }
             let l = unsafe { left.get_unchecked(i) };
             let r = unsafe { right.get_unchecked(i) };
@@ -601,7 +601,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         let right = &other_borrow.inner;
         for i in 0..left.len().min(right.len()) {
             if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                strand.check_interrupt()?;
+                strand.check_trap()?;
             }
             let l = unsafe { left.get_unchecked(i) };
             let r = unsafe { right.get_unchecked(i) };
@@ -906,7 +906,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                 let mut found = false;
                 for i in 0..len {
                     if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                        strand.check_interrupt()?;
+                        strand.check_trap()?;
                     }
                     if unsafe { borrow.inner.get_unchecked(i) }
                         .op_eq(strand, &needle)

@@ -163,7 +163,7 @@ nav:
       - api/std/immutable-error.md
       - api/std/import-error.md
       - api/std/index-error.md
-      - api/std/interrupt-error.md
+      - api/std/abort-error.md
       - api/std/int.md
       - api/std/iterable.md
       - api/std/iter.md
@@ -183,6 +183,7 @@ nav:
       - api/std/sink-stop.md
       - api/std/str.md
       - api/std/sym.md
+      - api/std/timed-out-error.md
       - api/std/tuple.md
       - api/std/type-error.md
       - api/std/type.md

@@ -48,7 +48,7 @@ pub use vm::{Alloc, Bytecode, Frame, State, Vm};
 /// Strands
 pub mod strand {
     pub use dolang_runtime::strand::{
-        CancelToken, Local, LocalKey, LocalRootKey, Redirect, Strand,
+        InterruptToken, Local, LocalKey, LocalRootKey, Redirect, Strand,
     };
 }
 

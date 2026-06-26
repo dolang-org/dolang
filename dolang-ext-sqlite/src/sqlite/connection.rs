@@ -256,7 +256,7 @@ impl<'v> Object<'v> for Connection {
 
                         // Always close the statement, even on error
                         strand
-                            .with_cancel_mask(true, async move |strand| {
+                            .with_interrupt_mask(true, async move |strand| {
                                 let _ = method!(strand, &wrapper, close, &mut tmp).await;
                             })
                             .await;
@@ -281,7 +281,7 @@ impl<'v> Object<'v> for Connection {
                     wrap_statement(this, strand, stmt, Slot::reborrow(&mut wrapper));
                     let res = wrapper.method(strand, execute, args, out).await;
                     let _ = strand
-                        .with_cancel_mask(true, async move |strand| {
+                        .with_interrupt_mask(true, async move |strand| {
                             method!(strand, wrapper, close, tmp).await
                         })
                         .await;
@@ -312,7 +312,7 @@ impl<'v> Object<'v> for Connection {
                         // Rollback if transaction not closed
                         if annex.in_transaction.get() {
                             let _ = strand
-                                .with_cancel_mask(true, async |strand| {
+                                .with_interrupt_mask(true, async |strand| {
                                     annex
                                         .exec(
                                             strand,

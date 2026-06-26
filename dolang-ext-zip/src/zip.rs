@@ -209,7 +209,7 @@ impl<'v> Object<'v> for Archive {
 
                         // Always close the file, even on error
                         strand
-                            .with_cancel_mask(true, async move |strand| {
+                            .with_interrupt_mask(true, async move |strand| {
                                 let _ = method!(strand, &file, close, &mut tmp).await;
                             })
                             .await;
@@ -581,7 +581,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
 
                         // Always close the archive, even on error
                         strand
-                            .with_cancel_mask(true, async move |strand| {
+                            .with_interrupt_mask(true, async move |strand| {
                                 let _ = method!(strand, &wrapper, close, &mut tmp).await;
                             })
                             .await;

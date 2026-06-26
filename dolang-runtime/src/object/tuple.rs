@@ -116,7 +116,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         let inner = this.receiver.get();
         for i in 0..inner.len() {
             if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                strand.check_interrupt()?;
+                strand.check_trap()?;
             }
             let elem = unsafe { inner.get_unchecked(i) };
             elem.op_hash(strand, hasher)?;
@@ -137,7 +137,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
             }
             for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                    strand.check_interrupt()?;
+                    strand.check_trap()?;
                 }
                 if !l.op_eq(strand, r).to_bool(strand) {
                     return Ok(Value::from_bool(false));
@@ -159,7 +159,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
             let right = other.get();
             for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                    strand.check_interrupt()?;
+                    strand.check_trap()?;
                 }
                 if l.op_lt(strand, r)?.to_bool(strand) {
                     return Ok(Value::from_bool(true));
@@ -316,7 +316,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                 let mut found = false;
                 for (i, elem) in inner.iter().enumerate() {
                     if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                        strand.check_interrupt()?;
+                        strand.check_trap()?;
                     }
                     if elem.op_eq(strand, &needle).to_bool(strand) {
                         found = true;

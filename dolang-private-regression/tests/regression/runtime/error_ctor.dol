@@ -19,9 +19,10 @@ import
     - ImportError
     - CompileError
     - RuntimeError
-    - InterruptError
+    - AbortError
     - BytecodeError
     - CanceledError
+    - TimedOutError
     - IterStop
     - SinkStop
 
@@ -86,6 +87,7 @@ assert_ctor $ImportError type: $ImportError msg: "module not found: pkg.mod" "pk
 assert_ctor $CompileError type: $CompileError msg: "compile error: invalid token" "invalid token"
 assert_ctor $RuntimeError type: $RuntimeError msg: "closed" "closed"
 assert_ctor $CanceledError type: $CanceledError msg: "strand canceled"
+assert_ctor $TimedOutError type: $TimedOutError msg: "strand timed out"
 
 assert_ctor_fail $MissingPosError type: $error.TypeError msg: "type error: expected int" "bad"
 assert_ctor_fail $UnexpectedPosError type: $error.TypeError msg: "type error: expected non-negative int" -1
@@ -97,5 +99,5 @@ assert_ctor_fail $ImportError type: $error.TypeError msg: "type error: expected 
 assert_ctor_fail $CompileError type: $error.TypeError msg: "type error: expected string" 123
 assert_ctor_fail $RuntimeError type: $error.TypeError msg: "type error: expected string" 123
 
-assert_ctor_fail $InterruptError type: $error.TypeError msg: "type error: Interrupt is not instantiable" "stop"
+assert_ctor_fail $AbortError type: $error.TypeError msg: "type error: Abort is not instantiable" "stop"
 assert_ctor_fail $BytecodeError type: $error.TypeError msg: "type error: Bytecode is not instantiable" "bad"

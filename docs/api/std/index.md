@@ -26,7 +26,7 @@ The `std` module provides core language facilities.
 | [`ImportError`](./import-error.md)                | Module import failure                      |
 | [`IndexError`](./index-error.md)                  | Out-of-bounds index access                 |
 | [`int`](./int.md)                                 | 128-bit signed integer                     |
-| [`InterruptError`](./interrupt-error.md)          | External interruption                      |
+| [`AbortError`](./abort-error.md)                  | Uncatchable host abort                     |
 | [`Iter`](./iter.md)                               | Abstract iterator type                     |
 | [`Iterable`](./iterable.md)                       | Abstract iterable type                     |
 | [`IterStop`](./iter-stop.md)                      | Error raised when an iterator is exhausted |
@@ -44,6 +44,7 @@ The `std` module provides core language facilities.
 | [`SinkStop`](./sink-stop.md)                      | Error raised when a sink is closed         |
 | [`str`](./str.md)                                 | Immutable UTF-8 string                     |
 | [`sym`](./sym.md)                                 | Interned symbol                            |
+| [`TimedOutError`](./timed-out-error.md)           | Strand timeout                             |
 | [`tuple`](./tuple.md)                             | Immutable ordered sequence                 |
 | [`type`](./type.md)                               | Type of types                              |
 | [`TypeError`](./type-error.md)                    | Wrong type for an operation                |

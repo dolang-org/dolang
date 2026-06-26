@@ -734,7 +734,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                     continue;
                 };
                 if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                    strand.check_interrupt()?;
+                    strand.check_trap()?;
                 }
                 let mut value = bucket.as_ref().value.dup();
                 sink.positional(strand, Slot::new(&mut value))?;

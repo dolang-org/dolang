@@ -68,7 +68,7 @@ impl<'v> Record<'v> {
 
         loop {
             if counter % crate::INTERRUPT_INTERVAL == 0 {
-                strand.check_interrupt_gc()?
+                strand.check_trap_gc()?
             }
             counter += 1;
             match args.next() {

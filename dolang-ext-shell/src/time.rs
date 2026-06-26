@@ -3,7 +3,7 @@ use std::{fmt, io, time::SystemTime};
 use dolang::{
     compile::Compiler,
     runtime::{
-        Error, Instance, Object, Output, Result, Slot, State, Strand, error::ResultExt,
+        Error, Instance, Object, Output, Result, Slot, State, Strand, call, error::ResultExt,
         object::TypeBuilder, unpack, vm::Builder,
     },
 };
@@ -468,6 +468,21 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let duration = coerce_sleep_duration(strand, global, duration)?;
             tokio::time::sleep(duration).await;
             Ok(())
+        })
+        .function("timeout", async move |strand, args, out| {
+            let ([duration, block], []) = unpack!(strand, args, 2, 0)?;
+            let duration = coerce_sleep_duration(strand, global, duration)?;
+            let interrupt = strand.interrupt_token().nested();
+            let interrupt_clone = interrupt.clone();
+            strand.spawn_task(async move {
+                tokio::time::sleep(duration).await;
+                interrupt_clone.timeout();
+            });
+            strand
+                .with_interrupt_token(interrupt, async move |strand| {
+                    call!(strand, block, out).await
+                })
+                .await
         })
         .value("DateTime", global.types.date_time)
         .value("Duration", global.types.duration)

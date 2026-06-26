@@ -111,7 +111,7 @@ async fn iter_extrema<'v, 'a, 's>(
                 if replace {
                     Slot::swap(Slot::reborrow(&mut out), &mut item);
                 }
-                strand.check_interrupt_gc()?;
+                strand.check_trap_gc()?;
             }
             Ok(())
         })
@@ -148,7 +148,7 @@ async fn iter_all_any<'v, 'a, 's>(
                         out.store(Value::TRUE);
                         return Ok(());
                     }
-                    strand.check_interrupt_gc()?;
+                    strand.check_trap_gc()?;
                 }
                 out.store(Value::from_bool(want_all));
                 Ok(())
@@ -169,7 +169,7 @@ async fn iter_count<'v, 'a, 's>(
             while iter.next(strand, &mut item).await? {
                 count += 1;
                 if count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                    strand.check_interrupt_gc()?;
+                    strand.check_trap_gc()?;
                 }
             }
             let value = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
@@ -195,7 +195,7 @@ async fn iter_fold<'v, 'a, 's>(
                 while iter.next(strand, &mut item).await? {
                     call!(strand, &func_slot, &mut next_acc, &acc, &item).await?;
                     Slot::swap(Slot::reborrow(&mut acc), &mut next_acc);
-                    strand.check_interrupt_gc()?;
+                    strand.check_trap_gc()?;
                 }
                 out.store(acc.take());
                 Ok(())
@@ -239,7 +239,7 @@ async fn iter_find<'v, 'a, 's>(
                         out.store(item.take());
                         return Ok(());
                     }
-                    strand.check_interrupt_gc()?;
+                    strand.check_trap_gc()?;
                 }
                 if let Some(mut default) = default {
                     out.store(default.take());
@@ -988,7 +988,7 @@ impl<'v> Protocol<'v> for Skip<'v> {
                     if !source.next(strand, &mut item).await? {
                         return Ok(false);
                     }
-                    strand.check_interrupt_gc()?;
+                    strand.check_trap_gc()?;
                 }
             })
             .await

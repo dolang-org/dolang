@@ -94,7 +94,7 @@ pub trait Alloc<'v> {
     fn alloc_vm(&mut self, _: private::Sealed) -> &Vm<'v>;
 }
 
-type Interrupt<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v;
+type Trap<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v;
 type ChannelFactory<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot<'v, '_>) + 'v;
 
 /// VM handle.
@@ -111,7 +111,7 @@ pub struct Vm<'v> {
     pub(crate) native_modules: HashMap<&'v str, Value<'v>>,
     pub(crate) importers: Vec<Value<'v>>,
     pub(crate) pipe_handler: Option<Box<ChannelFactory<'v>>>,
-    pub(crate) interrupt: Option<Box<Interrupt<'v>>>,
+    pub(crate) trap: Option<Box<Trap<'v>>>,
     // SAFETY: GC objects may point into state, so `arena` must be cleared first (but not dropped)
     pub(crate) state: HashMap<TypeId, ErasedState>,
     // SAFETY: must be unregistered after clearing GC objects and state, as this invalidates
@@ -789,7 +789,7 @@ impl Builder<'static> {
                 native_modules: Default::default(),
                 importers: Default::default(),
                 pipe_handler: None,
-                interrupt: None,
+                trap: None,
                 import_cache: Default::default(),
                 locals: Default::default(),
                 local_root_count: 0,
@@ -1001,21 +1001,21 @@ impl<'v> Builder<'v> {
         self
     }
 
-    /// Set interrupt function.  The interrupt function will be called periodically during
-    /// execution of the VM and may return an error.  In particular, [`Error::interrupt`]
+    /// Set trap function. The trap function will be called periodically during
+    /// execution of the VM and may return an error. In particular, [`Error::abort`]
     /// creates an error that ordinary Do programs can't catch, forcing unwinding back
     /// into host frames.  This may be used to enforce timeouts to prevent scripts from
     /// looping infinitely, for example.
     ///
-    /// When the interrupt function is called is not precisely specified, but there's guaranteed
+    /// When the trap function is called is not precisely specified, but there's guaranteed
     /// to be a constant upper bound on Do program instructions executed between invocations.
     /// Standard prelude functions will ensure this guarantee is respected by not performing
-    /// unbounded work on behalf of Do programs without periodic interrupt checks.
-    pub fn interrupt(
+    /// unbounded work on behalf of Do programs without periodic trap checks.
+    pub fn trap(
         &mut self,
-        interrupt: impl for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v,
+        trap: impl for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v,
     ) -> &mut Self {
-        self.inner.interrupt = Some(Box::new(interrupt));
+        self.inner.trap = Some(Box::new(trap));
         self
     }
 

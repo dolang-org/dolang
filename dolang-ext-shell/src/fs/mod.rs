@@ -1127,7 +1127,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 );
                 let result = call!(strand, callable, out, &path).await;
                 let _ = strand
-                    .with_cancel_mask(true, async move |strand| {
+                    .with_interrupt_mask(true, async move |strand| {
                         let local = global.local.get(strand);
                         let vfs = local.vfs();
                         vfs.remove(&temp_path, true, false).await

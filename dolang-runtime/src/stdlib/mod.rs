@@ -60,8 +60,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let error_compile = bc.error_compile.dup();
     let error_bytecode = bc.error_bytecode.dup();
     let error_runtime = bc.error_runtime.dup();
-    let error_interrupt = bc.error_interrupt.dup();
+    let error_abort = bc.error_abort.dup();
     let error_canceled = bc.error_canceled.dup();
+    let error_timed_out = bc.error_timed_out.dup();
 
     builder
         .module("std")
@@ -115,8 +116,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("CompileError", &error_compile)
         .value("BytecodeError", &error_bytecode)
         .value("RuntimeError", &error_runtime)
-        .value("InterruptError", &error_interrupt)
+        .value("AbortError", &error_abort)
         .value("CanceledError", &error_canceled)
+        .value("TimedOutError", &error_timed_out)
         // Core functions
         .function("arg", async move |strand, args, out| {
             let ([value], _) = unpack!(strand, args, 1, 0)?;
@@ -134,7 +136,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             let mut hasher = DefaultHasher::new();
             for (i, arg) in args.enumerate() {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                    strand.check_interrupt()?;
+                    strand.check_trap()?;
                 }
                 let slot = match arg {
                     Arg::Pos(s) => s,
