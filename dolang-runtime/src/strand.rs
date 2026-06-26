@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
+    future::Future,
     marker::PhantomData,
     mem::{self, MaybeUninit},
     ops::{ControlFlow, Deref, DerefMut},
@@ -29,45 +30,62 @@ use crate::{
 
 use crate::call;
 
-pub(crate) type CancelId = u64;
+pub(crate) type InterruptId = u64;
 
-struct CancelInner {
+struct InterruptInner {
     canceled: Cell<bool>,
-    next_id: Cell<CancelId>,
-    wakers: RefCell<Vec<(CancelId, Waker)>>,
-    children: RefCell<Vec<Weak<CancelInner>>>,
+    timed_out: Cell<bool>,
+    next_id: Cell<InterruptId>,
+    wakers: RefCell<Vec<(InterruptId, Waker)>>,
+    children: RefCell<Vec<Weak<InterruptInner>>>,
 }
 
-impl CancelInner {
+impl InterruptInner {
     fn cancel(&self) {
         self.canceled.set(true);
+        self.wake();
+    }
+
+    fn timeout(&self) {
+        self.timed_out.set(true);
+        self.wake();
+    }
+
+    fn wake(&self) {
         for (_, waker) in mem::take(&mut *self.wakers.borrow_mut()).into_iter() {
             waker.wake()
         }
-        for child in mem::take(&mut *self.children.borrow_mut()).into_iter() {
+        for child in self.children.borrow().iter() {
             if let Some(child) = child.upgrade() {
-                child.cancel()
+                if self.canceled.get() {
+                    child.cancel()
+                }
+                if self.timed_out.get() {
+                    child.timeout()
+                }
             }
         }
     }
 }
 
-/// Cancel token.
+/// Interrupt token.
 ///
-/// Cancel tokens permit cancelling one or more strands, causing them to abort with
-/// [`ErrorKind::Canceled`](crate::error::ErrorKind::Canceled) the next time they would
-/// suspend. Every strand has a cancel token set when it is created.
+/// Interrupt tokens permit interrupting one or more strands, causing them to abort with
+/// [`ErrorKind::Canceled`](crate::error::ErrorKind::Canceled) or
+/// [`ErrorKind::TimedOut`](crate::error::ErrorKind::TimedOut) the next time they would
+/// suspend. Every strand has an interrupt token set when it is created.
 #[derive(Clone)]
-pub struct CancelToken<'v> {
-    inner: Rc<CancelInner>,
+pub struct InterruptToken<'v> {
+    inner: Rc<InterruptInner>,
     phantom: PhantomData<&'v mut &'v ()>,
 }
 
-impl<'v> CancelToken<'v> {
+impl<'v> InterruptToken<'v> {
     pub(crate) fn new() -> Self {
         Self {
-            inner: Rc::new(CancelInner {
+            inner: Rc::new(InterruptInner {
                 canceled: Cell::new(false),
+                timed_out: Cell::new(false),
                 next_id: Cell::new(0),
                 wakers: Default::default(),
                 children: Default::default(),
@@ -76,8 +94,8 @@ impl<'v> CancelToken<'v> {
         }
     }
 
-    pub(crate) fn register(&self, waker: &Waker) -> Option<CancelId> {
-        if self.inner.canceled.get() {
+    pub(crate) fn register(&self, waker: &Waker) -> Option<InterruptId> {
+        if self.inner.canceled.get() || self.inner.timed_out.get() {
             return None;
         }
         let id = self.inner.next_id.get();
@@ -86,34 +104,47 @@ impl<'v> CancelToken<'v> {
         Some(id)
     }
 
-    pub(crate) fn unregister(&self, id: CancelId) {
+    pub(crate) fn unregister(&self, id: InterruptId) {
         self.inner.wakers.borrow_mut().retain(|(i, _)| *i != id);
     }
 
-    /// Creates a nested cancel token.  Cancellation of `self` will propagate
-    /// cancellation to all nested tokens created this way.
+    /// Creates a nested interrupt token. Parent cancellation/timeout propagates
+    /// to all nested tokens created this way.
     pub fn nested(&self) -> Self {
         let child = Self::new();
         if self.inner.canceled.get() {
-            child.inner.canceled.set(true)
-        } else {
-            self.inner
-                .children
-                .borrow_mut()
-                .push(Rc::downgrade(&child.inner));
+            child.inner.canceled.set(true);
         }
+        if self.inner.timed_out.get() {
+            child.inner.timed_out.set(true);
+        }
+        self.inner
+            .children
+            .borrow_mut()
+            .push(Rc::downgrade(&child.inner));
         child
     }
 
-    /// Cancel all associated strands and nested cancel tokens.
+    /// Cancel all associated strands and nested interrupt tokens.
     /// The canceled state is permanent.
     pub fn cancel(&self) {
         self.inner.cancel()
     }
 
-    /// Is this cancel token canceled?
+    /// Time out all associated strands and nested interrupt tokens.
+    /// The timed out state is permanent.
+    pub fn timeout(&self) {
+        self.inner.timeout()
+    }
+
+    /// Is this interrupt token canceled?
     pub fn is_canceled(&self) -> bool {
         self.inner.canceled.get()
+    }
+
+    /// Is this interrupt token timed out?
+    pub fn is_timed_out(&self) -> bool {
+        self.inner.timed_out.get()
     }
 }
 
@@ -242,9 +273,9 @@ pub(crate) struct StrandInner<'v> {
     locals: alias::Box<[NonNull<()>]>,
     local_roots: alias::Box<[UnsafeCell<Value<'v>>]>,
     arena: Arena,
-    pub(crate) cancel: CancelToken<'v>,
-    cancel_registered: Cell<bool>,
-    cancel_mask: Cell<bool>,
+    pub(crate) interrupt: RefCell<InterruptToken<'v>>,
+    interrupt_registered: Cell<bool>,
+    interrupt_mask: Cell<bool>,
     // Nested synchronous calls depth
     sync_depth: Cell<u32>,
     // Logical callable frame depth (Do + native frames only)
@@ -316,6 +347,17 @@ const MAX_CALL_DEPTH: u32 = 64;
 const MAX_CALL_DEPTH: u32 = 1000;
 
 impl<'v> StrandInner<'v> {
+    pub(crate) fn interrupt_error(&self) -> Error<'v, '_> {
+        let interrupt = self.interrupt.borrow();
+        if interrupt.is_canceled() {
+            Error::canceled_raw(self)
+        } else if interrupt.is_timed_out() {
+            Error::timed_out_raw(self)
+        } else {
+            unreachable!("interrupt_error without pending interrupt")
+        }
+    }
+
     pub(crate) fn new(vm: &'v Vm<'v>) -> Self {
         Self {
             group_link: Link::new(),
@@ -337,9 +379,9 @@ impl<'v> StrandInner<'v> {
                 .collect::<Vec<_>>()
                 .into(),
             arena: Arena::new(ARENA_DEFAULT_SIZE),
-            cancel: CancelToken::new(),
-            cancel_registered: Cell::new(false),
-            cancel_mask: Cell::new(false),
+            interrupt: RefCell::new(InterruptToken::new()),
+            interrupt_registered: Cell::new(false),
+            interrupt_mask: Cell::new(false),
             call_depth: Cell::new(0),
             sp: Cell::new(None),
             start: Value::NIL,
@@ -366,7 +408,7 @@ impl<'v> StrandInner<'v> {
         Ok(CallDepthGuard { inner: self })
     }
 
-    pub(crate) fn derived(strand: &Strand<'v, '_>, cancel: Option<CancelToken<'v>>) -> Self {
+    pub(crate) fn derived(strand: &Strand<'v, '_>, interrupt: Option<InterruptToken<'v>>) -> Self {
         let locals = strand
             .locals
             .iter()
@@ -392,9 +434,11 @@ impl<'v> StrandInner<'v> {
                 .collect::<Vec<_>>()
                 .into(),
             arena: Arena::new(ARENA_DEFAULT_SIZE),
-            cancel: cancel.unwrap_or_else(|| strand.inner.cancel.clone()),
-            cancel_registered: Cell::new(false),
-            cancel_mask: Cell::new(false),
+            interrupt: RefCell::new(
+                interrupt.unwrap_or_else(|| strand.inner.interrupt.borrow().clone()),
+            ),
+            interrupt_registered: Cell::new(false),
+            interrupt_mask: Cell::new(false),
             call_depth: Cell::new(strand.inner.call_depth.get()),
             sp: Cell::new(None),
             start: Value::NIL,
@@ -559,25 +603,26 @@ impl<'v> StrandInner<'v> {
     }
 }
 
-/// A pinned future that integrates with strand cancellation.
+/// A pinned future that integrates with strand interrupts.
 ///
-/// ## Cancellation Integration
+/// ## Interrupt Integration
 ///
-/// This wrapper connects a future to the strand's cancellation system:
-/// - When first polled, registers with the cancel notifier
-/// - On subsequent polls, checks if cancellation has been requested
-/// - When the future completes, unregisters from the cancel notifier
+/// This wrapper connects a future to the strand's interrupt system:
+/// - When first polled, registers with the interrupt notifier
+/// - On subsequent polls, checks if interruption has been requested
+/// - When the future completes, unregisters from the interrupt notifier
 ///
-/// ## Cancellation Masking
+/// ## Interrupt Masking
 ///
-/// If `cancel_mask` is set on the strand, cancellation checks are skipped
+/// If `interrupt_mask` is set on the strand, interruption checks are skipped
 /// and the future runs to completion normally. This is used for cleanup
-/// operations that must complete even during cancellation.
+/// operations that must complete even during interruption.
 pub(crate) struct Pinned<'v, 's, 'a, R> {
     inner: dolang_util::pin::Pinned<'a, Result<'v, 's, R>>,
     strand: &'s StrandInner<'v>,
-    /// Cancellation registration ID. None if not yet registered or already cleaned up.
-    id: Option<CancelId>,
+    interrupt: InterruptToken<'v>,
+    /// Interrupt registration ID. None if not yet registered or already cleaned up.
+    id: Option<InterruptId>,
 }
 
 impl<'v, 's, 'a, R> Future for Pinned<'v, 's, 'a, R> {
@@ -586,10 +631,10 @@ impl<'v, 's, 'a, R> Future for Pinned<'v, 's, 'a, R> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         match unsafe { Pin::new_unchecked(&mut self.inner) }.poll(cx) {
             Poll::Ready(res) => {
-                // Unregister from cancel token if we were registered
+                // Unregister from interrupt token if we were registered
                 if let Some(id) = self.id.take() {
-                    self.strand.cancel.unregister(id);
-                    self.strand.cancel_registered.set(false);
+                    self.interrupt.unregister(id);
+                    self.strand.interrupt_registered.set(false);
                 }
                 Poll::Ready(res)
             }
@@ -600,28 +645,28 @@ impl<'v, 's, 'a, R> Future for Pinned<'v, 's, 'a, R> {
                         "attempt to suspend in sync context",
                     )));
                 }
-                // FIXME: probably should move cancel mask testing into one check here to
+                // FIXME: probably should move interrupt mask testing into one check here to
                 // avoid waking up and going to sleep uselessly
-                if self.id.is_none() && !self.strand.cancel_registered.get() {
-                    // This strand is not registered with the cancel token, so do it now
-                    if let Some(id) = self.strand.cancel.register(cx.waker()) {
+                if self.id.is_none() && !self.strand.interrupt_registered.get() {
+                    // This strand is not registered with the interrupt token, so do it now
+                    if let Some(id) = self.interrupt.register(cx.waker()) {
                         self.id = Some(id);
-                        self.strand.cancel_registered.set(true);
-                        // If the cancel token is cancelled, it will wake the waker so
-                        // we can re-check cancel status
+                        self.strand.interrupt_registered.set(true);
+                        // If the interrupt token is triggered, it will wake the waker so
+                        // we can re-check interrupt status
                         return Poll::Pending;
-                    } else if !self.strand.cancel_mask.get() {
-                        // Registration raced with cancellation and cancellation is not masked, so
-                        // throw an error
-                        return Poll::Ready(Err(Error::canceled_raw(self.strand)));
+                    } else if !self.strand.interrupt_mask.get() {
+                        return Poll::Ready(Err(self.strand.interrupt_error()));
                     }
-                } else if !self.strand.cancel_mask.get() && self.strand.cancel.is_canceled() {
-                    // Cancel token was canceled and cancellation is not masked
+                } else if !self.strand.interrupt_mask.get()
+                    && (self.interrupt.is_canceled() || self.interrupt.is_timed_out())
+                {
+                    // Interrupt token was triggered and interruption is not masked
                     if let Some(id) = &self.id {
-                        self.strand.cancel.unregister(*id);
-                        self.strand.cancel_registered.set(false);
+                        self.interrupt.unregister(*id);
+                        self.strand.interrupt_registered.set(false);
                     }
-                    return Poll::Ready(Err(Error::canceled_raw(self.strand)));
+                    return Poll::Ready(Err(self.strand.interrupt_error()));
                 }
                 Poll::Pending
             }
@@ -936,23 +981,23 @@ impl<'v, 's> Strand<'v, 's> {
         }
     }
 
-    /// Run function with cancellation mask changed.
+    /// Run function with interrupt mask changed.
     ///
-    /// ## Cancellation Semantics
+    /// ## Interrupt Semantics
     ///
-    /// By default, when a strand is cancelled, all Do-related futures will return
-    /// a `Canceled` error on the next poll, and the deepest future in the stack
-    /// may be dropped entirely. This is the normal cancellation behavior.
+    /// By default, when a strand is interrupted, all Do-related futures will return
+    /// a `Canceled` or `TimedOut` error on the next poll, and the deepest future
+    /// in the stack may be dropped entirely. This is the normal interruption behavior.
     ///
-    /// When `mask` is `true`, pending cancellation is temporarily suppressed:
+    /// When `mask` is `true`, pending interruption is temporarily suppressed:
     /// - Do-related futures will continue to work normally
     /// - Futures won't be dropped on the floor
-    /// - The strand won't see `Canceled` errors
+    /// - The strand won't see interrupt errors
     ///
     /// # Use Cases
     ///
-    /// Cancellation masking is intended for cleanup paths where you must perform
-    /// certain operations even when the strand is being cancelled:
+    /// Interrupt masking is intended for cleanup paths where you must perform
+    /// certain operations even when the strand is being interrupted:
     /// - Deleting temporary files
     /// - Closing file handles
     /// - Rolling back database transactions
@@ -960,58 +1005,71 @@ impl<'v, 's> Strand<'v, 's> {
     ///
     /// # Important Warning
     ///
-    /// Cancelled strands are expected to unwind in a timely manner. Do NOT use
-    /// cancellation masking to perform arbitrary long-running operations.
+    /// Interrupted strands are expected to unwind in a timely manner. Do NOT use
+    /// interrupt masking to perform arbitrary long-running operations.
     /// Keep masked operations short and focused on cleanup.
     ///
     /// # Example
     ///
     /// ```ignore
     /// // In a cleanup handler
-    /// strand.with_cancel_mask(true, async |strand| {
-    ///     // This will complete even if the strand is cancelled
+    /// strand.with_interrupt_mask(true, async |strand| {
+    ///     // This will complete even if the strand is interrupted
     ///     file.delete().await?;
     ///     conn.rollback().await?;
     /// }).await?;
     /// ```
     #[inline]
-    pub async fn with_cancel_mask<R>(
+    pub async fn with_interrupt_mask<R>(
         &mut self,
         mask: bool,
         f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> R,
     ) -> R {
-        let orig = self.inner.cancel_mask.replace(mask);
+        let orig = self.inner.interrupt_mask.replace(mask);
         let res = f(self).await;
-        self.inner.cancel_mask.set(orig);
+        self.inner.interrupt_mask.set(orig);
         res
     }
 
-    /// Run function with cancellation interception.  If this strand is cancelled, the [`Future`]
+    /// Run function with interruption interception. If this strand is interrupted, the [`Future`]
     /// returned by `f` may be dropped, but the [`Future`] returned by this function
-    /// will return an error as by [`Error::canceled`].  This allows cleaning up using normal async
+    /// will return an interrupt error. This allows cleaning up using normal async
     /// error handling instead of drop guards.
     #[inline]
-    pub async fn cancel_guard<R>(
+    pub async fn interrupt_guard<R>(
         &mut self,
         f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> Result<'v, 's, R>,
     ) -> Result<'v, 's, R> {
         self.pin_future_call(f).await
     }
 
-    /// Check for interrupt without running garbage collection.
-    /// Safe to call while holding GC object borrows.  Host-provided functions that
-    /// perform CPU-bound work without significant allocation should use this.
-    pub fn check_interrupt(&mut self) -> Result<'v, 's, ()> {
-        self.vm().check_interrupt(self)
+    pub async fn with_interrupt_token<R>(
+        &mut self,
+        interrupt: InterruptToken<'v>,
+        f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> Result<'v, 's, R>,
+    ) -> Result<'v, 's, R> {
+        let orig = self.inner.interrupt.replace(interrupt);
+        self.inner.interrupt_registered.set(false);
+        let res = self.pin_future_call(f).await;
+        self.inner.interrupt.replace(orig);
+        self.inner.interrupt_registered.set(false);
+        res
     }
 
-    /// Check for interrupt and run GC if the collection threshold is exceeded.
+    /// Check trap without running garbage collection.
+    /// Safe to call while holding GC object borrows.  Host-provided functions that
+    /// perform CPU-bound work without significant allocation should use this.
+    pub fn check_trap(&mut self) -> Result<'v, 's, ()> {
+        self.vm().check_trap(self)
+    }
+
+    /// Check trap and run GC if the collection threshold is exceeded.
     /// Must be called with all GC object borrows released, since GC may collect
     /// objects whose reference counts drop to zero during trial deletion.
     /// Host-provided functions that allocate or iterate over potentially large
     /// structures should use this.
-    pub fn check_interrupt_gc(&mut self) -> Result<'v, 's, ()> {
-        self.vm().check_interrupt_gc(self)
+    pub fn check_trap_gc(&mut self) -> Result<'v, 's, ()> {
+        self.vm().check_trap_gc(self)
     }
 
     /// Get current input iterator.
@@ -1025,14 +1083,14 @@ impl<'v, 's> Strand<'v, 's> {
     }
 
     /// Spawn a new strand scoped to this strand which executes `f`.
-    /// If `cancel` is [`Some`], it will be the cancel token for the new strand,
-    /// otherwise it will inherit [`Self::cancel_token`].
+    /// If `interrupt` is [`Some`], it will be the interrupt token for the new strand,
+    /// otherwise it will inherit [`Self::interrupt_token`].
     pub async fn spawn_scoped<R>(
         &self,
-        cancel: Option<CancelToken<'v>>,
+        interrupt: Option<InterruptToken<'v>>,
         f: impl for<'ss> AsyncFnOnce(&mut Strand<'v, 'ss>) -> Result<'v, 'ss, R>,
     ) -> Result<'v, 's, R> {
-        let strand = StrandInner::derived(self, cancel);
+        let strand = StrandInner::derived(self, interrupt);
         // Safety: strand is at a stable address (async fn generator state is heap-allocated)
         // and the leader's StrandGroup outlives this scoped strand.
         unsafe { strand.init_group_member(self.inner) };
@@ -1078,13 +1136,13 @@ impl<'v, 's> Strand<'v, 's> {
     pub(crate) fn spawn_background_raw(
         &mut self,
         callable: Value<'v>,
-        cancel: CancelToken<'v>,
+        interrupt: InterruptToken<'v>,
         stream: Option<(Value<'v>, Value<'v>)>,
     ) -> Result<'v, 's, GcObj<'v, Handle<'v>>> {
         let close_on_exit = stream.is_some();
 
         // Create StrandInner derived from current strand
-        let mut inner = StrandInner::derived(self, Some(cancel.clone()));
+        let mut inner = StrandInner::derived(self, Some(interrupt.clone()));
         inner.call_depth.set(0);
         inner.start = callable;
 
@@ -1102,7 +1160,7 @@ impl<'v, 's> Strand<'v, 's> {
         let handle = GcObj::new(
             vm.arena(),
             vm.builtin_types().strand_handle,
-            Handle::new(inner.clone(), cancel),
+            Handle::new(inner.clone(), interrupt),
         );
 
         // Create weak ref for the future (doesn't participate in cycles)
@@ -1178,9 +1236,9 @@ impl<'v, 's> Strand<'v, 's> {
         Ok(handle)
     }
 
-    /// Get the cancel token for this strand
-    pub fn cancel_token(&self) -> &CancelToken<'v> {
-        &self.inner.cancel
+    /// Get the interrupt token for this strand
+    pub fn interrupt_token(&self) -> InterruptToken<'v> {
+        self.inner.interrupt.borrow().clone()
     }
 
     /// Import a module, running the same import logic as used for Do `import` statements.
@@ -1198,9 +1256,11 @@ impl<'v, 's> Strand<'v, 's> {
         f: impl for<'c> AsyncFnOnce(&'c mut Strand<'v, 's>) -> Result<'v, 's, R> + 'b,
     ) -> Pinned<'v, 's, 'b, R> {
         let inner = self.inner;
+        let interrupt = self.interrupt_token();
         Pinned {
             inner: unsafe { inner.arena.pin_future_unchecked(f(self)) },
             strand: inner,
+            interrupt,
             id: None,
         }
     }

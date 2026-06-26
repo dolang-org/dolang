@@ -58,7 +58,7 @@ async fn value_to_pattern<'v, 's>(
                         .ok_or_else(|| Error::type_error(strand, "invalid pattern: binary"))?
                         .chars(),
                 );
-                strand.check_interrupt_gc()?;
+                strand.check_trap_gc()?;
             }
             Ok(acc)
         })

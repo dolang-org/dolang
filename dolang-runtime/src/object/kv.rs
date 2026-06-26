@@ -871,7 +871,7 @@ impl<'v> Inner<'v> {
                     continue;
                 };
                 if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                    strand.check_interrupt()?;
+                    strand.check_trap()?;
                 }
                 if first {
                     first = false
@@ -920,7 +920,7 @@ impl<'v> Inner<'v> {
                         continue;
                     };
                 if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                    strand.check_interrupt()?;
+                    strand.check_trap()?;
                 }
                 let elem = elem.as_ref();
                 elem.hash.hash(hasher);
@@ -959,7 +959,7 @@ impl<'v> Inner<'v> {
                 };
 
                 if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                    strand.check_interrupt()?;
+                    strand.check_trap()?;
                 }
                 let (l, subl) = (l.0.as_ref(), l.1);
                 let (r, subr) = (r.0.as_ref(), r.1);
@@ -1005,7 +1005,7 @@ impl<'v> Inner<'v> {
                 };
 
                 if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                    strand.check_interrupt()?;
+                    strand.check_trap()?;
                 }
                 let (l, subl) = (l.0.as_ref(), l.1);
                 let (r, subr) = (r.0.as_ref(), r.1);
@@ -1188,7 +1188,7 @@ impl<'v> Inner<'v> {
                     continue;
                 };
                 if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                    strand.check_interrupt()?;
+                    strand.check_trap()?;
                 }
                 let bucket = bucket.as_ref();
                 Self::spread_key_value(
@@ -1402,7 +1402,7 @@ impl<'v> Inner<'v> {
                             };
                             for (i, (v, _)) in items.iter().enumerate() {
                                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                                    strand.check_interrupt()?;
+                                    strand.check_trap()?;
                                 }
                                 if v.op_eq(strand, &expected_value).to_bool(strand) {
                                     found = true;
@@ -1819,7 +1819,7 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
         'main: loop {
             counter += 1;
             if counter.is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                strand.check_interrupt()?;
+                strand.check_trap()?;
             }
             match &mut borrow.state {
                 UnpackState::Int { int, resume, skip } => {

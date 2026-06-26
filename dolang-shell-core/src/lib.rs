@@ -139,7 +139,7 @@ fn run(config: Arc<dyn Config>) -> i32 {
                 .enter_with_slots(async move |strand, [mut stdin, mut stdout]| {
                     dolang_ext_shell::stdin(strand, &mut stdin);
                     dolang_ext_shell::stdout(strand, &mut stdout);
-                    let ct = strand.cancel_token().clone();
+                    let ct = strand.interrupt_token();
                     let res =
                         Redirect::new(strand)
                             .input(stdin)
@@ -197,7 +197,7 @@ fn run(config: Arc<dyn Config>) -> i32 {
                     match res {
                         Ok(()) => 0,
                         Err(e) => {
-                            let exit_code = (e.kind() == ErrorKind::Interrupt)
+                            let exit_code = (e.kind() == ErrorKind::Abort)
                                 .then(|| {
                                     e.source()
                                         .and_then(|e| e.downcast_ref::<Exit>())

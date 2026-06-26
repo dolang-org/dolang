@@ -5,7 +5,7 @@ use crate::{
     error::{Error, ErrorPair, Result, ResultExt},
     gc::{Collect, arena::Visit},
     method,
-    strand::{CancelToken, Strand, StrandInner},
+    strand::{InterruptToken, Strand, StrandInner},
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, TypeObject, Value},
@@ -25,7 +25,7 @@ pub(crate) enum Completion<'v> {
 /// GC-managed handle for a background strand.
 pub(crate) struct Handle<'v> {
     pub(crate) inner: Option<Rc<StrandInner<'v>>>,
-    pub(crate) cancel: CancelToken<'v>,
+    pub(crate) interrupt: InterruptToken<'v>,
     pub(crate) result: Option<Completion<'v>>,
     pub(crate) wakers: Vec<Waker>,
     pub(crate) stream_input: Value<'v>,
@@ -33,10 +33,10 @@ pub(crate) struct Handle<'v> {
 }
 
 impl<'v> Handle<'v> {
-    pub(crate) fn new(inner: Rc<StrandInner<'v>>, cancel: CancelToken<'v>) -> Self {
+    pub(crate) fn new(inner: Rc<StrandInner<'v>>, interrupt: InterruptToken<'v>) -> Self {
         Self {
             inner: Some(inner),
-            cancel,
+            interrupt,
             result: None,
             wakers: Vec::new(),
             stream_input: Value::NIL,
@@ -80,7 +80,7 @@ unsafe impl<'v> Collect for Handle<'v> {
 
     fn clear(&mut self) {
         // Cancel the strand
-        self.cancel.cancel();
+        self.interrupt.cancel();
         // Drop our reference to StrandInner (the Future's Rc clone keeps it alive during unwind)
         self.inner = None;
     }
@@ -189,7 +189,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
             sym::CANCEL => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let borrow = this.borrow(strand)?;
-                borrow.cancel.cancel();
+                borrow.interrupt.cancel();
                 Ok(())
             }
             sym::WAIT => {

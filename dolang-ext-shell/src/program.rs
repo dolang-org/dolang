@@ -160,7 +160,7 @@ async fn cleanup_io<'v, 's>(
     cleanup: [bool; 3],
 ) {
     strand
-        .with_cancel_mask(true, async move |strand| {
+        .with_interrupt_mask(true, async move |strand| {
             strand
                 .with_slots(async move |strand, [mut tmp]| {
                     if cleanup[0] {
@@ -628,7 +628,7 @@ async fn run<'v, 's>(
     let stderr_pipe = stderr_pipe.map(|pipe| Box::new(pipe) as Box<dyn AsyncRead + Unpin>);
     let res = {
         strand
-            .cancel_guard(async |strand| {
+            .interrupt_guard(async |strand| {
                 run_monitor(
                     strand,
                     &mut proc,
@@ -647,7 +647,7 @@ async fn run<'v, 's>(
 
     if res.is_err() {
         let _ = strand
-            .with_cancel_mask(true, async move |_strand| proc.terminate().await)
+            .with_interrupt_mask(true, async move |_strand| proc.terminate().await)
             .await;
     }
 

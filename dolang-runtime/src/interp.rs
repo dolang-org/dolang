@@ -580,7 +580,7 @@ impl<'v> Vm<'v> {
                 // 3. Run finally under cancel mask
                 if !finally.is_nil() {
                     let finally_status = strand
-                        .with_cancel_mask(true, async |strand| {
+                        .with_interrupt_mask(true, async |strand| {
                             call!(strand, &finally, &mut tmp).await
                         })
                         .await;
@@ -595,18 +595,18 @@ impl<'v> Vm<'v> {
             .await
     }
 
-    pub(crate) fn check_interrupt<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        if let Some(int) = self.interrupt.as_ref() {
-            int(strand)?
+    pub(crate) fn check_trap<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
+        if let Some(trap) = self.trap.as_ref() {
+            trap(strand)?
         }
         Ok(())
     }
 
-    pub(crate) fn check_interrupt_gc<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
+    pub(crate) fn check_trap_gc<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
         if self.arena.collect() {
             self.sym_gc();
         }
-        self.check_interrupt(strand)
+        self.check_trap(strand)
     }
 
     async unsafe fn expand_args<'s>(
@@ -898,7 +898,7 @@ impl<'v> Vm<'v> {
                     func.store(frame.take(depth - count));
                     let args = Self::marshal_args(inner, frame, sig, 1).await?;
                     Strand::async_for_frame(inner, frame, async |strand| {
-                        self.check_interrupt_gc(strand)?;
+                        self.check_trap_gc(strand)?;
                         func.op_call(strand, args, Slot::reborrow(&mut res)).await
                     })
                     .await?;
@@ -920,7 +920,7 @@ impl<'v> Vm<'v> {
                     obj.store(frame.take(depth - count));
                     let args = Self::marshal_args(inner, frame, sig, 1).await?;
                     Strand::async_for_frame(inner, frame, async |strand| {
-                        self.check_interrupt_gc(strand)?;
+                        self.check_trap_gc(strand)?;
                         obj.op_mcall(strand, method, args, Slot::reborrow(&mut res))
                             .await
                     })
@@ -1021,7 +1021,7 @@ impl<'v> Vm<'v> {
                     let offset = reader.isize();
                     if offset < 0 {
                         frame.pc = reader.offset();
-                        Strand::for_frame(inner, frame, |strand| self.check_interrupt_gc(strand))?
+                        Strand::for_frame(inner, frame, |strand| self.check_trap_gc(strand))?
                     }
                     reader.seek(offset)
                 }
@@ -1031,7 +1031,7 @@ impl<'v> Vm<'v> {
                     let mut slot = frame.scratch1();
                     slot.store(frame.pop());
                     if offset < 0 {
-                        Strand::for_frame(inner, frame, |strand| self.check_interrupt_gc(strand))?
+                        Strand::for_frame(inner, frame, |strand| self.check_trap_gc(strand))?
                     }
                     let value =
                         Strand::for_frame_infallible(inner, frame, |strand| slot.op_bool(strand));

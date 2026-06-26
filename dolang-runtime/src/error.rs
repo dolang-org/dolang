@@ -63,6 +63,8 @@ pub enum ErrorKind {
     SinkStop,
     /// Input iterator stopped
     IterStop,
+    /// Strand timed out
+    TimedOut,
     /// Attempt to import a module already being imported
     CyclicImport,
     /// Failure resolving a module during an import
@@ -73,8 +75,8 @@ pub enum ErrorKind {
     Bytecode,
     /// Generic runtime error
     Runtime,
-    /// Explicit interrupt
-    Interrupt,
+    /// Explicit abort
+    Abort,
     /// Strand canceled
     Canceled,
 }
@@ -242,6 +244,7 @@ enum Variant<'v, 's> {
     SinkStop,
     IterStop,
     Canceled,
+    TimedOut,
     Concurrency,
     NonLocalJump(u8, gc::Weak<'v, frame::Upvars<'v>>),
     Boxed(FloatingRoot<'v, 's>, Box<ErrorMeta<'v>>),
@@ -423,6 +426,7 @@ impl<'v, 's> fmt::Display for Error<'v, 's> {
             Variant::SinkStop => write!(f, "output iterator stopped"),
             Variant::IterStop => write!(f, "input iterator stopped"),
             Variant::Canceled => write!(f, "strand canceled"),
+            Variant::TimedOut => write!(f, "strand timed out"),
             Variant::Concurrency => write!(f, "conflicting concurrent operation"),
             Variant::NonLocalJump(..) => write!(f, "non-local jump"),
             Variant::Boxed(root, info) => {
@@ -446,7 +450,7 @@ impl<'v, 's> error::Error for Error<'v, 's> {
                         Boxed::Compile(error)
                         | Boxed::Bytecode(error)
                         | Boxed::Runtime(error)
-                        | Boxed::Interrupt(error) => {
+                        | Boxed::Abort(error) => {
                             // Safety: the Box<dyn error::Error + 'static> is
                             // kept alive by FloatingRoot which outlives &self.
                             Some(unsafe {
@@ -513,6 +517,7 @@ impl<'v, 's> Error<'v, 's> {
             Variant::SinkStop => Self::new_info(inner, Boxed::SinkStop).inner,
             Variant::IterStop => Self::new_info(inner, Boxed::IterStop).inner,
             Variant::Canceled => Self::new_info(inner, Boxed::Canceled).inner,
+            Variant::TimedOut => Self::new_info(inner, Boxed::TimedOut).inner,
             Variant::Concurrency => Self::new_info(inner, Boxed::Concurrency(None)).inner,
             Variant::NonLocalJump(..) => unreachable!("non-local jump should never be boxed"),
             Variant::Boxed(..) => return,
@@ -781,10 +786,10 @@ impl<'v, 's> Error<'v, 's> {
         Self::runtime_raw(strand, "maximum call depth exceeded")
     }
 
-    /// Create error: interrupt.  Interrupt errors are usually not catchable by
+    /// Create error: abort. Abort errors are usually not catchable by
     /// Do programs.
-    pub fn interrupt(strand: &mut Strand<'v, 's>, err: impl Into<Box<dyn error::Error>>) -> Self {
-        Self::new_info(strand.inner, Boxed::Interrupt(err.into()))
+    pub fn abort(strand: &mut Strand<'v, 's>, err: impl Into<Box<dyn error::Error>>) -> Self {
+        Self::new_info(strand.inner, Boxed::Abort(err.into()))
     }
 
     /// Create error: canceled.
@@ -794,6 +799,15 @@ impl<'v, 's> Error<'v, 's> {
 
     pub(crate) fn canceled_raw(#[allow(unused_variables)] strand: &'s StrandInner<'v>) -> Self {
         Self::new_variant(Variant::Canceled)
+    }
+
+    /// Create error: timed out.
+    pub fn timed_out(#[allow(unused_variables)] strand: &mut Strand<'v, 's>) -> Self {
+        Self::new_variant(Variant::TimedOut)
+    }
+
+    pub(crate) fn timed_out_raw(#[allow(unused_variables)] strand: &'s StrandInner<'v>) -> Self {
+        Self::new_variant(Variant::TimedOut)
     }
 
     pub(crate) fn non_local_jump(indicator: u8, weak: gc::Weak<'v, frame::Upvars<'v>>) -> Self {
@@ -817,6 +831,7 @@ impl<'v, 's> Error<'v, 's> {
             Variant::SinkStop => ErrorKind::SinkStop,
             Variant::IterStop => ErrorKind::IterStop,
             Variant::Canceled => ErrorKind::Canceled,
+            Variant::TimedOut => ErrorKind::TimedOut,
             Variant::Concurrency => ErrorKind::Concurrency,
             Variant::NonLocalJump(..) => ErrorKind::Runtime,
             Variant::Boxed(root, info) => {
@@ -831,8 +846,7 @@ impl<'v, 's> Error<'v, 's> {
 
     /// Is error ordinarily catchable by Do programs?
     pub fn catchable(&self) -> bool {
-        !matches!(self.inner, Variant::NonLocalJump(..))
-            && !matches!(self.kind(), ErrorKind::Interrupt)
+        !matches!(self.inner, Variant::NonLocalJump(..)) && !matches!(self.kind(), ErrorKind::Abort)
     }
 
     /// Iterate over backtrace associated with error, deepest entries first.
@@ -982,6 +996,7 @@ impl<'v, 's> Error<'v, 's> {
                 Variant::SinkStop => Variant::SinkStop,
                 Variant::IterStop => Variant::IterStop,
                 Variant::Canceled => Variant::Canceled,
+                Variant::TimedOut => Variant::TimedOut,
                 Variant::Concurrency => Variant::Concurrency,
                 Variant::NonLocalJump(i, w) => Variant::NonLocalJump(i, w),
             },

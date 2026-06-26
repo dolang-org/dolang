@@ -223,7 +223,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                         let result = call!(strand, block, out, &wrapper).await;
 
                         strand
-                            .with_cancel_mask(true, async move |strand| {
+                            .with_interrupt_mask(true, async move |strand| {
                                 let _ = method!(strand, &wrapper, close, &mut tmp).await;
                             })
                             .await;

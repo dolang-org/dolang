@@ -41,7 +41,7 @@ use crate::error;
 
 /// Exit error.
 ///
-/// The `exit` function propagates an [`Error::interrupt`] containing
+/// The `exit` function propagates an [`Error::abort`] containing
 /// an instance of this type as the [`Error::source`](std::error::Error::source) which
 /// can be recovered through downcasting.
 #[derive(Debug)]
@@ -394,7 +394,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     None => 0i64,
                 };
                 let code = rc.try_into().map_err(|_| Error::overflow(strand))?;
-                Err(Error::interrupt(strand, Exit { code }))
+                Err(Error::abort(strand, Exit { code }))
             },
         )
         .function("echo", async move |strand, args, _| {

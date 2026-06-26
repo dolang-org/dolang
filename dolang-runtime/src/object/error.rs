@@ -33,6 +33,7 @@ pub(crate) enum Boxed<'v> {
     IterStop,
     Index,
     Canceled,
+    TimedOut,
     Field(alias::Box<str>),
     UnexpectedPos(usize),
     UnexpectedKey(alias::Box<str>),
@@ -43,7 +44,7 @@ pub(crate) enum Boxed<'v> {
     Compile(Box<dyn error::Error>),
     Bytecode(Box<dyn error::Error>),
     Runtime(Box<dyn error::Error>),
-    Interrupt(Box<dyn error::Error>),
+    Abort(Box<dyn error::Error>),
 }
 
 impl<'v> Boxed<'v> {
@@ -71,8 +72,9 @@ impl<'v> Boxed<'v> {
             Compile(_) => ErrorKind::Compile,
             Bytecode(_) => ErrorKind::Bytecode,
             Runtime(_) => ErrorKind::Runtime,
-            Interrupt(_) => ErrorKind::Interrupt,
+            Abort(_) => ErrorKind::Abort,
             Canceled => ErrorKind::Canceled,
+            TimedOut => ErrorKind::TimedOut,
         }
     }
 }
@@ -95,6 +97,7 @@ impl<'v> Display for Boxed<'v> {
             IterStop => write!(f, "input iterator stopped"),
             Index => write!(f, "index out of range or invalid"),
             Canceled => write!(f, "strand canceled"),
+            TimedOut => write!(f, "strand timed out"),
             Field(name) => write!(f, "no such field: {name}"),
             UnexpectedPos(i) => write!(f, "unexpected positional item: {i}"),
             UnexpectedKey(name) => write!(f, "unexpected key item: {name}"),
@@ -107,7 +110,7 @@ impl<'v> Display for Boxed<'v> {
             Compile(error) => write!(f, "compile error: {error}"),
             Bytecode(error) => write!(f, "bytecode error: {error}"),
             Runtime(error) => Display::fmt(error, f),
-            Interrupt(error) => Display::fmt(error, f),
+            Abort(error) => Display::fmt(error, f),
         }
     }
 }
@@ -156,8 +159,9 @@ impl<'v> Protocol<'v> for Boxed<'v> {
             ErrorKind::Compile => class.error_compile.dup(),
             ErrorKind::Bytecode => class.error_bytecode.dup(),
             ErrorKind::Runtime => class.error_runtime.dup(),
-            ErrorKind::Interrupt => class.error_interrupt.dup(),
+            ErrorKind::Abort => class.error_abort.dup(),
             ErrorKind::Canceled => class.error_canceled.dup(),
+            ErrorKind::TimedOut => class.error_timed_out.dup(),
         })
     }
 
@@ -384,7 +388,7 @@ impl<'v> Protocol<'v> for VariantType {
                 let msg = expect_string_like(strand, &msg)?;
                 Error::compile(strand, msg)
             }
-            ErrorKind::Bytecode | ErrorKind::Interrupt => {
+            ErrorKind::Bytecode | ErrorKind::Abort => {
                 return Err(Error::type_error(
                     strand,
                     format!("{} is not instantiable", variant_name(kind)),
@@ -398,6 +402,10 @@ impl<'v> Protocol<'v> for VariantType {
             ErrorKind::Canceled => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 Error::canceled(strand)
+            }
+            ErrorKind::TimedOut => {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                Error::timed_out(strand)
             }
         };
         error.get_value(strand, out);
@@ -428,8 +436,9 @@ fn variant_name(kind: ErrorKind) -> &'static str {
         ErrorKind::Compile => "Compile",
         ErrorKind::Bytecode => "Bytecode",
         ErrorKind::Runtime => "Runtime",
-        ErrorKind::Interrupt => "Interrupt",
+        ErrorKind::Abort => "Abort",
         ErrorKind::Canceled => "Canceled",
+        ErrorKind::TimedOut => "TimedOut",
     }
 }
 
@@ -455,6 +464,7 @@ fn is_runtime_superkind(kind: ErrorKind) -> bool {
             | ErrorKind::Compile
             | ErrorKind::Bytecode
             | ErrorKind::Runtime
+            | ErrorKind::TimedOut
     )
 }
 

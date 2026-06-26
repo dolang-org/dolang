@@ -428,12 +428,12 @@ impl Vm {
                     PhantomData,
                 );
                 let this = config.register_state(this.clone());
-                config.interrupt(move |strand| {
+                config.trap(move |strand| {
                     if Instant::now() > this.deadline.get() {
-                        return Err(Error::interrupt(strand, "timeout exceeded"));
+                        return Err(Error::abort(strand, "timeout exceeded"));
                     }
                     if strand.gc_allocated_size() > ALLOC_LIMIT {
-                        return Err(Error::interrupt(strand, "memory usage limit exceeded"));
+                        return Err(Error::abort(strand, "memory usage limit exceeded"));
                     }
                     Ok(())
                 });

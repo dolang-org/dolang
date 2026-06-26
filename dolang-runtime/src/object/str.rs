@@ -56,7 +56,7 @@ async fn value_to_pattern<'v, 's>(
                         .ok_or_else(|| Error::type_error(strand, "invalid pattern: not a string"))?
                         .chars(),
                 );
-                strand.check_interrupt_gc()?;
+                strand.check_trap_gc()?;
             }
             Ok(acc)
         })
@@ -300,7 +300,7 @@ impl<'v> Protocol<'v> for str {
                         while input.next(strand, &mut value).await? {
                             acc.push_str(this.receiver.get());
                             value.op_display(strand, &mut acc)?;
-                            strand.check_interrupt_gc()?;
+                            strand.check_trap_gc()?;
                         }
                         out.store(Value::from_str(strand, &acc));
                         Ok(())

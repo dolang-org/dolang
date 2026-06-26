@@ -141,7 +141,7 @@ impl<'v> Dict<'v> {
 
         loop {
             if counter % crate::INTERRUPT_INTERVAL == 0 {
-                strand.check_interrupt_gc()?
+                strand.check_trap_gc()?
             }
             counter += 1;
             let mut key = match args.next() {

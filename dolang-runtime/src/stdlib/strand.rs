@@ -8,7 +8,7 @@ use crate::{
     error::{Error, ErrorKind},
     method,
     object::{array::Array, backtrace, channel, protocol::GcObj, tuple},
-    strand::{CancelToken, Redirect, Strand},
+    strand::{InterruptToken, Redirect, Strand},
     unpack,
     value::{Output, Slot, Value},
     vm::Builder,
@@ -169,12 +169,12 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
 
             // We must avoid being dropped until we've awaited all strands we create
             strand
-                .with_cancel_mask(true, async move |strand| {
+                .with_interrupt_mask(true, async move |strand| {
                     let mut last_recv = Value::NIL;
                     let mut out = Some(out);
                     let mut strands = Vec::new();
                     let mut pipes = Vec::with_capacity(count.saturating_sub(1));
-                    let cancel = strand.cancel_token().nested();
+                    let interrupt = strand.interrupt_token().nested();
                     for _ in 0..count.saturating_sub(1) {
                         let mut send = Value::NIL;
                         let mut recv = Value::NIL;
@@ -191,7 +191,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                         let redir_input = if i == 0 { redir_input.take() } else { None };
 
                         strands.push(strand.spawn_scoped(
-                            Some(cancel.clone()),
+                            Some(interrupt.clone()),
                             async move |strand| {
                                 if let Err(e) = strand
                                     .with_slots(
@@ -236,7 +236,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                                         ErrorKind::IterStop | ErrorKind::SinkStop
                                     )
                                 {
-                                    strand.cancel_token().cancel();
+                                    strand.interrupt_token().cancel();
                                     return Err(e);
                                 }
                                 Ok(())
@@ -252,7 +252,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                                 if matches!(e.kind(), ErrorKind::IterStop | ErrorKind::SinkStop) {
                                     continue;
                                 }
-                                if cancel.is_canceled() && e.kind() == ErrorKind::Canceled {
+                                if interrupt.is_canceled() && e.kind() == ErrorKind::Canceled {
                                     continue;
                                 }
                             }
@@ -272,7 +272,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 while input.next(strand, &mut value).await? {
                     call!(strand, &func, &mut tmp, &mut value).await?;
                     output.put(strand, &mut tmp).await?;
-                    strand.check_interrupt_gc()?
+                    strand.check_trap_gc()?
                 }
                 Ok(())
             },
@@ -288,7 +288,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     if tmp.to_bool(strand) {
                         output.put(strand, &mut value).await?;
                     }
-                    strand.check_interrupt_gc()?
+                    strand.check_trap_gc()?
                 }
                 Ok(())
             },
@@ -301,7 +301,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 strand.output(&mut output);
                 while input.next(strand, &mut value).await? {
                     output.put(strand, &mut value).await?;
-                    strand.check_interrupt_gc()?
+                    strand.check_trap_gc()?
                 }
                 Ok(())
             },
@@ -315,7 +315,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     arg.sink(strand, &mut output).await?;
                     while input.next(strand, &mut item).await? {
                         output.put(strand, &mut item).await?;
-                        strand.check_interrupt_gc()?
+                        strand.check_trap_gc()?
                     }
                     out.store(arg.take());
                 } else {
@@ -334,7 +334,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         )
         .function("spawn", async move |strand, args, mut out| {
             let ([mut callable], []) = unpack!(strand, args, 1, 0)?;
-            let handle = strand.spawn_background_raw(callable.take(), CancelToken::new(), None)?;
+            let handle =
+                strand.spawn_background_raw(callable.take(), InterruptToken::new(), None)?;
             out.store(Value::from_object(handle));
             Ok(())
         })
@@ -361,7 +362,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
 
             let handle = strand.spawn_background_raw(
                 callable.take(),
-                CancelToken::new(),
+                InterruptToken::new(),
                 Some((input_receiver, output_sender)),
             )?;
 
@@ -391,17 +392,17 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             let count = thunks.len();
             // We must avoid being dropped until we've awaited all strands we create
             strand
-                .with_cancel_mask(true, async move |strand| {
+                .with_interrupt_mask(true, async move |strand| {
                     let results = RefCell::new((0..count).map(|_| Value::NIL).collect::<Vec<_>>());
                     let work = RefCell::new(thunks.into_iter().enumerate());
                     let num_workers = limit.unwrap_or(count).min(count);
                     let mut strands = Vec::new();
-                    let cancel = strand.cancel_token().nested();
+                    let interrupt = strand.interrupt_token().nested();
                     for _ in 0..num_workers {
                         let results = &results;
                         let work = &work;
                         strands.push(strand.spawn_scoped(
-                            Some(cancel.clone()),
+                            Some(interrupt.clone()),
                             async move |strand| {
                                 while let Some((i, thunk)) = { work.borrow_mut().next() } {
                                     if let Err(e) = strand
@@ -412,7 +413,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                                         })
                                         .await
                                     {
-                                        strand.cancel_token().cancel();
+                                        strand.interrupt_token().cancel();
                                         return Err(e);
                                     }
                                 }

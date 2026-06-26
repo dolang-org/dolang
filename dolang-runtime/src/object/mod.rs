@@ -328,8 +328,9 @@ pub(crate) struct Singletons<'v> {
     pub(crate) error_compile: Value<'v>,
     pub(crate) error_bytecode: Value<'v>,
     pub(crate) error_runtime: Value<'v>,
-    pub(crate) error_interrupt: Value<'v>,
+    pub(crate) error_abort: Value<'v>,
     pub(crate) error_canceled: Value<'v>,
+    pub(crate) error_timed_out: Value<'v>,
 }
 
 impl<'v> Singletons<'v> {
@@ -457,13 +458,17 @@ impl<'v> Singletons<'v> {
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Runtime)
             ),
-            error_interrupt: v!(
+            error_abort: v!(
                 builtin_types.error_variant_type,
-                error::VariantType(ErrorKind::Interrupt)
+                error::VariantType(ErrorKind::Abort)
             ),
             error_canceled: v!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Canceled)
+            ),
+            error_timed_out: v!(
+                builtin_types.error_variant_type,
+                error::VariantType(ErrorKind::TimedOut)
             ),
         }
     }
