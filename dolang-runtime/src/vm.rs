@@ -1030,8 +1030,10 @@ impl<'v> Builder<'v> {
         // Safety: VM is kept alive for the same duration as its contents, as it's self-referential.
         // In particular, it is not dropped before leaving this function, at which point all strand
         // lifetimes have ended
-        let strand =
-            StrandInner::new(unsafe { mem::transmute::<&Vm<'v>, &'v Vm<'v>>(&self.inner) });
+        let strand = StrandInner::new(
+            unsafe { mem::transmute::<&Vm<'v>, &'v Vm<'v>>(&self.inner) },
+            None,
+        );
         let _guard = unsafe { strand.init_group_leader(&group) };
         let native = Native {
             module: "<host>".into(),
