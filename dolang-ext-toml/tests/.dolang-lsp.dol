@@ -1,0 +1,15 @@
+return
+  prelude:
+    - regression
+    regression:
+      - assert
+      - assert_not
+      - assert_eq
+      - assert_ne
+      - log
+    regression2:
+      - async
+      - callme
+      - echo
+      - makefoo
+      - MIRI

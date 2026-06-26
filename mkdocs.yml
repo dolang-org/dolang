@@ -116,6 +116,7 @@ nav:
       - api/http/response.md
       - api/http/status.md
     - json: api/json.md
+    - toml: api/toml.md
     - load:
       - api/load/index.md
       - api/load/importhandler.md

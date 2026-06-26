@@ -48,6 +48,7 @@ let PUBLISH_CRATES =
   - dolang-ext-rand
   - dolang-ext-xml
   - dolang-ext-yaml
+  - dolang-ext-toml
   - dolang-ext-shell
   - dolang-ext-http
   - dolang-ext-zip
