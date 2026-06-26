@@ -1,0 +1,23 @@
+[package]
+name = "dolang-ext-toml"
+version = "0.1.0"
+description = "TOML extension for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = "1.0.228"
+toml = { version = "1", features = ["parse", "display", "serde"] }
+
+[dependencies.dolang]
+path = "../dolang"
+version = "0.1.0"
+
+[build-dependencies]
+dolang-private-build = { path = "../dolang-private-build", version = "0.1.0" }
+
+[dev-dependencies]
+dolang-private-test = { path = "../dolang-private-test", version = "0.1.0" }
+futures = "0.3"

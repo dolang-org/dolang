@@ -132,7 +132,7 @@ system configuration ([`systemd`](./api/systemd.md), [`xdg`](./api/xdg.md)),
 and show friendly [progress indicators](./api/progress/index.md).
 
 **Data and protocols** — [HTTP](./api/http/index.md), [JSON](./api/json.md),
-[XML](./api/xml/index.md), [YAML](./api/yaml.md),
+[TOML](./api/toml.md), [XML](./api/xml/index.md), [YAML](./api/yaml.md),
 [SQLite](./api/sqlite/index.md), [regex](./api/regex/index.md),
 [base64](./api/base64.md), [hashing](./api/digest/index.md),
 [zip](./api/zip/index.md)
