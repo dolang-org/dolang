@@ -82,6 +82,23 @@ assert_eq $results [42, "hello", 3]
 All blocks become runnable simultaneously and the function waits for all to
 complete. Results are returned in the same order as the input blocks.
 
+`fork limit:` only caps immediate fan-out at one fork site. To constrain total
+fork work across a larger nested region, wrap it in
+[`strand.limit`](../api/strand/index.md#limit-count-block):
+
+```
+import strand
+
+let results = strand.limit 256 do
+  strand.fork limit: 16
+    - do task_a()
+    - do task_b()
+    - do task_c()
+```
+
+Under `strand.limit`, active fork workers count against the budget, but strands
+blocked only as nested fork coordinators do not.
+
 ## Pipelines
 
 ### `pipeline`

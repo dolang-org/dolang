@@ -4,6 +4,35 @@ Concurrency primitives.
 
 ## Functions
 
+### `limit count block`
+
+Runs `block` with a transitive fork budget.
+
+`strand.limit` caps the total number of active `fork` workers anywhere under
+the scoped block. Nested `strand.limit` scopes compose by adding another
+constraint.
+
+**Parameters:**
+
+| Name    | Type                   | Description                                 |
+| ------- | ---------------------- | ------------------------------------------- |
+| `count` | [`int`](../std/int.md) | maximum active descendant fork workers      |
+| `block` | func                   | code to run under the transitive limit      |
+
+**Returns:** The block result.
+
+```
+let results = strand.limit 256 do
+  fork limit: 16
+    - do fetch_user 1
+    - do fetch_user 2
+    - do fetch_user 3
+```
+
+Here `fork limit:` controls immediate fan-out at that call site, while
+`strand.limit` controls the total active `fork` workers across the nested
+subtree.
+
 ### `fork ...blocks :limit?`
 
 Executes multiple blocks concurrently and returns their results as an array.
@@ -35,6 +64,10 @@ let results = fork limit: 2
   - do fetch_user 2
   - do fetch_user 3
 ```
+
+This `limit` only applies to that fork site. Use
+[`strand.limit`](#limit-count-block) to cap total nested fork work across a
+larger scope.
 
 ### `pipeline stage ...stages :input? :output?`
 

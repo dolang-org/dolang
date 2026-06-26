@@ -1,17 +1,21 @@
-use std::cell::RefCell;
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    task::{Poll, Waker},
+};
 
-use futures::future::join_all;
+use futures::future::{join_all, poll_fn};
 
 use crate::{
     arg::Arg,
     call,
-    error::{Error, ErrorKind},
+    error::{Error, ErrorKind, Result},
     method,
     object::{array::Array, backtrace, channel, protocol::GcObj, tuple},
-    strand::{InterruptToken, Redirect, Strand},
+    strand::{InterruptToken, Local, LocalKey, Redirect, Strand},
     unpack,
     value::{Output, Slot, Value},
-    vm::Builder,
+    vm::{Builder, State, Stateful},
 };
 
 /// Creates a channel pair using the VM's registered factory if set,
@@ -35,7 +39,195 @@ fn pipe_pair<'v>(
     }
 }
 
+struct ForkLimitScope {
+    limit: usize,
+    active: Cell<usize>,
+    waiters: RefCell<Vec<Waker>>,
+    parent: Option<Rc<ForkLimitScope>>,
+}
+
+impl ForkLimitScope {
+    fn new(limit: usize, parent: Option<Rc<ForkLimitScope>>) -> Rc<Self> {
+        Rc::new(Self {
+            limit,
+            active: Cell::new(0),
+            waiters: Default::default(),
+            parent,
+        })
+    }
+
+    fn try_acquire(&self, waker: &Waker) -> bool {
+        if self.active.get() < self.limit {
+            self.active.set(self.active.get() + 1);
+            true
+        } else {
+            self.waiters.borrow_mut().push(waker.clone());
+            false
+        }
+    }
+
+    fn acquire_fresh(&self) {
+        debug_assert_eq!(self.active.get(), 0);
+        self.active.set(1);
+    }
+
+    fn release_one(&self) {
+        let active = self.active.get();
+        debug_assert!(active > 0);
+        self.active.set(active - 1);
+        if let Some(waker) = self.waiters.borrow_mut().pop() {
+            waker.wake();
+        }
+    }
+}
+
+struct PermitChain {
+    scopes: Vec<Rc<ForkLimitScope>>,
+}
+
+impl PermitChain {
+    fn release_all(&self) {
+        for scope in self.scopes.iter().rev() {
+            scope.release_one();
+        }
+    }
+}
+
+struct ForkLimitLocal {
+    scope: RefCell<Option<Rc<ForkLimitScope>>>,
+    permit: RefCell<Option<PermitChain>>,
+}
+
+impl ForkLimitLocal {
+    fn current_scope(&self) -> Option<Rc<ForkLimitScope>> {
+        self.scope.borrow().clone()
+    }
+
+    fn replace_scope(&self, scope: Option<Rc<ForkLimitScope>>) -> Option<Rc<ForkLimitScope>> {
+        self.scope.replace(scope)
+    }
+
+    fn take_permit(&self) -> Option<PermitChain> {
+        self.permit.borrow_mut().take()
+    }
+
+    fn store_permit(&self, permit: PermitChain) {
+        *self.permit.borrow_mut() = Some(permit);
+    }
+
+    fn has_permit(&self) -> bool {
+        self.permit.borrow().is_some()
+    }
+
+    fn push_permit_scope(&self, scope: Rc<ForkLimitScope>) {
+        let mut permit = self.permit.borrow_mut();
+        let permit = permit.as_mut().expect("fork worker missing permit");
+        scope.acquire_fresh();
+        permit.scopes.push(scope);
+    }
+
+    fn pop_permit_scope(&self) {
+        let mut permit_ref = self.permit.borrow_mut();
+        let permit = permit_ref.as_mut().expect("fork worker missing permit");
+        let scope = permit.scopes.pop().expect("permit chain missing scope");
+        scope.release_one();
+        let empty = permit.scopes.is_empty();
+        drop(permit_ref);
+        if empty {
+            self.permit.borrow_mut().take();
+        }
+    }
+}
+
+impl<'v> Local<'v> for ForkLimitLocal {
+    fn init() -> Self {
+        Self {
+            scope: RefCell::new(None),
+            permit: RefCell::new(None),
+        }
+    }
+
+    fn inherit(&self, _strand: &Strand<'v, '_>) -> Self {
+        Self {
+            scope: RefCell::new(self.current_scope()),
+            permit: RefCell::new(None),
+        }
+    }
+}
+
+struct StrandState<'v> {
+    fork_limit: LocalKey<'v, ForkLimitLocal>,
+}
+
+struct StrandStateTag;
+
+impl<'v> Stateful<'v> for StrandState<'v> {
+    type Tag = StrandStateTag;
+}
+
+fn flatten_scope_chain(scope: Option<Rc<ForkLimitScope>>) -> Vec<Rc<ForkLimitScope>> {
+    let mut scopes = Vec::new();
+    let mut current = scope;
+    while let Some(scope) = current {
+        current = scope.parent.clone();
+        scopes.push(scope);
+    }
+    scopes.reverse();
+    scopes
+}
+
+async fn acquire_scopes<'v, 's>(scopes: &[Rc<ForkLimitScope>]) -> Result<'v, 's, PermitChain> {
+    poll_fn(|cx| {
+        let mut acquired = 0;
+        for scope in scopes {
+            if scope.try_acquire(cx.waker()) {
+                acquired += 1;
+            } else {
+                for scope in scopes[..acquired].iter().rev() {
+                    scope.release_one();
+                }
+                return Poll::Pending;
+            }
+        }
+        Poll::Ready(Ok(PermitChain {
+            scopes: scopes.to_vec(),
+        }))
+    })
+    .await
+}
+
+async fn acquire_permit<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    state: State<'v, StrandState<'v>>,
+) -> Result<'v, 's, ()> {
+    let scopes = flatten_scope_chain(state.fork_limit.get(strand).current_scope());
+    if scopes.is_empty() {
+        return Ok(());
+    }
+    let permit = acquire_scopes(&scopes).await?;
+    state.fork_limit.get(strand).store_permit(permit);
+    Ok(())
+}
+
+async fn restore_prior_permit<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    state: State<'v, StrandState<'v>>,
+    prior: Option<PermitChain>,
+) -> Result<'v, 's, ()> {
+    let Some(prior) = prior else {
+        return Ok(());
+    };
+    if prior.scopes.is_empty() {
+        return Ok(());
+    }
+    let permit = acquire_scopes(&prior.scopes).await?;
+    state.fork_limit.get(strand).store_permit(permit);
+    Ok(())
+}
+
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
+    let fork_limit = builder.local();
+    let state = builder.register_state(StrandState { fork_limit });
     let input_key = builder.sym("input");
     let output_key = builder.sym("output");
     let backtrace_key = builder.sym("backtrace");
@@ -148,6 +340,28 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 [Value::from_object(send), Value::from_object(recv)],
             )));
             Ok(())
+        })
+        .function("limit", async move |strand, args, mut out| {
+            let ([limit, block], []) = unpack!(strand, args, 2, 0)?;
+            let limit = limit.to_index(strand)?;
+            if limit == 0 {
+                return Err(Error::value(strand, "strand.limit: limit must be positive"));
+            }
+            let scope = ForkLimitScope::new(limit, state.fork_limit.get(strand).current_scope());
+            let prev_scope = state
+                .fork_limit
+                .get(strand)
+                .replace_scope(Some(scope.clone()));
+            let had_permit = state.fork_limit.get(strand).has_permit();
+            if had_permit {
+                state.fork_limit.get(strand).push_permit_scope(scope);
+            }
+            let res = call!(strand, block, &mut out).await;
+            if had_permit {
+                state.fork_limit.get(strand).pop_permit_scope();
+            }
+            state.fork_limit.get(strand).replace_scope(prev_scope);
+            res
         })
         .function("pipeline", async move |strand, args, out| {
             let mut thunks = Vec::new();
@@ -393,54 +607,75 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             // We must avoid being dropped until we've awaited all strands we create
             strand
                 .with_interrupt_mask(true, async move |strand| {
-                    let results = RefCell::new((0..count).map(|_| Value::NIL).collect::<Vec<_>>());
-                    let work = RefCell::new(thunks.into_iter().enumerate());
-                    let num_workers = limit.unwrap_or(count).min(count);
-                    let mut strands = Vec::new();
-                    let interrupt = strand.interrupt_token().nested();
-                    for _ in 0..num_workers {
-                        let results = &results;
-                        let work = &work;
-                        strands.push(strand.spawn_scoped(
-                            Some(interrupt.clone()),
-                            async move |strand| {
-                                while let Some((i, thunk)) = { work.borrow_mut().next() } {
-                                    if let Err(e) = strand
-                                        .with_slots(async move |strand, [mut tmp]| {
-                                            call!(strand, thunk, &mut tmp).await?;
-                                            results.borrow_mut()[i] = tmp.take();
-                                            Ok(())
-                                        })
-                                        .await
-                                    {
-                                        strand.interrupt_token().cancel();
-                                        return Err(e);
+                    let prior_permit = state.fork_limit.get(strand).take_permit();
+                    if let Some(permit) = prior_permit.as_ref() {
+                        permit.release_all();
+                    }
+
+                    let result = async {
+                        let results =
+                            RefCell::new((0..count).map(|_| Value::NIL).collect::<Vec<_>>());
+                        let work = RefCell::new(thunks.into_iter().enumerate());
+                        let num_workers = limit.unwrap_or(count).min(count);
+                        let mut strands = Vec::new();
+                        let interrupt = strand.interrupt_token().nested();
+                        for _ in 0..num_workers {
+                            let results = &results;
+                            let work = &work;
+                            strands.push(strand.spawn_scoped(
+                                Some(interrupt.clone()),
+                                async move |strand| {
+                                    while let Some((i, thunk)) = { work.borrow_mut().next() } {
+                                        if let Err(e) = acquire_permit(strand, state).await {
+                                            strand.interrupt_token().cancel();
+                                            return Err(e);
+                                        }
+                                        let res = strand
+                                            .with_slots(async move |strand, [mut tmp]| {
+                                                call!(strand, thunk, &mut tmp).await?;
+                                                results.borrow_mut()[i] = tmp.take();
+                                                Ok(())
+                                            })
+                                            .await;
+                                        if let Some(permit) =
+                                            state.fork_limit.get(strand).take_permit()
+                                        {
+                                            permit.release_all();
+                                        }
+                                        if let Err(e) = res {
+                                            strand.interrupt_token().cancel();
+                                            return Err(e);
+                                        }
                                     }
-                                }
-                                Ok(())
-                            },
-                        ));
-                    }
-                    let mut first_err: Option<Error<'v, '_>> = None;
-                    for res in join_all(strands).await {
-                        if let Err(e) = res
-                            && first_err.as_ref().is_none_or(|prev| {
-                                prev.kind() == ErrorKind::Canceled
-                                    && e.kind() != ErrorKind::Canceled
-                            })
-                        {
-                            first_err = Some(e);
+                                    Ok(())
+                                },
+                            ));
                         }
+                        let mut first_err: Option<Error<'v, '_>> = None;
+                        for res in join_all(strands).await {
+                            if let Err(e) = res
+                                && first_err.as_ref().is_none_or(|prev| {
+                                    prev.kind() == ErrorKind::Canceled
+                                        && e.kind() != ErrorKind::Canceled
+                                })
+                            {
+                                first_err = Some(e);
+                            }
+                        }
+                        if let Some(e) = first_err {
+                            return Err(e);
+                        }
+                        Ok(results.into_inner())
                     }
-                    if let Some(e) = first_err {
-                        return Err(e);
-                    }
+                    .await;
+
+                    restore_prior_permit(strand, state, prior_permit).await?;
+
+                    let results = result?;
                     out.store(Value::from_object(GcObj::new(
                         strand.arena(),
                         strand.builtin_types().array,
-                        Array {
-                            inner: results.into_inner(),
-                        },
+                        Array { inner: results },
                     )));
                     Ok(())
                 })

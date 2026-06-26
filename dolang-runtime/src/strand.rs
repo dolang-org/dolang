@@ -358,7 +358,7 @@ impl<'v> StrandInner<'v> {
         }
     }
 
-    pub(crate) fn new(vm: &'v Vm<'v>) -> Self {
+    pub(crate) fn new(vm: &'v Vm<'v>, interrupt: Option<InterruptToken<'v>>) -> Self {
         Self {
             group_link: Link::new(),
             vm,
@@ -379,7 +379,7 @@ impl<'v> StrandInner<'v> {
                 .collect::<Vec<_>>()
                 .into(),
             arena: Arena::new(ARENA_DEFAULT_SIZE),
-            interrupt: RefCell::new(InterruptToken::new()),
+            interrupt: RefCell::new(interrupt.unwrap_or_else(InterruptToken::new)),
             interrupt_registered: Cell::new(false),
             interrupt_mask: Cell::new(false),
             call_depth: Cell::new(0),
@@ -1141,8 +1141,8 @@ impl<'v, 's> Strand<'v, 's> {
     ) -> Result<'v, 's, GcObj<'v, Handle<'v>>> {
         let close_on_exit = stream.is_some();
 
-        // Create StrandInner derived from current strand
-        let mut inner = StrandInner::derived(self, Some(interrupt.clone()));
+        // Create StrandInner
+        let mut inner = StrandInner::new(self.vm(), Some(interrupt.clone()));
         inner.call_depth.set(0);
         inner.start = callable;
 
