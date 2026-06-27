@@ -271,6 +271,22 @@ Gets file metadata for the given path.
 | `blksize` | [`int`](../std/int.md) | Preferred block size for I/O          |
 | `blocks`  | [`int`](../std/int.md) | Number of 512-byte blocks allocated   |
 
+**Windows-only** (these fields do not exist on Unix):
+
+| Field                 | Type                     | Description                        |
+| --------------------- | ------------------------ | ---------------------------------- |
+| `attributes`          | [`int`](../std/int.md)   | Raw Windows file attribute bitmask |
+| `readonly`            | [`bool`](../std/bool.md) | Readonly attribute bit             |
+| `hidden`              | [`bool`](../std/bool.md) | Hidden attribute bit               |
+| `system`              | [`bool`](../std/bool.md) | System attribute bit               |
+| `archive`             | [`bool`](../std/bool.md) | Archive attribute bit              |
+| `reparse_point`       | [`bool`](../std/bool.md) | Reparse-point attribute bit        |
+| `compressed`          | [`bool`](../std/bool.md) | Compressed attribute bit           |
+| `encrypted`           | [`bool`](../std/bool.md) | Encrypted attribute bit            |
+| `temporary`           | [`bool`](../std/bool.md) | Temporary attribute bit            |
+| `offline`             | [`bool`](../std/bool.md) | Offline attribute bit              |
+| `not_content_indexed` | [`bool`](../std/bool.md) | Not-content-indexed attribute bit  |
+
 **Example:**
 
 ```
@@ -278,8 +294,10 @@ let meta = metadata "data.txt"
 echo "Size: $(meta.len)"
 echo "Type: $(meta.type)"
 
-if (meta.mode != nil)
+if (sys.os_info().family != :windows:)
   echo "Mode: $(meta.mode)"
+else
+  echo "Attributes: $(meta.attributes)"
 
 # Get symlink metadata without following
 let link_meta = metadata "link.txt" follow: false

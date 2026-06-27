@@ -78,6 +78,26 @@ async fn direct_symlink_metadata_and_read_link() {
     assert_eq!(direct.read_link(&link).await.unwrap(), target);
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn direct_metadata_windows_attributes() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("readonly.txt");
+    tokio::fs::write(&path, "hello").await.unwrap();
+
+    let mut permissions = tokio::fs::metadata(&path).await.unwrap().permissions();
+    permissions.set_readonly(true);
+    tokio::fs::set_permissions(&path, permissions)
+        .await
+        .unwrap();
+
+    let metadata = direct.metadata(&path).await.unwrap();
+
+    assert_ne!(metadata.attributes, 0);
+    assert_ne!(metadata.attributes & 0x0000_0001, 0);
+}
+
 #[tokio::test]
 async fn direct_copy_move_and_glob() {
     let direct = Direct::default();

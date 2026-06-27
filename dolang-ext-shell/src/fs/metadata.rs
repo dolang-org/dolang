@@ -1,5 +1,12 @@
 use dolang::runtime::{Object, Output, Result, State, Strand, Sym, object::TypeBuilder};
 use dolang_shell_vfs::{FileType, Metadata as VfsMetadata};
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::{
+    FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_ENCRYPTED,
+    FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_OFFLINE,
+    FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM,
+    FILE_ATTRIBUTE_TEMPORARY,
+};
 
 use crate::{global::Global, time::create_datetime};
 
@@ -40,6 +47,11 @@ fn write_timestamp<'v, 's>(
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     create_datetime(strand, global, timestamp_nanos(secs, nanos), out)
+}
+
+#[cfg(windows)]
+fn has_attributes(attributes: u32, flag: u32) -> bool {
+    attributes & flag != 0
 }
 
 pub(crate) fn create_metadata<'v>(
@@ -146,6 +158,95 @@ impl<'v> Object<'v> for Metadata {
             })
             .get("blocks", |this, strand, out| {
                 Output::set(strand, out, this.annex().inner.blocks as i64);
+                Ok(())
+            });
+        #[cfg(windows)]
+        let builder = builder
+            .get("attributes", |this, strand, out| {
+                Output::set(strand, out, this.annex().inner.attributes as i64);
+                Ok(())
+            })
+            .get("readonly", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_READONLY),
+                );
+                Ok(())
+            })
+            .get("hidden", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_HIDDEN),
+                );
+                Ok(())
+            })
+            .get("system", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_SYSTEM),
+                );
+                Ok(())
+            })
+            .get("archive", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_ARCHIVE),
+                );
+                Ok(())
+            })
+            .get("reparse_point", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_REPARSE_POINT),
+                );
+                Ok(())
+            })
+            .get("compressed", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_COMPRESSED),
+                );
+                Ok(())
+            })
+            .get("encrypted", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_ENCRYPTED),
+                );
+                Ok(())
+            })
+            .get("temporary", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_TEMPORARY),
+                );
+                Ok(())
+            })
+            .get("offline", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_OFFLINE),
+                );
+                Ok(())
+            })
+            .get("not_content_indexed", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    has_attributes(
+                        this.annex().inner.attributes,
+                        FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
+                    ),
+                );
                 Ok(())
             });
         builder
