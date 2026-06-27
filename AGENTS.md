@@ -540,17 +540,20 @@ let results = fork
 Prefer `dodo` for routine build and test tasks. If the `dodo` alias or
 symlink is not available, run `dolang -m dodo` instead. The task definitions
 and routing logic live in [`dodo.dol`](./dodo.dol) at the workspace root.
+**DO NOT** use `cargo` directly unless there is no way to avoid it; running
+`cargo` directly will often not set important environment variables.
 
 ```bash
 dodo build                 # debug build
 dodo fmt                   # format Rust and Markdown
+dodo lint                  # check for clippy and formatting warnings
 dodo cargo-test            # (cargo test, use `--` to pass arbitrary additional arguments to cargo)
 dodo shell-test            # (shell integration tests, use `--` to specify alternate arguments to `dolang -m test`)
 dodo test                  # cargo and shell tests
 dodo mkdocs                # build language docs (MkDocs site in site/)
 ```
 
-After changes: `dodo fmt` → `cargo clippy` (address warnings, consider if they
+After changes: `dodo fmt` → `dodo lint` (address warnings, consider if they
 indicate logic bugs).
 
 - **Rust edition**: 2024, **MSRV**: 1.92.0+
