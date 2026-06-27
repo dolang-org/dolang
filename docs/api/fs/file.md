@@ -79,16 +79,16 @@ open data.bin rb do |file|
 
 ### `metadata()`
 
-Gets file metadata as a record.
+Gets file metadata.
 
-**Returns:** Record with the following fields:
+**Returns:** [`Metadata`](metadata.md)
 
-**Always present:**
+**Fields:**
 
-| Field  | Type                     | Description                                               |
-| ------ | ------------------------ | --------------------------------------------------------- |
-| `len`  | [`int`](../std/index.md) | File size in bytes                                        |
-| `type` | [`sym`](../std/sym.md)   | File type: `:file:`, `:dir:`, `:symlink:`, or `:unknown:` |
+| Field  | Type                     | Description                                                                                                        |
+| ------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `len`  | [`int`](../std/index.md) | File size in bytes                                                                                                 |
+| `type` | [`sym`](../std/sym.md)   | File type: `:file:`, `:dir:`, `:symlink:`, `:fifo:`, `:char_device:`, `:block_device:`, `:socket:`, or `:unknown:` |
 
 **Optional timestamps** (platform-dependent):
 
@@ -98,7 +98,7 @@ Gets file metadata as a record.
 | `accessed` | [`DateTime`](../time/datetime.md) | Last access time       |
 | `created`  | [`DateTime`](../time/datetime.md) | Creation/change time   |
 
-**Unix-only** (not available on Windows):
+**Unix-only** (these fields do not exist on Windows):
 
 | Field     | Type                     | Description                           |
 | --------- | ------------------------ | ------------------------------------- |

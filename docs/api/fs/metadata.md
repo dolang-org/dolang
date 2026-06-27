@@ -1,0 +1,65 @@
+# Metadata
+
+Filesystem metadata object returned by
+[`metadata`](./index.md),
+[`Path.metadata()`](./path.md), and
+[`File.metadata()`](./file.md).
+
+## Fields
+
+### `len`
+
+File size in bytes.
+
+### `type`
+
+File type as a [`sym`](../std/sym.md): `:file:`, `:dir:`, `:symlink:`,
+`:fifo:`, `:char_device:`, `:block_device:`, `:socket:`, or `:unknown:`.
+
+### `modified`
+
+Last modification time as [`DateTime`](../time/datetime.md).
+
+### `accessed`
+
+Last access time as [`DateTime`](../time/datetime.md).
+
+### `created`
+
+Creation or status-change time as [`DateTime`](../time/datetime.md).
+
+### `mode`
+
+Stat mode bits.
+
+### `dev`
+
+Device ID.
+
+### `ino`
+
+Inode number.
+
+### `nlink`
+
+Hard-link count.
+
+### `uid`
+
+Owner user ID.
+
+### `gid`
+
+Owner group ID.
+
+### `rdev`
+
+Special-device ID.
+
+### `blksize`
+
+Preferred block size for I/O.
+
+### `blocks`
+
+Number of allocated 512-byte blocks.

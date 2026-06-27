@@ -1,7 +1,7 @@
 use dolang::runtime::{
-    Arg, Error, Output, Result, Slot, State, Strand, call, method, unpack, value::View, vm::Builder,
+    Arg, Error, Output, Result, Slot, State, Strand, call, unpack, value::View, vm::Builder,
 };
-use dolang_shell_vfs::{FileType, Metadata, OpenOptions, Vfs, WellKnownPath};
+use dolang_shell_vfs::{FileType, OpenOptions, Vfs, WellKnownPath};
 use std::{io, io::ErrorKind, path::PathBuf, time};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -9,6 +9,7 @@ use rand::{RngExt, distr::Alphanumeric};
 
 pub(crate) mod file;
 pub(crate) mod glob;
+pub(crate) mod metadata;
 pub(crate) mod path;
 pub(crate) mod readdir;
 
@@ -16,54 +17,15 @@ use crate::{
     error::{ErrorExt as _, ResultExt as _},
     fs::{
         file::File,
+        metadata::create_metadata,
         path::{Path, PathAnnex, normalize_path, path_from_value},
         readdir::{DirEntryIter, DirEntryIterAnnex},
     },
     global::Global,
-    time::{create_datetime, datetime_to_system_time},
+    time::datetime_to_system_time,
 };
 
 use glob::{GlobIter, GlobIterAnnex};
-
-const NANOS_PER_SEC_I128: i128 = 1_000_000_000;
-
-#[cfg(unix)]
-pub(crate) mod unix {
-    use super::*;
-    use dolang::runtime::Value;
-
-    pub(crate) async fn unix_metadata_to_record<'v, 's>(
-        strand: &mut Strand<'v, 's>,
-        global: State<'v, Global<'v>>,
-        record: &Value<'v>,
-        metadata: &Metadata,
-    ) -> Result<'v, 's, ()> {
-        use libc::{S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG, S_IFSOCK};
-
-        let mode = metadata.mode as libc::mode_t;
-        let file_type = match mode & S_IFMT {
-            S_IFREG => global.syms.file,
-            S_IFDIR => global.syms.dir,
-            S_IFLNK => global.syms.symlink,
-            S_IFBLK => global.syms.block_device,
-            S_IFCHR => global.syms.char_device,
-            S_IFIFO => global.syms.fifo,
-            S_IFSOCK => global.syms.socket,
-            _ => global.syms.unknown,
-        };
-        record.set(strand, global.syms.ty, file_type)?;
-        record.set(strand, global.syms.mode, mode as i64)?;
-        record.set(strand, global.syms.dev, metadata.dev as i64)?;
-        record.set(strand, global.syms.ino, metadata.ino as i64)?;
-        record.set(strand, global.syms.nlink, metadata.nlink as i64)?;
-        record.set(strand, global.syms.uid, metadata.uid as i64)?;
-        record.set(strand, global.syms.gid, metadata.gid as i64)?;
-        record.set(strand, global.syms.rdev, metadata.rdev as i64)?;
-        record.set(strand, global.syms.blksize, metadata.blksize as i64)?;
-        record.set(strand, global.syms.blocks, metadata.blocks as i64)?;
-        Ok(())
-    }
-}
 
 #[cfg(windows)]
 pub(crate) mod windows {
@@ -96,67 +58,6 @@ pub(crate) mod windows {
     }
 }
 
-async fn metadata_to_record<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    metadata: &Metadata,
-    out: impl Output<'v>,
-) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async |strand, [mut std_mod, mut record, mut tmp]| {
-            strand.import("std", &mut std_mod).await?;
-
-            let file_type = match metadata.file_type {
-                FileType::File => global.syms.file,
-                FileType::Dir => global.syms.dir,
-                FileType::Symlink => global.syms.symlink,
-                _ => global.syms.unknown,
-            };
-
-            let len = global.syms.len;
-            let ty = global.syms.ty;
-            let record_sym = global.syms.record;
-
-            method!(
-                strand, std_mod, record_sym, &mut record,
-                len: metadata.len as i64,
-                ty: file_type
-            )
-            .await?;
-
-            let modified = global.syms.modified;
-            let modified_nanos = i128::from(metadata.mtime)
-                .checked_mul(NANOS_PER_SEC_I128)
-                .and_then(|secs| secs.checked_add(i128::from(metadata.mtime_nsec)));
-            if let Some(modified_nanos) = modified_nanos {
-                create_datetime(strand, global, modified_nanos, &mut tmp)?;
-                record.set(strand, modified, &mut tmp)?;
-            }
-
-            let accessed = global.syms.accessed;
-            let accessed_nanos = i128::from(metadata.atime)
-                .checked_mul(NANOS_PER_SEC_I128)
-                .and_then(|secs| secs.checked_add(i128::from(metadata.atime_nsec)));
-            if let Some(accessed_nanos) = accessed_nanos {
-                create_datetime(strand, global, accessed_nanos, &mut tmp)?;
-                record.set(strand, accessed, &mut tmp)?;
-            }
-
-            let created = global.syms.created;
-            let created_nanos = i128::from(metadata.ctime)
-                .checked_mul(NANOS_PER_SEC_I128)
-                .and_then(|secs| secs.checked_add(i128::from(metadata.ctime_nsec)));
-            if let Some(created_nanos) = created_nanos {
-                create_datetime(strand, global, created_nanos, &mut tmp)?;
-                record.set(strand, created, &mut tmp)?;
-            }
-
-            Output::set(strand, out, record);
-            Ok(())
-        })
-        .await
-}
-
 async fn metadata<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
@@ -164,26 +65,17 @@ async fn metadata<'v, 's>(
     follow: bool,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async move |strand, [mut record]| {
-            let local = global.local.get(strand);
-            let path = local.cwd().as_ref().join(path);
-            let vfs = local.vfs();
-            let metadata = if follow {
-                vfs.metadata(&path).await
-            } else {
-                vfs.symlink_metadata(&path).await
-            }
-            .into_sys(strand)?;
-            metadata_to_record(strand, global, &metadata, &mut record).await?;
-
-            #[cfg(unix)]
-            unix::unix_metadata_to_record(strand, global, &record, &metadata).await?;
-
-            Output::set(strand, out, record);
-            Ok(())
-        })
-        .await
+    let local = global.local.get(strand);
+    let path = local.cwd().as_ref().join(path);
+    let vfs = local.vfs();
+    let metadata = if follow {
+        vfs.metadata(&path).await
+    } else {
+        vfs.symlink_metadata(&path).await
+    }
+    .into_sys(strand)?;
+    create_metadata(strand, global, metadata, out);
+    Ok(())
 }
 
 async fn remove<'v, 's>(
@@ -1136,6 +1028,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 result
             },
         )
+        .value("Metadata", global.types.metadata)
+        .value("DirEntry", global.types.dir_entry)
         .value("Path", global.types.path)
         .commit();
 }

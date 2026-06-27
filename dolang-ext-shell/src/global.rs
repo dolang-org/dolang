@@ -24,7 +24,9 @@ use crate::{
     },
     fs::{
         file::File,
+        metadata::Metadata,
         path::{Path, PathComponentsIter},
+        readdir::DirEntry,
     },
     local::Local,
     program::Program,
@@ -40,7 +42,9 @@ use crate::fs::readdir::DirEntryIter;
 pub(crate) struct Types<'v> {
     pub(crate) path: Type<'v, Path>,
     pub(crate) path_components_iter: Type<'v, PathComponentsIter>,
+    pub(crate) metadata: Type<'v, Metadata>,
     pub(crate) file: Type<'v, File>,
+    pub(crate) dir_entry: Type<'v, DirEntry>,
     pub(crate) dir_entry_iter: Type<'v, DirEntryIter>,
     pub(crate) glob_iter: Type<'v, crate::fs::glob::GlobIter>,
     pub(crate) program: Type<'v, Program>,
@@ -63,45 +67,21 @@ pub(crate) struct Types<'v> {
 }
 
 pub(crate) struct Syms<'v> {
-    pub(crate) accessed: Sym<'v, 'v>,
     pub(crate) chunk: Sym<'v, 'v>,
     pub(crate) close: Sym<'v, 'v>,
-    pub(crate) created: Sym<'v, 'v>,
     pub(crate) dir: Sym<'v, 'v>,
     pub(crate) file: Sym<'v, 'v>,
-    pub(crate) len: Sym<'v, 'v>,
     pub(crate) line: Sym<'v, 'v>,
-    pub(crate) modified: Sym<'v, 'v>,
-    pub(crate) path: Sym<'v, 'v>,
     pub(crate) record: Sym<'v, 'v>,
     pub(crate) stderr: Sym<'v, 'v>,
     pub(crate) stdin: Sym<'v, 'v>,
     pub(crate) stdout: Sym<'v, 'v>,
     pub(crate) symlink: Sym<'v, 'v>,
-    pub(crate) ty: Sym<'v, 'v>,
     pub(crate) unknown: Sym<'v, 'v>,
-    #[cfg(unix)]
-    pub(crate) mode: Sym<'v, 'v>,
     #[cfg(unix)]
     pub(crate) follow: Sym<'v, 'v>,
     #[cfg(unix)]
     pub(crate) group: Sym<'v, 'v>,
-    #[cfg(unix)]
-    pub(crate) dev: Sym<'v, 'v>,
-    #[cfg(unix)]
-    pub(crate) ino: Sym<'v, 'v>,
-    #[cfg(unix)]
-    pub(crate) nlink: Sym<'v, 'v>,
-    #[cfg(unix)]
-    pub(crate) uid: Sym<'v, 'v>,
-    #[cfg(unix)]
-    pub(crate) gid: Sym<'v, 'v>,
-    #[cfg(unix)]
-    pub(crate) rdev: Sym<'v, 'v>,
-    #[cfg(unix)]
-    pub(crate) blksize: Sym<'v, 'v>,
-    #[cfg(unix)]
-    pub(crate) blocks: Sym<'v, 'v>,
     pub(crate) fifo: Sym<'v, 'v>,
     pub(crate) char_device: Sym<'v, 'v>,
     pub(crate) block_device: Sym<'v, 'v>,
@@ -157,6 +137,8 @@ impl<'v> Global<'v> {
                 file: builder.register_type(),
                 path: builder.register_type(),
                 path_components_iter: builder.register_type(),
+                metadata: builder.register_type(),
+                dir_entry: builder.register_type(),
                 dir_entry_iter: builder.register_type(),
                 glob_iter: builder.register_type(),
                 program: builder.register_type(),
@@ -190,45 +172,21 @@ impl<'v> Global<'v> {
                 vfs: builder.register_type(),
             },
             syms: Syms {
-                accessed: builder.sym("accessed"),
                 chunk: builder.sym("chunk"),
                 close: builder.sym("close"),
-                created: builder.sym("created"),
                 dir: builder.sym("dir"),
                 file: builder.sym("file"),
-                len: builder.sym("len"),
                 line: builder.sym("line"),
-                modified: builder.sym("modified"),
-                path: builder.sym("path"),
                 record: builder.sym("record"),
                 stderr: builder.sym("stderr"),
                 stdin: builder.sym("stdin"),
                 stdout: builder.sym("stdout"),
                 symlink: builder.sym("symlink"),
-                ty: builder.sym("type"),
                 unknown: builder.sym("unknown"),
-                #[cfg(unix)]
-                mode: builder.sym("mode"),
                 #[cfg(unix)]
                 follow: builder.sym("follow"),
                 #[cfg(unix)]
                 group: builder.sym("group"),
-                #[cfg(unix)]
-                dev: builder.sym("dev"),
-                #[cfg(unix)]
-                ino: builder.sym("ino"),
-                #[cfg(unix)]
-                nlink: builder.sym("nlink"),
-                #[cfg(unix)]
-                uid: builder.sym("uid"),
-                #[cfg(unix)]
-                gid: builder.sym("gid"),
-                #[cfg(unix)]
-                rdev: builder.sym("rdev"),
-                #[cfg(unix)]
-                blksize: builder.sym("blksize"),
-                #[cfg(unix)]
-                blocks: builder.sym("blocks"),
                 fifo: builder.sym("fifo"),
                 char_device: builder.sym("char_device"),
                 block_device: builder.sym("block_device"),

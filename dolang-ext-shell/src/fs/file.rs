@@ -19,6 +19,7 @@ use tokio::{
 
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
+    fs::metadata::create_metadata,
     global::Global,
 };
 
@@ -356,7 +357,7 @@ impl File {
         &mut self,
         strand: &mut Strand<'v, 's>,
         global: State<'v, Global<'v>>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let file_ref = self
             .file
@@ -370,10 +371,7 @@ impl File {
             .file_metadata(file_ref)
             .await
             .into_sys(strand)?;
-
-        super::metadata_to_record(strand, global, &metadata, &mut out).await?;
-        #[cfg(unix)]
-        super::unix::unix_metadata_to_record(strand, global, &out, &metadata).await?;
+        create_metadata(strand, global, metadata, out);
         Ok(())
     }
 }

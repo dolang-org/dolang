@@ -4,7 +4,11 @@ The `fs` module provides functions and types for filesystem operations.
 
 ## Types
 
-- [Path](path.md)
+| Type                    | Description                   |
+| ----------------------- | ----------------------------- |
+| [Path](path.md)         | Filesystem path object        |
+| [Metadata](metadata.md) | Immutable filesystem metadata |
+| [DirEntry](direntry.md) | Directory entry object        |
 
 ## Functions
 
@@ -236,14 +240,14 @@ Gets file metadata for the given path.
 | `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file or directory                               |
 | `follow` | [`bool`](../std/bool.md)                  | If `false`, returns metadata for symlink instead of target. |
 
-**Returns:** Record with the following fields:
+**Returns:** [`Metadata`](metadata.md)
 
-**Always present:**
+**Fields:**
 
-| Field  | Type                   | Description                                               |
-| ------ | ---------------------- | --------------------------------------------------------- |
-| `len`  | [`int`](../std/int.md) | File size in bytes                                        |
-| `type` | [`sym`](../std/sym.md) | File type: `:file:`, `:dir:`, `:symlink:`, or `:unknown:` |
+| Field  | Type                   | Description                                                                                                        |
+| ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `len`  | [`int`](../std/int.md) | File size in bytes                                                                                                 |
+| `type` | [`sym`](../std/sym.md) | File type: `:file:`, `:dir:`, `:symlink:`, `:fifo:`, `:char_device:`, `:block_device:`, `:socket:`, or `:unknown:` |
 
 **Optional timestamps** (platform-dependent):
 
@@ -253,7 +257,7 @@ Gets file metadata for the given path.
 | `accessed` | [`DateTime`](../time/datetime.md) | Last access time       |
 | `created`  | [`DateTime`](../time/datetime.md) | Creation/change time   |
 
-**Unix-only** (not available on Windows):
+**Unix-only** (these fields do not exist on Windows):
 
 | Field     | Type                   | Description                           |
 | --------- | ---------------------- | ------------------------------------- |

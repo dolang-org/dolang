@@ -1,15 +1,28 @@
+use std::fmt;
 use std::path::PathBuf;
 
 use dolang::runtime::{
-    Instance, Object, Output, Result, Slot, State, Strand, method, object::TypeBuilder,
-    value::TypeObject,
+    Instance, Object, Output, Result, Slot, State, Strand, error::ResultExt as _,
+    object::TypeBuilder, value::TypeObject,
 };
-use dolang_shell_vfs::{DirEntry, FileType, ReadDir};
+use dolang_shell_vfs::{DirEntry as VfsDirEntry, FileType, ReadDir};
 
 use crate::error::ErrorExt as ShellErrorExt;
 use crate::global::Global;
 
+use crate::fs::metadata::file_type_to_sym;
 use crate::fs::path::{Path, PathAnnex};
+
+pub(crate) struct DirEntry;
+
+pub(crate) struct DirEntryAnnex<'v> {
+    pub(crate) global: State<'v, Global<'v>>,
+    pub(crate) path: PathBuf,
+    pub(crate) name: String,
+    pub(crate) file_type: FileType,
+    #[cfg(unix)]
+    pub(crate) ino: u64,
+}
 
 pub(crate) struct DirEntryIter {
     pub(crate) read_dir: ReadDir,
@@ -18,6 +31,78 @@ pub(crate) struct DirEntryIter {
 
 pub(crate) struct DirEntryIterAnnex<'v> {
     pub(crate) global: State<'v, Global<'v>>,
+}
+
+pub(crate) fn create_dir_entry<'v>(
+    strand: &mut Strand<'v, '_>,
+    entry: &VfsDirEntry,
+    dir_path: &std::path::Path,
+    global: State<'v, Global<'v>>,
+    out: Slot<'v, '_>,
+) {
+    let path = dir_path.join(entry.file_name());
+    let name = entry.file_name().to_string_lossy().into_owned();
+    global.types.dir_entry.create_with_annex(
+        strand,
+        DirEntry,
+        DirEntryAnnex {
+            global,
+            path,
+            name,
+            file_type: entry.file_type(),
+            #[cfg(unix)]
+            ino: entry.ino(),
+        },
+        out,
+    );
+}
+
+impl<'v> Object<'v> for DirEntry {
+    const NAME: &'v str = "DirEntry";
+    const MODULE: &'v str = "fs";
+    type Annex = DirEntryAnnex<'v>;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn debug<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn fmt::Write,
+    ) -> Result<'v, 's, ()> {
+        write!(w, "<fs.DirEntry {:?}>", this.annex().path).into_do(strand)
+    }
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let builder = builder
+            .get("path", |this, strand, out| {
+                let annex = this.annex();
+                annex.global.types.path.create_with_annex(
+                    strand,
+                    Path,
+                    PathAnnex::new(annex.path.clone(), annex.global),
+                    out,
+                );
+                Ok(())
+            })
+            .get("name", |this, strand, out| {
+                Output::set(strand, out, this.annex().name.as_str());
+                Ok(())
+            })
+            .get("type", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    file_type_to_sym(this.annex().file_type, this.annex().global),
+                );
+                Ok(())
+            });
+        #[cfg(unix)]
+        let builder = builder.get("ino", |this, strand, out| {
+            Output::set(strand, out, this.annex().ino as i64);
+            Ok(())
+        });
+        builder
+    }
 }
 
 impl<'v> Object<'v> for DirEntryIter {
@@ -51,60 +136,11 @@ impl<'v> Object<'v> for DirEntryIter {
 
         match borrow.read_dir.next_entry().await {
             Ok(Some(entry)) => {
-                entry_to_record(&entry, &borrow.path, global, strand, out).await?;
+                create_dir_entry(strand, &entry, &borrow.path, global, out);
                 Ok(true)
             }
             Ok(None) => Ok(false),
             Err(e) => Err(e.into_sys(strand)),
         }
     }
-}
-
-async fn entry_to_record<'v, 's>(
-    entry: &DirEntry,
-    dir_path: &std::path::Path,
-    global: State<'v, Global<'v>>,
-    strand: &mut Strand<'v, 's>,
-    out: Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async |strand, [mut std_mod, mut record, mut tmp]| {
-            strand.import("std", &mut std_mod).await?;
-
-            let entry_path = dir_path.join(entry.file_name());
-
-            let path_sym = global.syms.path;
-            let record_sym = global.syms.record;
-
-            global.types.path.create_with_annex(
-                strand,
-                Path,
-                PathAnnex::new(entry_path, global),
-                &mut tmp,
-            );
-
-            method!(
-                strand, std_mod, record_sym, &mut record,
-                path_sym: &mut tmp,
-            )
-            .await?;
-
-            let ty = match entry.file_type() {
-                FileType::File => global.syms.file,
-                FileType::Dir => global.syms.dir,
-                FileType::Symlink => global.syms.symlink,
-                FileType::Fifo => global.syms.fifo,
-                FileType::CharacterDevice => global.syms.char_device,
-                FileType::BlockDevice => global.syms.block_device,
-                FileType::Socket => global.syms.socket,
-                FileType::Unknown => global.syms.unknown,
-            };
-            record.set(strand, global.syms.ty, ty)?;
-            #[cfg(unix)]
-            record.set(strand, global.syms.ino, entry.ino() as i64)?;
-
-            Output::set(strand, out, record);
-            Ok(())
-        })
-        .await
 }

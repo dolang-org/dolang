@@ -1,5 +1,6 @@
 import
   fs:
+    - Metadata
     - open
     - remove
   agent:
@@ -18,6 +19,7 @@ with_and_without_agent "file metadata basic" do
   # Get metadata
   open $test_path r do |f|
     let meta = f.metadata()
+    assert (type meta Metadata)
     assert_eq $meta.len 11
     assert_eq $meta.type :file:
     assert (type meta.modified DateTime)
@@ -36,6 +38,7 @@ with_and_without_agent "metadata timestamps" do
   # Get metadata
   open $test_path r do |f|
     let meta = f.metadata()
+    assert (type meta Metadata)
     let modified = meta.modified
     assert (type modified DateTime)
     assert (modified.unix_secs > 0.0)  # positive timestamp
@@ -73,6 +76,7 @@ with_and_without_agent "metadata Unix fields" do
   # Get metadata and check Unix fields
   open $test_path r do |f|
     let meta = f.metadata()
+    assert (type meta Metadata)
     assert (meta.mode > 0)
     assert (meta.dev >= 0)
     assert (meta.ino >= 0)
@@ -95,6 +99,7 @@ with_and_without_agent "metadata len and type" do
 
   open $test_path r do |f|
     let meta = f.metadata()
+    assert (type meta Metadata)
     assert_eq $meta.len 4
     assert_eq $meta.type :file:
 
