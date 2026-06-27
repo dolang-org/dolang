@@ -1,6 +1,7 @@
 import
   std:
     - arg
+    - FieldError
     - hash
     - TypeError
   fs:
@@ -144,6 +145,56 @@ assert_eq $full (Path "parent/subdir")
 # Test normalize rename
 let messy = Path "./foo/../bar/./baz"
 assert_eq $messy.normalize() (Path "bar/baz")
+
+# Test Windows prefix fields
+if (sys.os_info().family == :windows:)
+  let drive = Path "C:/work/file.txt"
+  assert_eq $drive.disk "C"
+  assert_eq $drive.server nil
+  assert_eq $drive.share nil
+  assert_eq $drive.device nil
+  assert_eq $drive.verbatim false
+
+  let unc = Path "//server/share/file.txt"
+  assert_eq $unc.disk nil
+  assert_eq $unc.server "server"
+  assert_eq $unc.share "share"
+  assert_eq $unc.device nil
+  assert_eq $unc.verbatim false
+
+  let device = Path r"\\.\COM42"
+  assert_eq $device.disk nil
+  assert_eq $device.server nil
+  assert_eq $device.share nil
+  assert_eq $device.device "COM42"
+  assert_eq $device.verbatim false
+
+  let verbatim_drive = Path r"\\?\C:\work\file.txt"
+  assert_eq $verbatim_drive.disk "C"
+  assert_eq $verbatim_drive.server nil
+  assert_eq $verbatim_drive.share nil
+  assert_eq $verbatim_drive.device nil
+  assert_eq $verbatim_drive.verbatim true
+
+  let verbatim_unc = Path r"\\?\UNC\server\share\file.txt"
+  assert_eq $verbatim_unc.disk nil
+  assert_eq $verbatim_unc.server "server"
+  assert_eq $verbatim_unc.share "share"
+  assert_eq $verbatim_unc.device nil
+  assert_eq $verbatim_unc.verbatim true
+
+  let verbatim = Path r"\\?\cat_pics"
+  assert_eq $verbatim.disk nil
+  assert_eq $verbatim.server nil
+  assert_eq $verbatim.share nil
+  assert_eq $verbatim.device nil
+  assert_eq $verbatim.verbatim true
+else
+  assert_err_type $FieldError do p.disk
+  assert_err_type $FieldError do p.server
+  assert_err_type $FieldError do p.share
+  assert_err_type $FieldError do p.device
+  assert_err_type $FieldError do p.verbatim
 
 # Test type errors on new string-taking methods
 assert_err_type $TypeError do with_ext1.with_ext 1

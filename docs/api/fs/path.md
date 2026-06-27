@@ -63,6 +63,55 @@ let rel = Path "./file.txt"
 echo $rel.is_absolute  # false
 ```
 
+## Platform-Specific Fields
+
+### Windows
+
+#### `disk`
+
+Drive letter for `C:`-style and `\\?\C:`-style prefixes, or `nil` otherwise.
+
+```
+let path = Path "C:/work/file.txt"
+echo $path.disk  # C
+```
+
+#### `server`
+
+UNC server name, or `nil` if the path does not use a UNC prefix.
+
+```
+let path = Path "//server/share/file.txt"
+echo $path.server  # server
+```
+
+#### `share`
+
+UNC share name, or `nil` if the path does not use a UNC prefix.
+
+```
+let path = Path "//server/share/file.txt"
+echo $path.share  # share
+```
+
+#### `device`
+
+Device namespace name for `\\.\name` paths, or `nil` otherwise.
+
+```
+let path = Path r"\\.\COM42"
+echo $path.device  # COM42
+```
+
+#### `verbatim`
+
+Returns whether the path uses a verbatim `\\?\...` prefix.
+
+```
+let path = Path r"\\?\C:\work\file.txt"
+echo $path.verbatim  # true
+```
+
 ## Class Methods
 
 ### `(init) path`
