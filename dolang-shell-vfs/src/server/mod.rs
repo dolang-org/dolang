@@ -16,10 +16,10 @@ use crate::{
     Child as _, Command as _, Direct, LockedSender, Permissions, Vfs,
     protocol::{
         AccessRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
-        GlobRequest, MetadataRequest, MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest,
-        RemoveRequest, RenameRequest, Request, RequestKind, Response, ResponseKind,
-        SetPermissionsRequest, SpawnRequest, SymlinkRequest, UnixStreamSocketRequest, UtimeRequest,
-        WellKnownPathRequest,
+        GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest, ReadLinkRequest,
+        RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind, Response,
+        ResponseKind, SetPermissionsRequest, SpawnRequest, SymlinkRequest, UnixStreamSocketRequest,
+        UtimeRequest, WellKnownPathRequest,
     },
 };
 
@@ -173,6 +173,9 @@ impl Connection {
                     }
                     RequestKind::Symlink(symlink_request) => {
                         this.handle_symlink(msg.id, symlink_request).await;
+                    }
+                    RequestKind::HardLink(hard_link_request) => {
+                        this.handle_hard_link(msg.id, hard_link_request).await;
                     }
                     RequestKind::SymlinkMetadata(metadata_request) => {
                         this.handle_symlink_metadata(msg.id, metadata_request).await;
@@ -464,6 +467,14 @@ impl Connection {
     async fn handle_symlink(&self, id: u64, req: SymlinkRequest) {
         let result = ResponseKind::Symlink(Self::io_result(
             self.server.direct.symlink(&req.src, &req.dst).await,
+        ));
+
+        let _ = self.sender.send(Response { id, kind: result }).await;
+    }
+
+    async fn handle_hard_link(&self, id: u64, req: HardLinkRequest) {
+        let result = ResponseKind::HardLink(Self::io_result(
+            self.server.direct.hard_link(&req.src, &req.dst).await,
         ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;

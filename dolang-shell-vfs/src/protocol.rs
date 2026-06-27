@@ -103,6 +103,12 @@ pub(crate) struct SymlinkRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct HardLinkRequest {
+    pub(crate) src: PathBuf,
+    pub(crate) dst: PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct CanonicalizeRequest {
     pub(crate) path: PathBuf,
 }
@@ -182,6 +188,7 @@ pub(crate) enum RequestKind {
     Rename(RenameRequest),
     Move(MoveRequest),
     Symlink(SymlinkRequest),
+    HardLink(HardLinkRequest),
     SymlinkMetadata(MetadataRequest),
     Canonicalize(CanonicalizeRequest),
     ReadLink(ReadLinkRequest),
@@ -220,6 +227,7 @@ pub(crate) enum ResponseKind {
     Rename(Result<(), i32>),
     Move(Result<(), i32>),
     Symlink(Result<(), i32>),
+    HardLink(Result<(), i32>),
     SymlinkMetadata(Result<Metadata, i32>),
     Canonicalize(Result<PathBuf, i32>),
     ReadLink(Result<PathBuf, i32>),
@@ -262,6 +270,7 @@ impl std::fmt::Debug for ResponseKind {
             ResponseKind::Rename(result) => f.debug_tuple("Rename").field(result).finish(),
             ResponseKind::Move(result) => f.debug_tuple("Move").field(result).finish(),
             ResponseKind::Symlink(result) => f.debug_tuple("Symlink").field(result).finish(),
+            ResponseKind::HardLink(result) => f.debug_tuple("HardLink").field(result).finish(),
             ResponseKind::SymlinkMetadata(result) => {
                 f.debug_tuple("SymlinkMetadata").field(result).finish()
             }

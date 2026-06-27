@@ -302,6 +302,29 @@ let dir = Path "project"
 dir.move "archive/project" all: true
 ```
 
+### `hard_link to`
+
+Creates a hard link at `to` pointing to this existing file.
+
+Equivalent to [`hard_link`](index.md#hard_link-src-dst).
+
+This uses the platform-native hard-link operation. The source must already
+exist, and the link must be created on the same filesystem or volume if the
+platform requires it.
+
+**Parameters:**
+
+| Name | Type                                    | Description                         |
+| ---- | --------------------------------------- | ----------------------------------- |
+| `to` | [`str`](../std/str.md)\|[Path](path.md) | Path where the hard link is created |
+
+**Example:**
+
+```
+let src = Path "data.txt"
+src.hard_link "data-copy.txt"
+```
+
 ### `entries()`
 
 Reads the entries in the directory at this path.

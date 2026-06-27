@@ -922,6 +922,14 @@ impl Vfs for Direct {
         Self::create_symlink(src.as_ref(), dst.as_ref()).await
     }
 
+    async fn hard_link(
+        &self,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+    ) -> Result<(), io::Error> {
+        fs::hard_link(src.as_ref(), dst.as_ref()).await
+    }
+
     async fn symlink_dir(
         &self,
         src: impl AsRef<Path>,
