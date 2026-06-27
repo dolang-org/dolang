@@ -49,7 +49,7 @@ diagnostics are also raised as errors.
 **Prelude Format:**
 
 The `prelude` parameter specifies additional imports to prepend to the source.
-It follows the same format as `.dolang-lsp.dol` configuration files:
+It accepts the same logical import shapes used by the LSP prelude settings:
 
 ```
 # Modules

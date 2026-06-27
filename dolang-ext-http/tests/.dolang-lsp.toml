@@ -1,0 +1,8 @@
+[prelude.regression]
+mod = true
+TEST_URL = true
+log = true
+assert = true
+assert_eq = true
+assert_ne = true
+assert_not = true
