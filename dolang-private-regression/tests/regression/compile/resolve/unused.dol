@@ -28,3 +28,23 @@ def bar
   # LL | def bar
   #    |     ^^^
   nil
+
+def keep value
+  value
+
+#[keep]
+def decorated_top
+  nil
+
+#[keep]
+class DecoratedTop
+
+pub def outer
+  #[keep]
+  def decorated_local
+    nil
+
+  #[keep]
+  class DecoratedLocal
+
+  nil
