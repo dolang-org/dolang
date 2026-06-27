@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use std::path::Prefix;
 use std::{
     collections::VecDeque,
     fmt,
@@ -108,6 +110,14 @@ impl<'v> PathAnnex<'v> {
     #[cfg(not(target_os = "windows"))]
     fn forward_slash_display(&self) -> path::Display<'_> {
         self.inner.display()
+    }
+
+    #[cfg(windows)]
+    fn windows_prefix(&self) -> Option<Prefix<'_>> {
+        match self.inner.components().next() {
+            Some(Component::Prefix(prefix)) => Some(prefix.kind()),
+            _ => None,
+        }
     }
 }
 
@@ -493,6 +503,70 @@ impl<'v> Object<'v> for Path {
                     created,
                 )
                 .await
+            });
+        #[cfg(windows)]
+        let builder = builder
+            .get("disk", |this, strand, out| {
+                let annex = this.annex();
+                let Some(prefix) = annex.windows_prefix() else {
+                    return Ok(());
+                };
+                let disk = match prefix {
+                    Prefix::Disk(disk) | Prefix::VerbatimDisk(disk) => Some(char::from(disk)),
+                    _ => None,
+                };
+                if let Some(disk) = disk {
+                    let disk = disk.to_string();
+                    Output::set(strand, out, disk.as_str());
+                }
+                Ok(())
+            })
+            .get("server", |this, strand, out| {
+                let annex = this.annex();
+                let Some(prefix) = annex.windows_prefix() else {
+                    return Ok(());
+                };
+                let server = match prefix {
+                    Prefix::UNC(server, _) | Prefix::VerbatimUNC(server, _) => Some(server),
+                    _ => None,
+                };
+                if let Some(server) = server {
+                    Output::set(strand, out, server.to_string_lossy().as_ref());
+                }
+                Ok(())
+            })
+            .get("share", |this, strand, out| {
+                let annex = this.annex();
+                let Some(prefix) = annex.windows_prefix() else {
+                    return Ok(());
+                };
+                let share = match prefix {
+                    Prefix::UNC(_, share) | Prefix::VerbatimUNC(_, share) => Some(share),
+                    _ => None,
+                };
+                if let Some(share) = share {
+                    Output::set(strand, out, share.to_string_lossy().as_ref());
+                }
+                Ok(())
+            })
+            .get("device", |this, strand, out| {
+                let annex = this.annex();
+                let Some(prefix) = annex.windows_prefix() else {
+                    return Ok(());
+                };
+                if let Prefix::DeviceNS(device) = prefix {
+                    Output::set(strand, out, device.to_string_lossy().as_ref());
+                }
+                Ok(())
+            })
+            .get("verbatim", |this, strand, out| {
+                let annex = this.annex();
+                let verbatim = annex
+                    .windows_prefix()
+                    .map(|prefix| prefix.is_verbatim())
+                    .unwrap_or(false);
+                Output::set(strand, out, verbatim);
+                Ok(())
             });
         #[cfg(unix)]
         let builder = builder.method("chown", async move |this, strand, args, _out| {
