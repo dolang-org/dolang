@@ -4,8 +4,7 @@ DirEntry objects represent individual entries within a directory. They are
 returned by the [`entries()`](index.md#entries-path) function and the
 [`Path.entries()`](path.md#entries) method.
 
-DirEntry objects are records with information about a directory entry, providing
-access to the entry's path, name, and file type.
+DirEntry objects provide access to an entry's path, name, and file type.
 
 ## Creating DirEntry Objects
 
@@ -28,6 +27,15 @@ for entry = entries .
   echo "Full path: $(entry.path)"
 ```
 
+### `name`
+
+Returns the final path component for the entry.
+
+```
+for entry = entries .
+  echo "Name: $(entry.name)"
+```
+
 ## Platform-Specific Fields
 
 ### Unix-Only Fields
@@ -45,8 +53,7 @@ for entry = entries .
 
 ### `type`
 
-Returns the file type as a [`sym`](../std/sym.md), or
-[`nil`](../std/index.md) if the type cannot be determined.
+Returns the file type as a [`sym`](../std/sym.md).
 
 Possible values when present:
 
@@ -59,6 +66,7 @@ Possible values when present:
 | `:char_device:` | Character device                 |
 | `:block_device:`| Block device                     |
 | `:socket:`      | Unix domain socket               |
+| `:unknown:`     | Type could not be determined     |
 
 ```
 for entry = entries .
@@ -66,7 +74,7 @@ for entry = entries .
     echo "Directory: $(entry.name)"
   else if entry.type == :file:
     echo "File: $(entry.name)"
-  else if entry.type == nil:
+  else if entry.type == :unknown:
     echo "Unknown type: $(entry.name)"
 ```
 
@@ -76,8 +84,7 @@ for entry = entries .
 
 ```
 for entry = entries /var/log
-  let ty = (entry.type || :unknown:)
-  echo "$(entry.name): $ty"
+  echo "$(entry.name): $(entry.type)"
 ```
 
 ### Collecting to Array
@@ -108,11 +115,7 @@ for entry = entries .
   echo "Name: $(entry.name)"
 
   if (sys.os_info().family != :windows:)
-    # Type is Unix-only and may be nil
-    if (entry.type != nil)
-      echo "Type: $(entry.type)"
-    else
-      echo "Type: unavailable"
+    echo "Type: $(entry.type)"
 
     # Inode is Unix-only
     echo "Inode: $(entry.ino)"

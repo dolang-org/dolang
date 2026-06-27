@@ -134,7 +134,7 @@ Gets metadata for the file at this path.
 | -------- | ------------------------ | ----------------------------------------------------------------- |
 | `follow` | [`bool`](../std/bool.md) | If `false`, returns metadata for a symlink rather than its target |
 
-**Returns:** Record with the same fields as [`File.metadata`](file.md#metadata)
+**Returns:** [`Metadata`](metadata.md)
 
 **Example:**
 

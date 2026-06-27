@@ -101,6 +101,7 @@ nav:
       - api/fs/index.md
       - api/fs/direntry.md
       - api/fs/file.md
+      - api/fs/metadata.md
       - api/fs/path.md
     - glob:
       - api/glob/index.md
