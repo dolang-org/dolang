@@ -7,6 +7,7 @@ use dolang::{
         object::TypeBuilder, unpack, vm::Builder,
     },
 };
+use futures::future::{AbortHandle, Abortable};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::global::Global;
@@ -473,16 +474,25 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let ([duration, block], []) = unpack!(strand, args, 2, 0)?;
             let duration = coerce_sleep_duration(strand, global, duration)?;
             let interrupt = strand.interrupt_token().nested();
+            let (abort, reg) = AbortHandle::new_pair();
             let interrupt_clone = interrupt.clone();
             strand.spawn_task(async move {
-                tokio::time::sleep(duration).await;
-                interrupt_clone.timeout();
+                let _ = Abortable::new(
+                    async move {
+                        tokio::time::sleep(duration).await;
+                        interrupt_clone.timeout();
+                    },
+                    reg,
+                )
+                .await;
             });
-            strand
+            let res = strand
                 .with_interrupt_token(interrupt, async move |strand| {
                     call!(strand, block, out).await
                 })
-                .await
+                .await;
+            abort.abort();
+            res
         })
         .value("DateTime", global.types.date_time)
         .value("Duration", global.types.duration)

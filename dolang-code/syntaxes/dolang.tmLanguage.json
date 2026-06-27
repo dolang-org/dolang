@@ -8,6 +8,7 @@
     "repository": {
         "main": {
             "patterns": [
+                { "include": "#decorator" },
                 { "include": "#comment" },
                 { "include": "#string" },
                 { "include": "#number" },
@@ -32,6 +33,7 @@
         },
         "expr": {
             "patterns": [
+                { "include": "#decorator" },
                 { "include": "#comment" },
                 { "include": "#string" },
                 { "include": "#number" },
@@ -54,8 +56,21 @@
                 { "include": "#identifier" }
             ]
         },
+        "decorator": {
+            "begin": "(#)(\\[)",
+            "end": "\\]",
+            "beginCaptures": {
+                "1": { "name": "punctuation.definition.annotation.dol" },
+                "2": { "name": "punctuation.section.bracket.begin.dol" }
+            },
+            "endCaptures": {
+                "0": { "name": "punctuation.section.bracket.end.dol" }
+            },
+            "name": "meta.annotation.dol",
+            "patterns": [{ "include": "#expr" }]
+        },
         "comment": {
-            "match": "(?:^|\\s)(#.*)$",
+            "match": "(?:^|\\s)(#(?!\\[).*)$",
             "captures": {"1": { "name": "comment.line.number-sign.dol"}}
         },
         "string": {

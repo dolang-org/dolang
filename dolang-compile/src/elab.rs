@@ -1028,6 +1028,18 @@ impl<'s> Scope<'s> {
         }
     }
 
+    fn mark_local_used(&self, index: usize, epoch: Epoch) {
+        match self {
+            Self::Base => panic!("Can't mark vars in base scope"),
+            Self::Nested { vars, .. } => {
+                vars[index].update(|(mut var, _)| {
+                    var.used = true;
+                    (var, epoch)
+                });
+            }
+        }
+    }
+
     fn resolve_inner(
         &self,
         id: sym::Id,
@@ -2182,6 +2194,14 @@ impl<'a> Elaborater<'a> {
         if scope.is_class() {
             self.insert_class_def(scope, def);
         }
+        if !def.decorators.is_empty() {
+            let res = match &def.variant {
+                DefVariant::Normal(ident) => ident.res.as_ref(),
+                DefVariant::Special(_, _, res) => res.as_ref(),
+            }
+            .expect("decorated def should have an assigned binding");
+            scope.mark_local_used(res.index, self.epoch);
+        }
         self.visit_function(scope, &mut def.func, None)
     }
 
@@ -2286,6 +2306,11 @@ impl<'a> Elaborater<'a> {
             class.ident.res.is_some(),
             "class should already be registered during block pre-pass"
         );
+
+        if !class.decorators.is_empty() {
+            let res = class.ident.res.as_ref().unwrap();
+            scope.mark_local_used(res.index, self.epoch);
+        }
 
         // Visit the class body in a new class scope
         {
