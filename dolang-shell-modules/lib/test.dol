@@ -1,8 +1,15 @@
-import args compile diagnostic load progress
+import args compile diagnostic load progress strand
   fs:
     - Path
   glob:
     - Glob
+import time:
+  - timeout
+
+let collect_key = strand.Key()
+
+pub def test func
+  collect_key.value.push [str(func), func]
 
 # Exception thrown to skip a test case.
 #
@@ -60,16 +67,27 @@ def parse_jobs value
     throw args.Error "--jobs must be at least 1"
   jobs
 
+def parse_timeout value
+  let secs = try
+    float $value
+  catch std.RuntimeError: _
+    throw args.Error "--timeout expects a number"
+  if !(secs >= 0)
+    throw args.Error "--timeout must be non-negative"
+  secs
+
 class Harness
   let jobs = nil
   let filter = nil
+  let timeout = nil
   let filter_glob = nil
   let errors = nil
   let success = 0
   let total = 0
 
-  def (init) self :jobs :filter
+  def (init) self :jobs :filter :timeout
     self.#jobs = jobs
+    self.#timeout = timeout
     self.#errors = []
     self.#filter = try
         Glob $filter
@@ -85,25 +103,24 @@ class Harness
   def record_success self
     self.#success = (self.#success + 1)
 
+  def with_timeout self func
+    if (self.#timeout != nil)
+      timeout $self.#timeout $func
+    else
+      func()
+
   def record_error self err bt path test = nil
     self.#errors.push [err, bt, path, test]
 
   def run_test self path name func
     self.#record_test()
     try
-      func()
+      self.#with_timeout $func
       self.#record_success()
     catch std.RuntimeError: e
       self.#record_error $e $(strand.error_backtrace()) $path $name
 
-  def run_module self path module
-    let tests = []
-    for sym value = module
-      if str(sym).starts_with test_
-        let name = str(sym).without_prefix("test_")
-        if self.#matches_filter $path $name
-          tests.push [name, value]
-
+  def run_module self path tests
     progress.show message: $path.stem total: $tests.len do |w|
       strand.fork limit: $self.#jobs
         for name func = tests
@@ -112,14 +129,18 @@ class Harness
             w.delta()
 
   def run_file self path
-    let source = path.open rb do |file| file.read()
-    let compiled = compile.compile $path $source module: <test>
+    let source = path.read b
+    let compiled = compile.compile $path $source
     for diag = compiled.diagnostics
       diagnostic.print_compile_diag $diag
     if !compiled.ok
       throw std.CompileError "failed to compile $(path.relative())"
-    let module = load.run $compiled.bytecode
-    self.#run_module $path $module
+
+    collect_key.value = []
+    self.#with_timeout do load.run $compiled.bytecode
+    let tests = collect_key.value
+    collect_key.value = nil
+    self.#run_module $path $tests
 
   def report self
     let rc = 0
@@ -167,11 +188,16 @@ pub def main()
     - opt: filter
       default: **
       help: Glob filter for test names in `stem/test` form
+    - opt: timeout
+      type: $parse_timeout
+      default: 600
+      meta: SECS
+      help: Max seconds for each test and module load.
     - arg: files
       type: $Path
       collect: true
       help: Test files to run.
     do |p|
-      let :filter :jobs :files ... = p
-      let harness = Harness :jobs :filter
+      let :filter :jobs :timeout :files ... = p
+      let harness = Harness :jobs :filter :timeout
       exit $ harness.run $files

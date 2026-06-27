@@ -1,42 +1,49 @@
 import args
   test:
+    - test
     - assert
     - assert_eq
 
-pub def test_bool_flag()
+#[test]
+def bool_flag()
   let p = args.parse
     args: ["--verbose"]
     - flag: verbose
   assert $p.verbose
 
-pub def test_bool_flag_default_false()
+#[test]
+def bool_flag_default_false()
   let p = args.parse
     args: []
     - flag: verbose
   assert (!p.verbose)
 
-pub def test_option_value()
+#[test]
+def option_value()
   let p = args.parse
     args: ["--format", "bz2"]
     - opt: format
       default: gz
   assert_eq $p.format "bz2"
 
-pub def test_option_default()
+#[test]
+def option_default()
   let p = args.parse
     args: []
     - opt: format
       default: gz
   assert_eq $p.format "gz"
 
-pub def test_option_default_nil_is_optional()
+#[test]
+def option_default_nil_is_optional()
   let p = args.parse
     args: []
     - opt: format
       default: nil
   assert_eq $p.format nil
 
-pub def test_option_short()
+#[test]
+def option_short()
   let p = args.parse
     args: ["-f", "xz"]
     - opt: format
@@ -44,33 +51,38 @@ pub def test_option_short()
       default: gz
   assert_eq $p.format "xz"
 
-pub def test_positional()
+#[test]
+def positional()
   let p = args.parse
     args: ["hello"]
     - arg: message
   assert_eq $p.message "hello"
 
-pub def test_positional_collect()
+#[test]
+def positional_collect()
   let p = args.parse
     args: ["a", "b", "c"]
     - arg: files
       collect: true
   assert_eq $p.files ["a", "b", "c"]
 
-pub def test_positional_default_nil_is_optional()
+#[test]
+def positional_default_nil_is_optional()
   let p = args.parse
     args: []
     - arg: message
       default: nil
   assert_eq $p.message nil
 
-pub def test_dashdash()
+#[test]
+def dashdash()
   let p = args.parse
     args: ["--", "--not-a-flag"]
     - arg: arg
   assert_eq $p.arg "--not-a-flag"
 
-pub def test_unknown_option_error()
+#[test]
+def unknown_option_error()
   let caught = try
     let _ = args.parse args: ["--unknown"]
     false
@@ -78,7 +90,8 @@ pub def test_unknown_option_error()
     true
   assert $caught
 
-pub def test_missing_required_error()
+#[test]
+def missing_required_error()
   let caught = try
     let _ = args.parse
       args: []
@@ -88,13 +101,15 @@ pub def test_missing_required_error()
     true
   assert $caught
 
-pub def test_parse_help_sets_flag()
+#[test]
+def parse_help_sets_flag()
   let p = args.parse
     args: ["--help"]
     - arg: required_arg
   assert $p.help
 
-pub def test_parse_subcommand_help_sets_flag()
+#[test]
+def parse_subcommand_help_sets_flag()
   let p = args.parse
     args: ["build-docs", "--help"]
     - cmd: build-docs
@@ -103,7 +118,8 @@ pub def test_parse_subcommand_help_sets_flag()
   assert_eq $p.cmd :build_docs:
   assert $p[p.cmd].help
 
-pub def test_parse_help_skips_validation()
+#[test]
+def parse_help_skips_validation()
   let p = args.parse
     args: ["deploy", "--help"]
     - opt: region
@@ -112,7 +128,8 @@ pub def test_parse_help_skips_validation()
   assert $p.help
   assert_eq $p.cmd :deploy:
 
-pub def test_run_help_throws_when_exit_false()
+#[test]
+def run_help_throws_when_exit_false()
   let message = try
     let _ = args.with
       args: ["--help"]
@@ -132,7 +149,8 @@ pub def test_run_help_throws_when_exit_false()
       SERVICE
   assert_eq $message $expected
 
-pub def test_run_subcommand_help_throws_selected_help_when_exit_false()
+#[test]
+def run_subcommand_help_throws_selected_help_when_exit_false()
   let message = try
     let _ = args.with
       args: ["deploy", "--help"]
@@ -157,7 +175,8 @@ pub def test_run_subcommand_help_throws_selected_help_when_exit_false()
       SERVICE
   assert_eq $message $expected
 
-pub def test_subcommand()
+#[test]
+def subcommand()
   let p = args.parse
     args: ["deploy", "myservice"]
     - cmd: deploy
@@ -168,7 +187,8 @@ pub def test_subcommand()
   assert_eq $p[p.cmd].service "myservice"
   assert_eq (p.handler p) "myservice"
 
-pub def test_subcommand_hyphen_normalized()
+#[test]
+def subcommand_hyphen_normalized()
   let p = args.parse
     args: ["build-docs", "api"]
     - cmd: build-docs
@@ -176,7 +196,8 @@ pub def test_subcommand_hyphen_normalized()
   assert_eq $p.cmd :build_docs:
   assert_eq $p[p.cmd].target "api"
 
-pub def test_subcommand_keeps_global_and_nested_names_separate()
+#[test]
+def subcommand_keeps_global_and_nested_names_separate()
   let p = args.parse
     args: ["--env", "prod", "deploy", "--env", "stage"]
     - opt: env
@@ -187,7 +208,8 @@ pub def test_subcommand_keeps_global_and_nested_names_separate()
   assert_eq $p.env "prod"
   assert_eq $p[p.cmd].env "stage"
 
-pub def test_run_dispatches_selected_subcommand_handler_with_root_record()
+#[test]
+def run_dispatches_selected_subcommand_handler_with_root_record()
   let result = args.with
     args: ["--region", "us-west", "deploy", "api"]
     exit: false
@@ -199,7 +221,8 @@ pub def test_run_dispatches_selected_subcommand_handler_with_root_record()
         "$(p.region):$(p[p.cmd].service)"
   assert_eq $result "us-west:api"
 
-pub def test_parse_exposes_top_level_handler()
+#[test]
+def parse_exposes_top_level_handler()
   let p = args.parse
     args: ["hello"]
     - arg: message
@@ -207,7 +230,8 @@ pub def test_parse_exposes_top_level_handler()
       p.message
   assert_eq $(p.handler p) "hello"
 
-pub def test_nested_subcommand_shape()
+#[test]
+def nested_subcommand_shape()
   let p = args.parse
     args: ["cloud", "deploy", "api"]
     - cmd: cloud

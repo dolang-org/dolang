@@ -5,11 +5,13 @@ import exec fs
     - assert
     - assert_eq
     - assert_ne
+    - test
 
 def app_name prefix dir
   "$prefix-$(dir.name)"
 
-pub def test_run_uses_app_scoped_cache()
+#[test]
+def run_uses_app_scoped_cache()
   fs.with_temp_dir do |dir|
     let app = app_name exec-regression $dir
     let script = (dir / "script.dol")
@@ -25,14 +27,16 @@ pub def test_run_uses_app_scoped_cache()
     finally
       cache_root.remove all: true ignore: true
 
-pub def test_module_defaults_app_from_program_module_name()
+#[test]
+def module_defaults_app_from_program_module_name()
   fs.with_temp_dir do |dir|
     let mod_path = (dir / "demo_mod.dol")
     mod_path.write "pub let answer = 42\n"
     let m = exec.module $mod_path
     assert_eq $m.answer 42
 
-pub def test_run_rebuilds_invalid_cached_bytecode()
+#[test]
+def run_rebuilds_invalid_cached_bytecode()
   fs.with_temp_dir do |dir|
     let app = app_name exec-corrupt $dir
     let script = (dir / "script.dol")
@@ -49,20 +53,23 @@ pub def test_run_rebuilds_invalid_cached_bytecode()
     finally
       cache_root.remove all: true ignore: true
 
-pub def test_run_injects_globals()
+#[test]
+def run_injects_globals()
   fs.with_temp_dir do |dir|
     let script = (dir / "script.dol")
     script.write "answer\n"
     assert_eq (exec.run script inject: {answer: 41}) 41
 
-pub def test_module_injects_globals_during_init()
+#[test]
+def module_injects_globals_during_init()
   fs.with_temp_dir do |dir|
     let mod_path = (dir / "demo_mod.dol")
     mod_path.write "pub let answer = answer\n"
     let m = exec.module $mod_path inject: {answer: 42}
     assert_eq $m.answer 42
 
-pub def test_run_merges_dict_prelude_with_inject()
+#[test]
+def run_merges_dict_prelude_with_inject()
   fs.with_temp_dir do |dir|
     let script = (dir / "script.dol")
     script.write r|
@@ -74,7 +81,8 @@ pub def test_run_merges_dict_prelude_with_inject()
         inject: {answer: 41}
     ) 41
 
-pub def test_run_reuses_cache_when_inject_values_change()
+#[test]
+def run_reuses_cache_when_inject_values_change()
   fs.with_temp_dir do |dir|
     let app = app_name exec-inject-cache $dir
     let script = (dir / "script.dol")
@@ -89,7 +97,8 @@ pub def test_run_reuses_cache_when_inject_values_change()
     finally
       cache_root.remove all: true ignore: true
 
-pub def test_run_rejects_non_dict_inject()
+#[test]
+def run_rejects_non_dict_inject()
   fs.with_temp_dir do |dir|
     let script = (dir / "script.dol")
     script.write "0\n"
@@ -101,7 +110,8 @@ pub def test_run_rejects_non_dict_inject()
       true
     assert $ok
 
-pub def test_run_rejects_non_symbol_inject_key()
+#[test]
+def run_rejects_non_symbol_inject_key()
   fs.with_temp_dir do |dir|
     let script = (dir / "script.dol")
     script.write "0\n"
