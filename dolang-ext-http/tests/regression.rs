@@ -160,6 +160,217 @@ mod detail {
                     .mount(server)
                     .await;
             }
+            "multipart" => {
+                use wiremock::{Request, Respond};
+
+                #[derive(Debug)]
+                struct MultipartPart {
+                    name: String,
+                    filename: Option<String>,
+                    content_type: Option<String>,
+                    body: Vec<u8>,
+                }
+
+                fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+                    haystack
+                        .windows(needle.len())
+                        .position(|window| window == needle)
+                }
+
+                fn trim_quotes(value: &str) -> &str {
+                    value
+                        .strip_prefix('"')
+                        .and_then(|value| value.strip_suffix('"'))
+                        .unwrap_or(value)
+                }
+
+                fn parse_boundary(content_type: &str) -> Option<&str> {
+                    content_type.split(';').find_map(|segment| {
+                        let segment = segment.trim();
+                        segment.strip_prefix("boundary=").map(trim_quotes)
+                    })
+                }
+
+                fn parse_content_disposition(value: &str) -> (Option<String>, Option<String>) {
+                    let mut name = None;
+                    let mut filename = None;
+                    for piece in value.split(';').skip(1) {
+                        let piece = piece.trim();
+                        if let Some(value) = piece.strip_prefix("name=") {
+                            name = Some(trim_quotes(value).to_owned());
+                        } else if let Some(value) = piece.strip_prefix("filename=") {
+                            filename = Some(trim_quotes(value).to_owned());
+                        }
+                    }
+                    (name, filename)
+                }
+
+                fn parse_multipart(
+                    body: &[u8],
+                    boundary: &str,
+                ) -> Result<Vec<MultipartPart>, String> {
+                    let marker = format!("--{boundary}").into_bytes();
+                    let mut cursor = 0;
+                    let mut parts = Vec::new();
+
+                    loop {
+                        if !body[cursor..].starts_with(&marker) {
+                            return Err("missing multipart boundary".into());
+                        }
+                        cursor += marker.len();
+                        if body[cursor..].starts_with(b"--") {
+                            break;
+                        }
+                        if !body[cursor..].starts_with(b"\r\n") {
+                            return Err("malformed multipart boundary".into());
+                        }
+                        cursor += 2;
+
+                        let headers_end = find_bytes(&body[cursor..], b"\r\n\r\n")
+                            .ok_or_else(|| "missing part header terminator".to_owned())?;
+                        let headers = &body[cursor..cursor + headers_end];
+                        cursor += headers_end + 4;
+
+                        let next_marker =
+                            find_bytes(&body[cursor..], format!("\r\n--{boundary}").as_bytes())
+                                .ok_or_else(|| "missing next multipart boundary".to_owned())?;
+                        let part_body = body[cursor..cursor + next_marker].to_vec();
+                        cursor += next_marker + 2;
+
+                        let mut name = None;
+                        let mut filename = None;
+                        let mut content_type = None;
+                        for line in headers.split(|byte| *byte == b'\n') {
+                            let line = std::str::from_utf8(line)
+                                .map_err(|_| "multipart header not utf-8".to_owned())?
+                                .trim_end_matches('\r');
+                            if let Some(value) = line.strip_prefix("Content-Disposition: ") {
+                                let (parsed_name, parsed_filename) =
+                                    parse_content_disposition(value);
+                                name = parsed_name;
+                                filename = parsed_filename;
+                            } else if let Some(value) = line.strip_prefix("Content-Type: ") {
+                                content_type = Some(value.to_owned());
+                            }
+                        }
+
+                        parts.push(MultipartPart {
+                            name: name.ok_or_else(|| "multipart part missing name".to_owned())?,
+                            filename,
+                            content_type,
+                            body: part_body,
+                        });
+                    }
+
+                    Ok(parts)
+                }
+
+                struct MultipartFlow;
+
+                impl Respond for MultipartFlow {
+                    fn respond(&self, request: &Request) -> ResponseTemplate {
+                        let content_type = request
+                            .headers
+                            .get("content-type")
+                            .and_then(|value| value.to_str().ok());
+                        let Some(content_type) = content_type else {
+                            return ResponseTemplate::new(400)
+                                .set_body_string("missing content-type");
+                        };
+                        if !content_type.starts_with("multipart/form-data;") {
+                            return ResponseTemplate::new(400).set_body_string("bad content-type");
+                        }
+                        let Some(boundary) = parse_boundary(content_type) else {
+                            return ResponseTemplate::new(400).set_body_string("missing boundary");
+                        };
+                        let parts = match parse_multipart(&request.body, boundary) {
+                            Ok(parts) => parts,
+                            Err(err) => return ResponseTemplate::new(400).set_body_string(err),
+                        };
+
+                        match request.url.path() {
+                            "/multipart-basic" => {
+                                if parts.len() != 2 {
+                                    return ResponseTemplate::new(400)
+                                        .set_body_string("wrong part count");
+                                }
+                                if parts[0].name != "metadata"
+                                    || parts[0].content_type.as_deref() != Some("application/json")
+                                    || parts[0].body != br#"{"kind":"report"}"#
+                                {
+                                    return ResponseTemplate::new(400)
+                                        .set_body_string("bad metadata part");
+                                }
+                                match parts[1].name.as_str() {
+                                    "note" => {
+                                        if parts[1].filename.is_some()
+                                            || parts[1].body != b"hello world"
+                                        {
+                                            return ResponseTemplate::new(400)
+                                                .set_body_string("bad note part");
+                                        }
+                                    }
+                                    "explicit" => {
+                                        if parts[1].content_type.as_deref()
+                                            != Some("application/vnd.api+json")
+                                            || parts[1].body != br#"{"kind":"explicit"}"#
+                                        {
+                                            return ResponseTemplate::new(400)
+                                                .set_body_string("bad explicit json part");
+                                        }
+                                    }
+                                    _ => {
+                                        return ResponseTemplate::new(400)
+                                            .set_body_string("unexpected second part");
+                                    }
+                                }
+                                ResponseTemplate::new(201).set_body_string("basic")
+                            }
+                            "/multipart-binary" => {
+                                if parts.len() != 2 {
+                                    return ResponseTemplate::new(400)
+                                        .set_body_string("wrong part count");
+                                }
+                                if parts[0].name != "note" || parts[0].body != b"hello" {
+                                    return ResponseTemplate::new(400)
+                                        .set_body_string("bad note part");
+                                }
+                                if parts[1].name != "payload"
+                                    || parts[1].filename.as_deref() != Some("payload.bin")
+                                    || parts[1].content_type.as_deref()
+                                        != Some("application/octet-stream")
+                                    || parts[1].body != b"\x00\x01hello\xff"
+                                {
+                                    return ResponseTemplate::new(400)
+                                        .set_body_string("bad payload part");
+                                }
+                                ResponseTemplate::new(201).set_body_string("binary")
+                            }
+                            "/multipart-file" => {
+                                if parts.len() != 1 {
+                                    return ResponseTemplate::new(400)
+                                        .set_body_string("wrong part count");
+                                }
+                                if parts[0].name != "file"
+                                    || parts[0].filename.as_deref() != Some("report.txt")
+                                    || parts[0].content_type.as_deref() != Some("text/plain")
+                                    || parts[0].body != b"file-backed upload"
+                                {
+                                    return ResponseTemplate::new(400)
+                                        .set_body_string("bad file part");
+                                }
+                                ResponseTemplate::new(201).set_body_string("file")
+                            }
+                            _ => ResponseTemplate::new(404),
+                        }
+                    }
+                }
+
+                Mock::given(matchers::any())
+                    .respond_with(MultipartFlow)
+                    .mount(server)
+                    .await;
+            }
             "sse" => {
                 Mock::given(matchers::path("/events"))
                     .respond_with(
