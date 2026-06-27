@@ -314,6 +314,14 @@ return
       show cargo fmt
       show rumdl fmt
 
+  lint:
+    help: check for coding/formatting errors
+    do |args|
+      let spec = Spec $args
+      spec.cargo clippy
+      show cargo fmt --check
+      show rumdl check
+
   clean:
     help: remove build artifacts and generated docs
     do |_|
