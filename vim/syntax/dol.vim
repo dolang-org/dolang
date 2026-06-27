@@ -26,7 +26,8 @@ syn region dolFullExpr matchgroup=dolDelimiter start="\[" end="]" contains=@dolE
 syn region dolFullExpr matchgroup=dolDelimiter start="{" end="}" contains=@dolExprList
 syn region dolCompactExpr matchgroup=dolSpecial start="\zs\(\$\|\.\.\.\)\ze[^ \t]" end="\zs\ze[^A-Za-z0-9_]" contains=@dolCompactExprList
 
-syn match dolComment "\(^\|\s\)\zs#.*\ze$" contains=@Spell
+syn region dolDecorator matchgroup=dolSpecial start="#\[" end="\]" contains=@dolExprList
+syn match dolComment "\(^\|\s\)\zs#\(\[\)\@!.*\ze$" contains=@Spell
 
 syn region dolStringInterp matchgroup=dolSpecial start="\$" end="\zs\ze[^A-Za-z0-9_]" contains=doIdentifier contained
 syn region dolStringInterp matchgroup=dolSpecial start="\$(" end=")" contains=@dolExprList contained
@@ -53,6 +54,7 @@ hi def link dolRepeat Repeat
 hi def link dolOperator Operator
 hi def link dolInclude Include
 hi def link dolComment Comment
+hi def link dolDecorator PreProc
 hi def link dolString String
 hi def link dolQuote String
 hi def link dolSpecial Special
