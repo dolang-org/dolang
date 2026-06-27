@@ -30,14 +30,14 @@ pub(crate) struct Entry<'v> {
     index: usize,
 }
 
-pub(crate) struct Inner<'v> {
+pub(crate) struct Set<'v> {
     inner: RawTable<Entry<'v>>,
     order: Vec<Option<Bucket<Entry<'v>>>>,
     epoch: u64,
 }
 
-impl<'v> Inner<'v> {
-    fn new() -> Self {
+impl<'v> Set<'v> {
+    pub(crate) fn new() -> Self {
         Self {
             inner: Default::default(),
             order: Default::default(),
@@ -208,7 +208,7 @@ impl<'v> Inner<'v> {
         Ok(true)
     }
 
-    fn clone_ordered(&self) -> Set<'v> {
+    fn cloned(&self) -> Set<'v> {
         let mut set = Set::new();
         unsafe {
             for entry in &self.order {
@@ -216,7 +216,7 @@ impl<'v> Inner<'v> {
                     continue;
                 };
                 let entry = bucket.as_ref();
-                set.0.insert_known_unique(entry.value.dup(), entry.hash);
+                set.insert_known_unique(entry.value.dup(), entry.hash);
             }
         }
         set
@@ -225,7 +225,7 @@ impl<'v> Inner<'v> {
     fn extend_from<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        other: &Inner<'v>,
+        other: &Set<'v>,
     ) -> Result<'v, 's, ()> {
         unsafe {
             for entry in &other.order {
@@ -240,29 +240,17 @@ impl<'v> Inner<'v> {
     }
 }
 
-pub(crate) struct Set<'v>(pub(crate) Inner<'v>);
-
-impl<'v> Set<'v> {
-    pub(crate) fn new() -> Self {
-        Self(Inner::new())
-    }
-
-    fn from_inner(other: &Inner<'v>) -> Self {
-        other.clone_ordered()
-    }
-}
-
 unsafe impl<'v> Collect for Set<'v> {
     const CYCLIC: bool = true;
     const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.0.accept(visit)
+        Set::accept(self, visit)
     }
 
     fn clear(&mut self) {
-        self.0.clear()
+        Set::clear(self)
     }
 }
 
@@ -275,7 +263,7 @@ impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let hash = kv::hash(strand, &value)?;
-        self.0.0.insert(strand, value.take(), hash)?;
+        self.0.insert(strand, value.take(), hash)?;
         Ok(())
     }
 
@@ -290,7 +278,7 @@ impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
             [Value::from_object(strand.sym_obj(key)), value.take()],
         ));
         let hash = kv::hash(strand, &pair)?;
-        self.0.0.insert(strand, pair, hash)?;
+        self.0.insert(strand, pair, hash)?;
         Ok(())
     }
 
@@ -302,7 +290,7 @@ impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
     ) -> Result<'v, 's, ()> {
         let pair = Value::from_object(tuple::tuple(strand, [key.take(), value.take()]));
         let hash = kv::hash(strand, &pair)?;
-        self.0.0.insert(strand, pair, hash)?;
+        self.0.insert(strand, pair, hash)?;
         Ok(())
     }
 }
@@ -361,14 +349,14 @@ impl<'v> Protocol<'v> for Iter<'v> {
             .set
             .borrow()
             .ok_or_else(|| Error::concurrency(strand))?;
-        if set.0.epoch != borrow.epoch {
+        if set.epoch != borrow.epoch {
             return Err(Error::concurrency_msg(
                 strand,
                 "collection was modified during iteration",
             ));
         }
         loop {
-            let Some(entry) = set.0.order.get(borrow.index.get()) else {
+            let Some(entry) = set.order.get(borrow.index.get()) else {
                 return Ok(false);
             };
             borrow.index.set(borrow.index.get() + 1);
@@ -428,7 +416,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         let borrow = this.borrow(strand)?;
         let mut first = true;
         unsafe {
-            for entry in &borrow.0.order {
+            for entry in &borrow.order {
                 let Some(bucket) = entry else {
                     continue;
                 };
@@ -446,7 +434,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         let Ok(borrow) = this.borrow(strand) else {
             return true;
         };
-        !borrow.0.inner.is_empty()
+        !borrow.inner.is_empty()
     }
 
     fn op_hash<'a, 's>(
@@ -455,9 +443,9 @@ impl<'v> Protocol<'v> for Set<'v> {
         hasher: &mut DefaultHasher,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let mut digests = Vec::with_capacity(borrow.0.len());
+        let mut digests = Vec::with_capacity(borrow.len());
         unsafe {
-            for bucket in borrow.0.inner.iter() {
+            for bucket in borrow.inner.iter() {
                 let mut elem_hasher = DefaultHasher::new();
                 bucket.as_ref().value.op_hash(strand, &mut elem_hasher)?;
                 digests.push(elem_hasher.finish());
@@ -482,14 +470,13 @@ impl<'v> Protocol<'v> for Set<'v> {
         };
         let left = this.borrow(strand)?;
         let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        if left.0.len() != right.0.len() {
+        if left.len() != right.len() {
             return Ok(Value::FALSE);
         }
         unsafe {
-            for bucket in left.0.inner.iter() {
+            for bucket in left.inner.iter() {
                 let entry = bucket.as_ref();
                 if right
-                    .0
                     .inner
                     .find(entry.hash, |other| entry.value.eq(strand, &other.value))
                     .is_none()
@@ -509,7 +496,7 @@ impl<'v> Protocol<'v> for Set<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                let input = this.borrow(strand)?.0.len() as i64;
+                let input = this.borrow(strand)?.len() as i64;
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -543,7 +530,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                 let ([mut value], []) = unpack!(strand, args, 1, 0)?;
                 let hash = kv::hash(strand, &value)?;
                 let mut borrow = this.borrow_mut(strand)?;
-                borrow.0.insert(strand, value.take(), hash)?;
+                borrow.insert(strand, value.take(), hash)?;
                 Ok(())
             }
             sym::DELETE => {
@@ -551,7 +538,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                 let hash = kv::hash(strand, &value)?;
                 let deleted = {
                     let mut borrow = this.borrow_mut(strand)?;
-                    borrow.0.delete(strand, &value, hash)?
+                    borrow.delete(strand, &value, hash)?
                 };
                 Output::set(strand, out, deleted);
                 Ok(())
@@ -559,7 +546,7 @@ impl<'v> Protocol<'v> for Set<'v> {
             sym::CLEAR => {
                 let _ = unpack!(strand, args, 0, 0)?;
                 let mut borrow = this.borrow_mut(strand)?;
-                borrow.0.clear();
+                borrow.clear();
                 Ok(())
             }
             sym::COPY => {
@@ -568,14 +555,14 @@ impl<'v> Protocol<'v> for Set<'v> {
                 out.store(Value::from_object(GcObj::new(
                     strand.arena(),
                     strand.builtin_types().set,
-                    Self::from_inner(&borrow.0),
+                    borrow.cloned(),
                 )));
                 Ok(())
             }
             sym::CONTAINS => {
                 let ([value], []) = unpack!(strand, args, 1, 0)?;
                 let hash = kv::hash(strand, &value)?;
-                let contains = this.borrow(strand)?.0.contains(strand, &value, hash)?;
+                let contains = this.borrow(strand)?.contains(strand, &value, hash)?;
                 Output::set(strand, out, contains);
                 Ok(())
             }
@@ -591,9 +578,10 @@ impl<'v> Protocol<'v> for Set<'v> {
                     .ok_or_else(|| Error::type_error(strand, "expected set"))?;
                 match method.tag() {
                     sym::UNION => {
-                        let mut result = Self::from_inner(&this.borrow(strand)?.0);
+                        let this = this.borrow(strand)?;
+                        let mut result = this.cloned();
                         let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                        result.0.extend_from(strand, &other.0)?;
+                        result.extend_from(strand, &other)?;
                         out.store(Value::from_object(GcObj::new(
                             strand.arena(),
                             strand.builtin_types().set,
@@ -605,13 +593,13 @@ impl<'v> Protocol<'v> for Set<'v> {
                         let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
                         let mut result = Self::new();
                         unsafe {
-                            for entry in &left.0.order {
+                            for entry in &left.order {
                                 let Some(bucket) = entry else {
                                     continue;
                                 };
                                 let entry = bucket.as_ref();
-                                if other.0.contains(strand, &entry.value, entry.hash)? {
-                                    result.0.insert_unique(strand, &entry.value, entry.hash)?;
+                                if other.contains(strand, &entry.value, entry.hash)? {
+                                    result.insert_unique(strand, &entry.value, entry.hash)?;
                                 }
                             }
                         }
@@ -626,13 +614,13 @@ impl<'v> Protocol<'v> for Set<'v> {
                         let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
                         let mut result = Self::new();
                         unsafe {
-                            for entry in &left.0.order {
+                            for entry in &left.order {
                                 let Some(bucket) = entry else {
                                     continue;
                                 };
                                 let entry = bucket.as_ref();
-                                if !other.0.contains(strand, &entry.value, entry.hash)? {
-                                    result.0.insert_unique(strand, &entry.value, entry.hash)?;
+                                if !other.contains(strand, &entry.value, entry.hash)? {
+                                    result.insert_unique(strand, &entry.value, entry.hash)?;
                                 }
                             }
                         }
@@ -647,22 +635,22 @@ impl<'v> Protocol<'v> for Set<'v> {
                         let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
                         let mut result = Self::new();
                         unsafe {
-                            for entry in &left.0.order {
+                            for entry in &left.order {
                                 let Some(bucket) = entry else {
                                     continue;
                                 };
                                 let entry = bucket.as_ref();
-                                if !other.0.contains(strand, &entry.value, entry.hash)? {
-                                    result.0.insert_unique(strand, &entry.value, entry.hash)?;
+                                if !other.contains(strand, &entry.value, entry.hash)? {
+                                    result.insert_unique(strand, &entry.value, entry.hash)?;
                                 }
                             }
-                            for entry in &other.0.order {
+                            for entry in &other.order {
                                 let Some(bucket) = entry else {
                                     continue;
                                 };
                                 let entry = bucket.as_ref();
-                                if !left.0.contains(strand, &entry.value, entry.hash)? {
-                                    result.0.insert_unique(strand, &entry.value, entry.hash)?;
+                                if !left.contains(strand, &entry.value, entry.hash)? {
+                                    result.insert_unique(strand, &entry.value, entry.hash)?;
                                 }
                             }
                         }
@@ -677,9 +665,9 @@ impl<'v> Protocol<'v> for Set<'v> {
                         let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
                         let mut subset = true;
                         unsafe {
-                            for bucket in left.0.inner.iter() {
+                            for bucket in left.inner.iter() {
                                 let entry = bucket.as_ref();
-                                if !other.0.contains(strand, &entry.value, entry.hash)? {
+                                if !other.contains(strand, &entry.value, entry.hash)? {
                                     subset = false;
                                     break;
                                 }
@@ -692,9 +680,9 @@ impl<'v> Protocol<'v> for Set<'v> {
                         let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
                         let mut superset = true;
                         unsafe {
-                            for bucket in other.0.inner.iter() {
+                            for bucket in other.inner.iter() {
                                 let entry = bucket.as_ref();
-                                if !left.0.contains(strand, &entry.value, entry.hash)? {
+                                if !left.contains(strand, &entry.value, entry.hash)? {
                                     superset = false;
                                     break;
                                 }
@@ -721,7 +709,7 @@ impl<'v> Protocol<'v> for Set<'v> {
     ) -> Result<'v, 's, ()> {
         let iter = Iter {
             index: Cell::new(0),
-            epoch: this.borrow(strand)?.0.epoch,
+            epoch: this.borrow(strand)?.epoch,
             set: this.to_strong(),
         };
         out.store(Value::from_object(GcObj::new(
@@ -740,7 +728,7 @@ impl<'v> Protocol<'v> for Set<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         unsafe {
-            for (i, entry) in borrow.0.order.iter().enumerate() {
+            for (i, entry) in borrow.order.iter().enumerate() {
                 let Some(bucket) = entry else {
                     continue;
                 };
