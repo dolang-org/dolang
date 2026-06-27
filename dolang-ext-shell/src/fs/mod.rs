@@ -289,6 +289,20 @@ async fn symlink<'v, 's>(
     Ok(())
 }
 
+async fn hard_link<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    src: &std::path::Path,
+    dst: &std::path::Path,
+) -> Result<'v, 's, ()> {
+    let local = global.local.get(strand);
+    let src_path = local.cwd().as_ref().join(src);
+    let dst_path = local.cwd().as_ref().join(dst);
+    let vfs = local.vfs();
+    vfs.hard_link(&src_path, &dst_path).await.into_sys(strand)?;
+    Ok(())
+}
+
 async fn symlink_dir<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
@@ -857,6 +871,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let src = path_from_value(strand, global, &src)?;
             let dst = path_from_value(strand, global, &dst)?;
             symlink(strand, global, &src, &dst).await
+        })
+        .function("hard_link", async move |strand, args, _out| {
+            let ([src, dst], []) = unpack!(strand, args, 2, 0)?;
+            let src = path_from_value(strand, global, &src)?;
+            let dst = path_from_value(strand, global, &dst)?;
+            hard_link(strand, global, &src, &dst).await
         })
         .function("symlink_dir", async move |strand, args, _out| {
             let ([src, dst], []) = unpack!(strand, args, 2, 0)?;

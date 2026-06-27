@@ -381,6 +381,11 @@ impl<'v> Object<'v> for Path {
                 let to = path_from_value(strand, this.annex().global, &to)?;
                 super::move_(strand, this.annex().global, &this.annex().inner, &to, all).await
             })
+            .method("hard_link", async move |this, strand, args, _out| {
+                let ([to], []) = unpack!(strand, args, 1, 0)?;
+                let to = path_from_value(strand, this.annex().global, &to)?;
+                super::hard_link(strand, this.annex().global, &this.annex().inner, &to).await
+            })
             .method("entries", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 super::entries(strand, this.annex().global, this.annex().inner.clone(), out).await

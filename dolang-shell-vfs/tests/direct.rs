@@ -78,6 +78,19 @@ async fn direct_symlink_metadata_and_read_link() {
     assert_eq!(direct.read_link(&link).await.unwrap(), target);
 }
 
+#[tokio::test]
+async fn direct_hard_link_round_trip() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("target.txt");
+    let link = dir.path().join("link.txt");
+    tokio::fs::write(&target, "hello").await.unwrap();
+
+    direct.hard_link(&target, &link).await.unwrap();
+
+    assert_eq!(tokio::fs::read_to_string(&link).await.unwrap(), "hello");
+}
+
 #[cfg(windows)]
 #[tokio::test]
 async fn direct_metadata_windows_attributes() {

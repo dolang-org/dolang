@@ -24,10 +24,10 @@ use crate::{
     ReadDir, Vfs, WellKnownPath,
     protocol::{
         AccessRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
-        GlobRequest, MetadataRequest, MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest,
-        RemoveRequest, RenameRequest, Request, RequestKind, Response, ResponseKind,
-        SetPermissionsRequest, SpawnRequest, SymlinkRequest, Timestamp, UnixStreamSocketRequest,
-        UtimeRequest, WellKnownPathRequest,
+        GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest, ReadLinkRequest,
+        RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind, Response,
+        ResponseKind, SetPermissionsRequest, SpawnRequest, SymlinkRequest, Timestamp,
+        UnixStreamSocketRequest, UtimeRequest, WellKnownPathRequest,
     },
 };
 
@@ -919,6 +919,32 @@ impl Vfs for Client {
         }
     }
 
+    async fn hard_link(
+        &self,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+    ) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::HardLink(HardLinkRequest {
+                        src: src.as_ref().to_path_buf(),
+                        dst: dst.as_ref().to_path_buf(),
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
     async fn symlink_dir(
         &self,
         src: impl AsRef<Path>,
@@ -1179,6 +1205,9 @@ async fn receive_loop(receiver: Receiver<Response>, inner: Arc<ClientInner>) {
                     alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
                 }
                 ResponseKind::Symlink(result) => {
+                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
+                }
+                ResponseKind::HardLink(result) => {
                     alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
                 }
                 ResponseKind::SymlinkMetadata(result) => {

@@ -442,6 +442,27 @@ Creates a file symbolic link at `dst` pointing to `src`.
 symlink_file "/path/to/file" "file_link"
 ```
 
+### `hard_link src dst`
+
+Creates a hard link at `dst` pointing to the existing file at `src`.
+
+This uses the platform-native hard-link operation. The source must already
+exist, and the link must be created on the same filesystem or volume if the
+platform requires it.
+
+**Parameters:**
+
+| Name  | Type                                      | Description                         |
+| ----- | ----------------------------------------- | ----------------------------------- |
+| `src` | [`str`](../std/str.md)\|[`Path`](path.md) | Existing file to link to            |
+| `dst` | [`str`](../std/str.md)\|[`Path`](path.md) | Path where the hard link is created |
+
+**Example:**
+
+```
+hard_link "data.txt" "data-copy.txt"
+```
+
 ### `entries path`
 
 Reads the entries in a directory.
