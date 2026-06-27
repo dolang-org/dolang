@@ -1062,6 +1062,7 @@ dependencies = [
  "dolang-ext-rand",
  "dolang-ext-regex",
  "dolang-ext-sqlite",
+ "dolang-ext-toml",
  "dolang-ext-url",
  "dolang-ext-xml",
  "dolang-ext-yaml",

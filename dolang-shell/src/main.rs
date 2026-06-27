@@ -25,6 +25,8 @@ extern crate dolang_ext_rand;
 extern crate dolang_ext_regex;
 #[cfg(feature = "sqlite")]
 extern crate dolang_ext_sqlite;
+#[cfg(feature = "toml")]
+extern crate dolang_ext_toml;
 #[cfg(feature = "xml")]
 extern crate dolang_ext_xml;
 #[cfg(feature = "yaml")]
