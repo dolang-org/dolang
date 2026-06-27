@@ -1,0 +1,31 @@
+import strand:
+  - fork
+  - Key
+  - spawn
+
+let key = Key()
+assert_eq $key.value nil
+
+key.value = "parent"
+assert_eq $key.value "parent"
+
+let child = spawn do
+  assert_eq $key.value nil
+  key.value = "child"
+  key.value
+
+assert_eq $child.join() "child"
+assert_eq $key.value "parent"
+
+let results = fork
+  do
+    assert_eq $key.value "parent"
+    key.value = "fork"
+    assert_eq $key.value "fork"
+    key.value
+
+assert_eq $results ["fork"]
+assert_eq $key.value "parent"
+
+key.value = nil
+assert_eq $key.value nil

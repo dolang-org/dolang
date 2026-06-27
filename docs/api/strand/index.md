@@ -2,6 +2,12 @@
 
 Concurrency primitives.
 
+## Types
+
+| Type               | Description                        |
+| ------------------ | ---------------------------------- |
+| [`Key`](./key.md)  | Strand-local storage key           |
+
 ## Functions
 
 ### `limit count block`
