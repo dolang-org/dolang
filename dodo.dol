@@ -217,11 +217,11 @@ return
 
   "shell-test":
     help: run shell integration tests
-    - arg: tests
-      help: tests to run (default: test/*.dol)
+    - arg: args
+      help: arguments to `dolang -m test` (default: test/*.dol)
       collect: true
     do |args|
-      shell_test (Spec args) $args.tests
+      shell_test (Spec args) $args.args
 
   "test":
     help: run all tests

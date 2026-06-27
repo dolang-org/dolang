@@ -5,6 +5,7 @@ import sys sqlite systemd
     - skip
     - assert
     - assert_eq
+    - test
 
 if (sys.os_info().os != :linux:)
   skip "not supported on this system"
@@ -18,7 +19,8 @@ else if run.podman.which()
 else
   skip "no container runtime available"
 
-pub def test_read_ubuntu_release()
+#[test]
+def read_ubuntu_release()
   bind runtime.with ubuntu:24.04 do systemd.os_release()
     "NAME": name
     "VERSION_ID": ver
@@ -26,7 +28,8 @@ pub def test_read_ubuntu_release()
   assert_eq $name Ubuntu
   assert_eq $ver "24.04"
 
-pub def test_read_fedora_packages()
+#[test]
+def read_fedora_packages()
   let pkgs = runtime.with fedora:43 do
     sqlite.open /var/lib/rpm/rpmdb.sqlite do |conn|
       conn.prepare "SELECT key from Name" do |stmt|
@@ -34,7 +37,8 @@ pub def test_read_fedora_packages()
   assert $ pkgs.contains bash
   assert $ pkgs.contains sudo
 
-pub def test_run_direct_command()
+#[test]
+def run_direct_command()
   let release = sub do runtime.run ubuntu:24.04 cat /etc/os-release
   assert $ release.contains "NAME=\"Ubuntu\""
   assert $ release.contains "VERSION_ID=\"24.04\""
@@ -44,7 +48,8 @@ let container_cli = if run.docker.which()
 else
   run.podman
 
-pub def test_image_build_inspect_remove()
+#[test]
+def image_build_inspect_remove()
   let image_tag = "dolang-test-image-inspect-remove:latest"
   # Build a minimal image
   let built = runtime.build
@@ -78,7 +83,8 @@ pub def test_image_build_inspect_remove()
     true
   assert $gone
 
-pub def test_image_build_multi_tag()
+#[test]
+def image_build_multi_tag()
   let image_tag = "dolang-test-image-multi-tag:latest"
   let image_tag_alt = "dolang-test-image-multi-tag:alt"
   let img = runtime.build
@@ -94,7 +100,8 @@ pub def test_image_build_multi_tag()
 
   latest.remove force: true
 
-pub def test_image_build_untagged()
+#[test]
+def image_build_untagged()
   let img = runtime.build
     from: ubuntu:24.04
     run: do run touch /untagged-marker
@@ -105,7 +112,8 @@ pub def test_image_build_untagged()
   assert_eq $img.tags().len 0
   img.remove()
 
-pub def test_image_save_load()
+#[test]
+def image_save_load()
   let image_archive_tag = "dolang-test-image-save-load:latest"
   runtime.build
     from: ubuntu:24.04
@@ -135,7 +143,8 @@ pub def test_image_save_load()
   let restored = runtime.image $image_archive_tag
   restored.remove()
 
-pub def test_push_missing_image()
+#[test]
+def push_missing_image()
   let missing = try
     runtime.push "dolang-definitely-missing-image:latest"
     false
@@ -143,7 +152,8 @@ pub def test_push_missing_image()
     true
   assert $missing
 
-pub def test_container_inspect_lifecycle()
+#[test]
+def container_inspect_lifecycle()
   let container_name = "dolang-test-container-inspect-lifecycle"
   let cleanup = do
     try
