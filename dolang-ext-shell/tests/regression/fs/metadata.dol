@@ -90,6 +90,33 @@ with_and_without_agent "metadata Unix fields" do
   # Cleanup
   remove $test_path
 
+with_and_without_agent "metadata Windows attributes" do
+  if (sys.os_info().family != :windows:)
+    log "skipping Windows-specific test on non-Windows"
+    return
+
+  let test_path = "test_metadata_windows.txt"
+
+  open $test_path w do |f|
+    f.write "windows metadata test"
+
+  open $test_path r do |f|
+    let meta = f.metadata()
+    assert (type meta Metadata)
+    assert (type meta.attributes int)
+    assert (type meta.readonly bool)
+    assert (type meta.hidden bool)
+    assert (type meta.system bool)
+    assert (type meta.archive bool)
+    assert (type meta.reparse_point bool)
+    assert (type meta.compressed bool)
+    assert (type meta.encrypted bool)
+    assert (type meta.temporary bool)
+    assert (type meta.offline bool)
+    assert (type meta.not_content_indexed bool)
+
+  remove $test_path
+
 with_and_without_agent "metadata len and type" do
   # Test metadata returns correct len and type for a file
   let test_path = "test_metadata_len.txt"

@@ -87,6 +87,8 @@ pub struct Metadata {
     pub rdev: u64,
     pub blksize: u64,
     pub blocks: u64,
+    #[cfg(windows)]
+    pub attributes: u32,
 }
 
 impl Metadata {
@@ -142,6 +144,8 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
 
     #[cfg(windows)]
     {
+        use std::os::windows::fs::MetadataExt;
+
         let file_type = if metadata.is_file() {
             crate::FileType::File
         } else if metadata.is_dir() {
@@ -174,6 +178,7 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
             rdev: 0,
             blksize: 0,
             blocks: 0,
+            attributes: metadata.file_attributes(),
         }
     }
 }

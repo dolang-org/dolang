@@ -41,6 +41,10 @@ version = "0.2"
 [target.'cfg(target_os = "windows")'.dependencies.dunce]
 version = "1"
 
+[target.'cfg(target_os = "windows")'.dependencies.windows-sys]
+version = "0.61"
+features = ["Win32_Storage_FileSystem"]
+
 [build-dependencies]
 dolang-private-build = { path = "../dolang-private-build", version = "0.1.0" }
 

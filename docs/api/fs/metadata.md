@@ -28,6 +28,54 @@ Last access time as [`DateTime`](../time/datetime.md).
 
 Creation or status-change time as [`DateTime`](../time/datetime.md).
 
+## Windows-Only Fields
+
+### `attributes`
+
+Raw Windows file attribute bitmask.
+
+### `readonly`
+
+Whether the readonly attribute bit is set.
+
+### `hidden`
+
+Whether the hidden attribute bit is set.
+
+### `system`
+
+Whether the system attribute bit is set.
+
+### `archive`
+
+Whether the archive attribute bit is set.
+
+### `reparse_point`
+
+Whether the reparse-point attribute bit is set.
+
+### `compressed`
+
+Whether the compressed attribute bit is set.
+
+### `encrypted`
+
+Whether the encrypted attribute bit is set.
+
+### `temporary`
+
+Whether the temporary attribute bit is set.
+
+### `offline`
+
+Whether the offline attribute bit is set.
+
+### `not_content_indexed`
+
+Whether the not-content-indexed attribute bit is set.
+
+## Unix-Only Fields
+
 ### `mode`
 
 Stat mode bits.
