@@ -1,24 +1,22 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, hash_map::Entry},
-    mem,
+    fs, mem,
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
 
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::Mutex;
+use toml::{Table, Value as TomlValue};
 use tower_lsp_server::{
-    Client, ClientSocket, LanguageServer, LspService,
-    jsonrpc::{self, Result},
-    ls_types::*,
+    Client, ClientSocket, LanguageServer, LspService, jsonrpc::Result, ls_types::*,
 };
 
 use dolang_compile::{Compiler, Context, Origin, Token, diag};
 
-use crate::vm::{self, Cmd};
-
 const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[SemanticTokenModifier::DEFAULT_LIBRARY];
+const CONFIG_FILE_NAME: &str = ".dolang-lsp.toml";
 
 const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::ENUM_MEMBER,
@@ -104,7 +102,7 @@ struct Document {
     patches: Vec<Patch>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Import {
     Module(String),
     ModuleAs(String, String),
@@ -130,7 +128,6 @@ pub(crate) struct Backend {
     documents: Mutex<HashMap<Uri, Arc<Mutex<Document>>>>,
     config: Mutex<Config>,
     position_encoding: RwLock<PositionEncodingKind>,
-    vm: vm::Vm,
 }
 
 #[derive(Debug)]
@@ -209,7 +206,6 @@ impl Backend {
             documents: Default::default(),
             config: Default::default(),
             position_encoding: RwLock::new(PositionEncodingKind::UTF16),
-            vm: vm::Vm::new(),
         }
     }
 
@@ -223,37 +219,144 @@ impl Backend {
             if let Some(settings) = guard.settings.get(dir) {
                 return Some(settings.clone());
             }
-            let candidate = dir.join(".dolang-lsp.dol");
+            let candidate = dir.join(CONFIG_FILE_NAME);
             if candidate.is_file() {
-                config_file = Some(candidate);
+                config_file = Some((dir.to_owned(), candidate));
                 break;
             }
         }
         mem::drop(guard);
 
-        if let Some(config) = config_file {
-            let (send, recv) = oneshot::channel();
-            if let Err(e) = self.vm.send(Cmd::ReadSettings(config.clone(), send)).await {
-                log::error!("failed to load configuration {}: {}", config.display(), e);
-                return None;
-            }
-            let settings = match recv.await {
+        if let Some((config_dir, config)) = config_file {
+            let settings = match Self::read_settings(&config) {
+                Ok(settings) => settings,
                 Err(e) => {
                     log::error!("failed to load configuration {}: {}", config.display(), e);
                     return None;
                 }
-                Ok(Err(e)) => {
-                    log::error!("failed to load configuration {}: {}", config.display(), e);
-                    return None;
-                }
-                Ok(Ok(settings)) => settings,
             };
             let settings = Arc::new(settings);
             let mut guard = self.config.lock().await;
-            guard.settings.insert(path.to_owned(), settings.clone());
+            guard.settings.insert(config_dir, settings.clone());
             return Some(settings);
         }
         Some(Arc::new(Self::default_settings(path)))
+    }
+
+    fn read_settings(path: &Path) -> std::result::Result<Settings, String> {
+        let content = fs::read_to_string(path)
+            .map_err(|e| format!("could not read {}: {e}", path.display()))?;
+        let value = toml::from_str::<TomlValue>(&content)
+            .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))?;
+        Self::parse_settings_toml(&value)
+    }
+
+    fn parse_settings_toml(value: &TomlValue) -> std::result::Result<Settings, String> {
+        let table = value
+            .as_table()
+            .ok_or_else(|| "settings are not a table as expected".to_owned())?;
+        let mut prelude = Vec::new();
+
+        for (key, value) in table {
+            match key.as_str() {
+                "prelude" => Self::parse_prelude_table(value, &mut prelude)?,
+                _ => return Err(format!("unexpected key in settings: {key}")),
+            }
+        }
+
+        Ok(Settings { prelude })
+    }
+
+    fn parse_prelude_table(
+        value: &TomlValue,
+        prelude: &mut Vec<Import>,
+    ) -> std::result::Result<(), String> {
+        let table = value
+            .as_table()
+            .ok_or_else(|| "prelude is not a table as expected".to_owned())?;
+
+        for (module, value) in table {
+            Self::parse_prelude_entry(module, value, prelude)?;
+        }
+
+        Ok(())
+    }
+
+    fn parse_prelude_entry(
+        module: &str,
+        value: &TomlValue,
+        prelude: &mut Vec<Import>,
+    ) -> std::result::Result<(), String> {
+        match value {
+            TomlValue::Boolean(true) => prelude.push(Import::Module(module.to_owned())),
+            TomlValue::Boolean(false) => {
+                return Err(format!("prelude entry for {module} cannot be false"));
+            }
+            TomlValue::String(bind) => {
+                prelude.push(Import::ModuleAs(module.to_owned(), bind.clone()));
+            }
+            TomlValue::Array(items) => {
+                for item in items {
+                    let item = item.as_str().ok_or_else(|| {
+                        format!("prelude array for {module} must contain only strings")
+                    })?;
+                    prelude.push(Import::Item(module.to_owned(), item.to_owned()));
+                }
+            }
+            TomlValue::Table(table) => Self::parse_prelude_descriptor(module, table, prelude)?,
+            _ => {
+                return Err(format!(
+                    "prelude entry for {module} must be true, a string, an array, or a table"
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn parse_prelude_descriptor(
+        module: &str,
+        table: &Table,
+        prelude: &mut Vec<Import>,
+    ) -> std::result::Result<(), String> {
+        for (key, value) in table {
+            if key == "mod" {
+                match value {
+                    TomlValue::Boolean(true) => prelude.push(Import::Module(module.to_owned())),
+                    TomlValue::Boolean(false) => {
+                        return Err(format!("descriptor entry {module}.mod cannot be false"));
+                    }
+                    TomlValue::String(bind) => {
+                        prelude.push(Import::ModuleAs(module.to_owned(), bind.clone()));
+                    }
+                    _ => {
+                        return Err(format!(
+                            "descriptor entry {module}.mod must be true or a string"
+                        ));
+                    }
+                }
+                continue;
+            }
+
+            match value {
+                TomlValue::Boolean(true) => {
+                    prelude.push(Import::Item(module.to_owned(), key.clone()));
+                }
+                TomlValue::Boolean(false) => {
+                    return Err(format!("descriptor entry {module}.{key} cannot be false"));
+                }
+                TomlValue::String(bind) => {
+                    prelude.push(Import::ItemAs(module.to_owned(), key.clone(), bind.clone()));
+                }
+                _ => {
+                    return Err(format!(
+                        "descriptor entry {module}.{key} must be true or a string"
+                    ));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn default_settings(path: &Path) -> Settings {
@@ -664,11 +767,6 @@ impl LanguageServer for Backend {
 
     async fn shutdown(&self) -> Result<()> {
         log::debug!("shutting down");
-        self.vm.join().await.map_err(|e| {
-            let mut error = jsonrpc::Error::new(jsonrpc::ErrorCode::InternalError);
-            error.message = e.into();
-            error
-        })?;
         Ok(())
     }
 
@@ -872,6 +970,10 @@ mod tests {
         }
     }
 
+    fn parse_toml(input: &str) -> TomlValue {
+        toml::from_str(input).unwrap()
+    }
+
     #[test]
     fn choose_utf8_when_client_offers_it() {
         let params = InitializeParams {
@@ -950,6 +1052,88 @@ mod tests {
             index.range_from_offsets(start, end),
             Range::new(Position::new(0, 5), Position::new(0, 8))
         );
+    }
+
+    #[test]
+    fn parse_module_import() {
+        let settings =
+            Backend::parse_settings_toml(&parse_toml("[prelude]\nshell = true\n")).unwrap();
+
+        assert_eq!(settings.prelude, vec![Import::Module("shell".to_owned())]);
+    }
+
+    #[test]
+    fn parse_module_alias() {
+        let settings =
+            Backend::parse_settings_toml(&parse_toml("[prelude]\n\"proc.run\" = \"run\"\n"))
+                .unwrap();
+
+        assert_eq!(
+            settings.prelude,
+            vec![Import::ModuleAs("proc.run".to_owned(), "run".to_owned())]
+        );
+    }
+
+    #[test]
+    fn parse_item_array() {
+        let settings = Backend::parse_settings_toml(&parse_toml(
+            "[prelude]\nregression = [\"assert\", \"log\"]\n",
+        ))
+        .unwrap();
+
+        assert_eq!(
+            settings.prelude,
+            vec![
+                Import::Item("regression".to_owned(), "assert".to_owned()),
+                Import::Item("regression".to_owned(), "log".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_descriptor_table_with_mod_and_items() {
+        let settings =
+            Backend::parse_settings_toml(&parse_toml("[prelude.proc]\nmod = true\nsub = true\n"))
+                .unwrap();
+
+        assert_eq!(
+            settings.prelude,
+            vec![
+                Import::Module("proc".to_owned()),
+                Import::Item("proc".to_owned(), "sub".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn reject_unknown_top_level_key() {
+        let error = Backend::parse_settings_toml(&parse_toml("other = true\n")).unwrap_err();
+
+        assert!(error.contains("unexpected key in settings"));
+    }
+
+    #[test]
+    fn reject_false_module_value() {
+        let error =
+            Backend::parse_settings_toml(&parse_toml("[prelude]\nshell = false\n")).unwrap_err();
+
+        assert!(error.contains("cannot be false"));
+    }
+
+    #[test]
+    fn reject_non_string_array_item() {
+        let error = Backend::parse_settings_toml(&parse_toml("[prelude]\nshell = [\"echo\", 1]\n"))
+            .unwrap_err();
+
+        assert!(error.contains("must contain only strings"));
+    }
+
+    #[test]
+    fn reject_invalid_descriptor_value() {
+        let error =
+            Backend::parse_settings_toml(&parse_toml("[prelude.shell]\necho = 1\n")).unwrap_err();
+
+        assert!(error.contains("must be true or a string"));
     }
 
     #[tokio::test(flavor = "current_thread")]

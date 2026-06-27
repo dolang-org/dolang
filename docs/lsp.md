@@ -21,13 +21,10 @@ dolang-lsp
 Configure your editor to use `dolang-lsp` as the language server for `.dol`
 files.
 
-## Configuration with `.dolang-lsp.dol`
+## Configuration with `.dolang-lsp.toml`
 
 The LSP searches upward from each file's directory for a configuration file
-named `.dolang-lsp.dol`. This file is a Do script that is **executed** and must
-return a settings dictionary. Only core modules will be available, so
-interacting with the external system is not possible, but the returned settings
-can be programmatically derived.
+named `.dolang-lsp.toml`. This file contains static settings.
 
 ### Prelude Override
 
@@ -35,18 +32,34 @@ The primary use of the config file is to specify the prelude -- the set of
 imports that the LSP assumes are available in scope. This tells the LSP what
 names exist so it can provide accurate diagnostics and completions.
 
-The returned dictionary should have a `prelude` key describing what to import.
+The file may contain a `prelude` table describing what to import.
 
 ```
-# .dolang-lsp.dol
-return
-  prelude:
-    - my_module
+# .dolang-lsp.toml
+[prelude]
+my_module = true
+```
+
+Supported forms:
+
+```toml
+[prelude]
+sys = true
+"proc.run" = "run"
+regression = ["assert", "log"]
+
+[prelude.shell]
+echo = true
+env = true
+
+[prelude.proc]
+mod = true
+sub = true
 ```
 
 ### Default Prelude
 
-When no `.dolang-lsp.dol` is found, the LSP defaults to the `dolang`
+When no `.dolang-lsp.toml` is found, the LSP defaults to the `dolang`
 prelude, which also includes the core language prelude.
 
 ### When to Use This
@@ -58,9 +71,3 @@ don't report false "unbound variable" errors.
 
 For `dolang` projects, the default prelude is correct and no
 configuration file is needed.
-
-### Execution Environment
-
-The config script runs in a sandboxed VM with strict resource limits (4 MB
-memory, 250 ms time limit). Compiled config files are cached in
-`~/.cache/dolang-lsp/bytecode-cache/`.

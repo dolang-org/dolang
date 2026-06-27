@@ -950,16 +950,15 @@ name = "dolang-lsp"
 version = "0.1.0"
 dependencies = [
  "backtrace",
- "blake3",
  "dirs",
  "dolang-compile",
- "dolang-runtime",
  "env_logger",
  "futures",
  "log",
  "serde",
  "serde_json",
  "tokio",
+ "toml",
  "tower",
  "tower-lsp-server",
 ]

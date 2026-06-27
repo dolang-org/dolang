@@ -1,0 +1,14 @@
+[prelude.regression]
+mod = true
+assert = true
+assert_not = true
+assert_eq = true
+assert_ne = true
+log = true
+
+[prelude.regression2]
+async = true
+callme = true
+echo = true
+makefoo = true
+MIRI = true
