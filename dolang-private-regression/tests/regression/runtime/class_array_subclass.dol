@@ -1,12 +1,9 @@
 # Basic subclassing of array
 class MyArray: array
-  def (init) self
-    array.(init) $self
+  def (init) self source
+    array.(init) $self $source
 
-let a = MyArray()
-a.push 1
-a.push 2
-a.push 3
+let a = MyArray [1, 2, 3]
 
 # Length
 assert_eq $a.len 3
@@ -25,8 +22,11 @@ assert_eq $sum 6
 assert_eq (str a) "[1, 2, 3]"
 
 # Comparison
-let b = MyArray()
-b.push 1
-b.push 2
-b.push 3
+let b = MyArray [1, 2, 3]
 assert (a == b)
+
+let c = a.copy()
+assert (type c MyArray)
+c.push 4
+assert_eq $a [1, 2, 3]
+assert_eq $c [1, 2, 3, 4]

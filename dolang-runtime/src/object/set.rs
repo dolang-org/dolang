@@ -516,6 +516,7 @@ impl<'v> Protocol<'v> for Set<'v> {
             sym::ADD
             | sym::DELETE
             | sym::CLEAR
+            | sym::COPY
             | sym::CONTAINS
             | sym::UNION
             | sym::INTERSECT
@@ -559,6 +560,16 @@ impl<'v> Protocol<'v> for Set<'v> {
                 let _ = unpack!(strand, args, 0, 0)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.0.clear();
+                Ok(())
+            }
+            sym::COPY => {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let borrow = this.borrow(strand)?;
+                out.store(Value::from_object(GcObj::new(
+                    strand.arena(),
+                    strand.builtin_types().set,
+                    Self::from_inner(&borrow.0),
+                )));
                 Ok(())
             }
             sym::CONTAINS => {
@@ -824,6 +835,7 @@ impl<'v> Protocol<'v> for Type {
                 Sym::well_known(sym::ADD),
                 Sym::well_known(sym::DELETE),
                 Sym::well_known(sym::CLEAR),
+                Sym::well_known(sym::COPY),
                 Sym::well_known(sym::CONTAINS),
                 Sym::well_known(sym::UNION),
                 Sym::well_known(sym::INTERSECT),
@@ -852,6 +864,7 @@ impl<'v> Protocol<'v> for Type {
             | sym::ADD
             | sym::DELETE
             | sym::CLEAR
+            | sym::COPY
             | sym::CONTAINS
             | sym::UNION
             | sym::INTERSECT

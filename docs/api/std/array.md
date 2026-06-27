@@ -128,6 +128,15 @@ arr.clear
 assert_eq $arr.len 0
 ```
 
+### `copy`
+
+Returns a shallow copy of the array. Contents are *not* copied recursively.
+
+**Returns:** [`array`](./array.md)
+
+When inherited by a Do subclass, `copy()` calls the subclass constructor with
+the source array as a single positional argument.
+
 ### `sort :key? :reverse?`
 
 Sorts the array in place.

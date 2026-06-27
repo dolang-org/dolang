@@ -93,10 +93,23 @@ let sort_key_reverse = ["bbb", "a", "cc"]
 sort_key_reverse.sort key: (do |x| x.len) reverse: true
 assert_eq $sort_key_reverse ["bbb", "cc", "a"]
 
+let original = [1, 2]
+let copied = original.copy()
+copied.push 3
+assert_eq $original [1, 2]
+assert_eq $copied [1, 2, 3]
+
+let shared_inner = [1]
+let shallow = [shared_inner].copy()
+shallow[0].push 2
+assert_eq $shared_inner [1, 2]
+assert_eq $shallow [[1, 2]]
+
 assert_err "type error: reverse: expected bool" do
   [1, 2].sort reverse: 1
 
 assert_err "type error: array.len is a field, not a method" do [].len()
+assert_err "unexpected positional item: 0" do [].copy 1
 # output: END
 # ["hello", 1, 2, "goodbye"]
 # []

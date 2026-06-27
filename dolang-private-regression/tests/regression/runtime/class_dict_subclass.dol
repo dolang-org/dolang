@@ -1,11 +1,9 @@
 # Basic subclassing of dict
 class MyDict: dict
-  def (init) self
-    dict.(init) $self
+  def (init) self source
+    dict.(init) $self $source
 
-let d = MyDict()
-d.insert "a" 1
-d.insert "b" 2
+let d = MyDict {"a": 1, "b": 2}
 
 # Length
 assert_eq $d.len 2
@@ -26,3 +24,9 @@ assert_eq $sum 3
 
 # Coercion
 assert_eq (str d) r#"{"a": 1, "b": 2}"#
+
+let copied = d.copy()
+assert (type copied MyDict)
+copied.insert "c" 3
+assert_eq (str d) r#"{"a": 1, "b": 2}"#
+assert_eq (str copied) r#"{"a": 1, "b": 2, "c": 3}"#

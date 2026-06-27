@@ -2,13 +2,17 @@ import std:
   - tuple
 # Basic subclassing of tuple
 class MyTuple: tuple
-  def (init) self
-    tuple.(init) $self
+  def (init) self source
+    tuple.(init) $self $source
 
-let t = MyTuple()
+let t = MyTuple (tuple [])
 
 # Length
 assert_eq $t.len 0
 
 # Coercion
 assert_eq (str t) "()"
+
+let copied = t.copy()
+assert (type copied MyTuple)
+assert_eq (str copied) "()"

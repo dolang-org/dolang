@@ -144,4 +144,19 @@ assert_err_type $IterStop do failed_key_unpack.next()
 let mapped = ({a: 1, b: 2, a: 3}.values()).map do |value| (value * 10)
 assert_eq [...mapped] [10, 20, 30]
 
+let original = {a: 1, b: 2, a: 3}
+let copied = original.copy()
+copied.insert :c: 4
+assert_eq [...original] [(tuple [:a:, 1]), (tuple [:b:, 2]), (tuple [:a:, 3])]
+assert_eq [...copied] [(tuple [:a:, 1]), (tuple [:b:, 2]), (tuple [:a:, 3]), (tuple [:c:, 4])]
+
+let shared_inner = [1]
+let shallow = {items: shared_inner}.copy()
+let items = shallow.get :items:
+items.push 2
+assert_eq $shared_inner [1, 2]
+assert_eq $items [1, 2]
+
+assert_err "unexpected positional item: 0" do {}.copy 1
+
 assert_err "type error: str.len is a field, not a method" do "foo".len()
