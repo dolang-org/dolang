@@ -196,6 +196,7 @@ nav:
       - api/std/zero-div-error.md
     - strand:
       - api/strand/index.md
+      - api/strand/key.md
       - api/strand/strand.md
       - api/strand/stream.md
       - api/strand/sender.md

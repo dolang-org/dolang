@@ -366,9 +366,10 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
                             return Err(de::Error::custom("TOML datetimes are not supported"));
                         }
 
-                        dict.insert(strand, &mut saved_key, &mut value).unwrap();
+                        dict.insert(strand, &mut saved_key, &mut value, false)
+                            .unwrap();
                     } else {
-                        dict.insert(strand, &mut key, &mut value).unwrap();
+                        dict.insert(strand, &mut key, &mut value, false).unwrap();
                         have_key = map
                             .next_key_seed(MapKeySeed {
                                 strand,

@@ -125,9 +125,9 @@ fn output_headers<'v, 's>(
         let value_str = header_value_to_str(value);
         if let Ok(time) = httpdate::parse_http_date(value_str.as_ref()) {
             datetime(strand, time, &mut tmp).map_err(|err| Error::runtime(strand, err))?;
-            dict.insert(strand, name.as_str(), &tmp)?;
+            dict.insert(strand, name.as_str(), &tmp, false)?;
         } else {
-            dict.insert(strand, name.as_str(), value_str.as_ref())?;
+            dict.insert(strand, name.as_str(), value_str.as_ref(), false)?;
         }
     }
     Ok(())

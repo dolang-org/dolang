@@ -301,7 +301,7 @@ fn parse_event_into<'v, 's, 'i>(
                         ));
                     }
                     parse_event_into(strand, parser, value_event, Slot::reborrow(&mut value))?;
-                    dict.insert(strand, &key, &value)
+                    dict.insert(strand, &key, &value, false)
                 })?;
             }
 

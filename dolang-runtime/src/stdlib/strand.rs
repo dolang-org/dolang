@@ -11,10 +11,16 @@ use crate::{
     call,
     error::{Error, ErrorKind, Result},
     method,
-    object::{array::Array, backtrace, channel, protocol::GcObj, tuple},
-    strand::{InterruptToken, Local, LocalKey, Redirect, Strand},
+    object::{
+        array::Array,
+        backtrace, channel,
+        native::{Object, Type, TypeBuilder},
+        protocol::GcObj,
+        tuple,
+    },
+    strand::{InterruptToken, Local, LocalKey, LocalRootKey, Redirect, Strand},
     unpack,
-    value::{Output, Slot, Value},
+    value::{Empty, Output, Slot, Value},
     vm::{Builder, State, Stateful},
 };
 
@@ -155,14 +161,124 @@ impl<'v> Local<'v> for ForkLimitLocal {
     }
 }
 
+struct StrandLocalData {
+    cow: Cell<bool>,
+}
+
+impl<'v> Local<'v> for StrandLocalData {
+    fn init() -> Self {
+        Self {
+            cow: Cell::new(false),
+        }
+    }
+
+    fn inherit(&self, _strand: &Strand<'v, '_>) -> Self {
+        self.cow.set(true);
+        Self {
+            cow: Cell::new(true),
+        }
+    }
+}
+
+struct StrandTypes<'v> {
+    key: Type<'v, Key>,
+}
+
 struct StrandState<'v> {
     fork_limit: LocalKey<'v, ForkLimitLocal>,
+    local: LocalKey<'v, StrandLocalData>,
+    local_root: LocalRootKey<'v>,
+    types: StrandTypes<'v>,
 }
 
 struct StrandStateTag;
 
 impl<'v> Stateful<'v> for StrandState<'v> {
     type Tag = StrandStateTag;
+}
+
+struct Key;
+
+impl<'v> Object<'v> for Key {
+    const NAME: &'v str = "Key";
+    const MODULE: &'v str = "strand";
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+
+    async fn new<'a, 's>(
+        this: Type<'v, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        args: crate::arg::Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let ([], []) = unpack!(strand, args, 0, 0)?;
+        this.create(strand, Key, out);
+        Ok(())
+    }
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder
+            .get_with_slots("value", |this, strand, out, [mut key]| {
+                let state = strand.state::<StrandState<'v>>();
+                Output::set(strand, &mut key, this);
+                let root = state.local_root.slot(strand);
+                if root.is_nil() {
+                    return Ok(());
+                }
+                let dict = root.as_dict(strand).expect("strand local store is a dict");
+                let _ = dict.get(strand, &key, None, out)?;
+                Ok(())
+            })
+            .set_with_slots("value", |this, strand, mut value, [mut key]| {
+                let state = strand.state::<StrandState<'v>>();
+                Output::set(strand, &mut key, this);
+                let root = unique_local_root(state, strand)?;
+                let dict = root
+                    .as_dict(strand)
+                    .expect("strand local store is not a dict");
+                dict.insert(strand, &mut key, &mut value, true)?;
+                Ok(())
+            })
+    }
+}
+
+fn clone_local_root<'v, 's>(
+    state: State<'v, StrandState<'v>>,
+    strand: &mut Strand<'v, 's>,
+) -> Slot<'v, 's> {
+    strand.with_slots_sync(|strand, [mut copied, mut key, mut value]| {
+        let mut root = state.local_root.slot(strand);
+        Output::set(strand, &mut copied, Empty::Dict);
+        let prior_dict = root.as_dict(strand).expect("strand local store is a dict");
+        let copied_dict = copied.as_dict(strand).unwrap();
+        let mut pairs = prior_dict.pairs();
+        while pairs
+            .next(strand, &mut key, &mut value)
+            .expect("strand local dict is not accessed concurrently")
+        {
+            copied_dict
+                .insert(strand, &mut key, &mut value, false)
+                .unwrap();
+        }
+        Output::set(strand, &mut root, copied);
+        root
+    })
+}
+
+fn unique_local_root<'v, 's>(
+    state: State<'v, StrandState<'v>>,
+    strand: &mut Strand<'v, 's>,
+) -> Result<'v, 's, Slot<'v, 's>> {
+    let local = state.local.get(strand);
+    if local.cow.replace(false) {
+        return Ok(clone_local_root(state, strand));
+    }
+    let mut root = state.local_root.slot(strand);
+    if root.is_nil() {
+        Output::set(strand, &mut root, Empty::Dict);
+    }
+    Ok(root)
 }
 
 fn flatten_scope_chain(scope: Option<Rc<ForkLimitScope>>) -> Vec<Rc<ForkLimitScope>> {
@@ -227,7 +343,15 @@ async fn restore_prior_permit<'v, 's>(
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let fork_limit = builder.local();
-    let state = builder.register_state(StrandState { fork_limit });
+    let local = builder.local();
+    let local_root = builder.local_root();
+    let key = builder.register_type();
+    let state = builder.register_state(StrandState {
+        fork_limit,
+        local,
+        local_root,
+        types: StrandTypes { key },
+    });
     let input_key = builder.sym("input");
     let output_key = builder.sym("output");
     let backtrace_key = builder.sym("backtrace");
@@ -242,6 +366,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .module("strand")
         .value("Strand", &strand_class)
         .value("Backtrace", &backtrace_class)
+        .value("Key", state.types.key)
         // Implicit I/O functions (moved from former std.iter)
         .function_with_slots("put", async move |strand, args, _, [mut tmp]| {
             let ([value], []) = unpack!(strand, args, 1, 0)?;

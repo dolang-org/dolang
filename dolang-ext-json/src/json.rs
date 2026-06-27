@@ -260,7 +260,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         self.0.with_slots_sync(|strand, [mut key, mut value]| {
             while let Some(()) = map.next_key_seed(Seed(strand, Slot::reborrow(&mut key)))? {
                 map.next_value_seed(Seed(strand, Slot::reborrow(&mut value)))?;
-                dict.insert(strand, &mut key, &mut value).unwrap();
+                dict.insert(strand, &mut key, &mut value, false).unwrap();
             }
             Ok(())
         })

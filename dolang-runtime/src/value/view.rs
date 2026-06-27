@@ -365,12 +365,43 @@ impl<'v, 'a> Dict<'v, 'a> {
         }
     }
 
+    /// Write the value for `key` to `out`.
+    ///
+    /// Returns `true` if a matching entry was found. When multiple values exist
+    /// for the same key, `instance` selects which one to fetch using the same
+    /// indexing rules as the Do `dict.get` method. `None` selects the default
+    /// instance.
+    pub fn get<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        key: impl Input<'v>,
+        instance: Option<i64>,
+        out: impl Output<'v>,
+    ) -> Result<'v, 's, bool> {
+        let key = Value::from_input(strand, key);
+        let borrow = match self.0.borrow() {
+            Some(b) => b,
+            None => return Err(Error::concurrency(strand)),
+        };
+        match borrow.get(strand, &key, instance)? {
+            Some(value) => {
+                Output::set(strand, out, value);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     /// Insert a key-value pair.
+    ///
+    /// When `unique` is `true`, any existing values for the same key are
+    /// replaced by `value`. When `false`, the new pair is appended.
     pub fn insert<'s>(
         &self,
         strand: &mut Strand<'v, 's>,
         key: impl Input<'v>,
         value: impl Input<'v>,
+        unique: bool,
     ) -> Result<'v, 's, ()> {
         let key = Value::from_input(strand, key);
         let value = Value::from_input(strand, value);
@@ -379,7 +410,7 @@ impl<'v, 'a> Dict<'v, 'a> {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
         };
-        borrow.0.insert(strand, key, value, hv, false);
+        borrow.0.insert(strand, key, value, hv, unique);
         Ok(())
     }
 }

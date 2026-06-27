@@ -71,7 +71,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
                     .handlers
                     .as_dict(strand)
                     .expect("load handler registry must be a dict");
-                dict.insert(strand, &out, callback)?;
+                dict.insert(strand, &out, callback, false)?;
             }
 
             Ok(())
