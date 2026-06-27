@@ -8,13 +8,14 @@ use bitvec::bitbox;
 
 use crate::{
     arg::{Arg, Args},
+    call,
     error::{Error, Result, ResultExt},
     gc::{Collect, arena::Visit},
     sig,
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{self, Slot, Slots, TypeObject, Value},
+    value::{Output, Slot, Slots, TypeObject, Value},
     vm::Vm,
 };
 
@@ -224,7 +225,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        value::Output::set(strand, out, &this);
+        Output::set(strand, out, &this);
         Ok(())
     }
 
@@ -329,7 +330,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        value::Output::set(strand, out, &this);
+        Output::set(strand, out, &this);
         Ok(())
     }
 
@@ -557,6 +558,28 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 let ([], [key]) = unpack!(strand, args, 0, 1)?;
                 kv::Inner::mcall_count(this, strand, key, out)
             }
+            sym::COPY => {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let borrow = this.borrow(strand)?;
+                let mut dict = Dict::new();
+                for entry in borrow.0.index.iter().flatten() {
+                    let (bucket, subindex) = entry;
+                    let bucket = unsafe { bucket.as_ref() };
+                    dict.insert(
+                        strand,
+                        bucket.key.dup(),
+                        bucket.value.at(*subindex).dup(),
+                        bucket.hash,
+                        false,
+                    );
+                }
+                out.store(Value::from_object(GcObj::new(
+                    strand.arena(),
+                    strand.builtin_types().dict,
+                    dict,
+                )));
+                Ok(())
+            }
             sym::CONTAINS => {
                 let ([key], [value]) = unpack!(strand, args, 1, 1)?;
                 kv::Inner::mcall_contains(this, strand, key, value, out)
@@ -578,7 +601,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         match field.tag() {
             sym::LEN => {
                 let input = this.borrow(strand)?.0.total_pairs as i64;
-                value::Output::set(strand, out, input);
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::CLEAR
@@ -589,6 +612,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
             | sym::KEYS
             | sym::VALUES
             | sym::COUNT
+            | sym::COPY
             | sym::CONTAINS => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
@@ -613,6 +637,27 @@ impl<'v> Protocol<'v> for Dict<'v> {
             iter,
         )));
         Ok(())
+    }
+
+    async fn op_dcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        delegator: &'a Value<'v>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        if method.tag() == sym::COPY {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            return strand
+                .with_slots(async |strand, [mut tmp, mut ty]| {
+                    Output::set(strand, Slot::reborrow(&mut tmp), delegator);
+                    tmp.op_type(strand, Slot::reborrow(&mut ty));
+                    call!(strand, &ty, out, delegator).await
+                })
+                .await;
+        }
+        Self::op_mcall(this, strand, method, args, out).await
     }
 
     async fn op_spread<'a, 's>(
@@ -737,6 +782,7 @@ impl<'v> Protocol<'v> for Type {
                 Sym::well_known(sym::KEYS),
                 Sym::well_known(sym::VALUES),
                 Sym::well_known(sym::COUNT),
+                Sym::well_known(sym::COPY),
                 Sym::well_known(sym::CONTAINS),
                 Sym::well_known(sym::INDEX_METHOD),
                 Sym::well_known(sym::ASSIGN_METHOD),
@@ -769,6 +815,7 @@ impl<'v> Protocol<'v> for Type {
             | sym::PAIRS
             | sym::KEYS
             | sym::VALUES
+            | sym::COPY
             | sym::CONTAINS
             | sym::INDEX_METHOD
             | sym::ASSIGN_METHOD
@@ -790,14 +837,14 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val], []) = unpack!(strand, args, 1, 0)?;
-                let native = Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().dict,
-                    Dict::new(),
-                ));
-                self_val.op_fill(strand, &strand.vm().singletons().dict, native)?;
-                Ok(())
+                let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
+                strand
+                    .with_slots(async |strand, [mut native]| {
+                        call!(strand, &strand.vm().singletons().dict, &mut native, items).await?;
+                        self_val.op_fill(strand, &strand.vm().singletons().dict, native.take())?;
+                        Ok(())
+                    })
+                    .await
             }
             _ => {
                 dispatch_native_method(strand, &strand.vm().singletons().dict, method, args, out)

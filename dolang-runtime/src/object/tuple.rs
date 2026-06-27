@@ -326,6 +326,11 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                 Output::set(strand, out, found);
                 Ok(())
             }
+            sym::COPY => {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                Output::set(strand, out, &this);
+                Ok(())
+            }
             sym::LEN => Err(Error::type_error(
                 strand,
                 "tuple.len is a field, not a method",
@@ -345,12 +350,33 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                 Output::set(strand, out, this.get().len() as i64);
                 Ok(())
             }
-            sym::PAIRS | sym::GET | sym::CONTAINS => {
+            sym::PAIRS | sym::GET | sym::CONTAINS | sym::COPY => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
             _ => iter::iterable_get(strand, &this, field, out),
         }
+    }
+
+    async fn op_dcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        delegator: &'a Value<'v>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        if method.tag() == sym::COPY {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            return strand
+                .with_slots(async |strand, [mut tmp, mut ty]| {
+                    Output::set(strand, Slot::reborrow(&mut tmp), delegator);
+                    tmp.op_type(strand, Slot::reborrow(&mut ty));
+                    call!(strand, &ty, out, delegator).await
+                })
+                .await;
+        }
+        Self::op_mcall(this, strand, method, args, out).await
     }
 }
 
@@ -696,6 +722,7 @@ impl<'v> Protocol<'v> for Type {
                 Sym::well_known(sym::LEN),
                 Sym::well_known(sym::GET),
                 Sym::well_known(sym::PAIRS),
+                Sym::well_known(sym::COPY),
                 Sym::well_known(sym::CONTAINS),
                 Sym::well_known(sym::INDEX_METHOD),
                 Sym::well_known(sym::ITER_METHOD),
@@ -720,6 +747,7 @@ impl<'v> Protocol<'v> for Type {
             | sym::LEN
             | sym::GET
             | sym::PAIRS
+            | sym::COPY
             | sym::CONTAINS
             | sym::INDEX_METHOD
             | sym::ITER_METHOD
@@ -740,10 +768,14 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val], []) = unpack!(strand, args, 1, 0)?;
-                let native = Value::from_object(tuple(strand, std::iter::empty::<Value<'v>>()));
-                self_val.op_fill(strand, &strand.vm().singletons().tuple, native)?;
-                Ok(())
+                let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
+                strand
+                    .with_slots(async |strand, [mut native]| {
+                        call!(strand, &strand.vm().singletons().tuple, &mut native, items).await?;
+                        self_val.op_fill(strand, &strand.vm().singletons().tuple, native.take())?;
+                        Ok(())
+                    })
+                    .await
             }
             _ => {
                 let vm = strand.vm();

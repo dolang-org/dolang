@@ -62,6 +62,7 @@ well_known_symbols! {
     (Close, "close", CLOSE),
     (Count, "count", COUNT),
     (Contains, "contains", CONTAINS),
+    (Copy, "copy", COPY),
     (DbgMethod, "(dbg)", DBG_METHOD),
     (Default, "default", DEFAULT),
     (Delete, "delete", DELETE),

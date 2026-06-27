@@ -54,6 +54,14 @@ s.clear()
 assert_eq $s.len 0
 ```
 
+### `copy`
+
+Returns a shallow copy of the set.
+
+Insertion order is preserved. Contained values are *not* recursively copied.
+
+**Returns:** [`set`](./set.md)
+
 ### `contains value`
 
 Tests whether the set contains `value`.

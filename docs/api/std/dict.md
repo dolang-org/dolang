@@ -45,6 +45,18 @@ d.clear
 assert_eq $d.len 0
 ```
 
+### `copy`
+
+Returns a shallow copy of the dictionary.
+
+Insertion order and multiple per-key values are preserved. Keys and
+values are *not* copied recursively.
+
+**Returns:** [`dict`](./dict.md)
+
+When inherited by a Do subclass, `copy()` calls the subclass constructor with
+the source dict as a single positional argument.
+
 ### `insert key value`
 
 Adds a key-value pair. Does **not** remove existing values for the same key

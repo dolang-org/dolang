@@ -12,7 +12,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{self, Slot, Slots, TypeObject, Value},
+    value::{Output, Slot, Slots, TypeObject, Value},
     vm::Vm,
 };
 
@@ -86,7 +86,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        value::Output::set(strand, out, &this);
+        Output::set(strand, out, &this);
         Ok(())
     }
 
@@ -105,7 +105,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         drop(array_borrow);
         borrow.index += count;
         if sig.variadic == Variadic::Capture {
-            value::Output::set(strand, out.at(sig.len() - 1), &this);
+            Output::set(strand, out.at(sig.len() - 1), &this);
         }
         Ok(())
     }
@@ -122,7 +122,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
             .borrow()
             .ok_or_else(|| Error::concurrency(strand))?;
         if let Some(value) = array_borrow.inner.get(index) {
-            value::Output::set(strand, out, value);
+            Output::set(strand, out, value);
             mem::drop(array_borrow);
             borrow.index += 1;
             Ok(true)
@@ -199,7 +199,7 @@ impl<'v> Protocol<'v> for Sink<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        value::Output::set(strand, out, &this);
+        Output::set(strand, out, &this);
         Ok(())
     }
 
@@ -286,7 +286,7 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        value::Output::set(strand, out, &this);
+        Output::set(strand, out, &this);
         Ok(())
     }
 
@@ -305,7 +305,7 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         mem::drop(array_borrow);
         borrow.index += count;
         if sig.variadic == Variadic::Capture {
-            value::Output::set(strand, out.at(sig.len() - 1), &this);
+            Output::set(strand, out.at(sig.len() - 1), &this);
         }
         Ok(())
     }
@@ -650,7 +650,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             index::element(borrow.inner.len(), index).ok_or_else(|| Error::index(strand))?;
         match borrow.inner.get(index) {
             Some(value) => {
-                value::Output::set(strand, out, value);
+                Output::set(strand, out, value);
                 Ok(())
             }
             None => Err(Error::index(strand)),
@@ -878,12 +878,25 @@ impl<'v> Protocol<'v> for Array<'v> {
                 if let Some(index) = index::element(borrow.inner.len(), index) {
                     borrow.inner.remove(index);
                 }
-                value::Output::set(strand, out, deleted);
+                Output::set(strand, out, deleted);
                 Ok(())
             }
             sym::CLEAR => {
                 let _ = unpack!(strand, args, 0, 0)?;
                 this.borrow_mut(strand)?.inner.clear();
+                Ok(())
+            }
+            sym::COPY => {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let borrow = this.borrow(strand)?;
+                let array = Array {
+                    inner: borrow.inner.iter().map(Value::dup).collect(),
+                };
+                out.store(Value::from_object(GcObj::new(
+                    strand.arena(),
+                    strand.builtin_types().array,
+                    array,
+                )));
                 Ok(())
             }
             sym::SORT => Self::sort(this, strand, args).await,
@@ -916,7 +929,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                         break;
                     }
                 }
-                value::Output::set(strand, out, found);
+                Output::set(strand, out, found);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(
@@ -938,7 +951,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         match field.tag() {
             sym::LEN => {
                 let input = this.borrow(strand)?.inner.len() as i64;
-                value::Output::set(strand, out, input);
+                Output::set(strand, out, input);
                 Ok(())
             }
             sym::PUSH
@@ -947,6 +960,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             | sym::POP
             | sym::DELETE
             | sym::CLEAR
+            | sym::COPY
             | sym::SORT
             | sym::PAIRS
             | sym::CONTAINS => {
@@ -977,6 +991,27 @@ impl<'v> Protocol<'v> for Array<'v> {
             },
         )));
         Ok(())
+    }
+
+    async fn op_dcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        delegator: &'a Value<'v>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        if method.tag() == sym::COPY {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            return strand
+                .with_slots(async |strand, [mut tmp, mut ty]| {
+                    Output::set(strand, &mut tmp, delegator);
+                    tmp.op_type(strand, Slot::reborrow(&mut ty));
+                    call!(strand, &ty, out, delegator).await
+                })
+                .await;
+        }
+        Self::op_mcall(this, strand, method, args, out).await
     }
 
     async fn op_spread<'a, 's>(
@@ -1180,6 +1215,7 @@ impl<'v> Protocol<'v> for Type {
                 Sym::well_known(sym::POP),
                 Sym::well_known(sym::DELETE),
                 Sym::well_known(sym::CLEAR),
+                Sym::well_known(sym::COPY),
                 Sym::well_known(sym::SORT),
                 Sym::well_known(sym::PAIRS),
                 Sym::well_known(sym::CONTAINS),
@@ -1211,6 +1247,7 @@ impl<'v> Protocol<'v> for Type {
             | sym::POP
             | sym::DELETE
             | sym::CLEAR
+            | sym::COPY
             | sym::SORT
             | sym::PAIRS
             | sym::CONTAINS
@@ -1234,14 +1271,14 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val], []) = unpack!(strand, args, 1, 0)?;
-                let native = Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().array,
-                    Array::new(),
-                ));
-                self_val.op_fill(strand, &strand.vm().singletons().array, native)?;
-                Ok(())
+                let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
+                strand
+                    .with_slots(async |strand, [mut native]| {
+                        call!(strand, &strand.vm().singletons().array, &mut native, items).await?;
+                        self_val.op_fill(strand, &strand.vm().singletons().array, native.take())?;
+                        Ok(())
+                    })
+                    .await
             }
             _ => {
                 dispatch_native_method(strand, &strand.vm().singletons().array, method, args, out)

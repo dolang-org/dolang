@@ -19,6 +19,11 @@ Builds a tuple from an iterable.
 
 **Returns:** `tuple`
 
+When inherited by a Do subclass, `copy()` calls the subclass constructor with
+the source tuple as a single positional argument. Subclasses that inherit
+`copy()` should accept that argument and usually forward it with
+`tuple.(init) $self $source`.
+
 ```
 let tup = tuple([1, 2, 3])
 assert_eq $tup[1] 2
@@ -64,6 +69,13 @@ Tests whether the tuple contains the given element (by equality).
 | `element` |      | the value to check |
 
 **Returns:** `bool`
+
+### `copy`
+
+Returns a shallow copy of the tuple. Because tuples are immutable, the
+returned copy may be the same object.
+
+**Returns:** `tuple`
 
 ### `pairs`
 
