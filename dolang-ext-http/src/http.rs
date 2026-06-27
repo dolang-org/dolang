@@ -20,6 +20,7 @@ use dolang_ext_shell::{as_datetime, datetime};
 use reqwest::{
     Method,
     header::{HeaderMap, HeaderName, HeaderValue},
+    multipart,
     tls::{Certificate, Identity},
 };
 
@@ -55,6 +56,11 @@ impl Stream for BodyStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.0.poll_recv(cx)
     }
+}
+
+struct MultipartStream {
+    sender: mpsc::Sender<result::Result<Bytes, BodyError>>,
+    body_index: usize,
 }
 
 pub(crate) struct Client {
@@ -288,7 +294,10 @@ impl<'v> Object<'v> for StatusObject {
     type Type = ();
     type TypeAnnex = ();
 
-    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        #[cfg(feature = "json")]
+        let mut builder = builder;
+
         #[cfg(feature = "json")]
         let from_str = builder.sym("from_str");
 
@@ -428,6 +437,178 @@ async fn pump_request_body<'v, 's>(
         .await
 }
 
+fn multipart_text_field<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: Option<&Value<'v>>,
+    key: Sym<'v, '_>,
+) -> Result<'v, 's, String> {
+    let value = value.ok_or_else(|| Error::missing_key(strand, key))?;
+    value
+        .as_str(strand)
+        .map(|value| value.to_string())
+        .ok_or_else(|| {
+            Error::type_error(
+                strand,
+                format!("multipart part {}: expected str", key.as_str(strand.vm())),
+            )
+        })
+}
+
+async fn multipart_part<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    part_spec: &Value<'v>,
+    bodies: &Value<'v>,
+) -> Result<'v, 's, (String, multipart::Part, Option<MultipartStream>)> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum BodyKind {
+        Body,
+        #[cfg(feature = "json")]
+        Json,
+    }
+
+    #[cfg(not(feature = "json"))]
+    let _ = global;
+    strand
+        .with_slots(
+            async move |strand,
+                        [
+                mut iter,
+                mut item,
+                mut key,
+                mut value,
+                mut body_iter,
+                mut body,
+            ]| {
+                let mut name = None;
+                let mut body_kind = None;
+                let mut filename = None;
+                let mut content_type = None;
+
+                part_spec.iter(strand, &mut iter).await?;
+                while iter.next(strand, &mut item).await? {
+                    item.index(strand, 0, &mut key)?;
+                    item.index(strand, 1, &mut value)?;
+                    let key_sym = key.as_sym(strand.vm()).ok_or_else(|| {
+                        Error::type_error(strand, "multipart part keys must be symbols")
+                    })?;
+                    if key_sym == global.syms.name {
+                        name = Some(multipart_text_field(
+                            strand,
+                            Some(&value),
+                            global.syms.name,
+                        )?);
+                    } else if key_sym == global.syms.body {
+                        #[cfg(feature = "json")]
+                        if body_kind == Some(BodyKind::Json) {
+                            return Err(Error::runtime(
+                                strand,
+                                "multipart part may specify at most one of `body` or `json`",
+                            ));
+                        }
+                        Output::set(strand, &mut body, &value);
+                        body_kind = Some(BodyKind::Body);
+                    } else if key_sym == global.syms.filename {
+                        filename = Some(multipart_text_field(
+                            strand,
+                            Some(&value),
+                            global.syms.filename,
+                        )?);
+                    } else if key_sym == global.syms.content_type {
+                        content_type = Some(multipart_text_field(
+                            strand,
+                            Some(&value),
+                            global.syms.content_type,
+                        )?);
+                    } else {
+                        #[cfg(feature = "json")]
+                        if key_sym == global.syms.json {
+                            if body_kind == Some(BodyKind::Body) {
+                                return Err(Error::runtime(
+                                    strand,
+                                    "multipart part may specify at most one of `body` or `json`",
+                                ));
+                            }
+                            Output::set(strand, &mut body, &value);
+                            body_kind = Some(BodyKind::Json);
+                            continue;
+                        }
+                        return Err(Error::unexpected_key(strand, &key));
+                    }
+                }
+
+                let name = name.ok_or_else(|| Error::missing_key(strand, global.syms.name))?;
+                if body_kind.is_none() {
+                    return Err(Error::missing_key(strand, global.syms.body));
+                }
+
+                #[cfg(feature = "json")]
+                if body_kind == Some(BodyKind::Json) {
+                    strand
+                        .with_slots(async |strand, [mut json_mod, mut json_text]| {
+                            strand.import("json", &mut json_mod).await?;
+                            let to_str = global.syms.to_str;
+                            method!(strand, json_mod, to_str, &mut json_text, &mut body).await?;
+                            Output::set(strand, &mut body, &json_text);
+                            Ok(())
+                        })
+                        .await?;
+                    if content_type.is_none() {
+                        content_type = Some("application/json".to_owned());
+                    }
+                }
+
+                let mut part = if let Some(slice) = body.as_bin(strand) {
+                    multipart::Part::bytes(slice.to_vec())
+                } else if let Some(text) = body.as_str(strand) {
+                    multipart::Part::text(text.to_string())
+                } else {
+                    match body.iter(strand, &mut body_iter).await {
+                        Ok(()) => {
+                            let bodies = bodies.as_array(strand).ok_or_else(|| {
+                                Error::state_error(strand, "multipart body roots missing")
+                            })?;
+                            let body_index = bodies.len(strand)?;
+                            bodies.push(strand, &body)?;
+                            let (sender, receiver) = mpsc::channel(8);
+                            let mut part = multipart::Part::stream(reqwest::Body::wrap_stream(
+                                BodyStream(receiver),
+                            ));
+                            if let Some(filename) = filename {
+                                part = part.file_name(filename);
+                            }
+                            if let Some(content_type) = content_type {
+                                part = part.mime_str(&content_type).map_err(|err| {
+                                    Error::value(
+                                        strand,
+                                        format!("multipart part content_type: {err}"),
+                                    )
+                                })?;
+                            }
+                            return Ok((name, part, Some(MultipartStream { sender, body_index })));
+                        }
+                        Err(e) if e.kind() == ErrorKind::Type => {
+                            multipart::Part::text(body.to_string(strand)?)
+                        }
+                        Err(e) => return Err(e),
+                    }
+                };
+
+                if let Some(filename) = filename {
+                    part = part.file_name(filename);
+                }
+                if let Some(content_type) = content_type {
+                    part = part.mime_str(&content_type).map_err(|err| {
+                        Error::value(strand, format!("multipart part content_type: {err}"))
+                    })?;
+                }
+
+                Ok((name, part, None))
+            },
+        )
+        .await
+}
+
 async fn request<'v, 's>(
     client: &reqwest::Client,
     global: State<'v, Global<'v>>,
@@ -444,12 +625,14 @@ async fn request<'v, 's>(
             mut key,
             mut value,
             mut body_iterator,
+            mut multipart_bodies,
             mut tmp,
         ]| {
             let mut url = None;
             let mut thunk = None;
             let mut body = None;
             let mut lines = None;
+            let mut multipart = None;
             let mut status = StatusPolicy::Check;
             #[cfg(feature = "json")]
             let mut json = None;
@@ -468,6 +651,7 @@ async fn request<'v, 's>(
                     }
                     Arg::Key(sym, slot) if sym == global.syms.body => body = Some(slot),
                     Arg::Key(sym, slot) if sym == global.syms.lines => lines = Some(slot),
+                    Arg::Key(sym, slot) if sym == global.syms.multipart => multipart = Some(slot),
                     #[cfg(feature = "json")]
                     Arg::Key(sym, slot) if sym == global.syms.json => json = Some(slot),
                     Arg::Key(sym, slot) if sym == global.syms.headers => {
@@ -496,17 +680,23 @@ async fn request<'v, 's>(
                 }
             }
             #[cfg(feature = "json")]
-            if body.is_some() as usize + lines.is_some() as usize + json.is_some() as usize > 1 {
+            if body.is_some() as usize
+                + lines.is_some() as usize
+                + json.is_some() as usize
+                + multipart.is_some() as usize
+                > 1
+            {
                 return Err(Error::runtime(
                     st,
-                    "at most one of `body`, `lines`, or `json` arguments may be specified",
+                    "at most one of `body`, `lines`, `json`, or `multipart` arguments may be specified",
                 ));
             }
             #[cfg(not(feature = "json"))]
-            if body.is_some() as usize + lines.is_some() as usize > 1 {
+            if body.is_some() as usize + lines.is_some() as usize + multipart.is_some() as usize > 1
+            {
                 return Err(Error::runtime(
                     st,
-                    "at most one of `body` or `lines` arguments may be specified",
+                    "at most one of `body`, `lines`, or `multipart` arguments may be specified",
                 ));
             }
             let url = url.ok_or_else(|| Error::missing_positional(st, 0))?;
@@ -515,6 +705,7 @@ async fn request<'v, 's>(
 
             // Track streaming setup for later
             let mut stream = None;
+            let mut multipart_streams = Vec::new();
 
             if let Some(body) = body {
                 // Try direct conversions first (backward compatibility)
@@ -566,6 +757,28 @@ async fn request<'v, 's>(
                 }
             }
 
+            if let Some(multipart) = multipart {
+                if headers.contains_key("content-type") {
+                    return Err(Error::runtime(
+                        st,
+                        "multipart requests must not set content-type manually",
+                    ));
+                }
+
+                Output::set(st, &mut multipart_bodies, Empty::Array);
+                let mut form = multipart::Form::new();
+                multipart.iter(st, &mut iter).await?;
+                while iter.next(st, &mut item).await? {
+                    let (name, part, multipart_stream) =
+                        multipart_part(st, global, &item, &multipart_bodies).await?;
+                    if let Some(multipart_stream) = multipart_stream {
+                        multipart_streams.push(multipart_stream);
+                    }
+                    form = form.part(name, part);
+                }
+                builder = builder.multipart(form);
+            }
+
             if !queries.is_empty() {
                 builder = builder.query(&queries);
             }
@@ -584,6 +797,38 @@ async fn request<'v, 's>(
                 pump_result?;
 
                 // Then handle response
+                response_result.into_http(st)?
+            } else if !multipart_streams.is_empty() {
+                let multipart_roots = &multipart_bodies;
+                let pumps = multipart_streams
+                    .into_iter()
+                    .map(|stream| {
+                        st.spawn_scoped(None, async move |strand| {
+                            strand
+                                .with_slots(async move |strand, [mut body]| {
+                                    let bodies = multipart_roots.as_array(strand).ok_or_else(|| {
+                                        Error::state_error(strand, "multipart body roots missing")
+                                    })?;
+                                    if !bodies.get(strand, stream.body_index, &mut body)? {
+                                        return Err(Error::state_error(
+                                            strand,
+                                            "multipart body root missing",
+                                        ));
+                                    }
+                                    pump_request_body(strand, &body, stream.sender, false).await
+                                })
+                                .await
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                let (response_result, pump_results) =
+                    futures::join!(builder.send(), futures::future::join_all(pumps));
+
+                for pump_result in pump_results {
+                    pump_result?;
+                }
+
                 response_result.into_http(st)?
             } else {
                 // Non-streaming path
@@ -838,7 +1083,10 @@ impl<'v> Object<'v> for Response {
         res
     }
 
-    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        #[cfg(feature = "json")]
+        let mut builder = builder;
+
         #[cfg(feature = "json")]
         let from_str = builder.sym("from_str");
 

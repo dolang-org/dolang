@@ -1,0 +1,102 @@
+import fs:
+  - open
+  - with_temp_dir
+import http
+
+http.post $TEST_URL/multipart-basic 
+  multipart:
+    - name: metadata
+      body: r#"{"kind":"report"}"#
+      content_type: application/json
+    - name: note
+      body: hello world
+  do |res|
+    assert_eq $res.status 201
+    assert_eq $res.text() "basic"
+
+if HAVE_JSON
+  http.post $TEST_URL/multipart-basic
+    multipart:
+      - name: metadata
+        json:
+          kind: report
+      - name: explicit
+        json:
+          kind: explicit
+        content_type: application/vnd.api+json
+    do |res|
+      assert_eq $res.status 201
+      assert_eq $res.text() "basic"
+
+http.post $TEST_URL/multipart-binary 
+  multipart:
+    - name: note
+      body: hello
+    - name: payload
+      filename: payload.bin
+      content_type: application/octet-stream
+      body: b"\x00\x01hello\xff"
+  do |res|
+    assert_eq $res.status 201
+    assert_eq $res.text() "binary"
+
+with_temp_dir do |dir|
+  let path = (dir / "report.txt")
+  open $path wb do |file|
+    file.write b"file-backed upload"
+
+  open $path rb do |file|
+    let file_parts =
+      - name: file
+        filename: report.txt
+        content_type: text/plain
+        body: $file
+
+    http.post $TEST_URL/multipart-file multipart: $file_parts do |res|
+      assert_eq $res.status 201
+      assert_eq $res.text() "file"
+
+let body_conflict = try
+  http.post $TEST_URL/multipart-basic
+    body: "oops"
+    multipart:
+      - name: value
+        body: ok
+  false
+catch err
+  let expected = if HAVE_JSON
+    "at most one of `body`, `lines`, `json`, or `multipart` arguments may be specified"
+  else
+    "at most one of `body`, `lines`, or `multipart` arguments may be specified"
+  assert_eq (str err) $expected
+  true
+
+assert $body_conflict
+
+let content_type_conflict = try
+  http.post $TEST_URL/multipart-basic
+    headers: {"content-type": "multipart/form-data"}
+    multipart:
+      - name: value
+        body: ok
+  false
+catch err
+  assert_eq (str err) "multipart requests must not set content-type manually"
+  true
+
+assert $content_type_conflict
+
+if HAVE_JSON
+  let part_conflict = try
+    http.post $TEST_URL/multipart-basic
+      multipart:
+        - name: value
+          body: ok
+          json:
+            kind: nope
+    false
+  catch err
+    assert_eq (str err) "multipart part may specify at most one of `body` or `json`"
+    true
+
+  assert $part_conflict

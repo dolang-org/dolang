@@ -24,12 +24,16 @@ pub(crate) struct Types<'v> {
 
 pub(crate) struct Syms<'v> {
     pub(crate) body: Sym<'v, 'v>,
+    pub(crate) content_type: Sym<'v, 'v>,
     pub(crate) cookies: Sym<'v, 'v>,
     pub(crate) close: Sym<'v, 'v>,
+    pub(crate) filename: Sym<'v, 'v>,
     pub(crate) headers: Sym<'v, 'v>,
     #[cfg(feature = "json")]
     pub(crate) json: Sym<'v, 'v>,
     pub(crate) lines: Sym<'v, 'v>,
+    pub(crate) multipart: Sym<'v, 'v>,
+    pub(crate) name: Sym<'v, 'v>,
     pub(crate) query: Sym<'v, 'v>,
     pub(crate) status: Sym<'v, 'v>,
     pub(crate) ignore: Sym<'v, 'v>,
@@ -89,12 +93,16 @@ impl<'v> Global<'v> {
             },
             syms: Syms {
                 body: builder.sym("body"),
+                content_type: builder.sym("content_type"),
                 cookies: builder.sym("cookies"),
                 close: builder.sym("close"),
+                filename: builder.sym("filename"),
                 headers: builder.sym("headers"),
                 #[cfg(feature = "json")]
                 json: builder.sym("json"),
                 lines: builder.sym("lines"),
+                multipart: builder.sym("multipart"),
+                name: builder.sym("name"),
                 query: builder.sym("query"),
                 status: builder.sym("status"),
                 ignore: builder.sym("ignore"),

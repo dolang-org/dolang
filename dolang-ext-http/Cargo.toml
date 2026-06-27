@@ -31,7 +31,7 @@ version = "0.1.0"
 [dependencies.reqwest]
 version = "0.13.1"
 default-features = false
-features = ["query", "stream", "native-tls", "http2", "cookies"]
+features = ["query", "stream", "native-tls", "http2", "cookies", "multipart"]
 
 [build-dependencies]
 dolang-private-build = { path = "../dolang-private-build", version = "0.1.0" }

@@ -97,7 +97,7 @@ options ...
 trace ...
 connect ...
 
-post url :headers? :body? :json? :lines? :query? :status? block?
+post url :headers? :body? :json? :lines? :multipart? :query? :status? block?
 put ...
 patch ...
 ```
@@ -106,16 +106,17 @@ Makes an HTTP request using the specified verb.
 
 **Parameters:**
 
-| Name      | Type                                                  | Description                                                   |
-| --------- | ----------------------------------------------------- | ------------------------------------------------------------- |
-| `url`     | [`str`](../std/str.md)                                | The URL to request                                            |
-| `body`    | [`str`](../std/str.md)\|[`bin`](../std/bin.md)\|input | Request body; accepts iterables for streaming                 |
-| `json`    | any                                                   | Request body as JSON value (auto-serialized)                  |
-| `lines`   | input                                                 | Stream request body with newlines between elements            |
-| `headers` | [`dict`](../std/dict.md)                              | Dictionary of headers; repeated keys are accepted             |
-| `query`   | [`dict`](../std/dict.md)                              | Dictionary of query parameters; repeated keys are accepted    |
-| `status`  | `:ignore:`\|`"ignore"`                                | Return the response even when the status is outside 200-299   |
-| `block`   | func                                                  | Called with response; response is closed upon return or error |
+| Name        | Type                                                  | Description                                                   |
+| ----------- | ----------------------------------------------------- | ------------------------------------------------------------- |
+| `url`       | [`str`](../std/str.md)                                | The URL to request                                            |
+| `body`      | [`str`](../std/str.md)\|[`bin`](../std/bin.md)\|input | Request body; accepts iterables for streaming                 |
+| `json`      | any                                                   | Request body as JSON value (auto-serialized)                  |
+| `lines`     | input                                                 | Stream request body with newlines between elements            |
+| `multipart` | input                                                 | Multipart/form-data parts                                     |
+| `headers`   | [`dict`](../std/dict.md)                              | Dictionary of headers; repeated keys are accepted             |
+| `query`     | [`dict`](../std/dict.md)                              | Dictionary of query parameters; repeated keys are accepted    |
+| `status`    | `:ignore:`\|`"ignore"`                                | Return the response even when the status is outside 200-299   |
+| `block`     | func                                                  | Called with response; response is closed upon return or error |
 
 **Returns:** [`Response`](./response.md) -- The HTTP response
 
@@ -150,7 +151,8 @@ assert_eq $response.status 404
 
 ### `body`
 
-Specifies the raw request body. Cannot be used together with `json` or `lines`.
+Specifies the raw request body. Cannot be used together with `json`, `lines`,
+or `multipart`.
 
 When a string or binary value is passed, it is sent as-is. When an iterable is
 passed, the values are streamed directly to the request body without adding any
@@ -171,7 +173,7 @@ let response = client.post https://api.example.com/stream
 ### `json`
 
 Specifies the request body as a Do value that will be automatically serialized
-to JSON. Cannot be used together with `body` or `lines`.
+to JSON. Cannot be used together with `body`, `lines`, or `multipart`.
 
 ```
 let response = client.post https://api.example.com/users
@@ -181,8 +183,8 @@ let response = client.post https://api.example.com/users
 ### `lines`
 
 Streams the request body from an iterable, adding a newline after each element.
-Cannot be used together with `body` or `json`. Unlike `body` which accepts any
-value, `lines` requires an iterable.
+Cannot be used together with `body`, `json`, or `multipart`. Unlike `body`
+which accepts any value, `lines` requires an iterable.
 
 ```
 let response = client.post https://api.example.com/data
@@ -193,6 +195,58 @@ let response = client.post https://api.example.com/data
 
 # Sends: "first line\nsecond line\nthird line\n"
 ```
+
+### `multipart`
+
+Builds a `multipart/form-data` request body from an iterable of part specs.
+Cannot be used together with `body`, `json`, or `lines`.
+
+Each part must provide `name` and either `body` or, when the HTTP extension is
+built with its `json` feature, `json`. `filename` and `content_type` are
+optional.
+
+```
+let response = client.post https://api.example.com/upload
+  multipart:
+    - name: file
+      filename: report.txt
+      content_type: text/plain
+      body: b"report contents"
+    - name: metadata
+      json:
+        kind: report
+```
+
+Multipart part bodies accept:
+
+- `str` for text fields
+- `bin` for binary fields
+- iterable/input values for streaming uploads such as files opened in binary
+  mode
+
+When a part uses `json:`, the value is serialized the same way as a top-level
+request `json:` body. The part `content_type` defaults to `application/json`
+if omitted.
+
+The request sets the multipart `content-type` header automatically, including
+the boundary parameter. Do not set `content-type` manually on multipart
+requests.
+
+```
+import fs:
+  - open
+
+open report.bin rb do |file|
+  client.post https://api.example.com/upload
+    multipart:
+      - name: file
+        filename: report.bin
+        content_type: application/octet-stream
+        body: $file
+```
+
+Binary file mode matters here: text-mode file iteration is line-oriented, while
+binary mode yields raw chunks suitable for uploads.
 
 ### `headers`
 
