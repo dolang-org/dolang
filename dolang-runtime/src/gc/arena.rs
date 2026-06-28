@@ -539,11 +539,6 @@ impl<'v> Arena<'v> {
     }
 
     #[inline]
-    pub(crate) fn adjust_allocated(&self, delta: isize) {
-        self.0.adjust_allocated(delta)
-    }
-
-    #[inline]
     pub(crate) fn allocated(&self) -> usize {
         self.0.allocated.get()
     }

@@ -4,7 +4,7 @@ use std::{
     cell::UnsafeCell,
     hash::{Hash, Hasher},
     marker::PhantomData,
-    mem,
+    mem::{self, MaybeUninit},
     ops::{ControlFlow, Deref, DerefMut},
     ptr::{self, NonNull},
 };
@@ -72,19 +72,27 @@ impl<'v, T: Upcast<Header>> Base<'v, T> {
     }
 
     pub(crate) unsafe fn new_from_raw(arena: &Arena<'v>, ptr: NonNull<T>, size: usize) -> Self {
+        unsafe { Self::new_from_raw_inner(NonNull::from_ref(&arena.0), ptr, size) }
+    }
+
+    unsafe fn new_from_raw_inner(
+        arena: NonNull<arena::ArenaInner>,
+        ptr: NonNull<T>,
+        size: usize,
+    ) -> Self {
         let this = Self {
             ptr,
             phantom: PhantomData,
         };
 
-        arena.0.balance.update(|b| b + 1);
-        arena.adjust_allocated(size.try_into().unwrap());
-
         unsafe {
+            arena.as_ref().balance.update(|b| b + 1);
+            arena.as_ref().adjust_allocated(size.try_into().unwrap());
+
             if this.vtbl().as_ref().cyclic {
                 this.base().as_ref().cyclic.init();
                 this.base().as_ref().queue.init();
-                arena.0.cyclic.push_front(this.base());
+                arena.as_ref().cyclic.push_front(this.base());
             }
         }
         this
@@ -98,7 +106,7 @@ impl<'v, T: Upcast<Header>> Base<'v, T> {
     }
 
     pub(crate) unsafe fn from_weak(weak: &BaseWeak<'v, T>) -> Self {
-        assert_ne!(weak.strong_count(), 0);
+        debug_assert_ne!(weak.strong_count(), 0);
         Self {
             ptr: weak.ptr,
             phantom: PhantomData,
@@ -423,15 +431,183 @@ impl<H: Upcast<Header>, T> Drop for BoxedSlice<H, T> {
     }
 }
 
-#[repr(C)]
-pub(crate) struct BoxedStr<H: Upcast<Header>> {
-    header: H,
-    len: usize,
-    _value: [u8; 0],
+type BoxedStr<H> = BoxedSlice<H, u8>;
+
+pub(crate) struct Embryo<'v, H: Upcast<Header>, T: ?Sized + Boxable<H>> {
+    ptr: NonNull<u8>,
+    layout: Layout,
+    phantom: PhantomData<(&'v mut &'v (), H, T)>,
 }
 
-unsafe impl<H: Upcast<Header>> Upcast<H> for BoxedStr<H> {}
-unsafe impl<H: Upcast<Header>> Upcast<BoxedStr<H>> for BoxedStr<H> {}
+impl<'v, H: Upcast<Header>, T: ?Sized + Boxable<H>> Drop for Embryo<'v, H, T> {
+    fn drop(&mut self) {
+        unsafe { alloc::dealloc(self.ptr.as_ptr(), self.layout) }
+    }
+}
+
+impl<'v, H: Upcast<Header>> Embryo<'v, H, [u8]>
+where
+    Boxed<H, [u8]>: Upcast<Header>,
+    [u8]: Boxable<H>,
+{
+    pub(crate) unsafe fn from_arena_capacity(arena: &Arena<'v>, cap: usize) -> Self {
+        let layout = slice_layout::<H, u8>(cap);
+        let ptr = unsafe { alloc::alloc(layout) };
+        if ptr.is_null() {
+            alloc::handle_alloc_error(layout);
+        }
+        let boxed = ptr.cast::<BoxedSlice<H, u8>>();
+        unsafe {
+            ptr.cast::<NonNull<arena::ArenaInner>>()
+                .write(NonNull::from_ref(&arena.0));
+            (&raw mut (*boxed).len).write(0);
+        }
+        Self {
+            ptr: unsafe { NonNull::new_unchecked(ptr) },
+            layout,
+            phantom: PhantomData,
+        }
+    }
+
+    pub(crate) fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                self.data_ptr().add(self.len()).cast::<MaybeUninit<u8>>(),
+                self.capacity() - self.len(),
+            )
+        }
+    }
+
+    pub(crate) fn reserve(&mut self, additional: usize) {
+        if additional <= self.capacity() - self.len() {
+            return;
+        }
+        let required = self
+            .len()
+            .checked_add(additional)
+            .expect("embryo capacity overflow");
+        let grown = self.capacity().saturating_mul(2).max(8);
+        self.realloc(required.max(grown));
+    }
+
+    pub(crate) unsafe fn advance(&mut self, initialized: usize) {
+        debug_assert!(initialized <= self.capacity() - self.len());
+        unsafe { self.set_len(self.len().strict_add(initialized)) };
+    }
+
+    pub(crate) fn truncate(&mut self, len: usize) {
+        if len >= self.len() {
+            return;
+        }
+        unsafe { self.set_len(len) }
+    }
+
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.data_ptr(), self.len()) }
+    }
+
+    /// # Safety
+    /// The embryo must have at least `slice.len()` bytes of spare capacity.
+    pub(crate) unsafe fn extend(&mut self, slice: &[u8]) {
+        unsafe {
+            ptr::copy_nonoverlapping(slice.as_ptr(), self.data_ptr().add(self.len()), slice.len());
+            self.advance(slice.len());
+        }
+    }
+
+    pub(crate) fn finalize(mut self, header: H) -> Base<'v, Boxed<H, [u8]>> {
+        self.shrink_to_fit();
+        unsafe {
+            debug_assert_eq!(self.arena_inner(), Self::arena_inner_from_header(&header));
+            self.header_ptr().write(header);
+            let arena = self.arena_inner();
+            let ptr = self.ptr.cast::<Boxed<H, [u8]>>();
+            let size = self.layout.size();
+            mem::forget(self);
+            Base::new_from_raw_inner(arena, ptr, size)
+        }
+    }
+
+    fn data_ptr(&self) -> *mut u8 {
+        unsafe { self.ptr.as_ptr().add(size_of::<BoxedSlice<H, u8>>()) }
+    }
+
+    fn realloc(&mut self, new_cap: usize) {
+        let old_layout = self.layout;
+        let new_layout = slice_layout::<H, u8>(new_cap);
+        let ptr = unsafe { alloc::realloc(self.ptr.as_ptr(), old_layout, new_layout.size()) };
+        if ptr.is_null() {
+            alloc::handle_alloc_error(new_layout);
+        }
+        self.ptr = unsafe { NonNull::new_unchecked(ptr) };
+        self.layout = new_layout;
+    }
+
+    fn shrink_to_fit(&mut self) {
+        if self.len() == self.capacity() {
+            return;
+        }
+        self.realloc(self.len());
+    }
+
+    fn len(&self) -> usize {
+        unsafe { self.len_ptr().read() }
+    }
+
+    unsafe fn set_len(&mut self, len: usize) {
+        unsafe { self.len_ptr().write(len) }
+    }
+
+    pub(crate) fn capacity(&self) -> usize {
+        (self.layout.size() - size_of::<BoxedSlice<H, u8>>()) / size_of::<u8>()
+    }
+
+    fn header_ptr(&mut self) -> *mut H {
+        let boxed = self.ptr.cast::<BoxedSlice<H, u8>>().as_ptr();
+        unsafe { &raw mut (*boxed).header }
+    }
+
+    fn len_ptr(&self) -> *mut usize {
+        let boxed = self.ptr.cast::<BoxedSlice<H, u8>>().as_ptr();
+        unsafe { &raw mut (*boxed).len }
+    }
+
+    unsafe fn arena_inner(&self) -> NonNull<arena::ArenaInner> {
+        unsafe {
+            self.ptr
+                .cast::<NonNull<arena::ArenaInner>>()
+                .as_ptr()
+                .read()
+        }
+    }
+
+    fn arena_inner_from_header(header: &H) -> NonNull<arena::ArenaInner> {
+        unsafe { NonNull::from_ref(header).cast::<Header>().as_ref().arena }
+    }
+}
+
+impl<'v, H: Upcast<Header>> Embryo<'v, H, [u8]>
+where
+    Boxed<H, [u8]>: Upcast<Header>,
+    [u8]: Boxable<H>,
+    Boxed<H, str>: Upcast<Header>,
+    str: Boxable<H>,
+{
+    /// # Safety
+    /// The initialized bytes must be valid UTF-8.
+    pub(crate) unsafe fn finalize_str_unchecked(mut self, header: H) -> Base<'v, Boxed<H, str>> {
+        self.shrink_to_fit();
+        unsafe {
+            debug_assert_eq!(self.arena_inner(), Self::arena_inner_from_header(&header));
+            self.header_ptr().write(header);
+            let arena = self.arena_inner();
+            let ptr = self.ptr.cast::<Boxed<H, str>>();
+            let size = self.layout.size();
+            mem::forget(self);
+            Base::new_from_raw_inner(arena, ptr, size)
+        }
+    }
+}
 
 pub(crate) trait Boxable<H: Upcast<Header>> {
     type Inner: Upcast<Header>;
@@ -453,13 +629,6 @@ const fn sized_layout<H: Upcast<Header>, T: Collect>() -> Layout {
 fn slice_layout<H: Upcast<Header>, T>(len: usize) -> Layout {
     Layout::new::<BoxedSlice<H, T>>()
         .extend(Layout::array::<T>(len).unwrap())
-        .and_then(|(l, _)| l.align_to(1 << tag::WIDTH))
-        .unwrap()
-}
-
-fn str_layout<H: Upcast<Header>>(len: usize) -> Layout {
-    Layout::new::<BoxedStr<H>>()
-        .extend(Layout::array::<u8>(len).unwrap())
         .and_then(|(l, _)| l.align_to(1 << tag::WIDTH))
         .unwrap()
 }
@@ -710,33 +879,37 @@ where
     }
 }
 
+impl<'v, H: Upcast<Header>> Base<'v, Boxed<H, [u8]>>
+where
+    Boxed<H, [u8]>: Upcast<Header>,
+    [u8]: Boxable<H>,
+{
+    pub(crate) unsafe fn from_header_slice(arena: &Arena<'v>, header: H, value: &[u8]) -> Self {
+        let embryo = unsafe {
+            let mut embryo = Embryo::<H, [u8]>::from_arena_capacity(arena, value.len());
+            embryo.extend(value);
+            embryo
+        };
+        embryo.finalize(header)
+    }
+}
+
 impl<'v, H: Upcast<Header>> Base<'v, Boxed<H, str>>
 where
     Boxed<H, str>: Upcast<Header>,
     str: Boxable<H>,
+    Boxed<H, [u8]>: Upcast<Header>,
+    [u8]: Boxable<H>,
 {
-    pub(crate) unsafe fn from_header_utf8_iter(
+    pub(crate) unsafe fn from_header_utf8_slice(
         arena: &Arena<'v>,
         header: H,
-        iter: impl ExactSizeIterator<Item = u8>,
+        value: &[u8],
     ) -> Self {
-        let layout = str_layout::<H>(iter.len());
         unsafe {
-            let boxed = alloc::alloc(layout) as *mut BoxedStr<H>;
-            if boxed.is_null() {
-                alloc::handle_alloc_error(layout);
-            }
-            ptr::write(&raw mut (*boxed).header, header);
-            ptr::write(&raw mut (*boxed).len, iter.len());
-            let value = (boxed as *mut u8).add(size_of::<BoxedStr<H>>());
-            for (i, e) in iter.enumerate() {
-                value.add(i).write(e);
-            }
-            Base::new_from_raw(
-                arena,
-                NonNull::new_unchecked(boxed as *mut Boxed<H, str>),
-                layout.size(),
-            )
+            let mut embryo = Embryo::<H, [u8]>::from_arena_capacity(arena, value.len());
+            embryo.extend(value);
+            embryo.finalize_str_unchecked(header)
         }
     }
 }
@@ -792,7 +965,7 @@ where
     Boxed<H, T>: Upcast<Header>,
 {
     pub(crate) unsafe fn get_unchecked(&self) -> &T {
-        assert_ne!(self.strong_count(), 0);
+        debug_assert_ne!(self.strong_count(), 0);
         unsafe { Boxable::deref_inner(self.ptr.cast()).as_ref() }
     }
 }
