@@ -1,27 +1,30 @@
 #[cfg(unix)]
 use std::os::fd::{AsFd, OwnedFd};
-use std::{io, io::SeekFrom, path, result, str};
+use std::{
+    io::{self, SeekFrom},
+    mem, path, result, str,
+};
 
 use bstr::ByteSlice;
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, call,
-    error::ResultExt,
-    method,
+    Error, Instance, Object, Output, Result, Slot, State, Strand, call, method,
     object::TypeBuilder,
     unpack,
-    value::{TypeObject, View},
+    value::{BinEmbryo, TypeObject, View},
 };
 use dolang_shell_vfs::{OpenOptions, Vfs};
 use tokio::{
     fs,
-    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
+    io::{AsyncSeekExt, AsyncWriteExt},
 };
 
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
-    fs::metadata::create_metadata,
+    fs::{metadata::create_metadata, read_all, read_into_spare},
     global::Global,
 };
+
+const CHUNK_SIZE: usize = 8192;
 
 /// Configure OpenOptions based on mode string (supports 'b' suffix for binary mode).
 fn configure_options(opts: &mut impl OpenOptions, mode: &str) {
@@ -65,9 +68,9 @@ fn maximal_utf8_prefix(bytes: &[u8]) -> result::Result<&str, ()> {
 }
 
 /// A handle to an open file.
-pub(crate) struct File {
+pub(crate) struct File<'v> {
     file: Option<fs::File>,
-    buf: Vec<u8>,
+    buf: BinEmbryo<'v>,
 }
 
 pub(crate) struct FileAnnex<'v> {
@@ -89,8 +92,8 @@ pub(crate) async fn open<'v, 's>(
     opts.open(&path).await
 }
 
-impl File {
-    pub(crate) fn create<'v>(
+impl<'v> File<'v> {
+    pub(crate) fn create(
         global: State<'v, Global<'v>>,
         file: fs::File,
         is_binary: bool,
@@ -98,14 +101,14 @@ impl File {
         (
             File {
                 file: Some(file),
-                buf: Default::default(),
+                buf: BinEmbryo::new(),
             },
             FileAnnex { global, is_binary },
         )
     }
 
     #[cfg(unix)]
-    pub(crate) fn fd<'v, 'a, 's>(
+    pub(crate) fn fd<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, Option<OwnedFd>> {
@@ -124,10 +127,7 @@ impl File {
             .into_sys(strand)
     }
 
-    async fn logical_position<'v, 's>(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, u64> {
+    async fn logical_position<'s>(&mut self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, u64> {
         let file_ref = self
             .file
             .as_mut()
@@ -137,7 +137,7 @@ impl File {
             .ok_or_else(|| Error::runtime(strand, "file cursor is before buffered data"))
     }
 
-    async fn seek_to<'v, 's>(
+    async fn seek_to<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
         seek_from: SeekFrom,
@@ -147,11 +147,11 @@ impl File {
             .as_mut()
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
         let pos = file_ref.seek(seek_from).await.into_sys(strand)?;
-        self.buf.clear();
+        self.buf.truncate(0);
         Ok(pos)
     }
 
-    pub(crate) async fn open<'v, 's>(
+    pub(crate) async fn open<'s>(
         strand: &mut Strand<'v, 's>,
         global: State<'v, Global<'v>>,
         path: path::PathBuf,
@@ -197,18 +197,11 @@ impl File {
             strand
                 .with_slots(async move |strand, [mut handle, mut tmp]| {
                     // Block scope mode: create handle, call block with auto-close
-                    global.types.file.create_with_annex(
-                        strand,
-                        File {
-                            file: Some(file),
-                            buf: Default::default(),
-                        },
-                        FileAnnex {
-                            global,
-                            is_binary: mode.contains('b'),
-                        },
-                        &mut handle,
-                    );
+                    let (file, annex) = File::create(global, file, mode.contains('b'));
+                    global
+                        .types
+                        .file
+                        .create_with_annex(strand, file, annex, &mut handle);
 
                     // Call the block with the handle as argument
                     let result = call!(strand, block, out, &handle).await;
@@ -221,27 +214,16 @@ impl File {
                 .await
         } else {
             // No block: just return the handle in the slot
-            global.types.file.create_with_annex(
-                strand,
-                File {
-                    file: Some(file),
-                    buf: Default::default(),
-                },
-                FileAnnex {
-                    global,
-                    is_binary: mode.contains('b'),
-                },
-                out,
-            );
+            let (file, annex) = File::create(global, file, mode.contains('b'));
+            global
+                .types
+                .file
+                .create_with_annex(strand, file, annex, out);
             Ok(())
         }
     }
 
-    async fn fill_buf<'v, 's>(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        n: usize,
-    ) -> Result<'v, 's, ()> {
+    async fn fill_buf<'s>(&mut self, strand: &mut Strand<'v, 's>, n: usize) -> Result<'v, 's, ()> {
         let file_ref = self
             .file
             .as_mut()
@@ -250,82 +232,81 @@ impl File {
         if buf.len() >= n {
             return Ok(());
         }
-        if buf.len() + buf.capacity() < n {
-            buf.reserve(n - buf.len() - buf.capacity())
+        if n > buf.capacity() {
+            buf.reserve(strand, n - buf.len())
         }
-
-        file_ref.read_buf(buf).await.into_sys(strand)?;
+        let read = read_into_spare(file_ref, buf.spare_capacity_mut())
+            .await
+            .into_sys(strand)?;
+        unsafe { buf.advance(read) };
         Ok(())
     }
 
-    async fn fill_buf_all<'v, 's>(&mut self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        let file_ref = self
+    async fn read_binary<'s>(
+        &mut self,
+        n: usize,
+        strand: &mut Strand<'v, 's>,
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        self.fill_buf(strand, n).await?;
+        let buf = mem::take(&mut self.buf);
+        buf.finish(strand, out);
+        Ok(())
+    }
+
+    async fn read_binary_all<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let mut buf = mem::take(&mut self.buf);
+        let file = self
             .file
             .as_mut()
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-        let buf = &mut self.buf;
-        file_ref.read_to_end(buf).await.into_sys(strand)?;
+        read_all(strand, file, &mut buf).await?;
+        buf.finish(strand, out);
         Ok(())
     }
 
-    async fn read_binary<'v, 's>(
+    async fn read_text<'s>(
         &mut self,
         n: usize,
         strand: &mut Strand<'v, 's>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         self.fill_buf(strand, n).await?;
-        Output::set(strand, out, self.buf.as_slice());
-        self.buf.clear();
-        Ok(())
-    }
-
-    async fn read_binary_all<'v, 's>(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        out: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        self.fill_buf_all(strand).await?;
-        Output::set(strand, out, self.buf.as_slice());
-        self.buf.clear();
-        Ok(())
-    }
-
-    async fn read_text<'v, 's>(
-        &mut self,
-        n: usize,
-        strand: &mut Strand<'v, 's>,
-        out: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        self.fill_buf(strand, n).await?;
-        match maximal_utf8_prefix(&self.buf) {
+        match maximal_utf8_prefix(self.buf.as_slice()) {
             Ok(s) => {
                 let consumed = s.len();
-                Output::set(strand, out, s);
-                self.buf.drain(..consumed);
+                let rem = self.buf.len() - consumed;
+                let mut buf =
+                    mem::replace(&mut self.buf, BinEmbryo::new_with_capacity(strand, rem));
+                self.buf.extend(strand, &buf.as_slice()[consumed..]);
+                buf.truncate(consumed);
+                unsafe { buf.finish_str_unchecked(strand, out) };
                 Ok(())
             }
             Err(()) => Err(Error::runtime(strand, "invalid UTF-8 data")),
         }
     }
 
-    async fn read_text_all<'v, 's>(
+    async fn read_text_all<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        self.fill_buf_all(strand).await?;
-        match str::from_utf8(&self.buf) {
-            Ok(s) => {
-                Output::set(strand, out, s);
-                self.buf.clear();
-                Ok(())
-            }
-            Err(_) => Err(Error::runtime(strand, "invalid UTF-8 data")),
-        }
+        let mut buf = mem::take(&mut self.buf);
+        let file = self
+            .file
+            .as_mut()
+            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+        read_all(strand, file, &mut buf).await?;
+        buf.finish_str(strand, out)
+            .map_err(|_| Error::runtime(strand, "invalid UTF-8 data"))
     }
 
-    async fn write<'v, 'a, 's>(
+    async fn write<'a, 's>(
         &mut self,
         data: Slot<'v, 'a>,
         strand: &mut Strand<'v, 's>,
@@ -353,7 +334,7 @@ impl File {
         Ok(())
     }
 
-    async fn metadata<'v, 's>(
+    async fn metadata<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
         global: State<'v, Global<'v>>,
@@ -376,7 +357,7 @@ impl File {
     }
 }
 
-impl<'v> Object<'v> for File {
+impl<'v> Object<'v> for File<'v> {
     const NAME: &'v str = "File";
     const MODULE: &'v str = "fs";
     type Annex = FileAnnex<'v>;
@@ -402,24 +383,22 @@ impl<'v> Object<'v> for File {
 
         if is_binary {
             // Binary mode: read a chunk of data
-            const CHUNK_SIZE: usize = 8192;
-            let mut buf = std::mem::take(&mut borrow.buf);
-            buf.reserve(CHUNK_SIZE.saturating_sub(buf.len()));
+            let mut buf = mem::take(&mut borrow.buf);
+            buf.reserve(strand, CHUNK_SIZE.saturating_sub(buf.len()));
 
             let file_ref = borrow
                 .file
                 .as_mut()
                 .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
 
-            match file_ref.read_buf(&mut buf).await {
+            match read_into_spare(file_ref, buf.spare_capacity_mut()).await {
                 Ok(0) => {
                     borrow.buf = buf;
                     Ok(false)
                 }
-                Ok(_) => {
-                    Output::set(strand, out, buf.as_slice());
-                    buf.clear();
-                    borrow.buf = buf;
+                Ok(read) => {
+                    unsafe { buf.advance(read) };
+                    buf.finish(strand, out);
                     Ok(true)
                 }
                 Err(e) => {
@@ -430,44 +409,42 @@ impl<'v> Object<'v> for File {
         } else {
             // Text mode: read a line using buffered approach
             // Take ownership of the buffer temporarily
-            let mut buf = std::mem::take(&mut borrow.buf);
+            let mut buf = mem::take(&mut borrow.buf);
 
             loop {
                 // Check if we already have a complete line in the buffer
-                if let Some((line, _rest)) = buf.split_once_str(b"\n") {
-                    let line = str::from_utf8(line).into_do(strand)?;
-                    Output::set(strand, out, line.strip_suffix('\r').unwrap_or(line));
-                    // Drain the consumed bytes (line + \n) from the buffer
-                    buf.drain(..line.len() + 1);
-                    borrow.buf = buf;
+                if let Some((line, _rest)) = buf.as_slice().split_once_str(b"\n") {
+                    let line_len = line.len();
+                    borrow.buf = BinEmbryo::new_with_capacity(strand, buf.len() - (line_len + 1));
+                    borrow.buf.extend(strand, &buf.as_slice()[line_len + 1..]);
+                    buf.truncate(line_len - line.ends_with(b"\r") as usize);
+                    buf.finish_str(strand, out)
+                        .map_err(|_| Error::runtime(strand, "invalid UTF-8"))?;
                     return Ok(true);
                 }
 
                 // Need to read more data
-                const CHUNK_SIZE: usize = 8192;
-                buf.reserve(CHUNK_SIZE.saturating_sub(buf.len()));
+                buf.reserve(strand, CHUNK_SIZE);
 
                 let file_ref = borrow
                     .file
                     .as_mut()
                     .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
 
-                match file_ref.read_buf(&mut buf).await {
+                match read_into_spare(file_ref, buf.spare_capacity_mut()).await {
                     Ok(0) => {
                         // EOF reached
                         if buf.is_empty() {
                             borrow.buf = buf;
                             return Ok(false);
                         } else {
-                            // Return final line without newline
-                            let line = str::from_utf8(&buf).into_do(strand)?;
-                            Output::set(strand, out, line);
-                            buf.clear();
-                            borrow.buf = buf;
+                            buf.finish_str(strand, out)
+                                .map_err(|_| Error::runtime(strand, "invalid UTF-8"))?;
                             return Ok(true);
                         }
                     }
-                    Ok(_) => {
+                    Ok(read) => {
+                        unsafe { buf.advance(read) };
                         // Continue loop to check for newline
                         continue;
                     }

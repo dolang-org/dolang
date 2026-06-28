@@ -43,7 +43,7 @@ pub(crate) struct Types<'v> {
     pub(crate) path: Type<'v, Path>,
     pub(crate) path_components_iter: Type<'v, PathComponentsIter>,
     pub(crate) metadata: Type<'v, Metadata>,
-    pub(crate) file: Type<'v, File>,
+    pub(crate) file: Type<'v, File<'v>>,
     pub(crate) dir_entry: Type<'v, DirEntry>,
     pub(crate) dir_entry_iter: Type<'v, DirEntryIter>,
     pub(crate) glob_iter: Type<'v, crate::fs::glob::GlobIter>,

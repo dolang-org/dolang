@@ -1,9 +1,18 @@
 use dolang::runtime::{
-    Arg, Error, Output, Result, Slot, State, Strand, call, unpack, value::View, vm::Builder,
+    Arg, Error, Output, Result, Slot, State, Strand, call, unpack,
+    value::{BinEmbryo, View},
+    vm::Builder,
 };
 use dolang_shell_vfs::{FileType, OpenOptions, Vfs, WellKnownPath};
-use std::{io, io::ErrorKind, path::PathBuf, time};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::{
+    future::poll_fn,
+    io::{self, ErrorKind},
+    mem::MaybeUninit,
+    path::PathBuf,
+    pin::Pin,
+    str, time,
+};
+use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 
 use rand::{RngExt, distr::Alphanumeric};
 
@@ -26,6 +35,38 @@ use crate::{
 };
 
 use glob::{GlobIter, GlobIterAnnex};
+
+#[cfg(unix)]
+use dolang::runtime::Value;
+
+pub(super) async fn read_into_spare(
+    reader: &mut (impl AsyncRead + Unpin),
+    spare: &mut [MaybeUninit<u8>],
+) -> io::Result<usize> {
+    let mut buf = ReadBuf::uninit(spare);
+    poll_fn(|cx| Pin::new(&mut *reader).poll_read(cx, &mut buf)).await?;
+    Ok(buf.filled().len())
+}
+
+pub(super) async fn read_all<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    reader: &mut (impl AsyncRead + Unpin),
+    embryo: &mut BinEmbryo<'v>,
+) -> Result<'v, 's, ()> {
+    loop {
+        if embryo.spare_capacity_mut().is_empty() {
+            embryo.reserve(strand, 1);
+        }
+        let read = read_into_spare(reader, embryo.spare_capacity_mut())
+            .await
+            .into_sys(strand)?;
+        if read == 0 {
+            break;
+        }
+        unsafe { embryo.advance(read) };
+    }
+    Ok(())
+}
 
 #[cfg(windows)]
 pub(crate) mod windows {
@@ -168,14 +209,14 @@ async fn read<'v, 's>(
     let mut file = file::open(strand, global, path, mode)
         .await
         .into_sys(strand)?;
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf).await.into_sys(strand)?;
+    let mut embryo = BinEmbryo::new_with_capacity(strand, 8192);
+    read_all(strand, &mut file, &mut embryo).await?;
     if is_binary {
-        Output::set(strand, out, buf.as_slice());
+        embryo.finish(strand, out);
     } else {
-        let text =
-            std::str::from_utf8(&buf).map_err(|_| Error::runtime(strand, "invalid UTF-8 data"))?;
-        Output::set(strand, out, text);
+        embryo
+            .finish_str(strand, out)
+            .map_err(|_| Error::runtime(strand, "invalid UTF-8 data"))?;
     }
     Ok(())
 }
@@ -493,7 +534,7 @@ async fn set_timestamps<'v, 's>(
 #[cfg(unix)]
 fn parse_chown_identity<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    value: &dolang::runtime::Value<'v>,
+    value: &Value<'v>,
     field: &'static str,
 ) -> Result<'v, 's, dolang_shell_vfs::ChownIdentity> {
     if let Some(value) = value.as_int(strand) {
