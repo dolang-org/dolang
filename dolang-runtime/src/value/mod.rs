@@ -1580,6 +1580,7 @@ impl<'v> BinEmbryo<'v> {
         Ok(())
     }
 
+    /// Finalizes the embryo into a Do `str` *without validation*
     /// # Safety
     /// The initialized bytes must be valid UTF-8.
     pub unsafe fn finish_str_unchecked(self, alloc: &mut impl Alloc<'v>, mut out: impl Output<'v>) {
