@@ -381,10 +381,10 @@ impl<'v> Value<'v> {
             Case::Prim(prim) => {
                 // Primitives are only subtypes of themselves
                 let self_type = match prim {
-                    Prim::Nil => strand.singletons().nil.dup(),
-                    Prim::Int(_) => strand.singletons().int.dup(),
-                    Prim::F64(_) => strand.singletons().float.dup(),
-                    Prim::Bool(_) => strand.singletons().bool.dup(),
+                    Prim::Nil => &strand.singletons().nil,
+                    Prim::Int(_) => &strand.singletons().int,
+                    Prim::F64(_) => &strand.singletons().float,
+                    Prim::Bool(_) => &strand.singletons().bool,
                 };
                 self_type.op_eq(strand, supertype).op_bool(strand)
             }

@@ -6,7 +6,7 @@ use crate::{
     gc::{Collect, arena::Visit},
     object::{
         iter,
-        protocol::{GcObj, Protocol, Recv},
+        protocol::{Protocol, Recv},
     },
     strand::Strand,
     sym::{self, Sym},
@@ -192,17 +192,17 @@ impl<'v> Protocol<'v> for Range<'v> {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &strand.vm().singletons().iterable)
-            || supertype.eq(strand, &strand.vm().singletons().range)
+        supertype.eq(strand, &strand.singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().range)
             || supertype.eq(strand, TypeObject::Value)
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().range.dup())
+        Output::set(strand, out, &strand.singletons().range)
     }
 
     fn op_display<'a, 's>(
@@ -263,7 +263,7 @@ impl<'v> Protocol<'v> for Range<'v> {
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
         if borrow.start.is_nil() {
@@ -281,16 +281,16 @@ impl<'v> Protocol<'v> for Range<'v> {
         } else {
             Direction::Empty
         };
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().range_iter,
+        strand.builtin_types().range_iter.create(
+            strand,
             Iter {
                 cur: borrow.start.dup(),
                 step: borrow.step.dup(),
                 end: borrow.end.dup(),
                 direction,
             },
-        )));
+            out,
+        );
         Ok(())
     }
 
@@ -396,9 +396,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_display<'a, 's>(
@@ -485,9 +485,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -496,7 +496,7 @@ impl<'v> Protocol<'v> for Type {
         supertype: &Value<'v>,
     ) -> bool {
         supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.vm().singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().iterable)
             || supertype.eq(strand, TypeObject::Value)
     }
 
@@ -513,7 +513,7 @@ impl<'v> Protocol<'v> for Type {
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let start = Sym::well_known(sym::START);
         let end = Sym::well_known(sym::END);
@@ -540,9 +540,8 @@ impl<'v> Protocol<'v> for Type {
         let end = end
             .ok_or_else(|| Error::missing_key(strand, Sym::well_known(sym::END)))?
             .take();
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().range,
+        strand.builtin_types().range.create(
+            strand,
             Range::new(
                 start
                     .as_mut()
@@ -553,7 +552,8 @@ impl<'v> Protocol<'v> for Type {
                     .map(Slot::take)
                     .unwrap_or_else(|| Value::from_i64(strand, 1)),
             ),
-        )));
+            out,
+        );
         Ok(())
     }
 }

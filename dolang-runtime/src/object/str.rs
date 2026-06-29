@@ -67,9 +67,9 @@ impl<'v> Protocol<'v> for str {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().str.dup())
+        Output::set(strand, out, &strand.singletons().str)
     }
 
     fn op_display<'a, 's>(
@@ -272,16 +272,16 @@ impl<'v> Protocol<'v> for str {
                         }
                     }
                 };
-                out.store(Value::from_object(GcObj::new(
-                    strand.vm().arena(),
-                    strand.vm().builtin_types().str_split,
+                strand.builtin_types().str_split.create(
+                    strand,
                     Split {
                         str: this.to_strong(),
                         delim: delim_gc,
                         state,
                         forward,
                     },
-                )));
+                    out,
+                );
                 Ok(())
             }
             sym::JOIN => {
@@ -539,9 +539,9 @@ impl<'v> Protocol<'v> for Split<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -673,9 +673,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -778,7 +778,7 @@ impl<'v> Protocol<'v> for Type {
                 let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
                 let s = value.to_string(strand)?;
                 let native = Value::from_str(strand, s.as_str());
-                self_val.op_fill(strand, &strand.vm().singletons().str, native)?;
+                self_val.op_fill(strand, &strand.singletons().str, native)?;
                 Ok(())
             }
             _ => {

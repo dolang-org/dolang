@@ -94,17 +94,17 @@ impl<'v> Protocol<'v> for Module<'v> {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &strand.vm().singletons().iterable)
-            || supertype.eq(strand, &strand.vm().singletons().module)
+        supertype.eq(strand, &strand.singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().module)
             || supertype.eq(strand, TypeObject::Value)
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().module.dup())
+        Output::set(strand, out, &strand.singletons().module)
     }
 
     fn op_display<'a, 's>(
@@ -182,17 +182,17 @@ impl<'v> Protocol<'v> for Module<'v> {
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let sr = this.to_strong();
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().module_iter,
+        strand.builtin_types().module_iter.create(
+            strand,
             Iter {
                 module: sr,
                 index: 0,
             },
-        )));
+            out,
+        );
         Ok(())
     }
 }
@@ -220,9 +220,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -318,9 +318,9 @@ impl<'v> Protocol<'v> for Native<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().module.dup())
+        Output::set(strand, out, &strand.singletons().module)
     }
 
     fn op_display<'a, 's>(
@@ -480,9 +480,9 @@ impl<'v> Protocol<'v> for Namespace<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().module.dup())
+        Output::set(strand, out, &strand.singletons().module)
     }
 
     fn op_display<'a, 's>(
@@ -621,9 +621,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -632,7 +632,7 @@ impl<'v> Protocol<'v> for Type {
         supertype: &Value<'v>,
     ) -> bool {
         supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.vm().singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().iterable)
             || supertype.eq(strand, TypeObject::Value)
     }
 

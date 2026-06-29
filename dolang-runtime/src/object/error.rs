@@ -13,7 +13,7 @@ use crate::{
     gc::{Collect, arena::Visit},
     strand::Strand,
     unpack,
-    value::{Slot, Value},
+    value::{Output, Slot, Value},
     vm::Vm,
 };
 
@@ -202,9 +202,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -253,9 +253,9 @@ impl<'v> Protocol<'v> for VariantType {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -264,9 +264,9 @@ impl<'v> Protocol<'v> for VariantType {
         supertype: &crate::value::Value<'v>,
     ) -> bool {
         supertype.eq(strand, &this)
-            || strand.vm().singletons().error.eq(strand, supertype)
+            || strand.singletons().error.eq(strand, supertype)
             || (is_runtime_superkind(this.get().0)
-                && strand.vm().singletons().error_runtime.eq(strand, supertype))
+                && strand.singletons().error_runtime.eq(strand, supertype))
     }
 
     fn op_debug<'a, 's>(

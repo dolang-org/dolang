@@ -282,9 +282,9 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().args.dup())
+        Output::set(strand, out, &strand.singletons().args)
     }
 
     fn op_debug<'a, 's>(
@@ -298,13 +298,13 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().arg_iter,
+        strand.builtin_types().arg_iter.create(
+            strand,
             ArgIter::new(this.to_strong(), HashSet::new(), 0, 0, false),
-        )));
+            out,
+        );
         Ok(())
     }
 
@@ -333,11 +333,11 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
             let pos = first_visible_index(&pack.inner, &skip, 0).unwrap_or(pack.inner.len());
             let positional_matched =
                 i64::try_from(plan.pos_matched).map_err(|_| Error::overflow(strand))?;
-            out.at(sig.len() - 1).store(Value::from_object(GcObj::new(
-                strand.arena(),
-                strand.builtin_types().arg_iter,
+            strand.builtin_types().arg_iter.create(
+                strand,
                 ArgIter::new(this.to_strong(), skip, pos, positional_matched, false),
-            )));
+                out.at(sig.len() - 1),
+            );
         }
 
         Ok(())
@@ -418,11 +418,11 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
                             .expect("has_keys implies a key"),
                     ));
                 }
-                out.store(Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().arg_iter,
+                strand.builtin_types().arg_iter.create(
+                    strand,
                     ArgIter::new(this.to_strong(), HashSet::new(), 0, 0, true),
-                )));
+                    out,
+                );
                 Ok(())
             }
             sym::POS_KEYS => {
@@ -459,9 +459,9 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -628,11 +628,11 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
                 }
                 let pos = first_visible_index(&iter.pack.inner, &skip, iter.pos)
                     .unwrap_or(iter.pack.inner.len());
-                out.store(Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().arg_iter,
+                strand.builtin_types().arg_iter.create(
+                    strand,
                     ArgIter::new(iter.pack.clone(), skip, pos, 0, true),
-                )));
+                    out,
+                );
                 Ok(())
             }
             sym::POS_KEYS => {

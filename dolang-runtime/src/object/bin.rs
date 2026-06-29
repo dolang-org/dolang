@@ -69,9 +69,9 @@ impl<'v> Protocol<'v> for [u8] {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().bin.dup())
+        Output::set(strand, out, &strand.singletons().bin)
     }
 
     fn op_display<'a, 's>(
@@ -268,16 +268,16 @@ impl<'v> Protocol<'v> for [u8] {
                         }
                     }
                 };
-                out.store(Value::from_object(GcObj::new(
-                    strand.vm().arena(),
-                    strand.vm().builtin_types().bin_split,
+                strand.builtin_types().bin_split.create(
+                    strand,
                     Split {
                         str: this.to_strong(),
                         delim: delim_gc,
                         state,
                         forward,
                     },
-                )));
+                    out,
+                );
                 Ok(())
             }
             sym::JOIN => {
@@ -514,9 +514,9 @@ impl<'v> Protocol<'v> for Split<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -648,9 +648,9 @@ impl<'v> Protocol<'v> for Class {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -722,7 +722,7 @@ impl<'v> Protocol<'v> for Class {
                     let s = value.to_string(strand)?;
                     Value::from_u8_slice(strand, s.as_bytes())
                 };
-                self_val.op_fill(strand, &strand.vm().singletons().bin, native)?;
+                self_val.op_fill(strand, &strand.singletons().bin, native)?;
                 Ok(())
             }
             sym::PACK => {
@@ -756,10 +756,7 @@ impl<'v> Protocol<'v> for Class {
                 }
                 Ok(())
             }
-            _ => {
-                dispatch_native_method(strand, &strand.vm().singletons().bin, method, args, out)
-                    .await
-            }
+            _ => dispatch_native_method(strand, &strand.singletons().bin, method, args, out).await,
         }
     }
 

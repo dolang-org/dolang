@@ -145,7 +145,7 @@ impl<'v> Vm<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         mut args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         enum Mode {
             Get,
@@ -190,11 +190,11 @@ impl<'v> Vm<'v> {
                     Mode::Module => {
                         let mut ns = Namespace::new(strand);
                         ns.insert(strand, &[], raw)?;
-                        out.store(Value::from_object(GcObj::new(
-                            strand.arena(),
-                            strand.builtin_types().namespace,
-                            ns,
-                        )));
+                        strand
+                            .vm()
+                            .builtin_types()
+                            .namespace
+                            .create(strand, ns, out);
                     }
                 }
                 Ok(())
@@ -206,13 +206,10 @@ impl<'v> Vm<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        out.store(Value::from_object(GcObj::new(
-            self.arena(),
-            self.builtin_types().array,
-            Array::from_builtin_args(strand, args).await?,
-        )));
+        let array = Array::from_builtin_args(strand, args).await?;
+        strand.builtin_types().array.create(strand, array, out);
         Ok(())
     }
 
@@ -220,13 +217,10 @@ impl<'v> Vm<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        out.store(Value::from_object(GcObj::new(
-            self.arena(),
-            self.builtin_types().dict,
-            Dict::from_builtin_args(strand, args).await?,
-        )));
+        let dict = Dict::from_builtin_args(strand, args).await?;
+        strand.builtin_types().dict.create(strand, dict, out);
         Ok(())
     }
 
@@ -234,7 +228,7 @@ impl<'v> Vm<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let ([mut start, mut end, mut step], []) = unpack!(strand, args, 3, 0)?;
         let step = if step.is_nil() {
@@ -242,11 +236,11 @@ impl<'v> Vm<'v> {
         } else {
             step.take()
         };
-        out.store(Value::from_object(GcObj::new(
-            self.arena(),
-            self.builtin_types().range,
+        strand.builtin_types().range.create(
+            strand,
             range::Range::new(start.take(), end.take(), step),
-        )));
+            out,
+        );
         Ok(())
     }
 
@@ -326,14 +320,14 @@ impl<'v> Vm<'v> {
         &self,
         strand: &mut Strand<'v, 's>,
         args: Args<'v, '_>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let arg_pack = ArgPack::from_args(strand, args);
-        out.store(Value::from_object(GcObj::new(
-            strand.vm().arena(),
-            strand.vm().builtin_types().arg_pack,
-            arg_pack,
-        )));
+        strand
+            .vm()
+            .builtin_types()
+            .arg_pack
+            .create(strand, arg_pack, out);
         Ok(())
     }
 
@@ -342,7 +336,7 @@ impl<'v> Vm<'v> {
         &self,
         strand: &mut Strand<'v, 's>,
         mut args: Args<'v, '_>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let Some(Arg::Pos(name)) = args.next() else {
             return Err(Error::missing_positional(strand, 0));
@@ -366,7 +360,7 @@ impl<'v> Vm<'v> {
                 Arg::Pos(slot) => slot,
                 Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
             };
-            if !slot.is_instance_of(strand, &strand.singletons().type_obj.dup()) {
+            if !slot.is_instance_of(strand, &strand.singletons().type_obj) {
                 return Err(Error::type_error(
                     strand,
                     "class_create: superclass must be a type object",
@@ -470,7 +464,7 @@ impl<'v> Vm<'v> {
                 .is_some()
             {
                 ClassEntry::Method(value)
-            } else if value.is_instance_of(strand, &strand.vm().singletons().descriptor) {
+            } else if value.is_instance_of(strand, &strand.singletons().descriptor) {
                 ClassEntry::Descriptor(value)
             } else {
                 let slot = field_defaults.len();
@@ -493,11 +487,11 @@ impl<'v> Vm<'v> {
             native_supers: native_supers.into(),
         };
 
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().class_object,
-            class_obj,
-        )));
+        strand
+            .vm()
+            .builtin_types()
+            .class_object
+            .create(strand, class_obj, out);
 
         Ok(())
     }

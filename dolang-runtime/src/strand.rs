@@ -19,7 +19,7 @@ use crate::{
     gc::arena::Visit,
     method,
     object::{
-        backtrace,
+        BuiltinTypes, Singletons, backtrace,
         protocol::GcObj,
         strand::{Completion, Handle},
     },
@@ -1286,6 +1286,14 @@ impl<'v, 's> Strand<'v, 's> {
         };
         self.inner.sync_depth.update(|x| x - 1);
         res
+    }
+
+    pub(crate) fn builtin_types(&self) -> &'v BuiltinTypes<'v> {
+        self.vm().builtin_types()
+    }
+
+    pub(crate) fn singletons(&self) -> &'v Singletons<'v> {
+        self.vm().singletons()
     }
 }
 

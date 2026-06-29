@@ -19,7 +19,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Input, InputBy, Output, Slot, Slots, TypeObject, Value, private::Sealed},
-    vm::Vm,
+    vm::{Alloc, Vm},
 };
 
 pub(crate) struct Inspect<'v, 'a> {
@@ -788,6 +788,31 @@ impl<'v, T: ?Sized + 'v> TypeHandle<'v, T> {
 
     pub(crate) fn vtbl(self) -> &'v Vtbl<'v> {
         unsafe { self.vtbl.as_ref() }
+    }
+}
+
+impl<'v, T: Protocol<'v>> TypeHandle<'v, T> {
+    pub(crate) fn create(&self, alloc: &mut impl Alloc<'v>, value: T, out: impl Output<'v>)
+    where
+        T::Annex: Default,
+    {
+        self.create_with_annex(alloc, value, Default::default(), out)
+    }
+
+    pub(crate) fn create_with_annex(
+        &self,
+        alloc: &mut impl Alloc<'v>,
+        value: T,
+        annex: T::Annex,
+        mut out: impl Output<'v>,
+    ) {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        Slot::from_output(&mut out).store(Value::from_object(GcObj::new_annex(
+            vm.arena(),
+            *self,
+            value,
+            annex,
+        )));
     }
 }
 

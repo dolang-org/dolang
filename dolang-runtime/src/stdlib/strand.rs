@@ -15,7 +15,6 @@ use crate::{
         array::Array,
         backtrace, channel,
         native::{Object, Type, TypeBuilder},
-        protocol::GcObj,
         tuple,
     },
     strand::{InterruptToken, Local, LocalKey, LocalRootKey, Redirect, Strand},
@@ -662,11 +661,11 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     while input.next(strand, &mut item).await? {
                         acc.push(item.take())
                     }
-                    out.store(Value::from_object(GcObj::new(
-                        strand.arena(),
-                        strand.builtin_types().array,
-                        Array { inner: acc },
-                    )));
+                    strand
+                        .vm()
+                        .builtin_types()
+                        .array
+                        .create(strand, Array { inner: acc }, out);
                 }
                 Ok(())
             },
@@ -717,7 +716,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             out.store(Value::from_object(handle));
             Ok(())
         })
-        .function("fork", async move |strand, args, mut out| {
+        .function("fork", async move |strand, args, out| {
             let mut thunks = Vec::new();
             let mut limit = None;
             for arg in args {
@@ -797,11 +796,11 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     restore_prior_permit(strand, state, prior_permit).await?;
 
                     let results = result?;
-                    out.store(Value::from_object(GcObj::new(
-                        strand.arena(),
-                        strand.builtin_types().array,
-                        Array { inner: results },
-                    )));
+                    strand
+                        .vm()
+                        .builtin_types()
+                        .array
+                        .create(strand, Array { inner: results }, out);
                     Ok(())
                 })
                 .await

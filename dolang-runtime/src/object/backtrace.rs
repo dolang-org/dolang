@@ -9,16 +9,20 @@ use crate::{
     vm::Vm,
 };
 
-use super::protocol::{GcObj, Inspect, Protocol, Recv};
+use super::protocol::{Inspect, Protocol, Recv};
 
-pub(crate) fn create<'v>(vm: &Vm<'v>, entries: Vec<UnwindEntry<'v>>, mut out: impl Output<'v>) {
-    Slot::from_output(&mut out).store(Value::from_object(GcObj::new(
-        vm.arena(),
-        vm.builtin_types().backtrace,
+pub(crate) fn create<'v>(
+    strand: &mut Strand<'v, '_>,
+    entries: Vec<UnwindEntry<'v>>,
+    out: impl Output<'v>,
+) {
+    strand.builtin_types().backtrace.create(
+        strand,
         Backtrace {
             entries: entries.into_boxed_slice(),
         },
-    )));
+        out,
+    );
 }
 
 pub(crate) fn entries_from_value<'v>(
@@ -61,17 +65,17 @@ impl<'v> Protocol<'v> for Backtrace<'v> {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &strand.vm().singletons().backtrace)
-            || supertype.eq(strand, &strand.vm().singletons().iterable)
+        supertype.eq(strand, &strand.singletons().backtrace)
+            || supertype.eq(strand, &strand.singletons().iterable)
             || supertype.eq(strand, TypeObject::Value)
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().backtrace.dup())
+        Output::set(strand, out, &strand.singletons().backtrace)
     }
 
     fn op_debug<'a, 's>(
@@ -111,16 +115,16 @@ impl<'v> Protocol<'v> for Backtrace<'v> {
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().backtrace_iter,
+        strand.builtin_types().backtrace_iter.create(
+            strand,
             Iter {
                 entries: this.get().entries.to_vec().into_boxed_slice(),
                 index: 0,
             },
-        )));
+            out,
+        );
         Ok(())
     }
 }
@@ -149,9 +153,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -172,7 +176,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let Some(entry) = borrow.entries.get(borrow.index).cloned() else {
@@ -180,11 +184,11 @@ impl<'v> Protocol<'v> for Iter<'v> {
         };
         borrow.index += 1;
         drop(borrow);
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().backtrace_frame,
-            Frame { entry },
-        )));
+        strand
+            .vm()
+            .builtin_types()
+            .backtrace_frame
+            .create(strand, Frame { entry }, out);
         Ok(true)
     }
 }
@@ -211,9 +215,9 @@ impl<'v> Protocol<'v> for Frame<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().value.dup())
+        Output::set(strand, out, &strand.singletons().value)
     }
 
     fn op_debug<'a, 's>(
@@ -294,9 +298,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(

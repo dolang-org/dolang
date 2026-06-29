@@ -209,17 +209,17 @@ impl<'v> Protocol<'v> for Receiver<'v> {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &strand.vm().singletons().iterable)
-            || supertype.eq(strand, &strand.vm().singletons().input_iter)
+        supertype.eq(strand, &strand.singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().input_iter)
             || supertype.eq(strand, TypeObject::Value)
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -332,17 +332,17 @@ impl<'v> Protocol<'v> for Sender<'v> {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &strand.vm().singletons().sinkable)
-            || supertype.eq(strand, &strand.vm().singletons().output_iter)
+        supertype.eq(strand, &strand.singletons().sinkable)
+            || supertype.eq(strand, &strand.singletons().output_iter)
             || supertype.eq(strand, TypeObject::Value)
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().output_iter.dup())
+        Output::set(strand, out, &strand.singletons().output_iter)
     }
 
     fn op_debug<'a, 's>(

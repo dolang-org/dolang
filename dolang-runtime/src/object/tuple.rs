@@ -74,17 +74,17 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &strand.vm().singletons().iterable)
-            || supertype.eq(strand, &strand.vm().singletons().tuple)
+        supertype.eq(strand, &strand.singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().tuple)
             || supertype.eq(strand, TypeObject::Value)
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().tuple.dup())
+        Output::set(strand, out, &strand.singletons().tuple)
     }
 
     fn op_debug<'a, 's>(
@@ -214,16 +214,16 @@ impl<'v> Protocol<'v> for [Value<'v>] {
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().tuple_iter,
+        strand.builtin_types().tuple_iter.create(
+            strand,
             Iter {
                 tuple: this.to_strong(),
                 index: 0,
             },
-        )));
+            out,
+        );
         Ok(())
     }
 
@@ -242,14 +242,14 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         }
         let index = unpack_from(strand, sig, &mut out, this.get(), 0, false)?;
         if sig.variadic == Variadic::Capture {
-            out.at(sig.len() - 1).store(Value::from_object(GcObj::new(
-                strand.arena(),
-                strand.builtin_types().tuple_iter,
+            strand.builtin_types().tuple_iter.create(
+                strand,
                 Iter {
                     tuple: this.to_strong(),
                     index,
                 },
-            )));
+                out.at(sig.len() - 1),
+            );
         }
         Ok(())
     }
@@ -300,14 +300,14 @@ impl<'v> Protocol<'v> for [Value<'v>] {
             }
             sym::PAIRS => {
                 let _ = unpack!(strand, args, 0, 0)?;
-                out.store(Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().tuple_pairs,
+                strand.builtin_types().tuple_pairs.create(
+                    strand,
                     Pairs {
                         tuple: this.to_strong(),
                         index: 0,
                     },
-                )));
+                    out,
+                );
                 Ok(())
             }
             sym::CONTAINS => {
@@ -458,9 +458,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_get<'a, 's>(
@@ -564,9 +564,9 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_get<'a, 's>(
@@ -686,9 +686,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -697,7 +697,7 @@ impl<'v> Protocol<'v> for Type {
         supertype: &Value<'v>,
     ) -> bool {
         supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.vm().singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().iterable)
             || supertype.eq(strand, TypeObject::Value)
     }
 
@@ -771,8 +771,8 @@ impl<'v> Protocol<'v> for Type {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 strand
                     .with_slots(async |strand, [mut native]| {
-                        call!(strand, &strand.vm().singletons().tuple, &mut native, items).await?;
-                        self_val.op_fill(strand, &strand.vm().singletons().tuple, native.take())?;
+                        call!(strand, &strand.singletons().tuple, &mut native, items).await?;
+                        self_val.op_fill(strand, &strand.singletons().tuple, native.take())?;
                         Ok(())
                     })
                     .await

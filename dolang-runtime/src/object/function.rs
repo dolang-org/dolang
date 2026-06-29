@@ -11,7 +11,7 @@ use crate::{
     strand::{Pinned, Strand},
     sym::{self, Sym},
     unpack,
-    value::Slot,
+    value::{Output, Slot},
     vm::Vm,
 };
 
@@ -149,9 +149,9 @@ impl<'v> Protocol<'v> for NativeFunction<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().func.dup())
+        Output::set(strand, out, &strand.singletons().func);
     }
 
     fn op_display<'a, 's>(
@@ -238,9 +238,9 @@ impl<'v> Protocol<'v> for Function<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().func.dup())
+        Output::set(strand, out, &strand.singletons().func)
     }
 
     async fn op_call<'a, 's>(
@@ -309,9 +309,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(

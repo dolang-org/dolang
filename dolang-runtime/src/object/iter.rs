@@ -7,7 +7,7 @@ use crate::{
     gc::{Annex, Collect, arena::Visit},
     object::{
         BoundMethod,
-        protocol::{GcObj, Inspect, Protocol, Recv},
+        protocol::{Inspect, Protocol, Recv},
         tuple,
     },
     strand::Strand,
@@ -395,9 +395,9 @@ impl<'v> Protocol<'v> for Iterable {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -466,9 +466,9 @@ impl<'v> Protocol<'v> for Sinkable {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -678,9 +678,9 @@ impl<'v> Protocol<'v> for Chain<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -744,9 +744,9 @@ impl<'v> Protocol<'v> for Zip<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -879,9 +879,9 @@ impl<'v> Protocol<'v> for Take<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -944,9 +944,9 @@ impl<'v> Protocol<'v> for Skip<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -1018,9 +1018,9 @@ impl<'v> Protocol<'v> for Enumerate<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -1091,9 +1091,9 @@ impl<'v> Protocol<'v> for Iter {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -1103,7 +1103,7 @@ impl<'v> Protocol<'v> for Iter {
     ) -> bool {
         supertype.eq(strand, &this)
             || supertype.eq(strand, TypeObject::Value)
-            || strand.vm().singletons().iterable.eq(strand, supertype)
+            || strand.singletons().iterable.eq(strand, supertype)
     }
 
     fn op_debug<'a, 's>(
@@ -1231,9 +1231,9 @@ impl<'v> Protocol<'v> for Sink {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -1243,7 +1243,7 @@ impl<'v> Protocol<'v> for Sink {
     ) -> bool {
         supertype.eq(strand, &this)
             || supertype.eq(strand, TypeObject::Value)
-            || strand.vm().singletons().sinkable.eq(strand, supertype)
+            || strand.singletons().sinkable.eq(strand, supertype)
     }
 
     fn op_debug<'a, 's>(
@@ -1355,13 +1355,17 @@ impl<'v> Protocol<'v> for Map<'v> {
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(if this.annex().has_input {
-            strand.singletons().map_iter.dup()
-        } else {
-            strand.singletons().output_iter.dup()
-        });
+        Output::set(
+            strand,
+            out,
+            if this.annex().has_input {
+                &strand.singletons().map_iter
+            } else {
+                &strand.singletons().output_iter
+            },
+        );
     }
 
     fn op_debug<'a, 's>(
@@ -1517,13 +1521,17 @@ impl<'v> Protocol<'v> for Filter<'v> {
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(if this.annex().has_input {
-            strand.singletons().filter_iter.dup()
-        } else {
-            strand.singletons().output_iter.dup()
-        });
+        Output::set(
+            strand,
+            out,
+            if this.annex().has_input {
+                &strand.singletons().filter_iter
+            } else {
+                &strand.singletons().output_iter
+            },
+        );
     }
 
     fn op_debug<'a, 's>(
@@ -1665,9 +1673,9 @@ impl<'v> Protocol<'v> for MapType {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup());
+        Output::set(strand, out, &strand.singletons().type_obj);
     }
 
     fn op_debug<'a, 's>(
@@ -1707,9 +1715,9 @@ impl<'v> Protocol<'v> for FilterType {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup());
+        Output::set(strand, out, &strand.singletons().type_obj);
     }
 
     fn op_debug<'a, 's>(
@@ -1737,11 +1745,10 @@ pub(crate) async fn create_map<'v, 's>(
     mut func: Slot<'v, '_>,
     has_input: bool,
     has_output: bool,
-    mut out: impl Output<'v>,
+    out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    Slot::from_output(&mut out).store(Value::from_object(GcObj::new_annex(
-        strand.arena(),
-        strand.builtin_types().map_iter,
+    strand.builtin_types().map_iter.create_with_annex(
+        strand,
         Map {
             func: func.take(),
             obj: obj.dup(),
@@ -1750,7 +1757,8 @@ pub(crate) async fn create_map<'v, 's>(
             has_input,
             has_output,
         },
-    )));
+        out,
+    );
     Ok(())
 }
 
@@ -1760,11 +1768,10 @@ pub(crate) async fn create_filter<'v, 's>(
     mut pred: Slot<'v, '_>,
     has_input: bool,
     has_output: bool,
-    mut out: impl Output<'v>,
+    out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    Slot::from_output(&mut out).store(Value::from_object(GcObj::new_annex(
-        strand.arena(),
-        strand.builtin_types().filter_iter,
+    strand.builtin_types().filter_iter.create_with_annex(
+        strand,
         Filter {
             pred: pred.take(),
             obj: obj.dup(),
@@ -1773,63 +1780,66 @@ pub(crate) async fn create_filter<'v, 's>(
             has_input,
             has_output,
         },
-    )));
+        out,
+    );
     Ok(())
 }
 
-pub(crate) fn create_chain<'v>(vm: &Vm<'v>, sources: Vec<Value<'v>>, mut out: impl Output<'v>) {
-    Slot::from_output(&mut out).store(Value::from_object(GcObj::new_annex(
-        vm.arena(),
-        vm.builtin_types().chain_iter,
-        Chain { sources, index: 0 },
-        (),
-    )));
+pub(crate) fn create_chain<'v>(
+    strand: &mut Strand<'v, '_>,
+    sources: Vec<Value<'v>>,
+    out: impl Output<'v>,
+) {
+    strand
+        .builtin_types()
+        .chain_iter
+        .create(strand, Chain { sources, index: 0 }, out);
 }
 
-pub(crate) fn create_zip<'v>(vm: &Vm<'v>, sources: Vec<Value<'v>>, mut out: impl Output<'v>) {
-    Slot::from_output(&mut out).store(Value::from_object(GcObj::new_annex(
-        vm.arena(),
-        vm.builtin_types().zip_iter,
-        Zip { sources },
-        (),
-    )));
+pub(crate) fn create_zip<'v>(
+    strand: &mut Strand<'v, '_>,
+    sources: Vec<Value<'v>>,
+    out: impl Output<'v>,
+) {
+    strand
+        .builtin_types()
+        .zip_iter
+        .create(strand, Zip { sources }, out);
 }
 
 pub(crate) fn create_take<'v>(
-    vm: &Vm<'v>,
+    strand: &mut Strand<'v, '_>,
     source: Value<'v>,
     remaining: usize,
-    mut out: impl Output<'v>,
+    out: impl Output<'v>,
 ) {
-    Slot::from_output(&mut out).store(Value::from_object(GcObj::new_annex(
-        vm.arena(),
-        vm.builtin_types().take_iter,
-        Take { source, remaining },
-        (),
-    )));
+    strand
+        .builtin_types()
+        .take_iter
+        .create(strand, Take { source, remaining }, out);
 }
 
 pub(crate) fn create_skip<'v>(
-    vm: &Vm<'v>,
+    strand: &mut Strand<'v, '_>,
     source: Value<'v>,
     remaining: usize,
-    mut out: impl Output<'v>,
+    out: impl Output<'v>,
 ) {
-    Slot::from_output(&mut out).store(Value::from_object(GcObj::new_annex(
-        vm.arena(),
-        vm.builtin_types().skip_iter,
-        Skip { source, remaining },
-        (),
-    )));
+    strand
+        .builtin_types()
+        .skip_iter
+        .create(strand, Skip { source, remaining }, out);
 }
 
-pub(crate) fn create_enumerate<'v>(vm: &Vm<'v>, source: Value<'v>, mut out: impl Output<'v>) {
-    Slot::from_output(&mut out).store(Value::from_object(GcObj::new_annex(
-        vm.arena(),
-        vm.builtin_types().enumerate_iter,
-        Enumerate { source, index: 0 },
-        (),
-    )));
+pub(crate) fn create_enumerate<'v>(
+    strand: &mut Strand<'v, '_>,
+    source: Value<'v>,
+    out: impl Output<'v>,
+) {
+    strand
+        .builtin_types()
+        .enumerate_iter
+        .create(strand, Enumerate { source, index: 0 }, out);
 }
 
 pub(crate) async fn create_chain_from_args<'v, 'a, 's>(
@@ -1871,9 +1881,9 @@ impl<'v> Protocol<'v> for Null {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(

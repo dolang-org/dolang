@@ -207,9 +207,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -312,9 +312,9 @@ impl<'v> Protocol<'v> for Unpack<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -388,17 +388,17 @@ impl<'v> Protocol<'v> for Dict<'v> {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &strand.vm().singletons().iterable)
-            || supertype.eq(strand, &strand.vm().singletons().dict)
+        supertype.eq(strand, &strand.singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().dict)
             || supertype.eq(strand, TypeObject::Value)
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().dict.dup())
+        Output::set(strand, out, &strand.singletons().dict)
     }
 
     fn op_debug<'a, 's>(
@@ -511,16 +511,16 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 let borrow = this.borrow(strand)?;
                 let epoch = borrow.0.epoch;
                 let dict = this.to_strong();
-                out.store(Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().dict_keys,
+                strand.builtin_types().dict_keys.create(
+                    strand,
                     kv::Keys {
                         index: Cell::new(0),
                         epoch,
                         visited: RefCell::new(bitbox![0; borrow.0.inner.buckets()]),
                         container: dict,
                     },
-                )));
+                    out,
+                );
                 Ok(())
             }
             sym::VALUES => {
@@ -573,11 +573,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                         false,
                     );
                 }
-                out.store(Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().dict,
-                    dict,
-                )));
+                strand.builtin_types().dict.create(strand, dict, out);
                 Ok(())
             }
             sym::CONTAINS => {
@@ -624,18 +620,18 @@ impl<'v> Protocol<'v> for Dict<'v> {
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let iter = Iter {
             index: Cell::new(0),
             dict: this.to_strong(),
             epoch: this.borrow(strand)?.0.epoch,
         };
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().dict_iter,
-            iter,
-        )));
+        strand
+            .vm()
+            .builtin_types()
+            .dict_iter
+            .create(strand, iter, out);
         Ok(())
     }
 
@@ -714,7 +710,7 @@ impl<'v> Protocol<'v> for Type {
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([items], []) = unpack!(strand, args, 1, 0)?;
         let mut dict = Dict::new();
@@ -728,20 +724,16 @@ impl<'v> Protocol<'v> for Type {
         items
             .op_spread(strand, SpreadContext::Pairs, &mut sink)
             .await?;
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().dict,
-            dict,
-        )));
+        strand.builtin_types().dict.create(strand, dict, out);
         Ok(())
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -750,7 +742,7 @@ impl<'v> Protocol<'v> for Type {
         supertype: &Value<'v>,
     ) -> bool {
         supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.vm().singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().iterable)
             || supertype.eq(strand, TypeObject::Value)
     }
 
@@ -840,16 +832,13 @@ impl<'v> Protocol<'v> for Type {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 strand
                     .with_slots(async |strand, [mut native]| {
-                        call!(strand, &strand.vm().singletons().dict, &mut native, items).await?;
-                        self_val.op_fill(strand, &strand.vm().singletons().dict, native.take())?;
+                        call!(strand, &strand.singletons().dict, &mut native, items).await?;
+                        self_val.op_fill(strand, &strand.singletons().dict, native.take())?;
                         Ok(())
                     })
                     .await
             }
-            _ => {
-                dispatch_native_method(strand, &strand.vm().singletons().dict, method, args, out)
-                    .await
-            }
+            _ => dispatch_native_method(strand, &strand.singletons().dict, method, args, out).await,
         }
     }
 }

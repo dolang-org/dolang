@@ -57,9 +57,9 @@ impl<'v> Protocol<'v> for i128 {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().int.dup())
+        Output::set(strand, out, &strand.singletons().int)
     }
 
     fn op_debug<'a, 's>(
@@ -272,9 +272,9 @@ impl<'v> Protocol<'v> for Verbatim {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().int.dup())
+        Output::set(strand, out, &strand.singletons().int)
     }
 
     fn op_display_arg<'a, 's>(
@@ -510,9 +510,9 @@ impl<'v> Protocol<'v> for Int {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -616,13 +616,10 @@ impl<'v> Protocol<'v> for Int {
                 let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
                 let coerced = coerce_to_int(&value, strand)?;
                 let native = Value::from_int(strand, coerced);
-                self_val.op_fill(strand, &strand.vm().singletons().int, native)?;
+                self_val.op_fill(strand, &strand.singletons().int, native)?;
                 Ok(())
             }
-            _ => {
-                dispatch_native_method(strand, &strand.vm().singletons().int, method, args, out)
-                    .await
-            }
+            _ => dispatch_native_method(strand, &strand.singletons().int, method, args, out).await,
         }
     }
 }

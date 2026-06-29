@@ -134,9 +134,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_get<'a, 's>(
@@ -239,9 +239,9 @@ impl<'v> Protocol<'v> for Sink<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().output_iter.dup())
+        Output::set(strand, out, &strand.singletons().output_iter)
     }
 }
 
@@ -338,9 +338,9 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_get<'a, 's>(
@@ -504,9 +504,9 @@ impl<'v> Protocol<'v> for Array<'v> {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &strand.vm().singletons().iterable)
-            || supertype.eq(strand, &strand.vm().singletons().sinkable)
-            || supertype.eq(strand, &strand.vm().singletons().array)
+        supertype.eq(strand, &strand.singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().sinkable)
+            || supertype.eq(strand, &strand.singletons().array)
             || supertype.eq(strand, TypeObject::Value)
     }
 
@@ -619,7 +619,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         index: &Value<'v>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         if let Some(slice) = range::slice(index, strand, borrow.inner.len())? {
@@ -638,11 +638,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                         .extend(indices.into_iter().map(|i| borrow.inner[i].dup()));
                 }
             }
-            out.store(Value::from_object(GcObj::new(
-                strand.arena(),
-                strand.builtin_types().array,
-                array,
-            )));
+            strand.builtin_types().array.create(strand, array, out);
             return Ok(());
         }
         let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
@@ -700,13 +696,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             }
             return strand.with_slots_sync(|strand, [mut replacement]| {
                 strand.sync(async |strand| {
-                    call!(
-                        strand,
-                        &strand.vm().singletons().array,
-                        &mut replacement,
-                        &value
-                    )
-                    .await
+                    call!(strand, &strand.singletons().array, &mut replacement, &value).await
                 })?;
                 let source = replacement
                     .downcast_native(strand, strand.builtin_types().array)
@@ -892,24 +882,20 @@ impl<'v> Protocol<'v> for Array<'v> {
                 let array = Array {
                     inner: borrow.inner.iter().map(Value::dup).collect(),
                 };
-                out.store(Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().array,
-                    array,
-                )));
+                strand.builtin_types().array.create(strand, array, out);
                 Ok(())
             }
             sym::SORT => Self::sort(this, strand, args).await,
             sym::PAIRS => {
                 let _ = unpack!(strand, args, 0, 0)?;
-                out.store(Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().array_pairs,
+                strand.builtin_types().array_pairs.create(
+                    strand,
                     Pairs {
                         array: this.to_strong(),
                         index: 0,
                     },
-                )));
+                    out,
+                );
                 Ok(())
             }
             sym::CONTAINS => {
@@ -980,16 +966,16 @@ impl<'v> Protocol<'v> for Array<'v> {
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().array_iter,
+        strand.builtin_types().array_iter.create(
+            strand,
             Iter {
                 array: this.to_strong(),
                 index: 0,
             },
-        )));
+            out,
+        );
         Ok(())
     }
 
@@ -1037,14 +1023,14 @@ impl<'v> Protocol<'v> for Array<'v> {
         let borrow = this.borrow(strand)?;
         let index = unpack_from(strand, sig, &mut out, &borrow, 0, false)?;
         if sig.variadic == Variadic::Capture {
-            out.at(sig.len() - 1).store(Value::from_object(GcObj::new(
-                strand.arena(),
-                strand.builtin_types().array_iter,
+            strand.builtin_types().array_iter.create(
+                strand,
                 Iter {
                     array: this.to_strong(),
                     index,
                 },
-            )));
+                out.at(sig.len() - 1),
+            );
         }
         Ok(())
     }
@@ -1052,23 +1038,23 @@ impl<'v> Protocol<'v> for Array<'v> {
     async fn op_sink<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let array = this.to_strong();
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().array_sink,
-            Sink { array },
-        )));
+        strand
+            .vm()
+            .builtin_types()
+            .array_sink
+            .create(strand, Sink { array }, out);
         Ok(())
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().array.dup())
+        Output::set(strand, out, &strand.singletons().array)
     }
 }
 
@@ -1154,7 +1140,7 @@ impl<'v> Protocol<'v> for Type {
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([items], []) = unpack!(strand, args, 1, 0)?;
         let mut array = Array::new();
@@ -1164,20 +1150,16 @@ impl<'v> Protocol<'v> for Type {
         items
             .op_spread(strand, SpreadContext::Sequence, &mut sink)
             .await?;
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().array,
-            array,
-        )));
+        strand.builtin_types().array.create(strand, array, out);
         Ok(())
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -1186,8 +1168,8 @@ impl<'v> Protocol<'v> for Type {
         supertype: &Value<'v>,
     ) -> bool {
         supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.vm().singletons().iterable)
-            || supertype.eq(strand, &strand.vm().singletons().sinkable)
+            || supertype.eq(strand, &strand.singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().sinkable)
             || supertype.eq(strand, TypeObject::Value)
     }
 
@@ -1274,15 +1256,14 @@ impl<'v> Protocol<'v> for Type {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 strand
                     .with_slots(async |strand, [mut native]| {
-                        call!(strand, &strand.vm().singletons().array, &mut native, items).await?;
-                        self_val.op_fill(strand, &strand.vm().singletons().array, native.take())?;
+                        call!(strand, &strand.singletons().array, &mut native, items).await?;
+                        self_val.op_fill(strand, &strand.singletons().array, native.take())?;
                         Ok(())
                     })
                     .await
             }
             _ => {
-                dispatch_native_method(strand, &strand.vm().singletons().array, method, args, out)
-                    .await
+                dispatch_native_method(strand, &strand.singletons().array, method, args, out).await
             }
         }
     }

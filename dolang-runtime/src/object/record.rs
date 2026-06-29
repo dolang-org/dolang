@@ -115,9 +115,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -220,9 +220,9 @@ impl<'v> Protocol<'v> for Unpack<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -296,17 +296,17 @@ impl<'v> Protocol<'v> for Record<'v> {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &strand.vm().singletons().iterable)
-            || supertype.eq(strand, &strand.vm().singletons().record)
+        supertype.eq(strand, &strand.singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().record)
             || supertype.eq(strand, TypeObject::Value)
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().record.dup())
+        Output::set(strand, out, &strand.singletons().record)
     }
 
     fn op_debug<'a, 's>(
@@ -428,18 +428,18 @@ impl<'v> Protocol<'v> for Record<'v> {
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let iter = Iter {
             index: Cell::new(0),
             record: this.to_strong(),
             epoch: this.borrow(strand)?.0.epoch,
         };
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().record_iter,
-            iter,
-        )));
+        strand
+            .vm()
+            .builtin_types()
+            .record_iter
+            .create(strand, iter, out);
         Ok(())
     }
 
@@ -512,9 +512,9 @@ impl<'v> Protocol<'v> for Class {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -523,7 +523,7 @@ impl<'v> Protocol<'v> for Class {
         supertype: &Value<'v>,
     ) -> bool {
         supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.vm().singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().iterable)
             || supertype.eq(strand, TypeObject::Value)
     }
 
@@ -569,7 +569,7 @@ impl<'v> Protocol<'v> for Class {
                     strand.builtin_types().record,
                     Record(kv::Inner::new()),
                 ));
-                self_val.op_fill(strand, &strand.vm().singletons().record, native)?;
+                self_val.op_fill(strand, &strand.singletons().record, native)?;
                 Ok(())
             }
             sym::LEN => {
@@ -650,16 +650,16 @@ impl<'v> Protocol<'v> for Class {
                     .0
                     .inner
                     .buckets();
-                out.store(Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().record_keys,
+                strand.builtin_types().record_keys.create(
+                    strand,
                     kv::Keys {
                         index: Cell::new(0),
                         epoch,
                         visited: RefCell::new(bitbox![0; buckets]),
                         container: Recv::new(record).to_strong(),
                     },
-                )));
+                    out,
+                );
                 Ok(())
             }
             sym::VALUES => {
@@ -767,14 +767,14 @@ impl<'v> Protocol<'v> for Class {
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let value = Record::from_args(strand, args)?;
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().record,
-            value,
-        )));
+        strand
+            .vm()
+            .builtin_types()
+            .record
+            .create(strand, value, out);
         Ok(())
     }
 }

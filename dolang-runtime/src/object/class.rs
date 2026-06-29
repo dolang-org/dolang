@@ -41,9 +41,9 @@ impl<'v> Protocol<'v> for Descriptor {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -173,9 +173,9 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -223,7 +223,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                 .supers
                 .iter()
                 .any(|sup| sup.op_subtype(strand, supertype))
-            || supertype.eq(strand, &strand.vm().singletons().value)
+            || supertype.eq(strand, &strand.singletons().value)
     }
 
     async fn op_mcall<'a, 's>(

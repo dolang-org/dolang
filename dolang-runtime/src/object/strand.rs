@@ -105,18 +105,18 @@ impl<'v> Protocol<'v> for Handle<'v> {
         let is_sinkable = borrow
             .as_ref()
             .is_some_and(|borrow| !borrow.stream_input.is_nil());
-        (is_iterable && supertype.eq(strand, &strand.vm().singletons().iterable))
-            || (is_sinkable && supertype.eq(strand, &strand.vm().singletons().sinkable))
-            || supertype.eq(strand, &strand.vm().singletons().strand)
+        (is_iterable && supertype.eq(strand, &strand.singletons().iterable))
+            || (is_sinkable && supertype.eq(strand, &strand.singletons().sinkable))
+            || supertype.eq(strand, &strand.singletons().strand)
             || supertype.eq(strand, TypeObject::Value)
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().strand.dup())
+        Output::set(strand, out, &strand.singletons().strand)
     }
 
     fn op_debug<'a, 's>(
@@ -302,9 +302,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(

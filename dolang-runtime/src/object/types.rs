@@ -36,9 +36,9 @@ impl<'v> Protocol<'v> for Value {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -85,9 +85,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -161,9 +161,9 @@ impl<'v> Protocol<'v> for Bool {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -239,7 +239,7 @@ impl<'v> Protocol<'v> for Bool {
             sym::INIT_METHOD => {
                 let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
                 let native = DoValue::from_bool(value.op_bool(strand));
-                self_val.op_fill(strand, &strand.vm().singletons().bool, native)?;
+                self_val.op_fill(strand, &strand.singletons().bool, native)?;
                 Ok(())
             }
             _ => {
@@ -254,9 +254,9 @@ impl<'v> Protocol<'v> for ArgsType {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -264,7 +264,7 @@ impl<'v> Protocol<'v> for ArgsType {
         strand: &'a mut Strand<'v, 's>,
         supertype: &DoValue<'v>,
     ) -> bool {
-        let sings = strand.vm().singletons();
+        let sings = strand.singletons();
         supertype.eq(strand, &this)
             || supertype.eq(strand, TypeObject::Value)
             || sings.iterable.eq(strand, supertype)
@@ -297,9 +297,9 @@ impl<'v> Protocol<'v> for NilType {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(

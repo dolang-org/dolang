@@ -1420,9 +1420,10 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(this.singleton(strand).dup())
+        let input = this.singleton(strand.vm());
+        Output::set(strand, out, input);
     }
 
     fn op_subtype<'a, 's>(
@@ -2949,10 +2950,10 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
         // The type of a type object is the "type" singleton.
-        out.store(strand.singletons().type_obj.dup());
+        Output::set(strand, out, &strand.singletons().type_obj);
     }
 
     fn op_debug<'a, 's>(

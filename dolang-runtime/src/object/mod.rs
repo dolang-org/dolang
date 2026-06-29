@@ -33,7 +33,7 @@ use crate::{
     object::protocol::Recv,
     strand::Strand,
     sym::Sym,
-    value::{Input, Slot, Value},
+    value::{Input, Output, Slot, Value},
     vm::Alloc,
 };
 
@@ -498,9 +498,9 @@ impl<'v> Protocol<'v> for BoundMethod<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().func.dup())
+        Output::set(strand, out, &strand.singletons().func)
     }
 
     fn op_debug<'a, 's>(
@@ -531,16 +531,14 @@ impl<'v> BoundMethod<'v> {
         alloc: &mut impl Alloc<'v>,
         rcvr: impl Input<'v>,
         method: Sym<'v, '_>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        out.store(Value::from_object(protocol::GcObj::new(
-            vm.arena(),
-            vm.builtin_types().bound_method,
-            BoundMethod {
-                rcvr: Value::from_input(vm, rcvr),
-                method: vm.sym_obj(method),
-            },
-        )));
+        let ty = vm.builtin_types().bound_method;
+        let bound = BoundMethod {
+            rcvr: Value::from_input(vm, rcvr),
+            method: vm.sym_obj(method),
+        };
+        ty.create(alloc, bound, out);
     }
 }

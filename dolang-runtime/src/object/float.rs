@@ -184,9 +184,9 @@ impl<'v> Protocol<'v> for f64 {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().float.dup())
+        Output::set(strand, out, &strand.singletons().float)
     }
 }
 
@@ -222,9 +222,9 @@ impl<'v> Protocol<'v> for Verbatim {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().float.dup())
+        Output::set(strand, out, &strand.singletons().float)
     }
 
     fn op_display_arg<'a, 's>(
@@ -403,9 +403,9 @@ impl<'v> Protocol<'v> for Float {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -497,12 +497,11 @@ impl<'v> Protocol<'v> for Float {
                 let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
                 let coerced = coerce_to_f64(&value, strand)?;
                 let native = Value::from_f64(strand, coerced);
-                self_val.op_fill(strand, &strand.vm().singletons().float, native)?;
+                self_val.op_fill(strand, &strand.singletons().float, native)?;
                 Ok(())
             }
             _ => {
-                dispatch_native_method(strand, &strand.vm().singletons().float, method, args, out)
-                    .await
+                dispatch_native_method(strand, &strand.singletons().float, method, args, out).await
             }
         }
     }

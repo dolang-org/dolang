@@ -317,9 +317,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.vm().singletons().input_iter.dup())
+        Output::set(strand, out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -342,7 +342,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let borrow = this.borrow(strand)?;
         let set = borrow
@@ -363,7 +363,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
             let Some(bucket) = entry else {
                 continue;
             };
-            Output::set(strand, &mut out, unsafe { &bucket.as_ref().value });
+            Output::set(strand, out, unsafe { &bucket.as_ref().value });
             return Ok(true);
         }
     }
@@ -394,17 +394,17 @@ impl<'v> Protocol<'v> for Set<'v> {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &strand.vm().singletons().iterable)
-            || supertype.eq(strand, &strand.vm().singletons().set)
+        supertype.eq(strand, &strand.singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().set)
             || supertype.eq(strand, TypeObject::Value)
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().set.dup())
+        Output::set(strand, out, &strand.singletons().set)
     }
 
     fn op_debug<'a, 's>(
@@ -523,7 +523,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::ADD => {
@@ -552,11 +552,11 @@ impl<'v> Protocol<'v> for Set<'v> {
             sym::COPY => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let borrow = this.borrow(strand)?;
-                out.store(Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().set,
-                    borrow.cloned(),
-                )));
+                strand
+                    .vm()
+                    .builtin_types()
+                    .set
+                    .create(strand, borrow.cloned(), out);
                 Ok(())
             }
             sym::CONTAINS => {
@@ -582,11 +582,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                         let mut result = this.cloned();
                         let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
                         result.extend_from(strand, &other)?;
-                        out.store(Value::from_object(GcObj::new(
-                            strand.arena(),
-                            strand.builtin_types().set,
-                            result,
-                        )));
+                        strand.builtin_types().set.create(strand, result, out);
                     }
                     sym::INTERSECT => {
                         let left = this.borrow(strand)?;
@@ -603,11 +599,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                                 }
                             }
                         }
-                        out.store(Value::from_object(GcObj::new(
-                            strand.arena(),
-                            strand.builtin_types().set,
-                            result,
-                        )));
+                        strand.builtin_types().set.create(strand, result, out);
                     }
                     sym::DIFF => {
                         let left = this.borrow(strand)?;
@@ -624,11 +616,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                                 }
                             }
                         }
-                        out.store(Value::from_object(GcObj::new(
-                            strand.arena(),
-                            strand.builtin_types().set,
-                            result,
-                        )));
+                        strand.builtin_types().set.create(strand, result, out);
                     }
                     sym::SYM_DIFF => {
                         let left = this.borrow(strand)?;
@@ -654,11 +642,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                                 }
                             }
                         }
-                        out.store(Value::from_object(GcObj::new(
-                            strand.arena(),
-                            strand.builtin_types().set,
-                            result,
-                        )));
+                        strand.builtin_types().set.create(strand, result, out);
                     }
                     sym::IS_SUBSET => {
                         let left = this.borrow(strand)?;
@@ -705,18 +689,18 @@ impl<'v> Protocol<'v> for Set<'v> {
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let iter = Iter {
             index: Cell::new(0),
             epoch: this.borrow(strand)?.epoch,
             set: this.to_strong(),
         };
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().set_iter,
-            iter,
-        )));
+        strand
+            .vm()
+            .builtin_types()
+            .set_iter
+            .create(strand, iter, out);
         Ok(())
     }
 
@@ -762,7 +746,7 @@ impl<'v> Protocol<'v> for Type {
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([], [items]) = unpack!(strand, args, 0, 1)?;
         let set = if let Some(items) = items {
@@ -777,20 +761,16 @@ impl<'v> Protocol<'v> for Type {
         } else {
             Set::new()
         };
-        out.store(Value::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().set,
-            set,
-        )));
+        strand.builtin_types().set.create(strand, set, out);
         Ok(())
     }
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(strand.singletons().type_obj.dup())
+        Output::set(strand, out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -799,7 +779,7 @@ impl<'v> Protocol<'v> for Type {
         supertype: &Value<'v>,
     ) -> bool {
         supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.vm().singletons().iterable)
+            || supertype.eq(strand, &strand.singletons().iterable)
             || supertype.eq(strand, TypeObject::Value)
     }
 
@@ -883,13 +863,10 @@ impl<'v> Protocol<'v> for Type {
                     strand.builtin_types().set,
                     Set::new(),
                 ));
-                self_val.op_fill(strand, &strand.vm().singletons().set, native)?;
+                self_val.op_fill(strand, &strand.singletons().set, native)?;
                 Ok(())
             }
-            _ => {
-                dispatch_native_method(strand, &strand.vm().singletons().set, method, args, out)
-                    .await
-            }
+            _ => dispatch_native_method(strand, &strand.singletons().set, method, args, out).await,
         }
     }
 }
