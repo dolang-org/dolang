@@ -515,7 +515,7 @@ async fn set_timestamps<'v, 's>(
         let accessed = parse_timestamp_arg(strand, global, accessed, "accessed")?;
         let created = parse_timestamp_arg(strand, global, created, "created")?;
         let local = global.local.get(strand);
-        let path = local.cwd().as_ref().join(&path);
+        let path = local.cwd().as_ref().join(path);
         windows::set_times_path(path, accessed, modified, created)
             .await
             .into_sys(strand)?;

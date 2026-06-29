@@ -67,7 +67,7 @@ impl PipeSend {
         #[cfg(windows)]
         {
             Ok(Self {
-                inner: Arc::new((&*self.inner).try_clone()?),
+                inner: Arc::new(self.inner.try_clone()?),
                 pending: None,
             })
         }
@@ -113,7 +113,7 @@ impl PipeRecv {
         #[cfg(windows)]
         {
             Ok(Self {
-                inner: Arc::new((&*self.inner).try_clone()?),
+                inner: Arc::new(self.inner.try_clone()?),
                 pending: None,
                 ready: None,
             })

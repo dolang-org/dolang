@@ -165,11 +165,11 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
             mtime_nsec: i64::from(system_time_to_parts(metadata.modified().ok()).1),
             ctime: system_time_to_parts(metadata.created().ok()).0,
             ctime_nsec: i64::from(system_time_to_parts(metadata.created().ok()).1),
-            mode: metadata
-                .permissions()
-                .readonly()
-                .then_some(0o444)
-                .unwrap_or(0o666),
+            mode: if metadata.permissions().readonly() {
+                0o444
+            } else {
+                0o666
+            },
             dev: 0,
             ino: 0,
             nlink: 0,
