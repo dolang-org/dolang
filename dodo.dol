@@ -18,11 +18,6 @@ let COV_IGNORE =
   - dolang-private-highlight
   - dolang-private-build
 
-let MAIN_BINS =
-  - dolang
-  - dolang-shell-vfs
-  - dolang-lsp
-
 let MKDOCS_BINS =
   - dolang-highlight
   - dolang-doc
@@ -202,10 +197,7 @@ return
       collect: true
     do |args|
       let spec = Spec $args
-      spec.cargo build
-        for bin = MAIN_BINS
-          --bin $bin
-        ...args.args
+      spec.cargo build ...args.args
 
   "cargo-test":
     help: run cargo tests
