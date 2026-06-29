@@ -127,7 +127,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
         let is_stream = !this.borrow(strand)?.stream_output.is_nil();
         write!(
             w,
-            "<std.strand.{}>",
+            "<strand.{}>",
             if is_stream { "Stream" } else { "Strand" }
         )
         .into_do(strand)
@@ -313,6 +313,6 @@ impl<'v> Protocol<'v> for Type {
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
         use crate::error::ResultExt;
-        write!(w, "<type std.strand>").into_do(strand)
+        write!(w, "<type strand.Strand>").into_do(strand)
     }
 }

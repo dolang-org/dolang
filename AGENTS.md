@@ -522,7 +522,7 @@ bind args
 ### Concurrency
 
 ```
-import std.strand:
+import strand:
   - spawn
   - fork
 

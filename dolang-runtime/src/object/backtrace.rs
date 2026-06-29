@@ -295,7 +295,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type std.strand.Backtrace>").into_do(strand)
+        write!(w, "<type strand.Backtrace>").into_do(strand)
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

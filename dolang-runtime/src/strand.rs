@@ -1095,7 +1095,7 @@ impl<'v, 's> Strand<'v, 's> {
         // and the leader's StrandGroup outlives this scoped strand.
         unsafe { strand.init_group_member(self.inner) };
         let native = frame::Native {
-            module: Cow::Borrowed("std.strand"),
+            module: Cow::Borrowed("strand"),
             receiver: Cow::Borrowed("<scoped>"),
             method: None,
             parent: Some(self.fp),
@@ -1169,7 +1169,7 @@ impl<'v, 's> Strand<'v, 's> {
         // Create the background strand future
         let future = Box::pin(async move {
             let native = frame::Native {
-                module: Cow::Borrowed("std.strand"),
+                module: Cow::Borrowed("strand"),
                 receiver: Cow::Borrowed("spawn"),
                 method: None,
                 parent: None,
