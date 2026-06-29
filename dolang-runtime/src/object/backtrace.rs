@@ -79,11 +79,11 @@ impl<'v> Protocol<'v> for Backtrace<'v> {
     }
 
     fn op_debug<'a, 's>(
-        this: Recv<'v, 'a, Self>,
+        _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<backtrace {}>", this.get().entries.len()).into_do(strand)
+        write!(w, "<backtrace>").into_do(strand)
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -159,18 +159,11 @@ impl<'v> Protocol<'v> for Iter<'v> {
     }
 
     fn op_debug<'a, 's>(
-        this: Recv<'v, 'a, Self>,
+        _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        let borrow = this.borrow(strand)?;
-        write!(
-            w,
-            "<backtrace.iter {}/{}>",
-            borrow.index,
-            borrow.entries.len()
-        )
-        .into_do(strand)
+        write!(w, "<backtrace.iter>").into_do(strand)
     }
 
     async fn op_next<'a, 's>(
@@ -221,17 +214,11 @@ impl<'v> Protocol<'v> for Frame<'v> {
     }
 
     fn op_debug<'a, 's>(
-        this: Recv<'v, 'a, Self>,
+        _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(
-            w,
-            "<backtrace frame {}.{}>",
-            this.get().entry.module(strand),
-            this.get().entry.receiver(strand)
-        )
-        .into_do(strand)
+        write!(w, "<backtrace frame>").into_do(strand)
     }
 
     fn op_get<'a, 's>(
