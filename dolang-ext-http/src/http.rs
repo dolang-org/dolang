@@ -13,7 +13,7 @@ use dolang::runtime::{
     method,
     object::{Mut, Ref, TypeBuilder},
     unpack,
-    value::{Empty, TypeObject, View},
+    value::{BinEmbryo, Empty, TypeObject, View},
     vm::Builder,
 };
 use dolang_ext_shell::{as_datetime, datetime};
@@ -386,7 +386,7 @@ pub(crate) trait ResultExt<T> {
     fn into_http<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
 }
 
-impl<T> ResultExt<T> for std::result::Result<T, reqwest::Error> {
+impl<T> ResultExt<T> for result::Result<T, reqwest::Error> {
     fn into_http<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
         self.map_err(|error| error.into_http(strand))
     }
@@ -1312,17 +1312,19 @@ impl<'v> Object<'v> for ChunkIter {
     }
 }
 
-pub(crate) struct LineIter {
-    buffer: Vec<u8>,
+pub(crate) struct LineIter<'v> {
+    buffer: BinEmbryo<'v>,
 }
 
-impl LineIter {
+impl<'v> LineIter<'v> {
     fn new() -> Self {
-        Self { buffer: Vec::new() }
+        Self {
+            buffer: BinEmbryo::new(),
+        }
     }
 }
 
-impl<'v> Object<'v> for LineIter {
+impl<'v> Object<'v> for LineIter<'v> {
     const NAME: &'v str = "ResponseLineIter";
     const MODULE: &'v str = "http";
     const SLOTS: usize = 1;
@@ -1354,12 +1356,17 @@ impl<'v> Object<'v> for LineIter {
             // Check if we have a complete line in the buffer
             {
                 let mut borrow = this.borrow_mut(strand)?;
-                if let Some((line, _)) = borrow.buffer.split_once_str(b"\n") {
-                    let len = line.len() + 1;
-                    let input = str::from_utf8(line.strip_suffix(b"\r").unwrap_or(line))
+                if let Some((line, _)) = borrow.buffer.as_slice().split_once_str(b"\n") {
+                    let line_len = line.len();
+                    let trimmed_line_len = line_len - line.ends_with(b"\r") as usize;
+                    let mut next =
+                        BinEmbryo::new_with_capacity(strand, borrow.buffer.len() - (line_len + 1));
+                    next.extend(strand, &borrow.buffer.as_slice()[line_len + 1..]);
+                    borrow.buffer.truncate(trimmed_line_len);
+                    let buf = mem::replace(&mut borrow.buffer, next);
+                    drop(borrow);
+                    buf.finish_str(strand, out)
                         .map_err(|_| Error::runtime(strand, "invalid UTF-8"))?;
-                    Output::set(strand, out, input);
-                    borrow.buffer.drain(..len);
                     return Ok(true);
                 }
             }
@@ -1389,16 +1396,16 @@ impl<'v> Object<'v> for LineIter {
                 Some(chunk) => {
                     // Add to buffer
                     let mut borrow = this.borrow_mut(strand)?;
-                    borrow.buffer.extend(chunk);
+                    borrow.buffer.extend(strand, &chunk);
                 }
                 None => {
                     // End of stream - return any remaining data as the last line
                     let mut borrow = this.borrow_mut(strand)?;
                     if !borrow.buffer.is_empty() {
-                        let input = str::from_utf8(&borrow.buffer)
+                        let buf = mem::take(&mut borrow.buffer);
+                        drop(borrow);
+                        buf.finish_str(strand, out)
                             .map_err(|_| Error::runtime(strand, "invalid UTF-8"))?;
-                        Output::set(strand, out, input);
-                        borrow.buffer.clear();
                         return Ok(true);
                     }
                     return Ok(false);

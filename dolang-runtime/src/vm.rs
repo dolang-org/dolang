@@ -346,10 +346,10 @@ impl<'v> Vm<'v> {
                 file::Const::Bool(v) => Value::from_bool(*v),
                 file::Const::Str(file::StrId { start, end }) => {
                     Value::from_object(gc::Base::upcast(unsafe {
-                        gc::Base::from_header_utf8_iter(
+                        gc::Base::from_header_utf8_slice(
                             &self.arena,
                             Header::new(self.arena(), self.builtin_types.str.vtbl),
-                            verified.bintab.content[*start..*end].iter().copied(),
+                            &verified.bintab.content[*start..*end],
                         )
                     }))
                 }

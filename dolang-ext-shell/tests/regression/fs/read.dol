@@ -65,6 +65,26 @@ with_and_without_agent "fs.read reads entire binary file" do
   assert_eq ((Path test_path).read "b") $data
   remove $test_path
 
+with_and_without_agent "fs.read grows for large full reads" do
+  let test_path = "test_fs_read_large.txt"
+  let data = ("abcdefghij".repeat 2000)
+  write $test_path $data
+  assert_eq (read test_path) $data
+  assert_eq ((Path test_path).read()) $data
+  remove $test_path
+
+with_and_without_agent "fs.read rejects invalid UTF-8 data" do
+  let test_path = "test_fs_read_invalid.bin"
+  write $test_path b"\xff\xfe"
+  let caught = try
+    read $test_path
+    false
+  catch err
+    assert_eq (str err) "invalid UTF-8 data"
+    true
+  assert $caught
+  remove $test_path
+
 with_and_without_agent "fs.read rejects invalid mode" do
   let caught = try
     read "Cargo.toml" "rb"

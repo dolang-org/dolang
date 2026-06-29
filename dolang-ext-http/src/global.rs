@@ -19,7 +19,7 @@ pub(crate) struct Types<'v> {
     pub(crate) response: Type<'v, Response>,
     pub(crate) chunk_iter: Type<'v, ChunkIter>,
     pub(crate) event_iter: Type<'v, EventIter>,
-    pub(crate) line_iter: Type<'v, LineIter>,
+    pub(crate) line_iter: Type<'v, LineIter<'v>>,
 }
 
 pub(crate) struct Syms<'v> {

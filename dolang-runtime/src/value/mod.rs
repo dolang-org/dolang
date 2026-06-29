@@ -8,9 +8,9 @@ use std::{
     fmt,
     hash::DefaultHasher,
     marker::PhantomData,
-    mem,
+    mem::{self, MaybeUninit},
     ops::{ControlFlow, Deref},
-    ptr,
+    ptr, result, str,
 };
 
 use crate::{
@@ -51,6 +51,23 @@ pub(crate) enum Case<'v, 'a> {
 /// owned value temporarily.  For holding a value long-term, use a [`Root`]
 /// or the [`Object::SLOTS`](crate::object::native::Object::SLOTS) mechanism.
 pub struct Value<'v>(Repr, PhantomData<&'v mut &'v ()>);
+
+/// Growable binary buffer that can be finalized directly into a Do `bin` or `str`.
+///
+/// This is useful when bytes arrive incrementally and an intermediate
+/// allocation would otherwise be needed before constructing a Do value.
+pub struct BinEmbryo<'v> {
+    embryo: Option<gc::Embryo<'v, Header, [u8]>>,
+}
+
+/// Growable UTF-8 buffer that can be finalized directly into a Do `str`.
+///
+/// Safe methods on this type preserve the invariant that the initialized prefix
+/// is valid UTF-8. The unsafe spare-capacity/advance path may be used when the
+/// caller can uphold that invariant manually.
+pub struct StrEmbryo<'v> {
+    embryo: Option<gc::Embryo<'v, Header, [u8]>>,
+}
 
 unsafe impl<'v> Collect for Value<'v> {
     const CYCLIC: bool = true;
@@ -154,20 +171,20 @@ impl<'v> Value<'v> {
 
     pub(crate) fn from_str(vm: &Vm<'v>, value: &str) -> Self {
         Self::from_object(gc::Base::upcast(unsafe {
-            gc::Base::from_header_utf8_iter(
+            gc::Base::from_header_utf8_slice(
                 vm.arena(),
                 Header::new(vm.arena(), vm.builtin_types().str.vtbl),
-                value.as_bytes().iter().copied(),
+                value.as_bytes(),
             )
         }))
     }
 
     pub(crate) fn from_u8_slice(vm: &Vm<'v>, value: &[u8]) -> Self {
         Self::from_object(gc::Base::upcast(unsafe {
-            gc::Base::from_header_iter(
+            gc::Base::from_header_slice(
                 vm.arena(),
                 Header::new(vm.arena(), vm.builtin_types().bin.vtbl),
-                value.iter().copied(),
+                value,
             )
         }))
     }
@@ -1450,6 +1467,244 @@ impl<'v> Value<'v> {
                 View::Object(unsafe { ObjectView::from_ptr(obj.into_raw()) })
             }
         }
+    }
+}
+
+impl<'v> BinEmbryo<'v> {
+    /// Creates an empty embryo without allocating.
+    pub fn new() -> Self {
+        Self { embryo: None }
+    }
+
+    /// Creates an empty embryo with space reserved for at least `capacity` bytes.
+    pub fn new_with_capacity(alloc: &mut impl Alloc<'v>, capacity: usize) -> Self {
+        let mut this = Self::new();
+        this.reserve(alloc, capacity);
+        this
+    }
+
+    /// Returns the number of initialized bytes currently in the embryo.
+    pub fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    /// Returns the total byte capacity currently available without reallocating.
+    pub fn capacity(&self) -> usize {
+        self.embryo.as_ref().map_or(0, gc::Embryo::capacity)
+    }
+
+    /// Returns `true` if the embryo contains no initialized bytes.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns the uninitialized spare capacity of the embryo.
+    ///
+    /// If the embryo has not allocated yet, this returns an empty slice.
+    pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        self.embryo
+            .as_mut()
+            .map_or(&mut [], gc::Embryo::spare_capacity_mut)
+    }
+
+    /// Ensures the embryo can accept at least `additional` more bytes
+    /// without reallocating.
+    pub fn reserve(&mut self, alloc: &mut impl Alloc<'v>, additional: usize) {
+        if additional == 0 {
+            return;
+        }
+        if let Some(embryo) = self.embryo.as_mut() {
+            embryo.reserve(additional);
+        } else {
+            self.embryo = Some(Self::allocate(alloc, additional));
+        }
+    }
+
+    /// Shrinks the initialized length to `len`.
+    ///
+    /// If `len` is greater than the current length, this is a no-op.
+    pub fn truncate(&mut self, len: usize) {
+        if let Some(embryo) = self.embryo.as_mut() {
+            embryo.truncate(len);
+        }
+    }
+
+    /// # Safety
+    /// The caller must ensure the next `initialized` bytes in spare capacity were written.
+    pub unsafe fn advance(&mut self, initialized: usize) {
+        if initialized == 0 {
+            return;
+        }
+        unsafe { self.embryo.as_mut().unwrap_unchecked().advance(initialized) }
+    }
+
+    /// Returns the initialized bytes currently stored in the embryo.
+    pub fn as_slice(&self) -> &[u8] {
+        self.embryo.as_ref().map_or(&[], gc::Embryo::as_slice)
+    }
+
+    /// Appends `slice` to the embryo.
+    pub fn extend(&mut self, alloc: &mut impl Alloc<'v>, slice: &[u8]) {
+        if slice.is_empty() {
+            return;
+        }
+        self.reserve(alloc, slice.len());
+        unsafe { self.embryo.as_mut().unwrap_unchecked().extend(slice) }
+    }
+
+    /// Finalizes the embryo into a Do `bin` and writes it to `out`.
+    pub fn finish(self, alloc: &mut impl Alloc<'v>, mut out: impl Output<'v>) {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        let value = unsafe {
+            let header = Header::new(vm.arena(), vm.builtin_types().bin.vtbl);
+            match self.embryo {
+                Some(embryo) => Value::from_object(gc::Base::upcast(embryo.finalize(header))),
+                None => Value::from_object(gc::Base::upcast(gc::Base::from_header_slice(
+                    vm.arena(),
+                    header,
+                    &[],
+                ))),
+            }
+        };
+        Slot::from_output(&mut out).store(value);
+    }
+
+    /// Finalizes the embryo into a Do `str` after validating it as UTF-8.
+    pub fn finish_str(
+        self,
+        alloc: &mut impl Alloc<'v>,
+        mut out: impl Output<'v>,
+    ) -> result::Result<(), str::Utf8Error> {
+        str::from_utf8(self.as_slice())?;
+        unsafe { self.finish_str_unchecked(alloc, &mut out) };
+        Ok(())
+    }
+
+    /// Finalizes the embryo into a Do `str` *without validation*
+    /// # Safety
+    /// The initialized bytes must be valid UTF-8.
+    pub unsafe fn finish_str_unchecked(self, alloc: &mut impl Alloc<'v>, mut out: impl Output<'v>) {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        let header = unsafe { Header::new(vm.arena(), vm.builtin_types().str.vtbl) };
+        let value = match self.embryo {
+            Some(embryo) => Value::from_object(unsafe { embryo.finalize_str_unchecked(header) }),
+            None => Value::from_object(unsafe {
+                gc::Base::from_header_utf8_slice(vm.arena(), header, b"")
+            }),
+        };
+        Slot::from_output(&mut out).store(value);
+    }
+
+    fn allocate(alloc: &mut impl Alloc<'v>, capacity: usize) -> gc::Embryo<'v, Header, [u8]> {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        unsafe { gc::Embryo::<Header, [u8]>::from_arena_capacity(vm.arena(), capacity) }
+    }
+}
+
+impl<'v> StrEmbryo<'v> {
+    /// Creates an empty embryo without allocating.
+    pub fn new() -> Self {
+        Self { embryo: None }
+    }
+
+    /// Creates an empty embryo with space reserved for at least `capacity` bytes.
+    pub fn new_with_capacity(alloc: &mut impl Alloc<'v>, capacity: usize) -> Self {
+        let mut this = Self::new();
+        this.reserve(alloc, capacity);
+        this
+    }
+
+    /// Returns the number of initialized bytes currently in the embryo.
+    pub fn len(&self) -> usize {
+        self.as_bytes().len()
+    }
+
+    /// Returns `true` if the embryo contains no initialized bytes.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// # Safety
+    /// Bytes written into the returned spare capacity and later exposed via
+    /// `advance` must keep the full initialized prefix valid UTF-8.
+    pub unsafe fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        self.embryo
+            .as_mut()
+            .map_or(&mut [], gc::Embryo::spare_capacity_mut)
+    }
+
+    /// Ensures the embryo can accept at least `additional` more bytes
+    /// without reallocating.
+    pub fn reserve(&mut self, alloc: &mut impl Alloc<'v>, additional: usize) {
+        if additional == 0 {
+            return;
+        }
+        if let Some(embryo) = self.embryo.as_mut() {
+            embryo.reserve(additional);
+        } else {
+            self.embryo = Some(BinEmbryo::allocate(alloc, additional));
+        }
+    }
+
+    /// # Safety
+    /// The caller must ensure the next `initialized` bytes in spare capacity were written
+    /// and that advancing over them keeps the full initialized prefix valid UTF-8.
+    pub unsafe fn advance(&mut self, initialized: usize) {
+        if initialized == 0 {
+            return;
+        }
+        unsafe { self.embryo.as_mut().unwrap_unchecked().advance(initialized) }
+    }
+
+    /// Returns the initialized contents as `&str`.
+    pub fn as_str(&self) -> &str {
+        unsafe { str::from_utf8_unchecked(self.as_bytes()) }
+    }
+
+    /// Returns the initialized contents as bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.embryo.as_ref().map_or(b"", gc::Embryo::as_slice)
+    }
+
+    /// Appends `slice` to the embryo.
+    pub fn extend(&mut self, alloc: &mut impl Alloc<'v>, slice: &str) {
+        if slice.is_empty() {
+            return;
+        }
+        self.reserve(alloc, slice.len());
+        unsafe {
+            self.embryo
+                .as_mut()
+                .unwrap_unchecked()
+                .extend(slice.as_bytes())
+        }
+    }
+
+    /// Finalizes the embryo into a Do `str` and writes it to `out`.
+    pub fn finish(self, alloc: &mut impl Alloc<'v>, mut out: impl Output<'v>) {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        let value = unsafe {
+            let header = Header::new(vm.arena(), vm.builtin_types().str.vtbl);
+            match self.embryo {
+                Some(embryo) => Value::from_object(embryo.finalize_str_unchecked(header)),
+                None => {
+                    Value::from_object(gc::Base::from_header_utf8_slice(vm.arena(), header, b""))
+                }
+            }
+        };
+        Slot::from_output(&mut out).store(value)
+    }
+}
+
+impl<'v> Default for BinEmbryo<'v> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'v> Default for StrEmbryo<'v> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
