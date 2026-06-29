@@ -509,9 +509,10 @@ impl<'v> Object<'v> for File<'v> {
             .supertype(TypeObject::Sink)
             .method("close", async move |this, strand, _args, _out| {
                 let mut borrow = this.borrow_mut(strand)?;
-                if let Some(file) = borrow.file.as_mut() {
-                    file.flush().await.into_sys(strand)?;
-                    borrow.file = None;
+                if let Some(mut file) = borrow.file.take() {
+                    let res = file.flush().await;
+                    let _ = tokio::task::spawn_blocking(move || drop(file)).await;
+                    res.into_sys(strand)?
                 }
                 Ok(())
             })
