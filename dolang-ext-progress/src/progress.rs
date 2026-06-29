@@ -580,13 +580,13 @@ impl<'v> Object<'v> for Indicator {
             .get("total", |this, strand, out| {
                 check_closed(strand, &this.annex().closed)?;
                 if let Some(n) = this.annex().bar.length() {
-                    Output::set(strand, out, n as i64);
+                    Output::set(strand, out, n);
                 }
                 Ok(())
             })
             .get("position", |this, strand, out| {
                 check_closed(strand, &this.annex().closed)?;
-                Output::set(strand, out, this.annex().bar.position() as i64);
+                Output::set(strand, out, this.annex().bar.position());
                 Ok(())
             })
             // --- Setters ---

@@ -347,7 +347,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(strand, out, this.get().len() as i64);
+                Output::set(strand, out, this.get().len());
                 Ok(())
             }
             sym::PAIRS | sym::GET | sym::CONTAINS | sym::COPY => {

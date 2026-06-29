@@ -600,7 +600,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                let input = this.borrow(strand)?.0.total_pairs as i64;
+                let input = this.borrow(strand)?.0.total_pairs;
                 Output::set(strand, out, input);
                 Ok(())
             }

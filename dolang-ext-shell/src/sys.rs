@@ -17,7 +17,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
     let os = builder.sym(std::env::consts::OS);
     let family = builder.sym(std::env::consts::FAMILY);
     let arch = builder.sym(std::env::consts::ARCH);
-    let logical_count = std::thread::available_parallelism().map_or(1, |count| count.get()) as i64;
+    let logical_count = std::thread::available_parallelism().map_or(1, |count| count.get());
 
     builder
         .module("sys")

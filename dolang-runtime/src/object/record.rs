@@ -579,7 +579,7 @@ impl<'v> Protocol<'v> for Class {
                     .borrow()
                     .ok_or_else(|| Error::concurrency(strand))?
                     .0
-                    .total_pairs as i64;
+                    .total_pairs;
                 Output::set(strand, out, input);
                 Ok(())
             }

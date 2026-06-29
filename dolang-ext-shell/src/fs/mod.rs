@@ -245,7 +245,7 @@ async fn write<'v, 's>(
     .into_sys(strand)?;
 
     file.flush().await.into_sys(strand)?;
-    Output::set(strand, out, bytes_written as i64);
+    Output::set(strand, out, bytes_written);
     Ok(())
 }
 

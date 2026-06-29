@@ -1114,7 +1114,7 @@ impl<'v> Object<'v> for Response {
                 Output::set(
                     strand,
                     out,
-                    borrow.inner.as_ref().unwrap().status().as_u16() as i64,
+                    borrow.inner.as_ref().unwrap().status().as_u16(),
                 );
                 Ok(())
             })

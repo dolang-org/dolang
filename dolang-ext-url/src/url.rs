@@ -198,7 +198,7 @@ impl<'v> Object<'v> for Url {
             })
             .get("port", |this, strand, out| {
                 if let Some(port) = this.annex().inner.port() {
-                    Output::set(strand, out, port as i64);
+                    Output::set(strand, out, port);
                 } else {
                     Output::set(strand, out, Nil);
                 }

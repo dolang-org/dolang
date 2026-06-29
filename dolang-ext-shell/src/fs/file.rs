@@ -330,7 +330,7 @@ impl<'v> File<'v> {
         }
         .into_sys(strand)?;
 
-        Output::set(strand, out, bytes_written as i64);
+        Output::set(strand, out, bytes_written);
         Ok(())
     }
 

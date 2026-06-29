@@ -496,7 +496,7 @@ impl<'v> Protocol<'v> for Set<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                let input = this.borrow(strand)?.len() as i64;
+                let input = this.borrow(strand)?.len();
                 Output::set(strand, out, input);
                 Ok(())
             }

@@ -701,15 +701,15 @@ impl<'v> Object<'v> for Pos {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("byte_offset", |this, strand, out| {
-                Output::set(strand, out, this.annex().pos.byte_offset as i64);
+                Output::set(strand, out, this.annex().pos.byte_offset);
                 Ok(())
             })
             .get("line", |this, strand, out| {
-                Output::set(strand, out, this.annex().pos.line as i64);
+                Output::set(strand, out, this.annex().pos.line);
                 Ok(())
             })
             .get("column", |this, strand, out| {
-                Output::set(strand, out, this.annex().pos.column as i64);
+                Output::set(strand, out, this.annex().pos.column);
                 Ok(())
             })
     }

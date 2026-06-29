@@ -81,7 +81,7 @@ impl<'v> Object<'v> for Metadata {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let builder = builder
             .get("len", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.len as i64);
+                Output::set(strand, out, this.annex().inner.len);
                 Ok(())
             })
             .get("type", |this, strand, out| {
@@ -125,45 +125,45 @@ impl<'v> Object<'v> for Metadata {
         #[cfg(unix)]
         let builder = builder
             .get("mode", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.mode as i64);
+                Output::set(strand, out, this.annex().inner.mode);
                 Ok(())
             })
             .get("dev", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.dev as i64);
+                Output::set(strand, out, this.annex().inner.dev);
                 Ok(())
             })
             .get("ino", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.ino as i64);
+                Output::set(strand, out, this.annex().inner.ino);
                 Ok(())
             })
             .get("nlink", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.nlink as i64);
+                Output::set(strand, out, this.annex().inner.nlink);
                 Ok(())
             })
             .get("uid", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.uid as i64);
+                Output::set(strand, out, this.annex().inner.uid);
                 Ok(())
             })
             .get("gid", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.gid as i64);
+                Output::set(strand, out, this.annex().inner.gid);
                 Ok(())
             })
             .get("rdev", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.rdev as i64);
+                Output::set(strand, out, this.annex().inner.rdev);
                 Ok(())
             })
             .get("blksize", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.blksize as i64);
+                Output::set(strand, out, this.annex().inner.blksize);
                 Ok(())
             })
             .get("blocks", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.blocks as i64);
+                Output::set(strand, out, this.annex().inner.blocks);
                 Ok(())
             });
         #[cfg(windows)]
         let builder = builder
             .get("attributes", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.attributes as i64);
+                Output::set(strand, out, this.annex().inner.attributes);
                 Ok(())
             })
             .get("readonly", |this, strand, out| {

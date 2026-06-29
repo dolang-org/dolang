@@ -950,7 +950,7 @@ impl<'v> Protocol<'v> for Array<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                let input = this.borrow(strand)?.inner.len() as i64;
+                let input = this.borrow(strand)?.inner.len();
                 Output::set(strand, out, input);
                 Ok(())
             }

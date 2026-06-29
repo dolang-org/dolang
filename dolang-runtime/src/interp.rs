@@ -1151,7 +1151,7 @@ impl<'v> Vm<'v> {
                                 && weak.ptr_eq_strong(upvars)
                             {
                                 frame.push(Value::NIL);
-                                frame.push(Value::from_i64(inner.vm(), indicator as i64));
+                                frame.push(Value::from_int(inner.vm(), indicator as i128));
                                 Ok(())
                             } else {
                                 Err(err)

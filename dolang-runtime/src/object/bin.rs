@@ -381,7 +381,7 @@ impl<'v> Protocol<'v> for [u8] {
                 Output::set(strand, &mut out, Empty::Array);
                 let array = out.as_array(strand).unwrap();
                 for b in this.receiver.get() {
-                    array.push(strand, *b as i64).unwrap();
+                    array.push(strand, *b).unwrap();
                 }
                 Ok(())
             }
@@ -404,7 +404,7 @@ impl<'v> Protocol<'v> for [u8] {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(strand, out, this.receiver.get().len() as i64);
+                Output::set(strand, out, this.receiver.get().len());
                 Ok(())
             }
             sym::STARTS_WITH
@@ -752,7 +752,7 @@ impl<'v> Protocol<'v> for Class {
                 Output::set(strand, &mut out, Empty::Array);
                 let array = out.as_array(strand).unwrap();
                 for b in slice {
-                    array.push(strand, *b as i64).unwrap();
+                    array.push(strand, *b).unwrap();
                 }
                 Ok(())
             }

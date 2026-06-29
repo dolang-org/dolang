@@ -144,7 +144,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 };
                 slot.op_hash(strand, &mut hasher)?;
             }
-            Output::set(strand, out, hasher.finish() as i64);
+            Output::set(strand, out, hasher.finish());
             Ok(())
         })
         .commit();

@@ -97,7 +97,7 @@ impl<'v> Protocol<'v> for Backtrace<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(strand, out, this.get().entries.len() as i64);
+                Output::set(strand, out, this.get().entries.len());
                 Ok(())
             }
             sym::ITER_METHOD => {
@@ -265,7 +265,7 @@ impl<'v> Protocol<'v> for Frame<'v> {
             }
             sym::LINE => {
                 if let Some((_, line)) = this.get().entry.source(strand) {
-                    Output::set(strand, out, line as i64);
+                    Output::set(strand, out, line);
                 } else {
                     out.store(Value::NIL);
                 }

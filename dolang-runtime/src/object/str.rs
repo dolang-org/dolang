@@ -420,7 +420,7 @@ impl<'v> Protocol<'v> for str {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(strand, out, this.receiver.get().len() as i64);
+                Output::set(strand, out, this.receiver.get().len());
                 Ok(())
             }
             sym::STARTS_WITH

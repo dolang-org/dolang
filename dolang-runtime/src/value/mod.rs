@@ -1910,20 +1910,6 @@ impl<'v> Input<'v> for &Value<'v> {
     }
 }
 
-impl<'v> Input<'v> for i64 {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
-        InputBy::Value(Value::from_i64(vm, *self), None)
-    }
-}
-
-impl<'v> Input<'v> for i32 {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
-        InputBy::Value(Value::from_i64(vm, (*self).into()), None)
-    }
-}
-
 impl<'v> Input<'v> for i128 {
     #[allow(private_interfaces)]
     fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
@@ -1931,10 +1917,87 @@ impl<'v> Input<'v> for i128 {
     }
 }
 
+impl<'v> Input<'v> for isize {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_int(vm, *self as i128), None)
+    }
+}
+
+impl<'v> Input<'v> for i64 {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_int(vm, *self as i128), None)
+    }
+}
+
+impl<'v> Input<'v> for i32 {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_int(vm, *self as i128), None)
+    }
+}
+
+impl<'v> Input<'v> for i16 {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_int(vm, *self as i128), None)
+    }
+}
+
+impl<'v> Input<'v> for i8 {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_int(vm, *self as i128), None)
+    }
+}
+
+impl<'v> Input<'v> for usize {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_int(vm, *self as i128), None)
+    }
+}
+
+impl<'v> Input<'v> for u64 {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_int(vm, *self as i128), None)
+    }
+}
+
+impl<'v> Input<'v> for u32 {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_int(vm, *self as i128), None)
+    }
+}
+
+impl<'v> Input<'v> for u16 {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_int(vm, *self as i128), None)
+    }
+}
+
+impl<'v> Input<'v> for u8 {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_int(vm, *self as i128), None)
+    }
+}
+
 impl<'v> Input<'v> for f64 {
     #[allow(private_interfaces)]
     fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
         InputBy::Value(Value::from_f64(vm, *self), None)
+    }
+}
+
+impl<'v> Input<'v> for f32 {
+    #[allow(private_interfaces)]
+    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(Value::from_f64(vm, *self as f64), None)
     }
 }
 

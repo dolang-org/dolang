@@ -98,7 +98,7 @@ impl<'v> Object<'v> for DirEntry {
             });
         #[cfg(unix)]
         let builder = builder.get("ino", |this, strand, out| {
-            Output::set(strand, out, this.annex().ino as i64);
+            Output::set(strand, out, this.annex().ino);
             Ok(())
         });
         builder

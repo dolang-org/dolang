@@ -209,7 +209,7 @@ impl<'v> Object<'v> for Statement {
                                         rc = sqlite3_step(raw);
                                     }
                                     if rc == SQLITE_DONE {
-                                        Ok(sqlite3_changes(sqlite3_db_handle(raw)) as i64)
+                                        Ok(sqlite3_changes(sqlite3_db_handle(raw)))
                                     } else {
                                         Err(rc)
                                     }

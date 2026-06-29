@@ -1952,7 +1952,7 @@ pub(crate) async fn dispatch_native_method<'v, 's>(
         sym::HASH_METHOD => {
             let mut hasher = DefaultHasher::new();
             this.op_hash(strand, &mut hasher)?;
-            Output::set(strand, out, hasher.finish() as i64);
+            Output::set(strand, out, hasher.finish());
         }
         sym::EQ_METHOD => {
             let ([other], []) = unpack!(strand, trailing, 1, 0)?;
