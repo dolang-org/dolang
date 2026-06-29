@@ -14,7 +14,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{self, Empty, Output, Slot, Slots, Value},
+    value::{self, BinEmbryo, Empty, Output, Slot, Slots, Value},
     vm::Vm,
 };
 
@@ -289,21 +289,21 @@ impl<'v> Protocol<'v> for [u8] {
                         } else {
                             strand.input(&mut input)
                         }
-                        let mut acc = Vec::new();
+                        let mut acc = BinEmbryo::new();
                         if input.next(strand, &mut value).await? {
                             let slice = value.as_u8_slice_raw(strand).ok_or_else(|| {
                                 Error::type_error(strand, "element was not binary data")
                             })?;
-                            acc.extend(slice);
+                            acc.extend(strand, slice);
                         }
                         while input.next(strand, &mut value).await? {
-                            acc.extend(this.receiver.get());
+                            acc.extend(strand, this.receiver.get());
                             let slice = value.as_u8_slice_raw(strand).ok_or_else(|| {
                                 Error::type_error(strand, "element was not binary data")
                             })?;
-                            acc.extend(slice);
+                            acc.extend(strand, slice);
                         }
-                        out.store(Value::from_u8_slice(strand, &acc));
+                        acc.finish(strand, out);
                         Ok(())
                     })
                     .await
