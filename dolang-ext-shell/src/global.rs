@@ -31,6 +31,7 @@ use crate::{
     local::Local,
     program::Program,
     shell::{Stderr, Stdin, Stdout},
+    sys::{CpuInfo, OsInfo},
     time::{DateTime, Duration},
 };
 
@@ -54,6 +55,8 @@ pub(crate) struct Types<'v> {
     pub(crate) stderr: Type<'v, Stderr>,
     pub(crate) date_time: Type<'v, DateTime>,
     pub(crate) duration: Type<'v, Duration>,
+    pub(crate) os_info: Type<'v, OsInfo>,
+    pub(crate) cpu_info: Type<'v, CpuInfo>,
     pub(crate) sys_error: Type<'v, SysErrorObject<SysError>>,
     pub(crate) not_found: Type<'v, SysErrorObject<NotFoundError>>,
     pub(crate) permission_denied: Type<'v, SysErrorObject<PermissionDeniedError>>,
@@ -72,7 +75,6 @@ pub(crate) struct Syms<'v> {
     pub(crate) dir: Sym<'v, 'v>,
     pub(crate) file: Sym<'v, 'v>,
     pub(crate) line: Sym<'v, 'v>,
-    pub(crate) record: Sym<'v, 'v>,
     pub(crate) stderr: Sym<'v, 'v>,
     pub(crate) stdin: Sym<'v, 'v>,
     pub(crate) stdout: Sym<'v, 'v>,
@@ -148,6 +150,8 @@ impl<'v> Global<'v> {
                 stderr: builder.register_type(),
                 date_time: builder.register_type::<DateTime>(),
                 duration: builder.register_type::<Duration>(),
+                os_info: builder.register_type(),
+                cpu_info: builder.register_type(),
                 sys_error,
                 not_found: builder
                     .build_type::<SysErrorObject<NotFoundError>>((), ())
@@ -177,7 +181,6 @@ impl<'v> Global<'v> {
                 dir: builder.sym("dir"),
                 file: builder.sym("file"),
                 line: builder.sym("line"),
-                record: builder.sym("record"),
                 stderr: builder.sym("stderr"),
                 stdin: builder.sym("stdin"),
                 stdout: builder.sym("stdout"),

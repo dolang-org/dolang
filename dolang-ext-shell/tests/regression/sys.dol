@@ -1,0 +1,32 @@
+import
+  std:
+    - FieldError
+  - sys
+  sys:
+    - CpuInfo
+    - OsInfo
+
+def assert_err_type ty block
+  let res = try
+    block()
+    false
+  catch e
+    assert_eq (type e) $ty
+    true
+  assert $res
+
+let os = sys.os_info()
+let cpu = sys.cpu_info()
+
+assert (type os OsInfo)
+assert $os.os
+assert $os.family
+
+if (os.family == :windows:)
+  assert (type os.is_wine bool)
+else
+  assert_err_type $FieldError do os.is_wine
+
+assert (type cpu CpuInfo)
+assert $cpu.arch
+assert (cpu.logical_count >= 1)
