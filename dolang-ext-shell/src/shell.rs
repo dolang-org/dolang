@@ -465,12 +465,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .get("program", move |strand, out| {
             match global.program.borrow().as_ref() {
                 Some(ProgramSource::Path(path)) => {
-                    global.types.path.create_with_annex(
-                        strand,
-                        Path,
-                        PathAnnex::new(path.clone(), global),
-                        out,
-                    );
+                    let annex = PathAnnex::try_new(strand, path.clone(), global)?;
+                    global
+                        .types
+                        .path
+                        .create_with_annex(strand, Path, annex, out);
                 }
                 Some(ProgramSource::Module(name)) => Output::set(strand, out, name.as_str()),
                 None => Output::set(strand, out, Nil),
@@ -482,10 +481,10 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             "exe",
             global.types.path,
             Path,
-            PathAnnex {
-                inner: std::env::current_exe().expect("could not get current exe"),
+            PathAnnex::new(
+                std::env::current_exe().expect("could not get current exe"),
                 global,
-            },
+            ),
         )
         .function("host", async move |strand, mut args, out| {
             let func = match args.next() {
@@ -515,12 +514,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let dir = match args.next() {
                 None => {
                     let cwd = global.local.get(strand).cwd().as_ref().to_owned();
-                    global.types.path.create_with_annex(
-                        strand,
-                        Path,
-                        PathAnnex::new(cwd, global),
-                        out,
-                    );
+                    let annex = PathAnnex::try_new(strand, cwd, global)?;
+                    global
+                        .types
+                        .path
+                        .create_with_annex(strand, Path, annex, out);
                     return Ok(());
                 }
                 Some(Arg::Pos(slot)) => slot,

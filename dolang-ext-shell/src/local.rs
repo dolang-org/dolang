@@ -181,7 +181,7 @@ impl Local {
         self.env.borrow().clone()
     }
 
-    pub(crate) fn cwd(&self) -> impl Deref<Target = impl AsRef<Path>> {
+    pub(crate) fn cwd(&self) -> impl Deref<Target = impl AsRef<Path> + Deref<Target = Path>> {
         self.cwd.borrow()
     }
 

@@ -112,6 +112,33 @@ let path = Path r"\\?\C:\work\file.txt"
 echo $path.verbatim  # true
 ```
 
+#### `stream_name`
+
+Alternate data stream name from the final path component, or
+`nil` if no stream is specified.
+
+```
+let path = Path "file.txt:zone"
+echo $path.name         # file.txt
+echo $path.stream_name  # zone
+```
+
+Use `stream_name != nil` to test whether a path targets an alternate stream.
+
+#### `stream_type`
+
+Explicit alternate data stream type without the leading `$`, or
+`nil` if no type is specified.
+
+```
+let path = Path "file.txt:zone:$DATA"
+echo $path.stream_type  # DATA
+```
+
+`Path` parses stream syntax only from the final component. Forms with more than
+two `:` separators in that component are rejected, and an explicit stream type
+must start with `$`.
+
 ## Class Methods
 
 ### `(init) path`

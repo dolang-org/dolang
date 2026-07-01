@@ -154,7 +154,7 @@ impl<'v> File<'v> {
     pub(crate) async fn open<'s>(
         strand: &mut Strand<'v, 's>,
         global: State<'v, Global<'v>>,
-        path: path::PathBuf,
+        path: &path::Path,
         opt1: Option<Slot<'v, '_>>,
         opt2: Option<Slot<'v, '_>>,
         out: Slot<'v, '_>,
@@ -191,7 +191,7 @@ impl<'v> File<'v> {
             }
         }
 
-        let file = open(strand, global, &path, &mode).await.into_sys(strand)?;
+        let file = open(strand, global, path, &mode).await.into_sys(strand)?;
 
         if let Some(block) = block {
             strand

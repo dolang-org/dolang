@@ -719,12 +719,11 @@ impl<'v> Object<'v> for Program {
                 .into_sys(strand)?;
 
             if let Some(path) = resolved {
-                global.types.path.create_with_annex(
-                    strand,
-                    crate::fs::path::Path,
-                    PathAnnex::new(path, global),
-                    out,
-                );
+                let annex = PathAnnex::try_new(strand, path, global)?;
+                global
+                    .types
+                    .path
+                    .create_with_annex(strand, crate::fs::path::Path, annex, out);
             } else {
                 Output::set(strand, out, Nil);
             }
