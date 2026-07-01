@@ -15,7 +15,7 @@ which = "8.0"
 
 [target.'cfg(windows)'.dependencies]
 dunce = "1.0"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_LibraryLoader", "Win32_UI_Shell"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -24,7 +24,7 @@ tempfile = "3"
 tokio-unix-ipc = { package = "dolang-private-ipc", path = "../dolang-private-ipc", version = "0.1.0" }
 tokio = { version = "1.48.0", features = ["process", "time", "signal"] }
 libc = "0.2"
-nix = { version = "0.31", features = ["dir", "fs", "user", "socket"] }
+nix = { version = "0.31", features = ["dir", "fs", "ioctl", "user", "socket"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 futures = "0.3"

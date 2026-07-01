@@ -3,7 +3,7 @@ use dolang::runtime::{
     value::{BinEmbryo, View},
     vm::Builder,
 };
-use dolang_shell_vfs::{FileType, OpenOptions, Vfs, WellKnownPath};
+use dolang_shell_vfs::{Attrs, FileType, OpenOptions, Vfs, WellKnownPath};
 use std::{
     future::poll_fn,
     io::{self, ErrorKind},
@@ -16,6 +16,7 @@ use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 
 use rand::{RngExt, distr::Alphanumeric};
 
+pub(crate) mod attrs;
 pub(crate) mod file;
 pub(crate) mod glob;
 pub(crate) mod metadata;
@@ -116,6 +117,47 @@ async fn metadata<'v, 's>(
     }
     .into_sys(strand)?;
     create_metadata(strand, global, metadata, out);
+    Ok(())
+}
+
+async fn get_attrs<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    path: &std::path::Path,
+    follow: bool,
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    let local = global.local.get(strand);
+    let path = local.cwd().as_ref().join(path);
+    let vfs = local.vfs();
+    let attrs = vfs.attrs(&path, follow).await.into_sys(strand)?;
+    attrs::create_attrs(strand, global, attrs, out);
+    Ok(())
+}
+
+fn parse_attr_bool<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: Option<Slot<'v, '_>>,
+) -> Result<'v, 's, Option<bool>> {
+    match value {
+        Some(value) => value
+            .as_bool(strand)
+            .map(Some)
+            .ok_or_else(|| Error::type_error(strand, "expected bool")),
+        None => Ok(None),
+    }
+}
+
+async fn set_attrs<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    path: &std::path::Path,
+    attrs: Attrs,
+) -> Result<'v, 's, ()> {
+    let local = global.local.get(strand);
+    let path = local.cwd().as_ref().join(path);
+    let vfs = local.vfs();
+    vfs.set_attrs(&path, attrs).await.into_sys(strand)?;
     Ok(())
 }
 
@@ -793,6 +835,32 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
     let modified = builder.sym("modified");
     let accessed = builder.sym("accessed");
     let created = builder.sym("created");
+    let readonly = builder.sym("readonly");
+    let hidden = builder.sym("hidden");
+    let system = builder.sym("system");
+    let archive = builder.sym("archive");
+    let compressed = builder.sym("compressed");
+    let temporary = builder.sym("temporary");
+    let offline = builder.sym("offline");
+    let not_content_indexed = builder.sym("not_content_indexed");
+    let immutable = builder.sym("immutable");
+    let append_only = builder.sym("append_only");
+    let no_dump = builder.sym("no_dump");
+    let no_atime = builder.sym("no_atime");
+    let no_copy_on_write = builder.sym("no_copy_on_write");
+    let dir_sync = builder.sym("dir_sync");
+    let casefold = builder.sym("casefold");
+    let data_journaling = builder.sym("data_journaling");
+    let no_compress = builder.sym("no_compress");
+    let project_inherit = builder.sym("project_inherit");
+    let secure_delete = builder.sym("secure_delete");
+    let sync = builder.sym("sync");
+    let no_tail_merge = builder.sym("no_tail_merge");
+    let top_dir = builder.sym("top_dir");
+    let undelete = builder.sym("undelete");
+    let direct_access = builder.sym("direct_access");
+    let extent_format = builder.sym("extent_format");
+    let opaque = builder.sym("opaque");
     let module = builder
         .module("fs")
         .function("open", async move |strand, args, out| {
@@ -837,6 +905,17 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             };
             metadata(strand, global, &path, follow, out).await
         })
+        .function("attrs", async move |strand, args, out| {
+            let ([path], [follow]) = unpack!(strand, args, 1, 0, follow = None)?;
+            let path = path_from_value(strand, global, &path)?;
+            let follow = match follow {
+                Some(v) => v
+                    .as_bool(strand)
+                    .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
+                None => true,
+            };
+            get_attrs(strand, global, &path, follow, out).await
+        })
         .function("exists", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
             let path = path_from_value(strand, global, &path)?;
@@ -861,6 +940,101 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let size = u64::try_from(size)
                 .map_err(|_| Error::type_error(strand, "size must be a non-negative integer"))?;
             set_len(strand, global, &path, size).await
+        })
+        .function("set_attrs", async move |strand, args, _out| {
+            let (
+                [path],
+                [
+                    readonly,
+                    hidden,
+                    system,
+                    archive,
+                    compressed,
+                    temporary,
+                    offline,
+                    not_content_indexed,
+                    immutable,
+                    append_only,
+                    no_dump,
+                    no_atime,
+                    no_copy_on_write,
+                    dir_sync,
+                    casefold,
+                    data_journaling,
+                    no_compress,
+                    project_inherit,
+                    secure_delete,
+                    sync,
+                    no_tail_merge,
+                    top_dir,
+                    undelete,
+                    direct_access,
+                    extent_format,
+                    opaque,
+                ],
+            ) = unpack!(
+                strand,
+                args,
+                1,
+                0,
+                readonly = None,
+                hidden = None,
+                system = None,
+                archive = None,
+                compressed = None,
+                temporary = None,
+                offline = None,
+                not_content_indexed = None,
+                immutable = None,
+                append_only = None,
+                no_dump = None,
+                no_atime = None,
+                no_copy_on_write = None,
+                dir_sync = None,
+                casefold = None,
+                data_journaling = None,
+                no_compress = None,
+                project_inherit = None,
+                secure_delete = None,
+                sync = None,
+                no_tail_merge = None,
+                top_dir = None,
+                undelete = None,
+                direct_access = None,
+                extent_format = None,
+                opaque = None
+            )?;
+            let path = path_from_value(strand, global, &path)?;
+            let attrs = Attrs {
+                readonly: parse_attr_bool(strand, readonly)?,
+                hidden: parse_attr_bool(strand, hidden)?,
+                system: parse_attr_bool(strand, system)?,
+                archive: parse_attr_bool(strand, archive)?,
+                compressed: parse_attr_bool(strand, compressed)?,
+                temporary: parse_attr_bool(strand, temporary)?,
+                offline: parse_attr_bool(strand, offline)?,
+                not_content_indexed: parse_attr_bool(strand, not_content_indexed)?,
+                immutable: parse_attr_bool(strand, immutable)?,
+                append_only: parse_attr_bool(strand, append_only)?,
+                no_dump: parse_attr_bool(strand, no_dump)?,
+                no_atime: parse_attr_bool(strand, no_atime)?,
+                no_copy_on_write: parse_attr_bool(strand, no_copy_on_write)?,
+                dir_sync: parse_attr_bool(strand, dir_sync)?,
+                casefold: parse_attr_bool(strand, casefold)?,
+                data_journaling: parse_attr_bool(strand, data_journaling)?,
+                no_compress: parse_attr_bool(strand, no_compress)?,
+                project_inherit: parse_attr_bool(strand, project_inherit)?,
+                secure_delete: parse_attr_bool(strand, secure_delete)?,
+                sync: parse_attr_bool(strand, sync)?,
+                no_tail_merge: parse_attr_bool(strand, no_tail_merge)?,
+                top_dir: parse_attr_bool(strand, top_dir)?,
+                undelete: parse_attr_bool(strand, undelete)?,
+                direct_access: parse_attr_bool(strand, direct_access)?,
+                extent_format: parse_attr_bool(strand, extent_format)?,
+                opaque: parse_attr_bool(strand, opaque)?,
+                ..Attrs::default()
+            };
+            set_attrs(strand, global, &path, attrs).await
         })
         .function("is_absolute", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
@@ -1090,6 +1264,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             },
         )
         .value("Metadata", global.types.metadata)
+        .value("Attrs", global.types.attrs)
         .value("DirEntry", global.types.dir_entry)
         .value("Path", global.types.path)
         .commit();

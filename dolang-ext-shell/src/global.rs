@@ -23,6 +23,7 @@ use crate::{
         SysErrorObject, TimedOutError,
     },
     fs::{
+        attrs::Attrs,
         file::File,
         metadata::Metadata,
         path::{Path, PathComponentsIter},
@@ -43,6 +44,7 @@ use crate::fs::readdir::DirEntryIter;
 pub(crate) struct Types<'v> {
     pub(crate) path: Type<'v, Path>,
     pub(crate) path_components_iter: Type<'v, PathComponentsIter>,
+    pub(crate) attrs: Type<'v, Attrs>,
     pub(crate) metadata: Type<'v, Metadata>,
     pub(crate) file: Type<'v, File<'v>>,
     pub(crate) dir_entry: Type<'v, DirEntry>,
@@ -139,6 +141,7 @@ impl<'v> Global<'v> {
                 file: builder.register_type(),
                 path: builder.register_type(),
                 path_components_iter: builder.register_type(),
+                attrs: builder.register_type(),
                 metadata: builder.register_type(),
                 dir_entry: builder.register_type(),
                 dir_entry_iter: builder.register_type(),

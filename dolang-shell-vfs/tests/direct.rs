@@ -2,6 +2,8 @@
 
 #[cfg(unix)]
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::io;
 
 use dolang_shell_vfs::{Child, Command, Direct, FileType, OpenOptions, Vfs};
 use tempfile::tempdir;
@@ -37,6 +39,17 @@ fn env_forwarding_command() -> (&'static str, [&'static str; 2]) {
 #[cfg(windows)]
 fn successful_command() -> (&'static str, [&'static str; 2]) {
     ("cmd", ["/C", "exit 0"])
+}
+
+#[cfg(windows)]
+fn is_wine() -> bool {
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    use windows_sys::core::w;
+
+    const WINE_GET_VERSION: &[u8] = b"wine_get_version\0";
+
+    let ntdll = unsafe { GetModuleHandleW(w!("ntdll.dll")) };
+    !ntdll.is_null() && unsafe { GetProcAddress(ntdll, WINE_GET_VERSION.as_ptr()) }.is_some()
 }
 
 #[tokio::test]
@@ -107,8 +120,141 @@ async fn direct_metadata_windows_attributes() {
 
     let metadata = direct.metadata(&path).await.unwrap();
 
-    assert_ne!(metadata.attributes, 0);
-    assert_ne!(metadata.attributes & 0x0000_0001, 0);
+    assert_ne!(metadata.win_attrs, 0);
+    assert_ne!(metadata.win_attrs & 0x0000_0001, 0);
+    assert_eq!(metadata.attrs().readonly, Some(true));
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn direct_windows_attrs() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("attrs.txt");
+    tokio::fs::write(&path, "hello").await.unwrap();
+
+    direct
+        .set_attrs(
+            &path,
+            dolang_shell_vfs::Attrs {
+                readonly: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let attrs = direct.attrs(&path, true).await.unwrap();
+    assert_eq!(attrs.readonly, Some(true));
+
+    direct
+        .set_attrs(
+            &path,
+            dolang_shell_vfs::Attrs {
+                readonly: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let attrs = direct.attrs(&path, true).await.unwrap();
+    assert_eq!(attrs.readonly, Some(false));
+
+    if is_wine() {
+        return;
+    }
+
+    direct
+        .set_attrs(
+            &path,
+            dolang_shell_vfs::Attrs {
+                compressed: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let attrs = direct.attrs(&path, true).await.unwrap();
+    assert_eq!(attrs.compressed, Some(true));
+
+    direct
+        .set_attrs(
+            &path,
+            dolang_shell_vfs::Attrs {
+                compressed: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let attrs = direct.attrs(&path, true).await.unwrap();
+    assert_eq!(attrs.compressed, Some(false));
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn direct_linux_attrs() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("attrs.txt");
+    tokio::fs::write(&path, "hello").await.unwrap();
+
+    let attrs = match direct.attrs(&path, true).await {
+        Ok(attrs) => attrs,
+        Err(err)
+            if matches!(
+                err.raw_os_error(),
+                Some(libc::ENOTTY | libc::EOPNOTSUPP | libc::EINVAL)
+            ) =>
+        {
+            return;
+        }
+        Err(err) => panic!("attrs failed: {err}"),
+    };
+    assert!(attrs.unix_flags.is_some());
+    assert!(attrs.immutable.is_some());
+    assert!(attrs.append_only.is_some());
+    assert!(attrs.no_dump.is_some());
+    assert!(attrs.no_atime.is_some());
+
+    if let Err(err) = direct
+        .set_attrs(
+            &path,
+            dolang_shell_vfs::Attrs {
+                no_dump: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+    {
+        if matches!(
+            err.raw_os_error(),
+            Some(libc::ENOTTY | libc::EOPNOTSUPP | libc::EINVAL | libc::EPERM)
+        ) || err.kind() == io::ErrorKind::PermissionDenied
+        {
+            return;
+        }
+        panic!("set_attrs failed: {err}");
+    }
+
+    let attrs = direct.attrs(&path, true).await.unwrap();
+    assert_eq!(attrs.no_dump, Some(true));
+
+    direct
+        .set_attrs(
+            &path,
+            dolang_shell_vfs::Attrs {
+                no_dump: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let attrs = direct.attrs(&path, true).await.unwrap();
+    assert_eq!(attrs.no_dump, Some(false));
 }
 
 #[tokio::test]

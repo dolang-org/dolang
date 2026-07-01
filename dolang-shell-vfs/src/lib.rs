@@ -88,12 +88,144 @@ pub struct Metadata {
     pub blksize: u64,
     pub blocks: u64,
     #[cfg(windows)]
-    pub attributes: u32,
+    pub win_attrs: u32,
+    #[cfg(target_os = "macos")]
+    pub unix_flags: u32,
 }
 
 impl Metadata {
     pub fn permissions(&self) -> Permissions {
         Permissions::from_mode(self.mode)
+    }
+
+    pub fn attrs(&self) -> Attrs {
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            #[cfg(windows)]
+            {
+                Attrs::from_win_attrs(self.win_attrs)
+            }
+            #[cfg(target_os = "macos")]
+            {
+                Attrs::from_macos_flags(self.unix_flags)
+            }
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            Attrs::default()
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attrs {
+    pub readonly: Option<bool>,
+    pub hidden: Option<bool>,
+    pub system: Option<bool>,
+    pub archive: Option<bool>,
+    pub reparse_point: Option<bool>,
+    pub compressed: Option<bool>,
+    pub encrypted: Option<bool>,
+    pub temporary: Option<bool>,
+    pub offline: Option<bool>,
+    pub not_content_indexed: Option<bool>,
+    pub immutable: Option<bool>,
+    pub append_only: Option<bool>,
+    pub no_dump: Option<bool>,
+    pub no_atime: Option<bool>,
+    pub no_copy_on_write: Option<bool>,
+    pub dir_sync: Option<bool>,
+    pub casefold: Option<bool>,
+    pub data_journaling: Option<bool>,
+    pub no_compress: Option<bool>,
+    pub project_inherit: Option<bool>,
+    pub secure_delete: Option<bool>,
+    pub sync: Option<bool>,
+    pub no_tail_merge: Option<bool>,
+    pub top_dir: Option<bool>,
+    pub undelete: Option<bool>,
+    pub direct_access: Option<bool>,
+    pub extent_format: Option<bool>,
+    pub opaque: Option<bool>,
+    pub win_attrs: Option<u32>,
+    pub unix_flags: Option<u32>,
+}
+
+impl Attrs {
+    pub fn is_empty_patch(&self) -> bool {
+        self.readonly.is_none()
+            && self.hidden.is_none()
+            && self.system.is_none()
+            && self.archive.is_none()
+            && self.reparse_point.is_none()
+            && self.compressed.is_none()
+            && self.encrypted.is_none()
+            && self.temporary.is_none()
+            && self.offline.is_none()
+            && self.not_content_indexed.is_none()
+            && self.immutable.is_none()
+            && self.append_only.is_none()
+            && self.no_dump.is_none()
+            && self.no_atime.is_none()
+            && self.no_copy_on_write.is_none()
+            && self.dir_sync.is_none()
+            && self.casefold.is_none()
+            && self.data_journaling.is_none()
+            && self.no_compress.is_none()
+            && self.project_inherit.is_none()
+            && self.secure_delete.is_none()
+            && self.sync.is_none()
+            && self.no_tail_merge.is_none()
+            && self.top_dir.is_none()
+            && self.undelete.is_none()
+            && self.direct_access.is_none()
+            && self.extent_format.is_none()
+            && self.opaque.is_none()
+            && self.win_attrs.is_none()
+            && self.unix_flags.is_none()
+    }
+
+    #[cfg(windows)]
+    pub fn from_win_attrs(attrs: u32) -> Self {
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_ENCRYPTED,
+            FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_OFFLINE,
+            FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM,
+            FILE_ATTRIBUTE_TEMPORARY,
+        };
+
+        Self {
+            readonly: Some(attrs & FILE_ATTRIBUTE_READONLY != 0),
+            hidden: Some(attrs & FILE_ATTRIBUTE_HIDDEN != 0),
+            system: Some(attrs & FILE_ATTRIBUTE_SYSTEM != 0),
+            archive: Some(attrs & FILE_ATTRIBUTE_ARCHIVE != 0),
+            reparse_point: Some(attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0),
+            compressed: Some(attrs & FILE_ATTRIBUTE_COMPRESSED != 0),
+            encrypted: Some(attrs & FILE_ATTRIBUTE_ENCRYPTED != 0),
+            temporary: Some(attrs & FILE_ATTRIBUTE_TEMPORARY != 0),
+            offline: Some(attrs & FILE_ATTRIBUTE_OFFLINE != 0),
+            not_content_indexed: Some(attrs & FILE_ATTRIBUTE_NOT_CONTENT_INDEXED != 0),
+            win_attrs: Some(attrs),
+            ..Self::default()
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn from_macos_flags(flags: u32) -> Self {
+        use nix::sys::stat::FileFlag;
+
+        let flags = FileFlag::from_bits_truncate(flags);
+
+        Self {
+            hidden: Some(flags.contains(FileFlag::UF_HIDDEN)),
+            compressed: Some(flags.contains(FileFlag::UF_COMPRESSED)),
+            immutable: Some(flags.contains(FileFlag::UF_IMMUTABLE)),
+            append_only: Some(flags.contains(FileFlag::UF_APPEND)),
+            no_dump: Some(flags.contains(FileFlag::UF_NODUMP)),
+            opaque: Some(flags.contains(FileFlag::UF_OPAQUE)),
+            unix_flags: Some(flags.bits()),
+            ..Self::default()
+        }
     }
 }
 
@@ -107,6 +239,8 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
     #[cfg(unix)]
     {
         use nix::sys::stat::{SFlag, mode_t};
+        #[cfg(target_os = "macos")]
+        use std::os::darwin::fs::MetadataExt as DarwinMetadataExt;
         use std::os::unix::fs::MetadataExt;
 
         let mode = metadata.mode();
@@ -139,6 +273,8 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
             rdev: metadata.rdev(),
             blksize: metadata.blksize(),
             blocks: metadata.blocks(),
+            #[cfg(target_os = "macos")]
+            unix_flags: metadata.st_flags(),
         }
     }
 
@@ -178,7 +314,7 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
             rdev: 0,
             blksize: 0,
             blocks: 0,
-            attributes: metadata.file_attributes(),
+            win_attrs: metadata.file_attributes(),
         }
     }
 }
@@ -355,6 +491,8 @@ pub trait Vfs {
         dst: impl AsRef<Path>,
     ) -> Result<(), io::Error>;
     async fn symlink_metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error>;
+    async fn attrs(&self, path: impl AsRef<Path>, follow: bool) -> Result<Attrs, io::Error>;
+    async fn set_attrs(&self, path: impl AsRef<Path>, attrs: Attrs) -> Result<(), io::Error>;
     async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error>;
     async fn read_link(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error>;
     async fn glob(
@@ -1236,6 +1374,34 @@ impl Vfs for ClientOrDirect {
         #[cfg(not(unix))]
         {
             self.0.symlink_metadata(path).await
+        }
+    }
+
+    async fn attrs(&self, path: impl AsRef<Path>, follow: bool) -> Result<Attrs, io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.attrs(path, follow).await,
+                Self::Direct(direct) => direct.attrs(path, follow).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.attrs(path, follow).await
+        }
+    }
+
+    async fn set_attrs(&self, path: impl AsRef<Path>, attrs: Attrs) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.set_attrs(path, attrs).await,
+                Self::Direct(direct) => direct.set_attrs(path, attrs).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.set_attrs(path, attrs).await
         }
     }
 

@@ -114,19 +114,10 @@ Gets file metadata.
 
 **Windows-only** (these fields do not exist on Unix):
 
-| Field                 | Type                     | Description                        |
-| --------------------- | ------------------------ | ---------------------------------- |
-| `attributes`          | [`int`](../std/index.md) | Raw Windows file attribute bitmask |
-| `readonly`            | [`bool`](../std/bool.md) | Readonly attribute bit             |
-| `hidden`              | [`bool`](../std/bool.md) | Hidden attribute bit               |
-| `system`              | [`bool`](../std/bool.md) | System attribute bit               |
-| `archive`             | [`bool`](../std/bool.md) | Archive attribute bit              |
-| `reparse_point`       | [`bool`](../std/bool.md) | Reparse-point attribute bit        |
-| `compressed`          | [`bool`](../std/bool.md) | Compressed attribute bit           |
-| `encrypted`           | [`bool`](../std/bool.md) | Encrypted attribute bit            |
-| `temporary`           | [`bool`](../std/bool.md) | Temporary attribute bit            |
-| `offline`             | [`bool`](../std/bool.md) | Offline attribute bit              |
-| `not_content_indexed` | [`bool`](../std/bool.md) | Not-content-indexed attribute bit  |
+| Field       | Type                     | Description                           |
+| ----------- | ------------------------ | ------------------------------------- |
+| `win_attrs` | [`int`](../std/index.md) | Raw Windows file attribute bitmask    |
+| `attrs`     | [`Attrs`](attrs.md)      | Windows attributes from this metadata |
 
 **Example:**
 
@@ -142,7 +133,7 @@ open data.txt r do |file|
     echo "Mode: $(meta.mode)"
     echo "Owner: UID=$(meta.uid), GID=$(meta.gid)"
   else
-    echo "Attributes: $(meta.attributes)"
+    echo "Attributes: $(meta.attrs.win_attrs)"
 ```
 
 ### `seek offset`

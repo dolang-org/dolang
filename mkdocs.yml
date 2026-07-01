@@ -99,6 +99,7 @@ nav:
       - api/digest/state.md
     - fs:
       - api/fs/index.md
+      - api/fs/attrs.md
       - api/fs/direntry.md
       - api/fs/file.md
       - api/fs/metadata.md

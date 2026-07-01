@@ -198,6 +198,27 @@ let link_meta = link.metadata follow: false
 echo "Link points to: $(link_meta.type)"
 ```
 
+### `attrs :follow = true`
+
+Gets filesystem attributes for this path.
+
+Equivalent to [`attrs`](index.md).
+
+**Parameters:**
+
+| Name     | Type                     | Description                                                  |
+| -------- | ------------------------ | ------------------------------------------------------------ |
+| `follow` | [`bool`](../std/bool.md) | If `false`, queries attributes for symlink instead of target |
+
+**Returns:** [`Attrs`](attrs.md)
+
+```
+let path = Path "data.txt"
+let a = path.attrs()
+if a.hidden
+  echo hidden
+```
+
 ### `exists()`
 
 Checks if the path exists.
@@ -278,6 +299,22 @@ Equivalent to [`set_len`](index.md#set_len-path-size).
 ```
 let path = Path "output.txt"
 path.set_len 0
+```
+
+### `set_attrs :readonly? :hidden? ...`
+
+Updates filesystem attributes for this path.
+
+Equivalent to [`set_attrs`](index.md).
+
+Unspecified attributes are left unchanged.
+
+```
+let path = Path "data.txt"
+path.set_attrs hidden: true
+path.set_attrs readonly: false
+path.set_attrs no_dump: true
+path.set_attrs opaque: false
 ```
 
 ### `copy to :all?`

@@ -7,6 +7,7 @@ The `fs` module provides functions and types for filesystem operations.
 | Type                    | Description                   |
 | ----------------------- | ----------------------------- |
 | [Path](path.md)         | Filesystem path object        |
+| [Attrs](attrs.md)       | Filesystem attributes         |
 | [Metadata](metadata.md) | Immutable filesystem metadata |
 | [DirEntry](direntry.md) | Directory entry object        |
 
@@ -273,19 +274,10 @@ Gets file metadata for the given path.
 
 **Windows-only** (these fields do not exist on Unix):
 
-| Field                 | Type                     | Description                        |
-| --------------------- | ------------------------ | ---------------------------------- |
-| `attributes`          | [`int`](../std/int.md)   | Raw Windows file attribute bitmask |
-| `readonly`            | [`bool`](../std/bool.md) | Readonly attribute bit             |
-| `hidden`              | [`bool`](../std/bool.md) | Hidden attribute bit               |
-| `system`              | [`bool`](../std/bool.md) | System attribute bit               |
-| `archive`             | [`bool`](../std/bool.md) | Archive attribute bit              |
-| `reparse_point`       | [`bool`](../std/bool.md) | Reparse-point attribute bit        |
-| `compressed`          | [`bool`](../std/bool.md) | Compressed attribute bit           |
-| `encrypted`           | [`bool`](../std/bool.md) | Encrypted attribute bit            |
-| `temporary`           | [`bool`](../std/bool.md) | Temporary attribute bit            |
-| `offline`             | [`bool`](../std/bool.md) | Offline attribute bit              |
-| `not_content_indexed` | [`bool`](../std/bool.md) | Not-content-indexed attribute bit  |
+| Field       | Type                   | Description                             |
+| ----------- | ---------------------- | --------------------------------------- |
+| `win_attrs` | [`int`](../std/int.md) | Raw Windows file attribute bitmask      |
+| `attrs`     | [`Attrs`](attrs.md)    | Windows attributes from this metadata   |
 
 **Example:**
 
@@ -297,11 +289,32 @@ echo "Type: $(meta.type)"
 if (sys.os_info().family != :windows:)
   echo "Mode: $(meta.mode)"
 else
-  echo "Attributes: $(meta.attributes)"
+  echo "Attributes: $(meta.attrs.win_attrs)"
 
 # Get symlink metadata without following
 let link_meta = metadata "link.txt" follow: false
 echo "Link type: $(link_meta.type)"
+```
+
+### `attrs path :follow = true`
+
+Gets filesystem attributes for the given path.
+
+**Parameters:**
+
+| Name     | Type                                      | Description                                                  |
+| -------- | ----------------------------------------- | ------------------------------------------------------------ |
+| `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file or directory                                |
+| `follow` | [`bool`](../std/bool.md)                  | If `false`, queries attributes for symlink instead of target |
+
+**Returns:** [`Attrs`](attrs.md)
+
+**Errors:** Raises a runtime error on unsupported platforms.
+
+```
+let a = attrs "data.txt"
+if a.hidden
+  echo hidden
 ```
 
 ### `copy from to :all?`
@@ -718,6 +731,53 @@ import time:
 set_timestamps "artifact.tar" modified: DateTime.from_unix(1700000000)
 set_timestamps "cache.db" accessed: DateTime.now()
 set_timestamps "cache.db" created: DateTime.from_unix(1690000000)
+```
+
+### `set_attrs path :readonly? :hidden? ...`
+
+Updates filesystem attributes.
+
+Unspecified attributes are left unchanged.
+
+**Parameters:**
+
+| Name                  | Type                                      | Description                       |
+| --------------------- | ----------------------------------------- | --------------------------------- |
+| `path`                | [`str`](../std/str.md)\|[`Path`](path.md) | Path to update                    |
+| `readonly`            | [`bool`](../std/bool.md)                  | Optional readonly attribute value |
+| `hidden`              | [`bool`](../std/bool.md)                  | Optional hidden attribute/flag    |
+| `system`              | [`bool`](../std/bool.md)                  | Optional system attribute value   |
+| `archive`             | [`bool`](../std/bool.md)                  | Optional archive attribute value  |
+| `compressed`          | [`bool`](../std/bool.md)                  | Optional compressed flag          |
+| `temporary`           | [`bool`](../std/bool.md)                  | Optional temporary value          |
+| `offline`             | [`bool`](../std/bool.md)                  | Optional offline value            |
+| `not_content_indexed` | [`bool`](../std/bool.md)                  | Optional indexing attribute value |
+| `immutable`           | [`bool`](../std/bool.md)                  | Optional immutable flag           |
+| `append_only`         | [`bool`](../std/bool.md)                  | Optional append-only flag         |
+| `no_dump`             | [`bool`](../std/bool.md)                  | Optional no-dump flag             |
+| `no_atime`            | [`bool`](../std/bool.md)                  | Optional Linux no-atime flag      |
+| `no_copy_on_write`    | [`bool`](../std/bool.md)                  | Optional Linux no-COW flag        |
+| `dir_sync`            | [`bool`](../std/bool.md)                  | Optional Linux dir-sync flag      |
+| `casefold`            | [`bool`](../std/bool.md)                  | Optional Linux casefold flag      |
+| `data_journaling`     | [`bool`](../std/bool.md)                  | Optional Linux journaling flag    |
+| `no_compress`         | [`bool`](../std/bool.md)                  | Optional Linux no-compress flag   |
+| `project_inherit`     | [`bool`](../std/bool.md)                  | Optional Linux project flag       |
+| `secure_delete`       | [`bool`](../std/bool.md)                  | Optional Linux secure-delete flag |
+| `sync`                | [`bool`](../std/bool.md)                  | Optional Linux sync flag          |
+| `no_tail_merge`       | [`bool`](../std/bool.md)                  | Optional Linux no-tail flag       |
+| `top_dir`             | [`bool`](../std/bool.md)                  | Optional Linux top-dir flag       |
+| `undelete`            | [`bool`](../std/bool.md)                  | Optional Linux undelete flag      |
+| `direct_access`       | [`bool`](../std/bool.md)                  | Optional Linux direct-access flag |
+| `extent_format`       | [`bool`](../std/bool.md)                  | Optional Linux extent flag        |
+| `opaque`              | [`bool`](../std/bool.md)                  | Optional macOS opaque flag        |
+
+**Errors:** Raises a runtime error on unsupported platforms.
+
+```
+set_attrs "data.txt" hidden: true
+set_attrs "data.txt" readonly: false
+set_attrs "data.txt" no_dump: true
+set_attrs "data.txt" opaque: false
 ```
 
 ### `chown path user? :group? :follow = true`

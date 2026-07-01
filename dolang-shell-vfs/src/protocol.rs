@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tokio_unix_ipc::serde::Handle;
 
-pub(crate) use crate::{ChownIdentity, Metadata, WellKnownPath};
+pub(crate) use crate::{Attrs, ChownIdentity, Metadata, WellKnownPath};
 
 pub(crate) type RequestId = u64;
 
@@ -74,6 +74,18 @@ pub(crate) struct RemoveDirRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct MetadataRequest {
     pub(crate) path: PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct AttrsRequest {
+    pub(crate) path: PathBuf,
+    pub(crate) follow: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct SetAttrsRequest {
+    pub(crate) path: PathBuf,
+    pub(crate) attrs: Attrs,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -190,6 +202,8 @@ pub(crate) enum RequestKind {
     Symlink(SymlinkRequest),
     HardLink(HardLinkRequest),
     SymlinkMetadata(MetadataRequest),
+    Attrs(AttrsRequest),
+    SetAttrs(SetAttrsRequest),
     Canonicalize(CanonicalizeRequest),
     ReadLink(ReadLinkRequest),
     Access(AccessRequest),
@@ -229,6 +243,8 @@ pub(crate) enum ResponseKind {
     Symlink(Result<(), i32>),
     HardLink(Result<(), i32>),
     SymlinkMetadata(Result<Metadata, i32>),
+    Attrs(Result<Attrs, i32>),
+    SetAttrs(Result<(), i32>),
     Canonicalize(Result<PathBuf, i32>),
     ReadLink(Result<PathBuf, i32>),
     Access(Result<(), i32>),
@@ -274,6 +290,8 @@ impl std::fmt::Debug for ResponseKind {
             ResponseKind::SymlinkMetadata(result) => {
                 f.debug_tuple("SymlinkMetadata").field(result).finish()
             }
+            ResponseKind::Attrs(result) => f.debug_tuple("Attrs").field(result).finish(),
+            ResponseKind::SetAttrs(result) => f.debug_tuple("SetAttrs").field(result).finish(),
             ResponseKind::Canonicalize(result) => {
                 f.debug_tuple("Canonicalize").field(result).finish()
             }
