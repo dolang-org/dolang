@@ -20,14 +20,14 @@ use tokio::{
 use tokio_unix_ipc::{Receiver, Sender, serde::Handle};
 
 use crate::{
-    Child, ChownIdentity, Command, LockedSender, Metadata, Permissions, PipeRecv, PipeSend,
+    Attrs, Child, ChownIdentity, Command, LockedSender, Metadata, Permissions, PipeRecv, PipeSend,
     ReadDir, Vfs, WellKnownPath,
     protocol::{
-        AccessRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
-        GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest, ReadLinkRequest,
-        RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind, Response,
-        ResponseKind, SetPermissionsRequest, SpawnRequest, SymlinkRequest, Timestamp,
-        UnixStreamSocketRequest, UtimeRequest, WellKnownPathRequest,
+        AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
+        CreateDirRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
+        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
+        Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SpawnRequest,
+        SymlinkRequest, Timestamp, UnixStreamSocketRequest, UtimeRequest, WellKnownPathRequest,
     },
 };
 
@@ -982,6 +982,50 @@ impl Vfs for Client {
         }
     }
 
+    async fn attrs(&self, path: impl AsRef<Path>, follow: bool) -> Result<Attrs, io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Attrs(AttrsRequest {
+                        path: path.as_ref().to_path_buf(),
+                        follow,
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn set_attrs(&self, path: impl AsRef<Path>, attrs: Attrs) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::SetAttrs(SetAttrsRequest {
+                        path: path.as_ref().to_path_buf(),
+                        attrs,
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
     async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
         let mut state = self.inner.state.lock().await;
         match &mut *state {
@@ -1211,6 +1255,12 @@ async fn receive_loop(receiver: Receiver<Response>, inner: Arc<ClientInner>) {
                     alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
                 }
                 ResponseKind::SymlinkMetadata(result) => {
+                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
+                }
+                ResponseKind::Attrs(result) => {
+                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
+                }
+                ResponseKind::SetAttrs(result) => {
                     alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
                 }
                 ResponseKind::Canonicalize(result) => {

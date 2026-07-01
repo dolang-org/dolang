@@ -6,31 +6,82 @@ use std::{
     process::{ExitStatus, Stdio},
     sync::Arc,
 };
-#[cfg(windows)]
-use std::{os::windows::io::AsHandle, time::SystemTime};
 
 #[cfg(unix)]
-use tokio::time::timeout;
+use std::os::fd::{AsFd, OwnedFd};
+
+#[cfg(windows)]
+use std::{
+    os::windows::{
+        ffi::{OsStrExt, OsStringExt},
+        io::{AsHandle, FromRawHandle, OwnedHandle},
+    },
+    time::SystemTime,
+};
+#[cfg(windows)]
+use windows_sys::{
+    Win32::{
+        Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, S_OK},
+        Storage::FileSystem::{
+            COMPRESSION_FORMAT_DEFAULT, COMPRESSION_FORMAT_NONE, CreateFileW,
+            FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL,
+            FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_READONLY,
+            FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileAttributesW,
+            INVALID_FILE_ATTRIBUTES, OPEN_EXISTING, SetFileAttributesW,
+        },
+        System::{Com::CoTaskMemFree, IO::DeviceIoControl, Ioctl::FSCTL_SET_COMPRESSION},
+        UI::Shell::{
+            FOLDERID_LocalAppData, FOLDERID_Profile, KF_FLAG_DONT_VERIFY, SHGetKnownFolderPath,
+        },
+    },
+    core::GUID,
+};
+
 use tokio::{
     fs::{self, File, OpenOptions},
     process::Command as TokioCommand,
     sync::Mutex,
     time::Duration,
 };
+
+#[cfg(unix)]
+use tokio::time::timeout;
+
 use wax::{
     Glob,
     walk::{DepthBehavior, DepthMax, Entry, LinkBehavior, WalkBehavior},
 };
 
-#[cfg(unix)]
-use std::os::fd::{AsFd, OwnedFd};
-#[cfg(windows)]
-use std::os::windows::ffi::OsStringExt;
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsRawFd, RawFd};
 
 use crate::{
-    Child, ChownIdentity, Command, Metadata, Permissions, PipeRecv, PipeSend, ReadDir, Vfs,
+    Attrs, Child, ChownIdentity, Command, Metadata, Permissions, PipeRecv, PipeSend, ReadDir, Vfs,
     WellKnownPath,
 };
+
+#[cfg(target_os = "linux")]
+mod linux_attrs {
+    pub(super) const SECRM: libc::c_long = 0x0000_0001;
+    pub(super) const UNRM: libc::c_long = 0x0000_0002;
+    pub(super) const COMPR: libc::c_long = 0x0000_0004;
+    pub(super) const SYNC: libc::c_long = 0x0000_0008;
+    pub(super) const IMMUTABLE: libc::c_long = 0x0000_0010;
+    pub(super) const APPEND: libc::c_long = 0x0000_0020;
+    pub(super) const NODUMP: libc::c_long = 0x0000_0040;
+    pub(super) const NOATIME: libc::c_long = 0x0000_0080;
+    pub(super) const NOCOMP: libc::c_long = 0x0000_0400;
+    pub(super) const JOURNAL_DATA: libc::c_long = 0x0000_4000;
+    pub(super) const NOTAIL: libc::c_long = 0x0000_8000;
+    pub(super) const DIRSYNC: libc::c_long = 0x0001_0000;
+    pub(super) const TOPDIR: libc::c_long = 0x0002_0000;
+    pub(super) const EXTENT: libc::c_long = 0x0008_0000;
+    pub(super) const NOCOW: libc::c_long = 0x0080_0000;
+    pub(super) const DAX: libc::c_long = 0x0200_0000;
+    pub(super) const PROJINHERIT: libc::c_long = 0x2000_0000;
+    pub(super) const CASEFOLD: libc::c_long = 0x4000_0000;
+}
 
 #[derive(Debug, Clone)]
 pub struct Direct {
@@ -143,6 +194,344 @@ impl Default for Direct {
 }
 
 impl Direct {
+    #[cfg(target_os = "linux")]
+    fn attrs_from_flags(flags: libc::c_long) -> Attrs {
+        Attrs {
+            compressed: Some(flags & linux_attrs::COMPR != 0),
+            immutable: Some(flags & linux_attrs::IMMUTABLE != 0),
+            append_only: Some(flags & linux_attrs::APPEND != 0),
+            no_dump: Some(flags & linux_attrs::NODUMP != 0),
+            no_atime: Some(flags & linux_attrs::NOATIME != 0),
+            no_copy_on_write: Some(flags & linux_attrs::NOCOW != 0),
+            dir_sync: Some(flags & linux_attrs::DIRSYNC != 0),
+            casefold: Some(flags & linux_attrs::CASEFOLD != 0),
+            data_journaling: Some(flags & linux_attrs::JOURNAL_DATA != 0),
+            no_compress: Some(flags & linux_attrs::NOCOMP != 0),
+            project_inherit: Some(flags & linux_attrs::PROJINHERIT != 0),
+            secure_delete: Some(flags & linux_attrs::SECRM != 0),
+            sync: Some(flags & linux_attrs::SYNC != 0),
+            no_tail_merge: Some(flags & linux_attrs::NOTAIL != 0),
+            top_dir: Some(flags & linux_attrs::TOPDIR != 0),
+            undelete: Some(flags & linux_attrs::UNRM != 0),
+            direct_access: Some(flags & linux_attrs::DAX != 0),
+            extent_format: Some(flags & linux_attrs::EXTENT != 0),
+            unix_flags: u32::try_from(flags).ok(),
+            ..Attrs::default()
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn apply_linux_flag(flags: &mut libc::c_long, flag: libc::c_long, value: Option<bool>) {
+        match value {
+            Some(true) => *flags |= flag,
+            Some(false) => *flags &= !flag,
+            None => {}
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn get_linux_flags(fd: RawFd) -> io::Result<libc::c_long> {
+        nix::ioctl_read!(fs_ioc_getflags, b'f', 1, libc::c_long);
+
+        let mut flags = 0;
+        unsafe { fs_ioc_getflags(fd, &mut flags) }.map_err(io::Error::from)?;
+        Ok(flags)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_linux_flags(fd: RawFd, flags: libc::c_long) -> io::Result<()> {
+        nix::ioctl_write_ptr!(fs_ioc_setflags, b'f', 2, libc::c_long);
+
+        unsafe { fs_ioc_setflags(fd, &flags) }.map_err(io::Error::from)?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn attrs_from_path(path: PathBuf, _follow: bool) -> io::Result<Attrs> {
+        let file = std::fs::File::open(path)?;
+        Self::get_linux_flags(file.as_raw_fd()).map(Self::attrs_from_flags)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_attrs_path(path: PathBuf, patch: Attrs) -> io::Result<()> {
+        if patch.readonly.is_some()
+            || patch.hidden.is_some()
+            || patch.system.is_some()
+            || patch.archive.is_some()
+            || patch.reparse_point.is_some()
+            || patch.encrypted.is_some()
+            || patch.temporary.is_some()
+            || patch.offline.is_some()
+            || patch.not_content_indexed.is_some()
+            || patch.opaque.is_some()
+            || patch.win_attrs.is_some()
+            || patch.unix_flags.is_some()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "one or more attributes cannot be set on this platform",
+            ));
+        }
+
+        if patch.is_empty_patch() {
+            return Ok(());
+        }
+
+        let file = std::fs::OpenOptions::new().read(true).open(path)?;
+        let mut flags = Self::get_linux_flags(file.as_raw_fd())?;
+        Self::apply_linux_flag(&mut flags, linux_attrs::COMPR, patch.compressed);
+        Self::apply_linux_flag(&mut flags, linux_attrs::IMMUTABLE, patch.immutable);
+        Self::apply_linux_flag(&mut flags, linux_attrs::APPEND, patch.append_only);
+        Self::apply_linux_flag(&mut flags, linux_attrs::NODUMP, patch.no_dump);
+        Self::apply_linux_flag(&mut flags, linux_attrs::NOATIME, patch.no_atime);
+        Self::apply_linux_flag(&mut flags, linux_attrs::NOCOW, patch.no_copy_on_write);
+        Self::apply_linux_flag(&mut flags, linux_attrs::DIRSYNC, patch.dir_sync);
+        Self::apply_linux_flag(&mut flags, linux_attrs::CASEFOLD, patch.casefold);
+        Self::apply_linux_flag(&mut flags, linux_attrs::JOURNAL_DATA, patch.data_journaling);
+        Self::apply_linux_flag(&mut flags, linux_attrs::NOCOMP, patch.no_compress);
+        Self::apply_linux_flag(&mut flags, linux_attrs::PROJINHERIT, patch.project_inherit);
+        Self::apply_linux_flag(&mut flags, linux_attrs::SECRM, patch.secure_delete);
+        Self::apply_linux_flag(&mut flags, linux_attrs::SYNC, patch.sync);
+        Self::apply_linux_flag(&mut flags, linux_attrs::NOTAIL, patch.no_tail_merge);
+        Self::apply_linux_flag(&mut flags, linux_attrs::TOPDIR, patch.top_dir);
+        Self::apply_linux_flag(&mut flags, linux_attrs::UNRM, patch.undelete);
+        Self::apply_linux_flag(&mut flags, linux_attrs::DAX, patch.direct_access);
+        Self::apply_linux_flag(&mut flags, linux_attrs::EXTENT, patch.extent_format);
+        Self::set_linux_flags(file.as_raw_fd(), flags)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn attrs_from_flags(flags: libc::c_uint) -> Attrs {
+        use nix::sys::stat::FileFlag;
+
+        let flags = FileFlag::from_bits_truncate(flags);
+        Attrs {
+            hidden: Some(flags.contains(FileFlag::UF_HIDDEN)),
+            compressed: Some(flags.contains(FileFlag::UF_COMPRESSED)),
+            immutable: Some(flags.contains(FileFlag::UF_IMMUTABLE)),
+            append_only: Some(flags.contains(FileFlag::UF_APPEND)),
+            no_dump: Some(flags.contains(FileFlag::UF_NODUMP)),
+            opaque: Some(flags.contains(FileFlag::UF_OPAQUE)),
+            unix_flags: Some(flags.bits()),
+            ..Attrs::default()
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn apply_macos_flag(
+        flags: &mut nix::sys::stat::FileFlag,
+        flag: nix::sys::stat::FileFlag,
+        value: Option<bool>,
+    ) {
+        match value {
+            Some(true) => flags.insert(flag),
+            Some(false) => flags.remove(flag),
+            None => {}
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn attrs_from_path(path: PathBuf, follow: bool) -> io::Result<Attrs> {
+        let stat = if follow {
+            nix::sys::stat::stat(&path)
+        } else {
+            nix::sys::stat::lstat(&path)
+        }
+        .map_err(io::Error::from)?;
+        Ok(Self::attrs_from_flags(stat.st_flags))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn set_attrs_path(path: PathBuf, patch: Attrs) -> io::Result<()> {
+        use nix::sys::stat::FileFlag;
+
+        if patch.readonly.is_some()
+            || patch.system.is_some()
+            || patch.archive.is_some()
+            || patch.reparse_point.is_some()
+            || patch.compressed.is_some()
+            || patch.encrypted.is_some()
+            || patch.temporary.is_some()
+            || patch.offline.is_some()
+            || patch.not_content_indexed.is_some()
+            || patch.no_atime.is_some()
+            || patch.no_copy_on_write.is_some()
+            || patch.dir_sync.is_some()
+            || patch.casefold.is_some()
+            || patch.data_journaling.is_some()
+            || patch.no_compress.is_some()
+            || patch.project_inherit.is_some()
+            || patch.secure_delete.is_some()
+            || patch.sync.is_some()
+            || patch.no_tail_merge.is_some()
+            || patch.top_dir.is_some()
+            || patch.undelete.is_some()
+            || patch.direct_access.is_some()
+            || patch.extent_format.is_some()
+            || patch.win_attrs.is_some()
+            || patch.unix_flags.is_some()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "one or more attributes cannot be set on this platform",
+            ));
+        }
+
+        if patch.is_empty_patch() {
+            return Ok(());
+        }
+
+        let stat = nix::sys::stat::stat(&path).map_err(io::Error::from)?;
+        let mut flags = FileFlag::from_bits_truncate(stat.st_flags);
+        Self::apply_macos_flag(&mut flags, FileFlag::UF_HIDDEN, patch.hidden);
+        Self::apply_macos_flag(&mut flags, FileFlag::UF_IMMUTABLE, patch.immutable);
+        Self::apply_macos_flag(&mut flags, FileFlag::UF_APPEND, patch.append_only);
+        Self::apply_macos_flag(&mut flags, FileFlag::UF_NODUMP, patch.no_dump);
+        Self::apply_macos_flag(&mut flags, FileFlag::UF_OPAQUE, patch.opaque);
+        nix::unistd::chflags(&path, flags).map_err(io::Error::from)
+    }
+
+    #[cfg(windows)]
+    fn path_wide(path: &Path) -> Vec<u16> {
+        path.as_os_str().encode_wide().chain([0]).collect()
+    }
+
+    #[cfg(windows)]
+    fn attrs_from_path(path: PathBuf, _follow: bool) -> io::Result<Attrs> {
+        let path = Self::path_wide(&path);
+        let attrs = unsafe { GetFileAttributesW(path.as_ptr()) };
+        if attrs == INVALID_FILE_ATTRIBUTES {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(Attrs::from_win_attrs(attrs))
+        }
+    }
+
+    #[cfg(windows)]
+    fn set_windows_compression(path: &[u16], compressed: bool) -> io::Result<()> {
+        let handle = unsafe {
+            CreateFileW(
+                path.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        let _handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+
+        let format = if compressed {
+            COMPRESSION_FORMAT_DEFAULT
+        } else {
+            COMPRESSION_FORMAT_NONE
+        };
+        let mut bytes_returned = 0;
+        if unsafe {
+            DeviceIoControl(
+                handle,
+                FSCTL_SET_COMPRESSION,
+                std::ptr::from_ref(&format).cast(),
+                u32::try_from(std::mem::size_of_val(&format)).unwrap(),
+                std::ptr::null_mut(),
+                0,
+                &mut bytes_returned,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(windows)]
+    fn set_attrs_path(path: PathBuf, patch: Attrs) -> io::Result<()> {
+        if patch.reparse_point.is_some()
+            || patch.encrypted.is_some()
+            || patch.immutable.is_some()
+            || patch.append_only.is_some()
+            || patch.no_dump.is_some()
+            || patch.no_atime.is_some()
+            || patch.no_copy_on_write.is_some()
+            || patch.dir_sync.is_some()
+            || patch.casefold.is_some()
+            || patch.data_journaling.is_some()
+            || patch.no_compress.is_some()
+            || patch.project_inherit.is_some()
+            || patch.secure_delete.is_some()
+            || patch.sync.is_some()
+            || patch.no_tail_merge.is_some()
+            || patch.top_dir.is_some()
+            || patch.undelete.is_some()
+            || patch.direct_access.is_some()
+            || patch.extent_format.is_some()
+            || patch.opaque.is_some()
+            || patch.win_attrs.is_some()
+            || patch.unix_flags.is_some()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "one or more attributes cannot be set on this platform",
+            ));
+        }
+
+        if patch.is_empty_patch() {
+            return Ok(());
+        }
+
+        fn apply(attrs: &mut u32, flag: u32, value: Option<bool>) {
+            match value {
+                Some(true) => *attrs |= flag,
+                Some(false) => *attrs &= !flag,
+                None => {}
+            }
+        }
+
+        let path = Self::path_wide(&path);
+        let mut attrs = unsafe { GetFileAttributesW(path.as_ptr()) };
+        if attrs == INVALID_FILE_ATTRIBUTES {
+            return Err(io::Error::last_os_error());
+        }
+
+        apply(&mut attrs, FILE_ATTRIBUTE_READONLY, patch.readonly);
+        apply(&mut attrs, FILE_ATTRIBUTE_HIDDEN, patch.hidden);
+        apply(&mut attrs, FILE_ATTRIBUTE_SYSTEM, patch.system);
+        apply(&mut attrs, FILE_ATTRIBUTE_ARCHIVE, patch.archive);
+        apply(&mut attrs, FILE_ATTRIBUTE_TEMPORARY, patch.temporary);
+        apply(&mut attrs, FILE_ATTRIBUTE_OFFLINE, patch.offline);
+        apply(
+            &mut attrs,
+            FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
+            patch.not_content_indexed,
+        );
+
+        if patch.readonly.is_some()
+            || patch.hidden.is_some()
+            || patch.system.is_some()
+            || patch.archive.is_some()
+            || patch.temporary.is_some()
+            || patch.offline.is_some()
+            || patch.not_content_indexed.is_some()
+        {
+            let res = unsafe { SetFileAttributesW(path.as_ptr(), attrs) };
+            if res == 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+
+        if let Some(compressed) = patch.compressed {
+            Self::set_windows_compression(&path, compressed)?;
+        }
+
+        Ok(())
+    }
+
     #[cfg(unix)]
     fn override_or_env(env: &HashMap<String, Option<String>>, key: &str) -> Option<OsString> {
         match env.get(key) {
@@ -197,11 +586,8 @@ impl Direct {
     }
 
     #[cfg(windows)]
-    fn known_folder(folder_id: &windows_sys::core::GUID) -> Result<PathBuf, io::Error> {
+    fn known_folder(folder_id: &GUID) -> Result<PathBuf, io::Error> {
         use std::slice;
-        use windows_sys::Win32::Foundation::S_OK;
-        use windows_sys::Win32::System::Com::CoTaskMemFree;
-        use windows_sys::Win32::UI::Shell::{KF_FLAG_DONT_VERIFY, SHGetKnownFolderPath};
 
         unsafe extern "C" {
             fn wcslen(buf: *const u16) -> usize;
@@ -229,7 +615,7 @@ impl Direct {
 
     #[cfg(windows)]
     fn home_dir_windows(_env: &HashMap<String, Option<String>>) -> Result<PathBuf, io::Error> {
-        Self::known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Profile)
+        Self::known_folder(&FOLDERID_Profile)
     }
 
     fn home_dir_local(env: &HashMap<String, Option<String>>) -> Result<PathBuf, io::Error> {
@@ -259,7 +645,7 @@ impl Direct {
         #[cfg(windows)]
         {
             let _ = env;
-            Self::known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_LocalAppData)
+            Self::known_folder(&FOLDERID_LocalAppData)
         }
     }
 }
@@ -950,6 +1336,42 @@ impl Vfs for Direct {
         fs::symlink_metadata(path.as_ref())
             .await
             .map(crate::metadata_from_std)
+    }
+
+    async fn attrs(&self, path: impl AsRef<Path>, follow: bool) -> Result<Attrs, io::Error> {
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+        {
+            let path = path.as_ref().to_path_buf();
+            tokio::task::spawn_blocking(move || Self::attrs_from_path(path, follow))
+                .await
+                .unwrap_or_else(|_| Err(io::Error::other("failed to join attrs query task")))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+        {
+            let _ = (path, follow);
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "attrs is not supported on this platform",
+            ))
+        }
+    }
+
+    async fn set_attrs(&self, path: impl AsRef<Path>, attrs: Attrs) -> Result<(), io::Error> {
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+        {
+            let path = path.as_ref().to_path_buf();
+            tokio::task::spawn_blocking(move || Self::set_attrs_path(path, attrs))
+                .await
+                .unwrap_or_else(|_| Err(io::Error::other("failed to join attrs update task")))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+        {
+            let _ = (path, attrs);
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "set_attrs is not supported on this platform",
+            ))
+        }
     }
 
     async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {

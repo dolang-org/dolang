@@ -1,12 +1,7 @@
+#[cfg(any(windows, target_os = "macos"))]
+use dolang::runtime::object::{Mut, Ref};
 use dolang::runtime::{Object, Output, Result, State, Strand, Sym, object::TypeBuilder};
 use dolang_shell_vfs::{FileType, Metadata as VfsMetadata};
-#[cfg(windows)]
-use windows_sys::Win32::Storage::FileSystem::{
-    FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_ENCRYPTED,
-    FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_OFFLINE,
-    FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM,
-    FILE_ATTRIBUTE_TEMPORARY,
-};
 
 use crate::{global::Global, time::create_datetime};
 
@@ -49,11 +44,6 @@ fn write_timestamp<'v, 's>(
     create_datetime(strand, global, timestamp_nanos(secs, nanos), out)
 }
 
-#[cfg(windows)]
-fn has_attributes(attributes: u32, flag: u32) -> bool {
-    attributes & flag != 0
-}
-
 pub(crate) fn create_metadata<'v>(
     strand: &mut Strand<'v, '_>,
     global: State<'v, Global<'v>>,
@@ -74,6 +64,7 @@ pub(crate) fn create_metadata<'v>(
 impl<'v> Object<'v> for Metadata {
     const NAME: &'v str = "Metadata";
     const MODULE: &'v str = "fs";
+    const SLOTS: usize = 1;
     type Annex = MetadataAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
@@ -161,94 +152,31 @@ impl<'v> Object<'v> for Metadata {
                 Ok(())
             });
         #[cfg(windows)]
-        let builder = builder
-            .get("attributes", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.attributes);
-                Ok(())
-            })
-            .get("readonly", |this, strand, out| {
-                Output::set(
-                    strand,
-                    out,
-                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_READONLY),
-                );
-                Ok(())
-            })
-            .get("hidden", |this, strand, out| {
-                Output::set(
-                    strand,
-                    out,
-                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_HIDDEN),
-                );
-                Ok(())
-            })
-            .get("system", |this, strand, out| {
-                Output::set(
-                    strand,
-                    out,
-                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_SYSTEM),
-                );
-                Ok(())
-            })
-            .get("archive", |this, strand, out| {
-                Output::set(
-                    strand,
-                    out,
-                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_ARCHIVE),
-                );
-                Ok(())
-            })
-            .get("reparse_point", |this, strand, out| {
-                Output::set(
-                    strand,
-                    out,
-                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_REPARSE_POINT),
-                );
-                Ok(())
-            })
-            .get("compressed", |this, strand, out| {
-                Output::set(
-                    strand,
-                    out,
-                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_COMPRESSED),
-                );
-                Ok(())
-            })
-            .get("encrypted", |this, strand, out| {
-                Output::set(
-                    strand,
-                    out,
-                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_ENCRYPTED),
-                );
-                Ok(())
-            })
-            .get("temporary", |this, strand, out| {
-                Output::set(
-                    strand,
-                    out,
-                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_TEMPORARY),
-                );
-                Ok(())
-            })
-            .get("offline", |this, strand, out| {
-                Output::set(
-                    strand,
-                    out,
-                    has_attributes(this.annex().inner.attributes, FILE_ATTRIBUTE_OFFLINE),
-                );
-                Ok(())
-            })
-            .get("not_content_indexed", |this, strand, out| {
-                Output::set(
-                    strand,
-                    out,
-                    has_attributes(
-                        this.annex().inner.attributes,
-                        FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
-                    ),
-                );
-                Ok(())
-            });
+        let builder = builder.get("win_attrs", |this, strand, out| {
+            Output::set(strand, out, this.annex().inner.win_attrs);
+            Ok(())
+        });
+        #[cfg(target_os = "macos")]
+        let builder = builder.get("unix_flags", |this, strand, out| {
+            Output::set(strand, out, this.annex().inner.unix_flags);
+            Ok(())
+        });
+        #[cfg(any(windows, target_os = "macos"))]
+        let builder = builder.get("attrs", |this, strand, mut out| {
+            let borrow = this.borrow(strand)?;
+            if !Ref::slot::<0>(&borrow).is_nil() {
+                Output::set(strand, out, Ref::slot::<0>(&borrow));
+                return Ok(());
+            }
+            drop(borrow);
+
+            let annex = this.annex();
+            let attrs = annex.inner.attrs();
+            crate::fs::attrs::create_attrs(strand, annex.global, attrs, &mut out);
+            let mut borrow = this.borrow_mut(strand)?;
+            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &out);
+            Ok(())
+        });
         builder
     }
 }

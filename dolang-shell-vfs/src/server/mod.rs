@@ -15,11 +15,11 @@ use tokio_unix_ipc::{Receiver, channel_from_std, serde::Handle};
 use crate::{
     Child as _, Command as _, Direct, LockedSender, Permissions, Vfs,
     protocol::{
-        AccessRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
-        GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest, ReadLinkRequest,
-        RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind, Response,
-        ResponseKind, SetPermissionsRequest, SpawnRequest, SymlinkRequest, UnixStreamSocketRequest,
-        UtimeRequest, WellKnownPathRequest,
+        AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
+        CreateDirRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
+        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
+        Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SpawnRequest,
+        SymlinkRequest, UnixStreamSocketRequest, UtimeRequest, WellKnownPathRequest,
     },
 };
 
@@ -179,6 +179,12 @@ impl Connection {
                     }
                     RequestKind::SymlinkMetadata(metadata_request) => {
                         this.handle_symlink_metadata(msg.id, metadata_request).await;
+                    }
+                    RequestKind::Attrs(attrs_request) => {
+                        this.handle_attrs(msg.id, attrs_request).await;
+                    }
+                    RequestKind::SetAttrs(attrs_request) => {
+                        this.handle_set_attrs(msg.id, attrs_request).await;
                     }
                     RequestKind::Canonicalize(canonicalize_request) => {
                         this.handle_canonicalize(msg.id, canonicalize_request).await;
@@ -483,6 +489,22 @@ impl Connection {
     async fn handle_symlink_metadata(&self, id: u64, req: MetadataRequest) {
         let result = ResponseKind::SymlinkMetadata(Self::io_result(
             self.server.direct.symlink_metadata(&req.path).await,
+        ));
+
+        let _ = self.sender.send(Response { id, kind: result }).await;
+    }
+
+    async fn handle_attrs(&self, id: u64, req: AttrsRequest) {
+        let result = ResponseKind::Attrs(Self::io_result(
+            self.server.direct.attrs(&req.path, req.follow).await,
+        ));
+
+        let _ = self.sender.send(Response { id, kind: result }).await;
+    }
+
+    async fn handle_set_attrs(&self, id: u64, req: SetAttrsRequest) {
+        let result = ResponseKind::SetAttrs(Self::io_result(
+            self.server.direct.set_attrs(&req.path, req.attrs).await,
         ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;

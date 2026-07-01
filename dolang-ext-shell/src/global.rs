@@ -23,6 +23,7 @@ use crate::{
         SysErrorObject, TimedOutError,
     },
     fs::{
+        attrs::Attrs,
         file::File,
         metadata::Metadata,
         path::{Path, PathComponentsIter},
@@ -31,6 +32,7 @@ use crate::{
     local::Local,
     program::Program,
     shell::{Stderr, Stdin, Stdout},
+    sys::{CpuInfo, OsInfo},
     time::{DateTime, Duration},
 };
 
@@ -42,6 +44,7 @@ use crate::fs::readdir::DirEntryIter;
 pub(crate) struct Types<'v> {
     pub(crate) path: Type<'v, Path>,
     pub(crate) path_components_iter: Type<'v, PathComponentsIter>,
+    pub(crate) attrs: Type<'v, Attrs>,
     pub(crate) metadata: Type<'v, Metadata>,
     pub(crate) file: Type<'v, File<'v>>,
     pub(crate) dir_entry: Type<'v, DirEntry>,
@@ -54,6 +57,8 @@ pub(crate) struct Types<'v> {
     pub(crate) stderr: Type<'v, Stderr>,
     pub(crate) date_time: Type<'v, DateTime>,
     pub(crate) duration: Type<'v, Duration>,
+    pub(crate) os_info: Type<'v, OsInfo>,
+    pub(crate) cpu_info: Type<'v, CpuInfo>,
     pub(crate) sys_error: Type<'v, SysErrorObject<SysError>>,
     pub(crate) not_found: Type<'v, SysErrorObject<NotFoundError>>,
     pub(crate) permission_denied: Type<'v, SysErrorObject<PermissionDeniedError>>,
@@ -72,7 +77,6 @@ pub(crate) struct Syms<'v> {
     pub(crate) dir: Sym<'v, 'v>,
     pub(crate) file: Sym<'v, 'v>,
     pub(crate) line: Sym<'v, 'v>,
-    pub(crate) record: Sym<'v, 'v>,
     pub(crate) stderr: Sym<'v, 'v>,
     pub(crate) stdin: Sym<'v, 'v>,
     pub(crate) stdout: Sym<'v, 'v>,
@@ -137,6 +141,7 @@ impl<'v> Global<'v> {
                 file: builder.register_type(),
                 path: builder.register_type(),
                 path_components_iter: builder.register_type(),
+                attrs: builder.register_type(),
                 metadata: builder.register_type(),
                 dir_entry: builder.register_type(),
                 dir_entry_iter: builder.register_type(),
@@ -148,6 +153,8 @@ impl<'v> Global<'v> {
                 stderr: builder.register_type(),
                 date_time: builder.register_type::<DateTime>(),
                 duration: builder.register_type::<Duration>(),
+                os_info: builder.register_type(),
+                cpu_info: builder.register_type(),
                 sys_error,
                 not_found: builder
                     .build_type::<SysErrorObject<NotFoundError>>((), ())
@@ -177,7 +184,6 @@ impl<'v> Global<'v> {
                 dir: builder.sym("dir"),
                 file: builder.sym("file"),
                 line: builder.sym("line"),
-                record: builder.sym("record"),
                 stderr: builder.sym("stderr"),
                 stdin: builder.sym("stdin"),
                 stdout: builder.sym("stdout"),

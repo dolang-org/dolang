@@ -99,6 +99,7 @@ nav:
       - api/digest/state.md
     - fs:
       - api/fs/index.md
+      - api/fs/attrs.md
       - api/fs/direntry.md
       - api/fs/file.md
       - api/fs/metadata.md
@@ -205,6 +206,8 @@ nav:
     - sudo: api/sudo.md
     - sys:
       - api/sys/index.md
+      - api/sys/osinfo.md
+      - api/sys/cpuinfo.md
       - api/sys/already-exists-error.md
       - api/sys/error.md
       - api/sys/not-found-error.md

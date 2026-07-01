@@ -19,7 +19,7 @@ use dolang::runtime::{
     unpack,
     value::TypeObject,
 };
-use dolang_shell_vfs::Vfs;
+use dolang_shell_vfs::{Attrs, Vfs};
 
 use super::file::File;
 
@@ -279,6 +279,32 @@ impl<'v> Object<'v> for Path {
         let modified = builder.sym("modified");
         let accessed = builder.sym("accessed");
         let created = builder.sym("created");
+        let readonly = builder.sym("readonly");
+        let hidden = builder.sym("hidden");
+        let system = builder.sym("system");
+        let archive = builder.sym("archive");
+        let compressed = builder.sym("compressed");
+        let temporary = builder.sym("temporary");
+        let offline = builder.sym("offline");
+        let not_content_indexed = builder.sym("not_content_indexed");
+        let immutable = builder.sym("immutable");
+        let append_only = builder.sym("append_only");
+        let no_dump = builder.sym("no_dump");
+        let no_atime = builder.sym("no_atime");
+        let no_copy_on_write = builder.sym("no_copy_on_write");
+        let dir_sync = builder.sym("dir_sync");
+        let casefold = builder.sym("casefold");
+        let data_journaling = builder.sym("data_journaling");
+        let no_compress = builder.sym("no_compress");
+        let project_inherit = builder.sym("project_inherit");
+        let secure_delete = builder.sym("secure_delete");
+        let sync = builder.sym("sync");
+        let no_tail_merge = builder.sym("no_tail_merge");
+        let top_dir = builder.sym("top_dir");
+        let undelete = builder.sym("undelete");
+        let direct_access = builder.sym("direct_access");
+        let extent_format = builder.sym("extent_format");
+        let opaque = builder.sym("opaque");
         let builder = builder
             .get("name", |this, strand, out| {
                 let borrow = this.annex();
@@ -334,6 +360,23 @@ impl<'v> Object<'v> for Path {
                     None => true,
                 };
                 super::metadata(
+                    strand,
+                    this.annex().global,
+                    &this.annex().inner,
+                    follow,
+                    out,
+                )
+                .await
+            })
+            .method("attrs", async move |this, strand, args, out| {
+                let ([], [follow]) = unpack!(strand, args, 0, 0, follow = None)?;
+                let follow = match follow {
+                    Some(v) => v
+                        .as_bool(strand)
+                        .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
+                    None => true,
+                };
+                super::get_attrs(
                     strand,
                     this.annex().global,
                     &this.annex().inner,
@@ -483,6 +526,100 @@ impl<'v> Object<'v> for Path {
                     .map_err(|_| Error::type_error(strand, "expected int"))?
                     as u32;
                 super::chmod(strand, this.annex().global, &this.annex().inner, mode).await
+            })
+            .method("set_attrs", async move |this, strand, args, _out| {
+                let (
+                    [],
+                    [
+                        readonly,
+                        hidden,
+                        system,
+                        archive,
+                        compressed,
+                        temporary,
+                        offline,
+                        not_content_indexed,
+                        immutable,
+                        append_only,
+                        no_dump,
+                        no_atime,
+                        no_copy_on_write,
+                        dir_sync,
+                        casefold,
+                        data_journaling,
+                        no_compress,
+                        project_inherit,
+                        secure_delete,
+                        sync,
+                        no_tail_merge,
+                        top_dir,
+                        undelete,
+                        direct_access,
+                        extent_format,
+                        opaque,
+                    ],
+                ) = unpack!(
+                    strand,
+                    args,
+                    0,
+                    0,
+                    readonly = None,
+                    hidden = None,
+                    system = None,
+                    archive = None,
+                    compressed = None,
+                    temporary = None,
+                    offline = None,
+                    not_content_indexed = None,
+                    immutable = None,
+                    append_only = None,
+                    no_dump = None,
+                    no_atime = None,
+                    no_copy_on_write = None,
+                    dir_sync = None,
+                    casefold = None,
+                    data_journaling = None,
+                    no_compress = None,
+                    project_inherit = None,
+                    secure_delete = None,
+                    sync = None,
+                    no_tail_merge = None,
+                    top_dir = None,
+                    undelete = None,
+                    direct_access = None,
+                    extent_format = None,
+                    opaque = None
+                )?;
+                let attrs = Attrs {
+                    readonly: super::parse_attr_bool(strand, readonly)?,
+                    hidden: super::parse_attr_bool(strand, hidden)?,
+                    system: super::parse_attr_bool(strand, system)?,
+                    archive: super::parse_attr_bool(strand, archive)?,
+                    compressed: super::parse_attr_bool(strand, compressed)?,
+                    temporary: super::parse_attr_bool(strand, temporary)?,
+                    offline: super::parse_attr_bool(strand, offline)?,
+                    not_content_indexed: super::parse_attr_bool(strand, not_content_indexed)?,
+                    immutable: super::parse_attr_bool(strand, immutable)?,
+                    append_only: super::parse_attr_bool(strand, append_only)?,
+                    no_dump: super::parse_attr_bool(strand, no_dump)?,
+                    no_atime: super::parse_attr_bool(strand, no_atime)?,
+                    no_copy_on_write: super::parse_attr_bool(strand, no_copy_on_write)?,
+                    dir_sync: super::parse_attr_bool(strand, dir_sync)?,
+                    casefold: super::parse_attr_bool(strand, casefold)?,
+                    data_journaling: super::parse_attr_bool(strand, data_journaling)?,
+                    no_compress: super::parse_attr_bool(strand, no_compress)?,
+                    project_inherit: super::parse_attr_bool(strand, project_inherit)?,
+                    secure_delete: super::parse_attr_bool(strand, secure_delete)?,
+                    sync: super::parse_attr_bool(strand, sync)?,
+                    no_tail_merge: super::parse_attr_bool(strand, no_tail_merge)?,
+                    top_dir: super::parse_attr_bool(strand, top_dir)?,
+                    undelete: super::parse_attr_bool(strand, undelete)?,
+                    direct_access: super::parse_attr_bool(strand, direct_access)?,
+                    extent_format: super::parse_attr_bool(strand, extent_format)?,
+                    opaque: super::parse_attr_bool(strand, opaque)?,
+                    ..Attrs::default()
+                };
+                super::set_attrs(strand, this.annex().global, &this.annex().inner, attrs).await
             })
             .method("set_timestamps", async move |this, strand, args, _out| {
                 let ([], [modified, accessed, created]) = unpack!(
