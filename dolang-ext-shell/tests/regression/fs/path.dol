@@ -4,6 +4,7 @@ import
     - FieldError
     - hash
     - TypeError
+    - ValueError
   fs:
     - Path
   - sys
@@ -189,12 +190,42 @@ if (sys.os_info().family == :windows:)
   assert_eq $verbatim.share nil
   assert_eq $verbatim.device nil
   assert_eq $verbatim.verbatim true
+
+  let no_stream = Path "file.txt"
+  assert_eq $no_stream.stream_name nil
+  assert_eq $no_stream.stream_type nil
+
+  let named_stream = Path "file.txt:zone"
+  assert_eq (str named_stream) "file.txt:zone"
+  assert_eq $named_stream.name "file.txt"
+  assert_eq $named_stream.stem "file"
+  assert_eq $named_stream.ext "txt"
+  assert_eq $named_stream.stream_name "zone"
+  assert_eq $named_stream.stream_type nil
+
+  let typed_stream = Path r"file.txt:zone:$DATA"
+  assert_eq (str typed_stream) r"file.txt:zone:$DATA"
+  assert_eq $typed_stream.name "file.txt"
+  assert_eq $typed_stream.stream_name "zone"
+  assert_eq $typed_stream.stream_type "DATA"
+
+  let unnamed_stream = Path r"file.txt::$DATA"
+  assert_eq $unnamed_stream.stream_name ""
+  assert_eq $unnamed_stream.stream_type "DATA"
+
+  let stream_components = [...(Path r"dir/file.txt:zone:$DATA").components()]
+  assert_eq $stream_components[(stream_components.len - 1)] r"file.txt:zone:$DATA"
+
+  assert_err_type $ValueError do Path "file.txt:zone:DATA"
+  assert_err_type $ValueError do Path "file.txt:a:b:c"
 else
   assert_err_type $FieldError do p.disk
   assert_err_type $FieldError do p.server
   assert_err_type $FieldError do p.share
   assert_err_type $FieldError do p.device
   assert_err_type $FieldError do p.verbatim
+  assert_err_type $FieldError do p.stream_name
+  assert_err_type $FieldError do p.stream_type
 
 # Test type errors on new string-taking methods
 assert_err_type $TypeError do with_ext1.with_ext 1

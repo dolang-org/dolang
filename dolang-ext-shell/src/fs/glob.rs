@@ -56,12 +56,11 @@ impl<'v> Object<'v> for GlobIter {
             Some(path) => {
                 // Prepend prefix if present (used by Path::glob)
                 // Create a new Path object for this result
-                global.types.path.create_with_annex(
-                    strand,
-                    Path,
-                    PathAnnex::new(annex.prefix.join(&path), global),
-                    out,
-                );
+                let annex = PathAnnex::try_new(strand, annex.prefix.join(&path), global)?;
+                global
+                    .types
+                    .path
+                    .create_with_annex(strand, Path, annex, out);
                 Ok(true)
             }
             None => Ok(false),

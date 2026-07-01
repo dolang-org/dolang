@@ -33,13 +33,13 @@ pub(crate) struct DirEntryIterAnnex<'v> {
     pub(crate) global: State<'v, Global<'v>>,
 }
 
-pub(crate) fn create_dir_entry<'v>(
-    strand: &mut Strand<'v, '_>,
+pub(crate) fn create_dir_entry<'v, 's>(
+    strand: &mut Strand<'v, 's>,
     entry: &VfsDirEntry,
     dir_path: &std::path::Path,
     global: State<'v, Global<'v>>,
     out: Slot<'v, '_>,
-) {
+) -> Result<'v, 's, ()> {
     let path = dir_path.join(entry.file_name());
     let name = entry.file_name().to_string_lossy().into_owned();
     global.types.dir_entry.create_with_annex(
@@ -55,6 +55,7 @@ pub(crate) fn create_dir_entry<'v>(
         },
         out,
     );
+    Ok(())
 }
 
 impl<'v> Object<'v> for DirEntry {
@@ -76,12 +77,12 @@ impl<'v> Object<'v> for DirEntry {
         let builder = builder
             .get("path", |this, strand, out| {
                 let annex = this.annex();
-                annex.global.types.path.create_with_annex(
-                    strand,
-                    Path,
-                    PathAnnex::new(annex.path.clone(), annex.global),
-                    out,
-                );
+                let path_annex = PathAnnex::try_new(strand, annex.path.clone(), annex.global)?;
+                annex
+                    .global
+                    .types
+                    .path
+                    .create_with_annex(strand, Path, path_annex, out);
                 Ok(())
             })
             .get("name", |this, strand, out| {
@@ -136,7 +137,7 @@ impl<'v> Object<'v> for DirEntryIter {
 
         match borrow.read_dir.next_entry().await {
             Ok(Some(entry)) => {
-                create_dir_entry(strand, &entry, &borrow.path, global, out);
+                create_dir_entry(strand, &entry, &borrow.path, global, out)?;
                 Ok(true)
             }
             Ok(None) => Ok(false),

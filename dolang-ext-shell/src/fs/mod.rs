@@ -684,10 +684,11 @@ pub(crate) fn path_absolute<'v, 's>(
     } else {
         local.cwd().as_ref().join(path)
     };
+    let annex = PathAnnex::try_new(strand, absolute, global)?;
     global
         .types
         .path
-        .create_with_annex(strand, Path, PathAnnex::new(absolute, global), out);
+        .create_with_annex(strand, Path, annex, out);
     Ok(())
 }
 
@@ -701,10 +702,11 @@ async fn well_known_path<'v, 's>(
     let vfs = local.vfs();
     let env = local.env().flatten_delta();
     let path = vfs.well_known_path(key, &env).await.into_sys(strand)?;
+    let annex = PathAnnex::try_new(strand, path, global)?;
     global
         .types
         .path
-        .create_with_annex(strand, Path, PathAnnex::new(path, global), out);
+        .create_with_annex(strand, Path, annex, out);
     Ok(())
 }
 
@@ -720,17 +722,14 @@ pub(crate) fn path_relative<'v, 's>(
         Some(b) => path.strip_prefix(&path_from_value(strand, global, &b)?),
         None => path.strip_prefix(global.local.get(strand).cwd().as_ref()),
     };
-    global.types.path.create_with_annex(
-        strand,
-        Path,
-        PathAnnex::new(
-            relative
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|_| path.to_path_buf()),
-            global,
-        ),
-        out,
-    );
+    let relative = relative
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|_| path.to_path_buf());
+    let annex = PathAnnex::try_new(strand, relative, global)?;
+    global
+        .types
+        .path
+        .create_with_annex(strand, Path, annex, out);
     Ok(())
 }
 
@@ -745,10 +744,11 @@ pub(crate) async fn path_canonical<'v, 's>(
     let absolute = local.cwd().as_ref().join(path);
     let vfs = local.vfs();
     let canonical = vfs.canonicalize(&absolute).await.into_sys(strand)?;
+    let annex = PathAnnex::try_new(strand, canonical, global)?;
     global
         .types
         .path
-        .create_with_annex(strand, Path, PathAnnex::new(canonical, global), out);
+        .create_with_annex(strand, Path, annex, out);
     Ok(())
 }
 
@@ -866,7 +866,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .function("open", async move |strand, args, out| {
             let ([path], [opt1, opt2]) = unpack!(strand, args, 1, 2)?;
             let path = path_from_value(strand, global, &path)?;
-            File::open(strand, global, path, opt1, opt2, out).await
+            File::open(strand, global, &path, opt1, opt2, out).await
         })
         .function("remove", async move |strand, args, _out| {
             let ([], [all, ignore], paths) =
@@ -1181,12 +1181,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let ([path], []) = unpack!(strand, args, 1, 0)?;
             let path = path_from_value(strand, global, &path)?;
             let normalized = normalize_path(&path);
-            global.types.path.create_with_annex(
-                strand,
-                Path,
-                PathAnnex::new(normalized, global),
-                out,
-            );
+            let annex = PathAnnex::try_new(strand, normalized, global)?;
+            global
+                .types
+                .path
+                .create_with_annex(strand, Path, annex, out);
             Ok(())
         })
         .function("absolute", async move |strand, args, out| {
@@ -1208,12 +1207,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 .strip_prefix(&base_path)
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|_| path.to_path_buf());
-            global.types.path.create_with_annex(
-                strand,
-                Path,
-                PathAnnex::new(relative, global),
-                out,
-            );
+            let annex = PathAnnex::try_new(strand, relative, global)?;
+            global
+                .types
+                .path
+                .create_with_annex(strand, Path, annex, out);
             Ok(())
         })
         .function("canonical", async move |strand, args, out| {
@@ -1246,12 +1244,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 let temp_path = create_temp_dir(strand, global, &parent)
                     .await
                     .into_sys(strand)?;
-                global.types.path.create_with_annex(
-                    strand,
-                    Path,
-                    PathAnnex::new(temp_path.clone(), global),
-                    &mut path,
-                );
+                let annex = PathAnnex::try_new(strand, temp_path.clone(), global)?;
+                global
+                    .types
+                    .path
+                    .create_with_annex(strand, Path, annex, &mut path);
                 let result = call!(strand, callable, out, &path).await;
                 let _ = strand
                     .with_interrupt_mask(true, async move |strand| {

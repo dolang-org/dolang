@@ -4,6 +4,11 @@ import fs:
   - symlink
   - with_temp_dir
 
+import
+  fs:
+    - Path
+  - sys
+
 import agent:
   - with_and_without_agent
 
@@ -64,3 +69,23 @@ with_and_without_agent "Path components absolute path" do with_temp_dir do |dir|
 
   assert_eq $parts[(parts.len - 2)] "subdir"
   assert_eq $parts[(parts.len - 1)] "file.txt"
+
+if (sys.os_info().family == :windows:)
+  with_and_without_agent "Path alternate data stream I/O" do with_temp_dir do |dir|
+    let base = (dir / "ads.txt")
+    let stream = (dir / "ads.txt:zone")
+
+    base.write "base"
+    stream.write "stream"
+
+    assert $base.exists()
+    assert $stream.exists()
+    assert_eq $base.read() "base"
+    assert_eq $stream.read() "stream"
+
+    stream.open r do |f|
+      assert_eq $f.read() "stream"
+
+    let parsed = Path $stream
+    assert_eq $parsed.name "ads.txt"
+    assert_eq $parsed.stream_name "zone"

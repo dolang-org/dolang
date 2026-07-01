@@ -1,6 +1,7 @@
 #[cfg(windows)]
 use std::path::Prefix;
 use std::{
+    borrow::Cow,
     collections::VecDeque,
     fmt,
     hash::{Hash, Hasher},
@@ -32,6 +33,10 @@ pub(crate) struct PathComponentsIter {
 pub(crate) struct PathAnnex<'v> {
     pub(crate) inner: path::PathBuf,
     pub(crate) global: State<'v, Global<'v>>,
+    #[cfg(windows)]
+    stream_name: Option<String>,
+    #[cfg(windows)]
+    stream_type: Option<String>,
 }
 
 pub(crate) fn path_from_value<'v, 's>(
@@ -40,7 +45,7 @@ pub(crate) fn path_from_value<'v, 's>(
     value: &Value<'v>,
 ) -> Result<'v, 's, PathBuf> {
     if let Some(path) = global.types.path.downcast(value) {
-        Ok(path.annex().inner.clone())
+        Ok(path.annex().as_path().into_owned())
     } else if let Some(str) = value.as_str(strand) {
         Ok(strand.access(|x| path::Path::new(str.as_str(x)).to_owned()))
     } else {
@@ -53,11 +58,13 @@ fn create_path<'v, 'a, 's>(
     global: State<'v, Global<'v>>,
     path: PathBuf,
     out: Slot<'v, 'a>,
-) {
+) -> Result<'v, 's, ()> {
+    let annex = PathAnnex::try_new(strand, path, global)?;
     global
         .types
         .path
-        .create_with_annex(strand, Path, PathAnnex::new(path, global), out);
+        .create_with_annex(strand, Path, annex, out);
+    Ok(())
 }
 
 fn expect_str<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, String> {
@@ -69,14 +76,20 @@ fn expect_str<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<
 
 fn rewrite_path<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    annex: &PathAnnex<'v>,
     path: &path::Path,
     out: Slot<'v, 'a>,
     rewrite: impl FnOnce(&mut PathBuf),
-) {
+) -> Result<'v, 's, ()> {
     let mut path = path.to_owned();
     rewrite(&mut path);
-    create_path(strand, global, path, out);
+    let next = annex.with_path(strand, path)?;
+    annex
+        .global
+        .types
+        .path
+        .create_with_annex(strand, Path, next, out);
+    Ok(())
 }
 
 fn with_stem_path(path: &path::Path, stem: &str) -> PathBuf {
@@ -92,19 +105,86 @@ fn with_stem_path(path: &path::Path, stem: &str) -> PathBuf {
 }
 
 impl<'v> PathAnnex<'v> {
-    pub(crate) fn new(path: path::PathBuf, global: State<'v, Global<'v>>) -> Self {
+    pub(crate) fn try_new<'s>(
+        strand: &mut Strand<'v, 's>,
+        path: path::PathBuf,
+        global: State<'v, Global<'v>>,
+    ) -> Result<'v, 's, Self> {
+        #[cfg(windows)]
+        let (path, stream_name, stream_type) = split_windows_ads(strand, path)?;
+        #[cfg(not(windows))]
+        let _ = strand;
+
         // Canonicalize by splitting into components and rejoining
         // This naturally uses platform-native separator
+        Ok(Self {
+            inner: path.components().collect(),
+            global,
+            #[cfg(windows)]
+            stream_name,
+            #[cfg(windows)]
+            stream_type,
+        })
+    }
+
+    pub(crate) fn new(path: path::PathBuf, global: State<'v, Global<'v>>) -> Self {
         Self {
             inner: path.components().collect(),
             global,
+            #[cfg(windows)]
+            stream_name: None,
+            #[cfg(windows)]
+            stream_type: None,
+        }
+    }
+
+    pub(crate) fn as_path(&self) -> Cow<'_, path::Path> {
+        #[cfg(windows)]
+        {
+            let Some(stream_name) = &self.stream_name else {
+                return Cow::Borrowed(&self.inner);
+            };
+            let Some(name) = self.inner.file_name() else {
+                return Cow::Borrowed(&self.inner);
+            };
+            let mut name = name.to_string_lossy().into_owned();
+            name.push(':');
+            name.push_str(stream_name);
+            if let Some(stream_type) = &self.stream_type {
+                name.push_str(":$");
+                name.push_str(stream_type);
+            }
+            Cow::Owned(self.inner.with_file_name(name))
+        }
+        #[cfg(not(windows))]
+        {
+            Cow::Borrowed(&self.inner)
+        }
+    }
+
+    fn with_path<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        path: path::PathBuf,
+    ) -> Result<'v, 's, Self> {
+        let annex = Self::try_new(strand, path, self.global)?;
+        #[cfg(windows)]
+        {
+            let mut annex = annex;
+            annex.stream_name = self.stream_name.clone();
+            annex.stream_type = self.stream_type.clone();
+            Ok(annex)
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(annex)
         }
     }
 
     /// Returns the path with forward slashes as separator for platform-consistent display
     #[cfg(target_os = "windows")]
     fn forward_slash_display(&self) -> String {
-        self.inner.to_string_lossy().replace('\\', "/")
+        self.as_path().to_string_lossy().replace('\\', "/")
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -118,6 +198,41 @@ impl<'v> PathAnnex<'v> {
             Some(Component::Prefix(prefix)) => Some(prefix.kind()),
             _ => None,
         }
+    }
+}
+
+#[cfg(windows)]
+fn split_windows_ads<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    mut path: path::PathBuf,
+) -> Result<'v, 's, (path::PathBuf, Option<String>, Option<String>)> {
+    let Some(file_name) = path.file_name() else {
+        return Ok((path, None, None));
+    };
+    let file_name = file_name.to_string_lossy().into_owned();
+    let parts = file_name.split(':').collect::<Vec<_>>();
+    match parts.as_slice() {
+        [_base] => Ok((path, None, None)),
+        [base, stream_name] => {
+            path.set_file_name(base);
+            Ok((path, Some((*stream_name).to_owned()), None))
+        }
+        [base, stream_name, stream_type] if stream_type.starts_with('$') => {
+            path.set_file_name(base);
+            Ok((
+                path,
+                Some((*stream_name).to_owned()),
+                Some(stream_type[1..].to_owned()),
+            ))
+        }
+        [_base, _stream_name, _stream_type] => Err(Error::value(
+            strand,
+            "explicit alternate data stream type must start with `$`",
+        )),
+        _ => Err(Error::value(
+            strand,
+            "path final component has too many alternate data stream parts",
+        )),
     }
 }
 
@@ -241,7 +356,8 @@ impl<'v> Object<'v> for Path {
         let global = strand.state::<Global<'v>>();
         let ([path], []) = unpack!(strand, args, 1, 0)?;
         let path = path_from_value(strand, global, &path)?.to_owned();
-        this.create_with_annex(strand, Path, PathAnnex::new(path, global), out);
+        let annex = PathAnnex::try_new(strand, path, global)?;
+        this.create_with_annex(strand, Path, annex, out);
         Ok(())
     }
 
@@ -268,7 +384,7 @@ impl<'v> Object<'v> for Path {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().inner.display()).into_do(strand)
+        write!(w, "{}", this.annex().as_path().display()).into_do(strand)
     }
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
@@ -323,7 +439,7 @@ impl<'v> Object<'v> for Path {
             .get("parent", |this, strand, out| {
                 let borrow = this.annex();
                 if let Some(path) = borrow.inner.parent() {
-                    create_path(strand, borrow.global, path.to_owned(), out);
+                    create_path(strand, borrow.global, path.to_owned(), out)?;
                 }
                 Ok(())
             })
@@ -341,15 +457,8 @@ impl<'v> Object<'v> for Path {
             })
             .method("open", async move |this, strand, args, out| {
                 let ([], [opt1, opt2]) = unpack!(strand, args, 0, 2)?;
-                File::open(
-                    strand,
-                    this.annex().global,
-                    this.annex().inner.clone(),
-                    opt1,
-                    opt2,
-                    out,
-                )
-                .await
+                let annex = this.annex();
+                File::open(strand, annex.global, &annex.as_path(), opt1, opt2, out).await
             })
             .method("metadata", async move |this, strand, args, out| {
                 let ([], [follow]) = unpack!(strand, args, 0, 1)?;
@@ -359,14 +468,8 @@ impl<'v> Object<'v> for Path {
                         .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
                     None => true,
                 };
-                super::metadata(
-                    strand,
-                    this.annex().global,
-                    &this.annex().inner,
-                    follow,
-                    out,
-                )
-                .await
+                let annex = this.annex();
+                super::metadata(strand, annex.global, &annex.as_path(), follow, out).await
             })
             .method("attrs", async move |this, strand, args, out| {
                 let ([], [follow]) = unpack!(strand, args, 0, 0, follow = None)?;
@@ -376,26 +479,23 @@ impl<'v> Object<'v> for Path {
                         .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
                     None => true,
                 };
-                super::get_attrs(
-                    strand,
-                    this.annex().global,
-                    &this.annex().inner,
-                    follow,
-                    out,
-                )
-                .await
+                let annex = this.annex();
+                super::get_attrs(strand, annex.global, &annex.as_path(), follow, out).await
             })
             .method("exists", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                super::exists(strand, this.annex().global, &this.annex().inner, out).await
+                let annex = this.annex();
+                super::exists(strand, annex.global, &annex.as_path(), out).await
             })
             .method("read", async move |this, strand, args, out| {
                 let ([], [mode]) = unpack!(strand, args, 0, 1)?;
-                super::read(strand, this.annex().global, &this.annex().inner, mode, out).await
+                let annex = this.annex();
+                super::read(strand, annex.global, &annex.as_path(), mode, out).await
             })
             .method("write", async move |this, strand, args, out| {
                 let ([data], []) = unpack!(strand, args, 1, 0)?;
-                super::write(strand, this.annex().global, &this.annex().inner, data, out).await
+                let annex = this.annex();
+                super::write(strand, annex.global, &annex.as_path(), data, out).await
             })
             .method("set_len", async move |this, strand, args, _out| {
                 let ([size], []) = unpack!(strand, args, 1, 0)?;
@@ -405,7 +505,8 @@ impl<'v> Object<'v> for Path {
                 let size = u64::try_from(size).map_err(|_| {
                     Error::type_error(strand, "size must be a non-negative integer")
                 })?;
-                super::set_len(strand, this.annex().global, &this.annex().inner, size).await
+                let annex = this.annex();
+                super::set_len(strand, annex.global, &annex.as_path(), size).await
             })
             .method("copy", async move |this, strand, args, _out| {
                 let ([to], [all]) = unpack!(strand, args, 1, 0, all = None)?;
@@ -416,12 +517,14 @@ impl<'v> Object<'v> for Path {
                     None => false,
                 };
                 let to = path_from_value(strand, this.annex().global, &to)?;
-                super::copy(strand, this.annex().global, &this.annex().inner, &to, all).await
+                let annex = this.annex();
+                super::copy(strand, annex.global, &annex.as_path(), &to, all).await
             })
             .method("rename", async move |this, strand, args, _out| {
                 let ([to], []) = unpack!(strand, args, 1, 0)?;
                 let to = path_from_value(strand, this.annex().global, &to)?;
-                super::rename(strand, this.annex().global, &this.annex().inner, &to).await
+                let annex = this.annex();
+                super::rename(strand, annex.global, &annex.as_path(), &to).await
             })
             .method("move", async move |this, strand, args, _out| {
                 let ([to], [all]) = unpack!(strand, args, 1, 0, all = None)?;
@@ -432,35 +535,38 @@ impl<'v> Object<'v> for Path {
                     None => false,
                 };
                 let to = path_from_value(strand, this.annex().global, &to)?;
-                super::move_(strand, this.annex().global, &this.annex().inner, &to, all).await
+                let annex = this.annex();
+                super::move_(strand, annex.global, &annex.as_path(), &to, all).await
             })
             .method("hard_link", async move |this, strand, args, _out| {
                 let ([to], []) = unpack!(strand, args, 1, 0)?;
                 let to = path_from_value(strand, this.annex().global, &to)?;
-                super::hard_link(strand, this.annex().global, &this.annex().inner, &to).await
+                let annex = this.annex();
+                super::hard_link(strand, annex.global, &annex.as_path(), &to).await
             })
             .method("entries", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                super::entries(strand, this.annex().global, this.annex().inner.clone(), out).await
+                let annex = this.annex();
+                super::entries(strand, annex.global, annex.as_path().into_owned(), out).await
             })
             .method("canonical", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                super::path_canonical(strand, this.annex().global, &this.annex().inner, out).await
+                let annex = this.annex();
+                super::path_canonical(strand, annex.global, &annex.as_path(), out).await
             })
             .method("read_link", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let annex = this.annex();
                 let global = annex.global;
                 let local = global.local.get(strand);
-                let path = local.cwd().as_ref().join(&annex.inner);
+                let path = local.cwd().join(annex.as_path());
                 let vfs = local.vfs();
                 let target = vfs.read_link(&path).await.into_sys(strand)?;
-                global.types.path.create_with_annex(
-                    strand,
-                    Path,
-                    PathAnnex::new(target, global),
-                    out,
-                );
+                let annex = PathAnnex::try_new(strand, target, global)?;
+                global
+                    .types
+                    .path
+                    .create_with_annex(strand, Path, annex, out);
                 Ok(())
             })
             .method("remove", async move |this, strand, args, _out| {
@@ -477,14 +583,8 @@ impl<'v> Object<'v> for Path {
                         .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
                     None => false,
                 };
-                super::remove(
-                    strand,
-                    this.annex().global,
-                    &this.annex().inner,
-                    all,
-                    ignore,
-                )
-                .await
+                let annex = this.annex();
+                super::remove(strand, annex.global, &annex.as_path(), all, ignore).await
             })
             .method("create_dir", async move |this, strand, args, _out| {
                 let ([], [all]) = unpack!(strand, args, 0, 0, all = None)?;
@@ -494,7 +594,8 @@ impl<'v> Object<'v> for Path {
                         .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
                     None => false,
                 };
-                super::create_dir(strand, this.annex().global, &this.annex().inner, all).await
+                let annex = this.annex();
+                super::create_dir(strand, annex.global, &annex.as_path(), all).await
             })
             .method("remove_dir", async move |this, strand, args, _out| {
                 let ([], [all, ignore]) = unpack!(strand, args, 0, 0, all = None, ignore = None)?;
@@ -510,14 +611,8 @@ impl<'v> Object<'v> for Path {
                         .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
                     None => false,
                 };
-                super::remove_dir(
-                    strand,
-                    this.annex().global,
-                    &this.annex().inner,
-                    all,
-                    ignore,
-                )
-                .await
+                let annex = this.annex();
+                super::remove_dir(strand, annex.global, &annex.as_path(), all, ignore).await
             })
             .method("chmod", async move |this, strand, args, _out| {
                 let ([mode], []) = unpack!(strand, args, 1, 0)?;
@@ -525,7 +620,8 @@ impl<'v> Object<'v> for Path {
                     .to_i64(strand)
                     .map_err(|_| Error::type_error(strand, "expected int"))?
                     as u32;
-                super::chmod(strand, this.annex().global, &this.annex().inner, mode).await
+                let annex = this.annex();
+                super::chmod(strand, annex.global, &annex.as_path(), mode).await
             })
             .method("set_attrs", async move |this, strand, args, _out| {
                 let (
@@ -619,7 +715,8 @@ impl<'v> Object<'v> for Path {
                     opaque: super::parse_attr_bool(strand, opaque)?,
                     ..Attrs::default()
                 };
-                super::set_attrs(strand, this.annex().global, &this.annex().inner, attrs).await
+                let annex = this.annex();
+                super::set_attrs(strand, annex.global, &annex.as_path(), attrs).await
             })
             .method("set_timestamps", async move |this, strand, args, _out| {
                 let ([], [modified, accessed, created]) = unpack!(
@@ -631,10 +728,11 @@ impl<'v> Object<'v> for Path {
                     accessed = None,
                     created = None
                 )?;
+                let annex = this.annex();
                 super::set_timestamps(
                     strand,
-                    this.annex().global,
-                    &this.annex().inner,
+                    annex.global,
+                    &annex.as_path(),
                     modified,
                     accessed,
                     created,
@@ -643,6 +741,18 @@ impl<'v> Object<'v> for Path {
             });
         #[cfg(windows)]
         let builder = builder
+            .get("stream_name", |this, strand, out| {
+                if let Some(stream_name) = &this.annex().stream_name {
+                    Output::set(strand, out, stream_name.as_str());
+                }
+                Ok(())
+            })
+            .get("stream_type", |this, strand, out| {
+                if let Some(stream_type) = &this.annex().stream_type {
+                    Output::set(strand, out, stream_type.as_str());
+                }
+                Ok(())
+            })
             .get("disk", |this, strand, out| {
                 let annex = this.annex();
                 let Some(prefix) = annex.windows_prefix() else {
@@ -708,8 +818,9 @@ impl<'v> Object<'v> for Path {
         #[cfg(unix)]
         let builder = builder.method("chown", async move |this, strand, args, _out| {
             let global = this.annex().global;
+            let path = this.annex().as_path().into_owned();
             let (path, user, group, follow) =
-                super::parse_chown_common(strand, global, args, Some(this.annex().inner.clone()))?;
+                super::parse_chown_common(strand, global, args, Some(path))?;
             super::chown(strand, global, &path, user, group, follow).await
         });
         builder
@@ -717,7 +828,7 @@ impl<'v> Object<'v> for Path {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let components = this
                     .annex()
-                    .inner
+                    .as_path()
                     .components()
                     .map(|component| component.as_os_str().to_string_lossy().into_owned())
                     .collect();
@@ -731,10 +842,11 @@ impl<'v> Object<'v> for Path {
             .method("glob", async move |this, strand, args, out| {
                 let ([pattern], [max_depth, follow]) =
                     unpack!(strand, args, 1, 0, max_depth = None, follow = None)?;
+                let annex = this.annex();
                 super::glob(
                     strand,
-                    this.annex().global,
-                    Some(&this.annex().inner),
+                    annex.global,
+                    Some(&annex.as_path()),
                     pattern,
                     max_depth,
                     follow,
@@ -744,69 +856,69 @@ impl<'v> Object<'v> for Path {
             })
             .method("normalize", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let normalized = normalize_path(&this.annex().inner);
-                create_path(strand, this.annex().global, normalized, out);
+                let annex = this.annex();
+                let normalized = normalize_path(&annex.as_path());
+                create_path(strand, annex.global, normalized, out)?;
                 Ok(())
             })
             .method("absolute", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                path_absolute(strand, this.annex().global, &this.annex().inner, out)
+                let annex = this.annex();
+                path_absolute(strand, annex.global, &annex.as_path(), out)
             })
             .method("relative", async move |this, strand, args, out| {
                 let ([], [base]) = unpack!(strand, args, 0, 1)?;
-                path_relative(strand, this.annex().global, &this.annex().inner, base, out)
+                let annex = this.annex();
+                path_relative(strand, annex.global, &annex.as_path(), base, out)
             })
             .method("add_ext", async move |this, strand, args, out| {
                 let ([ext], []) = unpack!(strand, args, 1, 0)?;
                 let ext = expect_str(strand, &ext)?;
-                let path = this.annex().inner.with_added_extension(ext);
-                create_path(strand, this.annex().global, path, out);
+                let annex = this.annex();
+                let annex = annex.with_path(strand, annex.inner.with_added_extension(ext))?;
+                this.annex()
+                    .global
+                    .types
+                    .path
+                    .create_with_annex(strand, Path, annex, out);
                 Ok(())
             })
             .method("without_ext", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                rewrite_path(
-                    strand,
-                    this.annex().global,
-                    &this.annex().inner,
-                    out,
-                    |path| {
-                        let _ = path.set_extension("");
-                    },
-                );
+                let annex = this.annex();
+                rewrite_path(strand, &annex, &annex.inner, out, |path| {
+                    let _ = path.set_extension("");
+                })?;
                 Ok(())
             })
             .method("with_ext", async move |this, strand, args, out| {
                 let ([ext], []) = unpack!(strand, args, 1, 0)?;
                 let ext = expect_str(strand, &ext)?;
-                rewrite_path(
-                    strand,
-                    this.annex().global,
-                    &this.annex().inner,
-                    out,
-                    |path| {
-                        let _ = path.set_extension(ext);
-                    },
-                );
+                let annex = this.annex();
+                rewrite_path(strand, &annex, &annex.inner, out, |path| {
+                    let _ = path.set_extension(ext);
+                })?;
                 Ok(())
             })
             .method("with_name", async move |this, strand, args, out| {
                 let ([name], []) = unpack!(strand, args, 1, 0)?;
                 let name = expect_str(strand, &name)?;
-                rewrite_path(
-                    strand,
-                    this.annex().global,
-                    &this.annex().inner,
-                    out,
-                    |path| path.set_file_name(name),
-                );
+                let annex = this.annex();
+                rewrite_path(strand, &annex, &annex.inner, out, |path| {
+                    path.set_file_name(name)
+                })?;
                 Ok(())
             })
             .method("with_stem", async move |this, strand, args, out| {
                 let ([stem], []) = unpack!(strand, args, 1, 0)?;
                 let stem = expect_str(strand, &stem)?;
                 let path = with_stem_path(&this.annex().inner, &stem);
-                create_path(strand, this.annex().global, path, out);
+                let annex = this.annex().with_path(strand, path)?;
+                this.annex()
+                    .global
+                    .types
+                    .path
+                    .create_with_annex(strand, Path, annex, out);
                 Ok(())
             })
             .type_method("join", async move |this, strand, args, out| {
@@ -818,7 +930,8 @@ impl<'v> Object<'v> for Path {
                         Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
                     }
                 }
-                this.create_with_annex(strand, Path, PathAnnex::new(buf, global), out);
+                let annex = PathAnnex::try_new(strand, buf, global)?;
+                this.create_with_annex(strand, Path, annex, out);
                 Ok(())
             })
     }
@@ -831,7 +944,7 @@ impl<'v> Object<'v> for Path {
         let borrow = this.annex();
         let global = borrow.global;
         if let Some(other) = global.types.path.downcast(other) {
-            Ok(borrow.inner == other.annex().inner)
+            Ok(borrow.as_path() == other.annex().as_path())
         } else {
             Err(Error::not_supported(strand))
         }
@@ -842,7 +955,7 @@ impl<'v> Object<'v> for Path {
         _strand: &'a mut Strand<'v, 's>,
         hasher: &mut impl Hasher,
     ) -> Result<'v, 's, ()> {
-        this.annex().inner.hash(hasher);
+        this.annex().as_path().hash(hasher);
         Ok(())
     }
 
@@ -854,7 +967,7 @@ impl<'v> Object<'v> for Path {
         let borrow = this.annex();
         let global = borrow.global;
         if let Some(other) = global.types.path.downcast(other) {
-            Ok(borrow.inner < other.annex().inner)
+            Ok(borrow.as_path() < other.annex().as_path())
         } else {
             Err(Error::not_supported(strand))
         }
@@ -869,12 +982,12 @@ impl<'v> Object<'v> for Path {
         let borrow = this.annex();
         let global = borrow.global;
         if let Ok(other) = path_from_value(strand, global, other) {
-            global.types.path.create_with_annex(
-                strand,
-                Path,
-                PathAnnex::new(borrow.inner.join(&other), global),
-                out,
-            );
+            let path = borrow.inner.join(&other);
+            let annex = PathAnnex::try_new(strand, path, global)?;
+            global
+                .types
+                .path
+                .create_with_annex(strand, Path, annex, out);
             Ok(())
         } else {
             Err(Error::not_supported(strand))
@@ -890,12 +1003,12 @@ impl<'v> Object<'v> for Path {
         let borrow = this.annex();
         let global = borrow.global;
         if let Ok(other) = path_from_value(strand, global, other) {
-            global.types.path.create_with_annex(
-                strand,
-                Path,
-                PathAnnex::new(other.join(&borrow.inner), global),
-                out,
-            );
+            let path = other.join(borrow.as_path());
+            let annex = PathAnnex::try_new(strand, path, global)?;
+            global
+                .types
+                .path
+                .create_with_annex(strand, Path, annex, out);
             Ok(())
         } else {
             Err(Error::not_supported(strand))
