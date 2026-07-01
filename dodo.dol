@@ -1,6 +1,7 @@
 import sys
   fs:
     - Path
+    - create_dir
     - glob
     - remove
 
@@ -156,6 +157,14 @@ def shell_test spec tests
 def both_test spec
   cargo_test $spec []
   shell_test $spec nil
+
+def install_bin spec bin_dir name
+  let bin = spec.bin(name)
+  let dst = (bin_dir / bin.name).absolute()
+  let tmp = dst.add_ext tmp
+  bin.copy $tmp
+  tmp.rename $dst
+  echo "installed: $dst"
 
 return
   common:
@@ -322,25 +331,29 @@ return
 
   install:
     help: install dolang binaries
-    - arg: args
-      help: arguments to `cargo install`
-      collect: true
+    - opt: prefix
+      type: $Path
+      help: installation root
     do |args|
       let spec = Spec $args profile: dist
       let is_linux = spec.tuple.ends_with "-linux-gnu"
-      if is_linux
-        env ZSTD_SYS_USE_PKG_CONFIG: 1 do
-          spec.cargo install --path dolang-shell --bin dolang ...args.args
-      else
-        spec.cargo install --path dolang-shell --bin dolang ...args.args
-      spec.cargo install --path dolang-lsp ...args.args
-      if is_linux
-        let spec = Spec $args
-          profile: dist
-          tuple: $(spec.tuple.without_suffix "-gnu")-musl
-        spec.cargo install
-          --path dolang-shell-vfs
-          ...args.args
+      env
+        if is_linux
+          ZSTD_SYS_USE_PKG_CONFIG: 1
+        do
+          spec.cargo build --bin dolang --bin dolang-lsp
+
+          let bin_dir = (args.prefix / "bin")
+          create_dir $bin_dir all: true
+          install_bin $spec $bin_dir dolang
+          install_bin $spec $bin_dir dolang-lsp
+
+          if is_linux
+            let musl_spec = Spec $args
+              profile: dist
+              tuple: $(spec.tuple.without_suffix "-gnu")-musl
+            musl_spec.cargo build --bin dolang-shell-vfs
+            install_bin $musl_spec $bin_dir dolang-shell-vfs
 
   publish:
     help: publish workspace crates in dependency order
