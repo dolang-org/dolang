@@ -57,7 +57,7 @@ mod detail {
         compiler
             .prelude()
             .import_items("regression2")
-            .items(["async", "callme", "makefoo", "MIRI", "DEBUG"])
+            .items(["async", "callme", "makefoo", "noop", "MIRI", "DEBUG"])
             .commit();
         if let Some(name) = module {
             compiler.mode(Mode::Module { name });
@@ -229,6 +229,7 @@ mod detail {
                         footy.create(strand, Foo, out);
                         Ok(())
                     })
+                    .function("noop", async move |_strand, _args, _out| Ok(()))
                     .commit();
 
                     vm.enter_with_slots(async move |strand, slots| {

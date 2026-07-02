@@ -18,8 +18,8 @@ use crate::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
         CreateDirRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
         ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
-        Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SpawnRequest,
-        SymlinkRequest, UnixStreamSocketRequest, UtimeRequest, WellKnownPathRequest,
+        Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
+        SpawnRequest, SymlinkRequest, UnixStreamSocketRequest, WellKnownPathRequest,
     },
 };
 
@@ -201,8 +201,8 @@ impl Connection {
                     RequestKind::SetPermissions(perm_request) => {
                         this.handle_set_permissions(msg.id, perm_request).await;
                     }
-                    RequestKind::Utime(utime_request) => {
-                        this.handle_utime(msg.id, utime_request).await;
+                    RequestKind::SetTimes(set_times_request) => {
+                        this.handle_set_times(msg.id, set_times_request).await;
                     }
                     RequestKind::Chown(chown_request) => {
                         this.handle_chown(msg.id, chown_request).await;
@@ -567,17 +567,20 @@ impl Connection {
         let _ = self.sender.send(Response { id, kind: result }).await;
     }
 
-    async fn handle_utime(&self, id: u64, req: UtimeRequest) {
+    async fn handle_set_times(&self, id: u64, req: SetTimesRequest) {
         let accessed = req
             .accessed
             .map(|timestamp| (timestamp.secs, timestamp.nanos));
         let modified = req
             .modified
             .map(|timestamp| (timestamp.secs, timestamp.nanos));
-        let result = ResponseKind::Utime(Self::io_result(
+        let created = req
+            .created
+            .map(|timestamp| (timestamp.secs, timestamp.nanos));
+        let result = ResponseKind::SetTimes(Self::io_result(
             self.server
                 .direct
-                .utime(&req.path, accessed, modified)
+                .set_times(&req.path, accessed, modified, created)
                 .await,
         ));
 

@@ -125,6 +125,22 @@ async fn direct_metadata_windows_attributes() {
     assert_eq!(metadata.attrs().readonly, Some(true));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn direct_set_times_rejects_created_timestamp() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("timestamps.txt");
+    tokio::fs::write(&path, "hello").await.unwrap();
+
+    let err = direct
+        .set_times(&path, None, None, Some((1, 0)))
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+}
+
 #[cfg(windows)]
 #[tokio::test]
 async fn direct_windows_attrs() {

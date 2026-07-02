@@ -26,8 +26,8 @@ use crate::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
         CreateDirRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
         ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
-        Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SpawnRequest,
-        SymlinkRequest, Timestamp, UnixStreamSocketRequest, UtimeRequest, WellKnownPathRequest,
+        Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
+        SpawnRequest, SymlinkRequest, Timestamp, UnixStreamSocketRequest, WellKnownPathRequest,
     },
 };
 
@@ -1124,11 +1124,12 @@ impl Vfs for Client {
         }
     }
 
-    async fn utime(
+    async fn set_times(
         &self,
         path: impl AsRef<Path>,
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
+        created: Option<(i64, u32)>,
     ) -> Result<(), io::Error> {
         let mut state = self.inner.state.lock().await;
         match &mut *state {
@@ -1138,10 +1139,11 @@ impl Vfs for Client {
                 alive.insert_pending(id, tx);
                 let request = Request {
                     id,
-                    kind: RequestKind::Utime(UtimeRequest {
+                    kind: RequestKind::SetTimes(SetTimesRequest {
                         path: path.as_ref().to_path_buf(),
                         accessed: accessed.map(|(secs, nanos)| Timestamp { secs, nanos }),
                         modified: modified.map(|(secs, nanos)| Timestamp { secs, nanos }),
+                        created: created.map(|(secs, nanos)| Timestamp { secs, nanos }),
                     }),
                 };
                 alive.sender.send(request).await?;
@@ -1278,7 +1280,7 @@ async fn receive_loop(receiver: Receiver<Response>, inner: Arc<ClientInner>) {
                 ResponseKind::SetPermissions(result) => {
                     alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
                 }
-                ResponseKind::Utime(result) => {
+                ResponseKind::SetTimes(result) => {
                     alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
                 }
                 ResponseKind::Chown(result) => {

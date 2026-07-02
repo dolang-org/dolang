@@ -69,37 +69,6 @@ pub(super) async fn read_all<'v, 's>(
     Ok(())
 }
 
-#[cfg(windows)]
-pub(crate) mod windows {
-    use super::*;
-
-    use std::{fs::File, fs::FileTimes, os::windows::fs::FileTimesExt};
-
-    pub(crate) async fn set_times_path(
-        path: PathBuf,
-        accessed: Option<time::SystemTime>,
-        modified: Option<time::SystemTime>,
-        created: Option<time::SystemTime>,
-    ) -> io::Result<()> {
-        tokio::task::spawn_blocking(move || {
-            let file = File::open(path)?;
-            let mut times = FileTimes::new();
-            if let Some(accessed) = accessed {
-                times = times.set_accessed(accessed);
-            }
-            if let Some(modified) = modified {
-                times = times.set_modified(modified);
-            }
-            if let Some(created) = created {
-                times = times.set_created(created);
-            }
-            file.set_times(times)
-        })
-        .await
-        .unwrap_or_else(|_| Err(io::Error::other("failed to join timestamp update task")))
-    }
-}
-
 async fn metadata<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
@@ -488,7 +457,6 @@ fn parse_timestamp_arg<'v, 's>(
         .map_err(|_| Error::type_error(strand, format!("{name}: expected DateTime")))
 }
 
-#[cfg(unix)]
 fn system_time_to_unix_timestamp<'v, 's>(
     strand: &mut Strand<'v, 's>,
     time: Option<time::SystemTime>,
@@ -530,47 +498,19 @@ async fn set_timestamps<'v, 's>(
     accessed: Option<Slot<'v, '_>>,
     created: Option<Slot<'v, '_>>,
 ) -> Result<'v, 's, ()> {
-    #[cfg(unix)]
-    {
-        let modified = parse_timestamp_arg(strand, global, modified, "modified")?;
-        let accessed = parse_timestamp_arg(strand, global, accessed, "accessed")?;
-        let created = parse_timestamp_arg(strand, global, created, "created")?;
-        let modified = system_time_to_unix_timestamp(strand, modified)?;
-        let accessed = system_time_to_unix_timestamp(strand, accessed)?;
-        if created.is_some() {
-            return Err(Error::runtime(
-                strand,
-                "created: unsupported on this platform",
-            ));
-        }
-        let local = global.local.get(strand);
-        let path = local.cwd().as_ref().join(path);
-        let vfs = local.vfs();
-        vfs.utime(&path, accessed, modified)
-            .await
-            .into_sys(strand)?;
-        Ok(())
-    }
-    #[cfg(windows)]
-    {
-        let modified = parse_timestamp_arg(strand, global, modified, "modified")?;
-        let accessed = parse_timestamp_arg(strand, global, accessed, "accessed")?;
-        let created = parse_timestamp_arg(strand, global, created, "created")?;
-        let local = global.local.get(strand);
-        let path = local.cwd().as_ref().join(path);
-        windows::set_times_path(path, accessed, modified, created)
-            .await
-            .into_sys(strand)?;
-        Ok(())
-    }
-    #[cfg(all(not(unix), not(windows)))]
-    {
-        let _ = (global, path, modified, accessed, created);
-        Err(Error::runtime(
-            strand,
-            "set_timestamps is not supported on this platform",
-        ))
-    }
+    let modified = parse_timestamp_arg(strand, global, modified, "modified")?;
+    let accessed = parse_timestamp_arg(strand, global, accessed, "accessed")?;
+    let created = parse_timestamp_arg(strand, global, created, "created")?;
+    let modified = system_time_to_unix_timestamp(strand, modified)?;
+    let accessed = system_time_to_unix_timestamp(strand, accessed)?;
+    let created = system_time_to_unix_timestamp(strand, created)?;
+    let local = global.local.get(strand);
+    let path = local.cwd().as_ref().join(path);
+    let vfs = local.vfs();
+    vfs.set_times(&path, accessed, modified, created)
+        .await
+        .into_sys(strand)?;
+    Ok(())
 }
 
 #[cfg(unix)]
