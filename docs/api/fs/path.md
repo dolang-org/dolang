@@ -344,6 +344,89 @@ path.set_attrs no_dump: true
 path.set_attrs opaque: false
 ```
 
+### `xattrs :namespace? :follow = true`
+
+Lists extended attributes for this path.
+
+Equivalent to [`xattrs`](index.md).
+
+**Parameters:**
+
+| Name        | Type                                            | Description                                                      |
+| ----------- | ----------------------------------------------- | ---------------------------------------------------------------- |
+| `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:any:` to list all namespaces |
+| `follow`    | [`bool`](../std/bool.md)                        | If `false`, does not follow a symlink                            |
+
+**Returns:** iterator of [`XattrEntry`](xattr-entry.md)
+
+```
+let path = Path "data.txt"
+for attr = path.xattrs()
+  echo $attr.name
+```
+
+### `xattr name :namespace? :follow = true`
+
+Gets an extended attribute value.
+
+Equivalent to [`xattr`](index.md).
+
+**Parameters:**
+
+| Name        | Type                                                   | Description                           |
+| ----------- | ------------------------------------------------------ | ------------------------------------- |
+| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
+| `namespace` | [`str`](../std/str.md)?                                | Namespace to query                    |
+| `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
+
+**Returns:** [`bin`](../std/bin.md)
+
+```
+let path = Path "data.txt"
+let value = path.xattr "comment"
+```
+
+### `set_xattr name value :namespace? :follow = true`
+
+Sets an extended attribute value.
+
+Equivalent to
+[`set_xattr`](index.md).
+
+**Parameters:**
+
+| Name        | Type                                                   | Description                           |
+| ----------- | ------------------------------------------------------ | ------------------------------------- |
+| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
+| `value`     | [`str`](../std/str.md)\|[`bin`](../std/bin.md)         | Attribute bytes; strings use UTF-8    |
+| `namespace` | [`str`](../std/str.md)?                                | Namespace to update                   |
+| `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
+
+```
+let path = Path "data.txt"
+path.set_xattr "comment" "ready"
+```
+
+### `remove_xattr name :namespace? :follow = true`
+
+Removes an extended attribute.
+
+Equivalent to
+[`remove_xattr`](index.md).
+
+**Parameters:**
+
+| Name        | Type                                                   | Description                           |
+| ----------- | ------------------------------------------------------ | ------------------------------------- |
+| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
+| `namespace` | [`str`](../std/str.md)?                                | Namespace to update                   |
+| `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
+
+```
+let path = Path "data.txt"
+path.remove_xattr "comment"
+```
+
 ### `copy to :all?`
 
 Copies this filesystem entry to `to`.

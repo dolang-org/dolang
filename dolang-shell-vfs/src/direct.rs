@@ -8,29 +8,50 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::os::fd::{AsFd, OwnedFd};
+use std::ffi::CStr;
+#[cfg(unix)]
+use std::ffi::CString;
+#[cfg(target_os = "linux")]
+use std::os::fd::RawFd;
+#[cfg(unix)]
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 
 #[cfg(windows)]
 use std::{
+    mem,
     os::windows::{
         ffi::{OsStrExt, OsStringExt},
-        io::{AsHandle, FromRawHandle, OwnedHandle},
+        io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle},
     },
+    ptr, slice,
     time::SystemTime,
 };
 #[cfg(windows)]
 use windows_sys::{
+    Wdk::Storage::FileSystem::{
+        FILE_FULL_EA_INFORMATION, FILE_GET_EA_INFORMATION, NtQueryEaFile, NtSetEaFile,
+    },
     Win32::{
-        Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, S_OK},
+        Foundation::{
+            GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, RtlNtStatusToDosError, S_OK,
+            STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL, STATUS_NO_EAS_ON_FILE,
+            STATUS_NO_MORE_EAS, STATUS_SUCCESS,
+        },
         Storage::FileSystem::{
             COMPRESSION_FORMAT_DEFAULT, COMPRESSION_FORMAT_NONE, CreateFileW,
             FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL,
             FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_READONLY,
             FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_BACKUP_SEMANTICS,
-            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileAttributesW,
-            INVALID_FILE_ATTRIBUTES, OPEN_EXISTING, SetFileAttributesW,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+            GetFileAttributesW, INVALID_FILE_ATTRIBUTES, OPEN_EXISTING, SetFileAttributesW,
         },
-        System::{Com::CoTaskMemFree, IO::DeviceIoControl, Ioctl::FSCTL_SET_COMPRESSION},
+        System::{
+            Com::CoTaskMemFree,
+            IO::{DeviceIoControl, IO_STATUS_BLOCK},
+            Ioctl::FSCTL_SET_COMPRESSION,
+        },
         UI::Shell::{
             FOLDERID_LocalAppData, FOLDERID_Profile, KF_FLAG_DONT_VERIFY, SHGetKnownFolderPath,
         },
@@ -53,12 +74,11 @@ use wax::{
     walk::{DepthBehavior, DepthMax, Entry, LinkBehavior, WalkBehavior},
 };
 
-#[cfg(target_os = "linux")]
-use std::os::fd::{AsRawFd, RawFd};
-
+#[cfg(windows)]
+use crate::OpenOptions as _;
 use crate::{
     Attrs, Child, ChownIdentity, Command, Metadata, Permissions, PipeRecv, PipeSend, ReadDir, Vfs,
-    WellKnownPath,
+    WellKnownPath, XattrEntry, XattrNamespace,
 };
 
 #[cfg(target_os = "linux")]
@@ -96,6 +116,7 @@ pub struct DirectOpenOptions {
     create: bool,
     create_new: bool,
     truncate: bool,
+    no_follow: bool,
 }
 
 pub struct DirectCommand<'a> {
@@ -123,6 +144,12 @@ struct CacheKey {
 #[derive(Debug, Default)]
 struct PathCache {
     map: Mutex<HashMap<CacheKey, PathBuf>>,
+}
+
+#[cfg(unix)]
+enum UnixXattrTarget<'a> {
+    Fd(BorrowedFd<'a>),
+    Path(&'a CStr, bool),
 }
 
 impl PathCache {
@@ -870,6 +897,16 @@ impl DirectOpenOptions {
             .create(self.create)
             .create_new(self.create_new)
             .truncate(self.truncate);
+        #[cfg(unix)]
+        if self.no_follow {
+            opts.custom_flags(libc::O_NOFOLLOW);
+        }
+        #[cfg(windows)]
+        {
+            if self.no_follow {
+                opts.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            }
+        }
         opts
     }
 }
@@ -905,12 +942,734 @@ impl crate::OpenOptions for DirectOpenOptions {
         self
     }
 
+    fn no_follow(&mut self, no_follow: bool) -> &mut Self {
+        self.no_follow = no_follow;
+        self
+    }
+
     async fn open(&self, path: impl AsRef<Path>) -> Result<File, io::Error> {
         self.as_tokio().open(path).await
     }
 }
 
 impl Direct {
+    #[cfg(unix)]
+    fn unix_xattr_namespace(namespace: XattrNamespace<'_>) -> io::Result<Option<Vec<u8>>> {
+        #[cfg(not(target_os = "linux"))]
+        {
+            if !matches!(namespace, XattrNamespace::Default) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "xattr namespaces not supported on this platform",
+                ));
+            }
+            Ok(None)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Ok(match namespace {
+                XattrNamespace::Default => Some(b"user.".to_vec()),
+                XattrNamespace::Named(namespace) => Some(format!("{namespace}.").into_bytes()),
+                XattrNamespace::Any => None,
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    fn xattr_path(path: &Path) -> io::Result<CString> {
+        CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains NUL"))
+    }
+
+    #[cfg(unix)]
+    fn xattr_name(name: &str, namespace: Option<&str>) -> io::Result<CString> {
+        #[cfg(target_os = "linux")]
+        let full_name = match namespace {
+            Some(namespace) => format!("{namespace}.{name}"),
+            None => format!("user.{name}"),
+        };
+        #[cfg(not(target_os = "linux"))]
+        let full_name = match namespace {
+            Some(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "xattr namespaces are not supported on this platform",
+                ));
+            }
+            None => name.to_owned(),
+        };
+        CString::new(full_name)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "xattr name contains NUL"))
+    }
+
+    #[cfg(unix)]
+    fn xattr_entry(raw_name: Vec<u8>) -> io::Result<XattrEntry> {
+        let name = String::from_utf8(raw_name)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "xattr name is not UTF-8"))?;
+        #[cfg(target_os = "linux")]
+        {
+            let (namespace, name) = name
+                .split_once('.')
+                .map(|(namespace, name)| (Some(namespace.to_owned()), name.to_owned()))
+                .unwrap_or_else(|| (None, name.clone()));
+            Ok(XattrEntry {
+                name,
+                namespace,
+                size: None,
+                flags: None,
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Ok(XattrEntry {
+                name,
+                namespace: None,
+                size: None,
+                flags: None,
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    fn unix_list_xattrs(
+        target: UnixXattrTarget<'_>,
+        namespace: Option<Vec<u8>>,
+    ) -> io::Result<Vec<XattrEntry>> {
+        #[cfg(not(target_os = "macos"))]
+        let mut size = unsafe {
+            match target {
+                UnixXattrTarget::Fd(fd) => {
+                    libc::flistxattr(fd.as_raw_fd(), std::ptr::null_mut(), 0)
+                }
+                UnixXattrTarget::Path(path, true) => {
+                    libc::listxattr(path.as_ptr(), std::ptr::null_mut(), 0)
+                }
+                UnixXattrTarget::Path(path, false) => {
+                    libc::llistxattr(path.as_ptr(), std::ptr::null_mut(), 0)
+                }
+            }
+        };
+        #[cfg(target_os = "macos")]
+        let mut size = unsafe {
+            debug_assert!(namespace.is_none());
+            let _ = namespace;
+            match target {
+                UnixXattrTarget::Fd(fd) => {
+                    libc::flistxattr(fd.as_raw_fd(), std::ptr::null_mut(), 0, 0)
+                }
+                UnixXattrTarget::Path(path, follow) => libc::listxattr(
+                    path.as_ptr(),
+                    std::ptr::null_mut(),
+                    0,
+                    if follow { 0 } else { libc::XATTR_NOFOLLOW },
+                ),
+            }
+        };
+        if size < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        loop {
+            let mut buf = vec![0u8; size as usize];
+            #[cfg(not(target_os = "macos"))]
+            let read = unsafe {
+                match target {
+                    UnixXattrTarget::Fd(fd) => {
+                        libc::flistxattr(fd.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len())
+                    }
+                    UnixXattrTarget::Path(path, true) => {
+                        libc::listxattr(path.as_ptr(), buf.as_mut_ptr().cast(), buf.len())
+                    }
+                    UnixXattrTarget::Path(path, false) => {
+                        libc::llistxattr(path.as_ptr(), buf.as_mut_ptr().cast(), buf.len())
+                    }
+                }
+            };
+            #[cfg(target_os = "macos")]
+            let read = unsafe {
+                match target {
+                    UnixXattrTarget::Fd(fd) => {
+                        libc::flistxattr(fd.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len(), 0)
+                    }
+                    UnixXattrTarget::Path(path, follow) => libc::listxattr(
+                        path.as_ptr(),
+                        buf.as_mut_ptr().cast(),
+                        buf.len(),
+                        if follow { 0 } else { libc::XATTR_NOFOLLOW },
+                    ),
+                }
+            };
+            if read < 0 {
+                let err = io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::ERANGE) {
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        size = unsafe {
+                            match target {
+                                UnixXattrTarget::Fd(fd) => {
+                                    libc::flistxattr(fd.as_raw_fd(), std::ptr::null_mut(), 0)
+                                }
+                                UnixXattrTarget::Path(path, true) => {
+                                    libc::listxattr(path.as_ptr(), std::ptr::null_mut(), 0)
+                                }
+                                UnixXattrTarget::Path(path, false) => {
+                                    libc::llistxattr(path.as_ptr(), std::ptr::null_mut(), 0)
+                                }
+                            }
+                        };
+                    }
+                    #[cfg(target_os = "macos")]
+                    {
+                        size = unsafe {
+                            match target {
+                                UnixXattrTarget::Fd(fd) => {
+                                    libc::flistxattr(fd.as_raw_fd(), std::ptr::null_mut(), 0, 0)
+                                }
+                                UnixXattrTarget::Path(path, follow) => libc::listxattr(
+                                    path.as_ptr(),
+                                    std::ptr::null_mut(),
+                                    0,
+                                    if follow { 0 } else { libc::XATTR_NOFOLLOW },
+                                ),
+                            }
+                        };
+                    }
+                    if size < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    continue;
+                }
+                return Err(err);
+            }
+            buf.truncate(read as usize);
+            return buf
+                .split(|byte| *byte == 0)
+                .filter(|name| {
+                    if name.is_empty() {
+                        return false;
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        namespace.as_ref().is_none_or(|ns| name.starts_with(ns))
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    true
+                })
+                .map(|name| Direct::xattr_entry(name.to_vec()))
+                .collect();
+        }
+    }
+
+    #[cfg(unix)]
+    fn unix_get_xattr(target: UnixXattrTarget<'_>, name: &CStr) -> io::Result<Vec<u8>> {
+        #[cfg(not(target_os = "macos"))]
+        let mut size = unsafe {
+            match target {
+                UnixXattrTarget::Fd(fd) => {
+                    libc::fgetxattr(fd.as_raw_fd(), name.as_ptr(), std::ptr::null_mut(), 0)
+                }
+                UnixXattrTarget::Path(path, true) => {
+                    libc::getxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0)
+                }
+                UnixXattrTarget::Path(path, false) => {
+                    libc::lgetxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0)
+                }
+            }
+        };
+        #[cfg(target_os = "macos")]
+        let mut size = unsafe {
+            match target {
+                UnixXattrTarget::Fd(fd) => {
+                    libc::fgetxattr(fd.as_raw_fd(), name.as_ptr(), std::ptr::null_mut(), 0, 0, 0)
+                }
+                UnixXattrTarget::Path(path, follow) => libc::getxattr(
+                    path.as_ptr(),
+                    name.as_ptr(),
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    if follow { 0 } else { libc::XATTR_NOFOLLOW },
+                ),
+            }
+        };
+        if size < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        loop {
+            let mut buf = vec![0u8; size as usize];
+            #[cfg(not(target_os = "macos"))]
+            let read = unsafe {
+                match target {
+                    UnixXattrTarget::Fd(fd) => libc::fgetxattr(
+                        fd.as_raw_fd(),
+                        name.as_ptr(),
+                        buf.as_mut_ptr().cast(),
+                        buf.len(),
+                    ),
+                    UnixXattrTarget::Path(path, true) => libc::getxattr(
+                        path.as_ptr(),
+                        name.as_ptr(),
+                        buf.as_mut_ptr().cast(),
+                        buf.len(),
+                    ),
+                    UnixXattrTarget::Path(path, false) => libc::lgetxattr(
+                        path.as_ptr(),
+                        name.as_ptr(),
+                        buf.as_mut_ptr().cast(),
+                        buf.len(),
+                    ),
+                }
+            };
+            #[cfg(target_os = "macos")]
+            let read = unsafe {
+                match target {
+                    UnixXattrTarget::Fd(fd) => libc::fgetxattr(
+                        fd.as_raw_fd(),
+                        name.as_ptr(),
+                        buf.as_mut_ptr().cast(),
+                        buf.len(),
+                        0,
+                        0,
+                    ),
+                    UnixXattrTarget::Path(path, follow) => libc::getxattr(
+                        path.as_ptr(),
+                        name.as_ptr(),
+                        buf.as_mut_ptr().cast(),
+                        buf.len(),
+                        0,
+                        if follow { 0 } else { libc::XATTR_NOFOLLOW },
+                    ),
+                }
+            };
+            if read < 0 {
+                let err = io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::ERANGE) {
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        size = unsafe {
+                            match target {
+                                UnixXattrTarget::Fd(fd) => libc::fgetxattr(
+                                    fd.as_raw_fd(),
+                                    name.as_ptr(),
+                                    std::ptr::null_mut(),
+                                    0,
+                                ),
+                                UnixXattrTarget::Path(path, true) => libc::getxattr(
+                                    path.as_ptr(),
+                                    name.as_ptr(),
+                                    std::ptr::null_mut(),
+                                    0,
+                                ),
+                                UnixXattrTarget::Path(path, false) => libc::lgetxattr(
+                                    path.as_ptr(),
+                                    name.as_ptr(),
+                                    std::ptr::null_mut(),
+                                    0,
+                                ),
+                            }
+                        };
+                    }
+                    #[cfg(target_os = "macos")]
+                    {
+                        size = unsafe {
+                            match target {
+                                UnixXattrTarget::Fd(fd) => libc::fgetxattr(
+                                    fd.as_raw_fd(),
+                                    name.as_ptr(),
+                                    std::ptr::null_mut(),
+                                    0,
+                                    0,
+                                    0,
+                                ),
+                                UnixXattrTarget::Path(path, follow) => libc::getxattr(
+                                    path.as_ptr(),
+                                    name.as_ptr(),
+                                    std::ptr::null_mut(),
+                                    0,
+                                    0,
+                                    if follow { 0 } else { libc::XATTR_NOFOLLOW },
+                                ),
+                            }
+                        };
+                    }
+                    if size < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    continue;
+                }
+                return Err(err);
+            }
+            buf.truncate(read as usize);
+            return Ok(buf);
+        }
+    }
+
+    #[cfg(unix)]
+    fn unix_set_xattr(target: UnixXattrTarget<'_>, name: &CStr, value: &[u8]) -> io::Result<()> {
+        #[cfg(not(target_os = "macos"))]
+        let res = unsafe {
+            match target {
+                UnixXattrTarget::Fd(fd) => libc::fsetxattr(
+                    fd.as_raw_fd(),
+                    name.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                ),
+                UnixXattrTarget::Path(path, true) => libc::setxattr(
+                    path.as_ptr(),
+                    name.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                ),
+                UnixXattrTarget::Path(path, false) => libc::lsetxattr(
+                    path.as_ptr(),
+                    name.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                ),
+            }
+        };
+        #[cfg(target_os = "macos")]
+        let res = unsafe {
+            match target {
+                UnixXattrTarget::Fd(fd) => libc::fsetxattr(
+                    fd.as_raw_fd(),
+                    name.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                    0,
+                ),
+                UnixXattrTarget::Path(path, follow) => libc::setxattr(
+                    path.as_ptr(),
+                    name.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                    if follow { 0 } else { libc::XATTR_NOFOLLOW },
+                ),
+            }
+        };
+        if res < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(unix)]
+    fn unix_remove_xattr(target: UnixXattrTarget<'_>, name: &CStr) -> io::Result<()> {
+        #[cfg(not(target_os = "macos"))]
+        let res = unsafe {
+            match target {
+                UnixXattrTarget::Fd(fd) => libc::fremovexattr(fd.as_raw_fd(), name.as_ptr()),
+                UnixXattrTarget::Path(path, true) => {
+                    libc::removexattr(path.as_ptr(), name.as_ptr())
+                }
+                UnixXattrTarget::Path(path, false) => {
+                    libc::lremovexattr(path.as_ptr(), name.as_ptr())
+                }
+            }
+        };
+        #[cfg(target_os = "macos")]
+        let res = unsafe {
+            match target {
+                UnixXattrTarget::Fd(fd) => libc::fremovexattr(fd.as_raw_fd(), name.as_ptr(), 0),
+                UnixXattrTarget::Path(path, follow) => libc::removexattr(
+                    path.as_ptr(),
+                    name.as_ptr(),
+                    if follow { 0 } else { libc::XATTR_NOFOLLOW },
+                ),
+            }
+        };
+        if res < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(windows)]
+    fn nt_error(status: windows_sys::Win32::Foundation::NTSTATUS) -> io::Error {
+        io::Error::from_raw_os_error(unsafe { RtlNtStatusToDosError(status) } as i32)
+    }
+
+    #[cfg(windows)]
+    fn windows_xattr_name(name: &str, namespace: Option<&str>) -> io::Result<Vec<u8>> {
+        if namespace.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "xattr namespaces are not supported on this platform",
+            ));
+        }
+        if name.as_bytes().contains(&0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "xattr name contains NUL",
+            ));
+        }
+        let name = name.as_bytes().to_vec();
+        let Ok(_len) = u8::try_from(name.len()) else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "xattr name is too long",
+            ));
+        };
+        Ok(name)
+    }
+
+    #[cfg(windows)]
+    const fn align_windows_ea(len: usize) -> usize {
+        (len + 3) & !3
+    }
+
+    #[cfg(windows)]
+    fn windows_get_ea_list(name: &[u8]) -> io::Result<Vec<u8>> {
+        let len =
+            usize::from(u8::try_from(name.len()).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "xattr name is too long")
+            })?);
+        let size =
+            Self::align_windows_ea(std::mem::offset_of!(FILE_GET_EA_INFORMATION, EaName) + len + 1);
+        let mut buf = vec![0u8; size];
+        let entry = buf.as_mut_ptr().cast::<FILE_GET_EA_INFORMATION>();
+        unsafe {
+            (*entry).NextEntryOffset = 0;
+            (*entry).EaNameLength = len as u8;
+            ptr::copy_nonoverlapping(
+                name.as_ptr(),
+                (*entry).EaName.as_mut_ptr().cast::<u8>(),
+                len,
+            );
+        }
+        Ok(buf)
+    }
+
+    #[cfg(windows)]
+    fn windows_full_ea(name: &[u8], value: &[u8]) -> io::Result<Vec<u8>> {
+        let name_len =
+            usize::from(u8::try_from(name.len()).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "xattr name is too long")
+            })?);
+        let value_len = usize::from(u16::try_from(value.len()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "xattr value is too large")
+        })?);
+        let size = Self::align_windows_ea(
+            std::mem::offset_of!(FILE_FULL_EA_INFORMATION, EaName) + name_len + 1 + value_len,
+        );
+        let mut buf = vec![0u8; size];
+        let entry = buf.as_mut_ptr().cast::<FILE_FULL_EA_INFORMATION>();
+        unsafe {
+            (*entry).NextEntryOffset = 0;
+            (*entry).Flags = 0;
+            (*entry).EaNameLength = name_len as u8;
+            (*entry).EaValueLength = value_len as u16;
+            let name_ptr = (*entry).EaName.as_mut_ptr().cast::<u8>();
+            ptr::copy_nonoverlapping(name.as_ptr(), name_ptr, name_len);
+            ptr::copy_nonoverlapping(value.as_ptr(), name_ptr.add(name_len + 1), value_len);
+        }
+        Ok(buf)
+    }
+
+    #[cfg(windows)]
+    fn windows_parse_full_ea_chunk(buf: &[u8]) -> io::Result<Vec<XattrEntry>> {
+        let mut entries = Vec::new();
+        let mut offset = 0usize;
+        while offset < buf.len() {
+            let remaining = &buf[offset..];
+            if remaining.len() < std::mem::size_of::<FILE_FULL_EA_INFORMATION>() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "EA buffer truncated",
+                ));
+            }
+            let entry = unsafe { &*remaining.as_ptr().cast::<FILE_FULL_EA_INFORMATION>() };
+            let name_len = usize::from(entry.EaNameLength);
+            let value_len = usize::from(entry.EaValueLength);
+            let name_offset = std::mem::offset_of!(FILE_FULL_EA_INFORMATION, EaName);
+            let total_len = name_offset
+                .checked_add(name_len)
+                .and_then(|v| v.checked_add(1))
+                .and_then(|v| v.checked_add(value_len))
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "EA buffer overflow"))?;
+            if total_len > remaining.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "EA entry truncated",
+                ));
+            }
+            let name = unsafe {
+                slice::from_raw_parts(entry.EaName.as_ptr().cast::<u8>(), name_len).to_vec()
+            };
+            entries.push(XattrEntry {
+                name: String::from_utf8(name).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "xattr name is not UTF-8")
+                })?,
+                namespace: None,
+                size: Some(value_len as u64),
+                flags: Some(entry.Flags),
+            });
+            if entry.NextEntryOffset == 0 {
+                break;
+            }
+            let next = usize::try_from(entry.NextEntryOffset).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "invalid EA entry offset")
+            })?;
+            if next > remaining.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid EA entry offset",
+                ));
+            }
+            offset += next;
+        }
+        Ok(entries)
+    }
+
+    #[cfg(windows)]
+    fn windows_parse_full_ea_value(buf: &[u8]) -> io::Result<(String, Vec<u8>)> {
+        if buf.len() < mem::size_of::<FILE_FULL_EA_INFORMATION>() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "EA buffer truncated",
+            ));
+        }
+        let entry = unsafe { &*buf.as_ptr().cast::<FILE_FULL_EA_INFORMATION>() };
+        let name_len = usize::from(entry.EaNameLength);
+        let value_len = usize::from(entry.EaValueLength);
+        let name_offset = mem::offset_of!(FILE_FULL_EA_INFORMATION, EaName);
+        let value_offset = mem::offset_of!(FILE_FULL_EA_INFORMATION, EaName) + name_len + 1;
+        let end = value_offset
+            .checked_add(value_len)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "EA buffer overflow"))?;
+        if end > buf.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "EA entry truncated",
+            ));
+        }
+        let name = String::from_utf8(buf[name_offset..name_offset + name_len].to_vec())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "xattr name is not UTF-8"))?;
+        Ok((name, buf[value_offset..end].to_vec()))
+    }
+
+    #[cfg(windows)]
+    unsafe fn windows_list_xattrs(handle: BorrowedHandle<'_>) -> io::Result<Vec<XattrEntry>> {
+        let handle = handle.as_raw_handle();
+        let mut entries = Vec::new();
+        let mut restart_scan = true;
+        let mut buf = vec![0u8; 4096];
+        loop {
+            let mut iosb = IO_STATUS_BLOCK::default();
+            let status = unsafe {
+                NtQueryEaFile(
+                    handle,
+                    &mut iosb,
+                    buf.as_mut_ptr().cast(),
+                    buf.len().try_into().unwrap_or(u32::MAX),
+                    false,
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    restart_scan,
+                )
+            };
+            match status {
+                STATUS_SUCCESS => {
+                    let len = iosb.Information;
+                    if len == 0 {
+                        return Ok(entries);
+                    }
+                    entries.extend(Self::windows_parse_full_ea_chunk(&buf[..len])?);
+                    return Ok(entries);
+                }
+                STATUS_BUFFER_OVERFLOW => {
+                    let len = iosb.Information;
+                    if len == 0 {
+                        buf.resize(buf.len() * 2, 0);
+                        continue;
+                    }
+                    entries.extend(Self::windows_parse_full_ea_chunk(&buf[..len])?);
+                    restart_scan = false;
+                }
+                STATUS_BUFFER_TOO_SMALL => {
+                    buf.resize(buf.len() * 2, 0);
+                }
+                STATUS_NO_EAS_ON_FILE | STATUS_NO_MORE_EAS => return Ok(entries),
+                _ => return Err(Self::nt_error(status)),
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    unsafe fn windows_get_xattr(handle: BorrowedHandle<'_>, name: &[u8]) -> io::Result<Vec<u8>> {
+        let handle = handle.as_raw_handle();
+        let ea_list = Self::windows_get_ea_list(name)?;
+        let mut buf = vec![0u8; 256];
+        loop {
+            let mut iosb = IO_STATUS_BLOCK::default();
+            let status = unsafe {
+                NtQueryEaFile(
+                    handle,
+                    &mut iosb,
+                    buf.as_mut_ptr().cast(),
+                    buf.len().try_into().unwrap_or(u32::MAX),
+                    true,
+                    ea_list.as_ptr().cast(),
+                    ea_list.len().try_into().unwrap_or(u32::MAX),
+                    ptr::null(),
+                    true,
+                )
+            };
+            match status {
+                STATUS_SUCCESS => {
+                    let (found_name, value) =
+                        Self::windows_parse_full_ea_value(&buf[..iosb.Information])?;
+                    if value.is_empty() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::NotFound,
+                            format!("xattr {found_name:?} not found"),
+                        ));
+                    }
+                    return Ok(value);
+                }
+                STATUS_BUFFER_OVERFLOW | STATUS_BUFFER_TOO_SMALL => {
+                    let next_len = std::cmp::max(buf.len() * 2, iosb.Information.saturating_add(1));
+                    buf.resize(next_len, 0);
+                }
+                _ => return Err(Self::nt_error(status)),
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    unsafe fn windows_set_xattr(
+        handle: BorrowedHandle<'_>,
+        name: &[u8],
+        value: &[u8],
+    ) -> io::Result<()> {
+        let handle = handle.as_raw_handle();
+        let ea = Self::windows_full_ea(name, value)?;
+        let mut iosb = IO_STATUS_BLOCK::default();
+        let status = unsafe {
+            NtSetEaFile(
+                handle,
+                &mut iosb,
+                ea.as_ptr().cast(),
+                ea.len().try_into().unwrap_or(u32::MAX),
+            )
+        };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(Self::nt_error(status))
+        }
+    }
+
     fn directory_requires_all_error() -> io::Error {
         #[cfg(unix)]
         {
@@ -1223,6 +1982,335 @@ impl Vfs for Direct {
     async fn clear_cache(&self) -> Result<(), io::Error> {
         self.path_cache.clear().await;
         Ok(())
+    }
+
+    #[cfg(unix)]
+    async fn xattrs(
+        &self,
+        path: impl AsRef<Path>,
+        namespace: XattrNamespace<'_>,
+        follow: bool,
+    ) -> Result<Vec<XattrEntry>, io::Error> {
+        let path = Self::xattr_path(path.as_ref())?;
+        let namespace = Self::unix_xattr_namespace(namespace)?;
+        tokio::task::spawn_blocking(move || {
+            Self::unix_list_xattrs(UnixXattrTarget::Path(&path, follow), namespace)
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))
+    }
+
+    #[cfg(windows)]
+    async fn xattrs(
+        &self,
+        path: impl AsRef<Path>,
+        namespace: XattrNamespace<'_>,
+        follow: bool,
+    ) -> Result<Vec<XattrEntry>, io::Error> {
+        let file = self
+            .open_options()
+            .read(true)
+            .no_follow(!follow)
+            .open(path.as_ref())
+            .await?;
+        self.file_xattrs(&file, namespace).await
+    }
+
+    #[cfg(unix)]
+    async fn xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        follow: bool,
+    ) -> Result<Vec<u8>, io::Error> {
+        let path = Self::xattr_path(path.as_ref())?;
+        let name = Self::xattr_name(name, namespace)?;
+        tokio::task::spawn_blocking(move || {
+            Self::unix_get_xattr(UnixXattrTarget::Path(&path, follow), &name)
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))
+    }
+
+    #[cfg(windows)]
+    async fn xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        follow: bool,
+    ) -> Result<Vec<u8>, io::Error> {
+        let file = self
+            .open_options()
+            .read(true)
+            .no_follow(!follow)
+            .open(path.as_ref())
+            .await?;
+        self.file_xattr(&file, name, namespace).await
+    }
+
+    #[cfg(unix)]
+    async fn set_xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        value: &[u8],
+        follow: bool,
+    ) -> Result<(), io::Error> {
+        let path = Self::xattr_path(path.as_ref())?;
+        let name = Self::xattr_name(name, namespace)?;
+        let value = value.to_vec();
+        tokio::task::spawn_blocking(move || {
+            Self::unix_set_xattr(UnixXattrTarget::Path(&path, follow), &name, &value)
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))
+    }
+
+    #[cfg(windows)]
+    async fn set_xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        value: &[u8],
+        follow: bool,
+    ) -> Result<(), io::Error> {
+        let file = self
+            .open_options()
+            .write(true)
+            .no_follow(!follow)
+            .open(path.as_ref())
+            .await?;
+        self.file_set_xattr(&file, name, namespace, value).await
+    }
+
+    #[cfg(unix)]
+    async fn remove_xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        follow: bool,
+    ) -> Result<(), io::Error> {
+        let path = Self::xattr_path(path.as_ref())?;
+        let name = Self::xattr_name(name, namespace)?;
+        tokio::task::spawn_blocking(move || {
+            Self::unix_remove_xattr(UnixXattrTarget::Path(&path, follow), &name)
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))
+    }
+
+    #[cfg(windows)]
+    async fn remove_xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        follow: bool,
+    ) -> Result<(), io::Error> {
+        let file = self
+            .open_options()
+            .read(true)
+            .write(true)
+            .no_follow(!follow)
+            .open(path.as_ref())
+            .await?;
+        self.file_remove_xattr(&file, name, namespace).await
+    }
+
+    #[cfg(unix)]
+    async fn file_xattrs(
+        &self,
+        file: &File,
+        namespace: XattrNamespace<'_>,
+    ) -> Result<Vec<XattrEntry>, io::Error> {
+        let file = file.try_clone().await?;
+        let namespace = Self::unix_xattr_namespace(namespace)?;
+        tokio::task::spawn_blocking(move || {
+            Self::unix_list_xattrs(UnixXattrTarget::Fd(file.as_fd()), namespace)
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))
+    }
+
+    #[cfg(windows)]
+    async fn file_xattrs(
+        &self,
+        file: &File,
+        namespace: XattrNamespace<'_>,
+    ) -> Result<Vec<XattrEntry>, io::Error> {
+        if let XattrNamespace::Named(_) = namespace {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "xattr namespaces are not supported on this platform",
+            ));
+        }
+        let file = file.try_clone().await?;
+        tokio::task::spawn_blocking(move || unsafe { Self::windows_list_xattrs(file.as_handle()) })
+            .await
+            .unwrap_or_else(|e| Err(io::Error::other(e)))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    async fn file_xattrs(
+        &self,
+        _file: &File,
+        _namespace: XattrNamespace<'_>,
+    ) -> Result<Vec<XattrEntry>, io::Error> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "xattrs are not supported on this platform",
+        ))
+    }
+
+    #[cfg(unix)]
+    async fn file_xattr(
+        &self,
+        file: &File,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<Vec<u8>, io::Error> {
+        let file = file.try_clone().await?;
+        let name = Self::xattr_name(name, namespace)?;
+        tokio::task::spawn_blocking(move || {
+            Self::unix_get_xattr(UnixXattrTarget::Fd(file.as_fd()), &name)
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))
+    }
+
+    #[cfg(windows)]
+    async fn file_xattr(
+        &self,
+        file: &File,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<Vec<u8>, io::Error> {
+        let name = Self::windows_xattr_name(name, namespace)?;
+        let file = file.try_clone().await?;
+        tokio::task::spawn_blocking(move || unsafe {
+            Self::windows_get_xattr(file.as_handle(), &name)
+        })
+        .await
+        .unwrap_or_else(|e| Err(io::Error::other(e)))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    async fn file_xattr(
+        &self,
+        _file: &File,
+        _name: &str,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<u8>, io::Error> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "xattrs are not supported on this platform",
+        ))
+    }
+
+    #[cfg(unix)]
+    async fn file_set_xattr(
+        &self,
+        file: &File,
+        name: &str,
+        namespace: Option<&str>,
+        value: &[u8],
+    ) -> Result<(), io::Error> {
+        let file = file.try_clone().await?;
+        let name = Self::xattr_name(name, namespace)?;
+        let value = value.to_vec();
+        tokio::task::spawn_blocking(move || {
+            Self::unix_set_xattr(UnixXattrTarget::Fd(file.as_fd()), &name, &value)
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))
+    }
+
+    #[cfg(windows)]
+    async fn file_set_xattr(
+        &self,
+        file: &File,
+        name: &str,
+        namespace: Option<&str>,
+        value: &[u8],
+    ) -> Result<(), io::Error> {
+        if value.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "empty xattr values are not supported on this platform",
+            ));
+        }
+        let name = Self::windows_xattr_name(name, namespace)?;
+        let value = value.to_vec();
+        let file = file.try_clone().await?;
+        tokio::task::spawn_blocking(move || unsafe {
+            Self::windows_set_xattr(file.as_handle(), &name, &value)
+        })
+        .await
+        .unwrap_or_else(|e| Err(io::Error::other(e)))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    async fn file_set_xattr(
+        &self,
+        _file: &File,
+        _name: &str,
+        _namespace: Option<&str>,
+        _value: &[u8],
+    ) -> Result<(), io::Error> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "xattrs are not supported on this platform",
+        ))
+    }
+
+    #[cfg(unix)]
+    async fn file_remove_xattr(
+        &self,
+        file: &File,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<(), io::Error> {
+        let file = file.try_clone().await?;
+        let name = Self::xattr_name(name, namespace)?;
+        tokio::task::spawn_blocking(move || {
+            Self::unix_remove_xattr(UnixXattrTarget::Fd(file.as_fd()), &name)
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))
+    }
+
+    #[cfg(windows)]
+    async fn file_remove_xattr(
+        &self,
+        file: &File,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<(), io::Error> {
+        let name = Self::windows_xattr_name(name, namespace)?;
+        let file = file.try_clone().await?;
+        tokio::task::spawn_blocking(move || unsafe {
+            Self::windows_set_xattr(file.as_handle(), &name, &[])
+        })
+        .await
+        .unwrap_or_else(|e| Err(io::Error::other(e)))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    async fn file_remove_xattr(
+        &self,
+        _file: &File,
+        _name: &str,
+        _namespace: Option<&str>,
+    ) -> Result<(), io::Error> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "xattrs are not supported on this platform",
+        ))
     }
 
     async fn remove(

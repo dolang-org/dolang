@@ -350,6 +350,21 @@ pub enum ChownIdentity {
     Name(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum XattrNamespace<'a> {
+    Default,
+    Named(&'a str),
+    Any,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct XattrEntry {
+    pub name: String,
+    pub namespace: Option<String>,
+    pub size: Option<u64>,
+    pub flags: Option<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirEntry {
     file_name: OsString,
@@ -381,6 +396,7 @@ pub trait OpenOptions {
     fn create(&mut self, create: bool) -> &mut Self;
     fn create_new(&mut self, create_new: bool) -> &mut Self;
     fn truncate(&mut self, truncate: bool) -> &mut Self;
+    fn no_follow(&mut self, no_follow: bool) -> &mut Self;
     async fn open(&self, path: impl AsRef<Path>) -> Result<fs::File, io::Error>;
 }
 
@@ -446,6 +462,58 @@ pub trait Vfs {
     async fn file_metadata(&self, file: &fs::File) -> Result<Metadata, io::Error> {
         file.metadata().await.map(metadata_from_std)
     }
+    async fn file_xattrs(
+        &self,
+        file: &fs::File,
+        namespace: XattrNamespace<'_>,
+    ) -> Result<Vec<XattrEntry>, io::Error>;
+    async fn file_xattr(
+        &self,
+        file: &fs::File,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<Vec<u8>, io::Error>;
+    async fn file_set_xattr(
+        &self,
+        file: &fs::File,
+        name: &str,
+        namespace: Option<&str>,
+        value: &[u8],
+    ) -> Result<(), io::Error>;
+    async fn file_remove_xattr(
+        &self,
+        file: &fs::File,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<(), io::Error>;
+    async fn xattrs(
+        &self,
+        path: impl AsRef<Path>,
+        namespace: XattrNamespace<'_>,
+        follow: bool,
+    ) -> Result<Vec<XattrEntry>, io::Error>;
+    async fn xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        follow: bool,
+    ) -> Result<Vec<u8>, io::Error>;
+    async fn set_xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        value: &[u8],
+        follow: bool,
+    ) -> Result<(), io::Error>;
+    async fn remove_xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        follow: bool,
+    ) -> Result<(), io::Error>;
 
     async fn remove(
         &self,
@@ -606,6 +674,18 @@ impl OpenOptions for ClientOrDirectOpenOptions<'_> {
         self
     }
 
+    fn no_follow(&mut self, no_follow: bool) -> &mut Self {
+        match self {
+            Self::Client(opts) => {
+                opts.no_follow(no_follow);
+            }
+            Self::Direct(opts) => {
+                opts.no_follow(no_follow);
+            }
+        }
+        self
+    }
+
     async fn open(&self, path: impl AsRef<Path>) -> Result<fs::File, io::Error> {
         match self {
             Self::Client(opts) => opts.open(path).await,
@@ -649,6 +729,11 @@ impl OpenOptions for ClientOrDirectOpenOptions<'_> {
 
     fn truncate(&mut self, truncate: bool) -> &mut Self {
         self.inner.truncate(truncate);
+        self
+    }
+
+    fn no_follow(&mut self, no_follow: bool) -> &mut Self {
+        self.inner.no_follow(no_follow);
         self
     }
 
@@ -1175,6 +1260,176 @@ impl Vfs for ClientOrDirect {
         #[cfg(not(unix))]
         {
             self.0.clear_cache().await
+        }
+    }
+
+    async fn file_xattrs(
+        &self,
+        file: &fs::File,
+        namespace: XattrNamespace<'_>,
+    ) -> Result<Vec<XattrEntry>, io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.file_xattrs(file, namespace).await,
+                Self::Direct(direct) => direct.file_xattrs(file, namespace).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.file_xattrs(file, namespace).await
+        }
+    }
+
+    async fn file_xattr(
+        &self,
+        file: &fs::File,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<Vec<u8>, io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.file_xattr(file, name, namespace).await,
+                Self::Direct(direct) => direct.file_xattr(file, name, namespace).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.file_xattr(file, name, namespace).await
+        }
+    }
+
+    async fn file_set_xattr(
+        &self,
+        file: &fs::File,
+        name: &str,
+        namespace: Option<&str>,
+        value: &[u8],
+    ) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.file_set_xattr(file, name, namespace, value).await,
+                Self::Direct(direct) => direct.file_set_xattr(file, name, namespace, value).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.file_set_xattr(file, name, namespace, value).await
+        }
+    }
+
+    async fn file_remove_xattr(
+        &self,
+        file: &fs::File,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<(), io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.file_remove_xattr(file, name, namespace).await,
+                Self::Direct(direct) => direct.file_remove_xattr(file, name, namespace).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.file_remove_xattr(file, name, namespace).await
+        }
+    }
+
+    async fn xattrs(
+        &self,
+        path: impl AsRef<Path>,
+        namespace: XattrNamespace<'_>,
+        follow: bool,
+    ) -> Result<Vec<XattrEntry>, io::Error> {
+        let path = path.as_ref().to_path_buf();
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.xattrs(&path, namespace, follow).await,
+                Self::Direct(direct) => direct.xattrs(&path, namespace, follow).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.xattrs(&path, namespace, follow).await
+        }
+    }
+
+    async fn xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        follow: bool,
+    ) -> Result<Vec<u8>, io::Error> {
+        let path = path.as_ref().to_path_buf();
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.xattr(&path, name, namespace, follow).await,
+                Self::Direct(direct) => direct.xattr(&path, name, namespace, follow).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.xattr(&path, name, namespace, follow).await
+        }
+    }
+
+    async fn set_xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        value: &[u8],
+        follow: bool,
+    ) -> Result<(), io::Error> {
+        let path = path.as_ref().to_path_buf();
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => {
+                    client
+                        .set_xattr(&path, name, namespace, value, follow)
+                        .await
+                }
+                Self::Direct(direct) => {
+                    direct
+                        .set_xattr(&path, name, namespace, value, follow)
+                        .await
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0
+                .set_xattr(&path, name, namespace, value, follow)
+                .await
+        }
+    }
+
+    async fn remove_xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        follow: bool,
+    ) -> Result<(), io::Error> {
+        let path = path.as_ref().to_path_buf();
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.remove_xattr(&path, name, namespace, follow).await,
+                Self::Direct(direct) => direct.remove_xattr(&path, name, namespace, follow).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.remove_xattr(&path, name, namespace, follow).await
         }
     }
 

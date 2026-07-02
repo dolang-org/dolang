@@ -21,13 +21,15 @@ use tokio_unix_ipc::{Receiver, Sender, serde::Handle};
 
 use crate::{
     Attrs, Child, ChownIdentity, Command, LockedSender, Metadata, Permissions, PipeRecv, PipeSend,
-    ReadDir, Vfs, WellKnownPath,
+    ReadDir, Vfs, WellKnownPath, XattrEntry,
+    direct::Direct,
     protocol::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
         CreateDirRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
         ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
         Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
-        SpawnRequest, SymlinkRequest, Timestamp, UnixStreamSocketRequest, WellKnownPathRequest,
+        SetXattrRequest, SpawnRequest, SymlinkRequest, Timestamp, UnixStreamSocketRequest,
+        WellKnownPathRequest, XattrRequest, XattrsRequest,
     },
 };
 
@@ -90,8 +92,10 @@ pub struct Query {
 }
 
 /// Client for connecting to the agent daemon and spawning processes.
+#[derive(Clone)]
 pub struct Client {
     inner: Arc<ClientInner>,
+    direct: Direct,
 }
 
 impl Client {
@@ -122,7 +126,10 @@ impl Client {
             let _ = receive_loop(receiver, inner_clone).await;
         });
 
-        Self { inner }
+        Self {
+            inner,
+            direct: Direct::default(),
+        }
     }
 
     fn from_std_stream(stream: StdUnixStream) -> Result<Self, io::Error> {
@@ -323,14 +330,6 @@ impl TryFrom<OwnedFd> for Client {
         let stream = StdUnixStream::from(value);
         stream.set_nonblocking(true)?;
         Self::from_std_stream(stream)
-    }
-}
-
-impl Clone for Client {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
     }
 }
 
@@ -564,6 +563,7 @@ pub struct OpenOptions<'a> {
     create: bool,
     create_new: bool,
     truncate: bool,
+    no_follow: bool,
 }
 
 impl<'a> OpenOptions<'a> {
@@ -576,6 +576,7 @@ impl<'a> OpenOptions<'a> {
             create: false,
             create_new: false,
             truncate: false,
+            no_follow: false,
         }
     }
 
@@ -615,6 +616,12 @@ impl<'a> OpenOptions<'a> {
         self
     }
 
+    /// Set no-follow mode for the final path component.
+    pub fn no_follow(&mut self, no_follow: bool) -> &mut Self {
+        self.no_follow = no_follow;
+        self
+    }
+
     /// Open the file at the given path.
     pub async fn open(&self, path: impl AsRef<Path>) -> Result<File, io::Error> {
         let req = OpenRequest {
@@ -625,6 +632,7 @@ impl<'a> OpenOptions<'a> {
             create: self.create,
             create_new: self.create_new,
             truncate: self.truncate,
+            no_follow: self.no_follow,
         };
 
         let mut state = self.client.inner.state.lock().await;
@@ -669,6 +677,10 @@ impl crate::OpenOptions for OpenOptions<'_> {
 
     fn truncate(&mut self, truncate: bool) -> &mut Self {
         self.truncate(truncate)
+    }
+
+    fn no_follow(&mut self, no_follow: bool) -> &mut Self {
+        self.no_follow(no_follow)
     }
 
     async fn open(&self, path: impl AsRef<Path>) -> Result<File, io::Error> {
@@ -718,6 +730,164 @@ impl Vfs for Client {
 
     async fn clear_cache(&self) -> Result<(), io::Error> {
         Client::clear_cache(self).await
+    }
+
+    async fn file_xattrs(
+        &self,
+        file: &File,
+        namespace: crate::XattrNamespace<'_>,
+    ) -> Result<Vec<XattrEntry>, io::Error> {
+        self.direct.file_xattrs(file, namespace).await
+    }
+
+    async fn file_xattr(
+        &self,
+        file: &File,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<Vec<u8>, io::Error> {
+        self.direct.file_xattr(file, name, namespace).await
+    }
+
+    async fn file_set_xattr(
+        &self,
+        file: &File,
+        name: &str,
+        namespace: Option<&str>,
+        value: &[u8],
+    ) -> Result<(), io::Error> {
+        self.direct
+            .file_set_xattr(file, name, namespace, value)
+            .await
+    }
+
+    async fn file_remove_xattr(
+        &self,
+        file: &File,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<(), io::Error> {
+        self.direct.file_remove_xattr(file, name, namespace).await
+    }
+
+    async fn xattrs(
+        &self,
+        path: impl AsRef<Path>,
+        namespace: crate::XattrNamespace<'_>,
+        follow: bool,
+    ) -> Result<Vec<XattrEntry>, io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Xattrs(XattrsRequest {
+                        path: path.as_ref().to_path_buf(),
+                        namespace: namespace.into(),
+                        follow,
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        follow: bool,
+    ) -> Result<Vec<u8>, io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::Xattr(XattrRequest {
+                        path: path.as_ref().to_path_buf(),
+                        name: name.to_owned(),
+                        namespace: namespace.map(str::to_owned),
+                        follow,
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn set_xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        value: &[u8],
+        follow: bool,
+    ) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::SetXattr(SetXattrRequest {
+                        path: path.as_ref().to_path_buf(),
+                        name: name.to_owned(),
+                        namespace: namespace.map(str::to_owned),
+                        value: value.to_vec(),
+                        follow,
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn remove_xattr(
+        &self,
+        path: impl AsRef<Path>,
+        name: &str,
+        namespace: Option<&str>,
+        follow: bool,
+    ) -> Result<(), io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::RemoveXattr(XattrRequest {
+                        path: path.as_ref().to_path_buf(),
+                        name: name.to_owned(),
+                        namespace: namespace.map(str::to_owned),
+                        follow,
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
     }
 
     async fn remove(
@@ -1284,6 +1454,18 @@ async fn receive_loop(receiver: Receiver<Response>, inner: Arc<ClientInner>) {
                     alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
                 }
                 ResponseKind::Chown(result) => {
+                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
+                }
+                ResponseKind::Xattrs(result) => {
+                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
+                }
+                ResponseKind::Xattr(result) => {
+                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
+                }
+                ResponseKind::SetXattr(result) => {
+                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
+                }
+                ResponseKind::RemoveXattr(result) => {
                     alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
                 }
             },

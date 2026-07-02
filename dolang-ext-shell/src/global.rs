@@ -28,6 +28,7 @@ use crate::{
         metadata::Metadata,
         path::{Path, PathComponentsIter},
         readdir::DirEntry,
+        xattr::{XattrEntry, XattrIter},
     },
     local::Local,
     program::Program,
@@ -45,6 +46,8 @@ pub(crate) struct Types<'v> {
     pub(crate) path: Type<'v, Path>,
     pub(crate) path_components_iter: Type<'v, PathComponentsIter>,
     pub(crate) attrs: Type<'v, Attrs>,
+    pub(crate) xattr_entry: Type<'v, XattrEntry>,
+    pub(crate) xattr_iter: Type<'v, XattrIter>,
     pub(crate) metadata: Type<'v, Metadata>,
     pub(crate) file: Type<'v, File<'v>>,
     pub(crate) dir_entry: Type<'v, DirEntry>,
@@ -72,11 +75,17 @@ pub(crate) struct Types<'v> {
 }
 
 pub(crate) struct Syms<'v> {
+    pub(crate) any: Sym<'v, 'v>,
+    pub(crate) block_device: Sym<'v, 'v>,
+    pub(crate) char_device: Sym<'v, 'v>,
     pub(crate) chunk: Sym<'v, 'v>,
     pub(crate) close: Sym<'v, 'v>,
     pub(crate) dir: Sym<'v, 'v>,
+    pub(crate) fifo: Sym<'v, 'v>,
     pub(crate) file: Sym<'v, 'v>,
     pub(crate) line: Sym<'v, 'v>,
+    pub(crate) namespace: Sym<'v, 'v>,
+    pub(crate) socket: Sym<'v, 'v>,
     pub(crate) stderr: Sym<'v, 'v>,
     pub(crate) stdin: Sym<'v, 'v>,
     pub(crate) stdout: Sym<'v, 'v>,
@@ -86,10 +95,6 @@ pub(crate) struct Syms<'v> {
     pub(crate) follow: Sym<'v, 'v>,
     #[cfg(unix)]
     pub(crate) group: Sym<'v, 'v>,
-    pub(crate) fifo: Sym<'v, 'v>,
-    pub(crate) char_device: Sym<'v, 'v>,
-    pub(crate) block_device: Sym<'v, 'v>,
-    pub(crate) socket: Sym<'v, 'v>,
     #[cfg(unix)]
     pub(crate) unix_socket: Sym<'v, 'v>,
 }
@@ -142,6 +147,8 @@ impl<'v> Global<'v> {
                 path: builder.register_type(),
                 path_components_iter: builder.register_type(),
                 attrs: builder.register_type(),
+                xattr_entry: builder.register_type(),
+                xattr_iter: builder.register_type(),
                 metadata: builder.register_type(),
                 dir_entry: builder.register_type(),
                 dir_entry_iter: builder.register_type(),
@@ -179,11 +186,17 @@ impl<'v> Global<'v> {
                 vfs: builder.register_type(),
             },
             syms: Syms {
+                any: builder.sym("any"),
+                block_device: builder.sym("block_device"),
+                char_device: builder.sym("char_device"),
                 chunk: builder.sym("chunk"),
                 close: builder.sym("close"),
                 dir: builder.sym("dir"),
+                fifo: builder.sym("fifo"),
                 file: builder.sym("file"),
                 line: builder.sym("line"),
+                namespace: builder.sym("namespace"),
+                socket: builder.sym("socket"),
                 stderr: builder.sym("stderr"),
                 stdin: builder.sym("stdin"),
                 stdout: builder.sym("stdout"),
@@ -193,10 +206,6 @@ impl<'v> Global<'v> {
                 follow: builder.sym("follow"),
                 #[cfg(unix)]
                 group: builder.sym("group"),
-                fifo: builder.sym("fifo"),
-                char_device: builder.sym("char_device"),
-                block_device: builder.sym("block_device"),
-                socket: builder.sym("socket"),
                 #[cfg(unix)]
                 unix_socket: builder.sym("unix_socket"),
             },

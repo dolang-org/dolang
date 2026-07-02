@@ -392,6 +392,7 @@ impl<'v> Object<'v> for Path {
         let ignore = builder.sym("ignore");
         let max_depth = builder.sym("max_depth");
         let follow = builder.sym("follow");
+        let namespace = builder.sym("namespace");
         let modified = builder.sym("modified");
         let accessed = builder.sym("accessed");
         let created = builder.sym("created");
@@ -481,6 +482,64 @@ impl<'v> Object<'v> for Path {
                 };
                 let annex = this.annex();
                 super::get_attrs(strand, annex.global, &annex.as_path(), follow, out).await
+            })
+            .method("xattrs", async move |this, strand, args, out| {
+                let ([], [namespace, follow]) =
+                    unpack!(strand, args, 0, 0, namespace = None, follow = None)?;
+                let annex = this.annex();
+                super::xattr::path_list(
+                    strand,
+                    annex.global,
+                    &annex.as_path(),
+                    namespace,
+                    follow,
+                    out,
+                )
+                .await
+            })
+            .method("xattr", async move |this, strand, args, out| {
+                let ([name], [namespace, follow]) =
+                    unpack!(strand, args, 1, 0, namespace = None, follow = None)?;
+                let annex = this.annex();
+                super::xattr::path_get(
+                    strand,
+                    annex.global,
+                    &annex.as_path(),
+                    &name,
+                    namespace,
+                    follow,
+                    out,
+                )
+                .await
+            })
+            .method("set_xattr", async move |this, strand, args, _out| {
+                let ([name, value], [namespace, follow]) =
+                    unpack!(strand, args, 2, 0, namespace = None, follow = None)?;
+                let annex = this.annex();
+                super::xattr::path_set(
+                    strand,
+                    annex.global,
+                    &annex.as_path(),
+                    &name,
+                    namespace,
+                    &value,
+                    follow,
+                )
+                .await
+            })
+            .method("remove_xattr", async move |this, strand, args, _out| {
+                let ([name], [namespace, follow]) =
+                    unpack!(strand, args, 1, 0, namespace = None, follow = None)?;
+                let annex = this.annex();
+                super::xattr::path_remove(
+                    strand,
+                    annex.global,
+                    &annex.as_path(),
+                    &name,
+                    namespace,
+                    follow,
+                )
+                .await
             })
             .method("exists", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
