@@ -13,6 +13,7 @@ mod shell;
 mod shlex;
 mod sys;
 mod time;
+mod util;
 
 use std::{
     io::{self, IsTerminal},

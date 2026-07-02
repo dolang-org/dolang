@@ -4,12 +4,13 @@ The `fs` module provides functions and types for filesystem operations.
 
 ## Types
 
-| Type                    | Description                   |
-| ----------------------- | ----------------------------- |
-| [Path](path.md)         | Filesystem path object        |
-| [Attrs](attrs.md)       | Filesystem attributes         |
-| [Metadata](metadata.md) | Immutable filesystem metadata |
-| [DirEntry](direntry.md) | Directory entry object        |
+| Type                         | Description                   |
+| ---------------------------- | ----------------------------- |
+| [Path](path.md)              | Filesystem path object        |
+| [Attrs](attrs.md)            | Filesystem attributes         |
+| [Metadata](metadata.md)      | Immutable filesystem metadata |
+| [DirEntry](direntry.md)      | Directory entry object        |
+| [XattrEntry](xattr-entry.md) | Extended attribute entry      |
 
 ## Functions
 
@@ -315,6 +316,86 @@ Gets filesystem attributes for the given path.
 let a = attrs "data.txt"
 if a.hidden
   echo hidden
+```
+
+### `xattrs path :namespace? :follow = true`
+
+Lists extended attributes for the given path.
+
+On Windows, this uses NTFS extended attributes. Returned names may differ in
+case from the requested name.
+
+**Parameters:**
+
+| Name        | Type                                            | Description                                                      |
+| ----------- | ----------------------------------------------- | ---------------------------------------------------------------- |
+| `path`      | [`str`](../std/str.md)\|[`Path`](path.md)       | Path to query                                                    |
+| `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:any:` to list all namespaces |
+| `follow`    | [`bool`](../std/bool.md)                        | If `false`, does not follow a symlink                            |
+
+**Returns:** iterator of [`XattrEntry`](xattr-entry.md)
+
+```
+for attr = xattrs "data.txt"
+  echo $attr.name
+```
+
+### `xattr path name :namespace? :follow = true`
+
+Gets an extended attribute value.
+
+**Parameters:**
+
+| Name        | Type                                                   | Description                           |
+| ----------- | ------------------------------------------------------ | ------------------------------------- |
+| `path`      | [`str`](../std/str.md)\|[`Path`](path.md)              | Path to query                         |
+| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
+| `namespace` | [`str`](../std/str.md)?                                | Namespace to query                    |
+| `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
+
+**Returns:** [`bin`](../std/bin.md)
+
+```
+let value = xattr "data.txt" "comment"
+```
+
+### `set_xattr path name value :namespace? :follow = true`
+
+Sets an extended attribute value.
+
+On Windows, empty values are rejected. NTFS deletes the attribute instead of
+storing an empty value.
+
+**Parameters:**
+
+| Name        | Type                                                   | Description                           |
+| ----------- | ------------------------------------------------------ | ------------------------------------- |
+| `path`      | [`str`](../std/str.md)\|[`Path`](path.md)              | Path to update                        |
+| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
+| `value`     | [`str`](../std/str.md)\|[`bin`](../std/bin.md)         | Attribute bytes; strings use UTF-8    |
+| `namespace` | [`str`](../std/str.md)?                                | Namespace to update                   |
+| `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
+
+```
+set_xattr "data.txt" "comment" "ready"
+set_xattr "data.txt" "raw" b"\x00\x01"
+```
+
+### `remove_xattr path name :namespace? :follow = true`
+
+Removes an extended attribute.
+
+**Parameters:**
+
+| Name        | Type                                                   | Description                           |
+| ----------- | ------------------------------------------------------ | ------------------------------------- |
+| `path`      | [`str`](../std/str.md)\|[`Path`](path.md)              | Path to update                        |
+| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
+| `namespace` | [`str`](../std/str.md)?                                | Namespace to update                   |
+| `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
+
+```
+remove_xattr "data.txt" "comment"
 ```
 
 ### `copy from to :all?`

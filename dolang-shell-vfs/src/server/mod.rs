@@ -5,7 +5,6 @@ use std::{
 
 use nix::sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, bind, connect, socket};
 use tokio::{
-    fs::OpenOptions,
     io,
     net::{UnixListener, UnixStream, unix::SocketAddr},
     sync::{Mutex, oneshot, watch},
@@ -13,13 +12,14 @@ use tokio::{
 use tokio_unix_ipc::{Receiver, channel_from_std, serde::Handle};
 
 use crate::{
-    Child as _, Command as _, Direct, LockedSender, Permissions, Vfs,
+    Child as _, Command as _, Direct, LockedSender, OpenOptions as _, Permissions, Vfs,
     protocol::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
         CreateDirRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
         ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
         Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
-        SpawnRequest, SymlinkRequest, UnixStreamSocketRequest, WellKnownPathRequest,
+        SetXattrRequest, SpawnRequest, SymlinkRequest, UnixStreamSocketRequest,
+        WellKnownPathRequest, XattrRequest, XattrsRequest,
     },
 };
 
@@ -207,6 +207,18 @@ impl Connection {
                     RequestKind::Chown(chown_request) => {
                         this.handle_chown(msg.id, chown_request).await;
                     }
+                    RequestKind::Xattrs(xattrs_request) => {
+                        this.handle_xattrs(msg.id, xattrs_request).await;
+                    }
+                    RequestKind::Xattr(xattr_request) => {
+                        this.handle_xattr(msg.id, xattr_request).await;
+                    }
+                    RequestKind::SetXattr(set_xattr_request) => {
+                        this.handle_set_xattr(msg.id, set_xattr_request).await;
+                    }
+                    RequestKind::RemoveXattr(xattr_request) => {
+                        this.handle_remove_xattr(msg.id, xattr_request).await;
+                    }
                 }
             });
         };
@@ -354,13 +366,14 @@ impl Connection {
     }
 
     async fn handle_open(&self, id: u64, req: OpenRequest) {
-        let mut opts = OpenOptions::new();
+        let mut opts = self.server.direct.open_options();
         opts.read(req.read)
             .write(req.write)
             .append(req.append)
             .create(req.create)
             .create_new(req.create_new)
-            .truncate(req.truncate);
+            .truncate(req.truncate)
+            .no_follow(req.no_follow);
 
         let result = match opts.open(&req.path).await {
             Ok(file) => {
@@ -592,6 +605,56 @@ impl Connection {
             self.server
                 .direct
                 .chown(&req.path, req.user, req.group, req.follow)
+                .await,
+        ));
+
+        let _ = self.sender.send(Response { id, kind: result }).await;
+    }
+
+    async fn handle_xattrs(&self, id: u64, req: XattrsRequest) {
+        let result = ResponseKind::Xattrs(Self::io_result(
+            self.server
+                .direct
+                .xattrs(&req.path, req.namespace.as_borrowed(), req.follow)
+                .await,
+        ));
+
+        let _ = self.sender.send(Response { id, kind: result }).await;
+    }
+
+    async fn handle_xattr(&self, id: u64, req: XattrRequest) {
+        let result = ResponseKind::Xattr(Self::io_result(
+            self.server
+                .direct
+                .xattr(&req.path, &req.name, req.namespace.as_deref(), req.follow)
+                .await,
+        ));
+
+        let _ = self.sender.send(Response { id, kind: result }).await;
+    }
+
+    async fn handle_set_xattr(&self, id: u64, req: SetXattrRequest) {
+        let result = ResponseKind::SetXattr(Self::io_result(
+            self.server
+                .direct
+                .set_xattr(
+                    &req.path,
+                    &req.name,
+                    req.namespace.as_deref(),
+                    &req.value,
+                    req.follow,
+                )
+                .await,
+        ));
+
+        let _ = self.sender.send(Response { id, kind: result }).await;
+    }
+
+    async fn handle_remove_xattr(&self, id: u64, req: XattrRequest) {
+        let result = ResponseKind::RemoveXattr(Self::io_result(
+            self.server
+                .direct
+                .remove_xattr(&req.path, &req.name, req.namespace.as_deref(), req.follow)
                 .await,
         ));
 

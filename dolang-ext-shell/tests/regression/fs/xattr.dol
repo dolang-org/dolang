@@ -1,0 +1,108 @@
+import
+  std:
+    - TypeError
+    - UnexpectedKeyError
+  fs:
+    - open
+    - set_xattr
+    - xattr
+    - xattrs
+    - with_temp_dir
+    - write
+  agent:
+    - with_and_without_agent
+  - sys
+
+def assert_err_type ty block
+  let res = try
+    block()
+    false
+  catch e
+    assert_eq (type e) $ty
+    true
+  assert $res
+
+if (sys.os_info().os == :windows: && sys.os_info().is_wine)
+  log "skipping Windows EA xattr operations under wine"
+else
+  with_and_without_agent "xattr module path and file operations" do with_temp_dir do |dir|
+    let path = (dir / "file.txt")
+    write $path "payload"
+
+    let missing = try
+      let val = xattr $path "missing"
+      log $ dbg $val
+      false
+    catch _err
+      true
+    assert $missing
+
+    set_xattr $path "text" "å"
+    assert (type (xattr path "text") bin)
+    assert_eq (xattr path "text") b"\xc3\xa5"
+
+    path.set_xattr "path_method" b"path"
+    assert_eq (path.xattr "path_method") b"path"
+
+    open $path r+ do |file|
+      file.set_xattr "file_method" "file"
+      assert_eq (file.xattr "file_method") b"file"
+      let entries = [...file.xattrs().map(do |e| e.name.lower())]
+      assert $ entries.contains "file_method"
+
+    let entries = [...(xattrs path).map(do |e| e.name.lower())]
+    for e = ["text", "file_method", "path_method"]
+      assert $ entries.contains $e
+
+    path.remove_xattr "text"
+    let missing = try
+      xattr $path "text"
+      false
+    catch _err
+      true
+    assert $missing
+
+if (sys.os_info().os == :linux:)
+  with_and_without_agent "xattr linux namespace handling" do with_temp_dir do |dir|
+    let path = (dir / "file.txt")
+    write $path "payload"
+
+    set_xattr $path "explicit" b"value" namespace: "user"
+    assert_eq (xattr path "explicit" namespace: "user") b"value"
+
+    open $path r do |file|
+      let entries = file.xattrs namespace: :any:
+      let saw_explicit = false
+      for entry = entries
+        if (entry.name == "explicit")
+          assert_eq $entry.namespace "user"
+          saw_explicit = true
+          break
+      assert $saw_explicit
+
+    let entries = xattrs $path namespace: :any:
+    let saw_explicit = false
+    for entry = entries
+      if (entry.name == "explicit")
+        assert_eq $entry.namespace "user"
+        assert_eq $entry.name "explicit"
+        saw_explicit = true
+        break
+    assert $saw_explicit
+
+with_and_without_agent "xattr rejects invalid arguments" do with_temp_dir do |dir|
+  let path = (dir / "file.txt")
+  write $path "payload"
+
+  assert_err_type $TypeError do set_xattr $path bad 1
+
+  if ((sys.os_info().os == :windows:) && sys.os_info().is_wine)
+    log "skipping Windows EA xattr validation setup under wine"
+  else
+    set_xattr $path "known" b"value"
+    let entry = nil
+    for item = xattrs $path
+      entry = item
+      break
+    assert (entry != nil)
+    assert_err_type $UnexpectedKeyError do xattr $path $entry namespace: "user"

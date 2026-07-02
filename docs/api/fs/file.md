@@ -136,6 +136,81 @@ open data.txt r do |file|
     echo "Attributes: $(meta.attrs.win_attrs)"
 ```
 
+### `xattrs :namespace?`
+
+Lists extended attributes for this file.
+
+On Windows, this uses NTFS extended attributes. Returned names may differ in
+case from the requested name.
+
+**Parameters:**
+
+| Name        | Type                                            | Description                                                      |
+| ----------- | ----------------------------------------------- | ---------------------------------------------------------------- |
+| `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:any:` to list all namespaces |
+
+**Returns:** iterator of [`XattrEntry`](xattr-entry.md)
+
+```
+open data.txt r do |file|
+  for attr = file.xattrs()
+    echo $attr.name
+```
+
+### `xattr name :namespace?`
+
+Gets an extended attribute value.
+
+**Parameters:**
+
+| Name        | Type                                                   | Description                           |
+| ----------- | ------------------------------------------------------ | ------------------------------------- |
+| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
+| `namespace` | [`str`](../std/str.md)?                                | Namespace to query                    |
+
+**Returns:** [`bin`](../std/bin.md)
+
+```
+open data.txt r do |file|
+  let value = file.xattr "comment"
+```
+
+### `set_xattr name value :namespace?`
+
+Sets an extended attribute value.
+
+On Windows, empty values are rejected. NTFS deletes the attribute instead of
+storing an empty value.
+
+**Parameters:**
+
+| Name        | Type                                                   | Description                           |
+| ----------- | ------------------------------------------------------ | ------------------------------------- |
+| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
+| `value`     | [`str`](../std/str.md)\|[`bin`](../std/bin.md)         | Attribute bytes; strings use UTF-8    |
+| `namespace` | [`str`](../std/str.md)?                                | Namespace to update                   |
+
+```
+open data.txt r+ do |file|
+  file.set_xattr "comment" "ready"
+```
+
+### `remove_xattr name :namespace?`
+
+Removes an extended attribute.
+
+**Parameters:**
+
+| Name        | Type                                                   | Description                           |
+| ----------- | ------------------------------------------------------ | ------------------------------------- |
+| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
+| `namespace` | [`str`](../std/str.md)?                                | Namespace to update                   |
+
+```
+open data.txt r+ do |file|
+  file.remove_xattr "comment"
+```
+
 ### `seek offset`
 
 Moves the file cursor by a relative byte offset.

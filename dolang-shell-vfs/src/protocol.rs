@@ -5,9 +5,36 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tokio_unix_ipc::serde::Handle;
 
-pub(crate) use crate::{Attrs, ChownIdentity, Metadata, WellKnownPath};
+pub(crate) use crate::{Attrs, ChownIdentity, Metadata, WellKnownPath, XattrEntry, XattrNamespace};
 
 pub(crate) type RequestId = u64;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) enum XattrNamespaceRequest {
+    Default,
+    Named(String),
+    Any,
+}
+
+impl From<XattrNamespace<'_>> for XattrNamespaceRequest {
+    fn from(value: XattrNamespace<'_>) -> Self {
+        match value {
+            XattrNamespace::Default => Self::Default,
+            XattrNamespace::Named(namespace) => Self::Named(namespace.to_owned()),
+            XattrNamespace::Any => Self::Any,
+        }
+    }
+}
+
+impl XattrNamespaceRequest {
+    pub(crate) fn as_borrowed(&self) -> XattrNamespace<'_> {
+        match self {
+            Self::Default => XattrNamespace::Default,
+            Self::Named(namespace) => XattrNamespace::Named(namespace),
+            Self::Any => XattrNamespace::Any,
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct SpawnRequest {
@@ -43,6 +70,7 @@ pub(crate) struct OpenRequest {
     pub(crate) create: bool,
     pub(crate) create_new: bool,
     pub(crate) truncate: bool,
+    pub(crate) no_follow: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -179,6 +207,30 @@ pub(crate) struct ChownRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct XattrsRequest {
+    pub(crate) path: PathBuf,
+    pub(crate) namespace: XattrNamespaceRequest,
+    pub(crate) follow: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct XattrRequest {
+    pub(crate) path: PathBuf,
+    pub(crate) name: String,
+    pub(crate) namespace: Option<String>,
+    pub(crate) follow: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct SetXattrRequest {
+    pub(crate) path: PathBuf,
+    pub(crate) name: String,
+    pub(crate) namespace: Option<String>,
+    pub(crate) value: Vec<u8>,
+    pub(crate) follow: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum RequestKind {
     Spawn(SpawnRequest),
     Cancel,
@@ -212,6 +264,10 @@ pub(crate) enum RequestKind {
     SetPermissions(SetPermissionsRequest),
     SetTimes(SetTimesRequest),
     Chown(ChownRequest),
+    Xattrs(XattrsRequest),
+    Xattr(XattrRequest),
+    SetXattr(SetXattrRequest),
+    RemoveXattr(XattrRequest),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -253,6 +309,10 @@ pub(crate) enum ResponseKind {
     SetPermissions(Result<(), i32>),
     SetTimes(Result<(), i32>),
     Chown(Result<(), i32>),
+    Xattrs(Result<Vec<XattrEntry>, i32>),
+    Xattr(Result<Vec<u8>, i32>),
+    SetXattr(Result<(), i32>),
+    RemoveXattr(Result<(), i32>),
 }
 
 impl std::fmt::Debug for ResponseKind {
@@ -307,6 +367,18 @@ impl std::fmt::Debug for ResponseKind {
             }
             ResponseKind::SetTimes(result) => f.debug_tuple("SetTimes").field(result).finish(),
             ResponseKind::Chown(result) => f.debug_tuple("Chown").field(result).finish(),
+            ResponseKind::Xattrs(result) => f
+                .debug_tuple("Xattrs")
+                .field(&result.as_ref().map(|v| format!("{} attrs", v.len())))
+                .finish(),
+            ResponseKind::Xattr(result) => f
+                .debug_tuple("Xattr")
+                .field(&result.as_ref().map(|v| format!("{} bytes", v.len())))
+                .finish(),
+            ResponseKind::SetXattr(result) => f.debug_tuple("SetXattr").field(result).finish(),
+            ResponseKind::RemoveXattr(result) => {
+                f.debug_tuple("RemoveXattr").field(result).finish()
+            }
         }
     }
 }

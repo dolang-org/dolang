@@ -20,8 +20,9 @@ use tokio::{
 
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
-    fs::{metadata::create_metadata, read_all, read_into_spare},
+    fs::{metadata::create_metadata, read_all, read_into_spare, xattr},
     global::Global,
+    util,
 };
 
 const CHUNK_SIZE: usize = 8192;
@@ -504,6 +505,8 @@ impl<'v> Object<'v> for File<'v> {
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let start_sym = builder.sym("start");
         let end_sym = builder.sym("end");
+        let namespace = builder.sym("namespace");
+        let any = builder.sym("any");
         builder
             .supertype(TypeObject::Iter)
             .supertype(TypeObject::Sink)
@@ -568,6 +571,112 @@ impl<'v> Object<'v> for File<'v> {
                 this.borrow_mut(strand)?
                     .metadata(strand, this.annex().global, out)
                     .await
+            })
+            .method("xattrs", async move |this, strand, args, out| {
+                let ([], [namespace]) = unpack!(strand, args, 0, 0, namespace = None)?;
+                let global = this.annex().global;
+                let (namespace, any) = match namespace {
+                    None => (None, false),
+                    Some(namespace) => {
+                        if let Some(sym) = namespace.as_sym(strand) {
+                            if sym == any {
+                                (None, true)
+                            } else {
+                                return Err(Error::value(
+                                    strand,
+                                    "namespace: expected str or :any:",
+                                ));
+                            }
+                        } else if let Some(namespace) = namespace.as_str(strand) {
+                            (Some(namespace.to_string()), false)
+                        } else {
+                            return Err(Error::type_error(
+                                strand,
+                                "namespace: expected str or sym",
+                            ));
+                        }
+                    }
+                };
+                let entries = {
+                    let mut borrow = this.borrow_mut(strand)?;
+                    let file = borrow
+                        .file
+                        .as_mut()
+                        .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+                    global
+                        .local
+                        .get(strand)
+                        .vfs()
+                        .file_xattrs(
+                            file,
+                            if any {
+                                dolang_shell_vfs::XattrNamespace::Any
+                            } else if let Some(ref namespace) = namespace {
+                                dolang_shell_vfs::XattrNamespace::Named(namespace)
+                            } else {
+                                dolang_shell_vfs::XattrNamespace::Default
+                            },
+                        )
+                        .await
+                        .into_sys(strand)?
+                };
+                xattr::create_xattr_iter(strand, global, entries, out)
+            })
+            .method("xattr", async move |this, strand, args, out| {
+                let ([name], []) = unpack!(strand, args, 1, 0)?;
+                let global = this.annex().global;
+                let (name, namespace) = xattr::parse_name(strand, global, &name, None)?;
+                let value = {
+                    let mut borrow = this.borrow_mut(strand)?;
+                    let file = borrow
+                        .file
+                        .as_mut()
+                        .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+                    global
+                        .local
+                        .get(strand)
+                        .vfs()
+                        .file_xattr(file, &name, namespace.as_deref())
+                        .await
+                        .into_sys(strand)?
+                };
+                Output::set(strand, out, value.as_slice());
+                Ok(())
+            })
+            .method("set_xattr", async move |this, strand, args, _out| {
+                let ([name, value], []) = unpack!(strand, args, 2, 0)?;
+                let global = this.annex().global;
+                let (name, namespace) = xattr::parse_name(strand, global, &name, None)?;
+                let value = util::bytes(strand, &value, "value")?;
+                let mut borrow = this.borrow_mut(strand)?;
+                let file = borrow
+                    .file
+                    .as_mut()
+                    .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+                global
+                    .local
+                    .get(strand)
+                    .vfs()
+                    .file_set_xattr(file, &name, namespace.as_deref(), &value)
+                    .await
+                    .into_sys(strand)
+            })
+            .method("remove_xattr", async move |this, strand, args, _out| {
+                let ([name], []) = unpack!(strand, args, 1, 0)?;
+                let global = this.annex().global;
+                let (name, namespace) = xattr::parse_name(strand, global, &name, None)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                let file = borrow
+                    .file
+                    .as_mut()
+                    .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+                global
+                    .local
+                    .get(strand)
+                    .vfs()
+                    .file_remove_xattr(file, &name, namespace.as_deref())
+                    .await
+                    .into_sys(strand)
             })
             .method("tell", async move |this, strand, _args, out| {
                 let mut borrow = this.borrow_mut(strand)?;

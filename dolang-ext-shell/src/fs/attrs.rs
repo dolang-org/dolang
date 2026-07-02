@@ -1,7 +1,7 @@
-use dolang::runtime::{Error, Object, Output, Result, State, Strand, Sym, object::TypeBuilder};
+use dolang::runtime::{Object, Output, State, Strand, object::TypeBuilder};
 use dolang_shell_vfs::Attrs as VfsAttrs;
 
-use crate::global::Global;
+use crate::{global::Global, util};
 
 pub(crate) struct Attrs;
 
@@ -19,36 +19,6 @@ pub(crate) fn create_attrs<'v>(
         .types
         .attrs
         .create_with_annex(strand, Attrs, AttrsAnnex { inner: attrs }, out);
-}
-
-fn get_bool<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    value: Option<bool>,
-    field: Sym<'v, '_>,
-    out: impl Output<'v>,
-) -> Result<'v, 's, ()> {
-    match value {
-        Some(value) => {
-            Output::set(strand, out, value);
-            Ok(())
-        }
-        None => Err(Error::field(strand, field)),
-    }
-}
-
-fn get_u32<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    value: Option<u32>,
-    field: Sym<'v, '_>,
-    out: impl Output<'v>,
-) -> Result<'v, 's, ()> {
-    match value {
-        Some(value) => {
-            Output::set(strand, out, value);
-            Ok(())
-        }
-        None => Err(Error::field(strand, field)),
-    }
 }
 
 impl<'v> Object<'v> for Attrs {
@@ -92,40 +62,40 @@ impl<'v> Object<'v> for Attrs {
 
         builder
             .get("win_attrs", move |this, strand, out| {
-                get_u32(strand, this.annex().inner.win_attrs, win_attrs, out)
+                util::option_field(strand, this.annex().inner.win_attrs, win_attrs, out)
             })
             .get("unix_flags", move |this, strand, out| {
-                get_u32(strand, this.annex().inner.unix_flags, unix_flags, out)
+                util::option_field(strand, this.annex().inner.unix_flags, unix_flags, out)
             })
             .get("readonly", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.readonly, readonly, out)
+                util::option_field(strand, this.annex().inner.readonly, readonly, out)
             })
             .get("hidden", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.hidden, hidden, out)
+                util::option_field(strand, this.annex().inner.hidden, hidden, out)
             })
             .get("system", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.system, system, out)
+                util::option_field(strand, this.annex().inner.system, system, out)
             })
             .get("archive", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.archive, archive, out)
+                util::option_field(strand, this.annex().inner.archive, archive, out)
             })
             .get("reparse_point", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.reparse_point, reparse_point, out)
+                util::option_field(strand, this.annex().inner.reparse_point, reparse_point, out)
             })
             .get("compressed", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.compressed, compressed, out)
+                util::option_field(strand, this.annex().inner.compressed, compressed, out)
             })
             .get("encrypted", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.encrypted, encrypted, out)
+                util::option_field(strand, this.annex().inner.encrypted, encrypted, out)
             })
             .get("temporary", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.temporary, temporary, out)
+                util::option_field(strand, this.annex().inner.temporary, temporary, out)
             })
             .get("offline", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.offline, offline, out)
+                util::option_field(strand, this.annex().inner.offline, offline, out)
             })
             .get("not_content_indexed", move |this, strand, out| {
-                get_bool(
+                util::option_field(
                     strand,
                     this.annex().inner.not_content_indexed,
                     not_content_indexed,
@@ -133,19 +103,19 @@ impl<'v> Object<'v> for Attrs {
                 )
             })
             .get("immutable", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.immutable, immutable, out)
+                util::option_field(strand, this.annex().inner.immutable, immutable, out)
             })
             .get("append_only", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.append_only, append_only, out)
+                util::option_field(strand, this.annex().inner.append_only, append_only, out)
             })
             .get("no_dump", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.no_dump, no_dump, out)
+                util::option_field(strand, this.annex().inner.no_dump, no_dump, out)
             })
             .get("no_atime", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.no_atime, no_atime, out)
+                util::option_field(strand, this.annex().inner.no_atime, no_atime, out)
             })
             .get("no_copy_on_write", move |this, strand, out| {
-                get_bool(
+                util::option_field(
                     strand,
                     this.annex().inner.no_copy_on_write,
                     no_copy_on_write,
@@ -153,13 +123,13 @@ impl<'v> Object<'v> for Attrs {
                 )
             })
             .get("dir_sync", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.dir_sync, dir_sync, out)
+                util::option_field(strand, this.annex().inner.dir_sync, dir_sync, out)
             })
             .get("casefold", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.casefold, casefold, out)
+                util::option_field(strand, this.annex().inner.casefold, casefold, out)
             })
             .get("data_journaling", move |this, strand, out| {
-                get_bool(
+                util::option_field(
                     strand,
                     this.annex().inner.data_journaling,
                     data_journaling,
@@ -167,10 +137,10 @@ impl<'v> Object<'v> for Attrs {
                 )
             })
             .get("no_compress", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.no_compress, no_compress, out)
+                util::option_field(strand, this.annex().inner.no_compress, no_compress, out)
             })
             .get("project_inherit", move |this, strand, out| {
-                get_bool(
+                util::option_field(
                     strand,
                     this.annex().inner.project_inherit,
                     project_inherit,
@@ -178,28 +148,28 @@ impl<'v> Object<'v> for Attrs {
                 )
             })
             .get("secure_delete", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.secure_delete, secure_delete, out)
+                util::option_field(strand, this.annex().inner.secure_delete, secure_delete, out)
             })
             .get("sync", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.sync, sync, out)
+                util::option_field(strand, this.annex().inner.sync, sync, out)
             })
             .get("no_tail_merge", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.no_tail_merge, no_tail_merge, out)
+                util::option_field(strand, this.annex().inner.no_tail_merge, no_tail_merge, out)
             })
             .get("top_dir", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.top_dir, top_dir, out)
+                util::option_field(strand, this.annex().inner.top_dir, top_dir, out)
             })
             .get("undelete", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.undelete, undelete, out)
+                util::option_field(strand, this.annex().inner.undelete, undelete, out)
             })
             .get("direct_access", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.direct_access, direct_access, out)
+                util::option_field(strand, this.annex().inner.direct_access, direct_access, out)
             })
             .get("extent_format", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.extent_format, extent_format, out)
+                util::option_field(strand, this.annex().inner.extent_format, extent_format, out)
             })
             .get("opaque", move |this, strand, out| {
-                get_bool(strand, this.annex().inner.opaque, opaque, out)
+                util::option_field(strand, this.annex().inner.opaque, opaque, out)
             })
     }
 }

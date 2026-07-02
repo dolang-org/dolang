@@ -22,6 +22,7 @@ pub(crate) mod glob;
 pub(crate) mod metadata;
 pub(crate) mod path;
 pub(crate) mod readdir;
+pub(crate) mod xattr;
 
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
@@ -33,6 +34,7 @@ use crate::{
     },
     global::Global,
     time::datetime_to_system_time,
+    util,
 };
 
 use glob::{GlobIter, GlobIterAnnex};
@@ -108,13 +110,9 @@ fn parse_attr_bool<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: Option<Slot<'v, '_>>,
 ) -> Result<'v, 's, Option<bool>> {
-    match value {
-        Some(value) => value
-            .as_bool(strand)
-            .map(Some)
-            .ok_or_else(|| Error::type_error(strand, "expected bool")),
-        None => Ok(None),
-    }
+    value
+        .map(|value| util::bool(strand, value, "attr"))
+        .transpose()
 }
 
 async fn set_attrs<'v, 's>(
@@ -772,6 +770,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
     let ignore = builder.sym("ignore");
     let max_depth = builder.sym("max_depth");
     let follow = builder.sym("follow");
+    let namespace = builder.sym("namespace");
     let modified = builder.sym("modified");
     let accessed = builder.sym("accessed");
     let created = builder.sym("created");
@@ -855,6 +854,30 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 None => true,
             };
             get_attrs(strand, global, &path, follow, out).await
+        })
+        .function("xattrs", async move |strand, args, out| {
+            let ([path], [namespace, follow]) =
+                unpack!(strand, args, 1, 0, namespace = None, follow = None)?;
+            let path = path_from_value(strand, global, &path)?;
+            xattr::path_list(strand, global, &path, namespace, follow, out).await
+        })
+        .function("xattr", async move |strand, args, out| {
+            let ([path, name], [namespace, follow]) =
+                unpack!(strand, args, 2, 0, namespace = None, follow = None)?;
+            let path = path_from_value(strand, global, &path)?;
+            xattr::path_get(strand, global, &path, &name, namespace, follow, out).await
+        })
+        .function("set_xattr", async move |strand, args, _out| {
+            let ([path, name, value], [namespace, follow]) =
+                unpack!(strand, args, 3, 0, namespace = None, follow = None)?;
+            let path = path_from_value(strand, global, &path)?;
+            xattr::path_set(strand, global, &path, &name, namespace, &value, follow).await
+        })
+        .function("remove_xattr", async move |strand, args, _out| {
+            let ([path, name], [namespace, follow]) =
+                unpack!(strand, args, 2, 0, namespace = None, follow = None)?;
+            let path = path_from_value(strand, global, &path)?;
+            xattr::path_remove(strand, global, &path, &name, namespace, follow).await
         })
         .function("exists", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
@@ -1202,6 +1225,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         )
         .value("Metadata", global.types.metadata)
         .value("Attrs", global.types.attrs)
+        .value("XattrEntry", global.types.xattr_entry)
         .value("DirEntry", global.types.dir_entry)
         .value("Path", global.types.path)
         .commit();
