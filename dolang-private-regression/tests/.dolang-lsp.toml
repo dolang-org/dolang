@@ -12,4 +12,5 @@ callme = true
 DEBUG = true
 echo = true
 makefoo = true
+noop = true
 MIRI = true

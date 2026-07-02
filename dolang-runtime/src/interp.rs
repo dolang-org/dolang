@@ -1008,6 +1008,8 @@ impl<'v> Vm<'v> {
                         Gte => left.op_gte(strand, &right),
                         _ => unreachable_unchecked(),
                     })?;
+                    right.store(Value::NIL);
+                    left.store(Value::NIL);
                     frame.push(res)
                 }
                 Ret => return Ok(Status::Ret(frame.pop())),
@@ -1141,6 +1143,7 @@ impl<'v> Vm<'v> {
                             Ok(())
                         }
                         Err(err) => {
+                            res.store(Value::NIL);
                             if let Some((indicator, weak)) = err.as_nl_branch()
                                 && weak.ptr_eq_strong(upvars)
                             {

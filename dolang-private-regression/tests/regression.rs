@@ -57,7 +57,7 @@ mod detail {
         compiler
             .prelude()
             .import_items("regression2")
-            .items(["async", "callme", "makefoo", "MIRI", "DEBUG"])
+            .items(["async", "callme", "makefoo", "noop", "MIRI", "DEBUG"])
             .commit();
         if let Some(name) = module {
             compiler.mode(Mode::Module { name });
@@ -227,6 +227,9 @@ mod detail {
                     .function("makefoo", async move |strand, args, out| {
                         let _ = unpack!(strand, args, 0, 0)?;
                         footy.create(strand, Foo, out);
+                        Ok(())
+                    })
+                    .function("noop", async move |_strand, _args, _out| {
                         Ok(())
                     })
                     .commit();
