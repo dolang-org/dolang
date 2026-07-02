@@ -230,7 +230,7 @@ impl Direct {
     }
 
     #[cfg(target_os = "linux")]
-    fn get_linux_flags(fd: RawFd) -> io::Result<libc::c_long> {
+    unsafe fn get_linux_flags(fd: RawFd) -> io::Result<libc::c_long> {
         nix::ioctl_read!(fs_ioc_getflags, b'f', 1, libc::c_long);
 
         let mut flags = 0;
@@ -239,7 +239,7 @@ impl Direct {
     }
 
     #[cfg(target_os = "linux")]
-    fn set_linux_flags(fd: RawFd, flags: libc::c_long) -> io::Result<()> {
+    unsafe fn set_linux_flags(fd: RawFd, flags: libc::c_long) -> io::Result<()> {
         nix::ioctl_write_ptr!(fs_ioc_setflags, b'f', 2, libc::c_long);
 
         unsafe { fs_ioc_setflags(fd, &flags) }.map_err(io::Error::from)?;
@@ -249,7 +249,7 @@ impl Direct {
     #[cfg(target_os = "linux")]
     fn attrs_from_path(path: PathBuf, _follow: bool) -> io::Result<Attrs> {
         let file = std::fs::File::open(path)?;
-        Self::get_linux_flags(file.as_raw_fd()).map(Self::attrs_from_flags)
+        unsafe { Self::get_linux_flags(file.as_raw_fd()) }.map(Self::attrs_from_flags)
     }
 
     #[cfg(target_os = "linux")]
@@ -278,7 +278,7 @@ impl Direct {
         }
 
         let file = std::fs::OpenOptions::new().read(true).open(path)?;
-        let mut flags = Self::get_linux_flags(file.as_raw_fd())?;
+        let mut flags = unsafe { Self::get_linux_flags(file.as_raw_fd()) }?;
         Self::apply_linux_flag(&mut flags, linux_attrs::COMPR, patch.compressed);
         Self::apply_linux_flag(&mut flags, linux_attrs::IMMUTABLE, patch.immutable);
         Self::apply_linux_flag(&mut flags, linux_attrs::APPEND, patch.append_only);
@@ -297,7 +297,7 @@ impl Direct {
         Self::apply_linux_flag(&mut flags, linux_attrs::UNRM, patch.undelete);
         Self::apply_linux_flag(&mut flags, linux_attrs::DAX, patch.direct_access);
         Self::apply_linux_flag(&mut flags, linux_attrs::EXTENT, patch.extent_format);
-        Self::set_linux_flags(file.as_raw_fd(), flags)
+        unsafe { Self::set_linux_flags(file.as_raw_fd(), flags) }
     }
 
     #[cfg(target_os = "macos")]
