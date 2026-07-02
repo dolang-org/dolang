@@ -23,48 +23,36 @@ with_and_without_agent "set_timestamps updates timestamps" do
   open $test_path w do |f|
     f.write "set_timestamps test"
 
-  if (sys.os_info().family == :windows:)
-    if (env.get "WINEPREFIX")
-      log "skipping Windows created timestamp test under wine"
-      remove $test_path
-      return
+  let is_real_windows = (sys.os_info().family == :windows: && !sys.os_info().is_wine)
 
-    set_timestamps $test_path modified: $first_modified accessed: $first_accessed created: $first_created
-    let meta = metadata(test_path)
-    assert_eq $meta.modified.unix_secs 1234.0
-    assert_eq $meta.modified.unix_nanos 1234000000000
-    assert_eq $meta.accessed.unix_secs 2345.0
-    assert_eq $meta.accessed.unix_nanos 2345000000000
+  set_timestamps $test_path modified: $first_modified accessed: $first_accessed
+    if is_real_windows
+      created: $first_created
+  let meta = metadata(test_path)
+  assert_eq $meta.modified.unix_secs 1234.0
+  assert_eq $meta.modified.unix_nanos 1234000000000
+  assert_eq $meta.accessed.unix_secs 2345.0
+  assert_eq $meta.accessed.unix_nanos 2345000000000
+  if is_real_windows
     assert_eq $meta.created.unix_secs 1111.0
     assert_eq $meta.created.unix_nanos 1111000000000
 
-    Path(test_path).set_timestamps modified: $second_modified accessed: $second_accessed created: $second_created
-    let meta = Path(test_path).metadata()
-    assert_eq $meta.modified.unix_secs 3456.0
-    assert_eq $meta.modified.unix_nanos 3456000000000
-    assert_eq $meta.accessed.unix_secs 4567.0
-    assert_eq $meta.accessed.unix_nanos 4567000000000
+  Path(test_path).set_timestamps modified: $second_modified accessed: $second_accessed
+    if is_real_windows
+      created: $second_created
+  let meta = Path(test_path).metadata()
+  assert_eq $meta.modified.unix_secs 3456.0
+  assert_eq $meta.modified.unix_nanos 3456000000000
+  assert_eq $meta.accessed.unix_secs 4567.0
+  assert_eq $meta.accessed.unix_nanos 4567000000000
+  if is_real_windows
     assert_eq $meta.created.unix_secs 2222.0
     assert_eq $meta.created.unix_nanos 2222000000000
-  else
-    set_timestamps $test_path modified: $first_modified accessed: $first_accessed
-    let meta = metadata(test_path)
-    assert_eq $meta.modified.unix_secs 1234.0
-    assert_eq $meta.modified.unix_nanos 1234000000000
-    assert_eq $meta.accessed.unix_secs 2345.0
-    assert_eq $meta.accessed.unix_nanos 2345000000000
-
-    Path(test_path).set_timestamps modified: $second_modified accessed: $second_accessed
-    let meta = Path(test_path).metadata()
-    assert_eq $meta.modified.unix_secs 3456.0
-    assert_eq $meta.modified.unix_nanos 3456000000000
-    assert_eq $meta.accessed.unix_secs 4567.0
-    assert_eq $meta.accessed.unix_nanos 4567000000000
-
+  else if !(sys.os_info().family == :windows:)
     let caught = try
       set_timestamps $test_path created: $first_created
       false
-    catch _err
+    catch _
       true
     assert $caught
 
