@@ -507,11 +507,12 @@ pub trait Vfs {
         path: impl AsRef<Path>,
         perm: Permissions,
     ) -> Result<(), io::Error>;
-    async fn utime(
+    async fn set_times(
         &self,
         path: impl AsRef<Path>,
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
+        created: Option<(i64, u32)>,
     ) -> Result<(), io::Error>;
     async fn chown(
         &self,
@@ -1476,22 +1477,23 @@ impl Vfs for ClientOrDirect {
         }
     }
 
-    async fn utime(
+    async fn set_times(
         &self,
         path: impl AsRef<Path>,
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
+        created: Option<(i64, u32)>,
     ) -> Result<(), io::Error> {
         #[cfg(unix)]
         {
             match self {
-                Self::Client(client) => client.utime(path, accessed, modified).await,
-                Self::Direct(direct) => direct.utime(path, accessed, modified).await,
+                Self::Client(client) => client.set_times(path, accessed, modified, created).await,
+                Self::Direct(direct) => direct.set_times(path, accessed, modified, created).await,
             }
         }
         #[cfg(not(unix))]
         {
-            self.0.utime(path, accessed, modified).await
+            self.0.set_times(path, accessed, modified, created).await
         }
     }
 

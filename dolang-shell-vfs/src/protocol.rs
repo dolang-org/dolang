@@ -163,10 +163,11 @@ pub(crate) struct Timestamp {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct UtimeRequest {
+pub(crate) struct SetTimesRequest {
     pub(crate) path: PathBuf,
     pub(crate) accessed: Option<Timestamp>,
     pub(crate) modified: Option<Timestamp>,
+    pub(crate) created: Option<Timestamp>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -209,7 +210,7 @@ pub(crate) enum RequestKind {
     Access(AccessRequest),
     Glob(GlobRequest),
     SetPermissions(SetPermissionsRequest),
-    Utime(UtimeRequest),
+    SetTimes(SetTimesRequest),
     Chown(ChownRequest),
 }
 
@@ -250,7 +251,7 @@ pub(crate) enum ResponseKind {
     Access(Result<(), i32>),
     Glob(Result<Vec<PathBuf>, i32>),
     SetPermissions(Result<(), i32>),
-    Utime(Result<(), i32>),
+    SetTimes(Result<(), i32>),
     Chown(Result<(), i32>),
 }
 
@@ -304,7 +305,7 @@ impl std::fmt::Debug for ResponseKind {
             ResponseKind::SetPermissions(result) => {
                 f.debug_tuple("SetPermissions").field(result).finish()
             }
-            ResponseKind::Utime(result) => f.debug_tuple("Utime").field(result).finish(),
+            ResponseKind::SetTimes(result) => f.debug_tuple("SetTimes").field(result).finish(),
             ResponseKind::Chown(result) => f.debug_tuple("Chown").field(result).finish(),
         }
     }

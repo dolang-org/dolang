@@ -229,9 +229,7 @@ mod detail {
                         footy.create(strand, Foo, out);
                         Ok(())
                     })
-                    .function("noop", async move |_strand, _args, _out| {
-                        Ok(())
-                    })
+                    .function("noop", async move |_strand, _args, _out| Ok(()))
                     .commit();
 
                     vm.enter_with_slots(async move |strand, slots| {

@@ -1452,11 +1452,12 @@ impl Vfs for Direct {
         }
     }
 
-    async fn utime(
+    async fn set_times(
         &self,
         path: impl AsRef<Path>,
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
+        created: Option<(i64, u32)>,
     ) -> Result<(), io::Error> {
         #[cfg(unix)]
         {
@@ -1481,6 +1482,13 @@ impl Vfs for Direct {
                 }
             }
 
+            if created.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "created timestamp is not supported on this platform",
+                ));
+            }
+
             let path = path.as_ref().to_path_buf();
             tokio::task::spawn_blocking(move || {
                 let atime = unix_timespec(accessed)?;
@@ -1500,17 +1508,26 @@ impl Vfs for Direct {
 
         #[cfg(windows)]
         {
-            use std::{fs::File as StdFile, fs::FileTimes};
+            use std::{
+                fs::{FileTimes, OpenOptions as StdOpenOptions},
+                os::windows::fs::{FileTimesExt, OpenOptionsExt},
+            };
+            use windows_sys::Win32::Storage::FileSystem::FILE_WRITE_ATTRIBUTES;
 
             let path = path.as_ref().to_path_buf();
             tokio::task::spawn_blocking(move || {
-                let file = StdFile::open(path)?;
+                let file = StdOpenOptions::new()
+                    .access_mode(FILE_WRITE_ATTRIBUTES)
+                    .open(path)?;
                 let mut times = FileTimes::new();
                 if let Some(accessed) = parts_to_system_time(accessed) {
                     times = times.set_accessed(accessed);
                 }
                 if let Some(modified) = parts_to_system_time(modified) {
                     times = times.set_modified(modified);
+                }
+                if let Some(created) = parts_to_system_time(created) {
+                    times = times.set_created(created);
                 }
                 file.set_times(times)
             })
