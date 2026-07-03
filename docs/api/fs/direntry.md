@@ -4,7 +4,7 @@ DirEntry objects represent individual entries within a directory. They are
 returned by the [`entries()`](index.md#entries-path) function and the
 [`Path.entries()`](path.md#entries) method.
 
-DirEntry objects provide access to an entry's path, name, and file type.
+DirEntry objects provide access to an entry's name and file type.
 
 ## Creating DirEntry Objects
 
@@ -17,15 +17,6 @@ for entry = entries /home/user/docs
 ```
 
 ## Fields
-
-### `path`
-
-Returns the full path to the directory entry as a [Path](path.md) object.
-
-```
-for entry = entries .
-  echo "Full path: $(entry.path)"
-```
 
 ### `name`
 
@@ -98,15 +89,20 @@ echo "Found $(all_entries.len) entries"
 ### Working with Paths
 
 ```
-for entry = entries ./src
-  # entry.path is a Path object
-  let full_path = entry.path
+let dir = Path ./src
+for entry = dir.entries()
+  let full_path = (dir / entry)
   echo "Path: $full_path"
 
-  # Can use Path methods
   if full_path.exists()
     echo "  Confirmed: exists"
 ```
+
+## Operators
+
+### `/`
+
+`path / entry` returns the derived [`Path`](path.md) for that directory entry.
 
 ### Platform-Specific Handling
 

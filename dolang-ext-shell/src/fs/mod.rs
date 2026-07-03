@@ -193,7 +193,7 @@ async fn entries<'v, 's>(
 
     global.types.dir_entry_iter.create_with_annex(
         strand,
-        DirEntryIter { read_dir, path },
+        DirEntryIter { read_dir },
         DirEntryIterAnnex { global },
         out,
     );

@@ -23,7 +23,7 @@ def run_uses_app_scoped_cache()
       assert_eq (exec.run script app: app) 41
       assert $cache_root.exists()
       assert_eq ([...cache_root.entries()].len) 1
-      assert_eq (cache_root.entries().next().path.ext) dolc
+      assert_eq ((cache_root / cache_root.entries().next()).ext) dolc
     finally
       cache_root.remove all: true ignore: true
 
@@ -46,7 +46,7 @@ def run_rebuilds_invalid_cached_bytecode()
 
     try
       assert_eq (exec.run script app: app) 99
-      let file = cache_root.entries().next().path
+      let file = (cache_root / cache_root.entries().next())
       file.write b"bad bytecode"
       assert_eq (exec.run script app: app) 99
       assert_ne (file.read "b") b"bad bytecode"

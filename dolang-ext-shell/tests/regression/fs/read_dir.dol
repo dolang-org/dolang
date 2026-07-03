@@ -14,11 +14,12 @@ with_and_without_agent "basic entries" do
   assert (count > 0)
 
 with_and_without_agent "Path.entries" do
-  let iter = Path("src").entries()
+  let path = Path "src"
+  let iter = path.entries()
   let found_lib = false
   for entry = iter
     assert (type entry DirEntry)
-    if (entry.path.name == "lib.rs")
+    if ((path / entry).name == "lib.rs")
       assert_eq $entry.name lib.rs
       found_lib = true
       break

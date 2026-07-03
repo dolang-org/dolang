@@ -556,6 +556,7 @@ let dir = Path /home/user/docs
 # Iterate over directory entries
 for entry = dir.entries()
   echo "$(entry.name) - $(entry.type)"
+  echo (dir / entry)
 
 # Collect into an array
 let files = [...dir.entries()]
