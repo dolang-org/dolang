@@ -53,7 +53,7 @@ pub(crate) fn path_from_value<'v, 's>(
     }
 }
 
-fn create_path<'v, 'a, 's>(
+pub(crate) fn create_path<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     path: PathBuf,
@@ -496,6 +496,11 @@ impl<'v> Object<'v> for Path {
                     out,
                 )
                 .await
+            })
+            .method("streams", async move |this, strand, args, out| {
+                let ([], [follow]) = unpack!(strand, args, 0, 0, follow = None)?;
+                let annex = this.annex();
+                super::stream::path_list(strand, annex.global, &annex.as_path(), follow, out).await
             })
             .method("xattr", async move |this, strand, args, out| {
                 let ([name], [namespace, follow]) =
@@ -1042,6 +1047,15 @@ impl<'v> Object<'v> for Path {
         let global = borrow.global;
         if let Ok(other) = path_from_value(strand, global, other) {
             let path = borrow.inner.join(&other);
+            let annex = PathAnnex::try_new(strand, path, global)?;
+            global
+                .types
+                .path
+                .create_with_annex(strand, Path, annex, out);
+            Ok(())
+        } else if let Ok(path) =
+            super::stream::path_with_stream(strand, global, &borrow.as_path(), other)
+        {
             let annex = PathAnnex::try_new(strand, path, global)?;
             global
                 .types

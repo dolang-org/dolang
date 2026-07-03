@@ -22,6 +22,7 @@ pub(crate) mod glob;
 pub(crate) mod metadata;
 pub(crate) mod path;
 pub(crate) mod readdir;
+pub(crate) mod stream;
 pub(crate) mod xattr;
 
 use crate::{
@@ -861,6 +862,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let path = path_from_value(strand, global, &path)?;
             xattr::path_list(strand, global, &path, namespace, follow, out).await
         })
+        .function("streams", async move |strand, args, out| {
+            let ([path], [follow]) = unpack!(strand, args, 1, 0, follow = None)?;
+            let path = path_from_value(strand, global, &path)?;
+            stream::path_list(strand, global, &path, follow, out).await
+        })
         .function("xattr", async move |strand, args, out| {
             let ([path, name], [namespace, follow]) =
                 unpack!(strand, args, 2, 0, namespace = None, follow = None)?;
@@ -1226,6 +1232,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .value("Metadata", global.types.metadata)
         .value("Attrs", global.types.attrs)
         .value("XattrEntry", global.types.xattr_entry)
+        .value("StreamEntry", global.types.stream_entry)
         .value("DirEntry", global.types.dir_entry)
         .value("Path", global.types.path)
         .commit();

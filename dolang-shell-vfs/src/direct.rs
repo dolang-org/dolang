@@ -20,6 +20,7 @@ use std::os::unix::ffi::OsStrExt;
 
 #[cfg(windows)]
 use std::{
+    fs::File as StdFile,
     mem,
     os::windows::{
         ffi::{OsStrExt, OsStringExt},
@@ -35,9 +36,9 @@ use windows_sys::{
     },
     Win32::{
         Foundation::{
-            GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, RtlNtStatusToDosError, S_OK,
-            STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL, STATUS_NO_EAS_ON_FILE,
-            STATUS_NO_MORE_EAS, STATUS_SUCCESS,
+            ERROR_HANDLE_EOF, ERROR_MORE_DATA, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
+            RtlNtStatusToDosError, S_OK, STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL,
+            STATUS_NO_EAS_ON_FILE, STATUS_NO_MORE_EAS, STATUS_SUCCESS,
         },
         Storage::FileSystem::{
             COMPRESSION_FORMAT_DEFAULT, COMPRESSION_FORMAT_NONE, CreateFileW,
@@ -45,7 +46,8 @@ use windows_sys::{
             FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_READONLY,
             FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_BACKUP_SEMANTICS,
             FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-            GetFileAttributesW, INVALID_FILE_ATTRIBUTES, OPEN_EXISTING, SetFileAttributesW,
+            FILE_STREAM_INFO, FileStreamInfo, GetFileAttributesW, GetFileInformationByHandleEx,
+            INVALID_FILE_ATTRIBUTES, OPEN_EXISTING, SetFileAttributesW,
         },
         System::{
             Com::CoTaskMemFree,
@@ -77,8 +79,8 @@ use wax::{
 #[cfg(windows)]
 use crate::OpenOptions as _;
 use crate::{
-    Attrs, Child, ChownIdentity, Command, Metadata, Permissions, PipeRecv, PipeSend, ReadDir, Vfs,
-    WellKnownPath, XattrEntry, XattrNamespace,
+    Attrs, Child, ChownIdentity, Command, Metadata, Permissions, PipeRecv, PipeSend, ReadDir,
+    StreamEntry, Vfs, WellKnownPath, XattrEntry, XattrNamespace,
 };
 
 #[cfg(target_os = "linux")]
@@ -475,6 +477,31 @@ impl Direct {
         } else {
             Ok(())
         }
+    }
+
+    #[cfg(windows)]
+    fn open_streams_file(path: &Path, follow: bool) -> io::Result<File> {
+        let path = Self::path_wide(path);
+        let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
+        if !follow {
+            flags |= FILE_FLAG_OPEN_REPARSE_POINT;
+        }
+        let handle = unsafe {
+            CreateFileW(
+                path.as_ptr(),
+                0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                ptr::null(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL | flags,
+                ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+        Ok(File::from_std(StdFile::from(handle)))
     }
 
     #[cfg(windows)]
@@ -1670,6 +1697,110 @@ impl Direct {
         }
     }
 
+    #[cfg(windows)]
+    fn windows_parse_stream_name(name: &str) -> io::Result<(String, String)> {
+        let rest = name.strip_prefix(':').ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "stream name missing `:` prefix")
+        })?;
+        let split = rest.rfind(':').ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "stream name missing type suffix",
+            )
+        })?;
+        let stream_type = rest[split + 1..].strip_prefix('$').ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "stream type missing `$` prefix")
+        })?;
+        Ok((rest[..split].to_owned(), stream_type.to_owned()))
+    }
+
+    #[cfg(windows)]
+    fn windows_parse_streams(buf: &[u8]) -> io::Result<Vec<StreamEntry>> {
+        let mut streams = Vec::new();
+        let mut offset = 0usize;
+        while offset < buf.len() {
+            if buf.len() - offset < mem::size_of::<FILE_STREAM_INFO>() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "truncated FILE_STREAM_INFO entry",
+                ));
+            }
+            let info = unsafe { &*buf[offset..].as_ptr().cast::<FILE_STREAM_INFO>() };
+            let name_len = usize::try_from(info.StreamNameLength)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "stream name too large"))?;
+            if name_len % 2 != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid stream name length",
+                ));
+            }
+            let name_slice =
+                unsafe { std::slice::from_raw_parts(info.StreamName.as_ptr(), name_len / 2) };
+            let raw_name = String::from_utf16(name_slice).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "stream name is not UTF-16")
+            })?;
+            let (name, r#type) = Self::windows_parse_stream_name(&raw_name)?;
+            let size = u64::try_from(info.StreamSize).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "stream size out of range")
+            })?;
+            let alloc_size = u64::try_from(info.StreamAllocationSize).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "stream allocation size out of range",
+                )
+            })?;
+            streams.push(StreamEntry {
+                name,
+                r#type,
+                size,
+                alloc_size,
+            });
+
+            let next = usize::try_from(info.NextEntryOffset).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "stream entry offset out of range",
+                )
+            })?;
+            if next == 0 {
+                break;
+            }
+            offset = offset.checked_add(next).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "stream entry offset overflow")
+            })?;
+        }
+        Ok(streams)
+    }
+
+    #[cfg(windows)]
+    unsafe fn windows_list_streams(handle: BorrowedHandle<'_>) -> io::Result<Vec<StreamEntry>> {
+        let handle = handle.as_raw_handle();
+        let mut len = 4096usize;
+        loop {
+            let mut buf = vec![0u8; len];
+            let status = unsafe {
+                GetFileInformationByHandleEx(
+                    handle,
+                    FileStreamInfo,
+                    buf.as_mut_ptr().cast(),
+                    u32::try_from(buf.len()).unwrap_or(u32::MAX),
+                )
+            };
+            if status != 0 {
+                return Self::windows_parse_streams(&buf);
+            }
+            let err = io::Error::last_os_error();
+            if err.raw_os_error() == Some(ERROR_MORE_DATA as i32) {
+                len = len.saturating_mul(2);
+                continue;
+            }
+            if err.raw_os_error() == Some(ERROR_HANDLE_EOF as i32) {
+                return Ok(Vec::new());
+            }
+            return Err(err);
+        }
+    }
+
     fn directory_requires_all_error() -> io::Error {
         #[cfg(unix)]
         {
@@ -2017,6 +2148,40 @@ impl Vfs for Direct {
     }
 
     #[cfg(unix)]
+    async fn streams(
+        &self,
+        _path: impl AsRef<Path>,
+        _follow: bool,
+    ) -> Result<Vec<StreamEntry>, io::Error> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "streams are not supported on this platform",
+        ))
+    }
+
+    #[cfg(windows)]
+    async fn streams(
+        &self,
+        path: impl AsRef<Path>,
+        follow: bool,
+    ) -> Result<Vec<StreamEntry>, io::Error> {
+        let file = Self::open_streams_file(path.as_ref(), follow)?;
+        self.file_streams(&file).await
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    async fn streams(
+        &self,
+        _path: impl AsRef<Path>,
+        _follow: bool,
+    ) -> Result<Vec<StreamEntry>, io::Error> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "streams are not supported on this platform",
+        ))
+    }
+
+    #[cfg(unix)]
     async fn xattr(
         &self,
         path: impl AsRef<Path>,
@@ -2209,6 +2374,22 @@ impl Vfs for Direct {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "xattrs are not supported on this platform",
+        ))
+    }
+
+    #[cfg(windows)]
+    async fn file_streams(&self, file: &File) -> Result<Vec<StreamEntry>, io::Error> {
+        let file = file.try_clone().await?;
+        tokio::task::spawn_blocking(move || unsafe { Self::windows_list_streams(file.as_handle()) })
+            .await
+            .unwrap_or_else(|e| Err(io::Error::other(e)))
+    }
+
+    #[cfg(not(windows))]
+    async fn file_streams(&self, _file: &File) -> Result<Vec<StreamEntry>, io::Error> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "streams are not supported on this platform",
         ))
     }
 

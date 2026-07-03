@@ -365,6 +365,27 @@ for attr = path.xattrs()
   echo $attr.name
 ```
 
+### `streams :follow = true`
+
+Lists alternate data streams for this path.
+
+Equivalent to [`streams`](index.md).
+
+**Parameters:**
+
+| Name     | Type                     | Description                           |
+| -------- | ------------------------ | ------------------------------------- |
+| `follow` | [`bool`](../std/bool.md) | If `false`, does not follow a symlink |
+
+**Returns:** iterator of [`StreamEntry`](stream-entry.md)
+
+```
+let path = Path "data.txt"
+for stream = path.streams()
+  echo "$(stream.name) $(stream.type)"
+  echo (path / stream)
+```
+
 ### `xattr name :namespace? :follow = true`
 
 Gets an extended attribute value.

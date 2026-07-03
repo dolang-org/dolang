@@ -157,6 +157,22 @@ open data.txt r do |file|
     echo $attr.name
 ```
 
+### `streams`
+
+Lists alternate data streams for this file.
+
+This is only supported on Windows.
+
+**Returns:** iterator of [`StreamEntry`](stream-entry.md)
+
+```
+let path = Path data.txt
+open $path r do |file|
+  for stream = file.streams()
+    echo "$(stream.name) $(stream.type)"
+    echo (path / stream)
+```
+
 ### `xattr name :namespace?`
 
 Gets an extended attribute value.
