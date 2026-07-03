@@ -237,7 +237,7 @@ impl FsMetadata {
         #[cfg(target_os = "linux")]
         {
             self.unix_flags
-                .map(|flags| flags & libc::ST_RELATIME as u64 != 0)
+                .map(|flags| flags & libc::MS_RELATIME as u64 != 0)
         }
         #[cfg(not(target_os = "linux"))]
         {
