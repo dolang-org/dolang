@@ -3,9 +3,11 @@ import sys
 import
   fs:
     - Attrs
+    - FsMetadata
     - Metadata
     - Path
     - attrs
+    - fs_metadata
     - metadata
     - open
     - remove
@@ -248,3 +250,47 @@ with_and_without_agent "metadata len and type" do
     assert_eq $meta.type :file:
 
   remove $test_path
+
+with_and_without_agent "filesystem metadata basic" do
+  let test_path = "test_fs_metadata.txt"
+
+  open $test_path w do |f|
+    f.write "test"
+
+  let direct = fs_metadata $test_path
+  assert (type direct FsMetadata)
+  assert (direct.capacity > 0)
+  assert (direct.free > 0)
+  assert (direct.available > 0)
+  assert_eq $direct.read_only false
+
+  let path_meta = Path(test_path).fs_metadata()
+  assert (type path_meta FsMetadata)
+  assert_eq $path_meta.capacity $direct.capacity
+
+  open $test_path r do |f|
+    let file_meta = f.fs_metadata()
+    assert (type file_meta FsMetadata)
+    assert_eq $file_meta.capacity $direct.capacity
+
+  remove $test_path
+
+with_and_without_agent "filesystem metadata Unix raw fields" do
+  if (sys.os_info().family != :windows:)
+    let test_path = "test_fs_metadata_unix.txt"
+    open $test_path w do |f|
+      f.write "test"
+
+    let meta = fs_metadata $test_path
+    assert (type meta.blocks int)
+    assert (type meta.blocks_free int)
+    assert (type meta.blocks_available int)
+    assert (type meta.files int)
+    assert (type meta.files_free int)
+    assert (type meta.files_available int)
+    assert (type meta.unix_flags int)
+    assert (type meta.name_max int)
+
+    remove $test_path
+  else
+    log "skipping Unix fs_metadata test on Windows"

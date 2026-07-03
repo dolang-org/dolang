@@ -136,6 +136,21 @@ open data.txt r do |file|
     echo "Attributes: $(meta.attrs.win_attrs)"
 ```
 
+### `fs_metadata()`
+
+Gets filesystem metadata for the filesystem backing this open file.
+
+**Returns:** [`FsMetadata`](fs-metadata.md)
+
+**Example:**
+
+```
+open data.txt r do |file|
+  let meta = file.fs_metadata()
+  echo "Capacity: $(meta.capacity)"
+  echo "Available: $(meta.available)"
+```
+
 ### `xattrs :namespace?`
 
 Lists extended attributes for this file.

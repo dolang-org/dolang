@@ -472,6 +472,17 @@ impl<'v> Object<'v> for Path {
                 let annex = this.annex();
                 super::metadata(strand, annex.global, &annex.as_path(), follow, out).await
             })
+            .method("fs_metadata", async move |this, strand, args, out| {
+                let ([], [follow]) = unpack!(strand, args, 0, 0, follow = None)?;
+                let follow = match follow {
+                    Some(v) => v
+                        .as_bool(strand)
+                        .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
+                    None => true,
+                };
+                let annex = this.annex();
+                super::fs_metadata(strand, annex.global, &annex.as_path(), follow, out).await
+            })
             .method("attrs", async move |this, strand, args, out| {
                 let ([], [follow]) = unpack!(strand, args, 0, 0, follow = None)?;
                 let follow = match follow {

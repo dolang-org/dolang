@@ -20,7 +20,10 @@ use tokio::{
 
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
-    fs::{metadata::create_metadata, read_all, read_into_spare, stream, xattr},
+    fs::{
+        fs_metadata::create_fs_metadata, metadata::create_metadata, read_all, read_into_spare,
+        stream, xattr,
+    },
     global::Global,
     util,
 };
@@ -356,6 +359,28 @@ impl<'v> File<'v> {
         create_metadata(strand, global, metadata, out);
         Ok(())
     }
+
+    async fn fs_metadata<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        global: State<'v, Global<'v>>,
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let file_ref = self
+            .file
+            .as_mut()
+            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+
+        let metadata = global
+            .local
+            .get(strand)
+            .vfs()
+            .file_fs_metadata(file_ref)
+            .await
+            .into_sys(strand)?;
+        create_fs_metadata(strand, global, metadata, out);
+        Ok(())
+    }
 }
 
 impl<'v> Object<'v> for File<'v> {
@@ -570,6 +595,11 @@ impl<'v> Object<'v> for File<'v> {
             .method("metadata", async move |this, strand, _args, out| {
                 this.borrow_mut(strand)?
                     .metadata(strand, this.annex().global, out)
+                    .await
+            })
+            .method("fs_metadata", async move |this, strand, _args, out| {
+                this.borrow_mut(strand)?
+                    .fs_metadata(strand, this.annex().global, out)
                     .await
             })
             .method("xattrs", async move |this, strand, args, out| {

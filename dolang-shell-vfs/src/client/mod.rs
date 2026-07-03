@@ -20,16 +20,16 @@ use tokio::{
 use tokio_unix_ipc::{Receiver, Sender, serde::Handle};
 
 use crate::{
-    Attrs, Child, ChownIdentity, Command, LockedSender, Metadata, Permissions, PipeRecv, PipeSend,
-    ReadDir, StreamEntry, Vfs, WellKnownPath, XattrEntry,
+    Attrs, Child, ChownIdentity, Command, FsMetadata, LockedSender, Metadata, Permissions,
+    PipeRecv, PipeSend, ReadDir, StreamEntry, Vfs, WellKnownPath, XattrEntry,
     direct::Direct,
     protocol::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
-        CreateDirRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
-        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
-        Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
-        SetXattrRequest, SpawnRequest, SymlinkRequest, Timestamp, UnixStreamSocketRequest,
-        WellKnownPathRequest, XattrRequest, XattrsRequest,
+        CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
+        MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest,
+        Request, RequestKind, Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest,
+        SetTimesRequest, SetXattrRequest, SpawnRequest, SymlinkRequest, Timestamp,
+        UnixStreamSocketRequest, WellKnownPathRequest, XattrRequest, XattrsRequest,
     },
 };
 
@@ -732,6 +732,10 @@ impl Vfs for Client {
         Client::clear_cache(self).await
     }
 
+    async fn file_fs_metadata(&self, file: &File) -> Result<FsMetadata, io::Error> {
+        self.direct.file_fs_metadata(file).await
+    }
+
     async fn file_xattrs(
         &self,
         file: &File,
@@ -941,6 +945,32 @@ impl Vfs for Client {
                     id,
                     kind: RequestKind::Metadata(MetadataRequest {
                         path: path.as_ref().to_path_buf(),
+                    }),
+                };
+                alive.sender.send(request).await?;
+                drop(state);
+                rx.await.expect("oneshot sender dropped")
+            }
+            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        }
+    }
+
+    async fn fs_metadata(
+        &self,
+        path: impl AsRef<Path>,
+        follow: bool,
+    ) -> Result<FsMetadata, io::Error> {
+        let mut state = self.inner.state.lock().await;
+        match &mut *state {
+            ClientState::Alive(alive) => {
+                let (tx, rx) = oneshot::channel();
+                let id = alive.next_id();
+                alive.insert_pending(id, tx);
+                let request = Request {
+                    id,
+                    kind: RequestKind::FsMetadata(FsMetadataRequest {
+                        path: path.as_ref().to_path_buf(),
+                        follow,
                     }),
                 };
                 alive.sender.send(request).await?;
@@ -1415,6 +1445,9 @@ async fn receive_loop(receiver: Receiver<Response>, inner: Arc<ClientInner>) {
                     alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
                 }
                 ResponseKind::Metadata(result) => {
+                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
+                }
+                ResponseKind::FsMetadata(result) => {
                     alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
                 }
                 ResponseKind::CreateDir(result) => {
