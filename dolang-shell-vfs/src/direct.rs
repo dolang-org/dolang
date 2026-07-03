@@ -8,15 +8,17 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::ffi::CStr;
-#[cfg(unix)]
-use std::ffi::CString;
+use std::{
+    ffi::{CStr, CString},
+    mem::MaybeUninit,
+    os::{
+        fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
+        unix::ffi::OsStrExt,
+    },
+};
+
 #[cfg(target_os = "linux")]
 use std::os::fd::RawFd;
-#[cfg(unix)]
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
-#[cfg(unix)]
-use std::os::unix::ffi::OsStrExt;
 
 #[cfg(windows)]
 use std::{
@@ -26,6 +28,7 @@ use std::{
         ffi::{OsStrExt, OsStringExt},
         io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle},
     },
+    path::{Component, Prefix},
     ptr, slice,
     time::SystemTime,
 };
@@ -46,8 +49,9 @@ use windows_sys::{
             FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_READONLY,
             FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_BACKUP_SEMANTICS,
             FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-            FILE_STREAM_INFO, FileStreamInfo, GetFileAttributesW, GetFileInformationByHandleEx,
-            INVALID_FILE_ATTRIBUTES, OPEN_EXISTING, SetFileAttributesW,
+            FILE_STREAM_INFO, FileStreamInfo, GetDiskFreeSpaceExW, GetFileAttributesW,
+            GetFileInformationByHandleEx, GetFinalPathNameByHandleW, GetVolumeInformationByHandleW,
+            INVALID_FILE_ATTRIBUTES, OPEN_EXISTING, SetFileAttributesW, VOLUME_NAME_DOS,
         },
         System::{
             Com::CoTaskMemFree,
@@ -79,8 +83,8 @@ use wax::{
 #[cfg(windows)]
 use crate::OpenOptions as _;
 use crate::{
-    Attrs, Child, ChownIdentity, Command, Metadata, Permissions, PipeRecv, PipeSend, ReadDir,
-    StreamEntry, Vfs, WellKnownPath, XattrEntry, XattrNamespace,
+    Attrs, Child, ChownIdentity, Command, FsMetadata, Metadata, Permissions, PipeRecv, PipeSend,
+    ReadDir, StreamEntry, Vfs, WellKnownPath, XattrEntry, XattrNamespace,
 };
 
 #[cfg(target_os = "linux")]
@@ -223,6 +227,233 @@ impl Default for Direct {
 }
 
 impl Direct {
+    #[cfg(unix)]
+    fn statvfs_from_fd(fd: BorrowedFd<'_>) -> io::Result<libc::statvfs> {
+        let mut stat = MaybeUninit::<libc::statvfs>::uninit();
+        let rc = unsafe { libc::fstatvfs(fd.as_raw_fd(), stat.as_mut_ptr()) };
+        if rc == 0 {
+            Ok(unsafe { stat.assume_init() })
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    #[cfg(unix)]
+    fn statvfs_from_path(path: &Path) -> io::Result<libc::statvfs> {
+        let path = CString::new(path.as_os_str().as_bytes())?;
+        let mut stat = MaybeUninit::<libc::statvfs>::uninit();
+        let rc = unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) };
+        if rc == 0 {
+            Ok(unsafe { stat.assume_init() })
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    #[cfg(unix)]
+    #[allow(clippy::useless_conversion)]
+    fn fs_metadata_from_statvfs(stat: libc::statvfs) -> FsMetadata {
+        let unit_size = if stat.f_frsize != 0 {
+            u64::from(stat.f_frsize)
+        } else {
+            u64::from(stat.f_bsize)
+        };
+        FsMetadata {
+            capacity: u64::from(stat.f_blocks).saturating_mul(unit_size),
+            free: u64::from(stat.f_bfree).saturating_mul(unit_size),
+            available: u64::from(stat.f_bavail).saturating_mul(unit_size),
+            block_size: u32::try_from(stat.f_bsize).unwrap_or(u32::MAX),
+            blocks: Some(stat.f_blocks.into()),
+            blocks_free: Some(stat.f_bfree.into()),
+            blocks_available: Some(stat.f_bavail.into()),
+            files: Some(stat.f_files.into()),
+            files_free: Some(stat.f_ffree.into()),
+            files_available: Some(stat.f_favail.into()),
+            fragment_size: Some(u32::try_from(stat.f_frsize).unwrap_or(u32::MAX)),
+            unix_flags: Some(stat.f_flag.into()),
+            #[cfg(target_os = "linux")]
+            fsid: Some(stat.f_fsid),
+            #[cfg(not(target_os = "linux"))]
+            fsid: None,
+            name_max: Some(u32::try_from(stat.f_namemax).unwrap_or(u32::MAX)),
+            win_flags: None,
+            volume_serial_number: None,
+            component_length_max: None,
+        }
+    }
+
+    #[cfg(unix)]
+    fn fs_metadata_from_file(file: &File) -> io::Result<FsMetadata> {
+        Self::statvfs_from_fd(file.as_fd()).map(Self::fs_metadata_from_statvfs)
+    }
+
+    #[cfg(unix)]
+    fn fs_metadata_from_path(path: &Path, follow: bool) -> io::Result<FsMetadata> {
+        if !follow {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "fs_metadata follow: false is not implemented on this platform",
+            ));
+        }
+        Self::statvfs_from_path(path).map(Self::fs_metadata_from_statvfs)
+    }
+
+    #[cfg(windows)]
+    fn final_path_from_handle(handle: BorrowedHandle<'_>) -> io::Result<PathBuf> {
+        let mut path = vec![0u16; 32768];
+        let len = unsafe {
+            GetFinalPathNameByHandleW(
+                handle.as_raw_handle(),
+                path.as_mut_ptr(),
+                32768,
+                VOLUME_NAME_DOS,
+            )
+        };
+        if len == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let len = usize::try_from(len).unwrap_or(path.len());
+        if len >= path.len() {
+            return Err(io::Error::other("path buffer too small"));
+        }
+        path.truncate(len);
+
+        if path.starts_with(&[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16]) {
+            if path[4..].starts_with(&[b'U' as u16, b'N' as u16, b'C' as u16, b'\\' as u16]) {
+                path = [&[b'\\' as u16, b'\\' as u16][..], &path[8..]].concat();
+            } else {
+                path.drain(..4);
+            }
+        }
+        Ok(PathBuf::from(OsString::from_wide(&path)))
+    }
+
+    #[cfg(windows)]
+    fn volume_root_path(path: &Path) -> io::Result<PathBuf> {
+        match path.components().next() {
+            Some(Component::Prefix(prefix)) => match prefix.kind() {
+                Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => {
+                    Ok(PathBuf::from(format!("{}:\\", char::from(drive))))
+                }
+                Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                    Ok(PathBuf::from(format!(
+                        r"\\{}\{}\",
+                        server.to_string_lossy(),
+                        share.to_string_lossy()
+                    )))
+                }
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "unsupported Windows path prefix",
+                )),
+            },
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path has no Windows volume prefix",
+            )),
+        }
+    }
+
+    #[cfg(windows)]
+    fn fs_query_root_metadata(root: &Path) -> io::Result<(u64, u64, u64, u32, u32, u32)> {
+        let root_str = Self::path_wide(root);
+        let mut available = 0u64;
+        let mut capacity = 0u64;
+        let mut free = 0u64;
+        let ok = unsafe {
+            GetDiskFreeSpaceExW(root_str.as_ptr(), &mut available, &mut capacity, &mut free)
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let root_handle = Self::open_for_metadata(root, true)?;
+
+        let mut serial = 0u32;
+        let mut max_component = 0u32;
+        let mut flags = 0u32;
+        let ok = unsafe {
+            GetVolumeInformationByHandleW(
+                root_handle.as_raw_handle(),
+                ptr::null_mut(),
+                0,
+                &mut serial,
+                &mut max_component,
+                &mut flags,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        Ok((available, capacity, free, serial, max_component, flags))
+    }
+
+    #[cfg(windows)]
+    fn fs_metadata_from_handle(handle: BorrowedHandle<'_>) -> io::Result<FsMetadata> {
+        let root = Self::volume_root_path(&Self::final_path_from_handle(handle)?)?;
+        let (available, capacity, free, serial, max_component, flags) =
+            Self::fs_query_root_metadata(&root)?;
+
+        Ok(FsMetadata {
+            capacity,
+            free,
+            available,
+            block_size: 0,
+            blocks: None,
+            blocks_free: None,
+            blocks_available: None,
+            files: None,
+            files_free: None,
+            files_available: None,
+            fragment_size: None,
+            unix_flags: None,
+            fsid: None,
+            name_max: Some(max_component),
+            win_flags: Some(flags),
+            volume_serial_number: Some(serial),
+            component_length_max: Some(max_component),
+        })
+    }
+
+    #[cfg(windows)]
+    fn fs_metadata_from_file(file: &File) -> io::Result<FsMetadata> {
+        Self::fs_metadata_from_handle(file.as_handle())
+    }
+
+    #[cfg(windows)]
+    fn fs_metadata_from_path(path: &Path, follow: bool) -> io::Result<FsMetadata> {
+        let root = if follow {
+            Self::volume_root_path(&std::fs::canonicalize(path)?)?
+        } else {
+            Self::volume_root_path(path)?
+        };
+        let (available, capacity, free, serial, max_component, flags) =
+            Self::fs_query_root_metadata(&root)?;
+
+        Ok(FsMetadata {
+            capacity,
+            free,
+            available,
+            block_size: 0,
+            blocks: None,
+            blocks_free: None,
+            blocks_available: None,
+            files: None,
+            files_free: None,
+            files_available: None,
+            fragment_size: None,
+            unix_flags: None,
+            fsid: None,
+            name_max: Some(max_component),
+            win_flags: Some(flags),
+            volume_serial_number: Some(serial),
+            component_length_max: Some(max_component),
+        })
+    }
+
     #[cfg(target_os = "linux")]
     fn attrs_from_flags(flags: libc::c_long) -> Attrs {
         Attrs {
@@ -480,7 +711,7 @@ impl Direct {
     }
 
     #[cfg(windows)]
-    fn open_streams_file(path: &Path, follow: bool) -> io::Result<File> {
+    fn open_for_metadata(path: &Path, follow: bool) -> io::Result<File> {
         let path = Self::path_wide(path);
         let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
         if !follow {
@@ -2165,7 +2396,7 @@ impl Vfs for Direct {
         path: impl AsRef<Path>,
         follow: bool,
     ) -> Result<Vec<StreamEntry>, io::Error> {
-        let file = Self::open_streams_file(path.as_ref(), follow)?;
+        let file = Self::open_for_metadata(path.as_ref(), follow)?;
         self.file_streams(&file).await
     }
 
@@ -2521,6 +2752,24 @@ impl Vfs for Direct {
         fs::metadata(path.as_ref())
             .await
             .map(crate::metadata_from_std)
+    }
+
+    async fn file_fs_metadata(&self, file: &File) -> Result<FsMetadata, io::Error> {
+        let file = file.try_clone().await?;
+        tokio::task::spawn_blocking(move || Self::fs_metadata_from_file(&file))
+            .await
+            .unwrap_or_else(|_| Err(io::Error::other("failed to join fs metadata query task")))
+    }
+
+    async fn fs_metadata(
+        &self,
+        path: impl AsRef<Path>,
+        follow: bool,
+    ) -> Result<FsMetadata, io::Error> {
+        let path = path.as_ref().to_path_buf();
+        tokio::task::spawn_blocking(move || Self::fs_metadata_from_path(&path, follow))
+            .await
+            .unwrap_or_else(|_| Err(io::Error::other("failed to join fs metadata query task")))
     }
 
     async fn create_dir(&self, path: impl AsRef<Path>, all: bool) -> Result<(), io::Error> {

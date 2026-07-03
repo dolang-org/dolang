@@ -12,6 +12,8 @@ use std::{
     process::ExitStatus,
 };
 use tokio::fs;
+#[cfg(windows)]
+use windows_sys::Win32::System::SystemServices::FILE_READ_ONLY_VOLUME;
 
 #[cfg(unix)]
 mod client;
@@ -113,6 +115,133 @@ impl Metadata {
         #[cfg(not(any(windows, target_os = "macos")))]
         {
             Attrs::default()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsMetadata {
+    pub capacity: u64,
+    pub free: u64,
+    pub available: u64,
+    pub block_size: u32,
+    pub blocks: Option<u64>,
+    pub blocks_free: Option<u64>,
+    pub blocks_available: Option<u64>,
+    pub files: Option<u64>,
+    pub files_free: Option<u64>,
+    pub files_available: Option<u64>,
+    pub fragment_size: Option<u32>,
+    pub unix_flags: Option<u64>,
+    pub fsid: Option<u64>,
+    pub name_max: Option<u32>,
+    pub win_flags: Option<u32>,
+    pub volume_serial_number: Option<u32>,
+    pub component_length_max: Option<u32>,
+}
+
+impl FsMetadata {
+    #[allow(clippy::unnecessary_cast)]
+    pub fn read_only(&self) -> bool {
+        #[cfg(unix)]
+        if let Some(flags) = self.unix_flags {
+            return flags & libc::ST_RDONLY as u64 != 0;
+        }
+        #[cfg(windows)]
+        if let Some(flags) = self.win_flags {
+            return flags & FILE_READ_ONLY_VOLUME != 0;
+        }
+        false
+    }
+
+    #[allow(clippy::unnecessary_cast)]
+    pub fn no_suid(&self) -> Option<bool> {
+        #[cfg(unix)]
+        {
+            self.unix_flags
+                .map(|flags| flags & libc::ST_NOSUID as u64 != 0)
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
+    #[allow(clippy::unnecessary_cast)]
+    pub fn no_exec(&self) -> Option<bool> {
+        #[cfg(target_os = "linux")]
+        {
+            self.unix_flags
+                .map(|flags| flags & libc::ST_NOEXEC as u64 != 0)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    #[allow(clippy::unnecessary_cast)]
+    pub fn synchronous(&self) -> Option<bool> {
+        #[cfg(target_os = "linux")]
+        {
+            self.unix_flags
+                .map(|flags| flags & libc::ST_SYNCHRONOUS as u64 != 0)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    #[allow(clippy::unnecessary_cast)]
+    pub fn no_dev(&self) -> Option<bool> {
+        #[cfg(target_os = "linux")]
+        {
+            self.unix_flags
+                .map(|flags| flags & libc::ST_NODEV as u64 != 0)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    #[allow(clippy::unnecessary_cast)]
+    pub fn no_atime(&self) -> Option<bool> {
+        #[cfg(target_os = "linux")]
+        {
+            self.unix_flags
+                .map(|flags| flags & libc::ST_NOATIME as u64 != 0)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    #[allow(clippy::unnecessary_cast)]
+    pub fn no_dir_atime(&self) -> Option<bool> {
+        #[cfg(target_os = "linux")]
+        {
+            self.unix_flags
+                .map(|flags| flags & libc::ST_NODIRATIME as u64 != 0)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    #[allow(clippy::unnecessary_cast)]
+    pub fn relatime(&self) -> Option<bool> {
+        #[cfg(target_os = "linux")]
+        {
+            self.unix_flags
+                .map(|flags| flags & libc::ST_RELATIME as u64 != 0)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
         }
     }
 }
@@ -470,6 +599,7 @@ pub trait Vfs {
     async fn file_metadata(&self, file: &fs::File) -> Result<Metadata, io::Error> {
         file.metadata().await.map(metadata_from_std)
     }
+    async fn file_fs_metadata(&self, file: &fs::File) -> Result<FsMetadata, io::Error>;
     async fn file_xattrs(
         &self,
         file: &fs::File,
@@ -536,6 +666,11 @@ pub trait Vfs {
         ignore: bool,
     ) -> Result<(), io::Error>;
     async fn metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error>;
+    async fn fs_metadata(
+        &self,
+        path: impl AsRef<Path>,
+        follow: bool,
+    ) -> Result<FsMetadata, io::Error>;
     async fn create_dir(&self, path: impl AsRef<Path>, all: bool) -> Result<(), io::Error>;
     async fn remove_dir(
         &self,
@@ -1510,6 +1645,39 @@ impl Vfs for ClientOrDirect {
         #[cfg(not(unix))]
         {
             self.0.metadata(path).await
+        }
+    }
+
+    async fn file_fs_metadata(&self, file: &fs::File) -> Result<FsMetadata, io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.file_fs_metadata(file).await,
+                Self::Direct(direct) => direct.file_fs_metadata(file).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.file_fs_metadata(file).await
+        }
+    }
+
+    async fn fs_metadata(
+        &self,
+        path: impl AsRef<Path>,
+        follow: bool,
+    ) -> Result<FsMetadata, io::Error> {
+        let path = path.as_ref().to_path_buf();
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.fs_metadata(&path, follow).await,
+                Self::Direct(direct) => direct.fs_metadata(&path, follow).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.fs_metadata(&path, follow).await
         }
     }
 

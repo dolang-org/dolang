@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tokio_unix_ipc::serde::Handle;
 
-pub(crate) use crate::{Attrs, ChownIdentity, Metadata, WellKnownPath, XattrEntry, XattrNamespace};
+pub(crate) use crate::{
+    Attrs, ChownIdentity, FsMetadata, Metadata, WellKnownPath, XattrEntry, XattrNamespace,
+};
 
 pub(crate) type RequestId = u64;
 
@@ -102,6 +104,12 @@ pub(crate) struct RemoveDirRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct MetadataRequest {
     pub(crate) path: PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct FsMetadataRequest {
+    pub(crate) path: PathBuf,
+    pub(crate) follow: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -247,6 +255,7 @@ pub(crate) enum RequestKind {
     UnixStreamSocket(UnixStreamSocketRequest),
     Remove(RemoveRequest),
     Metadata(MetadataRequest),
+    FsMetadata(FsMetadataRequest),
     CreateDir(CreateDirRequest),
     RemoveDir(RemoveDirRequest),
     Copy(CopyRequest),
@@ -292,6 +301,7 @@ pub(crate) enum ResponseKind {
     UnixStreamSocket(Result<Handle<OwnedFd>, i32>),
     Remove(Result<(), i32>),
     Metadata(Result<Metadata, i32>),
+    FsMetadata(Result<FsMetadata, i32>),
     CreateDir(Result<(), i32>),
     RemoveDir(Result<(), i32>),
     Copy(Result<(), i32>),
@@ -341,6 +351,7 @@ impl std::fmt::Debug for ResponseKind {
                 .finish(),
             ResponseKind::Remove(result) => f.debug_tuple("Remove").field(result).finish(),
             ResponseKind::Metadata(result) => f.debug_tuple("Metadata").field(result).finish(),
+            ResponseKind::FsMetadata(result) => f.debug_tuple("FsMetadata").field(result).finish(),
             ResponseKind::CreateDir(result) => f.debug_tuple("CreateDir").field(result).finish(),
             ResponseKind::RemoveDir(result) => f.debug_tuple("RemoveDir").field(result).finish(),
             ResponseKind::Copy(result) => f.debug_tuple("Copy").field(result).finish(),

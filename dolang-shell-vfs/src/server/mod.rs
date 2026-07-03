@@ -15,10 +15,10 @@ use crate::{
     Child as _, Command as _, Direct, LockedSender, OpenOptions as _, Permissions, Vfs,
     protocol::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
-        CreateDirRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
-        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
-        Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
-        SetXattrRequest, SpawnRequest, SymlinkRequest, UnixStreamSocketRequest,
+        CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
+        MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest,
+        Request, RequestKind, Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest,
+        SetTimesRequest, SetXattrRequest, SpawnRequest, SymlinkRequest, UnixStreamSocketRequest,
         WellKnownPathRequest, XattrRequest, XattrsRequest,
     },
 };
@@ -155,6 +155,9 @@ impl Connection {
                     }
                     RequestKind::Metadata(metadata_request) => {
                         this.handle_metadata(msg.id, metadata_request).await;
+                    }
+                    RequestKind::FsMetadata(fs_metadata_request) => {
+                        this.handle_fs_metadata(msg.id, fs_metadata_request).await;
                     }
                     RequestKind::CreateDir(create_dir_request) => {
                         this.handle_create_dir(msg.id, create_dir_request).await;
@@ -435,6 +438,14 @@ impl Connection {
     async fn handle_metadata(&self, id: u64, req: MetadataRequest) {
         let result = ResponseKind::Metadata(Self::io_result(
             self.server.direct.metadata(&req.path).await,
+        ));
+
+        let _ = self.sender.send(Response { id, kind: result }).await;
+    }
+
+    async fn handle_fs_metadata(&self, id: u64, req: FsMetadataRequest) {
+        let result = ResponseKind::FsMetadata(Self::io_result(
+            self.server.direct.fs_metadata(&req.path, req.follow).await,
         ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;

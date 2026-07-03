@@ -18,6 +18,7 @@ use rand::{RngExt, distr::Alphanumeric};
 
 pub(crate) mod attrs;
 pub(crate) mod file;
+pub(crate) mod fs_metadata;
 pub(crate) mod glob;
 pub(crate) mod metadata;
 pub(crate) mod path;
@@ -29,6 +30,7 @@ use crate::{
     error::{ErrorExt as _, ResultExt as _},
     fs::{
         file::File,
+        fs_metadata::create_fs_metadata,
         metadata::create_metadata,
         path::{Path, PathAnnex, normalize_path, path_from_value},
         readdir::{DirEntryIter, DirEntryIterAnnex},
@@ -104,6 +106,21 @@ async fn get_attrs<'v, 's>(
     let vfs = local.vfs();
     let attrs = vfs.attrs(&path, follow).await.into_sys(strand)?;
     attrs::create_attrs(strand, global, attrs, out);
+    Ok(())
+}
+
+async fn fs_metadata<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    path: &std::path::Path,
+    follow: bool,
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    let local = global.local.get(strand);
+    let path = local.cwd().as_ref().join(path);
+    let vfs = local.vfs();
+    let metadata = vfs.fs_metadata(&path, follow).await.into_sys(strand)?;
+    create_fs_metadata(strand, global, metadata, out);
     Ok(())
 }
 
@@ -845,6 +862,17 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             };
             metadata(strand, global, &path, follow, out).await
         })
+        .function("fs_metadata", async move |strand, args, out| {
+            let ([path], [follow]) = unpack!(strand, args, 1, 0, follow = None)?;
+            let path = path_from_value(strand, global, &path)?;
+            let follow = match follow {
+                Some(v) => v
+                    .as_bool(strand)
+                    .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
+                None => true,
+            };
+            fs_metadata(strand, global, &path, follow, out).await
+        })
         .function("attrs", async move |strand, args, out| {
             let ([path], [follow]) = unpack!(strand, args, 1, 0, follow = None)?;
             let path = path_from_value(strand, global, &path)?;
@@ -1230,6 +1258,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             },
         )
         .value("Metadata", global.types.metadata)
+        .value("FsMetadata", global.types.fs_metadata)
         .value("Attrs", global.types.attrs)
         .value("XattrEntry", global.types.xattr_entry)
         .value("StreamEntry", global.types.stream_entry)

@@ -603,6 +603,27 @@ async fn dir_metadata() {
 }
 
 #[tokio::test]
+async fn fs_metadata_basic() {
+    let dir = tempdir().unwrap();
+    let socket_path = dir.path().join("test.sock");
+
+    let server_task = start_server(&socket_path).await;
+
+    let test_file = dir.path().join("test.txt");
+    std::fs::write(&test_file, "hello_world").unwrap();
+
+    let client = connect_client(&socket_path).await;
+    let metadata = client.fs_metadata(&test_file, true).await.unwrap();
+
+    assert!(metadata.capacity > 0);
+    assert!(metadata.free > 0);
+    assert!(metadata.available > 0);
+
+    server_task.abort();
+    let _ = server_task.await;
+}
+
+#[tokio::test]
 async fn hard_link_round_trip() {
     let dir = tempdir().unwrap();
     let socket_path = dir.path().join("test.sock");

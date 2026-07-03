@@ -125,6 +125,34 @@ async fn direct_metadata_windows_attributes() {
     assert_eq!(metadata.attrs().readonly, Some(true));
 }
 
+#[tokio::test]
+async fn direct_fs_metadata_basic() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("fsmeta.txt");
+    tokio::fs::write(&path, "hello").await.unwrap();
+
+    let metadata = direct.fs_metadata(&path, true).await.unwrap();
+    assert!(metadata.capacity > 0);
+    assert!(metadata.free > 0);
+    assert!(metadata.available > 0);
+    assert!(metadata.block_size > 0 || cfg!(windows));
+}
+
+#[tokio::test]
+async fn direct_file_fs_metadata_basic() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("fsmeta-file.txt");
+    tokio::fs::write(&path, "hello").await.unwrap();
+    let file = tokio::fs::File::open(&path).await.unwrap();
+
+    let metadata = direct.file_fs_metadata(&file).await.unwrap();
+    assert!(metadata.capacity > 0);
+    assert!(metadata.free > 0);
+    assert!(metadata.available > 0);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn direct_set_times_rejects_created_timestamp() {

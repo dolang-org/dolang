@@ -225,6 +225,29 @@ let link_meta = link.metadata follow: false
 echo "Link points to: $(link_meta.type)"
 ```
 
+### `fs_metadata :follow = true`
+
+Gets filesystem metadata for the filesystem containing this path.
+
+Equivalent to [`fs_metadata`](index.md).
+
+**Parameters:**
+
+| Name     | Type                     | Description                                                               |
+| -------- | ------------------------ | ------------------------------------------------------------------------- |
+| `follow` | [`bool`](../std/bool.md) | If `false`, use the symlink's containing filesystem instead of its target |
+
+**Returns:** [`FsMetadata`](fs-metadata.md)
+
+**Errors:** On Linux, `follow: false` is not implemented yet and raises a
+runtime error.
+
+```
+let path = Path "data.txt"
+let meta = path.fs_metadata()
+echo "Capacity: $(meta.capacity)"
+```
+
 ### `attrs :follow = true`
 
 Gets filesystem attributes for this path.

@@ -298,6 +298,29 @@ let link_meta = metadata "link.txt" follow: false
 echo "Link type: $(link_meta.type)"
 ```
 
+### `fs_metadata path :follow = true`
+
+Gets filesystem metadata for the filesystem containing the given path.
+
+**Parameters:**
+
+| Name     | Type                                      | Description                                                               |
+| -------- | ----------------------------------------- | ------------------------------------------------------------------------- |
+| `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to resolve                                                           |
+| `follow` | [`bool`](../std/bool.md)                  | If `false`, use the symlink's containing filesystem instead of its target |
+
+**Returns:** [`FsMetadata`](fs-metadata.md)
+
+**Errors:** On Linux, `follow: false` is not implemented yet and raises a
+runtime error.
+
+```
+let meta = fs_metadata "data.txt"
+echo "Capacity: $(meta.capacity)"
+echo "Available: $(meta.available)"
+echo "Readonly: $(meta.read_only)"
+```
+
 ### `attrs path :follow = true`
 
 Gets filesystem attributes for the given path.

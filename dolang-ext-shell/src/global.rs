@@ -25,6 +25,7 @@ use crate::{
     fs::{
         attrs::Attrs,
         file::File,
+        fs_metadata::FsMetadata,
         metadata::Metadata,
         path::{Path, PathComponentsIter},
         readdir::DirEntry,
@@ -52,6 +53,7 @@ pub(crate) struct Types<'v> {
     pub(crate) stream_entry: Type<'v, StreamEntry>,
     pub(crate) stream_iter: Type<'v, StreamIter>,
     pub(crate) metadata: Type<'v, Metadata>,
+    pub(crate) fs_metadata: Type<'v, FsMetadata>,
     pub(crate) file: Type<'v, File<'v>>,
     pub(crate) dir_entry: Type<'v, DirEntry>,
     pub(crate) dir_entry_iter: Type<'v, DirEntryIter>,
@@ -155,6 +157,7 @@ impl<'v> Global<'v> {
                 stream_entry: builder.register_type(),
                 stream_iter: builder.register_type(),
                 metadata: builder.register_type(),
+                fs_metadata: builder.register_type(),
                 dir_entry: builder.register_type(),
                 dir_entry_iter: builder.register_type(),
                 glob_iter: builder.register_type(),

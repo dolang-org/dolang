@@ -5,6 +5,9 @@ Filesystem metadata object returned by
 [`Path.metadata()`](./path.md), and
 [`File.metadata()`](./file.md).
 
+For filesystem-level capacity and mount metadata, use
+[`FsMetadata`](./fs-metadata.md).
+
 ## Fields
 
 ### `len`
