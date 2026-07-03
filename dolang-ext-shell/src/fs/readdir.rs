@@ -1,8 +1,7 @@
 use std::fmt;
-use std::path::PathBuf;
 
 use dolang::runtime::{
-    Instance, Object, Output, Result, Slot, State, Strand, error::ResultExt as _,
+    Error, Instance, Object, Output, Result, Slot, State, Strand, Value, error::ResultExt as _,
     object::TypeBuilder, value::TypeObject,
 };
 use dolang_shell_vfs::{DirEntry as VfsDirEntry, FileType, ReadDir};
@@ -11,13 +10,11 @@ use crate::error::ErrorExt as ShellErrorExt;
 use crate::global::Global;
 
 use crate::fs::metadata::file_type_to_sym;
-use crate::fs::path::{Path, PathAnnex};
 
 pub(crate) struct DirEntry;
 
 pub(crate) struct DirEntryAnnex<'v> {
     pub(crate) global: State<'v, Global<'v>>,
-    pub(crate) path: PathBuf,
     pub(crate) name: String,
     pub(crate) file_type: FileType,
     #[cfg(unix)]
@@ -26,7 +23,6 @@ pub(crate) struct DirEntryAnnex<'v> {
 
 pub(crate) struct DirEntryIter {
     pub(crate) read_dir: ReadDir,
-    pub(crate) path: PathBuf,
 }
 
 pub(crate) struct DirEntryIterAnnex<'v> {
@@ -36,18 +32,15 @@ pub(crate) struct DirEntryIterAnnex<'v> {
 pub(crate) fn create_dir_entry<'v, 's>(
     strand: &mut Strand<'v, 's>,
     entry: &VfsDirEntry,
-    dir_path: &std::path::Path,
     global: State<'v, Global<'v>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let path = dir_path.join(entry.file_name());
     let name = entry.file_name().to_string_lossy().into_owned();
     global.types.dir_entry.create_with_annex(
         strand,
         DirEntry,
         DirEntryAnnex {
             global,
-            path,
             name,
             file_type: entry.file_type(),
             #[cfg(unix)]
@@ -70,21 +63,11 @@ impl<'v> Object<'v> for DirEntry {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<fs.DirEntry {:?}>", this.annex().path).into_do(strand)
+        write!(w, "<fs.DirEntry {:?}>", this.annex().name).into_do(strand)
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let builder = builder
-            .get("path", |this, strand, out| {
-                let annex = this.annex();
-                let path_annex = PathAnnex::try_new(strand, annex.path.clone(), annex.global)?;
-                annex
-                    .global
-                    .types
-                    .path
-                    .create_with_annex(strand, Path, path_annex, out);
-                Ok(())
-            })
             .get("name", |this, strand, out| {
                 Output::set(strand, out, this.annex().name.as_str());
                 Ok(())
@@ -137,11 +120,25 @@ impl<'v> Object<'v> for DirEntryIter {
 
         match borrow.read_dir.next_entry().await {
             Ok(Some(entry)) => {
-                create_dir_entry(strand, &entry, &borrow.path, global, out)?;
+                create_dir_entry(strand, &entry, global, out)?;
                 Ok(true)
             }
             Ok(None) => Ok(false),
             Err(e) => Err(e.into_sys(strand)),
         }
     }
+}
+
+pub(crate) fn path_with_entry<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    path: &std::path::Path,
+    entry: &Value<'v>,
+) -> Result<'v, 's, std::path::PathBuf> {
+    let entry = global
+        .types
+        .dir_entry
+        .downcast(entry)
+        .ok_or_else(|| Error::not_supported(strand))?;
+    Ok(path.join(entry.annex().name.as_str()))
 }

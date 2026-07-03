@@ -1054,6 +1054,15 @@ impl<'v> Object<'v> for Path {
                 .create_with_annex(strand, Path, annex, out);
             Ok(())
         } else if let Ok(path) =
+            super::readdir::path_with_entry(strand, global, &borrow.as_path(), other)
+        {
+            let annex = PathAnnex::try_new(strand, path, global)?;
+            global
+                .types
+                .path
+                .create_with_annex(strand, Path, annex, out);
+            Ok(())
+        } else if let Ok(path) =
             super::stream::path_with_stream(strand, global, &borrow.as_path(), other)
         {
             let annex = PathAnnex::try_new(strand, path, global)?;
