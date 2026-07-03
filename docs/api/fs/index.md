@@ -4,13 +4,14 @@ The `fs` module provides functions and types for filesystem operations.
 
 ## Types
 
-| Type                         | Description                   |
-| ---------------------------- | ----------------------------- |
-| [Path](path.md)              | Filesystem path object        |
-| [Attrs](attrs.md)            | Filesystem attributes         |
-| [Metadata](metadata.md)      | Immutable filesystem metadata |
-| [DirEntry](direntry.md)      | Directory entry object        |
-| [XattrEntry](xattr-entry.md) | Extended attribute entry      |
+| Type                           | Description                   |
+| ------------------------------ | ----------------------------- |
+| [Path](path.md)                | Filesystem path object        |
+| [Attrs](attrs.md)              | Filesystem attributes         |
+| [Metadata](metadata.md)        | Immutable filesystem metadata |
+| [DirEntry](direntry.md)        | Directory entry object        |
+| [XattrEntry](xattr-entry.md)   | Extended attribute entry      |
+| [StreamEntry](stream-entry.md) | Alternate data stream entry   |
 
 ## Functions
 
@@ -338,6 +339,29 @@ case from the requested name.
 ```
 for attr = xattrs "data.txt"
   echo $attr.name
+```
+
+### `streams path :follow = true`
+
+Lists alternate data streams for the given path.
+
+This is only supported on Windows.
+
+**Parameters:**
+
+| Name     | Type                                      | Description                           |
+| -------- | ----------------------------------------- | ------------------------------------- |
+| `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to query                         |
+| `follow` | [`bool`](../std/bool.md)                  | If `false`, does not follow a symlink |
+
+**Returns:** iterator of [`StreamEntry`](stream-entry.md)
+
+```
+let path = Path data.txt
+open $path r do |file|
+  for stream = file.streams()
+    echo "$(stream.name) $(stream.type)"
+    echo (path / stream)
 ```
 
 ### `xattr path name :namespace? :follow = true`

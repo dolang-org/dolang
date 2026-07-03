@@ -20,7 +20,7 @@ use tokio::{
 
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
-    fs::{metadata::create_metadata, read_all, read_into_spare, xattr},
+    fs::{metadata::create_metadata, read_all, read_into_spare, stream, xattr},
     global::Global,
     util,
 };
@@ -642,6 +642,19 @@ impl<'v> Object<'v> for File<'v> {
                 };
                 Output::set(strand, out, value.as_slice());
                 Ok(())
+            })
+            .method("streams", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let global = this.annex().global;
+                let entries = {
+                    let mut borrow = this.borrow_mut(strand)?;
+                    let file = borrow
+                        .file
+                        .as_mut()
+                        .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+                    file.try_clone().await.into_sys(strand)?
+                };
+                stream::file_list(strand, global, &entries, out).await
             })
             .method("set_xattr", async move |this, strand, args, _out| {
                 let ([name, value], []) = unpack!(strand, args, 2, 0)?;

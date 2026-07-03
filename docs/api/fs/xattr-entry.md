@@ -25,7 +25,7 @@ Linux extended attribute namespace, such as `user`.
 
 ```
 for attr = xattrs "data.txt" namespace: :any:
-  echo "$attr.namespace:$attr.name"
+  echo "$(attr.namespace):$(attr.name)"
 ```
 
 ### Windows

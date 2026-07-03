@@ -365,6 +365,14 @@ pub struct XattrEntry {
     pub flags: Option<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamEntry {
+    pub name: String,
+    pub r#type: String,
+    pub size: u64,
+    pub alloc_size: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirEntry {
     file_name: OsString,
@@ -473,6 +481,7 @@ pub trait Vfs {
         name: &str,
         namespace: Option<&str>,
     ) -> Result<Vec<u8>, io::Error>;
+    async fn file_streams(&self, file: &fs::File) -> Result<Vec<StreamEntry>, io::Error>;
     async fn file_set_xattr(
         &self,
         file: &fs::File,
@@ -514,6 +523,11 @@ pub trait Vfs {
         namespace: Option<&str>,
         follow: bool,
     ) -> Result<(), io::Error>;
+    async fn streams(
+        &self,
+        path: impl AsRef<Path>,
+        follow: bool,
+    ) -> Result<Vec<StreamEntry>, io::Error>;
 
     async fn remove(
         &self,
@@ -1300,6 +1314,20 @@ impl Vfs for ClientOrDirect {
         }
     }
 
+    async fn file_streams(&self, file: &fs::File) -> Result<Vec<StreamEntry>, io::Error> {
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.file_streams(file).await,
+                Self::Direct(direct) => direct.file_streams(file).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.file_streams(file).await
+        }
+    }
+
     async fn file_set_xattr(
         &self,
         file: &fs::File,
@@ -1356,6 +1384,25 @@ impl Vfs for ClientOrDirect {
         #[cfg(not(unix))]
         {
             self.0.xattrs(&path, namespace, follow).await
+        }
+    }
+
+    async fn streams(
+        &self,
+        path: impl AsRef<Path>,
+        follow: bool,
+    ) -> Result<Vec<StreamEntry>, io::Error> {
+        let path = path.as_ref().to_path_buf();
+        #[cfg(unix)]
+        {
+            match self {
+                Self::Client(client) => client.streams(&path, follow).await,
+                Self::Direct(direct) => direct.streams(&path, follow).await,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.0.streams(&path, follow).await
         }
     }
 

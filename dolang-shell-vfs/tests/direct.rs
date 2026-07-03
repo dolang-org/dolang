@@ -210,6 +210,36 @@ async fn direct_windows_attrs() {
     assert_eq!(attrs.compressed, Some(false));
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn direct_windows_streams() {
+    if is_wine() {
+        return;
+    }
+
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("streams.txt");
+    let stream_path = dir.path().join("streams.txt:zone");
+    tokio::fs::write(&path, "base").await.unwrap();
+    tokio::fs::write(&stream_path, "stream").await.unwrap();
+
+    let file = direct.open_options().read(true).open(&path).await.unwrap();
+    let streams = direct.file_streams(&file).await.unwrap();
+    assert!(streams.iter().any(|entry| {
+        entry.name.is_empty()
+            && entry.r#type == "DATA"
+            && entry.size == 4
+            && entry.alloc_size >= entry.size
+    }));
+    assert!(streams.iter().any(|entry| {
+        entry.name == "zone"
+            && entry.r#type == "DATA"
+            && entry.size == 6
+            && entry.alloc_size >= entry.size
+    }));
+}
+
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn direct_linux_attrs() {

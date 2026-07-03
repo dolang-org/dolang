@@ -21,7 +21,7 @@ use tokio_unix_ipc::{Receiver, Sender, serde::Handle};
 
 use crate::{
     Attrs, Child, ChownIdentity, Command, LockedSender, Metadata, Permissions, PipeRecv, PipeSend,
-    ReadDir, Vfs, WellKnownPath, XattrEntry,
+    ReadDir, StreamEntry, Vfs, WellKnownPath, XattrEntry,
     direct::Direct,
     protocol::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
@@ -749,6 +749,10 @@ impl Vfs for Client {
         self.direct.file_xattr(file, name, namespace).await
     }
 
+    async fn file_streams(&self, file: &File) -> Result<Vec<StreamEntry>, io::Error> {
+        self.direct.file_streams(file).await
+    }
+
     async fn file_set_xattr(
         &self,
         file: &File,
@@ -796,6 +800,14 @@ impl Vfs for Client {
             }
             ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
         }
+    }
+
+    async fn streams(
+        &self,
+        path: impl AsRef<Path>,
+        follow: bool,
+    ) -> Result<Vec<StreamEntry>, io::Error> {
+        self.direct.streams(path, follow).await
     }
 
     async fn xattr(

@@ -1,7 +1,9 @@
 import fs:
   - open
   - create_dir
+  - remove
   - symlink
+  - streams
   - with_temp_dir
 
 import
@@ -70,7 +72,7 @@ with_and_without_agent "Path components absolute path" do with_temp_dir do |dir|
   assert_eq $parts[(parts.len - 2)] "subdir"
   assert_eq $parts[(parts.len - 1)] "file.txt"
 
-if (sys.os_info().family == :windows:)
+if (sys.os_info().family == :windows: && !sys.os_info().is_wine)
   with_and_without_agent "Path alternate data stream I/O" do with_temp_dir do |dir|
     let base = (dir / "ads.txt")
     let stream = (dir / "ads.txt:zone")
@@ -89,3 +91,85 @@ if (sys.os_info().family == :windows:)
     let parsed = Path $stream
     assert_eq $parsed.name "ads.txt"
     assert_eq $parsed.stream_name "zone"
+
+  with_and_without_agent "Path alternate data stream enumeration" do with_temp_dir do |dir|
+    let base = (dir / "ads.txt")
+    let stream = (dir / "ads.txt:zone")
+
+    base.write "base"
+    stream.write "stream"
+
+    let saw_base = false
+    let saw_named = false
+    let file_entry = nil
+
+    for entry = streams $base
+      if (entry.name == "")
+        assert_eq $entry.type "DATA"
+        let path = (base / entry)
+        assert_eq $path.name "ads.txt"
+        assert_eq $path.stream_name ""
+        assert_eq $path.stream_type "DATA"
+        assert_eq $path.read() "base"
+        saw_base = true
+      else if (entry.name == "zone")
+        assert_eq $entry.type "DATA"
+        let path = (base / entry)
+        assert_eq $path.name "ads.txt"
+        assert_eq $path.stream_name "zone"
+        assert_eq $path.stream_type "DATA"
+        assert_eq $path.read() "stream"
+        file_entry = entry
+        saw_named = true
+
+    assert $saw_base
+    assert $saw_named
+    assert (file_entry != nil)
+
+    let saw_file_named = false
+    open $base r do |file|
+      for entry = file.streams()
+        if (entry.name == "zone")
+          assert_eq ((base / entry).read()) "stream"
+          saw_file_named = true
+          break
+    assert $saw_file_named
+
+    let saw_path_named = false
+    for entry = base.streams()
+      if (entry.name == "zone")
+        assert (entry.alloc_size >= entry.size)
+        saw_path_named = true
+        break
+    assert $saw_path_named
+
+    remove (base / file_entry)
+    assert_eq $base.read() "base"
+    let missing = try
+      stream.read()
+      false
+    catch _err
+      true
+    assert $missing
+
+  with_and_without_agent "Directory alternate data stream enumeration" do with_temp_dir do |dir|
+    let base = (dir / "adsdir")
+    let stream = (dir / "adsdir:zone")
+    base.create_dir()
+
+    assert_eq [...(streams base)] []
+    assert_eq [...base.streams()] []
+
+    stream.write "stream"
+
+    let entries = [...(streams base)]
+    assert_eq $entries.len 1
+    assert_eq $entries[0].name "zone"
+    assert_eq $entries[0].type "DATA"
+    let path = (base / entries[0])
+    assert_eq $path.name "adsdir"
+    assert_eq $path.stream_name "zone"
+    assert_eq $path.stream_type "DATA"
+    assert_eq $path.read() "stream"
+else if (sys.os_info().family == :windows: && sys.os_info().is_wine)
+  log "skipping alternate data stream tests under wine"
