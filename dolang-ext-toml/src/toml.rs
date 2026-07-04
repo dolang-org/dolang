@@ -13,7 +13,7 @@ use serde::{
 
 use dolang::runtime::{
     Output, Slot, Strand, Value,
-    error::{Error, ResultExt},
+    error::Error,
     unpack,
     value::{Empty, View},
     vm::Builder,
@@ -435,11 +435,16 @@ fn parse<'v, 's>(
     out: Slot<'v, '_>,
 ) -> Result<(), Error<'v, 's>> {
     if let Ok(de) = toml::de::Deserializer::parse(src) {
-        return Seed(strand, out).deserialize(de).into_do(strand);
+        return Seed(strand, out)
+            .deserialize(de)
+            .map_err(|e| Error::value(strand, e.to_string()));
     }
 
-    let de = toml::de::ValueDeserializer::parse(src).into_do(strand)?;
-    Seed(strand, out).deserialize(de).into_do(strand)
+    let de =
+        toml::de::ValueDeserializer::parse(src).map_err(|e| Error::value(strand, e.to_string()))?;
+    Seed(strand, out)
+        .deserialize(de)
+        .map_err(|e| Error::value(strand, e.to_string()))
 }
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
@@ -455,15 +460,26 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 value: &arg,
             };
 
-            let dst = if as_document {
+            let res = if as_document {
                 toml::to_string(&value)
             } else {
                 let mut dst = String::new();
                 Serialize::serialize(&value, toml::ser::ValueSerializer::new(&mut dst))
                     .map(|_| ())
                     .map(|_| dst)
-            }
-            .into_do(strand)?;
+            };
+            let dst = match res {
+                Ok(dst) => dst,
+                Err(err) => {
+                    let msg = err.to_string();
+                    return Err(match msg.as_ref() {
+                        "nil values are not TOML representable" | "unsupported TOML type" => {
+                            Error::type_error(strand, msg)
+                        }
+                        _ => Error::value(strand, msg),
+                    });
+                }
+            };
 
             Output::set(strand, out, dst.as_str());
             Ok(())
