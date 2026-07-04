@@ -818,9 +818,6 @@ name = "dolang-ext-regex"
 version = "0.1.0"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
  "regex",
 ]
 

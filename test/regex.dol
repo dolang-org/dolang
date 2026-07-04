@@ -1,0 +1,122 @@
+import regex:
+  - Regex
+import test:
+  - assert_eq
+  - test
+
+#[test]
+def compile_match_and_find()
+  let date_pattern = Regex r"(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})"
+  let caps = date_pattern.match "2024-03-15"
+
+  assert_eq (str caps[0]) "2024-03-15"
+  assert_eq (str caps[1]) "2024"
+  assert_eq (str caps["year"]) "2024"
+  assert_eq (str caps[2]) "03"
+  assert_eq (str caps["month"]) "03"
+  assert_eq (str caps[3]) "15"
+  assert_eq (str caps["day"]) "15"
+
+  let no_match = date_pattern.match "not a date"
+  assert_eq $no_match nil
+
+  let text = "Dates: 2024-01-01, 2024-02-02, 2024-03-03"
+  let matches = [...date_pattern.find text]
+  assert_eq $matches.len 3
+  assert_eq (str matches[0]) "2024-01-01"
+  assert_eq (str matches[1]) "2024-02-02"
+  assert_eq (str matches[2]) "2024-03-03"
+
+#[test]
+def split_variants()
+  let re = Regex r"[,\s]+"
+  assert_eq ([...re.split "abc, def, ghi"]) ["abc", "def", "ghi"]
+  assert_eq ([...re.split "abcdefghi"]) ["abcdefghi"]
+
+  assert_eq ([...re.split "abc, def, ghi, jkl" limit: 1]) ["abc", "def, ghi, jkl"]
+  assert_eq ([...re.split "abc, def, ghi, jkl" limit: 2]) ["abc", "def", "ghi, jkl"]
+
+  assert_eq ([...re.split "abc, def, ghi, jkl" limit: -1]) ["abc, def, ghi", "jkl"]
+  assert_eq ([...re.split "abc, def, ghi, jkl" limit: -2]) ["abc, def", "ghi", "jkl"]
+
+  assert_eq ([...re.rsplit "abc, def, ghi"]) ["ghi", "def", "abc"]
+  assert_eq ([...re.rsplit "abc, def, ghi, jkl" limit: 1]) ["jkl", "abc, def, ghi"]
+  assert_eq ([...re.rsplit "abc, def, ghi, jkl" limit: 2]) ["jkl", "ghi", "abc, def"]
+  assert_eq ([...re.rsplit "abc, def, ghi, jkl" limit: -1]) ["def, ghi, jkl", "abc"]
+  assert_eq ([...re.rsplit "abc, def, ghi, jkl" limit: -2]) ["ghi, jkl", "def", "abc"]
+
+#[test]
+def split_delimiter_edges()
+  let re = Regex r","
+  assert_eq ([...re.split ""]) [""]
+  assert_eq ([...re.split "a,,b"]) ["a", "", "b"]
+
+#[test]
+def split_iter_unpack()
+  let re = Regex r"\s+"
+  let collected =
+    for part = re.split "hello world foo"
+      - $part
+  assert_eq $collected ["hello", "world", "foo"]
+
+  let first ...rest = re.split "a b c d"
+  assert_eq $first "a"
+  assert_eq ([...rest]) ["b", "c", "d"]
+
+  let a b c = re.split "x y z"
+  assert_eq $a "x"
+  assert_eq $b "y"
+  assert_eq $c "z"
+
+#[test]
+def split_unpack_atomic()
+  let re = Regex r"\s+"
+
+  let failed = try
+    let _a _b = re.split "x y z"
+    false
+  catch _
+    true
+  assert_eq $failed true
+
+  let iter = re.split "a b c d"
+  failed = try
+    let _x _y = iter
+    false
+  catch _
+    true
+  assert_eq $failed true
+  assert_eq ([...iter]) ["a", "b", "c", "d"]
+
+  failed = try
+    let _a _b _c = re.split "x y"
+    false
+  catch _
+    true
+  assert_eq $failed true
+
+#[test]
+def replace()
+  let re = Regex r"\d+"
+  assert_eq (re.replace "abc 123 def 456" "X") "abc X def X"
+  assert_eq (re.replace "abc 123 def 456 ghi 789" "X" limit: 1) "abc X def 456 ghi 789"
+  assert_eq (re.replace "abc 123 def 456 ghi 789" "X" limit: 2) "abc X def X ghi 789"
+  assert_eq (re.replace "abc 123 def 456" "X" limit: 0) "abc 123 def 456"
+  assert_eq (re.replace "abc def" "X") "abc def"
+
+  let date_re = Regex r"(\d{4})-(\d{2})-(\d{2})"
+  assert_eq (date_re.replace "date: 2024-03-15" r"$2/$3/$1") "date: 03/15/2024"
+
+  let named_re = Regex r"(?<first>\w+)\s+(?<last>\w+)"
+  assert_eq (named_re.replace "John Smith" r"${last}, ${first}") "Smith, John"
+
+  assert_eq (re.replace "price: 42" r"$$$0") r"price: $42"
+
+  let result = re.replace "abc 123 def 456" do |caps|
+    let n = int (str caps[0])
+    str (n * 2)
+  assert_eq $result "abc 246 def 912"
+
+  result = re.replace "abc 123 def 456 ghi 789" (do |_| "X") limit: 2
+  assert_eq $result "abc X def X ghi 789"
+  assert_eq (re.replace "" "X") ""
