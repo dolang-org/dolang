@@ -148,7 +148,7 @@ def with_mkdocs spec func
     $func
 
 def cargo_test spec rest
-  spec.cargo_vfs test ...rest
+  spec.cargo test ...rest
 
 def shell_test spec tests
   env DOLANG_MODULE_PATH: testlib do

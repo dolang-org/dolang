@@ -76,20 +76,14 @@ jobs:
           sudo apt update
           sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin llvm libclang-dev
 
-      - name: Run cargo tests (Unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          cargo build --bin dolang-shell-vfs
-          env DOLANG_SHELL_VFS="${{ github.workspace }}/target/debug/dolang-shell-vfs" cargo test
-
-      - name: Run cargo tests (Windows)
-        if: matrix.os == 'windows-latest'
+      - name: Run cargo tests
         run: |
           cargo test
 
       - name: Run integration tests (Unix)
         if: matrix.os != 'windows-latest'
         run: |
+          cargo build --bin dolang-shell-vfs
           env \
             DOLANG_SHELL_VFS="${{ github.workspace }}/target/debug/dolang-shell-vfs" \
             DOLANG_MODULE_PATH="${{ github.workspace }}/testlib" \
