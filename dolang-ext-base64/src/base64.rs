@@ -1,12 +1,6 @@
 use ::base64::{Engine as _, engine::general_purpose::STANDARD};
 
-use dolang::runtime::{
-    Output,
-    error::{Error, ResultExt},
-    unpack,
-    value::View,
-    vm::Builder,
-};
+use dolang::runtime::{Output, error::Error, unpack, value::View, vm::Builder};
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     builder
@@ -26,7 +20,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             let decoded = match arg.view(strand.vm()) {
                 View::Str(str) => strand
                     .access(|access| STANDARD.decode(str.as_str(access)))
-                    .into_do(strand)?,
+                    .map_err(|e| Error::value(strand, e.to_string()))?,
                 _ => return Err(Error::type_error(strand, "expected str")),
             };
             Output::set(strand, out, decoded.as_slice());
