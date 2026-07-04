@@ -2132,13 +2132,13 @@ impl Direct {
     }
 
     #[cfg(unix)]
-    async fn create_symlink(src: &Path, dst: &Path) -> io::Result<()> {
+    async fn create_symlink(_cwd: &Path, src: &Path, dst: &Path) -> io::Result<()> {
         fs::symlink(src, dst).await
     }
 
     #[cfg(windows)]
-    async fn create_symlink(src: &Path, dst: &Path) -> io::Result<()> {
-        let metadata = fs::metadata(src).await?;
+    async fn create_symlink(cwd: &Path, src: &Path, dst: &Path) -> io::Result<()> {
+        let metadata = fs::metadata(cwd.join(src)).await?;
         if metadata.is_dir() {
             Self::create_symlink_dir(src, dst).await
         } else {
@@ -2168,7 +2168,8 @@ impl Direct {
 
     async fn copy_symlink(src: &Path, dst: &Path) -> io::Result<()> {
         let target = fs::read_link(src).await?;
-        Self::create_symlink(&target, dst).await
+        // FIXME: this won't work on Windows
+        Self::create_symlink(Path::new(""), &target, dst).await
     }
 
     async fn copy_local(from: &Path, to: &Path, all: bool) -> io::Result<()> {
@@ -2822,8 +2823,13 @@ impl Vfs for Direct {
         Self::move_local(from.as_ref(), to.as_ref(), all).await
     }
 
-    async fn symlink(&self, src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), io::Error> {
-        Self::create_symlink(src.as_ref(), dst.as_ref()).await
+    async fn symlink(
+        &self,
+        cwd: impl AsRef<Path>,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+    ) -> Result<(), io::Error> {
+        Self::create_symlink(cwd.as_ref(), src.as_ref(), dst.as_ref()).await
     }
 
     async fn hard_link(

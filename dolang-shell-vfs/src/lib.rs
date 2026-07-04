@@ -691,7 +691,12 @@ pub trait Vfs {
         to: impl AsRef<Path>,
         all: bool,
     ) -> Result<(), io::Error>;
-    async fn symlink(&self, src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), io::Error>;
+    async fn symlink(
+        &self,
+        cwd: impl AsRef<Path>,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+    ) -> Result<(), io::Error>;
     async fn hard_link(
         &self,
         src: impl AsRef<Path>,
@@ -1766,17 +1771,22 @@ impl Vfs for ClientOrDirect {
         }
     }
 
-    async fn symlink(&self, src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), io::Error> {
+    async fn symlink(
+        &self,
+        cwd: impl AsRef<Path>,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+    ) -> Result<(), io::Error> {
         #[cfg(unix)]
         {
             match self {
-                Self::Client(client) => client.symlink(src, dst).await,
-                Self::Direct(direct) => direct.symlink(src, dst).await,
+                Self::Client(client) => client.symlink(cwd, src, dst).await,
+                Self::Direct(direct) => direct.symlink(cwd, src, dst).await,
             }
         }
         #[cfg(not(unix))]
         {
-            self.0.symlink(src, dst).await
+            self.0.symlink(cwd, src, dst).await
         }
     }
 

@@ -1124,7 +1124,12 @@ impl Vfs for Client {
         }
     }
 
-    async fn symlink(&self, src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), io::Error> {
+    async fn symlink(
+        &self,
+        _cwd: impl AsRef<Path>,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+    ) -> Result<(), io::Error> {
         let mut state = self.inner.state.lock().await;
         match &mut *state {
             ClientState::Alive(alive) => {
@@ -1177,7 +1182,7 @@ impl Vfs for Client {
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
     ) -> Result<(), io::Error> {
-        self.symlink(src, dst).await
+        self.symlink(Path::new(""), src, dst).await
     }
 
     async fn symlink_file(
@@ -1185,7 +1190,7 @@ impl Vfs for Client {
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
     ) -> Result<(), io::Error> {
-        self.symlink(src, dst).await
+        self.symlink(Path::new(""), src, dst).await
     }
 
     async fn symlink_metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {

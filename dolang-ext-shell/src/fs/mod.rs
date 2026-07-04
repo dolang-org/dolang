@@ -350,10 +350,10 @@ async fn symlink<'v, 's>(
     dst: &StdPath,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let src_path = local.cwd().as_ref().join(src);
-    let dst_path = local.cwd().as_ref().join(dst);
+    let cwd = local.cwd().as_ref().to_owned();
+    let dst = cwd.join(dst);
     let vfs = local.vfs();
-    vfs.symlink(&src_path, &dst_path).await.into_sys(strand)?;
+    vfs.symlink(&cwd, src, &dst).await.into_sys(strand)?;
     Ok(())
 }
 
@@ -378,12 +378,9 @@ async fn symlink_dir<'v, 's>(
     dst: &StdPath,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let src_path = local.cwd().as_ref().join(src);
-    let dst_path = local.cwd().as_ref().join(dst);
+    let dst = local.cwd().as_ref().join(dst);
     let vfs = local.vfs();
-    vfs.symlink_dir(&src_path, &dst_path)
-        .await
-        .into_sys(strand)?;
+    vfs.symlink_dir(src, &dst).await.into_sys(strand)?;
     Ok(())
 }
 
@@ -394,12 +391,9 @@ async fn symlink_file<'v, 's>(
     dst: &StdPath,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
-    let src_path = local.cwd().as_ref().join(src);
-    let dst_path = local.cwd().as_ref().join(dst);
+    let dst = local.cwd().as_ref().join(dst);
     let vfs = local.vfs();
-    vfs.symlink_file(&src_path, &dst_path)
-        .await
-        .into_sys(strand)?;
+    vfs.symlink_file(src, &dst).await.into_sys(strand)?;
     Ok(())
 }
 

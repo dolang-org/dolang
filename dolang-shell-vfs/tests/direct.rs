@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::io;
+use std::path::Path;
 
 use dolang_shell_vfs::{Child, Command, Direct, FileType, OpenOptions, Vfs};
 use tempfile::tempdir;
@@ -84,7 +85,7 @@ async fn direct_symlink_metadata_and_read_link() {
     let link = dir.path().join("link.txt");
     tokio::fs::write(&target, "hello").await.unwrap();
 
-    direct.symlink(&target, &link).await.unwrap();
+    direct.symlink(Path::new(""), &target, &link).await.unwrap();
 
     let metadata = direct.symlink_metadata(&link).await.unwrap();
     assert_eq!(metadata.file_type, FileType::Symlink);
