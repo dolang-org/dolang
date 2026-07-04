@@ -248,6 +248,10 @@ fn clone_local_root<'v, 's>(
 ) -> Slot<'v, 's> {
     strand.with_slots_sync(|strand, [mut copied, mut key, mut value]| {
         let mut root = state.local_root.slot(strand);
+        if root.is_nil() {
+            Output::set(strand, &mut root, Empty::Dict);
+            return root;
+        }
         Output::set(strand, &mut copied, Empty::Dict);
         let prior_dict = root.as_dict(strand).expect("strand local store is a dict");
         let copied_dict = copied.as_dict(strand).unwrap();
