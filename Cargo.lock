@@ -813,9 +813,6 @@ name = "dolang-ext-rand"
 version = "0.1.0"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
  "rand",
 ]
 
