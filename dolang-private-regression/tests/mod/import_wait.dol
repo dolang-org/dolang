@@ -1,0 +1,6 @@
+import regression2:
+  - async
+
+async nil
+
+pub let value = 42

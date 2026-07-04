@@ -1,0 +1,12 @@
+import strand:
+  - fork
+
+let values = fork
+  do
+    import import_wait: mod
+    mod.value
+  do
+    import import_wait: mod
+    mod.value
+
+assert_eq $values [42, 42]

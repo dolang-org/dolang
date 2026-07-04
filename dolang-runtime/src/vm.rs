@@ -9,7 +9,7 @@ use std::{
     ops::{Deref, Range},
     pin::Pin,
     ptr::NonNull,
-    task::Poll,
+    task::{Poll, Waker},
 };
 
 use dolang_util::alias;
@@ -43,6 +43,24 @@ use crate::{
 
 /// A spawned background strand future.
 pub(crate) type SpawnedFuture<'v> = Pin<Box<dyn Future<Output = ()> + 'v>>;
+
+pub(crate) struct ImportGuard<'v> {
+    pub(crate) owner: *const StrandInner<'v>,
+    pub(crate) waiters: Vec<Waker>,
+}
+
+impl<'v> Drop for ImportGuard<'v> {
+    fn drop(&mut self) {
+        for waker in self.waiters.drain(..) {
+            waker.wake()
+        }
+    }
+}
+
+pub(crate) enum ImportCacheEntry<'v> {
+    Pending(ImportGuard<'v>),
+    Ready(Value<'v>),
+}
 
 pub(crate) struct ErasedState {
     ptr: NonNull<()>,
@@ -106,7 +124,7 @@ type ChannelFactory<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot
 /// - [`Strand`]
 pub struct Vm<'v> {
     pub(crate) loaded: RefCell<Vec<Weak<'v, Program<'v>>>>,
-    pub(crate) import_cache: RefCell<HashMap<String, Option<Value<'v>>>>,
+    pub(crate) import_cache: RefCell<HashMap<String, ImportCacheEntry<'v>>>,
     pub(crate) next_loaded_id: Cell<u32>,
     pub(crate) native_modules: HashMap<&'v str, Value<'v>>,
     pub(crate) importers: Vec<Value<'v>>,
