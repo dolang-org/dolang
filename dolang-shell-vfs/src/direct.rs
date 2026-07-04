@@ -2945,6 +2945,7 @@ impl Vfs for Direct {
                 paths.push(prefix.join(entry?.root_relative_paths().1));
             }
 
+            paths.sort();
             Ok(paths)
         })
         .await
