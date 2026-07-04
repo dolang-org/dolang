@@ -102,6 +102,7 @@ nav:
       - api/fs/attrs.md
       - api/fs/direntry.md
       - api/fs/file.md
+      - api/fs/fs-metadata.md
       - api/fs/metadata.md
       - api/fs/path.md
       - api/fs/stream-entry.md
