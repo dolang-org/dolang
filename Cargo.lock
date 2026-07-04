@@ -725,9 +725,6 @@ dependencies = [
  "console",
  "dolang",
  "dolang-ext-compile",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
 ]
 
 [[package]]
