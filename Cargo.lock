@@ -747,9 +747,6 @@ name = "dolang-ext-glob"
 version = "0.1.0"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
  "wax",
 ]
 

@@ -45,7 +45,10 @@ impl<'v, 'a> PatternArg<'v, 'a> {
         } else {
             match value.view(strand.vm()) {
                 View::Str(pattern) => Ok(Self::Str(pattern.into())),
-                _ => Err(Error::type_error(strand, "pattern: expected Glob or str")),
+                _ => Err(Error::type_error(
+                    strand,
+                    "pattern: expected `Glob` or `str`",
+                )),
             }
         }
     }
@@ -118,5 +121,5 @@ impl<'v> Object<'v> for Glob {
 }
 
 fn compile<'v, 's>(pattern: &str, strand: &mut Strand<'v, 's>) -> Result<'v, 's, WaxGlob<'static>> {
-    WaxGlob::from_str(pattern).into_do(strand)
+    WaxGlob::from_str(pattern).map_err(|e| Error::value(strand, e.to_string()))
 }
