@@ -98,7 +98,7 @@ pub async fn set_program<'v, 's>(
     Ok(())
 }
 
-pub fn as_path<'v, 'a>(vm: &Vm<'v>, value: &'a Value<'v>) -> Option<impl AsRef<path::Path> + 'a> {
+pub fn as_path<'v, 'a>(vm: &Vm<'v>, value: &'a Value<'v>) -> Option<PathBuf> {
     let global = vm.state::<Global<'v>>();
     if let Some(path) = global.types.path.downcast(value) {
         Some(path.annex().inner.clone())
