@@ -14,10 +14,3 @@ serde_json = "1"
 [dependencies.dolang]
 path = "../dolang"
 version = "0.1.0"
-
-[build-dependencies]
-dolang-private-build = { path = "../dolang-private-build", version = "0.1.0" }
-
-[dev-dependencies]
-dolang-private-test = { path = "../dolang-private-test", version = "0.1.0" }
-futures = "0.3"
