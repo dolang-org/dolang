@@ -711,9 +711,6 @@ name = "dolang-ext-compile"
 version = "0.1.0"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
 ]
 
 [[package]]

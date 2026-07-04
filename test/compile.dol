@@ -1,0 +1,66 @@
+import compile std
+  test:
+    - assert
+    - assert_eq
+    - assert_type
+    - test
+  std:
+    - hash
+
+#[test]
+def success()
+  let result = compile.compile "ok.dol" |-
+    def foo
+      1
+    foo()
+
+  assert_type $compile.Result $result
+  assert $result.ok
+  assert_type $bin $result.bytecode
+  assert_eq $result.diagnostics.len 0
+
+#[test]
+def warning()
+  let result = compile.compile "warn.dol" |-
+    def foo unused
+      nil
+    foo 1
+
+  assert $result.ok
+  assert_eq $result.diagnostics.len 1
+
+  let diag = result.diagnostics[0]
+  assert_type $compile.Diagnostic $diag
+  assert_eq $diag.severity :warning:
+  assert_type $compile.Span $diag.span
+  assert_type $compile.Pos $diag.span.start
+  assert_eq $diag.span.start $diag.span.start
+  assert_eq (hash diag.span.start) (hash diag.span.start)
+  assert (diag.span.start <= diag.span.end)
+  assert_eq $diag.span $diag.span
+  assert_eq (hash diag.span) (hash diag.span)
+  assert (diag.span <= diag.span)
+  assert_eq $diag.patches.len 0
+  assert_eq $diag.notes.len 0
+
+#[test]
+def error()
+  let result = compile.compile "bad.dol" "let =\n"
+  assert (!result.ok)
+  assert_eq $result.bytecode nil
+  assert (result.diagnostics.len > 0)
+
+  let diag = result.diagnostics[0]
+  assert_type $compile.Diagnostic $diag
+  assert_eq $diag.severity :error:
+  assert_type $compile.Span $diag.span
+  assert_type $compile.Pos $diag.span.start
+  assert_eq $diag.span.start $diag.span.start
+  assert_eq (hash diag.span.start) (hash diag.span.start)
+  assert (diag.span.start <= diag.span.end)
+  assert_eq $diag.span $diag.span
+  assert_eq (hash diag.span) (hash diag.span)
+  assert (diag.span <= diag.span)
+  assert_type $array $diag.annotations
+  assert_type $array $diag.notes
+  assert_type $array $diag.patches
