@@ -2,7 +2,6 @@ import sys
   fs:
     - Path
     - create_dir
-    - glob
     - remove
 
 let MIRI_CRATES =
@@ -135,7 +134,7 @@ class Spec
     self.cargo ...rest
 
 def default_shell_tests()
-  glob "test/*.dol"
+  ["test"]
 
 def mkdocs_build_tools spec
   spec.cargo build
@@ -152,7 +151,8 @@ def cargo_test spec rest
   spec.cargo_vfs test ...rest
 
 def shell_test spec tests
-  spec.cargo_vfs run --bin dolang -- -m test ...(tests || default_shell_tests())
+  env DOLANG_MODULE_PATH: testlib do
+    spec.cargo_vfs run --bin dolang -- -m test ...(tests || default_shell_tests())
 
 def both_test spec
   cargo_test $spec []
@@ -219,7 +219,7 @@ return
   "shell-test":
     help: run shell integration tests
     - arg: args
-      help: arguments to `dolang -m test` (default: test/*.dol)
+      help: arguments to `dolang -m test` (default: $default_shell_tests())
       collect: true
     do |args|
       shell_test (Spec args) $args.args
@@ -259,10 +259,14 @@ return
           --all-features
       spec.cargo llvm-cov clean
       spec.cargo llvm-cov --no-report run --ignore-run-fail --bin dolang-shell-vfs
-      env DO_EXPORT_DOT: $Path("dot").absolute() VFS: (spec.bin "dolang-shell-vfs") do
-        spec.cargo llvm-cov --no-report test
-        spec.cargo llvm-cov run --no-report --bin dolang -- -m test
-          ...default_shell_tests()
+      env
+        DO_EXPORT_DOT: $Path("dot").absolute()
+        VFS: (spec.bin "dolang-shell-vfs")
+        DOLANG_MODULE_PATH: testlib
+        do
+          spec.cargo llvm-cov --no-report test
+          spec.cargo llvm-cov run --no-report --bin dolang -- -m test
+            ...default_shell_tests()
 
   "cov-dump":
     help: write coverage summaries to disk

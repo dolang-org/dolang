@@ -1,0 +1,101 @@
+import agent
+  test:
+    - assert_eq
+    - assert_throws
+  std:
+    - RuntimeError
+  fs:
+    - open
+    - copy
+    - create_dir
+    - Path
+
+#[agent.test]
+def copy_file()
+  let src = Path "source.txt"
+  let dst = Path "dest.txt"
+
+  open $src w do |f|
+    f.write "hello world"
+
+  copy $src $dst
+
+  open $dst r do |f|
+    let contents = f.read()
+    assert_eq $contents "hello world"
+
+#[agent.test]
+def copy_over_existing_file()
+  let src = Path "source.txt"
+  let dst = Path "dest.txt"
+
+  open $src w do |f|
+    f.write "new content"
+
+  open $dst w do |f|
+    f.write "old content"
+
+  copy $src $dst
+
+  open $dst r do |f|
+    let contents = f.read()
+    assert_eq $contents "new content"
+
+#[agent.test]
+def copy_non_existent_file_fails()
+  let src = Path "nonexistent.txt"
+  let dst = Path "dest.txt"
+
+  assert_throws $RuntimeError do
+    copy $src $dst
+
+#[agent.test]
+def copy_directory_requires_all()
+  let src = Path "src"
+  create_dir $src
+
+  let dst = Path "dst"
+
+  assert_throws $RuntimeError do
+    copy $src $dst
+
+#[agent.test]
+def copy_directory_with_all()
+  let src = Path "src"
+  let nested = (src / "nested")
+  create_dir $nested all: true
+
+  open (nested / "file.txt") w do |f|
+    f.write "nested content"
+
+  let dst = Path "dst"
+  copy $src $dst all: true
+
+  open (dst / "nested" / "file.txt") r do |f|
+    let contents = f.read()
+    assert_eq $contents "nested content"
+
+#[agent.test]
+def path_copy_method()
+  let src = Path "source.txt"
+  let dst = Path "dest.txt"
+
+  open $src w do |f|
+    f.write "copied with method"
+
+  src.copy $dst
+
+  open $dst r do |f|
+    let contents = f.read()
+    assert_eq $contents "copied with method"
+
+#[agent.test]
+def copy_to_non_existent_directory_fails()
+  let src = Path "source.txt"
+  let dst = (Path "nonexistent" / "dest.txt")
+
+  open $src w do |f|
+    f.write "test"
+
+  assert_throws $RuntimeError do
+    copy $src $dst

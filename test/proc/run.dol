@@ -1,0 +1,210 @@
+import agent proc sys
+  test:
+    - assert
+    - assert_eq
+    - assert_type
+    - assert_throws
+    - skip
+  fs:
+    - Path
+  strand:
+    - pipeline
+    - each
+    - collect
+  polyfill:
+    - echo
+    - cat
+    - grep
+  std:
+    - nulliter
+    - RuntimeError
+  time:
+    - sleep
+  proc:
+    - io_mode
+
+let is_windows = (sys.os_info().family == :windows:)
+
+def yield()
+  sleep 0.01
+
+#[agent.test]
+def echo()
+  let res = sub $echo hello world
+  assert_eq $res "hello world"
+
+#[agent.test]
+def cat()
+  let path = Path "fixture.txt"
+  path.write "[package]\nname = fixture\n"
+  let content = sub $cat $path
+  assert (content.starts_with "[package]")
+
+#[agent.test]
+def grep()
+  let path = Path "fixture.toml"
+  path.write |
+    [package]
+    name = fixture
+    [dependencies]
+    [dependencies.tokio]
+    [dependencies.dolang]
+    [dependencies.dolang-shell-vfs]
+  let res = [...(sub grep "\\[depend" path).split("\n").map do |x| x.trim_end "\r"]
+  assert_eq $res $
+    - "[dependencies]"
+    - "[dependencies.tokio]"
+    - "[dependencies.dolang]"
+    - "[dependencies.dolang-shell-vfs]"
+
+#[agent.test]
+def pipeline()
+  let path = Path "fixture.toml"
+  path.write |
+    [package]
+    name = fixture
+    [dependencies]
+    [dependencies.tokio]
+    [dependencies.dolang]
+    [dependencies.dolang-shell-vfs]
+  let res = pipeline
+    do cat $path
+    do grep "\\[dependencies"
+    do each do |line| line.trim_end "\r\n"
+    do collect()
+
+  assert_eq $res $
+    - "[dependencies]"
+    - "[dependencies.tokio]"
+    - "[dependencies.dolang]"
+    - "[dependencies.dolang-shell-vfs]"
+
+#[agent.test]
+def path_selector()
+  let name = if is_windows
+    "cmd.exe"
+  else
+    "echo"
+  let path = run[name].which()
+  let prog = run[path]
+  strand.redirect output: $nulliter do
+    if is_windows
+      prog /c echo ok
+      run $path /c echo ok
+    else
+      prog ok
+      run $path ok
+
+#[agent.test]
+def pipe_deferred_recv_transition()
+  if is_windows
+    skip "windows polyfill not yet adequate"
+  let res = sub do pipeline
+    do echo "foo"
+    do
+      yield()
+      cat()
+  assert_eq $res foo
+
+#[agent.test]
+def pipe_receive_side_value_flush()
+  if is_windows
+    skip "windows polyfill not yet adequate"
+  let res = sub do pipeline
+    do strand.put "foo"
+    do
+      yield()
+      cat()
+  assert_eq $res foo
+
+#[agent.test]
+def pipe_send_side_value_flush()
+  if is_windows
+    skip "windows polyfill not yet adequate"
+  let res = sub do pipeline
+    do
+      strand.put "foo"
+      echo "foo"
+    do
+      yield()
+      cat()
+  assert_eq $res "foo\nfoo"
+
+#[agent.test]
+def pipeline_and_io_mode_use_matching_encodings()
+  if is_windows
+    skip "windows polyfill not yet adequate"
+  let out = []
+  io_mode :line: do cat stdin: ["foo", "bar"] stdout: $out
+  assert_eq $out ["foo", "bar"]
+
+  out = []
+  sub do io_mode :chunk: do cat stdin: ["foo", "bar"] stdout: $out
+  assert_eq $out [b"foobar"]
+
+  let res = pipeline
+    do io_mode :line: do strand.put "foo"
+    do cat()
+    do io_mode :chunk: do collect()
+  assert_eq $res [b"foo\n"]
+
+  let res = pipeline
+    do io_mode :chunk: do strand.put "foo"
+    do cat()
+    do io_mode :chunk: do collect()
+  assert_eq $res [b"foo"]
+
+  let res = pipeline
+    do echo foo
+    do io_mode :line: do collect()
+  assert_eq $res ["foo"]
+
+  let res = pipeline
+    do echo foo
+    do io_mode :chunk: do collect()
+  assert_eq $res [b"foo\n"]
+
+#[agent.test]
+def missing_program_yields_sys_error()
+  let err = assert_throws $sys.NotFoundError do
+    run __dolang_missing_program__
+  assert_type $sys.Error $err
+  if !is_windows
+    assert_eq $err.errno 2
+
+#[agent.test]
+def non_zero_exit_yields_proc_error()
+  let err = if is_windows
+    assert_throws $proc.Error do
+      run cmd /c exit 42
+  else
+    assert_throws $proc.Error do
+      run sh -c "exit 42"
+  assert_eq $err.rc 42
+  if !is_windows
+    assert_eq $err.signal nil
+  let expected = if is_windows
+    "cmd exited with status: 42"
+  else
+    "sh exited with status: 42"
+  assert_eq (str err) $expected
+
+#[agent.test]
+def signaled_process_yields_proc_error()
+  if is_windows
+    skip "requires Unix"
+  let err = assert_throws $proc.Error do
+    run sh -c r"kill -TERM $$"
+  assert_eq $err.rc nil
+  if !is_windows
+    assert_eq $err.signal 15
+  assert_eq (str err) "sh terminated by signal: 15"
+
+#[agent.test]
+def proc_error_is_caught_by_runtime_error()
+  if is_windows
+    assert_throws $RuntimeError do
+      run cmd /c exit 7
+  else
+    assert_throws $RuntimeError do
+      run sh -c "exit 7"

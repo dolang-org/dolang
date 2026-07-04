@@ -1,0 +1,86 @@
+import agent
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+  std:
+    - RuntimeError
+  fs:
+    - open
+    - rename
+    - create_dir
+    - Path
+
+#[agent.test]
+def rename_file()
+  let old_path = Path "old_name.txt"
+  let new_path = Path "new_name.txt"
+
+  open $old_path w do |f|
+    f.write "test content"
+
+  rename $old_path $new_path
+
+  assert !$old_path.exists()
+
+  open $new_path r do |f|
+    let contents = f.read()
+    assert_eq $contents "test content"
+
+#[agent.test]
+def rename_to_different_directory()
+  let subdir = Path "subdir"
+  create_dir $subdir
+
+  let old_path = Path "file.txt"
+  let new_path = (subdir / "moved.txt")
+
+  open $old_path w do |f|
+    f.write "moved content"
+
+  rename $old_path $new_path
+
+  assert !$old_path.exists()
+  open $new_path r do |f|
+    let contents = f.read()
+    assert_eq $contents "moved content"
+
+#[agent.test]
+def rename_over_existing_file()
+  let path1 = Path "file1.txt"
+  let path2 = Path "file2.txt"
+
+  open $path1 w do |f|
+    f.write "content1"
+
+  open $path2 w do |f|
+    f.write "content2"
+
+  rename $path1 $path2
+
+  assert !$path1.exists()
+  open $path2 r do |f|
+    let contents = f.read()
+    assert_eq $contents "content1"
+
+#[agent.test]
+def rename_non_existent_file_fails()
+  let src = Path "nonexistent.txt"
+  let dst = Path "dest.txt"
+
+  assert_throws $RuntimeError do
+    rename $src $dst
+
+#[agent.test]
+def path_rename_method()
+  let src = Path "source.txt"
+  let dst = Path "dest.txt"
+
+  open $src w do |f|
+    f.write "rename method"
+
+  src.rename $dst
+
+  assert !$src.exists()
+  open $dst r do |f|
+    assert_eq (f.read()) "rename method"

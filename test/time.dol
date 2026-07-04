@@ -1,0 +1,103 @@
+import strand
+  test:
+    - assert
+    - assert_eq
+    - assert_type
+    - assert_throws
+    - test
+  std:
+    - CanceledError
+    - RuntimeError
+    - TimedOutError
+  time:
+    - DateTime
+    - Duration
+    - sleep
+    - timeout
+
+#[test]
+def datetime_conversions()
+  let now = DateTime.now()
+  assert_type $DateTime $now
+  assert_type $float $now.unix_secs
+  assert_type $int $now.unix_nanos
+
+  assert $str(now).contains(":")
+  assert_eq (str now) (now.rfc3339())
+
+  let zero = (now - now)
+  assert_type $Duration $zero
+  assert_eq $zero.secs 0.0
+  assert_eq $zero.nanos 0
+  assert_eq (str zero) "0s"
+
+  let parsed = DateTime.parse_rfc3339("2024-01-02T03:04:05.123456789Z")
+  assert_type $DateTime $parsed
+  assert_eq (parsed.rfc3339()) "2024-01-02T03:04:05.123456789Z"
+  assert_eq $parsed.unix_nanos 1704164645123456789
+  assert_eq (str parsed) (parsed.rfc3339())
+
+  let offset = DateTime.parse_rfc3339("2024-01-02T03:04:05+02:30")
+  assert_eq (offset.rfc3339()) "2024-01-02T00:34:05Z"
+
+  let from_secs = DateTime.from_unix(1.25)
+  assert_eq (from_secs.rfc3339()) "1970-01-01T00:00:01.25Z"
+  assert_eq $from_secs.unix_nanos 1250000000
+
+  let from_nanos = DateTime.from_unix(nanos: -1)
+  assert_eq (from_nanos.rfc3339()) "1969-12-31T23:59:59.999999999Z"
+  assert_eq $from_nanos.unix_nanos -1
+
+  let combined = DateTime.from_unix(1, nanos: 250000000)
+  assert_eq (combined.rfc3339()) "1970-01-01T00:00:01.25Z"
+  assert_eq $combined.unix_nanos 1250000000
+
+  assert_throws $RuntimeError do
+    DateTime.parse_rfc3339("not-a-timestamp")
+
+#[test]
+def sleep_accepts_zero_and_rejects_negative()
+  sleep 0
+  sleep 0.0
+  sleep (DateTime.from_unix(1) - DateTime.from_unix(1))
+
+  assert_throws $RuntimeError do
+    sleep -1
+
+#[test]
+def timeout_handles_completion_and_cancellation()
+  assert_eq (timeout 0 do :expected:) :expected:
+
+  assert_throws $TimedOutError do
+    timeout 0.01 do
+      sleep 10000
+      false
+
+  let res = timeout 0.1 do
+    sleep 0
+    :expected:
+  assert_eq $res :expected:
+
+  let cleaned = false
+  let inner = try
+    timeout 0.1 do
+      let value = try
+        timeout 0 do
+          sleep 10000
+          :unexpected:
+      catch TimedOutError: _
+        :expected:
+      sleep 0
+      value
+  finally
+    sleep 0
+    cleaned = true
+  assert_eq $inner :expected:
+  assert $cleaned
+
+  assert_throws $CanceledError do
+    let worker = strand.spawn do
+      timeout 1 do
+        sleep 10
+    worker.cancel()
+    worker.join()

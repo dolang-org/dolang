@@ -845,8 +845,6 @@ version = "0.1.0"
 dependencies = [
  "bstr",
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
  "dolang-shell-vfs",
  "dunce",
  "futures",
@@ -855,7 +853,6 @@ dependencies = [
  "nix",
  "rand",
  "shlex 2.0.1",
- "tempfile",
  "time",
  "tokio",
  "windows-sys 0.61.2",

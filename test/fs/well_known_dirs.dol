@@ -1,0 +1,42 @@
+import agent fs sys
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - skip
+  fs:
+    - Path
+
+#[agent.test]
+def absolute_paths()
+  assert $fs.home_dir().is_absolute
+  assert $fs.cache_dir().is_absolute
+
+#[agent.test]
+def scoped_home_on_unix()
+  if (sys.os_info().family != :unix:)
+    skip "requires Unix"
+  env HOME: /tmp/dolang-home do
+    assert_eq (fs.home_dir()) (Path "/tmp/dolang-home")
+
+#[agent.test]
+def relative_home_rejected_on_unix()
+  if (sys.os_info().family != :unix:)
+    skip "requires Unix"
+  assert_throws $sys.Error do
+    env HOME: relative-home do
+      fs.home_dir()
+
+#[agent.test]
+def cache_dir_on_macos()
+  if (sys.os_info().os != :macos:)
+    skip "requires macOS"
+  env HOME: /tmp/dolang-home XDG_CACHE_HOME: /tmp/dolang-cache do
+    assert_eq (fs.cache_dir()) (Path "/tmp/dolang-home/Library/Caches")
+
+#[agent.test]
+def cache_dir_on_unix_non_macos()
+  if !(sys.os_info().family == :unix: && sys.os_info().os != :macos:)
+    skip "requires Unix outside macOS"
+  env HOME: /tmp/dolang-home XDG_CACHE_HOME: /tmp/dolang-cache do
+    assert_eq (fs.cache_dir()) (Path "/tmp/dolang-cache")

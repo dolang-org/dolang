@@ -1,5 +1,0 @@
-import polyfill:
- - echo
-
-let res = sub $echo hello world
-assert_eq $res "hello world"

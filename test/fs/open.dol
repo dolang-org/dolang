@@ -1,0 +1,30 @@
+import agent
+  test:
+    - assert_eq
+  fs:
+    - open
+
+#[agent.test]
+def basic_open()
+  let path = "open_basic.txt"
+  open $path w do |file|
+    file.write "hello"
+
+  # Test basic open without block
+  let f = open $path r
+  let debug_str = dbg $f
+  assert_eq $debug_str "<fs.File>"
+  f.close()
+
+#[agent.test]
+def block_scope()
+  let path = "open_block.txt"
+  open $path w do |file|
+    file.write "hello"
+
+  # Test block scope syntax
+  let result = open $path r do |file|
+    let s = dbg $file
+    assert_eq $s "<fs.File>"
+    "success"
+  assert_eq $result "success"

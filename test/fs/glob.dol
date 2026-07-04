@@ -1,0 +1,30 @@
+import agent
+  test:
+    - assert_eq
+    - fixture
+  fs:
+    - glob
+    - Path
+
+#[fixture]
+def populate block
+  Path("src").create_dir all: true
+  Path("src/lib.rs").write ""
+  Path("src/foo.rs").write ""
+  Path("build.rs").write ""
+  block()
+
+#[agent.test]
+#[populate]
+def basic()
+  assert_eq [...glob "*.rs"] [Path "build.rs"]
+
+#[agent.test]
+#[populate]
+def max_depth()
+  assert_eq [...glob "**/*.rs" max_depth: 1] [Path "build.rs"]
+
+#[agent.test]
+#[populate]
+def path()
+  assert_eq [...Path("src").glob("*.rs")] [Path "src/foo.rs", Path "src/lib.rs"]

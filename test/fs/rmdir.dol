@@ -1,0 +1,146 @@
+import agent
+  test:
+    - assert
+    - assert_throws
+  std:
+    - RuntimeError
+  fs:
+    - create_dir
+    - remove_dir
+    - open
+    - Path
+
+#[agent.test]
+def remove_dir_removes_empty_directory()
+  let to_remove = Path "to_remove"
+
+  create_dir $to_remove
+  assert $to_remove.exists()
+
+  remove_dir $to_remove
+  assert $!to_remove.exists()
+
+#[agent.test]
+def remove_dir_fails_on_non_empty_directory()
+  let parent = Path "parent"
+  let child = (parent / "file.txt")
+
+  create_dir $parent
+  open $child w do |f|
+    f.write "content"
+
+  assert_throws $RuntimeError do
+    remove_dir $parent
+
+  assert $parent.exists()
+
+#[agent.test]
+def remove_dir_all_removes_empty_directory_tree()
+  let parent = Path "parent"
+  let child_dir = (parent / "child" / "grandchild")
+
+  create_dir $child_dir all: true
+
+  assert $parent.exists()
+  assert $child_dir.exists()
+
+  remove_dir $parent all: true
+
+  assert $!parent.exists()
+
+#[agent.test]
+def remove_dir_ignores_missing_directory_when_requested()
+  let nonexistent = Path "does_not_exist"
+  remove_dir $nonexistent ignore: true
+
+#[agent.test]
+def remove_dir_free_function_is_variadic()
+  let first = Path "first"
+  let second = Path "second"
+  first.create_dir()
+  second.create_dir()
+  remove_dir $first $second
+  assert $!first.exists()
+  assert $!second.exists()
+
+#[agent.test]
+def path_remove_dir_method()
+  let path = Path "method_remove"
+
+  path.create_dir()
+  assert $path.exists()
+
+  path.remove_dir()
+  assert $!path.exists()
+
+#[agent.test]
+def remove_dir_all_fails_when_tree_contains_files()
+  let parent = Path "parent"
+  let child = (parent / "child")
+  let file = (parent / "file.txt")
+
+  child.create_dir all: true
+  file.write "test"
+
+  assert_throws $RuntimeError do
+    remove_dir $parent all: true
+
+  assert $parent.exists()
+  assert $file.exists()
+
+#[agent.test]
+def remove_dir_all_ignore_prunes_only_empty_branches()
+  let parent = Path "parent"
+  let keep = (parent / "keep")
+  let keep_child = (keep / "child")
+  let prune = (parent / "prune")
+  let prune_child = (prune / "child")
+
+  prune_child.create_dir all: true
+  keep_child.create_dir all: true
+  open (keep / "file.txt") w do |f|
+    f.write "keep me"
+
+  remove_dir $parent all: true ignore: true
+
+  assert $parent.exists()
+  assert $keep.exists()
+  assert $!keep_child.exists()
+  assert $!prune.exists()
+
+#[agent.test]
+def path_remove_dir_all()
+  let parent = Path "rmdir_all_test"
+  let child = (parent / "child")
+
+  child.create_dir all: true
+
+  assert $parent.exists()
+
+  parent.remove_dir all: true
+
+  assert $!parent.exists()
+
+#[agent.test]
+def path_remove_dir_ignore()
+  let path = Path "missing"
+  path.remove_dir ignore: true
+
+#[agent.test]
+def remove_dir_fails_on_non_existent_directory()
+  let nonexistent = Path "does_not_exist"
+
+  assert_throws $RuntimeError do
+    remove_dir $nonexistent
+
+#[agent.test]
+def remove_dir_fails_on_file()
+  let file_path = Path "a_file.txt"
+
+  open $file_path w do |f|
+    f.write "not a directory"
+
+  assert_throws $RuntimeError do
+    remove_dir $file_path
+
+  assert $file_path.exists()

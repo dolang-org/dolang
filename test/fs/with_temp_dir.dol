@@ -1,0 +1,164 @@
+import agent
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+  std:
+    - RuntimeError
+  fs:
+    - with_temp_dir
+    - create_dir
+    - open
+    - remove_dir
+    - Path
+
+#[agent.test]
+def with_temp_dir_creates_temp_directory()
+  let temp_path = nil
+
+  with_temp_dir do |dir|
+    temp_path = dir
+
+    # Directory should exist
+    assert $dir.exists()
+
+    # Should be a Path object
+    let test_file = (dir / "test.txt")
+    open $test_file w do |f|
+      f.write "in temp"
+
+    assert $test_file.exists()
+
+  # After block, directory should be cleaned up
+  assert $!temp_path.exists()
+
+#[agent.test]
+def with_temp_dir_cleans_up_files()
+  let temp_path = nil
+
+  with_temp_dir do |dir|
+    temp_path = dir
+
+    # Create multiple files and subdirectories
+    open (dir / "file1.txt") w do |f|
+      f.write "content1"
+
+    open (dir / "file2.txt") w do |f|
+      f.write "content2"
+
+    # Verify files exist
+    assert $(dir / "file1.txt").exists()
+    assert $(dir / "file2.txt").exists()
+
+  # Everything should be cleaned up
+  assert $!temp_path.exists()
+
+#[agent.test]
+def with_temp_dir_cleans_up_nested_directories()
+  let temp_path = nil
+
+  with_temp_dir do |dir|
+    temp_path = dir
+
+    # Create nested structure
+    let nested = (dir / "a" / "b" / "c")
+    create_dir $nested all: true
+
+    open (nested / "deep.txt") w do |f|
+      f.write "deep content"
+
+    assert $nested.exists()
+
+  # All cleaned up including nested dirs
+  assert $!temp_path.exists()
+
+#[agent.test]
+def with_temp_dir_returns_block_result()
+  let result = with_temp_dir do |_|
+    "success"
+
+  assert_eq $result "success"
+
+#[agent.test]
+def with_temp_dir_cleans_up_on_error()
+  let temp_path = nil
+
+  let err = assert_throws $RuntimeError do
+    with_temp_dir do |dir|
+      temp_path = dir
+      open (dir / "file.txt") w do |f|
+        f.write "content"
+      # Throw an error
+      throw RuntimeError "intentional error"
+  assert_eq (str err) "intentional error"
+
+  # Directory should still be cleaned up despite error
+  assert $!temp_path.exists()
+
+#[agent.test]
+def each_with_temp_dir_gets_unique_directory()
+  let paths = []
+
+  for _ = range end: 5
+    with_temp_dir do |dir|
+      paths.push (str dir)
+
+  # All paths should be unique
+  let unique = {}
+  for p = paths
+    unique[p] = nil
+  assert_eq $unique.len 5
+
+#[agent.test]
+def with_temp_dir_with_parent_creates_temp_in_custom_location()
+  let parent = Path "test_temp_parent"
+  let temp_path = nil
+
+  # Create the custom parent directory
+  create_dir $parent all: true
+
+  with_temp_dir :parent do |dir|
+    temp_path = dir
+
+    # Directory should exist
+    assert $dir.exists()
+
+    # Verify the temp dir is inside the custom parent
+    assert_eq $dir.parent.canonical() $parent.canonical()
+
+    # Should be able to write files
+    let test_file = (dir / "test.txt")
+    open $test_file w do |f|
+      f.write "in custom temp"
+
+    assert $test_file.exists()
+
+  # After block, temp directory should be cleaned up
+  assert $!temp_path.exists()
+
+  # But the parent should remain
+  assert $parent.exists()
+
+  # Clean up the parent we created
+  parent.remove_dir()
+
+#[agent.test]
+def with_temp_dir_parent_cleans_up_on_error()
+  let custom_parent = "./test_error_parent"
+  let temp_path = nil
+
+  create_dir $custom_parent all: true
+
+  let err = assert_throws $RuntimeError do
+    with_temp_dir parent: $custom_parent do |dir|
+      temp_path = dir
+      open (dir / "file.txt") w do |f|
+        f.write "content"
+      throw RuntimeError "intentional error"
+  assert_eq (str err) "intentional error"
+
+  # Directory should still be cleaned up despite error
+  assert $!temp_path.exists()
+
+  # Clean up
+  remove_dir $custom_parent

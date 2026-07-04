@@ -1,0 +1,100 @@
+import agent
+  test:
+    - assert
+    - assert_eq
+  fs:
+    - open
+    - symlink
+    - symlink_dir
+    - symlink_file
+    - create_dir
+    - Path
+
+#[agent.test]
+def symlink_file()
+  let target = Path "target.txt"
+  let link = Path "link.txt"
+
+  open $target w do |f|
+    f.write "symlink target"
+
+  symlink $target $link
+
+  assert $link.exists()
+
+  open $link r do |f|
+    let contents = f.read()
+    assert_eq $contents "symlink target"
+
+  let resolved = link.read_link()
+  assert_eq $resolved $target
+
+#[agent.test]
+def symlink_dir_creates_directory_symlink()
+  let target = Path "target_dir"
+  let link = Path "link_dir"
+
+  create_dir $target
+  open (target / "file.txt") w do |f|
+    f.write "in target dir"
+
+  symlink_dir $target $link
+
+  assert $link.exists()
+
+  open (link / "file.txt") r do |f|
+    let contents = f.read()
+    assert_eq $contents "in target dir"
+
+#[agent.test]
+def symlink_file_creates_file_symlink()
+  let target = Path "target.txt"
+  let link = Path "link.txt"
+
+  open $target w do |f|
+    f.write "file target"
+
+  symlink_file $target $link
+
+  assert $link.exists()
+  open $link r do |f|
+    let contents = f.read()
+    assert_eq $contents "file target"
+
+#[agent.test]
+def symlink_metadata_follows_by_default()
+  let target = Path "target.txt"
+  let link = Path "link.txt"
+
+  open $target w do |f|
+    f.write "test"
+
+  symlink $target $link
+
+  let meta = link.metadata()
+  assert_eq $meta.type :file:
+
+#[agent.test]
+def symlink_metadata_nofollow()
+  let target = Path "target.txt"
+  let link = Path "link.txt"
+
+  open $target w do |f|
+    f.write "test"
+
+  symlink $target $link
+
+  let meta = link.metadata(false)
+  assert_eq $meta.type :symlink:
+
+#[agent.test]
+def broken_symlink()
+  let target = Path "nonexistent.txt"
+  let link = Path "broken_link.txt"
+
+  symlink_file $target $link
+
+  assert !$target.exists()
+
+  let resolved = link.read_link()
+  assert_eq $resolved $target

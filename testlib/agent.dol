@@ -1,0 +1,46 @@
+import test: unittest
+  strand:
+    - pipeline
+  - sys
+  - fs
+
+let vfs_bin = nil
+let Vfs = nil
+
+if (sys.os_info().family != :windows:)
+  import shell:
+    Vfs: it
+  Vfs = it
+  vfs_bin = env.get DOLANG_SHELL_VFS
+  if !vfs_bin
+    throw "couldn't find dolang-shell-vfs in DOLANG_SHELL_VFS"
+
+def with_vfs block
+  fs.with_temp_dir do |dir|
+    dir.chmod 0o700
+    let socket = (dir / "socket")
+
+    pipeline
+      do run $vfs_bin $socket
+      do
+        strand.next()
+        let vfs = Vfs unix_socket: $socket
+        return vfs $block
+
+pub def test
+  :name = nil
+  func = nil
+do
+  if (func == nil)
+    return do |func| test :name $func
+  name = (name || str(func))
+  # Wrap func to run in temp directory since it will likely create files
+  let func = do fs.with_temp_dir do |dir| cd $dir $func
+  if (sys.os_info().family == :windows:)
+    # No VFS agent on Windows yet, so only run test once
+    unittest.test :name $func
+  else
+    # Register two versions of test
+    unittest.test name: "$(name)_client" do with_vfs $func
+    unittest.test name: "$(name)_direct" $func
+    func
