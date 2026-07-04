@@ -147,6 +147,7 @@ class Harness
     self.#with_timeout do load.run $compiled.bytecode
     let tests = collect_key.value
     collect_key.value = nil
+    tests = [...tests.iter().filter(do |test| self.#matches_filter path test[0])]
     self.#run_module $path $tests
 
   def report self
