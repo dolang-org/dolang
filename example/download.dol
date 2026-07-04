@@ -1,3 +1,4 @@
+#!/usr/bin/env -S dolang --strict
 import args progress http fs url strand
 
 def download client url
