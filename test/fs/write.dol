@@ -1,0 +1,159 @@
+import test:
+  - assert
+  - assert_eq
+  - assert_throws
+
+import fs:
+  - create_dir
+  - open
+  - read
+  - write
+  - remove
+  - Path
+
+import agent
+import std:
+  - RuntimeError
+
+#[agent.test]
+def write_and_read_back_text()
+    # Test writing text and reading it back
+    let test_path = "test_write_text.txt"
+
+    # Write text to file
+    open $test_path w do |f|
+      let written = f.write "Hello, World!"
+      assert_eq $written 13
+
+    # Read it back
+    open $test_path r do |f|
+      let contents = f.read()
+      assert_eq $contents "Hello, World!"
+
+    # Cleanup
+    remove $test_path
+
+#[agent.test]
+def write_binary_data()
+    # Test writing binary data using binary string literals
+    let test_path = "test_write_binary.bin"
+    let binary_data = b"Hello"
+
+    # Write binary data
+    open $test_path wb do |f|
+      let written = f.write $binary_data
+      assert (written > 0)
+
+    # Read it back in binary mode
+    open $test_path rb do |f|
+      let contents = f.read()
+      assert_eq $contents $binary_data
+
+    # Cleanup
+    remove $test_path
+
+#[agent.test]
+def write_to_file_opened_in_append_mode()
+    # Test appending to a file
+    let test_path = "test_append.txt"
+
+    # Write initial content
+    open $test_path w do |f|
+      f.write "First line"
+
+    # Append more content
+    open $test_path a do |f|
+      let written = f.write "\nSecond line"
+      assert (written > 0)
+
+    # Read all content
+    open $test_path r do |f|
+      let contents = f.read()
+      assert (contents.contains "First line")
+      assert (contents.contains "Second line")
+
+    # Cleanup
+    remove $test_path
+
+#[agent.test]
+def write_after_close_fails()
+    # Test that writing to a closed file fails
+    let test_path = "test_write_closed.txt"
+
+    open $test_path w do |f|
+      f.close()
+      assert_throws $RuntimeError do
+        f.write "should fail"
+
+    # Cleanup
+    remove $test_path
+
+#[agent.test]
+def remove_file()
+    # Test removing a file
+    let test_path = "test_remove.txt"
+
+    # Create a file first
+    open $test_path w do |f|
+      f.write "delete me"
+
+    # Remove the file
+    remove $test_path
+
+    # Verify file is gone by trying to read it (should fail)
+    assert_throws $RuntimeError do
+      open $test_path "r" do |_f|
+        false  # Should not reach here
+
+#[agent.test]
+def remove_non_existent_file_fails()
+    # Test that removing a non-existent file fails
+    let test_path = "test_remove_nonexistent.txt"
+
+    # Ensure file doesn't exist
+    assert_throws $RuntimeError do
+      remove $test_path
+
+#[agent.test]
+def remove_ignores_missing_path_when_requested()
+    remove "test_remove_ignore.txt" ignore: true
+
+#[agent.test]
+def remove_free_function_is_variadic()
+    write "test_remove_first.txt" "a"
+    write "test_remove_second.txt" "b"
+    remove "test_remove_first.txt" "test_remove_second.txt"
+    assert (!(Path "test_remove_first.txt").exists())
+    assert (!(Path "test_remove_second.txt").exists())
+
+#[agent.test]
+def remove_all_removes_directory_trees()
+    create_dir "test_remove_all/subdir" all: true
+    write "test_remove_all/subdir/file.txt" "hello"
+    remove "test_remove_all" all: true
+    assert (!(Path "test_remove_all").exists())
+
+#[agent.test]
+def fs_write_writes_and_truncates_text_file()
+    let test_path = "test_fs_write_text.txt"
+    assert_eq (write test_path "Hello from fs.write") 19
+    assert_eq (read test_path) "Hello from fs.write"
+    assert_eq (write (Path test_path) "short") 5
+    assert_eq ((Path test_path).read()) "short"
+    remove $test_path
+
+#[agent.test]
+def fs_write_writes_binary_data()
+    let test_path = "test_fs_write_binary.bin"
+    assert_eq (write test_path b"Hello") 5
+    assert_eq ((Path test_path).read "b") b"Hello"
+    remove $test_path
+
+#[agent.test]
+def path_remove_supports_all_and_ignore()
+    let dir = Path "test_path_remove"
+    (dir / "nested").create_dir all: true
+    write (dir / "nested" / "file.txt") "payload"
+    dir.remove all: true
+    assert (!dir.exists())
+    dir.remove ignore: true

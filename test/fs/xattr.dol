@@ -1,0 +1,100 @@
+import agent sys
+  test:
+    - assert
+    - assert_eq
+    - assert_type
+    - assert_throws
+    - skip
+  std:
+    - RuntimeError
+    - TypeError
+    - UnexpectedKeyError
+  fs:
+    - Path
+    - open
+    - set_xattr
+    - xattr
+    - xattrs
+    - write
+
+#[agent.test]
+def module_path_and_file_operations()
+  if (sys.os_info().os == :windows: && sys.os_info().is_wine)
+    skip "skipping Windows EA xattr operations under wine"
+  let path = Path "file.txt"
+  write $path "payload"
+
+  assert_throws $RuntimeError do
+    xattr $path "missing"
+
+  set_xattr $path "text" "å"
+  assert_type $bin (xattr path "text")
+  assert_eq (xattr path "text") b"\xc3\xa5"
+
+  path.set_xattr "path_method" b"path"
+  assert_eq (path.xattr "path_method") b"path"
+
+  open $path r+ do |file|
+    file.set_xattr "file_method" "file"
+    assert_eq (file.xattr "file_method") b"file"
+    let entries = [...file.xattrs().map(do |e| e.name.lower())]
+    assert $ entries.contains "file_method"
+
+  let entries = [...(xattrs path).map(do |e| e.name.lower())]
+  for e = ["text", "file_method", "path_method"]
+    assert $ entries.contains $e
+
+  path.remove_xattr "text"
+  assert_throws $RuntimeError do
+    xattr $path "text"
+
+#[agent.test]
+def linux_namespace_handling()
+  if (sys.os_info().os != :linux:)
+    skip "requires Linux"
+  let path = Path "file.txt"
+  write $path "payload"
+
+  set_xattr $path "explicit" b"value" namespace: "user"
+  assert_eq (xattr path "explicit" namespace: "user") b"value"
+
+  open $path r do |file|
+    let entries = file.xattrs namespace: :any:
+    let saw_explicit = false
+    for entry = entries
+      if (entry.name == "explicit")
+        assert_eq $entry.namespace "user"
+        saw_explicit = true
+        break
+    assert $saw_explicit
+
+  let entries = xattrs $path namespace: :any:
+  let saw_explicit = false
+  for entry = entries
+    if (entry.name == "explicit")
+      assert_eq $entry.namespace "user"
+      saw_explicit = true
+      break
+  assert $saw_explicit
+
+#[agent.test]
+def rejects_invalid_argument_types()
+  let path = Path "file.txt"
+  write $path "payload"
+
+  assert_throws $TypeError do set_xattr $path bad 1
+
+#[agent.test]
+def rejects_invalid_namespace_argument()
+  if ((sys.os_info().os == :windows:) && sys.os_info().is_wine)
+    skip "skipping Windows EA xattr validation setup under wine"
+  let path = Path "file.txt"
+  write $path "payload"
+
+  set_xattr $path "known" b"value"
+  let entry = nil
+  for item = xattrs $path
+    entry = item
+    break
+  assert (entry != nil)
+  assert_throws $UnexpectedKeyError do xattr $path $entry namespace: "user"

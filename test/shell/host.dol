@@ -1,0 +1,37 @@
+import test:
+  - assert_eq
+  - skip
+
+import sys
+
+if (sys.os_info().family == :windows:)
+  skip "requires Unix"
+
+import agent
+
+import shell:
+  - host
+
+let launch_cwd = cd()
+
+#[agent.test]
+def resets_context_to_defaults()
+  let original_cwd = cd()
+
+  # Change directory
+  cd /tmp
+  let changed_cwd = cd()
+  assert_eq (str changed_cwd) "/tmp"
+
+  # Use host function to reset to defaults
+  host do
+    let reset_cwd = cd()
+    # Should be back to original, not /tmp
+    assert_eq $reset_cwd $launch_cwd
+
+  # Verify we're back to changed state
+  let final_cwd = cd()
+  assert_eq (str final_cwd) "/tmp"
+
+  # Restore original directory
+  cd $original_cwd

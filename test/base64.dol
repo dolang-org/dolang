@@ -1,0 +1,48 @@
+import
+  base64:
+    - encode
+    - decode
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - test
+  std:
+    - TypeError
+    - ValueError
+
+#[test]
+def encode()
+  assert_eq (encode "") ""
+  assert_eq (encode "hello") "aGVsbG8="
+  assert_eq (encode b"hello") "aGVsbG8="
+  assert_eq (encode b"\x00\x01\x02\xff") "AAEC/w=="
+
+#[test]
+def decode()
+  assert_eq (decode "") b""
+  assert_eq (decode "aGVsbG8=") b"hello"
+  assert_eq (decode "AAEC/w==") b"\x00\x01\x02\xff"
+
+#[test]
+def round_trip()
+  assert_eq (decode $ encode "hello") b"hello"
+  assert_eq (decode $ encode b"hello") b"hello"
+
+#[test]
+def encode_type_error()
+  let err = assert_throws $TypeError do
+    encode 123
+  assert_eq (str err) "type error: expected str or bin"
+
+#[test]
+def decode_type_error()
+  let err = assert_throws $TypeError do
+    decode 123
+  assert_eq (str err) "type error: expected str"
+
+#[test]
+def decode_invalid()
+  let err = assert_throws $ValueError do
+    decode "%%%not base64%%%"
+  assert $ (str err).contains "Invalid"

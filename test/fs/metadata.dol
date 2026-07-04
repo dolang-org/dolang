@@ -1,0 +1,275 @@
+import sys agent
+  test:
+    - assert
+    - assert_eq
+    - assert_type
+    - assert_throws
+    - skip
+  std:
+    - RuntimeError
+  fs:
+    - Attrs
+    - FsMetadata
+    - Metadata
+    - Path
+    - attrs
+    - fs_metadata
+    - metadata
+    - open
+    - remove
+    - set_attrs
+  time:
+    - DateTime
+
+#[agent.test]
+def basic()
+  let test_path = "test_metadata.txt"
+
+  # Create test file with some content
+  open $test_path w do |f|
+    f.write "hello world"
+
+  # Get metadata
+  open $test_path r do |f|
+    let meta = f.metadata()
+    assert_type $Metadata $meta
+    assert_eq $meta.len 11
+    assert_eq $meta.type :file:
+    assert_type $DateTime $meta.modified
+    assert (meta.modified.unix_secs > 0.0)
+
+  # Cleanup
+  remove $test_path
+
+#[agent.test]
+def timestamps()
+  let test_path = "test_metadata_time.txt"
+
+  # Create test file
+  open $test_path w do |f|
+    f.write "timestamp test"
+
+  # Get metadata
+  open $test_path r do |f|
+    let meta = f.metadata()
+    assert_type $Metadata $meta
+    let modified = meta.modified
+    assert_type $DateTime $modified
+    assert (modified.unix_secs > 0.0)  # positive timestamp
+
+  # Cleanup
+  remove $test_path
+
+#[agent.test]
+def closed_fails()
+  let test_path = "test_metadata_closed.txt"
+
+  open $test_path w do |f|
+    f.write "test content"
+    f.close()
+    assert_throws $RuntimeError do
+      f.metadata()
+
+  remove $test_path
+
+#[agent.test]
+def unix_fields()
+  if (sys.os_info().family == :windows:)
+    skip "requires non-Windows"
+  let test_path = "test_metadata_unix.txt"
+
+  open $test_path w do |f|
+    f.write "unix metadata test"
+
+  open $test_path r do |f|
+    let meta = f.metadata()
+    assert_type $Metadata $meta
+    assert (meta.mode > 0)
+    assert (meta.dev >= 0)
+    assert (meta.ino >= 0)
+    assert (meta.nlink >= 1)
+    assert (meta.uid >= 0)
+    assert (meta.gid >= 0)
+    assert (meta.rdev >= 0)
+    assert (meta.blksize >= 0)
+    assert (meta.blocks >= 0)
+
+  remove $test_path
+
+#[agent.test]
+def windows_attrs()
+  if (sys.os_info().family != :windows:)
+    skip "requires Windows"
+  let test_path = "test_metadata_windows.txt"
+
+  open $test_path w do |f|
+    f.write "windows metadata test"
+
+  open $test_path r do |f|
+    let meta = f.metadata()
+    assert_type $Metadata $meta
+    assert_type $int $meta.win_attrs
+    assert_type $Attrs $meta.attrs
+    assert_type $int $meta.attrs.win_attrs
+    assert_type $bool $meta.attrs.readonly
+    assert_type $bool $meta.attrs.hidden
+    assert_type $bool $meta.attrs.system
+    assert_type $bool $meta.attrs.archive
+    assert_type $bool $meta.attrs.reparse_point
+    assert_type $bool $meta.attrs.compressed
+    assert_type $bool $meta.attrs.encrypted
+    assert_type $bool $meta.attrs.temporary
+    assert_type $bool $meta.attrs.offline
+    assert_type $bool $meta.attrs.not_content_indexed
+
+    let direct_attrs = attrs $test_path
+    let path_attrs = Path(test_path).attrs()
+    assert_type $Attrs $direct_attrs
+    assert_eq $direct_attrs.win_attrs $path_attrs.win_attrs
+
+    set_attrs $test_path readonly: true
+    let readonly_attrs = attrs $test_path
+    assert_eq $readonly_attrs.readonly true
+    Path(test_path).set_attrs readonly: false
+    let writable_attrs = Path(test_path).attrs()
+    assert_eq $writable_attrs.readonly false
+
+  if !sys.os_info().is_wine
+    set_attrs $test_path compressed: true
+    let compressed_attrs = attrs $test_path
+    assert_eq $compressed_attrs.compressed true
+    Path(test_path).set_attrs compressed: false
+    let uncompressed_attrs = Path(test_path).attrs()
+    assert_eq $uncompressed_attrs.compressed false
+
+  remove $test_path
+
+#[agent.test]
+def linux_attrs()
+  if (sys.os_info().os != :linux:)
+    skip "requires Linux"
+  let test_path = "test_metadata_linux_attrs.txt"
+  open $test_path w do |f|
+    f.write "linux attrs test"
+
+  let direct_attrs = attrs $test_path
+  assert_type $Attrs $direct_attrs
+  assert_type $int $direct_attrs.unix_flags
+  assert_type $bool $direct_attrs.immutable
+  assert_type $bool $direct_attrs.append_only
+  assert_type $bool $direct_attrs.no_dump
+  assert_type $bool $direct_attrs.no_atime
+  assert_type $bool $direct_attrs.no_copy_on_write
+  assert_type $bool $direct_attrs.dir_sync
+  assert_type $bool $direct_attrs.casefold
+  assert_type $bool $direct_attrs.data_journaling
+  assert_type $bool $direct_attrs.no_compress
+  assert_type $bool $direct_attrs.project_inherit
+  assert_type $bool $direct_attrs.secure_delete
+  assert_type $bool $direct_attrs.sync
+  assert_type $bool $direct_attrs.no_tail_merge
+  assert_type $bool $direct_attrs.top_dir
+  assert_type $bool $direct_attrs.undelete
+  assert_type $bool $direct_attrs.direct_access
+  assert_type $bool $direct_attrs.extent_format
+
+  set_attrs $test_path no_dump: true
+  let no_dump_attrs = attrs $test_path
+  assert_eq $no_dump_attrs.no_dump true
+  Path(test_path).set_attrs no_dump: false
+  let normal_attrs = Path(test_path).attrs()
+  assert_eq $normal_attrs.no_dump false
+
+  remove $test_path
+
+#[agent.test]
+def macos_attrs()
+  if (sys.os_info().os != :macos:)
+    skip "requires macOS"
+  let test_path = "test_metadata_macos_attrs.txt"
+  open $test_path w do |f|
+    f.write "macos attrs test"
+
+  let meta = metadata $test_path
+  assert_type $Metadata $meta
+  assert_type $int $meta.unix_flags
+  assert_type $Attrs $meta.attrs
+  assert_type $int $meta.attrs.unix_flags
+  assert_type $bool $meta.attrs.hidden
+  assert_type $bool $meta.attrs.compressed
+  assert_type $bool $meta.attrs.immutable
+  assert_type $bool $meta.attrs.append_only
+  assert_type $bool $meta.attrs.no_dump
+  assert_type $bool $meta.attrs.opaque
+
+  set_attrs $test_path hidden: true no_dump: true
+  let hidden_attrs = attrs $test_path
+  assert_eq $hidden_attrs.hidden true
+  assert_eq $hidden_attrs.no_dump true
+  Path(test_path).set_attrs hidden: false no_dump: false
+  let normal_attrs = Path(test_path).attrs()
+  assert_eq $normal_attrs.hidden false
+  assert_eq $normal_attrs.no_dump false
+
+  remove $test_path
+
+#[agent.test]
+def len_type()
+  # Test metadata returns correct len and type for a file
+  let test_path = "test_metadata_len.txt"
+
+  open $test_path w do |f|
+    f.write "test"
+
+  open $test_path r do |f|
+    let meta = f.metadata()
+    assert_type $Metadata $meta
+    assert_eq $meta.len 4
+    assert_eq $meta.type :file:
+
+  remove $test_path
+
+#[agent.test]
+def fs_basic()
+  let test_path = "test_fs_metadata.txt"
+
+  open $test_path w do |f|
+    f.write "test"
+
+  let direct = fs_metadata $test_path
+  assert_type $FsMetadata $direct
+  assert (direct.capacity > 0)
+  assert (direct.free > 0)
+  assert (direct.available > 0)
+  assert_eq $direct.read_only false
+
+  let path_meta = Path(test_path).fs_metadata()
+  assert_type $FsMetadata $path_meta
+  assert_eq $path_meta.capacity $direct.capacity
+
+  open $test_path r do |f|
+    let file_meta = f.fs_metadata()
+    assert_type $FsMetadata $file_meta
+    assert_eq $file_meta.capacity $direct.capacity
+
+  remove $test_path
+
+#[agent.test]
+def unix_raw()
+  if (sys.os_info().family == :windows:)
+    skip "requires non-Windows"
+  let test_path = "test_fs_metadata_unix.txt"
+  open $test_path w do |f|
+    f.write "test"
+
+  let meta = fs_metadata $test_path
+  assert_type $int $meta.blocks
+  assert_type $int $meta.blocks_free
+  assert_type $int $meta.blocks_available
+  assert_type $int $meta.files
+  assert_type $int $meta.files_free
+  assert_type $int $meta.files_available
+  assert_type $int $meta.unix_flags
+  assert_type $int $meta.name_max
+
+  remove $test_path

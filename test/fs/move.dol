@@ -1,0 +1,65 @@
+import agent
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+  std:
+    - RuntimeError
+  fs:
+    - open
+    - move
+    - create_dir
+    - Path
+
+#[agent.test]
+def move_file()
+  let src = Path "source.txt"
+  let dst = Path "dest.txt"
+
+  open $src w do |f|
+    f.write "hello move"
+
+  move $src $dst
+
+  assert !$src.exists()
+  open $dst r do |f|
+    assert_eq (f.read()) "hello move"
+
+#[agent.test]
+def move_directory_requires_all()
+  let src = Path "src"
+  create_dir $src
+  let dst = Path "dst"
+
+  assert_throws $RuntimeError do
+    move $src $dst
+
+#[agent.test]
+def move_directory_with_all()
+  let src = Path "src"
+  let nested = (src / "nested")
+  create_dir $nested all: true
+
+  open (nested / "file.txt") w do |f|
+    f.write "nested move"
+
+  let dst = Path "dst"
+  move $src $dst all: true
+
+  assert !$src.exists()
+  open (dst / "nested" / "file.txt") r do |f|
+    assert_eq (f.read()) "nested move"
+
+#[agent.test]
+def path_move_method()
+  let src = Path "source.txt"
+  let dst = Path "dest.txt"
+
+  open $src w do |f|
+    f.write "method move"
+
+  src.move $dst
+
+  assert !$src.exists()
+  open $dst r do |f|
+    assert_eq (f.read()) "method move"

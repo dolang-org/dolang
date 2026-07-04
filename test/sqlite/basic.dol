@@ -1,0 +1,143 @@
+import agent sqlite
+  test:
+    - assert_eq
+    - assert_type
+    - assert_throws
+    - test
+  fs:
+    - Path
+  std:
+    - UnexpectedKeyError
+
+#[agent.test]
+def basic()
+  sqlite.open (Path "test.db") do |conn|
+    conn.execute "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)"
+    conn.execute "INSERT INTO test (name) VALUES ('Alice')"
+
+    conn.prepare "SELECT name FROM test" do |stmt|
+      let rows = [...stmt.query()]
+      assert_eq $rows.len 1
+      assert_eq $rows[0]["name"] "Alice"
+
+#[agent.test]
+def transaction()
+  sqlite.open "test.db" do |conn|
+    conn.transaction do |tx|
+      conn.execute "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)"
+
+      conn.prepare "INSERT INTO test (name) VALUES (:name)" do |stmt|
+        let insert_count = stmt.execute name: "Alice"
+        assert_eq $insert_count 1
+
+        insert_count = stmt.execute name: "Bob"
+        assert_eq $insert_count 1
+
+      tx.commit()
+
+    conn.prepare "SELECT name FROM test WHERE name = :name" do |stmt|
+      let rows = [...stmt.query name: "Alice"]
+      assert_eq $rows.len 1
+      assert_eq $rows[0]["name"] "Alice"
+      let :name = rows[0]
+      assert_eq $name "Alice"
+
+#[test]
+def boolean_round_trip()
+  sqlite.open ":memory:" do |conn|
+    conn.execute
+      "CREATE TABLE test (id INTEGER PRIMARY KEY, flag BOOLEAN, count INTEGER)"
+
+    conn.prepare "INSERT INTO test (flag, count) VALUES (:flag, :count)" do |stmt|
+      stmt.execute flag: true count: 42
+      stmt.execute flag: false count: 0
+
+    conn.prepare "SELECT flag, count FROM test ORDER BY id" do |stmt|
+      let rows = [...stmt.query()]
+
+      let first_flag = rows[0]["flag"]
+      let second_flag = rows[1]["flag"]
+      let first_count = rows[0]["count"]
+
+      assert_type $bool $first_flag
+      assert_eq $first_flag true
+
+      assert_type $bool $second_flag
+      assert_eq $second_flag false
+
+      assert_type $int $first_count
+      assert_eq $first_count 42
+
+#[test]
+def boolean()
+  sqlite.open ":memory:" do |conn|
+    conn.execute "CREATE TABLE t (v BOOLEAN)"
+    conn.execute "INSERT INTO t VALUES (2)"
+
+    conn.prepare "SELECT v FROM t" do |stmt|
+      for row = stmt.query()
+        let value = row["v"]
+        assert_type $bool $value
+        assert_eq $value true
+
+#[test]
+def unpack_by_name()
+  sqlite.open ":memory:" do |conn|
+    conn.execute "CREATE TABLE t (name TEXT, active BOOLEAN)"
+    conn.execute "INSERT INTO t VALUES ('Alice', 1)"
+    conn.execute "INSERT INTO t VALUES ('Bob', 0)"
+
+    conn.prepare "SELECT name, active FROM t ORDER BY name" do |stmt|
+      for row = stmt.query()
+        let :name :active = row
+        assert_type $bool $active
+        if (name == "Alice")
+          assert_eq $active true
+        else
+          assert_eq $active false
+
+#[test]
+def exhaustive_unpack()
+  sqlite.open ":memory:" do |conn|
+    conn.execute "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value REAL)"
+    conn.execute "INSERT INTO test VALUES (1, 'test', 3.14)"
+
+    conn.prepare "SELECT * FROM test" do |stmt|
+      for row = stmt.query()
+        assert_throws $UnexpectedKeyError do
+          let id: _ = row
+
+#[test]
+def partial_unpack()
+  sqlite.open ":memory:" do |conn|
+    conn.execute "CREATE TABLE test (a INTEGER, b TEXT, c REAL, d INTEGER)"
+    conn.execute "INSERT INTO test VALUES (1, 'two', 3.0, 4)"
+
+    conn.prepare "SELECT * FROM test" do |stmt|
+      for row = stmt.query()
+        let :a ...rest = row
+        assert_eq $a 1
+
+        let remaining = [...rest]
+        assert_eq $remaining.len 3
+        assert_eq $remaining[0] "two"
+        assert_eq $remaining[1] 3.0
+        assert_eq $remaining[2] 4
+
+#[test]
+def repeat_unpack_consumes()
+  sqlite.open ":memory:" do |conn|
+    conn.execute "CREATE TABLE test (x INTEGER, y TEXT, z REAL)"
+    conn.execute "INSERT INTO test VALUES (10, 'twenty', 30.0)"
+
+    conn.prepare "SELECT * FROM test" do |stmt|
+      for row = stmt.query()
+        let :x ...rest = row
+        assert_eq $x 10
+
+        let :y ...rest = rest
+        assert_eq $y "twenty"
+
+        let remaining = [...rest]
+        assert_eq $remaining.len 1
+        assert_eq $remaining[0] 30.0

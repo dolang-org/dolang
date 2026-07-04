@@ -1,0 +1,49 @@
+import agent sys
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+  std:
+    - RuntimeError
+  fs:
+    - hard_link
+    - open
+    - Path
+
+#[agent.test]
+def fs_hard_link_creates_linked_file()
+  let target = Path "target.txt"
+  let link = Path "link.txt"
+
+  open $target w do |f|
+    f.write "hello"
+
+  hard_link $target $link
+
+  open $link r do |f|
+    assert_eq (f.read()) "hello"
+
+  if (sys.os_info().family != :windows:)
+    assert (target.metadata().nlink >= 2)
+    assert (link.metadata().nlink >= 2)
+
+#[agent.test]
+def path_hard_link_creates_linked_file()
+  let target = Path "target.txt"
+  let link = Path "link.txt"
+
+  open $target w do |f|
+    f.write "hello"
+
+  target.hard_link $link
+
+  open $link r do |f|
+    assert_eq (f.read()) "hello"
+
+#[agent.test]
+def hard_link_missing_source_fails()
+  let target = Path "missing.txt"
+  let link = Path "link.txt"
+
+  assert_throws $RuntimeError do
+    hard_link $target $link

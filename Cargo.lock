@@ -704,9 +704,6 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
 ]
 
 [[package]]
@@ -714,9 +711,6 @@ name = "dolang-ext-compile"
 version = "0.1.0"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
 ]
 
 [[package]]
@@ -728,9 +722,6 @@ dependencies = [
  "console",
  "dolang",
  "dolang-ext-compile",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
 ]
 
 [[package]]
@@ -740,12 +731,9 @@ dependencies = [
  "blake3",
  "digest",
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
  "md-5",
  "sha1",
  "sha2",
- "tokio",
 ]
 
 [[package]]
@@ -753,9 +741,6 @@ name = "dolang-ext-glob"
 version = "0.1.0"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
  "wax",
 ]
 
@@ -784,9 +769,6 @@ name = "dolang-ext-json"
 version = "0.1.0"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
  "serde",
  "serde_json",
 ]
@@ -798,10 +780,6 @@ dependencies = [
  "anstyle",
  "console",
  "dolang",
- "dolang-ext-compile",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
 ]
 
 [[package]]
@@ -822,9 +800,6 @@ name = "dolang-ext-rand"
 version = "0.1.0"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
  "rand",
 ]
 
@@ -833,9 +808,6 @@ name = "dolang-ext-regex"
 version = "0.1.0"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
  "regex",
 ]
 
@@ -845,8 +817,6 @@ version = "0.1.0"
 dependencies = [
  "bstr",
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
  "dolang-shell-vfs",
  "dunce",
  "futures",
@@ -855,7 +825,6 @@ dependencies = [
  "nix",
  "rand",
  "shlex 2.0.1",
- "tempfile",
  "time",
  "tokio",
  "windows-sys 0.61.2",
@@ -867,8 +836,6 @@ version = "0.1.0"
 dependencies = [
  "dolang",
  "dolang-ext-shell",
- "dolang-private-build",
- "dolang-private-test",
  "dolang-shell-vfs",
  "libc",
  "libsqlite3-sys",
@@ -882,9 +849,6 @@ name = "dolang-ext-toml"
 version = "0.1.0"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
  "serde",
  "toml",
 ]
@@ -894,9 +858,6 @@ name = "dolang-ext-url"
 version = "0.1.0"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
  "percent-encoding",
  "url",
 ]
@@ -917,9 +878,6 @@ name = "dolang-ext-yaml"
 version = "0.1.0"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "futures",
  "ordered-float",
  "saphyr",
  "saphyr-parser",
@@ -931,8 +889,6 @@ version = "0.1.0"
 dependencies = [
  "dolang",
  "dolang-ext-shell",
- "dolang-private-build",
- "dolang-private-test",
  "tokio",
  "zip",
 ]

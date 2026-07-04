@@ -1,0 +1,42 @@
+import agent
+  test:
+    - assert
+    - assert_eq
+    - assert_type
+  fs:
+    - DirEntry
+    - entries
+    - Path
+
+def populate_read_dir_tree root
+  let nested = (root / "read_dir_case/src/nested")
+  nested.create_dir all: true
+  (root / "read_dir_case/src/lib.rs").write "pub fn lib() {}\n"
+  (root / "read_dir_case/src/mod.rs").write "pub fn mod_() {}\n"
+  (nested / "skip.rs").write "pub fn skip() {}\n"
+
+#[agent.test]
+def basic_entries()
+  let root = cd()
+  populate_read_dir_tree $root
+  let count = 0
+  for _ = entries "$(str root)/read_dir_case/src"
+    count = (count + 1)
+
+  assert (count > 0)
+
+#[agent.test]
+def path_entries()
+  let root = cd()
+  populate_read_dir_tree $root
+  let path = Path "$(str root)/read_dir_case/src"
+  let iter = path.entries()
+  let found_lib = false
+  for entry = iter
+    assert_type $DirEntry $entry
+    if ((path / entry).name == "lib.rs")
+      assert_eq $entry.name lib.rs
+      found_lib = true
+      break
+
+  assert $found_lib

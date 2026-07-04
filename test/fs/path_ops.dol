@@ -1,0 +1,180 @@
+import sys agent
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - skip
+  std:
+    - RuntimeError
+  fs:
+    - Path
+    - open
+    - create_dir
+    - remove
+    - symlink
+    - streams
+
+#[agent.test]
+def parent_field()
+  let child = (Path "subdir" / "file.txt")
+  let parent = child.parent
+
+  assert_eq $parent (Path "subdir")
+
+  let grandparent = parent.parent
+  assert_eq $grandparent (Path "")
+
+#[agent.test]
+def exists_method()
+  let existing = Path "exists.txt"
+  let nonexistent = Path "nonexistent.txt"
+
+  open $existing w do |f|
+    f.write "test"
+
+  assert $existing.exists()
+  assert !$nonexistent.exists()
+
+#[agent.test]
+def canonical_method()
+  let subdir = Path "subdir"
+  create_dir $subdir
+
+  let file = (subdir / "file.txt")
+  open $file w do |f|
+    f.write "test"
+
+  let relative = Path "subdir/../subdir/file.txt"
+  assert_eq $relative.canonical() $file.canonical()
+
+#[agent.test]
+def read_link_method()
+  let target = Path "target.txt"
+  let link = Path "link.txt"
+
+  open $target w do |f|
+    f.write "test"
+
+  symlink $target $link
+
+  let resolved = link.read_link()
+  assert_eq $resolved $target
+
+#[agent.test]
+def division_operator()
+  let base = Path "."
+  let child = (base / "subdir" / "file.txt")
+
+  assert_eq $child (Path "./subdir" / "file.txt")
+
+#[agent.test]
+def components_absolute_path()
+  let path = (Path "subdir" / "file.txt")
+  let parts = [...path.components()]
+
+  assert_eq $parts[(parts.len - 2)] "subdir"
+  assert_eq $parts[(parts.len - 1)] "file.txt"
+
+#[agent.test]
+def alternate_data_stream_io()
+  if !(sys.os_info().family == :windows: && !sys.os_info().is_wine)
+    skip "requires Windows outside Wine"
+  let base = Path "ads.txt"
+  let stream = Path "ads.txt:zone"
+
+  base.write "base"
+  stream.write "stream"
+
+  assert $base.exists()
+  assert $stream.exists()
+  assert_eq $base.read() "base"
+  assert_eq $stream.read() "stream"
+
+  stream.open r do |f|
+    assert_eq $f.read() "stream"
+
+  let parsed = Path $stream
+  assert_eq $parsed.name "ads.txt"
+  assert_eq $parsed.stream_name "zone"
+
+#[agent.test]
+def alternate_data_stream_enumeration()
+  if !(sys.os_info().family == :windows: && !sys.os_info().is_wine)
+    skip "requires Windows outside Wine"
+  let base = Path "ads.txt"
+  let stream = Path "ads.txt:zone"
+
+  base.write "base"
+  stream.write "stream"
+
+  let saw_base = false
+  let saw_named = false
+  let file_entry = nil
+
+  for entry = streams $base
+    if (entry.name == "")
+      assert_eq $entry.type "DATA"
+      let path = (base / entry)
+      assert_eq $path.name "ads.txt"
+      assert_eq $path.stream_name ""
+      assert_eq $path.stream_type "DATA"
+      assert_eq $path.read() "base"
+      saw_base = true
+    else if (entry.name == "zone")
+      assert_eq $entry.type "DATA"
+      let path = (base / entry)
+      assert_eq $path.name "ads.txt"
+      assert_eq $path.stream_name "zone"
+      assert_eq $path.stream_type "DATA"
+      assert_eq $path.read() "stream"
+      file_entry = entry
+      saw_named = true
+
+  assert $saw_base
+  assert $saw_named
+  assert (file_entry != nil)
+
+  let saw_file_named = false
+  open $base r do |file|
+    for entry = file.streams()
+      if (entry.name == "zone")
+        assert_eq ((base / entry).read()) "stream"
+        saw_file_named = true
+        break
+  assert $saw_file_named
+
+  let saw_path_named = false
+  for entry = base.streams()
+    if (entry.name == "zone")
+      assert (entry.alloc_size >= entry.size)
+      saw_path_named = true
+      break
+  assert $saw_path_named
+
+  remove (base / file_entry)
+  assert_eq $base.read() "base"
+  assert_throws $RuntimeError do
+    stream.read()
+
+#[agent.test]
+def directory_alternate_data_stream_enumeration()
+  if !(sys.os_info().family == :windows: && !sys.os_info().is_wine)
+    skip "requires Windows outside Wine"
+  let base = Path "adsdir"
+  let stream = Path "adsdir:zone"
+  base.create_dir()
+
+  assert_eq [...(streams base)] []
+  assert_eq [...base.streams()] []
+
+  stream.write "stream"
+
+  let entries = [...(streams base)]
+  assert_eq $entries.len 1
+  assert_eq $entries[0].name "zone"
+  assert_eq $entries[0].type "DATA"
+  let path = (base / entries[0])
+  assert_eq $path.name "adsdir"
+  assert_eq $path.stream_name "zone"
+  assert_eq $path.stream_type "DATA"
+  assert_eq $path.read() "stream"

@@ -1,0 +1,137 @@
+import
+  rand:
+    - int
+    - string
+    - pick
+    - shuffle
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - test
+  std:
+    - ValueError
+    - TypeError
+
+#[test]
+def int_range()
+  let zero = int 0 1
+  assert_eq $zero 0
+
+  for _ = range 200
+    let n = int 10
+    assert ((n >= 0) && (n < 10))
+
+  for _ = range 200
+    let n = int -5 5
+    assert ((n >= -5) && (n < 5))
+
+#[test]
+def int_invalid_args()
+  let end_err = assert_throws $ValueError do
+    int 0
+  assert_eq (str end_err) "value error: expected end to be greater than start"
+
+  let order_err = assert_throws $ValueError do
+    int 3 2
+  assert_eq (str order_err) "value error: expected end to be greater than start"
+
+  let start_type_err = assert_throws $TypeError do
+    int a
+  assert_eq (str start_type_err) "type error: expected `int`"
+
+  let end_type_err = assert_throws $TypeError do
+    int 0 b
+  assert_eq (str end_type_err) "type error: expected `int`"
+
+#[test]
+def string()
+  assert_eq (string 0 alphabet: "abc") ""
+
+  let token = string 8
+  assert_eq $token.len 8
+
+  for _ = range 50
+    let s = string 12 alphabet: a
+    assert_eq $s.len 12
+    assert_eq $s "aaaaaaaaaaaa"
+
+  for _ = range 50
+    let s = string 6 alphabet: "å"
+    assert_eq $s "åååååå"
+
+#[test]
+def string_invalid_args()
+  let len_err = assert_throws $ValueError do
+    string -1 alphabet: abc
+  assert_eq (str len_err) "value error: expected len to be non-negative"
+
+  let alpha_err = assert_throws $ValueError do
+    string 4 alphabet: ""
+  assert_eq (str alpha_err) "value error: expected alphabet to be non-empty"
+
+  let len_type_err = assert_throws $TypeError do
+    string foo alphabet: abc
+  assert_eq (str len_type_err) "type error: expected `int`"
+
+  let alpha_type_err = assert_throws $TypeError do
+    string 4 alphabet: 123
+  assert_eq (str alpha_type_err) "type error: expected `str`"
+
+#[test]
+def pick()
+  let items = [10, 20, 30]
+  for _ = range 50
+    assert (items.contains (pick items))
+
+#[test]
+def pick_invalid_args()
+  let empty_err = assert_throws $ValueError do
+    pick []
+  assert_eq (str empty_err) "value error: expected non-empty array"
+
+  let type_err = assert_throws $TypeError do
+    pick 123
+  assert_eq (str type_err) "type error: expected array"
+
+#[test]
+def shuffle_handles_empty_and_singleton_arrays()
+  let empty = []
+  assert_eq (shuffle empty) nil
+  assert_eq $empty []
+
+  let one = [42]
+  assert_eq (shuffle one) nil
+  assert_eq $one [42]
+
+#[test]
+def shuffle_preserves_elements_and_mutates_in_place()
+  let values = [1, 2, 3, 4, 5]
+  let before = [...values]
+  assert_eq (shuffle values) nil
+  let after = [...values]
+  before.sort()
+  after.sort()
+  assert_eq $after $before
+
+  let seq = [1, 2, 3, 4, 5]
+  let original = [...seq]
+  let alias = seq
+  let changed = false
+  for _ = range 100
+    shuffle $alias
+    if (seq != original)
+      changed = true
+      break
+
+  assert $changed
+  let seq_sorted = [...seq]
+  seq_sorted.sort()
+  original.sort()
+  assert_eq $seq_sorted $original
+
+#[test]
+def shuffle_rejects_non_arrays()
+  let err = assert_throws $TypeError do
+    shuffle 123
+  assert_eq (str err) "type error: expected array"

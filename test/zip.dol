@@ -1,0 +1,43 @@
+import agent zip
+  test:
+    - assert_eq
+
+#[agent.test]
+def write_read_append()
+  zip.open "test.zip" "w" do |archive|
+    archive.open "hello.txt" do |file|
+      file.write "Hello, World!"
+
+    archive.open "test.txt" do |file|
+      file.write "Test content"
+
+  zip.open "test.zip" do |archive|
+    let entries = [...archive.entries()]
+    assert_eq $entries.len 2
+    assert_eq $entries[0] "hello.txt"
+    assert_eq $entries[1] "test.txt"
+
+    archive.open "hello.txt" do |file|
+      let data = file.read 1024
+      assert_eq (str data) "Hello, World!"
+
+    archive.open "test.txt" do |file|
+      let data = file.read 1024
+      assert_eq (str data) "Test content"
+
+  zip.open "test.zip" "a" do |archive|
+    archive.open "new_file.txt" do |file|
+      file.write "Appended content"
+
+  zip.open "test.zip" do |archive|
+    let entries = [...archive.entries()]
+    assert_eq $entries.len 3
+    assert_eq $entries[2] "new_file.txt"
+
+    archive.open "test.txt" do |file|
+      let data = file.read 1024
+      assert_eq (str data) "Test content"
+
+    archive.open "new_file.txt" do |file|
+      let data = file.read 1024
+      assert_eq (str data) "Appended content"

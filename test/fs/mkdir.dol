@@ -1,0 +1,79 @@
+import agent sys
+  test:
+    - assert
+    - assert_eq
+    - assert_type
+    - assert_throws
+  std:
+    - RuntimeError
+  fs:
+    - create_dir
+    - Path
+    - metadata
+
+#[agent.test]
+def create_dir_creates_single_directory()
+  let new_dir = Path "new_directory"
+
+  assert !$new_dir.exists()
+
+  create_dir $new_dir
+
+  assert $new_dir.exists()
+  let meta = metadata $new_dir
+  assert_eq $meta.type :dir:
+
+#[agent.test]
+def create_dir_fails_if_exists()
+  let new_dir = Path "existing"
+
+  create_dir $new_dir
+
+  assert_throws $RuntimeError do
+    create_dir $new_dir
+
+#[agent.test]
+def create_dir_all_creates_nested_directories()
+  let nested = (Path "a" / "b" / "c")
+
+  create_dir $nested all: true
+
+  assert $(Path "a").exists()
+  assert $((Path "a" / "b")).exists()
+  assert $nested.exists()
+
+#[agent.test]
+def path_create_dir_method()
+  let path = Path "method_test"
+
+  path.create_dir()
+
+  assert path.exists()
+  let meta = path.metadata()
+  assert_eq $meta.type :dir:
+
+#[agent.test]
+def path_create_dir_all()
+  let nested = (Path "x" / "y" / "z")
+
+  nested.create_dir all: true
+
+  assert nested.exists()
+
+#[agent.test]
+def create_dir_all_is_idempotent()
+  let path = Path "idempotent"
+
+  create_dir $path all: true
+  assert $path.exists()
+
+  create_dir $path all: true
+  assert $path.exists()
+
+#[agent.test]
+def existing_path_yields_already_exists_error()
+  let path = Path "existing"
+  path.create_dir()
+  let err = assert_throws $sys.AlreadyExistsError do
+    path.create_dir()
+  assert_type $sys.Error $err

@@ -1,0 +1,108 @@
+import sys
+  test:
+    - skip
+    - assert_eq
+    - assert_throws
+
+if (sys.os_info().family == :windows:)
+  skip "requires Unix"
+
+import agent
+  fs:
+    - Path
+    - chown
+    - open
+    - remove
+    - symlink
+  proc.run:
+    - id
+import std:
+  - RuntimeError
+
+#[agent.test]
+def numeric_id()
+  let test_path = "test_chown_ids.txt"
+
+  open $test_path w do |f|
+    f.write "ownership"
+
+  let before = Path(test_path).metadata()
+  chown $test_path $before.uid group: $before.gid
+  let after = Path(test_path).metadata()
+  assert_eq $after.uid $before.uid
+  assert_eq $after.gid $before.gid
+
+  remove $test_path
+
+#[agent.test]
+def user_and_group_name()
+  let test_path = "test_chown_names.txt"
+
+  open $test_path w do |f|
+    f.write "ownership"
+
+  let before = Path(test_path).metadata()
+  let user = sub $id -un
+  let group = sub $id -gn
+  Path(test_path).chown $user group: $group
+  let after = Path(test_path).metadata()
+  assert_eq $after.uid $before.uid
+  assert_eq $after.gid $before.gid
+
+  remove $test_path
+
+#[agent.test]
+def group_only()
+  let test_path = "test_chown_group.txt"
+
+  open $test_path w do |f|
+    f.write "ownership"
+
+  let before = Path(test_path).metadata()
+  chown $test_path group: $before.gid
+  let after = Path(test_path).metadata()
+  assert_eq $after.uid $before.uid
+  assert_eq $after.gid $before.gid
+
+  remove $test_path
+
+#[agent.test]
+def requires_user_or_group()
+  let test_path = "test_chown_missing.txt"
+
+  open $test_path w do |f|
+    f.write "ownership"
+
+  assert_throws $RuntimeError do
+    chown $test_path
+
+  remove $test_path
+
+#[agent.test]
+def unknown_user_fails()
+  let test_path = "test_chown_unknown.txt"
+
+  open $test_path w do |f|
+    f.write "ownership"
+
+  assert_throws $RuntimeError do
+    chown $test_path "__dolang_missing_user__"
+
+  remove $test_path
+
+#[agent.test]
+def follow_controls_symlink_handling()
+  let link_path = "test_chown_link"
+  let missing_target = "test_chown_missing_target"
+  let group = sub $id -gn
+
+  remove $link_path ignore: true
+
+  symlink $missing_target $link_path
+
+  chown $link_path group: $group follow: false
+
+  assert_throws $sys.NotFoundError do
+    chown $link_path group: $group follow: true
+
+  remove $link_path

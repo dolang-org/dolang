@@ -1,0 +1,114 @@
+import
+  toml:
+    - from_str
+    - to_str
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - test
+  std:
+    - ValueError
+    - TypeError
+    - RuntimeError
+
+#[test]
+def parse_bare_values()
+  assert_eq (from_str "42") 42
+  assert_eq (from_str "3.14") 3.14
+  assert_eq (from_str "true") true
+  assert_eq (from_str "\"hello\"") "hello"
+  assert_eq (from_str "[1, 2, 3]") [1, 2, 3]
+  assert_eq (from_str "{ a = 1, b = \"two\" }") {"a": 1, "b": "two"}
+
+
+#[test]
+def parse_doc()
+  let doc = from_str "title = \"TOML\"\n[server]\nport = 8080\nenabled = true\n"
+  assert_eq $doc["title"] "TOML"
+  assert_eq $doc["server"]["port"] 8080
+  assert_eq $doc["server"]["enabled"] true
+
+#[test]
+def parse_arrays_of_tables()
+  let users = from_str "[[users]]\nname = \"alice\"\n[[users]]\nname = \"bob\"\n"
+  assert_eq $users["users"][0]["name"] "alice"
+  assert_eq $users["users"][1]["name"] "bob"
+
+#[test]
+def round_trip_scalar_values()
+  assert_eq (from_str $ to_str 42) 42
+  assert_eq (from_str $ to_str 3.14) 3.14
+  assert_eq (from_str $ to_str true) true
+  assert_eq (from_str $ to_str "hello") "hello"
+
+#[test]
+def round_trip_arrays_and_tuples()
+  assert_eq (from_str $ to_str [1, 2, 3]) [1, 2, 3]
+  assert_eq (from_str $ to_str $ tuple([1, 2, 3])) [1, 2, 3]
+
+#[test]
+def round_trip_dicts_and_records()
+  let obj = {"name": "alice", "age": 30}
+  let rt_obj = from_str $ to_str $obj
+  assert_eq $rt_obj["name"] "alice"
+  assert_eq $rt_obj["age"] 30
+
+  let rec = record enabled: true port: 8080
+  let rt_rec = from_str $ to_str $rec
+  assert_eq $rt_rec["enabled"] true
+  assert_eq $rt_rec["port"] 8080
+
+#[test]
+def symbol_keys_stringify()
+  let sym_dict = {}
+  sym_dict[:name:] = "alice"
+  let rt_sym = from_str $ to_str $sym_dict
+  assert_eq $rt_sym["name"] "alice"
+
+#[test]
+def round_trip_nested_structures()
+  let nested =
+    service:
+      host: localhost
+      ports:
+        - 80
+        - 443
+
+  let rt_nested = from_str $ to_str $nested
+  assert_eq $rt_nested["service"]["host"] "localhost"
+  assert_eq $rt_nested["service"]["ports"] [80, 443]
+
+#[test]
+def to_str_unsupported()
+  let nil_err = assert_throws $ValueError do
+    to_str nil
+  assert ((str nil_err).contains "nil values are not TOML-representable")
+
+  let key_err = assert_throws $ValueError do
+    to_str {1: "bad"}
+  assert ((str key_err).contains "TOML table keys must be str or sym values")
+
+  let bin_err = assert_throws $ValueError do
+    to_str b"\x01\x02"
+  assert ((str bin_err).contains "binary values are not TOML-representable")
+
+  let type_err = assert_throws $TypeError do
+    to_str $ range 10
+  assert ((str type_err).contains "unsupported TOML type")
+
+#[test]
+def from_str_unsupported()
+  let datetime_err = assert_throws $ValueError do
+    from_str "when = 1979-05-27T07:32:00Z"
+  assert ((str datetime_err).contains "TOML datetimes are not supported")
+
+  let arr = []
+  arr.push $arr
+  let cycle_err = assert_throws $RuntimeError do
+    to_str $arr
+  assert ((str cycle_err).contains "cyclic reference")
+
+  let parse_err = assert_throws $ValueError do
+    from_str "{ a = "
+  assert ((str parse_err).contains "expected")

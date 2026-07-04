@@ -8,8 +8,199 @@ import time:
 
 let collect_key = strand.Key()
 
-pub def test func
-  collect_key.value.push [str(func), func]
+def parse_jobs value
+  let jobs = try
+    int $value
+  catch std.RuntimeError: _
+    throw args.Error "--jobs expects an integer"
+  if (jobs < 1)
+    throw args.Error "--jobs must be at least 1"
+  jobs
+
+def parse_timeout value
+  let secs = try
+    float $value
+  catch std.RuntimeError: _
+    throw args.Error "--timeout expects a number"
+  if !(secs >= 0)
+    throw args.Error "--timeout must be non-negative"
+  secs
+
+class ModuleCompileError: std.RuntimeError
+  pub let path = nil
+  pub let output = nil
+
+  def (init) self path output
+    self.path = path
+    self.output = output
+
+class Harness
+  let module_jobs = nil
+  let jobs = nil
+  let filter = nil
+  let timeout = nil
+  let filter_glob = nil
+  let errors = nil
+  let success = 0
+  let total = 0
+
+  def (init) self :jobs :module_jobs :filter :timeout
+    self.#module_jobs = module_jobs
+    self.#jobs = jobs
+    self.#timeout = timeout
+    self.#errors = []
+    self.#filter = try
+        Glob $filter
+    catch std.RuntimeError: _
+        throw args.Error "invalid --filter glob: $filter"
+
+  def matches_filter self path test
+     self.#filter.matches (str $ path.without_ext() / test)
+
+  def record_test self
+    self.#total = (self.#total + 1)
+
+  def record_success self
+    self.#success = (self.#success + 1)
+
+  def with_timeout self func
+    if (self.#timeout != nil)
+      timeout $self.#timeout $func
+    else
+      func()
+
+  def record_error self err bt path test = nil
+    self.#errors.push [err, bt, path, test]
+
+  def run_test self path name func
+    self.#record_test()
+    try
+      self.#with_timeout $func
+      self.#record_success()
+    catch std.RuntimeError: e
+      self.#record_error $e $(strand.error_backtrace()) $path $name
+
+  def run_module self path tests
+    progress.show message: (str $ path.without_ext()) total: $tests.len do |w|
+      strand.fork
+        for name func = tests
+          do progress.show message: $name do |_|
+            self.#run_test $path $name $func
+            w.delta()
+
+  def run_file self path
+    let source = path.read b
+    let compiled = compile.compile $path $source
+    let warnings = compiled.diagnostics.iter().any do |d| (d.severity == :warning:)
+    if (!compiled.ok || warnings)
+      throw ModuleCompileError $path $compiled
+
+    collect_key.value = []
+    self.#with_timeout do load.run $compiled.bytecode
+    let tests = collect_key.value
+    collect_key.value = nil
+    tests = [...tests.iter().filter(do |test| self.#matches_filter path test[0])]
+    self.#run_module $path $tests
+
+  def report self
+    let rc = 0
+    let skipped = 0
+    for e bt path test = self.#errors
+      let module = path.without_ext()
+      if (type e Skip)
+        if test
+          if e.message
+            echo "test skipped: $module/$test ($(e.message))"
+          else
+            echo "test skipped: $module/$test"
+          skipped = (skipped + 1)
+        else
+          if e.message
+            echo "module skipped: $module ($(e.message))"
+          else
+            echo "module skipped: $module"
+      else if (type e ModuleCompileError)
+        rc = 1
+        echo "module compilation failed: $module"
+        for diag = e.output.diagnostics
+          diagnostic.print_compile_diag $diag
+      else
+        rc = 1
+        if test
+          echo "test failed: $module/$test"
+        else
+          echo "module failed: $module"
+        diagnostic.print_error $e backtrace: $bt
+    if skipped
+      echo "tests passed: $(self.#success)/$(self.#total - skipped) ($skipped skipped)"
+    else
+      echo "tests passed: $(self.#success)/$(self.#total)"
+    rc
+
+  pub def run self files
+    strand.limit $self.#jobs do progress.with do
+      progress.show message: modules total: $files.len do |w|
+        strand.fork limit: $self.#module_jobs
+          for path = files
+            do
+              try
+                self.#run_file $path
+              catch std.RuntimeError: e
+                self.#record_error $e $(strand.error_backtrace()) $path
+              w.delta()
+    self.#report()
+
+# Defines a test fixture.  `wrap` should be a function which accepts a block
+# and invokes it with surrounding setup and teardown logic.
+#
+# # Returns
+#
+# A function suitable for use as a decorator on a test function.
+#
+# # Example
+#
+# ```
+# #[fixture]
+# def example_fixture block
+#   setup()
+#   try
+#     block()
+#   finally
+#     teardown()
+#
+# #[test]
+# #[example_fixture]
+# def example_test()
+#   do_something()
+# ```
+pub def fixture wrap
+  return do |func| do wrap $func
+
+# Register a test case that runs `func` with no arguments.  `name`, if unspecified,
+# defaults to the `str` coercion of `func`, which for `def`s is simply the function
+# name.  This function is suitable for use as a decorator:
+#
+# ```
+# #[test]
+# def the_test()
+#   do_something()
+#
+# #[test name: "alternate_name"]
+# def overriden_name()
+#   do_something_else()
+# ```
+#
+# # Returns
+# If `func` is not specified, returns a function that takes the test case function instead
+# (for use as a decorator). Otherwise, returns `func`
+pub def test
+  :name = nil
+  func = nil
+do
+  if (func == nil)
+    return do |func| test :name $func
+  collect_key.value.push [name || str(func), func]
+  func
 
 pub class Assert: std.RuntimeError
   pub let message = nil
@@ -64,125 +255,26 @@ pub def assert_ne left right msg = nil
     else
       throw Assert "$(dbg left) != $(dbg right)"
 
-def parse_jobs value
-  let jobs = try
-    int $value
-  catch std.RuntimeError: _
-    throw args.Error "--jobs expects an integer"
-  if (jobs < 1)
-    throw args.Error "--jobs must be at least 1"
-  jobs
+# Assert that `block` throws an error of `type`, throwing an error with optional `msg`
+# otherwise.  The caught error is returned for further inspection if desired.
+pub def assert_throws type :msg = nil block
+  try
+    block()
+  catch type: e
+    return e
+  if msg
+    throw Assert "$type thrown"
+  else
+    throw Assert "$msg ($type thrown)"
 
-def parse_timeout value
-  let secs = try
-    float $value
-  catch std.RuntimeError: _
-    throw args.Error "--timeout expects a number"
-  if !(secs >= 0)
-    throw args.Error "--timeout must be non-negative"
-  secs
-
-class Harness
-  let jobs = nil
-  let filter = nil
-  let timeout = nil
-  let filter_glob = nil
-  let errors = nil
-  let success = 0
-  let total = 0
-
-  def (init) self :jobs :filter :timeout
-    self.#jobs = jobs
-    self.#timeout = timeout
-    self.#errors = []
-    self.#filter = try
-        Glob $filter
-    catch std.RuntimeError: _
-        throw args.Error "invalid --filter glob: $filter"
-
-  def matches_filter self path test
-     self.#filter.matches $path.stem/$test
-
-
-  def record_test self
-    self.#total = (self.#total + 1)
-
-  def record_success self
-    self.#success = (self.#success + 1)
-
-  def with_timeout self func
-    if (self.#timeout != nil)
-      timeout $self.#timeout $func
+# Assert that `value` is of type `expected` (including a subtype), throwing an
+# error with optional `msg` otherwise.
+pub def assert_type expected value msg = nil
+  if !(type value expected)
+    if msg
+      throw Assert "$msg ($value @ $(type value) <: $expected)"
     else
-      func()
-
-  def record_error self err bt path test = nil
-    self.#errors.push [err, bt, path, test]
-
-  def run_test self path name func
-    self.#record_test()
-    try
-      self.#with_timeout $func
-      self.#record_success()
-    catch std.RuntimeError: e
-      self.#record_error $e $(strand.error_backtrace()) $path $name
-
-  def run_module self path tests
-    progress.show message: $path.stem total: $tests.len do |w|
-      strand.fork limit: $self.#jobs
-        for name func = tests
-          do progress.show message: $name do |_|
-            self.#run_test $path $name $func
-            w.delta()
-
-  def run_file self path
-    let source = path.read b
-    let compiled = compile.compile $path $source
-    for diag = compiled.diagnostics
-      diagnostic.print_compile_diag $diag
-    if !compiled.ok
-      throw std.CompileError "failed to compile $(path.relative())"
-
-    collect_key.value = []
-    self.#with_timeout do load.run $compiled.bytecode
-    let tests = collect_key.value
-    collect_key.value = nil
-    tests = [...tests.iter().filter(do |test| self.#matches_filter path test[0])]
-    self.#run_module $path $tests
-
-  def report self
-    let rc = 0
-    for e bt path test = self.#errors
-      if (type e Skip)
-        if test
-          if e.message
-            echo "test skipped: $(path.stem)/$test ($(e.message))"
-          else
-            echo "test skipped: $(path.stem)/$test"
-        else
-          if e.message
-            echo "module skipped: $(path.stem) ($(e.message))"
-          else
-            echo "module skipped: $(path.stem)"
-      else
-        rc = 1
-        if test
-          echo "test failed: $(path.stem)/$test"
-        else
-          echo "module failed: $(path.stem)"
-        diagnostic.print_error $e backtrace: $bt
-    echo "tests passed: $(self.#success)/$(self.#total)"
-    rc
-
-  pub def run self files
-    progress.with do progress.show message: modules total: $files.len do |w|
-      for path = files
-        try
-          self.#run_file $path
-        catch std.RuntimeError: e
-          self.#record_error $e $(strand.error_backtrace()) $path
-        w.delta()
-    self.#report()
+      throw Assert "$value @ $(type value) <: $expected"
 
 pub def main()
   args.with
@@ -192,7 +284,12 @@ pub def main()
       type: $parse_jobs
       default: 8
       meta: N
-      help: Max concurrent strands per module.
+      help: Max concurrent tests (among all modules)
+    - opt: module-jobs
+      type: $parse_jobs
+      default: 4
+      meta: N
+      help: Max concurrent modules
     - opt: filter
       default: **
       help: Glob filter for test names in `stem/test` form
@@ -201,11 +298,17 @@ pub def main()
       default: 600
       meta: SECS
       help: Max seconds for each test and module load.
-    - arg: files
+    - arg: paths
       type: $Path
       collect: true
-      help: Test files to run.
+      help: Test directories or files to run.
     do |p|
-      let :filter :jobs :timeout :files ... = p
-      let harness = Harness :jobs :filter :timeout
+      let :filter :jobs :module_jobs :timeout :paths ... = p
+      let harness = Harness :jobs :module_jobs :filter :timeout
+      let files = []
+      for path = paths
+        if (path.metadata().type == :dir:)
+          files.push ...path.glob("**/*.dol")
+        else
+          files.push $path
       exit $ harness.run $files

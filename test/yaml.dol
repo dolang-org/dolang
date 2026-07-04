@@ -1,0 +1,134 @@
+import
+  yaml:
+    - from_str
+    - to_str
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - test
+  std:
+    - RuntimeError
+
+#[test]
+def parse_scalars()
+  assert_eq (from_str "null") nil
+  assert_eq (from_str "~") nil
+  assert_eq (from_str "true") true
+  assert_eq (from_str "false") false
+  assert_eq (from_str "42") 42
+  assert_eq (from_str "-42") -42
+  assert_eq (from_str "0b1010") 10
+  assert_eq (from_str "0o12") 10
+  assert_eq (from_str "0x2a") 42
+  assert_eq (from_str "3.14") 3.14
+  assert_eq (from_str "1e3") 1000.0
+  assert_eq (from_str "hello") "hello"
+  assert_eq (from_str "yes") "yes"
+  assert_eq (from_str "\"true\"") "true"
+  assert_eq (from_str "'42'") "42"
+
+#[test]
+def parse_sequences()
+  assert_eq (from_str "[]") []
+  assert_eq (from_str "- 1\n- 2\n- 3\n") [1, 2, 3]
+  assert_eq (from_str "[1, [2, 3], 4]") [1, [2, 3], 4]
+
+#[test]
+def parse_mappings()
+  let basic = from_str "a: 1\nb: two\n"
+  assert_eq $basic["a"] 1
+  assert_eq $basic["b"] "two"
+
+  let nested = from_str "outer:\n  inner:\n    - 1\n    - 2\n"
+  assert_eq $nested["outer"]["inner"] [1, 2]
+
+  let mixed = from_str "items:\n  - name: alice\n  - name: bob\ncount: 2\n"
+  assert_eq $mixed["count"] 2
+  assert_eq $mixed["items"][0]["name"] "alice"
+  assert_eq $mixed["items"][1]["name"] "bob"
+
+#[test]
+def parse_block_scalars()
+  assert_eq $(from_str "text: |\n  hello\n  world\n")["text"] "hello\nworld\n"
+  assert_eq $(from_str "text: >\n  hello\n  world\n")["text"] "hello world\n"
+
+#[test]
+def parse_arbitrary_keys()
+  let seq_key = from_str "? [1, 2]\n: sequence key\n"
+  let seq_pair = seq_key.iter().next()
+  assert_eq $seq_pair[0] [1, 2]
+  assert_eq $seq_pair[1] "sequence key"
+
+  let map_key = from_str "? {nested: true}\n: object key\n"
+  let map_pair = map_key.iter().next()
+  assert_eq $map_pair[0]["nested"] true
+  assert_eq $map_pair[1] "object key"
+
+#[test]
+def parse_error_cases()
+  let empty_err = assert_throws $RuntimeError do
+    from_str ""
+  assert ((str empty_err).contains "no YAML document")
+
+  let multi_err = assert_throws $RuntimeError do
+    from_str "---\n1\n---\n2\n"
+  assert ((str multi_err).contains "single document")
+
+  let tag_err = assert_throws $RuntimeError do
+    from_str "!!str hello"
+  assert ((str tag_err).contains "YAML tags are not supported")
+
+  let alias_err = assert_throws $RuntimeError do
+    from_str "a: &anchor 1\nb: *anchor\n"
+  assert ((str alias_err).contains "YAML aliases are not supported")
+
+  assert_eq (from_str "9223372036854775808") 9223372036854775808
+
+#[test]
+def round_trip_scalars()
+  assert_eq (from_str $ to_str nil) nil
+  assert_eq (from_str $ to_str true) true
+  assert_eq (from_str $ to_str false) false
+  assert_eq (from_str $ to_str 42) 42
+  assert_eq (from_str $ to_str -1) -1
+  assert_eq (from_str $ to_str 9223372036854775807) 9223372036854775807
+  assert_eq (from_str $ to_str 3.14) 3.14
+  assert_eq (from_str $ to_str "hello") "hello"
+
+#[test]
+def round_trip_special_strings()
+  assert_eq (from_str $ to_str "true") "true"
+  assert_eq (from_str $ to_str "42") "42"
+  assert_eq (from_str $ to_str "null") "null"
+  assert_eq (from_str $ to_str "~") "~"
+
+#[test]
+def round_trip_structures()
+  assert_eq (from_str $ to_str []) []
+  assert_eq (from_str $ to_str [1, 2, 3]) [1, 2, 3]
+  assert_eq (from_str $ to_str [1, [2, 3], 4]) [1, [2, 3], 4]
+
+  let d = {"name": "Alice", "age": 30}
+  let roundtrip = from_str $ to_str $d
+  assert_eq $roundtrip["name"] "Alice"
+  assert_eq $roundtrip["age"] 30
+
+  let nested = {"items": [1, 2], "meta": {"key": "val"}}
+  let rt = from_str $ to_str $nested
+  assert_eq $rt["items"] [1, 2]
+  assert_eq $rt["meta"]["key"] "val"
+
+#[test]
+def serialize_error_cases()
+  let overflow_err = assert_throws $RuntimeError do
+    to_str 9223372036854775808
+  assert ((str overflow_err).contains "numeric overflow")
+
+  let bin_err = assert_throws $RuntimeError do
+    to_str b"\x01\x02"
+  assert ((str bin_err).contains "YAML-representable")
+
+  let type_err = assert_throws $RuntimeError do
+    to_str $ range 10
+  assert ((str type_err).contains "unsupported YAML type")

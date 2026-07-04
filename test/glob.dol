@@ -1,0 +1,56 @@
+import
+  glob:
+    - Glob
+    - matches
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - test
+  std:
+    - ValueError
+    - TypeError
+
+#[test]
+def matches()
+  let png = Glob "**/*.png"
+  assert (matches "**/*.png" "images/logo.png")
+  assert (!matches "**/*.png" "images/logo.jpg")
+  assert (matches png "assets/icons/app.png")
+  assert (!matches png "assets/icons/app.svg")
+
+#[test]
+def matches_method()
+  let png = Glob "**/*.png"
+  assert (png.matches "images/logo.png")
+  assert (!png.matches "images/logo.jpg")
+  assert_eq (str png) "**/*.png"
+
+  let tree = Glob "src/**/mod.rs"
+  assert (tree.matches "src/fs/mod.rs")
+  assert (tree.matches "src/fs/path/mod.rs")
+  assert (!tree.matches "src/fs/path.rs")
+
+#[test]
+def invalid_patterns()
+  assert_throws $ValueError do
+    Glob "["
+
+  assert_throws $ValueError do
+    matches "[" "foo"
+
+#[test]
+def type_errors()
+  let png = Glob "**/*.png"
+
+  let pattern_err = assert_throws $TypeError do
+    matches 1 "foo"
+  assert_eq (str pattern_err) "type error: pattern: expected `Glob` or `str`"
+
+  let value_err = assert_throws $TypeError do
+    matches "*.png" 1
+  assert_eq (str value_err) "type error: value: expected `str`"
+
+  let method_err = assert_throws $TypeError do
+    png.matches 1
+  assert_eq (str method_err) "type error: value: expected `str`"

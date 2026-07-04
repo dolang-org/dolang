@@ -1,0 +1,53 @@
+import
+  compile
+  diagnostic
+  strand
+  test:
+    - assert
+    - assert_eq
+    - assert_ne
+    - test
+
+#[test]
+def compile_with_and_without_color()
+  let result = compile.compile "bad.dol" "let =\n"
+  let diag = result.diagnostics[0]
+
+  let plain = diagnostic.render_compile_diag $diag color: :never:
+  assert (plain.contains "error:")
+  assert (plain.contains "bad.dol")
+
+  let color = diagnostic.render_compile_diag $diag color: :always:
+  assert_ne $color $plain
+
+#[test]
+def error()
+  let plain = try
+    throw "boom"
+  catch e
+    diagnostic.render_error $e color: :never:
+  assert (plain.contains "boom")
+
+#[test]
+def error_explicit_backtrace()
+  let color = try
+    throw "boom"
+  catch e
+    diagnostic.render_error $e backtrace: (strand.error_backtrace()) color: :always:
+  assert (color.contains "boom")
+
+#[test]
+def error_no_backtrace()
+  let err = try
+    diagnostic.render_error "boom"
+  catch e
+    e
+  assert_eq (str err) "state error: no active handled exception"
+
+#[test]
+def error_bad_type()
+  let type_err = try
+    diagnostic.render_error "boom" backtrace: "bad"
+  catch e
+    e
+  assert_eq (str type_err) "type error: expected strand.Backtrace"
