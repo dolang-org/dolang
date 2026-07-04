@@ -496,7 +496,10 @@ impl Connection {
 
     async fn handle_symlink(&self, id: u64, req: SymlinkRequest) {
         let result = ResponseKind::Symlink(Self::io_result(
-            self.server.direct.symlink(&req.src, &req.dst).await,
+            self.server
+                .direct
+                .symlink(Path::new(""), &req.src, &req.dst)
+                .await,
         ));
 
         let _ = self.sender.send(Response { id, kind: result }).await;
