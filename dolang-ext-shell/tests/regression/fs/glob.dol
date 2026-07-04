@@ -6,41 +6,14 @@ import agent:
   - with_and_without_agent
 
 with_and_without_agent "fs.glob basic pattern" do
-  let iter = glob "*.rs"
-  let found = false
-  for path = iter
-    if (path.name == "build.rs")
-      found = true
-      break
-  assert $found
+  let paths = [...glob "*.rs"]
+  assert_eq $paths [Path "build.rs"]
 
 with_and_without_agent "fs.glob with max_depth" do
   let paths = [...glob "**/*.rs" max_depth: 1]
   # Should only find build.rs in current directory
-  assert_eq $paths.len 1
-  assert_eq $str(paths[0]) "build.rs"
-
-with_and_without_agent "Path.glob method" do
-  let src = Path "src"
-  let iter = src.glob "*.rs"
-  let found = false
-  for path = iter
-    if (path.name == "lib.rs")
-      found = true
-      break
-  assert $found
-
-with_and_without_agent "glob returns relative paths" do
-  let iter = glob "*.rs"
-  for path = iter
-    # Path should be relative, not absolute
-    assert (!path.name.starts_with "/")
+  assert_eq $paths [Path "build.rs"]
 
 with_and_without_agent "Path.glob prepends path prefix" do
-  let src = Path "src"
-  let iter = src.glob "*.rs"
-  for path = iter
-    # Results should include the 'src' prefix
-    let parent = path.parent
-    if (parent != nil)
-      assert_eq $parent.name "src"
+  let paths = [...Path("src").glob "*.rs"]
+  assert_eq $paths[0] (Path "src/env.rs")

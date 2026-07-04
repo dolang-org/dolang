@@ -8,7 +8,7 @@ use std::{
     future::poll_fn,
     io::{self, ErrorKind},
     mem::MaybeUninit,
-    path::PathBuf,
+    path::{Path as StdPath, PathBuf},
     pin::Pin,
     str, time,
 };
@@ -77,7 +77,7 @@ pub(super) async fn read_all<'v, 's>(
 async fn metadata<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     follow: bool,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
@@ -97,7 +97,7 @@ async fn metadata<'v, 's>(
 async fn get_attrs<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     follow: bool,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
@@ -112,7 +112,7 @@ async fn get_attrs<'v, 's>(
 async fn fs_metadata<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     follow: bool,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
@@ -136,7 +136,7 @@ fn parse_attr_bool<'v, 's>(
 async fn set_attrs<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     attrs: Attrs,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
@@ -149,7 +149,7 @@ async fn set_attrs<'v, 's>(
 async fn remove<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     all: bool,
     ignore: bool,
 ) -> Result<'v, 's, ()> {
@@ -179,7 +179,7 @@ async fn remove<'v, 's>(
 async fn exists<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
@@ -220,7 +220,7 @@ async fn entries<'v, 's>(
 async fn read<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     mode: Option<Slot<'v, '_>>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
@@ -251,7 +251,7 @@ async fn read<'v, 's>(
 async fn write<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     data: Slot<'v, '_>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
@@ -279,7 +279,7 @@ async fn write<'v, 's>(
 async fn set_len<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     size: u64,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
@@ -300,8 +300,8 @@ async fn set_len<'v, 's>(
 async fn copy<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    from: &std::path::Path,
-    to: &std::path::Path,
+    from: &StdPath,
+    to: &StdPath,
     all: bool,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
@@ -315,8 +315,8 @@ async fn copy<'v, 's>(
 async fn move_<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    from: &std::path::Path,
-    to: &std::path::Path,
+    from: &StdPath,
+    to: &StdPath,
     all: bool,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
@@ -332,8 +332,8 @@ async fn move_<'v, 's>(
 async fn rename<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    from: &std::path::Path,
-    to: &std::path::Path,
+    from: &StdPath,
+    to: &StdPath,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let from_path = local.cwd().as_ref().join(from);
@@ -346,8 +346,8 @@ async fn rename<'v, 's>(
 async fn symlink<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    src: &std::path::Path,
-    dst: &std::path::Path,
+    src: &StdPath,
+    dst: &StdPath,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let src_path = local.cwd().as_ref().join(src);
@@ -360,8 +360,8 @@ async fn symlink<'v, 's>(
 async fn hard_link<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    src: &std::path::Path,
-    dst: &std::path::Path,
+    src: &StdPath,
+    dst: &StdPath,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let src_path = local.cwd().as_ref().join(src);
@@ -374,8 +374,8 @@ async fn hard_link<'v, 's>(
 async fn symlink_dir<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    src: &std::path::Path,
-    dst: &std::path::Path,
+    src: &StdPath,
+    dst: &StdPath,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let src_path = local.cwd().as_ref().join(src);
@@ -390,8 +390,8 @@ async fn symlink_dir<'v, 's>(
 async fn symlink_file<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    src: &std::path::Path,
-    dst: &std::path::Path,
+    src: &StdPath,
+    dst: &StdPath,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let src_path = local.cwd().as_ref().join(src);
@@ -406,7 +406,7 @@ async fn symlink_file<'v, 's>(
 async fn create_dir<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     all: bool,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
@@ -419,7 +419,7 @@ async fn create_dir<'v, 's>(
 async fn remove_dir<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     all: bool,
     ignore: bool,
 ) -> Result<'v, 's, ()> {
@@ -437,7 +437,7 @@ async fn remove_dir<'v, 's>(
 async fn chmod<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     mode: u32,
 ) -> Result<'v, 's, ()> {
     #[cfg(unix)]
@@ -509,7 +509,7 @@ fn system_time_to_unix_timestamp<'v, 's>(
 async fn set_timestamps<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     modified: Option<Slot<'v, '_>>,
     accessed: Option<Slot<'v, '_>>,
     created: Option<Slot<'v, '_>>,
@@ -613,7 +613,7 @@ fn parse_chown_common<'v, 's, 'a>(
 async fn chown<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     user: Option<dolang_shell_vfs::ChownIdentity>,
     group: Option<dolang_shell_vfs::ChownIdentity>,
     follow: bool,
@@ -631,7 +631,7 @@ async fn chown<'v, 's>(
 pub(crate) fn path_absolute<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
@@ -670,7 +670,7 @@ async fn well_known_path<'v, 's>(
 pub(crate) fn path_relative<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     base: Option<Slot<'v, '_>>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
@@ -693,7 +693,7 @@ pub(crate) fn path_relative<'v, 's>(
 pub(crate) async fn path_canonical<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: &StdPath,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
@@ -711,7 +711,7 @@ pub(crate) async fn path_canonical<'v, 's>(
 async fn glob<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    root: Option<&std::path::Path>,
+    root: Option<&StdPath>,
     pattern: Slot<'v, '_>,
     max_depth: Option<Slot<'v, '_>>,
     follow: Option<Slot<'v, '_>>,
@@ -732,13 +732,16 @@ async fn glob<'v, 's>(
         None => false,
     };
 
-    let (cwd, vfs) = {
+    let root = root.unwrap_or(StdPath::new(""));
+
+    let (abs_root, vfs) = {
         let local = global.local.get(strand);
-        (local.cwd().as_ref().to_owned(), local.vfs())
+        let cwd = local.cwd();
+        (cwd.join(root), local.vfs())
     };
 
     let paths = vfs
-        .glob(pattern, root.unwrap_or(cwd.as_ref()), follow, max_depth)
+        .glob(pattern, &abs_root, follow, max_depth)
         .await
         .into_sys(strand)?;
 
@@ -749,7 +752,7 @@ async fn glob<'v, 's>(
         },
         GlobIterAnnex {
             global,
-            prefix: root.map(|p| p.to_owned()).unwrap_or_default(),
+            prefix: root.to_owned(),
         },
         out,
     );
@@ -759,7 +762,7 @@ async fn glob<'v, 's>(
 async fn create_temp_dir<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    parent: &std::path::Path,
+    parent: &StdPath,
 ) -> io::Result<PathBuf> {
     let mut rng = rand::rng();
     let vfs = global.local.get(strand).vfs();
