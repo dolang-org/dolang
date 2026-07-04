@@ -11,6 +11,18 @@ let collect_key = strand.Key()
 pub def test func
   collect_key.value.push [str(func), func]
 
+pub class Assert: std.RuntimeError
+  pub let message = nil
+
+  def (init) self message
+    self.message = message
+
+  def (str) self
+    if (self.message != nil)
+      "assertion failed: $(self.message)"
+    else
+      "assertion failed"
+
 # Exception thrown to skip a test case.
 #
 # Throw this (or call `skip()`) from a test function to mark it as skipped
@@ -19,7 +31,7 @@ pub class Skip: std.RuntimeError
   # Skip message, or `nil` is none specified
   pub let message = nil
 
-  def (init) self message
+  def (init) self message = nil
     self.message = message
 
 # Skip the current test with an optional message.
@@ -29,34 +41,28 @@ pub def skip msg = nil
 # Assert that `cond` is truthy, throwing an error with optional `msg` on failure.
 pub def assert cond msg = nil
   if !cond
-    if msg
-      throw "assertion failed: $msg"
-    else
-      throw "assertion failed"
+    throw Assert $msg
 
 # Assert that `cond` is falsy, throwing an error with optional `msg` on failure.
 pub def assert_not cond msg = nil
   if !cond
-    if msg
-      throw "assertion failed: $msg"
-    else
-      throw "assertion failed"
+    throw Assert $msg
 
 # Assert that `left == right`, throwing an error with optional `msg` on failure.
 pub def assert_eq left right msg = nil
   if (left != right)
     if msg
-      throw "assertion failed: $(dbg left) == $(dbg right): $msg"
+      throw Assert "$(dbg left) == $(dbg right): $msg"
     else
-      throw "assertion failed: $(dbg left) == $(dbg right)"
+      throw Assert "$(dbg left) == $(dbg right)"
 
 # Assert that `left != right`, throwing an error with optional `msg` on failure.
 pub def assert_ne left right msg = nil
   if (left == right)
     if msg
-      throw "assertion failed: $(dbg left) != $(dbg right): $msg"
+      throw Assert "$(dbg left) != $(dbg right): $msg"
     else
-      throw "assertion failed: $(dbg left) != $(dbg right)"
+      throw Assert "$(dbg left) != $(dbg right)"
 
 def parse_jobs value
   let jobs = try
@@ -95,7 +101,8 @@ class Harness
         throw args.Error "invalid --filter glob: $filter"
 
   def matches_filter self path test
-    self.#filter.matches $path.stem/$test
+     self.#filter.matches $path.stem/$test
+
 
   def record_test self
     self.#total = (self.#total + 1)
