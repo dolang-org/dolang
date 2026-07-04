@@ -1,7 +1,9 @@
 use std::{
     cell::Cell,
     ffi::{CStr, CString},
-    fmt, ptr,
+    fmt,
+    path::Path,
+    ptr,
 };
 
 use dolang::runtime::{
@@ -106,7 +108,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             )?;
             let path = dolang_ext_shell::as_path(strand, &path)
                 .ok_or_else(|| Error::type_error(strand, "path: expected str"))?;
-            let path = CString::new(path.as_ref().to_string_lossy().as_ref()).into_do(strand)?;
+            let path = if path == Path::new(":memory:") {
+                path
+            } else {
+                dolang_ext_shell::cwd(strand).join(path)
+            };
+            let path = CString::new(path.to_string_lossy().as_ref()).into_do(strand)?;
 
             // Parse retry configuration with defaults
             let busy_retries = if let Some(v) = retries {
