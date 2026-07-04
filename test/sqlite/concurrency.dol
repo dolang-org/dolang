@@ -1,0 +1,61 @@
+import agent sqlite
+  test:
+    - assert
+    - assert_eq
+  fs:
+    - Path
+  strand:
+    - fork
+
+let STRAND_COUNT = 4
+let INSERTS_PER_STRAND = 4
+let WAL_STRAND_COUNT = 16
+let WAL_INSERTS_PER_STRAND = 8
+
+#[agent.test]
+def concurrent_writers()
+  let db = Path "test.db"
+  sqlite.open $db do |conn|
+    conn.execute "CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)"
+
+    fork
+      for i = range $STRAND_COUNT
+        do sqlite.open $db retries: 20 min_wait: 2 do |writer|
+          writer.prepare "INSERT INTO test (value) VALUES (:value)" do |stmt|
+            for j = range $INSERTS_PER_STRAND
+              stmt.execute value: (i * INSERTS_PER_STRAND + j)
+
+    conn.prepare "SELECT value FROM test" do |stmt|
+      let rows = [...stmt.query()]
+      assert_eq $rows.len (STRAND_COUNT * INSERTS_PER_STRAND)
+
+#[agent.test]
+def wal()
+  let db = Path "test.db"
+  sqlite.open $db do |conn|
+    conn.execute "PRAGMA journal_mode=WAL"
+    conn.execute "CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)"
+
+    fork
+      for i = range $WAL_STRAND_COUNT
+        do sqlite.open $db retries: 20 min_wait: 2 do |writer|
+          writer.prepare "INSERT INTO test (value) VALUES (:value)" do |stmt|
+            for j = range $WAL_INSERTS_PER_STRAND
+              stmt.execute value: (i * WAL_INSERTS_PER_STRAND + j)
+      - do sqlite.open $db retries: 20 min_wait: 2 do |reader|
+          reader.prepare "SELECT COUNT(*) AS cnt FROM test" do |stmt|
+            for _ = range 5
+              let rows = [...stmt.query()]
+              assert (rows[0]["cnt"] >= 0)
+
+    let total = (WAL_STRAND_COUNT * WAL_INSERTS_PER_STRAND)
+
+    conn.prepare "SELECT COUNT(*) AS cnt FROM test" do |stmt|
+      let rows = [...stmt.query()]
+      assert_eq $rows[0]["cnt"] $total
+
+    conn.execute "PRAGMA wal_checkpoint(TRUNCATE)"
+
+    conn.prepare "SELECT COUNT(*) AS cnt FROM test" do |stmt|
+      let rows = [...stmt.query()]
+      assert_eq $rows[0]["cnt"] $total
