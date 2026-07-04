@@ -1,7 +1,7 @@
 use std::{
     any::Any,
     collections::HashMap,
-    io,
+    io, mem,
     os::unix::{
         io::{AsFd, OwnedFd},
         net::UnixStream as StdUnixStream,
@@ -33,7 +33,17 @@ use crate::{
     },
 };
 
-type PendingMap = HashMap<u64, Box<dyn Any + Send>>;
+trait Pending: Any + Send {
+    fn error(self: Box<Self>, err: io::Error);
+}
+
+impl<T: Send + 'static> Pending for oneshot::Sender<Result<T, io::Error>> {
+    fn error(self: Box<Self>, err: io::Error) {
+        let _ = self.send(Err(err));
+    }
+}
+
+type PendingMap = HashMap<u64, Box<dyn Pending>>;
 
 struct AliveState {
     sender: LockedSender<Request>,
@@ -60,8 +70,7 @@ impl AliveState {
         &mut self,
         id: u64,
     ) -> Option<oneshot::Sender<Result<T, io::Error>>> {
-        self.pending
-            .remove(&id)?
+        (self.pending.remove(&id)? as Box<dyn Any>)
             .downcast::<oneshot::Sender<Result<T, io::Error>>>()
             .ok()
             .map(|b| *b)
@@ -70,6 +79,12 @@ impl AliveState {
     fn complete<T: Send + 'static>(&mut self, id: u64, result: Result<T, io::Error>) {
         if let Some(tx) = self.remove_pending::<T>(id) {
             let _ = tx.send(result);
+        }
+    }
+
+    fn error(self, err: io::Error) {
+        for (_, pending) in self.pending.into_iter() {
+            pending.error(io::Error::new(err.kind(), err.to_string()))
         }
     }
 }
@@ -1398,10 +1413,10 @@ impl Vfs for Client {
 }
 
 async fn receive_loop(receiver: Receiver<Response>, inner: Arc<ClientInner>) {
-    let err_msg = loop {
+    let err = loop {
         let response = match receiver.recv().await {
             Ok(res) => res,
-            Err(err) => break err.to_string(),
+            Err(err) => break err,
         };
 
         let mut state = inner.state.lock().await;
@@ -1519,10 +1534,9 @@ async fn receive_loop(receiver: Receiver<Response>, inner: Arc<ClientInner>) {
     };
 
     let mut state = inner.state.lock().await;
-    let pending = std::mem::replace(&mut *state, ClientState::Dead(err_msg.clone()));
+    let pending = mem::replace(&mut *state, ClientState::Dead(err.to_string()));
 
     if let ClientState::Alive(alive) = pending {
-        // Dropping pending entries causes waiters to receive errors
-        drop(alive);
+        alive.error(err)
     }
 }
