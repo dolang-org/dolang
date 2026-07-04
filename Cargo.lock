@@ -926,8 +926,6 @@ version = "0.1.0"
 dependencies = [
  "dolang",
  "dolang-ext-shell",
- "dolang-private-build",
- "dolang-private-test",
  "tokio",
  "zip",
 ]

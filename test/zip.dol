@@ -1,24 +1,21 @@
-import zip
-import fs:
-  - with_temp_dir
+import agent zip
+  test:
+    - assert_eq
 
-with_temp_dir do |dir|
-  # Test 1: Write mode - create a new zip file and read it back
-  let test_zip = (dir / "test.zip")
-
-  zip.open $test_zip "w" do |archive|
+#[agent.test]
+def write_read_append()
+  zip.open "test.zip" "w" do |archive|
     archive.open "hello.txt" do |file|
       file.write "Hello, World!"
 
     archive.open "test.txt" do |file|
       file.write "Test content"
 
-  # Verify the written zip by reading it back
-  zip.open $test_zip do |archive|
-    let read_entries = [...archive.entries()]
-    assert_eq $read_entries.len 2
-    assert_eq $read_entries[0] "hello.txt"
-    assert_eq $read_entries[1] "test.txt"
+  zip.open "test.zip" do |archive|
+    let entries = [...archive.entries()]
+    assert_eq $entries.len 2
+    assert_eq $entries[0] "hello.txt"
+    assert_eq $entries[1] "test.txt"
 
     archive.open "hello.txt" do |file|
       let data = file.read 1024
@@ -28,13 +25,11 @@ with_temp_dir do |dir|
       let data = file.read 1024
       assert_eq (str data) "Test content"
 
-  # Test 2: Append mode - add to existing zip
-  zip.open $test_zip "a" do |archive|
+  zip.open "test.zip" "a" do |archive|
     archive.open "new_file.txt" do |file|
       file.write "Appended content"
 
-  # Verify the appended zip
-  zip.open $test_zip do |archive|
+  zip.open "test.zip" do |archive|
     let entries = [...archive.entries()]
     assert_eq $entries.len 3
     assert_eq $entries[2] "new_file.txt"
