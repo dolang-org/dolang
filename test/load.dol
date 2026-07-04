@@ -1,0 +1,86 @@
+import compile load
+  test:
+    - assert_eq
+    - assert_throws
+    - test
+  std:
+    - ImportError
+    - TypeError
+
+#[test]
+def synthetic_module()
+  let handle = load.import_handler do |name|
+    if (name == "synthetic_basic")
+      record answer: 42
+    else
+      throw ImportError(name)
+
+  import synthetic_basic: synthetic
+
+  assert_eq $synthetic.answer 42
+  assert_eq (type handle) (type handle)
+
+#[test]
+def fallback_after_import_error()
+  let seen = []
+
+  let first = load.import_handler do |name|
+    seen.push $name
+    throw ImportError(name)
+
+  let second = load.import_handler do |name|
+    seen.push $name
+    if (name == "synthetic_fallback")
+      record answer: 7
+    else
+      throw ImportError(name)
+
+  import synthetic_fallback: synthetic
+
+  assert_eq $synthetic.answer 7
+  assert_eq $seen.len 2
+  assert_eq $seen[0] "synthetic_fallback"
+  assert_eq $seen[1] "synthetic_fallback"
+  second.unregister()
+  first.unregister()
+
+#[test]
+def non_import_error_aborts()
+  let first = load.import_handler do |name|
+    if (name == "existing_module")
+      throw TypeError("boom")
+    else
+      throw ImportError(name)
+
+  let second = load.import_handler do |name|
+    if (name == "existing_module")
+      record answer: 99
+    else
+      throw ImportError(name)
+
+  let err = assert_throws $TypeError do
+    import existing_module:
+      - answer
+    answer
+  assert_eq (str err) "type error: boom"
+
+  second.unregister()
+  first.unregister()
+
+#[test]
+def unregister()
+  let handle = load.import_handler do |name|
+    if (name == "synthetic_unregister")
+      record answer: 1
+    else
+      throw ImportError(name)
+
+  handle.unregister()
+
+  let err = assert_throws $ImportError do
+    import synthetic_unregister: _
+  assert_eq (str err) "module not found: synthetic_unregister"
+
+#[test]
+def execute()
+  assert_eq 2 $ load.run $ (compile.compile "test.dol" "(1 + 1)").bytecode

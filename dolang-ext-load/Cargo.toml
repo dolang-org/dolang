@@ -11,11 +11,3 @@ rust-version.workspace = true
 dolang = { path = "../dolang", version = "0.1.0" }
 anstyle = "1.0.14"
 console = "0.16.2"
-
-[build-dependencies]
-dolang-private-build = { path = "../dolang-private-build", version = "0.1.0" }
-
-[dev-dependencies]
-dolang-private-test = { path = "../dolang-private-test", version = "0.1.0" }
-dolang-ext-compile = { path = "../dolang-ext-compile", version = "0.1.0" }
-futures = "0.3"

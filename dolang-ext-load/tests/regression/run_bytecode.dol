@@ -1,3 +1,0 @@
-import compile
-import load
-assert_eq 2 $ load.run $ (compile.compile "test.dol" "(1 + 1)").bytecode
