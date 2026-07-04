@@ -1,4 +1,7 @@
-use std::{cell::UnsafeCell, collections::HashMap, hint::unreachable_unchecked, mem, ptr};
+use std::{
+    cell::UnsafeCell, collections::HashMap, future::poll_fn, hint::unreachable_unchecked, mem, ptr,
+    task::Poll,
+};
 
 use dolang_bytecode::{Opcode, builtin};
 use dolang_util::alias;
@@ -24,7 +27,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, Slots, Value},
-    vm::Vm,
+    vm::{ImportCacheEntry, ImportGuard, Vm},
 };
 
 enum Status<'v> {
@@ -110,33 +113,60 @@ impl<'v> Vm<'v> {
             out.store(module.dup());
             return Ok(());
         }
-        match self.import_cache.borrow().get(name) {
-            Some(None) => return Err(Error::cyclic_import(strand, name)),
-            Some(Some(value)) => {
-                out.store(value.dup());
-                return Ok(());
+        loop {
+            match self.import_cache.borrow().get(name) {
+                Some(ImportCacheEntry::Pending(guard)) => {
+                    if ptr::eq(guard.owner, strand.inner) {
+                        return Err(Error::cyclic_import(strand, name));
+                    }
+                }
+                Some(ImportCacheEntry::Ready(value)) => {
+                    out.store(value.dup());
+                    return Ok(());
+                }
+                None => break,
             }
-            _ => {}
-        }
-        let mut err = Error::not_supported(strand);
-        for importer in self.importers.iter() {
-            {
+            poll_fn(|cx| {
                 let mut borrow = self.import_cache.borrow_mut();
-                // Insert a guard value
-                borrow.insert(name.to_owned(), None);
-                // Drop borrow before calling importer
-            }
+                if let Some(ImportCacheEntry::Pending(guard)) = borrow.get_mut(name) {
+                    if ptr::eq(guard.owner, strand.inner) {
+                        return Poll::Ready(Err(Error::cyclic_import(strand, name)));
+                    }
+                    guard.waiters.push(cx.waker().clone());
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Ok(()))
+                }
+            })
+            .await?;
+        }
+
+        let mut err = Error::not_supported(strand);
+        {
+            let mut borrow = self.import_cache.borrow_mut();
+            borrow.insert(
+                name.to_owned(),
+                ImportCacheEntry::Pending(ImportGuard {
+                    owner: strand.inner,
+                    waiters: Vec::new(),
+                }),
+            );
+        }
+        for importer in self.importers.iter() {
             if let Err(e) = call!(strand, importer, Slot::reborrow(&mut out), name).await {
                 if e.kind() == ErrorKind::Import {
                     err = e;
                     continue;
                 }
+                self.import_cache.borrow_mut().remove(name);
                 return Err(e);
             }
-            let mut borrow = self.import_cache.borrow_mut();
-            borrow.insert(name.to_owned(), Some(out.dup()));
+            self.import_cache
+                .borrow_mut()
+                .insert(name.to_owned(), ImportCacheEntry::Ready(out.dup()));
             return Ok(());
         }
+        self.import_cache.borrow_mut().remove(name);
         Err(err)
     }
 
