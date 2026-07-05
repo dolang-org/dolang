@@ -1,0 +1,70 @@
+import patch
+import
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - test
+  std:
+    - RuntimeError
+    - ValueError
+
+let BAD_PATCH = |
+  not a patch
+
+let CREATE_PATCH = |
+  diff --git a/new.txt b/new.txt
+  new file mode 100644
+  --- /dev/null
+  +++ b/new.txt
+  @@ -0,0 +1 @@
+  +hello
+
+let DELETE_PATCH = |
+  diff --git a/old.txt b/old.txt
+  deleted file mode 100644
+  --- a/old.txt
+  +++ /dev/null
+  @@ -1 +0,0 @@
+  -gone
+
+let MOVE_PATCH = |
+  diff --git a/old.txt b/new.txt
+  rename from old.txt
+  rename to new.txt
+  --- a/old.txt
+  +++ b/new.txt
+  @@ -1 +1 @@
+  -alpha
+  +beta
+
+#[test]
+def parse_errors_are_typed()
+  let err = assert_throws $patch.ParseError do
+    patch.decode(BAD_PATCH).next()
+  assert (type err patch.ParseError)
+  assert (type err ValueError)
+  assert (((str err).len) > 0)
+
+#[test]
+def apply_errors_are_typed()
+  let p = patch.diff "alpha\n" "beta\n"
+  let err = assert_throws $patch.ApplyError do
+    let _ = p.apply "gamma\n"
+  assert (type err patch.ApplyError)
+  assert (type err RuntimeError)
+  assert ((str err).len > 0)
+
+#[test]
+def patch_type_reports_operation_kind()
+  let modify = patch.diff "alpha\n" "beta\n"
+  assert_eq $modify.type :modify:
+
+  let create = patch.decode(CREATE_PATCH).next()
+  assert_eq $create.type :create:
+
+  let delete = patch.decode(DELETE_PATCH).next()
+  assert_eq $delete.type :delete:
+
+  let move = patch.decode(MOVE_PATCH).next()
+  assert_eq $move.type :move:
