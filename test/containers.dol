@@ -1,6 +1,7 @@
 import sys sqlite systemd
   fs:
     - with_temp_dir
+    - Path
   test:
     - skip
     - assert
@@ -18,6 +19,32 @@ else if run.podman.which()
   podman
 else
   skip "no container runtime available"
+
+def remove_image tag
+  try
+    let img = runtime.image $tag
+    img.remove force: true
+  catch runtime.NoImageError: _
+    nil
+
+def remove_container name
+  try
+    let ctr = runtime.container $name
+    ctr.remove force: true
+  catch runtime.NoContainerError: _
+    nil
+
+def clean_image tag block
+  try
+    block()
+  finally
+    remove_image $tag
+
+def clean_container name block
+  try
+    block()
+  finally
+    remove_container $name
 
 #[test]
 def read_ubuntu_release()
@@ -101,6 +128,30 @@ def image_build_multi_tag()
   latest.remove force: true
 
 #[test]
+def image_build_patch_step()
+  let tag = "dolang-test-image-patch-step:latest"
+  let path = Path /tmp/dolang-patch-test.txt
+
+  clean_image $tag do
+    runtime.build
+      from: ubuntu:24.04
+      add:
+        target: $path
+        content: |
+          alpha
+      patch:
+        content: |
+          --- $path
+          +++ $path
+          @@ -1 +1 @@
+          -alpha
+          +beta
+      tag: $tag
+
+    let contents = runtime.with $tag do path.read()
+    assert_eq $contents "beta\n"
+
+#[test]
 def image_build_untagged()
   let img = runtime.build
     from: ubuntu:24.04
@@ -154,36 +205,29 @@ def push_missing_image()
 
 #[test]
 def container_inspect_lifecycle()
-  let container_name = "dolang-test-container-inspect-lifecycle"
-  let cleanup = do
-    try
-      let ctr = runtime.container $container_name
-      ctr.remove force: true
-    catch runtime.NoContainerError: _
-      nil
+  let name = "dolang-test-container-inspect-lifecycle"
+  remove_container $name
 
-  cleanup()
+  clean_container $name do
+    sub do container_cli run --init -d --name $name ubuntu:24.04 sleep infinity
 
-  try
-    sub do container_cli run --init -d --name $container_name ubuntu:24.04 sleep infinity
-
-    let ctr = runtime.container $container_name
+    let ctr = runtime.container $name
     let state = ctr.state()
-    assert_eq $state.name $container_name
+    assert_eq $state.name $name
     assert_eq $ctr.image ubuntu:24.04
     assert_eq $state.state :running:
     assert_eq $state.status running
     assert $ctr.created
     assert_eq $state.ports []
 
-    let listed = [...runtime.containers filter: "name=$container_name"]
+    let listed = [...runtime.containers filter: "name=$name"]
     assert_eq $listed.len 1
     assert_eq $listed[0].id $ctr.id
 
     ctr.stop()
     assert_eq $ctr.state().state :exited:
 
-    let listed_all = [...runtime.containers all: true filter: "name=$container_name"]
+    let listed_all = [...runtime.containers all: true filter: "name=$name"]
     assert_eq $listed_all.len 1
     assert_eq $listed_all[0].id $ctr.id
 
@@ -196,10 +240,8 @@ def container_inspect_lifecycle()
     ctr.remove force: true
 
     let gone = try
-      runtime.container $container_name
+      runtime.container $name
       false
     catch runtime.NoContainerError: _
       true
     assert $gone
-  finally
-    cleanup()

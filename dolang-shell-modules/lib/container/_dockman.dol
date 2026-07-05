@@ -747,26 +747,36 @@ pub class Builder
     else
       (Path source).read b
 
-    for p = patch.decode $patch_data
-      let kind = p.type
-      let src = p.source
-      let dst = p.target
-
-      if (kind == :create:)
-        let result = p.apply b""
-        self.#add_content $result $dst nil
-      else if (kind == :delete:)
-        self.#agent do
-          let result = p.apply (src.read "b")
-          if (result.len != 0)
-            throw "delete patch did not apply to empty output: $src"
-          src.remove()
-      else if (kind == :modify: || kind == :move: || kind == :copy:)
-        self.#agent do
-          let result = p.apply (src.read "b")
-          self.#add_content $result $dst nil
-          if (kind == :move: && src != dst)
-            src.remove()
+    let patches = [...patch.decode patch_data]
+    progress.show message: "patching files" total: $patches.len do |w|
+      for p = patches
+        let kind = p.type
+        if (kind == :create:)
+          let target = p.target
+          let result = p.apply b""
+          w.message = "create: $target"
+          self.#add_content $result $target nil
+        else if (kind == :delete:)
+          let source = p.source
+          w.message = "delete: $source"
+          self.#agent do
+            let result = p.apply (source.read "b")
+            if (result.len != 0)
+              throw "delete patch did not produce empty output: $source"
+            p.source.remove()
+        else if (kind == :modify: || kind == :move: || kind == :copy:)
+          let source = p.source
+          let target = p.target
+          if (kind == :modify: || source == target)
+            w.message = "modify: $source"
+          else
+            w.message = "$kind: $source => $target"
+          self.#agent do
+            let result = p.apply (p.source.read "b")
+            self.#add_content $result $p.target nil
+            if (kind == :move: && p.source != p.target)
+              p.source.remove()
+        w.delta()
 
   def step_commit self msg
     progress.show message: "commit" do |_|
