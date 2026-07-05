@@ -1,5 +1,4 @@
 import
-  std: error
   std:
     - UnsupportedError
     - ImmutableError
@@ -26,9 +25,9 @@ import
     - IterStop
     - SinkStop
 
-def assert_ctor func type: ty :msg ...rest
-  let err = func ...rest
-  assert_eq (type err) $ty
+def assert_ctor ty :msg ...rest
+  let err = ty ...rest
+  assert (type err ty)
   assert_eq (str err) $msg
 
 def assert_ctor_fail func type: ty :msg ...rest
@@ -56,7 +55,7 @@ assert_eq (type state_err) $StateError
 assert_eq (str state_err) "state error: closed"
 assert (type state_err RuntimeError)
 
-let field_err = FieldError "name"
+let field_err = FieldError :name:
 assert_eq (type field_err) $FieldError
 assert_eq (str field_err) "no such field: name"
 
@@ -64,40 +63,39 @@ let sink_stop = SinkStop()
 assert_eq (type sink_stop) $SinkStop
 assert_eq (str sink_stop) "output iterator stopped"
 
-assert_ctor $UnsupportedError type: $UnsupportedError msg: "unsupported operation"
-assert_ctor $ImmutableError type: $ImmutableError msg: "object is immutable"
-assert_ctor $ConcurrencyError type: $ConcurrencyError msg: "conflicting concurrent operation"
-assert_ctor $ConcurrencyError type: $ConcurrencyError msg: "conflicting concurrent operation: shared" "shared"
-assert_ctor $TypeError type: $TypeError msg: "type error: expected int" "expected int"
-assert_ctor $ValueError type: $ValueError msg: "value error: expected mode" "expected mode"
-assert_ctor $StateError type: $StateError msg: "state error: closed" "closed"
-assert_ctor $IndexError type: $IndexError msg: "index out of range or invalid"
-assert_ctor $FieldError type: $FieldError msg: "no such field: name" "name"
-assert_ctor $FieldError type: $FieldError msg: "no such field: name" :name:
-assert_ctor $UnexpectedPosError type: $UnexpectedPosError msg: "unexpected positional item: 2" 2
-assert_ctor $UnexpectedKeyError type: $UnexpectedKeyError msg: "unexpected key item: key3" :key3:
-assert_ctor $MissingPosError type: $MissingPosError msg: "missing positional item: 3" 3
-assert_ctor $MissingKeyError type: $MissingKeyError msg: "missing key item: key4" :key4:
-assert_ctor $OverflowError type: $OverflowError msg: "numeric overflow"
-assert_ctor $ZeroDivError type: $ZeroDivError msg: "integer zero divisor"
-assert_ctor $IterStop type: $IterStop msg: "input iterator stopped"
-assert_ctor $SinkStop type: $SinkStop msg: "output iterator stopped"
-assert_ctor $CyclicImportError type: $CyclicImportError msg: "cycle detected importing module: pkg.mod" "pkg.mod"
-assert_ctor $ImportError type: $ImportError msg: "module not found: pkg.mod" "pkg.mod"
-assert_ctor $CompileError type: $CompileError msg: "compile error: invalid token" "invalid token"
-assert_ctor $RuntimeError type: $RuntimeError msg: "closed" "closed"
-assert_ctor $CanceledError type: $CanceledError msg: "strand canceled"
-assert_ctor $TimedOutError type: $TimedOutError msg: "strand timed out"
+assert_ctor $UnsupportedError msg: "unsupported operation"
+assert_ctor $ImmutableError msg: "object is immutable"
+assert_ctor $ConcurrencyError msg: "conflicting concurrent operation"
+assert_ctor $ConcurrencyError msg: "conflicting concurrent operation: shared" "shared"
+assert_ctor $TypeError msg: "type error: expected int" "expected int"
+assert_ctor $ValueError msg: "value error: expected mode" "expected mode"
+assert_ctor $StateError msg: "state error: closed" "closed"
+assert_ctor $IndexError msg: "index out of range or invalid"
+assert_ctor $FieldError msg: "no such field: name" :name:
+assert_ctor $UnexpectedPosError msg: "unexpected positional item: 2" 2
+assert_ctor $UnexpectedKeyError msg: "unexpected key item: key3" :key3:
+assert_ctor $MissingPosError msg: "missing positional item: 3" 3
+assert_ctor $MissingKeyError msg: "missing key item: key4" :key4:
+assert_ctor $OverflowError msg: "numeric overflow"
+assert_ctor $ZeroDivError msg: "integer zero divisor"
+assert_ctor $IterStop msg: "input iterator stopped"
+assert_ctor $SinkStop msg: "output iterator stopped"
+assert_ctor $CyclicImportError msg: "cycle detected importing module: pkg.mod" "pkg.mod"
+assert_ctor $ImportError msg: "module not found: pkg.mod" "pkg.mod"
+assert_ctor $CompileError msg: "compile error: invalid token" "invalid token"
+assert_ctor $RuntimeError msg: "closed" "closed"
+assert_ctor $CanceledError msg: "strand canceled"
+assert_ctor $TimedOutError msg: "strand timed out"
 
-assert_ctor_fail $MissingPosError type: $error.TypeError msg: "type error: expected int" "bad"
-assert_ctor_fail $UnexpectedPosError type: $error.TypeError msg: "type error: expected non-negative int" -1
-assert_ctor_fail $TypeError type: $error.TypeError msg: "type error: expected string" 123
-assert_ctor_fail $ValueError type: $error.TypeError msg: "type error: expected string" 123
-assert_ctor_fail $StateError type: $error.TypeError msg: "type error: expected string" 123
-assert_ctor_fail $FieldError type: $error.TypeError msg: "type error: expected string" 123
-assert_ctor_fail $ImportError type: $error.TypeError msg: "type error: expected string" 123
-assert_ctor_fail $CompileError type: $error.TypeError msg: "type error: expected string" 123
-assert_ctor_fail $RuntimeError type: $error.TypeError msg: "type error: expected string" 123
+assert_ctor_fail $MissingPosError type: $TypeError msg: "type error: expected `int`" "bad"
+assert_ctor_fail $UnexpectedPosError type: $ValueError msg: "value error: expected non-negative value" -1
+assert_ctor_fail $TypeError type: $TypeError msg: "type error: expected `str`" 123
+assert_ctor_fail $ValueError type: $TypeError msg: "type error: expected `str`" 123
+assert_ctor_fail $StateError type: $TypeError msg: "type error: expected `str`" 123
+assert_ctor_fail $FieldError type: $TypeError msg: "type error: expected `sym`" 123
+assert_ctor_fail $ImportError type: $TypeError msg: "type error: expected `str`" 123
+assert_ctor_fail $CompileError type: $TypeError msg: "type error: expected `str`" 123
+assert_ctor_fail $RuntimeError type: $TypeError msg: "type error: expected `str`" 123
 
-assert_ctor_fail $AbortError type: $error.TypeError msg: "type error: Abort is not instantiable" "stop"
-assert_ctor_fail $BytecodeError type: $error.TypeError msg: "type error: Bytecode is not instantiable" "bad"
+assert_ctor_fail $AbortError type: $TypeError msg: "type error: Abort is not instantiable" "stop"
+assert_ctor_fail $BytecodeError type: $TypeError msg: "type error: Bytecode is not instantiable" "bad"
