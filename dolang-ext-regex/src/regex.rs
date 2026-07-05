@@ -66,16 +66,13 @@ impl<'v> Object<'v> for Regex {
                         // the transmuted pin guard is owned by the Captures object.
                         annex.global.types.captures.create_with_annex(
                             strand,
-                            Captures,
-                            CapturesAnnex {
+                            Captures {
                                 caps: unsafe {
                                     mem::transmute::<rx::Captures<'_>, rx::Captures<'static>>(caps)
                                 },
-                                _haystack: unsafe {
-                                    mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(
-                                        haystack,
-                                    )
-                                },
+                                _haystack: unsafe { haystack.into_static_unchecked() },
+                            },
+                            CapturesAnnex {
                                 global: annex.global,
                             },
                             &mut out,
@@ -119,9 +116,7 @@ impl<'v> Object<'v> for Regex {
                     strand,
                     Find {
                         iter,
-                        _haystack: unsafe {
-                            mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(haystack)
-                        },
+                        _haystack: unsafe { haystack.into_static_unchecked() },
                     },
                     FindAnnex {
                         global: annex.global,
@@ -188,23 +183,21 @@ impl<'v> Object<'v> for Regex {
                             }
                             let m = caps.get(0).unwrap();
                             result.push_str(&haystack[last_end..m.start()]);
-                            let callback_haystack = unsafe {
-                                mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(
-                                    haystack.clone()
-                                )
-                            };
+                            let callback_haystack =
+                                unsafe { haystack.clone().into_static_unchecked() };
 
                             // Create Captures object for the callback
                             annex.global.types.captures.create_with_annex(
                                 strand,
-                                Captures,
-                                CapturesAnnex {
+                                Captures {
                                     caps: unsafe {
                                         mem::transmute::<rx::Captures<'_>, rx::Captures<'static>>(
                                             caps,
                                         )
                                     },
                                     _haystack: callback_haystack,
+                                },
+                                CapturesAnnex {
                                     global: annex.global,
                                 },
                                 &mut caps_slot,
@@ -326,9 +319,7 @@ impl<'v> Object<'v> for Regex {
                     strand,
                     RegexSplit {
                         inner,
-                        _haystack: unsafe {
-                            mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(haystack)
-                        },
+                        _haystack: unsafe { haystack.into_static_unchecked() },
                     },
                     RegexSplitAnnex,
                     &mut out,
@@ -394,9 +385,7 @@ impl<'v> Object<'v> for Regex {
                     strand,
                     RegexSplit {
                         inner,
-                        _haystack: unsafe {
-                            mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(haystack)
-                        },
+                        _haystack: unsafe { haystack.into_static_unchecked() },
                     },
                     RegexSplitAnnex,
                     &mut out,
@@ -417,17 +406,19 @@ impl<'v> Object<'v> for Regex {
     }
 }
 
-pub(crate) struct Captures;
-
-pub(crate) struct CapturesAnnex<'v> {
-    // SAFETY: The captures has 'static lifetime but actually borrows from the haystack
-    // stored in slot 0 and pinned by `haystack`.
+pub(crate) struct Captures<'v> {
+    // SAFETY: `caps` is lifetime-transmuted to `'static` but actually borrows from
+    // the haystack pinned by `haystack` and rooted in slot 0. Runtime finalization drops
+    // both before the slots are cleared.
     caps: rx::Captures<'static>,
     _haystack: PinStr<'v, 'static>,
+}
+
+pub(crate) struct CapturesAnnex<'v> {
     global: State<'v, Global<'v>>,
 }
 
-impl<'v> Object<'v> for Captures {
+impl<'v> Object<'v> for Captures<'v> {
     const NAME: &'v str = "Captures";
     const MODULE: &'v str = "regex";
     const SLOTS: usize = 1;
@@ -440,7 +431,7 @@ impl<'v> Object<'v> for Captures {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", &this.annex().caps[0]).into_do(strand)
+        write!(w, "{}", &this.borrow(strand)?.caps[0]).into_do(strand)
     }
 
     fn index<'a, 's>(
@@ -450,13 +441,14 @@ impl<'v> Object<'v> for Captures {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
+        let borrow = this.borrow(strand)?;
 
         let cap = if let Ok(idx) = index.to_i64(strand) {
-            annex
+            borrow
                 .caps
                 .get(idx.try_into().map_err(|_| Error::overflow(strand))?)
         } else if let Some(name) = index.as_str(strand) {
-            strand.access(|x| annex.caps.name(name.as_str(x)))
+            strand.access(|x| borrow.caps.name(name.as_str(x)))
         } else {
             return Err(Error::type_error(strand, "expected `int` or `str`"));
         };
@@ -467,21 +459,22 @@ impl<'v> Object<'v> for Captures {
                 // The haystack is stored in slot 0 to keep it alive.
                 let m = unsafe { mem::transmute::<rx::Match<'_>, rx::Match<'static>>(m) };
 
-                let borrow = this.borrow(strand)?;
                 let haystack = unsafe {
-                    mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(
-                        Ref::slot::<0>(&borrow).as_str(strand.vm()).unwrap().pin(),
-                    )
+                    Ref::slot::<0>(&borrow)
+                        .as_str(strand.vm())
+                        .unwrap()
+                        .pin()
+                        .into_static_unchecked()
                 };
 
                 // Create the Match object directly in out
                 annex.global.types.match_.create_with_annex(
                     strand,
-                    Match,
-                    MatchAnnex {
+                    Match {
                         match_: m,
                         _haystack: haystack,
                     },
+                    MatchAnnex,
                     &mut out,
                 );
 
@@ -508,15 +501,15 @@ impl<'v> Object<'v> for Captures {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("start", |this, strand, out| {
-                let annex = this.annex();
-                let input = TryInto::<i64>::try_into(annex.caps.get_match().start())
+                let borrow = this.borrow(strand)?;
+                let input = TryInto::<i64>::try_into(borrow.caps.get_match().start())
                     .map_err(|_| Error::overflow(strand))?;
                 Output::set(strand, out, input);
                 Ok(())
             })
             .get("end", |this, strand, out| {
-                let annex = this.annex();
-                let input = TryInto::<i64>::try_into(annex.caps.get_match().end())
+                let borrow = this.borrow(strand)?;
+                let input = TryInto::<i64>::try_into(borrow.caps.get_match().end())
                     .map_err(|_| Error::overflow(strand))?;
                 Output::set(strand, out, input);
                 Ok(())
@@ -524,20 +517,21 @@ impl<'v> Object<'v> for Captures {
     }
 }
 
-pub(crate) struct Match;
-
-pub(crate) struct MatchAnnex<'v> {
-    // SAFETY: The match has 'static lifetime but actually borrows from the haystack
-    // stored in slot 0 and pinned by `haystack`.
+pub(crate) struct Match<'v> {
+    // SAFETY: `match_` is lifetime-transmuted to `'static` but actually borrows
+    // from the haystack pinned by `haystack` and rooted in slot 0. Runtime finalization drops
+    // drop both before the slots are cleared.
     match_: rx::Match<'static>,
     _haystack: PinStr<'v, 'static>,
 }
 
-impl<'v> Object<'v> for Match {
+pub(crate) struct MatchAnnex;
+
+impl<'v> Object<'v> for Match<'v> {
     const NAME: &'v str = "Match";
     const MODULE: &'v str = "regex";
     const SLOTS: usize = 1;
-    type Annex = MatchAnnex<'v>;
+    type Annex = MatchAnnex;
     type Type = ();
     type TypeAnnex = ();
 
@@ -546,21 +540,21 @@ impl<'v> Object<'v> for Match {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().match_.as_str()).into_do(strand)
+        write!(w, "{}", this.borrow(strand)?.match_.as_str()).into_do(strand)
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("start", |this, strand, out| {
-                let annex = this.annex();
-                let input = TryInto::<i64>::try_into(annex.match_.start())
+                let borrow = this.borrow(strand)?;
+                let input = TryInto::<i64>::try_into(borrow.match_.start())
                     .map_err(|_| Error::overflow(strand))?;
                 Output::set(strand, out, input);
                 Ok(())
             })
             .get("end", |this, strand, out| {
-                let annex = this.annex();
-                let input = TryInto::<i64>::try_into(annex.match_.end())
+                let borrow = this.borrow(strand)?;
+                let input = TryInto::<i64>::try_into(borrow.match_.end())
                     .map_err(|_| Error::overflow(strand))?;
                 Output::set(strand, out, input);
                 Ok(())
@@ -571,7 +565,7 @@ impl<'v> Object<'v> for Match {
 pub(crate) struct Find<'v> {
     // SAFETY: The iterator has 'static lifetime but actually borrows from the regex
     // (stored in slot 0) and the haystack (stored in slot 1). The haystack is
-    // also pinned by `haystack`.
+    // also pinned by `haystack`. Runtime finalization drops both before the slots are cleared.
     iter: rx::CaptureMatches<'static, 'static>,
     _haystack: PinStr<'v, 'static>,
 }
@@ -615,16 +609,19 @@ impl<'v> Object<'v> for Find<'v> {
         match borrow.iter.next() {
             Some(caps) => {
                 let haystack = unsafe {
-                    mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(
-                        Mut::slot::<1>(&borrow).as_str(strand.vm()).unwrap().pin(),
-                    )
+                    Mut::slot::<1>(&borrow)
+                        .as_str(strand.vm())
+                        .unwrap()
+                        .pin()
+                        .into_static_unchecked()
                 };
                 annex.global.types.captures.create_with_annex(
                     strand,
-                    Captures,
-                    CapturesAnnex {
+                    Captures {
                         caps,
                         _haystack: haystack,
+                    },
+                    CapturesAnnex {
                         global: annex.global,
                     },
                     &mut out,

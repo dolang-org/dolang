@@ -47,7 +47,7 @@ pub(crate) unsafe trait Collect {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()>;
     fn clear(&mut self);
     #[allow(unused_variables)]
-    fn pre_clear(this: NonNull<Header>) {}
+    fn finalize(this: NonNull<Header>) {}
 }
 
 /// Base garbage-collected strong pointer with least upper bound `T`
@@ -644,6 +644,7 @@ where
         is_strand: T::STRAND,
         name: || type_name::<T>(),
         drop: |this| unsafe {
+            T::finalize(this);
             let boxed = this.cast::<BoxedSized<H, T>>();
             ptr::drop_in_place(boxed.as_ptr());
         },
@@ -658,7 +659,7 @@ where
         },
         clear: |this| unsafe {
             let boxed = this.cast::<BoxedSized<H, T>>();
-            T::pre_clear(this);
+            T::finalize(this);
             (*boxed.as_ref().value.get()).clear();
             boxed.as_ref().annex.clear()
         },

@@ -7,9 +7,9 @@ use crate::regex::{Captures, Find, Match, Regex, RegexSplit};
 
 pub(crate) struct Types<'v> {
     pub(crate) regex: Type<'v, Regex>,
-    pub(crate) captures: Type<'v, Captures>,
+    pub(crate) captures: Type<'v, Captures<'v>>,
     pub(crate) find: Type<'v, Find<'v>>,
-    pub(crate) match_: Type<'v, Match>,
+    pub(crate) match_: Type<'v, Match<'v>>,
     pub(crate) split: Type<'v, RegexSplit<'v>>,
 }
 

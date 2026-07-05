@@ -348,7 +348,7 @@ impl<'v> Object<'v> for File {
     type Type = ();
     type TypeAnnex = ();
 
-    fn clear<'a>(this: Instance<'v, 'a, Self>) {
+    fn finalize<'a>(this: Instance<'v, 'a, Self>) {
         let global = this.annex();
         // Get the archive reference from slot 0 and reset its file state
         let borrow = this.borrow_unwrap();

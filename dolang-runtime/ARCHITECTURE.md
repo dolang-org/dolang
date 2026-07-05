@@ -50,6 +50,14 @@ register named methods and getters/setters via `TypeBuilder`. The GC wrappers
 (`ObjectWrap`, `TypeObjWrap`) implement `Protocol<'v>` by delegating to the
 `Object<'v>` impl and to the registered handler tables.
 
+Annex data is immutable and accessible without a runtime borrow guard. It is
+only suitable for state that does not need GC-time finalization. If native
+object state contains lifetime-transmuted pins or other interior references
+that depend on `Object::SLOTS`, that state must live in the main borrow-checked
+object so `Object::finalize` and the runtime's finalization path can drop it
+before the slots are zeroed during
+collection.
+
 Each `Object<'v>` type gets an **automatic type singleton** created at
 registration time. Calling `op_type` on an instance returns this singleton,
 which can be exposed directly in a module. The singleton is callable (invoking
