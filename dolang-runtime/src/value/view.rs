@@ -2,6 +2,7 @@ use std::{
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
     marker::PhantomData,
+    mem,
     num::NonZero,
     ops::Deref,
     ptr::NonNull,
@@ -115,6 +116,21 @@ impl<'v, 'a> Display for Str<'v, 'a> {
     }
 }
 
+impl<'v, 'a> PinStr<'v, 'a> {
+    /// Widen the borrow lifetime of this pin without changing its dynamic pin state.
+    ///
+    /// This pin guarantees only address stability of the underlying string until it is
+    /// dropped. It does not guarantee rootedness or liveness of the underlying GC object.
+    ///
+    /// # Safety
+    /// The caller must ensure the underlying string object remains rooted and alive for the
+    /// full widened lifetime, and that any references derived from the widened pin are dropped
+    /// before the pin.
+    pub unsafe fn into_static_unchecked(self) -> PinStr<'v, 'static> {
+        unsafe { mem::transmute::<PinStr<'v, 'a>, PinStr<'v, 'static>>(self) }
+    }
+}
+
 impl<'v, 'a> Deref for PinStr<'v, 'a> {
     type Target = str;
 
@@ -191,6 +207,21 @@ impl<'v, 'a> Bin<'v, 'a> {
             value: self.value,
             phantom: PhantomData,
         }
+    }
+}
+
+impl<'v, 'a> PinBin<'v, 'a> {
+    /// Widen the borrow lifetime of this pin without changing its dynamic pin state.
+    ///
+    /// This pin guarantees only address stability of the underlying binary until it is dropped.
+    /// It does not guarantee rootedness or liveness of the underlying GC object.
+    ///
+    /// # Safety
+    /// The caller must ensure the underlying binary object remains rooted and alive for the
+    /// full widened lifetime, and that any references derived from the widened pin are dropped
+    /// before the pin.
+    pub unsafe fn into_static_unchecked(self) -> PinBin<'v, 'static> {
+        unsafe { mem::transmute::<PinBin<'v, 'a>, PinBin<'v, 'static>>(self) }
     }
 }
 

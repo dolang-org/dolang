@@ -4,6 +4,7 @@ use std::{
     fmt, future,
     hash::Hasher,
     marker::PhantomData,
+    mem::ManuallyDrop,
     ops::{ControlFlow, Deref, DerefMut},
     ptr::NonNull,
 };
@@ -33,7 +34,17 @@ use dolang_util::alias;
 
 pub use super::protocol::{Spread, SpreadContext};
 
-pub(crate) struct ObjectWrap<'v, T>(T, PhantomData<&'v mut &'v ()>);
+pub(crate) struct ObjectWrap<'v, T> {
+    value: ManuallyDrop<T>,
+    finalized: bool,
+    phantom: PhantomData<&'v mut &'v ()>,
+}
+
+impl<'v, T> Drop for ObjectWrap<'v, T> {
+    fn drop(&mut self) {
+        debug_assert!(self.finalized);
+    }
+}
 
 pub(crate) struct ObjectAnnex<'v, T: Object<'v>> {
     slots: Option<alias::Box<[UnsafeCell<Value<'v>>]>>,
@@ -345,7 +356,8 @@ impl<'v, 'a, T: Object<'v>> Deref for Ref<'v, 'a, T> {
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &self.0.0
+        debug_assert!(!self.0.finalized);
+        &self.0.value
     }
 }
 
@@ -398,14 +410,16 @@ impl<'v, 'a, T: Object<'v>> Deref for Mut<'v, 'a, T> {
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &self.0.0
+        debug_assert!(!self.0.finalized);
+        &self.0.value
     }
 }
 
 impl<'v, 'a, T: Object<'v>> DerefMut for Mut<'v, 'a, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0.0
+        debug_assert!(!self.0.finalized);
+        &mut self.0.value
     }
 }
 
@@ -451,6 +465,32 @@ impl<'v, 'a, T: Object<'v>> Input<'v> for Instance<'v, 'a, T> {
 
 impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
     #[inline]
+    fn borrow_impl<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        borrow: Option<gc::Ref<'v, 'a, protocol::Header, ObjectWrap<'v, T>>>,
+    ) -> Result<'v, 's, Ref<'v, 'a, T>> {
+        let borrow = borrow.ok_or_else(|| Error::concurrency(strand))?;
+        if borrow.finalized {
+            return Err(Error::runtime(strand, "native object finalized"));
+        }
+        Ok(Ref(borrow))
+    }
+
+    #[inline]
+    fn borrow_mut_impl<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        borrow: Option<gc::Mut<'v, 'a, protocol::Header, ObjectWrap<'v, T>>>,
+    ) -> Result<'v, 's, Mut<'v, 'a, T>> {
+        let borrow = borrow.ok_or_else(|| Error::concurrency(strand))?;
+        if borrow.finalized {
+            return Err(Error::runtime(strand, "native object finalized"));
+        }
+        Ok(Mut(borrow))
+    }
+
+    #[inline]
     pub(crate) fn new(receiver: gc::Borrow<'v, 'a, protocol::Header, ObjectWrap<'v, T>>) -> Self {
         Self {
             receiver,
@@ -461,31 +501,29 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
     /// Borrow content immutably
     #[inline]
     pub fn borrow<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, Ref<'v, 'a, T>> {
-        Ok(Ref(self
-            .receiver
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?))
+        self.borrow_impl(strand, self.receiver.borrow())
     }
 
     /// Borrow content immutably, panicking on failure
     #[inline]
     pub fn borrow_unwrap(&self) -> Ref<'v, 'a, T> {
-        Ref(self.receiver.borrow().expect("conflicting borrow"))
+        let borrow = self.receiver.borrow().expect("conflicting borrow");
+        assert!(!borrow.finalized, "native object finalized");
+        Ref(borrow)
     }
 
     /// Borrow content mutably
     #[inline]
     pub fn borrow_mut<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, Mut<'v, 'a, T>> {
-        Ok(Mut(self
-            .receiver
-            .borrow_mut()
-            .ok_or_else(|| Error::concurrency(strand))?))
+        self.borrow_mut_impl(strand, self.receiver.borrow_mut())
     }
 
     /// Borrow content mutably, panicking on failure
     #[inline]
     pub fn borrow_mut_unwrap(&self) -> Mut<'v, 'a, T> {
-        Mut(self.receiver.borrow_mut().expect("conflicting borrow"))
+        let borrow = self.receiver.borrow_mut().expect("conflicting borrow");
+        assert!(!borrow.finalized, "native object finalized");
+        Mut(borrow)
     }
 
     /// Get immutable annex
@@ -1145,16 +1183,18 @@ pub trait Object<'v>: Sized + 'v {
         future::ready(Err(Error::not_supported(strand)))
     }
 
-    /// Performs any cleanup before the objects slots are cleared during garbage collection.
+    /// Performs any object-specific finalization before the main object state is dropped.
     ///
-    /// This method is called synchronously during GC when the object is being collected.
-    /// It allows objects to perform cleanup that requires access to their slots.
-    /// before the slots are cleared to `nil`.
+    /// This method is called synchronously just before the runtime drops the main object state.
+    /// Unlike [`Drop::drop`], this method allows access to the object's annex and slots.
+    ///
+    /// `finalize` runs with no outstanding runtime borrows of the object, and
+    /// [`Instance::borrow_mut_unwrap`] is expected to succeed for `this` during the call.
     ///
     /// # Default
     /// Does nothing.
     #[allow(unused_variables)]
-    fn clear<'a>(this: Instance<'v, 'a, Self>) {}
+    fn finalize<'a>(this: Instance<'v, 'a, Self>) {}
 }
 
 unsafe impl<'v, T: Object<'v>> Collect for ObjectWrap<'v, T> {
@@ -1166,12 +1206,22 @@ unsafe impl<'v, T: Object<'v>> Collect for ObjectWrap<'v, T> {
         ControlFlow::Continue(())
     }
 
-    fn pre_clear(this: NonNull<arena::Header>) {
-        if T::SLOTS != 0 {
-            unsafe {
-                // Call the user Object::clear hook
-                T::clear(Instance::new(gc::Borrow::new(this.cast())));
+    fn finalize(this: NonNull<arena::Header>) {
+        unsafe {
+            let obj: protocol::GcObjBorrow<Self> = gc::Borrow::new(this.cast());
+            if obj
+                .borrow()
+                .expect("object borrowed during finalize")
+                .finalized
+            {
+                return;
             }
+            T::finalize(Instance::new(obj));
+            let mut borrow = obj
+                .borrow_mut()
+                .expect("borrow guard leaked during finalize");
+            ManuallyDrop::drop(&mut borrow.value);
+            borrow.finalized = true;
         }
     }
 
@@ -2053,7 +2103,11 @@ impl<'v, T: Object<'v>> Type<'v, T> {
         Value::from_object(protocol::GcObj::new_annex(
             vm.arena(),
             self.vtbl,
-            ObjectWrap(value, PhantomData),
+            ObjectWrap {
+                value: ManuallyDrop::new(value),
+                finalized: false,
+                phantom: PhantomData,
+            },
             ObjectAnnex {
                 slots: if T::SLOTS != 0 {
                     Some(

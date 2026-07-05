@@ -95,7 +95,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>) {
                 .ok_or_else(|| Error::type_error(strand, "expected `str`"))?;
 
             // SAFETY: the string will be kept alive as long as this iterator object exists.
-            let pin = unsafe { mem::transmute::<PinStr<'v, '_>, PinStr<'v, 'static>>(s.pin()) };
+            let pin = unsafe { s.pin().into_static_unchecked() };
             let shlex = Shlex::new(unsafe { mem::transmute::<&str, &'static str>(&*pin) });
             iter.create(strand, Iter { shlex, _pin: pin }, &mut out);
             Output::set(

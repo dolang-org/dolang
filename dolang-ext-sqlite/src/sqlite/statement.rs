@@ -107,7 +107,7 @@ impl<'v> Object<'v> for Statement {
     type Type = ();
     type TypeAnnex = ();
 
-    fn clear<'a>(this: Instance<'v, 'a, Self>) {
+    fn finalize<'a>(this: Instance<'v, 'a, Self>) {
         let annex = this.annex();
         let global = annex.global;
         let mut borrow = this.borrow_mut_unwrap();
