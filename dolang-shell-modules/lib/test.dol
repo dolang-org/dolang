@@ -263,9 +263,9 @@ pub def assert_throws type :msg = nil block
   catch type: e
     return e
   if msg
-    throw Assert "$type thrown"
-  else
     throw Assert "$msg ($type thrown)"
+  else
+    throw Assert "$type thrown"
 
 # Assert that `value` is of type `expected` (including a subtype), throwing an
 # error with optional `msg` otherwise.
