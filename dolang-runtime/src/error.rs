@@ -571,11 +571,6 @@ impl<'v, 's> Error<'v, 's> {
         Self::new_info(strand.inner, Boxed::Field(key.as_str(strand).into()))
     }
 
-    /// Create error: field does not exist
-    pub fn field_name(strand: &mut Strand<'v, 's>, key: impl Into<String>) -> Self {
-        Self::new_info(strand.inner, Boxed::Field(key.into().into()))
-    }
-
     /// Create error: absent or invalid index
     pub fn index(strand: &mut Strand<'v, 's>) -> Self {
         Self::new_info(strand.inner, Boxed::Index)

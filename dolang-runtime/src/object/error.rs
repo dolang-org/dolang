@@ -304,7 +304,7 @@ impl<'v> Protocol<'v> for VariantType {
                 let ([], [msg]) = unpack!(strand, args, 0, 1)?;
                 match msg {
                     Some(msg) => {
-                        let msg = expect_string_like(strand, &msg)?;
+                        let msg = expect_string(strand, &msg)?;
                         Error::concurrency_msg(strand, msg)
                     }
                     None => Error::concurrency(strand),
@@ -312,17 +312,17 @@ impl<'v> Protocol<'v> for VariantType {
             }
             ErrorKind::Type => {
                 let ([msg], []) = unpack!(strand, args, 1, 0)?;
-                let msg = expect_string_like(strand, &msg)?;
+                let msg = expect_string(strand, &msg)?;
                 Error::type_error(strand, msg)
             }
             ErrorKind::Value => {
                 let ([msg], []) = unpack!(strand, args, 1, 0)?;
-                let msg = expect_string_like(strand, &msg)?;
+                let msg = expect_string(strand, &msg)?;
                 Error::value(strand, msg)
             }
             ErrorKind::State => {
                 let ([msg], []) = unpack!(strand, args, 1, 0)?;
-                let msg = expect_string_like(strand, &msg)?;
+                let msg = expect_string(strand, &msg)?;
                 Error::state_error(strand, msg)
             }
             ErrorKind::Index => {
@@ -331,13 +331,10 @@ impl<'v> Protocol<'v> for VariantType {
             }
             ErrorKind::Field => {
                 let ([name], []) = unpack!(strand, args, 1, 0)?;
-                match name.as_sym(strand) {
-                    Some(sym) => Error::field(strand, sym),
-                    None => {
-                        let name = expect_string_like(strand, &name)?;
-                        Error::field_name(strand, name)
-                    }
-                }
+                let name = name
+                    .as_sym(strand)
+                    .ok_or_else(|| Error::type_error(strand, "expected `sym`"))?;
+                Error::field(strand, name)
             }
             ErrorKind::UnexpectedPos => {
                 let ([index], []) = unpack!(strand, args, 1, 0)?;
@@ -375,17 +372,17 @@ impl<'v> Protocol<'v> for VariantType {
             }
             ErrorKind::CyclicImport => {
                 let ([name], []) = unpack!(strand, args, 1, 0)?;
-                let name = expect_string_like(strand, &name)?;
+                let name = expect_string(strand, &name)?;
                 Error::cyclic_import(strand, name.as_ref())
             }
             ErrorKind::Import => {
                 let ([name], []) = unpack!(strand, args, 1, 0)?;
-                let name = expect_string_like(strand, &name)?;
+                let name = expect_string(strand, &name)?;
                 Error::import(strand, name.as_ref())
             }
             ErrorKind::Compile => {
                 let ([msg], []) = unpack!(strand, args, 1, 0)?;
-                let msg = expect_string_like(strand, &msg)?;
+                let msg = expect_string(strand, &msg)?;
                 Error::compile(strand, msg)
             }
             ErrorKind::Bytecode | ErrorKind::Abort => {
@@ -396,7 +393,7 @@ impl<'v> Protocol<'v> for VariantType {
             }
             ErrorKind::Runtime => {
                 let ([msg], []) = unpack!(strand, args, 1, 0)?;
-                let msg = expect_string_like(strand, &msg)?;
+                let msg = expect_string(strand, &msg)?;
                 Error::runtime(strand, msg)
             }
             ErrorKind::Canceled => {
@@ -471,19 +468,17 @@ fn is_runtime_superkind(kind: ErrorKind) -> bool {
 fn expect_index<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, usize> {
     let index = value
         .to_i64(strand)
-        .map_err(|_| Error::type_error(strand, "expected int"))?;
-    usize::try_from(index).map_err(|_| Error::type_error(strand, "expected non-negative int"))
+        .map_err(|_| Error::type_error(strand, "expected `int`"))?;
+    usize::try_from(index).map_err(|_| Error::value(strand, "expected non-negative value"))
 }
 
-fn expect_string_like<'v, 's>(
+fn expect_string<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Result<'v, 's, String> {
-    if let Some(sym) = value.as_sym(strand) {
-        return Ok(sym.as_str(strand).to_owned());
-    }
     if let Some(str) = value.as_str_raw(strand) {
-        return Ok(str.to_owned());
+        Ok(str.to_owned())
+    } else {
+        Err(Error::type_error(strand, "expected `str`"))
     }
-    Err(Error::type_error(strand, "expected string"))
 }
