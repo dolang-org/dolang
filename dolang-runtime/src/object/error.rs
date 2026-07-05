@@ -472,10 +472,7 @@ fn expect_index<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Resul
     usize::try_from(index).map_err(|_| Error::value(strand, "expected non-negative value"))
 }
 
-fn expect_string<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    value: &Value<'v>,
-) -> Result<'v, 's, String> {
+fn expect_string<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, String> {
     if let Some(str) = value.as_str_raw(strand) {
         Ok(str.to_owned())
     } else {
