@@ -53,11 +53,11 @@ pub(crate) fn path_from_value<'v, 's>(
     }
 }
 
-pub(crate) fn create_path<'v, 'a, 's>(
+pub(crate) fn create_path<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     path: PathBuf,
-    out: Slot<'v, 'a>,
+    out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let annex = PathAnnex::try_new(strand, path, global)?;
     global

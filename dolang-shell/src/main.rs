@@ -17,6 +17,8 @@ extern crate dolang_ext_glob;
 extern crate dolang_ext_http;
 #[cfg(feature = "json")]
 extern crate dolang_ext_json;
+#[cfg(feature = "patch")]
+extern crate dolang_ext_patch;
 #[cfg(feature = "progress")]
 extern crate dolang_ext_progress;
 #[cfg(feature = "rand")]

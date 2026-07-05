@@ -1,0 +1,20 @@
+[package]
+name = "dolang-ext-patch"
+version = "0.1.0"
+description = "Patch and unified diff support for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bstr = "1.12.1"
+diffy = { version = "0.5.0", features = ["binary", "std"] }
+
+[dependencies.dolang]
+path = "../dolang"
+version = "0.1.0"
+
+[dependencies.dolang-ext-shell]
+path = "../dolang-ext-shell"
+version = "0.1.0"

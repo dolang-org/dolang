@@ -1,4 +1,4 @@
-import http digest progress json strand proc time
+import http digest progress json patch strand proc time
   std:
     - RuntimeError
   strand:
@@ -735,6 +735,39 @@ pub class Builder
     else
       throw "source: expected str, Path, or Url"
 
+  def step_patch self spec
+    bind spec
+      :source = nil
+      :content = nil
+    if ((source == nil) == (content == nil))
+      throw "patch: expected exactly one of source or content"
+
+    let patch_data = if (content != nil)
+      content
+    else
+      (Path source).read b
+
+    for p = patch.decode $patch_data
+      let kind = p.type
+      let src = p.source
+      let dst = p.target
+
+      if (kind == :create:)
+        let result = p.apply b""
+        self.#add_content $result $dst nil
+      else if (kind == :delete:)
+        self.#agent do
+          let result = p.apply (src.read "b")
+          if (result.len != 0)
+            throw "delete patch did not apply to empty output: $src"
+          src.remove()
+      else if (kind == :modify: || kind == :move: || kind == :copy:)
+        self.#agent do
+          let result = p.apply (src.read "b")
+          self.#add_content $result $dst nil
+          if (kind == :move: && src != dst)
+            src.remove()
+
   def step_commit self msg
     progress.show message: "commit" do |_|
       let img_id = sub do self.#runtime.cli commit
@@ -761,6 +794,7 @@ pub class Builder
     let steps =
       run: $self.#step_run
       add: $self.#step_add
+      patch: $self.#step_patch
       commit: $self.#step_commit
 
     let label = if tags.len

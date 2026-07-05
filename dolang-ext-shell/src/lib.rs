@@ -107,6 +107,15 @@ pub fn as_path<'v, 'a>(vm: &Vm<'v>, value: &'a Value<'v>) -> Option<PathBuf> {
     }
 }
 
+pub fn path<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    path: PathBuf,
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    let global = strand.state::<Global<'v>>();
+    fs::path::create_path(strand, global, path, out)
+}
+
 /// Open file; container-aware
 pub async fn open<'v, 's>(
     strand: &mut Strand<'v, 's>,

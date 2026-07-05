@@ -2176,6 +2176,8 @@ pub enum TypeObject {
     Value,
     /// `std.type`, the type of types
     Type,
+    /// `std.error.Value`
+    ValueError,
     /// `std.error.Runtime`
     RuntimeError,
     /// `std.iter.Iter`
@@ -2194,6 +2196,7 @@ impl<'v> Input<'v> for TypeObject {
         InputBy::Borrow(match self {
             TypeObject::Value => &builtins.value,
             TypeObject::Type => &builtins.type_obj,
+            TypeObject::ValueError => &builtins.error_value,
             TypeObject::RuntimeError => &builtins.error_runtime,
             TypeObject::Iter => &builtins.input_iter,
             TypeObject::Sink => &builtins.output_iter,
