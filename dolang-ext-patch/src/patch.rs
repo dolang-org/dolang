@@ -260,11 +260,11 @@ impl<'v> Object<'v> for Patch<'v> {
     type TypeAnnex = ();
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let create = builder.sym("create");
-        let delete = builder.sym("delete");
-        let modify = builder.sym("modify");
-        let move_ = builder.sym("move");
-        let copy = builder.sym("copy");
+        let create = builder.sym("CREATE");
+        let delete = builder.sym("DELETE");
+        let modify = builder.sym("MODIFY");
+        let move_ = builder.sym("MOVE");
+        let copy = builder.sym("COPY");
         let source = builder.sym("source");
         let target = builder.sym("target");
         builder

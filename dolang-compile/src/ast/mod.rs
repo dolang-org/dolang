@@ -825,11 +825,11 @@ impl Node for Expr {
             Expr::VerbatimF64(_, span) => visit.token(Token::Number, *span, None),
             Expr::Bool(_, span) => visit.token(Token::Constant, *span, None),
             Expr::Nil(span) => visit.token(Token::Constant, *span, None),
-            Expr::Sym(span) => {
-                visit.token(Token::Delim, span.before_left_char(), None)?;
-                visit.token(Token::Constant, *span, None)?;
-                visit.token(Token::Delim, span.after_right_char(), None)
-            }
+            Expr::Sym(span) => visit.token(
+                Token::Constant,
+                span.before_left_char() | span.after_right_char(),
+                None,
+            ),
             Expr::Concat {
                 exprs, delim_span, ..
             } => {

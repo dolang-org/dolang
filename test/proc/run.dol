@@ -23,7 +23,7 @@ import agent proc sys
   proc:
     - io_mode
 
-let is_windows = (sys.os_info().family == :windows:)
+let is_windows = (sys.os_info().family == :WINDOWS:)
 
 def yield()
   sleep 0.01
@@ -135,33 +135,33 @@ def pipeline_and_io_mode_use_matching_encodings()
   if is_windows
     skip "windows polyfill not yet adequate"
   let out = []
-  io_mode :line: do cat stdin: ["foo", "bar"] stdout: $out
+  io_mode :LINE: do cat stdin: ["foo", "bar"] stdout: $out
   assert_eq $out ["foo", "bar"]
 
   out = []
-  sub do io_mode :chunk: do cat stdin: ["foo", "bar"] stdout: $out
+  sub do io_mode :CHUNK: do cat stdin: ["foo", "bar"] stdout: $out
   assert_eq $out [b"foobar"]
 
   let res = pipeline
-    do io_mode :line: do strand.put "foo"
+    do io_mode :LINE: do strand.put "foo"
     do cat()
-    do io_mode :chunk: do collect()
+    do io_mode :CHUNK: do collect()
   assert_eq $res [b"foo\n"]
 
   let res = pipeline
-    do io_mode :chunk: do strand.put "foo"
+    do io_mode :CHUNK: do strand.put "foo"
     do cat()
-    do io_mode :chunk: do collect()
+    do io_mode :CHUNK: do collect()
   assert_eq $res [b"foo"]
 
   let res = pipeline
     do echo foo
-    do io_mode :line: do collect()
+    do io_mode :LINE: do collect()
   assert_eq $res ["foo"]
 
   let res = pipeline
     do echo foo
-    do io_mode :chunk: do collect()
+    do io_mode :CHUNK: do collect()
   assert_eq $res [b"foo\n"]
 
 #[agent.test]

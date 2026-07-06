@@ -1,3 +1,5 @@
+use std::env::consts;
+
 use dolang::{
     compile::Compiler,
     runtime::{Object, Output, State, Sym, object::TypeBuilder, unpack, vm::Builder},
@@ -85,11 +87,11 @@ impl<'v> Object<'v> for CpuInfo {
 }
 
 pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
-    let os = builder.sym(std::env::consts::OS);
-    let family = builder.sym(std::env::consts::FAMILY);
+    let os = builder.sym(&consts::OS.to_ascii_uppercase());
+    let family = builder.sym(&consts::FAMILY.to_ascii_uppercase());
     #[cfg(windows)]
     let is_wine = is_wine();
-    let arch = builder.sym(std::env::consts::ARCH);
+    let arch = builder.sym(&consts::ARCH.to_ascii_uppercase());
     let logical_count = std::thread::available_parallelism().map_or(1, |count| count.get());
 
     builder

@@ -250,7 +250,7 @@ Gets file metadata for the given path.
 | Field  | Type                   | Description                                                                                                        |
 | ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `len`  | [`int`](../std/int.md) | File size in bytes                                                                                                 |
-| `type` | [`sym`](../std/sym.md) | File type: `:file:`, `:dir:`, `:symlink:`, `:fifo:`, `:char_device:`, `:block_device:`, `:socket:`, or `:unknown:` |
+| `type` | [`sym`](../std/sym.md) | File type: `:FILE:`, `:DIR:`, `:SYMLINK:`, `:FIFO:`, `:CHAR_DEVICE:`, `:BLOCK_DEVICE:`, `:SOCKET:`, or `:UNKNOWN:` |
 
 **Optional timestamps** (platform-dependent):
 
@@ -288,7 +288,7 @@ let meta = metadata "data.txt"
 echo "Size: $(meta.len)"
 echo "Type: $(meta.type)"
 
-if (sys.os_info().family != :windows:)
+if (sys.os_info().family != :WINDOWS:)
   echo "Mode: $(meta.mode)"
 else
   echo "Attributes: $(meta.attrs.win_attrs)"
@@ -354,7 +354,7 @@ case from the requested name.
 | Name        | Type                                            | Description                                                      |
 | ----------- | ----------------------------------------------- | ---------------------------------------------------------------- |
 | `path`      | [`str`](../std/str.md)\|[`Path`](path.md)       | Path to query                                                    |
-| `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:any:` to list all namespaces |
+| `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:ANY:` to list all namespaces |
 | `follow`    | [`bool`](../std/bool.md)                        | If `false`, does not follow a symlink                            |
 
 **Returns:** iterator of [`XattrEntry`](xattr-entry.md)

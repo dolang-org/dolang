@@ -22,7 +22,7 @@ types.
 Returns target operating system information.
 
 ```
-if (sys.os_info().family == :windows:)
+if (sys.os_info().family == :WINDOWS:)
   echo "running on Windows"
 ```
 

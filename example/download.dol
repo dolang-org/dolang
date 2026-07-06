@@ -12,7 +12,7 @@ def download client url
       fs.open $name w do |file| progress.show
         message: $name
         total: (len && int len)
-        units: bytes
+        units: :BYTES:
         do |w| for chunk = resp.chunks()
           file.write $chunk
           w.delta $chunk.len

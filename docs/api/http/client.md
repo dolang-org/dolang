@@ -115,7 +115,7 @@ Makes an HTTP request using the specified verb.
 | `multipart` | input                                                 | Multipart/form-data parts                                     |
 | `headers`   | [`dict`](../std/dict.md)                              | Dictionary of headers; repeated keys are accepted             |
 | `query`     | [`dict`](../std/dict.md)                              | Dictionary of query parameters; repeated keys are accepted    |
-| `status`    | `:ignore:`\|`"ignore"`                                | Return the response even when the status is outside 200-299   |
+| `status`    | `:IGNORE:`\|`"IGNORE"`                                | Return the response even when the status is outside 200-299   |
 | `block`     | func                                                  | Called with response; response is closed upon return or error |
 
 **Returns:** [`Response`](./response.md) -- The HTTP response
@@ -139,11 +139,11 @@ let response = client.post https://api.example.com/users
 ```
 
 To keep the old behavior and inspect non-2xx responses directly, pass
-`status: :ignore:`:
+`status: :IGNORE:`:
 
 ```
 let response = client.get https://api.example.com/missing
-  status: :ignore:
+  status: :IGNORE:
 assert_eq $response.status 404
 ```
 
@@ -273,7 +273,7 @@ import time:
 let response = client.get https://api.example.com/archive
   headers:
     "if-modified-since": DateTime.from_unix(1700000000)
-  status: :ignore:
+  status: :IGNORE:
 ```
 
 ### `query`

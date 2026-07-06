@@ -22,7 +22,7 @@ def path_api()
 
   assert_eq (dbg p) "<Path \"foo/bar.txt\">"
   assert_eq (str p) "foo/bar.txt"
-  if (sys.os_info().family == :windows:)
+  if (sys.os_info().family == :WINDOWS:)
     assert_eq (arg p) "foo\\bar.txt"
   else
     assert_eq (arg p) "foo/bar.txt"
@@ -146,7 +146,7 @@ def path_api()
   let messy = Path "./foo/../bar/./baz"
   assert_eq $messy.normalize() (Path "bar/baz")
 
-  if (sys.os_info().family != :windows:)
+  if (sys.os_info().family != :WINDOWS:)
     assert_throws $FieldError do p.disk
     assert_throws $FieldError do p.server
     assert_throws $FieldError do p.share
@@ -162,7 +162,7 @@ def path_api()
 
 #[test]
 def windows_path_fields()
-  if (sys.os_info().family != :windows:)
+  if (sys.os_info().family != :WINDOWS:)
     skip "requires Windows"
 
   let drive = Path "C:/work/file.txt"
@@ -209,7 +209,7 @@ def windows_path_fields()
 
 #[test]
 def windows_path_stream_fields()
-  if (sys.os_info().family != :windows:)
+  if (sys.os_info().family != :WINDOWS:)
     skip "requires Windows"
 
   let no_stream = Path "file.txt"

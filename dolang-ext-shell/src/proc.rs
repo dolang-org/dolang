@@ -94,7 +94,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let mode = match mode.as_sym(strand) {
                 Some(sym) if sym == global.syms.line => ChannelMode::Line,
                 Some(sym) if sym == global.syms.chunk => ChannelMode::Chunk,
-                _ => return Err(Error::value(strand, "mode must be :line: or :chunk:")),
+                _ => return Err(Error::value(strand, "mode must be :LINE: or :CHUNK:")),
             };
             let old_mode = {
                 let local = global.local.get(strand);

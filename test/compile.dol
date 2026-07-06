@@ -31,7 +31,7 @@ def warning()
 
   let diag = result.diagnostics[0]
   assert_type $compile.Diagnostic $diag
-  assert_eq $diag.severity :warning:
+  assert_eq $diag.severity :WARNING:
   assert_type $compile.Span $diag.span
   assert_type $compile.Pos $diag.span.start
   assert_eq $diag.span.start $diag.span.start
@@ -52,7 +52,7 @@ def error()
 
   let diag = result.diagnostics[0]
   assert_type $compile.Diagnostic $diag
-  assert_eq $diag.severity :error:
+  assert_eq $diag.severity :ERROR:
   assert_type $compile.Span $diag.span
   assert_type $compile.Pos $diag.span.start
   assert_eq $diag.span.start $diag.span.start

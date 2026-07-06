@@ -58,13 +58,13 @@ def apply_errors_are_typed()
 #[test]
 def patch_type_reports_operation_kind()
   let modify = patch.diff "alpha\n" "beta\n"
-  assert_eq $modify.type :modify:
+  assert_eq $modify.type :MODIFY:
 
   let create = patch.decode(CREATE_PATCH).next()
-  assert_eq $create.type :create:
+  assert_eq $create.type :CREATE:
 
   let delete = patch.decode(DELETE_PATCH).next()
-  assert_eq $delete.type :delete:
+  assert_eq $delete.type :DELETE:
 
   let move = patch.decode(MOVE_PATCH).next()
-  assert_eq $move.type :move:
+  assert_eq $move.type :MOVE:

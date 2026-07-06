@@ -50,22 +50,22 @@ Possible values when present:
 
 | Value           | Description                      |
 | --------------- | -------------------------------- |
-| `:file:`        | Regular file                     |
-| `:dir:`         | Directory                        |
-| `:symlink:`     | Symbolic link                    |
-| `:fifo:`        | Named pipe (FIFO)                |
-| `:char_device:` | Character device                 |
-| `:block_device:`| Block device                     |
-| `:socket:`      | Unix domain socket               |
-| `:unknown:`     | Type could not be determined     |
+| `:FILE:`        | Regular file                     |
+| `:DIR:`         | Directory                        |
+| `:SYMLINK:`     | Symbolic link                    |
+| `:FIFO:`        | Named pipe (FIFO)                |
+| `:CHAR_DEVICE:` | Character device                 |
+| `:BLOCK_DEVICE:`| Block device                     |
+| `:SOCKET:`      | Unix domain socket               |
+| `:UNKNOWN:`     | Type could not be determined     |
 
 ```
 for entry = entries .
-  if entry.type == :dir:
+  if entry.type == :DIR:
     echo "Directory: $(entry.name)"
-  else if entry.type == :file:
+  else if entry.type == :FILE:
     echo "File: $(entry.name)"
-  else if entry.type == :unknown:
+  else if entry.type == :UNKNOWN:
     echo "Unknown type: $(entry.name)"
 ```
 
@@ -110,7 +110,7 @@ for entry = dir.entries()
 for entry = entries .
   echo "Name: $(entry.name)"
 
-  if (sys.os_info().family != :windows:)
+  if (sys.os_info().family != :WINDOWS:)
     echo "Type: $(entry.type)"
 
     # Inode is Unix-only

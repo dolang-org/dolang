@@ -8,8 +8,8 @@ A compiler diagnostic produced by [`compile`](./index.md).
 
 The diagnostic severity as a symbol:
 
-- `:error:`
-- `:warning:`
+- `:ERROR:`
+- `:WARNING:`
 
 ### `message`
 

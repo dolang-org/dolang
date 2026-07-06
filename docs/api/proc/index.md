@@ -20,19 +20,19 @@ the duration of the call.
 
 | Name   | Type | Description                                   |
 | ------ | ---- | --------------------------------------------- |
-| `mode` |      | `:line:` or `:chunk:`                         |
+| `mode` |      | `:LINE:` or `:CHUNK:`                         |
 | `func` |      | callable to execute with that channel mode    |
 | `...`  |      | additional arguments passed to `func`         |
 
 **Returns:** The return value of `func`.
 
-In `:line:` mode, external process input is treated as UTF-8, split on line
+In `:LINE:` mode, external process input is treated as UTF-8, split on line
 boundaries, and yields `str` values with any line endings removed. Output to an
 external process sends the `str` form of each value as UTF-8 with
 platform-specific line endings appended, except for `bin` values, which are
 always sent verbatim. This is the default behavior.
 
-In `:chunk:` mode, input yields arbitrary-size `bin` values with no other
+In `:CHUNK:` mode, input yields arbitrary-size `bin` values with no other
 processing. Output sends `bin` values verbatim and otherwise sends the `str`
 form of each value as UTF-8 with no further transformation.
 
@@ -47,7 +47,7 @@ regardless of mode.
 
 ```
 let chunks = []
-io_mode :chunk: do run gzip -c stdin: ["hello world"] stdout: $chunks
+io_mode :CHUNK: do run gzip -c stdin: ["hello world"] stdout: $chunks
 
 assert (chunks[0].starts_with b"\x1f\x8b")
 ```

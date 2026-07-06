@@ -19,7 +19,7 @@ import agent sys
 
 #[agent.test]
 def module_path_and_file_operations()
-  if (sys.os_info().os == :windows: && sys.os_info().is_wine)
+  if (sys.os_info().os == :WINDOWS: && sys.os_info().is_wine)
     skip "skipping Windows EA xattr operations under wine"
   let path = Path "file.txt"
   write $path "payload"
@@ -50,7 +50,7 @@ def module_path_and_file_operations()
 
 #[agent.test]
 def linux_namespace_handling()
-  if (sys.os_info().os != :linux:)
+  if (sys.os_info().os != :LINUX:)
     skip "requires Linux"
   let path = Path "file.txt"
   write $path "payload"
@@ -59,7 +59,7 @@ def linux_namespace_handling()
   assert_eq (xattr path "explicit" namespace: "user") b"value"
 
   open $path r do |file|
-    let entries = file.xattrs namespace: :any:
+    let entries = file.xattrs namespace: :ANY:
     let saw_explicit = false
     for entry = entries
       if (entry.name == "explicit")
@@ -68,7 +68,7 @@ def linux_namespace_handling()
         break
     assert $saw_explicit
 
-  let entries = xattrs $path namespace: :any:
+  let entries = xattrs $path namespace: :ANY:
   let saw_explicit = false
   for entry = entries
     if (entry.name == "explicit")
@@ -86,7 +86,7 @@ def rejects_invalid_argument_types()
 
 #[agent.test]
 def rejects_invalid_namespace_argument()
-  if ((sys.os_info().os == :windows:) && sys.os_info().is_wine)
+  if ((sys.os_info().os == :WINDOWS:) && sys.os_info().is_wine)
     skip "skipping Windows EA xattr validation setup under wine"
   let path = Path "file.txt"
   write $path "payload"

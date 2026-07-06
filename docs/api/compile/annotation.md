@@ -9,8 +9,8 @@ An additional highlighted region attached to a
 
 The annotation kind as a symbol:
 
-- `:primary:`
-- `:context:`
+- `:PRIMARY:`
+- `:CONTEXT:`
 
 ### `span`
 

@@ -4,7 +4,7 @@ import sys
     - assert_eq
     - assert_throws
 
-if (sys.os_info().family == :windows:)
+if (sys.os_info().family == :WINDOWS:)
   skip "requires Unix"
 
 import agent

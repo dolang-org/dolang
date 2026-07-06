@@ -121,10 +121,10 @@ whose methods are silent no-ops.
 
 | Value     | Description                     |
 | --------- | ------------------------------- |
-| `:count:` | Display as `pos/len` or `pos`   |
-| `:bytes:` | Display as human-readable bytes |
+| `:COUNT:` | Display as `pos/len` or `pos`   |
+| `:BYTES:` | Display as human-readable bytes |
 
-When `total` is provided and `units` is omitted, units default to `:count:`.
+When `total` is provided and `units` is omitted, units default to `:COUNT:`.
 When neither `total` nor `units` is provided, spinner mode shows only elapsed
 time.
 

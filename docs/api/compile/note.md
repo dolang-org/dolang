@@ -8,8 +8,8 @@ An auxiliary note attached to a [`Diagnostic`](./diagnostic.md).
 
 The note kind as a symbol:
 
-- `:info:`
-- `:help:`
+- `:INFO:`
+- `:HELP:`
 
 ### `message`
 

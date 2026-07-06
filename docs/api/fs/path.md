@@ -377,7 +377,7 @@ Equivalent to [`xattrs`](index.md).
 
 | Name        | Type                                            | Description                                                      |
 | ----------- | ----------------------------------------------- | ---------------------------------------------------------------- |
-| `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:any:` to list all namespaces |
+| `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:ANY:` to list all namespaces |
 | `follow`    | [`bool`](../std/bool.md)                        | If `false`, does not follow a symlink                            |
 
 **Returns:** iterator of [`XattrEntry`](xattr-entry.md)
