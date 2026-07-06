@@ -4,7 +4,7 @@ pub let echo = nil
 pub let grep = nil
 pub let cat = nil
 
-if (sys.os_info().family == :windows:)
+if (sys.os_info().family == :WINDOWS:)
   let cmd = run.cmd
   cat = do |...args| for arg = args.pos_only()
     cmd /c type $arg

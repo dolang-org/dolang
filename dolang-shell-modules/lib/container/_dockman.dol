@@ -24,33 +24,33 @@ let SOCKET_SLEEPS = 100
 let SOCKET_SLEEP = 0.10
 
 let SAVE_FORMATS =
-  "docker-archive": docker-archive
-  "oci-archive": oci-archive
-  "oci-dir": oci-dir
-  "docker-dir": docker-dir
-  "dir": dir
+  DOCKER_ARCHIVE: docker-archive
+  OCI_ARCHIVE: oci-archive
+  OCI_DIR: oci-dir
+  DOCKER_DIR: docker-dir
+  DIR: dir
 
 let CONTAINER_STATES =
-  "created": :created:
-  "running": :running:
-  "paused": :paused:
-  "restarting": :restarting:
-  "removing": :removing:
-  "exited": :exited:
-  "dead": :dead:
+  "created": :CREATED:
+  "running": :RUNNING:
+  "paused": :PAUSED:
+  "restarting": :RESTARTING:
+  "removing": :REMOVING:
+  "exited": :EXITED:
+  "dead": :DEAD:
 
 let MOUNT_TYPES =
-  "bind": :bind:
-  "volume": :volume:
-  "tmpfs": :tmpfs:
-  "image": :image:
-  "npipe": :npipe:
-  "cluster": :cluster:
+  "bind": :BIND:
+  "volume": :VOLUME:
+  "tmpfs": :TMPFS:
+  "image": :IMAGE:
+  "npipe": :NPIPE:
+  "cluster": :CLUSTER:
 
 let PORT_PROTOCOLS =
-  "tcp": :tcp:
-  "udp": :udp:
-  "sctp": :sctp:
+  "tcp": :TCP:
+  "udp": :UDP:
+  "sctp": :SCTP:
 
 let INVALID_IMAGE_REFERENCE_ERRORS =
   - INVALID REFERENCE FORMAT
@@ -149,19 +149,13 @@ pub class NoContainerError: RuntimeError
   pub def (dbg) self
     "<NoContainerError ref: $(dbg self.ref)>"
 
-def as_const value
-  if (type value str || type value sym)
-    str $value
-  else
-    throw "expected str or sym: $value"
-
 def normalize_known mapping value
-  mapping.get $as_const(value) else: do value
+  mapping.get $value else: $value
 
 def normalize_save_format runtime format
-  let cli = SAVE_FORMATS.get $as_const(format).replace("_", "-") else: do
+  let cli = SAVE_FORMATS.get $format else: do
     throw "unsupported save format: $format"
-  if (runtime.id == :docker: && cli != "docker-archive")
+  if (runtime.id == :DOCKER: && cli != "docker-archive")
     throw "docker only supports docker_archive for save"
   let file = (cli == "docker-archive" || cli == "oci-archive")
   let multi = (cli == "docker-archive")
@@ -338,7 +332,7 @@ pub class Runtime
     throw "Runtime.cli not implemented"
 
   pub def mount_uopt self
-    if (self.id == :podman:)
+    if (self.id == :PODMAN:)
       ",U"
     else
       ""
@@ -370,7 +364,7 @@ pub class Runtime
   pub def run self ctr cmd ...args
     self.#run_direct $ctr $cmd $args.pos_only()
 
-  pub def build self :pull = :missing: :mounts = [] :from ...args
+  pub def build self :pull = :MISSING: :mounts = [] :from ...args
     with_temp_dir parent: $runtime_dir() do |subdir|
       subdir.chmod 0o700
       let b = Builder $self $subdir $agent_bin() $mounts
@@ -406,7 +400,7 @@ pub class Runtime
     let data = inspect_container $self $ref
     Container $self $data
 
-  pub def save self target :format = :docker_archive: :platform = nil ...images
+  pub def save self target :format = :DOCKER_ARCHIVE: :platform = nil ...images
     if (images.len == 0)
       throw "save: expected at least one image"
     let spec = normalize_save_format $self $format
@@ -421,7 +415,7 @@ pub class Runtime
     let lines = []
     try
       self.cli save
-        if (self.id == :podman:)
+        if (self.id == :PODMAN:)
           --format $spec.cli
         if !spec.file
           --output $path_target
@@ -585,8 +579,8 @@ class Cache
       if cached
         "if-modified-since": $payload.metadata().modified
 
-    progress.show message: (url_short url) units: bytes do |w|
-      self.#client.get $url :headers status: :ignore: do |resp|
+    progress.show message: (url_short url) units: :BYTES: do |w|
+      self.#client.get $url :headers status: :IGNORE: do |resp|
         if (cached && resp.status == 304)
           return payload
         resp.throw_for_status()
@@ -657,7 +651,7 @@ pub class Builder
       time.sleep $SOCKET_SLEEP
     throw "timed out waiting for container agent"
 
-  def connect self img :pull = :never:
+  def connect self img :pull = :NEVER:
     if self.#socket.exists()
       self.#socket.remove()
     let ctr_id = sub do self.#runtime.cli run -d --pull=$(str pull)
@@ -685,7 +679,7 @@ pub class Builder
   def resolve_target self target leaf
     target = Path $target
     self.#agent do
-      if (target.exists() && target.metadata().type == :dir:)
+      if (target.exists() && target.metadata().type == :DIR:)
         (target / leaf)
       else
         target
@@ -751,12 +745,12 @@ pub class Builder
     progress.show message: "patching files" total: $patches.len do |w|
       for p = patches
         let kind = p.type
-        if (kind == :create:)
+        if (kind == :CREATE:)
           let target = p.target
           let result = p.apply b""
           w.message = "create: $target"
           self.#add_content $result $target nil
-        else if (kind == :delete:)
+        else if (kind == :DELETE:)
           let source = p.source
           w.message = "delete: $source"
           self.#agent do
@@ -764,17 +758,17 @@ pub class Builder
             if (result.len != 0)
               throw "delete patch did not produce empty output: $source"
             p.source.remove()
-        else if (kind == :modify: || kind == :move: || kind == :copy:)
+        else if (kind == :MODIFY: || kind == :MOVE: || kind == :COPY:)
           let source = p.source
           let target = p.target
-          if (kind == :modify: || source == target)
+          if (kind == :MODIFY: || source == target)
             w.message = "modify: $source"
           else
             w.message = "$kind: $source => $target"
           self.#agent do
             let result = p.apply (p.source.read "b")
             self.#add_content $result $p.target nil
-            if (kind == :move: && p.source != p.target)
+            if (kind == :MOVE: && p.source != p.target)
               p.source.remove()
         w.delta()
 
@@ -797,7 +791,7 @@ pub class Builder
         proc.mute do self.#runtime.cli tag $img_id $tag
     self.#runtime.image $img_id
 
-  pub def build self from :pull = :missing: ...args
+  pub def build self from :pull = :MISSING: ...args
     let spec = {...args}
     let tags = [...spec.values :tag:]
     spec.delete :tag:
@@ -930,7 +924,7 @@ pub class Image
       $self.id
 
   # Save the image to an archive or directory.
-  pub def save self target :format = :docker_archive: :platform = nil
+  pub def save self target :format = :DOCKER_ARCHIVE: :platform = nil
     self.#runtime.save $target :format :platform $self.id
 
 pub class Container

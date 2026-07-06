@@ -105,7 +105,7 @@ impl<'v> Global<'v> {
                 name: builder.sym("name"),
                 query: builder.sym("query"),
                 status: builder.sym("status"),
-                ignore: builder.sym("ignore"),
+                ignore: builder.sym("IGNORE"),
                 #[cfg(feature = "json")]
                 to_str: builder.sym("to_str"),
                 unix_socket: builder.sym("unix_socket"),

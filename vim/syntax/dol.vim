@@ -39,7 +39,7 @@ syn match dolNumber "\%([A-Za-z0-9_]\@<!\)\zs-\?\(\d\+\|\d*\.\d\+\|\d\+\.\d*\)\(
 
 syn match dolKey "[A-Za-z_][A-Za-z0-9_]*:" contains=dolColon
 syn match dolDittoKey ":[A-Za-z_][A-Za-z0-9_]*" contains=dolColon
-syn match dolSymbol ":[A-Za-z_][A-Za-z0-9_]*:" contains=dolColon
+syn match dolSymbol ":[A-Za-z_][A-Za-z0-9_]*:"
 
 syn match dolListItem "^\s*-\(\s-\)*\s"
 

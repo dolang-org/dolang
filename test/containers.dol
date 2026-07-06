@@ -8,7 +8,7 @@ import sys sqlite systemd
     - assert_eq
     - test
 
-if (sys.os_info().os != :linux:)
+if (sys.os_info().os != :LINUX:)
   skip "not supported on this system"
 
 let runtime = if run.docker.which()
@@ -177,8 +177,8 @@ def image_save_load()
     let archive1 = (dir / "method.tar")
     let archive2 = (dir / "free.tar")
 
-    img.save $archive1 format: docker_archive
-    runtime.save $archive2 format: :docker_archive: $image_archive_tag
+    img.save $archive1 format: :DOCKER_ARCHIVE:
+    runtime.save $archive2 format: :DOCKER_ARCHIVE: $image_archive_tag
 
     img.remove()
 
@@ -215,7 +215,7 @@ def container_inspect_lifecycle()
     let state = ctr.state()
     assert_eq $state.name $name
     assert_eq $ctr.image ubuntu:24.04
-    assert_eq $state.state :running:
+    assert_eq $state.state :RUNNING:
     assert_eq $state.status running
     assert $ctr.created
     assert_eq $state.ports []
@@ -225,17 +225,17 @@ def container_inspect_lifecycle()
     assert_eq $listed[0].id $ctr.id
 
     ctr.stop()
-    assert_eq $ctr.state().state :exited:
+    assert_eq $ctr.state().state :EXITED:
 
     let listed_all = [...runtime.containers all: true filter: "name=$name"]
     assert_eq $listed_all.len 1
     assert_eq $listed_all[0].id $ctr.id
 
     ctr.start()
-    assert_eq $ctr.state().state :running:
+    assert_eq $ctr.state().state :RUNNING:
 
     ctr.restart()
-    assert_eq $ctr.state().state :running:
+    assert_eq $ctr.state().state :RUNNING:
 
     ctr.remove force: true
 

@@ -4,7 +4,7 @@ import test:
 
 import sys
 
-if (sys.os_info().family == :windows:)
+if (sys.os_info().family == :WINDOWS:)
   skip "requires Unix"
 
 import agent

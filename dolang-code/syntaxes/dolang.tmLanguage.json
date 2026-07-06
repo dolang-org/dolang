@@ -199,12 +199,8 @@
             ]
         },
         "symbol": {
-            "match": "(:)([A-Za-z_][A-Za-z0-9_]*)(:)",
-            "captures": {
-                "1": { "name": "punctuation.separator.dol" },
-                "2": { "name": "constant.language.dol" },
-                "3": { "name": "punctuation.separator.dol" }
-            }
+            "match": ":[A-Za-z_][A-Za-z0-9_]*:",
+            "name": "constant.other.dol"
         },
         "ditto_key": {
             "match": "(:)([A-Za-z_][A-Za-z0-9_]*)",

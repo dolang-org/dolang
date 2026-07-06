@@ -94,7 +94,7 @@ pub(crate) async fn path_list<'v, 's>(
                 if sym == global.syms.any {
                     XattrNamespace::Any
                 } else {
-                    return Err(Error::value(strand, "namespace: expected str or :any:"));
+                    return Err(Error::value(strand, "namespace: expected str or :ANY:"));
                 }
             } else if let Some(namespace) = namespace.as_str(strand) {
                 namespace_buf = namespace.to_string();

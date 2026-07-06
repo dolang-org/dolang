@@ -179,13 +179,13 @@ let nested = limit 1 do
     do
       let inner = fork
         do
-          entered_nested_send.put :started:
+          entered_nested_send.put :STARTED:
           release_nested_recv.next()
           42
       inner[0]
 
 assert_eq $nested [42]
-assert_eq (helper.join()) :started:
+assert_eq (helper.join()) :STARTED:
 
 # Nested fork errors should not poison later acquisitions.
 let err = try

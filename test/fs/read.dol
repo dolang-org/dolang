@@ -13,7 +13,7 @@ import agent sys
   std:
     - RuntimeError
 
-let is_windows = (sys.os_info().family == :windows:)
+let is_windows = (sys.os_info().family == :WINDOWS:)
 
 #[agent.test]
 def read_entire_file()

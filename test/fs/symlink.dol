@@ -72,7 +72,7 @@ def symlink_metadata_follows_by_default()
   symlink $target $link
 
   let meta = link.metadata()
-  assert_eq $meta.type :file:
+  assert_eq $meta.type :FILE:
 
 #[agent.test]
 def symlink_metadata_nofollow()
@@ -85,7 +85,7 @@ def symlink_metadata_nofollow()
   symlink $target $link
 
   let meta = link.metadata(false)
-  assert_eq $meta.type :symlink:
+  assert_eq $meta.type :SYMLINK:
 
 #[agent.test]
 def broken_symlink()

@@ -531,7 +531,7 @@ impl<'v> Object<'v> for File<'v> {
         let start_sym = builder.sym("start");
         let end_sym = builder.sym("end");
         let namespace = builder.sym("namespace");
-        let any = builder.sym("any");
+        let any = builder.sym("ANY");
         builder
             .supertype(TypeObject::Iter)
             .supertype(TypeObject::Sink)
@@ -614,7 +614,7 @@ impl<'v> Object<'v> for File<'v> {
                             } else {
                                 return Err(Error::value(
                                     strand,
-                                    "namespace: expected str or :any:",
+                                    "namespace: expected str or :ANY:",
                                 ));
                             }
                         } else if let Some(namespace) = namespace.as_str(strand) {

@@ -250,17 +250,17 @@ fn parse_units<'v, 's>(
         Some(v) => {
             if let Some(sym) = v.as_sym(strand) {
                 match sym.as_str(strand) {
-                    "count" => Ok(Some(Units::Count)),
-                    "bytes" => Ok(Some(Units::Bytes)),
-                    _ => Err(Error::value(strand, "units: expected :count: or :bytes:")),
+                    "COUNT" => Ok(Some(Units::Count)),
+                    "BYTES" => Ok(Some(Units::Bytes)),
+                    _ => Err(Error::value(strand, "units: expected :COUNT: or :BYTES:")),
                 }
             } else if let Some(s) = v.as_str(strand).map(|m| m.to_string()) {
                 match s.as_str() {
-                    "count" => Ok(Some(Units::Count)),
-                    "bytes" => Ok(Some(Units::Bytes)),
+                    "COUNT" => Ok(Some(Units::Count)),
+                    "BYTES" => Ok(Some(Units::Bytes)),
                     _ => Err(Error::value(
                         strand,
-                        "units: expected \"count\" or \"bytes\"",
+                        "units: expected \"COUNT\" or \"BYTES\"",
                     )),
                 }
             } else {

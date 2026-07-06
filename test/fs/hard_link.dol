@@ -23,7 +23,7 @@ def fs_hard_link_creates_linked_file()
   open $link r do |f|
     assert_eq (f.read()) "hello"
 
-  if (sys.os_info().family != :windows:)
+  if (sys.os_info().family != :WINDOWS:)
     assert (target.metadata().nlink >= 2)
     assert (link.metadata().nlink >= 2)
 

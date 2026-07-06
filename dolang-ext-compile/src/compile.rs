@@ -60,12 +60,12 @@ impl<'v> Global<'v> {
                 patch: builder.register_type(),
             },
             syms: Syms {
-                error: builder.sym("error"),
-                warning: builder.sym("warning"),
-                primary: builder.sym("primary"),
-                context: builder.sym("context"),
-                info: builder.sym("info"),
-                help: builder.sym("help"),
+                error: builder.sym("ERROR"),
+                warning: builder.sym("WARNING"),
+                primary: builder.sym("PRIMARY"),
+                context: builder.sym("CONTEXT"),
+                info: builder.sym("INFO"),
+                help: builder.sym("HELP"),
             },
         }
     }

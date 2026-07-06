@@ -19,7 +19,7 @@ def sys_reports_basic_information()
   assert $os.os
   assert $os.family
 
-  if (os.family == :windows:)
+  if (os.family == :WINDOWS:)
     assert_type $bool $os.is_wine
   else
     assert_throws $FieldError do os.is_wine

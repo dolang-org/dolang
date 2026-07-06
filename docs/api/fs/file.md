@@ -88,7 +88,7 @@ Gets file metadata.
 | Field  | Type                     | Description                                                                                                        |
 | ------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
 | `len`  | [`int`](../std/index.md) | File size in bytes                                                                                                 |
-| `type` | [`sym`](../std/sym.md)   | File type: `:file:`, `:dir:`, `:symlink:`, `:fifo:`, `:char_device:`, `:block_device:`, `:socket:`, or `:unknown:` |
+| `type` | [`sym`](../std/sym.md)   | File type: `:FILE:`, `:DIR:`, `:SYMLINK:`, `:FIFO:`, `:CHAR_DEVICE:`, `:BLOCK_DEVICE:`, `:SOCKET:`, or `:UNKNOWN:` |
 
 **Optional timestamps** (platform-dependent):
 
@@ -129,7 +129,7 @@ open data.txt r do |file|
   echo "Modified: $(meta.modified)"
   echo "Modified seconds: $(meta.modified.unix_secs)"
 
-  if (sys.os_info().family != :windows:)
+  if (sys.os_info().family != :WINDOWS:)
     echo "Mode: $(meta.mode)"
     echo "Owner: UID=$(meta.uid), GID=$(meta.gid)"
   else
@@ -162,7 +162,7 @@ case from the requested name.
 
 | Name        | Type                                            | Description                                                      |
 | ----------- | ----------------------------------------------- | ---------------------------------------------------------------- |
-| `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:any:` to list all namespaces |
+| `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:ANY:` to list all namespaces |
 
 **Returns:** iterator of [`XattrEntry`](xattr-entry.md)
 

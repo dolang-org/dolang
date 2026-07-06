@@ -168,7 +168,7 @@ fn status_message(status: reqwest::StatusCode, url: Option<&url::Url>) -> String
 }
 
 fn invalid_status_policy<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
-    Error::type_error(strand, r#"status: expected :ignore: or "ignore""#)
+    Error::type_error(strand, r#"status: expected :IGNORE: or "IGNORE""#)
 }
 
 fn parse_status_policy<'v, 's>(
@@ -179,7 +179,7 @@ fn parse_status_policy<'v, 's>(
     if value.as_sym(strand) == Some(global.syms.ignore) {
         Ok(StatusPolicy::Ignore)
     } else if let Some(str) = value.as_str(strand)
-        && strand.access(|x| str.as_str(x) == "ignore")
+        && strand.access(|x| str.as_str(x) == "IGNORE")
     {
         Ok(StatusPolicy::Ignore)
     } else {

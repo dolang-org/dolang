@@ -13,7 +13,7 @@ pub let ArchiveError = dockman.ArchiveError
 
 class DockerRuntime: dockman.Runtime
   def (init) self
-    dockman.Runtime.(init) $self :docker:
+    dockman.Runtime.(init) $self :DOCKER:
 
   pub def cli _self ...args
     env LC_ALL: C LANG: C do docker_cli ...args

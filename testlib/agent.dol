@@ -7,7 +7,7 @@ import test: unittest
 let vfs_bin = nil
 let Vfs = nil
 
-if (sys.os_info().family != :windows:)
+if (sys.os_info().family != :WINDOWS:)
   import shell:
     Vfs: it
   Vfs = it
@@ -36,7 +36,7 @@ do
   name = (name || str(func))
   # Wrap func to run in temp directory since it will likely create files
   let func = do fs.with_temp_dir do |dir| cd $dir $func
-  if (sys.os_info().family == :windows:)
+  if (sys.os_info().family == :WINDOWS:)
     # No VFS agent on Windows yet, so only run test once
     unittest.test :name $func
   else

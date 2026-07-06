@@ -56,7 +56,7 @@ catch err
 
 assert $large_caught
 
-http.get $TEST_URL/not-found status: :ignore: do |res|
+http.get $TEST_URL/not-found status: :IGNORE: do |res|
   assert_eq $res.status 404
   let caught = try
     res.throw_for_status()
@@ -68,10 +68,10 @@ http.get $TEST_URL/not-found status: :ignore: do |res|
     true
   assert $caught
 
-http.get $TEST_URL/get status: :ignore: do |res|
+http.get $TEST_URL/get status: :IGNORE: do |res|
   assert_eq (res.throw_for_status()) nil
   assert_eq $res.status 200
   assert_eq $res.text() "{\"status\":\"ok\"}"
 
-let ignored = http.get $TEST_URL/error status: ignore
+let ignored = http.get $TEST_URL/error status: IGNORE
 assert_eq $ignored.status 500

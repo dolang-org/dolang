@@ -60,7 +60,7 @@ let TARGETS =
   "x86_64-linux":
     tuple: x86_64-unknown-linux-gnu
   "x86_64-windows":
-    if (sys.os_info().family == :windows:)
+    if (sys.os_info().family == :WINDOWS:)
       # Native target
       tuple: x86_64-pc-windows-msvc
     else
@@ -71,7 +71,7 @@ let TARGETS =
     tuple: aarch64-apple-darwin
 
 def default_target()
-  let target = "$(sys.cpu_info().arch)-$(sys.os_info().os)"
+  let target = "$(str(sys.cpu_info().arch).lower())-$(str(sys.os_info().os).lower())"
   if !(TARGETS.contains target)
     throw "unsupported host target: $target"
   target

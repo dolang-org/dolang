@@ -8,7 +8,7 @@ http.get $TEST_URL/get do |res|
 http.post $TEST_URL/post do |res|
   assert_eq $res.status 201
 
-http.get $TEST_URL/not-found status: :ignore: do |res|
+http.get $TEST_URL/not-found status: :IGNORE: do |res|
   assert_eq $res.status 404
 
 http.get $TEST_URL/headers do |res|

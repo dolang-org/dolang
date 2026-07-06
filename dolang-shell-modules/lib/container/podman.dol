@@ -13,7 +13,7 @@ pub let ArchiveError = dockman.ArchiveError
 
 class PodmanRuntime: dockman.Runtime
   def (init) self
-    dockman.Runtime.(init) $self :podman:
+    dockman.Runtime.(init) $self :PODMAN:
 
   pub def cli _self ...args
     env LC_ALL: C LANG: C do

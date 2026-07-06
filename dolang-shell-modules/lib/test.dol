@@ -91,7 +91,7 @@ class Harness
   def run_file self path
     let source = path.read b
     let compiled = compile.compile $path $source
-    let warnings = compiled.diagnostics.iter().any do |d| (d.severity == :warning:)
+    let warnings = compiled.diagnostics.iter().any do |d| (d.severity == :WARNING:)
     if (!compiled.ok || warnings)
       throw ModuleCompileError $path $compiled
 
@@ -307,7 +307,7 @@ pub def main()
       let harness = Harness :jobs :module_jobs :filter :timeout
       let files = []
       for path = paths
-        if (path.metadata().type == :dir:)
+        if (path.metadata().type == :DIR:)
           files.push ...path.glob("**/*.dol")
         else
           files.push $path

@@ -24,7 +24,7 @@ for attr = xattrs "data.txt"
 Linux extended attribute namespace, such as `user`.
 
 ```
-for attr = xattrs "data.txt" namespace: :any:
+for attr = xattrs "data.txt" namespace: :ANY:
   echo "$(attr.namespace):$(attr.name)"
 ```
 
