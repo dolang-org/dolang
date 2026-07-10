@@ -1,0 +1,6 @@
+class Bad: foo()
+# error: expected superclass name
+#   --> class_super_expr_error.dol:LL:LL
+#    |
+# LL | class Bad: foo()
+#    |               ^

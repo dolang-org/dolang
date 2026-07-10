@@ -7,10 +7,10 @@ use dolang_bytecode::builtin;
 use crate::{
     Mode, PreludeImport,
     ast::{
-        Arg, ArrayElem, Assign, Bind, Block, Class, ClassMember, Const, Decorator, Def, DictElem,
-        Expand, Expr, For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key,
-        LValue, Let, Method, NlGuard, Pair, Param, ParamDefault, Pattern, PrimStmt, Res, Return,
-        Single, Stmt, Try, Unit, While, visit::Node,
+        Arg, ArrayElem, Assign, Bind, Block, Class, ClassMember, ClassSuper, Const, Decorator, Def,
+        DictElem, Expand, Expr, For, Function, GetVariant, Ident, If, Import, ImportElement,
+        ImportItem, Key, LValue, Let, Method, NlGuard, Pair, Param, ParamDefault, Pattern,
+        PrimStmt, Res, Return, Single, Stmt, Try, Unit, While, visit::Node,
     },
     cfg::{self, BlockRefMut, Inst, InstInfo, Term, TermInfo},
     constant::{self, ConstantExt},
@@ -2021,6 +2021,17 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.block.insts.push(Inst(InstInfo::LoadConst(sym), span));
     }
 
+    fn lower_class_super(&mut self, node: &'a ClassSuper) {
+        let res = node.ident.res.as_ref().expect("unresolved superclass root");
+        self.lower_load(res, node.ident.span);
+        for field in &node.fields {
+            let sym = self.symtab.id(&self.bintab.id_str(self.file.str(*field)));
+            self.block
+                .insts
+                .push(Inst(InstInfo::Get(sym), field.before_left_char()));
+        }
+    }
+
     fn lower_class_member_sym(&mut self, member: &'a ClassMember) -> sym::Id {
         match member {
             ClassMember::Field(field) => field.private_sym.unwrap_or_else(|| {
@@ -2062,8 +2073,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let field_sym = self.symtab.id(&self.bintab.id_str("field"));
         let method_sym = self.symtab.id(&self.bintab.id_str("method"));
 
-        for super_expr in &node.super_exprs {
-            self.lower_expr(super_expr)?;
+        for super_ref in &node.super_refs {
+            self.lower_class_super(super_ref);
         }
 
         for member in &node.body.members {
@@ -2080,7 +2091,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 .chain(std::iter::once(sig::Arg::Value))
                 .chain(std::iter::repeat_n(
                     sig::Arg::Key(super_sym),
-                    node.super_exprs.len(),
+                    node.super_refs.len(),
                 ))
                 .chain(node.body.members.iter().flat_map(|member| match member {
                     ClassMember::Field(_) => [sig::Arg::Key(field_sym), sig::Arg::Value],

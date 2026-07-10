@@ -130,6 +130,7 @@ pub enum NodeKind {
     Bind,
     Break,
     Class,
+    ClassSuper,
     ClassBody,
     ClassMember,
     Continue,

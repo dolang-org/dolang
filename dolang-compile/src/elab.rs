@@ -2270,10 +2270,10 @@ impl<'a> Elaborater<'a> {
             self.visit_expr(scope, &mut decorator.expr, false)?;
         }
 
-        // Resolve superclass expressions BEFORE inserting the class name
-        // (the class name should not be available in its own superclass expressions)
-        for super_expr in &mut class.super_exprs {
-            self.visit_expr(scope, super_expr, false)?;
+        // Resolve superclass references BEFORE inserting the class name
+        // (the class name should not be available in its own superclass references)
+        for super_ref in &mut class.super_refs {
+            self.visit_ident(scope, &mut super_ref.ident)?;
         }
 
         if scope.is_class() {
