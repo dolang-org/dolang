@@ -22,3 +22,4 @@ features = ["derive"]
 [[bin]]
 name = "dolang-highlight"
 path = "src/main.rs"
+test = false

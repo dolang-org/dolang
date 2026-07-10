@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[lib]
+test = false
+doctest = false
+
 [dependencies]
 ordered-float = "5.0"
 saphyr = "0.0.6"

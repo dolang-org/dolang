@@ -7,6 +7,14 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[lib]
+test = false
+
+[[bin]]
+name = "dolang-shell-vfs"
+path = "src/main.rs"
+test = false
+
 [dependencies]
 tokio = { version = "1.48.0", features = ["io-util", "sync", "rt-multi-thread", "rt", "macros", "fs", "net", "process", "time"] }
 wax = { version = "0.7", features = ["walk"] }

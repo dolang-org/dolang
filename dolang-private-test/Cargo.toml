@@ -8,6 +8,9 @@ repository.workspace = true
 rust-version.workspace = true
 publish = true
 
+[lib]
+test = false
+
 [dependencies]
 annotate-snippets = "0.12.10"
 bstr = "1.12.1"

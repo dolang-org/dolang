@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[lib]
+test = false
+doctest = false
+
 [dependencies]
 dolang = { path = "../dolang", version = "0.1.0" }
 dolang-ext-shell = { path = "../dolang-ext-shell", version = "0.1.0" }

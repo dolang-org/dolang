@@ -1,0 +1,154 @@
+import
+  test:
+    - assert
+    - assert_eq
+    - test
+  xml:
+    - from_str
+    - to_str
+    - Node
+
+#[test]
+def parse_basic_elements()
+  let el = from_str "<foo/>"
+  assert_eq $el.tag "foo"
+
+  let el = from_str r#"<foo bar="baz" count="3"/>"#
+  assert_eq $el.tag "foo"
+  assert_eq $el["bar"] "baz"
+  assert_eq $el["count"] "3"
+
+#[test]
+def parse_children_and_mixed_content()
+  let el = from_str "<greeting>hello</greeting>"
+  assert_eq $el.tag "greeting"
+  let cs = [...el.children()]
+  assert_eq $cs[0] "hello"
+
+  let el = from_str "<root><child/></root>"
+  assert_eq $el.tag "root"
+  let cs = [...el.children()]
+  assert_eq $cs[0].tag "child"
+
+  let el = from_str "<root>before<mid/>after</root>"
+  assert_eq $el.tag "root"
+  let cs = [...el.children()]
+  assert_eq $cs[0] "before"
+  assert_eq $cs[1].tag "mid"
+  assert_eq $cs[2] "after"
+
+#[test]
+def parse_nested_and_multiple_children()
+  let el = from_str "<a><b><c>deep</c></b></a>"
+  assert_eq $el.tag "a"
+  let l1 = [...el.children()]
+  assert_eq $l1[0].tag "b"
+  let l2 = [...l1[0].children()]
+  assert_eq $l2[0].tag "c"
+  let l3 = [...l2[0].children()]
+  assert_eq $l3[0] "deep"
+
+  let el = from_str r#"<items><item id="1">first</item><item id="2">second</item></items>"#
+  assert_eq $el.tag "items"
+  let items = [...el.children()]
+  assert_eq $items[0]["id"] "1"
+  assert_eq $[...items[0].children()][0] "first"
+  assert_eq $items[1]["id"] "2"
+  assert_eq $[...items[1].children()][0] "second"
+
+#[test]
+def ignores_xml_declaration()
+  let el = from_str "<?xml version=\"1.0\"?><root/>"
+  assert_eq $el.tag "root"
+
+#[test]
+def round_trip_nodes()
+  let n = Node "foo"
+  let s = to_str $n
+  let parsed = from_str $s
+  assert_eq $parsed.tag "foo"
+
+  let n = Node "foo"
+  n["bar"] = "baz"
+  let s = to_str $n
+  let parsed = from_str $s
+  assert_eq $parsed.tag "foo"
+  assert_eq $parsed["bar"] "baz"
+
+  let n = Node "greeting"
+  n.push "hello world"
+  let s = to_str $n
+  let parsed = from_str $s
+  assert_eq $parsed.tag "greeting"
+  assert_eq $[...parsed.children()][0] "hello world"
+
+#[test]
+def round_trip_nested_and_escaped_content()
+  let inner = Node "inner"
+  inner.push "content"
+  let outer = Node "outer"
+  outer.push $inner
+  let s = to_str $outer
+  let parsed = from_str $s
+  assert_eq $parsed.tag "outer"
+  let parsed_children = [...parsed.children()]
+  assert_eq $parsed_children[0].tag "inner"
+  assert_eq $[...parsed_children[0].children()][0] "content"
+
+  let n = Node "data"
+  n.push "a < b & c > d"
+  let s = to_str $n
+  let parsed = from_str $s
+  assert_eq $"".join(parsed.children()) "a < b & c > d"
+
+#[test]
+def attrs_and_tag_are_mutable()
+  let el = from_str r#"<foo x="1" y="2"/>"#
+  let a = {...el.attrs()}
+  assert_eq $a["x"] "1"
+  assert_eq $a["y"] "2"
+
+  let n = Node "old"
+  n.tag = "new"
+  assert_eq $n.tag "new"
+
+#[test]
+def node_type_and_subclassing()
+  let n = Node "foo"
+  assert_eq (type n) $Node
+
+  let el = from_str "<foo/>"
+  assert (type el Node)
+
+  class MyNode: Node
+    def (init) self tag
+      Node.(init) $self $tag
+
+  let node = MyNode foo
+  assert_eq $node.tag foo
+
+#[test]
+def namespace_handling()
+  let el = from_str r#"<ns:elem xmlns:ns="http://example.com"/>"#
+  assert_eq $el.tag "ns:elem"
+  assert_eq $el["xmlns:ns"] "http://example.com"
+
+  let src = r#"<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ns:Data xmlns:ns="http://example.com">value</ns:Data></soap:Body></soap:Envelope>"#
+  let doc = from_str $src
+  assert_eq $doc.tag "soap:Envelope"
+  let rt = to_str $doc
+  let doc2 = from_str $rt
+  assert_eq $doc2.tag "soap:Envelope"
+  assert_eq $doc2["xmlns:soap"] "http://schemas.xmlsoap.org/soap/envelope/"
+  let body = [...doc2.children()]
+  assert_eq $body[0].tag "soap:Body"
+
+#[test]
+def traverse_is_depth_first_parent_first()
+  let doc = from_str "<a><b><c/></b><d/></a>"
+  let nodes = [...doc.traverse()]
+  assert_eq $nodes.len 4
+  assert_eq $nodes[0].tag "a"
+  assert_eq $nodes[1].tag "b"
+  assert_eq $nodes[2].tag "c"
+  assert_eq $nodes[3].tag "d"
