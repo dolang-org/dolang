@@ -161,11 +161,11 @@ nav:
       - api/std/concurrency-error.md
       - api/std/cyclic-import-error.md
       - api/std/dict.md
-      - api/std/descriptor.md
       - api/std/error.md
       - api/std/field-error.md
       - api/std/float.md
       - api/std/func.md
+      - api/std/getter.md
       - api/std/immutable-error.md
       - api/std/import-error.md
       - api/std/index-error.md
@@ -178,11 +178,11 @@ nav:
       - api/std/missing-pos-error.md
       - api/std/nil.md
       - api/std/overflow-error.md
-      - api/std/property.md
       - api/std/range.md
       - api/std/record.md
       - api/std/runtime-error.md
       - api/std/set.md
+      - api/std/setter.md
       - api/std/state-error.md
       - api/std/sinkable.md
       - api/std/sink.md

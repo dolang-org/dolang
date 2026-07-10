@@ -16,12 +16,12 @@ The `std` module provides core language facilities.
 | [`ConcurrencyError`](./concurrency-error.md)      | Concurrent access violation                |
 | [`CyclicImportError`](./cyclic-import-error.md)   | Cyclic module dependency                   |
 | [`dict`](./dict.md)                               | Mutable ordered dictionary                 |
-| [`Descriptor`](./descriptor.md)                   | Abstract descriptor protocol type          |
 | [`set`](./set.md)                                 | Mutable ordered set                        |
 | [`Error`](./error.md)                             | Abstract base error type                   |
 | [`FieldError`](./field-error.md)                  | Nonexistent field access                   |
 | [`float`](./float.md)                             | 64-bit floating point                      |
 | [`func`](./func.md)                               | Callable value                             |
+| [`Getter`](./getter.md)                           | Abstract getter protocol type              |
 | [`ImmutableError`](./immutable-error.md)          | Mutation of an immutable value             |
 | [`ImportError`](./import-error.md)                | Module import failure                      |
 | [`IndexError`](./index-error.md)                  | Out-of-bounds index access                 |
@@ -34,10 +34,10 @@ The `std` module provides core language facilities.
 | [`MissingPosError`](./missing-pos-error.md)       | Required positional argument not provided  |
 | [`Nil`](./nil.md)                                 | Type object for `nil`                      |
 | [`OverflowError`](./overflow-error.md)            | Integer overflow                           |
-| [`property`](./property.md)                       | Descriptor helper for computed fields      |
 | [`range`](./range.md)                             | Numeric range for iteration                |
 | [`record`](./record.md)                           | Record with dot-syntax access              |
 | [`RuntimeError`](./runtime-error.md)              | Ordinary runtime failure supertype         |
+| [`Setter`](./setter.md)                           | Abstract setter protocol type              |
 | [`StateError`](./state-error.md)                  | Invalid operation for current state        |
 | [`Sinkable`](./sinkable.md)                       | Abstract sinkable type                     |
 | [`Sink`](./sink.md)                               | Abstract sink type                         |
@@ -78,6 +78,43 @@ quotes strings, shows type tags).
 | `value` |      | the value to convert |
 
 **Returns:** [`str`](./str.md)
+
+### `getter func`
+
+Builds a getter object from a callable.
+
+**Parameters:**
+
+| Name   | Type   | Description                   |
+| ------ | ------ | ----------------------------- |
+| `func` | `func` | callable used for field reads |
+
+**Returns:** [`Getter`](./getter.md)
+
+```
+class Config
+  let _port = 8080
+  pub let port = getter do |obj| obj.#_port
+```
+
+### `setter func`
+
+Builds a setter object from a callable.
+
+**Parameters:**
+
+| Name   | Type   | Description                    |
+| ------ | ------ | ------------------------------ |
+| `func` | `func` | callable used for field writes |
+
+**Returns:** [`Setter`](./setter.md)
+
+```
+class Config
+  #[setter]
+  pub def port obj value
+    obj.#_port = value
+```
 
 ### `record ...`
 

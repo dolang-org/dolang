@@ -79,7 +79,7 @@ impl<'v> Module<'v> {
         this
     }
 
-    pub(crate) fn entries(&self) -> Vec<(Sym<'v, 'static>, Value<'v>)> {
+    pub(crate) fn entries(&self) -> Vec<(Sym<'v, '_>, Value<'v>)> {
         let upvars = self.upvars.borrow().expect("upvar borrow conflict");
         self.map
             .iter()

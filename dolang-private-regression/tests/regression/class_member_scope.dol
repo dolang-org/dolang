@@ -1,11 +1,11 @@
 class PassThrough
-  pub def set _self fn
+  pub def (call) _self fn
     do |...args| fn ...args
 
 class Example
-  let getter = PassThrough()
+  let setter = PassThrough()
 
-  #[getter.set]
+  #[setter]
   pub def value _self
     42
 

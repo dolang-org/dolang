@@ -34,8 +34,8 @@ function value is created, decorators are applied from bottom to top, with each
 decorator receiving the current value and returning a replacement.
 
 The same syntax also applies to `class` definitions. See
-[Classes](./classes.md#computed-fields-with-property) for the common
-`#[field.setter]` property pattern.
+[Classes](./classes.md#computed-fields-with-getter-and-setter) for the common
+`#[getter]` / `#[setter]` computed-field pattern.
 
 ## Implicit Return
 

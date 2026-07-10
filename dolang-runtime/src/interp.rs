@@ -1,5 +1,9 @@
 use std::{
-    cell::UnsafeCell, collections::HashMap, future::poll_fn, hint::unreachable_unchecked, mem, ptr,
+    cell::UnsafeCell,
+    collections::{HashMap, hash_map::Entry},
+    future::poll_fn,
+    hint::unreachable_unchecked,
+    mem, ptr,
     task::Poll,
 };
 
@@ -16,7 +20,7 @@ use crate::{
     object::{
         arg::ArgPack,
         array::Array,
-        class::{ClassEntry, ClassObject},
+        class::{ClassEntry, ClassObject, Property},
         dict::Dict,
         module::{Module, Namespace},
         protocol::{GcObj, Spread, SpreadContext},
@@ -410,7 +414,7 @@ impl<'v> Vm<'v> {
         // entry_map: built left-to-right with first-insertion-wins (MRO order).
         let mut native_supers: Vec<Value<'v>> = Vec::new();
         let mut seen_abstract: Vec<Value<'v>> = Vec::new(); // for dedup only
-        let mut entry_map: HashMap<Sym<'v, 'static>, ClassEntry<'v>> = HashMap::new();
+        let mut entry_map: HashMap<Sym<'v, '_>, ClassEntry<'v>> = HashMap::new();
         let mut field_defaults: Vec<Value<'v>> = Vec::new();
 
         for sup in supers.iter() {
@@ -436,7 +440,10 @@ impl<'v> Vm<'v> {
                             ClassEntry::Field(new_slot)
                         }
                         ClassEntry::Method(v) => ClassEntry::Method(v.dup()),
-                        ClassEntry::Descriptor(v) => ClassEntry::Descriptor(v.dup()),
+                        ClassEntry::Property(property) => ClassEntry::Property(Property {
+                            getter: property.getter.as_ref().map(Value::dup),
+                            setter: property.setter.as_ref().map(Value::dup),
+                        }),
                         ClassEntry::Delegate(parent_slot) => {
                             // Remap via parent's native_supers → our native_supers.
                             let type_obj = &cls.native_supers[*parent_slot];
@@ -464,9 +471,8 @@ impl<'v> Vm<'v> {
                     // Abstract super: store the type-object directly in each entry.
                     seen_abstract.push(sup.dup());
                     for sym in inspect.members.iter() {
-                        let static_sym = unsafe { sym.into_static_scope_unchecked() };
                         entry_map
-                            .entry(static_sym)
+                            .entry(*sym)
                             .or_insert_with(|| ClassEntry::Abstract(sup.dup()));
                     }
                 } else {
@@ -474,9 +480,8 @@ impl<'v> Vm<'v> {
                     let our_slot = native_supers.len();
                     native_supers.push(sup.dup());
                     for sym in inspect.members.iter() {
-                        let static_sym = unsafe { sym.into_static_scope_unchecked() };
                         entry_map
-                            .entry(static_sym)
+                            .entry(*sym)
                             .or_insert(ClassEntry::Delegate(our_slot));
                     }
                 }
@@ -488,31 +493,113 @@ impl<'v> Vm<'v> {
             .downcast_ref(strand.builtin_types().module)
             .ok_or_else(|| Error::type_error(strand, "class_create: expected module"))?;
         let module = module.get();
+        let mut local_entries: HashMap<Sym<'v, '_>, ClassEntry<'v>> = HashMap::new();
         for (sym, value) in module.entries() {
+            if value.is_instance_of(strand, &strand.singletons().getter) {
+                match local_entries.entry(sym) {
+                    Entry::Vacant(entry) => {
+                        entry.insert(ClassEntry::Property(Property {
+                            getter: Some(value),
+                            setter: None,
+                        }));
+                    }
+                    Entry::Occupied(mut entry) => match entry.get_mut() {
+                        ClassEntry::Property(Property { getter, .. }) if getter.is_none() => {
+                            *getter = Some(value);
+                        }
+                        _ => {
+                            return Err(Error::runtime(
+                                strand,
+                                format!(
+                                    "class_create: duplicate class member `{}`",
+                                    sym.as_str(strand)
+                                ),
+                            ));
+                        }
+                    },
+                }
+                continue;
+            }
+
+            if value.is_instance_of(strand, &strand.singletons().setter) {
+                match local_entries.entry(sym) {
+                    Entry::Vacant(entry) => {
+                        entry.insert(ClassEntry::Property(Property {
+                            getter: None,
+                            setter: Some(value),
+                        }));
+                    }
+                    Entry::Occupied(mut entry) => match entry.get_mut() {
+                        ClassEntry::Property(Property { setter, .. }) if setter.is_none() => {
+                            *setter = Some(value);
+                        }
+                        _ => {
+                            return Err(Error::runtime(
+                                strand,
+                                format!(
+                                    "class_create: duplicate class member `{}`",
+                                    sym.as_str(strand)
+                                ),
+                            ));
+                        }
+                    },
+                }
+                continue;
+            }
+
             let entry = if value
                 .downcast_ref(strand.builtin_types().function)
                 .is_some()
             {
                 ClassEntry::Method(value)
-            } else if value.is_instance_of(strand, &strand.singletons().descriptor) {
-                ClassEntry::Descriptor(value)
             } else {
                 let slot = field_defaults.len();
                 field_defaults.push(value);
                 ClassEntry::Field(slot)
             };
+
+            match local_entries.entry(sym) {
+                Entry::Vacant(slot) => {
+                    slot.insert(entry);
+                }
+                Entry::Occupied(_) => {
+                    return Err(Error::runtime(
+                        strand,
+                        format!(
+                            "class_create: duplicate class member `{}`",
+                            sym.as_str(strand)
+                        ),
+                    ));
+                }
+            }
+        }
+
+        for (sym, entry) in local_entries {
             entry_map.insert(sym, entry);
         }
 
         // --- Phase 4: Sort entries by sym ---
-        let mut entries: Vec<(Sym<'v, 'static>, ClassEntry<'v>)> = entry_map.into_iter().collect();
+        let mut entries: Vec<(Sym<'v, '_>, ClassEntry<'v>)> = entry_map.into_iter().collect();
         entries.sort_by_key(|(s, _)| *s);
-
+        let symbols: Vec<_> = entries
+            .iter()
+            .map(|(sym, _)| strand.sym_obj(*sym))
+            .collect();
         let class_obj = ClassObject {
-            program: module.loaded.clone(),
             name,
+            module_name: module
+                .loaded
+                .module_name
+                .as_ref()
+                .map(|r| alias::Box::<str>::from(&module.loaded.debug_strtab()[r.clone()])),
+            symbols: symbols.into(),
+            entries: unsafe {
+                // SAFETY: every symbol in `entries` is explicitly rooted by the
+                // corresponding object in `_symbols`, which this ClassObject owns.
+                mem::transmute::<Vec<_>, Vec<(Sym<'v, 'static>, ClassEntry<'v>)>>(entries)
+            }
+            .into(),
             supers: supers.into(),
-            entries: entries.into(),
             field_defaults: field_defaults.into(),
             native_supers: native_supers.into(),
         };
