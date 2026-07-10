@@ -3,15 +3,15 @@ use std::{cell::OnceCell, fmt, ops::ControlFlow};
 use dolang_util::alias;
 
 use crate::{
-    Program,
     arg::Args,
     call,
     error::{Error, ErrorKind, Result, ResultExt},
-    gc::{self, Annex, Collect, arena::Visit},
+    gc::{Annex, Collect, arena::Visit},
     method,
     object::{
         BoundMethod,
         protocol::{Inspect, Recv, Spread, SpreadContext, default_spread},
+        sym::SymObj,
     },
     sig::Unpack,
     strand::Strand,
@@ -122,14 +122,16 @@ pub(crate) enum ClassEntry<'v> {
 }
 
 pub(crate) struct ClassObject<'v> {
-    // Roots below symbols
-    pub(crate) program: gc::Gc<'v, Program<'v>>,
     // Class name (for debug formatting)
     pub(crate) name: alias::Box<str>,
+    // Optional module name for debug formatting.
+    pub(crate) module_name: Option<alias::Box<str>>,
     // Direct superclasses (for subtype checking); may be ClassObject or built-in type objects
     pub(crate) supers: alias::Box<[Value<'v>]>,
-    // Unified MRO-ordered lookup table sorted by Sym.
+    // Unified MRO-ordered lookup table sorted by Sym. Symbols are rooted by `_symbols`.
     pub(crate) entries: alias::Box<[(Sym<'v, 'static>, ClassEntry<'v>)]>,
+    // Roots for the symbols used by `entries`.
+    pub(crate) symbols: alias::Box<[GcObj<'v, SymObj>]>,
     // Default values for field slots (indexed by ClassEntry::Field(n))
     pub(crate) field_defaults: alias::Box<[Value<'v>]>,
     // Non-abstract native supers, in transitive collection order (left-to-right).
@@ -171,9 +173,11 @@ unsafe impl<'v> Collect for ClassObject<'v> {
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.program.accept(visit)?;
         for sup in self.supers.iter() {
             sup.accept(visit)?;
+        }
+        for sym in self.symbols.iter() {
+            sym.accept(visit)?;
         }
         for (_, entry) in self.entries.iter() {
             match entry {
@@ -236,12 +240,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
         let this = this.get();
-        if let Some(module_name) = this
-            .program
-            .module_name
-            .as_ref()
-            .map(|r| &this.program.debug_strtab()[r.clone()])
-        {
+        if let Some(module_name) = &this.module_name {
             write!(w, "<type {module_name}.{}>", this.name).into_do(strand)
         } else {
             write!(w, "<type {}>", this.name).into_do(strand)
@@ -562,12 +561,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 strand.sync(async |strand| native.op_debug(strand, w))
             }
             _ => {
-                let program = &annex.class.program;
-                if let Some(module) = program
-                    .module_name
-                    .as_ref()
-                    .map(|r| &program.debug_strtab()[r.clone()])
-                {
+                if let Some(module) = &annex.class.module_name {
                     write!(w, "<{module}.{}>", annex.class.name).into_do(strand)
                 } else {
                     write!(w, "<{}>", annex.class.name).into_do(strand)
