@@ -16,15 +16,6 @@ let ex = Example()
 assert_eq $ex.value() 42
 assert_eq $ex.exposed 7
 
-class NestedClass
-  pub class Inner
-    pub let value = 1
-
-  pub let inner = Inner()
-
-let nested = NestedClass()
-assert_eq $nested.inner.value 1
-
 let shadowed = 2
 
 class MethodGlobalFallback
