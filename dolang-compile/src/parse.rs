@@ -3715,6 +3715,84 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_class_stmt(&mut self, scope: &mut Scope) -> Result<Stmt> {
+        use self::Keyword::*;
+        use TokenInfo::*;
+
+        let decorators = self.parse_decorators(scope)?;
+
+        let pub_span = if let Some(token!(Keyword(Pub))) = self.peek()? {
+            let span = self.advance();
+            self.expect(scope, &[ExpectKind::ArgSep])?;
+            Some(span)
+        } else {
+            None
+        };
+
+        match self.peek()? {
+            Some(token @ token!(Keyword(Let))) => {
+                if !decorators.is_empty() {
+                    let token = token.clone();
+                    return Err(self.syntax_error(
+                        scope,
+                        Some(token),
+                        "decorators are only valid before `def` in a class body",
+                    ));
+                }
+                Ok(Stmt::Let(self.parse_let(scope, pub_span)?))
+            }
+            Some(token!(Keyword(Def))) => {
+                Ok(Stmt::Def(self.parse_def(scope, pub_span, decorators)?))
+            }
+            Some(token!(Dedent)) | None => {
+                Err(self.syntax_error(scope, None, "expected statement"))
+            }
+            other => {
+                let token = other.cloned();
+                Err(self.syntax_error(
+                    scope,
+                    token,
+                    "class body only supports `let` and `def` declarations",
+                ))
+            }
+        }
+    }
+
+    fn parse_class_block(&mut self, scope: &mut Scope) -> Result<Block> {
+        use TokenInfo::*;
+
+        let mut stmts = Vec::new();
+
+        loop {
+            let done = (|| -> Result<bool> {
+                match self.peek()? {
+                    None | Some(token!(Dedent)) => return Ok(true),
+                    Some(token!(StmtSep)) => {
+                        self.advance();
+                    }
+                    _ => stmts.push(self.parse_class_stmt(scope)?),
+                }
+                Ok(false)
+            })();
+            match done {
+                Ok(true) => break,
+                Ok(false) => continue,
+                Err(_) => {
+                    self.lex.set_error();
+                    while !matches!(self.peek()?, None | Some(token!(StmtSep | Dedent))) {
+                        self.advance();
+                    }
+                }
+            }
+        }
+
+        Ok(Block {
+            stmts,
+            vars: Vec::new(),
+            repl: None,
+        })
+    }
+
     fn parse_class(
         &mut self,
         scope: &mut Scope,
@@ -3756,7 +3834,7 @@ impl<'a> Parser<'a> {
 
         let body = match self.next()? {
             Some(token!(TokenInfo::Indent)) => {
-                let block = self.parse_block(scope)?;
+                let block = self.parse_class_block(scope)?;
                 self.expect(scope, &[ExpectKind::Dedent])?;
                 block
             }
