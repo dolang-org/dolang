@@ -10,8 +10,8 @@ indented body containing field declarations and method definitions:
 
 ```
 class Point
-  pub let x = 0
-  pub let y = 0
+  pub field x = 0
+  pub field y = 0
 
   def (init) self x y
     self.x = x
@@ -23,14 +23,14 @@ class Point
 
 ### Fields
 
-Fields are declared with `let` inside the class body. Each field has a default
+Fields are declared with `field` inside the class body. Each field has a default
 value that is used when an instance is created:
 
 ```
 class Config
-  let host = "localhost"
-  let port = 8080
-  let verbose = false
+  field host = "localhost"
+  field port = 8080
+  field verbose = false
 ```
 
 !!! warning "Beware Mutable Default Values" Currently, all instances share the
@@ -45,30 +45,31 @@ conventionally named `self` and receives the instance:
 
 ```
 class Counter
-  let count = 0
+  field count = 0
 
   pub def increment self
     self.#count = (self.#count + 1)
 
   pub def value self
-    self.count
+    self.#count
 ```
 
 ## Computed Fields with `getter` and `setter`
 
-Fields can be backed by getter and setter objects instead of stored
-per-instance state. The built-in [`getter`](../api/std/getter.md) and
-[`setter`](../api/std/setter.md) helpers are the common way to define a
-computed field:
+Computed fields are declared with `#[getter]` and `#[setter]` decorators on
+methods:
 
 ```
 class Config
-  let _port = 8080
-  pub let port = getter do |obj| obj.#_port
+  field port = 8080
+
+  #[getter]
+  pub def port obj
+    obj.#port
 
   #[setter]
   pub def port obj value
-    obj.#_port = value
+    obj.#port = value
 ```
 
 Reads and writes still use ordinary field syntax:
@@ -80,14 +81,6 @@ cfg.port = 9000
 assert_eq $cfg.port 9000
 ```
 
-Class creation pairs one getter and one setter with the same member name into a
-single computed field. Any other duplicate member name is an error.
-
-Custom getter and setter objects can also be created by subclassing
-[`Getter`](../api/std/getter.md) or [`Setter`](../api/std/setter.md).
-Decorators can also be applied to classes and methods more generally; see
-[Functions](./functions.md#decorators) for the syntax.
-
 ## Visibility
 
 By default, all fields and methods of a class are **private** — they can only
@@ -96,7 +89,7 @@ accessible from outside the class, declare it with `pub`:
 
 ```
 class Counter
-  let count = 0        # private field
+  field count = 0        # private field
 
   def (init) self start
     self.#count = start
@@ -113,8 +106,8 @@ API:
 
 ```
 pub class Point
-  pub let x = 0
-  pub let y = 0
+  pub field x = 0
+  pub field y = 0
 
   def (init) self x y
     self.#x = x
@@ -128,7 +121,7 @@ accessed using the `.#field` syntax:
 
 ```
 class BankAccount
-  let balance = 0
+  field balance = 0
 
   def (init) self initial
     self.#balance = initial
@@ -151,7 +144,7 @@ syntax from within the class:
 
 ```
 class Adder
-  let base = 0
+  field base = 0
 
   def (init) self base
     self.#base = base
@@ -173,8 +166,8 @@ Call a class like a function to create an instance. Arguments are passed to
 
 ```
 class Rectangle
-  pub let width = 0
-  pub let height = 0
+  pub field width = 0
+  pub field height = 0
 
   def (init) self w h
     self.width = w
@@ -195,8 +188,8 @@ Let's start with a base class:
 
 ```
 class Animal
-  pub let name = nil
-  pub let species = "unknown"
+  pub field name = nil
+  pub field species = "unknown"
 
   def (init) self name species
     self.name = name
@@ -212,7 +205,7 @@ overridden by redefining them. To call a parent method, use
 
 ```
 class Dog: Animal
-  pub let breed = nil
+  pub field breed = nil
 
   def (init) self name breed
     Animal.(init) $self $name dog
@@ -238,7 +231,7 @@ Call the parent's `(init)` explicitly to initialize inherited fields:
 
 ```
 class Cat: Animal
-  pub let indoor = false
+  pub field indoor = false
 
   def (init) self name indoor
     Animal.(init) $self $name cat
@@ -323,8 +316,8 @@ argument:
 
 ```
 class Point
-  let x = 0
-  let y = 0
+  field x = 0
+  field y = 0
 
   def (init) self x y
     self.x = x
@@ -337,7 +330,7 @@ Makes an instance callable like a function:
 
 ```
 class Multiplier
-  let factor = 1
+  field factor = 1
 
   def (init) self factor
     self.factor = factor
@@ -356,8 +349,8 @@ of `self`:
 
 ```
 class Point
-  let x = 0
-  let y = 0
+  field x = 0
+  field y = 0
 
   def (init) self x y
     self.x = x
@@ -379,8 +372,8 @@ a built-in type, or a class instance that implements `(next)`:
 
 ```
 class NumberRange
-  let start = 0
-  let stop = 0
+  field start = 0
+  field stop = 0
 
   def (init) self start stop
     self.start = start
@@ -403,8 +396,8 @@ import std:
   - IterStop
 
 class Counter
-  let current = 0
-  let stop = 0
+  field current = 0
+  field stop = 0
 
   def (init) self start stop
     self.current = start
@@ -430,7 +423,7 @@ Makes an instance usable as a sink target with `strand.put` or
 
 ```
 class ListCollector
-  let items = nil
+  field items = nil
 
   def (init) self
     self.items = []
@@ -452,7 +445,7 @@ Receives values from `put` when the instance is used as a sink:
 
 ```
 class Summer
-  let sum = 0
+  field sum = 0
 
   def (put) self value
     self.sum = (self.sum + value)
@@ -471,8 +464,8 @@ Called when a value is used in a boolean context: `if`, `while`, `!`, `&&`,
 
 ```
 class Vec2
-  pub let x = 0
-  pub let y = 0
+  pub field x = 0
+  pub field y = 0
 
   def (init) self x y
     self.x = x
@@ -512,8 +505,8 @@ import std:
   - hash
 
 class Point
-  pub let x = 0
-  pub let y = 0
+  pub field x = 0
+  pub field y = 0
 
   def (init) self x y
     self.x = x
@@ -542,8 +535,8 @@ interpolation. Must return a `str`. Falls back to `(dbg)` if not defined:
 
 ```
 class Point
-  pub let x = 0
-  pub let y = 0
+  pub field x = 0
+  pub field y = 0
 
   def (init) self x y
     self.x = x
@@ -564,7 +557,7 @@ displays as `<object>`:
 
 ```
 class Node
-  pub let val = 0
+  pub field val = 0
 
   def (init) self val
     self.val = val
@@ -581,7 +574,7 @@ Called when an instance is interpolated into an external command as an argument
 
 ```
 class Path
-  pub let parts = []
+  pub field parts
 
   def (init) self ...parts
     self.parts = parts
@@ -600,7 +593,7 @@ class Path
 
 ```
 class Table
-  pub let data = nil
+  pub field data = nil
 
   def (init) self
     self.data = {}
@@ -623,8 +616,8 @@ methods. Define the method corresponding to the operator:
 
 ```
 class Vec2
-  pub let x = 0
-  pub let y = 0
+  pub field x = 0
+  pub field y = 0
 
   def (init) self x y
     self.x = x
@@ -682,7 +675,7 @@ operators. `<=`, `>`, and `>=` are derived automatically:
 
 ```
 class Num
-  pub let val = 0
+  pub field val = 0
 
   def (init) self val
     self.val = val
@@ -709,7 +702,7 @@ name as a symbol:
 
 ```
 class Dynamic
-  let data = {}
+  field data
 
   def (init) self
     self.#data = {}
@@ -732,7 +725,7 @@ assert_eq $d.bar "hello"
 
 ```
 class WithPub
-  pub let x = 0
+  pub field x = 0
 
   def (init) self v
     self.x = v

@@ -6,7 +6,7 @@ import std:
 # so Do classes can subclass them without a native (init) call doing anything.
 
 class MyInput: Iter
-  pub let items = nil
+  pub field items = nil
 
   def (init) self items
     Iter.(init) self
@@ -32,7 +32,7 @@ let result = [...src]
 assert_eq $result [1, 2, 3]
 
 class MyOutput: Sink
-  pub let items = nil
+  pub field items = nil
 
   def (init) self items
     Sink.(init) self
@@ -54,7 +54,7 @@ assert (type dst MyOutput)
 assert (type dst Sink)
 
 class MyPairInput: Iter
-  pub let pairs = nil
+  pub field pairs = nil
 
   def (init) self pairs
     Iter.(init) self

@@ -3,7 +3,7 @@ import std:
   - Setter
 
 class PropertyGetter: Getter
-  pub let getter = nil
+  pub field getter = nil
 
   def (init) self getter
     self.getter = getter
@@ -11,8 +11,8 @@ class PropertyGetter: Getter
   pub def get self obj
     self.getter $obj
 
-class PropertySetter: Setter
-  pub let setter_fn = nil
+class _PropertySetter: Setter
+  pub field setter_fn = nil
 
   pub def set self obj value
     self.setter_fn $obj $value
@@ -21,9 +21,15 @@ class PropertySetter: Setter
     self.setter_fn = fn
 
 class Example
-  pub let storage = 1
-  pub let value = PropertyGetter do |obj| obj.storage
-  pub let value = PropertySetter do |obj value| obj.storage = value
+  pub field storage = 1
+
+  #[getter]
+  pub def value obj
+    obj.storage
+
+  #[setter]
+  pub def value obj value
+    obj.storage = value
 
 let ex = Example()
 assert_eq $ex.value 1
@@ -32,8 +38,11 @@ assert_eq $ex.value 42
 assert_eq $ex.storage 42
 
 class Base
-  pub let storage = 7
-  pub let value = PropertyGetter do |obj| obj.storage
+  pub field storage = 7
+
+  #[getter]
+  pub def value obj
+    obj.storage
 
 class Derived: Base
 
@@ -44,7 +53,9 @@ def greet name
   "hello $name"
 
 class CallableProperty
-  pub let action = PropertyGetter do |_obj| greet
+  #[getter]
+  pub def action _obj
+    greet
 
 let callable = CallableProperty()
 assert_eq $callable.action("world") "hello world"
@@ -54,13 +65,16 @@ class LooksLikeGetter
     "not a getter"
 
 class OrdinaryField
-  pub let value = LooksLikeGetter()
+  pub field value
+
+  def (init) self
+    self.value = LooksLikeGetter()
 
 let ordinary = OrdinaryField()
 assert_eq $ordinary.value.get(nil) "not a getter"
 
 class AssignedGetter
-  pub let value = nil
+  pub field value = nil
 
   def (init) self desc
     self.value = desc

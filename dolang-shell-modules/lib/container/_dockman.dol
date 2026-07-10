@@ -88,7 +88,7 @@ let NO_CONTAINER_ERRORS =
   - NO CONTAINER FOUND
 
 pub class InvalidImageReferenceError: RuntimeError
-  pub let ref = nil
+  pub field ref = nil
 
   def (init) self ref
     self.ref = ref
@@ -97,7 +97,7 @@ pub class InvalidImageReferenceError: RuntimeError
     "invalid image reference: $(self.ref)"
 
 pub class RegistryAuthError: RuntimeError
-  pub let ref = nil
+  pub field ref = nil
 
   def (init) self ref
     self.ref = ref
@@ -106,7 +106,7 @@ pub class RegistryAuthError: RuntimeError
     "registry authentication failed: $(self.ref)"
 
 pub class ArchiveError: RuntimeError
-  pub let source = nil
+  pub field source = nil
 
   def (init) self source
     self.source = source
@@ -126,7 +126,7 @@ pub class ArchiveError: RuntimeError
 # ```
 pub class NoImageError: RuntimeError
   # The image reference that was not found
-  pub let ref = nil
+  pub field ref = nil
 
   def (init) self ref
     self.ref = ref
@@ -138,7 +138,7 @@ pub class NoImageError: RuntimeError
     "<NoImageError ref: $(dbg self.ref)>"
 
 pub class NoContainerError: RuntimeError
-  pub let ref = nil
+  pub field ref = nil
 
   def (init) self ref
     self.ref = ref
@@ -322,7 +322,7 @@ def parse_pushed_digest output stderr
   nil
 
 pub class Runtime
-  pub let id = nil
+  pub field id = nil
 
   def (init) self id
     self.id = id
@@ -562,8 +562,8 @@ def parse_source source
     source
 
 class Cache
-  let downloads = nil
-  let client = nil
+  field downloads = nil
+  field client = nil
 
   def (init) self
     self.#client = http.Client()
@@ -620,16 +620,16 @@ def prefetch_add_urls spec
       do cache.ensure $url
 
 pub class Builder
-  let runtime = nil
-  let subdir = nil
-  let socket = nil
-  let ctr_subdir = nil
-  let ctr_socket = nil
-  let ctr_agent = nil
-  let bin = nil
-  let mounts = nil
-  let agent = nil
-  let ctr_id = nil
+  field runtime = nil
+  field subdir = nil
+  field socket = nil
+  field ctr_subdir = nil
+  field ctr_socket = nil
+  field ctr_agent = nil
+  field bin = nil
+  field mounts = nil
+  field agent = nil
+  field ctr_id = nil
 
   def (init) self runtime subdir bin mounts
     self.#runtime = runtime
@@ -829,31 +829,31 @@ pub class Builder
 # A container image.
 pub class Image
   # Full image ID (`sha256:...`)
-  pub let id = nil
+  pub field id = nil
   # Creation timestamp
-  pub let created = nil
+  pub field created = nil
   # Image size in bytes
-  pub let size = nil
+  pub field size = nil
   # Array of layer digest strings
-  pub let layers = nil
+  pub field layers = nil
   # CPU architecture (e.g. `"amd64"`)
-  pub let architecture = nil
+  pub field architecture = nil
   # Operating system (e.g. `"linux"`)
-  pub let os = nil
+  pub field os = nil
   # Command (`array` of `str`)
-  pub let cmd = nil
+  pub field cmd = nil
   # Entrypoint (`array` of `str`)
-  pub let entrypoint = nil
+  pub field entrypoint = nil
   # Environment (a `dict`)
-  pub let env = nil
+  pub field env = nil
   # Working directory (a `Path`)
-  pub let working_dir = nil
+  pub field working_dir = nil
   # User (`str`)
-  pub let user = nil
+  pub field user = nil
   # Labels (`dict)`A
-  pub let labels = nil
+  pub field labels = nil
 
-  let runtime = nil
+  field runtime = nil
 
   def (init) self runtime data
     self.#runtime = runtime
@@ -928,15 +928,15 @@ pub class Image
     self.#runtime.save $target :format :platform $self.id
 
 pub class Container
-  pub let id = nil
-  pub let image = nil
-  pub let image_id = nil
-  pub let created = nil
-  pub let cmd = nil
-  pub let entrypoint = nil
-  pub let labels = nil
+  pub field id = nil
+  pub field image = nil
+  pub field image_id = nil
+  pub field created = nil
+  pub field cmd = nil
+  pub field entrypoint = nil
+  pub field labels = nil
 
-  let runtime = nil
+  field runtime = nil
 
   def (init) self runtime data
     self.#runtime = runtime

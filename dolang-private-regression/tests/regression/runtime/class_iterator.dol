@@ -8,8 +8,8 @@ import
 
 # Custom iterator that counts from start to stop
 class Counter
-  pub let current = 0
-  pub let stop = 0
+  pub field current = 0
+  pub field stop = 0
 
   def (init) self start stop
     self.current = start
@@ -37,7 +37,7 @@ assert_eq [...empty] []
 
 # Custom collector using (put) special method
 class Summer
-  pub let sum = 0
+  pub field sum = 0
 
   def (init) self
     self.sum = 0

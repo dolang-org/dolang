@@ -1,6 +1,6 @@
 class Foo
-  pub let x = 0
-  pub let y = 0
+  pub field x = 0
+  pub field y = 0
 
   def (init) self x y
     self.x = x

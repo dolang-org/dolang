@@ -1,0 +1,11 @@
+class _Counter
+  field count = 0        # private field
+
+  def (init) self start
+    self.#count = start
+
+  pub def increment self
+    self.#count = (self.#count + 1)
+
+  pub def value self
+    self.#count

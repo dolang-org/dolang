@@ -1,4 +1,4 @@
-def foo
+def foo()
   let cap = 0
   if true
     let cap2 = 0

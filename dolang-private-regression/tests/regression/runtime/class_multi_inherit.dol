@@ -1,19 +1,19 @@
 class A
-  pub let x = 1
+  pub field x = 1
   pub def greet _self
     "from A"
 
 class B: A
-  pub let y = 2
+  pub field y = 2
   pub def greet _self
     "from B"
 
 class C: A
-  pub let z = 3
+  pub field z = 3
 
 # Diamond: D gets fields x, y, z, w; method greet from B (left wins)
 class D: B C
-  pub let w = 4
+  pub field w = 4
 
 let d = D()
 assert_eq $d.x 1

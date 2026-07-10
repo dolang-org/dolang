@@ -5,7 +5,7 @@ import std:
   - Sinkable
 
 class MyIter: Iter
-  pub let inner = nil
+  pub field inner = nil
 
   def (init) self items
     Iter.(init) self
@@ -18,7 +18,7 @@ class MyIter: Iter
     self
 
 class MyEntryIter: Iter
-  pub let inner = nil
+  pub field inner = nil
 
   def (init) self items
     Iter.(init) self
@@ -31,7 +31,7 @@ class MyEntryIter: Iter
     self
 
 class MySink: Sink
-  pub let inner = nil
+  pub field inner = nil
 
   def (init) self items
     Sink.(init) self

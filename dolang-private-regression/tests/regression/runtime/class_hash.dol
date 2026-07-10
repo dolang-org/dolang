@@ -3,8 +3,8 @@ import std:
   - hash
 
 class Point
-  pub let x = 0
-  pub let y = 0
+  pub field x = 0
+  pub field y = 0
 
   def (init) self x y
     self.x = x
@@ -34,7 +34,7 @@ assert_eq (hash p1 p2) (hash p1 p2)
 
 # Without (hash), instances hash by identity
 class Anon
-  pub let v = 0
+  pub field v = 0
   def (init) self v
     self.v = v
 

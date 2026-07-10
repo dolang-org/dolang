@@ -1,12 +1,17 @@
-echo if else while for let = + - / %
-let rec = record true: true false: true nil: true while: true let: true
+echo if else while for let field = + - / %
+let rec = record true: true false: true nil: true while: true let: true field: true
 rec[:do:] = true
+let field = 1
+assert_eq $field 1
+for field = [2]
+  assert_eq $field 2
 assert $rec.true
 assert $rec.false
 assert $rec.nil
 assert $rec.while
 assert $rec.let
+assert $rec.field
 assert $rec.do
 # output: END
-# if else while for let = + - / %
+# if else while for let field = + - / %
 # END

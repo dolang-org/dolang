@@ -11,8 +11,8 @@ import fs:
 # `message` describes the specific problem (e.g. `unknown option: --foo`).
 # `hint` is an optional follow-up line (e.g. `Try 'prog --help' for more information.`).
 pub class Error
-  pub let message = nil
-  pub let hint = nil
+  pub field message = nil
+  pub field hint = nil
 
   def (init) self message hint = nil
     self.message = message
@@ -25,7 +25,7 @@ pub class Error
 #
 # `message` contains the rendered help text chosen by `args.with`.
 pub class Help
-  pub let message = nil
+  pub field message = nil
 
   def (init) self message
     self.message = message
@@ -38,14 +38,14 @@ pub class Help
 # ===========================================================================
 
 class Param
-  pub let name = nil
-  pub let help = nil
-  pub let collect = false
-  pub let default = :UNSET:
-  pub let type = nil
-  pub let sym = nil
-  pub let values = nil
-  pub let divider = false
+  pub field name = nil
+  pub field help = nil
+  pub field collect = false
+  pub field default = :UNSET:
+  pub field type = nil
+  pub field sym = nil
+  pub field values = nil
+  pub field divider = false
 
   def (init)
     self :name
@@ -89,9 +89,9 @@ class Arg: Param
 # ===========================================================================
 
 class Named: Param
-  pub let long = nil
-  pub let short = nil
-  pub let env = nil
+  pub field long = nil
+  pub field short = nil
+  pub field env = nil
 
   def (init)
     self :name
@@ -118,7 +118,7 @@ class Named: Param
 # ===========================================================================
 
 class Opt: Named
-  pub let meta = nil
+  pub field meta = nil
 
   def (init)
     self :name
@@ -193,19 +193,19 @@ def has_default p
 # ===========================================================================
 
 class Parser
-  pub let name = nil
-  pub let help = nil
-  pub let handler = nil
-  let sym = nil
-  let opts = nil
-  let long_opts = nil
-  let short_opts = nil
-  let args = nil
-  let sub_cmds = nil
-  let usage_override = nil
-  let rec = nil
-  let arg_idx = nil
-  let drain = false
+  pub field name = nil
+  pub field help = nil
+  pub field handler = nil
+  field sym = nil
+  field opts = nil
+  field long_opts = nil
+  field short_opts = nil
+  field args = nil
+  field sub_cmds = nil
+  field usage_override = nil
+  field rec = nil
+  field arg_idx = nil
+  field drain = false
 
   def (init) self :name :help = nil ...spec
     self.name = name

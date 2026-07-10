@@ -1,5 +1,5 @@
 class _MethodCapture
-  let helper = 1
+  field helper = 1
 
   pub def f _self
     helper
@@ -8,15 +8,6 @@ class _MethodCapture
 #    |
 # LL |     helper
 #    |     ^^^^^^
-
-class _LambdaCapture
-  let helper = 1
-  let f = do helper
-# error: unbound identifier
-#   --> class_member_capture.dol:LL:LL
-#    |
-# LL |   let f = do helper
-#    |              ^^^^^^
 
 class _LaterDecorator
   #[later]

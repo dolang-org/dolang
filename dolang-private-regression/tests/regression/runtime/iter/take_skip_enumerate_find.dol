@@ -62,7 +62,7 @@ assert_err_type $ValueError do [1, 2].iter().take (0 - 1)
 assert_err_type $ValueError do [1, 2].iter().skip (0 - 1)
 
 class MyInput: Iter
-  pub let inner = nil
+  pub field inner = nil
 
   def (init) self items
     Iter.(init) self

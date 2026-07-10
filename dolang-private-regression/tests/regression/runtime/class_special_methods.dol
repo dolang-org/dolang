@@ -5,8 +5,8 @@ import strand:
 
 # Test (unpack) special method - forwards to a dict
 class Point
-  pub let x = 0
-  pub let y = 0
+  pub field x = 0
+  pub field y = 0
 
   def (init) self x y
     self.x = x
@@ -23,8 +23,8 @@ assert_eq $y 4
 
 # Test (iter) special method - forwards to a list
 class NumberRange
-  pub let start = 0
-  pub let end = 0
+  pub field start = 0
+  pub field end = 0
 
   def (init) self start end
     self.start = start
@@ -39,7 +39,7 @@ assert_eq [...r] [0, 1, 2, 3, 4]
 
 # Test (sink) special method - forwards to a list
 class ListCollector
-  pub let items = nil
+  pub field items = nil
 
   def (init) self
     self.items = []
@@ -56,7 +56,7 @@ assert_eq (collector.items) [0, 1, 2]
 
 # Test (call) special method - makes the instance callable
 class Multiplier
-  pub let factor = 1
+  pub field factor = 1
 
   def (init) self factor
     self.factor = factor
@@ -72,7 +72,7 @@ assert_eq (triple 5) 15
 
 # Test (shl) and (shr) special methods
 class ShiftBox
-  pub let value = 0
+  pub field value = 0
 
   def (init) self value
     self.value = value

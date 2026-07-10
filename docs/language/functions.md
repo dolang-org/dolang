@@ -16,26 +16,12 @@ greet Alice
 # prints: Hello, Alice!
 ```
 
-### Decorators
-
-Definitions may be preceded by one or more decorators using `#[expr]` syntax:
+Functions with no arguments must have `()` after their name:
 
 ```
-#[memoize]
-def fib n
-  if (n < 2)
-    n
-  else
-    (fib(n - 1) + fib(n - 2))
+def hello()
+  echo Hello, world!
 ```
-
-Each decorator expression is evaluated in the surrounding scope. After the
-function value is created, decorators are applied from bottom to top, with each
-decorator receiving the current value and returning a replacement.
-
-The same syntax also applies to `class` definitions. See
-[Classes](./classes.md#computed-fields-with-getter-and-setter) for the common
-`#[getter]` / `#[setter]` computed-field pattern.
 
 ## Implicit Return
 
@@ -258,7 +244,7 @@ def validate record
   true
 
 # Invalid: closure is bound to a variable first
-def bad_example
+def bad_example()
   # Compiler will reject this line
   let closure = do return false
   record.get "name" else: $closure
@@ -274,3 +260,20 @@ pub def helper x
 ```
 
 See [Modules](./modules.md) for details on the module system.
+
+## Decorators
+
+Function defs may be preceded by one or more decorators using `#[expr]` syntax:
+
+```
+#[memoize]
+def fib n
+  if (n < 2)
+    n
+  else
+    (fib(n - 1) + fib(n - 2))
+```
+
+Each decorator expression is evaluated in the surrounding scope. After the
+function value is created, decorators are applied from bottom to top, with each
+decorator receiving the current value and returning a replacement.
