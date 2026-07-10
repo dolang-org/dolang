@@ -1760,8 +1760,8 @@ pub(crate) struct Class {
     pub(crate) ident: Ident,
     // Span of the `:` delimiter (if superclasses are present)
     pub(crate) colon_span: Option<Span>,
-    // Superclass expressions (empty = no superclasses)
-    pub(crate) super_exprs: Vec<Expr>,
+    // Superclass references (empty = no superclasses)
+    pub(crate) super_refs: Vec<ClassSuper>,
     pub(crate) body: ClassBody,
     pub(crate) pub_span: Option<Span>,
 }
@@ -1781,14 +1781,34 @@ impl Node for Class {
         if let Some(colon_span) = self.colon_span {
             visit.token(Token::Delim, colon_span, None)?;
         }
-        for super_expr in &self.super_exprs {
-            visit.node(super_expr)?;
+        for super_ref in &self.super_refs {
+            visit.node(super_ref)?;
         }
         visit.node(&self.body)
     }
 
     fn kind(&self) -> NodeKind {
         NodeKind::Class
+    }
+}
+
+pub(crate) struct ClassSuper {
+    pub(crate) ident: Ident,
+    pub(crate) fields: Vec<Span>,
+}
+
+impl Node for ClassSuper {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        visit.node(&self.ident)?;
+        for field in &self.fields {
+            visit.token(Token::Operator, field.before_left_char(), None)?;
+            visit.token(Token::Field, *field, None)?;
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::ClassSuper
     }
 }
 

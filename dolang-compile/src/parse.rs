@@ -8,10 +8,11 @@ use std::{
 use crate::{
     Compiler, ast,
     ast::{
-        Arg, ArrayElem, Assign, Bind, Block, CatchHandler, Class, Const, Decorator, Def, DictElem,
-        Expand, Expr, ExprBody, For, Function, GetVariant, GroupDelim, Ident, If, IfBranch, Import,
-        ImportElement, ImportItem, Key, Let, Method, Pair, Param, ParamDefault, Pattern, PrimStmt,
-        Return, Single, SpecialMethod, Stmt, Throw, Try, Unit, While, visit::Node,
+        Arg, ArrayElem, Assign, Bind, Block, CatchHandler, Class, ClassSuper, Const, Decorator,
+        Def, DictElem, Expand, Expr, ExprBody, For, Function, GetVariant, GroupDelim, Ident, If,
+        IfBranch, Import, ImportElement, ImportItem, Key, Let, Method, Pair, Param, ParamDefault,
+        Pattern, PrimStmt, Return, Single, SpecialMethod, Stmt, Throw, Try, Unit, While,
+        visit::Node,
     },
     diag::{AnnotationKind, NoteKind, Severity},
     lex::{self, Keyword, Lexer, Mode, Op, Token, TokenInfo},
@@ -3934,15 +3935,15 @@ impl<'a> Parser<'a> {
 
         // Class name can be either `Name` (Ident) or `Name:` (Key) if there's a superclass
         // The span of a Key token excludes the `:`, so we can use it directly for the identifier
-        let (ident, colon_span, super_exprs) = match self.next()? {
+        let (ident, colon_span, super_refs) = match self.next()? {
             Some(token!(TokenInfo::Ident, span)) => {
                 // Plain identifier, no superclasses
                 (Ident::new(span), None, vec![])
             }
             Some(token!(TokenInfo::Key, span)) => {
-                // Identifier with colon suffix; parse space-separated compact expressions
+                // Identifier with colon suffix; parse space-separated dotted names
                 let colon_span = span.after_right_char();
-                let mut super_exprs = vec![];
+                let mut super_refs = vec![];
                 loop {
                     match self.peek()? {
                         None
@@ -3952,10 +3953,10 @@ impl<'a> Parser<'a> {
                         Some(token!(TokenInfo::ArgSep)) => {
                             self.advance();
                         }
-                        _ => super_exprs.push(self.parse_expr(scope, ExprMode::Compact)?),
+                        _ => super_refs.push(self.parse_class_super(scope)?),
                     }
                 }
-                (Ident::new(span), Some(colon_span), super_exprs)
+                (Ident::new(span), Some(colon_span), super_refs)
             }
             other => {
                 return Err(self.syntax_error(scope, other, "expected class name after `class`"));
@@ -3983,10 +3984,33 @@ impl<'a> Parser<'a> {
             decorators,
             ident,
             colon_span,
-            super_exprs,
+            super_refs,
             body,
             pub_span,
         })
+    }
+
+    fn parse_class_super(&mut self, scope: &mut Scope) -> Result<ClassSuper> {
+        let ident = match decay_ident!(self.next()?) {
+            Some(token!(TokenInfo::Ident, span)) => Ident::new(span),
+            other => return Err(self.syntax_error(scope, other, "expected superclass name")),
+        };
+        let mut fields = Vec::new();
+        while let Some(token!(TokenInfo::Op(Op::Dot))) = self.peek()? {
+            self.advance();
+            let field = match decay_field!(self.next()?) {
+                Some(token!(TokenInfo::Ident, span)) => span,
+                other => {
+                    return Err(self.syntax_error(
+                        scope,
+                        other,
+                        "expected field name after `.` in superclass reference",
+                    ));
+                }
+            };
+            fields.push(field);
+        }
+        Ok(ClassSuper { ident, fields })
     }
 
     fn reinterpret_module_name(&mut self, scope: &mut Scope, mut token: Token) -> Result<Token> {
