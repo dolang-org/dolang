@@ -1,7 +1,7 @@
 def id arg
   arg 
 
-def bad_nl
+def bad_nl()
   let bad_closure = id do return
   bad_closure()
 

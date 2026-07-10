@@ -3,7 +3,7 @@ class A
     B()
 
 class B
-  pub let ok = true
+  pub field ok = true
 
 let b = A().make_b()
 assert $b.ok

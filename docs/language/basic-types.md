@@ -287,7 +287,7 @@ User-defined classes work the same way:
 
 ```
 class Foo
-  let x = 0
+  field x = 0
 
 let f = Foo()
 assert_eq (type f) $Foo

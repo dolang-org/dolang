@@ -50,37 +50,39 @@ macro_rules! decay {
 macro_rules! decay_ident {
     ($token: expr) => {
         decay!($token, TokenInfo::Keyword(
-                Keyword::Catch
-                | Keyword::Def
-                | Keyword::Bind
-                | Keyword::Do
-                | Keyword::Else
-                | Keyword::Finally
-                | Keyword::For
-                | Keyword::If
-                | Keyword::Let
-                | Keyword::Throw
-                | Keyword::Try
-                | Keyword::While) => TokenInfo::Ident)
+                self::Keyword::Catch
+                | self::Keyword::Def
+                | self::Keyword::Bind
+                | self::Keyword::Do
+                | self::Keyword::Else
+                | self::Keyword::Field
+                | self::Keyword::Finally
+                | self::Keyword::For
+                | self::Keyword::If
+                | self::Keyword::Let
+                | self::Keyword::Throw
+                | self::Keyword::Try
+                | self::Keyword::While) => TokenInfo::Ident)
     }
 }
 
 macro_rules! decay_field {
     ($token: expr) => {
         decay!($token, TokenInfo::Bool(_) | TokenInfo::Keyword(
-                Keyword::Catch
-                | Keyword::Def
-                | Keyword::Bind
-                | Keyword::Do
-                | Keyword::Else
-                | Keyword::Finally
-                | Keyword::For
-                | Keyword::If
-                | Keyword::Let
-                | Keyword::Nil
-                | Keyword::Throw
-                | Keyword::Try
-                | Keyword::While) => TokenInfo::Ident)
+                self::Keyword::Catch
+                | self::Keyword::Def
+                | self::Keyword::Bind
+                | self::Keyword::Do
+                | self::Keyword::Else
+                | self::Keyword::Field
+                | self::Keyword::Finally
+                | self::Keyword::For
+                | self::Keyword::If
+                | self::Keyword::Let
+                | self::Keyword::Nil
+                | self::Keyword::Throw
+                | self::Keyword::Try
+                | self::Keyword::While) => TokenInfo::Ident)
     }
 }
 
@@ -97,18 +99,19 @@ macro_rules! decay_literal {
             | TokenInfo::DotDot
             | TokenInfo::Ellipsis
             | TokenInfo::Keyword(
-                Keyword::Catch
-                | Keyword::Def
-                | Keyword::Bind
-                | Keyword::Do
-                | Keyword::Else
-                | Keyword::Finally
-                | Keyword::For
-                | Keyword::If
-                | Keyword::Let
-                | Keyword::Throw
-                | Keyword::Try
-                | Keyword::While)
+                self::Keyword::Catch
+                | self::Keyword::Def
+                | self::Keyword::Bind
+                | self::Keyword::Do
+                | self::Keyword::Else
+                | self::Keyword::Field
+                | self::Keyword::Finally
+                | self::Keyword::For
+                | self::Keyword::If
+                | self::Keyword::Let
+                | self::Keyword::Throw
+                | self::Keyword::Try
+                | self::Keyword::While)
             | TokenInfo::Op(_)
             | TokenInfo::RBar
                 => TokenInfo::Literal)
@@ -3452,7 +3455,7 @@ impl<'a> Parser<'a> {
                     );
                     let key = self.advance();
                     self.expect(scope, &[ExpectKind::ArgSep])?;
-                    let ident_span = match self.next()? {
+                    let ident_span = match decay_ident!(self.next()?) {
                         Some(token!(TokenInfo::Ident, span)) => span,
                         token => {
                             return Err(self.syntax_error(
@@ -3487,25 +3490,6 @@ impl<'a> Parser<'a> {
                     let _minus = self.advance();
                     self.expect(scope, &[ExpectKind::ArgSep])?;
                     let span = self.expect(scope, &[ExpectKind::Ident])?;
-                    self.report_non_trailing_variadic(
-                        variadic,
-                        variadic_span,
-                        &mut variadic_trailing_reported,
-                    );
-                    let default = self.parse_param_default(scope, mode)?;
-                    if default.is_some() {
-                        seen_optional = true;
-                    } else if seen_optional {
-                        self.fail = true;
-                        self.diags.push(RequiredAfterOptional(span));
-                    }
-                    params.push(Param::Pos {
-                        ident: Ident::new(span),
-                        default,
-                    })
-                }
-                Some(token!(TokenInfo::Ident)) => {
-                    let span = self.advance();
                     self.report_non_trailing_variadic(
                         variadic,
                         variadic_span,
@@ -3604,21 +3588,42 @@ impl<'a> Parser<'a> {
                         colon_span,
                     });
                 }
-                _ => {
-                    if matches!(mode, ParamMode::VertFunc) {
-                        break Ok(params);
+                other => match decay_ident!(other) {
+                    Some(token!(TokenInfo::Ident)) => {
+                        let span = self.advance();
+                        self.report_non_trailing_variadic(
+                            variadic,
+                            variadic_span,
+                            &mut variadic_trailing_reported,
+                        );
+                        let default = self.parse_param_default(scope, mode)?;
+                        if default.is_some() {
+                            seen_optional = true;
+                        } else if seen_optional {
+                            self.fail = true;
+                            self.diags.push(RequiredAfterOptional(span));
+                        }
+                        params.push(Param::Pos {
+                            ident: Ident::new(span),
+                            default,
+                        })
                     }
-                    let token = self.next()?;
-                    return Err(self.syntax_error(
-                        scope,
-                        token,
-                        if mode.is_pattern() {
-                            "invalid pattern"
-                        } else {
-                            "invalid parameter"
-                        },
-                    ));
-                }
+                    _ => {
+                        if matches!(mode, ParamMode::VertFunc) {
+                            break Ok(params);
+                        }
+                        let token = self.next()?;
+                        return Err(self.syntax_error(
+                            scope,
+                            token,
+                            if mode.is_pattern() {
+                                "invalid pattern"
+                            } else {
+                                "invalid parameter"
+                            },
+                        ));
+                    }
+                },
             }
         }
     }
@@ -3715,7 +3720,80 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_class_stmt(&mut self, scope: &mut Scope) -> Result<Stmt> {
+    fn parse_field_into(
+        &mut self,
+        scope: &mut Scope,
+        pub_span: Option<Span>,
+        out: &mut Vec<Stmt>,
+    ) -> Result<()> {
+        use TokenInfo::*;
+
+        let field_span = self.expect(scope, &[ExpectKind::Keyword(self::Keyword::Field)])?;
+        self.expect(scope, &[ExpectKind::ArgSep])?;
+
+        let mut fields = Vec::new();
+
+        loop {
+            match decay_ident!(self.next()?) {
+                Some(token!(Ident, span)) => fields.push(span),
+                other => return Err(self.syntax_error(scope, other, "expected field name")),
+            }
+
+            if let Some(token!(ArgSep)) = self.peek()? {
+                self.advance();
+            }
+
+            match self.peek()? {
+                Some(token!(Equal)) | None | Some(token!(StmtSep | Dedent)) => break,
+                _ => continue,
+            }
+        }
+
+        let rhs = if let Some(token!(Equal)) = self.peek()? {
+            if fields.len() > 1 {
+                let token = self.next()?;
+                return Err(self.syntax_error(scope, token, "multiple field names cannot use `=`"));
+            }
+            self.expect(scope, &[ExpectKind::Equal])?;
+            self.expect(scope, &[ExpectKind::ArgSep])?;
+            let (expr, _) = self.parse_expr_const(scope, ExprMode::Compact)?;
+            Some(PrimStmt::Expr(expr))
+        } else {
+            None
+        };
+
+        if let Some(rhs) = rhs {
+            let field = fields[0];
+            out.push(Stmt::Let(Let {
+                bind: Pattern::Ident(crate::ast::Ident::new(field)),
+                rhs,
+                let_span: field_span,
+                equal_span: Span {
+                    start: field.end,
+                    end: field.end,
+                },
+                pub_span,
+            }));
+            return Ok(());
+        }
+
+        for field in fields {
+            out.push(Stmt::Let(Let {
+                bind: Pattern::Ident(crate::ast::Ident::new(field)),
+                rhs: PrimStmt::Expr(Expr::Nil(field_span)),
+                let_span: field_span,
+                equal_span: Span {
+                    start: field.end,
+                    end: field.end,
+                },
+                pub_span,
+            }));
+        }
+
+        Ok(())
+    }
+
+    fn parse_class_stmt(&mut self, scope: &mut Scope, out: &mut Vec<Stmt>) -> Result<()> {
         use self::Keyword::*;
         use TokenInfo::*;
 
@@ -3730,7 +3808,7 @@ impl<'a> Parser<'a> {
         };
 
         match self.peek()? {
-            Some(token @ token!(Keyword(Let))) => {
+            Some(token @ token!(Keyword(Field))) => {
                 if !decorators.is_empty() {
                     let token = token.clone();
                     return Err(self.syntax_error(
@@ -3739,10 +3817,11 @@ impl<'a> Parser<'a> {
                         "decorators are only valid before `def` in a class body",
                     ));
                 }
-                Ok(Stmt::Let(self.parse_let(scope, pub_span)?))
+                self.parse_field_into(scope, pub_span, out)
             }
             Some(token!(Keyword(Def))) => {
-                Ok(Stmt::Def(self.parse_def(scope, pub_span, decorators)?))
+                out.push(Stmt::Def(self.parse_def(scope, pub_span, decorators)?));
+                Ok(())
             }
             Some(token!(Dedent)) | None => {
                 Err(self.syntax_error(scope, None, "expected statement"))
@@ -3752,7 +3831,7 @@ impl<'a> Parser<'a> {
                 Err(self.syntax_error(
                     scope,
                     token,
-                    "class body only supports `let` and `def` declarations",
+                    "class body only supports `field` and `def` declarations",
                 ))
             }
         }
@@ -3770,7 +3849,10 @@ impl<'a> Parser<'a> {
                     Some(token!(StmtSep)) => {
                         self.advance();
                     }
-                    _ => stmts.push(self.parse_class_stmt(scope)?),
+                    _ => self.parse_class_stmt(scope, &mut stmts)?,
+                }
+                if let Some(token!(ArgSep)) = self.peek()? {
+                    self.advance();
                 }
                 Ok(false)
             })();
@@ -3890,7 +3972,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_module_name(&mut self, scope: &mut Scope, allow_key: bool) -> Result<(Span, bool)> {
-        use self::{Keyword, Op};
+        use self::Op;
         use TokenInfo::*;
 
         let mut result = match decay_ident!(self.next()?) {
@@ -3916,7 +3998,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_import_items(&mut self, scope: &mut Scope) -> Result<Vec<ImportItem>> {
-        use self::{Ident, Keyword, Op};
+        use self::{Ident, Op};
         use TokenInfo::*;
 
         let mut items = Vec::new();
@@ -3970,7 +4052,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_import_elem_vert(&mut self, scope: &mut Scope) -> Result<ImportElement> {
-        use self::{Ident, Keyword, Op};
+        use self::{Ident, Op};
         use TokenInfo::*;
 
         match decay_ident!(self.peek()?) {
@@ -4117,6 +4199,10 @@ impl<'a> Parser<'a> {
         use self::{Keyword, Return, Throw};
         use Keyword::*;
         use TokenInfo::*;
+
+        if let Some(token!(ArgSep)) = self.peek()? {
+            self.advance();
+        }
 
         let decorators = self.parse_decorators(scope)?;
 
@@ -4267,6 +4353,9 @@ impl<'a> Parser<'a> {
                         self.advance();
                     }
                     _ => stmts.push(self.parse_stmt(scope)?),
+                }
+                if let Some(token!(ArgSep)) = self.peek()? {
+                    self.advance();
                 }
                 Ok(false)
             })();

@@ -93,8 +93,11 @@ Builds a getter object from a callable.
 
 ```
 class Config
-  let _port = 8080
-  pub let port = getter do |obj| obj.#_port
+  field port = 8080
+
+  #[getter]
+  pub def port obj
+    obj.#port
 ```
 
 ### `setter func`

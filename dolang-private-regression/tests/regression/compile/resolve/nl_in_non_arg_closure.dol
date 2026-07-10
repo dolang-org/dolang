@@ -1,4 +1,4 @@
-def _foo
+def _foo()
   let _ = do return
 # error: non-local return not allowed
 #   --> nl_in_non_arg_closure.dol:LL:LL
@@ -8,7 +8,7 @@ def _foo
 #    |           |
 #    |           this closure is not in argument position
 
-def _bar
+def _bar()
   for _ = [1, 2, 3]
     let _ = do break
 # error: non-local break not allowed
@@ -19,7 +19,7 @@ def _bar
 #    |             |
 #    |             this closure is not in argument position
 
-def _baz
+def _baz()
   for _ = [1, 2, 3]
     let _ = do continue
 # error: non-local continue not allowed

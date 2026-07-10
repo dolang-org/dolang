@@ -1,7 +1,7 @@
 # Test (get) and (set) special method fallbacks
 
 class Dynamic
-  pub let data = {}
+  pub field data
 
   def (init) self
     self.data = {}
@@ -20,7 +20,7 @@ assert_eq $d.bar "hello"
 
 # Static pub fields are not routed through (get)/(set)
 class WithPub
-  pub let x = 0
+  pub field x = 0
 
   def (init) self v
     self.x = v
@@ -35,7 +35,7 @@ assert_eq $w.missing "fallback"
 # (get) also works as a fallback for method dispatch:
 # obj.method(args) calls (get) to get the callable, then calls it directly with args
 class Dispatcher
-  pub let data = {}
+  pub field data
 
   def (init) self
     self.data = {}

@@ -2,7 +2,7 @@
 
 # Accessing a private field from outside the class via .#field get
 class Box
-  let val = 0
+  field val = 0
 
   def (init) self v
     self.#val = v
@@ -17,7 +17,7 @@ let _ = b.#val
 
 # Assigning a private field from outside the class via .#field set
 class Jar
-  let contents = nil
+  field contents = nil
 
   def (init) self v
     self.#contents = v
@@ -32,7 +32,7 @@ j.#contents = "rice"
 
 # Accessing another class's private field from within a different class
 pub class Counter
-  let n = 0
+  field n = 0
 
   def (init) self start
     self.#n = start

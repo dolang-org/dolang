@@ -18,22 +18,22 @@ def frame_info bt
       - [frame.module, frame.receiver, frame.method, frame.source != nil, frame.line != nil]
   out
 
-def live_inner
+def live_inner()
   return strand.backtrace()
 
-def live_middle
+def live_middle()
   return live_inner()
 
-def live_outer
+def live_outer()
   return live_middle()
 
-def boom_inner
+def boom_inner()
   throw "boom"
 
-def boom_outer
+def boom_outer()
   return boom_inner()
 
-def catch_snapshot
+def catch_snapshot()
   try
     boom_outer()
   catch _

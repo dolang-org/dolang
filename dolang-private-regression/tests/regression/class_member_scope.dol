@@ -3,14 +3,14 @@ class PassThrough
     do |...args| fn ...args
 
 class Example
-  let setter = PassThrough()
-
-  #[setter]
+  #[PassThrough()]
   pub def value _self
     42
 
-  let secret = 7
-  pub let exposed = secret
+  field secret = 7
+  #[getter]
+  pub def exposed self
+    self.#secret
 
 let ex = Example()
 assert_eq $ex.value() 42
@@ -19,7 +19,7 @@ assert_eq $ex.exposed 7
 let shadowed = 2
 
 class MethodGlobalFallback
-  let shadowed = 1
+  field shadowed = 1
 
   pub def value _self
     shadowed

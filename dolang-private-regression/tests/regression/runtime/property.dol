@@ -1,5 +1,5 @@
 class Example
-  pub let storage = 1
+  pub field storage = 1
   #[getter]
   pub def value obj
     obj.storage
@@ -15,8 +15,11 @@ assert_eq $ex.value 42
 assert_eq $ex.storage 42
 
 class Base
-  pub let storage = 7
-  pub let value = getter do |obj| obj.storage
+  pub field storage = 7
+
+  #[getter]
+  pub def value obj
+    obj.storage
 
 class Derived: Base
 
@@ -27,13 +30,17 @@ def greet name
   "hello $name"
 
 class CallableProperty
-  pub let action = getter do |_obj| greet
+  #[getter]
+  pub def action _obj
+    greet
 
 let callable = CallableProperty()
 assert_eq $callable.action("world") "hello world"
 
 class ReadOnly
-  pub let value = getter do |_obj| "read only"
+  #[getter]
+  pub def value _obj
+    "read only"
 
 let ro = ReadOnly()
 assert_eq $ro.value "read only"
@@ -67,7 +74,7 @@ try
     pub def value _obj
       1
 
-    pub let value = 2
+    pub field value = 2
 catch err
   assert_eq (str err) "class_create: duplicate class member `value`"
   getter_field_conflict = true

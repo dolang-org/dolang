@@ -1,0 +1,16 @@
+class BadDecoratorLet
+  #[setter]
+  field value = 1
+# error: decorators are only valid before `def` in a class body
+#   --> class_body.dol:LL:LL
+#    |
+# LL |   field value = 1
+#    |   ^^^^^
+
+class BadExpr
+  echo bad
+# error: class body only supports `field` and `def` declarations
+#   --> class_body.dol:LL:LL
+#    |
+# LL |   echo bad
+#    |   ^^^^

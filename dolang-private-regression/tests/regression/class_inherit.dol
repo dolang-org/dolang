@@ -1,6 +1,6 @@
 class Animal
-  pub let name = nil
-  pub let species = "unknown"
+  pub field name = nil
+  pub field species = "unknown"
 
   def (init) self name species
     self.name = name
@@ -13,7 +13,7 @@ class Animal
     "$(self.name) is a $(self.species)"
 
 class Dog: Animal
-  pub let breed = nil
+  pub field breed = nil
 
   def (init) self name breed
     # Call parent init to set up inherited fields
@@ -45,7 +45,7 @@ assert_eq (Animal.speak rex) "..."
 
 # Test explicit parent init call pattern
 class Cat: Animal
-  pub let indoor = false
+  pub field indoor = false
 
   def (init) self name indoor
     Animal.(init) $self $name cat

@@ -27,22 +27,22 @@ def parse_timeout value
   secs
 
 class ModuleCompileError: std.RuntimeError
-  pub let path = nil
-  pub let output = nil
+  pub field path = nil
+  pub field output = nil
 
   def (init) self path output
     self.path = path
     self.output = output
 
 class Harness
-  let module_jobs = nil
-  let jobs = nil
-  let filter = nil
-  let timeout = nil
-  let filter_glob = nil
-  let errors = nil
-  let success = 0
-  let total = 0
+  field module_jobs = nil
+  field jobs = nil
+  field filter = nil
+  field timeout = nil
+  field filter_glob = nil
+  field errors = nil
+  field success = 0
+  field total = 0
 
   def (init) self :jobs :module_jobs :filter :timeout
     self.#module_jobs = module_jobs
@@ -203,7 +203,7 @@ do
   func
 
 pub class Assert: std.RuntimeError
-  pub let message = nil
+  pub field message = nil
 
   def (init) self message
     self.message = message
@@ -220,7 +220,7 @@ pub class Assert: std.RuntimeError
 # rather than failed.
 pub class Skip: std.RuntimeError
   # Skip message, or `nil` is none specified
-  pub let message = nil
+  pub field message = nil
 
   def (init) self message = nil
     self.message = message

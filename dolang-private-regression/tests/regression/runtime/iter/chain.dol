@@ -17,7 +17,7 @@ let mixed = [10].pairs().chain [20]
 assert (type mixed Iter)
 
 class MyInput: Iter
-  pub let inner = nil
+  pub field inner = nil
 
   def (init) self items
     Iter.(init) self

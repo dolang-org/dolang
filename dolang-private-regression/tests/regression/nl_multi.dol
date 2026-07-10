@@ -2,7 +2,7 @@ def trampoline thunk
   thunk()
 
 # Test 1: break path in a guard that also has return
-def func1
+def func1()
   for i = [0, 1, 2]
     trampoline do
       if (i == 1)
@@ -12,7 +12,7 @@ def func1
 assert_eq $func1() "done"
 
 # Test 2: return path in a guard that also has break
-def func2
+def func2()
   for i = [0, 1, 2]
     trampoline do
       if (i == 1)

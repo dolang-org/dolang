@@ -25,7 +25,7 @@ def class_tag cls
 
 #[class_tag]
 class Thing
-  pub let value = 0
+  pub field value = 0
 
   def (init) self value
     self.value = value
