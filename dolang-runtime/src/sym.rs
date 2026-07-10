@@ -86,6 +86,7 @@ well_known_symbols! {
     (Join, "join", JOIN),
     (Key, "key", KEY),
     (Keys, "keys", KEYS),
+    (Kv, "kv", KV),
     (Len, "len", LEN),
     (Limit, "limit", LIMIT),
     (Line, "line", LINE),

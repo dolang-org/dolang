@@ -7,7 +7,6 @@ use std::{
 
 use crate::{
     arg::Args,
-    bytecode::Variadic,
     error::{Error, Result},
     gc::{
         self, Boxable, Boxed, Collect,
@@ -62,40 +61,19 @@ pub(crate) async fn default_spread<'v, 's>(
     context: SpreadContext,
     sink: &mut dyn Spread<'v, 's>,
 ) -> Result<'v, 's, ()> {
-    use std::cell::UnsafeCell;
-
     strand
-        .with_slots(
-            async move |strand, [mut root, mut iter, mut item, mut key, mut val]| {
-                Output::set(strand, Slot::reborrow(&mut root), value);
-                root.op_iter(strand, Slot::reborrow(&mut iter)).await?;
+        .with_slots(async move |strand, [mut root, mut iter, mut item]| {
+            Output::set(strand, Slot::reborrow(&mut root), value);
+            root.op_iter(strand, Slot::reborrow(&mut iter)).await?;
+            while iter.op_next(strand, Slot::reborrow(&mut item)).await? {
                 match context {
-                    SpreadContext::Sequence | SpreadContext::Args => {
-                        while iter.op_next(strand, Slot::reborrow(&mut item)).await? {
-                            sink.positional(strand, Slot::reborrow(&mut item))?;
-                        }
-                    }
-                    SpreadContext::Pairs => {
-                        while iter.op_next(strand, Slot::reborrow(&mut item)).await? {
-                            let unpack = Unpack {
-                                required: 2,
-                                optional: vec![],
-                                keys: vec![],
-                                sym_index: vec![],
-                                variadic: Variadic::None,
-                            };
-                            let cells = [UnsafeCell::new(Value::NIL), UnsafeCell::new(Value::NIL)];
-                            item.op_unpack(strand, &unpack, unsafe { Slots::new(&cells) })
-                                .await?;
-                            key.store(unsafe { (*cells[0].get()).take() });
-                            val.store(unsafe { (*cells[1].get()).take() });
-                            sink.keyed(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut val))?;
-                        }
+                    SpreadContext::Args | SpreadContext::Sequence | SpreadContext::Pairs => {
+                        sink.positional(strand, Slot::reborrow(&mut item))?
                     }
                 }
-                Ok(())
-            },
-        )
+            }
+            Ok(())
+        })
         .await
 }
 

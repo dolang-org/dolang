@@ -548,6 +548,7 @@ impl<'v> Protocol<'v> for Class {
                 Sym::well_known(sym::ASSIGN_METHOD),
                 Sym::well_known(sym::ITER_METHOD),
                 Sym::well_known(sym::UNPACK_METHOD),
+                Sym::well_known(sym::SPREAD_METHOD),
                 Sym::well_known(sym::GET_METHOD),
                 Sym::well_known(sym::SET_METHOD),
             ],
@@ -754,6 +755,7 @@ impl<'v> Protocol<'v> for Class {
             | sym::ASSIGN_METHOD
             | sym::ITER_METHOD
             | sym::UNPACK_METHOD
+            | sym::SPREAD_METHOD
             | sym::GET_METHOD
             | sym::SET_METHOD => {
                 BoundMethod::create(strand, &this, field, out);

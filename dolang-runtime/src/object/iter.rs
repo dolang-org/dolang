@@ -1,19 +1,21 @@
-use std::{fmt, ops::ControlFlow};
+use std::{cell::UnsafeCell, fmt, ops::ControlFlow};
 
 use crate::{
     arg::{Arg, Args},
+    bytecode::Variadic,
     call,
     error::{Error, Result, ResultExt},
     gc::{Annex, Collect, arena::Visit},
     object::{
         BoundMethod,
-        protocol::{Inspect, Protocol, Recv},
+        protocol::{Inspect, Protocol, Recv, Spread, SpreadContext},
         tuple,
     },
+    sig,
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Input, Output, Slot, TypeObject, Value},
+    value::{Input, Output, Slot, Slots, TypeObject, Value},
     vm::Vm,
 };
 
@@ -32,6 +34,7 @@ fn iter_members<'v, 'a>() -> Vec<Sym<'v, 'a>> {
         Sym::well_known(sym::TAKE),
         Sym::well_known(sym::SKIP),
         Sym::well_known(sym::ENUMERATE),
+        Sym::well_known(sym::KV),
         Sym::well_known(sym::FIND),
         Sym::well_known(sym::MIN),
         Sym::well_known(sym::MAX),
@@ -75,6 +78,7 @@ pub(crate) fn iter_get<'v, 'a, 's>(
         | sym::TAKE
         | sym::SKIP
         | sym::ENUMERATE
+        | sym::KV
         | sym::FIND
         | sym::MIN
         | sym::MAX => {
@@ -827,6 +831,10 @@ pub(crate) struct Enumerate<'v> {
     index: i64,
 }
 
+pub(crate) struct Kv<'v> {
+    source: Value<'v>,
+}
+
 unsafe impl<'v> Collect for Take<'v> {
     const CYCLIC: bool = true;
     const IMMUTABLE: bool = false;
@@ -872,6 +880,21 @@ unsafe impl<'v> Collect for Enumerate<'v> {
     fn clear(&mut self) {
         self.source.clear();
         self.index = 0;
+    }
+}
+
+unsafe impl<'v> Collect for Kv<'v> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = false;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.source.accept(visit)?;
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {
+        self.source.clear();
     }
 }
 
@@ -1087,6 +1110,101 @@ impl<'v> Protocol<'v> for Enumerate<'v> {
     }
 }
 
+impl<'v> Protocol<'v> for Kv<'v> {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, &strand.singletons().input_iter)
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn fmt::Write,
+    ) -> Result<'v, 's, ()> {
+        write!(w, "<std.iter.Kv>").into_do(strand)
+    }
+
+    async fn op_iter<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, &this);
+        Ok(())
+    }
+
+    async fn op_next<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        let source = this.borrow(strand)?.source.dup();
+        source.next(strand, out).await
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        strand
+            .with_slots(
+                async move |strand, [mut iter, mut item, mut key, mut value]| {
+                    let source = this.borrow(strand)?.source.dup();
+                    source.iter(strand, &mut iter).await?;
+                    while iter.next(strand, &mut item).await? {
+                        if context == SpreadContext::Pairs {
+                            let unpack = sig::Unpack {
+                                required: 2,
+                                optional: vec![],
+                                keys: vec![],
+                                sym_index: vec![],
+                                variadic: Variadic::None,
+                            };
+                            let cells = [UnsafeCell::new(Value::NIL), UnsafeCell::new(Value::NIL)];
+                            item.op_unpack(strand, &unpack, unsafe { Slots::new(&cells) })
+                                .await?;
+                            key.store(unsafe { (*cells[0].get()).take() });
+                            value.store(unsafe { (*cells[1].get()).take() });
+                            sink.keyed(
+                                strand,
+                                Slot::reborrow(&mut key),
+                                Slot::reborrow(&mut value),
+                            )?;
+                        } else {
+                            sink.positional(strand, Slot::reborrow(&mut item))?;
+                        }
+                    }
+                    Ok(())
+                },
+            )
+            .await
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        iter_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        iter_mcall(strand, &this, method, args, out).await
+    }
+}
+
 impl<'v> Protocol<'v> for Iter {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -1195,6 +1313,11 @@ impl<'v> Protocol<'v> for Iter {
             sym::ENUMERATE => {
                 let ([obj], []) = unpack!(strand, args, 1, 0)?;
                 create_enumerate(strand, obj.dup(), out);
+                Ok(())
+            }
+            sym::KV => {
+                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                create_kv(strand, obj.dup(), out);
                 Ok(())
             }
             sym::FIND => {
@@ -1840,6 +1963,13 @@ pub(crate) fn create_enumerate<'v>(
         .builtin_types()
         .enumerate_iter
         .create(strand, Enumerate { source, index: 0 }, out);
+}
+
+pub(crate) fn create_kv<'v>(strand: &mut Strand<'v, '_>, source: Value<'v>, out: impl Output<'v>) {
+    strand
+        .builtin_types()
+        .kv_iter
+        .create(strand, Kv { source }, out);
 }
 
 pub(crate) async fn create_chain_from_args<'v, 'a, 's>(

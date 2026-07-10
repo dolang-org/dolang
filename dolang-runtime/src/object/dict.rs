@@ -780,6 +780,7 @@ impl<'v> Protocol<'v> for Type {
                 Sym::well_known(sym::ASSIGN_METHOD),
                 Sym::well_known(sym::ITER_METHOD),
                 Sym::well_known(sym::UNPACK_METHOD),
+                Sym::well_known(sym::SPREAD_METHOD),
             ],
         })
     }
@@ -812,7 +813,8 @@ impl<'v> Protocol<'v> for Type {
             | sym::INDEX_METHOD
             | sym::ASSIGN_METHOD
             | sym::ITER_METHOD
-            | sym::UNPACK_METHOD => {
+            | sym::UNPACK_METHOD
+            | sym::SPREAD_METHOD => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
