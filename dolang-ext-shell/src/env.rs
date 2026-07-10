@@ -5,7 +5,7 @@ use std::{
 
 use dolang::runtime::{
     Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Value, call,
-    object::{TypeBuilder, Unpack, UnpackItem},
+    object::{Spread, SpreadContext, TypeBuilder, Unpack, UnpackItem},
     unpack,
     value::TypeObject,
 };
@@ -41,6 +41,31 @@ fn take_any<'v, 's>(
     let value = items.remove(&key).unwrap();
     set_pair(strand, out, &key, &value);
     Ok(true)
+}
+
+fn spread_items<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    items: &HashMap<String, String>,
+    context: SpreadContext,
+    sink: &mut dyn Spread<'v, 's>,
+) -> Result<'v, 's, ()> {
+    strand.with_slots_sync(|strand, [mut pair, mut key_slot, mut value_slot]| {
+        for (key, value) in items {
+            if context == SpreadContext::Pairs {
+                Output::set(strand, &mut key_slot, key.as_str());
+                Output::set(strand, &mut value_slot, value.as_str());
+                sink.keyed(
+                    strand,
+                    Slot::reborrow(&mut key_slot),
+                    Slot::reborrow(&mut value_slot),
+                )?;
+            } else {
+                set_pair(strand, &mut pair, key, value);
+                sink.positional(strand, Slot::reborrow(&mut pair))?;
+            }
+        }
+        Ok(())
+    })
 }
 
 fn get_sym<'a, 'v>(
@@ -233,6 +258,17 @@ impl<'v> Object<'v> for Env<'v> {
         Ok(())
     }
 
+    async fn spread<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        let global = this.borrow(strand)?.global;
+        let items = global.local.get(strand).env().effective_map();
+        spread_items(strand, &items, context, sink)
+    }
+
     async fn unpack<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -305,8 +341,8 @@ impl<'v> Object<'v> for EnvIter {
         strand: &'a mut Strand<'v, 's>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        let items = &mut this.borrow_mut(strand)?.items;
-        take_any(strand, items, &mut out)
+        let mut env_iter = this.borrow_mut(strand)?;
+        take_any(strand, &mut env_iter.items, &mut out)
     }
 
     async fn unpack<'a, 's>(
@@ -322,5 +358,15 @@ impl<'v> Object<'v> for EnvIter {
         })?;
         this.borrow_mut_unwrap().items = items;
         Ok(())
+    }
+
+    async fn spread<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        let env_iter = this.borrow(strand)?;
+        spread_items(strand, &env_iter.items, context, sink)
     }
 }

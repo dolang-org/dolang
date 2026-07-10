@@ -14,12 +14,16 @@ assert_eq $data {1, foo: "bar", ...{bar: 42}, 4}
 assert_eq $data {1, foo: "bar", bar: 42, 4}
 
 let mapped = ["foo=bar", "baz=qux"].iter().map do |e| e.split "="
-assert_eq {...mapped} {"foo": "bar", "baz": "qux"}
+let atomic = {...mapped}
+assert_eq (array atomic[0]) ["foo", "bar"]
+assert_eq (array atomic[1]) ["baz", "qux"]
+let mapped = ["foo=bar", "baz=qux"].iter().map do |e| e.split "="
+assert_eq {...mapped.kv()} {"foo": "bar", "baz": "qux"}
 
 let items = [1, 2, 3].iter()
 assert_eq (array items) [1, 2, 3]
 let entries = (["foo=bar", "baz=qux"].iter().map do |e| e.split "=")
-assert_eq (dict entries) {"foo": "bar", "baz": "qux"}
+assert_eq (dict(entries.kv())) {"foo": "bar", "baz": "qux"}
 
 let arr = [...{1, foo: "bar", 2}]
 assert_eq $arr[0][0] 0

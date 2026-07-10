@@ -185,7 +185,8 @@ The behavior of the spread depends on the context:
 
 - *Arguments*:
     - An ordinary iterable is spread as positional arguments
-    - An iterable yielding key/value pairs is spread as arguments, with integer
+    - A mapping-like value, or an iterator adapted with `kv()`, is spread as
+      arguments, with integer
       keys starting from 0 and increasing contiguously treated as positional
       argument and symbol keys treated as key arguments; all others cause a
       runtime error
@@ -193,5 +194,6 @@ The behavior of the spread depends on the context:
     - An iterable is expanded as individual items in place
 - *Dictionary* (at least one static key specified in vertical layout)
     - An ordinary iterable is spread as incrementing integer keys
-    - An iterable yielding key/value pairs is spread as such, preserving
+    - A mapping-like value, or an iterator adapted with `kv()`, is spread as
+      key/value pairs, preserving
       ordering and multiplicity

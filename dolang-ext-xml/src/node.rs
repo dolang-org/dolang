@@ -3,7 +3,7 @@ use std::fmt;
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     error::ResultExt,
-    object::{Mut, Ref, TypeBuilder},
+    object::{Mut, Ref, Spread, SpreadContext, TypeBuilder},
     unpack,
     value::{Empty, Nil, TypeObject},
 };
@@ -269,5 +269,38 @@ impl<'v> Object<'v> for AttrsIter {
         arr.push(strand, val.as_str()).unwrap();
         borrow.index += 1;
         Ok(true)
+    }
+
+    async fn spread<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        let borrow = this.borrow(strand)?;
+        strand
+            .with_slots(
+                async move |strand, [mut pair, mut key_slot, mut val_slot]| {
+                    for (key, val) in &borrow.attrs {
+                        if context == SpreadContext::Pairs {
+                            Output::set(strand, &mut key_slot, key.as_str());
+                            Output::set(strand, &mut val_slot, val.as_str());
+                            sink.keyed(
+                                strand,
+                                Slot::reborrow(&mut key_slot),
+                                Slot::reborrow(&mut val_slot),
+                            )?;
+                        } else {
+                            Output::set(strand, &mut pair, Empty::Array);
+                            let arr = pair.as_array(strand).unwrap();
+                            arr.push(strand, key.as_str()).unwrap();
+                            arr.push(strand, val.as_str()).unwrap();
+                            sink.positional(strand, Slot::reborrow(&mut pair))?;
+                        }
+                    }
+                    Ok(())
+                },
+            )
+            .await
     }
 }

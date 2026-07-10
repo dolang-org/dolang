@@ -95,6 +95,20 @@ Returns an iterator that yields `[index, value]` tuples.
 
 The first index is `0`.
 
+### `kv`
+
+Returns an iterator wrapper that preserves normal iteration, but opts into
+key/value spreading.
+
+When spread in a keyed context such as a dict literal or argument spread, each
+yielded item must unpack into exactly two values.
+
+```
+let entries = ["x=1", "y=2"].iter().map do |e| e.split "="
+
+assert_eq {...entries.kv()} {"x": "1", "y": "2"}
+```
+
 ### `map func`
 
 Creates a wrapper `Iter` which yields `func(value)` for each `value` yielded by

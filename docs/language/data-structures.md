@@ -104,11 +104,12 @@ let base = {name: "Alice"}
 let extended = {...base, age: 30}
 ```
 
-Each yielded item must unpack into exactly two values:
+Use `kv()` when you want an ordinary iterator of 2-item sequences to spread as
+key/value entries:
 
 ```
 let entries = ["x=1", "y=2"].iter().map do |e| e.split "="
-let dict = {...entries}
+let dict = {...entries.kv()}
 ```
 
 Spreading of dicts preserves duplicate keys and order.
