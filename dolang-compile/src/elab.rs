@@ -10,10 +10,10 @@ use dolang_util::{arena::ArenaVec, intern::BinTable};
 use crate::{
     Compiler, Mode, PreludeImport,
     ast::{
-        self, Arg, ArrayElem, Assign, Bind, Block, Class, Def, DefVariant, DictElem, Expand, Expr,
-        For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key, LValue, Let,
-        NlGuard, NlInfo, Pair, Param, Pattern, PrimStmt, Res, Return, SideEffect, Single, Stmt,
-        Try, Unit, Var, While, visit::Node,
+        self, Arg, ArrayElem, Assign, Bind, Block, Class, Def, DictElem, Expand, Expr, For,
+        Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key, LValue, Let,
+        Method, NlGuard, NlInfo, Pair, Param, Pattern, PrimStmt, Res, Return, SideEffect, Single,
+        Stmt, Try, Unit, Var, While, visit::Node,
     },
     diag::{AnnotationKind, Severity},
     origin::{self, Origin},
@@ -459,22 +459,6 @@ impl Patch for DiscardedComputation {
     }
 }
 
-struct SpecialMethodOutsideClass(Span);
-
-impl Diagnose for SpecialMethodOutsideClass {
-    fn span(&self) -> Span {
-        self.0
-    }
-
-    fn severity(&self) -> Severity {
-        Severity::Error
-    }
-
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "special methods are only valid in a class body")
-    }
-}
-
 struct NoPrivateField {
     span: Span,
     name: String,
@@ -551,7 +535,6 @@ enum ScopeKind {
     Normal,
     Lambda,
     Function,
-    Class { class_span: Span },
     Loop,
 }
 
@@ -584,7 +567,10 @@ enum Scope<'s> {
         vars: ArenaVec<Cell<(Var, Epoch)>>,
         parent: &'s Scope<'s>,
         index: HashMap<sym::Id, usize>,
-        /// For class scopes: maps plain field name → unique private sym::Id
+    },
+    Class {
+        class_span: Span,
+        parent: &'s Scope<'s>,
         class_private: HashMap<String, sym::Id>,
     },
 }
@@ -607,7 +593,11 @@ impl<'s> Scope<'s> {
             // Extract span for others
             Origin::ImportItem { name, .. } => name,
             Origin::ImportModule { name, .. } => name,
-            Origin::Class { span } | Origin::Def { span, .. } | Origin::Bind { span, .. } => span,
+            Origin::Class { span }
+            | Origin::Def { span }
+            | Origin::Bind { span }
+            | Origin::Method { span, .. }
+            | Origin::Field { span, .. } => span,
             Origin::Param { span } | Origin::SelfParam { span } => span,
         };
         if resolver.file.str(span).starts_with('_') {
@@ -622,6 +612,7 @@ impl<'s> Scope<'s> {
     fn can_break(&'s self) -> CanBranch {
         match self {
             Scope::Base => CanBranch::No,
+            Scope::Class { parent, .. } => parent.can_break(),
             Scope::Nested { can_break, .. } => *can_break,
         }
     }
@@ -629,6 +620,7 @@ impl<'s> Scope<'s> {
     fn can_continue(&'s self) -> CanBranch {
         match self {
             Scope::Base => CanBranch::No,
+            Scope::Class { parent, .. } => parent.can_continue(),
             Scope::Nested { can_continue, .. } => *can_continue,
         }
     }
@@ -636,6 +628,7 @@ impl<'s> Scope<'s> {
     fn can_return(&'s self) -> CanBranch {
         match self {
             Scope::Base => CanBranch::No,
+            Scope::Class { parent, .. } => parent.can_return(),
             Scope::Nested { can_return, .. } => *can_return,
         }
     }
@@ -655,10 +648,7 @@ impl<'s> Scope<'s> {
         loop {
             match scope {
                 Scope::Base => return None,
-                Scope::Nested {
-                    kind: ScopeKind::Class { class_span },
-                    ..
-                } => return Some(*class_span),
+                Scope::Class { class_span, .. } => return Some(*class_span),
                 Scope::Nested {
                     kind: ScopeKind::Function | ScopeKind::Lambda,
                     ..
@@ -669,13 +659,7 @@ impl<'s> Scope<'s> {
     }
 
     fn is_class(&self) -> bool {
-        matches!(
-            self,
-            Scope::Nested {
-                kind: ScopeKind::Class { .. },
-                ..
-            }
-        )
+        matches!(self, Scope::Class { .. })
     }
 
     fn nested(&'s self) -> Self {
@@ -690,7 +674,6 @@ impl<'s> Scope<'s> {
             vars: ArenaVec::new(),
             parent: self,
             index: HashMap::new(),
-            class_private: HashMap::new(),
         }
     }
 
@@ -706,7 +689,6 @@ impl<'s> Scope<'s> {
             vars: ArenaVec::new(),
             parent: self,
             index: HashMap::new(),
-            class_private: HashMap::new(),
         }
     }
 
@@ -726,22 +708,13 @@ impl<'s> Scope<'s> {
             vars: ArenaVec::new(),
             parent: self,
             index: HashMap::new(),
-            class_private: HashMap::new(),
         }
     }
 
     fn class(&'s self, class_span: Span) -> Self {
-        Self::Nested {
-            kind: ScopeKind::Class { class_span },
-            can_break: CanBranch::No,
-            can_continue: CanBranch::No,
-            can_return: CanBranch::No,
-            nl_break: Cell::new(false),
-            nl_continue: Cell::new(false),
-            nl_return: Cell::new(None),
-            vars: ArenaVec::new(),
+        Self::Class {
+            class_span,
             parent: self,
-            index: HashMap::new(),
             class_private: HashMap::new(),
         }
     }
@@ -757,6 +730,7 @@ impl<'s> Scope<'s> {
         loop {
             match scope {
                 Scope::Base => return 0,
+                Scope::Class { parent, .. } => scope = parent,
                 Scope::Nested { kind, parent, .. } => {
                     match kind {
                         ScopeKind::Function | ScopeKind::Lambda => {
@@ -770,7 +744,7 @@ impl<'s> Scope<'s> {
                                 0
                             };
                         }
-                        ScopeKind::Normal | ScopeKind::Class { .. } => (),
+                        ScopeKind::Normal => (),
                     }
                     depth += 1;
                     scope = parent;
@@ -789,6 +763,10 @@ impl<'s> Scope<'s> {
         loop {
             match scope {
                 Scope::Base => return 0,
+                Scope::Class { parent, .. } => {
+                    depth += 1;
+                    scope = parent;
+                }
                 Scope::Nested { kind, parent, .. } => {
                     match kind {
                         ScopeKind::Function => {
@@ -802,7 +780,7 @@ impl<'s> Scope<'s> {
                             crossed_lambda = true;
                             last_func_depth = depth;
                         }
-                        ScopeKind::Loop | ScopeKind::Normal | ScopeKind::Class { .. } => (),
+                        ScopeKind::Loop | ScopeKind::Normal => (),
                     }
                     depth += 1;
                     scope = parent;
@@ -818,6 +796,12 @@ impl<'s> Scope<'s> {
         loop {
             scope = match scope {
                 Scope::Base => unreachable!(),
+                Scope::Class { parent, .. } => {
+                    if depth == 0 {
+                        unreachable!();
+                    }
+                    parent
+                }
                 Scope::Nested {
                     nl_break, parent, ..
                 } => {
@@ -837,6 +821,12 @@ impl<'s> Scope<'s> {
         loop {
             scope = match scope {
                 Scope::Base => unreachable!(),
+                Scope::Class { parent, .. } => {
+                    if depth == 0 {
+                        unreachable!();
+                    }
+                    parent
+                }
                 Scope::Nested {
                     nl_continue,
                     parent,
@@ -858,6 +848,12 @@ impl<'s> Scope<'s> {
         loop {
             scope = match scope {
                 Scope::Base => unreachable!(),
+                Scope::Class { parent, .. } => {
+                    if depth == 0 {
+                        return parent.insert_synthetic(origin, epoch);
+                    }
+                    parent
+                }
                 Scope::Nested {
                     nl_return, parent, ..
                 } => {
@@ -881,6 +877,7 @@ impl<'s> Scope<'s> {
     fn take_nl_state(&self) -> (bool, bool, Option<usize>) {
         match self {
             Scope::Base => (false, false, None),
+            Scope::Class { .. } => (false, false, None),
             Scope::Nested {
                 nl_break,
                 nl_continue,
@@ -898,6 +895,7 @@ impl<'s> Scope<'s> {
     fn mark_captures_since(&self, epoch: Epoch) {
         match self {
             Scope::Base => (),
+            Scope::Class { parent, .. } => parent.mark_captures_since(epoch),
             Scope::Nested {
                 kind, vars, parent, ..
             } => {
@@ -929,17 +927,12 @@ impl<'s> Scope<'s> {
             vars: ArenaVec::new(),
             parent: self,
             index: HashMap::new(),
-            class_private: HashMap::new(),
         }
     }
 
     fn insert_private_field(&mut self, name: String, sym: sym::Id) {
         match self {
-            Scope::Nested {
-                kind: ScopeKind::Class { .. },
-                class_private,
-                ..
-            } => {
+            Scope::Class { class_private, .. } => {
                 class_private.insert(name, sym);
             }
             _ => unreachable!("private field insert outside class scope"),
@@ -954,19 +947,8 @@ impl<'s> Scope<'s> {
         loop {
             match scope {
                 Scope::Base => return None,
-                Scope::Nested {
-                    kind,
-                    class_private,
-                    parent,
-                    ..
-                } => {
-                    if matches!(kind, ScopeKind::Class { .. }) {
-                        // Stop at the nearest enclosing class scope
-                        return class_private.get(name).copied();
-                    }
-                    // Cross function/lambda/normal boundaries to reach the class scope
-                    scope = parent;
-                }
+                Scope::Class { class_private, .. } => return class_private.get(name).copied(),
+                Scope::Nested { parent, .. } => scope = parent,
             }
         }
     }
@@ -990,6 +972,7 @@ impl<'s> Scope<'s> {
     ) -> usize {
         match self {
             Self::Base => panic!("Can't insert into base scope"),
+            Self::Class { .. } => unreachable!("class scope is not lexical"),
             Self::Nested { vars, index, .. } => {
                 let i = vars.len();
                 vars.push(Cell::new((
@@ -1011,6 +994,7 @@ impl<'s> Scope<'s> {
     fn insert_synthetic(&self, origin: origin::Id, epoch: Epoch) -> usize {
         match self {
             Self::Base => panic!("Can't insert into base scope"),
+            Self::Class { .. } => unreachable!("class scope is not lexical"),
             Self::Nested { vars, .. } => {
                 let i = vars.len();
                 vars.push(Cell::new((
@@ -1031,6 +1015,7 @@ impl<'s> Scope<'s> {
     fn mark_local_used(&self, index: usize, epoch: Epoch) {
         match self {
             Self::Base => panic!("Can't mark vars in base scope"),
+            Self::Class { .. } => unreachable!("class scope has no locals"),
             Self::Nested { vars, .. } => {
                 vars[index].update(|(mut var, _)| {
                     var.used = true;
@@ -1049,6 +1034,7 @@ impl<'s> Scope<'s> {
     ) -> result::Result<Res, ResolveError> {
         match self {
             Scope::Base => Err(ResolveError::Unbound),
+            Scope::Class { parent, .. } => parent.resolve_inner(id, capture, promote, epoch),
             Scope::Nested {
                 kind,
                 parent,
@@ -1057,18 +1043,6 @@ impl<'s> Scope<'s> {
                 ..
             } => {
                 if let Some(&index) = index.get(&id) {
-                    if capture && matches!(kind, ScopeKind::Class { .. }) {
-                        let Res {
-                            index,
-                            depth,
-                            origin,
-                        } = parent.resolve_inner(id, capture, promote, epoch)?;
-                        return Ok(Res {
-                            index,
-                            depth: depth + 1,
-                            origin,
-                        });
-                    }
                     vars[index].update(|(var, _)| {
                         let mut var = var;
                         if capture {
@@ -1109,6 +1083,7 @@ impl<'s> Scope<'s> {
     fn is_read(&self, index: usize, depth: usize) -> bool {
         match self {
             Scope::Base => panic!("is_read on base scope"),
+            Scope::Class { parent, .. } => parent.is_read(index, depth),
             Scope::Nested { vars, parent, .. } => {
                 if depth == 0 {
                     vars[index].get().0.used
@@ -1670,10 +1645,7 @@ impl<'a> Elaborater<'a> {
         let id = self
             .symtab
             .id(&self.bintab.id_str(self.file.str(ident.span)));
-        let origin = self.origintab.id(&Origin::Bind {
-            span: ident.span,
-            class: scope.class_span(),
-        });
+        let origin = self.origintab.id(&Origin::Bind { span: ident.span });
         let index = scope.insert(id, origin, self.epoch, export);
         ident.res = Some(Res {
             index,
@@ -1714,10 +1686,7 @@ impl<'a> Elaborater<'a> {
             } else {
                 self.symtab.id(&self.bintab.id_str(name))
             };
-            let origin = self.origintab.id(&Origin::Bind {
-                span: ident.span,
-                class: scope.class_span(),
-            });
+            let origin = self.origintab.id(&Origin::Bind { span: ident.span });
             let lookup_sym = self.symtab.id(&self.bintab.id_str(name));
             let index = scope.insert_with_lookup(lookup_sym, sym, origin, self.epoch, true);
             ident.res = Some(Res {
@@ -2125,43 +2094,24 @@ impl<'a> Elaborater<'a> {
         Ok(())
     }
 
-    fn insert_class_def(&mut self, scope: &mut Scope<'_>, node: &mut Def) {
-        let (lookup_sym, effective_sym, origin) = match &node.variant {
-            DefVariant::Normal(ident) => {
-                let name = self.file.str(ident.span);
-                let lookup_sym = self.symtab.id(&self.bintab.id_str(name));
-                let effective_sym = if node.pub_span.is_none() {
-                    scope
-                        .lookup_private_field(name)
-                        .expect("private sym should exist from pre-scan")
-                } else {
-                    lookup_sym
-                };
-                let origin = self.origintab.id(&Origin::Def {
-                    span: ident.span,
-                    class: scope.class_span(),
-                });
-                (lookup_sym, effective_sym, origin)
-            }
-            DefVariant::Special(method, span, _) => {
-                let sym = self.symtab.id(&self.bintab.id_str(method.sym()));
-                let origin = self.origintab.id(&Origin::Def {
-                    span: *span,
-                    class: scope.class_span(),
-                });
-                (sym, sym, origin)
-            }
+    fn insert_class_method(&mut self, scope: &mut Scope<'_>, node: &mut Method) {
+        node.origin = Some(
+            self.origintab.id(&Origin::Method {
+                span: node.name_span,
+                class: scope
+                    .class_span()
+                    .expect("class method outside class scope"),
+            }),
+        );
+        node.private_sym = if node.pub_span.is_none() && node.special.is_none() {
+            Some(
+                scope
+                    .lookup_private_field(self.file.str(node.name_span))
+                    .expect("private sym should exist from pre-scan"),
+            )
+        } else {
+            None
         };
-        let index = scope.insert_with_lookup(lookup_sym, effective_sym, origin, self.epoch, true);
-        let res = match &mut node.variant {
-            DefVariant::Normal(ident) => &mut ident.res,
-            DefVariant::Special(_, _, res) => res,
-        };
-        *res = Some(Res {
-            index,
-            depth: 0,
-            origin,
-        });
     }
 
     fn insert_class_class(&mut self, scope: &mut Scope<'_>, node: &mut Class) {
@@ -2191,87 +2141,115 @@ impl<'a> Elaborater<'a> {
         for decorator in &mut def.decorators {
             self.visit_expr(scope, &mut decorator.expr, false)?;
         }
-        if scope.is_class() {
-            self.insert_class_def(scope, def);
-        }
         if !def.decorators.is_empty() {
-            let res = match &def.variant {
-                DefVariant::Normal(ident) => ident.res.as_ref(),
-                DefVariant::Special(_, _, res) => res.as_ref(),
-            }
-            .expect("decorated def should have an assigned binding");
+            let res = def
+                .ident
+                .res
+                .as_ref()
+                .expect("decorated def should have an assigned binding");
             scope.mark_local_used(res.index, self.epoch);
         }
         self.visit_function(scope, &mut def.func, None)
     }
 
+    fn visit_method(&mut self, scope: &mut Scope<'_>, def: &mut Method) -> Result<()> {
+        for decorator in &mut def.decorators {
+            self.visit_expr(scope, &mut decorator.expr, false)?;
+        }
+        self.visit_function(scope, &mut def.func, None)
+    }
+
+    fn visit_field_decl(&mut self, scope: &mut Scope<'_>, node: &mut ast::FieldDecl) -> Result<()> {
+        self.visit_expr(scope, &mut node.default, false)?;
+        node.origin = Some(self.origintab.id(&Origin::Field {
+            span: node.ident.span,
+            class: scope.class_span().expect("class field outside class scope"),
+        }));
+        let name = self.file.str(node.ident.span);
+        node.private_sym = if node.pub_span.is_none() {
+            Some(
+                scope
+                    .lookup_private_field(name)
+                    .expect("private sym should exist from pre-scan"),
+            )
+        } else {
+            None
+        };
+        Ok(())
+    }
+
     fn visit_body_pre(&mut self, scope: &mut Scope<'_>, block: &mut Block) -> Result<()> {
         for stmt in block.stmts.iter_mut() {
-            if scope.is_class() {
-                match stmt {
-                    Stmt::Let(node) if node.pub_span.is_none() => {
-                        // Register private field symbol for non-pub let.
-                        if let ast::Pattern::Ident(ident) = &node.bind {
-                            let name = self.file.str(ident.span).to_owned();
-                            let private_sym = self.symtab.fresh(self.bintab.id_str(&name));
-                            scope.insert_private_field(name, private_sym);
-                        }
-                    }
-                    Stmt::Def(node) => {
-                        if node.pub_span.is_none()
-                            && let DefVariant::Normal(ident) = &node.variant
-                        {
-                            let name = self.file.str(ident.span).to_owned();
-                            let private_sym = self.symtab.fresh(self.bintab.id_str(&name));
-                            scope.insert_private_field(name, private_sym);
-                        }
-                    }
-                    _ => {}
+            match stmt {
+                Stmt::Def(node) => {
+                    let ident = &mut node.ident;
+                    let sym = self
+                        .symtab
+                        .id(&self.bintab.id_str(self.file.str(ident.span)));
+                    let origin = self.origintab.id(&Origin::Def { span: ident.span });
+                    let exported = node.pub_span.is_some();
+                    let index = scope.insert(sym, origin, self.epoch, exported);
+                    ident.res = Some(Res {
+                        index,
+                        depth: 0,
+                        origin,
+                    });
                 }
-            } else {
-                match stmt {
-                    Stmt::Def(node) => {
-                        // Non-class scope: insert all defs for forward reference support
-                        // (enables recursive and co-recursive function definitions).
-                        match &mut node.variant {
-                            DefVariant::Normal(ident) => {
-                                let sym = self
-                                    .symtab
-                                    .id(&self.bintab.id_str(self.file.str(ident.span)));
-                                let origin = self.origintab.id(&Origin::Def {
-                                    span: ident.span,
-                                    class: scope.class_span(),
-                                });
-                                let exported = node.pub_span.is_some();
-                                let index = scope.insert(sym, origin, self.epoch, exported);
-                                ident.res = Some(Res {
-                                    index,
-                                    depth: 0,
-                                    origin,
-                                });
-                            }
-                            DefVariant::Special(_, span, _) => {
-                                self.fail = true;
-                                self.diags.push(SpecialMethodOutsideClass(*span));
-                            }
-                        }
-                    }
-                    Stmt::Class(node) => {
-                        let sym = self
-                            .symtab
-                            .id(&self.bintab.id_str(self.file.str(node.ident.span)));
-                        let origin = self.origintab.id(&Origin::Class {
-                            span: node.ident.span,
-                        });
-                        let exported = node.pub_span.is_some();
-                        let index = scope.insert(sym, origin, self.epoch, exported);
-                        node.ident.res = Some(Res {
-                            index,
-                            depth: 0,
-                            origin,
-                        });
-                    }
-                    _ => {}
+                Stmt::Class(node) => {
+                    let sym = self
+                        .symtab
+                        .id(&self.bintab.id_str(self.file.str(node.ident.span)));
+                    let origin = self.origintab.id(&Origin::Class {
+                        span: node.ident.span,
+                    });
+                    let exported = node.pub_span.is_some();
+                    let index = scope.insert(sym, origin, self.epoch, exported);
+                    node.ident.res = Some(Res {
+                        index,
+                        depth: 0,
+                        origin,
+                    });
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn visit_class_body_pre(
+        &mut self,
+        scope: &mut Scope<'_>,
+        body: &mut ast::ClassBody,
+    ) -> Result<()> {
+        for member in body.members.iter_mut() {
+            match member {
+                ast::ClassMember::Field(node) if node.pub_span.is_none() => {
+                    let name = self.file.str(node.ident.span).to_owned();
+                    let private_sym = self.symtab.fresh(self.bintab.id_str(&name));
+                    scope.insert_private_field(name, private_sym);
+                }
+                ast::ClassMember::Method(node)
+                    if node.pub_span.is_none() && node.special.is_none() =>
+                {
+                    let name = self.file.str(node.name_span).to_owned();
+                    let private_sym = self.symtab.fresh(self.bintab.id_str(&name));
+                    scope.insert_private_field(name, private_sym);
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn visit_class_body(&mut self, scope: &mut Scope<'_>, body: &mut ast::ClassBody) -> Result<()> {
+        self.visit_class_body_pre(scope, body)?;
+        for member in body.members.iter_mut() {
+            self.bump_epoch();
+            match member {
+                ast::ClassMember::Field(field) => self.visit_field_decl(scope, field)?,
+                ast::ClassMember::Method(def) => {
+                    self.insert_class_method(scope, def);
+                    self.visit_method(scope, def)?;
                 }
             }
         }
@@ -2316,17 +2294,7 @@ impl<'a> Elaborater<'a> {
         {
             let mut class_scope = scope.class(class.ident.span);
 
-            self.visit_block_inner(&mut class_scope, &mut class.body)?;
-            class_scope.finish(self, &mut class.body.vars);
-        }
-
-        // Mark ALL variables in the class body as captured and exported
-        // (they will be packed into the reified scope).
-        // Private fields are exported under their private sym;
-        // public fields and special methods are exported under their plain sym.
-        for var in class.body.vars.iter_mut() {
-            var.captured = true;
-            var.exported = true;
+            self.visit_class_body(&mut class_scope, &mut class.body)?;
         }
 
         Ok(())

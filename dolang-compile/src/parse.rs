@@ -6,13 +6,12 @@ use std::{
 };
 
 use crate::{
-    Compiler,
+    Compiler, ast,
     ast::{
-        Arg, ArrayElem, Assign, Bind, Block, CatchHandler, Class, Const, Decorator, Def,
-        DefVariant, DictElem, Expand, Expr, ExprBody, For, Function, GetVariant, GroupDelim, Ident,
-        If, IfBranch, Import, ImportElement, ImportItem, Key, Let, Pair, Param, ParamDefault,
-        Pattern, PrimStmt, Return, Single, SpecialMethod, Stmt, Throw, Try, Unit, While,
-        visit::Node,
+        Arg, ArrayElem, Assign, Bind, Block, CatchHandler, Class, Const, Decorator, Def, DictElem,
+        Expand, Expr, ExprBody, For, Function, GetVariant, GroupDelim, Ident, If, IfBranch, Import,
+        ImportElement, ImportItem, Key, Let, Method, Pair, Param, ParamDefault, Pattern, PrimStmt,
+        Return, Single, SpecialMethod, Stmt, Throw, Try, Unit, While, visit::Node,
     },
     diag::{AnnotationKind, NoteKind, Severity},
     lex::{self, Keyword, Lexer, Mode, Op, Token, TokenInfo},
@@ -686,6 +685,22 @@ impl Patch for MisleadingDollarPatch {
             MisleadingDollarPatch::Remove(_) => Ok(()),
             MisleadingDollarPatch::Insert(_) => write!(w, " "),
         }
+    }
+}
+
+struct SpecialMethodOutsideClass(Span);
+
+impl Diagnose for SpecialMethodOutsideClass {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "special methods are only valid in a class body")
     }
 }
 
@@ -3675,21 +3690,19 @@ impl<'a> Parser<'a> {
         Ok(decorators)
     }
 
-    fn parse_def(
+    fn parse_def_common(
         &mut self,
         scope: &mut Scope,
-        pub_span: Option<Span>,
-        decorators: Vec<Decorator>,
-    ) -> Result<Def> {
+    ) -> Result<(Span, Span, Option<SpecialMethod>, Function)> {
         let def_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Def)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
-        let variant = match self.next()? {
+        let (name_span, special) = match self.next()? {
             Some(token!(TokenInfo::LeftParen)) => {
                 let span = self.expect(scope, &[ExpectKind::Ident])?;
                 self.expect(scope, &[ExpectKind::RightParen])?;
-                DefVariant::Special(self.special_method(scope, span)?, span, None)
+                (span, Some(self.special_method(scope, span)?))
             }
-            Some(token!(TokenInfo::Ident, span)) => DefVariant::Normal(Ident::new(span)),
+            Some(token!(TokenInfo::Ident, span)) => (span, None),
             token => {
                 return Err(self.syntax_error(scope, token, "expected function or special method"));
             }
@@ -3711,11 +3724,46 @@ impl<'a> Parser<'a> {
         };
         let body = self.parse_block(scope)?;
         self.expect(scope, &[ExpectKind::Dedent])?;
+        Ok((def_span, name_span, special, Function { params, body }))
+    }
+
+    fn parse_def(
+        &mut self,
+        scope: &mut Scope,
+        pub_span: Option<Span>,
+        decorators: Vec<Decorator>,
+    ) -> Result<Def> {
+        let (def_span, name_span, special, func) = self.parse_def_common(scope)?;
+
+        if special.is_some() {
+            self.fail = true;
+            self.diags.push(SpecialMethodOutsideClass(name_span));
+        }
+
         Ok(Def {
             def_span,
             decorators,
-            variant,
-            func: Function { params, body },
+            ident: Ident::new(name_span),
+            func,
+            pub_span,
+        })
+    }
+
+    fn parse_method(
+        &mut self,
+        scope: &mut Scope,
+        pub_span: Option<Span>,
+        decorators: Vec<Decorator>,
+    ) -> Result<Method> {
+        let (def_span, name_span, special, func) = self.parse_def_common(scope)?;
+        Ok(Method {
+            def_span,
+            decorators,
+            name_span,
+            special,
+            origin: None,
+            private_sym: None,
+            func,
             pub_span,
         })
     }
@@ -3724,7 +3772,7 @@ impl<'a> Parser<'a> {
         &mut self,
         scope: &mut Scope,
         pub_span: Option<Span>,
-        out: &mut Vec<Stmt>,
+        out: &mut Vec<ast::ClassMember>,
     ) -> Result<()> {
         use TokenInfo::*;
 
@@ -3754,38 +3802,36 @@ impl<'a> Parser<'a> {
                 let token = self.next()?;
                 return Err(self.syntax_error(scope, token, "multiple field names cannot use `=`"));
             }
-            self.expect(scope, &[ExpectKind::Equal])?;
+            let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
             self.expect(scope, &[ExpectKind::ArgSep])?;
             let (expr, _) = self.parse_expr_const(scope, ExprMode::Compact)?;
-            Some(PrimStmt::Expr(expr))
+            Some((equal_span, expr))
         } else {
             None
         };
 
-        if let Some(rhs) = rhs {
+        if let Some((equal_span, default)) = rhs {
             let field = fields[0];
-            out.push(Stmt::Let(Let {
-                bind: Pattern::Ident(crate::ast::Ident::new(field)),
-                rhs,
-                let_span: field_span,
-                equal_span: Span {
-                    start: field.end,
-                    end: field.end,
-                },
+            out.push(ast::ClassMember::Field(ast::FieldDecl {
+                ident: crate::ast::Ident::new(field),
+                origin: None,
+                private_sym: None,
+                default,
+                field_span,
+                equal_span: Some(equal_span),
                 pub_span,
             }));
             return Ok(());
         }
 
         for field in fields {
-            out.push(Stmt::Let(Let {
-                bind: Pattern::Ident(crate::ast::Ident::new(field)),
-                rhs: PrimStmt::Expr(Expr::Nil(field_span)),
-                let_span: field_span,
-                equal_span: Span {
-                    start: field.end,
-                    end: field.end,
-                },
+            out.push(ast::ClassMember::Field(ast::FieldDecl {
+                ident: crate::ast::Ident::new(field),
+                origin: None,
+                private_sym: None,
+                default: Expr::Nil(field_span),
+                field_span,
+                equal_span: None,
                 pub_span,
             }));
         }
@@ -3793,7 +3839,11 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_class_stmt(&mut self, scope: &mut Scope, out: &mut Vec<Stmt>) -> Result<()> {
+    fn parse_class_stmt(
+        &mut self,
+        scope: &mut Scope,
+        out: &mut Vec<ast::ClassMember>,
+    ) -> Result<()> {
         use self::Keyword::*;
         use TokenInfo::*;
 
@@ -3820,7 +3870,9 @@ impl<'a> Parser<'a> {
                 self.parse_field_into(scope, pub_span, out)
             }
             Some(token!(Keyword(Def))) => {
-                out.push(Stmt::Def(self.parse_def(scope, pub_span, decorators)?));
+                out.push(ast::ClassMember::Method(
+                    self.parse_method(scope, pub_span, decorators)?,
+                ));
                 Ok(())
             }
             Some(token!(Dedent)) | None => {
@@ -3837,10 +3889,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_class_block(&mut self, scope: &mut Scope) -> Result<Block> {
+    fn parse_class_block(&mut self, scope: &mut Scope) -> Result<ast::ClassBody> {
         use TokenInfo::*;
 
-        let mut stmts = Vec::new();
+        let mut members = Vec::new();
 
         loop {
             let done = (|| -> Result<bool> {
@@ -3849,7 +3901,7 @@ impl<'a> Parser<'a> {
                     Some(token!(StmtSep)) => {
                         self.advance();
                     }
-                    _ => self.parse_class_stmt(scope, &mut stmts)?,
+                    _ => self.parse_class_stmt(scope, &mut members)?,
                 }
                 if let Some(token!(ArgSep)) = self.peek()? {
                     self.advance();
@@ -3868,11 +3920,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(Block {
-            stmts,
-            vars: Vec::new(),
-            repl: None,
-        })
+        Ok(ast::ClassBody { members })
     }
 
     fn parse_class(
@@ -3920,11 +3968,7 @@ impl<'a> Parser<'a> {
                 self.expect(scope, &[ExpectKind::Dedent])?;
                 block
             }
-            Some(token!(TokenInfo::StmtSep)) => Block {
-                stmts: vec![],
-                vars: Default::default(),
-                repl: None,
-            },
+            Some(token!(TokenInfo::StmtSep)) => ast::ClassBody { members: vec![] },
             other => {
                 return Err(self.syntax_error(
                     scope,

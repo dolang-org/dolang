@@ -313,13 +313,19 @@ fn convert_origin(file: &File, internal: &origin::Origin) -> Option<diag::Origin
         origin::Origin::Class { span } => Some(diag::Origin::Class {
             span: convert_span(file, *span),
         }),
-        origin::Origin::Def { span, class } => Some(diag::Origin::Def {
+        origin::Origin::Def { span } => Some(diag::Origin::Def {
             span: convert_span(file, *span),
-            class: class.map(|s| convert_span(file, s)),
         }),
-        origin::Origin::Bind { span, class } => Some(diag::Origin::Bind {
+        origin::Origin::Bind { span } => Some(diag::Origin::Bind {
             span: convert_span(file, *span),
-            class: class.map(|s| convert_span(file, s)),
+        }),
+        origin::Origin::Method { span, class } => Some(diag::Origin::Method {
+            span: convert_span(file, *span),
+            class: convert_span(file, *class),
+        }),
+        origin::Origin::Field { span, class } => Some(diag::Origin::Field {
+            span: convert_span(file, *span),
+            class: convert_span(file, *class),
         }),
         origin::Origin::Param { span } => Some(diag::Origin::Param {
             span: convert_span(file, *span),

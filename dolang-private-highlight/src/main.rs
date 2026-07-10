@@ -51,6 +51,7 @@ fn token_kind(token: &Token) -> &'static str {
         Token::Delim => "delim",
         Token::Escape => "escape",
         Token::Field => "field",
+        Token::Method => "method",
         Token::Key => "key",
         Token::ModuleName => "module_name",
         Token::ModuleItem => "module_item",
@@ -81,6 +82,8 @@ fn origin_kind(origin: &Origin) -> &'static str {
         Origin::Class { .. } => "class",
         Origin::Def { .. } => "def",
         Origin::Bind { .. } => "bind",
+        Origin::Method { .. } => "method",
+        Origin::Field { .. } => "field",
         Origin::Param { .. } => "param",
         Origin::SelfParam { .. } => "self_param",
     }

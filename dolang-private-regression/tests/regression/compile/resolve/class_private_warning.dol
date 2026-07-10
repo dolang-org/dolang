@@ -1,51 +1,20 @@
 # Test: warning when accessing a private field via .field on self
 
 pub class Counter
-let count = 0
-# warning: unused variable
-#   --> class_private_warning.dol:LL:LL
-#    |
-# LL | let count = 0
-#    |     ^^^^^
+  field count = 0
 
-def (init) self start
-  # error: special methods are only valid in a class body
-  #   --> class_private_warning.dol:LL:LL
-  #    |
-  # LL | def (init) self start
-  #    |      ^^^^
-  self.#count = start
-# error: no private field `count` in scope
-#   --> class_private_warning.dol:LL:LL
-#    |
-# LL |   self.#count = start
-#    |         ^^^^^
+  def (init) self start
+    self.#count = start
 
-pub def bad_read self
-  self.count
-
-# Warning also fires in a nested context (inside a for/if, still self)
-pub class Gauge
-let level = 0
-# warning: unused variable
-#   --> class_private_warning.dol:LL:LL
-#    |
-# LL | let level = 0
-#    |     ^^^^^
-
-def (init) self v
-  # error: special methods are only valid in a class body
-  #   --> class_private_warning.dol:LL:LL
-  #    |
-  # LL | def (init) self v
-  #    |      ^^^^
-  self.#level = v
-# error: no private field `level` in scope
-#   --> class_private_warning.dol:LL:LL
-#    |
-# LL |   self.#level = v
-#    |         ^^^^^
-
-pub def show self
-  if true
-    self.level
+  pub def bad_read self
+    self.count
+    # warning: `count` is private
+    #   --> class_private_warning.dol:LL:LL
+    #    |
+    # LL |     self.count
+    #    |          ^^^^^
+    #    |
+    # help: use `.#` to access private field
+    #    |
+    # LL |     self.#count
+    #    |          +

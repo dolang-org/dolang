@@ -375,38 +375,189 @@ impl<'v> Vm<'v> {
         let Some(Arg::Pos(name)) = args.next() else {
             return Err(Error::missing_positional(strand, 0));
         };
-
-        if args.len() < 1 {
+        let Some(Arg::Pos(module_name)) = args.next() else {
             return Err(Error::missing_positional(strand, 1));
-        }
+        };
 
         // Extract class name
         let name: alias::Box<str> = name
             .as_str_raw(strand)
             .ok_or_else(|| Error::type_error(strand, "class_create: expected string name"))?
             .into();
-
-        // Construct superclass list.
-        let len = args.len() - 1;
-        let mut supers = Vec::with_capacity(len);
-        for arg in (&mut args).take(len) {
-            let mut slot = match arg {
-                Arg::Pos(slot) => slot,
-                Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-            };
-            if !slot.is_instance_of(strand, &strand.singletons().type_obj) {
-                return Err(Error::type_error(
-                    strand,
-                    "class_create: superclass must be a type object",
-                ));
-            }
-            supers.push(slot.take());
-        }
-
-        let module = match args.next().unwrap() {
-            Arg::Pos(slot) => slot,
-            Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
+        let module_name = module_name.as_str_raw(strand).ok_or_else(|| {
+            Error::type_error(strand, "class_create: expected string module name")
+        })?;
+        let module_name = if module_name.is_empty() {
+            None
+        } else {
+            Some(alias::Box::<str>::from(module_name))
         };
+
+        let mut supers = Vec::new();
+        let mut local_entries = HashMap::new();
+        let mut field_defaults = Vec::new();
+        let mut symbols = Vec::new();
+
+        while let Some(arg) = args.next() {
+            let (key, mut slot) = match arg {
+                Arg::Pos(_slot) => {
+                    return Err(Error::type_error(
+                        strand,
+                        "class_create: unexpected positional argument",
+                    ));
+                }
+                Arg::Key(key, slot) => (key, slot),
+            };
+
+            match key.as_str(strand) {
+                "super" => {
+                    if !slot.is_instance_of(strand, &strand.singletons().type_obj) {
+                        return Err(Error::type_error(
+                            strand,
+                            "class_create: superclass must be a type object",
+                        ));
+                    }
+                    supers.push(slot.take());
+                }
+                "field" => {
+                    let sym = unsafe {
+                        slot.as_sym(strand)
+                            .ok_or_else(|| {
+                                Error::type_error(
+                                    strand,
+                                    "class_create: field name must be a symbol",
+                                )
+                            })?
+                            .into_static_scope_unchecked()
+                    };
+                    symbols.push(strand.sym_obj(sym));
+                    let Some(Arg::Pos(mut default)) = args.next() else {
+                        return Err(Error::type_error(
+                            strand,
+                            "class_create: field entry must include a default value",
+                        ));
+                    };
+                    let slot = field_defaults.len();
+                    field_defaults.push(default.take());
+                    match local_entries.entry(sym) {
+                        Entry::Vacant(entry) => {
+                            entry.insert(ClassEntry::Field(slot));
+                        }
+                        Entry::Occupied(_) => {
+                            return Err(Error::runtime(
+                                strand,
+                                format!(
+                                    "class_create: duplicate class member `{}`",
+                                    sym.as_str(strand)
+                                ),
+                            ));
+                        }
+                    }
+                }
+                "method" => {
+                    let sym = unsafe {
+                        slot.as_sym(strand)
+                            .ok_or_else(|| {
+                                Error::type_error(
+                                    strand,
+                                    "class_create: method name must be a symbol",
+                                )
+                            })?
+                            .into_static_scope_unchecked()
+                    };
+                    symbols.push(strand.sym_obj(sym));
+                    let Some(Arg::Pos(mut value)) = args.next() else {
+                        return Err(Error::type_error(
+                            strand,
+                            "class_create: method entry must include a value",
+                        ));
+                    };
+                    let value = value.take();
+
+                    if value.is_instance_of(strand, &strand.singletons().getter) {
+                        match local_entries.entry(sym) {
+                            Entry::Vacant(entry) => {
+                                entry.insert(ClassEntry::Property(Property {
+                                    getter: Some(value),
+                                    setter: None,
+                                }));
+                            }
+                            Entry::Occupied(mut entry) => match entry.get_mut() {
+                                ClassEntry::Property(Property { getter, .. })
+                                    if getter.is_none() =>
+                                {
+                                    *getter = Some(value);
+                                }
+                                _ => {
+                                    return Err(Error::runtime(
+                                        strand,
+                                        format!(
+                                            "class_create: duplicate class member `{}`",
+                                            sym.as_str(strand)
+                                        ),
+                                    ));
+                                }
+                            },
+                        }
+                        continue;
+                    }
+
+                    if value.is_instance_of(strand, &strand.singletons().setter) {
+                        match local_entries.entry(sym) {
+                            Entry::Vacant(entry) => {
+                                entry.insert(ClassEntry::Property(Property {
+                                    getter: None,
+                                    setter: Some(value),
+                                }));
+                            }
+                            Entry::Occupied(mut entry) => match entry.get_mut() {
+                                ClassEntry::Property(Property { setter, .. })
+                                    if setter.is_none() =>
+                                {
+                                    *setter = Some(value);
+                                }
+                                _ => {
+                                    return Err(Error::runtime(
+                                        strand,
+                                        format!(
+                                            "class_create: duplicate class member `{}`",
+                                            sym.as_str(strand)
+                                        ),
+                                    ));
+                                }
+                            },
+                        }
+                        continue;
+                    }
+
+                    if value
+                        .downcast_ref(strand.builtin_types().function)
+                        .is_none()
+                    {
+                        return Err(Error::type_error(
+                            strand,
+                            "class_create: method value must be a function, Getter, or Setter",
+                        ));
+                    }
+
+                    match local_entries.entry(sym) {
+                        Entry::Vacant(entry) => {
+                            entry.insert(ClassEntry::Method(value));
+                        }
+                        Entry::Occupied(_) => {
+                            return Err(Error::runtime(
+                                strand,
+                                format!(
+                                    "class_create: duplicate class member `{}`",
+                                    sym.as_str(strand)
+                                ),
+                            ));
+                        }
+                    }
+                }
+                _ => return Err(Error::unexpected_key(strand, key)),
+            }
+        }
 
         // Build native_supers and entries in a single left-to-right MRO pass.
         // native_supers: non-abstract native type objects; index == ClassInstance native slot.
@@ -414,8 +565,7 @@ impl<'v> Vm<'v> {
         // entry_map: built left-to-right with first-insertion-wins (MRO order).
         let mut native_supers: Vec<Value<'v>> = Vec::new();
         let mut seen_abstract: Vec<Value<'v>> = Vec::new(); // for dedup only
-        let mut entry_map: HashMap<Sym<'v, '_>, ClassEntry<'v>> = HashMap::new();
-        let mut field_defaults: Vec<Value<'v>> = Vec::new();
+        let mut entry_map = HashMap::new();
 
         for sup in supers.iter() {
             if let Some(cls) = sup.downcast_ref(strand.builtin_types().class_object) {
@@ -488,110 +638,18 @@ impl<'v> Vm<'v> {
             }
         }
 
-        // --- Phase 3: Apply this class's own module entries (always win) ---
-        let module = module
-            .downcast_ref(strand.builtin_types().module)
-            .ok_or_else(|| Error::type_error(strand, "class_create: expected module"))?;
-        let module = module.get();
-        let mut local_entries: HashMap<Sym<'v, '_>, ClassEntry<'v>> = HashMap::new();
-        for (sym, value) in module.entries() {
-            if value.is_instance_of(strand, &strand.singletons().getter) {
-                match local_entries.entry(sym) {
-                    Entry::Vacant(entry) => {
-                        entry.insert(ClassEntry::Property(Property {
-                            getter: Some(value),
-                            setter: None,
-                        }));
-                    }
-                    Entry::Occupied(mut entry) => match entry.get_mut() {
-                        ClassEntry::Property(Property { getter, .. }) if getter.is_none() => {
-                            *getter = Some(value);
-                        }
-                        _ => {
-                            return Err(Error::runtime(
-                                strand,
-                                format!(
-                                    "class_create: duplicate class member `{}`",
-                                    sym.as_str(strand)
-                                ),
-                            ));
-                        }
-                    },
-                }
-                continue;
-            }
-
-            if value.is_instance_of(strand, &strand.singletons().setter) {
-                match local_entries.entry(sym) {
-                    Entry::Vacant(entry) => {
-                        entry.insert(ClassEntry::Property(Property {
-                            getter: None,
-                            setter: Some(value),
-                        }));
-                    }
-                    Entry::Occupied(mut entry) => match entry.get_mut() {
-                        ClassEntry::Property(Property { setter, .. }) if setter.is_none() => {
-                            *setter = Some(value);
-                        }
-                        _ => {
-                            return Err(Error::runtime(
-                                strand,
-                                format!(
-                                    "class_create: duplicate class member `{}`",
-                                    sym.as_str(strand)
-                                ),
-                            ));
-                        }
-                    },
-                }
-                continue;
-            }
-
-            let entry = if value
-                .downcast_ref(strand.builtin_types().function)
-                .is_some()
-            {
-                ClassEntry::Method(value)
-            } else {
-                let slot = field_defaults.len();
-                field_defaults.push(value);
-                ClassEntry::Field(slot)
-            };
-
-            match local_entries.entry(sym) {
-                Entry::Vacant(slot) => {
-                    slot.insert(entry);
-                }
-                Entry::Occupied(_) => {
-                    return Err(Error::runtime(
-                        strand,
-                        format!(
-                            "class_create: duplicate class member `{}`",
-                            sym.as_str(strand)
-                        ),
-                    ));
-                }
-            }
-        }
-
+        // Apply this class's own entries, overriding
         for (sym, entry) in local_entries {
             entry_map.insert(sym, entry);
         }
 
-        // --- Phase 4: Sort entries by sym ---
-        let mut entries: Vec<(Sym<'v, '_>, ClassEntry<'v>)> = entry_map.into_iter().collect();
+        // Sort entries by sym
+        let mut entries: Vec<_> = entry_map.into_iter().collect();
         entries.sort_by_key(|(s, _)| *s);
-        let symbols: Vec<_> = entries
-            .iter()
-            .map(|(sym, _)| strand.sym_obj(*sym))
-            .collect();
+
         let class_obj = ClassObject {
             name,
-            module_name: module
-                .loaded
-                .module_name
-                .as_ref()
-                .map(|r| alias::Box::<str>::from(&module.loaded.debug_strtab()[r.clone()])),
+            module_name,
             symbols: symbols.into(),
             entries: unsafe {
                 // SAFETY: every symbol in `entries` is explicitly rooted by the

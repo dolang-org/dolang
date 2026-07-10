@@ -1596,11 +1596,6 @@ impl Node for PrimStmt {
     }
 }
 
-pub(crate) enum DefVariant {
-    Normal(Ident),
-    Special(SpecialMethod, Span, Option<Res>),
-}
-
 pub(crate) struct Decorator {
     pub(crate) open_span: Span,
     pub(crate) expr: Expr,
@@ -1623,8 +1618,7 @@ pub(crate) struct Def {
     // Span of the `def` keyword
     pub(crate) def_span: Span,
     pub(crate) decorators: Vec<Decorator>,
-    // Defined identifier or special method
-    pub(crate) variant: DefVariant,
+    pub(crate) ident: Ident,
     // Function
     pub(crate) func: Function,
     pub(crate) pub_span: Option<Span>,
@@ -1637,16 +1631,38 @@ impl Node for Def {
             visit.token(Token::Keyword, span, None)?;
         }
         visit.token(Token::Keyword, self.def_span, None)?;
-        match &self.variant {
-            DefVariant::Normal(ident) => visit.token(
-                Token::Variable,
-                ident.span,
-                ident.res.as_ref().map(|r| r.origin),
-            )?,
-            DefVariant::Special(_, span, res) => {
-                visit.token(Token::Keyword, *span, res.as_ref().map(|r| r.origin))?
-            }
+        visit.token(
+            Token::Variable,
+            self.ident.span,
+            self.ident.res.as_ref().map(|r| r.origin),
+        )?;
+        visit.node(&self.func)
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::Def
+    }
+}
+
+pub(crate) struct Method {
+    pub(crate) def_span: Span,
+    pub(crate) decorators: Vec<Decorator>,
+    pub(crate) name_span: Span,
+    pub(crate) special: Option<SpecialMethod>,
+    pub(crate) origin: Option<origin::Id>,
+    pub(crate) private_sym: Option<sym::Id>,
+    pub(crate) func: Function,
+    pub(crate) pub_span: Option<Span>,
+}
+
+impl Node for Method {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        self.decorators.accept(visit)?;
+        if let Some(span) = self.pub_span {
+            visit.token(Token::Keyword, span, None)?;
         }
+        visit.token(Token::Keyword, self.def_span, None)?;
+        visit.token(Token::Method, self.name_span, self.origin)?;
         visit.node(&self.func)
     }
 
@@ -1746,8 +1762,7 @@ pub(crate) struct Class {
     pub(crate) colon_span: Option<Span>,
     // Superclass expressions (empty = no superclasses)
     pub(crate) super_exprs: Vec<Expr>,
-    // Class body (block containing defs and lets)
-    pub(crate) body: Block,
+    pub(crate) body: ClassBody,
     pub(crate) pub_span: Option<Span>,
 }
 
@@ -1774,6 +1789,66 @@ impl Node for Class {
 
     fn kind(&self) -> NodeKind {
         NodeKind::Class
+    }
+}
+
+pub(crate) struct ClassBody {
+    pub(crate) members: Vec<ClassMember>,
+}
+
+impl Node for ClassBody {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        self.members.accept(visit)
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::ClassBody
+    }
+}
+
+pub(crate) enum ClassMember {
+    Field(FieldDecl),
+    Method(Method),
+}
+
+impl Node for ClassMember {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        match self {
+            ClassMember::Field(field) => field.accept(visit),
+            ClassMember::Method(method) => method.accept(visit),
+        }
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::ClassMember
+    }
+}
+
+pub(crate) struct FieldDecl {
+    pub(crate) ident: Ident,
+    pub(crate) origin: Option<origin::Id>,
+    pub(crate) private_sym: Option<sym::Id>,
+    pub(crate) default: Expr,
+    pub(crate) field_span: Span,
+    pub(crate) equal_span: Option<Span>,
+    pub(crate) pub_span: Option<Span>,
+}
+
+impl Node for FieldDecl {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        if let Some(span) = self.pub_span {
+            visit.token(Token::Keyword, span, None)?;
+        }
+        visit.token(Token::Keyword, self.field_span, None)?;
+        visit.token(Token::Field, self.ident.span, self.origin)?;
+        if let Some(span) = self.equal_span {
+            visit.token(Token::Operator, span, None)?;
+        }
+        visit.node(&self.default)
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::FieldDecl
     }
 }
 

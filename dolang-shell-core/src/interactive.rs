@@ -153,9 +153,11 @@ enum OriginClass {
 
 fn classify_origin(origin: Option<&Origin>) -> OriginClass {
     match origin {
-        None | Some(Origin::Bind { .. }) => OriginClass::Normal,
+        None | Some(Origin::Bind { .. }) | Some(Origin::Field { .. }) => OriginClass::Normal,
         Some(Origin::Param { .. }) | Some(Origin::SelfParam { .. }) => OriginClass::Param,
-        Some(Origin::Class { .. }) | Some(Origin::Def { .. }) => OriginClass::Function,
+        Some(Origin::Class { .. }) | Some(Origin::Def { .. }) | Some(Origin::Method { .. }) => {
+            OriginClass::Function
+        }
         Some(Origin::ImportModule { .. }) => OriginClass::Module,
         Some(Origin::ImportItem { .. }) => OriginClass::Normal,
         Some(Origin::PreludeItem { .. }) => OriginClass::Prelude,
@@ -285,6 +287,10 @@ impl Highlighter for DoHelper {
                         token_str,
                     ),
                 },
+                Token::Method => render_styled(
+                    Style::new().fg_color(Some(AnsiColor::Blue.into())),
+                    token_str,
+                ),
                 Token::Key => render_styled(
                     Style::new().fg_color(Some(AnsiColor::Green.into())),
                     token_str,

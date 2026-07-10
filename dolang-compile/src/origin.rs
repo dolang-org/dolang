@@ -28,11 +28,17 @@ pub enum Origin {
     },
     Def {
         span: Span,
-        class: Option<Span>,
     },
     Bind {
         span: Span,
-        class: Option<Span>,
+    },
+    Method {
+        span: Span,
+        class: Span,
+    },
+    Field {
+        span: Span,
+        class: Span,
     },
     Param {
         span: Span,

@@ -7,10 +7,10 @@ use dolang_bytecode::builtin;
 use crate::{
     Mode, PreludeImport,
     ast::{
-        Arg, ArrayElem, Assign, Bind, Block, Class, Const, Decorator, Def, DefVariant, DictElem,
+        Arg, ArrayElem, Assign, Bind, Block, Class, ClassMember, Const, Decorator, Def, DictElem,
         Expand, Expr, For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key,
-        LValue, Let, NlGuard, Pair, Param, ParamDefault, Pattern, PrimStmt, Res, Return, Single,
-        Stmt, Try, Unit, While, visit::Node,
+        LValue, Let, Method, NlGuard, Pair, Param, ParamDefault, Pattern, PrimStmt, Res, Return,
+        Single, Stmt, Try, Unit, While, visit::Node,
     },
     cfg::{self, BlockRefMut, Inst, InstInfo, Term, TermInfo},
     constant::{self, ConstantExt},
@@ -65,7 +65,6 @@ struct Params<'a> {
 
 enum WorkAst<'a> {
     Function(&'a Function, sig::UnpackId),
-    ClassBody(&'a Block),
     Block(&'a Block, bool),
     Stmt(&'a Stmt),
     Args(&'a [Arg]),
@@ -1901,12 +1900,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     fn lower_def(&mut self, node: &'a Def, want_result: bool) -> Result<()> {
         self.lower_decorator_exprs(&node.decorators)?;
         let unpack = self.lower_params(&node.func.params)?;
-        let (name, res) = match &node.variant {
-            DefVariant::Normal(ident) => (ident.span, &ident.res),
-            DefVariant::Special(_, span, res) => {
-                (span.before_left_char() | span.after_right_char(), res)
-            }
-        };
+        let name = node.ident.span;
+        let res = &node.ident.res;
         let sig = self.unpacktab.id(&unpack);
         let fid = self.graph.alloc_func(
             sig,
@@ -1977,65 +1972,121 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         }
     }
 
-    fn lower_class(&mut self, node: &'a Class, want_result: bool) -> Result<()> {
-        let span = node.class_span;
-
+    fn lower_class_method_value(&mut self, node: &'a Method, class_name: Span) -> Result<()> {
         self.lower_decorator_exprs(&node.decorators)?;
-
-        // Push class name as a string constant (first arg to CLASS_CREATE)
-        let name = self.file.str(node.ident.span).to_owned();
-        let cid = self.consttab.str(self.bintab.id_str(&name));
-        self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
-
-        // Evaluate superclass expressions (if any)
-        for super_expr in &node.super_exprs {
-            self.lower_expr(super_expr)?;
-        }
-
-        // Allocate a nested scope for the class body (not a function scope)
-        let class_scope = self.graph.alloc_scope(
-            false,
-            false,
-            self.block.func,
+        let unpack = self.lower_params(&node.func.params)?;
+        let name = if node.special.is_some() {
+            node.name_span.before_left_char() | node.name_span.after_right_char()
+        } else {
+            node.name_span
+        };
+        let sig = self.unpacktab.id(&unpack);
+        let fid = self.graph.alloc_func(
+            sig,
+            Some(name),
+            &node.func.body.vars,
             Some(self.block.scope),
-            &node.body.vars,
             self.origintab,
         );
-        self.graph.scope_mut(class_scope).class_name = Some(node.ident.span);
-        let class_block = self.graph.alloc_block(self.block.func, class_scope);
-        let next = self.graph.alloc_block(self.block.func, self.block.scope);
-
-        // Queue the class body for lowering (will emit Reify at the end)
+        self.graph.func_mut(fid).class_name = Some(class_name);
+        let (enter, exit) = {
+            let func = self.graph.func(fid);
+            (func.enter, func.exit)
+        };
         self.queue(Work {
-            bb: class_block,
-            ast: WorkAst::ClassBody(&node.body),
+            bb: enter,
+            ast: WorkAst::Function(&node.func, sig),
             params: Params {
                 bind: None,
                 bind_params: None,
                 unpack: None,
                 mode: self.params.mode.clone(),
                 is_top_level: false,
-                next_id: Some(next),
-                break_id: self.params.break_id,
-                break_result: self.params.break_result,
-                continue_id: self.params.continue_id,
-                exit_id: self.params.exit_id,
+                next_id: None,
+                break_id: None,
+                break_result: false,
+                continue_id: None,
+                exit_id: exit,
             },
         });
+        self.block
+            .insts
+            .push(Inst(InstInfo::Close(fid), node.def_span));
+        self.apply_decorators(&node.decorators);
+        Ok(())
+    }
 
-        // Branch into the class body
-        self.block.term = Term(TermInfo::Branch(class_block), span);
-        self.link(class_block);
+    fn lower_member_sym_value(&mut self, sym: sym::Id, span: Span) {
+        let sym = self.consttab.sym(sym);
+        self.block.insts.push(Inst(InstInfo::LoadConst(sym), span));
+    }
 
-        // Continue after the class body — reified module is on the stack
-        self.switch(next);
+    fn lower_class_member_sym(&mut self, member: &'a ClassMember) -> sym::Id {
+        match member {
+            ClassMember::Field(field) => field.private_sym.unwrap_or_else(|| {
+                self.symtab
+                    .id(&self.bintab.id_str(self.file.str(field.ident.span)))
+            }),
+            ClassMember::Method(def) => def.private_sym.unwrap_or_else(|| {
+                if let Some(method) = def.special {
+                    self.symtab.id(&self.bintab.id_str(method.sym()))
+                } else {
+                    self.symtab
+                        .id(&self.bintab.id_str(self.file.str(def.name_span)))
+                }
+            }),
+        }
+    }
 
-        // Call CLASS_CREATE builtin
-        // Stack: name_str [super0? super1? ...] reified_module
-        let class_sig = sig::Pack::new(std::iter::repeat_n(
-            sig::Arg::Value,
-            node.super_exprs.len() + 2,
-        ));
+    fn lower_class(&mut self, node: &'a Class, want_result: bool) -> Result<()> {
+        let span = node.class_span;
+
+        self.lower_decorator_exprs(&node.decorators)?;
+
+        let name = self.file.str(node.ident.span).to_owned();
+        let class_name = self.consttab.str(self.bintab.id_str(&name));
+        self.block
+            .insts
+            .push(Inst(InstInfo::LoadConst(class_name), span));
+
+        let module_name = match self.params.mode {
+            Mode::Module { name } => name,
+            _ => "",
+        };
+        let module_name = self.consttab.str(self.bintab.id_str(module_name));
+        self.block
+            .insts
+            .push(Inst(InstInfo::LoadConst(module_name), span));
+
+        let super_sym = self.symtab.id(&self.bintab.id_str("super"));
+        let field_sym = self.symtab.id(&self.bintab.id_str("field"));
+        let method_sym = self.symtab.id(&self.bintab.id_str("method"));
+
+        for super_expr in &node.super_exprs {
+            self.lower_expr(super_expr)?;
+        }
+
+        for member in &node.body.members {
+            let sym = self.lower_class_member_sym(member);
+            self.lower_member_sym_value(sym, member.span());
+            match member {
+                ClassMember::Field(field) => self.lower_expr(&field.default)?,
+                ClassMember::Method(def) => self.lower_class_method_value(def, node.ident.span)?,
+            }
+        }
+
+        let class_sig = sig::Pack::new(
+            std::iter::once(sig::Arg::Value)
+                .chain(std::iter::once(sig::Arg::Value))
+                .chain(std::iter::repeat_n(
+                    sig::Arg::Key(super_sym),
+                    node.super_exprs.len(),
+                ))
+                .chain(node.body.members.iter().flat_map(|member| match member {
+                    ClassMember::Field(_) => [sig::Arg::Key(field_sym), sig::Arg::Value],
+                    ClassMember::Method(_) => [sig::Arg::Key(method_sym), sig::Arg::Value],
+                })),
+        );
         let class_sig = self.packtab.id(&class_sig);
         self.block.insts.push(Inst(
             InstInfo::Builtin(builtin::CLASS_CREATE, class_sig),
@@ -2046,44 +2097,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         // Store class object into the class name variable
         let res = node.ident.res.as_ref().expect("unresolved class name");
         self.lower_store_res(res, node.ident.span, want_result);
-
-        Ok(())
-    }
-
-    /// Lower the body of a class definition. Executes all statements, then
-    /// reifies the scope into a module object left on the stack.
-    fn lower_class_body(&mut self, block: &'a Block) -> Result<()> {
-        let scope = self.graph.scope(self.block.scope);
-        let span = block.span();
-
-        // Prologue: always push an upvar frame so Reify can always produce a module
-        // (carrying the program reference needed for ClassObject._program).
-        self.block
-            .insts
-            .push(Inst(InstInfo::PushUpvars(scope.caps), span));
-
-        // Lower each statement (none produce a result)
-        for stmt in block.stmts.iter() {
-            if self.lower_stmt(stmt, false)? {
-                return Ok(());
-            }
-        }
-
-        // Epilogue: reify the scope into a module object (empty sig when no captures)
-        let module_sig = sig::Pack::new(block.vars.iter().filter(|v| v.captured).map(|v| {
-            if v.exported {
-                sig::Arg::Key(v.sym)
-            } else {
-                sig::Arg::Value
-            }
-        }));
-        let sig = self.packtab.id(&module_sig);
-        self.block.insts.push(Inst(InstInfo::Reify(sig), span));
-
-        // Branch to next block
-        let next = self.params.next_id.expect("class body must have next_id");
-        self.block.term = Term(TermInfo::Branch(next), span);
-        self.link(next);
 
         Ok(())
     }
@@ -3081,7 +3094,6 @@ impl<'c> Lowerer<'c> {
             };
             match work.ast {
                 WorkAst::Function(function, sig) => scope.lower_function(function, sig)?,
-                WorkAst::ClassBody(block) => scope.lower_class_body(block)?,
                 WorkAst::Block(block, want_result) => scope.lower_block(block, want_result)?,
                 WorkAst::Stmt(stmt) => scope.lower_nl_guard_body(stmt)?,
                 WorkAst::Args(body) => scope.lower_for_args(body)?,
