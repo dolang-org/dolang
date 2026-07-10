@@ -63,6 +63,8 @@ pub enum Token {
     Escape,
     /// Field, e.g. `bar` in `foo.bar`
     Field,
+    /// Method declaration name
+    Method,
     /// Key such as `foo:`
     Key,
     /// Module name
@@ -128,9 +130,12 @@ pub enum NodeKind {
     Bind,
     Break,
     Class,
+    ClassBody,
+    ClassMember,
     Continue,
     Decorator,
     Def,
+    FieldDecl,
     For,
     If,
     Import,

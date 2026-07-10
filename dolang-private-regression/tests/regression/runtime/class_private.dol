@@ -2,46 +2,16 @@
 
 # Basic private field access via .#field
 class Counter
-let count = 0
-# warning: unused variable
-#   --> class_private.dol:LL:LL
-#    |
-# LL | let count = 0
-#    |     ^^^^^
+  field count = 0
 
-def (init) self start
-  # error: special methods are only valid in a class body
-  #   --> class_private.dol:LL:LL
-  #    |
-  # LL | def (init) self start
-  #    |      ^^^^
-  self.#count = start
-# error: no private field `count` in scope
-#   --> class_private.dol:LL:LL
-#    |
-# LL |   self.#count = start
-#    |         ^^^^^
+  def (init) self start
+    self.#count = start
 
-pub def increment self
-  self.#count = (self.#count + 1)
-# error: no private field `count` in scope
-#   --> class_private.dol:LL:LL
-#    |
-# LL |   self.#count = (self.#count + 1)
-#    |         ^^^^^
-# error: no private field `count` in scope
-#   --> class_private.dol:LL:LL
-#    |
-# LL |   self.#count = (self.#count + 1)
-#    |                        ^^^^^
+  pub def increment self
+    self.#count = (self.#count + 1)
 
-pub def value self
-  self.#count
-# error: no private field `count` in scope
-#   --> class_private.dol:LL:LL
-#    |
-# LL |   self.#count
-#    |         ^^^^^
+  pub def value self
+    self.#count
 
 let c = Counter 10
 assert_eq $c.value() 10
@@ -50,108 +20,38 @@ assert_eq $c.value() 11
 
 # Private methods
 class Adder
-let base = 0
-# warning: unused variable
-#   --> class_private.dol:LL:LL
-#    |
-# LL | let base = 0
-#    |     ^^^^
+  field base = 0
 
-def (init) self base
-  # error: special methods are only valid in a class body
-  #   --> class_private.dol:LL:LL
-  #    |
-  # LL | def (init) self base
-  #    |      ^^^^
-  self.#base = base
-# error: no private field `base` in scope
-#   --> class_private.dol:LL:LL
-#    |
-# LL |   self.#base = base
-#    |         ^^^^
+  def (init) self base
+    self.#base = base
 
-def double_base self
-  # warning: unused variable
-  #   --> class_private.dol:LL:LL
-  #    |
-  # LL | def double_base self
-  #    |     ^^^^^^^^^^^
-  (self.#base * 2)
-# error: no private field `base` in scope
-#   --> class_private.dol:LL:LL
-#    |
-# LL |   (self.#base * 2)
-#    |          ^^^^
+  def double_base self
+    (self.#base * 2)
 
-pub def add self x
-  (self.#double_base() + x)
-# error: no private field `double_base` in scope
-#   --> class_private.dol:LL:LL
-#    |
-# LL |   (self.#double_base() + x)
-#    |          ^^^^^^^^^^^
+  pub def add self x
+    (self.#double_base() + x)
 
 let a = Adder 5
 assert_eq $a.add(3) 13
 
 # Two classes with same private field name - must not conflict
 class Box
-let value = 0
-# warning: unused variable
-#   --> class_private.dol:LL:LL
-#    |
-# LL | let value = 0
-#    |     ^^^^^
+  field value = 0
 
-def (init) self v
-  # error: special methods are only valid in a class body
-  #   --> class_private.dol:LL:LL
-  #    |
-  # LL | def (init) self v
-  #    |      ^^^^
-  self.#value = v
-# error: no private field `value` in scope
-#   --> class_private.dol:LL:LL
-#    |
-# LL |   self.#value = v
-#    |         ^^^^^
+  def (init) self v
+    self.#value = v
 
-pub def get self
-  self.#value
-# error: no private field `value` in scope
-#   --> class_private.dol:LL:LL
-#    |
-# LL |   self.#value
-#    |         ^^^^^
+  pub def get self
+    self.#value
 
 class Wrapper
-let value = 0
-# warning: unused variable
-#   --> class_private.dol:LL:LL
-#    |
-# LL | let value = 0
-#    |     ^^^^^
+  field value = 0
 
-def (init) self v
-  # error: special methods are only valid in a class body
-  #   --> class_private.dol:LL:LL
-  #    |
-  # LL | def (init) self v
-  #    |      ^^^^
-  self.#value = v
-# error: no private field `value` in scope
-#   --> class_private.dol:LL:LL
-#    |
-# LL |   self.#value = v
-#    |         ^^^^^
+  def (init) self v
+    self.#value = v
 
-pub def get self
-  self.#value
-# error: no private field `value` in scope
-#   --> class_private.dol:LL:LL
-#    |
-# LL |   self.#value
-#    |         ^^^^^
+  pub def get self
+    self.#value
 
 let b1 = Box 42
 let w1 = Wrapper 99

@@ -268,15 +268,25 @@ pub enum Origin {
     Def {
         /// Definition span
         span: Span,
-        /// Enclosing class name span, if this is a class member definition
-        class: Option<Span>,
     },
     /// Variable binding
     Bind {
         /// Binding span
         span: Span,
-        /// Enclosing class name span, if this is a class field binding
-        class: Option<Span>,
+    },
+    /// Class method definition
+    Method {
+        /// Definition span
+        span: Span,
+        /// Enclosing class name span
+        class: Span,
+    },
+    /// Class field declaration
+    Field {
+        /// Definition span
+        span: Span,
+        /// Enclosing class name span
+        class: Span,
     },
     /// Function parameter
     Param {

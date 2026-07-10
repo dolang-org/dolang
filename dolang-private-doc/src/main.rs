@@ -68,8 +68,10 @@ fn src_text(content: &[u8], start: usize, end: usize) -> &str {
 fn is_def_site(entry: &TokEntry) -> bool {
     match &entry.origin {
         Some(Origin::Class { span }) => span.start().byte_offset() == entry.start,
-        Some(Origin::Def { span, .. }) => span.start().byte_offset() == entry.start,
-        Some(Origin::Bind { span, .. }) => span.start().byte_offset() == entry.start,
+        Some(Origin::Def { span })
+        | Some(Origin::Bind { span })
+        | Some(Origin::Method { span, .. })
+        | Some(Origin::Field { span, .. }) => span.start().byte_offset() == entry.start,
         Some(Origin::Param { span }) => span.start().byte_offset() == entry.start,
         Some(Origin::SelfParam { span }) => span.start().byte_offset() == entry.start,
         _ => false,
@@ -127,7 +129,7 @@ fn extract_doc(entries: &[TokEntry], i: usize, content: &[u8]) -> String {
 /// Determine if a token is a special method definition (e.g. `(init)`).
 /// Special methods are emitted as `Token::Keyword`; the `(` precedes the span start.
 fn is_special_method(entry: &TokEntry, content: &[u8]) -> bool {
-    matches!(entry.token, Token::Keyword) && entry.start > 0 && content[entry.start - 1] == b'('
+    matches!(entry.token, Token::Method) && entry.start > 0 && content[entry.start - 1] == b'('
 }
 
 /// Determine if the entity at index `i` is `pub` by counting keyword tokens on the same line.
@@ -323,7 +325,9 @@ fn main() -> io::Result<()> {
     for i in 0..n {
         let e = &entries[i];
         let special = is_special_method(e, &content);
-        if !(matches!(e.token, Token::Variable) || special) || !is_def_site(e) {
+        if !(matches!(e.token, Token::Variable | Token::Method | Token::Field) || special)
+            || !is_def_site(e)
+        {
             continue;
         }
         let pub_flag = is_pub(&entries, i);
@@ -359,9 +363,7 @@ fn main() -> io::Result<()> {
                 class_info.insert(e.start, obj);
                 top_level.push((e.start, Value::Null)); // placeholder, filled later
             }
-            Some(Origin::Def {
-                class: Some(cls), ..
-            }) => {
+            Some(Origin::Method { class: cls, .. }) => {
                 let params = params_json(collect_params(&entries, i, &content));
                 let member = json!({
                     "kind": "method",
@@ -377,9 +379,7 @@ fn main() -> io::Result<()> {
                     .or_default()
                     .push(member);
             }
-            Some(Origin::Bind {
-                class: Some(cls), ..
-            }) => {
+            Some(Origin::Field { class: cls, .. }) => {
                 let member = json!({
                     "kind": "field",
                     "name": name,
@@ -392,7 +392,7 @@ fn main() -> io::Result<()> {
                     .or_default()
                     .push(member);
             }
-            Some(Origin::Def { class: None, .. }) => {
+            Some(Origin::Def { .. }) => {
                 let params = params_json(collect_params(&entries, i, &content));
                 let obj = json!({
                     "kind": "function",
@@ -404,7 +404,7 @@ fn main() -> io::Result<()> {
                 });
                 top_level.push((e.start, obj));
             }
-            Some(Origin::Bind { class: None, .. }) => {
+            Some(Origin::Bind { .. }) => {
                 let obj = json!({
                     "kind": "value",
                     "name": name,

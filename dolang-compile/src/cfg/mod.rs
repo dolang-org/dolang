@@ -18,8 +18,6 @@ pub(crate) struct Scope {
     pub(crate) blocks: ArenaVec<BlockId>,
     pub(crate) is_nl_guard: bool,
     pub(crate) func: Option<FuncId>,
-    /// Set on class-body scopes to carry the class name for debug naming.
-    pub(crate) class_name: Option<Span>,
 }
 
 impl Scope {
@@ -110,7 +108,6 @@ pub(crate) struct Block {
 }
 
 pub(crate) type ScopeRef<'c> = Ref<'c, Scope>;
-pub(crate) type ScopeRefMut<'c> = RefMut<'c, Scope>;
 
 pub(crate) struct Func {
     pub(crate) enter: BlockId,
@@ -119,6 +116,7 @@ pub(crate) struct Func {
     pub(crate) locals: usize,
     pub(crate) scopes: ArenaVec<ScopeId>,
     pub(crate) name: Option<Span>,
+    pub(crate) class_name: Option<Span>,
 }
 
 pub(crate) type BlockRef<'c> = Ref<'c, Block>;
@@ -133,6 +131,7 @@ impl Func {
             locals: 0,
             scopes: Default::default(),
             name,
+            class_name: None,
         }
     }
 }
@@ -213,15 +212,10 @@ impl Graph {
             vars: vars.into(),
             is_nl_guard,
             func: if is_func { Some(func) } else { None },
-            class_name: None,
         };
         borrow.scopes.push(id);
         self.scopes.push(RefCell::new(scope));
         id
-    }
-
-    pub(crate) fn scope_mut<'s>(&'s self, id: ScopeId) -> ScopeRefMut<'s> {
-        self.scopes[id.0].borrow_mut()
     }
 
     pub(crate) fn scope<'s>(&'s self, id: ScopeId) -> ScopeRef<'s> {

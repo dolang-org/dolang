@@ -614,14 +614,13 @@ impl<'a> Emitter<'a> {
 
     fn qualified_name(&self, func: &cfg::Func) -> String {
         let mut parts = Vec::new();
+        if let Some(span) = func.class_name {
+            parts.push(self.file.str(span).to_string());
+        }
         let mut scope_id = Some(self.graph.block(func.enter).scope);
 
         while let Some(id) = scope_id {
             let scope = self.graph.scope(id);
-            // Class-body scope: record the class name.
-            if let Some(span) = scope.class_name {
-                parts.push(self.file.str(span).to_string());
-            }
             // Function-entry scope: record the def name or lambda index.
             if let Some(func_id) = scope.func {
                 if let Some(span) = self.graph.func(func_id).name {

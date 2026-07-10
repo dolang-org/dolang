@@ -78,14 +78,6 @@ impl<'v> Module<'v> {
 
         this
     }
-
-    pub(crate) fn entries(&self) -> Vec<(Sym<'v, '_>, Value<'v>)> {
-        let upvars = self.upvars.borrow().expect("upvar borrow conflict");
-        self.map
-            .iter()
-            .map(|(sym, idx)| (*sym, upvars.vars[*idx].dup()))
-            .collect()
-    }
 }
 
 impl<'v> Protocol<'v> for Module<'v> {

@@ -58,6 +58,7 @@ fn classify_token(token: Token, origin: Option<&Origin>, context: Context) -> (u
             Context::Call => (TT_FUNCTION, 0),
             Context::None => (TT_PROPERTY, 0),
         },
+        Token::Method => (TT_FUNCTION, 0),
         Token::Key => (TT_PROPERTY, 0),
         Token::ModuleName => (TT_NAMESPACE, 0),
         Token::ModuleItem => (TT_PROPERTY, 0),
@@ -74,7 +75,7 @@ fn classify_token(token: Token, origin: Option<&Origin>, context: Context) -> (u
             (Context::None, Some(Origin::Param { .. } | Origin::SelfParam { .. })) => {
                 (TT_PARAMETER, 0)
             }
-            (Context::None, Some(Origin::Def { .. })) => (TT_FUNCTION, 0),
+            (Context::None, Some(Origin::Def { .. } | Origin::Method { .. })) => (TT_FUNCTION, 0),
             (Context::None, Some(Origin::PreludeItem { .. })) => (TT_VARIABLE, MOD_PRELUDE),
             (Context::None, Some(Origin::PreludeModule { .. })) => (TT_NAMESPACE, MOD_PRELUDE),
             (Context::None, Some(Origin::ImportModule { .. })) => (TT_NAMESPACE, 0),
@@ -524,8 +525,10 @@ impl Backend {
                                     Origin::PreludeModule { .. } => None,
                                     Origin::PreludeItem { .. } => None,
                                     Origin::Class { span } => Some(span),
-                                    Origin::Def { span, .. } => Some(span),
-                                    Origin::Bind { span, .. } => Some(span),
+                                    Origin::Def { span }
+                                    | Origin::Bind { span }
+                                    | Origin::Method { span, .. }
+                                    | Origin::Field { span, .. } => Some(span),
                                     Origin::Param { span } | Origin::SelfParam { span } => {
                                         Some(span)
                                     }
