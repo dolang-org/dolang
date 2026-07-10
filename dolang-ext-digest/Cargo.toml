@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[lib]
+test = false
+doctest = false
+
 [dependencies]
 blake3 = "1.8.2"
 digest = "0.11.2"
