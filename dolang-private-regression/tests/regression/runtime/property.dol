@@ -1,10 +1,10 @@
 class Example
   pub let storage = 1
-  #[property]
+  #[getter]
   pub def value obj
     obj.storage
 
-  #[value.setter]
+  #[setter]
   pub def value obj value
     obj.storage = value
 
@@ -16,7 +16,7 @@ assert_eq $ex.storage 42
 
 class Base
   pub let storage = 7
-  pub let value = property do |obj| obj.storage
+  pub let value = getter do |obj| obj.storage
 
 class Derived: Base
 
@@ -27,23 +27,13 @@ def greet name
   "hello $name"
 
 class CallableProperty
-  pub let action = property do |_obj| greet
+  pub let action = getter do |_obj| greet
 
 let callable = CallableProperty()
 assert_eq $callable.action("world") "hello world"
 
-class AssignedProperty
-  pub let value = nil
-
-  def (init) self desc
-    self.value = desc
-
-let prop = property do |_obj| "descriptor result"
-let assigned = AssignedProperty $prop
-assert_eq $assigned.value $prop
-
 class ReadOnly
-  pub let value = property do |_obj| "read only"
+  pub let value = getter do |_obj| "read only"
 
 let ro = ReadOnly()
 assert_eq $ro.value "read only"
@@ -51,6 +41,34 @@ let failed = false
 try
   ro.value = "new"
 catch err
-  assert_eq (str err) "type error: property has no setter"
+  assert_eq (str err) "no such field: value"
   failed = true
 assert $failed
+
+let duplicate_getter = false
+try
+  class _DuplicateGetter
+    #[getter]
+    pub def value _obj
+      1
+
+    #[getter]
+    pub def value _obj
+      2
+catch err
+  assert_eq (str err) "class_create: duplicate class member `value`"
+  duplicate_getter = true
+assert $duplicate_getter
+
+let getter_field_conflict = false
+try
+  class _GetterFieldConflict
+    #[getter]
+    pub def value _obj
+      1
+
+    pub let value = 2
+catch err
+  assert_eq (str err) "class_create: duplicate class member `value`"
+  getter_field_conflict = true
+assert $getter_field_conflict

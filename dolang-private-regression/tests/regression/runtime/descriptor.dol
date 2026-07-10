@@ -1,9 +1,9 @@
 import std:
-  - Descriptor
+  - Getter
+  - Setter
 
-class Property: Descriptor
+class PropertyGetter: Getter
   pub let getter = nil
-  pub let setter_fn = nil
 
   def (init) self getter
     self.getter = getter
@@ -11,20 +11,19 @@ class Property: Descriptor
   pub def get self obj
     self.getter $obj
 
+class PropertySetter: Setter
+  pub let setter_fn = nil
+
   pub def set self obj value
     self.setter_fn $obj $value
 
-  pub def setter self fn
+  def (init) self fn
     self.setter_fn = fn
-    self
 
 class Example
   pub let storage = 1
-  pub let value = Property do |obj| obj.storage
-
-  #[value.setter]
-  pub def value obj value
-    obj.storage = value
+  pub let value = PropertyGetter do |obj| obj.storage
+  pub let value = PropertySetter do |obj value| obj.storage = value
 
 let ex = Example()
 assert_eq $ex.value 1
@@ -34,7 +33,7 @@ assert_eq $ex.storage 42
 
 class Base
   pub let storage = 7
-  pub let value = Property do |obj| obj.storage
+  pub let value = PropertyGetter do |obj| obj.storage
 
 class Derived: Base
 
@@ -45,39 +44,42 @@ def greet name
   "hello $name"
 
 class CallableProperty
-  pub let action = Property do |_obj| greet
+  pub let action = PropertyGetter do |_obj| greet
 
 let callable = CallableProperty()
 assert_eq $callable.action("world") "hello world"
 
-class LooksLikeDescriptor
+class LooksLikeGetter
   pub def get _self _obj
-    "not a descriptor"
+    "not a getter"
 
 class OrdinaryField
-  pub let value = LooksLikeDescriptor()
+  pub let value = LooksLikeGetter()
 
 let ordinary = OrdinaryField()
-assert_eq $ordinary.value.get(nil) "not a descriptor"
+assert_eq $ordinary.value.get(nil) "not a getter"
 
-class AssignedDescriptor
+class AssignedGetter
   pub let value = nil
 
   def (init) self desc
     self.value = desc
 
-let prop = Property do |_obj| "descriptor result"
-let assigned = AssignedDescriptor $prop
+let prop = PropertyGetter do |_obj| "getter result"
+let assigned = AssignedGetter $prop
 assert_eq $assigned.value $prop
 
-class ReadOnly
-  pub let value = Property do |_obj| "read only"
-
-let ro = ReadOnly()
-assert_eq $ro.value "read only"
-let failed = false
+let duplicate_setter = false
 try
-  ro.value = "new"
-catch _
-  failed = true
-assert $failed
+  class _DuplicateSetter
+    #[setter]
+    pub def value _obj _value
+      nil
+
+    #[setter]
+    pub def value _obj _value
+      nil
+catch err
+  assert_eq (str err) "class_create: duplicate class member `value`"
+  duplicate_setter = true
+assert $duplicate_setter

@@ -23,9 +23,9 @@ use crate::{
 
 use super::protocol::{GcObj, GcObjBorrow, Protocol};
 
-pub(crate) struct Descriptor;
+pub(crate) struct Getter;
 
-unsafe impl Collect for Descriptor {
+unsafe impl Collect for Getter {
     const CYCLIC: bool = false;
     const IMMUTABLE: bool = true;
     type Annex = ();
@@ -37,7 +37,7 @@ unsafe impl Collect for Descriptor {
     fn clear(&mut self) {}
 }
 
-impl<'v> Protocol<'v> for Descriptor {
+impl<'v> Protocol<'v> for Getter {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -51,15 +51,59 @@ impl<'v> Protocol<'v> for Descriptor {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type Descriptor>").into_do(strand)
+        write!(w, "<type Getter>").into_do(strand)
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: true,
-            members: vec![Sym::well_known(sym::GET), Sym::well_known(sym::SET)],
+            members: vec![Sym::well_known(sym::GET)],
         })
     }
+}
+
+pub(crate) struct Setter;
+
+unsafe impl Collect for Setter {
+    const CYCLIC: bool = false;
+    const IMMUTABLE: bool = true;
+    type Annex = ();
+
+    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> Protocol<'v> for Setter {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, &strand.singletons().type_obj)
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn fmt::Write,
+    ) -> Result<'v, 's, ()> {
+        write!(w, "<type Setter>").into_do(strand)
+    }
+
+    fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
+        Some(Inspect {
+            is_abstract: true,
+            members: vec![Sym::well_known(sym::SET)],
+        })
+    }
+}
+
+pub(crate) struct Property<'v> {
+    pub(crate) getter: Option<Value<'v>>,
+    pub(crate) setter: Option<Value<'v>>,
 }
 
 /// A single entry in a class's unified symbol table.
@@ -68,8 +112,8 @@ pub(crate) enum ClassEntry<'v> {
     Field(usize),
     /// A Do function value (method).
     Method(Value<'v>),
-    /// A descriptor object whose `get`/`set` methods mediate instance access.
-    Descriptor(Value<'v>),
+    /// A getter/setter pair whose `get`/`set` methods mediate instance access.
+    Property(Property<'v>),
     /// Native delegation: index into instance `natives`.
     Delegate(usize),
     /// Abstract delegation: the type-object singleton to dispatch to.
@@ -133,8 +177,14 @@ unsafe impl<'v> Collect for ClassObject<'v> {
         }
         for (_, entry) in self.entries.iter() {
             match entry {
-                ClassEntry::Method(v) | ClassEntry::Descriptor(v) | ClassEntry::Abstract(v) => {
-                    v.accept(visit)?
+                ClassEntry::Method(v) | ClassEntry::Abstract(v) => v.accept(visit)?,
+                ClassEntry::Property(property) => {
+                    if let Some(getter) = &property.getter {
+                        getter.accept(visit)?;
+                    }
+                    if let Some(setter) = &property.setter {
+                        setter.accept(visit)?;
+                    }
                 }
                 _ => {}
             }
@@ -154,8 +204,10 @@ unsafe impl<'v> Collect for ClassObject<'v> {
         }
         for (_, entry) in self.entries.iter_mut() {
             match entry {
-                ClassEntry::Method(v) | ClassEntry::Descriptor(v) | ClassEntry::Abstract(v) => {
-                    *v = Value::NIL
+                ClassEntry::Method(v) | ClassEntry::Abstract(v) => *v = Value::NIL,
+                ClassEntry::Property(property) => {
+                    property.getter = None;
+                    property.setter = None;
                 }
                 _ => {}
             }
@@ -574,8 +626,11 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 out.store(borrow.fields[*slot_idx].dup());
                 Ok(())
             }
-            Some(ClassEntry::Descriptor(descriptor)) => strand.sync(async |strand| {
-                method!(strand, descriptor, Sym::well_known(sym::GET), out, &this).await
+            Some(ClassEntry::Property(Property {
+                getter: Some(getter),
+                ..
+            })) => strand.sync(async |strand| {
+                method!(strand, getter, Sym::well_known(sym::GET), out, &this).await
             }),
             Some(ClassEntry::Method(_) | ClassEntry::Abstract(_)) => {
                 BoundMethod::create(strand, &this, field, out);
@@ -615,21 +670,22 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 borrow.fields[*slot_idx] = value.take();
                 Ok(())
             }
-            Some(ClassEntry::Descriptor(descriptor)) => {
-                strand.with_slots_sync(move |strand, [mut tmp]| {
-                    strand.sync(async |strand| {
-                        method!(
-                            strand,
-                            descriptor,
-                            Sym::well_known(sym::SET),
-                            &mut tmp,
-                            &this,
-                            &value
-                        )
-                        .await
-                    })
+            Some(ClassEntry::Property(Property {
+                setter: Some(setter),
+                ..
+            })) => strand.with_slots_sync(move |strand, [mut tmp]| {
+                strand.sync(async |strand| {
+                    method!(
+                        strand,
+                        setter,
+                        Sym::well_known(sym::SET),
+                        &mut tmp,
+                        &this,
+                        &value
+                    )
+                    .await
                 })
-            }
+            }),
             Some(ClassEntry::Delegate(slot)) => annex.natives[*slot]
                 .get()
                 .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?
@@ -670,12 +726,15 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 };
                 return func.op_call(strand, args, out).await;
             }
-            Some(ClassEntry::Descriptor(descriptor)) => {
+            Some(ClassEntry::Property(Property {
+                getter: Some(getter),
+                ..
+            })) => {
                 return strand
                     .with_slots(async move |strand, [mut callable]| {
                         method!(
                             strand,
-                            descriptor,
+                            getter,
                             Sym::well_known(sym::GET),
                             &mut callable,
                             &this
@@ -685,6 +744,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await;
             }
+            Some(ClassEntry::Property(Property { getter: None, .. })) => {}
             Some(ClassEntry::Delegate(slot)) => {
                 let native = this.annex().natives[*slot]
                     .get()

@@ -6,7 +6,7 @@ mod property;
 mod strand;
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
-    let property = property::register(builder);
+    let property_types = property::register(builder);
     let bc = builder.singletons();
 
     // Core types
@@ -34,7 +34,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let sink_type = bc.output_iter.dup();
     let iterable_type = bc.iterable.dup();
     let sinkable_type = bc.sinkable.dup();
-    let descriptor_type = bc.descriptor.dup();
+    let getter_type = bc.getter.dup();
+    let setter_type = bc.setter.dup();
     let nulliter = bc.nulliter.dup();
     let error_sink_stop = bc.error_sink_stop.dup();
     let error_iter_stop = bc.error_iter_stop.dup();
@@ -81,7 +82,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("tuple", &tuple)
         .value("func", &func)
         .value("range", &range)
-        .value("property", property)
+        .value("getter", property_types.getter)
+        .value("setter", property_types.setter)
         .value("module", &module)
         .value("record", &record)
         .value("bin", &bin)
@@ -89,7 +91,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         // Iterator protocol types
         .value("Iterable", &iterable_type)
         .value("Sinkable", &sinkable_type)
-        .value("Descriptor", &descriptor_type)
+        .value("Getter", &getter_type)
+        .value("Setter", &setter_type)
         .value("Iter", &iter_type)
         .value("Sink", &sink_type)
         .value("nulliter", &nulliter)

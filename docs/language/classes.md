@@ -54,18 +54,19 @@ class Counter
     self.count
 ```
 
-## Computed Fields with `property`
+## Computed Fields with `getter` and `setter`
 
-Fields can be backed by descriptor objects instead of stored per-instance
-state. The built-in [`property`](../api/std/property.md) helper is the common
-way to define a computed field:
+Fields can be backed by getter and setter objects instead of stored
+per-instance state. The built-in [`getter`](../api/std/getter.md) and
+[`setter`](../api/std/setter.md) helpers are the common way to define a
+computed field:
 
 ```
 class Config
   let _port = 8080
-  pub let port = property do |obj| obj.#_port
+  pub let port = getter do |obj| obj.#_port
 
-  #[port.setter]
+  #[setter]
   pub def port obj value
     obj.#_port = value
 ```
@@ -79,14 +80,13 @@ cfg.port = 9000
 assert_eq $cfg.port 9000
 ```
 
-`property` is a built-in subtype of
-[`Descriptor`](../api/std/descriptor.md). A class field is treated as a
-descriptor-backed field only when its class-body value is a nominal subtype of
-`Descriptor`.
+Class creation pairs one getter and one setter with the same member name into a
+single computed field. Any other duplicate member name is an error.
 
-Use `#[field.setter]` to attach a setter method to an existing property value
-in the class body. Decorators can also be applied to classes and methods more
-generally; see [Functions](./functions.md#decorators) for the syntax.
+Custom getter and setter objects can also be created by subclassing
+[`Getter`](../api/std/getter.md) or [`Setter`](../api/std/setter.md).
+Decorators can also be applied to classes and methods more generally; see
+[Functions](./functions.md#decorators) for the syntax.
 
 ## Visibility
 
@@ -291,7 +291,7 @@ defined with the method name in parentheses.
 
 `(get)` and `(set)` only run when ordinary field lookup misses. They are
 separate from descriptor-backed fields such as
-[`property`](../api/std/property.md).
+[`getter`](../api/std/getter.md) and [`setter`](../api/std/setter.md).
 
 **Operators:**
 

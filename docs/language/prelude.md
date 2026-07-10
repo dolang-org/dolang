@@ -14,12 +14,13 @@ The following items are available globally in every Do program without any
 | [`dict`](../api/std/dict.md)                    | [`dict`](../api/std/dict.md) type     |
 | [`float`](../api/std/float.md)                  | [`float`](../api/std/float.md) type   |
 | [`func`](../api/std/func.md)                    | [`func`](../api/std/func.md) type     |
+| [`getter`](../api/std/index.md#getter-func)     | Built-in getter helper                |
 | [`int`](../api/std/int.md)                      | [`int`](../api/std/int.md) type       |
 | [`module`](../api/std/index.md)                 | Module type                           |
-| [`property`](../api/std/property.md)            | Built-in descriptor helper            |
 | [`range`](../api/std/range.md)                  | [`range`](../api/std/range.md) type   |
 | [`record`](../api/std/record.md)                | [`record`](../api/std/record.md) type |
 | [`set`](../api/std/set.md)                      | [`set`](../api/std/set.md) type       |
+| [`setter`](../api/std/index.md#setter-func)     | Built-in setter helper                |
 | [`str`](../api/std/str.md)                      | [`str`](../api/std/str.md) type       |
 | [`sym`](../api/std/sym.md)                      | [`sym`](../api/std/sym.md) type       |
 | [`tuple`](../api/std/tuple.md)                  | [`tuple`](../api/std/tuple.md) type   |

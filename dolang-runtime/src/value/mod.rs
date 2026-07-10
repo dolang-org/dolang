@@ -2184,8 +2184,10 @@ pub enum TypeObject {
     Iter,
     /// `std.iter.Sink`
     Sink,
-    /// `std.Descriptor`
-    Descriptor,
+    /// `std.Getter`
+    Getter,
+    /// `std.Setter`
+    Setter,
 }
 
 impl<'v> Input<'v> for TypeObject {
@@ -2200,7 +2202,8 @@ impl<'v> Input<'v> for TypeObject {
             TypeObject::RuntimeError => &builtins.error_runtime,
             TypeObject::Iter => &builtins.input_iter,
             TypeObject::Sink => &builtins.output_iter,
-            TypeObject::Descriptor => &builtins.descriptor,
+            TypeObject::Getter => &builtins.getter,
+            TypeObject::Setter => &builtins.setter,
         })
     }
 }
