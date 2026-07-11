@@ -17,6 +17,9 @@ d.foo = 42
 d.bar = "hello"
 assert_eq $d.foo 42
 assert_eq $d.bar "hello"
+assert_eq (d.(get) :foo:) 42
+d.(set) :baz: 99
+assert_eq $d.baz 99
 
 # Static pub fields are not routed through (get)/(set)
 class WithPub
@@ -52,3 +55,19 @@ def greet name
 let dp = Dispatcher()
 dp.greet = greet
 assert_eq $dp.greet("world") "hello world"
+
+# Type-object (get)/(set) take an explicit receiver for superclass delegation
+class Parent
+  pub field value = 0
+
+class Child: Parent
+  pub def write_parent self value
+    Parent.(set) $self :value: $value
+
+  pub def read_parent self
+    (Parent.(get) self :value:)
+
+let c = Child()
+c.write_parent 123
+assert_eq $c.value 123
+assert_eq (c.read_parent()) 123

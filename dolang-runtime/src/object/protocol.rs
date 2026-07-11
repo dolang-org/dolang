@@ -12,7 +12,7 @@ use crate::{
         self, Boxable, Boxed, Collect,
         arena::{self, Arena, Upcast},
     },
-    object::class::get_native_slot,
+    object::{BoundMethod, class::get_native_slot},
     sig::Unpack,
     strand::{Pinned, Strand},
     sym::{self, Sym},
@@ -94,12 +94,30 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand
-            .with_slots(async move |strand, [mut func]| {
-                Self::op_get(this, strand, method, Slot::reborrow(&mut func))?;
-                func.op_call(strand, args, out).await
-            })
-            .await
+        match method.tag() {
+            sym::GET_METHOD => {
+                let ([field], []) = unpack!(strand, args, 1, 0)?;
+                let field = field
+                    .as_sym(strand)
+                    .ok_or_else(|| Error::type_error(strand, "field: expected `sym`"))?;
+                Self::op_get(this, strand, field, out)
+            }
+            sym::SET_METHOD => {
+                let ([field, value], []) = unpack!(strand, args, 2, 0)?;
+                let field = field
+                    .as_sym(strand)
+                    .ok_or_else(|| Error::type_error(strand, "field: expected `sym`"))?;
+                Self::op_set(this, strand, field, value)
+            }
+            _ => {
+                strand
+                    .with_slots(async move |strand, [mut func]| {
+                        Self::op_get(this, strand, method, Slot::reborrow(&mut func))?;
+                        func.op_call(strand, args, out).await
+                    })
+                    .await
+            }
+        }
     }
 
     /// Like [`op_mcall`], but called when this object received the call via class delegation.
@@ -370,12 +388,18 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
     }
 
     fn op_get<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        _field: Sym<'v, 'a>,
-        _out: Slot<'v, 'a>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::type_error(strand, "field get not supported"))
+        match field.tag() {
+            sym::GET_METHOD | sym::SET_METHOD => {
+                BoundMethod::create(strand, &this, field, out);
+                Ok(())
+            }
+            _ => Err(Error::type_error(strand, "field get not supported")),
+        }
     }
 
     fn op_set<'a, 's>(
@@ -1926,6 +1950,26 @@ pub(crate) async fn dispatch_native_method<'v, 's>(
     args: Args<'v, '_>,
     mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
+    // Handle the special case of a `(get)` or `(set)` intended for the class object itself
+    // rather than qualified method invocation on an instance
+    match method.tag() {
+        sym::GET_METHOD if args.len() == 1 => {
+            let ([field], []) = unpack!(strand, args, 1, 0)?;
+            let field = field
+                .as_sym(strand)
+                .ok_or_else(|| Error::type_error(strand, "field: expected `sym`"))?;
+            return ty.op_get(strand, field, out);
+        }
+        sym::SET_METHOD if args.len() == 2 => {
+            let ([field, value], []) = unpack!(strand, args, 2, 0)?;
+            let field = field
+                .as_sym(strand)
+                .ok_or_else(|| Error::type_error(strand, "field: expected `sym`"))?;
+            return ty.op_set(strand, field, value);
+        }
+        _ => (),
+    }
+
     let ([this], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
     let this = if let Some(inst) = this.downcast_ref(strand.builtin_types().class_instance) {
         get_native_slot(strand, inst, ty)
