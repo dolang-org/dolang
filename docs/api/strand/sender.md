@@ -3,6 +3,10 @@
 A Sender is used to send values into a channel. Senders are output iterators,
 used with `put` or the `.put()` method.
 
+## Inherits
+
+- [`Sink`](../std/sink.md)
+
 ## Creating a Sender
 
 Senders are created by the [`channel`](./index.md) function:

@@ -7,6 +7,10 @@ implements [`Iter`](../std/iter.md).
 
 Each iteration yields one [`Patch`](./patch.md).
 
+## Inherits
+
+- [`Iter`](../std/iter.md)
+
 ## Example
 
 ```

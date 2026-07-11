@@ -10,7 +10,3 @@ assert (type "hello" value)
 assert (type [] value)
 assert (type nil value)
 ```
-
-## Inherits
-
-`value` is the root of the type hierarchy.

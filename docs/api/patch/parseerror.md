@@ -5,6 +5,10 @@
 `ParseError` is raised by [`patch.decode`](./index.md#decode-input) when the
 input cannot be parsed as a patch stream.
 
+## Inherits
+
+- [`ValueError`](../std/value-error.md)
+
 ## Example
 
 ```

@@ -2,6 +2,10 @@
 
 [`State`](./state.md) for BLAKE3.
 
+## Inherits
+
+- [`State`](./state.md)
+
 ## Constructor
 
 ### `Blake3()`

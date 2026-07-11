@@ -10,6 +10,10 @@ are instances of `Iter`, which can be used for type testing.
 assert_eq (type $ [1, 2, 3].iter()) $Iter
 ```
 
+## Inherits
+
+- [`Iterable`](./iterable.md)
+
 ## Methods
 
 ### `next :default? :else?`

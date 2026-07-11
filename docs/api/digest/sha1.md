@@ -2,6 +2,10 @@
 
 [`State`](./state.md) for SHA-1.
 
+## Inherits
+
+- [`State`](./state.md)
+
 ## Constructor
 
 ### `Sha1()`

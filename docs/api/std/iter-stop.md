@@ -13,4 +13,4 @@ throw err
 
 ## Inherits
 
-[`Error`](./error.md)
+- [`Error`](./error.md)

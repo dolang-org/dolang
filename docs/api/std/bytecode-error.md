@@ -4,4 +4,4 @@ Raised on bytecode verification errors.
 
 ## Inherits
 
-[`Error`](./error.md)
+- [`Error`](./error.md)

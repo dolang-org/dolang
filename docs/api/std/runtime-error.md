@@ -7,4 +7,4 @@ more specific type applies.
 
 ## Inherits
 
-[`Error`](./error.md)
+- [`Error`](./error.md)

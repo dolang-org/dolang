@@ -312,7 +312,6 @@ impl<'v> Object<'v> for StatusObject {
             });
 
         builder
-            .nominal_supertype(TypeObject::RuntimeError)
             .get("url", |this, strand, out| {
                 output_url(strand, this.annex().url.as_ref(), out);
                 Ok(())

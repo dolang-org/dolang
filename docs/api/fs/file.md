@@ -4,6 +4,11 @@ File objects are returned by [`open`](./index.md#open-path-mode-func) and
 provide methods for file operations. All operations on closed files raise a
 runtime error.
 
+## Inherits
+
+- [`Iter`](../std/iter.md)
+- [`Sink`](../std/sink.md)
+
 ## Methods
 
 ### `write data`

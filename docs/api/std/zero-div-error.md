@@ -4,4 +4,4 @@ Raised on integer division or modulo by zero.
 
 ## Inherits
 
-[`Error`](./error.md)
+- [`Error`](./error.md)

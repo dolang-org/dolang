@@ -5,6 +5,10 @@ and act as an iterator of [`Row`](./row.md) objects. A `Rows` iterator is also
 yielded by a `...rest` term when unpacking a `Row`, in which case it iterates
 the remaining unconsumed columns of that row as values.
 
+## Inherits
+
+- [`Iter`](../std/iter.md)
+
 ## Usage Notes
 
 ### Invalidation

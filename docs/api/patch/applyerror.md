@@ -5,6 +5,10 @@
 `ApplyError` is raised by [`Patch.apply`](./patch.md#apply-base) when a patch
 cannot be applied to the provided base content.
 
+## Inherits
+
+- [`RuntimeError`](../std/runtime-error.md)
+
 ## Example
 
 ```

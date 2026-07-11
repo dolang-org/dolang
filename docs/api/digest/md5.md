@@ -2,6 +2,10 @@
 
 [`State`](./state.md) for MD5.
 
+## Inherits
+
+- [`State`](./state.md)
+
 ## Constructor
 
 ### `Md5()`

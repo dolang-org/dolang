@@ -1,8 +1,7 @@
 # Status
 
 `Status` is raised when an HTTP request completes but returns a status
-outside `200..=299`. It is a subtype of [`Error`](./error.md), and also of
-[`std.RuntimeError`](../std/runtime-error.md).
+outside `200..=299`.
 
 ```
 try
@@ -12,6 +11,10 @@ catch Status: err
 ```
 
 The error stores response metadata and the first 64 KiB of the response body.
+
+## Inherits
+
+- [`Error`](./error.md)
 
 ## Fields
 
