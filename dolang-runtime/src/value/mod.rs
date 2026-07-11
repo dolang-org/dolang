@@ -207,10 +207,16 @@ impl<'v> Value<'v> {
         self.0 = Repr::UNINIT;
     }
 
-    pub(crate) fn is_instance_of(&self, strand: &mut Strand<'v, '_>, ty: &Value<'v>) -> bool {
-        let mut type_slot = Value::NIL;
-        self.op_type(strand, Slot::new(&mut type_slot));
-        type_slot.op_subtype(strand, ty)
+    pub(crate) fn is_instance_of(
+        &self,
+        strand: &mut Strand<'v, '_>,
+        input: impl Input<'v>,
+    ) -> bool {
+        strand.with_slots_sync(|strand, [mut self_ty, mut ty]| {
+            self.op_type(strand, Slot::reborrow(&mut self_ty));
+            Output::set(strand, &mut ty, input);
+            self_ty.op_subtype(strand, &ty)
+        })
     }
 
     pub(crate) fn is_uninit(&self) -> bool {

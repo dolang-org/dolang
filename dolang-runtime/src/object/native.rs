@@ -1341,7 +1341,23 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             )
             .await
         } else {
-            T::method(Instance::new(this.receiver), strand, method, args, out).await
+            match method.tag() {
+                sym::GET_METHOD => {
+                    let ([field], []) = unpack!(strand, args, 1, 0)?;
+                    let field = field
+                        .as_sym(strand)
+                        .ok_or_else(|| Error::type_error(strand, "field: expected `sym`"))?;
+                    Self::op_get(this, strand, field, out)
+                }
+                sym::SET_METHOD => {
+                    let ([field, value], []) = unpack!(strand, args, 2, 0)?;
+                    let field = field
+                        .as_sym(strand)
+                        .ok_or_else(|| Error::type_error(strand, "field: expected `sym`"))?;
+                    Self::op_set(this, strand, field, value)
+                }
+                _ => T::method(Instance::new(this.receiver), strand, method, args, out).await,
+            }
         }
     }
 
@@ -3168,6 +3184,14 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        match field.tag() {
+            sym::GET_METHOD | sym::SET_METHOD => {
+                BoundMethod::create(strand, &this, field, out);
+                return Ok(());
+            }
+            _ => (),
+        }
+
         // Check type-level entries first.
         if let Some(entry) = this.entry(field) {
             return match entry {

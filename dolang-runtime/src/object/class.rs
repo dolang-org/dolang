@@ -262,6 +262,14 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
         field: Sym<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        match field.tag() {
+            sym::GET_METHOD | sym::SET_METHOD => {
+                BoundMethod::create(strand, &this, field, out);
+                return Ok(());
+            }
+            _ => (),
+        }
+
         let me = this.get();
 
         // Only methods are accessible on the class type object itself
@@ -294,12 +302,181 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let me = this.get();
-
-        // Only methods are callable on the class type object itself
-        if let Some(v) = me.method(method) {
-            return v.dup().op_call(strand, args, out).await;
+        match method.tag() {
+            sym::GET_METHOD if args.len() == 1 => {
+                let ([field], []) = unpack!(strand, args, 1, 0)?;
+                let field = field
+                    .as_sym(strand)
+                    .ok_or_else(|| Error::type_error(strand, "field: expected `sym`"))?;
+                Self::op_get(this, strand, field, out)
+            }
+            sym::GET_METHOD => {
+                let ([obj, field], []) = unpack!(strand, args, 2, 0)?;
+                let field = field
+                    .as_sym(strand)
+                    .ok_or_else(|| Error::type_error(strand, "field: expected `sym`"))?;
+                if !obj.is_instance_of(strand, this.clone()) {
+                    return Err(Error::type_error(strand, "invalid class object type"));
+                }
+                match me.entry(field) {
+                    Some(ClassEntry::Field(_)) => {
+                        let recv = obj
+                            .downcast_ref(strand.builtin_types().class_instance)
+                            .expect("object is a class instance");
+                        let slot_idx = match recv.annex().class.entry(field) {
+                            Some(ClassEntry::Field(slot_idx)) => *slot_idx,
+                            _ => {
+                                return Err(Error::runtime(
+                                    strand,
+                                    "can't access plain superclass field that was overridden as a different member type in a dervied class",
+                                ));
+                            }
+                        };
+                        let borrow = recv.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                        Output::set(strand, out, &borrow.fields[slot_idx]);
+                        Ok(())
+                    }
+                    Some(ClassEntry::Property(Property {
+                        getter: Some(getter),
+                        ..
+                    })) => strand.sync(async |strand| {
+                        method!(strand, getter, Sym::well_known(sym::GET), out, obj).await
+                    }),
+                    Some(ClassEntry::Method(_) | ClassEntry::Abstract(_)) => {
+                        BoundMethod::create(strand, obj, field, out);
+                        Ok(())
+                    }
+                    Some(ClassEntry::Property { .. }) => Err(Error::field(strand, field)),
+                    Some(ClassEntry::Delegate(_slot)) => {
+                        let native = obj
+                            .downcast_ref(strand.builtin_types().class_instance)
+                            .ok_or_else(|| Error::type_error(strand, "invalid class object type"))?
+                            .annex()
+                            .class
+                            .entry(field)
+                            .and_then(|entry| match entry {
+                                ClassEntry::Delegate(slot) => obj
+                                    .downcast_ref(strand.builtin_types().class_instance)
+                                    .and_then(|recv| recv.annex().natives[*slot].get()),
+                                _ => None,
+                            })
+                            .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
+                        strand.sync(async |strand| native.op_get(strand, field, out))
+                    }
+                    _ => match me.entry_by_tag(sym::GET_METHOD) {
+                        Some(ClassEntry::Method(v)) => {
+                            strand.sync(async |strand| call!(strand, v, out, obj, field).await)
+                        }
+                        Some(ClassEntry::Delegate(slot)) => {
+                            let recv = obj
+                                .downcast_ref(strand.builtin_types().class_instance)
+                                .ok_or_else(|| {
+                                    Error::type_error(strand, "invalid class object type")
+                                })?;
+                            let native = recv.annex().natives[*slot].get().ok_or_else(|| {
+                                Error::runtime(strand, "native slot uninitialized")
+                            })?;
+                            strand.sync(async |strand| native.op_get(strand, field, out))
+                        }
+                        _ => Err(Error::field(strand, field)),
+                    },
+                }
+            }
+            sym::SET_METHOD if args.len() == 2 => {
+                let ([field, value], []) = unpack!(strand, args, 2, 0)?;
+                let field = field
+                    .as_sym(strand)
+                    .ok_or_else(|| Error::type_error(strand, "field: expected `sym`"))?;
+                Self::op_set(this, strand, field, value)
+            }
+            sym::SET_METHOD => {
+                let ([obj, field, mut value], []) = unpack!(strand, args, 3, 0)?;
+                let field = field
+                    .as_sym(strand)
+                    .ok_or_else(|| Error::type_error(strand, "field: expected `sym`"))?;
+                if !obj.is_instance_of(strand, this.clone()) {
+                    return Err(Error::type_error(strand, "invalid class object type"));
+                }
+                match me.entry(field) {
+                    Some(ClassEntry::Field(_)) => {
+                        let recv = obj
+                            .downcast_ref(strand.builtin_types().class_instance)
+                            .ok_or_else(|| {
+                                Error::type_error(strand, "invalid class object type")
+                            })?;
+                        let slot_idx = match recv.annex().class.entry(field) {
+                            Some(ClassEntry::Field(slot_idx)) => *slot_idx,
+                            _ => return Err(Error::field(strand, field)),
+                        };
+                        let mut borrow = recv
+                            .borrow_mut()
+                            .ok_or_else(|| Error::concurrency(strand))?;
+                        borrow.fields[slot_idx] = value.take();
+                        Ok(())
+                    }
+                    Some(ClassEntry::Property(Property {
+                        setter: Some(setter),
+                        ..
+                    })) => strand.with_slots_sync(move |strand, [mut tmp]| {
+                        strand.sync(async |strand| {
+                            method!(
+                                strand,
+                                setter,
+                                Sym::well_known(sym::SET),
+                                &mut tmp,
+                                obj,
+                                &value
+                            )
+                            .await
+                        })
+                    }),
+                    Some(
+                        ClassEntry::Method(_)
+                        | ClassEntry::Abstract(_)
+                        | ClassEntry::Property { .. },
+                    ) => Err(Error::field(strand, field)),
+                    Some(ClassEntry::Delegate(slot)) => {
+                        let recv = obj
+                            .downcast_ref(strand.builtin_types().class_instance)
+                            .ok_or_else(|| {
+                                Error::type_error(strand, "invalid class object type")
+                            })?;
+                        recv.annex().natives[*slot]
+                            .get()
+                            .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?
+                            .op_set(strand, field, value)
+                    }
+                    _ => match me.entry_by_tag(sym::SET_METHOD) {
+                        Some(ClassEntry::Method(v)) => {
+                            strand.with_slots_sync(move |strand, [mut tmp]| {
+                                strand.sync(async |strand| {
+                                    call!(strand, v, &mut tmp, obj, field, &value).await
+                                })
+                            })
+                        }
+                        Some(ClassEntry::Delegate(slot)) => {
+                            let recv = obj
+                                .downcast_ref(strand.builtin_types().class_instance)
+                                .ok_or_else(|| {
+                                    Error::type_error(strand, "invalid class object type")
+                                })?;
+                            let native = recv.annex().natives[*slot].get().ok_or_else(|| {
+                                Error::runtime(strand, "native slot uninitialized")
+                            })?;
+                            strand.sync(async |strand| native.op_set(strand, field, value))
+                        }
+                        _ => Err(Error::field(strand, field)),
+                    },
+                }
+            }
+            _ => {
+                // Only methods are callable on the class type object itself
+                if let Some(v) = me.method(method) {
+                    return v.op_call(strand, args, out).await;
+                }
+                Err(Error::field(strand, method))
+            }
         }
-        Err(Error::field(strand, method))
     }
 
     async fn op_call<'a, 's>(
@@ -633,6 +810,13 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         field: Sym<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        match field.tag() {
+            sym::GET_METHOD | sym::SET_METHOD => {
+                BoundMethod::create(strand, &this, field, out);
+                return Ok(());
+            }
+            _ => (),
+        }
         let annex = this.annex();
         match annex.class.entry(field) {
             Some(ClassEntry::Field(slot_idx)) => {
@@ -727,6 +911,24 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        match method.tag() {
+            sym::GET_METHOD => {
+                let ([field], []) = unpack!(strand, args, 1, 0)?;
+                let field = field
+                    .as_sym(strand)
+                    .ok_or_else(|| Error::type_error(strand, "field: expected `sym`"))?;
+                return Self::op_get(this, strand, field, out);
+            }
+            sym::SET_METHOD => {
+                let ([field, value], []) = unpack!(strand, args, 2, 0)?;
+                let field = field
+                    .as_sym(strand)
+                    .ok_or_else(|| Error::type_error(strand, "field: expected `sym`"))?;
+                return Self::op_set(this, strand, field, value);
+            }
+            _ => (),
+        }
+
         let class = &this.annex().class;
         match class.entry(method) {
             Some(ClassEntry::Method(v)) => {

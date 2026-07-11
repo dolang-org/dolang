@@ -286,6 +286,21 @@ defined with the method name in parentheses.
 separate from descriptor-backed fields such as
 [`getter`](../api/std/getter.md) and [`setter`](../api/std/setter.md).
 
+They can also be called explicitly for programmatic field access:
+
+```
+obj.(get) :field:
+obj.(set) :field: value
+```
+
+On type objects they may take an explicit receiver. This is useful for
+superclass delegation:
+
+```
+echo $ Super.(get) $self :field:
+Super.(set) $self :field: value
+```
+
 **Operators:**
 
 | Method    | Operator                             | Notes                                                |
@@ -718,6 +733,10 @@ d.foo = 42
 d.bar = "hello"
 assert_eq $d.foo 42
 assert_eq $d.bar "hello"
+assert_eq (d.(get) :foo:) 42
+
+d.(set) :baz: 99
+assert_eq $d.baz 99
 ```
 
 `pub` fields still take priority and are never routed through `(get)` or
