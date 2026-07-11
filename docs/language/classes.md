@@ -1,7 +1,8 @@
 # Classes
 
-Do supports user-defined classes with fields, methods, inheritance, and special
-methods to overload behavior such as iteration and calling.
+Do supports user-defined classes with fields, methods, getters and setters,
+multiple inheritance, and special methods to control behavior such as iteration
+and arithmetic operators.
 
 ## Defining a Class
 
@@ -23,20 +24,30 @@ class Point
 
 ### Fields
 
-Fields are declared with `field` inside the class body. Each field has a default
-value that is used when an instance is created:
+Fields are declared with `field` inside the class body. A single declaration may
+introduce one or more fields:
 
 ```
 class Config
   field host = "localhost"
-  field port = 8080
-  field verbose = false
+  field port verbose
+  field retries timeout = 0
 ```
 
-!!! warning "Beware Mutable Default Values" Currently, all instances share the
-same default field value. This is subject to change. Fields that are data
-structures such as arrays or dictionaries should ideally be initialized to fresh
-instances in the `(init)` method, described below.
+Defaults values are optional. A field declared without `= ...` is initialized
+to `nil`.
+
+Defaults are evaluated when an instance is created, once per field:
+
+```
+class Pair
+  pub field left right = []
+
+let p = Pair()
+p.left.push 1
+assert_eq $p.left [1]
+assert_eq $p.right []
+```
 
 ### Methods
 
@@ -56,8 +67,7 @@ class Counter
 
 ## Computed Fields with `getter` and `setter`
 
-Computed fields are declared with `#[getter]` and `#[setter]` decorators on
-methods:
+Computed fields use decorators on methods:
 
 ```
 class Config
@@ -80,6 +90,10 @@ assert_eq $cfg.port 8080
 cfg.port = 9000
 assert_eq $cfg.port 9000
 ```
+
+See [Decorators](./decorators.md) for decorator syntax and evaluation order, and
+[`getter`](../api/std/getter.md) / [`setter`](../api/std/setter.md) for the
+descriptor helpers.
 
 ## Visibility
 
@@ -183,7 +197,7 @@ echo $r.width    # 10
 
 ## Inheritance
 
-A class can extend another class by specifying a parent after a colon.
+A class can inherit from one or more parents by listing them after a colon.
 Let's start with a base class:
 
 ```
@@ -225,6 +239,55 @@ echo $rex.describe()           # Rex is a dog (German Shepherd)
 echo $ Animal.describe $rex    # Rex is a dog
 ```
 
+### Multiple Inheritance
+
+List multiple parents after the colon, separated by spaces:
+
+```
+class LoudDog: Animal Pet
+  pub def describe self
+    "$(Animal.describe self)! pet=$(Pet.category self)"
+```
+
+Superclass references may also be dotted names:
+
+```
+class LocalTool: tools.build.Tool
+  pub field root = "."
+```
+
+### Member Resolution Order
+
+- Earlier superclasses in the list win when the same member is defined multiple
+  times
+- A class's own members override inherited ones
+- This rule is recursive: each parent brings along its already-merged inherited
+  members.
+
+For example:
+
+```
+class A
+  pub def who self
+    A
+
+class B
+  pub def who self
+    B
+
+class C: A B
+
+assert_eq $(C().who()) A
+```
+
+Swapping the parents changes the result:
+
+```
+class D: B A
+
+assert_eq $(D().who()) B
+```
+
 ### Calling Parent Constructor
 
 Call the parent's `(init)` explicitly to initialize inherited fields:
@@ -238,7 +301,7 @@ class Cat: Animal
     self.indoor = indoor
 ```
 
-## Type Checking
+## Type Inspection
 
 The `type` builtin works with classes:
 
@@ -254,377 +317,9 @@ assert (type rex Animal)    # true: Dog inherits from Animal
 assert_not (type rex Cat)   # false: Dog is not a Cat
 ```
 
-See [Basic Types](basic-types.md#type-checking) for more on `type`.
+See [Basic Types](basic-types.md#type-inspection) for more on `type`.
 
-## Special Methods
-
-Special methods integrate class instances with language features. They are
-defined with the method name in parentheses.
-
-### Quick Reference
-
-| Method     | Trigger                                    | Description                                |
-| ---------- | ------------------------------------------ | ------------------------------------------ |
-| `(init)`   | `MyClass args...`                          | Constructor                                |
-| `(call)`   | `instance args...`                         | Call instance as function                  |
-| `(bool)`   | `if instance`, `!instance`                 | Boolean conversion                         |
-| `(str)`    | `"$instance"`, `str(instance)`             | String conversion; fallback for `(arg)`    |
-| `(dbg)`    | `dbg` function                             | Debug string; fallback for `(str)`         |
-| `(arg)`    | `std.arg` function, external program spawn | Argument string                            |
-| `(unpack)` | `let :x :y = instance`                     | Destructuring                              |
-| `(index)`  | `instance[key]`                            | Index                                      |
-| `(assign)` | `instance[key] = val`                      | Index assign                               |
-| `(get)`    | `instance.missing_field`                   | Dynamic missing-field fallback             |
-| `(set)`    | `instance.missing_field = val`             | Dynamic missing-field assignment fallback  |
-| `(hash)`   | `std.hash(instance)`, dict key             | Hash code (must be consistent with `(eq)`) |
-| `(iter)`   | `for x = instance`, `[...instance]`        | Input iteration                            |
-| `(next)`   | iteration protocol                         | Advance input iterator                     |
-| `(sink)`   | `redirect output: $instance`               | Output iteration                           |
-| `(put)`    | output protocol                            | Advance output iterator                    |
-
-`(get)` and `(set)` only run when ordinary field lookup misses. They are
-separate from descriptor-backed fields such as
-[`getter`](../api/std/getter.md) and [`setter`](../api/std/setter.md).
-
-They can also be called explicitly for programmatic field access:
-
-```
-obj.(get) :field:
-obj.(set) :field: value
-```
-
-On type objects they may take an explicit receiver. This is useful for
-superclass delegation:
-
-```
-echo $ Super.(get) $self :field:
-Super.(set) $self :field: value
-```
-
-**Operators:**
-
-| Method    | Operator                             | Notes                                                |
-| --------- | ------------------------------------ | ---------------------------------------------------- |
-| `(neg)`   | `-x`                                 | Unary negation                                       |
-| `(bnot)`  | `~x`                                 | Bitwise NOT                                          |
-| `(add)`   | `x + y`                              |                                                      |
-| `(sub)`   | `x - y`                              | `self` is left operand                               |
-| `(rsub)`  | `y - x`                              | `self` is right operand (left doesn't handle it)     |
-| `(mul)`   | `x * y`                              |                                                      |
-| `(div)`   | `x / y`                              | `self` is left operand                               |
-| `(rdiv)`  | `y / x`                              | `self` is right operand                              |
-| `(ediv)`  | `x // y`                             | Euclidean division; `self` is left                   |
-| `(rediv)` | `y // x`                             | Euclidean division; `self` is right                  |
-| `(mod)`   | `x % y`                              | `self` is left operand                               |
-| `(rmod)`  | `y % x`                              | `self` is right operand                              |
-| `(band)`  | `x & y`                              | Bitwise AND                                          |
-| `(bor)`   | `x \| y`                             | Bitwise OR                                           |
-| `(bxor)`  | `x ^ y`                              | Bitwise XOR                                          |
-| `(eq)`    | `x == y`, `x != y`                   | `!=` is the logical inverse                          |
-| `(lt)`    | `x < y`, `x <= y`, `x > y`, `x >= y` | All four comparisons derived from `(lt)` and `(eq)`  |
-| `(hash)`  | `std.hash(x)`, dict key              | Must return an `int`; must be consistent with `(eq)` |
-
-### `(init)` --- Constructor
-
-Called when a new instance is created. Receives the new instance as the first
-argument:
-
-```
-class Point
-  field x = 0
-  field y = 0
-
-  def (init) self x y
-    self.x = x
-    self.y = y
-```
-
-### `(call)` --- Function Call
-
-Makes an instance callable like a function:
-
-```
-class Multiplier
-  field factor = 1
-
-  def (init) self factor
-    self.factor = factor
-
-  def (call) self x
-    (x * self.factor)
-
-let double = Multiplier 2
-echo (double 5)   # 10
-```
-
-### `(unpack)` --- Destructuring
-
-Return a more primitive type (such as a `dict`) for Do to destructure in lieu
-of `self`:
-
-```
-class Point
-  field x = 0
-  field y = 0
-
-  def (init) self x y
-    self.x = x
-    self.y = y
-
-  def (unpack) self
-    {x: self.x, y: self.y}
-
-let p = Point 3 4
-let :x :y = p
-echo "$x, $y"   # 3, 4
-```
-
-### `(iter)` --- Iteration
-
-Makes an instance usable as an iterator source for `for` loops, spread syntax,
-and so forth. Should return an object supporting the iteration protocol: either
-a built-in type, or a class instance that implements `(next)`:
-
-```
-class NumberRange
-  field start = 0
-  field stop = 0
-
-  def (init) self start stop
-    self.start = start
-    self.stop = stop
-
-  def (iter) self
-    (range start: self.start end: self.stop).iter()
-
-let r = NumberRange 0 5
-assert_eq [...r] [0, 1, 2, 3, 4]
-```
-
-### `(next)` --- Iterator Protocol
-
-Defines a class as a stateful iterator. Return the next value, or throw
-`IterStop` when exhausted:
-
-```
-import std:
-  - IterStop
-
-class Counter
-  field current = 0
-  field stop = 0
-
-  def (init) self start stop
-    self.current = start
-    self.stop = stop
-
-  def (iter) self
-    self
-
-  def (next) self
-    if (self.current >= self.stop)
-      throw IterStop()
-    let value = self.current
-    self.current = (self.current + 1)
-    value
-```
-
-An iterator should conventionally implement `(iter)` by returning `self`.
-
-### `(sink)` --- Sink Protocol
-
-Makes an instance usable as a sink target with `strand.put` or
-`strand.redirect`:
-
-```
-class ListCollector
-  field items = nil
-
-  def (init) self
-    self.items = []
-
-  def (sink) self
-    self.items.sink()
-
-let collector = ListCollector()
-redirect output: $collector do
-  put 1
-  put 2
-  put 3
-assert_eq $collector.items [0, 1, 2]
-```
-
-### `(put)` --- Sink Write Protocol
-
-Receives values from `put` when the instance is used as a sink:
-
-```
-class Summer
-  field sum = 0
-
-  def (put) self value
-    self.sum = (self.sum + value)
-
-  def (sink) self
-    self
-```
-
-A sink should conventionally implement `(sink)` by returning
-`self`.
-
-### `(bool)` --- Boolean Conversion
-
-Called when a value is used in a boolean context: `if`, `while`, `!`, `&&`,
-`||`. Return a bool. If not defined, instances are always truthy:
-
-```
-class Vec2
-  pub field x = 0
-  pub field y = 0
-
-  def (init) self x y
-    self.x = x
-    self.y = y
-
-  def (bool) self
-    (self.x != 0 || self.y != 0)
-
-let zero = Vec2 0 0
-let nonzero = Vec2 1 0
-assert_not (bool zero)
-assert (bool nonzero)
-```
-
-### `(hash)` --- Hash Code
-
-Called by `std.hash` and when an instance is used as a dictionary key. Must
-return an `int`. If not defined, the hash is derived from the instance's
-identity (memory address), consistent with the default identity-based equality.
-
-`std.hash` accepts multiple values and hashes them all together in sequence,
-which makes it easy to combine fields:
-
-```
-import std:
-  - hash
-
-def (hash) self
-  hash self.x self.y self.z
-```
-
-**Important:** if you define `(eq)`, you should also define `(hash)` so that
-equal objects produce the same hash:
-
-```
-import std:
-  - hash
-
-class Point
-  pub field x = 0
-  pub field y = 0
-
-  def (init) self x y
-    self.x = x
-    self.y = y
-
-  def (eq) self other
-    (self.x == other.x && self.y == other.y)
-
-  def (hash) self
-    (self.x * 31 + self.y)
-
-let p1 = Point 3 4
-let p2 = Point 3 4
-assert_eq (hash p1) (hash p2)   # equal objects, equal hashes
-
-# Can be used as dict keys
-let d = {}
-d[p1] = "hello"
-assert_eq $d[p2] "hello"
-```
-
-### `(str)` --- String Conversion
-
-Called when an instance is converted to a string via `str()` or used in string
-interpolation. Must return a `str`. Falls back to `(dbg)` if not defined:
-
-```
-class Point
-  pub field x = 0
-  pub field y = 0
-
-  def (init) self x y
-    self.x = x
-    self.y = y
-
-  def (str) self
-    "($(self.x), $(self.y))"
-
-let p = Point 3 4
-echo "Point is $p"   # Point is (3, 4)
-```
-
-### `(dbg)` --- Debug String
-
-Called for debug/inspect output and as a fallback when `(str)` is not defined.
-Must return a `str`. If neither `(str)` nor `(dbg)` is defined, the instance
-displays as `<object>`:
-
-```
-class Node
-  pub field val = 0
-
-  def (init) self val
-    self.val = val
-
-  def (dbg) self
-    "Node($(self.val))"
-```
-
-### `(arg)` --- External Command Argument
-
-Called when an instance is interpolated into an external command as an argument
-(e.g. `echo $obj` in a shell context). Must return a `str`. Falls back to
-`(str)` if not defined, which in turn falls back to `(dbg)`:
-
-```
-class Path
-  pub field parts
-
-  def (init) self ...parts
-    self.parts = parts
-
-  def (arg) self
-    self.parts.join("/")
-
-  def (str) self
-    "Path($(self.parts.join("/")))"
-```
-
-### `(index)` and `(assign)` --- Subscript Access
-
-`(index)` is called for `instance[key]` reads; `(assign)` is called for
-`instance[key] = value` writes:
-
-```
-class Table
-  pub field data = nil
-
-  def (init) self
-    self.data = {}
-
-  def (index) self key
-    self.data[key]
-
-  def (assign) self key value
-    self.data[key] = value
-
-let t = Table()
-t["x"] = 10
-assert_eq $t["x"] 10
-```
-
-### Operator Overloading
+## Operator Overloading
 
 Arithmetic, shift, bitwise, and comparison operators are dispatched to special
 methods. Define the method corresponding to the operator:
@@ -709,11 +404,316 @@ assert (n2 > n1)
 assert (n2 >= n1)
 ```
 
-### `(get)` and `(set)` --- Dynamic Field Fallback
+## Special Method Reference
 
-Called when a field or method is accessed on an instance and no matching `pub`
-field or method exists in the class prototype. Receives `self` and the field
-name as a symbol:
+Special methods integrate class instances with language features. They are
+defined with the method name in parentheses.
+
+### `(init)`: Constructor
+
+Called when a new instance is created. Receives the new instance as the first
+argument:
+
+```
+class Point
+  field x = 0
+  field y = 0
+
+  def (init) self x y
+    self.x = x
+    self.y = y
+```
+
+### `(call)`: Function Call
+
+Invoked when an instance is called like a function:
+
+```
+class Multiplier
+  field factor = 1
+
+  def (init) self factor
+    self.factor = factor
+
+  def (call) self x
+    (x * self.factor)
+
+let double = Multiplier 2
+echo (double 5)   # 10
+```
+
+### `(unpack)`: Destructuring
+
+Return a more primitive type (such as a `dict`) for the runtime to destructure
+in lieu of `self`:
+
+```
+class Point
+  field x = 0
+  field y = 0
+
+  def (init) self x y
+    self.x = x
+    self.y = y
+
+  def (unpack) self
+    {x: self.x, y: self.y}
+
+let p = Point 3 4
+let :x :y = p
+echo "$x, $y"   # 3, 4
+```
+
+### `(iter)`: Obtain Iterator
+
+Invoked implicitly by for loops, certain iterator combinators, etc. Should
+return an object supporting the iteration protocol: either a built-in type, or
+a class instance that implements `(next)`:
+
+```
+class NumberRange
+  field start = 0
+  field stop = 0
+
+  def (init) self start stop
+    self.start = start
+    self.stop = stop
+
+  def (iter) self
+    (range start: self.start end: self.stop).iter()
+
+let r = NumberRange 0 5
+assert_eq [...r] [0, 1, 2, 3, 4]
+```
+
+### `(next)`: Iterator Protocol
+
+Invoked when getting the next item from an iterator. Returns the next value,
+or throws `IterStop` when exhausted:
+
+```
+import std:
+  - IterStop
+
+class Counter
+  field current = 0
+  field stop = 0
+
+  def (init) self start stop
+    self.current = start
+    self.stop = stop
+
+  def (iter) self
+    self
+
+  def (next) self
+    if (self.current >= self.stop)
+      throw IterStop()
+    let value = self.current
+    self.current = (self.current + 1)
+    value
+```
+
+An iterator should conventionally implement `(iter)` by returning `self`.
+
+### `(sink)`: Obtain Sink
+
+Invoked to obtain a sink object, such as by `strand.put` or
+`strand.redirect output: $instance`
+
+```
+class ListCollector
+  field items = nil
+
+  def (init) self
+    self.items = []
+
+  def (sink) self
+    self.items.sink()
+
+let collector = ListCollector()
+redirect output: $collector do
+  put 1
+  put 2
+  put 3
+assert_eq $collector.items [0, 1, 2]
+```
+
+### `(put)`: Sink Protocol
+
+Invoked when an object is written to a sink.
+
+```
+class Summer
+  field sum = 0
+
+  def (put) self value
+    self.sum = (self.sum + value)
+
+  def (sink) self
+    self
+```
+
+A sink should conventionally implement `(sink)` by returning
+`self`.
+
+### `(bool)`: Boolean Conversion
+
+Called when a value is used in a boolean context: `if`, `while`, `!`, `&&`,
+`||`. Return a bool. If not defined, instances are always truthy:
+
+```
+class Vec2
+  pub field x = 0
+  pub field y = 0
+
+  def (init) self x y
+    self.x = x
+    self.y = y
+
+  def (bool) self
+    (self.x != 0 || self.y != 0)
+
+let zero = Vec2 0 0
+let nonzero = Vec2 1 0
+assert_not (bool zero)
+assert (bool nonzero)
+```
+
+### `(hash)`: Hash Code
+
+Called by `std.hash` and when an instance is used as a dictionary key. Must
+return an `int`. If not defined, the hash is derived from the instance's
+identity (memory address), consistent with the default identity-based equality.
+
+`std.hash` accepts multiple values and hashes them all together in sequence,
+which makes it easy to combine fields:
+
+```
+import std:
+  - hash
+
+def (hash) self
+  hash self.x self.y self.z
+```
+
+**Important:** if you define `(eq)`, you should also define `(hash)` so that
+equal objects produce the same hash:
+
+```
+import std:
+  - hash
+
+class Point
+  pub field x = 0
+  pub field y = 0
+
+  def (init) self x y
+    self.x = x
+    self.y = y
+
+  def (eq) self other
+    (self.x == other.x && self.y == other.y)
+
+  def (hash) self
+    (self.x * 31 + self.y)
+
+let p1 = Point 3 4
+let p2 = Point 3 4
+assert_eq (hash p1) (hash p2)   # equal objects, equal hashes
+
+# Can be used as dict keys
+let d = {}
+d[p1] = "hello"
+assert_eq $d[p2] "hello"
+```
+
+### `(str)`: String Conversion
+
+Called when an instance is converted to a string via `str()` or used in string
+interpolation. Must return a `str`. Falls back to `(dbg)` if not defined:
+
+```
+class Point
+  pub field x = 0
+  pub field y = 0
+
+  def (init) self x y
+    self.x = x
+    self.y = y
+
+  def (str) self
+    "($(self.x), $(self.y))"
+
+let p = Point 3 4
+echo "Point is $p"   # Point is (3, 4)
+```
+
+### `(dbg)`: Debug String
+
+Called for debug/inspect output and as a fallback when `(str)` is not defined.
+Must return a `str`. If neither `(str)` nor `(dbg)` is defined, the instance
+displays as `<object>`:
+
+```
+class Node
+  pub field val = 0
+
+  def (init) self val
+    self.val = val
+
+  def (dbg) self
+    "Node($(self.val))"
+```
+
+### `(arg)`: External Command Argument
+
+Called when an instance is interpolated into an external command as an argument
+(e.g. `echo $obj` in a shell context). Must return a `str`. Falls back to
+`(str)` if not defined, which in turn falls back to `(dbg)`:
+
+```
+class Path
+  pub field parts
+
+  def (init) self ...parts
+    self.parts = parts
+
+  def (arg) self
+    self.parts.join("/")
+
+  def (str) self
+    "Path($(self.parts.join("/")))"
+```
+
+### `(index)` and `(assign)`: Subscript Access
+
+`(index)` is called for `instance[key]` reads; `(assign)` is called for
+`instance[key] = value` writes:
+
+```
+class Table
+  pub field data = nil
+
+  def (init) self
+    self.data = {}
+
+  def (index) self key
+    self.data[key]
+
+  def (assign) self key value
+    self.data[key] = value
+
+let t = Table()
+t["x"] = 10
+assert_eq $t["x"] 10
+```
+
+### `(get)` and `(set)`: Dynamic Field Fallback
+
+Called when a field or method is accessed on an instance and no matching field,
+method, or getter/setter exists. Receives `self` and the field name as a
+symbol:
 
 ```
 class Dynamic
@@ -737,34 +737,4 @@ assert_eq (d.(get) :foo:) 42
 
 d.(set) :baz: 99
 assert_eq $d.baz 99
-```
-
-`pub` fields still take priority and are never routed through `(get)` or
-`(set)`:
-
-```
-class WithPub
-  pub field x = 0
-
-  def (init) self v
-    self.x = v
-
-  def (get) _self _key
-    "fallback"
-
-let w = WithPub 10
-# static pub field, not routed through (get)
-assert_eq $w.x 10
-assert_eq $w.missing "fallback"
-```
-
-`(get)` also serves as a fallback for method dispatch. When `obj.method(args)`
-is called and `method` is not a statically defined method, the runtime calls
-`(get)` to retrieve a callable and then invokes it directly with the provided
-arguments. Any `self`-binding must be handled by `(get)` itself:
-
-```
-let dp = Dynamic()
-dp.greet = do |name| "hello $name"
-assert_eq $dp.greet("world") "hello world"
 ```

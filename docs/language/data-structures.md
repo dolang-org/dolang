@@ -41,14 +41,14 @@ let d = {name: "Alice", age: 30}
 
 ### Symbol Keys vs String Keys
 
-A bare `key:` in a dict literal creates a **symbol** key:
+A literal `key:` in a dict literal creates a **symbol** key:
 
 ```
 let d = {name: "Alice"}
 # key is the symbol :name:
 ```
 
-To interpret the key as an expression instead, prefix it with `$`:
+To interpret the key as a variable instead, prefix it with `$`:
 
 ```
 let key = "name"
@@ -60,7 +60,7 @@ Constants, quoted strings, parenthesized expressions, and other literals are
 automatically treated as expressions. Values are always treated as full,
 whitespace-insensitive expressions.
 
-### Non-Pair Elements
+### Positional Elements
 
 Dict literals can contain values without explicit keys. These receive
 incrementing integer keys starting at 0:
@@ -158,7 +158,7 @@ Like sets, tuples do not have a dedicated literal syntax. Construct them with
 the `tuple` type object from an iterable:
 
 ```
-let tup = tuple([1, 2, 3])
+let tup = tuple [1, 2, 3]
 assert_eq $tup[1] 2
 ```
 
@@ -170,7 +170,7 @@ for pair = {name: "Alice"}
   echo $pair[1]
 ```
 
-Note that mutable collections may be used as `dict` keys, so `tuple` usage
-is not mandatory.
+Note that mutable collections may be used as `dict` keys, so `tuple` usage is
+not mandatory as in Python.
 
 See the [Tuple API](../api/std/tuple.md) for details.

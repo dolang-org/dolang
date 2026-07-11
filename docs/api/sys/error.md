@@ -26,3 +26,7 @@ catch Error: err
 ```
 
 If the failure did not originate from an OS errno, `errno` is `nil`.
+
+## Inherits
+
+- [`RuntimeError`](../std/runtime-error.md)

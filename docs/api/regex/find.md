@@ -5,3 +5,7 @@ An iterator over all non-overlapping matches of a pattern in a string.
 implements `Iter`, so it can be used directly in `for` loops.
 
 Each iteration yields a [`Captures`](./captures.md) value for one match.
+
+## Inherits
+
+- [`Iter`](../std/iter.md)

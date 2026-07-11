@@ -6,4 +6,4 @@ Error raised to signal that an output iterator has been closed.
 
 ## Inherits
 
-[`Error`](./error.md)
+- [`Error`](./error.md)

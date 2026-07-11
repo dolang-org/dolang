@@ -6,4 +6,4 @@ masked so cleanup can complete. See
 
 ## Inherits
 
-[`Error`](./error.md)
+- [`Error`](./error.md)

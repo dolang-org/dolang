@@ -53,6 +53,7 @@ nav:
     - language/classes.md
     - language/error-handling.md
     - language/concurrency.md
+    - language/decorators.md
     - language/misc.md
     - language/prelude.md
   - Shell Guide:
@@ -76,8 +77,6 @@ nav:
     - diagnostic: api/diagnostic.md
     - exec:
       - api/exec/index.md
-    - container:
-      - api/container/index.md
     - container.docker:
       - api/container/docker/index.md
       - api/container/docker/container.md
@@ -121,6 +120,12 @@ nav:
       - api/http/response.md
       - api/http/status.md
     - json: api/json.md
+    - patch:
+      - api/patch/index.md
+      - api/patch/patch.md
+      - api/patch/patchiter.md
+      - api/patch/parseerror.md
+      - api/patch/applyerror.md
     - toml: api/toml.md
     - load:
       - api/load/index.md

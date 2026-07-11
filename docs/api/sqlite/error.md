@@ -13,3 +13,7 @@ open "mydb.sqlite" do |conn|
   catch Error: e
     echo "SQLite error: $e"
 ```
+
+## Inherits
+
+- [`RuntimeError`](../std/runtime-error.md)

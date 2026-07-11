@@ -5,4 +5,4 @@ meaning for the operation.
 
 ## Inherits
 
-[`RuntimeError`](./runtime-error.md)
+- [`RuntimeError`](./runtime-error.md)

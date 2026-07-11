@@ -15,8 +15,8 @@ introduces variable references and expressions:
 
 ```
 echo hello world
-echo 1+1 https://example.com
 # prints: hello world
+echo 1+1 https://example.com
 # prints: 1+1 https://example.com
 ```
 

@@ -9,6 +9,10 @@ are instances of `Sink`, which can be used for type testing.
 assert_eq (type $ [].sink()) $Sink
 ```
 
+## Inherits
+
+- [`Sinkable`](./sinkable.md)
+
 ## Methods
 
 ### `put value`

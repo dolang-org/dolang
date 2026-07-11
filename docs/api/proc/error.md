@@ -31,3 +31,7 @@ with that message.
 
 Spawn, lookup, and other I/O failures do not raise `Error`; they raise
 [`sys.Error`](../sys/error.md) instead.
+
+## Inherits
+
+- [`RuntimeError`](../std/runtime-error.md)

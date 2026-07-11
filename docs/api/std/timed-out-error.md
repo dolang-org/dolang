@@ -5,4 +5,4 @@ suspend or interrupt-check points.
 
 ## Inherits
 
-[`RuntimeError`](./runtime-error.md)
+- [`RuntimeError`](./runtime-error.md)

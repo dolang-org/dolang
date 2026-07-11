@@ -5,4 +5,4 @@ such as using a closed handle or stale reference.
 
 ## Inherits
 
-[`RuntimeError`](./runtime-error.md)
+- [`RuntimeError`](./runtime-error.md)

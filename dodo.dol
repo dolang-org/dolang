@@ -141,6 +141,7 @@ def with_mkdocs spec func
   env
     DOLANG_HIGHLIGHT: $spec.bin("dolang-highlight")
     DOLANG_DOC: $spec.bin("dolang-doc")
+    NO_MKDOCS_2_WARNING: 1
     $func
 
 def cargo_test spec rest

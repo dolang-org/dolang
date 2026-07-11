@@ -41,9 +41,7 @@ Immutable UTF-8 strings. Created with double quotes or as bare literals at
 statement level:
 
 ```
-let quoted = "hello, world"
-let bare = hello
-echo "They are equal: $(quoted == bare)"
+echo "Quoted strings" or bare literals
 ```
 
 Quoted strings support escape sequences (`\n`, `\t`, `\\`, `\"`, `\$`) and
@@ -204,7 +202,7 @@ Interpolation works the same way as in regular strings, using `$`:
 
 ```
 let prefix = b"foo"
-let result = b"${prefix}bar"   # b"foobar"
+let result = b"$(prefix)bar"   # b"foobar"
 ```
 
 Both `str` and `bin` values can be interpolated into a binary string. `str`
@@ -216,39 +214,27 @@ Binary strings and regular strings are distinct types and are never equal,
 even when their byte content matches:
 
 ```
-assert (!(b"hello" == "hello"))
+assert_ne b"hello" "hello"
 ```
-
-Use `(type v bin)` to test whether a value is a binary string.
 
 ## Booleans (`bool`)
 
 `true` and `false`.
 
-```
-let flag = true
-if flag
-  echo yes
-```
-
 ## Nil (`nil`)
 
-The absence of a value.
-
-```
-let x = nil
-if (!x)
-  echo "x is falsy"
-```
+A generic "absent" marker and the result of functions, expressions, and
+statements with nothing interesting to return.
 
 ## Symbols (`sym`)
 
-Interned identifiers surrounded by colons. Used for unquoted dictionary keys,
-key parameters, record fields, ad-hoc enumerated values, etc.
+Globally canonical identifiers that are more efficient to hash and compare than
+`str`. Used for literal dictionary keys, key arguments in variadic argument
+packs, object fields, ad-hoc enumerated constants, etc.
 
 ```
-let status = :ok:
-let mode = :verbose:
+let value = some_dict[:key:]
+let mode = :VERBOSE:
 ```
 
 Symbols can also be created from strings with `sym`:
@@ -262,7 +248,7 @@ let s = sym "my_symbol"
 See [Data Structures](./data-structures.md) for arrays, dictionaries, records,
 sets, and tuples.
 
-## Type Checking
+## Type Inspection
 
 Every value has an associated **type object** that represents its type. The
 built-in types (`int`, `float`, `str`, `bool`, `sym`, `array`, `dict`, etc.)

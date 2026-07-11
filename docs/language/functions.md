@@ -25,8 +25,7 @@ def hello()
 
 ## Implicit Return
 
-A function returns the result of its statement or block implicitly. Every
-statement produces a result:
+A function returns the result of its final statement:
 
 | Statement                   | Result                                        |
 | --------------------------- | --------------------------------------------- |
@@ -37,8 +36,9 @@ statement produces a result:
 | `if` (without final `else`) | `nil`                                         |
 | `try`/`catch`               | result of `try` (no error) or invoked `catch` |
 
-All other statements have a `nil` result. The result of the last statement in a
-block becomes the block's result, and thus that of the function call.
+All other statements have a `nil` result.
+
+## Explicit Return
 
 Use `return` for early exit:
 
@@ -109,12 +109,22 @@ connect port: 3000             # localhost:3000
 connect host: example.com      # example.com:8080
 ```
 
-Defaults are instantiated on every invocation of the function, so the following
+Defaults are evaluated on every invocation of the function, so the following
 function always returns a fresh empty `array` if called with no arguments:
 
 ```
 def default_empty arg = []
   arg
+```
+
+Defaults are evaluated left-to-right and may reference earlier parameters:
+
+```
+def window start end = (start + 10)
+  start..end
+
+assert_eq (window 5) (5..15)
+assert_eq (window 5 20) (5..20)
 ```
 
 ### Variadic Parameters
@@ -129,10 +139,11 @@ log INFO hello world
 # prints: [INFO] hello world
 ```
 
-The `rest` parameter receives an argument iterator that yields positional and
-key arguments in invocation order. When iterating arguments manually, each item
-is a `[key, value]` pair where the key is the symbol for arguments and the
-positional argument index (0-origin) for positional arguments.
+The `rest` parameter receives an immutable argument pack. It is iterable, but
+is not itself an iterator, so iterating or spreading it does not consume it.
+Iteration yields positional and key arguments in invocation order as key/value
+tuples, where the key is the positional argument index (0-origin) for
+positional arguments.
 
 ```
 def echo_all ...args
@@ -147,7 +158,7 @@ echo_all foo bar: 1 baz
 
 ### Argument Spreading
 
-Spread an iterable into a call:
+Spread collections or iterators into a call:
 
 ```
 let args = [1, 2, 3]
@@ -263,7 +274,7 @@ See [Modules](./modules.md) for details on the module system.
 
 ## Decorators
 
-Function defs may be preceded by one or more decorators using `#[expr]` syntax:
+Function defs may be preceded by decorators:
 
 ```
 #[memoize]
@@ -274,6 +285,4 @@ def fib n
     (fib(n - 1) + fib(n - 2))
 ```
 
-Each decorator expression is evaluated in the surrounding scope. After the
-function value is created, decorators are applied from bottom to top, with each
-decorator receiving the current value and returning a replacement.
+See [Decorators](./decorators.md) for syntax, ordering, and examples.

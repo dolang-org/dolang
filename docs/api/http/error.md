@@ -28,3 +28,7 @@ catch Error: err
   if (err.url != nil)
     echo $err.url.host
 ```
+
+## Inherits
+
+- [`RuntimeError`](../std/runtime-error.md)
