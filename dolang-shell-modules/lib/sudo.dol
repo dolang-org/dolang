@@ -1,7 +1,7 @@
 import xdg
   shell:
     - Vfs
-  container._common:
+  _container.common:
     - agent_bin
   fs:
     - with_temp_dir

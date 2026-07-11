@@ -12,7 +12,7 @@ import http digest progress json patch strand proc time
     - Url
   shell:
     - Vfs
-  container._common:
+  _container.common:
     - runtime_dir
     - agent_bin
     - cache_dir
@@ -117,7 +117,7 @@ pub class ArchiveError: RuntimeError
 # Raised when an image reference cannot be found.
 #
 # ```
-# import container.docker: docker
+# import docker
 #
 # try
 #   docker.image "nonexistent:latest"

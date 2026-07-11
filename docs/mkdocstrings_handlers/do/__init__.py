@@ -81,8 +81,8 @@ class DoHandler(BaseHandler):
           - ``module.ClassName.member``     → a class member (method or field)
 
         Resolution tries the longest module prefix first so that dotted module
-        names (e.g. ``container.docker``) are preferred over treating the last
-        component as an entity name.
+        names (e.g. ``_container.dockman``) are preferred over treating the
+        last component as an entity name.
         """
         paths_opt = options.get("paths", [])
 

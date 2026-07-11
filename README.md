@@ -37,7 +37,7 @@ echo "Building on $kernel, branch $branch"
 **Declarative and procedural in one syntax:**
 
 ```
-import progress container.podman: podman
+import progress podman
 
 let PACKAGES =
   - gcc

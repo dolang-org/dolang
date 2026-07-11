@@ -12,10 +12,10 @@ if (sys.os_info().os != :LINUX:)
   skip "not supported on this system"
 
 let runtime = if run.docker.which()
-  import container.docker: docker
+  import docker
   docker
 else if run.podman.which()
-  import container.podman: podman
+  import podman
   podman
 else
   skip "no container runtime available"

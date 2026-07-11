@@ -1,7 +1,7 @@
 import
   shell:
     - Vfs
-  container._common:
+  _container.common:
     - runtime_dir
     - agent_bin
   proc.run:
