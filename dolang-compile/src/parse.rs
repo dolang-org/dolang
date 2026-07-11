@@ -6,13 +6,13 @@ use std::{
 };
 
 use crate::{
-    Compiler, ast,
+    Compiler,
     ast::{
-        Arg, ArrayElem, Assign, Bind, Block, CatchHandler, Class, ClassSuper, Const, Decorator,
-        Def, DictElem, Expand, Expr, ExprBody, For, Function, GetVariant, GroupDelim, Ident, If,
-        IfBranch, Import, ImportElement, ImportItem, Key, Let, Method, Pair, Param, ParamDefault,
-        Pattern, PrimStmt, Return, Single, SpecialMethod, Stmt, Throw, Try, Unit, While,
-        visit::Node,
+        Arg, ArrayElem, Assign, Bind, Block, CatchHandler, Class, ClassBody, ClassMember,
+        ClassSuper, Const, Decorator, Def, DictElem, Expand, Expr, ExprBody, FieldDecl, FieldInit,
+        FieldName, For, Function, GetVariant, GroupDelim, Ident, If, IfBranch, Import,
+        ImportElement, ImportItem, Key, Let, Method, Pair, Param, ParamDefault, Pattern, PrimStmt,
+        Return, Single, SpecialMethod, Stmt, Throw, Try, Unit, While, visit::Node,
     },
     diag::{AnnotationKind, NoteKind, Severity},
     lex::{self, Keyword, Lexer, Mode, Op, Token, TokenInfo},
@@ -1604,7 +1604,7 @@ impl<'a> Parser<'a> {
                         } else {
                             None
                         };
-                        elems.push(crate::ast::ArrayElem::Expand(Expand {
+                        elems.push(ArrayElem::Expand(Expand {
                             expr,
                             delim_span: comma,
                             ellipsis_span,
@@ -1618,7 +1618,7 @@ impl<'a> Parser<'a> {
                         } else {
                             None
                         };
-                        elems.push(crate::ast::ArrayElem::Single(Single {
+                        elems.push(ArrayElem::Single(Single {
                             expr,
                             delim_span: comma,
                         }));
@@ -3769,12 +3769,8 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_field_into(
-        &mut self,
-        scope: &mut Scope,
-        pub_span: Option<Span>,
-        out: &mut Vec<ast::ClassMember>,
-    ) -> Result<()> {
+    fn parse_field(&mut self, scope: &mut Scope, pub_span: Option<Span>) -> Result<FieldDecl> {
+        use self::Ident;
         use TokenInfo::*;
 
         let field_span = self.expect(scope, &[ExpectKind::Keyword(self::Keyword::Field)])?;
@@ -3799,52 +3795,60 @@ impl<'a> Parser<'a> {
         }
 
         let rhs = if let Some(token!(Equal)) = self.peek()? {
-            if fields.len() > 1 {
-                let token = self.next()?;
-                return Err(self.syntax_error(scope, token, "multiple field names cannot use `=`"));
-            }
             let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
             self.expect(scope, &[ExpectKind::ArgSep])?;
-            let (expr, _) = self.parse_expr_const(scope, ExprMode::Compact)?;
-            Some((equal_span, expr))
+            let rhs = self.parse_cmd_or_expr(scope, true)?;
+            let init = if let Some(fold) = rhs.fold(self.file) {
+                FieldInit::Const(rhs, fold)
+            } else {
+                FieldInit::Thunk(Function {
+                    params: vec![],
+                    body: Block {
+                        stmts: vec![Stmt::Prim(PrimStmt::Expr(rhs))],
+                        vars: vec![],
+                        repl: None,
+                    },
+                })
+            };
+            Some((equal_span, init))
         } else {
             None
         };
 
-        if let Some((equal_span, default)) = rhs {
-            let field = fields[0];
-            out.push(ast::ClassMember::Field(ast::FieldDecl {
-                ident: crate::ast::Ident::new(field),
-                origin: None,
-                private_sym: None,
-                default,
+        if let Some((equal_span, init)) = rhs {
+            return Ok(FieldDecl {
+                fields: fields
+                    .into_iter()
+                    .map(|span| FieldName {
+                        ident: Ident::new(span),
+                        origin: None,
+                        private_sym: None,
+                    })
+                    .collect(),
+                init,
                 field_span,
                 equal_span: Some(equal_span),
                 pub_span,
-            }));
-            return Ok(());
+            });
         }
 
-        for field in fields {
-            out.push(ast::ClassMember::Field(ast::FieldDecl {
-                ident: crate::ast::Ident::new(field),
-                origin: None,
-                private_sym: None,
-                default: Expr::Nil(field_span),
-                field_span,
-                equal_span: None,
-                pub_span,
-            }));
-        }
-
-        Ok(())
+        Ok(FieldDecl {
+            fields: fields
+                .into_iter()
+                .map(|span| FieldName {
+                    ident: Ident::new(span),
+                    origin: None,
+                    private_sym: None,
+                })
+                .collect(),
+            init: FieldInit::None,
+            field_span,
+            equal_span: None,
+            pub_span,
+        })
     }
 
-    fn parse_class_stmt(
-        &mut self,
-        scope: &mut Scope,
-        out: &mut Vec<ast::ClassMember>,
-    ) -> Result<()> {
+    fn parse_class_member(&mut self, scope: &mut Scope) -> Result<ClassMember> {
         use self::Keyword::*;
         use TokenInfo::*;
 
@@ -3868,14 +3872,11 @@ impl<'a> Parser<'a> {
                         "decorators are only valid before `def` in a class body",
                     ));
                 }
-                self.parse_field_into(scope, pub_span, out)
+                Ok(ClassMember::Field(self.parse_field(scope, pub_span)?))
             }
-            Some(token!(Keyword(Def))) => {
-                out.push(ast::ClassMember::Method(
-                    self.parse_method(scope, pub_span, decorators)?,
-                ));
-                Ok(())
-            }
+            Some(token!(Keyword(Def))) => Ok(ClassMember::Method(
+                self.parse_method(scope, pub_span, decorators)?,
+            )),
             Some(token!(Dedent)) | None => {
                 Err(self.syntax_error(scope, None, "expected statement"))
             }
@@ -3890,7 +3891,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_class_block(&mut self, scope: &mut Scope) -> Result<ast::ClassBody> {
+    fn parse_class_block(&mut self, scope: &mut Scope) -> Result<ClassBody> {
         use TokenInfo::*;
 
         let mut members = Vec::new();
@@ -3902,7 +3903,7 @@ impl<'a> Parser<'a> {
                     Some(token!(StmtSep)) => {
                         self.advance();
                     }
-                    _ => self.parse_class_stmt(scope, &mut members)?,
+                    _ => members.push(self.parse_class_member(scope)?),
                 }
                 if let Some(token!(ArgSep)) = self.peek()? {
                     self.advance();
@@ -3921,7 +3922,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(ast::ClassBody { members })
+        Ok(ClassBody { members })
     }
 
     fn parse_class(
@@ -3969,7 +3970,7 @@ impl<'a> Parser<'a> {
                 self.expect(scope, &[ExpectKind::Dedent])?;
                 block
             }
-            Some(token!(TokenInfo::StmtSep)) => ast::ClassBody { members: vec![] },
+            Some(token!(TokenInfo::StmtSep)) => ClassBody { members: vec![] },
             other => {
                 return Err(self.syntax_error(
                     scope,

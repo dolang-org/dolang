@@ -106,6 +106,11 @@ pub(crate) struct Property<'v> {
     pub(crate) setter: Option<Value<'v>>,
 }
 
+pub(crate) enum FieldDefault<'v> {
+    Value(Value<'v>),
+    Thunk(Value<'v>),
+}
+
 /// A single entry in a class's unified symbol table.
 pub(crate) enum ClassEntry<'v> {
     /// Index into `field_defaults` / instance `fields`.
@@ -133,7 +138,7 @@ pub(crate) struct ClassObject<'v> {
     // Roots for the symbols used by `entries`.
     pub(crate) symbols: alias::Box<[GcObj<'v, SymObj>]>,
     // Default values for field slots (indexed by ClassEntry::Field(n))
-    pub(crate) field_defaults: alias::Box<[Value<'v>]>,
+    pub(crate) field_defaults: alias::Box<[FieldDefault<'v>]>,
     // Non-abstract native supers, in transitive collection order (left-to-right).
     // Index in this slice == slot index in ClassInstance::native_slots.
     pub(crate) native_supers: alias::Box<[Value<'v>]>,
@@ -194,7 +199,9 @@ unsafe impl<'v> Collect for ClassObject<'v> {
             }
         }
         for v in self.field_defaults.iter() {
-            v.accept(visit)?;
+            match v {
+                FieldDefault::Value(v) | FieldDefault::Thunk(v) => v.accept(visit)?,
+            }
         }
         for v in self.native_supers.iter() {
             v.accept(visit)?;
@@ -217,7 +224,9 @@ unsafe impl<'v> Collect for ClassObject<'v> {
             }
         }
         for v in self.field_defaults.iter_mut() {
-            *v = Value::NIL;
+            match v {
+                FieldDefault::Value(v) | FieldDefault::Thunk(v) => *v = Value::NIL,
+            }
         }
         for v in self.native_supers.iter_mut() {
             *v = Value::NIL;
@@ -300,16 +309,27 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let me = this.get();
-        let defaults = me.field_defaults.iter().map(|v| v.dup()).collect();
         let native_slot_count = me.native_supers.len();
         let class_obj = this.to_strong();
 
         strand
-            .with_slots(async move |strand, [mut inst, tmp]| {
+            .with_slots(async move |strand, [mut inst, mut tmp]| {
+                let mut defaults = Vec::with_capacity(me.field_defaults.len());
+                for default in me.field_defaults.iter() {
+                    match default {
+                        FieldDefault::Value(value) => defaults.push(value.dup()),
+                        FieldDefault::Thunk(thunk) => {
+                            call!(strand, thunk, &mut tmp).await?;
+                            defaults.push(tmp.take());
+                        }
+                    }
+                }
                 inst.store(Value::from_object(GcObj::new_annex(
                     strand.arena(),
                     strand.builtin_types().class_instance,
-                    ClassInstance { fields: defaults },
+                    ClassInstance {
+                        fields: defaults.into(),
+                    },
                     ClassInstanceAnnex {
                         class: class_obj,
                         natives: (0..native_slot_count)

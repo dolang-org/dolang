@@ -81,12 +81,8 @@ def show ...cmd
   run ...cmd
 
 class Spec
-  pub let target = nil
-  pub let tuple = nil
-  pub let profile = nil
-  pub let channel = nil
-  pub let target_dir = nil
-  let extra = nil
+  pub field target tuple profile channel target_dir
+  field extra
 
   def (init)
     self args

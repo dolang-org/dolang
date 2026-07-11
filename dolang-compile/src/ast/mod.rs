@@ -1844,14 +1844,24 @@ impl Node for ClassMember {
     }
 }
 
-pub(crate) struct FieldDecl {
+pub(crate) struct FieldName {
     pub(crate) ident: Ident,
     pub(crate) origin: Option<origin::Id>,
     pub(crate) private_sym: Option<sym::Id>,
-    pub(crate) default: Expr,
+}
+
+pub(crate) struct FieldDecl {
+    pub(crate) fields: Vec<FieldName>,
+    pub(crate) init: FieldInit,
     pub(crate) field_span: Span,
     pub(crate) equal_span: Option<Span>,
     pub(crate) pub_span: Option<Span>,
+}
+
+pub(crate) enum FieldInit {
+    None,
+    Const(Expr, Const),
+    Thunk(Function),
 }
 
 impl Node for FieldDecl {
@@ -1860,11 +1870,18 @@ impl Node for FieldDecl {
             visit.token(Token::Keyword, span, None)?;
         }
         visit.token(Token::Keyword, self.field_span, None)?;
-        visit.token(Token::Field, self.ident.span, self.origin)?;
+        for field in &self.fields {
+            visit.token(Token::Field, field.ident.span, field.origin)?;
+        }
         if let Some(span) = self.equal_span {
             visit.token(Token::Operator, span, None)?;
         }
-        visit.node(&self.default)
+        match &self.init {
+            FieldInit::None => (),
+            FieldInit::Const(expr, _) => visit.node(expr)?,
+            FieldInit::Thunk(function) => visit.node(function)?,
+        }
+        ControlFlow::Continue(())
     }
 
     fn kind(&self) -> NodeKind {

@@ -193,18 +193,10 @@ def has_default p
 # ===========================================================================
 
 class Parser
-  pub field name = nil
-  pub field help = nil
-  pub field handler = nil
-  field sym = nil
-  field opts = nil
-  field long_opts = nil
-  field short_opts = nil
-  field args = nil
-  field sub_cmds = nil
-  field usage_override = nil
-  field rec = nil
-  field arg_idx = nil
+  pub field name help handler
+  field sym usage_override rec arg_idx
+  field opts args = []
+  field long_opts short_opts sub_cmds = {}
   field drain = false
 
   def (init) self :name :help = nil ...spec
@@ -217,13 +209,6 @@ class Parser
         cmd = part
       if (cmd != nil)
         self.#sym = sym $ cmd.replace "-" "_"
-    self.#opts = []
-    self.#long_opts = {}
-    self.#short_opts = {}
-    self.#args = []
-    self.#sub_cmds = {}
-    self.handler = nil
-    self.#usage_override = nil
     for k v = spec
       if (type k == int)
         if (type v dict)

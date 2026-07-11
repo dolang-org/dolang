@@ -1,7 +1,0 @@
-class BadFieldDefault
-  field value = other
-# error: expression is not a constant
-#   --> class_field_non_const_error.dol:LL:LL
-#    |
-# LL |   field value = other
-#    |                 ^^^^^
