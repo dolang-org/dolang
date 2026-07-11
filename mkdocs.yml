@@ -75,19 +75,6 @@ nav:
       - api/compile/note.md
       - api/compile/patch.md
     - diagnostic: api/diagnostic.md
-    - exec:
-      - api/exec/index.md
-    - container.docker:
-      - api/container/docker/index.md
-      - api/container/docker/container.md
-      - api/container/docker/image.md
-      - api/container/docker/noimageerror.md
-    - container.podman:
-      - api/container/podman/index.md
-      - api/container/podman/container.md
-      - api/container/podman/image.md
-      - api/container/podman/noimageerror.md
-    - container.toolbx: api/container/toolbx.md
     - digest:
       - api/digest/index.md
       - api/digest/blake3.md
@@ -96,6 +83,13 @@ nav:
       - api/digest/sha256.md
       - api/digest/sha512.md
       - api/digest/state.md
+    - docker:
+      - api/docker/index.md
+      - api/docker/container.md
+      - api/docker/image.md
+      - api/docker/noimageerror.md
+    - exec:
+      - api/exec/index.md
     - fs:
       - api/fs/index.md
       - api/fs/attrs.md
@@ -109,6 +103,11 @@ nav:
     - glob:
       - api/glob/index.md
       - api/glob/glob.md
+    - podman:
+      - api/podman/index.md
+      - api/podman/container.md
+      - api/podman/image.md
+      - api/podman/noimageerror.md
     - progress:
       - api/progress/index.md
       - api/progress/indicator.md
@@ -127,6 +126,7 @@ nav:
       - api/patch/parseerror.md
       - api/patch/applyerror.md
     - toml: api/toml.md
+    - toolbx: api/toolbx.md
     - load:
       - api/load/index.md
       - api/load/importhandler.md

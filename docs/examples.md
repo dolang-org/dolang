@@ -27,7 +27,7 @@ with the results installed:
 
 ```
 #!/usr/bin/env -S dolang --strict
-import xml progress container.docker: docker
+import xml progress docker
 import proc.run:
   - zypper
 

@@ -52,7 +52,7 @@ Mixed structured data and code in the same syntax and runtime:
 
 ```
 # Build a container with podman with progress tracking
-import progress container.podman: podman
+import progress podman
 
 let PACKAGES =
   - gcc
@@ -105,7 +105,7 @@ host:
 
 ```
 import shlex
-import container.podman: podman
+import podman
 import fs:
   - open
 
@@ -124,9 +124,9 @@ echo $ read_key ubuntu:24.04 /etc/os-release PRETTY_NAME
 
 **Automation** — run external programs as functions
 ([`proc.run`](./api/proc-run.md)), manage files ([`fs`](./api/fs/index.md)),
-build and run containers ([podman](./api/container/podman/index.md),
-[docker](./api/container/docker/index.md),
-[toolbx](./api/container/toolbx.md)), parse CLI arguments
+build and run containers ([podman](./api/podman/index.md),
+[docker](./api/docker/index.md),
+[toolbx](./api/toolbx.md)), parse CLI arguments
 ([`args`](./api/args.md)), elevate privileges ([`sudo`](./api/sudo.md)), read
 system configuration ([`systemd`](./api/systemd.md), [`xdg`](./api/xdg.md)),
 and show friendly [progress indicators](./api/progress/index.md).

@@ -1,7 +1,7 @@
 import
   proc.run:
     docker: docker_cli
-  container._dockman: dockman
+  _container.dockman: dockman
 
 pub let Image = dockman.Image
 pub let Container = dockman.Container
@@ -86,7 +86,7 @@ pub def with image func
 # The final `Image`
 #
 # ```
-# import container.docker: docker
+# import docker
 # let img = docker.build
 #   from: ubuntu:24.04
 #   run: do run apt install -y curl
