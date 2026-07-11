@@ -12,8 +12,6 @@
 
 Creates an MD5 digest state handle.
 
-**Returns:** [`Md5`](./md5.md)
-
 ```
 let state = Md5()
 state.update "abc"

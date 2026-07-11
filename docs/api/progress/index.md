@@ -67,7 +67,9 @@ changing it.
 
 All keys are optional; omitted values use defaults.
 
-**Returns:** The return value of `func`
+#### Returns
+
+The return value of `func`
 
 ```
 progress.with do
@@ -128,7 +130,9 @@ When `total` is provided and `units` is omitted, units default to `:COUNT:`.
 When neither `total` nor `units` is provided, spinner mode shows only elapsed
 time.
 
-**Returns:** The return value of `func`
+#### Returns
+
+The return value of `func`
 
 ```
 progress.with do

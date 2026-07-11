@@ -1,6 +1,6 @@
 # IterStop
 
-Error raised to signal that an input iterator is exhausted. This is used
+Error raised to signal that an iterator is exhausted. This is used
 internally by the iteration protocol and can be caught in `try`/`catch`
 statements.
 

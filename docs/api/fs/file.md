@@ -15,15 +15,17 @@ runtime error.
 
 Writes data to the file.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type         | Description                                       |
 | ------ | ------------ | ------------------------------------------------- |
 | `data` | `str`\|`bin` | Data to write. Strings are written as UTF-8 text. |
 
-**Returns:** [`int`](../std/index.md) (number of bytes written)
+#### Returns
 
-**Example:**
+[`int`](../std/index.md) (number of bytes written)
+
+#### Example
 
 ```
 open output.txt w do |file|
@@ -42,13 +44,13 @@ Truncates the file to the given byte length.
 If the file has buffered unread data, the logical cursor position is preserved
 after truncation.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                     | Description                 |
 | ------ | ------------------------ | --------------------------- |
 | `size` | [`int`](../std/index.md) | New file length in bytes    |
 
-**Example:**
+#### Example
 
 ```
 open data.bin r+ do |file|
@@ -59,16 +61,18 @@ open data.bin r+ do |file|
 
 Reads data from the file.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                     | Description                                                              |
 | ------ | ------------------------ | ------------------------------------------------------------------------ |
 | `size` | [`int`](../std/index.md) | Number of bytes to read. If [`nil`](../std/index.md), reads entire file. |
 
-**Returns:** [`str`](../std/str.md) in text mode, binary blob in binary
+#### Returns
+
+[`str`](../std/str.md) in text mode, binary blob in binary
 mode
 
-**Example:**
+#### Example
 
 ```
 # Read entire file
@@ -86,7 +90,9 @@ open data.bin rb do |file|
 
 Gets file metadata.
 
-**Returns:** [`Metadata`](metadata.md)
+#### Returns
+
+[`Metadata`](metadata.md)
 
 **Fields:**
 
@@ -124,7 +130,7 @@ Gets file metadata.
 | `win_attrs` | [`int`](../std/index.md) | Raw Windows file attribute bitmask    |
 | `attrs`     | [`Attrs`](attrs.md)      | Windows attributes from this metadata |
 
-**Example:**
+#### Example
 
 ```
 open data.txt r do |file|
@@ -145,9 +151,11 @@ open data.txt r do |file|
 
 Gets filesystem metadata for the filesystem backing this open file.
 
-**Returns:** [`FsMetadata`](fs-metadata.md)
+#### Returns
 
-**Example:**
+[`FsMetadata`](fs-metadata.md)
+
+#### Example
 
 ```
 open data.txt r do |file|
@@ -163,13 +171,15 @@ Lists extended attributes for this file.
 On Windows, this uses NTFS extended attributes. Returned names may differ in
 case from the requested name.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                            | Description                                                      |
 | ----------- | ----------------------------------------------- | ---------------------------------------------------------------- |
 | `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:ANY:` to list all namespaces |
 
-**Returns:** iterator of [`XattrEntry`](xattr-entry.md)
+#### Returns
+
+iterator of [`XattrEntry`](xattr-entry.md)
 
 ```
 open data.txt r do |file|
@@ -183,7 +193,9 @@ Lists alternate data streams for this file.
 
 This is only supported on Windows.
 
-**Returns:** iterator of [`StreamEntry`](stream-entry.md)
+#### Returns
+
+iterator of [`StreamEntry`](stream-entry.md)
 
 ```
 let path = Path data.txt
@@ -197,14 +209,16 @@ open $path r do |file|
 
 Gets an extended attribute value.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                                   | Description                           |
 | ----------- | ------------------------------------------------------ | ------------------------------------- |
 | `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
 | `namespace` | [`str`](../std/str.md)?                                | Namespace to query                    |
 
-**Returns:** [`bin`](../std/bin.md)
+#### Returns
+
+[`bin`](../std/bin.md)
 
 ```
 open data.txt r do |file|
@@ -218,7 +232,7 @@ Sets an extended attribute value.
 On Windows, empty values are rejected. NTFS deletes the attribute instead of
 storing an empty value.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                                   | Description                           |
 | ----------- | ------------------------------------------------------ | ------------------------------------- |
@@ -235,7 +249,7 @@ open data.txt r+ do |file|
 
 Removes an extended attribute.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                                   | Description                           |
 | ----------- | ------------------------------------------------------ | ------------------------------------- |
@@ -254,15 +268,17 @@ Moves the file cursor by a relative byte offset.
 Buffered unread data is discarded before the seek so subsequent reads use the
 new cursor position.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                     | Description                       |
 | -------- | ------------------------ | --------------------------------- |
 | `offset` | [`int`](../std/index.md) | Relative byte offset from current |
 
-**Returns:** [`int`](../std/index.md) - New absolute byte position
+#### Returns
 
-**Example:**
+[`int`](../std/index.md) - New absolute byte position
+
+#### Example
 
 ```
 open data.bin rb do |file|
@@ -277,15 +293,17 @@ Moves the file cursor to an absolute byte offset from the start of the file.
 Buffered unread data is discarded before the seek so subsequent reads use the
 new cursor position.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type                     | Description                          |
 | ----- | ------------------------ | ------------------------------------ |
 | `ofs` | [`int`](../std/index.md) | Absolute byte offset from file start |
 
-**Returns:** [`int`](../std/index.md) - New absolute byte position
+#### Returns
 
-**Example:**
+[`int`](../std/index.md) - New absolute byte position
+
+#### Example
 
 ```
 open data.bin rb do |file|
@@ -300,15 +318,17 @@ Moves the file cursor to a byte offset relative to the end of the file.
 Buffered unread data is discarded before the seek so subsequent reads use the
 new cursor position.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type                     | Description                      |
 | ----- | ------------------------ | -------------------------------- |
 | `ofs` | [`int`](../std/index.md) | Byte offset relative to file end |
 
-**Returns:** [`int`](../std/index.md) - New absolute byte position
+#### Returns
 
-**Example:**
+[`int`](../std/index.md) - New absolute byte position
+
+#### Example
 
 ```
 open data.bin rb do |file|
@@ -319,9 +339,11 @@ open data.bin rb do |file|
 
 Returns the current file cursor position in bytes.
 
-**Returns:** [`int`](../std/index.md)
+#### Returns
 
-**Example:**
+[`int`](../std/index.md)
+
+#### Example
 
 ```
 open data.txt r do |file|
@@ -335,7 +357,7 @@ open data.txt r do |file|
 Explicitly closes the file. Required if you didn't use the `func` parameter to
 `open()`.
 
-**Example:**
+#### Example
 
 ```
 let file = open data.txt r
@@ -343,16 +365,18 @@ let data = file.read()
 file.close()
 ```
 
-## Input/Output Iteration
+## Iterator and Sink Protocols
 
-Files implement the input/output iterator protocols, allowing them to be used
+Files implement the iterator and sink protocols, allowing them to be used
 with `for` loops, `.next()`, `.put()`, and `strand.redirect`.
 
 ### `input`/`output`
 
-Returns the file as its own input/output iterator.
+Returns the file as its own iterator and sink.
 
-**Returns:** The file object itself
+#### Returns
+
+The file object itself
 
 ### `next`
 

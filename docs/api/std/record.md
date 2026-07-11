@@ -64,7 +64,9 @@ entirely reserved for the user.
 
 Returns the number of fields.
 
-**Returns:** `int`
+#### Returns
+
+`int`
 
 ### `record.clear rec`
 
@@ -120,7 +122,7 @@ Missing keys return `0`.
 Tests whether the record contains the given key. If a value is provided,
 tests whether any value associated with that key matches.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type           | Description                             |
 | ------- | -------------- | --------------------------------------- |
@@ -128,7 +130,9 @@ tests whether any value associated with that key matches.
 | `key`   | `int` or `sym` | the key to check                        |
 | `value` |                | optional value to check for (multi-map) |
 
-**Returns:** `bool`
+#### Returns
+
+`bool`
 
 ```
 let r = record 1 2 3 a: "first"

@@ -59,9 +59,9 @@ pub enum ErrorKind {
     Overflow,
     /// Integer zero divisor
     ZeroDiv,
-    /// Output iterator stopped
+    /// Sink stopped
     SinkStop,
-    /// Input iterator stopped
+    /// Iterator stopped
     IterStop,
     /// Strand timed out
     TimedOut,
@@ -423,8 +423,8 @@ impl<'v, 's> fmt::Display for Error<'v, 's> {
             Variant::Immutable => write!(f, "object is immutable"),
             Variant::Overflow => write!(f, "numeric overflow"),
             Variant::ZeroDiv => write!(f, "integer zero divisor"),
-            Variant::SinkStop => write!(f, "output iterator stopped"),
-            Variant::IterStop => write!(f, "input iterator stopped"),
+            Variant::SinkStop => write!(f, "sink stopped"),
+            Variant::IterStop => write!(f, "iterator stopped"),
             Variant::Canceled => write!(f, "strand canceled"),
             Variant::TimedOut => write!(f, "strand timed out"),
             Variant::Concurrency => write!(f, "conflicting concurrent operation"),

@@ -8,7 +8,9 @@ Arrays are ordered, mutable sequences of values.
 
 Returns the number of elements.
 
-**Type:** [`int`](./index.md)
+#### Type
+
+[`int`](./index.md)
 
 ```
 assert_eq $[1, 2, 3].len 3
@@ -20,7 +22,7 @@ assert_eq $[1, 2, 3].len 3
 
 Appends one or more values to the end of the array.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type | Description      |
 | ----------- | ---- | ---------------- |
@@ -37,7 +39,7 @@ assert_eq $arr [1, 2, 3]
 Inserts one or more values at the specified index, shifting existing elements.
 Negative indexes count from the end; `-1` inserts before the last element.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                | Description               |
 | ----------- | ------------------- | ------------------------- |
@@ -57,7 +59,7 @@ assert_eq $arr [1, 42, 99, 2, 3]
 Retrieves the value at the given index. Returns `nil` if out of bounds and no
 alternative is provided. Negative indexes count from the end.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                | Description                         |
 | ---------- | ------------------- | ----------------------------------- |
@@ -65,7 +67,9 @@ alternative is provided. Negative indexes count from the end.
 | `default:` |                     | value to return if out of bounds    |
 | `else:`    |                     | callable to invoke if out of bounds |
 
-**Returns:** The value, or the default/else result.
+#### Returns
+
+The value, or the default/else result.
 
 ```
 let arr = [10, 20, 30]
@@ -81,7 +85,7 @@ Removes and returns the last element, or the element at `index` if provided.
 Raises an error if the selected element does not exist and no alternative is
 provided. Negative indexes count from the end.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                | Description                                            |
 | ---------- | ------------------- | ------------------------------------------------------ |
@@ -89,7 +93,9 @@ provided. Negative indexes count from the end.
 | `default:` |                     | value to return if the element does not exist          |
 | `else:`    |                     | callable to invoke if the element does not exist       |
 
-**Returns:** The removed value, or the default/else result.
+#### Returns
+
+The removed value, or the default/else result.
 
 ```
 let arr = [1, 2, 3]
@@ -108,7 +114,9 @@ Negative indexes count from the end.
 
 Out-of-bounds indexes are ignored.
 
-**Returns:** [`bool`](./index.md) indicating whether an element was removed
+#### Returns
+
+[`bool`](./index.md) indicating whether an element was removed
 
 ```
 let arr = [10, 20, 30]
@@ -132,7 +140,9 @@ assert_eq $arr.len 0
 
 Returns a shallow copy of the array. Contents are *not* copied recursively.
 
-**Returns:** [`array`](./array.md)
+#### Returns
+
+[`array`](./array.md)
 
 When inherited by a Do subclass, `copy()` calls the subclass constructor with
 the source array as a single positional argument.
@@ -141,7 +151,7 @@ the source array as a single positional argument.
 
 Sorts the array in place.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                  | Description                           |
 | ---------- | --------------------- | ------------------------------------- |
@@ -163,13 +173,15 @@ assert_eq $arr ["bbb", "cc", "a"]
 
 Tests whether the array contains the given element (by equality).
 
-**Parameters:**
+#### Parameters
 
 | Name      | Type | Description        |
 | --------- | ---- | ------------------ |
 | `element` |      | the value to check |
 
-**Returns:** [`bool`](./index.md)
+#### Returns
+
+[`bool`](./index.md)
 
 ```
 let arr = [1, 2, 3, "hello"]
@@ -183,7 +195,9 @@ assert (![].contains 1)
 
 Returns an iterator yielding `[index, value]` pairs.
 
-**Returns:** iterator of `[int, value]` pairs
+#### Returns
+
+iterator of `[int, value]` pairs
 
 ```
 for i v = [10, 20, 30].pairs()

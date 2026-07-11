@@ -13,16 +13,18 @@ This is a convenience shorthand for [`prepare`](#prepare-sql-func) +
 [`Statement.execute`](./statement.md#execute-args) when a statement doesn't
 need to be reused.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type                   | Description                             |
 | ----- | ---------------------- | --------------------------------------- |
 | `sql` | [`str`](../std/str.md) | SQL statement to execute                |
 | `...` | any                    | Keyword arguments for parameter binding |
 
-**Returns:** `int` — number of rows affected
+#### Returns
 
-**Example:**
+`int` — number of rows affected
+
+#### Example
 
 ```
 open "mydb.sqlite" do |conn|
@@ -36,17 +38,19 @@ open "mydb.sqlite" do |conn|
 
 Prepares a SQL statement for repeated execution.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                   | Description                                               |
 | ------ | ---------------------- | --------------------------------------------------------- |
 | `sql`  | [`str`](../std/str.md) | SQL statement to prepare                                  |
 | `func` | func                   | Callable to run with the statement; auto-closes when done |
 
-**Returns:** [Statement](./statement.md) when no `func` is provided, otherwise
+#### Returns
+
+[Statement](./statement.md) when no `func` is provided, otherwise
 the result of calling `func`
 
-**Example:**
+#### Example
 
 ```
 open "mydb.sqlite" do |conn|
@@ -66,13 +70,15 @@ open "mydb.sqlite" do |conn|
 Begins a database transaction and passes a [Transaction](./transaction.md)
 object to the provided block.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type | Description                            |
 | ------ | ---- | -------------------------------------- |
 | `func` | func | Callable to run within the transaction |
 
-**Returns:** The result of calling `func`
+#### Returns
+
+The result of calling `func`
 
 The transaction is automatically committed when `func` returns successfully and
 automatically rolled back if it raises an error. Call
@@ -84,7 +90,7 @@ When a busy error occurs inside a transaction, the operation raises immediately
 without retrying. The transaction block is then rolled back and re-invoked
 until it succeeds, is explicitly rolled back, or retries are exhausted.
 
-**Example:**
+#### Example
 
 ```
 open "mydb.sqlite" do |conn|

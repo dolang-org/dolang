@@ -1,7 +1,7 @@
 # NotFoundError
 
-`NotFoundError` is a subtype of [`Error`](./error.md) used for
-`io::ErrorKind::NotFound` failures.
+Raised when a filesystem path, program, or other system resource cannot be
+found.
 
 ## Inherits
 

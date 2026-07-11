@@ -19,7 +19,7 @@ assert_eq (type $ [].sink()) $Sink
 
 Writes a value to the sink.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description        |
 | ------- | ---- | ------------------ |

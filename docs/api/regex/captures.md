@@ -12,13 +12,17 @@ Coercing `Captures` value to `str` produces the text of the overall match.
 
 The byte offset of the start of the overall match within the haystack.
 
-**Type:** [`int`](../std/int.md)
+#### Type
+
+[`int`](../std/int.md)
 
 ### `end`
 
 The byte offset of the end of the overall match within the haystack.
 
-**Type:** [`int`](../std/int.md)
+#### Type
+
+[`int`](../std/int.md)
 
 ## Index Access
 
@@ -33,10 +37,15 @@ Capture groups can be retrieved by integer index or by name.
 | `2`   | Second capture group      |
 | `n`   | nth capture group         |
 
-**Returns:** [`Match`](./match.md)
+#### Returns
 
-**Errors:** Raises an index error if the group index is out of range or the
-group did not participate in the match.
+[`Match`](./match.md)
+
+#### Errors
+
+| Exception                             | Condition                                                                     |
+| ------------------------------------- | ----------------------------------------------------------------------------- |
+| [`IndexError`](../std/index-error.md) | The group index is out of range or the group did not participate in the match |
 
 ```
 let date = Regex r"(\d{4})-(\d{2})-(\d{2})"
@@ -53,10 +62,15 @@ echo $caps[3]    # => 15
 
 Named groups (defined with `(?<name>...)`) can be accessed by their name.
 
-**Returns:** [`Match`](./match.md)
+#### Returns
 
-**Errors:** Raises an index error if no group with that name exists or the
-group did not participate in the match.
+[`Match`](./match.md)
+
+#### Errors
+
+| Exception                             | Condition                                                                    |
+| ------------------------------------- | ---------------------------------------------------------------------------- |
+| [`IndexError`](../std/index-error.md) | No group with that name exists or the group did not participate in the match |
 
 ```
 let date = Regex r"(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})"

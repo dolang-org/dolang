@@ -15,4 +15,6 @@ assert (type [1, 2, 3] Iterable)
 
 Returns an iterator over the value.
 
-**Returns:** [`Iter`](./iter.md)
+#### Returns
+
+[`Iter`](./iter.md)

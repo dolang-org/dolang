@@ -8,18 +8,22 @@ Random integer sampling, string generation, selection, and shuffling.
 
 Samples a uniformly distributed integer from the half-open range `[0, end)`.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type  | Description           |
 | ----- | ----- | --------------------- |
 | `end` | `int` | exclusive upper bound |
 
-**Returns:** `int` - Sampled integer
+#### Returns
 
-**Errors:**
+`int` - Sampled integer
 
-- Raises a type error if `end` is not an integer
-- Raises an error if `end <= 0`
+#### Errors
+
+| Exception    | Condition               |
+| ------------ | ----------------------- |
+| `TypeError`  | `end` is not an integer |
+| `ValueError` | `end <= 0`              |
 
 ```
 assert_eq (int 1) 0
@@ -31,19 +35,23 @@ assert ((n >= 0) && (n < 10))
 
 Samples a uniformly distributed integer from the half-open range `[start, end)`.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type  | Description           |
 | ------- | ----- | --------------------- |
 | `end`   | `int` | exclusive upper bound |
 | `start` | `int` | lower bound           |
 
-**Returns:** `int` - Sampled integer
+#### Returns
 
-**Errors:**
+`int` - Sampled integer
 
-- Raises a type error if `start` or `end` is not an integer
-- Raises an error if `end <= start`
+#### Errors
+
+| Exception    | Condition                          |
+| ------------ | ---------------------------------- |
+| `TypeError`  | `start` or `end` is not an integer |
+| `ValueError` | `end <= start`                     |
 
 ```
 assert_eq (int 0 1) 0
@@ -56,20 +64,24 @@ assert_eq (int -4 -5) -5
 
 Generates a random string by sampling characters from `alphabet`.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type   | Description                  |
 | ---------- | ------ | ---------------------------- |
 | `len`      | `int`  | number of characters to emit |
 | `alphabet` | `str?` | characters to sample from    |
 
-**Returns:** [`str`](./std/str.md) - Randomly generated text
+#### Returns
 
-**Errors:**
+[`str`](./std/str.md) - Randomly generated text
 
-- Raises a type error if `len` is not an integer or `alphabet` is not a string
-- Raises an error if `len` is negative
-- Raises an error if `alphabet` is empty
+#### Errors
+
+| Exception    | Condition                                             |
+| ------------ | ----------------------------------------------------- |
+| `TypeError`  | `len` is not an integer or `alphabet` is not a string |
+| `ValueError` | `len` is negative                                     |
+| `ValueError` | `alphabet` is empty                                   |
 
 `alphabet` is interpreted as characters, not raw UTF-8 bytes.
 
@@ -88,18 +100,22 @@ assert_eq $text.len 8
 
 Selects one random element from an array.
 
-**Parameters:**
+#### Parameters
 
 | Name         | Type    | Description         |
 | ------------ | ------- | ------------------- |
 | `collection` | `array` | source array        |
 
-**Returns:** One element from `collection`
+#### Returns
 
-**Errors:**
+One element from `collection`
 
-- Raises a type error if `collection` is not an array
-- Raises an error if `collection` is empty
+#### Errors
+
+| Exception    | Condition                    |
+| ------------ | ---------------------------- |
+| `TypeError`  | `collection` is not an array |
+| `ValueError` | `collection` is empty        |
 
 ```
 let item = pick [1, 2, 3]
@@ -110,17 +126,21 @@ assert ([1, 2, 3].contains $item)
 
 Shuffles an array in place using a uniform Fisher-Yates pass.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type    | Description      |
 | ------- | ------- | ---------------- |
 | `array` | `array` | array to mutate  |
 
-**Returns:** `nil`
+#### Returns
 
-**Errors:**
+`nil`
 
-- Raises a type error if `array` is not an array
+#### Errors
+
+| Exception   | Condition               |
+| ----------- | ----------------------- |
+| `TypeError` | `array` is not an array |
 
 ```
 let items = [1, 2, 3, 4]

@@ -1,8 +1,9 @@
 # Error
 
-`Error` is raised when a SQLite operation fails for any reason other
-than a busy/locked condition. [`Busy`](./busy.md) is a subtype of
-`Error`, so catching `Error` handles all SQLite errors.
+`Error` is raised when a SQLite operation fails for any reason other than a
+busy/locked condition.
+
+Catching `Error` also catches [`Busy`](./busy.md).
 
 ```
 open "mydb.sqlite" do |conn|

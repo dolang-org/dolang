@@ -8,17 +8,19 @@ A compiled regular expression.
 
 Compiles a regular expression pattern.
 
-**Parameters:**
+#### Parameters
 
 | Name      | Type                   | Description            |
 | --------- | ---------------------- | ---------------------- |
 | `pattern` | [`str`](../std/str.md) | RE2-compatible pattern |
 
-**Returns:** A compiled `Regex` instance
+#### Errors
 
-**Errors:** Raises a runtime error if the pattern is invalid.
+| Exception    | Condition              |
+| ------------ | ---------------------- |
+| `ValueError` | The pattern is invalid |
 
-**Example:**
+#### Example
 
 ```
 let digits = Regex r"\d+"
@@ -31,16 +33,18 @@ let date = Regex r"(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})"
 
 Searches for the first match of this pattern anywhere in `haystack`.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                   | Description             |
 | ---------- | ---------------------- | ----------------------- |
 | `haystack` | [`str`](../std/str.md) | The string to search in |
 
-**Returns:** A [`Captures`](./captures.md) object if the pattern matches,
+#### Returns
+
+A [`Captures`](./captures.md) object if the pattern matches,
 or `nil` if there is no match.
 
-**Example:**
+#### Example
 
 ```
 let pattern = Regex r"\d+"
@@ -56,16 +60,18 @@ echo $no_match  # => nil
 Returns an iterator over all non-overlapping matches of this pattern in
 `haystack`.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                   | Description             |
 | ---------- | ---------------------- | ----------------------- |
 | `haystack` | [`str`](../std/str.md) | The string to search in |
 
-**Returns:** A [`Find`](./find.md) that yields a
+#### Returns
+
+A [`Find`](./find.md) that yields a
 [`Captures`](./captures.md) for each match.
 
-**Example:**
+#### Example
 
 ```
 let pattern = Regex r"\d+"
@@ -99,7 +105,7 @@ The optional `limit` controls how many replacements are performed:
 
 Negative limits are not supported.
 
-**Parameters:**
+#### Parameters
 
 | Name          | Type                                     | Description                           |
 | ------------- | ---------------------------------------- | ------------------------------------- |
@@ -107,9 +113,11 @@ Negative limits are not supported.
 | `replacement` | [`str`](../std/str.md) or function       | template string or callback           |
 | `limit`       | [`int`](../std/index.md)                 | max replacements (default: unlimited) |
 
-**Returns:** A new `str` with replacements applied.
+#### Returns
 
-**Example:**
+A new `str` with replacements applied.
+
+#### Example
 
 ```
 let re = Regex r"(\w+)@(\w+)"
@@ -146,16 +154,18 @@ The optional `limit` controls how many splits are performed and from which end:
 When possible, iteration is lazy (segments are computed on demand). Negative
 limits require buffering all matches up front.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                     | Description                                 |
 | ---------- | ------------------------ | ------------------------------------------- |
 | `haystack` | [`str`](../std/str.md)   | the string to split                         |
 | `limit`    | [`int`](../std/index.md) | max splits; negative means split from right |
 
-**Returns:** An iterator over the segments.
+#### Returns
 
-**Example:**
+An iterator over the segments.
+
+#### Example
 
 ```
 let ws = Regex r"\s+"
@@ -191,16 +201,18 @@ The optional `limit` controls how many splits are performed and from which end:
 `rsplit` always buffers all matches internally (the regex engine only scans
 forward).
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                     | Description                                |
 | ---------- | ------------------------ | ------------------------------------------ |
 | `haystack` | [`str`](../std/str.md)   | the string to split                        |
 | `limit`    | [`int`](../std/index.md) | max splits; negative means split from left |
 
-**Returns:** An iterator over the segments in reverse order.
+#### Returns
 
-**Example:**
+An iterator over the segments in reverse order.
+
+#### Example
 
 ```
 let comma = Regex r","

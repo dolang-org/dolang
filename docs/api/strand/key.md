@@ -11,8 +11,6 @@ fresh and do not inherit values.
 
 Creates a new strand-local key.
 
-**Returns:** [`Key`](./key.md)
-
 ```
 let key = strand.Key()
 ```

@@ -45,7 +45,7 @@ let err3 = try
 catch e
   e
 s3.wait()
-assert_eq (str err3) "output iterator stopped"
+assert_eq (str err3) "sink stopped"
 
 # Test 4: iter()/sink() expose ordinary channel endpoints.
 let s4 = stream do each do |x| x

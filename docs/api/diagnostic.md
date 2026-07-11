@@ -8,14 +8,16 @@ Renders compiler diagnostics and runtime errors.
 
 Prints a [`compile.Diagnostic`](./compile/diagnostic.md) to stderr.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description                                             |
 | ------- | ---- | ------------------------------------------------------- |
 | `diag`  |      | Compiler diagnostic to render                           |
 | `color` | `?`  | Optional color mode: `:auto:`, `:never:`, or `:always:` |
 
-**Returns:** `nil`
+#### Returns
+
+`nil`
 
 ```
 let result = compile.compile "bad.dol" "let =\n"
@@ -27,14 +29,16 @@ for diag = result.diagnostics
 
 Renders a [`compile.Diagnostic`](./compile/diagnostic.md) to a string.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description                                             |
 | ------- | ---- | ------------------------------------------------------- |
 | `diag`  |      | Compiler diagnostic to render                           |
 | `color` | `?`  | Optional color mode: `:auto:`, `:never:`, or `:always:` |
 
-**Returns:** [`str`](./std/str.md)
+#### Returns
+
+[`str`](./std/str.md)
 
 ```
 let text = diagnostic.render_compile_diag $diag color: :never:
@@ -44,7 +48,7 @@ let text = diagnostic.render_compile_diag $diag color: :never:
 
 Prints an error message and backtrace to stderr.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type | Description                                             |
 | ----------- | ---- | ------------------------------------------------------- |
@@ -52,13 +56,16 @@ Prints an error message and backtrace to stderr.
 | `backtrace` | `?`  | Optional [`strand.Backtrace`](./strand/index.md)        |
 | `color`     | `?`  | Optional color mode: `:auto:`, `:never:`, or `:always:` |
 
-**Returns:** `nil`
+#### Returns
 
-**Errors:**
+`nil`
 
-- Raises an error if `backtrace` is provided and is not `strand.Backtrace`
-- Raises an error if `backtrace` is omitted and there is no active handled
-  exception
+#### Errors
+
+| Exception      | Condition                                                       |
+| -------------- | --------------------------------------------------------------- |
+| `TypeError`    | `backtrace` is provided and is not `strand.Backtrace`           |
+| `RuntimeError` | `backtrace` is omitted and there is no active handled exception |
 
 ```
 try
@@ -71,7 +78,7 @@ catch e
 
 Renders an error message and backtrace to a string.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type | Description                                             |
 | ----------- | ---- | ------------------------------------------------------- |
@@ -79,7 +86,9 @@ Renders an error message and backtrace to a string.
 | `backtrace` | `?`  | Optional [`strand.Backtrace`](./strand/index.md)        |
 | `color`     | `?`  | Optional color mode: `:auto:`, `:never:`, or `:always:` |
 
-**Returns:** [`str`](./std/str.md)
+#### Returns
+
+[`str`](./std/str.md)
 
 ```
 let text = try

@@ -11,13 +11,15 @@ or [`bin`](../std/bin.md) value updates the digest state with its bytes.
 
 Updates the digest state with the bytes of `data`.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                           | Description     |
 | ------ | ---------------------------------------------- | --------------- |
 | `data` | [`str`](../std/str.md)\|[`bin`](../std/bin.md) | Input to hash   |
 
-**Returns:** The same handle, for chaining.
+#### Returns
+
+The same handle, for chaining.
 
 ```
 let state = Blake3()
@@ -36,7 +38,9 @@ assert_eq $sink.digest() (blake3 "abc")
 
 Returns the current digest bytes without consuming the handle.
 
-**Returns:** [`bin`](../std/bin.md) - Digest snapshot
+#### Returns
+
+[`bin`](../std/bin.md) - Digest snapshot
 
 ```
 let state = Blake3()

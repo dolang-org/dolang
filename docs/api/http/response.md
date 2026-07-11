@@ -13,7 +13,9 @@ most subsequent methods will return errors.
 
 The HTTP status code of the response.
 
-**Type:** [`int`](../std/int.md)
+#### Type
+
+[`int`](../std/int.md)
 
 ```
 
@@ -29,7 +31,9 @@ fetched via iteration, unpacking, or the `pop` or `get` methods.
 Header values are usually returned as strings. If a header value parses as an
 HTTP-date, it is returned as a [`DateTime`](../time/datetime.md) instead.
 
-**Type:** [`dict`](../std/dict.md)
+#### Type
+
+[`dict`](../std/dict.md)
 
 ```
 
@@ -58,10 +62,16 @@ Closes the response if it hasn't been already.
 Reads the response body as text. This method consumes the response and leaves it
 in a "closed" state.
 
-**Returns:** [`str`](../std/str.md) -- The response body as text
+#### Returns
 
-**Errors:** Raises an error if the response has already been closed or
-[`Error`](./error.md) on transport or protocol failure.
+[`str`](../std/str.md) -- The response body as text
+
+#### Errors
+
+| Exception             | Condition                              |
+| --------------------- | -------------------------------------- |
+| `RuntimeError`        | The response has already been closed   |
+| [`Error`](./error.md) | A transport or protocol failure occurs |
 
 ```
 
@@ -74,7 +84,9 @@ echo $response.text()
 Reads the response body as binary data. This method consumes the response and
 leaves it in a "closed" state.
 
-**Returns:** [`bin`](../std/bin.md) -- The response body as bytes
+#### Returns
+
+[`bin`](../std/bin.md) -- The response body as bytes
 
 ```
 
@@ -88,17 +100,21 @@ echo "Downloaded $data.len bytes"
 Reads the response body and parses it as JSON. This method consumes the response
 and leaves it in a "closed" state.
 
-**Returns:** The parsed JSON value as a tree of
+#### Returns
+
+The parsed JSON value as a tree of
 [`int`](../std/int.md),
 [`float`](../std/float.md), [`str`](../std/str.md),
 [`array`](../std/array.md), and [`dict`](../std/dict.md), as
 appropriate.
 
-**Errors:** Raises an error if:
+#### Errors
 
-- The response has already been closed
-- [`Error`](./error.md) occurred while reading the response
-- The JSON is invalid
+| Exception             | Condition                                  |
+| --------------------- | ------------------------------------------ |
+| `RuntimeError`        | The response has already been closed       |
+| [`Error`](./error.md) | An error occurs while reading the response |
+| `ValueError`          | The JSON is invalid                        |
 
 ```
 
@@ -113,7 +129,9 @@ Returns an iterator that yields the response body as raw bytes chunks. This
 method is useful for processing large responses without loading the entire
 body into memory.
 
-**Returns:** An iterator of [`bin`](../std/bin.md) values
+#### Returns
+
+An iterator of [`bin`](../std/bin.md) values
 
 ```
 
@@ -129,7 +147,9 @@ get https://api.example.com/large-file do |response|
 Returns an iterator that yields the response body as lines (split on `\n` or
 `\r\n`). Line endings are stripped from the returned values.
 
-**Returns:** An iterator of [`str`](../std/str.md) values
+#### Returns
+
+An iterator of [`str`](../std/str.md) values
 
 ```
 
@@ -152,13 +172,17 @@ the response should be treated as body-owned by the iterator, just like
 Each yielded item is an [`Event`](./event.md) with `type`, `data`, `id`,
 and `retry` fields.
 
-**Returns:** An iterator of [`Event`](./event.md) values
+#### Returns
 
-**Errors:** Raises an error if:
+An iterator of [`Event`](./event.md) values
 
-- The response has already been closed
-- The underlying body read fails
-- The event stream contains invalid UTF-8
+#### Errors
+
+| Exception             | Condition                               |
+| --------------------- | --------------------------------------- |
+| `RuntimeError`        | The response has already been closed    |
+| [`Error`](./error.md) | The underlying body read fails          |
+| `ValueError`          | The event stream contains invalid UTF-8 |
 
 ```
 

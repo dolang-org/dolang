@@ -33,7 +33,7 @@ impl<'v> Object<'v> for GlobIter {
         builder.supertype(TypeObject::Iter)
     }
 
-    /// GlobIter is both an input and output iterator
+    /// GlobIter is both an iterator and a sink
     async fn input<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

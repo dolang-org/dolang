@@ -11,15 +11,17 @@ parameters.
 
 Executes the statement and returns a Rows iterator for reading results.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type | Description                                           |
 | ----- | ---- | ----------------------------------------------------- |
 | `...` | any  | Keyword arguments for parameter binding               |
 
-**Returns:** [Rows](./rows.md)
+#### Returns
 
-**Example:**
+[Rows](./rows.md)
+
+#### Example
 
 ```
 open "mydb.sqlite" do |conn|
@@ -37,15 +39,17 @@ open "mydb.sqlite" do |conn|
 
 Executes the statement and returns the number of rows affected.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type | Description                                           |
 | ----- | ---- | ----------------------------------------------------- |
 | `...` | any  | Keyword arguments for parameter binding               |
 
-**Returns:** `int` - Number of rows affected
+#### Returns
 
-**Example:**
+`int` - Number of rows affected
+
+#### Example
 
 ```
 open "mydb.sqlite" do |conn|
@@ -78,7 +82,7 @@ are bound by passing keyword arguments to `query()` or `execute()`.
 
 `bool` values are stored as `0` or `1`.
 
-**Example:**
+#### Example
 
 ```
 open "mydb.sqlite" do |conn|

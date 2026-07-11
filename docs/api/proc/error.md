@@ -1,7 +1,6 @@
 # Error
 
-`Error` is raised when an external program exits unsuccessfully. It is a
-subtype of [`std.RuntimeError`](../std/runtime-error.md).
+`Error` is raised when an external program exits unsuccessfully.
 
 ```
 try
@@ -19,15 +18,14 @@ On Unix, a signaled process reports `signal` instead of `rc`:
 
 ```
 try
-  run.sh -c "kill -TERM \$\$"
+  run.sh -c r"kill -TERM $$"
 catch Error: err
   assert_eq $err.rc nil
   assert_eq $err.signal 15
 ```
 
 `str(err)` returns a stable process-failure message such as an exit status or
-fatal signal description. `dbg(err)` includes the nominal type name together
-with that message.
+fatal signal description.
 
 Spawn, lookup, and other I/O failures do not raise `Error`; they raise
 [`sys.Error`](../sys/error.md) instead.

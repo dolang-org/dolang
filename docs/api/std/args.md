@@ -12,8 +12,6 @@ pairs. Positional items use their positional index as the key.
 
 Creates an argument pack from positional and keyed arguments.
 
-**Returns:** `args`
-
 ```
 let pack = args 1 name: Alice 2
 assert_eq [...pack] [[0, 1], [:name:, "Alice"], [1, 2]]

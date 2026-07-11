@@ -9,7 +9,7 @@ and scoped timeouts.
 
 Suspends the current strand.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                                                                                | Description                                                |
 | ---------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------- |
@@ -29,19 +29,22 @@ sleep (DateTime.from_unix(10) - DateTime.from_unix(10))
 
 Runs `block` with a scoped timeout.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                                                                                | Description                                                  |
 | ---------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | `duration` | [`Duration`](./duration.md) \| [`int`](../std/int.md) \| [`float`](../std/float.md) | Timeout duration. Numeric values are interpreted as seconds. |
 | `block`    | [`func`](../std/func.md)                                                            | Block to run under the timeout scope.                        |
 
-**Returns:** block result
+#### Returns
 
-**Errors:**
+block result
 
-- Raises [`TimedOutError`](../std/timed-out-error.md) if the timeout is observed
-  at a suspend or interrupt-check point before the block completes.
+#### Errors
+
+| Exception                                    | Condition                                                                                |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| [`TimedOutError`](../std/timed-out-error.md) | The timeout is observed at a suspend or interrupt-check point before the block completes |
 
 ```
 timeout 1 do

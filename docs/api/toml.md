@@ -8,18 +8,21 @@ TOML serialization and deserialization.
 
 Serializes a Do value to a TOML string.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description            |
 | ------- | ---- | ---------------------- |
 | `value` |      | the value to serialize |
 
-**Returns:** `str` -- TOML string
+#### Returns
 
-**Errors:**
+`str` -- TOML string
 
-- Raises an error for values that are not TOML-representable, including `nil`,
-  binary data, custom objects, and tables with non-string/non-symbol keys
+#### Errors
+
+| Exception   | Condition                                                                                                                   |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `TypeError` | A value is not TOML-representable, including `nil`, binary data, custom objects, or a table with non-string/non-symbol keys |
 
 Type mapping:
 
@@ -50,19 +53,22 @@ assert_eq (from_str $doc) {"name": "alice", "enabled": true}
 
 Parses a TOML string into a Do value.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                  | Description         |
 | ------ | --------------------- | ------------------- |
 | `toml` | [`str`](./std/str.md) | TOML input to parse |
 
-**Returns:** The parsed Do value.
+#### Returns
 
-**Errors:**
+The parsed Do value.
 
-- Raises an error if the input is not valid TOML
-- Raises an error if the input uses TOML datetime/date/time values, which are
-  not mapped in this module yet
+#### Errors
+
+| Exception    | Condition                                                                              |
+| ------------ | -------------------------------------------------------------------------------------- |
+| `ValueError` | The input is not valid TOML                                                            |
+| `ValueError` | The input uses TOML datetime/date/time values, which are not mapped in this module yet |
 
 Type mapping:
 

@@ -1072,12 +1072,12 @@ impl<'v, 's> Strand<'v, 's> {
         self.vm().check_trap_gc(self)
     }
 
-    /// Get current input iterator.
+    /// Get current iterator.
     pub fn input(&self, mut out: impl Output<'v>) {
         Slot::from_output(&mut out).store(self.inner.input());
     }
 
-    /// Get current output iterator.
+    /// Get current sink.
     pub fn output(&self, mut out: impl Output<'v>) {
         Slot::from_output(&mut out).store(self.inner.output());
     }
@@ -1359,19 +1359,19 @@ impl<'v, 'a, 's> Redirect<'v, 'a, 's> {
         }
     }
 
-    /// Set input iterator
+    /// Set iterator
     pub fn input(mut self, input: impl Input<'v>) -> Self {
         self.input = Some(Value::from_input(self.strand, input));
         self
     }
 
-    /// Set output iterator
+    /// Set sink
     pub fn output(mut self, output: impl Input<'v>) -> Self {
         self.output = Some(Value::from_input(self.strand, output));
         self
     }
 
-    /// Call function with strand-local input/output iterators redirected
+    /// Call function with strand-local iterator/sink redirected
     pub async fn enter<R>(
         self,
         f: impl for<'b> AsyncFnOnce(&'b mut Strand<'v, 's>) -> Result<'v, 's, R>,

@@ -13,7 +13,9 @@ assert_eq (int true) 1
 assert_eq (int false) 0
 ```
 
-**Errors:** Raises an error if the value cannot be converted (e.g. `nil` or
+### Errors
+
+Raises an error if the value cannot be converted (e.g. `nil` or
 a non-numeric string).
 
 ## Operators

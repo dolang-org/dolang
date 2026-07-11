@@ -10,7 +10,7 @@ methods for explicitly committing or rolling back.
 
 Commits the transaction, making all changes permanent.
 
-**Example:**
+#### Example
 
 ```
 open "mydb.sqlite" do |conn|
@@ -24,7 +24,7 @@ open "mydb.sqlite" do |conn|
 
 Rolls back the transaction, discarding all changes.
 
-**Example:**
+#### Example
 
 ```
 open "mydb.sqlite" do |conn|

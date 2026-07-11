@@ -9,7 +9,7 @@ and provide methods for working with ZIP archives.
 
 Opens a file within the archive.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                   | Description                                          |
 | ------ | ---------------------- | ---------------------------------------------------- |
@@ -21,10 +21,12 @@ Opens a file within the archive.
 - **Read mode:** Opens an existing file for reading
 - **Write/Append mode:** Creates a new file entry for writing
 
-**Returns:** [File](./file.md) when no func is provided, otherwise the result of
+#### Returns
+
+[File](./file.md) when no func is provided, otherwise the result of
 calling `func`
 
-**Example:**
+#### Example
 
 ```
 open "archive.zip" do |archive|
@@ -45,9 +47,11 @@ Returns an iterator over the names of all entries in the archive.
 
 **Availability:** Read mode only
 
-**Returns:** [EntryIter](entryiter.md)
+#### Returns
 
-**Example:**
+[EntryIter](entryiter.md)
+
+#### Example
 
 ```
 open "archive.zip" do |archive|
@@ -72,7 +76,7 @@ Closes the archive and releases resources.
 - **Write/Append mode:** Finalizes the archive (writes central directory) before
   closing
 
-**Example:**
+#### Example
 
 ```
 let archive = open "data.zip"

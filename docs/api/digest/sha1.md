@@ -12,8 +12,6 @@
 
 Creates a SHA-1 digest state handle.
 
-**Returns:** [`Sha1`](./sha1.md)
-
 ```
 let state = Sha1()
 state.update "abc"

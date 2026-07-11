@@ -12,13 +12,11 @@ n["id"] = "123"
 n.push "content"
 ```
 
-**Parameters:**
+### Parameters
 
 | Name  | Type  | Description          |
 | ----- | ----- | -------------------- |
 | `tag` | `str` | The tag name         |
-
-**Returns:** `Node` -- A new empty node
 
 ## Fields
 
@@ -51,7 +49,9 @@ assert_eq $n["id"] "123"
 
 Returns an iterator over the node's attributes, yielding `[key, val]` pairs.
 
-**Returns:** An iterator suitable for use in `for` loops and dict
+#### Returns
+
+An iterator suitable for use in `for` loops and dict
 comprehensions.
 
 ```
@@ -65,9 +65,11 @@ let attrs = {...el.attrs()}
 
 ### `children()`
 
-Returns an input iterator over the node's children.
+Returns an iterator over the node's children.
 
-**Returns:** An input iterator yielding child nodes (which may be `Node` or
+#### Returns
+
+An iterator yielding child nodes (which may be `Node` or
 `str` for text).
 
 ```
@@ -81,7 +83,9 @@ for child = el.children()
 Returns a depth-first, parent-first iterator over the node and all its
 descendants.
 
-**Returns:** An input iterator yielding each node in the tree in document
+#### Returns
+
+An iterator yielding each node in the tree in document
 order. Each yielded value is either an `Node` (element) or a `str` (text
 content). The root node itself is the first value yielded.
 
@@ -103,7 +107,7 @@ let nodes = [...doc.traverse()]
 
 Appends a child to the node.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type            | Description      |
 | ------- | --------------- | ---------------- |

@@ -11,13 +11,11 @@ explicit import.
 
 Builds a tuple from an iterable.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type | Description        |
 | ---------- | ---- | ------------------ |
 | `iterable` |      | values to collect  |
-
-**Returns:** `tuple`
 
 When inherited by a Do subclass, `copy()` calls the subclass constructor with
 the source tuple as a single positional argument. Subclasses that inherit
@@ -39,7 +37,9 @@ for k v = {name: "Alice", age: 30}
 
 Returns the number of elements.
 
-**Type:** `int`
+#### Type
+
+`int`
 
 ## Methods
 
@@ -48,7 +48,7 @@ Returns the number of elements.
 Retrieves the value at the given index. Returns `nil` if out of bounds and no
 alternative is provided. Negative indexes count from the end.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type  | Description                         |
 | ---------- | ----- | ----------------------------------- |
@@ -56,32 +56,40 @@ alternative is provided. Negative indexes count from the end.
 | `default:` |       | value to return if out of bounds    |
 | `else:`    |       | callable to invoke if out of bounds |
 
-**Returns:** The value, or the default/else result.
+#### Returns
+
+The value, or the default/else result.
 
 ### `contains element`
 
 Tests whether the tuple contains the given element (by equality).
 
-**Parameters:**
+#### Parameters
 
 | Name      | Type | Description        |
 | --------- | ---- | ------------------ |
 | `element` |      | the value to check |
 
-**Returns:** `bool`
+#### Returns
+
+`bool`
 
 ### `copy`
 
 Returns a shallow copy of the tuple. Because tuples are immutable, the
 returned copy may be the same object.
 
-**Returns:** `tuple`
+#### Returns
+
+`tuple`
 
 ### `pairs`
 
 Returns an iterator yielding `[index, value]` pairs.
 
-**Returns:** iterator of `[int, value]` pairs
+#### Returns
+
+iterator of `[int, value]` pairs
 
 ## Operations
 

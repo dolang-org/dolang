@@ -1,6 +1,6 @@
 # Sender
 
-A Sender is used to send values into a channel. Senders are output iterators,
+A Sender is used to send values into a channel. Senders are sinks,
 used with `put` or the `.put()` method.
 
 ## Inherits
@@ -36,7 +36,7 @@ Closes the sender, signaling EOF to receivers. After closing:
 - If `error` is provided, the receiver re-raises it from `.next()` once any
   buffered values have been drained
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                               | Description                         |
 | ----------- | ---------------------------------- | ----------------------------------- |

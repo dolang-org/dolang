@@ -2,8 +2,7 @@
 
 Iterator over a patch stream.
 
-`PatchIter` is returned by [`patch.decode`](./index.md#decode-input) and
-implements [`Iter`](../std/iter.md).
+Returned by [`patch.decode`](./index.md#decode-input).
 
 Each iteration yields one [`Patch`](./patch.md).
 

@@ -703,7 +703,7 @@ pub trait Object<'v>: Sized + 'v {
     }
 
     /// Implements Do iteration (`for value = iteratee`), setting `out` to an
-    /// input iterator object which should implement [`Object::next`]
+    /// iterator object which should implement [`Object::next`]
     /// # Default
     /// Returns a type error
     #[allow(unused_variables)]
@@ -732,12 +732,12 @@ pub trait Object<'v>: Sized + 'v {
     ) -> impl Future<Output = Result<'v, 's, bool>> {
         future::ready(Err(Error::type_error(
             strand,
-            format!("input iterator `next` not supported: {}", Self::NAME),
+            format!("iterator `next` not supported: {}", Self::NAME),
         )))
     }
 
     /// Implements Do output iteration (`output`), setting `out` to an
-    /// output iterator object which should implement [`Object::put`]
+    /// sink object which should implement [`Object::put`]
     /// # Default
     /// Returns a type error
     #[allow(unused_variables)]
@@ -748,7 +748,7 @@ pub trait Object<'v>: Sized + 'v {
     ) -> impl Future<Output = Result<'v, 's, ()>> {
         future::ready(Err(Error::type_error(
             strand,
-            format!("output iteration not supported: {}", Self::NAME),
+            format!("sink coercion not supported: {}", Self::NAME),
         )))
     }
 
@@ -763,7 +763,7 @@ pub trait Object<'v>: Sized + 'v {
     ) -> impl Future<Output = Result<'v, 's, ()>> {
         future::ready(Err(Error::type_error(
             strand,
-            format!("output iterator `put` not supported: {}", Self::NAME),
+            format!("sink `put` not supported: {}", Self::NAME),
         )))
     }
 

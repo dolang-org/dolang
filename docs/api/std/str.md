@@ -8,7 +8,9 @@ Strings are immutable sequences of UTF-8 bytes.
 
 Returns the byte length of the string.
 
-**Type:** [`int`](./index.md)
+#### Type
+
+[`int`](./index.md)
 
 ```
 assert_eq $"hello".len 5
@@ -21,13 +23,15 @@ assert_eq $"".len 0
 
 Tests whether the string starts with the given prefix.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type              | Description       |
 | -------- | ----------------- | ----------------- |
 | `prefix` | [`str`](./str.md) | the prefix string |
 
-**Returns:** [`bool`](./index.md)
+#### Returns
+
+[`bool`](./index.md)
 
 ```
 assert ("foobar".starts_with "foo")
@@ -39,13 +43,15 @@ assert (!("foobar".starts_with "bar"))
 Returns the string with the prefix removed if it matches, otherwise returns
 the original string.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type              | Description          |
 | -------- | ----------------- | -------------------- |
 | `prefix` | [`str`](./str.md) | the prefix to remove |
 
-**Returns:** [`str`](./str.md)
+#### Returns
+
+[`str`](./str.md)
 
 ```
 assert_eq ("foobar".without_prefix "foo") "bar"
@@ -56,13 +62,15 @@ assert_eq ("foobar".without_prefix "baz") "foobar"
 
 Tests whether the string ends with the given suffix.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type              | Description       |
 | -------- | ----------------- | ----------------- |
 | `suffix` | [`str`](./str.md) | the suffix string |
 
-**Returns:** [`bool`](./index.md)
+#### Returns
+
+[`bool`](./index.md)
 
 ```
 assert ("foobar".ends_with "bar")
@@ -73,13 +81,15 @@ assert ("foobar".ends_with "bar")
 Returns the string with the suffix removed if it matches, otherwise returns
 the original string.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type              | Description          |
 | -------- | ----------------- | -------------------- |
 | `suffix` | [`str`](./str.md) | the suffix to remove |
 
-**Returns:** [`str`](./str.md)
+#### Returns
+
+[`str`](./str.md)
 
 ```
 assert_eq ("foobar".without_suffix "bar") "foo"
@@ -99,14 +109,16 @@ The optional `limit` controls how many splits are performed and from which end:
   (e.g. a file extension).
 - Omitted — split fully with no limit.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                | Description                                 |
 | ----------- | ------------------- | ------------------------------------------- |
 | `delimiter` | [`str`](./str.md)   | the delimiter string                        |
 | `limit`     | [`int`](./index.md) | max splits; negative means split from right |
 
-**Returns:** iterator of [`str`](./str.md)
+#### Returns
+
+iterator of [`str`](./str.md)
 
 ```
 assert_eq [..."a,b,c".split ","] ["a", "b", "c"]
@@ -131,14 +143,16 @@ The optional `limit` controls how many splits are performed and from which end:
   yield segments right-to-left.
 - Omitted — split fully with no limit.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                | Description                                |
 | ----------- | ------------------- | ------------------------------------------ |
 | `delimiter` | [`str`](./str.md)   | the delimiter string                       |
 | `limit`     | [`int`](./index.md) | max splits; negative means split from left |
 
-**Returns:** iterator of [`str`](./str.md)
+#### Returns
+
+iterator of [`str`](./str.md)
 
 ```
 assert_eq [..."a,b,c".rsplit ","] ["c", "b", "a"]
@@ -152,13 +166,15 @@ assert_eq [..."a,b,c".rsplit "," limit: -1] ["b,c", "a"]
 
 Joins values from an input source using this string as a separator.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description                                      |
 | ------- | ---- | ------------------------------------------------ |
 | `input` |      | iterable to join (uses default input if omitted) |
 
-**Returns:** [`str`](./str.md)
+#### Returns
+
+[`str`](./str.md)
 
 ```
 assert_eq (",".join ["a", "b", "c"]) "a,b,c"
@@ -168,13 +184,15 @@ assert_eq (",".join ["a", "b", "c"]) "a,b,c"
 
 Removes whitespace (or specified characters) from both ends.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type  | Description                                 |
 | ------- | ----- | ------------------------------------------- |
 | `chars` | `str` | characters to trim (defaults to whitespace) |
 
-**Returns:** [`str`](./str.md)
+#### Returns
+
+[`str`](./str.md)
 
 ```
 assert_eq ("  hello  ".trim()) "hello"
@@ -185,13 +203,15 @@ assert_eq ("xxhelloxx".trim "x") "hello"
 
 Removes whitespace (or specified characters) from the start.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type              | Description        |
 | ------- | ----------------- | ------------------ |
 | `chars` | [`str`](./str.md) | characters to trim |
 
-**Returns:** [`str`](./str.md)
+#### Returns
+
+[`str`](./str.md)
 
 ```
 assert_eq ("  hello  ".trim_start()) "hello  "
@@ -201,13 +221,15 @@ assert_eq ("  hello  ".trim_start()) "hello  "
 
 Removes whitespace (or specified characters) from the end.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type              | Description        |
 | ------- | ----------------- | ------------------ |
 | `chars` | [`str`](./str.md) | characters to trim |
 
-**Returns:** [`str`](./str.md)
+#### Returns
+
+[`str`](./str.md)
 
 ```
 assert_eq ("  hello  ".trim_end()) "  hello"
@@ -217,13 +239,15 @@ assert_eq ("  hello  ".trim_end()) "  hello"
 
 Tests whether the string contains the given substring.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type              | Description           |
 | -------- | ----------------- | --------------------- |
 | `needle` | [`str`](./str.md) | the substring to find |
 
-**Returns:** [`bool`](./index.md)
+#### Returns
+
+[`bool`](./index.md)
 
 ```
 assert ("foobar".contains "foo")
@@ -237,14 +261,16 @@ assert ("foobar".contains "")  # empty string is always contained
 Returns a new string with all non-overlapping occurrences of `from` replaced
 with `to`.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type              | Description                |
 | ------ | ----------------- | -------------------------- |
 | `from` | [`str`](./str.md) | substring to replace       |
 | `to`   | [`str`](./str.md) | replacement string         |
 
-**Returns:** [`str`](./str.md)
+#### Returns
+
+[`str`](./str.md)
 
 ```
 assert_eq ("foo bar foo".replace "foo" "baz") "baz bar baz"
@@ -256,7 +282,9 @@ assert_eq ("abc".replace "" "-") "-a-b-c-"
 
 Returns the string converted to uppercase.
 
-**Returns:** [`str`](./str.md)
+#### Returns
+
+[`str`](./str.md)
 
 ```
 assert_eq ("hello".upper()) "HELLO"
@@ -267,7 +295,9 @@ assert_eq ("Hello World".upper()) "HELLO WORLD"
 
 Returns the string converted to lowercase.
 
-**Returns:** [`str`](./str.md)
+#### Returns
+
+[`str`](./str.md)
 
 ```
 assert_eq ("HELLO".lower()) "hello"
@@ -278,13 +308,15 @@ assert_eq ("Hello World".lower()) "hello world"
 
 Returns the string repeated `count` times.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type                | Description                     |
 | ------- | ------------------- | ------------------------------- |
 | `count` | [`int`](./index.md) | non-negative repetition count   |
 
-**Returns:** [`str`](./str.md)
+#### Returns
+
+[`str`](./str.md)
 
 ```
 assert_eq ("ab".repeat 3) "ababab"

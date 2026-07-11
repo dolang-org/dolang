@@ -6,13 +6,15 @@
 
 Returns the type object representing the value's type.
 
-**Parameters:**
+### Parameters
 
 | Name    | Type | Description        |
 | ------- | ---- | ------------------ |
 | `value` |      | the value to query |
 
-**Returns:** type object
+#### Returns
+
+type object
 
 ```
 assert_eq (type 42) $int
@@ -26,14 +28,16 @@ assert_eq (type nil) $Nil
 Tests whether a value is an instance of the given type, including through
 inheritance.
 
-**Parameters:**
+### Parameters
 
 | Name    | Type | Description        |
 | ------- | ---- | ------------------ |
 | `value` |      | the value to test  |
 | `type`  |      | the type to check  |
 
-**Returns:** `bool`
+#### Returns
+
+`bool`
 
 ```
 assert (type 42 int)
