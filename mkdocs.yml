@@ -53,6 +53,7 @@ nav:
     - language/classes.md
     - language/error-handling.md
     - language/concurrency.md
+    - language/decorators.md
     - language/misc.md
     - language/prelude.md
   - Shell Guide:

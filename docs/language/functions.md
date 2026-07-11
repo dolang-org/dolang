@@ -263,7 +263,7 @@ See [Modules](./modules.md) for details on the module system.
 
 ## Decorators
 
-Function defs may be preceded by one or more decorators using `#[expr]` syntax:
+Function defs may be preceded by decorators:
 
 ```
 #[memoize]
@@ -274,6 +274,4 @@ def fib n
     (fib(n - 1) + fib(n - 2))
 ```
 
-Each decorator expression is evaluated in the surrounding scope. After the
-function value is created, decorators are applied from bottom to top, with each
-decorator receiving the current value and returning a replacement.
+See [Decorators](./decorators.md) for syntax, ordering, and examples.

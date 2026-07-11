@@ -56,8 +56,7 @@ class Counter
 
 ## Computed Fields with `getter` and `setter`
 
-Computed fields are declared with `#[getter]` and `#[setter]` decorators on
-methods:
+Computed fields use decorators on methods:
 
 ```
 class Config
@@ -80,6 +79,10 @@ assert_eq $cfg.port 8080
 cfg.port = 9000
 assert_eq $cfg.port 9000
 ```
+
+See [Decorators](./decorators.md) for decorator syntax and evaluation order, and
+[`getter`](../api/std/getter.md) / [`setter`](../api/std/setter.md) for the
+descriptor helpers.
 
 ## Visibility
 
