@@ -1461,7 +1461,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_dict_literal(&mut self, scope: &mut Scope<'_>, left: Span) -> Result<Expr> {
-        use self::Ident;
+        use self::{Ident, Key};
         use TokenInfo::*;
         self.with_mode(lex::Mode::FullExpr, |this| {
             let mut elems = Vec::new();
@@ -1469,9 +1469,19 @@ impl<'a> Parser<'a> {
                 let (key, colon_span) = match this.peek()? {
                     Some(token!(RightBrace)) => break this.advance(),
                     Some(token!(Key, span)) => {
-                        let span = *span;
+                        let key_span = *span;
                         this.advance();
-                        (Expr::Sym(span), span.after_right_char())
+                        elems.push(DictElem::Key(Key {
+                            key_span,
+                            colon_span: key_span.after_right_char(),
+                            expr: this.parse_expr(scope, ExprMode::Full)?,
+                            delim_span: if let Some(token!(Comma)) = this.peek()? {
+                                Some(this.advance())
+                            } else {
+                                None
+                            },
+                        }));
+                        continue;
                     }
                     Some(token!(Dollar)) => {
                         let dollar_span = this.advance();
@@ -1506,17 +1516,16 @@ impl<'a> Parser<'a> {
                         continue;
                     }
                     Some(token!(DittoKey)) => {
-                        let span = this.advance();
-                        let comma_span = if let Some(token!(Comma)) = this.peek()? {
-                            Some(this.advance())
-                        } else {
-                            None
-                        };
-                        elems.push(DictElem::Pair(Pair {
-                            key: Expr::Sym(span),
-                            value: Expr::Ident(Ident::new(span)),
-                            colon_span: Some(span.before_left_char()),
-                            delim_span: comma_span,
+                        let key_span = this.advance();
+                        elems.push(DictElem::Key(Key {
+                            key_span,
+                            expr: Expr::Ident(Ident::new(key_span)),
+                            colon_span: key_span.before_left_char(),
+                            delim_span: if let Some(token!(Comma)) = this.peek()? {
+                                Some(this.advance())
+                            } else {
+                                None
+                            },
                         }));
                         continue;
                     }
