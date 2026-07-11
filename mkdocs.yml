@@ -122,6 +122,12 @@ nav:
       - api/http/response.md
       - api/http/status.md
     - json: api/json.md
+    - patch:
+      - api/patch/index.md
+      - api/patch/patch.md
+      - api/patch/patchiter.md
+      - api/patch/parseerror.md
+      - api/patch/applyerror.md
     - toml: api/toml.md
     - load:
       - api/load/index.md
