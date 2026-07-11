@@ -1,8 +1,7 @@
 # Commands
 
 At statement level, Do uses shell-like syntax where most tokens are literal
-strings. This is the default parsing mode at the top level and within indented
-blocks.
+strings.
 
 ## Basic Commands
 

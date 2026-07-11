@@ -70,6 +70,7 @@ Things to notice:
 configurable concurrency:
 
 ```
+#!/usr/bin/env -S dolang --strict
 import args progress http fs url strand
 
 def download client url
@@ -94,21 +95,21 @@ def download client url
         fs.remove $name ignore: true
 
 args.with
- help: Download files over HTTP(S)
- - opt: limit
-   short: l
-   type: $int
-   help: Maximum concurrent downloads
-   default: 4
- - arg: urls
-   collect: true
-   help: URLs to download
-   type: $url.Url
- do |args| progress.with do
-  let client = http.Client()
-  strand.fork limit: $args.limit
-    for url = args.urls
-      do download $client $url
+  help: Download files over HTTP(S)
+  - opt: limit
+    short: l
+    type: $int
+    help: Maximum concurrent downloads
+    default: 4
+  - arg: urls
+    collect: true
+    help: URLs to download
+    type: $url.Url
+  do |args| progress.with do
+    let client = http.Client()
+    strand.fork limit: $args.limit
+      for url = args.urls
+        do download $client $url
 ```
 
 Things to notice:

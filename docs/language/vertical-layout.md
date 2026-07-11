@@ -1,7 +1,7 @@
 # Vertical Layout
 
 Do supports YAML-like vertical layout for arguments and data structures. This
-provides a natural way to format complex commands or function calls or even
+provides a natural way to format complex commands or function calls, or even
 define small declarative languages. Vertical layout is started by placing an
 indented block in the following contexts:
 
@@ -60,7 +60,7 @@ func arg1 key1: val1
 # Bin packed
 func
   arg1 arg2
-  arg3 arg3
+  arg3 arg4
 
 # Not allowed
 #func
@@ -126,11 +126,16 @@ my_func
 ## Line Items
 
 Items that span the line (after `-` or `key:`) are treated like ordinary
-command arguments, except that whitespace is preserved literally instead
-being a separator. There is also a special form:
+command arguments, except that whitespace is preserved literally instead being
+a separator. There is also a special form: `$` followed by a space interprets
+the remainder of the line as a full command statement, with the value being its
+result.
 
-- `$` followed by a space: the remainder of the line is treated as a full
-  command statement, with the value being its result
+```
+some_func
+  key1: $ command arg1 arg2
+  key2: $ comannd arg3 arg4
+```
 
 ## `for` in Vertical Layout
 
@@ -144,7 +149,7 @@ let doubled =
 
 ## `if` in Vertical Layout
 
-`if` introduced conditional items or arguments in vertical layout:
+`if` introduces conditional items or arguments in vertical layout:
 
 ```
 let items =
@@ -168,8 +173,7 @@ assert_eq $bar []
 
 ## Spreading
 
-Use `...` to spread an iterable in vertical context. It must not be preceded by
-`-`.
+Use `...` to spread in vertical layout. It must not be preceded by `-`.
 
 ```
 let extras = [4, 5, 6]
@@ -183,17 +187,13 @@ assert_eq $all [1, 2, 3, 4, 5, 6]
 
 The behavior of the spread depends on the context:
 
-- *Arguments*:
-    - An ordinary iterable is spread as positional arguments
-    - A mapping-like value, or an iterator adapted with `kv()`, is spread as
-      arguments, with integer
-      keys starting from 0 and increasing contiguously treated as positional
-      argument and symbol keys treated as key arguments; all others cause a
-      runtime error
-- *Array* (no static keys specified in vertical layout)
-    - An iterable is expanded as individual items in place
-- *Dictionary* (at least one static key specified in vertical layout)
-    - An ordinary iterable is spread as incrementing integer keys
-    - A mapping-like value, or an iterator adapted with `kv()`, is spread as
-      key/value pairs, preserving
-      ordering and multiplicity
+| Context    | Spread input                        | Behavior                                                                                       |
+| ---------- | ----------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Arguments  | Iterable                            | Positional arguments                                                                           |
+| Arguments  | Dict-like object or `kv()` iterator | Mixed arguments. Monotonic integer keys starting from `0` are positional, symbol keys are keys |
+| Array      | Iterable                            | Expanded as individual items in place                                                          |
+| Dictionary | Iterable                            | Items assigned incrementing integer keys                                                       |
+| Dictionary | Dict-like object or `kv()` iterator | Key/value pairs, preserving ordering and multiplicity                                          |
+
+Note that a dictionary is only produced if at least one static key exists in
+addition to any spreads; otherwise, an array results.

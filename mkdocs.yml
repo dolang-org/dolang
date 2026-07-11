@@ -77,8 +77,6 @@ nav:
     - diagnostic: api/diagnostic.md
     - exec:
       - api/exec/index.md
-    - container:
-      - api/container/index.md
     - container.docker:
       - api/container/docker/index.md
       - api/container/docker/container.md
