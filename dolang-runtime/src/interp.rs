@@ -20,7 +20,7 @@ use crate::{
     object::{
         arg::ArgPack,
         array::Array,
-        class::{ClassEntry, ClassObject, Property},
+        class::{ClassEntry, ClassObject, FieldDefault, Property},
         dict::Dict,
         module::{Module, Namespace},
         protocol::{GcObj, Spread, SpreadContext},
@@ -409,8 +409,8 @@ impl<'v> Vm<'v> {
                 Arg::Key(key, slot) => (key, slot),
             };
 
-            match key.as_str(strand) {
-                "super" => {
+            match key.tag() {
+                sym::SUPER => {
                     if !slot.is_instance_of(strand, &strand.singletons().type_obj) {
                         return Err(Error::type_error(
                             strand,
@@ -419,7 +419,7 @@ impl<'v> Vm<'v> {
                     }
                     supers.push(slot.take());
                 }
-                "field" => {
+                sym::FIELD | sym::FIELD_THUNK => {
                     let sym = unsafe {
                         slot.as_sym(strand)
                             .ok_or_else(|| {
@@ -438,7 +438,18 @@ impl<'v> Vm<'v> {
                         ));
                     };
                     let slot = field_defaults.len();
-                    field_defaults.push(default.take());
+                    let default = if key.tag() == sym::FIELD_THUNK {
+                        if !default.is_instance_of(strand, &strand.singletons().func) {
+                            return Err(Error::type_error(
+                                strand,
+                                "class_create: field thunk must be a function",
+                            ));
+                        }
+                        FieldDefault::Thunk(default.take())
+                    } else {
+                        FieldDefault::Value(default.take())
+                    };
+                    field_defaults.push(default);
                     match local_entries.entry(sym) {
                         Entry::Vacant(entry) => {
                             entry.insert(ClassEntry::Field(slot));
@@ -454,7 +465,7 @@ impl<'v> Vm<'v> {
                         }
                     }
                 }
-                "method" => {
+                sym::METHOD => {
                     let sym = unsafe {
                         slot.as_sym(strand)
                             .ok_or_else(|| {
@@ -530,10 +541,7 @@ impl<'v> Vm<'v> {
                         continue;
                     }
 
-                    if value
-                        .downcast_ref(strand.builtin_types().function)
-                        .is_none()
-                    {
+                    if !value.is_instance_of(strand, &strand.singletons().func) {
                         return Err(Error::type_error(
                             strand,
                             "class_create: method value must be a function, Getter, or Setter",
@@ -584,7 +592,10 @@ impl<'v> Vm<'v> {
                     }
                     let new_entry = match entry {
                         ClassEntry::Field(old_slot) => {
-                            let default = cls.field_defaults[*old_slot].dup();
+                            let default = match &cls.field_defaults[*old_slot] {
+                                FieldDefault::Value(v) => FieldDefault::Value(v.dup()),
+                                FieldDefault::Thunk(v) => FieldDefault::Thunk(v.dup()),
+                            };
                             let new_slot = field_defaults.len();
                             field_defaults.push(default);
                             ClassEntry::Field(new_slot)

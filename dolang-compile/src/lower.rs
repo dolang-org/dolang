@@ -8,9 +8,9 @@ use crate::{
     Mode, PreludeImport,
     ast::{
         Arg, ArrayElem, Assign, Bind, Block, Class, ClassMember, ClassSuper, Const, Decorator, Def,
-        DictElem, Expand, Expr, For, Function, GetVariant, Ident, If, Import, ImportElement,
-        ImportItem, Key, LValue, Let, Method, NlGuard, Pair, Param, ParamDefault, Pattern,
-        PrimStmt, Res, Return, Single, Stmt, Try, Unit, While, visit::Node,
+        DictElem, Expand, Expr, FieldInit, For, Function, GetVariant, Ident, If, Import,
+        ImportElement, ImportItem, Key, LValue, Let, Method, NlGuard, Pair, Param, ParamDefault,
+        Pattern, PrimStmt, Res, Return, Single, Stmt, Try, Unit, While, visit::Node,
     },
     cfg::{self, BlockRefMut, Inst, InstInfo, Term, TermInfo},
     constant::{self, ConstantExt},
@@ -2021,6 +2021,27 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.block.insts.push(Inst(InstInfo::LoadConst(sym), span));
     }
 
+    fn lower_field_init_value(&mut self, field: &'a crate::ast::FieldDecl) -> Result<()> {
+        let span = field
+            .fields
+            .first()
+            .map(|field| field.ident.span)
+            .unwrap_or(field.field_span);
+        match &field.init {
+            FieldInit::None => {
+                self.lower_load_nil(field.field_span);
+            }
+            FieldInit::Const(_, value) => {
+                let cid = self.lower_const(value);
+                self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
+            }
+            FieldInit::Thunk(func) => {
+                self.lower_closure(func, span)?;
+            }
+        }
+        Ok(())
+    }
+
     fn lower_class_super(&mut self, node: &'a ClassSuper) {
         let res = node.ident.res.as_ref().expect("unresolved superclass root");
         self.lower_load(res, node.ident.span);
@@ -2032,21 +2053,22 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         }
     }
 
-    fn lower_class_member_sym(&mut self, member: &'a ClassMember) -> sym::Id {
-        match member {
-            ClassMember::Field(field) => field.private_sym.unwrap_or_else(|| {
+    fn lower_field_name_sym(&mut self, field: &'a crate::ast::FieldName) -> sym::Id {
+        field.private_sym.unwrap_or_else(|| {
+            self.symtab
+                .id(&self.bintab.id_str(self.file.str(field.ident.span)))
+        })
+    }
+
+    fn lower_method_sym(&mut self, def: &'a Method) -> sym::Id {
+        def.private_sym.unwrap_or_else(|| {
+            if let Some(method) = def.special {
+                self.symtab.id(&self.bintab.id_str(method.sym()))
+            } else {
                 self.symtab
-                    .id(&self.bintab.id_str(self.file.str(field.ident.span)))
-            }),
-            ClassMember::Method(def) => def.private_sym.unwrap_or_else(|| {
-                if let Some(method) = def.special {
-                    self.symtab.id(&self.bintab.id_str(method.sym()))
-                } else {
-                    self.symtab
-                        .id(&self.bintab.id_str(self.file.str(def.name_span)))
-                }
-            }),
-        }
+                    .id(&self.bintab.id_str(self.file.str(def.name_span)))
+            }
+        })
     }
 
     fn lower_class(&mut self, node: &'a Class, want_result: bool) -> Result<()> {
@@ -2071,6 +2093,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
         let super_sym = self.symtab.id(&self.bintab.id_str("super"));
         let field_sym = self.symtab.id(&self.bintab.id_str("field"));
+        let field_thunk_sym = self.symtab.id(&self.bintab.id_str("field_thunk"));
         let method_sym = self.symtab.id(&self.bintab.id_str("method"));
 
         for super_ref in &node.super_refs {
@@ -2078,26 +2101,79 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         }
 
         for member in &node.body.members {
-            let sym = self.lower_class_member_sym(member);
-            self.lower_member_sym_value(sym, member.span());
             match member {
-                ClassMember::Field(field) => self.lower_expr(&field.default)?,
-                ClassMember::Method(def) => self.lower_class_method_value(def, node.ident.span)?,
+                ClassMember::Field(field) => {
+                    let Some((first, rest)) = field.fields.split_first() else {
+                        continue;
+                    };
+                    let sym = self.lower_field_name_sym(first);
+                    self.lower_member_sym_value(sym, first.ident.span);
+                    self.lower_field_init_value(field)?;
+                    match &field.init {
+                        FieldInit::None => {
+                            for name in rest {
+                                let sym = self.lower_field_name_sym(name);
+                                self.lower_member_sym_value(sym, name.ident.span);
+                                self.lower_load_nil(name.ident.span);
+                            }
+                        }
+                        FieldInit::Const(_, value) => {
+                            let cid = self.lower_const(value);
+                            for name in rest {
+                                let sym = self.lower_field_name_sym(name);
+                                self.lower_member_sym_value(sym, name.ident.span);
+                                self.block
+                                    .insts
+                                    .push(Inst(InstInfo::LoadConst(cid), name.ident.span));
+                            }
+                        }
+                        _ => {
+                            for name in rest {
+                                self.block.insts.push(Inst(InstInfo::Dup, name.ident.span));
+                                let sym = self.lower_field_name_sym(name);
+                                self.lower_member_sym_value(sym, name.ident.span);
+                                self.block
+                                    .insts
+                                    .push(Inst(InstInfo::Swap(0, 1), name.ident.span));
+                            }
+                        }
+                    }
+                }
+                ClassMember::Method(def) => {
+                    let sym = self.lower_method_sym(def);
+                    self.lower_member_sym_value(sym, member.span());
+                    self.lower_class_method_value(def, node.ident.span)?;
+                }
             }
         }
 
-        let class_sig = sig::Pack::new(
-            std::iter::once(sig::Arg::Value)
-                .chain(std::iter::once(sig::Arg::Value))
-                .chain(std::iter::repeat_n(
-                    sig::Arg::Key(super_sym),
-                    node.super_refs.len(),
-                ))
-                .chain(node.body.members.iter().flat_map(|member| match member {
-                    ClassMember::Field(_) => [sig::Arg::Key(field_sym), sig::Arg::Value],
-                    ClassMember::Method(_) => [sig::Arg::Key(method_sym), sig::Arg::Value],
-                })),
-        );
+        let mut class_sig_args =
+            Vec::with_capacity(2 + node.super_refs.len() + node.body.members.len() * 2);
+        class_sig_args.push(sig::Arg::Value);
+        class_sig_args.push(sig::Arg::Value);
+        class_sig_args.extend(std::iter::repeat_n(
+            sig::Arg::Key(super_sym),
+            node.super_refs.len(),
+        ));
+        for member in &node.body.members {
+            match member {
+                ClassMember::Field(field) => {
+                    let key_sym = match &field.init {
+                        FieldInit::Thunk(_) => field_thunk_sym,
+                        _ => field_sym,
+                    };
+                    for _ in &field.fields {
+                        class_sig_args.push(sig::Arg::Key(key_sym));
+                        class_sig_args.push(sig::Arg::Value);
+                    }
+                }
+                ClassMember::Method(_) => {
+                    class_sig_args.push(sig::Arg::Key(method_sym));
+                    class_sig_args.push(sig::Arg::Value);
+                }
+            }
+        }
+        let class_sig = sig::Pack::new(class_sig_args.into_iter());
         let class_sig = self.packtab.id(&class_sig);
         self.block.insts.push(Inst(
             InstInfo::Builtin(builtin::CLASS_CREATE, class_sig),

@@ -1,7 +1,0 @@
-class BadFieldMultiAssign
-  field left right = 1
-# error: multiple field names cannot use `=`
-#   --> class_field_multi_assign_error.dol:LL:LL
-#    |
-# LL |   field left right = 1
-#    |                    ^

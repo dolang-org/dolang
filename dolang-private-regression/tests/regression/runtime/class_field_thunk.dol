@@ -1,0 +1,29 @@
+let counter = 0
+
+def next()
+  let value = counter
+  counter = (counter + 1)
+  value
+
+class Countered
+  pub field id = next()
+
+let a = Countered()
+let b = Countered()
+
+assert_eq $a.id 0
+assert_eq $b.id 1
+
+class Pair
+  pub field left right = next()
+
+let pair = Pair()
+assert_eq $pair.left 2
+assert_eq $pair.right 3
+
+class SharedConst
+  pub field left right = 7
+
+let shared = SharedConst()
+assert_eq $shared.left 7
+assert_eq $shared.right 7

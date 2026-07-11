@@ -2160,21 +2160,28 @@ impl<'a> Elaborater<'a> {
     }
 
     fn visit_field_decl(&mut self, scope: &mut Scope<'_>, node: &mut ast::FieldDecl) -> Result<()> {
-        self.visit_expr(scope, &mut node.default, false)?;
-        node.origin = Some(self.origintab.id(&Origin::Field {
-            span: node.ident.span,
-            class: scope.class_span().expect("class field outside class scope"),
-        }));
-        let name = self.file.str(node.ident.span);
-        node.private_sym = if node.pub_span.is_none() {
-            Some(
-                scope
-                    .lookup_private_field(name)
-                    .expect("private sym should exist from pre-scan"),
-            )
-        } else {
-            None
-        };
+        match &mut node.init {
+            ast::FieldInit::None => {}
+            ast::FieldInit::Const(expr, _) => self.visit_expr(scope, expr, false)?,
+            ast::FieldInit::Thunk(func) => self.visit_function(scope, func, None)?,
+        }
+        let class = scope.class_span().expect("class field outside class scope");
+        for field in &mut node.fields {
+            field.origin = Some(self.origintab.id(&Origin::Field {
+                span: field.ident.span,
+                class,
+            }));
+            let name = self.file.str(field.ident.span);
+            field.private_sym = if node.pub_span.is_none() {
+                Some(
+                    scope
+                        .lookup_private_field(name)
+                        .expect("private sym should exist from pre-scan"),
+                )
+            } else {
+                None
+            };
+        }
         Ok(())
     }
 
@@ -2224,9 +2231,11 @@ impl<'a> Elaborater<'a> {
         for member in body.members.iter_mut() {
             match member {
                 ast::ClassMember::Field(node) if node.pub_span.is_none() => {
-                    let name = self.file.str(node.ident.span).to_owned();
-                    let private_sym = self.symtab.fresh(self.bintab.id_str(&name));
-                    scope.insert_private_field(name, private_sym);
+                    for field in &node.fields {
+                        let name = self.file.str(field.ident.span).to_owned();
+                        let private_sym = self.symtab.fresh(self.bintab.id_str(&name));
+                        scope.insert_private_field(name, private_sym);
+                    }
                 }
                 ast::ClassMember::Method(node)
                     if node.pub_span.is_none() && node.special.is_none() =>
