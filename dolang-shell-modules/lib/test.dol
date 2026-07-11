@@ -27,28 +27,21 @@ def parse_timeout value
   secs
 
 class ModuleCompileError: std.RuntimeError
-  pub field path = nil
-  pub field output = nil
+  pub field path output
 
   def (init) self path output
     self.path = path
     self.output = output
 
 class Harness
-  field module_jobs = nil
-  field jobs = nil
-  field filter = nil
-  field timeout = nil
-  field filter_glob = nil
-  field errors = nil
-  field success = 0
-  field total = 0
+  field module_jobs jobs filter timeout
+  field errors = []
+  field success total = 0
 
   def (init) self :jobs :module_jobs :filter :timeout
     self.#module_jobs = module_jobs
     self.#jobs = jobs
     self.#timeout = timeout
-    self.#errors = []
     self.#filter = try
         Glob $filter
     catch std.RuntimeError: _
