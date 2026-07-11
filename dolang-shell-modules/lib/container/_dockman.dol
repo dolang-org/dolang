@@ -654,7 +654,7 @@ pub class Builder
   def connect self img :pull = :NEVER:
     if self.#socket.exists()
       self.#socket.remove()
-    let ctr_id = sub do self.#runtime.cli run -d --pull=$(str pull)
+    let ctr_id = sub do self.#runtime.cli run -d --pull=$str(pull).lower()
       ...mount_args(self.#mounts)
       --entrypoint env
       -v $self.#subdir:$self.#ctr_subdir:rw,z$(self.#runtime.mount_uopt())
