@@ -1011,6 +1011,21 @@ name = "dolang-private-util"
 version = "0.1.0"
 
 [[package]]
+name = "dolang-rpc"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "libc",
+ "nix",
+ "postcard",
+ "serde",
+ "thiserror",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "dolang-runtime"
 version = "0.1.0"
 dependencies = [
