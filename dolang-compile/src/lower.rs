@@ -2952,7 +2952,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.lower_non_const_defaults(params, span)?;
         }
 
-        let mut sig = vec![sig::Arg::Pack];
+        let mut sig = Vec::new();
+        self.block.insts.push(Inst(InstInfo::Dup, span));
         // End prologue
         for arg in body.iter() {
             sig.push(self.lower_arg(arg)?);
@@ -2960,9 +2961,11 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let sig = sig::Pack::new(sig.into_iter());
         let sig = self.packtab.id(&sig);
 
-        self.block
-            .insts
-            .push(Inst(InstInfo::Builtin(builtin::ARGS, sig), span));
+        self.block.insts.push(Inst(
+            InstInfo::MethodCall(self.symtab.id(&self.bintab.id_str("push")), sig),
+            span,
+        ));
+        self.block.insts.push(Inst(InstInfo::Pop, span));
 
         // Epilogue
         if scope.has_upvars() {
@@ -3016,7 +3019,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.lower_non_const_defaults(params, span)?;
         }
 
-        let mut sig = vec![sig::Arg::Pack];
+        let mut sig = Vec::new();
+        self.block.insts.push(Inst(InstInfo::Dup, span));
         // End prologue
         for elem in body.iter() {
             sig.push(self.lower_array_elem(elem)?);
@@ -3024,9 +3028,11 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let sig = sig::Pack::new(sig.into_iter());
         let sig = self.packtab.id(&sig);
 
-        self.block
-            .insts
-            .push(Inst(InstInfo::Builtin(builtin::ARGS, sig), span));
+        self.block.insts.push(Inst(
+            InstInfo::MethodCall(self.symtab.id(&self.bintab.id_str("push")), sig),
+            span,
+        ));
+        self.block.insts.push(Inst(InstInfo::Pop, span));
 
         // Epilogue
         if scope.has_upvars() {
@@ -3080,7 +3086,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.lower_non_const_defaults(params, span)?;
         }
 
-        let mut sig = vec![sig::Arg::Pack];
+        let mut sig = Vec::new();
+        self.block.insts.push(Inst(InstInfo::Dup, span));
         // End prologue
         for elem in body.iter() {
             let (arg1, arg2) = self.lower_dict_elem(elem)?;
@@ -3092,9 +3099,11 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let sig = sig::Pack::new(sig.into_iter());
         let sig = self.packtab.id(&sig);
 
-        self.block
-            .insts
-            .push(Inst(InstInfo::Builtin(builtin::ARGS, sig), span));
+        self.block.insts.push(Inst(
+            InstInfo::MethodCall(self.symtab.id(&self.bintab.id_str("push")), sig),
+            span,
+        ));
+        self.block.insts.push(Inst(InstInfo::Pop, span));
 
         // Epilogue
         if scope.has_upvars() {

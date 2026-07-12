@@ -246,7 +246,7 @@ fn split_skip_sets<'v>(
 
 unsafe impl<'v> Collect for ArgPack<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
+    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -314,7 +314,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let pack = this.get();
+        let pack = this.borrow(strand)?;
         let plan = unpack_plan(strand, &pack.inner, &HashSet::new(), 0, sig)?;
 
         for action in &plan.actions {
@@ -350,7 +350,8 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let mut int = 0i64;
-        for (key, value) in &this.get().inner {
+        let pack = this.borrow(strand)?;
+        for (key, value) in &pack.inner {
             let mut value = value.dup();
             if context == SpreadContext::Sequence {
                 if let Some(key) = key {
@@ -387,8 +388,8 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                let len =
-                    i64::try_from(this.get().inner.len()).map_err(|_| Error::overflow(strand))?;
+                let len = i64::try_from(this.borrow(strand)?.inner.len())
+                    .map_err(|_| Error::overflow(strand))?;
                 Output::set(strand, out, len);
                 Ok(())
             }
@@ -408,9 +409,22 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
+            sym::PUSH => {
+                let mut pack = this.borrow_mut(strand)?;
+                for arg in args {
+                    match arg {
+                        Arg::Pos(mut value) => pack.inner.push((None, value.take())),
+                        Arg::Key(key, mut value) => {
+                            pack.has_keys = true;
+                            pack.inner.push((Some(strand.sym_obj(key)), value.take()));
+                        }
+                    }
+                }
+                Ok(())
+            }
             sym::POS_ONLY => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let pack = this.get();
+                let pack = this.borrow(strand)?;
                 if pack.has_keys {
                     return Err(Error::unexpected_key(
                         strand,
@@ -427,7 +441,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
             }
             sym::POS_KEYS => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let pack = this.get();
+                let pack = this.borrow(strand)?;
                 let (pos_skip, key_skip) = split_skip_sets(&pack.inner, &HashSet::new(), 0);
                 let pos_pos =
                     first_visible_index(&pack.inner, &pos_skip, 0).unwrap_or(pack.inner.len());
@@ -488,17 +502,32 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut iter = this.borrow_mut(strand)?;
-        let plan = unpack_plan(strand, &iter.pack.inner, &iter.skip, iter.pos, sig)?;
+        let pack = iter
+            .pack
+            .borrow()
+            .ok_or_else(|| Error::concurrency(strand))?;
+        let plan = unpack_plan(strand, &pack.inner, &iter.skip, iter.pos, sig)?;
+        let values: Vec<_> = plan
+            .actions
+            .iter()
+            .map(|action| (action.source_index, pack.inner[action.source_index].1.dup()))
+            .collect();
+        let len = pack.inner.len();
+        drop(pack);
 
-        for action in &plan.actions {
-            let value = iter.pack.inner[action.source_index].1.dup();
-            iter.skip.insert(action.source_index);
+        for (action, (source_index, value)) in plan.actions.iter().zip(values) {
+            iter.skip.insert(source_index);
             out.at(action.dest_slot).store(value);
         }
         fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
 
-        let len = iter.pack.inner.len();
-        iter.pos = first_visible_index(&iter.pack.inner, &iter.skip, iter.pos).unwrap_or(len);
+        let pack = iter
+            .pack
+            .borrow()
+            .ok_or_else(|| Error::concurrency(strand))?;
+        let pos = first_visible_index(&pack.inner, &iter.skip, iter.pos).unwrap_or(len);
+        drop(pack);
+        iter.pos = pos;
         iter.int = iter
             .int
             .checked_add(i64::try_from(plan.pos_matched).map_err(|_| Error::overflow(strand))?)
@@ -517,11 +546,16 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut iter = this.borrow_mut(strand)?;
-        if let Some(index) = first_visible_index(&iter.pack.inner, &iter.skip, iter.pos) {
-            let (key, value) = {
-                let (key, value) = &iter.pack.inner[index];
-                (key.clone(), value.dup())
-            };
+        let pack = iter
+            .pack
+            .borrow()
+            .ok_or_else(|| Error::concurrency(strand))?;
+        let item = first_visible_index(&pack.inner, &iter.skip, iter.pos).map(|index| {
+            let (key, value) = &pack.inner[index];
+            (index, key.clone(), value.dup())
+        });
+        drop(pack);
+        if let Some((index, key, value)) = item {
             iter.pos = index + 1;
             if iter.pos_only {
                 debug_assert!(
@@ -554,30 +588,39 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let mut iter = this.borrow_mut(strand)?;
-        while let Some(index) = first_visible_index(&iter.pack.inner, &iter.skip, iter.pos) {
-            let (key, value) = &iter.pack.inner[index];
+        loop {
+            let pack = iter
+                .pack
+                .borrow()
+                .ok_or_else(|| Error::concurrency(strand))?;
+            let item = first_visible_index(&pack.inner, &iter.skip, iter.pos).map(|index| {
+                let (key, value) = &pack.inner[index];
+                (index, key.clone(), value.dup())
+            });
+            drop(pack);
+            let Some((index, key, value)) = item else {
+                break;
+            };
             if context == SpreadContext::Sequence && !iter.pos_only {
                 if let Some(key) = key {
-                    let mut value = Value::from_object(tuple::tuple(
-                        strand,
-                        [Value::from_object(key.clone()), value.dup()],
-                    ));
+                    let mut value =
+                        Value::from_object(tuple::tuple(strand, [Value::from_object(key), value]));
                     sink.positional(strand, Slot::new(&mut value))?;
                 } else {
                     let mut value = Value::from_object(tuple::tuple(
                         strand,
-                        [Value::from_i64(strand, iter.int), value.dup()],
+                        [Value::from_i64(strand, iter.int), value],
                     ));
                     sink.positional(strand, Slot::new(&mut value))?;
                     iter.int += 1;
                 }
             } else {
                 if let Some(key) = key {
-                    let mut key = Value::from_object(key.clone());
-                    let mut value = value.dup();
+                    let mut key = Value::from_object(key);
+                    let mut value = value;
                     sink.keyed(strand, Slot::new(&mut key), Slot::new(&mut value))?;
                 } else {
-                    let mut value = value.dup();
+                    let mut value = value;
                     sink.positional(strand, Slot::new(&mut value))?;
                 }
             }
@@ -595,7 +638,11 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
         match field.tag() {
             sym::LEN => {
                 let iter = this.borrow(strand)?;
-                let len = i64::try_from(visible_len(&iter.pack.inner, &iter.skip, iter.pos))
+                let pack = iter
+                    .pack
+                    .borrow()
+                    .ok_or_else(|| Error::concurrency(strand))?;
+                let len = i64::try_from(visible_len(&pack.inner, &iter.skip, iter.pos))
                     .map_err(|_| Error::overflow(strand))?;
                 Output::set(strand, out, len);
                 Ok(())
@@ -619,15 +666,19 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
             sym::POS_ONLY => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let iter = this.borrow(strand)?;
-                if let Some(sym) = first_visible_key(&iter.pack.inner, &iter.skip, iter.pos) {
+                let pack = iter
+                    .pack
+                    .borrow()
+                    .ok_or_else(|| Error::concurrency(strand))?;
+                if let Some(sym) = first_visible_key(&pack.inner, &iter.skip, iter.pos) {
                     return Err(Error::unexpected_key(strand, sym));
                 }
                 let mut skip = iter.skip.clone();
                 for index in 0..iter.pos {
                     skip.insert(index);
                 }
-                let pos = first_visible_index(&iter.pack.inner, &skip, iter.pos)
-                    .unwrap_or(iter.pack.inner.len());
+                let pos =
+                    first_visible_index(&pack.inner, &skip, iter.pos).unwrap_or(pack.inner.len());
                 strand.builtin_types().arg_iter.create(
                     strand,
                     ArgIter::new(iter.pack.clone(), skip, pos, 0, true),
@@ -638,11 +689,15 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
             sym::POS_KEYS => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let iter = this.borrow(strand)?;
-                let (pos_skip, key_skip) = split_skip_sets(&iter.pack.inner, &iter.skip, iter.pos);
-                let pos_pos = first_visible_index(&iter.pack.inner, &pos_skip, iter.pos)
-                    .unwrap_or(iter.pack.inner.len());
-                let key_pos = first_visible_index(&iter.pack.inner, &key_skip, iter.pos)
-                    .unwrap_or(iter.pack.inner.len());
+                let pack = iter
+                    .pack
+                    .borrow()
+                    .ok_or_else(|| Error::concurrency(strand))?;
+                let (pos_skip, key_skip) = split_skip_sets(&pack.inner, &iter.skip, iter.pos);
+                let pos_pos = first_visible_index(&pack.inner, &pos_skip, iter.pos)
+                    .unwrap_or(pack.inner.len());
+                let key_pos = first_visible_index(&pack.inner, &key_skip, iter.pos)
+                    .unwrap_or(pack.inner.len());
                 out.store(Value::from_object(tuple::tuple(
                     strand,
                     [

@@ -42,6 +42,13 @@ def collect_pairs ...args
   [...args]
 
 assert (type (std.args 1 2) std.args)
+let pack = std.args 1
+assert_eq (pack.push 2 name: "Alice") nil
+let pushed = [...pack]
+assert_eq $pushed[0][1] 1
+assert_eq $pushed[1][1] 2
+assert_eq $pushed[2][0] :name:
+assert_eq $pushed[2][1] "Alice"
 assert_eq (collect_pos 1 2 3) [1, 2, 3]
 assert_eq (unpack_pos 1 2 3 4) [1, 2, [3, 4]]
 assert_eq (spread_pos 4 5 6) [4, 5, 6]

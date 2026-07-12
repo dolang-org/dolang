@@ -11,8 +11,9 @@ rust-version.workspace = true
 test = false
 doctest = false
 
-[dependencies]
-
 [build-dependencies]
 dolang-private-bundle = { path = "../dolang-private-bundle", version = "0.1.0" }
 dolang-ext-shell = { path = "../dolang-ext-shell", version = "0.1.0" }
+
+[features]
+debug = ["dolang-private-bundle/debug"]
