@@ -1,11 +1,10 @@
 # args
 
-Immutable argument pack.
+Argument pack.
 
 `args` values are returned by variadic captures such as `...rest` and by
 calling the `args` type object. Iterating an `args` value yields `[key, value]`
-pairs. Positional items use their positional index as the key. Iterating or
-spreading a pack does not consume it.
+pairs. Positional items use their positional index as the key.
 
 ## Constructor
 
@@ -32,6 +31,20 @@ assert_eq $pack.len 3
 ```
 
 ## Methods
+
+### `push ...`
+
+Appends positional and keyed arguments to the pack.
+
+**Returns:** `nil`
+
+```
+let pack = args 1
+pack.push 2 name: Alice
+let items = [...pack]
+assert_eq $items[1][1] 2
+assert_eq $items[2][0] :name:
+```
 
 ### `pos_only`
 
