@@ -1,15 +1,19 @@
 use std::collections::HashMap;
-use std::os::unix::io::OwnedFd;
 use std::path::PathBuf;
 
+use dolang_rpc::{OsHandle, Protocol};
 use serde::{Deserialize, Serialize};
-use tokio_unix_ipc::serde::Handle;
 
 pub(crate) use crate::{
     Attrs, ChownIdentity, FsMetadata, Metadata, WellKnownPath, XattrEntry, XattrNamespace,
 };
 
-pub(crate) type RequestId = u64;
+pub(crate) struct VfsProtocol;
+
+impl Protocol for VfsProtocol {
+    type Request = RequestKind;
+    type Response = ResponseKind;
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum XattrNamespaceRequest {
@@ -44,9 +48,9 @@ pub(crate) struct SpawnRequest {
     pub(crate) args: Vec<String>,
     pub(crate) env: HashMap<String, Option<String>>,
     pub(crate) cwd: Option<PathBuf>,
-    pub(crate) stdin_fd: Option<Handle<OwnedFd>>,
-    pub(crate) stdout_fd: Option<Handle<OwnedFd>>,
-    pub(crate) stderr_fd: Option<Handle<OwnedFd>>,
+    pub(crate) stdin_fd: Option<OsHandle>,
+    pub(crate) stdout_fd: Option<OsHandle>,
+    pub(crate) stderr_fd: Option<OsHandle>,
 }
 
 impl std::fmt::Debug for SpawnRequest {
@@ -241,7 +245,6 @@ pub(crate) struct SetXattrRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum RequestKind {
     Spawn(SpawnRequest),
-    Cancel,
     Query,
     Which {
         program: PathBuf,
@@ -279,16 +282,9 @@ pub(crate) enum RequestKind {
     RemoveXattr(XattrRequest),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct Request {
-    pub(crate) id: RequestId,
-    pub(crate) kind: RequestKind,
-}
-
 #[derive(Serialize, Deserialize)]
 pub(crate) enum ResponseKind {
     Spawn(Result<i32, i32>),
-    Cancel,
     Query {
         env: HashMap<String, String>,
         cwd: PathBuf,
@@ -297,8 +293,8 @@ pub(crate) enum ResponseKind {
     WellKnownPath(Result<PathBuf, i32>),
     Stop,
     ClearCache,
-    Open(Result<Handle<OwnedFd>, i32>),
-    UnixStreamSocket(Result<Handle<OwnedFd>, i32>),
+    Open(Result<OsHandle, i32>),
+    UnixStreamSocket(Result<OsHandle, i32>),
     Remove(Result<(), i32>),
     Metadata(Result<Metadata, i32>),
     FsMetadata(Result<FsMetadata, i32>),
@@ -329,7 +325,6 @@ impl std::fmt::Debug for ResponseKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ResponseKind::Spawn(result) => f.debug_tuple("Spawn").field(result).finish(),
-            ResponseKind::Cancel => f.debug_struct("Cancel").finish(),
             ResponseKind::Query { env, cwd } => f
                 .debug_struct("Query")
                 .field("env", env)
@@ -392,10 +387,4 @@ impl std::fmt::Debug for ResponseKind {
             }
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct Response {
-    pub(crate) id: RequestId,
-    pub(crate) kind: ResponseKind,
 }
