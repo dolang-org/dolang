@@ -143,6 +143,18 @@ class Harness
               w.delta()
     self.#report()
 
+class Fixture
+  field wrap
+
+  def (init) self wrap
+    self.#wrap = wrap
+
+  def (call) self func
+    self.#wrap $func
+
+  def (str) self
+    str $self.#wrap
+
 # Defines a test fixture.  `wrap` should be a function which accepts a block
 # and invokes it with surrounding setup and teardown logic.
 #
@@ -167,7 +179,7 @@ class Harness
 #   do_something()
 # ```
 pub def fixture wrap
-  return do |func| do wrap $func
+  Fixture $wrap
 
 # Register a test case that runs `func` with no arguments.  `name`, if unspecified,
 # defaults to the `str` coercion of `func`, which for `def`s is simply the function
