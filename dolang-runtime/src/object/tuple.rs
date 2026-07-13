@@ -405,7 +405,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<tuple input iterator>").into_do(strand)
+        write!(w, "<tuple iterator>").into_do(strand)
     }
 
     async fn op_iter<'a, 's>(

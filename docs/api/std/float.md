@@ -13,7 +13,9 @@ assert_eq (float true) 1.0
 assert_eq (float false) 0.0
 ```
 
-**Errors:** Raises an error if the value cannot be converted (e.g. `nil` or
+### Errors
+
+Raises an error if the value cannot be converted (e.g. `nil` or
 a non-numeric string).
 
 ## Operators

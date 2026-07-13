@@ -19,13 +19,15 @@ Digest algorithms.
 
 Computes the BLAKE3 digest.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                           | Description   |
 | ------ | ---------------------------------------------- | ------------- |
 | `data` | [`str`](../std/str.md)\|[`bin`](../std/bin.md) | Input to hash |
 
-**Returns:** [`bin`](../std/bin.md) - 32-byte digest
+#### Returns
+
+[`bin`](../std/bin.md) - 32-byte digest
 
 ```
 let digest = blake3 "abc"
@@ -38,13 +40,15 @@ assert_eq $digest.hex()
 
 Computes the MD5 digest.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                           | Description   |
 | ------ | ---------------------------------------------- | ------------- |
 | `data` | [`str`](../std/str.md)\|[`bin`](../std/bin.md) | Input to hash |
 
-**Returns:** [`bin`](../std/bin.md) - 16-byte digest
+#### Returns
+
+[`bin`](../std/bin.md) - 16-byte digest
 
 ```
 assert_eq $md5("abc").hex()
@@ -55,13 +59,15 @@ assert_eq $md5("abc").hex()
 
 Computes the SHA-1 digest.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                           | Description   |
 | ------ | ---------------------------------------------- | ------------- |
 | `data` | [`str`](../std/str.md)\|[`bin`](../std/bin.md) | Input to hash |
 
-**Returns:** [`bin`](../std/bin.md) - 20-byte digest
+#### Returns
+
+[`bin`](../std/bin.md) - 20-byte digest
 
 ```
 assert_eq $sha1("abc").hex()
@@ -72,13 +78,15 @@ assert_eq $sha1("abc").hex()
 
 Computes the SHA-256 digest.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                           | Description   |
 | ------ | ---------------------------------------------- | ------------- |
 | `data` | [`str`](../std/str.md)\|[`bin`](../std/bin.md) | Input to hash |
 
-**Returns:** [`bin`](../std/bin.md) - 32-byte digest
+#### Returns
+
+[`bin`](../std/bin.md) - 32-byte digest
 
 ```
 assert_eq $sha256("abc").hex()
@@ -89,13 +97,15 @@ assert_eq $sha256("abc").hex()
 
 Computes the SHA-512 digest.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                           | Description   |
 | ------ | ---------------------------------------------- | ------------- |
 | `data` | [`str`](../std/str.md)\|[`bin`](../std/bin.md) | Input to hash |
 
-**Returns:** [`bin`](../std/bin.md) - 64-byte digest
+#### Returns
+
+[`bin`](../std/bin.md) - 64-byte digest
 
 ```
 assert_eq $sha512("abc").hex()[..10]

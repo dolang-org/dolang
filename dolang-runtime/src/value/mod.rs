@@ -919,10 +919,7 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, bool> {
         match self.case() {
             Case::Object(o) => o.op_next(strand, out).await,
-            _ => Err(Error::type_error(
-                strand,
-                "input iterator `next` not supported",
-            )),
+            _ => Err(Error::type_error(strand, "iterator `next` not supported")),
         }
     }
 
@@ -933,10 +930,7 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_put(strand, item).await,
-            Case::Prim(_) => Err(Error::type_error(
-                strand,
-                "output iterator `put` not supported",
-            )),
+            Case::Prim(_) => Err(Error::type_error(strand, "sink `put` not supported")),
         }
     }
 
@@ -1198,7 +1192,7 @@ impl<'v> Value<'v> {
         method!(strand, self, Sym::well_known(sym::PAIRS), out).await
     }
 
-    /// Receive from input iterator
+    /// Receive from iterator
     #[inline]
     pub async fn next<'a, 's>(
         &self,
@@ -1209,7 +1203,7 @@ impl<'v> Value<'v> {
             .await
     }
 
-    /// Send item to output iterator
+    /// Send item to sink
     #[inline]
     pub async fn put<'a, 's>(
         &self,
@@ -2186,6 +2180,8 @@ pub enum TypeObject {
     ValueError,
     /// `std.error.Runtime`
     RuntimeError,
+    /// `std.TimedOutError`
+    TimedOutError,
     /// `std.iter.Iter`
     Iter,
     /// `std.iter.Sink`
@@ -2206,6 +2202,7 @@ impl<'v> Input<'v> for TypeObject {
             TypeObject::Type => &builtins.type_obj,
             TypeObject::ValueError => &builtins.error_value,
             TypeObject::RuntimeError => &builtins.error_runtime,
+            TypeObject::TimedOutError => &builtins.error_timed_out,
             TypeObject::Iter => &builtins.input_iter,
             TypeObject::Sink => &builtins.output_iter,
             TypeObject::Getter => &builtins.getter,

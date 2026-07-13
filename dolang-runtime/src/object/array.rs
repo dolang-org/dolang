@@ -78,7 +78,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<array input iterator>").into_do(strand)
+        write!(w, "<array iterator>").into_do(strand)
     }
 
     async fn op_iter<'a, 's>(
@@ -191,7 +191,7 @@ impl<'v> Protocol<'v> for Sink<'v> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<array output iterator>").into_do(strand)
+        write!(w, "<array sink>").into_do(strand)
     }
 
     async fn op_sink<'a, 's>(

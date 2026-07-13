@@ -11,7 +11,9 @@ and does not move it to the end.
 
 Returns the number of members.
 
-**Type:** [`int`](./index.md)
+#### Type
+
+[`int`](./index.md)
 
 ## Methods
 
@@ -19,7 +21,7 @@ Returns the number of members.
 
 Adds `value` if it is not already present.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description         |
 | ------- | ---- | ------------------- |
@@ -36,13 +38,15 @@ assert_eq [...s] [1, 2, 3]
 
 Removes `value` if present.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description         |
 | ------- | ---- | ------------------- |
 | `value` |      | the value to remove |
 
-**Returns:** [`bool`](./index.md) indicating whether a value was removed
+#### Returns
+
+[`bool`](./index.md) indicating whether a value was removed
 
 ### `clear`
 
@@ -60,95 +64,111 @@ Returns a shallow copy of the set.
 
 Insertion order is preserved. Contained values are *not* recursively copied.
 
-**Returns:** [`set`](./set.md)
+#### Returns
+
+[`set`](./set.md)
 
 ### `contains value`
 
 Tests whether the set contains `value`.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description       |
 | ------- | ---- | ----------------- |
 | `value` |      | the value to test |
 
-**Returns:** [`bool`](./index.md)
+#### Returns
+
+[`bool`](./index.md)
 
 ### `union other`
 
 Returns a new set containing all members from `self`, then first-seen members
 from `other`.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type              | Description |
 | ------- | ----------------- | ----------- |
 | `other` | [`set`](./set.md) | other set   |
 
-**Returns:** [`set`](./set.md)
+#### Returns
+
+[`set`](./set.md)
 
 ### `intersect other`
 
 Returns a new set containing members that are present in both sets, in
 the receiver's insertion order.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type              | Description |
 | ------- | ----------------- | ----------- |
 | `other` | [`set`](./set.md) | other set   |
 
-**Returns:** [`set`](./set.md)
+#### Returns
+
+[`set`](./set.md)
 
 ### `diff other`
 
 Returns a new set containing members from the receiver that are not present in
 `other`.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type              | Description |
 | ------- | ----------------- | ----------- |
 | `other` | [`set`](./set.md) | other set   |
 
-**Returns:** [`set`](./set.md)
+#### Returns
+
+[`set`](./set.md)
 
 ### `sym_diff other`
 
 Returns a new set containing members present in exactly one of the two
 sets.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type              | Description |
 | ------- | ----------------- | ----------- |
 | `other` | [`set`](./set.md) | other set   |
 
-**Returns:** [`set`](./set.md)
+#### Returns
+
+[`set`](./set.md)
 
 ### `is_subset other`
 
 Returns `true` when every member of the receiver is present in `other`.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type              | Description |
 | ------- | ----------------- | ----------- |
 | `other` | [`set`](./set.md) | other set   |
 
-**Returns:** [`bool`](./index.md)
+#### Returns
+
+[`bool`](./index.md)
 
 ### `is_superset other`
 
 Returns `true` when every member of `other` is present in the receiver.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type              | Description |
 | ------- | ----------------- | ----------- |
 | `other` | [`set`](./set.md) | other set   |
 
-**Returns:** [`bool`](./index.md)
+#### Returns
+
+[`bool`](./index.md)
 
 ## Operations
 

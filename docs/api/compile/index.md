@@ -16,7 +16,7 @@ let result = compile "example.dol" source
 
 Compiles Do source code and returns a structured result.
 
-**Parameters:**
+#### Parameters
 
 | Name      | Type        | Description                                          |
 | --------- | ----------- | ---------------------------------------------------- |
@@ -25,14 +25,18 @@ Compiles Do source code and returns a structured result.
 | `module`  | `str`       | Optional. Compile in module mode with the given name |
 | `prelude` | various     | Optional. Additional prelude imports to include      |
 
-**Returns:** [`Result`](./result.md), containing the compile output and any
+#### Returns
+
+[`Result`](./result.md), containing the compile output and any
 diagnostics emitted during compilation.
 
-**Errors:** Raises an error for invalid arguments, including:
+#### Errors
 
-- `source` is not `str` or `bin`
-- `module` is present but not `str`
-- `prelude` is malformed
+| Exception    | Condition                         |
+| ------------ | --------------------------------- |
+| `TypeError`  | `source` is not `str` or `bin`    |
+| `TypeError`  | `module` is present but not `str` |
+| `ValueError` | `prelude` is malformed            |
 
 Ordinary compiler diagnostics from the compiled source are returned on the
 result object instead. Unexpected compiler failures that are not ordinary source

@@ -19,7 +19,7 @@ The `fs` module provides functions and types for filesystem operations.
 
 Opens a file and returns a File object.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                   | Description                                          |
 | ------ | ---------------------- | ---------------------------------------------------- |
@@ -40,9 +40,11 @@ Opens a file and returns a File object.
 
 Add `"b"` suffix for binary mode (e.g., `"rb"`, `"wb"`, `"r+b"`).
 
-**Returns:** File
+#### Returns
 
-**Example:**
+File
+
+#### Example
 
 ``` 
 # Read a file (auto-closed when block finishes)
@@ -68,7 +70,7 @@ By default this removes a single file or symlink. With `all: true`, it also
 removes directories recursively, similar to `rm -r`. With `ignore: true`,
 missing paths are treated as success.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                                      | Description                                |
 | -------- | ----------------------------------------- | ------------------------------------------ |
@@ -76,7 +78,7 @@ missing paths are treated as success.
 | `all`    | [`bool`](../std/bool.md)                  | If `true`, removes directories recursively |
 | `ignore` | [`bool`](../std/bool.md)                  | If `true`, ignores a missing path          |
 
-**Example:**
+#### Example
 
 ```
 write "temp.txt" "temporary data"
@@ -91,16 +93,18 @@ remove "a.txt" "b.txt"
 
 Checks whether a file or directory exists at the given path.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description                 |
 | ------ | ----------------------------------------- | --------------------------- |
 | `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to check for existence |
 
-**Returns:** [`bool`](../std/bool.md) - `true` if the path
+#### Returns
+
+[`bool`](../std/bool.md) - `true` if the path
 exists, `false` otherwise
 
-**Example:**
+#### Example
 
 ```
 # Check before removing
@@ -122,16 +126,18 @@ Reads the entire contents of a file in one call.
 By default, returns text as a [`str`](../std/str.md). If `mode` is
 `"b"`, returns raw bytes as [`bin`](../std/bin.md).
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description                                 |
 | ------ | ----------------------------------------- | ------------------------------------------- |
 | `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file to read                    |
 | `mode` | `str`                                     | Optional mode string; only `"b"` is allowed |
 
-**Returns:** [`str`](../std/str.md)\|[`bin`](../std/bin.md)
+#### Returns
 
-**Example:**
+[`str`](../std/str.md)\|[`bin`](../std/bin.md)
+
+#### Example
 
 ```
 let text = read "config.txt"
@@ -146,16 +152,18 @@ file.
 Binary values are written as raw bytes. All other values are converted to a
 string first.
 
-**Parameters:**
+#### Parameters
 
 | Name      | Type                                      | Description               |
 | --------- | ----------------------------------------- | ------------------------- |
 | `path`    | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file to write |
 | `content` | `str`\|`bin`                              | Value to write            |
 
-**Returns:** [`int`](../std/int.md) - Number of bytes written
+#### Returns
 
-**Example:**
+[`int`](../std/int.md) - Number of bytes written
+
+#### Example
 
 ```
 write "message.txt" "hello"
@@ -167,14 +175,14 @@ write "data.bin" b"\x01\x02\x03"
 Truncates the file at the given path to the specified byte length, creating it
 if needed.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description              |
 | ------ | ----------------------------------------- | ------------------------ |
 | `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file         |
 | `size` | [`int`](../std/index.md)                  | New file length in bytes |
 
-**Example:**
+#### Example
 
 ```
 set_len "output.txt" 0
@@ -185,16 +193,18 @@ set_len (Path "archive.bin") 1024
 
 Checks whether a path is absolute.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description   |
 | ------ | ----------------------------------------- | ------------- |
 | `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to check |
 
-**Returns:** [`bool`](../std/bool.md) - `true` if the path is absolute,
+#### Returns
+
+[`bool`](../std/bool.md) - `true` if the path is absolute,
 `false` if relative
 
-**Example:**
+#### Example
 
 ```
 # Check different paths
@@ -216,7 +226,9 @@ Returns the current user's home directory as a [`Path`](path.md).
 | Unix     | `env["HOME"]`, or home directory from passwd database if unset |
 | Windows  | `FOLDERID_Profile`, typically `C:\Users\<user>`                |
 
-**Returns:** [`Path`](path.md)
+#### Returns
+
+[`Path`](path.md)
 
 ### `cache_dir()`
 
@@ -230,20 +242,24 @@ Returns the platform-native user cache directory as a [`Path`](path.md).
 | macOS          | `home_dir() / "Library" / "Caches"`                                   |
 | Windows        | `FOLDERID_LocalAppData`, typically `home_dir() / "AppData" / "Local"` |
 
-**Returns:** [`Path`](path.md)
+#### Returns
+
+[`Path`](path.md)
 
 ### `metadata path :follow = true`
 
 Gets file metadata for the given path.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                                      | Description                                                 |
 | -------- | ----------------------------------------- | ----------------------------------------------------------- |
 | `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file or directory                               |
 | `follow` | [`bool`](../std/bool.md)                  | If `false`, returns metadata for symlink instead of target. |
 
-**Returns:** [`Metadata`](metadata.md)
+#### Returns
+
+[`Metadata`](metadata.md)
 
 **Fields:**
 
@@ -281,7 +297,7 @@ Gets file metadata for the given path.
 | `win_attrs` | [`int`](../std/int.md) | Raw Windows file attribute bitmask      |
 | `attrs`     | [`Attrs`](attrs.md)    | Windows attributes from this metadata   |
 
-**Example:**
+#### Example
 
 ```
 let meta = metadata "data.txt"
@@ -302,17 +318,22 @@ echo "Link type: $(link_meta.type)"
 
 Gets filesystem metadata for the filesystem containing the given path.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                                      | Description                                                               |
 | -------- | ----------------------------------------- | ------------------------------------------------------------------------- |
 | `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to resolve                                                           |
 | `follow` | [`bool`](../std/bool.md)                  | If `false`, use the symlink's containing filesystem instead of its target |
 
-**Returns:** [`FsMetadata`](fs-metadata.md)
+#### Returns
 
-**Errors:** On Linux, `follow: false` is not implemented yet and raises a
-runtime error.
+[`FsMetadata`](fs-metadata.md)
+
+#### Errors
+
+| Exception      | Condition                         |
+| -------------- | --------------------------------- |
+| `RuntimeError` | On Linux, `follow: false` is used |
 
 ```
 let meta = fs_metadata "data.txt"
@@ -325,16 +346,22 @@ echo "Readonly: $(meta.read_only)"
 
 Gets filesystem attributes for the given path.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                                      | Description                                                  |
 | -------- | ----------------------------------------- | ------------------------------------------------------------ |
 | `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file or directory                                |
 | `follow` | [`bool`](../std/bool.md)                  | If `false`, queries attributes for symlink instead of target |
 
-**Returns:** [`Attrs`](attrs.md)
+#### Returns
 
-**Errors:** Raises a runtime error on unsupported platforms.
+[`Attrs`](attrs.md)
+
+#### Errors
+
+| Exception      | Condition                                        |
+| -------------- | ------------------------------------------------ |
+| `RuntimeError` | The operation is used on an unsupported platform |
 
 ```
 let a = attrs "data.txt"
@@ -349,7 +376,7 @@ Lists extended attributes for the given path.
 On Windows, this uses NTFS extended attributes. Returned names may differ in
 case from the requested name.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                            | Description                                                      |
 | ----------- | ----------------------------------------------- | ---------------------------------------------------------------- |
@@ -357,7 +384,9 @@ case from the requested name.
 | `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:ANY:` to list all namespaces |
 | `follow`    | [`bool`](../std/bool.md)                        | If `false`, does not follow a symlink                            |
 
-**Returns:** iterator of [`XattrEntry`](xattr-entry.md)
+#### Returns
+
+iterator of [`XattrEntry`](xattr-entry.md)
 
 ```
 for attr = xattrs "data.txt"
@@ -370,14 +399,16 @@ Lists alternate data streams for the given path.
 
 This is only supported on Windows.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                                      | Description                           |
 | -------- | ----------------------------------------- | ------------------------------------- |
 | `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to query                         |
 | `follow` | [`bool`](../std/bool.md)                  | If `false`, does not follow a symlink |
 
-**Returns:** iterator of [`StreamEntry`](stream-entry.md)
+#### Returns
+
+iterator of [`StreamEntry`](stream-entry.md)
 
 ```
 let path = Path data.txt
@@ -391,7 +422,7 @@ open $path r do |file|
 
 Gets an extended attribute value.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                                   | Description                           |
 | ----------- | ------------------------------------------------------ | ------------------------------------- |
@@ -400,7 +431,9 @@ Gets an extended attribute value.
 | `namespace` | [`str`](../std/str.md)?                                | Namespace to query                    |
 | `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
 
-**Returns:** [`bin`](../std/bin.md)
+#### Returns
+
+[`bin`](../std/bin.md)
 
 ```
 let value = xattr "data.txt" "comment"
@@ -413,7 +446,7 @@ Sets an extended attribute value.
 On Windows, empty values are rejected. NTFS deletes the attribute instead of
 storing an empty value.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                                   | Description                           |
 | ----------- | ------------------------------------------------------ | ------------------------------------- |
@@ -432,7 +465,7 @@ set_xattr "data.txt" "raw" b"\x00\x01"
 
 Removes an extended attribute.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                                   | Description                           |
 | ----------- | ------------------------------------------------------ | ------------------------------------- |
@@ -452,7 +485,7 @@ Copies a filesystem entry from one location to another.
 By default this copies a single file or symlink. With `all: true`, it also
 copies directories recursively.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description                                |
 | ------ | ----------------------------------------- | ------------------------------------------ |
@@ -460,7 +493,7 @@ copies directories recursively.
 | `to`   | [`str`](../std/str.md)\|[`Path`](path.md) | Destination path                           |
 | `all`  | [`bool`](../std/bool.md)                  | If `true`, allows recursive directory copy |
 
-**Example:**
+#### Example
 
 ```
 copy "source.txt" "backup.txt"
@@ -471,14 +504,14 @@ copy "project" "project-backup" all: true
 
 Renames (moves) a file or directory.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description      |
 | ------ | ----------------------------------------- | ---------------- |
 | `from` | [`str`](../std/str.md)\|[`Path`](path.md) | Source path      |
 | `to`   | [`str`](../std/str.md)\|[`Path`](path.md) | Destination path |
 
-**Example:**
+#### Example
 
 ```
 rename "old_name.txt" "new_name.txt"
@@ -496,7 +529,7 @@ destination are on different filesystems, it falls back to copy-and-delete.
 By default this moves a single file or symlink. With `all: true`, it also
 moves directories recursively.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description                                |
 | ------ | ----------------------------------------- | ------------------------------------------ |
@@ -504,7 +537,7 @@ moves directories recursively.
 | `to`   | [`str`](../std/str.md)\|[`Path`](path.md) | Destination path                           |
 | `all`  | [`bool`](../std/bool.md)                  | If `true`, allows recursive directory move |
 
-**Example:**
+#### Example
 
 ```
 move "source.txt" "dest.txt"
@@ -522,16 +555,20 @@ Creates a symbolic link at `dst` pointing to `src`.
   reading its metadata. If the target cannot be accessed, the operation fails.
   For explicit control, use `symlink_file` or `symlink_dir`.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type                                      | Description                       |
 | ----- | ----------------------------------------- | --------------------------------- |
 | `src` | [`str`](../std/str.md)\|[`Path`](path.md) | Target path the symlink points to |
 | `dst` | [`str`](../std/str.md)\|[`Path`](path.md) | Path where the symlink is created |
 
-**Errors:** Raises a runtime error if the target cannot be accessed on Windows.
+#### Errors
 
-**Example:**
+| Exception      | Condition                                |
+| -------------- | ---------------------------------------- |
+| `RuntimeError` | The target cannot be accessed on Windows |
+
+#### Example
 
 ```
 symlink "/path/to/target" "link_name"
@@ -547,14 +584,14 @@ Creates a directory symbolic link at `dst` pointing to `src`.
 - **Windows:** Creates a directory symlink (requires appropriate permissions on
   some Windows versions)
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type                                      | Description                       |
 | ----- | ----------------------------------------- | --------------------------------- |
 | `src` | [`str`](../std/str.md)\|[`Path`](path.md) | Target directory path             |
 | `dst` | [`str`](../std/str.md)\|[`Path`](path.md) | Path where the symlink is created |
 
-**Example:**
+#### Example
 
 ```
 symlink_dir "/path/to/dir" "dir_link"
@@ -570,14 +607,14 @@ Creates a file symbolic link at `dst` pointing to `src`.
 - **Windows:** Creates a file symlink (may require appropriate permissions on
   some Windows versions)
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type                                      | Description                       |
 | ----- | ----------------------------------------- | --------------------------------- |
 | `src` | [`str`](../std/str.md)\|[`Path`](path.md) | Target file path                  |
 | `dst` | [`str`](../std/str.md)\|[`Path`](path.md) | Path where the symlink is created |
 
-**Example:**
+#### Example
 
 ```
 symlink_file "/path/to/file" "file_link"
@@ -591,14 +628,14 @@ This uses the platform-native hard-link operation. The source must already
 exist, and the link must be created on the same filesystem or volume if the
 platform requires it.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type                                      | Description                         |
 | ----- | ----------------------------------------- | ----------------------------------- |
 | `src` | [`str`](../std/str.md)\|[`Path`](path.md) | Existing file to link to            |
 | `dst` | [`str`](../std/str.md)\|[`Path`](path.md) | Path where the hard link is created |
 
-**Example:**
+#### Example
 
 ```
 hard_link "data.txt" "data-copy.txt"
@@ -608,15 +645,17 @@ hard_link "data.txt" "data-copy.txt"
 
 Reads the entries in a directory.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description           |
 | ------ | ----------------------------------------- | --------------------- |
 | `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the directory |
 
-**Returns:** Iterable of [`DirEntry`](direntry.md) objects
+#### Returns
 
-**Example:**
+Iterable of [`DirEntry`](direntry.md) objects
+
+#### Example
 
 ```
 # Iterate over directory entries
@@ -632,14 +671,14 @@ echo "Found $(files.len) entries"
 
 Creates a directory at the given path.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description                               |
 | ------ | ----------------------------------------- | ----------------------------------------- |
 | `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the directory to create           |
 | `all`  | [`bool`](../std/bool.md)                  | If `true`, creates parent directories too |
 
-**Example:**
+#### Example
 
 ```
 # Create a single directory
@@ -659,7 +698,7 @@ no files or other non-directory entries. Use
 [`remove`](index.md#remove-path-all-ignore) to delete directories that contain
 files.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                                      | Description                                                      |
 | -------- | ----------------------------------------- | ---------------------------------------------------------------- |
@@ -667,7 +706,7 @@ files.
 | `all`    | [`bool`](../std/bool.md)                  | If `true`, recursively prunes only empty directory subtrees      |
 | `ignore` | [`bool`](../std/bool.md)                  | If `true`, ignores missing directories and file-blocked subtrees |
 
-**Example:**
+#### Example
 
 ```
 # Remove an empty directory
@@ -684,7 +723,7 @@ remove_dir cache tmp all: true ignore: true
 
 Returns an iterator over paths matching a glob pattern.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                     | Description                                                       |
 | ----------- | ------------------------ | ----------------------------------------------------------------- |
@@ -692,7 +731,9 @@ Returns an iterator over paths matching a glob pattern.
 | `max_depth` | [`int`](../std/int.md)   | Maximum directory depth to traverse (default: unlimited)          |
 | `follow`    | [`bool`](../std/bool.md) | Whether to follow symbolic links when traversing (default: false) |
 
-**Returns:** Iterable of [`Path`](path.md) objects
+#### Returns
+
+Iterable of [`Path`](path.md) objects
 
 **Glob pattern syntax:**
 
@@ -702,7 +743,7 @@ Returns an iterator over paths matching a glob pattern.
 - `[abc]` - Match any character in the set
 - `{a,b,c}` - Match any of the comma-separated patterns
 
-**Example:**
+#### Example
 
 ```
 # Find all text files
@@ -723,15 +764,17 @@ for path = glob "**/*" follow: true
 Returns a normalized path with `.` and `..` components resolved without
 accessing the filesystem.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description       |
 | ------ | ----------------------------------------- | ----------------- |
 | `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to normalize |
 
-**Returns:** [`Path`](path.md) - Normalized path
+#### Returns
 
-**Example:**
+[`Path`](path.md) - Normalized path
+
+#### Example
 
 ```
 # Remove redundant components
@@ -748,15 +791,17 @@ echo $norm  # a/c
 
 Returns the absolute form of a path based on the current working directory.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description           |
 | ------ | ----------------------------------------- | --------------------- |
 | `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to make absolute |
 
-**Returns:** [`Path`](path.md) - Absolute path
+#### Returns
 
-**Example:**
+[`Path`](path.md) - Absolute path
+
+#### Example
 
 ```
 let abs = absolute "./config.txt"
@@ -771,17 +816,19 @@ echo $unchanged  # /etc/passwd
 
 Returns the path relative to a base directory.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description                   |
 | ------ | ----------------------------------------- | ----------------------------- |
 | `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to make relative         |
 | `base` | [`str`](../std/str.md)\|[`Path`](path.md) | Base directory (default: cwd) |
 
-**Returns:** [`Path`](path.md) - Relative path, or the original path if it
+#### Returns
+
+[`Path`](path.md) - Relative path, or the original path if it
 cannot be made relative
 
-**Example:**
+#### Example
 
 ```
 # Relative to current directory
@@ -806,17 +853,20 @@ Changes the permissions of a file or directory.
 - **Unix:** Changes file permissions using standard Unix mode bits
 - **Windows:** Raises a runtime error (not supported)
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description                          |
 | ------ | ----------------------------------------- | ------------------------------------ |
 | `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file or directory        |
 | `mode` | [`int`](../std/int.md)                    | Permission mode bits (e.g., `0o755`) |
 
-**Errors:** Raises a runtime error on non-Unix platforms or if the operation
-fails.
+#### Errors
 
-**Example:**
+| Exception      | Condition                                             |
+| -------------- | ----------------------------------------------------- |
+| `RuntimeError` | The operation is used on a non-Unix platform or fails |
+
+#### Example
 
 ```
 # Set file permissions to rwxr-xr-x (755)
@@ -840,7 +890,7 @@ Updates the timestamps of a file or directory.
 
 Unspecified timestamps are left unchanged.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                                      | Description                               |
 | ---------- | ----------------------------------------- | ----------------------------------------- |
@@ -849,8 +899,11 @@ Unspecified timestamps are left unchanged.
 | `accessed` | [`DateTime`](../time/datetime.md)         | Optional new access time                  |
 | `created`  | [`DateTime`](../time/datetime.md)         | Optional new creation time (Windows only) |
 
-**Errors:** Raises a runtime error if `created` is used on unsupported
-platforms or if the operation fails.
+#### Errors
+
+| Exception      | Condition                                                           |
+| -------------- | ------------------------------------------------------------------- |
+| `RuntimeError` | `created` is used on an unsupported platform or the operation fails |
 
 ```
 import time:
@@ -867,7 +920,7 @@ Updates filesystem attributes.
 
 Unspecified attributes are left unchanged.
 
-**Parameters:**
+#### Parameters
 
 | Name                  | Type                                      | Description                       |
 | --------------------- | ----------------------------------------- | --------------------------------- |
@@ -899,7 +952,11 @@ Unspecified attributes are left unchanged.
 | `extent_format`       | [`bool`](../std/bool.md)                  | Optional Linux extent flag        |
 | `opaque`              | [`bool`](../std/bool.md)                  | Optional macOS opaque flag        |
 
-**Errors:** Raises a runtime error on unsupported platforms.
+#### Errors
+
+| Exception      | Condition                                        |
+| -------------- | ------------------------------------------------ |
+| `RuntimeError` | The operation is used on an unsupported platform |
 
 ```
 set_attrs "data.txt" hidden: true
@@ -917,7 +974,7 @@ Changes the owner and/or group of a file, directory, or symlink target.
 - **Unix:** Available
 - **Windows:** Not available
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                                           | Description                               |
 | -------- | ---------------------------------------------- | ----------------------------------------- |
@@ -928,7 +985,7 @@ Changes the owner and/or group of a file, directory, or symlink target.
 
 At least one of `user` or `group` must be provided.
 
-**Example:**
+#### Example
 
 ```
 chown "script.sh" "deploy"
@@ -942,15 +999,17 @@ chown "link" group: "www-data" follow: false
 Returns the canonical, absolute form of a path with all intermediate components
 normalized and symbolic links resolved.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description          |
 | ------ | ----------------------------------------- | -------------------- |
 | `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to canonicalize |
 
-**Returns:** [`Path`](path.md) - Canonical path
+#### Returns
 
-**Example:**
+[`Path`](path.md) - Canonical path
+
+#### Example
 
 ```
 let abs = canonical "./foo/../bar"
@@ -963,7 +1022,7 @@ echo $abs # /current/working/dir/bar (with symlinks resolved)
 Creates a temporary directory, invokes a callable with the directory path, then
 removes the directory recursively upon return or error.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type | Description                                     |
 | -------- | ---- | ----------------------------------------------- |
@@ -979,7 +1038,7 @@ The default parent of the temporary directory is chosen as follows:
 - **Unix:** Uses `TMPDIR` from the strand-local environment if set, otherwise
   `/tmp`
 
-**Example:**
+#### Example
 
 ```
 # Use the temporary directory in the default location

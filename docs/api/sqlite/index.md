@@ -9,7 +9,7 @@ databases.
 
 Opens a SQLite database connection and returns a Connection object.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                                            | Description                                                |
 | ---------- | ----------------------------------------------- | ---------------------------------------------------------- |
@@ -19,10 +19,12 @@ Opens a SQLite database connection and returns a Connection object.
 | `max_wait` | `int`                                           | Max wait in ms between retries (default: 1000)             |
 | `func`     | func                                            | Callable to run with the connection; auto-closes when done |
 
-**Returns:** [Connection](./connection.md) when no `func` is provided, otherwise
+#### Returns
+
+[Connection](./connection.md) when no `func` is provided, otherwise
 the result of calling `func`
 
-**Example:**
+#### Example
 
 ```
 # Open with default retry settings

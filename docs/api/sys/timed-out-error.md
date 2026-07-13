@@ -1,8 +1,8 @@
 # TimedOutError
 
-`TimedOutError` is a subtype of [`Error`](./error.md) used for
-`io::ErrorKind::TimedOut` failures.
+Raised when a system operation times out.
 
 ## Inherits
 
 - [`Error`](./error.md)
+- [`std.TimedOutError`](../std/timed-out-error.md)

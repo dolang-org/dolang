@@ -20,14 +20,16 @@ assert_eq (type $ [1, 2, 3].iter()) $Iter
 
 Returns the next value from the iterator.
 
-**Parameters:**
+#### Parameters
 
 | Name      | Type | Description                                 |
 | --------- | ---- | ------------------------------------------- |
 | `default` |      | value to return if the iterator is empty    |
 | `else`    |      | callable to invoke if the iterator is empty |
 
-**Errors:** Raises [`IterStop`](./iter-stop.md) when exhausted and no fallback
+#### Errors
+
+Raises [`IterStop`](./iter-stop.md) when exhausted and no fallback
 is provided.
 
 ### `all pred?`
@@ -71,26 +73,30 @@ The zipped iterator stops as soon as any input is exhausted.
 
 Returns an iterator that yields at most `n` values.
 
-**Parameters:**
+#### Parameters
 
 | Name | Type | Description             |
 | ---- | ---- | ----------------------- |
 | `n`  | int  | maximum values to yield |
 
-**Errors:** Raises [`TypeError`](./type-error.md) if `n` is not an `int`.
+#### Errors
+
+Raises [`TypeError`](./type-error.md) if `n` is not an `int`.
 Raises [`ValueError`](./value-error.md) if `n` is negative.
 
 ### `skip n`
 
 Returns an iterator that discards the first `n` values, then yields the rest.
 
-**Parameters:**
+#### Parameters
 
 | Name | Type | Description         |
 | ---- | ---- | ------------------- |
 | `n`  | int  | values to discard   |
 
-**Errors:** Raises [`TypeError`](./type-error.md) if `n` is not an `int`.
+#### Errors
+
+Raises [`TypeError`](./type-error.md) if `n` is not an `int`.
 Raises [`ValueError`](./value-error.md) if `n` is negative.
 
 ### `enumerate`
@@ -127,7 +133,7 @@ only if `pred(value)` is truthy.
 
 Consumes the iterator and returns the first value where `pred(value)` is truthy.
 
-**Parameters:**
+#### Parameters
 
 | Name      | Type | Description                              |
 | --------- | ---- | ---------------------------------------- |
@@ -135,19 +141,25 @@ Consumes the iterator and returns the first value where `pred(value)` is truthy.
 | `default` |      | value to return if no value matches      |
 | `else`    |      | callable to invoke if no value matches   |
 
-**Errors:** Raises [`RuntimeError`](./runtime-error.md) if no value matches and
+#### Errors
+
+Raises [`RuntimeError`](./runtime-error.md) if no value matches and
 no fallback is provided.
 
 ### `min :default?`
 
 Consumes the iterator and returns the minimum yielded value.
 
-**Errors:** Raises [`IterStop`](./iter-stop.md) if the iterator is empty and no
+#### Errors
+
+Raises [`IterStop`](./iter-stop.md) if the iterator is empty and no
 `default:` is provided.
 
 ### `max :default?`
 
 Consumes the iterator and returns the maximum yielded value.
 
-**Errors:** Raises [`IterStop`](./iter-stop.md) if the iterator is empty and no
+#### Errors
+
+Raises [`IterStop`](./iter-stop.md) if the iterator is empty and no
 `default:` is provided.

@@ -67,7 +67,7 @@ let r = range 10 step: 2
 let r = range 0 end: 20 step: 5
 ```
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type  | Description                 | Position |
 | ------- | ----- | --------------------------- | -------- |
@@ -152,13 +152,15 @@ Tests whether the given value is within the range interval. For increasing
 ranges (start < end), checks if value is in \[start, end). For decreasing
 ranges (start > end), checks if value is in (end, start].
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description          |
 | ------- | ---- | -------------------- |
 | `value` |      | the value to check   |
 
-**Returns:** `bool`
+#### Returns
+
+`bool`
 
 ```
 # Increasing range [0, 5)

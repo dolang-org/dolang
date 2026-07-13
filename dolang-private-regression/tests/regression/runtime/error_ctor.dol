@@ -61,7 +61,7 @@ assert_eq (str field_err) "no such field: name"
 
 let sink_stop = SinkStop()
 assert_eq (type sink_stop) $SinkStop
-assert_eq (str sink_stop) "output iterator stopped"
+assert_eq (str sink_stop) "sink stopped"
 
 assert_ctor $UnsupportedError msg: "unsupported operation"
 assert_ctor $ImmutableError msg: "object is immutable"
@@ -78,8 +78,8 @@ assert_ctor $MissingPosError msg: "missing positional item: 3" 3
 assert_ctor $MissingKeyError msg: "missing key item: key4" :key4:
 assert_ctor $OverflowError msg: "numeric overflow"
 assert_ctor $ZeroDivError msg: "integer zero divisor"
-assert_ctor $IterStop msg: "input iterator stopped"
-assert_ctor $SinkStop msg: "output iterator stopped"
+assert_ctor $IterStop msg: "iterator stopped"
+assert_ctor $SinkStop msg: "sink stopped"
 assert_ctor $CyclicImportError msg: "cycle detected importing module: pkg.mod" "pkg.mod"
 assert_ctor $ImportError msg: "module not found: pkg.mod" "pkg.mod"
 assert_ctor $CompileError msg: "compile error: invalid token" "invalid token"

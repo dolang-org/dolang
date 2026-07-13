@@ -186,6 +186,7 @@ impl<'v> Global<'v> {
                 timed_out: builder
                     .build_type::<SysErrorObject<TimedOutError>>((), ())
                     .nominal_supertype(sys_error)
+                    .nominal_supertype(TypeObject::TimedOutError)
                     .build(),
                 proc_error: builder.register_type(),
                 pipe_receiver: builder.register_type(),

@@ -11,15 +11,17 @@ Reads data from the file.
 
 **Availability:** Read mode only
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                   | Description                     |
 | ------ | ---------------------- | ------------------------------- |
 | `size` | [`int`](../std/int.md) | Maximum number of bytes to read |
 
-**Returns:** [bin](../std/bin.md)
+#### Returns
 
-**Example:**
+[bin](../std/bin.md)
+
+#### Example
 
 ```
 open "archive.zip" do |archive|
@@ -41,13 +43,13 @@ Writes data to the file.
 
 **Availability:** Write/Append mode only
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                             | Description   |
 | ------ | ------------------------------------------------ | ------------- |
 | `data` | [`bin`](../std/bin.md) or [`str`](../std/str.md) | Data to write |
 
-**Example:**
+#### Example
 
 ```
 open "output.zip" "w" do |archive|
@@ -62,7 +64,7 @@ open "output.zip" "w" do |archive|
 
 Closes the file.
 
-**Example:**
+#### Example
 
 ```
 open "archive.zip" do |archive|

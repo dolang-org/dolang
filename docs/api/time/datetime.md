@@ -16,7 +16,7 @@ echo $DateTime.now()
 
 Creates a `DateTime` from a Unix timestamp.
 
-**Parameters:**
+#### Parameters
 
 | Name      | Type                                                | Description                                            |
 | --------- | --------------------------------------------------- | ------------------------------------------------------ |
@@ -34,17 +34,21 @@ echo $ DateTime.from_unix 1700000000 nanos: 123000000
 
 Parses an RFC3339 timestamp.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                   | Description         |
 | ------ | ---------------------- | ------------------- |
 | `text` | [`str`](../std/str.md) | RFC3339 input text  |
 
-**Returns:** [`DateTime`](./datetime.md)
+#### Returns
 
-**Errors:**
+[`DateTime`](./datetime.md)
 
-- The input is not a valid RFC3339 timestamp.
+#### Errors
+
+| Exception    | Condition                                  |
+| ------------ | ------------------------------------------ |
+| `ValueError` | The input is not a valid RFC3339 timestamp |
 
 ```
 let dt = DateTime.parse_rfc3339("2024-01-02T03:04:05Z")
@@ -68,7 +72,9 @@ echo $dt.rfc3339()
 
 Returns the RFC3339 representation.
 
-**Returns:** [`str`](../std/str.md)
+#### Returns
+
+[`str`](../std/str.md)
 
 ```
 let dt = DateTime.from_unix(1700000000)

@@ -8,13 +8,15 @@ JSON serialization and deserialization.
 
 Serializes a Do value to a JSON string.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description            |
 | ------- | ---- | ---------------------- |
 | `value` |      | the value to serialize |
 
-**Returns:** `str` -- JSON string
+#### Returns
+
+`str` -- JSON string
 
 Type mapping:
 
@@ -39,15 +41,21 @@ assert_eq (to_str nil) "null"
 
 Deserializes a JSON string to a Do value.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type  | Description          |
 | ------ | ----- | -------------------- |
 | `json` | `str` | JSON string to parse |
 
-**Returns:** The parsed Do value.
+#### Returns
 
-**Errors:** Raises an error if the JSON is invalid.
+The parsed Do value.
+
+#### Errors
+
+| Exception    | Condition           |
+| ------------ | ------------------- |
+| `ValueError` | The JSON is invalid |
 
 Type mapping:
 

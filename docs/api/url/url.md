@@ -9,17 +9,19 @@ iteration, and path-segment construction via `/`.
 
 Parses a URL string or copies an existing `Url`.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type                     | Description          |
 | ------- | ------------------------ | -------------------- |
 | `value` | `str`\|[`Url`](./url.md) | URL to parse or copy |
 
-**Returns:** `Url`
+#### Errors
 
-**Errors:** Raises a runtime error if the string is not a valid URL.
+| Exception    | Condition                     |
+| ------------ | ----------------------------- |
+| `ValueError` | The string is not a valid URL |
 
-**Example:**
+#### Example
 
 ```
 let base = Url "https://example.com/api"
@@ -76,9 +78,11 @@ The decoded fragment string, or `nil` if absent.
 
 Returns a fresh iterator of decoded path segments.
 
-**Returns:** iterator of [`str`](../std/str.md)
+#### Returns
 
-**Example:**
+iterator of [`str`](../std/str.md)
+
+#### Example
 
 ```
 let url = Url "https://example.com/a%20b/c"
@@ -91,9 +95,11 @@ Returns a fresh iterator of decoded query pairs.
 
 Duplicate keys and original ordering are preserved.
 
-**Returns:** iterator of `(str, str)` tuples
+#### Returns
 
-**Example:**
+iterator of `(str, str)` tuples
+
+#### Example
 
 ```
 let url = Url "https://example.com?q=a+b&q=c"
@@ -109,13 +115,15 @@ Returns a new `Url` with its raw query replaced.
 
 Pass `nil` to remove the query.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type         | Description               |
 | ------- | ------------ | ------------------------- |
 | `query` | `str`\|`nil` | Raw query string or `nil` |
 
-**Returns:** `Url`
+#### Returns
+
+`Url`
 
 ### `with_fragment fragment`
 
@@ -123,13 +131,15 @@ Returns a new `Url` with its fragment replaced.
 
 Pass `nil` to remove the fragment.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type         | Description              |
 | ---------- | ------------ | ------------------------ |
 | `fragment` | `str`\|`nil` | Fragment string or `nil` |
 
-**Returns:** `Url`
+#### Returns
+
+`Url`
 
 ### `with_query pairs`
 
@@ -137,15 +147,17 @@ Returns a new `Url` with its query rebuilt from decoded key/value pairs.
 
 The input may be any iterable of 2-element values.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type  | Description                         |
 | ------- | ----- | ----------------------------------- |
 | `pairs` | input | Iterable of decoded key/value pairs |
 
-**Returns:** `Url`
+#### Returns
 
-**Example:**
+`Url`
+
+#### Example
 
 ```
 let url = (Url "https://example.com").with_query_pairs [

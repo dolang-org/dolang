@@ -8,7 +8,7 @@ The `zip` module provides functions and types for working with ZIP archives.
 
 Opens a ZIP archive and returns an Archive object.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                   | Description                                             |
 | ------ | ---------------------- | ------------------------------------------------------- |
@@ -24,10 +24,12 @@ Opens a ZIP archive and returns an Archive object.
 | `"w"`  | Write mode - creates new archive (truncates existing) |
 | `"a"`  | Append mode - opens existing archive for appending    |
 
-**Returns:** [Archive](archive.md) when no func is provided, otherwise the
+#### Returns
+
+[Archive](archive.md) when no func is provided, otherwise the
 result of calling `func`
 
-**Example:**
+#### Example
 
 ```
 # Read an existing archive

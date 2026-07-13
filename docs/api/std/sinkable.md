@@ -16,4 +16,6 @@ assert (type [] Sinkable)
 
 Returns a sink over the value.
 
-**Returns:** [`Sink`](./sink.md)
+#### Returns
+
+[`Sink`](./sink.md)

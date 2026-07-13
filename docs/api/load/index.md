@@ -8,18 +8,22 @@ Execute Do bytecode and register runtime import handlers.
 
 Executes compiled Do bytecode.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                   | Description          |
 | ---------- | ---------------------- | -------------------- |
 | `bytecode` | [`bin`](../std/bin.md) | Compiled Do bytecode |
 
-**Returns:** The result of executing the bytecode.
+#### Returns
 
-**Errors:**
+The result of executing the bytecode.
 
-- Raises a type error if `bytecode` is not `bin`
-- Propagates bytecode verification and execution errors
+#### Errors
+
+| Exception   | Condition                                |
+| ----------- | ---------------------------------------- |
+| `TypeError` | `bytecode` is not `bin`                  |
+| Various     | Bytecode verification or execution fails |
 
 ```
 import compile
@@ -39,13 +43,15 @@ handler that returns successfully supplies the imported value.
 To decline a module name, raise
 [`ImportError`](../std/import-error.md). Any other error aborts the import.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                     | Description                           |
 | ---------- | ------------------------ | ------------------------------------- |
 | `callback` | [`func`](../std/func.md) | Called with the requested module name |
 
-**Returns:** [`ImportHandler`](./importhandler.md)
+#### Returns
+
+[`ImportHandler`](./importhandler.md)
 
 ```
 let handle = load.import_handler do |name|

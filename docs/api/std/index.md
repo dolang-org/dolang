@@ -71,25 +71,29 @@ Acts as both an iterator and a sink that performs no operations.
 Converts a value to its debug representation. Shows internal structure (e.g.
 quotes strings, shows type tags).
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description          |
 | ------- | ---- | -------------------- |
 | `value` |      | the value to convert |
 
-**Returns:** [`str`](./str.md)
+#### Returns
+
+[`str`](./str.md)
 
 ### `getter func`
 
 Builds a getter object from a callable.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type   | Description                   |
 | ------ | ------ | ----------------------------- |
 | `func` | `func` | callable used for field reads |
 
-**Returns:** [`Getter`](./getter.md)
+#### Returns
+
+[`Getter`](./getter.md)
 
 ```
 class Config
@@ -104,13 +108,15 @@ class Config
 
 Builds a setter object from a callable.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type   | Description                    |
 | ------ | ------ | ------------------------------ |
 | `func` | `func` | callable used for field writes |
 
-**Returns:** [`Setter`](./setter.md)
+#### Returns
+
+[`Setter`](./setter.md)
 
 ```
 class Config
@@ -123,13 +129,15 @@ class Config
 
 Creates a record from keyword arguments.
 
-**Parameters:**
+#### Parameters
 
 | Name         | Type | Description   |
 | ------------ | ---- | ------------- |
 | keyword args |      | become fields |
 
-**Returns:** [`record`](./record.md)
+#### Returns
+
+[`record`](./record.md)
 
 ```
 let r = record name: Alice age: 30
@@ -142,13 +150,15 @@ Converts a value to its external argument representation. Preserves the literal
 textual form of values where possible, which is useful for passing values as
 command-line arguments to external programs.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description          |
 | ------- | ---- | -------------------- |
 | `value` |      | the value to convert |
 
-**Returns:** [`str`](./str.md)
+#### Returns
+
+[`str`](./str.md)
 
 ### `hash ...values`
 
@@ -160,10 +170,12 @@ def (hash) self
   hash $self.x $self.y $self.z
 ```
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type | Description                |
 | ----------- | ---- | -------------------------- |
 | `...values` |      | one or more values to hash |
 
-**Returns:** `int`
+#### Returns
+
+`int`

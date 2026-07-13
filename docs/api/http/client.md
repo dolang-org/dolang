@@ -11,7 +11,7 @@ HTTP client for making web requests.
     the host where the Do process is running, not through the shell agent's
     container filesystem/network translation layer.
 
-**Parameters:**
+#### Parameters
 
 | Name            | Type                                                        | Description                                                  |
 | --------------- | ----------------------------------------------------------- | ------------------------------------------------------------ |
@@ -24,7 +24,9 @@ HTTP client for making web requests.
 | `invalid_certs` | `:DANGER_ACCEPT:`                                           | Pass `:DANGER_ACCEPT:` to disable TLS certificate validation |
 | `func`          | func                                                        | Callable to run with the client; auto-closes when done       |
 
-**Returns:** `Client` when no `func` is provided, otherwise the result of
+#### Returns
+
+`Client` when no `func` is provided, otherwise the result of
 calling `func`
 
 ```
@@ -104,7 +106,7 @@ patch ...
 
 Makes an HTTP request using the specified verb.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                                  | Description                                                   |
 | ----------- | ----------------------------------------------------- | ------------------------------------------------------------- |
@@ -118,10 +120,16 @@ Makes an HTTP request using the specified verb.
 | `status`    | `:IGNORE:`\|`"IGNORE"`                                | Return the response even when the status is outside 200-299   |
 | `block`     | func                                                  | Called with response; response is closed upon return or error |
 
-**Returns:** [`Response`](./response.md) -- The HTTP response
+#### Returns
 
-**Errors:** Raises [`Status`](./status.md) on non-2xx responses by
-default, and [`Error`](./error.md) on transport or protocol failure
+[`Response`](./response.md) -- The HTTP response
+
+#### Errors
+
+| Exception               | Condition                                             |
+| ----------------------- | ----------------------------------------------------- |
+| [`Status`](./status.md) | The response is non-2xx and `status:` is not provided |
+| [`Error`](./error.md)   | A transport or protocol failure occurs                |
 
 ```
 

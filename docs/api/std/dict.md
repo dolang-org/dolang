@@ -31,7 +31,9 @@ parameter:
 Returns the number of key-value pairs (counting each value in a multi-map
 separately).
 
-**Type:** [`int`](./index.md)
+#### Type
+
+[`int`](./index.md)
 
 ## Methods
 
@@ -52,7 +54,9 @@ Returns a shallow copy of the dictionary.
 Insertion order and multiple per-key values are preserved. Keys and
 values are *not* copied recursively.
 
-**Returns:** [`dict`](./dict.md)
+#### Returns
+
+[`dict`](./dict.md)
 
 When inherited by a Do subclass, `copy()` calls the subclass constructor with
 the source dict as a single positional argument.
@@ -62,7 +66,7 @@ the source dict as a single positional argument.
 Adds a key-value pair. Does **not** remove existing values for the same key
 (multi-map insert).
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description |
 | ------- | ---- | ----------- |
@@ -74,7 +78,7 @@ Adds a key-value pair. Does **not** remove existing values for the same key
 Retrieves the value for a key. Returns `nil` if the key is missing and no
 alternative is provided. Negative `instance` indexes count from the end.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                | Description                                                                                                 |
 | ---------- | ------------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -83,7 +87,9 @@ alternative is provided. Negative `instance` indexes count from the end.
 | `default:` |                     | value to return if missing                                                                                  |
 | `else:`    |                     | callable to invoke if missing                                                                               |
 
-**Returns:** The value, or the default/else result.
+#### Returns
+
+The value, or the default/else result.
 
 ```
 let d = {name: "Alice"}
@@ -99,7 +105,7 @@ and no alternative is provided. Supports `instance` for multi-map access to
 remove a specific value by its position among values for that key. Negative
 `instance` indexes count from the end.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type  | Description                                                                                               |
 | ---------- | ----- | --------------------------------------------------------------------------------------------------------- |
@@ -108,7 +114,9 @@ remove a specific value by its position among values for that key. Negative
 | `default:` |       | value to return if missing                                                                                |
 | `else:`    |       | callable to invoke if missing                                                                             |
 
-**Returns:** The removed value, or the default/else result.
+#### Returns
+
+The removed value, or the default/else result.
 
 ```
 let d = {a: 1, b: 2}
@@ -126,13 +134,15 @@ assert_eq (d.pop "multi" 0) "second"
 
 Removes all values for the key.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type | Description       |
 | ----- | ---- | ----------------- |
 | `key` |      | the key to remove |
 
-**Returns:** [`bool`](./index.md) indicating whether any values were removed
+#### Returns
+
+[`bool`](./index.md) indicating whether any values were removed
 
 ```
 let d = {a: 1, b: 2}
@@ -147,7 +157,9 @@ Returns an iterator yielding `[key, value]` pairs, the same as ordinary
 iteration. This method is present to allow uniform key/value iteration
 over both [`dict`](./dict.md) and [`array`](./array.md).
 
-**Returns:** iterator of `[key, value]` pairs
+#### Returns
+
+iterator of `[key, value]` pairs
 
 ### `keys`
 
@@ -156,7 +168,9 @@ order its first pair was inserted.
 
 If duplicate-key iteration is needed, use [`pairs`](#pairs) instead.
 
-**Returns:** iterator of keys
+#### Returns
+
+iterator of keys
 
 ### `values key?`
 
@@ -166,7 +180,9 @@ that key, in that key's insertion order.
 
 Missing keys return an empty iterator.
 
-**Returns:** iterator of values
+#### Returns
+
+iterator of values
 
 ### `count key?`
 
@@ -177,7 +193,9 @@ the number of values associated with that key.
 
 Missing keys return `0`.
 
-**Returns:** [`int`](./index.md)
+#### Returns
+
+[`int`](./index.md)
 
 ### `contains key value?`
 
@@ -185,14 +203,16 @@ Tests whether the dictionary contains the given key. If a value is provided,
 tests whether any value associated with that key matches the given value
 (multi-map aware).
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type | Description                             |
 | ------- | ---- | --------------------------------------- |
 | `key`   |      | the key to check                        |
 | `value` |      | optional value to check for (multi-map) |
 
-**Returns:** [`bool`](./index.md)
+#### Returns
+
+[`bool`](./index.md)
 
 ```
 let d = {a: 1, b: 2}

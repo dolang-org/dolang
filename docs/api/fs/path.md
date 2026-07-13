@@ -156,15 +156,17 @@ objects or strings.
 
 If any component is an absolute path, it replaces everything before it.
 
-**Parameters:**
+#### Parameters
 
 | Name         | Type          | Description             |
 | ------------ | ------------- | ----------------------- |
 | `components` | `str`\|`Path` | Path components to join |
 
-**Returns:** Path
+#### Returns
 
-**Example:**
+Path
+
+#### Example
 
 ```
 let path = Path.join home user docs file.txt
@@ -182,16 +184,18 @@ echo $abs  # /etc/config.txt
 Opens the file at this path. Equivalent to `open` but with a `Path`
 object.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type  | Description                                          |
 | ------- | ----- | ---------------------------------------------------- |
 | `mode`  | `str` | File access mode (default: `"r"`)                    |
 | `block` | func  | Callable to run with the file; auto-closes when done |
 
-**Returns:** File
+#### Returns
 
-**Example:**
+File
+
+#### Example
 
 ```
 let path = Path data.txt
@@ -204,15 +208,17 @@ path.open r do |file|
 
 Gets metadata for the file at this path.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                     | Description                                                       |
 | -------- | ------------------------ | ----------------------------------------------------------------- |
 | `follow` | [`bool`](../std/bool.md) | If `false`, returns metadata for a symlink rather than its target |
 
-**Returns:** [`Metadata`](metadata.md)
+#### Returns
 
-**Example:**
+[`Metadata`](metadata.md)
+
+#### Example
 
 ```
 let path = Path config.json
@@ -231,16 +237,21 @@ Gets filesystem metadata for the filesystem containing this path.
 
 Equivalent to [`fs_metadata`](index.md).
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                     | Description                                                               |
 | -------- | ------------------------ | ------------------------------------------------------------------------- |
 | `follow` | [`bool`](../std/bool.md) | If `false`, use the symlink's containing filesystem instead of its target |
 
-**Returns:** [`FsMetadata`](fs-metadata.md)
+#### Returns
 
-**Errors:** On Linux, `follow: false` is not implemented yet and raises a
-runtime error.
+[`FsMetadata`](fs-metadata.md)
+
+#### Errors
+
+| Exception      | Condition                         |
+| -------------- | --------------------------------- |
+| `RuntimeError` | On Linux, `follow: false` is used |
 
 ```
 let path = Path "data.txt"
@@ -254,13 +265,15 @@ Gets filesystem attributes for this path.
 
 Equivalent to [`attrs`](index.md).
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                     | Description                                                  |
 | -------- | ------------------------ | ------------------------------------------------------------ |
 | `follow` | [`bool`](../std/bool.md) | If `false`, queries attributes for symlink instead of target |
 
-**Returns:** [`Attrs`](attrs.md)
+#### Returns
+
+[`Attrs`](attrs.md)
 
 ```
 let path = Path "data.txt"
@@ -275,9 +288,11 @@ Checks if the path exists.
 
 Equivalent to the free function [`exists`](index.md#exists-path).
 
-**Returns:** [`bool`](../std/bool.md)
+#### Returns
 
-**Example:**
+[`bool`](../std/bool.md)
+
+#### Example
 
 ```
 let path = Path important.txt
@@ -293,15 +308,17 @@ Reads the entire contents of the file at this path.
 
 Equivalent to [`read`](index.md#read-path-mode).
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type  | Description                                 |
 | ------ | ----- | ------------------------------------------- |
 | `mode` | `str` | Optional mode string; only `"b"` is allowed |
 
-**Returns:** [`str`](../std/str.md)\|[`bin`](../std/bin.md)
+#### Returns
 
-**Example:**
+[`str`](../std/str.md)\|[`bin`](../std/bin.md)
+
+#### Example
 
 ```
 let path = Path "config.txt"
@@ -316,15 +333,17 @@ the file.
 
 Equivalent to [`write`](index.md#write-path-content).
 
-**Parameters:**
+#### Parameters
 
 | Name      | Type | Description    |
 | --------- | ---- | -------------- |
 | `content` | any  | Value to write |
 
-**Returns:** [`int`](../std/int.md) - Number of bytes written
+#### Returns
 
-**Example:**
+[`int`](../std/int.md) - Number of bytes written
+
+#### Example
 
 ```
 let path = Path "output.txt"
@@ -338,13 +357,13 @@ needed.
 
 Equivalent to [`set_len`](index.md#set_len-path-size).
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                     | Description              |
 | ------ | ------------------------ | ------------------------ |
 | `size` | [`int`](../std/index.md) | New file length in bytes |
 
-**Example:**
+#### Example
 
 ```
 let path = Path "output.txt"
@@ -373,14 +392,16 @@ Lists extended attributes for this path.
 
 Equivalent to [`xattrs`](index.md).
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                            | Description                                                      |
 | ----------- | ----------------------------------------------- | ---------------------------------------------------------------- |
 | `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:ANY:` to list all namespaces |
 | `follow`    | [`bool`](../std/bool.md)                        | If `false`, does not follow a symlink                            |
 
-**Returns:** iterator of [`XattrEntry`](xattr-entry.md)
+#### Returns
+
+iterator of [`XattrEntry`](xattr-entry.md)
 
 ```
 let path = Path "data.txt"
@@ -394,13 +415,15 @@ Lists alternate data streams for this path.
 
 Equivalent to [`streams`](index.md).
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                     | Description                           |
 | -------- | ------------------------ | ------------------------------------- |
 | `follow` | [`bool`](../std/bool.md) | If `false`, does not follow a symlink |
 
-**Returns:** iterator of [`StreamEntry`](stream-entry.md)
+#### Returns
+
+iterator of [`StreamEntry`](stream-entry.md)
 
 ```
 let path = Path "data.txt"
@@ -415,7 +438,7 @@ Gets an extended attribute value.
 
 Equivalent to [`xattr`](index.md).
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                                   | Description                           |
 | ----------- | ------------------------------------------------------ | ------------------------------------- |
@@ -423,7 +446,9 @@ Equivalent to [`xattr`](index.md).
 | `namespace` | [`str`](../std/str.md)?                                | Namespace to query                    |
 | `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
 
-**Returns:** [`bin`](../std/bin.md)
+#### Returns
+
+[`bin`](../std/bin.md)
 
 ```
 let path = Path "data.txt"
@@ -437,7 +462,7 @@ Sets an extended attribute value.
 Equivalent to
 [`set_xattr`](index.md).
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                                   | Description                           |
 | ----------- | ------------------------------------------------------ | ------------------------------------- |
@@ -458,7 +483,7 @@ Removes an extended attribute.
 Equivalent to
 [`remove_xattr`](index.md).
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                                                   | Description                           |
 | ----------- | ------------------------------------------------------ | ------------------------------------- |
@@ -480,14 +505,14 @@ Equivalent to [`copy`](index.md#copy-from-to-all).
 By default this copies a single file or symlink. With `all: true`, it also
 copies directories recursively.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type                                      | Description                                |
 | ----- | ----------------------------------------- | ------------------------------------------ |
 | `to`  | [`str`](../std/str.md)\|[Path](path.md)   | Destination path                           |
 | `all` | [`bool`](../std/bool.md)                  | If `true`, allows recursive directory copy |
 
-**Example:**
+#### Example
 
 ```
 let src = Path "source.txt"
@@ -503,13 +528,13 @@ Renames this path to `to`.
 
 Equivalent to [`rename`](index.md#rename-from-to).
 
-**Parameters:**
+#### Parameters
 
 | Name | Type                                    | Description      |
 | ---- | --------------------------------------- | ---------------- |
 | `to` | [`str`](../std/str.md)\|[Path](path.md) | Destination path |
 
-**Example:**
+#### Example
 
 ```
 let src = Path "old.txt"
@@ -525,14 +550,14 @@ Equivalent to [`move`](index.md#move-from-to-all).
 By default this moves a single file or symlink. With `all: true`, it also
 moves directories recursively.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type                                      | Description                                |
 | ----- | ----------------------------------------- | ------------------------------------------ |
 | `to`  | [`str`](../std/str.md)\|[Path](path.md)   | Destination path                           |
 | `all` | [`bool`](../std/bool.md)                  | If `true`, allows recursive directory move |
 
-**Example:**
+#### Example
 
 ```
 let src = Path "source.txt"
@@ -552,13 +577,13 @@ This uses the platform-native hard-link operation. The source must already
 exist, and the link must be created on the same filesystem or volume if the
 platform requires it.
 
-**Parameters:**
+#### Parameters
 
 | Name | Type                                    | Description                         |
 | ---- | --------------------------------------- | ----------------------------------- |
 | `to` | [`str`](../std/str.md)\|[Path](path.md) | Path where the hard link is created |
 
-**Example:**
+#### Example
 
 ```
 let src = Path "data.txt"
@@ -569,9 +594,11 @@ src.hard_link "data-copy.txt"
 
 Reads the entries in the directory at this path.
 
-**Returns:** Iterable of [DirEntry](direntry.md) objects
+#### Returns
 
-**Example:**
+Iterable of [DirEntry](direntry.md) objects
+
+#### Example
 
 ```
 let dir = Path /home/user/docs
@@ -590,15 +617,17 @@ echo "Found $(files.len) entries"
 
 Returns a new path with `ext` appended as an additional extension.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type                   | Description                  |
 | ----- | ---------------------- | ---------------------------- |
 | `ext` | [`str`](../std/str.md) | Extension to append          |
 
-**Returns:** [Path](path.md)
+#### Returns
 
-**Example:**
+[Path](path.md)
+
+#### Example
 
 ```
 let path = Path "archive.tar"
@@ -612,7 +641,9 @@ echo file.add_ext "txt"  # report.txt
 
 Returns an iterator over the lexical components of the path.
 
-**Returns:** Iterator of [`str`](../std/str.md)
+#### Returns
+
+Iterator of [`str`](../std/str.md)
 
 ```
 let path = Path "alpha/beta/gamma"
@@ -628,9 +659,11 @@ assert_eq [...rest] ["beta", "gamma"]
 Returns the canonical, absolute form of the path with all intermediate
 components normalized and symbolic links resolved.
 
-**Returns:** [Path](path.md)
+#### Returns
 
-**Example:**
+[Path](path.md)
+
+#### Example
 
 ```
 let rel = Path "./foo/../bar"
@@ -642,12 +675,17 @@ echo $abs  # Absolute normalized path
 
 Reads the target of a symbolic link.
 
-**Returns:** [Path](path.md) - The path that the symlink points to
+#### Returns
 
-**Errors:** Raises a runtime error if the path is not a symbolic link or cannot
-be read.
+[Path](path.md) - The path that the symlink points to
 
-**Example:**
+#### Errors
+
+| Exception      | Condition                                         |
+| -------------- | ------------------------------------------------- |
+| `RuntimeError` | The path is not a symbolic link or cannot be read |
+
+#### Example
 
 ```
 let link = Path "my_link"
@@ -659,7 +697,9 @@ echo "Link points to: $target"
 
 Returns a new path with the final extension removed.
 
-**Returns:** [Path](path.md)
+#### Returns
+
+[Path](path.md)
 
 ```
 let path = Path "archive.tar.gz"
@@ -673,13 +713,15 @@ echo plain.without_ext()  # Makefile
 
 Returns a new path with the final extension replaced.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type                   | Description             |
 | ----- | ---------------------- | ----------------------- |
 | `ext` | [`str`](../std/str.md) | Replacement extension   |
 
-**Returns:** [Path](path.md)
+#### Returns
+
+[Path](path.md)
 
 ```
 let path = Path "archive.tar.gz"
@@ -693,13 +735,15 @@ echo plain.with_ext "txt"  # Makefile.txt
 
 Returns a new path with the final component replaced.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                   | Description                 |
 | ------ | ---------------------- | --------------------------- |
 | `name` | [`str`](../std/str.md) | Replacement final component |
 
-**Returns:** [Path](path.md)
+#### Returns
+
+[Path](path.md)
 
 ```
 let path = Path "src/main.rs"
@@ -711,13 +755,15 @@ echo path.with_name "lib.rs"  # src/lib.rs
 Returns a new path with the final stem replaced, preserving the final
 extension when present.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                   | Description         |
 | ------ | ---------------------- | ------------------- |
 | `stem` | [`str`](../std/str.md) | Replacement stem    |
 
-**Returns:** [Path](path.md)
+#### Returns
+
+[Path](path.md)
 
 ```
 let path = Path "archive.tar.gz"
@@ -737,14 +783,14 @@ By default this removes a single file or symlink. With `all: true`, it also
 removes directories recursively, similar to `rm -r`. With `ignore: true`,
 missing paths are treated as success.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                     | Description                                |
 | -------- | ------------------------ | ------------------------------------------ |
 | `all`    | [`bool`](../std/bool.md) | If `true`, removes directories recursively |
 | `ignore` | [`bool`](../std/bool.md) | If `true`, ignores a missing path          |
 
-**Example:**
+#### Example
 
 ```
 let file = Path "temp.txt"
@@ -760,13 +806,13 @@ dir.remove ignore: true
 
 Creates a directory at this path.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type                     | Description                               |
 | ----- | ------------------------ | ----------------------------------------- |
 | `all` | [`bool`](../std/bool.md) | If `true`, creates parent directories too |
 
-**Example:**
+#### Example
 
 ```
 let dir = Path "new_subdir"
@@ -787,14 +833,14 @@ no files or other non-directory entries. Use
 [`remove`](index.md#remove-path-all-ignore) to delete directories that
 contain files.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                     | Description                                                      |
 | -------- | ------------------------ | ---------------------------------------------------------------- |
 | `all`    | [`bool`](../std/bool.md) | If `true`, recursively prunes only empty directory subtrees      |
 | `ignore` | [`bool`](../std/bool.md) | If `true`, ignores missing directories and file-blocked subtrees |
 
-**Example:**
+#### Example
 
 ```
 let dir = Path "empty_dir"
@@ -816,16 +862,19 @@ Changes the permissions of the file or directory at this path.
 - **Unix:** Changes file permissions using standard Unix mode bits
 - **Windows:** Raises a runtime error (not supported)
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                   | Description                          |
 | ------ | ---------------------- | ------------------------------------ |
 | `mode` | [`int`](../std/int.md) | Permission mode bits (e.g., `0o755`) |
 
-**Errors:** Raises a runtime error on non-Unix platforms or if the operation
-fails.
+#### Errors
 
-**Example:**
+| Exception      | Condition                                             |
+| -------------- | ----------------------------------------------------- |
+| `RuntimeError` | The operation is used on a non-Unix platform or fails |
+
+#### Example
 
 ```
 let script = Path "script.sh"
@@ -846,7 +895,7 @@ Updates the timestamps of the file or directory at this path.
 
 Unspecified timestamps are left unchanged.
 
-**Parameters:**
+#### Parameters
 
 | Name       | Type                              | Description                               |
 | ---------- | --------------------------------- | ----------------------------------------- |
@@ -874,7 +923,7 @@ this path.
 - **Unix:** Available
 - **Windows:** Not available
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                                           | Description                               |
 | -------- | ---------------------------------------------- | ----------------------------------------- |
@@ -884,7 +933,7 @@ this path.
 
 At least one of `user` or `group` must be provided.
 
-**Example:**
+#### Example
 
 ```
 let script = Path "script.sh"
@@ -902,9 +951,11 @@ link.chown group: 33 follow: false
 Returns a normalized path with `.` and `..` components resolved without
 accessing the filesystem.
 
-**Returns:** [Path](path.md)
+#### Returns
 
-**Example:**
+[Path](path.md)
+
+#### Example
 
 ```
 let messy = Path "./foo/../bar/./baz"
@@ -918,9 +969,11 @@ Returns the absolute form of this path based on the current working directory.
 
 If the path is already absolute, it is returned unchanged.
 
-**Returns:** [Path](path.md)
+#### Returns
 
-**Example:**
+[Path](path.md)
+
+#### Example
 
 ```
 let rel = Path "./config.txt"
@@ -936,16 +989,18 @@ echo $already_abs.absolute()  # /etc/passwd
 
 Returns this path relative to a base directory.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                      | Description                   |
 | ------ | ----------------------------------------- | ----------------------------- |
 | `base` | [`str`](../std/str.md)\|[`Path`](path.md) | Base directory (default: cwd) |
 
-**Returns:** [Path](path.md) - Relative path, or the original path if it cannot
+#### Returns
+
+[Path](path.md) - Relative path, or the original path if it cannot
 be made relative
 
-**Example:**
+#### Example
 
 ```
 # Relative to current directory
@@ -965,7 +1020,7 @@ echo path3.relative "/home/user"  # /etc/passwd
 
 Returns an iterator over paths matching a glob pattern relative to this path.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                     | Description                                                       |
 | ----------- | ------------------------ | ----------------------------------------------------------------- |
@@ -973,9 +1028,11 @@ Returns an iterator over paths matching a glob pattern relative to this path.
 | `max_depth` | [`int`](../std/int.md)   | Maximum directory depth to traverse (default: unlimited)          |
 | `follow`    | [`bool`](../std/bool.md) | Whether to follow symbolic links when traversing (default: false) |
 
-**Returns:** Iterable of [Path](path.md) objects
+#### Returns
 
-**Example:**
+Iterable of [Path](path.md) objects
+
+#### Example
 
 ```
 let src = Path "src"

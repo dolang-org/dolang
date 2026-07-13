@@ -18,18 +18,21 @@ patches.
 
 Parses a patch stream.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type                                              | Description                |
 | ------- | ------------------------------------------------- | -------------------------- |
 | `input` | [`str`](../std/str.md)\|[`bin`](../std/bin.md)    | Unified or git-style patch |
 
-**Returns:** [`PatchIter`](./patchiter.md)
+#### Returns
 
-**Errors:**
+[`PatchIter`](./patchiter.md)
 
-- Raises [`ParseError`](./parseerror.md) when iteration reaches malformed patch
-  data
+#### Errors
+
+| Exception                       | Condition                              |
+| ------------------------------- | -------------------------------------- |
+| [`ParseError`](./parseerror.md) | Iteration reaches malformed patch data |
 
 ```
 let patches = [...patch.decode diff_text]
@@ -42,7 +45,7 @@ Builds a text patch from two versions of the same content.
 `before` and `after` must both be [`str`](../std/str.md) or both be
 [`bin`](../std/bin.md).
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type                                                                               | Description                            |
 | -------- | ---------------------------------------------------------------------------------- | -------------------------------------- |
@@ -51,13 +54,16 @@ Builds a text patch from two versions of the same content.
 | `source` | [`Path`](../fs/path.md)\|[`str`](../std/str.md)?                                   | Source filename for the patch headers  |
 | `target` | [`Path`](../fs/path.md)\|[`str`](../std/str.md)?                                   | Target filename for the patch headers  |
 
-**Returns:** [`Patch`](./patch.md)
+#### Returns
 
-**Errors:**
+[`Patch`](./patch.md)
 
-- Raises `TypeError` if `before` and `after` are not both text or both binary
-- Raises `TypeError` if `source` or `target` is not a [`Path`](../fs/path.md)
-  or [`str`](../std/str.md)
+#### Errors
+
+| Exception   | Condition                                                                       |
+| ----------- | ------------------------------------------------------------------------------- |
+| `TypeError` | `before` and `after` are not both text or both binary                           |
+| `TypeError` | `source` or `target` is not a [`Path`](../fs/path.md) or [`str`](../std/str.md) |
 
 ```
 let p = patch.diff "alpha\n" "beta\n" source: old.txt target: new.txt
@@ -71,17 +77,21 @@ Encodes a [`Patch`](./patch.md) or iterable of patches back to patch text.
 When every encoded byte is valid UTF-8, this returns a
 [`str`](../std/str.md). Otherwise it returns [`bin`](../std/bin.md).
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type                              | Description                          |
 | ------- | --------------------------------- | ------------------------------------ |
 | `value` | [`Patch`](./patch.md)\|iterable   | One patch or an iterable of patches  |
 
-**Returns:** [`str`](../std/str.md)\|[`bin`](../std/bin.md)
+#### Returns
 
-**Errors:**
+[`str`](../std/str.md)\|[`bin`](../std/bin.md)
 
-- Raises `TypeError` if an iterable contains a non-`Patch` value
+#### Errors
+
+| Exception   | Condition                                |
+| ----------- | ---------------------------------------- |
+| `TypeError` | An iterable contains a non-`Patch` value |
 
 ```
 let patches = [...patch.decode diff_text]

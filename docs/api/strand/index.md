@@ -18,14 +18,16 @@ Runs `block` with a transitive fork budget.
 the scoped block. Nested `strand.limit` scopes compose by adding another
 constraint.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type                   | Description                                 |
 | ------- | ---------------------- | ------------------------------------------- |
 | `count` | [`int`](../std/int.md) | maximum active descendant fork workers      |
 | `block` | func                   | code to run under the transitive limit      |
 
-**Returns:** The block result.
+#### Returns
+
+The block result.
 
 ```
 let results = strand.limit 256 do
@@ -43,14 +45,16 @@ subtree.
 
 Executes multiple blocks concurrently and returns their results as an array.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type                   | Description                                                      |
 | ----------- | ---------------------- | ---------------------------------------------------------------- |
 | `...blocks` | func                   | callables to execute concurrently                                |
 | `limit`     | [`int`](../std/int.md) | maximum number of worker strands to run at once (default: all)   |
 
-**Returns:** `array` -- results in the same order as the blocks
+#### Returns
+
+`array` -- results in the same order as the blocks
 
 ```
 let results = fork
@@ -81,7 +85,7 @@ Creates a data processing pipeline by connecting multiple stages together. Each
 stage runs concurrently in its own strand, with channels connecting the output
 of one stage to the input of the next.
 
-**Parameters:**
+#### Parameters
 
 | Name              | Type   | Description                                    |
 | ----------------- | ------ | ---------------------------------------------- |
@@ -123,13 +127,15 @@ open input.txt r do |in| open output.txt w do |out|
 Spawns `func` to run concurrently in a background strand, returning a
 [Strand](strand.md) handle for managing it.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type   | Description             |
 | ------ | ------ | ----------------------- |
 | `func` | `func` | the callable to execute |
 
-**Returns:** [Strand](strand.md) -- a handle to the background strand
+#### Returns
+
+[Strand](strand.md) -- a handle to the background strand
 
 ```
 let worker = spawn do
@@ -154,13 +160,15 @@ pre-wired, returning a [Stream](./stream.md) handle. The callable runs with its
 ambient input and output connected to the stream's channels, so it can use
 `next` to read values fed in from outside and `put` to send values out.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type   | Description             |
 | ------ | ------ | ----------------------- |
 | `func` | `func` | the callable to execute |
 
-**Returns:** [Stream](./stream.md)
+#### Returns
+
+[Stream](./stream.md)
 
 ```
 let s = stream do each do |x| (x * 2)
@@ -189,13 +197,15 @@ See [Stream](./stream.md) for the handle's fields and methods.
 Creates a new channel for communication between strands. Returns a
 `[sender, receiver]` pair.
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type  | Description                                |
 | -------- | ----- | ------------------------------------------ |
 | `buffer` | `int` | Buffer capacity (default: 1, unbuffered)   |
 
-**Returns:** `[sender, receiver]`
+#### Returns
+
+`[sender, receiver]`
 
 ```
 let send recv = channel()  # unbuffered channel
@@ -208,7 +218,7 @@ See [Sender](sender.md) and [Receiver](receiver.md) for the types returned.
 
 A pipeline stage that emits all values from an iterable to its output.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type  | Description                     |
 | ------- | ----- | ------------------------------- |
@@ -219,7 +229,7 @@ A pipeline stage that emits all values from an iterable to its output.
 A pipeline stage that filters values. Reads from input, tests each value with
 the predicate, and writes passing values to output.
 
-**Parameters:**
+#### Parameters
 
 | Name        | Type | Description                               |
 | ----------- | ---- | ----------------------------------------- |
@@ -230,7 +240,7 @@ the predicate, and writes passing values to output.
 A pipeline stage that transforms values. Reads from input, calls `func` on
 each value, and writes the result to output.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type | Description                               |
 | ------ | ---- | ----------------------------------------- |
@@ -241,10 +251,12 @@ each value, and writes the result to output.
 A pipeline stage that collects all input values into an array (or another
 target).
 
-**Parameters:**
+#### Parameters
 
 | Name     | Type   | Description                                    |
 | -------- | ------ | ---------------------------------------------- |
 | `target` | output | collection to add to (defaults to a new array) |
 
-**Returns:** The collection.
+#### Returns
+
+The collection.

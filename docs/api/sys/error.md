@@ -1,9 +1,6 @@
 # Error
 
-`Error` is raised for system and I/O failures originating from the shell
-extension. It is a subtype of
-[`std.RuntimeError`](../std/runtime-error.md), so it can be caught
-either specifically or through the broader runtime error type.
+`Error` is raised for system and I/O failures.
 
 ```
 try
@@ -12,8 +9,7 @@ catch Error: err
   echo $str(err)
 ```
 
-`str(err)` returns the underlying system error message. `dbg(err)` includes the
-nominal type name together with that message.
+`str(err)` returns the underlying system error message.
 
 On Unix, `Error` exposes an `errno` field containing the underlying OS
 error number when one exists:

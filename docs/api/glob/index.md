@@ -20,14 +20,16 @@ Tests whether `value` matches a glob pattern.
 `pattern` may be either a [`Glob`](./glob.md) or a
 [`str`](../std/str.md). Passing a `str` compiles it for that call only.
 
-**Parameters:**
+#### Parameters
 
 | Name      | Type                                        | Description                 |
 | --------- | ------------------------------------------- | --------------------------- |
 | `pattern` | [`Glob`](./glob.md)\|[`str`](../std/str.md) | Glob object or pattern text |
 | `value`   | [`str`](../std/str.md)                      | Candidate string to test    |
 
-**Returns:** [`bool`](../std/index.md) indicating whether the value matches.
+#### Returns
+
+[`bool`](../std/index.md) indicating whether the value matches.
 
 ```
 let png = glob.Glob "**/*.png"

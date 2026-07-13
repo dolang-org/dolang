@@ -50,20 +50,23 @@ Applies the patch to `base`.
 `base` may be text or binary. If `base` is text, the patched result must still
 be valid UTF-8.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                                              | Description                    |
 | ------ | ------------------------------------------------- | ------------------------------ |
 | `base` | [`str`](../std/str.md)\|[`bin`](../std/bin.md)    | Content to patch               |
 
-**Returns:** [`str`](../std/str.md)\|[`bin`](../std/bin.md)
+#### Returns
 
-**Errors:**
+[`str`](../std/str.md)\|[`bin`](../std/bin.md)
 
-- Raises [`ApplyError`](./applyerror.md) if the patch does not apply cleanly
-- Raises [`ApplyError`](./applyerror.md) if a text result is not valid UTF-8
-- Raises `TypeError` if `base` is not [`str`](../std/str.md) or
-  [`bin`](../std/bin.md)
+#### Errors
+
+| Exception                       | Condition                                                      |
+| ------------------------------- | -------------------------------------------------------------- |
+| [`ApplyError`](./applyerror.md) | The patch does not apply cleanly                               |
+| [`ApplyError`](./applyerror.md) | A text result is not valid UTF-8                               |
+| `TypeError`                     | `base` is not [`str`](../std/str.md) or [`bin`](../std/bin.md) |
 
 ```
 let p = patch.diff "alpha\n" "beta\n"

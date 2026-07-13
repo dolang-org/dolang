@@ -475,7 +475,7 @@ async fn run_monitor<'v, 's>(
                 status = &mut wait, if res.is_none() => {
                     res = Some(status);
                     // Don't wait for input pump any longer, it might be stuck trying to receive on the
-                    // input iterator and hasn't noticed that the pipe was closed by the process
+                    // iterator and hasn't noticed that the pipe was closed by the process
                     // exiting.
                     idone = true;
                 }
@@ -496,7 +496,7 @@ async fn run_monitor<'v, 's>(
     let res = res.into_sys(strand)?;
     if res.success() {
         // Check pump results if they exited, but don't block as they could be stuck on a pending
-        // input/output iterator receive/send.  They'll get canceled on scope exit in this case.
+        // iterator/sink receive/send. They'll get canceled on scope exit in this case.
         if let Some(res) = ires {
             res?;
         }

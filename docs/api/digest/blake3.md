@@ -12,8 +12,6 @@
 
 Creates a BLAKE3 digest state handle.
 
-**Returns:** [`Blake3`](./blake3.md)
-
 ```
 let state = Blake3()
 state.update "abc"

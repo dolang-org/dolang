@@ -1,9 +1,6 @@
 # Error
 
-`Error` is raised for transport and protocol failures originating from the
-HTTP extension. It is a subtype of
-[`std.RuntimeError`](../std/runtime-error.md), so it can be caught
-either specifically or through the broader runtime error type.
+`Error` is raised for transport and protocol failures.
 
 ```
 try
@@ -12,11 +9,9 @@ catch Error: err
   echo $str(err)
 ```
 
-`str(err)` returns the underlying `reqwest` error message. `dbg(err)` includes
-the nominal type name together with that message.
+`str(err)` returns the underlying error message.
 
-Non-2xx HTTP responses are reported through
-[`Status`](./status.md), which is a nominal subtype of `Error`.
+Non-2xx HTTP responses are reported through [`Status`](./status.md).
 
 When the underlying error carries a URL, `Error` exposes it through a
 `url` field:

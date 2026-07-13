@@ -8,15 +8,17 @@ A compiled glob pattern.
 
 Compiles a glob pattern.
 
-**Parameters:**
+#### Parameters
 
 | Name      | Type                   | Description   |
 | --------- | ---------------------- | ------------- |
 | `pattern` | [`str`](../std/str.md) | Glob pattern  |
 
-**Returns:** A compiled `Glob` instance.
+#### Errors
 
-**Errors:** Raises a runtime error if the pattern is invalid.
+| Exception    | Condition              |
+| ------------ | ---------------------- |
+| `ValueError` | The pattern is invalid |
 
 ```
 let png = Glob "**/*.png"
@@ -29,13 +31,15 @@ let tree = Glob "src/**/mod.rs"
 
 Tests whether `value` matches this glob.
 
-**Parameters:**
+#### Parameters
 
 | Name    | Type                   | Description               |
 | ------- | ---------------------- | ------------------------- |
 | `value` | [`str`](../std/str.md) | Candidate string to test  |
 
-**Returns:** [`bool`](../std/index.md) indicating whether the value matches.
+#### Returns
+
+[`bool`](../std/index.md) indicating whether the value matches.
 
 ```
 let png = Glob "**/*.png"

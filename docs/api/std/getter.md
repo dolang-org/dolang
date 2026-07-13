@@ -13,10 +13,12 @@ For a computed field `obj.name`:
 
 Returns the field value for `obj`.
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type | Description             |
 | ----- | ---- | ----------------------- |
 | `obj` |      | instance being accessed |
 
-**Returns:** field value
+#### Returns
+
+field value

@@ -1,7 +1,7 @@
 # AlreadyExistsError
 
-`AlreadyExistsError` is a subtype of [`Error`](./error.md) used for
-`io::ErrorKind::AlreadyExists` failures.
+Raised when creating or renaming something would conflict with an existing
+filesystem path or other system resource.
 
 ## Inherits
 

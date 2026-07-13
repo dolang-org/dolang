@@ -1,7 +1,7 @@
 # PermissionDeniedError
 
-`PermissionDeniedError` is a subtype of [`Error`](./error.md) used for
-`io::ErrorKind::PermissionDenied` failures.
+Raised when a system operation is not permitted by filesystem, process, or
+platform access rules.
 
 ## Inherits
 

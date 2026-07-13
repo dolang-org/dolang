@@ -8,15 +8,21 @@ XML parsing and serialization.
 
 Parses an XML string and returns the root element as an [`Node`](./node.md).
 
-**Parameters:**
+#### Parameters
 
 | Name  | Type  | Description         |
 | ----- | ----- | ------------------- |
 | `xml` | `str` | XML string to parse |
 
-**Returns:** [`Node`](./node.md) -- The root element
+#### Returns
 
-**Errors:** Raises an error if the XML is invalid or has no root element.
+[`Node`](./node.md) -- The root element
+
+#### Errors
+
+| Exception    | Condition                                 |
+| ------------ | ----------------------------------------- |
+| `ValueError` | The XML is invalid or has no root element |
 
 ```
 let doc = from_str "<root><child>text</child></root>"
@@ -27,15 +33,21 @@ assert_eq $doc.tag "root"
 
 Serializes a value to an XML string.
 
-**Parameters:**
+#### Parameters
 
 | Name   | Type                         | Description                   |
 | ------ | ---------------------------- | ----------------------------- |
 | `node` | [`Node`](./node.md) or `str` | The node or text to serialize |
 
-**Returns:** `str` -- XML string
+#### Returns
 
-**Errors:** Raises an error if the value cannot be serialized.
+`str` -- XML string
+
+#### Errors
+
+| Exception    | Condition                      |
+| ------------ | ------------------------------ |
+| `ValueError` | The value cannot be serialized |
 
 ```
 let n = Node "greeting"

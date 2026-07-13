@@ -9,25 +9,33 @@ Server-Sent Event item yielded by [`Response.events()`](./response.md#events).
 The event type. When the stream omits `event:`, or provides an empty `event:`
 field, this defaults to `"message"`.
 
-**Type:** [`str`](../std/str.md)
+#### Type
+
+[`str`](../std/str.md)
 
 ### `data`
 
 The event payload text. Multiple `data:` lines are joined with `\n`.
 
-**Type:** [`str`](../std/str.md)
+#### Type
+
+[`str`](../std/str.md)
 
 ### `id`
 
 The event identifier, if present.
 
-**Type:** [`str`](../std/str.md) or `nil`
+#### Type
+
+[`str`](../std/str.md) or `nil`
 
 ### `retry`
 
 The reconnection delay hint from the stream, if present.
 
-**Type:** [`int`](../std/int.md) or `nil`
+#### Type
+
+[`int`](../std/int.md) or `nil`
 
 ```
 

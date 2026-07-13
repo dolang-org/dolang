@@ -11,13 +11,17 @@ Coercing a `Match` value to `str` produces the matched text.
 
 The byte offset of the start of the match within the haystack.
 
-**Type:** [`int`](../std/int.md)
+#### Type
+
+[`int`](../std/int.md)
 
 ### `end`
 
 The byte offset of the end of the match within the haystack.
 
-**Type:** [`int`](../std/int.md)
+#### Type
+
+[`int`](../std/int.md)
 
 ```
 let date = Regex r"(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})"

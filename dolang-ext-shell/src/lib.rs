@@ -35,13 +35,13 @@ use tokio::io::AsyncWrite;
 
 use crate::global::Global;
 
-/// Instantiate wrapper input iterator around stdin
+/// Instantiate wrapper iterator around stdin
 pub fn stdin<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
     let global = strand.state::<Global<'v>>();
     global.types.stdin.create(strand, shell::Stdin::new(), out)
 }
 
-/// Instantiate wrapper output iterator around stdout
+/// Instantiate wrapper sink around stdout
 pub fn stdout<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
     let global = strand.state::<Global<'v>>();
     global

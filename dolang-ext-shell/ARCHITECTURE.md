@@ -11,7 +11,7 @@ resolve an executable in `PATH` and spawn it with environment variables and
 working directory taken from the strand. Objects from the strand-local input
 iterator are converted to strings and pumped into the process stdin. Output
 from the process is parsed at line boundaries and fed into the strand-local
-output iterator as individual strings with line endings removed. Non-zero exit
+sink as individual strings with line endings removed. Non-zero exit
 codes are treated as errors.
 
 ### Container Transparency
