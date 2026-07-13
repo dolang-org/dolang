@@ -24,7 +24,7 @@ def with_vfs block
       do run $vfs_bin $socket
       do
         strand.next()
-        let vfs = Vfs unix_socket: $socket
+        let vfs = Vfs.unix_socket $socket
         return vfs $block
 
 pub def test

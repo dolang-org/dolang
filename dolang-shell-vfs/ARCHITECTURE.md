@@ -14,8 +14,23 @@ than virtualizing all I/O.
 On Windows, the RPC client uses the server end of a connected named pipe and
 the RPC server uses the client end. The client retains a trusted handle for the
 server process so `dolang-rpc` can transfer native handles in both directions.
-Creating the named pipe and launching or elevating that process are the
-caller's responsibility.
+`shell.Vfs.windows_admin()` creates the pipe and launches the current
+`dolang.exe` through UAC. The child handles the private `--vfs` mode and serves
+the direct backend until shutdown or disconnect.
+
+For automated tests, `shell.Vfs.windows_admin(elevate: false)` uses a normal
+same-user process launch instead. Windows release validation must also accept a
+real UAC prompt, perform an operation requiring administrator access, call
+`stop()`, and confirm that the child exits. Cancelling the prompt must return
+an error without leaving a child process.
+
+An elevated Windows VFS process cannot reliably use console handles inherited
+from its non-elevated parent. Programs which require console input or output
+may therefore hang, fail, or produce no output when run through an elevated
+VFS session. The VFS still duplicates standard handles because doing so is
+harmless and remains useful for non-console handles. In particular, redirected
+and captured output works because it uses ordinary handles rather than the
+parent console.
 
 Path-based operations execute on the RPC server. Operations whose names begin
 with `file_` act locally on a file handle that the server already transferred

@@ -25,6 +25,8 @@ mod read_dir;
 mod server;
 #[cfg(unix)]
 mod service;
+#[cfg(windows)]
+mod windows;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileType {
@@ -2018,3 +2020,6 @@ mod unix {
 
 #[cfg(unix)]
 pub use unix::*;
+
+#[cfg(windows)]
+pub use windows::{WindowsSession, serve_named_pipe};

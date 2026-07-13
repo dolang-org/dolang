@@ -24,19 +24,20 @@ use crate::{
     local::Env as LocalEnv,
 };
 
-#[cfg(unix)]
-use std::{
-    collections::HashMap,
-    path::{self, PathBuf},
-};
+#[cfg(any(unix, windows))]
+use std::collections::HashMap;
+#[cfg(any(unix, windows))]
+use std::path::PathBuf;
 
-#[cfg(unix)]
+#[cfg(windows)]
+use dolang_shell_vfs::WindowsSession;
+#[cfg(any(unix, windows))]
 use dolang_shell_vfs::{Client, ClientOrDirect, Query};
 
-#[cfg(unix)]
-use dolang::runtime::{Type, error::ResultExt};
+#[cfg(any(unix, windows))]
+use dolang::runtime::error::ResultExt;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::error;
 
 /// Exit error.
@@ -58,7 +59,7 @@ impl Display for Exit {
 
 impl std::error::Error for Exit {}
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Clone)]
 pub(crate) struct Context {
     client: Client,
@@ -66,7 +67,7 @@ pub(crate) struct Context {
     env: Rc<LocalEnv>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Context {
     pub(crate) async fn enter<'v, 's, R>(
         &self,
@@ -87,6 +88,7 @@ impl Context {
         res
     }
 
+    #[cfg(unix)]
     pub(crate) fn client(&self) -> &Client {
         &self.client
     }
@@ -264,28 +266,25 @@ impl<'v> Object<'v> for Stderr {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) struct Vfs;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) struct VfsAnnex<'v> {
     handle: Context,
-    socket: PathBuf,
+    source: VfsSource,
     global: State<'v, Global<'v>>,
 }
 
-#[cfg(unix)]
-impl<'v> VfsAnnex<'v> {
-    pub(crate) fn new(handle: Context, socket: &path::Path, global: State<'v, Global<'v>>) -> Self {
-        Self {
-            handle,
-            socket: socket.into(),
-            global,
-        }
-    }
+#[cfg(any(unix, windows))]
+enum VfsSource {
+    #[cfg(unix)]
+    Unix(PathBuf),
+    #[cfg(windows)]
+    Windows(WindowsSession),
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl<'v> Object<'v> for Vfs {
     const NAME: &'v str = "Vfs";
     const MODULE: &'v str = "shell";
@@ -293,52 +292,17 @@ impl<'v> Object<'v> for Vfs {
     type Type = ();
     type TypeAnnex = ();
 
-    async fn new<'a, 's>(
-        _this: Type<'v, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        args: dolang::runtime::Args<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let global = strand.vm().state::<Global<'v>>();
-        let unix_socket = global.syms.unix_socket;
-
-        let ([path], []) = unpack!(strand, args, 0, 0, unix_socket)?;
-        let path = path_from_value(strand, global, &path)?;
-
-        let parent_client = {
-            let local = global.local.get(strand);
-            local.vfs().into_client()
-        };
-
-        let client = if let Some(parent_client) = parent_client {
-            let fd = error::io_result(
-                strand,
-                parent_client
-                    .unix_stream_socket(None::<&path::Path>, Some(path.as_path()))
-                    .await,
-            )?;
-            error::io_result(strand, Client::try_from(fd))?
-        } else {
-            error::io_result(strand, Client::connect(&path).await)?
-        };
-        let Query { env, cwd } = error::io_result(strand, client.query().await)?;
-        let env = Rc::new(LocalEnv::new(None, true, env));
-
-        global.types.vfs.create_with_annex(
-            strand,
-            Vfs,
-            VfsAnnex::new(Context { client, env, cwd }, &path, global),
-            out,
-        );
-        Ok(())
-    }
-
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<shell.Vfs socket: {:?}>", this.annex().socket).into_do(strand)
+        match &this.annex().source {
+            #[cfg(unix)]
+            VfsSource::Unix(socket) => write!(w, "<shell.Vfs socket: {socket:?}>").into_do(strand),
+            #[cfg(windows)]
+            VfsSource::Windows(_) => write!(w, "<shell.Vfs windows admin>").into_do(strand),
+        }
     }
 
     async fn call<'a, 's>(
@@ -362,11 +326,96 @@ impl<'v> Object<'v> for Vfs {
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.method("stop", async move |this, strand, _args, _out| {
-            let borrow = this.annex();
-            error::io_result(strand, borrow.handle.client().stop().await)?;
+        #[cfg(unix)]
+        let builder = builder.type_method("unix_socket", async move |_this, strand, args, out| {
+            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            let global = strand.vm().state::<Global<'v>>();
+            let path = path_from_value(strand, global, &path)?;
+
+            let parent_client = {
+                let local = global.local.get(strand);
+                local.vfs().into_client()
+            };
+
+            let client = if let Some(parent_client) = parent_client {
+                let fd = error::io_result(
+                    strand,
+                    parent_client
+                        .unix_stream_socket(None::<&std::path::Path>, Some(path.as_path()))
+                        .await,
+                )?;
+                error::io_result(strand, Client::try_from(fd))?
+            } else {
+                error::io_result(strand, Client::connect(&path).await)?
+            };
+            let Query { env, cwd } = error::io_result(strand, client.query().await)?;
+            let env = Rc::new(LocalEnv::new(None, true, env));
+
+            global.types.vfs.create_with_annex(
+                strand,
+                Vfs,
+                VfsAnnex {
+                    handle: Context { client, env, cwd },
+                    source: VfsSource::Unix(path),
+                    global,
+                },
+                out,
+            );
             Ok(())
-        })
+        });
+
+        #[cfg(windows)]
+        let (builder, elevate) = {
+            let mut builder = builder;
+            let elevate = builder.sym("elevate");
+            (builder, elevate)
+        };
+        let builder = builder.method("stop", async move |this, strand, _args, _out| {
+            let borrow = this.annex();
+            let result = match &borrow.source {
+                #[cfg(unix)]
+                VfsSource::Unix(_) => borrow.handle.client().stop().await,
+                #[cfg(windows)]
+                VfsSource::Windows(session) => session.stop().await,
+            };
+            error::io_result(strand, result)?;
+            Ok(())
+        });
+
+        #[cfg(windows)]
+        let builder =
+            builder.type_method("windows_admin", async move |_this, strand, args, out| {
+                let ([], [elevate]) = unpack!(strand, args, 0, 0, elevate = None)?;
+                let elevate = match elevate {
+                    Some(elevate) => elevate
+                        .as_bool(strand)
+                        .ok_or_else(|| Error::type_error(strand, "elevate: expected bool"))?,
+                    None => true,
+                };
+                let global = strand.vm().state::<Global<'v>>();
+                let cwd = global.local.get(strand).cwd().as_ref().to_owned();
+                let result = if elevate {
+                    WindowsSession::launch(cwd).await
+                } else {
+                    WindowsSession::launch_unelevated(cwd).await
+                };
+                let (session, Query { env, cwd }) = error::io_result(strand, result)?;
+                let client = session.client().clone();
+                let env = Rc::new(LocalEnv::new(None, true, env));
+                global.types.vfs.create_with_annex(
+                    strand,
+                    Vfs,
+                    VfsAnnex {
+                        handle: Context { client, env, cwd },
+                        source: VfsSource::Windows(session),
+                        global,
+                    },
+                    out,
+                );
+                Ok(())
+            });
+
+        builder
     }
 }
 
@@ -545,7 +594,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             }
         });
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         module = module.value("Vfs", global.types.vfs);
     }

@@ -44,6 +44,13 @@ version = "0.1.0"
 path = "../dolang"
 version = "0.1.0"
 
+[target.'cfg(windows)'.dependencies.dolang-shell-vfs]
+path = "../dolang-shell-vfs"
+version = "0.1.0"
+
+[target.'cfg(windows)'.dev-dependencies]
+tokio = { version = "1.48.0", features = ["macros", "net", "rt"] }
+
 [dependencies.dolang-ext-digest]
 path = "../dolang-ext-digest"
 version = "0.1.0"

@@ -38,7 +38,7 @@ impl Env {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) fn new(
         parent: Option<Rc<Env>>,
         baseline: bool,
@@ -47,7 +47,13 @@ impl Env {
         Self {
             parent,
             baseline,
+            #[cfg(not(target_os = "windows"))]
             vars: values.into_iter().map(|(k, v)| (k, Some(v))).collect(),
+            #[cfg(target_os = "windows")]
+            vars: values
+                .into_iter()
+                .map(|(k, v)| (k.to_ascii_uppercase(), Some(v)))
+                .collect(),
         }
     }
 
