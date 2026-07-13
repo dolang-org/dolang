@@ -25,9 +25,9 @@ use windows_sys::{
     },
     Win32::{
         Foundation::{
-            ERROR_HANDLE_EOF, ERROR_MORE_DATA, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
-            RtlNtStatusToDosError, S_OK, STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL,
-            STATUS_NO_EAS_ON_FILE, STATUS_NO_MORE_EAS, STATUS_SUCCESS,
+            ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF, ERROR_MORE_DATA, GENERIC_READ, GENERIC_WRITE,
+            INVALID_HANDLE_VALUE, RtlNtStatusToDosError, S_OK, STATUS_BUFFER_OVERFLOW,
+            STATUS_BUFFER_TOO_SMALL, STATUS_NO_EAS_ON_FILE, STATUS_NO_MORE_EAS, STATUS_SUCCESS,
         },
         Storage::FileSystem::{
             COMPRESSION_FORMAT_DEFAULT, COMPRESSION_FORMAT_NONE, CreateFileW,
@@ -53,7 +53,7 @@ use windows_sys::{
 
 impl Direct {
     pub(super) fn program_not_found_error() -> io::Error {
-        io::Error::from(io::ErrorKind::NotFound)
+        io::Error::from_raw_os_error(ERROR_FILE_NOT_FOUND as i32)
     }
 
     pub(super) fn directory_requires_all_error() -> io::Error {

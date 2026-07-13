@@ -228,7 +228,7 @@ fn configure_direct_input<'v, 's>(
     if let Some(file) = global.types.file.downcast(input)
         && let Some(fd) = File::fd(file, strand)?
     {
-        command.stdin_fd(fd);
+        command.stdin_handle(fd);
         return Ok(true);
     }
     Ok(false)
@@ -255,7 +255,7 @@ fn configure_direct_output<'v, 's>(
     if let Some(file) = global.types.file.downcast(output)
         && let Some(fd) = File::fd(file, strand)?
     {
-        command.stdout_fd(fd);
+        command.stdout_handle(fd);
         return Ok(true);
     }
     Ok(false)
@@ -282,7 +282,7 @@ fn configure_direct_stderr<'v, 's>(
     if let Some(file) = global.types.file.downcast(stderr)
         && let Some(fd) = File::fd(file, strand)?
     {
-        command.stderr_fd(fd);
+        command.stderr_handle(fd);
         return Ok(true);
     }
     Ok(false)
@@ -591,7 +591,7 @@ async fn run<'v, 's>(
             } else {
                 #[cfg(unix)]
                 if let Some(file) = global.types.file.downcast(output) {
-                    command.stderr_fd(File::fd(file, strand)?.unwrap());
+                    command.stderr_handle(File::fd(file, strand)?.unwrap());
                 } else {
                     unreachable!("stdout direct path should have been direct-fd capable")
                 }

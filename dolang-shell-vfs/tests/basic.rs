@@ -270,7 +270,7 @@ async fn fd_passing() {
     let mut command = client.command("echo");
     command
         .arg("hello_world")
-        .stdout_fd(file.as_fd().try_clone_to_owned().unwrap());
+        .stdout_handle(file.as_fd().try_clone_to_owned().unwrap());
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
 

@@ -4,8 +4,11 @@ use std::path::PathBuf;
 use dolang_rpc::{OsHandle, Protocol};
 use serde::{Deserialize, Serialize};
 
+#[cfg(windows)]
+pub(crate) use crate::DirEntry;
 pub(crate) use crate::{
-    Attrs, ChownIdentity, FsMetadata, Metadata, WellKnownPath, XattrEntry, XattrNamespace,
+    Attrs, ChownIdentity, FsMetadata, Metadata, StreamEntry, WellKnownPath, XattrEntry,
+    XattrNamespace,
 };
 
 pub(crate) struct VfsProtocol;
@@ -79,6 +82,7 @@ pub(crate) struct OpenRequest {
     pub(crate) no_follow: bool,
 }
 
+#[cfg(unix)]
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct UnixStreamSocketRequest {
     pub(crate) bind: Option<PathBuf>,
@@ -149,9 +153,18 @@ pub(crate) struct MoveRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub(crate) enum SymlinkKind {
+    Infer,
+    Dir,
+    File,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct SymlinkRequest {
+    pub(crate) cwd: PathBuf,
     pub(crate) src: PathBuf,
     pub(crate) dst: PathBuf,
+    pub(crate) kind: SymlinkKind,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -170,6 +183,7 @@ pub(crate) struct ReadLinkRequest {
     pub(crate) path: PathBuf,
 }
 
+#[cfg(unix)]
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct AccessRequest {
     pub(crate) path: PathBuf,
@@ -226,6 +240,12 @@ pub(crate) struct XattrsRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct StreamsRequest {
+    pub(crate) path: PathBuf,
+    pub(crate) follow: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct XattrRequest {
     pub(crate) path: PathBuf,
     pub(crate) name: String,
@@ -255,7 +275,12 @@ pub(crate) enum RequestKind {
     Stop,
     ClearCache,
     Open(OpenRequest),
+    #[cfg(unix)]
     UnixStreamSocket(UnixStreamSocketRequest),
+    #[cfg(windows)]
+    ReadDir {
+        path: PathBuf,
+    },
     Remove(RemoveRequest),
     Metadata(MetadataRequest),
     FsMetadata(FsMetadataRequest),
@@ -271,6 +296,7 @@ pub(crate) enum RequestKind {
     SetAttrs(SetAttrsRequest),
     Canonicalize(CanonicalizeRequest),
     ReadLink(ReadLinkRequest),
+    #[cfg(unix)]
     Access(AccessRequest),
     Glob(GlobRequest),
     SetPermissions(SetPermissionsRequest),
@@ -280,6 +306,7 @@ pub(crate) enum RequestKind {
     Xattr(XattrRequest),
     SetXattr(SetXattrRequest),
     RemoveXattr(XattrRequest),
+    Streams(StreamsRequest),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -294,7 +321,10 @@ pub(crate) enum ResponseKind {
     Stop,
     ClearCache,
     Open(Result<OsHandle, i32>),
+    #[cfg(unix)]
     UnixStreamSocket(Result<OsHandle, i32>),
+    #[cfg(windows)]
+    ReadDir(Result<Vec<DirEntry>, i32>),
     Remove(Result<(), i32>),
     Metadata(Result<Metadata, i32>),
     FsMetadata(Result<FsMetadata, i32>),
@@ -310,6 +340,7 @@ pub(crate) enum ResponseKind {
     SetAttrs(Result<(), i32>),
     Canonicalize(Result<PathBuf, i32>),
     ReadLink(Result<PathBuf, i32>),
+    #[cfg(unix)]
     Access(Result<(), i32>),
     Glob(Result<Vec<PathBuf>, i32>),
     SetPermissions(Result<(), i32>),
@@ -319,6 +350,7 @@ pub(crate) enum ResponseKind {
     Xattr(Result<Vec<u8>, i32>),
     SetXattr(Result<(), i32>),
     RemoveXattr(Result<(), i32>),
+    Streams(Result<Vec<StreamEntry>, i32>),
 }
 
 impl std::fmt::Debug for ResponseKind {
@@ -340,9 +372,15 @@ impl std::fmt::Debug for ResponseKind {
                 .debug_tuple("Open")
                 .field(&result.as_ref().map(|_| "<fd>"))
                 .finish(),
+            #[cfg(unix)]
             ResponseKind::UnixStreamSocket(result) => f
                 .debug_tuple("UnixStreamSocket")
                 .field(&result.as_ref().map(|_| "<fd>"))
+                .finish(),
+            #[cfg(windows)]
+            ResponseKind::ReadDir(result) => f
+                .debug_tuple("ReadDir")
+                .field(&result.as_ref().map(|v| format!("{} entries", v.len())))
                 .finish(),
             ResponseKind::Remove(result) => f.debug_tuple("Remove").field(result).finish(),
             ResponseKind::Metadata(result) => f.debug_tuple("Metadata").field(result).finish(),
@@ -363,6 +401,7 @@ impl std::fmt::Debug for ResponseKind {
                 f.debug_tuple("Canonicalize").field(result).finish()
             }
             ResponseKind::ReadLink(result) => f.debug_tuple("ReadLink").field(result).finish(),
+            #[cfg(unix)]
             ResponseKind::Access(result) => f.debug_tuple("Access").field(result).finish(),
             ResponseKind::Glob(result) => f
                 .debug_tuple("Glob")
@@ -385,6 +424,10 @@ impl std::fmt::Debug for ResponseKind {
             ResponseKind::RemoveXattr(result) => {
                 f.debug_tuple("RemoveXattr").field(result).finish()
             }
+            ResponseKind::Streams(result) => f
+                .debug_tuple("Streams")
+                .field(&result.as_ref().map(|v| format!("{} streams", v.len())))
+                .finish(),
         }
     }
 }

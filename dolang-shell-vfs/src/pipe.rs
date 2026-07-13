@@ -12,8 +12,11 @@ use std::os::fd::{AsFd, OwnedFd};
 #[cfg(windows)]
 use std::{
     io::{PipeReader as StdPipeReader, PipeWriter as StdPipeWriter, Read as _, Write as _},
+    os::windows::io::OwnedHandle,
     sync::Arc,
 };
+
+use dolang_rpc::DefaultHandle;
 #[cfg(windows)]
 use tokio::task::JoinHandle;
 
@@ -94,6 +97,24 @@ impl PipeSend {
         }
     }
 
+    pub fn into_blocking_handle(self) -> io::Result<DefaultHandle> {
+        #[cfg(unix)]
+        {
+            self.0.into_blocking_fd()
+        }
+
+        #[cfg(windows)]
+        {
+            if self.pending.is_some() {
+                return Err(io::Error::other(
+                    "cannot convert PipeSend into a handle while an async write is in flight",
+                ));
+            }
+            let pipe = Arc::try_unwrap(self.inner).or_else(|inner| inner.try_clone())?;
+            Ok(OwnedHandle::from(pipe))
+        }
+    }
+
     #[cfg(unix)]
     pub fn into_blocking_fd(self) -> io::Result<OwnedFd> {
         self.0.into_blocking_fd()
@@ -138,6 +159,24 @@ impl PipeRecv {
             Arc::try_unwrap(self.inner)
                 .or_else(|inner| inner.try_clone())
                 .map(Stdio::from)
+        }
+    }
+
+    pub fn into_blocking_handle(self) -> io::Result<DefaultHandle> {
+        #[cfg(unix)]
+        {
+            self.0.into_blocking_fd()
+        }
+
+        #[cfg(windows)]
+        {
+            if self.pending.is_some() {
+                return Err(io::Error::other(
+                    "cannot convert PipeRecv into a handle while an async read is in flight",
+                ));
+            }
+            let pipe = Arc::try_unwrap(self.inner).or_else(|inner| inner.try_clone())?;
+            Ok(OwnedHandle::from(pipe))
         }
     }
 

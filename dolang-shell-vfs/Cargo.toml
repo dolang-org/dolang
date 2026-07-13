@@ -20,16 +20,16 @@ tokio = { version = "1.48.0", features = ["io-util", "sync", "rt-multi-thread", 
 wax = { version = "0.7", features = ["walk"] }
 serde = { version = "1.0", features = ["derive"] }
 which = "8.0"
+dolang-rpc = { path = "../dolang-rpc", version = "0.1.0" }
 
 [target.'cfg(windows)'.dependencies]
 dunce = "1.0"
-windows-sys = { version = "0.61", features = ["Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_LibraryLoader", "Win32_UI_Shell"] }
+windows-sys = { version = "0.61", features = ["Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_UI_Shell"] }
 
 [dev-dependencies]
 tempfile = "3"
 
 [target.'cfg(unix)'.dependencies]
-dolang-rpc = { path = "../dolang-rpc", version = "0.1.0" }
 tokio = { version = "1.48.0", features = ["process", "time", "signal"] }
 libc = "0.2"
 nix = { version = "0.31", features = ["dir", "fs", "ioctl", "user", "socket"] }
