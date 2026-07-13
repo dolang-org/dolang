@@ -1,7 +1,6 @@
 use std::{
-    any::Any,
     collections::HashMap,
-    io, mem,
+    io,
     os::unix::{
         io::{AsFd, OwnedFd},
         net::UnixStream as StdUnixStream,
@@ -9,94 +8,24 @@ use std::{
     },
     path::{Path, PathBuf},
     process::ExitStatus,
-    sync::Arc,
 };
 
-use tokio::{
-    fs::File,
-    net::UnixStream,
-    sync::{Mutex, oneshot},
-};
-use tokio_unix_ipc::{Receiver, Sender, serde::Handle};
+use dolang_rpc::{Call, OsHandle};
+use tokio::{fs::File, net::UnixStream};
 
 use crate::{
-    Attrs, Child, ChownIdentity, Command, FsMetadata, LockedSender, Metadata, Permissions,
-    PipeRecv, PipeSend, ReadDir, StreamEntry, Vfs, WellKnownPath, XattrEntry,
+    Attrs, Child, ChownIdentity, Command, FsMetadata, Metadata, Permissions, PipeRecv, PipeSend,
+    ReadDir, StreamEntry, Vfs, WellKnownPath, XattrEntry,
     direct::Direct,
     protocol::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
         CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
         MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest,
-        Request, RequestKind, Response, ResponseKind, SetAttrsRequest, SetPermissionsRequest,
-        SetTimesRequest, SetXattrRequest, SpawnRequest, SymlinkRequest, Timestamp,
-        UnixStreamSocketRequest, WellKnownPathRequest, XattrRequest, XattrsRequest,
+        RequestKind, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
+        SetXattrRequest, SpawnRequest, SymlinkRequest, Timestamp, UnixStreamSocketRequest,
+        VfsProtocol, WellKnownPathRequest, XattrRequest, XattrsRequest,
     },
 };
-
-trait Pending: Any + Send {
-    fn error(self: Box<Self>, err: io::Error);
-}
-
-impl<T: Send + 'static> Pending for oneshot::Sender<Result<T, io::Error>> {
-    fn error(self: Box<Self>, err: io::Error) {
-        let _ = self.send(Err(err));
-    }
-}
-
-type PendingMap = HashMap<u64, Box<dyn Pending>>;
-
-struct AliveState {
-    sender: LockedSender<Request>,
-    pending: PendingMap,
-    next_id: u64,
-}
-
-impl AliveState {
-    fn next_id(&mut self) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
-    }
-
-    fn insert_pending<T: Send + 'static>(
-        &mut self,
-        id: u64,
-        sender: oneshot::Sender<Result<T, io::Error>>,
-    ) {
-        self.pending.insert(id, Box::new(sender));
-    }
-
-    fn remove_pending<T: Send + 'static>(
-        &mut self,
-        id: u64,
-    ) -> Option<oneshot::Sender<Result<T, io::Error>>> {
-        (self.pending.remove(&id)? as Box<dyn Any>)
-            .downcast::<oneshot::Sender<Result<T, io::Error>>>()
-            .ok()
-            .map(|b| *b)
-    }
-
-    fn complete<T: Send + 'static>(&mut self, id: u64, result: Result<T, io::Error>) {
-        if let Some(tx) = self.remove_pending::<T>(id) {
-            let _ = tx.send(result);
-        }
-    }
-
-    fn error(self, err: io::Error) {
-        for (_, pending) in self.pending.into_iter() {
-            pending.error(io::Error::new(err.kind(), err.to_string()))
-        }
-    }
-}
-
-enum ClientState {
-    Alive(AliveState),
-    Dead(String),
-}
-
-struct ClientInner {
-    state: Mutex<ClientState>,
-}
 
 /// Query result containing the daemon's environment and working directory.
 pub struct Query {
@@ -109,7 +38,7 @@ pub struct Query {
 /// Client for connecting to the agent daemon and spawning processes.
 #[derive(Clone)]
 pub struct Client {
-    inner: Arc<ClientInner>,
+    rpc: dolang_rpc::Client<VfsProtocol>,
     direct: Direct,
 }
 
@@ -124,32 +53,20 @@ impl Client {
         Self::from_std_stream(stream.into_std()?)
     }
 
-    pub(crate) fn from_channel(sender: Sender<Request>, receiver: Receiver<Response>) -> Self {
-        let alive_state = AliveState {
-            sender: LockedSender::new(sender),
-            pending: Default::default(),
-            next_id: 0,
-        };
-
-        let inner = Arc::new(ClientInner {
-            state: Mutex::new(ClientState::Alive(alive_state)),
-        });
-
-        let inner_clone = inner.clone();
-
-        tokio::spawn(async move {
-            let _ = receive_loop(receiver, inner_clone).await;
-        });
-
-        Self {
-            inner,
+    fn from_std_stream(stream: StdUnixStream) -> Result<Self, io::Error> {
+        let rpc = dolang_rpc::Client::from_unix_stream(stream)?;
+        Ok(Self {
+            rpc,
             direct: Direct::default(),
-        }
+        })
     }
 
-    fn from_std_stream(stream: StdUnixStream) -> Result<Self, io::Error> {
-        let (sender, receiver) = tokio_unix_ipc::channel_from_std(stream)?;
-        Ok(Self::from_channel(sender, receiver))
+    fn call(&self, request: RequestKind) -> Call<ResponseKind> {
+        self.rpc.call(request)
+    }
+
+    async fn request(&self, request: RequestKind) -> io::Result<ResponseKind> {
+        self.call(request).await.map_err(rpc_error)
     }
 
     /// Create a Unix stream socket in the agent namespace and return its descriptor.
@@ -171,21 +88,11 @@ impl Client {
             connect: connect.map(|p| p.as_ref().to_path_buf()),
         };
 
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::UnixStreamSocket(req),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        match self.request(RequestKind::UnixStreamSocket(req)).await? {
+            ResponseKind::UnixStreamSocket(result) => result
+                .map(OsHandle::into_inner)
+                .map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -201,44 +108,21 @@ impl Client {
         path: impl AsRef<Path>,
         mode: crate::AccessFlags,
     ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Access(AccessRequest {
-                        path: path.as_ref().to_path_buf(),
-                        mode: mode.bits(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = AccessRequest {
+            path: path.as_ref().to_path_buf(),
+            mode: mode.bits(),
+        };
+        match self.request(RequestKind::Access(request)).await? {
+            ResponseKind::Access(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
     /// Query the daemon's environment variables and current working directory.
     pub async fn query(&self) -> Result<Query, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Query,
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        match self.request(RequestKind::Query).await? {
+            ResponseKind::Query { env, cwd } => Ok(Query { env, cwd }),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -249,25 +133,14 @@ impl Client {
         path: Option<&str>,
         cwd: Option<&Path>,
     ) -> Result<Option<PathBuf>, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Which {
-                        program: program.as_ref().to_path_buf(),
-                        path: path.map(|p| p.to_string()),
-                        cwd: cwd.map(|p| p.to_path_buf()),
-                    },
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = RequestKind::Which {
+            program: program.as_ref().to_path_buf(),
+            path: path.map(str::to_owned),
+            cwd: cwd.map(Path::to_path_buf),
+        };
+        match self.request(request).await? {
+            ResponseKind::Which(result) => Ok(result),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -276,64 +149,29 @@ impl Client {
         key: WellKnownPath,
         env: &HashMap<String, Option<String>>,
     ) -> Result<PathBuf, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::WellKnownPath(WellKnownPathRequest {
-                        key,
-                        env: env.clone(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = WellKnownPathRequest {
+            key,
+            env: env.clone(),
+        };
+        match self.request(RequestKind::WellKnownPath(request)).await? {
+            ResponseKind::WellKnownPath(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
     /// Signal the daemon to stop accepting new connections.
     pub async fn stop(&self) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Stop,
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        match self.request(RequestKind::Stop).await? {
+            ResponseKind::Stop => Ok(()),
+            response => Err(unexpected(response)),
         }
     }
 
     /// Clear the server's path resolution cache.
     pub async fn clear_cache(&self) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::ClearCache,
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        match self.request(RequestKind::ClearCache).await? {
+            ResponseKind::ClearCache => Ok(()),
+            response => Err(unexpected(response)),
         }
     }
 }
@@ -346,6 +184,23 @@ impl TryFrom<OwnedFd> for Client {
         stream.set_nonblocking(true)?;
         Self::from_std_stream(stream)
     }
+}
+
+fn rpc_error(error: dolang_rpc::Error) -> io::Error {
+    match error {
+        dolang_rpc::Error::Io(error) => error,
+        dolang_rpc::Error::ConnectionClosed => {
+            io::Error::new(io::ErrorKind::ConnectionReset, error.to_string())
+        }
+        dolang_rpc::Error::Cancelled => {
+            io::Error::new(io::ErrorKind::Interrupted, error.to_string())
+        }
+        error => io::Error::other(error),
+    }
+}
+
+fn unexpected(response: ResponseKind) -> io::Error {
+    io::Error::other(format!("unexpected RPC response: {response:?}"))
 }
 
 /// Builder for constructing spawn requests.
@@ -376,9 +231,8 @@ pub struct CommandBuilder<'a> {
 }
 
 pub struct ClientChild<'a> {
-    client: &'a Client,
-    request_id: u64,
-    inner: Option<oneshot::Receiver<Result<ExitStatus, io::Error>>>,
+    inner: Option<Call<ResponseKind>>,
+    marker: std::marker::PhantomData<&'a Client>,
 }
 
 impl<'a> CommandBuilder<'a> {
@@ -398,35 +252,29 @@ impl<'a> CommandBuilder<'a> {
 
 impl Child for ClientChild<'_> {
     async fn wait(&mut self) -> Result<ExitStatus, io::Error> {
-        let result = match self.inner.as_mut() {
-            Some(inner) => inner.await.expect("oneshot sender dropped"),
+        let result = match self.inner.take() {
+            Some(inner) => inner.await.map_err(rpc_error),
             None => return Err(io::Error::other("child already waited")),
-        };
-        self.inner = None;
-        result
+        }?;
+        match result {
+            ResponseKind::Spawn(result) => result
+                .map(ExitStatus::from_raw)
+                .map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
+        }
     }
 
     async fn terminate(self) -> Result<ExitStatus, io::Error> {
-        let inner = self.inner;
-        if inner.is_none() {
+        let Some(mut inner) = self.inner else {
             return Err(io::Error::other("child already waited"));
+        };
+        inner.cancel();
+        match inner.await.map_err(rpc_error)? {
+            ResponseKind::Spawn(result) => result
+                .map(ExitStatus::from_raw)
+                .map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
-        let mut state = self.client.inner.state.lock().await;
-        if let ClientState::Alive(alive) = &mut *state {
-            let _ = alive
-                .sender
-                .send(Request {
-                    id: self.request_id,
-                    kind: RequestKind::Cancel,
-                })
-                .await;
-        }
-        drop(state);
-
-        if let Some(inner) = inner {
-            return inner.await.expect("oneshot sender dropped");
-        }
-        Err(io::Error::other("child already waited"))
     }
 }
 
@@ -524,35 +372,13 @@ impl<'a> Command for CommandBuilder<'a> {
             args: self.args,
             env: self.env,
             cwd: self.cwd,
-            stdin_fd: self.stdin_fd.map(Handle::new),
-            stdout_fd: self.stdout_fd.map(Handle::new),
-            stderr_fd: self.stderr_fd.map(Handle::new),
+            stdin_fd: self.stdin_fd.map(OsHandle::new),
+            stdout_fd: self.stdout_fd.map(OsHandle::new),
+            stderr_fd: self.stderr_fd.map(OsHandle::new),
         };
-        let client = self.client;
-        let (id, rx) = {
-            let mut state = client.inner.state.lock().await;
-            match &mut *state {
-                ClientState::Alive(alive) => {
-                    let (tx, rx) = oneshot::channel();
-                    let id = alive.next_id();
-                    alive.insert_pending(id, tx);
-                    alive
-                        .sender
-                        .send(Request {
-                            id,
-                            kind: RequestKind::Spawn(req),
-                        })
-                        .await?;
-                    (id, rx)
-                }
-                ClientState::Dead(msg) => return Err(io::Error::other(msg.clone())),
-            }
-        };
-
         Ok(ClientChild {
-            client,
-            request_id: id,
-            inner: Some(rx),
+            inner: Some(self.client.call(RequestKind::Spawn(req))),
+            marker: std::marker::PhantomData,
         })
     }
 }
@@ -650,21 +476,11 @@ impl<'a> OpenOptions<'a> {
             no_follow: self.no_follow,
         };
 
-        let mut state = self.client.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Open(req),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        match self.client.request(RequestKind::Open(req)).await? {
+            ResponseKind::Open(result) => result
+                .map(|fd| File::from_std(fd.into_inner().into()))
+                .map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 }
@@ -799,25 +615,14 @@ impl Vfs for Client {
         namespace: crate::XattrNamespace<'_>,
         follow: bool,
     ) -> Result<Vec<XattrEntry>, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Xattrs(XattrsRequest {
-                        path: path.as_ref().to_path_buf(),
-                        namespace: namespace.into(),
-                        follow,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = XattrsRequest {
+            path: path.as_ref().to_path_buf(),
+            namespace: namespace.into(),
+            follow,
+        };
+        match self.request(RequestKind::Xattrs(request)).await? {
+            ResponseKind::Xattrs(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -836,26 +641,15 @@ impl Vfs for Client {
         namespace: Option<&str>,
         follow: bool,
     ) -> Result<Vec<u8>, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Xattr(XattrRequest {
-                        path: path.as_ref().to_path_buf(),
-                        name: name.to_owned(),
-                        namespace: namespace.map(str::to_owned),
-                        follow,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = XattrRequest {
+            path: path.as_ref().to_path_buf(),
+            name: name.to_owned(),
+            namespace: namespace.map(str::to_owned),
+            follow,
+        };
+        match self.request(RequestKind::Xattr(request)).await? {
+            ResponseKind::Xattr(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -867,27 +661,16 @@ impl Vfs for Client {
         value: &[u8],
         follow: bool,
     ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::SetXattr(SetXattrRequest {
-                        path: path.as_ref().to_path_buf(),
-                        name: name.to_owned(),
-                        namespace: namespace.map(str::to_owned),
-                        value: value.to_vec(),
-                        follow,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = SetXattrRequest {
+            path: path.as_ref().to_path_buf(),
+            name: name.to_owned(),
+            namespace: namespace.map(str::to_owned),
+            value: value.to_vec(),
+            follow,
+        };
+        match self.request(RequestKind::SetXattr(request)).await? {
+            ResponseKind::SetXattr(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -898,26 +681,15 @@ impl Vfs for Client {
         namespace: Option<&str>,
         follow: bool,
     ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::RemoveXattr(XattrRequest {
-                        path: path.as_ref().to_path_buf(),
-                        name: name.to_owned(),
-                        namespace: namespace.map(str::to_owned),
-                        follow,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = XattrRequest {
+            path: path.as_ref().to_path_buf(),
+            name: name.to_owned(),
+            namespace: namespace.map(str::to_owned),
+            follow,
+        };
+        match self.request(RequestKind::RemoveXattr(request)).await? {
+            ResponseKind::RemoveXattr(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -927,46 +699,24 @@ impl Vfs for Client {
         all: bool,
         ignore: bool,
     ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Remove(RemoveRequest {
-                        path: path.as_ref().to_path_buf(),
-                        all,
-                        ignore,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = RemoveRequest {
+            path: path.as_ref().to_path_buf(),
+            all,
+            ignore,
+        };
+        match self.request(RequestKind::Remove(request)).await? {
+            ResponseKind::Remove(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
     async fn metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Metadata(MetadataRequest {
-                        path: path.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = MetadataRequest {
+            path: path.as_ref().to_path_buf(),
+        };
+        match self.request(RequestKind::Metadata(request)).await? {
+            ResponseKind::Metadata(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -975,46 +725,24 @@ impl Vfs for Client {
         path: impl AsRef<Path>,
         follow: bool,
     ) -> Result<FsMetadata, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::FsMetadata(FsMetadataRequest {
-                        path: path.as_ref().to_path_buf(),
-                        follow,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = FsMetadataRequest {
+            path: path.as_ref().to_path_buf(),
+            follow,
+        };
+        match self.request(RequestKind::FsMetadata(request)).await? {
+            ResponseKind::FsMetadata(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
     async fn create_dir(&self, path: impl AsRef<Path>, all: bool) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::CreateDir(CreateDirRequest {
-                        path: path.as_ref().to_path_buf(),
-                        all,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = CreateDirRequest {
+            path: path.as_ref().to_path_buf(),
+            all,
+        };
+        match self.request(RequestKind::CreateDir(request)).await? {
+            ResponseKind::CreateDir(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -1024,25 +752,14 @@ impl Vfs for Client {
         all: bool,
         ignore: bool,
     ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::RemoveDir(RemoveDirRequest {
-                        path: path.as_ref().to_path_buf(),
-                        ignore,
-                        all,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = RemoveDirRequest {
+            path: path.as_ref().to_path_buf(),
+            ignore,
+            all,
+        };
+        match self.request(RequestKind::RemoveDir(request)).await? {
+            ResponseKind::RemoveDir(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -1052,47 +769,25 @@ impl Vfs for Client {
         to: impl AsRef<Path>,
         all: bool,
     ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Copy(CopyRequest {
-                        from: from.as_ref().to_path_buf(),
-                        to: to.as_ref().to_path_buf(),
-                        all,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = CopyRequest {
+            from: from.as_ref().to_path_buf(),
+            to: to.as_ref().to_path_buf(),
+            all,
+        };
+        match self.request(RequestKind::Copy(request)).await? {
+            ResponseKind::Copy(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
     async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Rename(RenameRequest {
-                        from: from.as_ref().to_path_buf(),
-                        to: to.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = RenameRequest {
+            from: from.as_ref().to_path_buf(),
+            to: to.as_ref().to_path_buf(),
+        };
+        match self.request(RequestKind::Rename(request)).await? {
+            ResponseKind::Rename(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -1102,25 +797,14 @@ impl Vfs for Client {
         to: impl AsRef<Path>,
         all: bool,
     ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Move(MoveRequest {
-                        from: from.as_ref().to_path_buf(),
-                        to: to.as_ref().to_path_buf(),
-                        all,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = MoveRequest {
+            from: from.as_ref().to_path_buf(),
+            to: to.as_ref().to_path_buf(),
+            all,
+        };
+        match self.request(RequestKind::Move(request)).await? {
+            ResponseKind::Move(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -1130,24 +814,13 @@ impl Vfs for Client {
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
     ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Symlink(SymlinkRequest {
-                        src: src.as_ref().to_path_buf(),
-                        dst: dst.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = SymlinkRequest {
+            src: src.as_ref().to_path_buf(),
+            dst: dst.as_ref().to_path_buf(),
+        };
+        match self.request(RequestKind::Symlink(request)).await? {
+            ResponseKind::Symlink(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -1156,24 +829,13 @@ impl Vfs for Client {
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
     ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::HardLink(HardLinkRequest {
-                        src: src.as_ref().to_path_buf(),
-                        dst: dst.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = HardLinkRequest {
+            src: src.as_ref().to_path_buf(),
+            dst: dst.as_ref().to_path_buf(),
+        };
+        match self.request(RequestKind::HardLink(request)).await? {
+            ResponseKind::HardLink(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -1194,109 +856,54 @@ impl Vfs for Client {
     }
 
     async fn symlink_metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::SymlinkMetadata(MetadataRequest {
-                        path: path.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = MetadataRequest {
+            path: path.as_ref().to_path_buf(),
+        };
+        match self.request(RequestKind::SymlinkMetadata(request)).await? {
+            ResponseKind::SymlinkMetadata(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
     async fn attrs(&self, path: impl AsRef<Path>, follow: bool) -> Result<Attrs, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Attrs(AttrsRequest {
-                        path: path.as_ref().to_path_buf(),
-                        follow,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = AttrsRequest {
+            path: path.as_ref().to_path_buf(),
+            follow,
+        };
+        match self.request(RequestKind::Attrs(request)).await? {
+            ResponseKind::Attrs(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
     async fn set_attrs(&self, path: impl AsRef<Path>, attrs: Attrs) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::SetAttrs(SetAttrsRequest {
-                        path: path.as_ref().to_path_buf(),
-                        attrs,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = SetAttrsRequest {
+            path: path.as_ref().to_path_buf(),
+            attrs,
+        };
+        match self.request(RequestKind::SetAttrs(request)).await? {
+            ResponseKind::SetAttrs(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
     async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Canonicalize(CanonicalizeRequest {
-                        path: path.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = CanonicalizeRequest {
+            path: path.as_ref().to_path_buf(),
+        };
+        match self.request(RequestKind::Canonicalize(request)).await? {
+            ResponseKind::Canonicalize(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
     async fn read_link(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::ReadLink(ReadLinkRequest {
-                        path: path.as_ref().to_path_buf(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = ReadLinkRequest {
+            path: path.as_ref().to_path_buf(),
+        };
+        match self.request(RequestKind::ReadLink(request)).await? {
+            ResponseKind::ReadLink(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -1307,26 +914,15 @@ impl Vfs for Client {
         follow_symlinks: bool,
         max_depth: Option<usize>,
     ) -> Result<Vec<PathBuf>, io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Glob(GlobRequest {
-                        pattern: pattern.into(),
-                        root: root.to_path_buf(),
-                        follow_symlinks,
-                        max_depth,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = GlobRequest {
+            pattern: pattern.into(),
+            root: root.to_path_buf(),
+            follow_symlinks,
+            max_depth,
+        };
+        match self.request(RequestKind::Glob(request)).await? {
+            ResponseKind::Glob(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -1335,24 +931,13 @@ impl Vfs for Client {
         path: impl AsRef<Path>,
         perm: Permissions,
     ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::SetPermissions(SetPermissionsRequest {
-                        path: path.as_ref().to_path_buf(),
-                        mode: perm.mode(),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = SetPermissionsRequest {
+            path: path.as_ref().to_path_buf(),
+            mode: perm.mode(),
+        };
+        match self.request(RequestKind::SetPermissions(request)).await? {
+            ResponseKind::SetPermissions(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -1363,26 +948,15 @@ impl Vfs for Client {
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
     ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::SetTimes(SetTimesRequest {
-                        path: path.as_ref().to_path_buf(),
-                        accessed: accessed.map(|(secs, nanos)| Timestamp { secs, nanos }),
-                        modified: modified.map(|(secs, nanos)| Timestamp { secs, nanos }),
-                        created: created.map(|(secs, nanos)| Timestamp { secs, nanos }),
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
+        let request = SetTimesRequest {
+            path: path.as_ref().to_path_buf(),
+            accessed: accessed.map(|(secs, nanos)| Timestamp { secs, nanos }),
+            modified: modified.map(|(secs, nanos)| Timestamp { secs, nanos }),
+            created: created.map(|(secs, nanos)| Timestamp { secs, nanos }),
+        };
+        match self.request(RequestKind::SetTimes(request)).await? {
+            ResponseKind::SetTimes(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
     }
 
@@ -1393,155 +967,15 @@ impl Vfs for Client {
         group: Option<ChownIdentity>,
         follow: bool,
     ) -> Result<(), io::Error> {
-        let mut state = self.inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => {
-                let (tx, rx) = oneshot::channel();
-                let id = alive.next_id();
-                alive.insert_pending(id, tx);
-                let request = Request {
-                    id,
-                    kind: RequestKind::Chown(ChownRequest {
-                        path: path.as_ref().to_path_buf(),
-                        user,
-                        group,
-                        follow,
-                    }),
-                };
-                alive.sender.send(request).await?;
-                drop(state);
-                rx.await.expect("oneshot sender dropped")
-            }
-            ClientState::Dead(msg) => Err(io::Error::other(msg.clone())),
-        }
-    }
-}
-
-async fn receive_loop(receiver: Receiver<Response>, inner: Arc<ClientInner>) {
-    let err = loop {
-        let response = match receiver.recv().await {
-            Ok(res) => res,
-            Err(err) => break err,
+        let request = ChownRequest {
+            path: path.as_ref().to_path_buf(),
+            user,
+            group,
+            follow,
         };
-
-        let mut state = inner.state.lock().await;
-        match &mut *state {
-            ClientState::Alive(alive) => match response.kind {
-                ResponseKind::Spawn(result) => {
-                    alive.complete(
-                        response.id,
-                        result
-                            .map(ExitStatus::from_raw)
-                            .map_err(io::Error::from_raw_os_error),
-                    );
-                }
-                ResponseKind::Cancel => {}
-                ResponseKind::Query { env, cwd } => {
-                    alive.complete(response.id, Ok(Query { env, cwd }))
-                }
-                ResponseKind::Which(result) => alive.complete(response.id, Ok(result)),
-                ResponseKind::WellKnownPath(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Stop => alive.complete(response.id, Ok(())),
-                ResponseKind::ClearCache => alive.complete(response.id, Ok(())),
-                ResponseKind::Open(result) => {
-                    alive.complete(
-                        response.id,
-                        result
-                            .map(|fd| File::from_std(fd.into_inner().into()))
-                            .map_err(io::Error::from_raw_os_error),
-                    );
-                }
-                ResponseKind::UnixStreamSocket(result) => {
-                    alive.complete(
-                        response.id,
-                        result
-                            .map(|fd| fd.into_inner())
-                            .map_err(io::Error::from_raw_os_error),
-                    );
-                }
-                ResponseKind::Remove(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Metadata(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::FsMetadata(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::CreateDir(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::RemoveDir(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Copy(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Rename(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Move(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Symlink(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::HardLink(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::SymlinkMetadata(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Attrs(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::SetAttrs(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Canonicalize(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::ReadLink(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Access(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Glob(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::SetPermissions(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::SetTimes(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Chown(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Xattrs(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::Xattr(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::SetXattr(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-                ResponseKind::RemoveXattr(result) => {
-                    alive.complete(response.id, result.map_err(io::Error::from_raw_os_error));
-                }
-            },
-            ClientState::Dead(_) => {}
+        match self.request(RequestKind::Chown(request)).await? {
+            ResponseKind::Chown(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
         }
-    };
-
-    let mut state = inner.state.lock().await;
-    let pending = mem::replace(&mut *state, ClientState::Dead(err.to_string()));
-
-    if let ClientState::Alive(alive) = pending {
-        alive.error(err)
     }
 }

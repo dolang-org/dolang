@@ -2016,22 +2016,6 @@ mod unix {
     pub use service::ServiceError;
     /// Run the agent server in foreground mode (no daemonization).
     pub use service::foreground;
-
-    /// Thread-safe wrapper for `tokio_unix_ipc::Sender`.
-    ///
-    /// The underlying sender is `Sync` but will corrupt messages with concurrent sends.
-    /// This wrapper serializes access via a mutex to ensure message integrity.
-    pub(crate) struct LockedSender<T>(pub(crate) tokio::sync::Mutex<tokio_unix_ipc::Sender<T>>);
-
-    impl<T: serde::Serialize + for<'de> serde::Deserialize<'de>> LockedSender<T> {
-        pub(crate) fn new(sender: tokio_unix_ipc::Sender<T>) -> Self {
-            Self(tokio::sync::Mutex::new(sender))
-        }
-
-        pub(crate) async fn send(&self, message: T) -> std::io::Result<()> {
-            self.0.lock().await.send(message).await
-        }
-    }
 }
 
 #[cfg(unix)]

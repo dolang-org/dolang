@@ -87,7 +87,7 @@ env DOLANG_SHELL_VFS=./target/release/dolang-shell-vfs ./target/release/dolang e
 
 Do builds on a lot of excellent Rust ecosystem work.
 
-- Vendored code: `hashbrown`; `tokio-unix-ipc` by Armin Ronacher (`mitsuhiko`)
+- Vendored code: `hashbrown`
 - Implementation inspiration: `vint64` by Tony Arcieri; `tiny-sort-rs` by Lukas
   Bergdoll
 - Major building blocks: `tokio`, `reqwest`, `sqlite-plugin`, `libsqlite3-sys`,
