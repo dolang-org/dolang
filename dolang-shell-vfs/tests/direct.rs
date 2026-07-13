@@ -6,8 +6,28 @@ use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 
-use dolang_shell_vfs::{Child, Command, Direct, FileType, OpenOptions, Vfs};
+use dolang_shell_vfs::{
+    Child, Command, Direct, FileType, OpenOptions, Utf8TypedPath, Utf8UnixPath, Utf8WindowsPath,
+    Vfs,
+};
 use tempfile::tempdir;
+
+fn typed(path: &Path) -> Utf8TypedPath<'_> {
+    let path = path.to_str().unwrap();
+    if cfg!(windows) {
+        Utf8TypedPath::Windows(Utf8WindowsPath::new(path))
+    } else {
+        Utf8TypedPath::Unix(Utf8UnixPath::new(path))
+    }
+}
+
+fn typed_str(path: &str) -> Utf8TypedPath<'_> {
+    if cfg!(windows) {
+        Utf8TypedPath::Windows(Utf8WindowsPath::new(path))
+    } else {
+        Utf8TypedPath::Unix(Utf8UnixPath::new(path))
+    }
+}
 
 #[cfg(unix)]
 fn failing_exit_command() -> (&'static str, [&'static str; 2]) {
@@ -64,7 +84,7 @@ async fn direct_open_options_round_trip() {
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&path)
+        .open(typed(&path))
         .await
         .unwrap();
     tokio::io::AsyncWriteExt::write_all(&mut file, b"hello")
@@ -85,11 +105,17 @@ async fn direct_symlink_metadata_and_read_link() {
     let link = dir.path().join("link.txt");
     tokio::fs::write(&target, "hello").await.unwrap();
 
-    direct.symlink(Path::new(""), &target, &link).await.unwrap();
+    direct
+        .symlink(typed_str(""), typed(&target), typed(&link))
+        .await
+        .unwrap();
 
-    let metadata = direct.symlink_metadata(&link).await.unwrap();
+    let metadata = direct.symlink_metadata(typed(&link)).await.unwrap();
     assert_eq!(metadata.file_type, FileType::Symlink);
-    assert_eq!(direct.read_link(&link).await.unwrap(), target);
+    assert_eq!(
+        direct.read_link(typed(&link)).await.unwrap().as_str(),
+        target.to_str().unwrap()
+    );
 }
 
 #[tokio::test]
@@ -100,7 +126,10 @@ async fn direct_hard_link_round_trip() {
     let link = dir.path().join("link.txt");
     tokio::fs::write(&target, "hello").await.unwrap();
 
-    direct.hard_link(&target, &link).await.unwrap();
+    direct
+        .hard_link(typed(&target), typed(&link))
+        .await
+        .unwrap();
 
     assert_eq!(tokio::fs::read_to_string(&link).await.unwrap(), "hello");
 }
@@ -119,7 +148,7 @@ async fn direct_metadata_windows_attributes() {
         .await
         .unwrap();
 
-    let metadata = direct.metadata(&path).await.unwrap();
+    let metadata = direct.metadata(typed(&path)).await.unwrap();
 
     assert_ne!(metadata.win_attrs, 0);
     assert_ne!(metadata.win_attrs & 0x0000_0001, 0);
@@ -133,7 +162,7 @@ async fn direct_fs_metadata_basic() {
     let path = dir.path().join("fsmeta.txt");
     tokio::fs::write(&path, "hello").await.unwrap();
 
-    let metadata = direct.fs_metadata(&path, true).await.unwrap();
+    let metadata = direct.fs_metadata(typed(&path), true).await.unwrap();
     assert!(metadata.capacity > 0);
     assert!(metadata.free > 0);
     assert!(metadata.available > 0);
@@ -163,7 +192,7 @@ async fn direct_set_times_rejects_created_timestamp() {
     tokio::fs::write(&path, "hello").await.unwrap();
 
     let err = direct
-        .set_times(&path, None, None, Some((1, 0)))
+        .set_times(typed(&path), None, None, Some((1, 0)))
         .await
         .unwrap_err();
 
@@ -180,7 +209,7 @@ async fn direct_windows_attrs() {
 
     direct
         .set_attrs(
-            &path,
+            typed(&path),
             dolang_shell_vfs::Attrs {
                 readonly: Some(true),
                 ..Default::default()
@@ -189,12 +218,12 @@ async fn direct_windows_attrs() {
         .await
         .unwrap();
 
-    let attrs = direct.attrs(&path, true).await.unwrap();
+    let attrs = direct.attrs(typed(&path), true).await.unwrap();
     assert_eq!(attrs.readonly, Some(true));
 
     direct
         .set_attrs(
-            &path,
+            typed(&path),
             dolang_shell_vfs::Attrs {
                 readonly: Some(false),
                 ..Default::default()
@@ -203,7 +232,7 @@ async fn direct_windows_attrs() {
         .await
         .unwrap();
 
-    let attrs = direct.attrs(&path, true).await.unwrap();
+    let attrs = direct.attrs(typed(&path), true).await.unwrap();
     assert_eq!(attrs.readonly, Some(false));
 
     if is_wine() {
@@ -212,7 +241,7 @@ async fn direct_windows_attrs() {
 
     direct
         .set_attrs(
-            &path,
+            typed(&path),
             dolang_shell_vfs::Attrs {
                 compressed: Some(true),
                 ..Default::default()
@@ -221,12 +250,12 @@ async fn direct_windows_attrs() {
         .await
         .unwrap();
 
-    let attrs = direct.attrs(&path, true).await.unwrap();
+    let attrs = direct.attrs(typed(&path), true).await.unwrap();
     assert_eq!(attrs.compressed, Some(true));
 
     direct
         .set_attrs(
-            &path,
+            typed(&path),
             dolang_shell_vfs::Attrs {
                 compressed: Some(false),
                 ..Default::default()
@@ -235,7 +264,7 @@ async fn direct_windows_attrs() {
         .await
         .unwrap();
 
-    let attrs = direct.attrs(&path, true).await.unwrap();
+    let attrs = direct.attrs(typed(&path), true).await.unwrap();
     assert_eq!(attrs.compressed, Some(false));
 }
 
@@ -253,7 +282,12 @@ async fn direct_windows_streams() {
     tokio::fs::write(&path, "base").await.unwrap();
     tokio::fs::write(&stream_path, "stream").await.unwrap();
 
-    let file = direct.open_options().read(true).open(&path).await.unwrap();
+    let file = direct
+        .open_options()
+        .read(true)
+        .open(typed(&path))
+        .await
+        .unwrap();
     let streams = direct.file_streams(&file).await.unwrap();
     assert!(streams.iter().any(|entry| {
         entry.name.is_empty()
@@ -277,7 +311,7 @@ async fn direct_linux_attrs() {
     let path = dir.path().join("attrs.txt");
     tokio::fs::write(&path, "hello").await.unwrap();
 
-    let attrs = match direct.attrs(&path, true).await {
+    let attrs = match direct.attrs(typed(&path), true).await {
         Ok(attrs) => attrs,
         Err(err)
             if matches!(
@@ -297,7 +331,7 @@ async fn direct_linux_attrs() {
 
     if let Err(err) = direct
         .set_attrs(
-            &path,
+            typed(&path),
             dolang_shell_vfs::Attrs {
                 no_dump: Some(true),
                 ..Default::default()
@@ -315,12 +349,12 @@ async fn direct_linux_attrs() {
         panic!("set_attrs failed: {err}");
     }
 
-    let attrs = direct.attrs(&path, true).await.unwrap();
+    let attrs = direct.attrs(typed(&path), true).await.unwrap();
     assert_eq!(attrs.no_dump, Some(true));
 
     direct
         .set_attrs(
-            &path,
+            typed(&path),
             dolang_shell_vfs::Attrs {
                 no_dump: Some(false),
                 ..Default::default()
@@ -328,7 +362,7 @@ async fn direct_linux_attrs() {
         )
         .await
         .unwrap();
-    let attrs = direct.attrs(&path, true).await.unwrap();
+    let attrs = direct.attrs(typed(&path), true).await.unwrap();
     assert_eq!(attrs.no_dump, Some(false));
 }
 
@@ -346,7 +380,10 @@ async fn direct_copy_move_and_glob() {
         .await
         .unwrap();
 
-    direct.copy(&src, &copied, true).await.unwrap();
+    direct
+        .copy(typed(&src), typed(&copied), true)
+        .await
+        .unwrap();
     assert_eq!(
         tokio::fs::read_to_string(copied.join("nested").join("file.txt"))
             .await
@@ -354,11 +391,14 @@ async fn direct_copy_move_and_glob() {
         "hello"
     );
 
-    direct.move_(&copied, &moved, true).await.unwrap();
+    direct
+        .move_(typed(&copied), typed(&moved), true)
+        .await
+        .unwrap();
     assert!(!copied.exists());
 
     let matches = direct
-        .glob("**/*.txt", dir.path(), false, None)
+        .glob("**/*.txt", typed(dir.path()), false, None)
         .await
         .unwrap();
     assert_eq!(matches.len(), 2);
@@ -386,7 +426,7 @@ async fn direct_remove_dir_ignore_prunes_empty_branches() {
         .await
         .unwrap();
 
-    direct.remove_dir(&root, true, true).await.unwrap();
+    direct.remove_dir(typed(&root), true, true).await.unwrap();
 
     assert!(root.exists());
     assert!(root.join("keep").exists());
@@ -397,7 +437,7 @@ async fn direct_remove_dir_ignore_prunes_empty_branches() {
 async fn direct_basic_spawn() {
     let direct = Direct::default();
     let (program, args) = successful_command();
-    let mut command = direct.command(program);
+    let mut command = direct.command(typed_str(program));
     command.arg(args[0]).arg(args[1]);
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
@@ -407,7 +447,10 @@ async fn direct_basic_spawn() {
 #[tokio::test]
 async fn direct_spawn_failure() {
     let direct = Direct::default();
-    let result = direct.command("nonexistent_command_12345").spawn().await;
+    let result = direct
+        .command(typed_str("nonexistent_command_12345"))
+        .spawn()
+        .await;
     assert!(result.is_err());
 }
 
@@ -415,7 +458,7 @@ async fn direct_spawn_failure() {
 async fn direct_exit_code() {
     let direct = Direct::default();
     let (program, args) = failing_exit_command();
-    let mut command = direct.command(program);
+    let mut command = direct.command(typed_str(program));
     command.arg(args[0]).arg(args[1]);
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
@@ -427,7 +470,7 @@ async fn direct_exit_code() {
 async fn direct_env_vars() {
     let direct = Direct::default();
     let (program, args) = env_forwarding_command();
-    let mut command = direct.command(program);
+    let mut command = direct.command(typed_str(program));
     command.arg(args[0]).arg(args[1]).env("TEST_VAR", "value");
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
@@ -445,7 +488,7 @@ async fn direct_well_known_home_dir_prefers_absolute_home_override() {
         .await
         .unwrap();
 
-    assert_eq!(path, std::path::Path::new("/tmp/test-home"));
+    assert_eq!(path.as_str(), "/tmp/test-home");
 }
 
 #[cfg(unix)]
@@ -479,7 +522,7 @@ async fn direct_well_known_cache_dir_prefers_xdg_override() {
         .await
         .unwrap();
 
-    assert_eq!(path, std::path::Path::new("/tmp/test-cache"));
+    assert_eq!(path.as_str(), "/tmp/test-cache");
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -496,7 +539,7 @@ async fn direct_well_known_cache_dir_falls_back_to_home() {
         .await
         .unwrap();
 
-    assert_eq!(path, std::path::Path::new("/tmp/test-home/.cache"));
+    assert_eq!(path.as_str(), "/tmp/test-home/.cache");
 }
 
 #[cfg(target_os = "macos")]
@@ -516,5 +559,5 @@ async fn direct_well_known_cache_dir_uses_macos_convention() {
         .await
         .unwrap();
 
-    assert_eq!(path, std::path::Path::new("/tmp/test-home/Library/Caches"));
+    assert_eq!(path.as_str(), "/tmp/test-home/Library/Caches");
 }

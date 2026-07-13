@@ -4,14 +4,16 @@ The `fs` module provides functions and types for filesystem operations.
 
 ## Types
 
-| Type                           | Description                   |
-| ------------------------------ | ----------------------------- |
-| [Path](path.md)                | Filesystem path object        |
-| [Attrs](attrs.md)              | Filesystem attributes         |
-| [Metadata](metadata.md)        | Immutable filesystem metadata |
-| [DirEntry](direntry.md)        | Directory entry object        |
-| [XattrEntry](xattr-entry.md)   | Extended attribute entry      |
-| [StreamEntry](stream-entry.md) | Alternate data stream entry   |
+| Type                           | Description                    |
+| ------------------------------ | ------------------------------ |
+| [Path](path.md)                | Supertype for filesystem paths |
+| [UnixPath](unix-path.md)       | Unix path object               |
+| [WindowsPath](windows-path.md) | Windows path object            |
+| [Attrs](attrs.md)              | Filesystem attributes          |
+| [Metadata](metadata.md)        | Immutable filesystem metadata  |
+| [DirEntry](direntry.md)        | Directory entry object         |
+| [XattrEntry](xattr-entry.md)   | Extended attribute entry       |
+| [StreamEntry](stream-entry.md) | Alternate data stream entry    |
 
 ## Functions
 

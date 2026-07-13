@@ -12,13 +12,13 @@ use dolang::runtime::{
     value::{Nil, Singleton},
     vm::Builder,
 };
-use dolang_shell_vfs::{Child as _, Command, Vfs as _, pipe};
+use dolang_shell_vfs::{Child as _, Command, Utf8TypedPath, Vfs as _, pipe};
 
 use crate::{
     error::{self, ResultExt as _},
     fs::{
         file::{self, File},
-        path::{PathAnnex, path_from_value},
+        path::{PathAnnex, create_path_annex, path_from_value},
     },
     global::Global,
     local::ChannelMode,
@@ -39,14 +39,16 @@ fn program_name_from_value<'v, 's>(
     global: State<'v, Global<'v>>,
     value: &Value<'v>,
 ) -> Result<'v, 's, String> {
-    if let Some(path) = global.types.path.downcast(value) {
-        let path = path.annex().inner.clone();
+    if global.types.unix_path.downcast(value).is_some()
+        || global.types.windows_path.downcast(value).is_some()
+    {
+        let path = path_from_value(strand, global, value)?;
         let path = if path.is_absolute() {
             path
         } else {
-            global.local.get(strand).cwd().as_ref().join(path)
+            global.local.get(strand).cwd().join(path.as_str())
         };
-        Ok(path.to_string_lossy().into_owned())
+        Ok(path.as_str().to_owned())
     } else if let Some(name) = value.as_str(strand) {
         Ok(name.to_string())
     } else {
@@ -140,9 +142,7 @@ async fn resolve_io_file<'v, 's>(
         return Ok(false);
     };
 
-    let file = file::open(strand, global, path.as_ref(), mode)
-        .await
-        .into_sys(strand)?;
+    let file = file::open(strand, global, path.to_path(), mode).await?;
     let (file, annex) = File::create(global, file, mode.contains('b'));
     global
         .types
@@ -301,7 +301,7 @@ fn apply_env_and_cwd<'v, 's>(
             command.env_remove(k);
         }
     });
-    command.current_dir((*local.cwd()).as_ref());
+    command.current_dir(local.cwd().to_path());
 }
 
 fn apply_args<'v, 's, 'a>(
@@ -541,7 +541,15 @@ async fn run<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let vfs = local.vfs();
-    let mut command = vfs.command(name);
+    let program = match dolang_shell_vfs::target_path_type() {
+        dolang_shell_vfs::PathType::Unix => {
+            Utf8TypedPath::Unix(dolang_shell_vfs::Utf8UnixPath::new(name))
+        }
+        dolang_shell_vfs::PathType::Windows => {
+            Utf8TypedPath::Windows(dolang_shell_vfs::Utf8WindowsPath::new(name))
+        }
+    };
+    let mut command = vfs.command(program);
     configure_default_stderr(strand, global, &mut command)?;
     let mut stdin_pipe = None;
     let mut stdout_pipe = None;
@@ -709,21 +717,29 @@ impl<'v> Object<'v> for Program {
                 (
                     local.vfs(),
                     env.get("PATH").as_deref().map(ToOwned::to_owned),
-                    local.cwd().as_ref().to_owned(),
+                    local.cwd().clone(),
                 )
             };
 
             let resolved = vfs
-                .which(name, paths.as_deref(), Some(cwd.as_ref()))
+                .which(
+                    match cwd.to_path() {
+                        Utf8TypedPath::Unix(_) => {
+                            Utf8TypedPath::Unix(dolang_shell_vfs::Utf8UnixPath::new(name))
+                        }
+                        Utf8TypedPath::Windows(_) => {
+                            Utf8TypedPath::Windows(dolang_shell_vfs::Utf8WindowsPath::new(name))
+                        }
+                    },
+                    paths.as_deref(),
+                    Some(cwd.to_path()),
+                )
                 .await
                 .into_sys(strand)?;
 
             if let Some(path) = resolved {
                 let annex = PathAnnex::try_new(strand, path, global)?;
-                global
-                    .types
-                    .path
-                    .create_with_annex(strand, crate::fs::path::Path, annex, out);
+                create_path_annex(strand, annex, out);
             } else {
                 Output::set(strand, out, Nil);
             }

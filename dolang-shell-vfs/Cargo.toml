@@ -21,6 +21,7 @@ wax = { version = "0.7", features = ["walk"] }
 serde = { version = "1.0", features = ["derive"] }
 which = "8.0"
 dolang-rpc = { path = "../dolang-rpc", version = "0.1.0" }
+typed-path.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 dunce = "1.0"

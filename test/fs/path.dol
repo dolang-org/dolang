@@ -4,7 +4,7 @@ import sys
     - assert_eq
     - assert_ne
     - assert_throws
-    - skip
+    - assert_type
     - test
   std:
     - arg
@@ -13,7 +13,10 @@ import sys
     - TypeError
     - ValueError
   fs:
+    - exists
     - Path
+    - UnixPath
+    - WindowsPath
 
 #[test]
 def path_api()
@@ -22,10 +25,7 @@ def path_api()
 
   assert_eq (dbg p) "<Path \"foo/bar.txt\">"
   assert_eq (str p) "foo/bar.txt"
-  if (sys.os_info().family == :WINDOWS:)
-    assert_eq (arg p) "foo\\bar.txt"
-  else
-    assert_eq (arg p) "foo/bar.txt"
+  assert_eq (arg p) "foo/bar.txt"
 
   # Test path name field
   let path1 = Path "foo/bar/baz.txt"
@@ -161,46 +161,107 @@ def path_api()
   assert_throws $TypeError do with_stem1.with_stem 1
 
 #[test]
-def windows_path_fields()
-  if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows"
+def typed_paths()
+  let unix = UnixPath r"alpha\beta/gamma"
+  let windows = WindowsPath r"alpha\beta/gamma"
+  assert_type $UnixPath $unix
+  assert_type $Path $unix
+  assert_type $WindowsPath $windows
+  assert_type $Path $windows
+  assert_eq (str unix) r"alpha\beta/gamma"
+  assert_eq (str windows) r"alpha\beta/gamma"
 
-  let drive = Path "C:/work/file.txt"
+  let smart = Path foo
+  if (sys.os_info().family == :WINDOWS:)
+    assert_type $WindowsPath $smart
+  else
+    assert_type $UnixPath $smart
+
+  assert_eq (UnixPath (WindowsPath r"foo\bar")) (UnixPath "foo/bar")
+  assert_eq (WindowsPath (UnixPath "foo/bar")) (WindowsPath r"foo\bar")
+  assert_eq ((UnixPath "foo") / (WindowsPath r"bar\baz")) (UnixPath "foo/bar/baz")
+
+  let unix_joined = UnixPath.join (UnixPath "alpha") "beta" "gamma"
+  let windows_joined = WindowsPath.join (WindowsPath "alpha") "beta" "gamma"
+  let smart_unix_joined = Path.join (UnixPath "alpha") "beta"
+  let smart_windows_joined = Path.join (WindowsPath "alpha") "beta"
+  assert_type $UnixPath $unix_joined
+  assert_type $WindowsPath $windows_joined
+  assert_type $UnixPath $smart_unix_joined
+  assert_type $WindowsPath $smart_windows_joined
+  assert_eq (str unix_joined) "alpha/beta/gamma"
+  assert_eq (str windows_joined) r"alpha\beta\gamma"
+  assert_eq (str smart_unix_joined) "alpha/beta"
+  assert_eq (str smart_windows_joined) r"alpha\beta"
+
+  let empty_joined = Path.join()
+  assert_eq (str empty_joined) ""
+  if (sys.os_info().family == :WINDOWS:)
+    assert_type $WindowsPath $empty_joined
+  else
+    assert_type $UnixPath $empty_joined
+
+  assert_throws $TypeError do UnixPath (WindowsPath r"C:\foo")
+  assert_throws $TypeError do UnixPath (WindowsPath r"\\server\share\foo")
+  assert_throws $TypeError do UnixPath (WindowsPath "file.txt:stream")
+  assert_throws $TypeError do WindowsPath (UnixPath "/foo")
+  assert_throws $TypeError do ((UnixPath "foo") / (WindowsPath r"C:\foo"))
+
+  if (sys.os_info().family == :WINDOWS:)
+    let foreign = UnixPath "test/fs/path.dol"
+    assert_eq (exists foreign) true
+    assert_eq $foreign.exists() true
+    assert_throws $TypeError do exists (UnixPath "/foo")
+    assert_throws $TypeError do (UnixPath "/foo").exists()
+    assert_throws $TypeError do (UnixPath "/foo").metadata()
+    assert_throws $TypeError do (UnixPath "/foo").open()
+  else
+    let foreign = WindowsPath r"test\fs\path.dol"
+    assert_eq (exists foreign) true
+    assert_eq $foreign.exists() true
+    assert_throws $TypeError do exists (WindowsPath r"C:\foo")
+    assert_throws $TypeError do (WindowsPath r"C:\foo").exists()
+    assert_throws $TypeError do (WindowsPath r"C:\foo").metadata()
+    assert_throws $TypeError do (WindowsPath r"C:\foo").open()
+
+#[test]
+def windows_path_fields()
+  let drive = WindowsPath "C:/work/file.txt"
   assert_eq $drive.disk "C"
   assert_eq $drive.server nil
   assert_eq $drive.share nil
   assert_eq $drive.device nil
   assert_eq $drive.verbatim false
 
-  let unc = Path "//server/share/file.txt"
+  let unc = WindowsPath "//server/share/file.txt"
   assert_eq $unc.disk nil
   assert_eq $unc.server "server"
   assert_eq $unc.share "share"
   assert_eq $unc.device nil
   assert_eq $unc.verbatim false
 
-  let device = Path r"\\.\COM42"
+  let device = WindowsPath r"\\.\COM42"
   assert_eq $device.disk nil
   assert_eq $device.server nil
   assert_eq $device.share nil
   assert_eq $device.device "COM42"
   assert_eq $device.verbatim false
 
-  let verbatim_drive = Path r"\\?\C:\work\file.txt"
+  let verbatim_drive = WindowsPath r"\\?\C:\work\file.txt"
   assert_eq $verbatim_drive.disk "C"
   assert_eq $verbatim_drive.server nil
   assert_eq $verbatim_drive.share nil
   assert_eq $verbatim_drive.device nil
   assert_eq $verbatim_drive.verbatim true
 
-  let verbatim_unc = Path r"\\?\UNC\server\share\file.txt"
+  let verbatim_unc = WindowsPath r"\\?\UNC\server\share\file.txt"
   assert_eq $verbatim_unc.disk nil
   assert_eq $verbatim_unc.server "server"
   assert_eq $verbatim_unc.share "share"
   assert_eq $verbatim_unc.device nil
   assert_eq $verbatim_unc.verbatim true
 
-  let verbatim = Path r"\\?\cat_pics"
+  let verbatim = WindowsPath r"\\?\cat_pics"
   assert_eq $verbatim.disk nil
   assert_eq $verbatim.server nil
   assert_eq $verbatim.share nil
@@ -209,14 +270,11 @@ def windows_path_fields()
 
 #[test]
 def windows_path_stream_fields()
-  if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows"
-
-  let no_stream = Path "file.txt"
+  let no_stream = WindowsPath "file.txt"
   assert_eq $no_stream.stream_name nil
   assert_eq $no_stream.stream_type nil
 
-  let named_stream = Path "file.txt:zone"
+  let named_stream = WindowsPath "file.txt:zone"
   assert_eq (str named_stream) "file.txt:zone"
   assert_eq $named_stream.name "file.txt"
   assert_eq $named_stream.stem "file"
@@ -224,18 +282,18 @@ def windows_path_stream_fields()
   assert_eq $named_stream.stream_name "zone"
   assert_eq $named_stream.stream_type nil
 
-  let typed_stream = Path r"file.txt:zone:$DATA"
+  let typed_stream = WindowsPath r"file.txt:zone:$DATA"
   assert_eq (str typed_stream) r"file.txt:zone:$DATA"
   assert_eq $typed_stream.name "file.txt"
   assert_eq $typed_stream.stream_name "zone"
   assert_eq $typed_stream.stream_type "DATA"
 
-  let unnamed_stream = Path r"file.txt::$DATA"
+  let unnamed_stream = WindowsPath r"file.txt::$DATA"
   assert_eq $unnamed_stream.stream_name ""
   assert_eq $unnamed_stream.stream_type "DATA"
 
-  let stream_components = [...(Path r"dir/file.txt:zone:$DATA").components()]
+  let stream_components = [...(WindowsPath r"dir/file.txt:zone:$DATA").components()]
   assert_eq $stream_components[(stream_components.len - 1)] r"file.txt:zone:$DATA"
 
-  assert_throws $ValueError do Path "file.txt:zone:DATA"
-  assert_throws $ValueError do Path "file.txt:a:b:c"
+  assert_throws $ValueError do WindowsPath "file.txt:zone:DATA"
+  assert_throws $ValueError do WindowsPath "file.txt:a:b:c"

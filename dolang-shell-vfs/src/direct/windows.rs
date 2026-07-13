@@ -1,6 +1,7 @@
 use super::{Direct, DirectChild, DirectCommand, DirectOpenOptions};
 use crate::{
-    Attrs, ChownIdentity, FsMetadata, OpenOptions as _, StreamEntry, XattrEntry, XattrNamespace,
+    Attrs, ChownIdentity, FsMetadata, OpenOptions as _, StreamEntry, Utf8TypedPath,
+    Utf8WindowsPath, XattrEntry, XattrNamespace,
 };
 use std::{
     collections::HashMap,
@@ -50,6 +51,13 @@ use windows_sys::{
     },
     core::GUID,
 };
+
+fn typed_windows_path(path: &Path) -> io::Result<Utf8TypedPath<'_>> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "path is not UTF-8"))?;
+    Ok(Utf8TypedPath::Windows(Utf8WindowsPath::new(path)))
+}
 
 impl Direct {
     pub(super) fn program_not_found_error() -> io::Error {
@@ -813,7 +821,7 @@ impl Direct {
             .direct_open_options()
             .read(true)
             .no_follow(!follow)
-            .open(path)
+            .open(typed_windows_path(path)?)
             .await?;
         self.impl_file_xattrs(&file, namespace).await
     }
@@ -838,7 +846,7 @@ impl Direct {
             .direct_open_options()
             .read(true)
             .no_follow(!follow)
-            .open(path)
+            .open(typed_windows_path(path)?)
             .await?;
         self.impl_file_xattr(&file, name, namespace).await
     }
@@ -855,7 +863,7 @@ impl Direct {
             .direct_open_options()
             .write(true)
             .no_follow(!follow)
-            .open(path)
+            .open(typed_windows_path(path)?)
             .await?;
         self.impl_file_set_xattr(&file, name, namespace, value)
             .await
@@ -873,7 +881,7 @@ impl Direct {
             .read(true)
             .write(true)
             .no_follow(!follow)
-            .open(path)
+            .open(typed_windows_path(path)?)
             .await?;
         self.impl_file_remove_xattr(&file, name, namespace).await
     }

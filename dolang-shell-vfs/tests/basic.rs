@@ -1,6 +1,9 @@
 #![deny(warnings)]
 #![cfg(unix)]
-use dolang_shell_vfs::{AccessFlags, Child, ChownIdentity, Client, Command, Direct, FileType, Vfs};
+use dolang_shell_vfs::{
+    AccessFlags, Child, ChownIdentity, Client, Command, Direct, FileType, Utf8TypedPath,
+    Utf8UnixPath, Vfs,
+};
 use nix::unistd::{Group, User, getgid, getuid};
 use std::os::unix::fs::FileTypeExt;
 use std::{
@@ -10,6 +13,14 @@ use std::{
 
 use tempfile::tempdir;
 use tokio::task::JoinHandle;
+
+fn typed(path: &Path) -> Utf8TypedPath<'_> {
+    Utf8TypedPath::Unix(Utf8UnixPath::new(path.to_str().unwrap()))
+}
+
+fn typed_str(path: &str) -> Utf8TypedPath<'_> {
+    Utf8TypedPath::Unix(Utf8UnixPath::new(path))
+}
 
 async fn start_server(socket_path: &Path) -> JoinHandle<()> {
     let path = socket_path.to_path_buf();
@@ -31,7 +42,7 @@ async fn basic_spawn() {
     let server_task = start_server(&socket_path).await;
 
     let client = connect_client(&socket_path).await;
-    let mut command = client.command("echo");
+    let mut command = client.command(typed_str("echo"));
     command.arg("hello");
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
@@ -57,7 +68,7 @@ async fn client_from_owned_fd() {
     let fd: OwnedFd = stream.into_std().unwrap().into();
     let client = Client::try_from(fd).unwrap();
 
-    let mut child = client.command("true").spawn().await.unwrap();
+    let mut child = client.command(typed_str("true")).spawn().await.unwrap();
     let status = child.wait().await.unwrap();
 
     assert!(status.success());
@@ -75,7 +86,7 @@ async fn spawn_failure() {
 
     let client = connect_client(&socket_path).await;
     let mut child = client
-        .command("nonexistent_command_12345")
+        .command(typed_str("nonexistent_command_12345"))
         .spawn()
         .await
         .unwrap();
@@ -95,7 +106,7 @@ async fn exit_code() {
     let server_task = start_server(&socket_path).await;
 
     let client = connect_client(&socket_path).await;
-    let mut command = client.command("sh");
+    let mut command = client.command(typed_str("sh"));
     command.arg("-c").arg("exit 42");
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
@@ -115,7 +126,7 @@ async fn env_vars() {
     let server_task = start_server(&socket_path).await;
 
     let client = connect_client(&socket_path).await;
-    let mut command = client.command("sh");
+    let mut command = client.command(typed_str("sh"));
     command
         .arg("-c")
         .arg("echo $TEST_VAR")
@@ -140,7 +151,10 @@ async fn copy_directory_requires_all() {
     let dst = dir.path().join("dst");
 
     let client = connect_client(&socket_path).await;
-    let err = client.copy(&src, &dst, false).await.unwrap_err();
+    let err = client
+        .copy(typed(&src), typed(&dst), false)
+        .await
+        .unwrap_err();
 
     assert!(err.kind() == std::io::ErrorKind::IsADirectory || err.raw_os_error().is_some());
 
@@ -161,7 +175,7 @@ async fn copy_directory_all() {
     let dst = dir.path().join("dst");
 
     let client = connect_client(&socket_path).await;
-    client.copy(&src, &dst, true).await.unwrap();
+    client.copy(typed(&src), typed(&dst), true).await.unwrap();
 
     assert_eq!(
         std::fs::read_to_string(dst.join("nested").join("file.txt")).unwrap(),
@@ -185,7 +199,7 @@ async fn move_directory_all() {
     let dst = dir.path().join("dst");
 
     let client = connect_client(&socket_path).await;
-    client.move_(&src, &dst, true).await.unwrap();
+    client.move_(typed(&src), typed(&dst), true).await.unwrap();
 
     assert!(!src.exists());
     assert_eq!(
@@ -207,7 +221,7 @@ async fn remove_dir_all_removes_empty_dirs() {
     std::fs::create_dir_all(root.join("a").join("b")).unwrap();
 
     let client = connect_client(&socket_path).await;
-    client.remove_dir(&root, true, false).await.unwrap();
+    client.remove_dir(typed(&root), true, false).await.unwrap();
 
     assert!(!root.exists());
 
@@ -226,7 +240,10 @@ async fn remove_dir_rejects_files_without_ignore() {
     std::fs::write(root.join("a").join("file.txt"), "hello").unwrap();
 
     let client = connect_client(&socket_path).await;
-    let err = client.remove_dir(&root, true, false).await.unwrap_err();
+    let err = client
+        .remove_dir(typed(&root), true, false)
+        .await
+        .unwrap_err();
 
     assert!(err.kind() == std::io::ErrorKind::DirectoryNotEmpty || err.raw_os_error().is_some());
     assert!(root.exists());
@@ -247,7 +264,7 @@ async fn remove_dir_ignore_prunes_empty_branches() {
     std::fs::write(root.join("keep").join("file.txt"), "hello").unwrap();
 
     let client = connect_client(&socket_path).await;
-    client.remove_dir(&root, true, true).await.unwrap();
+    client.remove_dir(typed(&root), true, true).await.unwrap();
 
     assert!(root.exists());
     assert!(root.join("keep").exists());
@@ -267,7 +284,7 @@ async fn fd_passing() {
     let file = tempfile::NamedTempFile::new().unwrap();
 
     let client = connect_client(&socket_path).await;
-    let mut command = client.command("echo");
+    let mut command = client.command(typed_str("echo"));
     command
         .arg("hello_world")
         .stdout_handle(file.as_fd().try_clone_to_owned().unwrap());
@@ -569,7 +586,7 @@ async fn file_metadata() {
     std::fs::write(&test_file, "hello_world").unwrap();
 
     let client = connect_client(&socket_path).await;
-    let metadata = client.metadata(&test_file).await.unwrap();
+    let metadata = client.metadata(typed(&test_file)).await.unwrap();
 
     assert_eq!(metadata.len, 11);
     assert_eq!(metadata.file_type, FileType::File);
@@ -592,7 +609,7 @@ async fn dir_metadata() {
     std::fs::create_dir(&subdir).unwrap();
 
     let client = connect_client(&socket_path).await;
-    let metadata = client.metadata(&subdir).await.unwrap();
+    let metadata = client.metadata(typed(&subdir)).await.unwrap();
 
     assert_eq!(metadata.file_type, FileType::Dir);
     assert!(metadata.mode != 0);
@@ -613,7 +630,7 @@ async fn fs_metadata_basic() {
     std::fs::write(&test_file, "hello_world").unwrap();
 
     let client = connect_client(&socket_path).await;
-    let metadata = client.fs_metadata(&test_file, true).await.unwrap();
+    let metadata = client.fs_metadata(typed(&test_file), true).await.unwrap();
 
     assert!(metadata.capacity > 0);
     assert!(metadata.free > 0);
@@ -635,7 +652,10 @@ async fn hard_link_round_trip() {
     std::fs::write(&target, "hello_world").unwrap();
 
     let client = connect_client(&socket_path).await;
-    client.hard_link(&target, &link).await.unwrap();
+    client
+        .hard_link(typed(&target), typed(&link))
+        .await
+        .unwrap();
 
     assert_eq!(std::fs::read_to_string(&link).unwrap(), "hello_world");
 
@@ -651,7 +671,7 @@ async fn metadata_nonexistent() {
     let server_task = start_server(&socket_path).await;
 
     let client = connect_client(&socket_path).await;
-    let result = client.metadata("nonexistent.txt").await;
+    let result = client.metadata(typed_str("nonexistent.txt")).await;
 
     assert!(result.is_err());
 
@@ -672,7 +692,7 @@ async fn chown_by_numeric_id() {
     let client = connect_client(&socket_path).await;
     client
         .chown(
-            &test_file,
+            typed(&test_file),
             Some(ChownIdentity::Id(getuid().as_raw())),
             Some(ChownIdentity::Id(getgid().as_raw())),
             true,
@@ -680,7 +700,7 @@ async fn chown_by_numeric_id() {
         .await
         .unwrap();
 
-    let metadata = client.metadata(&test_file).await.unwrap();
+    let metadata = client.metadata(typed(&test_file)).await.unwrap();
     assert_eq!(metadata.uid, getuid().as_raw());
     assert_eq!(metadata.gid, getgid().as_raw());
 
@@ -704,7 +724,7 @@ async fn chown_by_name() {
     let client = connect_client(&socket_path).await;
     client
         .chown(
-            &test_file,
+            typed(&test_file),
             Some(ChownIdentity::Name(user.name)),
             Some(ChownIdentity::Name(group.name)),
             true,
@@ -712,7 +732,7 @@ async fn chown_by_name() {
         .await
         .unwrap();
 
-    let metadata = client.metadata(&test_file).await.unwrap();
+    let metadata = client.metadata(typed(&test_file)).await.unwrap();
     assert_eq!(metadata.uid, getuid().as_raw());
     assert_eq!(metadata.gid, getgid().as_raw());
 
@@ -733,7 +753,7 @@ async fn chown_follow_false_on_dangling_symlink() {
     let client = connect_client(&socket_path).await;
     client
         .chown(
-            &link_path,
+            typed(&link_path),
             None,
             Some(ChownIdentity::Id(getgid().as_raw())),
             false,
@@ -743,7 +763,7 @@ async fn chown_follow_false_on_dangling_symlink() {
 
     let result = client
         .chown(
-            &link_path,
+            typed(&link_path),
             None,
             Some(ChownIdentity::Id(getgid().as_raw())),
             true,
@@ -768,7 +788,7 @@ async fn chown_unknown_user_errors() {
     let client = connect_client(&socket_path).await;
     let result = client
         .chown(
-            &test_file,
+            typed(&test_file),
             Some(ChownIdentity::Name("__dolang_missing_user__".to_string())),
             None,
             true,
@@ -851,7 +871,10 @@ async fn glob_basic_matching() {
     let client = connect_client(&socket_path).await;
 
     // Test glob matching *.txt files
-    let paths = client.glob("*.txt", dir.path(), false, None).await.unwrap();
+    let paths = client
+        .glob("*.txt", typed(dir.path()), false, None)
+        .await
+        .unwrap();
 
     assert_eq!(paths.len(), 2);
     assert!(paths.iter().any(|p| p.file_name().unwrap() == "file1.txt"));
@@ -878,7 +901,7 @@ async fn glob_recursive() {
 
     // Test recursive glob with **
     let paths = client
-        .glob("**/*.txt", dir.path(), false, None)
+        .glob("**/*.txt", typed(dir.path()), false, None)
         .await
         .unwrap();
 
@@ -909,7 +932,7 @@ async fn glob_max_depth() {
 
     // Test glob with max_depth=1 (should only find root.txt)
     let paths = client
-        .glob("**/*.txt", dir.path(), false, Some(1))
+        .glob("**/*.txt", typed(dir.path()), false, Some(1))
         .await
         .unwrap();
 
@@ -939,7 +962,7 @@ async fn glob_with_prefix() {
 
     // Test glob with prefix (should use partition to extract "subdir1/")
     let paths = client
-        .glob("subdir1/*.txt", dir.path(), false, None)
+        .glob("subdir1/*.txt", typed(dir.path()), false, None)
         .await
         .unwrap();
 
@@ -963,7 +986,10 @@ async fn glob_no_matches() {
     let client = connect_client(&socket_path).await;
 
     // Test glob with pattern that matches nothing
-    let paths = client.glob("*.rs", dir.path(), false, None).await.unwrap();
+    let paths = client
+        .glob("*.rs", typed(dir.path()), false, None)
+        .await
+        .unwrap();
 
     assert!(paths.is_empty());
 
@@ -981,7 +1007,9 @@ async fn glob_invalid_pattern() {
     let client = connect_client(&socket_path).await;
 
     // Test glob with invalid pattern (should return error)
-    let result = client.glob("[invalid", dir.path(), false, None).await;
+    let result = client
+        .glob("[invalid", typed(dir.path()), false, None)
+        .await;
 
     assert!(result.is_err());
 
@@ -1002,7 +1030,10 @@ async fn glob_local_basic_matching() {
     std::fs::write(dir.path().join("file.rs"), "content3").unwrap();
 
     // Test glob matching *.txt files
-    let paths = direct.glob("*.txt", dir.path(), false, None).await.unwrap();
+    let paths = direct
+        .glob("*.txt", typed(dir.path()), false, None)
+        .await
+        .unwrap();
 
     assert_eq!(paths.len(), 2);
     assert!(paths.iter().any(|p| p.file_name().unwrap() == "file1.txt"));
@@ -1022,7 +1053,7 @@ async fn glob_local_recursive() {
 
     // Test recursive glob with **
     let paths = direct
-        .glob("**/*.txt", dir.path(), false, None)
+        .glob("**/*.txt", typed(dir.path()), false, None)
         .await
         .unwrap();
 
@@ -1046,7 +1077,7 @@ async fn glob_local_max_depth() {
 
     // Test glob with max_depth=1 (should only find root.txt)
     let paths = direct
-        .glob("**/*.txt", dir.path(), false, Some(1))
+        .glob("**/*.txt", typed(dir.path()), false, Some(1))
         .await
         .unwrap();
 
@@ -1062,7 +1093,10 @@ async fn glob_local_no_matches() {
     std::fs::write(dir.path().join("file.txt"), "content").unwrap();
 
     // Test glob with pattern that matches nothing
-    let paths = direct.glob("*.rs", dir.path(), false, None).await.unwrap();
+    let paths = direct
+        .glob("*.rs", typed(dir.path()), false, None)
+        .await
+        .unwrap();
 
     assert!(paths.is_empty());
 }
@@ -1073,7 +1107,9 @@ async fn glob_local_invalid_pattern() {
     let dir = tempdir().unwrap();
 
     // Test glob with invalid pattern (should return error)
-    let result = direct.glob("[invalid", dir.path(), false, None).await;
+    let result = direct
+        .glob("[invalid", typed(dir.path()), false, None)
+        .await;
 
     assert!(result.is_err());
 }

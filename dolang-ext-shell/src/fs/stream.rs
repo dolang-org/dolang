@@ -4,7 +4,7 @@ use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder,
     value::TypeObject,
 };
-use dolang_shell_vfs::{StreamEntry as VfsStreamEntry, Vfs};
+use dolang_shell_vfs::{StreamEntry as VfsStreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs};
 
 use crate::{error::ResultExt as _, global::Global};
 
@@ -54,18 +54,18 @@ pub(crate) fn create_stream_iter<'v, 's>(
 }
 
 pub(crate) fn stream_path(
-    base_path: &std::path::Path,
+    base_path: Utf8TypedPath<'_>,
     entry: &VfsStreamEntry,
-) -> std::path::PathBuf {
-    let mut path = base_path.to_owned();
+) -> Utf8TypedPathBuf {
+    let mut path = base_path.to_path_buf();
     let mut name = path
         .file_name()
         .expect("stream base path must have a file name")
-        .to_os_string();
-    name.push(":");
-    name.push(entry.name.as_str());
-    name.push(":$");
-    name.push(entry.r#type.as_str());
+        .to_string();
+    name.push(':');
+    name.push_str(entry.name.as_str());
+    name.push_str(":$");
+    name.push_str(entry.r#type.as_str());
     path.set_file_name(name);
     path
 }
@@ -73,9 +73,9 @@ pub(crate) fn stream_path(
 pub(crate) fn path_with_stream<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: Utf8TypedPath<'_>,
     stream: &Value<'v>,
-) -> Result<'v, 's, std::path::PathBuf> {
+) -> Result<'v, 's, Utf8TypedPathBuf> {
     let stream = global
         .types
         .stream_entry
@@ -87,7 +87,7 @@ pub(crate) fn path_with_stream<'v, 's>(
 pub(crate) async fn path_list<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: Utf8TypedPath<'_>,
     follow: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
@@ -99,9 +99,13 @@ pub(crate) async fn path_list<'v, 's>(
         })
         .transpose()?
         .unwrap_or(true);
+    let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
-    let path = local.cwd().as_ref().join(path);
-    let entries = local.vfs().streams(&path, follow).await.into_sys(strand)?;
+    let entries = local
+        .vfs()
+        .streams(path.to_path(), follow)
+        .await
+        .into_sys(strand)?;
     create_stream_iter(strand, global, entries, out)
 }
 

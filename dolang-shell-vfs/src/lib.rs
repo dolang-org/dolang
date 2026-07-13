@@ -5,12 +5,12 @@ pub use dolang_rpc::DefaultHandle;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::{
-    io,
-    path::{Path, PathBuf},
-    process::ExitStatus,
-};
+use std::{io, path::PathBuf, process::ExitStatus};
 use tokio::fs;
+pub use typed_path::{
+    PathType, Utf8TypedPath, Utf8TypedPathBuf, Utf8UnixPath, Utf8UnixPathBuf, Utf8WindowsPath,
+    Utf8WindowsPathBuf, Utf8WindowsPrefix,
+};
 #[cfg(windows)]
 use windows_sys::Win32::System::SystemServices::FILE_READ_ONLY_VOLUME;
 
@@ -526,6 +526,41 @@ impl DirEntry {
 
 pub use read_dir::ReadDir;
 
+pub fn native_path(path: Utf8TypedPath<'_>) -> io::Result<PathBuf> {
+    let matches_target = if cfg!(windows) {
+        path.is_windows()
+    } else {
+        path.is_unix()
+    };
+    if !matches_target {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path style does not match VFS target",
+        ));
+    }
+    Ok(PathBuf::from(path.as_str()))
+}
+
+pub fn typed_path(path: PathBuf) -> io::Result<Utf8TypedPathBuf> {
+    let path = path
+        .into_os_string()
+        .into_string()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "path is not valid UTF-8"))?;
+    Ok(if cfg!(windows) {
+        Utf8TypedPathBuf::from_windows(path)
+    } else {
+        Utf8TypedPathBuf::from_unix(path)
+    })
+}
+
+pub const fn target_path_type() -> PathType {
+    if cfg!(windows) {
+        PathType::Windows
+    } else {
+        PathType::Unix
+    }
+}
+
 #[allow(async_fn_in_trait)]
 pub trait OpenOptions {
     fn read(&mut self, read: bool) -> &mut Self;
@@ -535,7 +570,7 @@ pub trait OpenOptions {
     fn create_new(&mut self, create_new: bool) -> &mut Self;
     fn truncate(&mut self, truncate: bool) -> &mut Self;
     fn no_follow(&mut self, no_follow: bool) -> &mut Self;
-    async fn open(&self, path: impl AsRef<Path>) -> Result<fs::File, io::Error>;
+    async fn open(&self, path: Utf8TypedPath<'_>) -> Result<fs::File, io::Error>;
 }
 
 #[allow(async_fn_in_trait)]
@@ -553,7 +588,7 @@ pub trait Command {
     fn arg(&mut self, arg: &str) -> &mut Self;
     fn env(&mut self, key: &str, val: &str) -> &mut Self;
     fn env_remove(&mut self, key: &str) -> &mut Self;
-    fn current_dir(&mut self, dir: &Path) -> &mut Self;
+    fn current_dir(&mut self, dir: Utf8TypedPath<'_>) -> &mut Self;
     fn stdin_pipe(&mut self, pipe: PipeRecv) -> io::Result<&mut Self>;
     fn stdout_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self>;
     fn stdin_inherit(&mut self) -> io::Result<&mut Self>;
@@ -580,19 +615,19 @@ pub trait Vfs {
         Self: 'a;
 
     fn open_options(&self) -> Self::OpenOptions<'_>;
-    fn command(&self, program: impl AsRef<Path>) -> Self::Command<'_>;
-    async fn read_dir(&self, path: impl AsRef<Path>) -> Result<ReadDir, io::Error>;
+    fn command(&self, program: Utf8TypedPath<'_>) -> Self::Command<'_>;
+    async fn read_dir(&self, path: Utf8TypedPath<'_>) -> Result<ReadDir, io::Error>;
     async fn which(
         &self,
-        program: impl AsRef<Path>,
+        program: Utf8TypedPath<'_>,
         path: Option<&str>,
-        cwd: Option<&Path>,
-    ) -> Result<Option<PathBuf>, io::Error>;
+        cwd: Option<Utf8TypedPath<'_>>,
+    ) -> Result<Option<Utf8TypedPathBuf>, io::Error>;
     async fn well_known_path(
         &self,
         key: WellKnownPath,
         env: &HashMap<String, Option<String>>,
-    ) -> Result<PathBuf, io::Error>;
+    ) -> Result<Utf8TypedPathBuf, io::Error>;
     async fn clear_cache(&self) -> Result<(), io::Error>;
     async fn file_metadata(&self, file: &fs::File) -> Result<Metadata, io::Error> {
         file.metadata().await.map(metadata_from_std)
@@ -625,20 +660,20 @@ pub trait Vfs {
     ) -> Result<(), io::Error>;
     async fn xattrs(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         namespace: XattrNamespace<'_>,
         follow: bool,
     ) -> Result<Vec<XattrEntry>, io::Error>;
     async fn xattr(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         name: &str,
         namespace: Option<&str>,
         follow: bool,
     ) -> Result<Vec<u8>, io::Error>;
     async fn set_xattr(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         name: &str,
         namespace: Option<&str>,
         value: &[u8],
@@ -646,97 +681,98 @@ pub trait Vfs {
     ) -> Result<(), io::Error>;
     async fn remove_xattr(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         name: &str,
         namespace: Option<&str>,
         follow: bool,
     ) -> Result<(), io::Error>;
     async fn streams(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         follow: bool,
     ) -> Result<Vec<StreamEntry>, io::Error>;
 
     async fn remove(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         all: bool,
         ignore: bool,
     ) -> Result<(), io::Error>;
-    async fn metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error>;
+    async fn metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata, io::Error>;
     async fn fs_metadata(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         follow: bool,
     ) -> Result<FsMetadata, io::Error>;
-    async fn create_dir(&self, path: impl AsRef<Path>, all: bool) -> Result<(), io::Error>;
+    async fn create_dir(&self, path: Utf8TypedPath<'_>, all: bool) -> Result<(), io::Error>;
     async fn remove_dir(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         all: bool,
         ignore: bool,
     ) -> Result<(), io::Error>;
     async fn copy(
         &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
+        from: Utf8TypedPath<'_>,
+        to: Utf8TypedPath<'_>,
         all: bool,
     ) -> Result<(), io::Error>;
-    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), io::Error>;
+    async fn rename(&self, from: Utf8TypedPath<'_>, to: Utf8TypedPath<'_>)
+    -> Result<(), io::Error>;
     async fn move_(
         &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
+        from: Utf8TypedPath<'_>,
+        to: Utf8TypedPath<'_>,
         all: bool,
     ) -> Result<(), io::Error>;
     async fn symlink(
         &self,
-        cwd: impl AsRef<Path>,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
+        cwd: Utf8TypedPath<'_>,
+        src: Utf8TypedPath<'_>,
+        dst: Utf8TypedPath<'_>,
     ) -> Result<(), io::Error>;
     async fn hard_link(
         &self,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
+        src: Utf8TypedPath<'_>,
+        dst: Utf8TypedPath<'_>,
     ) -> Result<(), io::Error>;
     async fn symlink_dir(
         &self,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
+        src: Utf8TypedPath<'_>,
+        dst: Utf8TypedPath<'_>,
     ) -> Result<(), io::Error>;
     async fn symlink_file(
         &self,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
+        src: Utf8TypedPath<'_>,
+        dst: Utf8TypedPath<'_>,
     ) -> Result<(), io::Error>;
-    async fn symlink_metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error>;
-    async fn attrs(&self, path: impl AsRef<Path>, follow: bool) -> Result<Attrs, io::Error>;
-    async fn set_attrs(&self, path: impl AsRef<Path>, attrs: Attrs) -> Result<(), io::Error>;
-    async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error>;
-    async fn read_link(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error>;
+    async fn symlink_metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata, io::Error>;
+    async fn attrs(&self, path: Utf8TypedPath<'_>, follow: bool) -> Result<Attrs, io::Error>;
+    async fn set_attrs(&self, path: Utf8TypedPath<'_>, attrs: Attrs) -> Result<(), io::Error>;
+    async fn canonicalize(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf, io::Error>;
+    async fn read_link(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf, io::Error>;
     async fn glob(
         &self,
         pattern: impl Into<String>,
-        root: &Path,
+        root: Utf8TypedPath<'_>,
         follow_symlinks: bool,
         max_depth: Option<usize>,
-    ) -> Result<Vec<PathBuf>, io::Error>;
+    ) -> Result<Vec<Utf8TypedPathBuf>, io::Error>;
     async fn set_permissions(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         perm: Permissions,
     ) -> Result<(), io::Error>;
     async fn set_times(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
     ) -> Result<(), io::Error>;
     async fn chown(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         user: Option<ChownIdentity>,
         group: Option<ChownIdentity>,
         follow: bool,
@@ -838,10 +874,10 @@ impl OpenOptions for ClientOrDirectOpenOptions<'_> {
         self
     }
 
-    async fn open(&self, path: impl AsRef<Path>) -> Result<fs::File, io::Error> {
+    async fn open(&self, path: Utf8TypedPath<'_>) -> Result<fs::File, io::Error> {
         match self {
-            Self::Client(opts) => opts.open(path).await,
-            Self::Direct(opts) => opts.open(path).await,
+            Self::Client(opts) => OpenOptions::open(opts, path).await,
+            Self::Direct(opts) => OpenOptions::open(opts, path).await,
         }
     }
 }
@@ -889,7 +925,7 @@ impl OpenOptions for ClientOrDirectOpenOptions<'_> {
         self
     }
 
-    async fn open(&self, path: impl AsRef<Path>) -> Result<fs::File, io::Error> {
+    async fn open(&self, path: Utf8TypedPath<'_>) -> Result<fs::File, io::Error> {
         self.inner.open(path).await
     }
 }
@@ -963,7 +999,7 @@ impl<'a> Command for ClientOrDirectCommand<'a> {
         self
     }
 
-    fn current_dir(&mut self, dir: &Path) -> &mut Self {
+    fn current_dir(&mut self, dir: Utf8TypedPath<'_>) -> &mut Self {
         match self {
             Self::Client(builder) => {
                 builder.current_dir(dir);
@@ -1330,25 +1366,24 @@ impl Vfs for ClientOrDirect {
         }
     }
 
-    fn command(&self, program: impl AsRef<Path>) -> Self::Command<'_> {
-        let program = program.as_ref().to_path_buf();
+    fn command(&self, program: Utf8TypedPath<'_>) -> Self::Command<'_> {
         #[cfg(any(unix, windows))]
         {
             match self {
-                Self::Client(client) => ClientOrDirectCommand::Client(client.command(&program)),
-                Self::Direct(direct) => ClientOrDirectCommand::Direct(direct.command(&program)),
+                Self::Client(client) => ClientOrDirectCommand::Client(client.command(program)),
+                Self::Direct(direct) => ClientOrDirectCommand::Direct(direct.command(program)),
             }
         }
         #[cfg(not(any(unix, windows)))]
         {
             ClientOrDirectCommand {
-                inner: self.0.command(&program),
+                inner: self.0.command(program),
                 _marker: std::marker::PhantomData,
             }
         }
     }
 
-    async fn read_dir(&self, path: impl AsRef<Path>) -> Result<ReadDir, io::Error> {
+    async fn read_dir(&self, path: Utf8TypedPath<'_>) -> Result<ReadDir, io::Error> {
         #[cfg(any(unix, windows))]
         {
             match self {
@@ -1364,21 +1399,20 @@ impl Vfs for ClientOrDirect {
 
     async fn which(
         &self,
-        program: impl AsRef<Path>,
+        program: Utf8TypedPath<'_>,
         path: Option<&str>,
-        cwd: Option<&Path>,
-    ) -> Result<Option<PathBuf>, io::Error> {
-        let program = program.as_ref().to_path_buf();
+        cwd: Option<Utf8TypedPath<'_>>,
+    ) -> Result<Option<Utf8TypedPathBuf>, io::Error> {
         #[cfg(any(unix, windows))]
         {
             match self {
-                Self::Client(client) => client.which(&program, path, cwd).await,
-                Self::Direct(direct) => direct.which(&program, path, cwd).await,
+                Self::Client(client) => Vfs::which(client, program, path, cwd).await,
+                Self::Direct(direct) => Vfs::which(direct, program, path, cwd).await,
             }
         }
         #[cfg(not(any(unix, windows)))]
         {
-            self.0.which(&program, path, cwd).await
+            self.0.which(program, path, cwd).await
         }
     }
 
@@ -1386,12 +1420,12 @@ impl Vfs for ClientOrDirect {
         &self,
         key: WellKnownPath,
         env: &HashMap<String, Option<String>>,
-    ) -> Result<PathBuf, io::Error> {
+    ) -> Result<Utf8TypedPathBuf, io::Error> {
         #[cfg(any(unix, windows))]
         {
             match self {
-                Self::Client(client) => client.well_known_path(key, env).await,
-                Self::Direct(direct) => direct.well_known_path(key, env).await,
+                Self::Client(client) => Vfs::well_known_path(client, key, env).await,
+                Self::Direct(direct) => Vfs::well_known_path(direct, key, env).await,
             }
         }
         #[cfg(not(any(unix, windows)))]
@@ -1506,120 +1540,109 @@ impl Vfs for ClientOrDirect {
 
     async fn xattrs(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         namespace: XattrNamespace<'_>,
         follow: bool,
     ) -> Result<Vec<XattrEntry>, io::Error> {
-        let path = path.as_ref().to_path_buf();
         #[cfg(any(unix, windows))]
         {
             match self {
-                Self::Client(client) => client.xattrs(&path, namespace, follow).await,
-                Self::Direct(direct) => direct.xattrs(&path, namespace, follow).await,
+                Self::Client(client) => client.xattrs(path, namespace, follow).await,
+                Self::Direct(direct) => direct.xattrs(path, namespace, follow).await,
             }
         }
         #[cfg(not(any(unix, windows)))]
         {
-            self.0.xattrs(&path, namespace, follow).await
+            self.0.xattrs(path, namespace, follow).await
         }
     }
 
     async fn streams(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         follow: bool,
     ) -> Result<Vec<StreamEntry>, io::Error> {
-        let path = path.as_ref().to_path_buf();
         #[cfg(any(unix, windows))]
         {
             match self {
-                Self::Client(client) => client.streams(&path, follow).await,
-                Self::Direct(direct) => direct.streams(&path, follow).await,
+                Self::Client(client) => client.streams(path, follow).await,
+                Self::Direct(direct) => direct.streams(path, follow).await,
             }
         }
         #[cfg(not(any(unix, windows)))]
         {
-            self.0.streams(&path, follow).await
+            self.0.streams(path, follow).await
         }
     }
 
     async fn xattr(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         name: &str,
         namespace: Option<&str>,
         follow: bool,
     ) -> Result<Vec<u8>, io::Error> {
-        let path = path.as_ref().to_path_buf();
         #[cfg(any(unix, windows))]
         {
             match self {
-                Self::Client(client) => client.xattr(&path, name, namespace, follow).await,
-                Self::Direct(direct) => direct.xattr(&path, name, namespace, follow).await,
+                Self::Client(client) => client.xattr(path, name, namespace, follow).await,
+                Self::Direct(direct) => direct.xattr(path, name, namespace, follow).await,
             }
         }
         #[cfg(not(any(unix, windows)))]
         {
-            self.0.xattr(&path, name, namespace, follow).await
+            self.0.xattr(path, name, namespace, follow).await
         }
     }
 
     async fn set_xattr(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         name: &str,
         namespace: Option<&str>,
         value: &[u8],
         follow: bool,
     ) -> Result<(), io::Error> {
-        let path = path.as_ref().to_path_buf();
         #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => {
-                    client
-                        .set_xattr(&path, name, namespace, value, follow)
-                        .await
+                    client.set_xattr(path, name, namespace, value, follow).await
                 }
                 Self::Direct(direct) => {
-                    direct
-                        .set_xattr(&path, name, namespace, value, follow)
-                        .await
+                    direct.set_xattr(path, name, namespace, value, follow).await
                 }
             }
         }
         #[cfg(not(any(unix, windows)))]
         {
-            self.0
-                .set_xattr(&path, name, namespace, value, follow)
-                .await
+            self.0.set_xattr(path, name, namespace, value, follow).await
         }
     }
 
     async fn remove_xattr(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         name: &str,
         namespace: Option<&str>,
         follow: bool,
     ) -> Result<(), io::Error> {
-        let path = path.as_ref().to_path_buf();
         #[cfg(any(unix, windows))]
         {
             match self {
-                Self::Client(client) => client.remove_xattr(&path, name, namespace, follow).await,
-                Self::Direct(direct) => direct.remove_xattr(&path, name, namespace, follow).await,
+                Self::Client(client) => client.remove_xattr(path, name, namespace, follow).await,
+                Self::Direct(direct) => direct.remove_xattr(path, name, namespace, follow).await,
             }
         }
         #[cfg(not(any(unix, windows)))]
         {
-            self.0.remove_xattr(&path, name, namespace, follow).await
+            self.0.remove_xattr(path, name, namespace, follow).await
         }
     }
 
     async fn remove(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         all: bool,
         ignore: bool,
     ) -> Result<(), io::Error> {
@@ -1636,7 +1659,7 @@ impl Vfs for ClientOrDirect {
         }
     }
 
-    async fn metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
+    async fn metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata, io::Error> {
         #[cfg(any(unix, windows))]
         {
             match self {
@@ -1666,24 +1689,23 @@ impl Vfs for ClientOrDirect {
 
     async fn fs_metadata(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         follow: bool,
     ) -> Result<FsMetadata, io::Error> {
-        let path = path.as_ref().to_path_buf();
         #[cfg(any(unix, windows))]
         {
             match self {
-                Self::Client(client) => client.fs_metadata(&path, follow).await,
-                Self::Direct(direct) => direct.fs_metadata(&path, follow).await,
+                Self::Client(client) => client.fs_metadata(path, follow).await,
+                Self::Direct(direct) => direct.fs_metadata(path, follow).await,
             }
         }
         #[cfg(not(any(unix, windows)))]
         {
-            self.0.fs_metadata(&path, follow).await
+            self.0.fs_metadata(path, follow).await
         }
     }
 
-    async fn create_dir(&self, path: impl AsRef<Path>, all: bool) -> Result<(), io::Error> {
+    async fn create_dir(&self, path: Utf8TypedPath<'_>, all: bool) -> Result<(), io::Error> {
         #[cfg(any(unix, windows))]
         {
             match self {
@@ -1699,7 +1721,7 @@ impl Vfs for ClientOrDirect {
 
     async fn remove_dir(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         all: bool,
         ignore: bool,
     ) -> Result<(), io::Error> {
@@ -1718,8 +1740,8 @@ impl Vfs for ClientOrDirect {
 
     async fn copy(
         &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
+        from: Utf8TypedPath<'_>,
+        to: Utf8TypedPath<'_>,
         all: bool,
     ) -> Result<(), io::Error> {
         #[cfg(any(unix, windows))]
@@ -1735,7 +1757,11 @@ impl Vfs for ClientOrDirect {
         }
     }
 
-    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), io::Error> {
+    async fn rename(
+        &self,
+        from: Utf8TypedPath<'_>,
+        to: Utf8TypedPath<'_>,
+    ) -> Result<(), io::Error> {
         #[cfg(any(unix, windows))]
         {
             match self {
@@ -1751,8 +1777,8 @@ impl Vfs for ClientOrDirect {
 
     async fn move_(
         &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
+        from: Utf8TypedPath<'_>,
+        to: Utf8TypedPath<'_>,
         all: bool,
     ) -> Result<(), io::Error> {
         #[cfg(any(unix, windows))]
@@ -1770,9 +1796,9 @@ impl Vfs for ClientOrDirect {
 
     async fn symlink(
         &self,
-        cwd: impl AsRef<Path>,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
+        cwd: Utf8TypedPath<'_>,
+        src: Utf8TypedPath<'_>,
+        dst: Utf8TypedPath<'_>,
     ) -> Result<(), io::Error> {
         #[cfg(any(unix, windows))]
         {
@@ -1789,8 +1815,8 @@ impl Vfs for ClientOrDirect {
 
     async fn hard_link(
         &self,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
+        src: Utf8TypedPath<'_>,
+        dst: Utf8TypedPath<'_>,
     ) -> Result<(), io::Error> {
         #[cfg(any(unix, windows))]
         {
@@ -1807,8 +1833,8 @@ impl Vfs for ClientOrDirect {
 
     async fn symlink_dir(
         &self,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
+        src: Utf8TypedPath<'_>,
+        dst: Utf8TypedPath<'_>,
     ) -> Result<(), io::Error> {
         #[cfg(any(unix, windows))]
         {
@@ -1825,8 +1851,8 @@ impl Vfs for ClientOrDirect {
 
     async fn symlink_file(
         &self,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
+        src: Utf8TypedPath<'_>,
+        dst: Utf8TypedPath<'_>,
     ) -> Result<(), io::Error> {
         #[cfg(any(unix, windows))]
         {
@@ -1841,7 +1867,7 @@ impl Vfs for ClientOrDirect {
         }
     }
 
-    async fn symlink_metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
+    async fn symlink_metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata, io::Error> {
         #[cfg(any(unix, windows))]
         {
             match self {
@@ -1855,7 +1881,7 @@ impl Vfs for ClientOrDirect {
         }
     }
 
-    async fn attrs(&self, path: impl AsRef<Path>, follow: bool) -> Result<Attrs, io::Error> {
+    async fn attrs(&self, path: Utf8TypedPath<'_>, follow: bool) -> Result<Attrs, io::Error> {
         #[cfg(any(unix, windows))]
         {
             match self {
@@ -1869,7 +1895,7 @@ impl Vfs for ClientOrDirect {
         }
     }
 
-    async fn set_attrs(&self, path: impl AsRef<Path>, attrs: Attrs) -> Result<(), io::Error> {
+    async fn set_attrs(&self, path: Utf8TypedPath<'_>, attrs: Attrs) -> Result<(), io::Error> {
         #[cfg(any(unix, windows))]
         {
             match self {
@@ -1883,7 +1909,7 @@ impl Vfs for ClientOrDirect {
         }
     }
 
-    async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
+    async fn canonicalize(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf, io::Error> {
         #[cfg(any(unix, windows))]
         {
             match self {
@@ -1897,7 +1923,7 @@ impl Vfs for ClientOrDirect {
         }
     }
 
-    async fn read_link(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
+    async fn read_link(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf, io::Error> {
         #[cfg(any(unix, windows))]
         {
             match self {
@@ -1914,10 +1940,10 @@ impl Vfs for ClientOrDirect {
     async fn glob(
         &self,
         pattern: impl Into<String>,
-        root: &Path,
+        root: Utf8TypedPath<'_>,
         follow_symlinks: bool,
         max_depth: Option<usize>,
-    ) -> Result<Vec<PathBuf>, io::Error> {
+    ) -> Result<Vec<Utf8TypedPathBuf>, io::Error> {
         let pattern = pattern.into();
         #[cfg(any(unix, windows))]
         {
@@ -1938,7 +1964,7 @@ impl Vfs for ClientOrDirect {
 
     async fn set_permissions(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         perm: Permissions,
     ) -> Result<(), io::Error> {
         #[cfg(any(unix, windows))]
@@ -1956,7 +1982,7 @@ impl Vfs for ClientOrDirect {
 
     async fn set_times(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
@@ -1976,7 +2002,7 @@ impl Vfs for ClientOrDirect {
 
     async fn chown(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         user: Option<ChownIdentity>,
         group: Option<ChownIdentity>,
         follow: bool,

@@ -4,12 +4,12 @@ use std::{
     collections::HashMap,
     env, mem,
     ops::Deref,
-    path::{Path, PathBuf},
     rc::Rc,
 };
 
 use dolang::runtime::{Strand, strand};
 use dolang_shell_vfs::ClientOrDirect;
+use dolang_shell_vfs::{Utf8TypedPathBuf, typed_path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ChannelMode {
@@ -153,7 +153,7 @@ impl Env {
 }
 
 pub(crate) struct Local {
-    cwd: RefCell<PathBuf>,
+    cwd: RefCell<Utf8TypedPathBuf>,
     env: RefCell<Rc<Env>>,
     vfs: RefCell<ClientOrDirect>,
     channel_mode: Cell<ChannelMode>,
@@ -162,7 +162,7 @@ pub(crate) struct Local {
 impl<'v> strand::Local<'v> for Local {
     fn init() -> Self {
         Self {
-            cwd: RefCell::new(env::current_dir().unwrap()),
+            cwd: RefCell::new(typed_path(env::current_dir().unwrap()).unwrap()),
             env: RefCell::new(Rc::new(Env::derived(
                 Rc::new(Env::root()),
                 Default::default(),
@@ -187,12 +187,12 @@ impl Local {
         self.env.borrow().clone()
     }
 
-    pub(crate) fn cwd(&self) -> impl Deref<Target = impl AsRef<Path> + Deref<Target = Path>> {
+    pub(crate) fn cwd(&self) -> impl Deref<Target = Utf8TypedPathBuf> {
         self.cwd.borrow()
     }
 
-    pub(crate) fn replace_cwd(&self, cwd: impl Into<PathBuf>) -> PathBuf {
-        mem::replace(&mut *self.cwd.borrow_mut(), cwd.into())
+    pub(crate) fn replace_cwd(&self, cwd: Utf8TypedPathBuf) -> Utf8TypedPathBuf {
+        mem::replace(&mut *self.cwd.borrow_mut(), cwd)
     }
 
     pub(crate) fn replace_env(&self, env: Rc<Env>) -> Rc<Env> {

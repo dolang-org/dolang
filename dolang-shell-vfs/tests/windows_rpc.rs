@@ -3,10 +3,14 @@
 
 use std::{
     os::windows::io::{FromRawHandle, OwnedHandle},
+    path::Path,
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use dolang_shell_vfs::{Child, Client, ClientOrDirect, Command, OpenOptions, Server, Vfs, pipe};
+use dolang_shell_vfs::{
+    Child, Client, ClientOrDirect, Command, OpenOptions, Server, Utf8TypedPath, Utf8WindowsPath,
+    Vfs, pipe,
+};
 use tempfile::tempdir;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -29,6 +33,14 @@ fn is_wine() -> bool {
 }
 
 static NEXT_PIPE: AtomicU64 = AtomicU64::new(0);
+
+fn typed(path: &Path) -> Utf8TypedPath<'_> {
+    Utf8TypedPath::Windows(Utf8WindowsPath::new(path.to_str().unwrap()))
+}
+
+fn typed_str(path: &str) -> Utf8TypedPath<'_> {
+    Utf8TypedPath::Windows(Utf8WindowsPath::new(path))
+}
 
 fn current_process_handle() -> OwnedHandle {
     let handle = unsafe {
@@ -73,16 +85,16 @@ async fn client_or_direct_routes_path_and_open_operations() {
 
     let mut options = vfs.open_options();
     options.write(true).create_new(true);
-    let mut file = options.open(&path).await.unwrap();
+    let mut file = options.open(typed(&path)).await.unwrap();
     file.write_all(b"transferred handle").await.unwrap();
     file.flush().await.unwrap();
     drop(file);
     assert_eq!(std::fs::read(&path).unwrap(), b"transferred handle");
 
-    let metadata = vfs.metadata(&path).await.unwrap();
+    let metadata = vfs.metadata(typed(&path)).await.unwrap();
     assert_eq!(metadata.len, 18);
 
-    let mut entries = vfs.read_dir(&subdir).await.unwrap();
+    let mut entries = vfs.read_dir(typed(&subdir)).await.unwrap();
     let entry = entries.next_entry().await.unwrap().unwrap();
     assert_eq!(entry.file_name(), "one.txt");
     assert!(entries.next_entry().await.unwrap().is_none());
@@ -98,7 +110,7 @@ async fn spawn_transfers_standard_stream_handles() {
     let (stdout_send, mut stdout_recv) = pipe().unwrap();
     let (stderr_send, mut stderr_recv) = pipe().unwrap();
 
-    let mut command = client.command("cmd.exe");
+    let mut command = client.command(typed_str("cmd.exe"));
     command
         .arg("/d")
         .arg("/v:on")
@@ -130,7 +142,7 @@ async fn spawn_transfers_standard_stream_handles() {
 async fn spawn_failure_returns_remote_os_error() {
     let (client, server_task) = connected_pair().await;
     let mut child = client
-        .command("dolang-command-that-does-not-exist.exe")
+        .command(typed_str("dolang-command-that-does-not-exist.exe"))
         .spawn()
         .await
         .unwrap();
@@ -152,7 +164,7 @@ async fn streams_run_in_the_server_namespace() {
     std::fs::write(&stream_path, "stream").unwrap();
 
     let (client, server_task) = connected_pair().await;
-    let streams = client.streams(&path, true).await.unwrap();
+    let streams = client.streams(typed(&path), true).await.unwrap();
     assert!(streams.iter().any(|entry| entry.name == "zone"));
 
     client.stop().await.unwrap();

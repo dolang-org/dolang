@@ -19,7 +19,8 @@ use wax::{
 
 use crate::{
     Attrs, Child, ChownIdentity, Command, DefaultHandle, FsMetadata, Metadata, Permissions,
-    PipeRecv, PipeSend, ReadDir, StreamEntry, Vfs, WellKnownPath, XattrEntry, XattrNamespace,
+    PipeRecv, PipeSend, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
+    XattrEntry, XattrNamespace, native_path, typed_path,
 };
 
 #[cfg(unix)]
@@ -52,6 +53,7 @@ pub struct DirectCommand<'a> {
     stdin: Option<Stdio>,
     stdout: Option<Stdio>,
     stderr: Option<Stdio>,
+    error: Option<io::Error>,
 }
 
 pub struct DirectChild {
@@ -139,16 +141,18 @@ impl Default for Direct {
 }
 
 impl<'a> DirectCommand<'a> {
-    fn new(direct: &'a Direct, program: impl AsRef<Path>) -> Self {
+    fn new(direct: &'a Direct, program: Utf8TypedPath<'_>) -> Self {
+        let program = native_path(program);
         Self {
             direct,
-            program: program.as_ref().to_path_buf(),
+            program: program.as_ref().cloned().unwrap_or_default(),
             args: Vec::new(),
             env: HashMap::new(),
             cwd: None,
             stdin: None,
             stdout: None,
             stderr: None,
+            error: program.err(),
         }
     }
 }
@@ -187,8 +191,11 @@ impl Command for DirectCommand<'_> {
         self
     }
 
-    fn current_dir(&mut self, dir: &Path) -> &mut Self {
-        self.cwd = Some(dir.to_path_buf());
+    fn current_dir(&mut self, dir: Utf8TypedPath<'_>) -> &mut Self {
+        match native_path(dir) {
+            Ok(dir) => self.cwd = Some(dir),
+            Err(error) => self.error = Some(error),
+        }
         self
     }
 
@@ -257,14 +264,18 @@ impl Command for DirectCommand<'_> {
     }
 
     async fn spawn(self) -> io::Result<Self::Child> {
+        if let Some(error) = self.error {
+            return Err(error);
+        }
         let path_override = self
             .env
             .get("PATH")
             .map(|path| path.as_deref().unwrap_or(""));
         let resolved = self
             .direct
-            .which(&self.program, path_override, self.cwd.as_deref())
-            .await?;
+            .path_cache
+            .resolve(&self.program, path_override, self.cwd.as_deref())
+            .await;
         let resolved = resolved.ok_or_else(Direct::program_not_found_error)?;
 
         let mut command = TokioCommand::new(&resolved);
@@ -349,8 +360,8 @@ impl crate::OpenOptions for DirectOpenOptions {
         self
     }
 
-    async fn open(&self, path: impl AsRef<Path>) -> Result<File, io::Error> {
-        self.as_tokio().open(path).await
+    async fn open(&self, path: Utf8TypedPath<'_>) -> Result<File, io::Error> {
+        self.as_tokio().open(native_path(path)?).await
     }
 }
 
@@ -503,32 +514,39 @@ impl Vfs for Direct {
         DirectOpenOptions::default()
     }
 
-    fn command(&self, program: impl AsRef<Path>) -> Self::Command<'_> {
+    fn command(&self, program: Utf8TypedPath<'_>) -> Self::Command<'_> {
         DirectCommand::new(self, program)
     }
 
-    async fn read_dir(&self, path: impl AsRef<Path>) -> Result<ReadDir, io::Error> {
-        ReadDir::open(path.as_ref()).await
+    async fn read_dir(&self, path: Utf8TypedPath<'_>) -> Result<ReadDir, io::Error> {
+        ReadDir::open(&native_path(path)?).await
     }
 
     async fn which(
         &self,
-        program: impl AsRef<Path>,
+        program: Utf8TypedPath<'_>,
         path: Option<&str>,
-        cwd: Option<&Path>,
-    ) -> Result<Option<PathBuf>, io::Error> {
-        Ok(self.path_cache.resolve(program.as_ref(), path, cwd).await)
+        cwd: Option<Utf8TypedPath<'_>>,
+    ) -> Result<Option<Utf8TypedPathBuf>, io::Error> {
+        let program = native_path(program)?;
+        let cwd = cwd.map(native_path).transpose()?;
+        self.path_cache
+            .resolve(&program, path, cwd.as_deref())
+            .await
+            .map(typed_path)
+            .transpose()
     }
 
     async fn well_known_path(
         &self,
         key: WellKnownPath,
         env: &HashMap<String, Option<String>>,
-    ) -> Result<PathBuf, io::Error> {
-        match key {
+    ) -> Result<Utf8TypedPathBuf, io::Error> {
+        let path = match key {
             WellKnownPath::HomeDir => Self::home_dir_platform(env),
             WellKnownPath::CacheDir => Self::cache_dir_platform(env),
-        }
+        }?;
+        typed_path(path)
     }
 
     async fn clear_cache(&self) -> Result<(), io::Error> {
@@ -538,52 +556,53 @@ impl Vfs for Direct {
 
     async fn xattrs(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         namespace: XattrNamespace<'_>,
         follow: bool,
     ) -> Result<Vec<XattrEntry>, io::Error> {
-        self.impl_xattrs(path.as_ref(), namespace, follow).await
+        self.impl_xattrs(&native_path(path)?, namespace, follow)
+            .await
     }
 
     async fn streams(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         follow: bool,
     ) -> Result<Vec<StreamEntry>, io::Error> {
-        self.impl_streams(path.as_ref(), follow).await
+        self.impl_streams(&native_path(path)?, follow).await
     }
 
     async fn xattr(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         name: &str,
         namespace: Option<&str>,
         follow: bool,
     ) -> Result<Vec<u8>, io::Error> {
-        self.impl_xattr(path.as_ref(), name, namespace, follow)
+        self.impl_xattr(&native_path(path)?, name, namespace, follow)
             .await
     }
 
     async fn set_xattr(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         name: &str,
         namespace: Option<&str>,
         value: &[u8],
         follow: bool,
     ) -> Result<(), io::Error> {
-        self.impl_set_xattr(path.as_ref(), name, namespace, value, follow)
+        self.impl_set_xattr(&native_path(path)?, name, namespace, value, follow)
             .await
     }
 
     async fn remove_xattr(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         name: &str,
         namespace: Option<&str>,
         follow: bool,
     ) -> Result<(), io::Error> {
-        self.impl_remove_xattr(path.as_ref(), name, namespace, follow)
+        self.impl_remove_xattr(&native_path(path)?, name, namespace, follow)
             .await
     }
 
@@ -629,11 +648,12 @@ impl Vfs for Direct {
 
     async fn remove(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         all: bool,
         ignore: bool,
     ) -> Result<(), io::Error> {
-        let path = path.as_ref();
+        let path = native_path(path)?;
+        let path = path.as_path();
         let result = if all {
             match fs::symlink_metadata(path).await {
                 Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path).await,
@@ -650,8 +670,8 @@ impl Vfs for Direct {
         }
     }
 
-    async fn metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
-        fs::metadata(path.as_ref())
+    async fn metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata, io::Error> {
+        fs::metadata(native_path(path)?)
             .await
             .map(crate::metadata_from_std)
     }
@@ -665,35 +685,37 @@ impl Vfs for Direct {
 
     async fn fs_metadata(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         follow: bool,
     ) -> Result<FsMetadata, io::Error> {
-        let path = path.as_ref().to_path_buf();
+        let path = native_path(path)?;
         tokio::task::spawn_blocking(move || Self::fs_metadata_from_path(&path, follow))
             .await
             .unwrap_or_else(|_| Err(io::Error::other("failed to join fs metadata query task")))
     }
 
-    async fn create_dir(&self, path: impl AsRef<Path>, all: bool) -> Result<(), io::Error> {
+    async fn create_dir(&self, path: Utf8TypedPath<'_>, all: bool) -> Result<(), io::Error> {
+        let path = native_path(path)?;
         if all {
-            fs::create_dir_all(path.as_ref()).await
+            fs::create_dir_all(path).await
         } else {
-            fs::create_dir(path.as_ref()).await
+            fs::create_dir(path).await
         }
     }
 
     async fn remove_dir(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         all: bool,
         ignore: bool,
     ) -> Result<(), io::Error> {
+        let path = native_path(path)?;
         let result = if all {
-            Self::remove_dir_empty_tree_local(path.as_ref(), ignore)
+            Self::remove_dir_empty_tree_local(&path, ignore)
                 .await
                 .map(|_| ())
         } else {
-            fs::remove_dir(path.as_ref()).await
+            fs::remove_dir(path).await
         };
         match result {
             Ok(()) => Ok(()),
@@ -704,90 +726,94 @@ impl Vfs for Direct {
 
     async fn copy(
         &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
+        from: Utf8TypedPath<'_>,
+        to: Utf8TypedPath<'_>,
         all: bool,
     ) -> Result<(), io::Error> {
-        Self::copy_local(from.as_ref(), to.as_ref(), all).await
+        Self::copy_local(&native_path(from)?, &native_path(to)?, all).await
     }
 
-    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), io::Error> {
-        fs::rename(from.as_ref(), to.as_ref()).await
+    async fn rename(
+        &self,
+        from: Utf8TypedPath<'_>,
+        to: Utf8TypedPath<'_>,
+    ) -> Result<(), io::Error> {
+        fs::rename(native_path(from)?, native_path(to)?).await
     }
 
     async fn move_(
         &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
+        from: Utf8TypedPath<'_>,
+        to: Utf8TypedPath<'_>,
         all: bool,
     ) -> Result<(), io::Error> {
-        Self::move_local(from.as_ref(), to.as_ref(), all).await
+        Self::move_local(&native_path(from)?, &native_path(to)?, all).await
     }
 
     async fn symlink(
         &self,
-        cwd: impl AsRef<Path>,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
+        cwd: Utf8TypedPath<'_>,
+        src: Utf8TypedPath<'_>,
+        dst: Utf8TypedPath<'_>,
     ) -> Result<(), io::Error> {
-        Self::impl_symlink(cwd.as_ref(), src.as_ref(), dst.as_ref()).await
+        Self::impl_symlink(&native_path(cwd)?, &native_path(src)?, &native_path(dst)?).await
     }
 
     async fn hard_link(
         &self,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
+        src: Utf8TypedPath<'_>,
+        dst: Utf8TypedPath<'_>,
     ) -> Result<(), io::Error> {
-        fs::hard_link(src.as_ref(), dst.as_ref()).await
+        fs::hard_link(native_path(src)?, native_path(dst)?).await
     }
 
     async fn symlink_dir(
         &self,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
+        src: Utf8TypedPath<'_>,
+        dst: Utf8TypedPath<'_>,
     ) -> Result<(), io::Error> {
-        Self::impl_symlink_dir(src.as_ref(), dst.as_ref()).await
+        Self::impl_symlink_dir(&native_path(src)?, &native_path(dst)?).await
     }
 
     async fn symlink_file(
         &self,
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
+        src: Utf8TypedPath<'_>,
+        dst: Utf8TypedPath<'_>,
     ) -> Result<(), io::Error> {
-        Self::impl_symlink_file(src.as_ref(), dst.as_ref()).await
+        Self::impl_symlink_file(&native_path(src)?, &native_path(dst)?).await
     }
 
-    async fn symlink_metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
-        fs::symlink_metadata(path.as_ref())
+    async fn symlink_metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata, io::Error> {
+        fs::symlink_metadata(native_path(path)?)
             .await
             .map(crate::metadata_from_std)
     }
 
-    async fn attrs(&self, path: impl AsRef<Path>, follow: bool) -> Result<Attrs, io::Error> {
-        self.impl_attrs(path.as_ref(), follow).await
+    async fn attrs(&self, path: Utf8TypedPath<'_>, follow: bool) -> Result<Attrs, io::Error> {
+        self.impl_attrs(&native_path(path)?, follow).await
     }
 
-    async fn set_attrs(&self, path: impl AsRef<Path>, attrs: Attrs) -> Result<(), io::Error> {
-        self.impl_set_attrs(path.as_ref(), attrs).await
+    async fn set_attrs(&self, path: Utf8TypedPath<'_>, attrs: Attrs) -> Result<(), io::Error> {
+        self.impl_set_attrs(&native_path(path)?, attrs).await
     }
 
-    async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
-        self.impl_canonicalize(path.as_ref()).await
+    async fn canonicalize(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf, io::Error> {
+        typed_path(self.impl_canonicalize(&native_path(path)?).await?)
     }
 
-    async fn read_link(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
-        fs::read_link(path.as_ref()).await
+    async fn read_link(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf, io::Error> {
+        typed_path(fs::read_link(native_path(path)?).await?)
     }
 
     async fn glob(
         &self,
         pattern: impl Into<String>,
-        root: &Path,
+        root: Utf8TypedPath<'_>,
         follow_symlinks: bool,
         max_depth: Option<usize>,
-    ) -> Result<Vec<PathBuf>, io::Error> {
+    ) -> Result<Vec<Utf8TypedPathBuf>, io::Error> {
         let pattern = pattern.into();
-        let root = root.to_owned();
+        let root = native_path(root)?;
         tokio::task::spawn_blocking(move || {
             let (prefix, glob) = Glob::new(&pattern)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid glob pattern"))?
@@ -814,7 +840,7 @@ impl Vfs for Direct {
             }
 
             paths.sort();
-            Ok(paths)
+            paths.into_iter().map(typed_path).collect()
         })
         .await
         .unwrap_or_else(|e| Err(io::Error::other(e)))
@@ -822,30 +848,31 @@ impl Vfs for Direct {
 
     async fn set_permissions(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         perm: Permissions,
     ) -> Result<(), io::Error> {
-        self.impl_set_permissions(path.as_ref(), perm).await
+        self.impl_set_permissions(&native_path(path)?, perm).await
     }
 
     async fn set_times(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
     ) -> Result<(), io::Error> {
-        self.impl_set_times(path.as_ref(), accessed, modified, created)
+        self.impl_set_times(&native_path(path)?, accessed, modified, created)
             .await
     }
 
     async fn chown(
         &self,
-        path: impl AsRef<Path>,
+        path: Utf8TypedPath<'_>,
         user: Option<ChownIdentity>,
         group: Option<ChownIdentity>,
         follow: bool,
     ) -> Result<(), io::Error> {
-        self.impl_chown(path.as_ref(), user, group, follow).await
+        self.impl_chown(&native_path(path)?, user, group, follow)
+            .await
     }
 }
