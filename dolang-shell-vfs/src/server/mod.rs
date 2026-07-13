@@ -1,32 +1,40 @@
 use std::{
     collections::HashMap,
-    os::fd::AsRawFd,
-    os::unix::io::OwnedFd,
-    os::unix::process::ExitStatusExt,
-    path::Path,
+    process::ExitStatus,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
 
-use dolang_rpc::{CallContext, OsHandle};
+#[cfg(unix)]
+use std::path::Path;
+
+use dolang_rpc::{CallContext, DefaultHandle, OsHandle};
+#[cfg(unix)]
 use nix::sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, bind, connect, socket};
+#[cfg(unix)]
+use std::os::{fd::AsRawFd, unix::io::OwnedFd, unix::process::ExitStatusExt};
+use tokio::io;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::NamedPipeClient;
+#[cfg(unix)]
 use tokio::{
-    io,
     net::{UnixListener, UnixStream, unix::SocketAddr},
     sync::watch,
 };
 
+#[cfg(unix)]
+use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
 use crate::{
     Child as _, Command as _, Direct, OpenOptions as _, Permissions, Vfs,
     protocol::{
-        AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
-        CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
-        MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest,
-        RequestKind, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
-        SetXattrRequest, SpawnRequest, SymlinkRequest, UnixStreamSocketRequest, VfsProtocol,
-        WellKnownPathRequest, XattrRequest, XattrsRequest,
+        AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
+        FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
+        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind,
+        SetAttrsRequest, SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest,
+        StreamsRequest, SymlinkKind, SymlinkRequest, VfsProtocol, WellKnownPathRequest,
+        XattrRequest, XattrsRequest,
     },
 };
 
@@ -36,24 +44,28 @@ struct Connection {
 
 struct ServerState {
     direct: Direct,
+    #[cfg(unix)]
     shutdown_tx: watch::Sender<()>,
 }
 
-/// Agent server that accepts connections and handles spawn requests.
-///
-/// Created via [`Server::bind`] or [`Server::from_listener`].
+/// Agent server that handles VFS RPC requests.
 pub struct Server {
+    #[cfg(unix)]
     listener: UnixListener,
+    #[cfg(windows)]
+    rpc: dolang_rpc::Server<VfsProtocol>,
     shared: Arc<ServerState>,
 }
 
 impl Server {
     /// Bind to a socket path and create a server.
+    #[cfg(unix)]
     pub async fn bind(path: impl AsRef<Path>) -> Result<Self, io::Error> {
         Ok(Self::from_listener(UnixListener::bind(path)?))
     }
 
     /// Create a server from an existing `UnixListener`.
+    #[cfg(unix)]
     fn from_listener(listener: UnixListener) -> Self {
         let (shutdown_tx, _) = watch::channel(());
         Self {
@@ -65,6 +77,18 @@ impl Server {
         }
     }
 
+    /// Creates a VFS RPC server on the client end of a connected Windows named pipe.
+    #[cfg(windows)]
+    pub fn from_named_pipe_client(pipe: NamedPipeClient) -> Result<Self, io::Error> {
+        Ok(Self {
+            rpc: dolang_rpc::Server::from_named_pipe_client(pipe)?,
+            shared: Arc::new(ServerState {
+                direct: Direct::default(),
+            }),
+        })
+    }
+
+    #[cfg(unix)]
     fn handle_accept(&self, res: io::Result<(UnixStream, SocketAddr)>) -> Result<(), io::Error> {
         let (stream, _) = res?;
         let rpc = dolang_rpc::Server::<VfsProtocol>::from_unix_stream(stream.into_std()?)?;
@@ -75,17 +99,7 @@ impl Server {
             let stop = Arc::new(AtomicBool::new(false));
             let stop_handler = stop.clone();
             let handler = connection.clone();
-            let _ = rpc
-                .serve(async move |context, request| match request {
-                    RequestKind::Spawn(request) => handler.handle_spawn_rpc(context, request).await,
-                    RequestKind::Stop => {
-                        stop_handler.store(true, Ordering::Release);
-                        context.shutdown();
-                        ResponseKind::Stop
-                    }
-                    request => handler.handle(request).await,
-                })
-                .await;
+            let _ = serve_connection(rpc, handler, stop_handler).await;
             if stop.load(Ordering::Acquire) {
                 let _ = connection.server.shutdown_tx.send(());
             }
@@ -96,6 +110,7 @@ impl Server {
     /// Accept incoming connections in an infinite loop.
     ///
     /// Each connection spawns a handler task that processes requests.
+    #[cfg(unix)]
     pub async fn accept(&self) -> Result<(), io::Error> {
         let mut shutdown_rx = self.shared.shutdown_tx.subscribe();
 
@@ -110,11 +125,52 @@ impl Server {
             }
         }
     }
+
+    /// Serves one connected Windows named-pipe session.
+    #[cfg(windows)]
+    pub async fn serve(self) -> Result<(), io::Error> {
+        let connection = Arc::new(Connection {
+            server: self.shared,
+        });
+        let stop = Arc::new(AtomicBool::new(false));
+        match serve_connection(self.rpc, connection, stop).await {
+            Ok(()) => Ok(()),
+            Err(dolang_rpc::Error::ConnectionClosed) => Ok(()),
+            Err(dolang_rpc::Error::Io(error))
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::UnexpectedEof
+                        | io::ErrorKind::BrokenPipe
+                        | io::ErrorKind::ConnectionReset
+                ) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(io::Error::other(error)),
+        }
+    }
+}
+
+async fn serve_connection(
+    rpc: dolang_rpc::Server<VfsProtocol>,
+    connection: Arc<Connection>,
+    stop: Arc<AtomicBool>,
+) -> Result<(), dolang_rpc::Error> {
+    rpc.serve(async move |context, request| match request {
+        RequestKind::Spawn(request) => connection.handle_spawn_rpc(context, request).await,
+        RequestKind::Stop => {
+            stop.store(true, Ordering::Release);
+            context.shutdown();
+            ResponseKind::Stop
+        }
+        request => connection.handle(request).await,
+    })
+    .await
 }
 
 impl Connection {
     fn io_result<T>(result: io::Result<T>) -> Result<T, i32> {
-        result.map_err(|e| e.raw_os_error().unwrap_or(libc::EIO))
+        result.map_err(io_error_code)
     }
 
     async fn handle(&self, kind: RequestKind) -> ResponseKind {
@@ -130,7 +186,10 @@ impl Connection {
                 ResponseKind::ClearCache
             }
             RequestKind::Open(request) => self.handle_open(request).await,
+            #[cfg(unix)]
             RequestKind::UnixStreamSocket(request) => self.handle_unix_stream_socket(request).await,
+            #[cfg(windows)]
+            RequestKind::ReadDir { path } => self.handle_read_dir(path).await,
             RequestKind::Remove(request) => self.handle_remove(request).await,
             RequestKind::Metadata(request) => self.handle_metadata(request).await,
             RequestKind::FsMetadata(request) => self.handle_fs_metadata(request).await,
@@ -146,6 +205,7 @@ impl Connection {
             RequestKind::SetAttrs(request) => self.handle_set_attrs(request).await,
             RequestKind::Canonicalize(request) => self.handle_canonicalize(request).await,
             RequestKind::ReadLink(request) => self.handle_read_link(request).await,
+            #[cfg(unix)]
             RequestKind::Access(request) => self.handle_access(request).await,
             RequestKind::Glob(request) => self.handle_glob(request).await,
             RequestKind::SetPermissions(request) => self.handle_set_permissions(request).await,
@@ -155,6 +215,7 @@ impl Connection {
             RequestKind::Xattr(request) => self.handle_xattr(request).await,
             RequestKind::SetXattr(request) => self.handle_set_xattr(request).await,
             RequestKind::RemoveXattr(request) => self.handle_remove_xattr(request).await,
+            RequestKind::Streams(request) => self.handle_streams(request).await,
         }
     }
 
@@ -175,7 +236,7 @@ impl Connection {
 
     async fn handle_well_known_path(&self, req: WellKnownPathRequest) -> ResponseKind {
         let result = self.server.direct.well_known_path(req.key, &req.env).await;
-        ResponseKind::WellKnownPath(result.map_err(|e| e.raw_os_error().unwrap_or(libc::EIO)))
+        ResponseKind::WellKnownPath(result.map_err(io_error_code))
     }
 
     async fn handle_spawn_rpc(
@@ -203,18 +264,18 @@ impl Connection {
             };
         }
 
-        if let Some(fd) = req.stdin_fd {
-            cmd.stdin_fd(fd.into_inner());
+        if let Some(handle) = req.stdin_fd {
+            cmd.stdin_handle(handle.into_inner());
         } else {
             cmd.stdin_null();
         }
-        if let Some(fd) = req.stdout_fd {
-            cmd.stdout_fd(fd.into_inner());
+        if let Some(handle) = req.stdout_fd {
+            cmd.stdout_handle(handle.into_inner());
         } else {
             cmd.stdout_null();
         }
-        if let Some(fd) = req.stderr_fd {
-            cmd.stderr_fd(fd.into_inner());
+        if let Some(handle) = req.stderr_fd {
+            cmd.stderr_handle(handle.into_inner());
         } else {
             cmd.stderr_null();
         }
@@ -222,8 +283,7 @@ impl Connection {
         let mut child = match cmd.spawn().await {
             Ok(child) => child,
             Err(e) => {
-                let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                return ResponseKind::Spawn(Err(errno));
+                return ResponseKind::Spawn(Err(io_error_code(e)));
             }
         };
 
@@ -231,11 +291,7 @@ impl Connection {
             Ok(exit) => exit,
             Err(_) => child.terminate().await,
         };
-        let code = match exit {
-            Ok(status) => status.into_raw(),
-            Err(_) => -1,
-        };
-        ResponseKind::Spawn(Ok(code))
+        ResponseKind::Spawn(exit.map(exit_status_to_raw).map_err(io_error_code))
     }
 
     async fn handle_query(&self) -> ResponseKind {
@@ -256,16 +312,28 @@ impl Connection {
 
         match opts.open(&req.path).await {
             Ok(file) => {
-                let fd = OsHandle::new(OwnedFd::from(file.into_std().await));
-                ResponseKind::Open(Ok(fd))
+                let handle: DefaultHandle = file.into_std().await.into();
+                ResponseKind::Open(Ok(OsHandle::new(handle)))
             }
-            Err(e) => {
-                let errno = e.raw_os_error().unwrap_or(libc::EIO);
-                ResponseKind::Open(Err(errno))
-            }
+            Err(e) => ResponseKind::Open(Err(io_error_code(e))),
         }
     }
 
+    #[cfg(windows)]
+    async fn handle_read_dir(&self, path: std::path::PathBuf) -> ResponseKind {
+        let result = async {
+            let mut read_dir = self.server.direct.read_dir(path).await?;
+            let mut entries = Vec::new();
+            while let Some(entry) = read_dir.next_entry().await? {
+                entries.push(entry);
+            }
+            Ok(entries)
+        }
+        .await;
+        ResponseKind::ReadDir(Self::io_result(result))
+    }
+
+    #[cfg(unix)]
     async fn handle_unix_stream_socket(&self, req: UnixStreamSocketRequest) -> ResponseKind {
         let result = tokio::task::spawn_blocking(move || {
             let fd = socket(
@@ -351,12 +419,17 @@ impl Connection {
     }
 
     async fn handle_symlink(&self, req: SymlinkRequest) -> ResponseKind {
-        ResponseKind::Symlink(Self::io_result(
-            self.server
-                .direct
-                .symlink(Path::new(""), &req.src, &req.dst)
-                .await,
-        ))
+        let result = match req.kind {
+            SymlinkKind::Infer => {
+                self.server
+                    .direct
+                    .symlink(&req.cwd, &req.src, &req.dst)
+                    .await
+            }
+            SymlinkKind::Dir => self.server.direct.symlink_dir(&req.src, &req.dst).await,
+            SymlinkKind::File => self.server.direct.symlink_file(&req.src, &req.dst).await,
+        };
+        ResponseKind::Symlink(Self::io_result(result))
     }
 
     async fn handle_hard_link(&self, req: HardLinkRequest) -> ResponseKind {
@@ -395,6 +468,7 @@ impl Connection {
         ))
     }
 
+    #[cfg(unix)]
     async fn handle_access(&self, req: AccessRequest) -> ResponseKind {
         use nix::unistd::{AccessFlags, access};
 
@@ -498,4 +572,28 @@ impl Connection {
                 .await,
         ))
     }
+
+    async fn handle_streams(&self, req: StreamsRequest) -> ResponseKind {
+        ResponseKind::Streams(Self::io_result(
+            self.server.direct.streams(&req.path, req.follow).await,
+        ))
+    }
+}
+
+fn io_error_code(error: io::Error) -> i32 {
+    #[cfg(unix)]
+    let fallback = libc::EIO;
+    #[cfg(windows)]
+    let fallback = windows_sys::Win32::Foundation::ERROR_GEN_FAILURE as i32;
+    error.raw_os_error().unwrap_or(fallback)
+}
+
+#[cfg(unix)]
+fn exit_status_to_raw(status: ExitStatus) -> i32 {
+    status.into_raw()
+}
+
+#[cfg(windows)]
+fn exit_status_to_raw(status: ExitStatus) -> i32 {
+    status.code().unwrap_or(-1)
 }

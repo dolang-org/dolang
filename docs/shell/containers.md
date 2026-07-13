@@ -32,7 +32,7 @@ stdin/stdout/stderr to be piped between host and container.
     ```
     import shell: Vfs
 
-    let a = Vfs unix_socket: $vfsdir/socket
+    let a = Vfs.unix_socket $vfsdir/socket
     a do
       run.cat /etc/os-release
     a.stop
@@ -80,7 +80,7 @@ import shell:
   - Vfs
   - host
 
-let a = Vfs unix_socket: /tmp/container/socket
+let a = Vfs.unix_socket /tmp/container/socket
 
 a do
   # Inside container context
@@ -96,5 +96,5 @@ a do
   run.echo "Container directory: $(cd())"
 ```
 
-Note: The `host` function is available on all platforms, but `Vfs` is only
-available on Unix platforms.
+The `Vfs.unix_socket` class method is available only on Unix. Windows
+provides `Vfs.windows_admin()` for an elevated local context instead.

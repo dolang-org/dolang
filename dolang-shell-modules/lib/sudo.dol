@@ -27,7 +27,7 @@ do
         $agent $socket
       do
         strand.next()
-        let a = Vfs unix_socket: $socket
+        let a = Vfs.unix_socket $socket
         return a $thunk
 
 def run_command

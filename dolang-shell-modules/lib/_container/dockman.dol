@@ -355,7 +355,7 @@ pub class Runtime
           $ctr $ctr_socket
         do
           strand.next()
-          let agent = Vfs unix_socket: $socket
+          let agent = Vfs.unix_socket $socket
           return agent $thunk
 
   def run_direct self ctr cmd argv
@@ -659,7 +659,7 @@ pub class Builder
       $self.#ctr_agent $self.#ctr_socket
     self.#wait_socket()
     self.#ctr_id = ctr_id
-    self.#agent = Vfs unix_socket: $self.#socket
+    self.#agent = Vfs.unix_socket $self.#socket
 
   def cleanup self
     if self.#agent

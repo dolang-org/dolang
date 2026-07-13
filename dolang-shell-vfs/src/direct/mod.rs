@@ -6,9 +6,6 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(unix)]
-use std::os::fd::OwnedFd;
-
 use tokio::{
     fs::{self, File, OpenOptions},
     process::Command as TokioCommand,
@@ -21,8 +18,8 @@ use wax::{
 };
 
 use crate::{
-    Attrs, Child, ChownIdentity, Command, FsMetadata, Metadata, Permissions, PipeRecv, PipeSend,
-    ReadDir, StreamEntry, Vfs, WellKnownPath, XattrEntry, XattrNamespace,
+    Attrs, Child, ChownIdentity, Command, DefaultHandle, FsMetadata, Metadata, Permissions,
+    PipeRecv, PipeSend, ReadDir, StreamEntry, Vfs, WellKnownPath, XattrEntry, XattrNamespace,
 };
 
 #[cfg(unix)]
@@ -215,15 +212,13 @@ impl Command for DirectCommand<'_> {
         Ok(self)
     }
 
-    #[cfg(unix)]
-    fn stdin_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        self.stdin = Some(Stdio::from(fd));
+    fn stdin_handle(&mut self, handle: DefaultHandle) -> &mut Self {
+        self.stdin = Some(Stdio::from(handle));
         self
     }
 
-    #[cfg(unix)]
-    fn stdout_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        self.stdout = Some(Stdio::from(fd));
+    fn stdout_handle(&mut self, handle: DefaultHandle) -> &mut Self {
+        self.stdout = Some(Stdio::from(handle));
         self
     }
 
@@ -251,9 +246,8 @@ impl Command for DirectCommand<'_> {
         self.impl_stderr_inherit_stdout()
     }
 
-    #[cfg(unix)]
-    fn stderr_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        self.stderr = Some(Stdio::from(fd));
+    fn stderr_handle(&mut self, handle: DefaultHandle) -> &mut Self {
+        self.stderr = Some(Stdio::from(handle));
         self
     }
 

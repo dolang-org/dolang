@@ -23,7 +23,14 @@ pub struct ReadDir {
 #[cfg(windows)]
 #[derive(Debug)]
 pub struct ReadDir {
-    inner: tokio::fs::ReadDir,
+    inner: WindowsReadDir,
+}
+
+#[cfg(windows)]
+#[derive(Debug)]
+enum WindowsReadDir {
+    Direct(Box<tokio::fs::ReadDir>),
+    Remote(std::vec::IntoIter<DirEntry>),
 }
 
 #[cfg(unix)]
@@ -101,12 +108,24 @@ impl ReadDir {
 impl ReadDir {
     pub(crate) async fn open(path: &Path) -> io::Result<Self> {
         Ok(Self {
-            inner: tokio::fs::read_dir(path).await?,
+            inner: WindowsReadDir::Direct(Box::new(tokio::fs::read_dir(path).await?)),
         })
     }
 
+    pub(crate) fn from_entries(entries: Vec<DirEntry>) -> Self {
+        Self {
+            inner: WindowsReadDir::Remote(entries.into_iter()),
+        }
+    }
+
     pub async fn next_entry(&mut self) -> io::Result<Option<DirEntry>> {
-        let Some(entry) = self.inner.next_entry().await? else {
+        let WindowsReadDir::Direct(inner) = &mut self.inner else {
+            let WindowsReadDir::Remote(entries) = &mut self.inner else {
+                unreachable!()
+            };
+            return Ok(entries.next());
+        };
+        let Some(entry) = inner.next_entry().await? else {
             return Ok(None);
         };
         let file_type = entry.file_type().await?;

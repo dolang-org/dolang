@@ -1,29 +1,42 @@
 use std::{
     collections::HashMap,
     io,
-    os::unix::{
-        io::{AsFd, OwnedFd},
-        net::UnixStream as StdUnixStream,
-        process::ExitStatusExt,
-    },
     path::{Path, PathBuf},
     process::ExitStatus,
 };
 
-use dolang_rpc::{Call, OsHandle};
-use tokio::{fs::File, net::UnixStream};
+#[cfg(unix)]
+use std::os::unix::{
+    io::{AsFd, OwnedFd},
+    net::UnixStream as StdUnixStream,
+    process::ExitStatusExt,
+};
+#[cfg(windows)]
+use std::os::windows::{
+    io::{AsHandle, OwnedHandle},
+    process::ExitStatusExt,
+};
 
+use dolang_rpc::{Call, DefaultHandle, OsHandle};
+use tokio::fs::File;
+#[cfg(unix)]
+use tokio::net::UnixStream;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::NamedPipeServer;
+
+#[cfg(unix)]
+use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
 use crate::{
     Attrs, Child, ChownIdentity, Command, FsMetadata, Metadata, Permissions, PipeRecv, PipeSend,
     ReadDir, StreamEntry, Vfs, WellKnownPath, XattrEntry,
     direct::Direct,
     protocol::{
-        AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
-        CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
-        MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest,
-        RequestKind, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
-        SetXattrRequest, SpawnRequest, SymlinkRequest, Timestamp, UnixStreamSocketRequest,
-        VfsProtocol, WellKnownPathRequest, XattrRequest, XattrsRequest,
+        AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
+        FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
+        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind,
+        SetAttrsRequest, SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest,
+        StreamsRequest, SymlinkKind, SymlinkRequest, Timestamp, VfsProtocol, WellKnownPathRequest,
+        XattrRequest, XattrsRequest,
     },
 };
 
@@ -44,17 +57,38 @@ pub struct Client {
 
 impl Client {
     /// Connect to an agent daemon at the given socket path.
+    #[cfg(unix)]
     pub async fn connect(path: impl AsRef<Path>) -> Result<Self, io::Error> {
         Self::from_stream(UnixStream::connect(path).await?).await
     }
 
     /// Connect using an existing `UnixStream`.
+    #[cfg(unix)]
     pub async fn from_stream(stream: UnixStream) -> Result<Self, io::Error> {
         Self::from_std_stream(stream.into_std()?)
     }
 
+    #[cfg(unix)]
     fn from_std_stream(stream: StdUnixStream) -> Result<Self, io::Error> {
         let rpc = dolang_rpc::Client::from_unix_stream(stream)?;
+        Ok(Self {
+            rpc,
+            direct: Direct::default(),
+        })
+    }
+
+    /// Starts a VFS client on the server end of a connected Windows named pipe.
+    ///
+    /// # Safety
+    ///
+    /// `server_process` must identify the trusted process at the other end of
+    /// the pipe. That process can transfer handles which this process adopts.
+    #[cfg(windows)]
+    pub unsafe fn from_named_pipe_server(
+        pipe: NamedPipeServer,
+        server_process: OwnedHandle,
+    ) -> Result<Self, io::Error> {
+        let rpc = unsafe { dolang_rpc::Client::from_named_pipe_server(pipe, server_process)? };
         Ok(Self {
             rpc,
             direct: Direct::default(),
@@ -74,6 +108,7 @@ impl Client {
     /// If `bind` is provided, the socket is bound to that pathname first. If `connect`
     /// is provided, the socket is then connected to that pathname. Either or both may
     /// be omitted.
+    #[cfg(unix)]
     pub async fn unix_stream_socket<B, C>(
         &self,
         bind: Option<B>,
@@ -103,6 +138,7 @@ impl Client {
     /// - `AccessFlags::R_OK`: Test for read permission
     /// - `AccessFlags::W_OK`: Test for write permission
     /// - `AccessFlags::X_OK`: Test for execute permission
+    #[cfg(unix)]
     pub async fn access(
         &self,
         path: impl AsRef<Path>,
@@ -176,6 +212,7 @@ impl Client {
     }
 }
 
+#[cfg(unix)]
 impl TryFrom<OwnedFd> for Client {
     type Error = io::Error;
 
@@ -203,6 +240,49 @@ fn unexpected(response: ResponseKind) -> io::Error {
     io::Error::other(format!("unexpected RPC response: {response:?}"))
 }
 
+#[cfg(unix)]
+fn exit_status_from_raw(raw: i32) -> ExitStatus {
+    ExitStatus::from_raw(raw)
+}
+
+#[cfg(windows)]
+fn exit_status_from_raw(raw: i32) -> ExitStatus {
+    ExitStatus::from_raw(raw as u32)
+}
+
+fn clone_stdin_handle() -> io::Result<DefaultHandle> {
+    #[cfg(unix)]
+    {
+        std::io::stdin().as_fd().try_clone_to_owned()
+    }
+    #[cfg(windows)]
+    {
+        std::io::stdin().as_handle().try_clone_to_owned()
+    }
+}
+
+fn clone_stdout_handle() -> io::Result<DefaultHandle> {
+    #[cfg(unix)]
+    {
+        std::io::stdout().as_fd().try_clone_to_owned()
+    }
+    #[cfg(windows)]
+    {
+        std::io::stdout().as_handle().try_clone_to_owned()
+    }
+}
+
+fn clone_stderr_handle() -> io::Result<DefaultHandle> {
+    #[cfg(unix)]
+    {
+        std::io::stderr().as_fd().try_clone_to_owned()
+    }
+    #[cfg(windows)]
+    {
+        std::io::stderr().as_handle().try_clone_to_owned()
+    }
+}
+
 /// Builder for constructing spawn requests.
 ///
 /// # Example
@@ -225,9 +305,9 @@ pub struct CommandBuilder<'a> {
     args: Vec<String>,
     env: HashMap<String, Option<String>>,
     cwd: Option<PathBuf>,
-    stdin_fd: Option<OwnedFd>,
-    stdout_fd: Option<OwnedFd>,
-    stderr_fd: Option<OwnedFd>,
+    stdin_handle: Option<DefaultHandle>,
+    stdout_handle: Option<DefaultHandle>,
+    stderr_handle: Option<DefaultHandle>,
 }
 
 pub struct ClientChild<'a> {
@@ -243,9 +323,9 @@ impl<'a> CommandBuilder<'a> {
             args: Vec::new(),
             env: HashMap::new(),
             cwd: None,
-            stdin_fd: None,
-            stdout_fd: None,
-            stderr_fd: None,
+            stdin_handle: None,
+            stdout_handle: None,
+            stderr_handle: None,
         }
     }
 }
@@ -258,7 +338,7 @@ impl Child for ClientChild<'_> {
         }?;
         match result {
             ResponseKind::Spawn(result) => result
-                .map(ExitStatus::from_raw)
+                .map(exit_status_from_raw)
                 .map_err(io::Error::from_raw_os_error),
             response => Err(unexpected(response)),
         }
@@ -271,7 +351,7 @@ impl Child for ClientChild<'_> {
         inner.cancel();
         match inner.await.map_err(rpc_error)? {
             ResponseKind::Spawn(result) => result
-                .map(ExitStatus::from_raw)
+                .map(exit_status_from_raw)
                 .map_err(io::Error::from_raw_os_error),
             response => Err(unexpected(response)),
         }
@@ -302,67 +382,67 @@ impl<'a> Command for CommandBuilder<'a> {
     }
 
     fn stdin_pipe(&mut self, pipe: PipeRecv) -> io::Result<&mut Self> {
-        self.stdin_fd = Some(pipe.into_blocking_fd()?);
+        self.stdin_handle = Some(pipe.into_blocking_handle()?);
         Ok(self)
     }
 
     fn stdout_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
-        self.stdout_fd = Some(pipe.into_blocking_fd()?);
+        self.stdout_handle = Some(pipe.into_blocking_handle()?);
         Ok(self)
     }
 
     fn stdin_inherit(&mut self) -> io::Result<&mut Self> {
-        self.stdin_fd = Some(std::io::stdin().as_fd().try_clone_to_owned()?);
+        self.stdin_handle = Some(clone_stdin_handle()?);
         Ok(self)
     }
 
     fn stdout_inherit(&mut self) -> io::Result<&mut Self> {
-        self.stdout_fd = Some(std::io::stdout().as_fd().try_clone_to_owned()?);
+        self.stdout_handle = Some(clone_stdout_handle()?);
         Ok(self)
     }
 
-    fn stdin_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        self.stdin_fd = Some(fd);
+    fn stdin_handle(&mut self, handle: DefaultHandle) -> &mut Self {
+        self.stdin_handle = Some(handle);
         self
     }
 
-    fn stdout_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        self.stdout_fd = Some(fd);
+    fn stdout_handle(&mut self, handle: DefaultHandle) -> &mut Self {
+        self.stdout_handle = Some(handle);
         self
     }
 
     fn stdin_null(&mut self) -> &mut Self {
-        self.stdin_fd = None;
+        self.stdin_handle = None;
         self
     }
 
     fn stdout_null(&mut self) -> &mut Self {
-        self.stdout_fd = None;
+        self.stdout_handle = None;
         self
     }
 
     fn stderr_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
-        self.stderr_fd = Some(pipe.into_blocking_fd()?);
+        self.stderr_handle = Some(pipe.into_blocking_handle()?);
         Ok(self)
     }
 
     fn stderr_inherit(&mut self) -> io::Result<&mut Self> {
-        self.stderr_fd = Some(std::io::stderr().as_fd().try_clone_to_owned()?);
+        self.stderr_handle = Some(clone_stderr_handle()?);
         Ok(self)
     }
 
     fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self> {
-        self.stderr_fd = Some(std::io::stdout().as_fd().try_clone_to_owned()?);
+        self.stderr_handle = Some(clone_stdout_handle()?);
         Ok(self)
     }
 
-    fn stderr_fd(&mut self, fd: OwnedFd) -> &mut Self {
-        self.stderr_fd = Some(fd);
+    fn stderr_handle(&mut self, handle: DefaultHandle) -> &mut Self {
+        self.stderr_handle = Some(handle);
         self
     }
 
     fn stderr_null(&mut self) -> &mut Self {
-        self.stderr_fd = None;
+        self.stderr_handle = None;
         self
     }
 
@@ -372,9 +452,9 @@ impl<'a> Command for CommandBuilder<'a> {
             args: self.args,
             env: self.env,
             cwd: self.cwd,
-            stdin_fd: self.stdin_fd.map(OsHandle::new),
-            stdout_fd: self.stdout_fd.map(OsHandle::new),
-            stderr_fd: self.stderr_fd.map(OsHandle::new),
+            stdin_fd: self.stdin_handle.map(OsHandle::new),
+            stdout_fd: self.stdout_handle.map(OsHandle::new),
+            stderr_fd: self.stderr_handle.map(OsHandle::new),
         };
         Ok(ClientChild {
             inner: Some(self.client.call(RequestKind::Spawn(req))),
@@ -538,8 +618,25 @@ impl Vfs for Client {
     }
 
     async fn read_dir(&self, path: impl AsRef<Path>) -> Result<ReadDir, io::Error> {
-        let file = self.open_options().read(true).open(path.as_ref()).await?;
-        ReadDir::from_fd(file.into_std().await.into())
+        #[cfg(unix)]
+        {
+            let file = self.open_options().read(true).open(path.as_ref()).await?;
+            ReadDir::from_fd(file.into_std().await.into())
+        }
+        #[cfg(windows)]
+        {
+            match self
+                .request(RequestKind::ReadDir {
+                    path: path.as_ref().to_path_buf(),
+                })
+                .await?
+            {
+                ResponseKind::ReadDir(result) => result
+                    .map(ReadDir::from_entries)
+                    .map_err(io::Error::from_raw_os_error),
+                response => Err(unexpected(response)),
+            }
+        }
     }
 
     async fn which(
@@ -631,7 +728,14 @@ impl Vfs for Client {
         path: impl AsRef<Path>,
         follow: bool,
     ) -> Result<Vec<StreamEntry>, io::Error> {
-        self.direct.streams(path, follow).await
+        let request = StreamsRequest {
+            path: path.as_ref().to_path_buf(),
+            follow,
+        };
+        match self.request(RequestKind::Streams(request)).await? {
+            ResponseKind::Streams(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
+        }
     }
 
     async fn xattr(
@@ -810,13 +914,15 @@ impl Vfs for Client {
 
     async fn symlink(
         &self,
-        _cwd: impl AsRef<Path>,
+        cwd: impl AsRef<Path>,
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
     ) -> Result<(), io::Error> {
         let request = SymlinkRequest {
+            cwd: cwd.as_ref().to_path_buf(),
             src: src.as_ref().to_path_buf(),
             dst: dst.as_ref().to_path_buf(),
+            kind: SymlinkKind::Infer,
         };
         match self.request(RequestKind::Symlink(request)).await? {
             ResponseKind::Symlink(result) => result.map_err(io::Error::from_raw_os_error),
@@ -844,7 +950,16 @@ impl Vfs for Client {
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
     ) -> Result<(), io::Error> {
-        self.symlink(Path::new(""), src, dst).await
+        let request = SymlinkRequest {
+            cwd: PathBuf::new(),
+            src: src.as_ref().to_path_buf(),
+            dst: dst.as_ref().to_path_buf(),
+            kind: SymlinkKind::Dir,
+        };
+        match self.request(RequestKind::Symlink(request)).await? {
+            ResponseKind::Symlink(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
+        }
     }
 
     async fn symlink_file(
@@ -852,7 +967,16 @@ impl Vfs for Client {
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
     ) -> Result<(), io::Error> {
-        self.symlink(Path::new(""), src, dst).await
+        let request = SymlinkRequest {
+            cwd: PathBuf::new(),
+            src: src.as_ref().to_path_buf(),
+            dst: dst.as_ref().to_path_buf(),
+            kind: SymlinkKind::File,
+        };
+        match self.request(RequestKind::Symlink(request)).await? {
+            ResponseKind::Symlink(result) => result.map_err(io::Error::from_raw_os_error),
+            response => Err(unexpected(response)),
+        }
     }
 
     async fn symlink_metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {

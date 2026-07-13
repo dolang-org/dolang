@@ -1,37 +1,31 @@
-import test:
-  - assert_eq
-  - skip
-
-import sys
-
-if (sys.os_info().family == :WINDOWS:)
-  skip "requires Unix"
-
-import agent
-
-import shell:
-  - host
+import sys agent
+  test:
+    - assert_eq
+    - skip
+    - test
+  shell:
+    - Vfs
+    - host
+  fs:
+    - with_temp_dir
 
 let launch_cwd = cd()
 
 #[agent.test]
 def resets_context_to_defaults()
-  let original_cwd = cd()
+  # Change directory, re-enter host context
+  with_temp_dir do |dir| cd $dir do host do
+    # Should be back to original directory
+    assert_eq $cd() $launch_cwd
 
-  # Change directory
-  cd /tmp
-  let changed_cwd = cd()
-  assert_eq (str changed_cwd) "/tmp"
+#[test]
+def windows_admin_captures_current_cwd()
+  if (sys.os_info().family != :WINDOWS:)
+    skip "requires Windows"
 
-  # Use host function to reset to defaults
-  host do
-    let reset_cwd = cd()
-    # Should be back to original, not /tmp
-    assert_eq $reset_cwd $launch_cwd
-
-  # Verify we're back to changed state
-  let final_cwd = cd()
-  assert_eq (str final_cwd) "/tmp"
-
-  # Restore original directory
-  cd $original_cwd
+  let dir = (launch_cwd / "test")
+  let vfs = cd $dir do Vfs.windows_admin elevate: false
+  try
+    vfs do assert_eq $cd() $dir
+  finally
+    vfs.stop()

@@ -50,7 +50,7 @@ do
         DOLANG_SHELL_VFS: $agent
     do
       strand.next()
-      let agent = Vfs unix_socket: $socket
+      let agent = Vfs.unix_socket $socket
       try
         return agent $thunk
       finally

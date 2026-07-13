@@ -1,11 +1,10 @@
 #![deny(warnings)]
 #![allow(async_fn_in_trait)]
 
+pub use dolang_rpc::DefaultHandle;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsString;
-#[cfg(unix)]
-use std::os::fd::OwnedFd;
 use std::{
     io,
     path::{Path, PathBuf},
@@ -15,17 +14,19 @@ use tokio::fs;
 #[cfg(windows)]
 use windows_sys::Win32::System::SystemServices::FILE_READ_ONLY_VOLUME;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod client;
 mod direct;
 mod pipe;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod protocol;
 mod read_dir;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod server;
 #[cfg(unix)]
 mod service;
+#[cfg(windows)]
+mod windows;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileType {
@@ -502,7 +503,7 @@ pub struct StreamEntry {
     pub alloc_size: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirEntry {
     file_name: OsString,
     ino: u64,
@@ -557,17 +558,14 @@ pub trait Command {
     fn stdout_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self>;
     fn stdin_inherit(&mut self) -> io::Result<&mut Self>;
     fn stdout_inherit(&mut self) -> io::Result<&mut Self>;
-    #[cfg(unix)]
-    fn stdin_fd(&mut self, fd: OwnedFd) -> &mut Self;
-    #[cfg(unix)]
-    fn stdout_fd(&mut self, fd: OwnedFd) -> &mut Self;
+    fn stdin_handle(&mut self, handle: DefaultHandle) -> &mut Self;
+    fn stdout_handle(&mut self, handle: DefaultHandle) -> &mut Self;
     fn stdin_null(&mut self) -> &mut Self;
     fn stdout_null(&mut self) -> &mut Self;
     fn stderr_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self>;
     fn stderr_inherit(&mut self) -> io::Result<&mut Self>;
     fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self>;
-    #[cfg(unix)]
-    fn stderr_fd(&mut self, fd: OwnedFd) -> &mut Self;
+    fn stderr_handle(&mut self, handle: DefaultHandle) -> &mut Self;
     fn stderr_null(&mut self) -> &mut Self;
     async fn spawn(self) -> io::Result<Self::Child>;
 }
@@ -748,13 +746,13 @@ pub trait Vfs {
 pub use direct::{Direct, DirectOpenOptions};
 pub use pipe::{PipeRecv, PipeSend, pipe};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub enum ClientOrDirectOpenOptions<'a> {
     Client(client::OpenOptions<'a>),
     Direct(DirectOpenOptions),
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl OpenOptions for ClientOrDirectOpenOptions<'_> {
     fn read(&mut self, read: bool) -> &mut Self {
         match self {
@@ -848,13 +846,13 @@ impl OpenOptions for ClientOrDirectOpenOptions<'_> {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub struct ClientOrDirectOpenOptions<'a> {
     inner: DirectOpenOptions,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl OpenOptions for ClientOrDirectOpenOptions<'_> {
     fn read(&mut self, read: bool) -> &mut Self {
         self.inner.read(read);
@@ -896,20 +894,19 @@ impl OpenOptions for ClientOrDirectOpenOptions<'_> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub enum ClientOrDirectCommand<'a> {
     Client(client::CommandBuilder<'a>),
     Direct(direct::DirectCommand<'a>),
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub enum ClientOrDirectChild<'a> {
     Client(client::ClientChild<'a>),
-    Direct(direct::DirectChild),
+    Direct(Box<direct::DirectChild>),
 }
 
-#[cfg(unix)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Child for ClientOrDirectChild<'_> {
     async fn wait(&mut self) -> Result<ExitStatus, io::Error> {
         match self {
@@ -921,12 +918,12 @@ impl Child for ClientOrDirectChild<'_> {
     async fn terminate(self) -> Result<ExitStatus, io::Error> {
         match self {
             Self::Client(child) => child.terminate().await,
-            Self::Direct(child) => child.terminate().await,
+            Self::Direct(child) => (*child).terminate().await,
         }
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl<'a> Command for ClientOrDirectCommand<'a> {
     type Child = ClientOrDirectChild<'a>;
 
@@ -1026,27 +1023,25 @@ impl<'a> Command for ClientOrDirectCommand<'a> {
         Ok(self)
     }
 
-    #[cfg(unix)]
-    fn stdin_fd(&mut self, fd: OwnedFd) -> &mut Self {
+    fn stdin_handle(&mut self, handle: DefaultHandle) -> &mut Self {
         match self {
             Self::Client(builder) => {
-                builder.stdin_fd(fd);
+                builder.stdin_handle(handle);
             }
             Self::Direct(builder) => {
-                builder.stdin_fd(fd);
+                builder.stdin_handle(handle);
             }
         }
         self
     }
 
-    #[cfg(unix)]
-    fn stdout_fd(&mut self, fd: OwnedFd) -> &mut Self {
+    fn stdout_handle(&mut self, handle: DefaultHandle) -> &mut Self {
         match self {
             Self::Client(builder) => {
-                builder.stdout_fd(fd);
+                builder.stdout_handle(handle);
             }
             Self::Direct(builder) => {
-                builder.stdout_fd(fd);
+                builder.stdout_handle(handle);
             }
         }
         self
@@ -1112,14 +1107,13 @@ impl<'a> Command for ClientOrDirectCommand<'a> {
         Ok(self)
     }
 
-    #[cfg(unix)]
-    fn stderr_fd(&mut self, fd: OwnedFd) -> &mut Self {
+    fn stderr_handle(&mut self, handle: DefaultHandle) -> &mut Self {
         match self {
             Self::Client(builder) => {
-                builder.stderr_fd(fd);
+                builder.stderr_handle(handle);
             }
             Self::Direct(builder) => {
-                builder.stderr_fd(fd);
+                builder.stderr_handle(handle);
             }
         }
         self
@@ -1140,25 +1134,28 @@ impl<'a> Command for ClientOrDirectCommand<'a> {
     async fn spawn(self) -> io::Result<Self::Child> {
         match self {
             Self::Client(builder) => builder.spawn().await.map(ClientOrDirectChild::Client),
-            Self::Direct(builder) => builder.spawn().await.map(ClientOrDirectChild::Direct),
+            Self::Direct(builder) => builder
+                .spawn()
+                .await
+                .map(Box::new)
+                .map(ClientOrDirectChild::Direct),
         }
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub struct ClientOrDirectCommand<'a> {
     inner: direct::DirectCommand<'a>,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub struct ClientOrDirectChild<'a> {
     inner: direct::DirectChild,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
-#[cfg(not(unix))]
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl Child for ClientOrDirectChild<'_> {
     async fn wait(&mut self) -> Result<ExitStatus, io::Error> {
         self.inner.wait().await
@@ -1169,7 +1166,7 @@ impl Child for ClientOrDirectChild<'_> {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl<'a> Command for ClientOrDirectCommand<'a> {
     type Child = ClientOrDirectChild<'a>;
 
@@ -1251,25 +1248,25 @@ impl<'a> Command for ClientOrDirectCommand<'a> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Clone)]
 pub enum ClientOrDirect {
     Client(client::Client),
     Direct(Direct),
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 #[derive(Clone, Default)]
 pub struct ClientOrDirect(Direct);
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Default for ClientOrDirect {
     fn default() -> Self {
         Self::Direct(Direct::default())
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl From<client::Client> for ClientOrDirect {
     fn from(value: client::Client) -> Self {
         Self::Client(value)
@@ -1278,18 +1275,18 @@ impl From<client::Client> for ClientOrDirect {
 
 impl From<Direct> for ClientOrDirect {
     fn from(value: Direct) -> Self {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             Self::Direct(value)
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             Self(value)
         }
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl ClientOrDirect {
     pub fn as_client(&self) -> Option<&client::Client> {
         match self {
@@ -1317,14 +1314,14 @@ impl Vfs for ClientOrDirect {
         Self: 'a;
 
     fn open_options(&self) -> Self::OpenOptions<'_> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => ClientOrDirectOpenOptions::Client(client.open_options()),
                 Self::Direct(direct) => ClientOrDirectOpenOptions::Direct(direct.open_options()),
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             ClientOrDirectOpenOptions {
                 inner: self.0.open_options(),
@@ -1335,14 +1332,14 @@ impl Vfs for ClientOrDirect {
 
     fn command(&self, program: impl AsRef<Path>) -> Self::Command<'_> {
         let program = program.as_ref().to_path_buf();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => ClientOrDirectCommand::Client(client.command(&program)),
                 Self::Direct(direct) => ClientOrDirectCommand::Direct(direct.command(&program)),
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             ClientOrDirectCommand {
                 inner: self.0.command(&program),
@@ -1352,14 +1349,14 @@ impl Vfs for ClientOrDirect {
     }
 
     async fn read_dir(&self, path: impl AsRef<Path>) -> Result<ReadDir, io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.read_dir(path).await,
                 Self::Direct(direct) => direct.read_dir(path).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.read_dir(path).await
         }
@@ -1372,14 +1369,14 @@ impl Vfs for ClientOrDirect {
         cwd: Option<&Path>,
     ) -> Result<Option<PathBuf>, io::Error> {
         let program = program.as_ref().to_path_buf();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.which(&program, path, cwd).await,
                 Self::Direct(direct) => direct.which(&program, path, cwd).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.which(&program, path, cwd).await
         }
@@ -1390,28 +1387,28 @@ impl Vfs for ClientOrDirect {
         key: WellKnownPath,
         env: &HashMap<String, Option<String>>,
     ) -> Result<PathBuf, io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.well_known_path(key, env).await,
                 Self::Direct(direct) => direct.well_known_path(key, env).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.well_known_path(key, env).await
         }
     }
 
     async fn clear_cache(&self) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.clear_cache().await,
                 Self::Direct(direct) => direct.clear_cache().await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.clear_cache().await
         }
@@ -1422,14 +1419,14 @@ impl Vfs for ClientOrDirect {
         file: &fs::File,
         namespace: XattrNamespace<'_>,
     ) -> Result<Vec<XattrEntry>, io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.file_xattrs(file, namespace).await,
                 Self::Direct(direct) => direct.file_xattrs(file, namespace).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.file_xattrs(file, namespace).await
         }
@@ -1441,28 +1438,28 @@ impl Vfs for ClientOrDirect {
         name: &str,
         namespace: Option<&str>,
     ) -> Result<Vec<u8>, io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.file_xattr(file, name, namespace).await,
                 Self::Direct(direct) => direct.file_xattr(file, name, namespace).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.file_xattr(file, name, namespace).await
         }
     }
 
     async fn file_streams(&self, file: &fs::File) -> Result<Vec<StreamEntry>, io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.file_streams(file).await,
                 Self::Direct(direct) => direct.file_streams(file).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.file_streams(file).await
         }
@@ -1475,14 +1472,14 @@ impl Vfs for ClientOrDirect {
         namespace: Option<&str>,
         value: &[u8],
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.file_set_xattr(file, name, namespace, value).await,
                 Self::Direct(direct) => direct.file_set_xattr(file, name, namespace, value).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.file_set_xattr(file, name, namespace, value).await
         }
@@ -1494,14 +1491,14 @@ impl Vfs for ClientOrDirect {
         name: &str,
         namespace: Option<&str>,
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.file_remove_xattr(file, name, namespace).await,
                 Self::Direct(direct) => direct.file_remove_xattr(file, name, namespace).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.file_remove_xattr(file, name, namespace).await
         }
@@ -1514,14 +1511,14 @@ impl Vfs for ClientOrDirect {
         follow: bool,
     ) -> Result<Vec<XattrEntry>, io::Error> {
         let path = path.as_ref().to_path_buf();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.xattrs(&path, namespace, follow).await,
                 Self::Direct(direct) => direct.xattrs(&path, namespace, follow).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.xattrs(&path, namespace, follow).await
         }
@@ -1533,14 +1530,14 @@ impl Vfs for ClientOrDirect {
         follow: bool,
     ) -> Result<Vec<StreamEntry>, io::Error> {
         let path = path.as_ref().to_path_buf();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.streams(&path, follow).await,
                 Self::Direct(direct) => direct.streams(&path, follow).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.streams(&path, follow).await
         }
@@ -1554,14 +1551,14 @@ impl Vfs for ClientOrDirect {
         follow: bool,
     ) -> Result<Vec<u8>, io::Error> {
         let path = path.as_ref().to_path_buf();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.xattr(&path, name, namespace, follow).await,
                 Self::Direct(direct) => direct.xattr(&path, name, namespace, follow).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.xattr(&path, name, namespace, follow).await
         }
@@ -1576,7 +1573,7 @@ impl Vfs for ClientOrDirect {
         follow: bool,
     ) -> Result<(), io::Error> {
         let path = path.as_ref().to_path_buf();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => {
@@ -1591,7 +1588,7 @@ impl Vfs for ClientOrDirect {
                 }
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0
                 .set_xattr(&path, name, namespace, value, follow)
@@ -1607,14 +1604,14 @@ impl Vfs for ClientOrDirect {
         follow: bool,
     ) -> Result<(), io::Error> {
         let path = path.as_ref().to_path_buf();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.remove_xattr(&path, name, namespace, follow).await,
                 Self::Direct(direct) => direct.remove_xattr(&path, name, namespace, follow).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.remove_xattr(&path, name, namespace, follow).await
         }
@@ -1626,42 +1623,42 @@ impl Vfs for ClientOrDirect {
         all: bool,
         ignore: bool,
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.remove(path, all, ignore).await,
                 Self::Direct(direct) => direct.remove(path, all, ignore).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.remove(path, all, ignore).await
         }
     }
 
     async fn metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.metadata(path).await,
                 Self::Direct(direct) => direct.metadata(path).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.metadata(path).await
         }
     }
 
     async fn file_fs_metadata(&self, file: &fs::File) -> Result<FsMetadata, io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.file_fs_metadata(file).await,
                 Self::Direct(direct) => direct.file_fs_metadata(file).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.file_fs_metadata(file).await
         }
@@ -1673,28 +1670,28 @@ impl Vfs for ClientOrDirect {
         follow: bool,
     ) -> Result<FsMetadata, io::Error> {
         let path = path.as_ref().to_path_buf();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.fs_metadata(&path, follow).await,
                 Self::Direct(direct) => direct.fs_metadata(&path, follow).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.fs_metadata(&path, follow).await
         }
     }
 
     async fn create_dir(&self, path: impl AsRef<Path>, all: bool) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.create_dir(path, all).await,
                 Self::Direct(direct) => direct.create_dir(path, all).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.create_dir(path, all).await
         }
@@ -1706,14 +1703,14 @@ impl Vfs for ClientOrDirect {
         all: bool,
         ignore: bool,
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.remove_dir(path, all, ignore).await,
                 Self::Direct(direct) => direct.remove_dir(path, all, ignore).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.remove_dir(path, all, ignore).await
         }
@@ -1725,28 +1722,28 @@ impl Vfs for ClientOrDirect {
         to: impl AsRef<Path>,
         all: bool,
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.copy(from, to, all).await,
                 Self::Direct(direct) => direct.copy(from, to, all).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.copy(from, to, all).await
         }
     }
 
     async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.rename(from, to).await,
                 Self::Direct(direct) => direct.rename(from, to).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.rename(from, to).await
         }
@@ -1758,14 +1755,14 @@ impl Vfs for ClientOrDirect {
         to: impl AsRef<Path>,
         all: bool,
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.move_(from, to, all).await,
                 Self::Direct(direct) => direct.move_(from, to, all).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.move_(from, to, all).await
         }
@@ -1777,14 +1774,14 @@ impl Vfs for ClientOrDirect {
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.symlink(cwd, src, dst).await,
                 Self::Direct(direct) => direct.symlink(cwd, src, dst).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.symlink(cwd, src, dst).await
         }
@@ -1795,14 +1792,14 @@ impl Vfs for ClientOrDirect {
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.hard_link(src, dst).await,
                 Self::Direct(direct) => direct.hard_link(src, dst).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.hard_link(src, dst).await
         }
@@ -1813,14 +1810,14 @@ impl Vfs for ClientOrDirect {
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.symlink_dir(src, dst).await,
                 Self::Direct(direct) => direct.symlink_dir(src, dst).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.symlink_dir(src, dst).await
         }
@@ -1831,84 +1828,84 @@ impl Vfs for ClientOrDirect {
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.symlink_file(src, dst).await,
                 Self::Direct(direct) => direct.symlink_file(src, dst).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.symlink_file(src, dst).await
         }
     }
 
     async fn symlink_metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.symlink_metadata(path).await,
                 Self::Direct(direct) => direct.symlink_metadata(path).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.symlink_metadata(path).await
         }
     }
 
     async fn attrs(&self, path: impl AsRef<Path>, follow: bool) -> Result<Attrs, io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.attrs(path, follow).await,
                 Self::Direct(direct) => direct.attrs(path, follow).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.attrs(path, follow).await
         }
     }
 
     async fn set_attrs(&self, path: impl AsRef<Path>, attrs: Attrs) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.set_attrs(path, attrs).await,
                 Self::Direct(direct) => direct.set_attrs(path, attrs).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.set_attrs(path, attrs).await
         }
     }
 
     async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.canonicalize(path).await,
                 Self::Direct(direct) => direct.canonicalize(path).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.canonicalize(path).await
         }
     }
 
     async fn read_link(&self, path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.read_link(path).await,
                 Self::Direct(direct) => direct.read_link(path).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.read_link(path).await
         }
@@ -1922,7 +1919,7 @@ impl Vfs for ClientOrDirect {
         max_depth: Option<usize>,
     ) -> Result<Vec<PathBuf>, io::Error> {
         let pattern = pattern.into();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => {
@@ -1933,7 +1930,7 @@ impl Vfs for ClientOrDirect {
                 }
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.glob(pattern, root, follow_symlinks, max_depth).await
         }
@@ -1944,14 +1941,14 @@ impl Vfs for ClientOrDirect {
         path: impl AsRef<Path>,
         perm: Permissions,
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.set_permissions(path, perm).await,
                 Self::Direct(direct) => direct.set_permissions(path, perm).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.set_permissions(path, perm).await
         }
@@ -1964,14 +1961,14 @@ impl Vfs for ClientOrDirect {
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.set_times(path, accessed, modified, created).await,
                 Self::Direct(direct) => direct.set_times(path, accessed, modified, created).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.set_times(path, accessed, modified, created).await
         }
@@ -1984,39 +1981,45 @@ impl Vfs for ClientOrDirect {
         group: Option<ChownIdentity>,
         follow: bool,
     ) -> Result<(), io::Error> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self {
                 Self::Client(client) => client.chown(path, user, group, follow).await,
                 Self::Direct(direct) => direct.chown(path, user, group, follow).await,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             self.0.chown(path, user, group, follow).await
         }
     }
 }
 
+#[cfg(any(unix, windows))]
+/// Client for connecting to the agent daemon and spawning processes.
+pub use client::Client;
+#[cfg(any(unix, windows))]
+/// Builder for constructing spawn requests.
+pub use client::CommandBuilder;
+#[cfg(any(unix, windows))]
+/// Query result containing the daemon's environment and working directory.
+pub use client::Query;
+#[cfg(any(unix, windows))]
+/// Agent server for VFS RPC connections.
+pub use server::Server;
+
 #[cfg(unix)]
 mod unix {
-    use super::*;
-
-    /// Client for connecting to the agent daemon and spawning processes.
-    pub use client::Client;
-    /// Builder for constructing spawn requests.
-    pub use client::CommandBuilder;
-    /// Query result containing the daemon's environment and working directory.
-    pub use client::Query;
+    /// Daemonization errors.
+    pub use crate::service::ServiceError;
+    /// Run the agent server in foreground mode (no daemonization).
+    pub use crate::service::foreground;
     /// Access permission flags for the `access` method.
     pub use nix::unistd::AccessFlags;
-    /// Agent server that accepts connections and handles spawn requests.
-    pub use server::Server;
-    /// Daemonization errors.
-    pub use service::ServiceError;
-    /// Run the agent server in foreground mode (no daemonization).
-    pub use service::foreground;
 }
 
 #[cfg(unix)]
 pub use unix::*;
+
+#[cfg(windows)]
+pub use windows::{WindowsSession, serve_named_pipe};

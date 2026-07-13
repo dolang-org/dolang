@@ -1048,6 +1048,8 @@ dependencies = [
  "dolang-private-bundle",
  "dolang-shell-core",
  "dolang-shell-modules",
+ "dolang-shell-vfs",
+ "tokio",
 ]
 
 [[package]]
@@ -1088,6 +1090,7 @@ dependencies = [
  "futures",
  "libc",
  "nix",
+ "rand",
  "serde",
  "tempfile",
  "tokio",

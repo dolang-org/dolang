@@ -39,7 +39,7 @@ use crate::{
     time::{DateTime, Duration},
 };
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::shell::Vfs;
 
 use crate::fs::readdir::DirEntryIter;
@@ -75,7 +75,7 @@ pub(crate) struct Types<'v> {
     pub(crate) proc_error: Type<'v, ProcError>,
     pub(crate) pipe_receiver: Type<'v, PipeReceiver>,
     pub(crate) pipe_sender: Type<'v, PipeSender>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) vfs: Type<'v, Vfs>,
 }
 
@@ -100,8 +100,6 @@ pub(crate) struct Syms<'v> {
     pub(crate) follow: Sym<'v, 'v>,
     #[cfg(unix)]
     pub(crate) group: Sym<'v, 'v>,
-    #[cfg(unix)]
-    pub(crate) unix_socket: Sym<'v, 'v>,
 }
 
 pub enum ProgramSource {
@@ -191,7 +189,7 @@ impl<'v> Global<'v> {
                 proc_error: builder.register_type(),
                 pipe_receiver: builder.register_type(),
                 pipe_sender: builder.register_type(),
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 vfs: builder.register_type(),
             },
             syms: Syms {
@@ -215,8 +213,6 @@ impl<'v> Global<'v> {
                 follow: builder.sym("follow"),
                 #[cfg(unix)]
                 group: builder.sym("group"),
-                #[cfg(unix)]
-                unix_socket: builder.sym("unix_socket"),
             },
             local: builder.local(),
             args: RefCell::new(Vec::new()),
