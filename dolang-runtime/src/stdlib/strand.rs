@@ -1,10 +1,11 @@
 use std::{
     cell::{Cell, RefCell},
+    pin::Pin,
     rc::Rc,
-    task::{Poll, Waker},
+    task::{self, Poll, Waker},
 };
 
-use futures::future::{join_all, poll_fn};
+use futures::future::join_all;
 
 use crate::{
     arg::Arg,
@@ -47,7 +48,8 @@ fn pipe_pair<'v>(
 struct ForkLimitScope {
     limit: usize,
     active: Cell<usize>,
-    waiters: RefCell<Vec<Waker>>,
+    next_id: Cell<u64>,
+    waiters: RefCell<Vec<(u64, Waker)>>,
     parent: Option<Rc<ForkLimitScope>>,
 }
 
@@ -55,20 +57,34 @@ impl ForkLimitScope {
     fn new(limit: usize, parent: Option<Rc<ForkLimitScope>>) -> Rc<Self> {
         Rc::new(Self {
             limit,
+            next_id: Cell::new(0),
             active: Cell::new(0),
             waiters: Default::default(),
             parent,
         })
     }
 
-    fn try_acquire(&self, waker: &Waker) -> bool {
+    fn next_id(&self) -> u64 {
+        let id = self.next_id.get();
+        self.next_id.set(id.strict_add(1));
+        id
+    }
+
+    fn try_acquire(&self, waker: &Waker) -> Option<u64> {
         if self.active.get() < self.limit {
             self.active.set(self.active.get() + 1);
-            true
+            None
         } else {
-            self.waiters.borrow_mut().push(waker.clone());
-            false
+            let id = self.next_id();
+            self.waiters.borrow_mut().push((id, waker.clone()));
+            Some(id)
         }
+    }
+
+    fn nevermind(&self, id: u64) {
+        self.waiters
+            .borrow_mut()
+            .retain(|(i, _)| *i != id)
     }
 
     fn acquire_fresh(&self) {
@@ -80,9 +96,15 @@ impl ForkLimitScope {
         let active = self.active.get();
         debug_assert!(active > 0);
         self.active.set(active - 1);
-        if let Some(waker) = self.waiters.borrow_mut().pop() {
+        if let Some((_, waker)) = self.waiters.borrow_mut().pop() {
             waker.wake();
         }
+    }
+}
+
+impl Drop for ForkLimitScope {
+    fn drop(&mut self) {
+        assert!(self.waiters.get_mut().is_empty());
     }
 }
 
@@ -295,24 +317,51 @@ fn flatten_scope_chain(scope: Option<Rc<ForkLimitScope>>) -> Vec<Rc<ForkLimitSco
     scopes
 }
 
-async fn acquire_scopes<'v, 's>(scopes: &[Rc<ForkLimitScope>]) -> Result<'v, 's, PermitChain> {
-    poll_fn(|cx| {
-        let mut acquired = 0;
-        for scope in scopes {
-            if scope.try_acquire(cx.waker()) {
-                acquired += 1;
-            } else {
-                for scope in scopes[..acquired].iter().rev() {
-                    scope.release_one();
-                }
+struct Acquire<'a> {
+    scopes: &'a [Rc<ForkLimitScope>],
+    acquired: usize,
+    id: Option<u64>,
+}
+
+impl<'a> Future for Acquire<'a> {
+    type Output = PermitChain;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        for scope in &self.scopes[self.acquired..] {
+            if let Some(id) = self.id.take() {
+                scope.nevermind(id);
+            }
+            if let Some(id) = scope.try_acquire(cx.waker()) {
+                self.id = Some(id);
                 return Poll::Pending;
+            } else {
+                self.acquired += 1;
             }
         }
-        Poll::Ready(Ok(PermitChain {
-            scopes: scopes.to_vec(),
-        }))
-    })
-    .await
+        self.acquired = 0;
+        Poll::Ready(PermitChain {
+            scopes: self.scopes.to_vec(),
+        })
+    }
+}
+
+impl<'a> Drop for Acquire<'a> {
+    fn drop(&mut self) {
+        if let Some(id) = self.id.take() {
+            self.scopes[self.acquired].nevermind(id)
+        }
+        for scope in self.scopes[..self.acquired].iter().rev() {
+            scope.release_one();
+        }
+    }
+}
+
+fn acquire_scopes(scopes: &[Rc<ForkLimitScope>]) -> Acquire<'_> {
+    Acquire {
+        scopes,
+        acquired: 0,
+        id: None,
+    }
 }
 
 async fn acquire_permit<'v, 's>(
@@ -323,7 +372,7 @@ async fn acquire_permit<'v, 's>(
     if scopes.is_empty() {
         return Ok(());
     }
-    let permit = acquire_scopes(&scopes).await?;
+    let permit = acquire_scopes(&scopes).await;
     state.fork_limit.get(strand).store_permit(permit);
     Ok(())
 }
@@ -339,7 +388,7 @@ async fn restore_prior_permit<'v, 's>(
     if prior.scopes.is_empty() {
         return Ok(());
     }
-    let permit = acquire_scopes(&prior.scopes).await?;
+    let permit = acquire_scopes(&prior.scopes).await;
     state.fork_limit.get(strand).store_permit(permit);
     Ok(())
 }
