@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
+    fmt,
     marker::PhantomData,
     sync::Arc,
 };
@@ -18,10 +19,22 @@ pub struct Opaque<M: ?Sized> {
     id: u64,
     marker: PhantomData<fn() -> M>,
 }
-impl<M: ?Sized> Copy for Opaque<M> {}
 impl<M: ?Sized> Clone for Opaque<M> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            owner: self.owner,
+            id: self.id,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<M: ?Sized> fmt::Debug for Opaque<M> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Opaque")
+            .field("owner", &self.owner)
+            .field("id", &self.id)
+            .finish_non_exhaustive()
     }
 }
 
@@ -73,33 +86,84 @@ impl ObjectTable {
             erased.clone().downcast::<T>().map_err(|_| InvalidOpaque)?,
         ))
     }
-    pub fn unregister<M: ?Sized + 'static>(
+    pub fn unregister<T: OpaqueResource>(
         &mut self,
-        value: Opaque<M>,
-    ) -> Result<(), InvalidOpaque> {
-        self.values
-            .remove(&value.id)
-            .map(|_| ())
-            .ok_or(InvalidOpaque)
+        value: Opaque<T::Marker>,
+    ) -> Result<Option<T>, InvalidOpaque> {
+        if value.owner != 1 {
+            return Err(InvalidOpaque);
+        }
+        let (ty, _) = self.values.get(&value.id).ok_or(InvalidOpaque)?;
+        if *ty != TypeId::of::<T>() {
+            return Err(InvalidOpaque);
+        }
+        let (_, erased) = self.values.remove(&value.id).unwrap();
+        let value = erased.downcast::<T>().map_err(|_| InvalidOpaque)?;
+        Ok(Arc::try_unwrap(value).ok())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
     struct Marker;
+    struct OtherMarker;
     struct Value(u32);
+    struct OtherValue;
+    struct DropValue(Arc<AtomicBool>);
     impl OpaqueResource for Value {
         type Marker = Marker;
+    }
+    impl OpaqueResource for OtherValue {
+        type Marker = OtherMarker;
+    }
+    impl OpaqueResource for DropValue {
+        type Marker = Marker;
+    }
+    impl Drop for DropValue {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Relaxed);
+        }
     }
 
     #[test]
     fn guards_outlive_registration() {
         let mut table = ObjectTable::default();
         let opaque = table.register(Value(42));
-        let guard = table.acquire::<Value>(opaque).unwrap();
-        table.unregister(opaque).unwrap();
+        let guard = table.acquire::<Value>(opaque.clone()).unwrap();
+        assert!(table.unregister::<Value>(opaque.clone()).unwrap().is_none());
         assert_eq!(guard.0.0, 42);
         assert!(table.acquire::<Value>(opaque).is_err());
+    }
+
+    #[test]
+    fn unregister_returns_exclusively_owned_value() {
+        let mut table = ObjectTable::default();
+        let opaque = table.register(Value(42));
+        let value = table.unregister::<Value>(opaque).unwrap().unwrap();
+        assert_eq!(value.0, 42);
+    }
+
+    #[test]
+    fn wrong_type_does_not_remove_value() {
+        let mut table = ObjectTable::default();
+        let opaque = table.register(Value(42));
+        let wrong = Opaque::<OtherMarker> {
+            owner: opaque.owner,
+            id: opaque.id,
+            marker: PhantomData,
+        };
+        assert!(table.unregister::<OtherValue>(wrong).is_err());
+        assert_eq!(table.acquire::<Value>(opaque).unwrap().0.0, 42);
+    }
+
+    #[test]
+    fn dropping_table_drops_registered_values() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let mut table = ObjectTable::default();
+        table.register(DropValue(dropped.clone()));
+        drop(table);
+        assert!(dropped.load(Ordering::Relaxed));
     }
 }

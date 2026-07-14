@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::{io, path::PathBuf};
 
-use dolang_rpc::{OsHandle, Protocol};
+use dolang_rpc::{Opaque, OsHandle, Protocol};
 use serde::{Deserialize, Serialize};
 
 pub(crate) use crate::{
@@ -458,6 +458,46 @@ pub(crate) struct OpenRequest {
     pub(crate) create_new: bool,
     pub(crate) truncate: bool,
     pub(crate) no_follow: bool,
+    pub(crate) handle_preference: OpenHandlePreference,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub(crate) enum OpenHandlePreference {
+    NativePreferred,
+    Opaque,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) enum OpenHandle {
+    Native(OsHandle),
+    Opaque(Opaque<crate::FileMarker>),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub(crate) enum FileSeekFrom {
+    Start(u64),
+    End(i64),
+    Current(i64),
+}
+
+impl From<io::SeekFrom> for FileSeekFrom {
+    fn from(value: io::SeekFrom) -> Self {
+        match value {
+            io::SeekFrom::Start(offset) => Self::Start(offset),
+            io::SeekFrom::End(offset) => Self::End(offset),
+            io::SeekFrom::Current(offset) => Self::Current(offset),
+        }
+    }
+}
+
+impl From<FileSeekFrom> for io::SeekFrom {
+    fn from(value: FileSeekFrom) -> Self {
+        match value {
+            FileSeekFrom::Start(offset) => Self::Start(offset),
+            FileSeekFrom::End(offset) => Self::End(offset),
+            FileSeekFrom::Current(offset) => Self::Current(offset),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -651,6 +691,60 @@ pub(crate) enum RequestKind {
     Stop,
     ClearCache,
     Open(OpenRequest),
+    FileRead {
+        file: Opaque<crate::FileMarker>,
+        len: usize,
+    },
+    FileWrite {
+        file: Opaque<crate::FileMarker>,
+        data: Vec<u8>,
+    },
+    FileSeek {
+        file: Opaque<crate::FileMarker>,
+        position: FileSeekFrom,
+    },
+    FileFlush {
+        file: Opaque<crate::FileMarker>,
+    },
+    FileSetLen {
+        file: Opaque<crate::FileMarker>,
+        len: u64,
+    },
+    FileClone {
+        file: Opaque<crate::FileMarker>,
+    },
+    FileMetadata {
+        file: Opaque<crate::FileMarker>,
+    },
+    FileFsMetadata {
+        file: Opaque<crate::FileMarker>,
+    },
+    FileXattrs {
+        file: Opaque<crate::FileMarker>,
+        namespace: XattrNamespaceRequest,
+    },
+    FileXattr {
+        file: Opaque<crate::FileMarker>,
+        name: String,
+        namespace: Option<String>,
+    },
+    FileStreams {
+        file: Opaque<crate::FileMarker>,
+    },
+    FileSetXattr {
+        file: Opaque<crate::FileMarker>,
+        name: String,
+        namespace: Option<String>,
+        value: Vec<u8>,
+    },
+    FileRemoveXattr {
+        file: Opaque<crate::FileMarker>,
+        name: String,
+        namespace: Option<String>,
+    },
+    FileClose {
+        file: Opaque<crate::FileMarker>,
+    },
     UnixStreamSocket(UnixStreamSocketRequest),
     ReadDir {
         path: WirePath,
@@ -690,7 +784,21 @@ pub(crate) enum ResponseKind {
     WellKnownPath(Result<WirePath, WireError>),
     Stop,
     ClearCache(Result<(), WireError>),
-    Open(Result<OsHandle, WireError>),
+    Open(Result<OpenHandle, WireError>),
+    FileRead(Result<Vec<u8>, WireError>),
+    FileWrite(Result<usize, WireError>),
+    FileSeek(Result<u64, WireError>),
+    FileFlush(Result<(), WireError>),
+    FileSetLen(Result<(), WireError>),
+    FileClone(Result<Opaque<crate::FileMarker>, WireError>),
+    FileMetadata(Result<Metadata, WireError>),
+    FileFsMetadata(Result<FsMetadata, WireError>),
+    FileXattrs(Result<Vec<XattrEntry>, WireError>),
+    FileXattr(Result<Vec<u8>, WireError>),
+    FileStreams(Result<Vec<StreamEntry>, WireError>),
+    FileSetXattr(Result<(), WireError>),
+    FileRemoveXattr(Result<(), WireError>),
+    FileClose(Result<(), WireError>),
     UnixStreamSocket(Result<OsHandle, WireError>),
     ReadDir(Result<Vec<DirEntry>, WireError>),
     Remove(Result<(), WireError>),

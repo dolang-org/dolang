@@ -4,7 +4,7 @@ import agent
   fs:
     - open
 
-#[agent.test remote: false]
+#[agent.test]
 def basic_open()
   let path = "open_basic.txt"
   open $path w do |file|
@@ -15,8 +15,9 @@ def basic_open()
   let debug_str = dbg $f
   assert_eq $debug_str "<fs.File>"
   f.close()
+  f.close()
 
-#[agent.test remote: false]
+#[agent.test]
 def block_scope()
   let path = "open_block.txt"
   open $path w do |file|

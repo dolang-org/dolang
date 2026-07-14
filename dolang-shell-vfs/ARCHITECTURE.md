@@ -8,8 +8,19 @@ It has two backends:
 - Direct filesystem access and process spawning
 - An RPC client which forwards to a server running the direct backend.
 
-The Unix socket VFS exchanges raw file descriptors with `SCM_RIGHTS` rather
-than virtualizing all I/O.
+The Unix socket VFS normally exchanges raw file descriptors with `SCM_RIGHTS`.
+An opaque-only client instead asks the server to retain regular files and
+performs byte I/O, seeking, flushing, and truncation through typed opaque RPC
+identities. Generic byte-stream sessions use the same retained-file path.
+
+Open requests prefer native handles on attachment-capable sessions unless the
+client explicitly requests an opaque file. A server which cannot transfer
+handles falls back to an opaque file even for a native-preferred request.
+Cursor-affecting operations on each retained file are serialized by the server.
+Explicit close removes the resource and consumes the file when no operation is
+racing; otherwise close reports that the resource is busy and the outstanding
+guard performs final drop cleanup. Connection teardown drops all resources
+which remain in the RPC object table.
 
 On Windows, the RPC client uses the server end of a connected named pipe and
 the RPC server uses the client end. The client retains a trusted handle for the

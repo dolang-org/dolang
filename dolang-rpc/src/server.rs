@@ -334,8 +334,15 @@ impl<P> CallContext<P> {
         self.inner.lock().unwrap().objects.acquire(value)
     }
 
-    pub fn unregister<M: ?Sized + 'static>(&self, value: Opaque<M>) -> Result<(), InvalidOpaque> {
-        self.inner.lock().unwrap().objects.unregister(value)
+    /// Removes a typed opaque resource from this session.
+    ///
+    /// Returns the resource when no acquired guards still share its ownership,
+    /// or `None` after removing it when another call retains a guard.
+    pub fn unregister<T: OpaqueResource>(
+        &self,
+        value: Opaque<T::Marker>,
+    ) -> Result<Option<T>, InvalidOpaque> {
+        self.inner.lock().unwrap().objects.unregister::<T>(value)
     }
 }
 

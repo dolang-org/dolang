@@ -8,7 +8,7 @@ import agent
     - write
     - Path
 
-#[agent.test remote: false]
+#[agent.test]
 def file_set_len_preserves_buffered_cursor()
   let path = "test_set_len_file.txt"
   write $path "alpha\nbeta\n"
@@ -19,7 +19,7 @@ def file_set_len_preserves_buffered_cursor()
     assert_eq (file.tell()) 6
     assert_eq (file.read()) ""
 
-#[agent.test remote: false]
+#[agent.test]
 def path_set_len_and_fs_set_len_adjust_file_length()
   let path = "test_set_len_path.bin"
   write $path b"abc"

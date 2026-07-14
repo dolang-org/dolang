@@ -6,14 +6,15 @@ use std::sync::{
 #[cfg(unix)]
 use std::path::{Path, PathBuf};
 
-use dolang_rpc::{CallContext, DefaultHandle, OsHandle};
+use dolang_rpc::{CallContext, DefaultHandle, OpaqueResource, OsHandle};
 #[cfg(unix)]
 use nix::sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, bind, connect, socket};
 #[cfg(unix)]
 use std::os::{fd::AsRawFd, unix::io::OwnedFd};
-use tokio::io::{self, AsyncRead, AsyncWrite};
+use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeClient;
+use tokio::sync::Mutex;
 #[cfg(unix)]
 use tokio::{
     net::{UnixListener, UnixStream, unix::SocketAddr},
@@ -26,11 +27,11 @@ use crate::{
     protocol::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
         CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
-        MoveRequest, OpenRequest, QueryResponse, ReadLinkRequest, RemoveDirRequest, RemoveRequest,
-        RenameRequest, RequestKind, ResponseKind, SetAttrsRequest, SetPermissionsRequest,
-        SetTimesRequest, SetXattrRequest, SpawnRequest, StreamsRequest, SymlinkKind,
-        SymlinkRequest, UnixStreamSocketRequest, VfsProtocol, WellKnownPathRequest, WirePath,
-        XattrRequest, XattrsRequest,
+        MoveRequest, OpenHandle, OpenHandlePreference, OpenRequest, QueryResponse, ReadLinkRequest,
+        RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind, SetAttrsRequest,
+        SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest, StreamsRequest,
+        SymlinkKind, SymlinkRequest, UnixStreamSocketRequest, VfsProtocol, WellKnownPathRequest,
+        WirePath, XattrRequest, XattrsRequest,
     },
 };
 
@@ -41,6 +42,12 @@ fn request_path(path: &WirePath) -> Utf8TypedPath<'_> {
 struct Connection {
     server: Arc<ServerState>,
     mode: SessionMode,
+}
+
+struct RetainedFile(Mutex<AnyFile>);
+
+impl OpaqueResource for RetainedFile {
+    type Marker = crate::FileMarker;
 }
 
 struct ServerState {
@@ -192,7 +199,7 @@ async fn serve_connection(
             context.shutdown();
             ResponseKind::Stop
         }
-        request => connection.handle(request).await,
+        request => connection.handle(context, request).await,
     })
     .await
 }
@@ -214,7 +221,7 @@ impl Connection {
         result.map_err(wire_error)
     }
 
-    async fn handle(&self, kind: RequestKind) -> ResponseKind {
+    async fn handle(&self, context: &CallContext<VfsProtocol>, kind: RequestKind) -> ResponseKind {
         match kind {
             RequestKind::Query => self.handle_query().await,
             RequestKind::Which { program, path, cwd } => {
@@ -225,7 +232,50 @@ impl Connection {
             RequestKind::ClearCache => {
                 ResponseKind::ClearCache(Self::wire_result(self.server.vfs.clear_cache().await))
             }
-            RequestKind::Open(request) => self.handle_open(request).await,
+            RequestKind::Open(request) => self.handle_open(context, request).await,
+            RequestKind::FileRead { file, len } => self.handle_file_read(context, file, len).await,
+            RequestKind::FileWrite { file, data } => {
+                self.handle_file_write(context, file, data).await
+            }
+            RequestKind::FileSeek { file, position } => {
+                self.handle_file_seek(context, file, position.into()).await
+            }
+            RequestKind::FileFlush { file } => self.handle_file_flush(context, file).await,
+            RequestKind::FileSetLen { file, len } => {
+                self.handle_file_set_len(context, file, len).await
+            }
+            RequestKind::FileClone { file } => self.handle_file_clone(context, file).await,
+            RequestKind::FileMetadata { file } => self.handle_file_metadata(context, file).await,
+            RequestKind::FileFsMetadata { file } => {
+                self.handle_file_fs_metadata(context, file).await
+            }
+            RequestKind::FileXattrs { file, namespace } => {
+                self.handle_file_xattrs(context, file, namespace).await
+            }
+            RequestKind::FileXattr {
+                file,
+                name,
+                namespace,
+            } => self.handle_file_xattr(context, file, name, namespace).await,
+            RequestKind::FileStreams { file } => self.handle_file_streams(context, file).await,
+            RequestKind::FileSetXattr {
+                file,
+                name,
+                namespace,
+                value,
+            } => {
+                self.handle_file_set_xattr(context, file, name, namespace, value)
+                    .await
+            }
+            RequestKind::FileRemoveXattr {
+                file,
+                name,
+                namespace,
+            } => {
+                self.handle_file_remove_xattr(context, file, name, namespace)
+                    .await
+            }
+            RequestKind::FileClose { file } => self.handle_file_close(context, file).await,
             RequestKind::UnixStreamSocket(request) => self.handle_unix_stream_socket(request).await,
             RequestKind::ReadDir { path } => self.handle_read_dir(path).await,
             RequestKind::Remove(request) => self.handle_remove(request).await,
@@ -361,10 +411,11 @@ impl Connection {
         )))
     }
 
-    async fn handle_open(&self, req: OpenRequest) -> ResponseKind {
-        if self.mode == SessionMode::Remote {
-            return ResponseKind::Open(Err(Self::unsupported("opening files")));
-        }
+    async fn handle_open(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        req: OpenRequest,
+    ) -> ResponseKind {
         let mut opts = self.server.vfs.open_options();
         opts.read(req.read)
             .write(req.write)
@@ -376,11 +427,255 @@ impl Connection {
 
         match opts.open(request_path(&req.path)).await {
             Ok(file) => {
-                let handle: DefaultHandle = file.try_into_std().await.unwrap().into();
-                ResponseKind::Open(Ok(OsHandle::new(handle)))
+                if self.mode == SessionMode::Remote
+                    || matches!(req.handle_preference, OpenHandlePreference::Opaque)
+                {
+                    let file = context.register(RetainedFile(Mutex::new(file)));
+                    ResponseKind::Open(Ok(OpenHandle::Opaque(file)))
+                } else {
+                    let handle: DefaultHandle = file.try_into_std().await.unwrap().into();
+                    ResponseKind::Open(Ok(OpenHandle::Native(OsHandle::new(handle))))
+                }
             }
             Err(e) => ResponseKind::Open(Err(wire_error(e))),
         }
+    }
+
+    fn retained_file(
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+    ) -> Result<dolang_rpc::OpaqueGuard<RetainedFile>, crate::protocol::WireError> {
+        context.acquire::<RetainedFile>(file).map_err(|_| {
+            wire_error(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid opaque file",
+            ))
+        })
+    }
+
+    async fn handle_file_read(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+        len: usize,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            let mut file = file.0.lock().await;
+            let mut data = vec![0; len];
+            let len = file.read(&mut data).await.map_err(wire_error)?;
+            data.truncate(len);
+            Ok(data)
+        }
+        .await;
+        ResponseKind::FileRead(result)
+    }
+
+    async fn handle_file_write(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+        data: Vec<u8>,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0.lock().await.write(&data).await.map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileWrite(result)
+    }
+
+    async fn handle_file_seek(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+        position: io::SeekFrom,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0.lock().await.seek(position).await.map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileSeek(result)
+    }
+
+    async fn handle_file_flush(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0.lock().await.flush().await.map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileFlush(result)
+    }
+
+    async fn handle_file_set_len(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+        len: u64,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0.lock().await.set_len(len).await.map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileSetLen(result)
+    }
+
+    async fn handle_file_clone(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            let file = file.0.lock().await.try_clone().await.map_err(wire_error)?;
+            Ok(context.register(RetainedFile(Mutex::new(file))))
+        }
+        .await;
+        ResponseKind::FileClone(result)
+    }
+
+    async fn handle_file_metadata(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0.lock().await.metadata().await.map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileMetadata(result)
+    }
+
+    async fn handle_file_fs_metadata(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0.lock().await.fs_metadata().await.map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileFsMetadata(result)
+    }
+
+    async fn handle_file_xattrs(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+        namespace: crate::protocol::XattrNamespaceRequest,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0
+                .lock()
+                .await
+                .xattrs(namespace.as_borrowed())
+                .await
+                .map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileXattrs(result)
+    }
+
+    async fn handle_file_xattr(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+        name: String,
+        namespace: Option<String>,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0
+                .lock()
+                .await
+                .xattr(&name, namespace.as_deref())
+                .await
+                .map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileXattr(result)
+    }
+
+    async fn handle_file_streams(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0.lock().await.streams().await.map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileStreams(result)
+    }
+
+    async fn handle_file_set_xattr(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+        name: String,
+        namespace: Option<String>,
+        value: Vec<u8>,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0
+                .lock()
+                .await
+                .set_xattr(&name, namespace.as_deref(), &value)
+                .await
+                .map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileSetXattr(result)
+    }
+
+    async fn handle_file_remove_xattr(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+        name: String,
+        namespace: Option<String>,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0
+                .lock()
+                .await
+                .remove_xattr(&name, namespace.as_deref())
+                .await
+                .map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileRemoveXattr(result)
+    }
+
+    async fn handle_file_close(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+    ) -> ResponseKind {
+        let result = match context.unregister::<RetainedFile>(file) {
+            Ok(Some(file)) => file.0.into_inner().close().await.map_err(wire_error),
+            Ok(None) => Err(wire_error(io::Error::new(
+                io::ErrorKind::ResourceBusy,
+                "opaque file is in use",
+            ))),
+            Err(_) => Err(wire_error(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid opaque file",
+            ))),
+        };
+        ResponseKind::FileClose(result)
     }
 
     async fn handle_read_dir(&self, path: WirePath) -> ResponseKind {
@@ -761,10 +1056,10 @@ fn wire_error(error: impl Into<crate::Error>) -> crate::protocol::WireError {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
-
     use super::Server;
-    use crate::protocol::{OpenRequest, RequestKind, ResponseKind, VfsProtocol, WirePath};
+    use crate::protocol::{
+        OpenHandle, OpenHandlePreference, OpenRequest, RequestKind, ResponseKind, VfsProtocol,
+    };
 
     #[tokio::test]
     async fn remote_server_replies_without_serializing_a_handle() {
@@ -772,11 +1067,13 @@ mod tests {
         let server = tokio::spawn(Server::new(server_stream).serve());
         let client = dolang_rpc::Client::<VfsProtocol>::new(client_stream);
 
+        let temp = tempfile::NamedTempFile::new().unwrap();
         let response = client
             .call(RequestKind::Open(OpenRequest {
-                path: WirePath::empty_like(
-                    crate::typed_path(std::env::temp_dir()).unwrap().to_path(),
-                ),
+                path: crate::typed_path(temp.path().to_path_buf())
+                    .unwrap()
+                    .to_path()
+                    .into(),
                 read: true,
                 write: false,
                 append: false,
@@ -784,13 +1081,30 @@ mod tests {
                 create_new: false,
                 truncate: false,
                 no_follow: false,
+                handle_preference: OpenHandlePreference::NativePreferred,
             }))
             .await
             .unwrap();
-        let ResponseKind::Open(Err(error)) = response else {
-            panic!("remote open did not return an error");
+        let ResponseKind::Open(Ok(OpenHandle::Opaque(file))) = response else {
+            panic!("remote open did not return an opaque file");
         };
-        assert_eq!(crate::Error::from(error).kind(), io::ErrorKind::Unsupported);
+        let ResponseKind::FileClose(result) = client
+            .call(RequestKind::FileClose { file: file.clone() })
+            .await
+            .unwrap()
+        else {
+            panic!("file close returned the wrong response");
+        };
+        result.unwrap();
+        let ResponseKind::FileClose(result) =
+            client.call(RequestKind::FileClose { file }).await.unwrap()
+        else {
+            panic!("duplicate file close returned the wrong response");
+        };
+        assert_eq!(
+            crate::Error::from(result.unwrap_err()).kind(),
+            std::io::ErrorKind::InvalidInput
+        );
 
         let _ = client.call(RequestKind::Stop).await.unwrap();
         server.await.unwrap().unwrap();
