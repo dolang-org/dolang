@@ -512,96 +512,108 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             // We must avoid being dropped until we've awaited all strands we create
             strand
                 .with_interrupt_mask(true, async move |strand| {
-                    let mut last_recv = Value::NIL;
-                    let mut out = Some(out);
-                    let mut strands = Vec::new();
-                    let mut pipes = Vec::with_capacity(count.saturating_sub(1));
-                    let interrupt = strand.interrupt_token().nested();
-                    for _ in 0..count.saturating_sub(1) {
-                        let mut send = Value::NIL;
-                        let mut recv = Value::NIL;
-                        pipe_pair(strand, Slot::new(&mut send), Slot::new(&mut recv));
-                        pipes.push(Some((send, recv)));
+                    let prior_permit = state.fork_limit.get(strand).take_permit();
+                    if let Some(permit) = prior_permit.as_ref() {
+                        permit.release_all();
                     }
-                    for (i, thunk) in thunks.into_iter().enumerate() {
-                        let (send, recv, mut out, redir_output) = if i < count - 1 {
-                            let (send, recv) = pipes[i].take().unwrap();
-                            (Some(send), Some(recv), None, None)
-                        } else {
-                            (None, None, out.take(), redir_output.take())
-                        };
-                        let redir_input = if i == 0 { redir_input.take() } else { None };
 
-                        strands.push(strand.spawn_scoped(
-                            Some(interrupt.clone()),
-                            async move |strand| {
-                                if let Err(e) = strand
-                                    .with_slots(
-                                        async move |strand, [mut s, mut r, mut tmp, mut tmp2]| {
-                                            let mut redir = Redirect::new(strand);
-                                            if !last_recv.is_nil() {
-                                                r.store(last_recv);
-                                                redir = redir.input(&*r);
-                                            } else if let Some(redir_input) = redir_input {
-                                                redir_input.iter(&mut redir, &mut tmp).await?;
-                                                redir = redir.input(&mut tmp);
-                                            }
-                                            if let Some(send) = send {
-                                                s.store(send);
-                                                redir = redir.output(&*s);
-                                            } else if let Some(redir_output) = redir_output {
-                                                redir_output.sink(&mut redir, &mut tmp).await?;
-                                                redir = redir.output(&mut tmp);
-                                            }
-                                            let res = redir
-                                                .enter(async move |strand| {
-                                                    call!(
-                                                        strand,
-                                                        thunk,
-                                                        out.as_mut().unwrap_or(&mut tmp)
-                                                    )
-                                                    .await
-                                                })
-                                                .await;
-                                            if !r.is_nil() {
-                                                method!(strand, r, close, &mut tmp2).await?;
-                                            }
-                                            if !s.is_nil() {
-                                                method!(strand, s, close, &mut tmp2).await?;
-                                            }
-                                            res
-                                        },
-                                    )
-                                    .await
-                                    && !matches!(
-                                        e.kind(),
-                                        ErrorKind::IterStop | ErrorKind::SinkStop
-                                    )
-                                {
-                                    strand.interrupt_token().cancel();
-                                    return Err(e);
-                                }
-                                Ok(())
-                            },
-                        ));
-                        last_recv = recv.unwrap_or(Value::NIL);
-                    }
-                    for (i, res) in join_all(strands).await.into_iter().enumerate() {
-                        if let Err(e) = res {
-                            // Suppress Input/SinkStop errors (broken pipe) or cancellation from all
-                            // but the final element
-                            if i != count - 1 {
-                                if matches!(e.kind(), ErrorKind::IterStop | ErrorKind::SinkStop) {
-                                    continue;
-                                }
-                                if interrupt.is_canceled() && e.kind() == ErrorKind::Canceled {
-                                    continue;
-                                }
-                            }
-                            return Err(e);
+                    let result = async {
+                        let mut last_recv = Value::NIL;
+                        let mut out = Some(out);
+                        let mut strands = Vec::new();
+                        let mut pipes = Vec::with_capacity(count.saturating_sub(1));
+                        let interrupt = strand.interrupt_token().nested();
+                        for _ in 0..count.saturating_sub(1) {
+                            let mut send = Value::NIL;
+                            let mut recv = Value::NIL;
+                            pipe_pair(strand, Slot::new(&mut send), Slot::new(&mut recv));
+                            pipes.push(Some((send, recv)));
                         }
+                        for (i, thunk) in thunks.into_iter().enumerate() {
+                            let (send, recv, mut out, redir_output) = if i < count - 1 {
+                                let (send, recv) = pipes[i].take().unwrap();
+                                (Some(send), Some(recv), None, None)
+                            } else {
+                                (None, None, out.take(), redir_output.take())
+                            };
+                            let redir_input = if i == 0 { redir_input.take() } else { None };
+
+                            strands.push(strand.spawn_scoped(
+                                Some(interrupt.clone()),
+                                async move |strand| {
+                                    if let Err(e) = strand
+                                        .with_slots(
+                                            async move |strand, [mut s, mut r, mut tmp, mut tmp2]| {
+                                                let mut redir = Redirect::new(strand);
+                                                if !last_recv.is_nil() {
+                                                    r.store(last_recv);
+                                                    redir = redir.input(&*r);
+                                                } else if let Some(redir_input) = redir_input {
+                                                    redir_input.iter(&mut redir, &mut tmp).await?;
+                                                    redir = redir.input(&mut tmp);
+                                                }
+                                                if let Some(send) = send {
+                                                    s.store(send);
+                                                    redir = redir.output(&*s);
+                                                } else if let Some(redir_output) = redir_output {
+                                                    redir_output.sink(&mut redir, &mut tmp).await?;
+                                                    redir = redir.output(&mut tmp);
+                                                }
+                                                let res = redir
+                                                    .enter(async move |strand| {
+                                                        call!(
+                                                            strand,
+                                                            thunk,
+                                                            out.as_mut().unwrap_or(&mut tmp)
+                                                        )
+                                                        .await
+                                                    })
+                                                    .await;
+                                                if !r.is_nil() {
+                                                    method!(strand, r, close, &mut tmp2).await?;
+                                                }
+                                                if !s.is_nil() {
+                                                    method!(strand, s, close, &mut tmp2).await?;
+                                                }
+                                                res
+                                            },
+                                        )
+                                        .await
+                                        && !matches!(
+                                            e.kind(),
+                                            ErrorKind::IterStop | ErrorKind::SinkStop
+                                        )
+                                    {
+                                        strand.interrupt_token().cancel();
+                                        return Err(e);
+                                    }
+                                    Ok(())
+                                },
+                            ));
+                            last_recv = recv.unwrap_or(Value::NIL);
+                        }
+                        for (i, res) in join_all(strands).await.into_iter().enumerate() {
+                            if let Err(e) = res {
+                                // Suppress Input/SinkStop errors (broken pipe) or cancellation from all
+                                // but the final element
+                                if i != count - 1 {
+                                    if matches!(e.kind(), ErrorKind::IterStop | ErrorKind::SinkStop)
+                                    {
+                                        continue;
+                                    }
+                                    if interrupt.is_canceled() && e.kind() == ErrorKind::Canceled {
+                                        continue;
+                                    }
+                                }
+                                return Err(e);
+                            }
+                        }
+                        Ok(())
                     }
-                    Ok(())
+                    .await;
+
+                    restore_prior_permit(strand, state, prior_permit).await?;
+                    result
                 })
                 .await
         })
