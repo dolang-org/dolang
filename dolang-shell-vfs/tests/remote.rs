@@ -1,9 +1,12 @@
 #![deny(warnings)]
 
-use std::io;
+use std::io::{self, SeekFrom};
 
-use dolang_shell_vfs::{Client, Command, FileType, OpenOptions, Server, Vfs, typed_path};
+use dolang_shell_vfs::{
+    Client, Command, FileHandle, FileType, OpenOptions, Server, Vfs, typed_path,
+};
 use tempfile::tempdir;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 async fn connected_pair() -> (Client, tokio::task::JoinHandle<io::Result<()>>) {
     let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
@@ -53,17 +56,39 @@ async fn handle_operations_are_unsupported_remotely() {
     let temp = tempdir().unwrap();
     let path = typed_path(temp.path().join("file")).unwrap();
 
-    let options = client.open_options();
-    let error = OpenOptions::open(&options, path.to_path())
-        .await
-        .unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
-
     let error = client.read_dir(path.to_path()).await.unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
 
     let error = client.command(path.to_path()).spawn().await.err().unwrap();
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn regular_file_round_trip_over_generic_stream() {
+    let (client, server_task) = connected_pair().await;
+    let temp = tempdir().unwrap();
+    let path = typed_path(temp.path().join("file")).unwrap();
+
+    let mut options = client.open_options();
+    options.read(true).write(true).create(true).truncate(true);
+    let mut file = OpenOptions::open(&options, path.to_path()).await.unwrap();
+
+    file.write_all(b"abcdef").await.unwrap();
+    file.flush().await.unwrap();
+    assert_eq!(file.seek(SeekFrom::Start(0)).await.unwrap(), 0);
+    let mut data = Vec::new();
+    file.read_to_end(&mut data).await.unwrap();
+    assert_eq!(data, b"abcdef");
+
+    file.set_len(3).await.unwrap();
+    assert_eq!(file.seek(SeekFrom::Start(0)).await.unwrap(), 0);
+    data.clear();
+    file.read_to_end(&mut data).await.unwrap();
+    assert_eq!(data, b"abc");
+    file.close().await.unwrap();
 
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();

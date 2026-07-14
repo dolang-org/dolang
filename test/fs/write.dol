@@ -15,7 +15,7 @@ import agent
 import std:
   - RuntimeError
 
-#[agent.test remote: false]
+#[agent.test]
 def write_and_read_back_text()
     # Test writing text and reading it back
     let test_path = "test_write_text.txt"
@@ -33,7 +33,7 @@ def write_and_read_back_text()
     # Cleanup
     remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def write_binary_data()
     # Test writing binary data using binary string literals
     let test_path = "test_write_binary.bin"
@@ -52,7 +52,7 @@ def write_binary_data()
     # Cleanup
     remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def write_to_file_opened_in_append_mode()
     # Test appending to a file
     let test_path = "test_append.txt"
@@ -75,7 +75,7 @@ def write_to_file_opened_in_append_mode()
     # Cleanup
     remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def write_after_close_fails()
     # Test that writing to a closed file fails
     let test_path = "test_write_closed.txt"
@@ -88,7 +88,7 @@ def write_after_close_fails()
     # Cleanup
     remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def remove_file()
     # Test removing a file
     let test_path = "test_remove.txt"
@@ -105,7 +105,7 @@ def remove_file()
       open $test_path "r" do |_f|
         false  # Should not reach here
 
-#[agent.test remote: false]
+#[agent.test]
 def remove_non_existent_file_fails()
     # Test that removing a non-existent file fails
     let test_path = "test_remove_nonexistent.txt"
@@ -114,11 +114,11 @@ def remove_non_existent_file_fails()
     assert_throws $RuntimeError do
       remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def remove_ignores_missing_path_when_requested()
     remove "test_remove_ignore.txt" ignore: true
 
-#[agent.test remote: false]
+#[agent.test]
 def remove_free_function_is_variadic()
     write "test_remove_first.txt" "a"
     write "test_remove_second.txt" "b"
@@ -126,14 +126,14 @@ def remove_free_function_is_variadic()
     assert (!(Path "test_remove_first.txt").exists())
     assert (!(Path "test_remove_second.txt").exists())
 
-#[agent.test remote: false]
+#[agent.test]
 def remove_all_removes_directory_trees()
     create_dir "test_remove_all/subdir" all: true
     write "test_remove_all/subdir/file.txt" "hello"
     remove "test_remove_all" all: true
     assert (!(Path "test_remove_all").exists())
 
-#[agent.test remote: false]
+#[agent.test]
 def fs_write_writes_and_truncates_text_file()
     let test_path = "test_fs_write_text.txt"
     assert_eq (write test_path "Hello from fs.write") 19
@@ -142,14 +142,14 @@ def fs_write_writes_and_truncates_text_file()
     assert_eq ((Path test_path).read()) "short"
     remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def fs_write_writes_binary_data()
     let test_path = "test_fs_write_binary.bin"
     assert_eq (write test_path b"Hello") 5
     assert_eq ((Path test_path).read "b") b"Hello"
     remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def path_remove_supports_all_and_ignore()
     let dir = Path "test_path_remove"
     (dir / "nested").create_dir all: true

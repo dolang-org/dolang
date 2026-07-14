@@ -894,6 +894,10 @@ pub trait Vfs {
 pub use direct::{Direct, DirectFile, DirectOpenOptions};
 pub use pipe::{PipeRecv, PipeSend};
 
+/// Marker for a regular file retained by a VFS RPC session.
+#[derive(Debug)]
+pub struct FileMarker;
+
 #[derive(Debug)]
 pub enum AnyFile {
     Client(client::ClientFile),

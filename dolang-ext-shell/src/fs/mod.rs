@@ -253,7 +253,10 @@ async fn read<'v, 's>(
     let is_binary = mode == "rb";
     let mut file = file::open(strand, global, path, mode).await?;
     let mut embryo = BinEmbryo::new_with_capacity(strand, 8192);
-    read_all(strand, &mut file, &mut embryo).await?;
+    let read_result = read_all(strand, &mut file, &mut embryo).await;
+    let close_result = file.close().await;
+    read_result?;
+    close_result.into_sys(strand)?;
     if is_binary {
         embryo.finish(strand, out);
     } else {
@@ -281,11 +284,15 @@ async fn write<'v, 's>(
             let b = b.pin();
             file.write_all(&b).await.map(|_| b.len())
         }
-        _ => return Err(Error::type_error(strand, "expected `str` or `bin`")),
-    }
-    .into_sys(strand)?;
+        _ => {
+            let _ = file.close().await;
+            return Err(Error::type_error(strand, "expected `str` or `bin`"));
+        }
+    };
 
-    file.flush().await.into_sys(strand)?;
+    let close_result = file.close().await;
+    let bytes_written = bytes_written.into_sys(strand)?;
+    close_result.into_sys(strand)?;
     Output::set(strand, out, bytes_written);
     Ok(())
 }
@@ -307,7 +314,10 @@ async fn set_len<'v, 's>(
         .open(path.to_path())
         .await
         .into_sys(strand)?;
-    file.set_len(size).await.into_sys(strand)?;
+    let set_len_result = file.set_len(size).await;
+    let close_result = file.close().await;
+    set_len_result.into_sys(strand)?;
+    close_result.into_sys(strand)?;
     Ok(())
 }
 
