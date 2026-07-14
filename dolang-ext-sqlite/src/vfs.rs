@@ -34,7 +34,7 @@ use sqlite_plugin::{
     vfs::{RegisterOpts, Vfs, VfsHandle, VfsResult, register_static},
 };
 
-use dolang_shell_vfs::{Client, Utf8TypedPath, Utf8UnixPath, Vfs as _};
+use dolang_shell_vfs::{Client, FileHandle as _, Utf8TypedPath, Utf8UnixPath, Vfs as _};
 
 // Shadow libc's F_RDLCK/F_WRLCK/F_UNLCK with i32 versions.
 // On Linux these constants are already i32; on macOS they are i16.
@@ -514,7 +514,7 @@ fn open_or_join_shm(handle: &mut ShellFileHandle) -> VfsResult<()> {
                     .open(&shm_path_clone)
                     .await
                 {
-                    Ok(f) => Ok((f.into_std().await, false)),
+                    Ok(f) => Ok((f.try_into_std().await.map_err(|_| SQLITE_CANTOPEN)?, false)),
                     Err(_) => {
                         // Fall back to read-only (e.g. permissions or read-only mount).
                         let f = client
@@ -523,7 +523,7 @@ fn open_or_join_shm(handle: &mut ShellFileHandle) -> VfsResult<()> {
                             .open(&shm_path_clone)
                             .await
                             .map_err(|e| map_io_err(e, SQLITE_CANTOPEN, SQLITE_IOERR_SHMOPEN))?;
-                        Ok::<_, i32>((f.into_std().await, true))
+                        Ok::<_, i32>((f.try_into_std().await.map_err(|_| SQLITE_CANTOPEN)?, true))
                     }
                 }
             })?;
@@ -652,7 +652,7 @@ impl Vfs for ShellVfs {
                     .open(&path)
                     .await
                     .map_err(|e| map_io_err(e, SQLITE_CANTOPEN, SQLITE_IOERR))?;
-                Ok::<std::fs::File, i32>(tokio_file.into_std().await)
+                tokio_file.try_into_std().await.map_err(|_| SQLITE_CANTOPEN)
             })?;
             (file, delete_on_close)
         } else {
@@ -669,7 +669,7 @@ impl Vfs for ShellVfs {
                     .open(&tp)
                     .await
                     .map_err(|e| map_io_err(e, SQLITE_CANTOPEN, SQLITE_IOERR))?;
-                Ok::<std::fs::File, i32>(tokio_file.into_std().await)
+                tokio_file.try_into_std().await.map_err(|_| SQLITE_CANTOPEN)
             })?;
             (file, Some(temp_path))
         };

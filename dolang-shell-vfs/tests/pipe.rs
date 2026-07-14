@@ -2,7 +2,7 @@
 
 use std::process::Stdio;
 
-use dolang_shell_vfs::pipe;
+use dolang_shell_vfs::{Direct, Vfs};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::Command,
@@ -11,7 +11,7 @@ use tokio::{
 
 #[tokio::test]
 async fn pipe_round_trip() {
-    let (mut send, mut recv) = pipe().unwrap();
+    let (mut send, mut recv) = Direct::default().pipe().unwrap();
 
     send.write_all(b"hello world").await.unwrap();
     drop(send);
@@ -23,7 +23,7 @@ async fn pipe_round_trip() {
 
 #[tokio::test]
 async fn pipe_reports_eof_after_sender_drop() {
-    let (send, mut recv) = pipe().unwrap();
+    let (send, mut recv) = Direct::default().pipe().unwrap();
     drop(send);
 
     let mut buf = [0; 16];
@@ -33,7 +33,7 @@ async fn pipe_reports_eof_after_sender_drop() {
 
 #[tokio::test]
 async fn pipe_reports_write_failure_after_receiver_drop() {
-    let (mut send, recv) = pipe().unwrap();
+    let (mut send, recv) = Direct::default().pipe().unwrap();
     let mut child = close_stdin_immediately(recv.into_stdio().unwrap());
     let status = child.wait().await.unwrap();
     assert!(status.success());
@@ -63,7 +63,7 @@ async fn pipe_reports_write_failure_after_receiver_drop() {
 
 #[tokio::test]
 async fn pipe_recv_can_be_used_as_child_stdin() {
-    let (mut send, recv) = pipe().unwrap();
+    let (mut send, recv) = Direct::default().pipe().unwrap();
     let child = cat_stdin_to_stdout(recv.into_stdio().unwrap());
 
     #[cfg(unix)]
@@ -79,7 +79,7 @@ async fn pipe_recv_can_be_used_as_child_stdin() {
 
 #[tokio::test]
 async fn pipe_send_can_be_used_as_child_stdout() {
-    let (send, mut recv) = pipe().unwrap();
+    let (send, mut recv) = Direct::default().pipe().unwrap();
     let mut child = write_hello_to_stdout(send.into_stdio().unwrap());
 
     let mut buf = Vec::new();

@@ -109,22 +109,6 @@ pub(crate) async fn path_list<'v, 's>(
     create_stream_iter(strand, global, entries, out)
 }
 
-pub(crate) async fn file_list<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    file: &tokio::fs::File,
-    out: Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    let entries = global
-        .local
-        .get(strand)
-        .vfs()
-        .file_streams(file)
-        .await
-        .into_sys(strand)?;
-    create_stream_iter(strand, global, entries, out)
-}
-
 impl<'v> Object<'v> for StreamEntry {
     const NAME: &'v str = "StreamEntry";
     const MODULE: &'v str = "fs";

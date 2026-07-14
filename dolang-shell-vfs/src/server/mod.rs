@@ -27,7 +27,8 @@ use tokio::{
 #[cfg(unix)]
 use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
 use crate::{
-    Child as _, Command as _, Direct, OpenOptions as _, Permissions, Utf8TypedPath, Vfs,
+    Child as _, Command as _, Direct, FileHandle as _, OpenOptions as _, Permissions,
+    Utf8TypedPath, Vfs,
     protocol::{
         AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
         FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
@@ -273,17 +274,20 @@ impl Connection {
         }
 
         if let Some(handle) = req.stdin_fd {
-            cmd.stdin_handle(handle.into_inner());
+            cmd.stdin_handle(crate::DirectFile::from_std(handle.into_inner().into()))
+                .unwrap();
         } else {
             cmd.stdin_null();
         }
         if let Some(handle) = req.stdout_fd {
-            cmd.stdout_handle(handle.into_inner());
+            cmd.stdout_handle(crate::DirectFile::from_std(handle.into_inner().into()))
+                .unwrap();
         } else {
             cmd.stdout_null();
         }
         if let Some(handle) = req.stderr_fd {
-            cmd.stderr_handle(handle.into_inner());
+            cmd.stderr_handle(crate::DirectFile::from_std(handle.into_inner().into()))
+                .unwrap();
         } else {
             cmd.stderr_null();
         }
@@ -321,7 +325,7 @@ impl Connection {
 
         match opts.open(request_path(&req.path)).await {
             Ok(file) => {
-                let handle: DefaultHandle = file.into_std().await.into();
+                let handle: DefaultHandle = file.try_into_std().await.unwrap().into();
                 ResponseKind::Open(Ok(OsHandle::new(handle)))
             }
             Err(e) => ResponseKind::Open(Err(io_error_code(e))),

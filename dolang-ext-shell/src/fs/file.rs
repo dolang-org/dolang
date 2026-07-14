@@ -1,5 +1,3 @@
-#[cfg(unix)]
-use std::os::fd::{AsFd, OwnedFd};
 use std::{
     io::{self, SeekFrom},
     mem, result, str,
@@ -12,11 +10,8 @@ use dolang::runtime::{
     unpack,
     value::{BinEmbryo, TypeObject, View},
 };
-use dolang_shell_vfs::{OpenOptions, Utf8TypedPath, Vfs};
-use tokio::{
-    fs,
-    io::{AsyncSeekExt, AsyncWriteExt},
-};
+use dolang_shell_vfs::{AnyFile, FileHandle, OpenOptions, Utf8TypedPath, Vfs};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
@@ -73,7 +68,7 @@ fn maximal_utf8_prefix(bytes: &[u8]) -> result::Result<&str, ()> {
 
 /// A handle to an open file.
 pub(crate) struct File<'v> {
-    file: Option<fs::File>,
+    file: Option<AnyFile>,
     buf: BinEmbryo<'v>,
 }
 
@@ -87,7 +82,7 @@ pub(crate) async fn open<'v, 's>(
     global: State<'v, Global<'v>>,
     path: Utf8TypedPath<'_>,
     mode: &str,
-) -> Result<'v, 's, fs::File> {
+) -> Result<'v, 's, AnyFile> {
     let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     let vfs = local.vfs();
@@ -101,7 +96,7 @@ pub(crate) async fn open_native<'v>(
     global: State<'v, Global<'v>>,
     path: Utf8TypedPath<'_>,
     mode: &str,
-) -> io::Result<fs::File> {
+) -> io::Result<AnyFile> {
     let local = global.local.get(strand);
     let path = local.cwd().join(path.as_str());
     let vfs = local.vfs();
@@ -113,7 +108,7 @@ pub(crate) async fn open_native<'v>(
 impl<'v> File<'v> {
     pub(crate) fn create(
         global: State<'v, Global<'v>>,
-        file: fs::File,
+        file: AnyFile,
         is_binary: bool,
     ) -> (Self, FileAnnex<'v>) {
         (
@@ -125,11 +120,10 @@ impl<'v> File<'v> {
         )
     }
 
-    #[cfg(unix)]
-    pub(crate) fn fd<'a, 's>(
+    pub(crate) async fn command_handle<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Option<OwnedFd>> {
+    ) -> Result<'v, 's, Option<AnyFile>> {
         let borrow = this.borrow(strand)?;
         if !borrow.buf.is_empty() {
             return Ok(None);
@@ -138,11 +132,7 @@ impl<'v> File<'v> {
             .file
             .as_ref()
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-        file_ref
-            .as_fd()
-            .try_clone_to_owned()
-            .map(Some)
-            .into_sys(strand)
+        file_ref.try_clone().await.map(Some).into_sys(strand)
     }
 
     async fn logical_position<'s>(&mut self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, u64> {
@@ -363,13 +353,7 @@ impl<'v> File<'v> {
             .as_mut()
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
 
-        let metadata = global
-            .local
-            .get(strand)
-            .vfs()
-            .file_metadata(file_ref)
-            .await
-            .into_sys(strand)?;
+        let metadata = file_ref.metadata().await.into_sys(strand)?;
         create_metadata(strand, global, metadata, out);
         Ok(())
     }
@@ -385,13 +369,7 @@ impl<'v> File<'v> {
             .as_mut()
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
 
-        let metadata = global
-            .local
-            .get(strand)
-            .vfs()
-            .file_fs_metadata(file_ref)
-            .await
-            .into_sys(strand)?;
+        let metadata = file_ref.fs_metadata().await.into_sys(strand)?;
         create_fs_metadata(strand, global, metadata, out);
         Ok(())
     }
@@ -551,10 +529,8 @@ impl<'v> Object<'v> for File<'v> {
             .supertype(TypeObject::Sink)
             .method("close", async move |this, strand, _args, _out| {
                 let mut borrow = this.borrow_mut(strand)?;
-                if let Some(mut file) = borrow.file.take() {
-                    let res = file.flush().await;
-                    let _ = tokio::task::spawn_blocking(move || drop(file)).await;
-                    res.into_sys(strand)?
+                if let Some(file) = borrow.file.take() {
+                    file.close().await.into_sys(strand)?
                 }
                 Ok(())
             })
@@ -647,22 +623,15 @@ impl<'v> Object<'v> for File<'v> {
                         .file
                         .as_mut()
                         .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-                    global
-                        .local
-                        .get(strand)
-                        .vfs()
-                        .file_xattrs(
-                            file,
-                            if any {
-                                dolang_shell_vfs::XattrNamespace::Any
-                            } else if let Some(ref namespace) = namespace {
-                                dolang_shell_vfs::XattrNamespace::Named(namespace)
-                            } else {
-                                dolang_shell_vfs::XattrNamespace::Default
-                            },
-                        )
-                        .await
-                        .into_sys(strand)?
+                    file.xattrs(if any {
+                        dolang_shell_vfs::XattrNamespace::Any
+                    } else if let Some(ref namespace) = namespace {
+                        dolang_shell_vfs::XattrNamespace::Named(namespace)
+                    } else {
+                        dolang_shell_vfs::XattrNamespace::Default
+                    })
+                    .await
+                    .into_sys(strand)?
                 };
                 xattr::create_xattr_iter(strand, global, entries, out)
             })
@@ -676,11 +645,7 @@ impl<'v> Object<'v> for File<'v> {
                         .file
                         .as_mut()
                         .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-                    global
-                        .local
-                        .get(strand)
-                        .vfs()
-                        .file_xattr(file, &name, namespace.as_deref())
+                    file.xattr(&name, namespace.as_deref())
                         .await
                         .into_sys(strand)?
                 };
@@ -696,9 +661,9 @@ impl<'v> Object<'v> for File<'v> {
                         .file
                         .as_mut()
                         .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-                    file.try_clone().await.into_sys(strand)?
+                    file.streams().await.into_sys(strand)?
                 };
-                stream::file_list(strand, global, &entries, out).await
+                stream::create_stream_iter(strand, global, entries, out)
             })
             .method("set_xattr", async move |this, strand, args, _out| {
                 let ([name, value], []) = unpack!(strand, args, 2, 0)?;
@@ -710,11 +675,7 @@ impl<'v> Object<'v> for File<'v> {
                     .file
                     .as_mut()
                     .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-                global
-                    .local
-                    .get(strand)
-                    .vfs()
-                    .file_set_xattr(file, &name, namespace.as_deref(), &value)
+                file.set_xattr(&name, namespace.as_deref(), &value)
                     .await
                     .into_sys(strand)
             })
@@ -727,11 +688,7 @@ impl<'v> Object<'v> for File<'v> {
                     .file
                     .as_mut()
                     .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-                global
-                    .local
-                    .get(strand)
-                    .vfs()
-                    .file_remove_xattr(file, &name, namespace.as_deref())
+                file.remove_xattr(&name, namespace.as_deref())
                     .await
                     .into_sys(strand)
             })

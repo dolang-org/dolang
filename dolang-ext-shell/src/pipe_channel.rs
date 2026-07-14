@@ -15,13 +15,16 @@ use dolang::runtime::{
     unpack,
     value::{Nil, TypeObject, View},
 };
-use dolang_shell_vfs::{PipeRecv, PipeSend};
+use dolang_shell_vfs::{AnyVfs, Vfs};
 
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
     global::Global,
     local::ChannelMode,
 };
+
+type PipeSend = <AnyVfs as Vfs>::PipeSend;
+type PipeRecv = <AnyVfs as Vfs>::PipeRecv;
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -498,7 +501,7 @@ pub(crate) async fn negotiate_recv<'v, 's>(
         match &mut inner.state {
             PipeState::Value => {
                 let stale_bytes = take_buffered_bytes(inst, strand, &mut inner)?;
-                let (w, r) = dolang_shell_vfs::pipe().into_sys(strand)?;
+                let (w, r) = global.local.get(strand).vfs().pipe().into_sys(strand)?;
                 inner.recv_end.set_present(BufReader::new(r));
                 inner.send_end = EndState::Taken;
                 inner.state = PipeState::RecvPipe;
@@ -519,7 +522,7 @@ pub(crate) async fn negotiate_recv<'v, 's>(
                     (None, None, None)
                 } else {
                     let old_recv_end = inner.recv_end.take().unwrap();
-                    let (w, r) = dolang_shell_vfs::pipe().into_sys(strand)?;
+                    let (w, r) = global.local.get(strand).vfs().pipe().into_sys(strand)?;
                     inner.recv_end.set_present(BufReader::new(r));
                     inner.send_end = EndState::Taken;
                     inner.state = PipeState::RecvPipe;
@@ -593,7 +596,7 @@ pub(crate) async fn negotiate_send<'v, 's>(
                 drop(inner);
                 inner = shared.borrow_mut();
                 drop(send_borrow);
-                let (w, r) = dolang_shell_vfs::pipe().into_sys(strand)?;
+                let (w, r) = global.local.get(strand).vfs().pipe().into_sys(strand)?;
                 inner.send_end = EndState::Taken;
                 inner.recv_end.set_present(BufReader::new(r));
                 inner.state = PipeState::SendPipe;
@@ -608,7 +611,7 @@ pub(crate) async fn negotiate_send<'v, 's>(
             }
             PipeState::Draining => {
                 let old_recv_end = inner.recv_end.take().unwrap();
-                let (w, r) = dolang_shell_vfs::pipe().into_sys(strand)?;
+                let (w, r) = global.local.get(strand).vfs().pipe().into_sys(strand)?;
                 inner.send_end = EndState::Taken;
                 inner.recv_end.set_present(BufReader::new(r));
                 inner.state = PipeState::SendPipe;

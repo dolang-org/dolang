@@ -4,7 +4,7 @@ use dolang::runtime::{
     vm::Builder,
 };
 use dolang_shell_vfs::{
-    Attrs, FileType, OpenOptions, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
+    Attrs, FileHandle, FileType, OpenOptions, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
 };
 use std::{
     future::poll_fn,
@@ -300,7 +300,7 @@ async fn set_len<'v, 's>(
     let path = prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     let vfs = local.vfs();
-    let file = vfs
+    let mut file = vfs
         .open_options()
         .read(true)
         .write(true)

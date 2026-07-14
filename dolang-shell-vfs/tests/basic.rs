@@ -1,13 +1,13 @@
 #![deny(warnings)]
 #![cfg(unix)]
 use dolang_shell_vfs::{
-    AccessFlags, Child, ChownIdentity, Client, Command, Direct, FileType, Utf8TypedPath,
-    Utf8UnixPath, Vfs,
+    AccessFlags, AnyVfs, Child, ChownIdentity, Client, Command, Direct, FileHandle, FileType,
+    OpenOptions, Utf8TypedPath, Utf8UnixPath, Vfs,
 };
 use nix::unistd::{Group, User, getgid, getuid};
 use std::os::unix::fs::FileTypeExt;
 use std::{
-    os::fd::{AsFd, AsRawFd, OwnedFd},
+    os::fd::{AsRawFd, OwnedFd},
     path::Path,
 };
 
@@ -284,10 +284,14 @@ async fn fd_passing() {
     let file = tempfile::NamedTempFile::new().unwrap();
 
     let client = connect_client(&socket_path).await;
+    let output = client
+        .open_options()
+        .write(true)
+        .open(file.path())
+        .await
+        .unwrap();
     let mut command = client.command(typed_str("echo"));
-    command
-        .arg("hello_world")
-        .stdout_handle(file.as_fd().try_clone_to_owned().unwrap());
+    command.arg("hello_world").stdout_handle(output).unwrap();
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
 
@@ -301,6 +305,54 @@ async fn fd_passing() {
 
     server_task.abort();
     let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn client_or_direct_rejects_mismatched_file_handles() {
+    let dir = tempdir().unwrap();
+    let socket_path = dir.path().join("test.sock");
+    let path = dir.path().join("output.txt");
+    let server_task = start_server(&socket_path).await;
+    let client = connect_client(&socket_path).await;
+
+    let direct_vfs = AnyVfs::from(Direct::default());
+    let client_vfs = AnyVfs::from(client.clone());
+
+    let direct_file = direct_vfs
+        .open_options()
+        .write(true)
+        .create(true)
+        .open(typed(&path))
+        .await
+        .unwrap();
+    let mut client_command = client_vfs.command(typed_str("echo"));
+    assert_eq!(
+        client_command
+            .stdout_handle(direct_file)
+            .err()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+
+    let client_file = client_vfs
+        .open_options()
+        .write(true)
+        .open(typed(&path))
+        .await
+        .unwrap();
+    let mut direct_command = direct_vfs.command(typed_str("echo"));
+    assert_eq!(
+        direct_command
+            .stdout_handle(client_file)
+            .err()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap();
 }
 
 #[tokio::test]
@@ -322,7 +374,7 @@ async fn file_open_read() {
         .unwrap();
 
     let mut contents = String::new();
-    let mut std_file = file.into_std().await;
+    let mut std_file = file.try_into_std().await.unwrap();
     std::io::Read::read_to_string(&mut std_file, &mut contents).unwrap();
     assert_eq!(contents, "hello_world");
 
@@ -349,7 +401,7 @@ async fn file_open_write() {
         .await
         .unwrap();
 
-    let mut std_file = file.into_std().await;
+    let mut std_file = file.try_into_std().await.unwrap();
     std::io::Write::write_all(&mut std_file, b"replaced").unwrap();
     drop(std_file);
 
@@ -381,7 +433,7 @@ async fn file_create() {
 
     assert!(test_file.exists());
 
-    let mut std_file = file.into_std().await;
+    let mut std_file = file.try_into_std().await.unwrap();
     std::io::Write::write_all(&mut std_file, b"created").unwrap();
     drop(std_file);
 

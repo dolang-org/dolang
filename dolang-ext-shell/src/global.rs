@@ -15,9 +15,8 @@ use tokio::{
     sync::Mutex,
 };
 
-use crate::env::EnvIter;
-use crate::pipe_channel::{PipeReceiver, PipeSender};
 use crate::{
+    env::EnvIter,
     error::{
         AlreadyExistsError, NotFoundError, PermissionDeniedError, ProcError, SysError,
         SysErrorObject, TimedOutError,
@@ -28,21 +27,17 @@ use crate::{
         fs_metadata::FsMetadata,
         metadata::Metadata,
         path::{Path, PathComponentsIter, UnixPath, WindowsPath},
-        readdir::DirEntry,
+        readdir::{DirEntry, DirEntryIter},
         stream::{StreamEntry, StreamIter},
         xattr::{XattrEntry, XattrIter},
     },
     local::Local,
+    pipe_channel::{PipeReceiver, PipeSender},
     program::Program,
-    shell::{Stderr, Stdin, Stdout},
+    shell::{Stderr, Stdin, Stdout, Vfs},
     sys::{CpuInfo, OsInfo},
     time::{DateTime, Duration},
 };
-
-#[cfg(any(unix, windows))]
-use crate::shell::Vfs;
-
-use crate::fs::readdir::DirEntryIter;
 
 pub(crate) struct Types<'v> {
     pub(crate) path: Type<'v, Path>,
@@ -77,7 +72,6 @@ pub(crate) struct Types<'v> {
     pub(crate) proc_error: Type<'v, ProcError>,
     pub(crate) pipe_receiver: Type<'v, PipeReceiver>,
     pub(crate) pipe_sender: Type<'v, PipeSender>,
-    #[cfg(any(unix, windows))]
     pub(crate) vfs: Type<'v, Vfs>,
 }
 
@@ -203,7 +197,6 @@ impl<'v> Global<'v> {
                 proc_error: builder.register_type(),
                 pipe_receiver: builder.register_type(),
                 pipe_sender: builder.register_type(),
-                #[cfg(any(unix, windows))]
                 vfs: builder.register_type(),
             },
             syms: Syms {
