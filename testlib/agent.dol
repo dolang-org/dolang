@@ -44,10 +44,15 @@ do
   # Wrap func to run in temp directory since it will likely create files
   let func = do fs.with_temp_dir do |dir| cd $dir $func
   if (sys.os_info().family == :WINDOWS: && !windows_vfs)
-    unittest.test :name $func
+    unittest.test name: "$(name)/direct" $func
+    unittest.test name: "$(name)/local" do unittest.skip "Windows functionality not ready"
+    unittest.test name: "$(name)/remote" do unittest.skip "Windows functionality not ready"
+    func
   else
-    unittest.test name: "$(name)_local" do with_vfs false $func
+    unittest.test name: "$(name)/local" do with_vfs false $func
     if remote
-      unittest.test name: "$(name)_remote" do with_vfs true $func
-    unittest.test name: "$(name)_direct" $func
+      unittest.test name: "$(name)/remote" do with_vfs true $func
+    else
+      unittest.test name: "$(name)/remote" do unittest.skip "remote functionality not ready"
+    unittest.test name: "$(name)/direct" $func
     func
