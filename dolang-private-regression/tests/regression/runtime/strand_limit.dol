@@ -3,6 +3,7 @@ import
     - channel
     - fork
     - limit
+    - pipeline
     - spawn
   std:
     - ValueError
@@ -199,5 +200,16 @@ catch e
 assert_eq (str err) "boom"
 
 assert_eq (limit 1 do fork do 7) [7]
+
+# A fork worker waiting for a pipeline must yield its permit so a pipeline
+# stage can create nested fork workers.
+let piped = limit 1 do
+  fork
+    do
+      pipeline do
+        let inner = fork
+          do 42
+        inner[0]
+assert_eq $piped [42]
 
 assert_err_type $ValueError do limit 0 do nil

@@ -1,10 +1,12 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::VecDeque,
+    pin::Pin,
     rc::Rc,
-    task::{Poll, Waker},
+    task::{self, Poll, Waker},
 };
 
-use futures::future::{join_all, poll_fn};
+use futures::future::join_all;
 
 use crate::{
     arg::Arg,
@@ -47,7 +49,8 @@ fn pipe_pair<'v>(
 struct ForkLimitScope {
     limit: usize,
     active: Cell<usize>,
-    waiters: RefCell<Vec<Waker>>,
+    next_id: Cell<u64>,
+    waiters: RefCell<VecDeque<(u64, Waker)>>,
     parent: Option<Rc<ForkLimitScope>>,
 }
 
@@ -55,20 +58,32 @@ impl ForkLimitScope {
     fn new(limit: usize, parent: Option<Rc<ForkLimitScope>>) -> Rc<Self> {
         Rc::new(Self {
             limit,
+            next_id: Cell::new(0),
             active: Cell::new(0),
             waiters: Default::default(),
             parent,
         })
     }
 
-    fn try_acquire(&self, waker: &Waker) -> bool {
+    fn next_id(&self) -> u64 {
+        let id = self.next_id.get();
+        self.next_id.set(id.strict_add(1));
+        id
+    }
+
+    fn try_acquire(&self, waker: &Waker) -> Option<u64> {
         if self.active.get() < self.limit {
             self.active.set(self.active.get() + 1);
-            true
+            None
         } else {
-            self.waiters.borrow_mut().push(waker.clone());
-            false
+            let id = self.next_id();
+            self.waiters.borrow_mut().push_back((id, waker.clone()));
+            Some(id)
         }
+    }
+
+    fn nevermind(&self, id: u64) {
+        self.waiters.borrow_mut().retain(|(i, _)| *i != id)
     }
 
     fn acquire_fresh(&self) {
@@ -80,9 +95,15 @@ impl ForkLimitScope {
         let active = self.active.get();
         debug_assert!(active > 0);
         self.active.set(active - 1);
-        if let Some(waker) = self.waiters.borrow_mut().pop() {
+        if let Some((_, waker)) = self.waiters.borrow_mut().pop_front() {
             waker.wake();
         }
+    }
+}
+
+impl Drop for ForkLimitScope {
+    fn drop(&mut self) {
+        assert!(self.waiters.get_mut().is_empty());
     }
 }
 
@@ -295,24 +316,51 @@ fn flatten_scope_chain(scope: Option<Rc<ForkLimitScope>>) -> Vec<Rc<ForkLimitSco
     scopes
 }
 
-async fn acquire_scopes<'v, 's>(scopes: &[Rc<ForkLimitScope>]) -> Result<'v, 's, PermitChain> {
-    poll_fn(|cx| {
-        let mut acquired = 0;
-        for scope in scopes {
-            if scope.try_acquire(cx.waker()) {
-                acquired += 1;
-            } else {
-                for scope in scopes[..acquired].iter().rev() {
-                    scope.release_one();
-                }
+struct Acquire<'a> {
+    scopes: &'a [Rc<ForkLimitScope>],
+    acquired: usize,
+    id: Option<u64>,
+}
+
+impl<'a> Future for Acquire<'a> {
+    type Output = PermitChain;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        for scope in &self.scopes[self.acquired..] {
+            if let Some(id) = self.id.take() {
+                scope.nevermind(id);
+            }
+            if let Some(id) = scope.try_acquire(cx.waker()) {
+                self.id = Some(id);
                 return Poll::Pending;
+            } else {
+                self.acquired += 1;
             }
         }
-        Poll::Ready(Ok(PermitChain {
-            scopes: scopes.to_vec(),
-        }))
-    })
-    .await
+        self.acquired = 0;
+        Poll::Ready(PermitChain {
+            scopes: self.scopes.to_vec(),
+        })
+    }
+}
+
+impl<'a> Drop for Acquire<'a> {
+    fn drop(&mut self) {
+        if let Some(id) = self.id.take() {
+            self.scopes[self.acquired].nevermind(id)
+        }
+        for scope in self.scopes[..self.acquired].iter().rev() {
+            scope.release_one();
+        }
+    }
+}
+
+fn acquire_scopes(scopes: &[Rc<ForkLimitScope>]) -> Acquire<'_> {
+    Acquire {
+        scopes,
+        acquired: 0,
+        id: None,
+    }
 }
 
 async fn acquire_permit<'v, 's>(
@@ -323,7 +371,7 @@ async fn acquire_permit<'v, 's>(
     if scopes.is_empty() {
         return Ok(());
     }
-    let permit = acquire_scopes(&scopes).await?;
+    let permit = acquire_scopes(&scopes).await;
     state.fork_limit.get(strand).store_permit(permit);
     Ok(())
 }
@@ -339,7 +387,7 @@ async fn restore_prior_permit<'v, 's>(
     if prior.scopes.is_empty() {
         return Ok(());
     }
-    let permit = acquire_scopes(&prior.scopes).await?;
+    let permit = acquire_scopes(&prior.scopes).await;
     state.fork_limit.get(strand).store_permit(permit);
     Ok(())
 }
@@ -512,96 +560,108 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             // We must avoid being dropped until we've awaited all strands we create
             strand
                 .with_interrupt_mask(true, async move |strand| {
-                    let mut last_recv = Value::NIL;
-                    let mut out = Some(out);
-                    let mut strands = Vec::new();
-                    let mut pipes = Vec::with_capacity(count.saturating_sub(1));
-                    let interrupt = strand.interrupt_token().nested();
-                    for _ in 0..count.saturating_sub(1) {
-                        let mut send = Value::NIL;
-                        let mut recv = Value::NIL;
-                        pipe_pair(strand, Slot::new(&mut send), Slot::new(&mut recv));
-                        pipes.push(Some((send, recv)));
+                    let prior_permit = state.fork_limit.get(strand).take_permit();
+                    if let Some(permit) = prior_permit.as_ref() {
+                        permit.release_all();
                     }
-                    for (i, thunk) in thunks.into_iter().enumerate() {
-                        let (send, recv, mut out, redir_output) = if i < count - 1 {
-                            let (send, recv) = pipes[i].take().unwrap();
-                            (Some(send), Some(recv), None, None)
-                        } else {
-                            (None, None, out.take(), redir_output.take())
-                        };
-                        let redir_input = if i == 0 { redir_input.take() } else { None };
 
-                        strands.push(strand.spawn_scoped(
-                            Some(interrupt.clone()),
-                            async move |strand| {
-                                if let Err(e) = strand
-                                    .with_slots(
-                                        async move |strand, [mut s, mut r, mut tmp, mut tmp2]| {
-                                            let mut redir = Redirect::new(strand);
-                                            if !last_recv.is_nil() {
-                                                r.store(last_recv);
-                                                redir = redir.input(&*r);
-                                            } else if let Some(redir_input) = redir_input {
-                                                redir_input.iter(&mut redir, &mut tmp).await?;
-                                                redir = redir.input(&mut tmp);
-                                            }
-                                            if let Some(send) = send {
-                                                s.store(send);
-                                                redir = redir.output(&*s);
-                                            } else if let Some(redir_output) = redir_output {
-                                                redir_output.sink(&mut redir, &mut tmp).await?;
-                                                redir = redir.output(&mut tmp);
-                                            }
-                                            let res = redir
-                                                .enter(async move |strand| {
-                                                    call!(
-                                                        strand,
-                                                        thunk,
-                                                        out.as_mut().unwrap_or(&mut tmp)
-                                                    )
-                                                    .await
-                                                })
-                                                .await;
-                                            if !r.is_nil() {
-                                                method!(strand, r, close, &mut tmp2).await?;
-                                            }
-                                            if !s.is_nil() {
-                                                method!(strand, s, close, &mut tmp2).await?;
-                                            }
-                                            res
-                                        },
-                                    )
-                                    .await
-                                    && !matches!(
-                                        e.kind(),
-                                        ErrorKind::IterStop | ErrorKind::SinkStop
-                                    )
-                                {
-                                    strand.interrupt_token().cancel();
-                                    return Err(e);
-                                }
-                                Ok(())
-                            },
-                        ));
-                        last_recv = recv.unwrap_or(Value::NIL);
-                    }
-                    for (i, res) in join_all(strands).await.into_iter().enumerate() {
-                        if let Err(e) = res {
-                            // Suppress Input/SinkStop errors (broken pipe) or cancellation from all
-                            // but the final element
-                            if i != count - 1 {
-                                if matches!(e.kind(), ErrorKind::IterStop | ErrorKind::SinkStop) {
-                                    continue;
-                                }
-                                if interrupt.is_canceled() && e.kind() == ErrorKind::Canceled {
-                                    continue;
-                                }
-                            }
-                            return Err(e);
+                    let result = async {
+                        let mut last_recv = Value::NIL;
+                        let mut out = Some(out);
+                        let mut strands = Vec::new();
+                        let mut pipes = Vec::with_capacity(count.saturating_sub(1));
+                        let interrupt = strand.interrupt_token().nested();
+                        for _ in 0..count.saturating_sub(1) {
+                            let mut send = Value::NIL;
+                            let mut recv = Value::NIL;
+                            pipe_pair(strand, Slot::new(&mut send), Slot::new(&mut recv));
+                            pipes.push(Some((send, recv)));
                         }
+                        for (i, thunk) in thunks.into_iter().enumerate() {
+                            let (send, recv, mut out, redir_output) = if i < count - 1 {
+                                let (send, recv) = pipes[i].take().unwrap();
+                                (Some(send), Some(recv), None, None)
+                            } else {
+                                (None, None, out.take(), redir_output.take())
+                            };
+                            let redir_input = if i == 0 { redir_input.take() } else { None };
+
+                            strands.push(strand.spawn_scoped(
+                                Some(interrupt.clone()),
+                                async move |strand| {
+                                    if let Err(e) = strand
+                                        .with_slots(
+                                            async move |strand, [mut s, mut r, mut tmp, mut tmp2]| {
+                                                let mut redir = Redirect::new(strand);
+                                                if !last_recv.is_nil() {
+                                                    r.store(last_recv);
+                                                    redir = redir.input(&*r);
+                                                } else if let Some(redir_input) = redir_input {
+                                                    redir_input.iter(&mut redir, &mut tmp).await?;
+                                                    redir = redir.input(&mut tmp);
+                                                }
+                                                if let Some(send) = send {
+                                                    s.store(send);
+                                                    redir = redir.output(&*s);
+                                                } else if let Some(redir_output) = redir_output {
+                                                    redir_output.sink(&mut redir, &mut tmp).await?;
+                                                    redir = redir.output(&mut tmp);
+                                                }
+                                                let res = redir
+                                                    .enter(async move |strand| {
+                                                        call!(
+                                                            strand,
+                                                            thunk,
+                                                            out.as_mut().unwrap_or(&mut tmp)
+                                                        )
+                                                        .await
+                                                    })
+                                                    .await;
+                                                if !r.is_nil() {
+                                                    method!(strand, r, close, &mut tmp2).await?;
+                                                }
+                                                if !s.is_nil() {
+                                                    method!(strand, s, close, &mut tmp2).await?;
+                                                }
+                                                res
+                                            },
+                                        )
+                                        .await
+                                        && !matches!(
+                                            e.kind(),
+                                            ErrorKind::IterStop | ErrorKind::SinkStop
+                                        )
+                                    {
+                                        strand.interrupt_token().cancel();
+                                        return Err(e);
+                                    }
+                                    Ok(())
+                                },
+                            ));
+                            last_recv = recv.unwrap_or(Value::NIL);
+                        }
+                        for (i, res) in join_all(strands).await.into_iter().enumerate() {
+                            if let Err(e) = res {
+                                // Suppress Input/SinkStop errors (broken pipe) or cancellation from all
+                                // but the final element
+                                if i != count - 1 {
+                                    if matches!(e.kind(), ErrorKind::IterStop | ErrorKind::SinkStop)
+                                    {
+                                        continue;
+                                    }
+                                    if interrupt.is_canceled() && e.kind() == ErrorKind::Canceled {
+                                        continue;
+                                    }
+                                }
+                                return Err(e);
+                            }
+                        }
+                        Ok(())
                     }
-                    Ok(())
+                    .await;
+
+                    restore_prior_permit(strand, state, prior_permit).await?;
+                    result
                 })
                 .await
         })
@@ -810,4 +870,75 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 .await
         })
         .commit();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        future::Future,
+        task::{Context, Poll},
+    };
+
+    use futures::task::noop_waker;
+
+    use super::{ForkLimitScope, acquire_scopes};
+
+    #[test]
+    fn spurious_acquire_poll_does_not_duplicate_waiter() {
+        let scope = ForkLimitScope::new(1, None);
+        scope.acquire_fresh();
+        let scopes = [scope.clone()];
+        let mut acquire = Box::pin(acquire_scopes(&scopes));
+        let waker = noop_waker();
+        let mut context = Context::from_waker(&waker);
+
+        assert!(acquire.as_mut().poll(&mut context).is_pending());
+        assert!(acquire.as_mut().poll(&mut context).is_pending());
+        assert_eq!(scope.waiters.borrow().len(), 1);
+
+        scope.release_one();
+        let Poll::Ready(permit) = acquire.as_mut().poll(&mut context) else {
+            panic!("released slot did not wake the acquire future");
+        };
+        permit.release_all();
+        assert_eq!(scope.active.get(), 0);
+    }
+
+    #[test]
+    fn limit_scope_wakes_waiters_in_arrival_order() {
+        let scope = ForkLimitScope::new(1, None);
+        scope.acquire_fresh();
+        let waker = noop_waker();
+
+        let first = scope.try_acquire(&waker).unwrap();
+        let second = scope.try_acquire(&waker).unwrap();
+        scope.release_one();
+
+        let waiters = scope.waiters.borrow();
+        assert_eq!(waiters.len(), 1);
+        assert_eq!(waiters.front().unwrap().0, second);
+        assert_ne!(first, second);
+        drop(waiters);
+        scope.nevermind(second);
+    }
+
+    #[test]
+    fn dropping_partial_acquire_releases_outer_permits() {
+        let outer = ForkLimitScope::new(1, None);
+        let inner = ForkLimitScope::new(1, Some(outer.clone()));
+        inner.acquire_fresh();
+        let scopes = [outer.clone(), inner.clone()];
+        let mut acquire = Box::pin(acquire_scopes(&scopes));
+        let waker = noop_waker();
+        let mut context = Context::from_waker(&waker);
+
+        assert!(acquire.as_mut().poll(&mut context).is_pending());
+        assert_eq!(outer.active.get(), 1);
+        assert_eq!(inner.waiters.borrow().len(), 1);
+
+        drop(acquire);
+        assert_eq!(outer.active.get(), 0);
+        assert!(inner.waiters.borrow().is_empty());
+        inner.release_one();
+    }
 }
