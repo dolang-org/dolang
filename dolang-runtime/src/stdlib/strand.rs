@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::VecDeque,
     pin::Pin,
     rc::Rc,
     task::{self, Poll, Waker},
@@ -49,7 +50,7 @@ struct ForkLimitScope {
     limit: usize,
     active: Cell<usize>,
     next_id: Cell<u64>,
-    waiters: RefCell<Vec<(u64, Waker)>>,
+    waiters: RefCell<VecDeque<(u64, Waker)>>,
     parent: Option<Rc<ForkLimitScope>>,
 }
 
@@ -76,15 +77,13 @@ impl ForkLimitScope {
             None
         } else {
             let id = self.next_id();
-            self.waiters.borrow_mut().push((id, waker.clone()));
+            self.waiters.borrow_mut().push_back((id, waker.clone()));
             Some(id)
         }
     }
 
     fn nevermind(&self, id: u64) {
-        self.waiters
-            .borrow_mut()
-            .retain(|(i, _)| *i != id)
+        self.waiters.borrow_mut().retain(|(i, _)| *i != id)
     }
 
     fn acquire_fresh(&self) {
@@ -96,7 +95,7 @@ impl ForkLimitScope {
         let active = self.active.get();
         debug_assert!(active > 0);
         self.active.set(active - 1);
-        if let Some((_, waker)) = self.waiters.borrow_mut().pop() {
+        if let Some((_, waker)) = self.waiters.borrow_mut().pop_front() {
             waker.wake();
         }
     }
