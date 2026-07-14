@@ -46,13 +46,25 @@ pub struct WindowsSession {
 impl WindowsSession {
     /// Launches an elevated copy of the current executable and connects to it.
     pub async fn launch(cwd: impl Into<PathBuf>) -> io::Result<(Self, Query)> {
-        launch_with(cwd.into(), launch_elevated).await
+        launch_with(cwd.into(), launch_elevated, false).await
+    }
+
+    /// Launches an elevated session using opaque-only generic framing.
+    #[doc(hidden)]
+    pub async fn launch_remote(cwd: impl Into<PathBuf>) -> io::Result<(Self, Query)> {
+        launch_with(cwd.into(), launch_elevated, true).await
     }
 
     /// Launches a non-elevated copy of the current executable for automated tests.
     #[doc(hidden)]
     pub async fn launch_unelevated(cwd: impl Into<PathBuf>) -> io::Result<(Self, Query)> {
-        launch_with(cwd.into(), launch_process).await
+        launch_with(cwd.into(), launch_process, false).await
+    }
+
+    /// Launches a non-elevated session using opaque-only generic framing.
+    #[doc(hidden)]
+    pub async fn launch_unelevated_remote(cwd: impl Into<PathBuf>) -> io::Result<(Self, Query)> {
+        launch_with(cwd.into(), launch_process, true).await
     }
 
     /// Returns the VFS RPC client for this session.
@@ -88,6 +100,7 @@ impl WindowsSession {
 async fn launch_with(
     cwd: PathBuf,
     launcher: impl FnOnce(&Path, &OsStr, &Path) -> io::Result<OwnedHandle> + Send + 'static,
+    remote: bool,
 ) -> io::Result<(WindowsSession, Query)> {
     let pipe_name = random_pipe_name();
     let pipe = create_pipe(&pipe_name)?;
@@ -96,9 +109,13 @@ async fn launch_with(
     let guard = ProcessGuard::new(&process);
 
     connect_or_exit(&pipe, &process).await?;
-    let client_process = process.as_handle().try_clone_to_owned()?;
-    let client = unsafe { Client::from_named_pipe_server(pipe, client_process) }
-        .map_err(crate::Error::into_io_error)?;
+    let client = if remote {
+        Client::new(pipe)
+    } else {
+        let client_process = process.as_handle().try_clone_to_owned()?;
+        unsafe { Client::from_named_pipe_server(pipe, client_process) }
+            .map_err(crate::Error::into_io_error)?
+    };
     let query = client.query().await.map_err(crate::Error::into_io_error)?;
     guard.disarm();
 
@@ -389,9 +406,11 @@ mod tests {
 
     #[tokio::test]
     async fn launcher_errors_are_reported_without_uac() {
-        let error = match launch_with(std::env::current_dir().unwrap(), |_, _, _| {
-            Err(io::Error::other("launch failed"))
-        })
+        let error = match launch_with(
+            std::env::current_dir().unwrap(),
+            |_, _, _| Err(io::Error::other("launch failed")),
+            false,
+        )
         .await
         {
             Ok(_) => panic!("launcher unexpectedly succeeded"),

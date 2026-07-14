@@ -24,7 +24,7 @@ def parent_field()
   let grandparent = parent.parent
   assert_eq $grandparent (Path "")
 
-#[agent.test]
+#[agent.test remote: false]
 def exists_method()
   let existing = Path "exists.txt"
   let nonexistent = Path "nonexistent.txt"
@@ -35,7 +35,7 @@ def exists_method()
   assert $existing.exists()
   assert !$nonexistent.exists()
 
-#[agent.test]
+#[agent.test remote: false]
 def canonical_method()
   let subdir = Path "subdir"
   create_dir $subdir
@@ -47,7 +47,7 @@ def canonical_method()
   let relative = Path "subdir/../subdir/file.txt"
   assert_eq $relative.canonical() $file.canonical()
 
-#[agent.test]
+#[agent.test remote: false]
 def read_link_method()
   let target = Path "target.txt"
   let link = Path "link.txt"
@@ -75,7 +75,7 @@ def components_absolute_path()
   assert_eq $parts[(parts.len - 2)] "subdir"
   assert_eq $parts[(parts.len - 1)] "file.txt"
 
-#[agent.test]
+#[agent.test remote: false]
 def alternate_data_stream_io()
   if !(sys.os_info().family == :WINDOWS: && !sys.os_info().is_wine)
     skip "requires Windows outside Wine"
@@ -97,7 +97,7 @@ def alternate_data_stream_io()
   assert_eq $parsed.name "ads.txt"
   assert_eq $parsed.stream_name "zone"
 
-#[agent.test]
+#[agent.test remote: false]
 def alternate_data_stream_enumeration()
   if !(sys.os_info().family == :WINDOWS: && !sys.os_info().is_wine)
     skip "requires Windows outside Wine"
@@ -156,7 +156,7 @@ def alternate_data_stream_enumeration()
   assert_throws $RuntimeError do
     stream.read()
 
-#[agent.test]
+#[agent.test remote: false]
 def directory_alternate_data_stream_enumeration()
   if !(sys.os_info().family == :WINDOWS: && !sys.os_info().is_wine)
     skip "requires Windows outside Wine"

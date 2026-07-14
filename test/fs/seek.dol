@@ -12,7 +12,7 @@ import std:
   - MissingPosError
   - UnexpectedKeyError
 
-#[agent.test]
+#[agent.test remote: false]
 def seek_and_tell()
   let path = "test_fs_seek.bin"
   let data = b"abcdef"
@@ -29,7 +29,7 @@ def seek_and_tell()
     assert_eq (file.tell()) 5
   remove $path
 
-#[agent.test]
+#[agent.test remote: false]
 def seek_clears_buffered_text_reads()
   let path = "test_fs_seek.txt"
   write $path "alpha\nbeta\n"
@@ -39,7 +39,7 @@ def seek_clears_buffered_text_reads()
     assert_eq (file.next()) "alpha"
   remove $path
 
-#[agent.test]
+#[agent.test remote: false]
 def seek_rejects_redundant_args()
   let path = "test_fs_seek_args.txt"
   write $path "abc"

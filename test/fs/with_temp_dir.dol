@@ -12,7 +12,7 @@ import agent
     - remove_dir
     - Path
 
-#[agent.test]
+#[agent.test remote: false]
 def with_temp_dir_creates_temp_directory()
   let temp_path = nil
 
@@ -32,7 +32,7 @@ def with_temp_dir_creates_temp_directory()
   # After block, directory should be cleaned up
   assert $!temp_path.exists()
 
-#[agent.test]
+#[agent.test remote: false]
 def with_temp_dir_cleans_up_files()
   let temp_path = nil
 
@@ -53,7 +53,7 @@ def with_temp_dir_cleans_up_files()
   # Everything should be cleaned up
   assert $!temp_path.exists()
 
-#[agent.test]
+#[agent.test remote: false]
 def with_temp_dir_cleans_up_nested_directories()
   let temp_path = nil
 
@@ -79,7 +79,7 @@ def with_temp_dir_returns_block_result()
 
   assert_eq $result "success"
 
-#[agent.test]
+#[agent.test remote: false]
 def with_temp_dir_cleans_up_on_error()
   let temp_path = nil
 
@@ -109,7 +109,7 @@ def each_with_temp_dir_gets_unique_directory()
     unique[p] = nil
   assert_eq $unique.len 5
 
-#[agent.test]
+#[agent.test remote: false]
 def with_temp_dir_with_parent_creates_temp_in_custom_location()
   let parent = Path "test_temp_parent"
   let temp_path = nil
@@ -142,7 +142,7 @@ def with_temp_dir_with_parent_creates_temp_in_custom_location()
   # Clean up the parent we created
   parent.remove_dir()
 
-#[agent.test]
+#[agent.test remote: false]
 def with_temp_dir_parent_cleans_up_on_error()
   let custom_parent = "./test_error_parent"
   let temp_path = nil

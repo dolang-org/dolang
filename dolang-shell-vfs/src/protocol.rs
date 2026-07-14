@@ -203,6 +203,13 @@ impl Protocol for VfsProtocol {
     type Response = ResponseKind;
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct QueryResponse {
+    pub(crate) env: HashMap<String, String>,
+    pub(crate) cwd: WirePath,
+    pub(crate) target: TargetInfo,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WirePathKind {
     Unix,
@@ -288,7 +295,7 @@ impl TryFrom<WirePath> for PathBuf {
 mod tests {
     use std::io;
 
-    use super::{ResponseKind, WireError, WirePath, WirePathKind};
+    use super::{QueryResponse, ResponseKind, WireError, WirePath, WirePathKind};
     use crate::{
         Architecture, Error, OperatingSystem, ProcessStatus, SystemError, TargetInfo,
         Utf8TypedPath, Utf8TypedPathBuf, Utf8UnixPath, Utf8WindowsPath,
@@ -363,7 +370,7 @@ mod tests {
 
     #[test]
     fn wire_query_preserves_cross_target_identity() {
-        let response = ResponseKind::Query {
+        let response = ResponseKind::Query(Ok(QueryResponse {
             env: [("Path".to_owned(), r"C:\Windows".to_owned())].into(),
             cwd: WirePath::from(Utf8TypedPath::Windows(Utf8WindowsPath::new(r"C:\work"))),
             target: TargetInfo {
@@ -372,11 +379,11 @@ mod tests {
                 logical_cpu_count: 24,
                 is_wine: Some(true),
             },
-        };
+        }));
 
         let encoded = postcard::to_stdvec(&response).unwrap();
         let decoded: ResponseKind = postcard::from_bytes(&encoded).unwrap();
-        let ResponseKind::Query { env, cwd, target } = decoded else {
+        let ResponseKind::Query(Ok(QueryResponse { env, cwd, target })) = decoded else {
             panic!("query response changed variant");
         };
 
@@ -678,15 +685,11 @@ pub(crate) enum RequestKind {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum ResponseKind {
     Spawn(Result<crate::ProcessStatus, WireError>),
-    Query {
-        env: HashMap<String, String>,
-        cwd: WirePath,
-        target: TargetInfo,
-    },
-    Which(Option<WirePath>),
+    Query(Result<QueryResponse, WireError>),
+    Which(Result<Option<WirePath>, WireError>),
     WellKnownPath(Result<WirePath, WireError>),
     Stop,
-    ClearCache,
+    ClearCache(Result<(), WireError>),
     Open(Result<OsHandle, WireError>),
     UnixStreamSocket(Result<OsHandle, WireError>),
     ReadDir(Result<Vec<DirEntry>, WireError>),

@@ -2,7 +2,7 @@ import agent zip
   test:
     - assert_eq
 
-#[agent.test]
+#[agent.test remote: false]
 def write_read_append()
   zip.open "test.zip" "w" do |archive|
     archive.open "hello.txt" do |file|

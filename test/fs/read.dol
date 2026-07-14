@@ -15,7 +15,7 @@ import agent sys
 
 let is_windows = (sys.os_info().family == :WINDOWS:)
 
-#[agent.test]
+#[agent.test remote: false]
 def read_entire_file()
   let path = "test_fs_read_source.txt"
   write $path "[package]\nname = \"dolang-ext-shell\"\n"
@@ -29,7 +29,7 @@ def read_entire_file()
     assert (contents.starts_with("[package]"))
     assert (contents.contains("dolang-ext-shell"))
 
-#[agent.test]
+#[agent.test remote: false]
 def read_partial()
   let path = "test_fs_read_partial.txt"
   write $path "[package]\nname = \"dolang-ext-shell\"\n"
@@ -43,7 +43,7 @@ def read_partial()
     # Should be valid UTF-8 string
     assert (first_10.starts_with "[package]" )
 
-#[agent.test]
+#[agent.test remote: false]
 def read_binary_mode()
   let path = "test_fs_read_binary.bin"
   write $path b"[package]\n"
@@ -57,7 +57,7 @@ def read_binary_mode()
     # Binary mode returns bytes, check that we got a string representation
     assert (contents.contains "[" )
 
-#[agent.test]
+#[agent.test remote: false]
 def read_after_close_fails()
   let path = "test_fs_read_closed.txt"
   write $path "content"
@@ -69,7 +69,7 @@ def read_after_close_fails()
     f.read()
   remove $path
 
-#[agent.test]
+#[agent.test remote: false]
 def fs_read_reads_entire_text_file()
   let test_path = "test_fs_read.txt"
   write $test_path "alpha\nbeta\n"
@@ -78,7 +78,7 @@ def fs_read_reads_entire_text_file()
   assert_eq (read (Path test_path)) "alpha\nbeta\n"
   remove $test_path
 
-#[agent.test]
+#[agent.test remote: false]
 def fs_read_reads_entire_binary_file()
   let test_path = "test_fs_read.bin"
   let data = b"\x00\x01\x02\xff"
@@ -87,7 +87,7 @@ def fs_read_reads_entire_binary_file()
   assert_eq ((Path test_path).read "b") $data
   remove $test_path
 
-#[agent.test]
+#[agent.test remote: false]
 def fs_read_grows_for_large_full_reads()
   let test_path = "test_fs_read_large.txt"
   let data = ("abcdefghij".repeat 2000)
@@ -96,7 +96,7 @@ def fs_read_grows_for_large_full_reads()
   assert_eq ((Path test_path).read()) $data
   remove $test_path
 
-#[agent.test]
+#[agent.test remote: false]
 def fs_read_rejects_invalid_utf_8_data()
   let test_path = "test_fs_read_invalid.bin"
   write $test_path b"\xff\xfe"
@@ -105,7 +105,7 @@ def fs_read_rejects_invalid_utf_8_data()
   assert_eq (str err) "invalid UTF-8 data"
   remove $test_path
 
-#[agent.test]
+#[agent.test remote: false]
 def fs_read_rejects_invalid_mode()
   let path = "test_fs_read_invalid_mode.txt"
   write $path "hello"
@@ -114,7 +114,7 @@ def fs_read_rejects_invalid_mode()
   assert_eq (str err) "type error: fs.read: mode must be `b`"
   remove $path
 
-#[agent.test]
+#[agent.test remote: false]
 def missing_file_yields_sys_error()
   let missing = Path "missing.txt"
   let err = assert_throws $sys.NotFoundError do
@@ -123,7 +123,7 @@ def missing_file_yields_sys_error()
   if !is_windows
     assert_eq $err.errno 2
 
-#[agent.test]
+#[agent.test remote: false]
 def sys_error_is_caught_by_runtime_error()
   let missing = Path "missing.txt"
   assert_throws $RuntimeError do

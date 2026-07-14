@@ -29,6 +29,12 @@ mod windows;
 
 pub use error::{Error, OperatingSystem, Result, SystemError};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionMode {
+    Native,
+    Remote,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Architecture {
     X86_64,
