@@ -83,44 +83,84 @@ impl<'v> Object<'v> for FsMetadata {
                 Ok(())
             })
             .get("blocks", move |this, strand, out| {
-                option_field(strand, this.annex().inner.blocks, blocks, out)
+                option_field(
+                    strand,
+                    this.annex().inner.unix().map(|v| v.blocks),
+                    blocks,
+                    out,
+                )
             })
             .get("blocks_free", move |this, strand, out| {
-                option_field(strand, this.annex().inner.blocks_free, blocks_free, out)
+                option_field(
+                    strand,
+                    this.annex().inner.unix().map(|v| v.blocks_free),
+                    blocks_free,
+                    out,
+                )
             })
             .get("blocks_available", move |this, strand, out| {
                 option_field(
                     strand,
-                    this.annex().inner.blocks_available,
+                    this.annex().inner.unix().map(|v| v.blocks_available),
                     blocks_available,
                     out,
                 )
             })
             .get("files", move |this, strand, out| {
-                option_field(strand, this.annex().inner.files, files, out)
+                option_field(
+                    strand,
+                    this.annex().inner.unix().map(|v| v.files),
+                    files,
+                    out,
+                )
             })
             .get("files_free", move |this, strand, out| {
-                option_field(strand, this.annex().inner.files_free, files_free, out)
+                option_field(
+                    strand,
+                    this.annex().inner.unix().map(|v| v.files_free),
+                    files_free,
+                    out,
+                )
             })
             .get("files_available", move |this, strand, out| {
                 option_field(
                     strand,
-                    this.annex().inner.files_available,
+                    this.annex().inner.unix().map(|v| v.files_available),
                     files_available,
                     out,
                 )
             })
             .get("fragment_size", move |this, strand, out| {
-                option_field(strand, this.annex().inner.fragment_size, fragment_size, out)
+                option_field(
+                    strand,
+                    this.annex().inner.unix().map(|v| v.fragment_size),
+                    fragment_size,
+                    out,
+                )
             })
             .get("unix_flags", move |this, strand, out| {
-                option_field(strand, this.annex().inner.unix_flags, unix_flags, out)
+                option_field(
+                    strand,
+                    this.annex().inner.unix().map(|v| v.platform.flags()),
+                    unix_flags,
+                    out,
+                )
             })
             .get("fsid", move |this, strand, out| {
-                option_field(strand, this.annex().inner.fsid, fsid, out)
+                option_field(
+                    strand,
+                    this.annex().inner.unix().and_then(|v| v.fsid),
+                    fsid,
+                    out,
+                )
             })
             .get("name_max", move |this, strand, out| {
-                option_field(strand, this.annex().inner.name_max, name_max, out)
+                option_field(
+                    strand,
+                    this.annex().inner.unix().map(|v| v.name_max),
+                    name_max,
+                    out,
+                )
             })
             .get("no_suid", move |this, strand, out| {
                 option_field(strand, this.annex().inner.no_suid(), no_suid, out)
@@ -144,47 +184,28 @@ impl<'v> Object<'v> for FsMetadata {
                 option_field(strand, this.annex().inner.relatime(), relatime, out)
             })
             .get("win_flags", move |this, strand, out| {
-                #[cfg(windows)]
-                {
-                    option_field(strand, this.annex().inner.win_flags, win_flags, out)
-                }
-                #[cfg(not(windows))]
-                {
-                    let _ = this;
-                    option_field::<u32>(strand, None, win_flags, out)
-                }
+                option_field(
+                    strand,
+                    this.annex().inner.windows().map(|v| v.flags),
+                    win_flags,
+                    out,
+                )
             })
             .get("volume_serial_number", move |this, strand, out| {
-                #[cfg(windows)]
-                {
-                    option_field(
-                        strand,
-                        this.annex().inner.volume_serial_number,
-                        volume_serial_number,
-                        out,
-                    )
-                }
-                #[cfg(not(windows))]
-                {
-                    let _ = this;
-                    option_field::<u32>(strand, None, volume_serial_number, out)
-                }
+                option_field(
+                    strand,
+                    this.annex().inner.windows().map(|v| v.volume_serial_number),
+                    volume_serial_number,
+                    out,
+                )
             })
             .get("component_length_max", move |this, strand, out| {
-                #[cfg(windows)]
-                {
-                    option_field(
-                        strand,
-                        this.annex().inner.component_length_max,
-                        component_length_max,
-                        out,
-                    )
-                }
-                #[cfg(not(windows))]
-                {
-                    let _ = this;
-                    option_field::<u32>(strand, None, component_length_max, out)
-                }
+                option_field(
+                    strand,
+                    this.annex().inner.windows().map(|v| v.component_length_max),
+                    component_length_max,
+                    out,
+                )
             })
     }
 }

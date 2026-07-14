@@ -1,9 +1,8 @@
-#[cfg(any(windows, target_os = "macos"))]
 use dolang::runtime::object::{Mut, Ref};
 use dolang::runtime::{Object, Output, Result, State, Strand, Sym, object::TypeBuilder};
-use dolang_shell_vfs::{FileType, Metadata as VfsMetadata};
+use dolang_shell_vfs::{FileType, Metadata as VfsMetadata, UnixMetadataPlatform};
 
-use crate::{global::Global, time::create_datetime};
+use crate::{global::Global, time::create_datetime, util};
 
 const NANOS_PER_SEC_I128: i128 = 1_000_000_000;
 
@@ -69,8 +68,19 @@ impl<'v> Object<'v> for Metadata {
     type Type = ();
     type TypeAnnex = ();
 
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let builder = builder
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let mode = builder.sym("mode");
+        let dev = builder.sym("dev");
+        let ino = builder.sym("ino");
+        let nlink = builder.sym("nlink");
+        let uid = builder.sym("uid");
+        let gid = builder.sym("gid");
+        let rdev = builder.sym("rdev");
+        let blksize = builder.sym("blksize");
+        let blocks = builder.sym("blocks");
+        let win_attrs = builder.sym("win_attrs");
+        let unix_flags = builder.sym("unix_flags");
+        builder
             .get("len", |this, strand, out| {
                 Output::set(strand, out, this.annex().inner.len);
                 Ok(())
@@ -112,71 +122,83 @@ impl<'v> Object<'v> for Metadata {
                     annex.inner.ctime_nsec,
                     out,
                 )
-            });
-        #[cfg(unix)]
-        let builder = builder
-            .get("mode", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.mode);
-                Ok(())
             })
-            .get("dev", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.dev);
-                Ok(())
+            .get("mode", move |this, strand, out| {
+                util::option_field(
+                    strand,
+                    this.annex().inner.unix().map(|unix| unix.mode),
+                    mode,
+                    out,
+                )
             })
-            .get("ino", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.ino);
-                Ok(())
+            .get("dev", move |this, strand, out| {
+                util::option_field(strand, this.annex().inner.unix().map(|v| v.dev), dev, out)
             })
-            .get("nlink", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.nlink);
-                Ok(())
+            .get("ino", move |this, strand, out| {
+                util::option_field(strand, this.annex().inner.unix().map(|v| v.ino), ino, out)
             })
-            .get("uid", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.uid);
-                Ok(())
+            .get("nlink", move |this, strand, out| {
+                util::option_field(
+                    strand,
+                    this.annex().inner.unix().map(|v| v.nlink),
+                    nlink,
+                    out,
+                )
             })
-            .get("gid", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.gid);
-                Ok(())
+            .get("uid", move |this, strand, out| {
+                util::option_field(strand, this.annex().inner.unix().map(|v| v.uid), uid, out)
             })
-            .get("rdev", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.rdev);
-                Ok(())
+            .get("gid", move |this, strand, out| {
+                util::option_field(strand, this.annex().inner.unix().map(|v| v.gid), gid, out)
             })
-            .get("blksize", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.blksize);
-                Ok(())
+            .get("rdev", move |this, strand, out| {
+                util::option_field(strand, this.annex().inner.unix().map(|v| v.rdev), rdev, out)
             })
-            .get("blocks", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.blocks);
-                Ok(())
-            });
-        #[cfg(windows)]
-        let builder = builder.get("win_attrs", |this, strand, out| {
-            Output::set(strand, out, this.annex().inner.win_attrs);
-            Ok(())
-        });
-        #[cfg(target_os = "macos")]
-        let builder = builder.get("unix_flags", |this, strand, out| {
-            Output::set(strand, out, this.annex().inner.unix_flags);
-            Ok(())
-        });
-        #[cfg(any(windows, target_os = "macos"))]
-        let builder = builder.get("attrs", |this, strand, mut out| {
-            let borrow = this.borrow(strand)?;
-            if !Ref::slot::<0>(&borrow).is_nil() {
-                Output::set(strand, out, Ref::slot::<0>(&borrow));
-                return Ok(());
-            }
-            drop(borrow);
+            .get("blksize", move |this, strand, out| {
+                util::option_field(
+                    strand,
+                    this.annex().inner.unix().map(|v| v.blksize),
+                    blksize,
+                    out,
+                )
+            })
+            .get("blocks", move |this, strand, out| {
+                util::option_field(
+                    strand,
+                    this.annex().inner.unix().map(|v| v.blocks),
+                    blocks,
+                    out,
+                )
+            })
+            .get("win_attrs", move |this, strand, out| {
+                util::option_field(
+                    strand,
+                    this.annex().inner.windows().map(|v| v.attrs),
+                    win_attrs,
+                    out,
+                )
+            })
+            .get("unix_flags", move |this, strand, out| {
+                let value = this.annex().inner.unix().and_then(|v| match &v.platform {
+                    UnixMetadataPlatform::Macos { flags } => Some(*flags),
+                    _ => None,
+                });
+                util::option_field(strand, value, unix_flags, out)
+            })
+            .get("attrs", |this, strand, mut out| {
+                let borrow = this.borrow(strand)?;
+                if !Ref::slot::<0>(&borrow).is_nil() {
+                    Output::set(strand, out, Ref::slot::<0>(&borrow));
+                    return Ok(());
+                }
+                drop(borrow);
 
-            let annex = this.annex();
-            let attrs = annex.inner.attrs();
-            crate::fs::attrs::create_attrs(strand, annex.global, attrs, &mut out);
-            let mut borrow = this.borrow_mut(strand)?;
-            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &out);
-            Ok(())
-        });
-        builder
+                let annex = this.annex();
+                let attrs = annex.inner.attrs();
+                crate::fs::attrs::create_attrs(strand, annex.global, attrs, &mut out);
+                let mut borrow = this.borrow_mut(strand)?;
+                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &out);
+                Ok(())
+            })
     }
 }

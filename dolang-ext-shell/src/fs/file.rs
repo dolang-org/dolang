@@ -102,7 +102,9 @@ pub(crate) async fn open_native<'v>(
     let vfs = local.vfs();
     let mut opts = vfs.open_options();
     configure_options(&mut opts, mode);
-    opts.open(path.to_path()).await
+    opts.open(path.to_path())
+        .await
+        .map_err(dolang_shell_vfs::Error::into_io_error)
 }
 
 impl<'v> File<'v> {

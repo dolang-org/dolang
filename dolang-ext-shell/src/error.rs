@@ -21,12 +21,50 @@ impl<T> Default for SysErrorObject<T> {
 }
 
 pub(crate) struct SysErrorAnnex {
-    pub(crate) error: io::Error,
+    pub(crate) error: SysErrorSource,
+}
+
+pub(crate) enum SysErrorSource {
+    Io(io::Error),
+    Vfs(dolang_shell_vfs::Error),
 }
 
 impl SysErrorAnnex {
     fn message(&self) -> String {
         self.error.to_string()
+    }
+}
+
+impl SysErrorSource {
+    fn kind(&self) -> io::ErrorKind {
+        match self {
+            Self::Io(error) => error.kind(),
+            Self::Vfs(error) => error.kind(),
+        }
+    }
+
+    #[cfg(unix)]
+    fn errno(&self) -> Option<i32> {
+        match self {
+            Self::Io(error) => error.raw_os_error(),
+            Self::Vfs(error) => error.system().and_then(|error| {
+                matches!(
+                    error.operating_system(),
+                    dolang_shell_vfs::OperatingSystem::Linux
+                        | dolang_shell_vfs::OperatingSystem::Macos
+                )
+                .then(|| error.code())
+            }),
+        }
+    }
+}
+
+impl fmt::Display for SysErrorSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(error) => error.fmt(f),
+            Self::Vfs(error) => error.fmt(f),
+        }
     }
 }
 
@@ -44,7 +82,7 @@ impl<'v, T: SysErrorType<'v>> Object<'v> for SysErrorObject<T> {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         #[cfg(unix)]
         let builder = builder.get("errno", |this, strand, out| {
-            if let Some(errno) = this.annex().error.raw_os_error() {
+            if let Some(errno) = this.annex().error.errno() {
                 Output::set(strand, out, i64::from(errno));
             }
             Ok(())
@@ -113,7 +151,7 @@ fn classify_io_error_kind(kind: io::ErrorKind) -> SysErrorClass {
 fn create_sys_error<'v, 's, T: SysErrorType<'v>>(
     strand: &mut Strand<'v, 's>,
     ty: Type<'v, SysErrorObject<T>>,
-    error: io::Error,
+    error: SysErrorSource,
 ) -> Error<'v, 's> {
     Error::object_with_annex(
         strand,
@@ -198,6 +236,17 @@ impl<'v> Object<'v> for ProcError {
 }
 
 pub(crate) fn io_error<'v, 's>(strand: &mut Strand<'v, 's>, error: io::Error) -> Error<'v, 's> {
+    sys_error(strand, SysErrorSource::Io(error))
+}
+
+pub(crate) fn vfs_error<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    error: dolang_shell_vfs::Error,
+) -> Error<'v, 's> {
+    sys_error(strand, SysErrorSource::Vfs(error))
+}
+
+fn sys_error<'v, 's>(strand: &mut Strand<'v, 's>, error: SysErrorSource) -> Error<'v, 's> {
     let global = strand.state::<Global<'v>>();
     match classify_io_error_kind(error.kind()) {
         SysErrorClass::Error => create_sys_error::<SysError>(strand, global.types.sys_error, error),
@@ -226,20 +275,26 @@ impl ErrorExt for io::Error {
     }
 }
 
+impl ErrorExt for dolang_shell_vfs::Error {
+    fn into_sys<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
+        vfs_error(strand, self)
+    }
+}
+
 pub(crate) fn io_result<'v, 's, T>(
     strand: &mut Strand<'v, 's>,
-    result: io::Result<T>,
+    result: std::result::Result<T, impl ErrorExt>,
 ) -> Result<'v, 's, T> {
-    result.map_err(|error| io_error(strand, error))
+    result.map_err(|error| error.into_sys(strand))
 }
 
 pub(crate) trait ResultExt<T> {
     fn into_sys<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
 }
 
-impl<T> ResultExt<T> for io::Result<T> {
+impl<T, E: ErrorExt> ResultExt<T> for std::result::Result<T, E> {
     fn into_sys<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
-        io_result(strand, self)
+        self.map_err(|error| error.into_sys(strand))
     }
 }
 

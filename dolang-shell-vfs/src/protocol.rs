@@ -4,12 +4,197 @@ use std::{io, path::PathBuf};
 use dolang_rpc::{OsHandle, Protocol};
 use serde::{Deserialize, Serialize};
 
-#[cfg(windows)]
-pub(crate) use crate::DirEntry;
 pub(crate) use crate::{
-    Attrs, ChownIdentity, FsMetadata, Metadata, StreamEntry, WellKnownPath, XattrEntry,
-    XattrNamespace,
+    Attrs, ChownIdentity, DirEntry, FsMetadata, Metadata, OperatingSystem, StreamEntry,
+    WellKnownPath, XattrEntry, XattrNamespace,
 };
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub(crate) enum WireErrorKind {
+    NotFound,
+    PermissionDenied,
+    ConnectionRefused,
+    ConnectionReset,
+    HostUnreachable,
+    NetworkUnreachable,
+    ConnectionAborted,
+    NotConnected,
+    AddrInUse,
+    AddrNotAvailable,
+    NetworkDown,
+    BrokenPipe,
+    AlreadyExists,
+    WouldBlock,
+    NotADirectory,
+    IsADirectory,
+    DirectoryNotEmpty,
+    ReadOnlyFilesystem,
+    StaleNetworkFileHandle,
+    InvalidInput,
+    InvalidData,
+    TimedOut,
+    WriteZero,
+    StorageFull,
+    NotSeekable,
+    QuotaExceeded,
+    FileTooLarge,
+    ResourceBusy,
+    ExecutableFileBusy,
+    Deadlock,
+    CrossesDevices,
+    TooManyLinks,
+    InvalidFilename,
+    ArgumentListTooLong,
+    Interrupted,
+    Unsupported,
+    UnexpectedEof,
+    OutOfMemory,
+    Other,
+}
+
+impl From<io::ErrorKind> for WireErrorKind {
+    fn from(kind: io::ErrorKind) -> Self {
+        match kind {
+            io::ErrorKind::NotFound => Self::NotFound,
+            io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+            io::ErrorKind::ConnectionRefused => Self::ConnectionRefused,
+            io::ErrorKind::ConnectionReset => Self::ConnectionReset,
+            io::ErrorKind::HostUnreachable => Self::HostUnreachable,
+            io::ErrorKind::NetworkUnreachable => Self::NetworkUnreachable,
+            io::ErrorKind::ConnectionAborted => Self::ConnectionAborted,
+            io::ErrorKind::NotConnected => Self::NotConnected,
+            io::ErrorKind::AddrInUse => Self::AddrInUse,
+            io::ErrorKind::AddrNotAvailable => Self::AddrNotAvailable,
+            io::ErrorKind::NetworkDown => Self::NetworkDown,
+            io::ErrorKind::BrokenPipe => Self::BrokenPipe,
+            io::ErrorKind::AlreadyExists => Self::AlreadyExists,
+            io::ErrorKind::WouldBlock => Self::WouldBlock,
+            io::ErrorKind::NotADirectory => Self::NotADirectory,
+            io::ErrorKind::IsADirectory => Self::IsADirectory,
+            io::ErrorKind::DirectoryNotEmpty => Self::DirectoryNotEmpty,
+            io::ErrorKind::ReadOnlyFilesystem => Self::ReadOnlyFilesystem,
+            io::ErrorKind::StaleNetworkFileHandle => Self::StaleNetworkFileHandle,
+            io::ErrorKind::InvalidInput => Self::InvalidInput,
+            io::ErrorKind::InvalidData => Self::InvalidData,
+            io::ErrorKind::TimedOut => Self::TimedOut,
+            io::ErrorKind::WriteZero => Self::WriteZero,
+            io::ErrorKind::StorageFull => Self::StorageFull,
+            io::ErrorKind::NotSeekable => Self::NotSeekable,
+            io::ErrorKind::QuotaExceeded => Self::QuotaExceeded,
+            io::ErrorKind::FileTooLarge => Self::FileTooLarge,
+            io::ErrorKind::ResourceBusy => Self::ResourceBusy,
+            io::ErrorKind::ExecutableFileBusy => Self::ExecutableFileBusy,
+            io::ErrorKind::Deadlock => Self::Deadlock,
+            io::ErrorKind::CrossesDevices => Self::CrossesDevices,
+            io::ErrorKind::TooManyLinks => Self::TooManyLinks,
+            io::ErrorKind::InvalidFilename => Self::InvalidFilename,
+            io::ErrorKind::ArgumentListTooLong => Self::ArgumentListTooLong,
+            io::ErrorKind::Interrupted => Self::Interrupted,
+            io::ErrorKind::Unsupported => Self::Unsupported,
+            io::ErrorKind::UnexpectedEof => Self::UnexpectedEof,
+            io::ErrorKind::OutOfMemory => Self::OutOfMemory,
+            _ => Self::Other,
+        }
+    }
+}
+
+impl From<WireErrorKind> for io::ErrorKind {
+    fn from(kind: WireErrorKind) -> Self {
+        match kind {
+            WireErrorKind::NotFound => Self::NotFound,
+            WireErrorKind::PermissionDenied => Self::PermissionDenied,
+            WireErrorKind::ConnectionRefused => Self::ConnectionRefused,
+            WireErrorKind::ConnectionReset => Self::ConnectionReset,
+            WireErrorKind::HostUnreachable => Self::HostUnreachable,
+            WireErrorKind::NetworkUnreachable => Self::NetworkUnreachable,
+            WireErrorKind::ConnectionAborted => Self::ConnectionAborted,
+            WireErrorKind::NotConnected => Self::NotConnected,
+            WireErrorKind::AddrInUse => Self::AddrInUse,
+            WireErrorKind::AddrNotAvailable => Self::AddrNotAvailable,
+            WireErrorKind::NetworkDown => Self::NetworkDown,
+            WireErrorKind::BrokenPipe => Self::BrokenPipe,
+            WireErrorKind::AlreadyExists => Self::AlreadyExists,
+            WireErrorKind::WouldBlock => Self::WouldBlock,
+            WireErrorKind::NotADirectory => Self::NotADirectory,
+            WireErrorKind::IsADirectory => Self::IsADirectory,
+            WireErrorKind::DirectoryNotEmpty => Self::DirectoryNotEmpty,
+            WireErrorKind::ReadOnlyFilesystem => Self::ReadOnlyFilesystem,
+            WireErrorKind::StaleNetworkFileHandle => Self::StaleNetworkFileHandle,
+            WireErrorKind::InvalidInput => Self::InvalidInput,
+            WireErrorKind::InvalidData => Self::InvalidData,
+            WireErrorKind::TimedOut => Self::TimedOut,
+            WireErrorKind::WriteZero => Self::WriteZero,
+            WireErrorKind::StorageFull => Self::StorageFull,
+            WireErrorKind::NotSeekable => Self::NotSeekable,
+            WireErrorKind::QuotaExceeded => Self::QuotaExceeded,
+            WireErrorKind::FileTooLarge => Self::FileTooLarge,
+            WireErrorKind::ResourceBusy => Self::ResourceBusy,
+            WireErrorKind::ExecutableFileBusy => Self::ExecutableFileBusy,
+            WireErrorKind::Deadlock => Self::Deadlock,
+            WireErrorKind::CrossesDevices => Self::CrossesDevices,
+            WireErrorKind::TooManyLinks => Self::TooManyLinks,
+            WireErrorKind::InvalidFilename => Self::InvalidFilename,
+            WireErrorKind::ArgumentListTooLong => Self::ArgumentListTooLong,
+            WireErrorKind::Interrupted => Self::Interrupted,
+            WireErrorKind::Unsupported => Self::Unsupported,
+            WireErrorKind::UnexpectedEof => Self::UnexpectedEof,
+            WireErrorKind::OutOfMemory => Self::OutOfMemory,
+            WireErrorKind::Other => Self::Other,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) enum WireError {
+    Io {
+        kind: WireErrorKind,
+        message: String,
+    },
+    System {
+        operating_system: OperatingSystem,
+        code: i32,
+        kind: WireErrorKind,
+        message: String,
+    },
+}
+
+impl From<crate::Error> for WireError {
+    fn from(error: crate::Error) -> Self {
+        match error {
+            crate::Error::Io(error) => Self::Io {
+                kind: error.kind().into(),
+                message: error.to_string(),
+            },
+            crate::Error::System(error) => Self::System {
+                operating_system: error.operating_system().clone(),
+                code: error.code(),
+                kind: error.kind().into(),
+                message: error.message().to_owned(),
+            },
+        }
+    }
+}
+
+impl From<WireError> for crate::Error {
+    fn from(error: WireError) -> Self {
+        match error {
+            WireError::Io { kind, message } => {
+                Self::Io(io::Error::new(io::ErrorKind::from(kind), message))
+            }
+            WireError::System {
+                operating_system,
+                code,
+                kind,
+                message,
+            } => Self::System(crate::SystemError::new(
+                operating_system,
+                code,
+                kind.into(),
+                message,
+            )),
+        }
+    }
+}
 
 pub(crate) struct VfsProtocol;
 
@@ -84,25 +269,30 @@ impl From<WirePath> for crate::Utf8TypedPathBuf {
 }
 
 impl TryFrom<PathBuf> for WirePath {
-    type Error = io::Error;
+    type Error = crate::Error;
 
     fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
-        crate::typed_path(path).map(Into::into)
+        crate::typed_path(path).map(Into::into).map_err(Into::into)
     }
 }
 
 impl TryFrom<WirePath> for PathBuf {
-    type Error = io::Error;
+    type Error = crate::Error;
 
     fn try_from(path: WirePath) -> Result<Self, Self::Error> {
-        crate::native_path(crate::Utf8TypedPathBuf::from(path).to_path())
+        crate::native_path(crate::Utf8TypedPathBuf::from(path).to_path()).map_err(Into::into)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{WirePath, WirePathKind};
-    use crate::{Utf8TypedPath, Utf8TypedPathBuf, Utf8UnixPath, Utf8WindowsPath};
+    use std::io;
+
+    use super::{WireError, WirePath, WirePathKind};
+    use crate::{
+        Error, OperatingSystem, SystemError, Utf8TypedPath, Utf8TypedPathBuf, Utf8UnixPath,
+        Utf8WindowsPath,
+    };
 
     #[test]
     fn wire_path_preserves_unix_kind_and_literal_form() {
@@ -144,6 +334,33 @@ mod tests {
         assert!(PathBuf::try_from(wire).is_err());
     }
 
+    #[test]
+    fn wire_error_preserves_foreign_system_error() {
+        let error = Error::System(SystemError::new(
+            OperatingSystem::Windows,
+            5,
+            io::ErrorKind::PermissionDenied,
+            "access is denied",
+        ));
+
+        let error = Error::from(WireError::from(error));
+        let system = error.system().unwrap();
+        assert_eq!(system.operating_system(), &OperatingSystem::Windows);
+        assert_eq!(system.code(), 5);
+        assert_eq!(system.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(system.message(), "access is denied");
+    }
+
+    #[test]
+    fn wire_error_preserves_incidental_io_error() {
+        let error = Error::Io(io::Error::new(io::ErrorKind::InvalidData, "bad reply"));
+
+        let error = Error::from(WireError::from(error));
+        assert!(error.system().is_none());
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(error.to_string(), "bad reply");
+    }
+
     use std::path::PathBuf;
 }
 
@@ -174,7 +391,7 @@ impl XattrNamespaceRequest {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct SpawnRequest {
     pub(crate) program: WirePath,
     pub(crate) args: Vec<String>,
@@ -183,20 +400,6 @@ pub(crate) struct SpawnRequest {
     pub(crate) stdin_fd: Option<OsHandle>,
     pub(crate) stdout_fd: Option<OsHandle>,
     pub(crate) stderr_fd: Option<OsHandle>,
-}
-
-impl std::fmt::Debug for SpawnRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SpawnRequest")
-            .field("program", &self.program)
-            .field("args", &self.args)
-            .field("env", &self.env)
-            .field("cwd", &self.cwd)
-            .field("stdin_fd", &self.stdin_fd.is_some())
-            .field("stdout_fd", &self.stdout_fd.is_some())
-            .field("stderr_fd", &self.stderr_fd.is_some())
-            .finish()
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -211,7 +414,6 @@ pub(crate) struct OpenRequest {
     pub(crate) no_follow: bool,
 }
 
-#[cfg(unix)]
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct UnixStreamSocketRequest {
     pub(crate) bind: Option<WirePath>,
@@ -312,7 +514,6 @@ pub(crate) struct ReadLinkRequest {
     pub(crate) path: WirePath,
 }
 
-#[cfg(unix)]
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct AccessRequest {
     pub(crate) path: WirePath,
@@ -404,9 +605,7 @@ pub(crate) enum RequestKind {
     Stop,
     ClearCache,
     Open(OpenRequest),
-    #[cfg(unix)]
     UnixStreamSocket(UnixStreamSocketRequest),
-    #[cfg(windows)]
     ReadDir {
         path: WirePath,
     },
@@ -425,7 +624,6 @@ pub(crate) enum RequestKind {
     SetAttrs(SetAttrsRequest),
     Canonicalize(CanonicalizeRequest),
     ReadLink(ReadLinkRequest),
-    #[cfg(unix)]
     Access(AccessRequest),
     Glob(GlobRequest),
     SetPermissions(SetPermissionsRequest),
@@ -438,125 +636,43 @@ pub(crate) enum RequestKind {
     Streams(StreamsRequest),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum ResponseKind {
-    Spawn(Result<i32, i32>),
+    Spawn(Result<i32, WireError>),
     Query {
         env: HashMap<String, String>,
         cwd: WirePath,
     },
     Which(Option<WirePath>),
-    WellKnownPath(Result<WirePath, i32>),
+    WellKnownPath(Result<WirePath, WireError>),
     Stop,
     ClearCache,
-    Open(Result<OsHandle, i32>),
-    #[cfg(unix)]
-    UnixStreamSocket(Result<OsHandle, i32>),
-    #[cfg(windows)]
-    ReadDir(Result<Vec<DirEntry>, i32>),
-    Remove(Result<(), i32>),
-    Metadata(Result<Metadata, i32>),
-    FsMetadata(Result<FsMetadata, i32>),
-    CreateDir(Result<(), i32>),
-    RemoveDir(Result<(), i32>),
-    Copy(Result<(), i32>),
-    Rename(Result<(), i32>),
-    Move(Result<(), i32>),
-    Symlink(Result<(), i32>),
-    HardLink(Result<(), i32>),
-    SymlinkMetadata(Result<Metadata, i32>),
-    Attrs(Result<Attrs, i32>),
-    SetAttrs(Result<(), i32>),
-    Canonicalize(Result<WirePath, i32>),
-    ReadLink(Result<WirePath, i32>),
-    #[cfg(unix)]
-    Access(Result<(), i32>),
-    Glob(Result<Vec<WirePath>, i32>),
-    SetPermissions(Result<(), i32>),
-    SetTimes(Result<(), i32>),
-    Chown(Result<(), i32>),
-    Xattrs(Result<Vec<XattrEntry>, i32>),
-    Xattr(Result<Vec<u8>, i32>),
-    SetXattr(Result<(), i32>),
-    RemoveXattr(Result<(), i32>),
-    Streams(Result<Vec<StreamEntry>, i32>),
-}
-
-impl std::fmt::Debug for ResponseKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ResponseKind::Spawn(result) => f.debug_tuple("Spawn").field(result).finish(),
-            ResponseKind::Query { env, cwd } => f
-                .debug_struct("Query")
-                .field("env", env)
-                .field("cwd", cwd)
-                .finish(),
-            ResponseKind::Which(path) => f.debug_tuple("Which").field(path).finish(),
-            ResponseKind::WellKnownPath(result) => {
-                f.debug_tuple("WellKnownPath").field(result).finish()
-            }
-            ResponseKind::Stop => f.debug_struct("Stop").finish(),
-            ResponseKind::ClearCache => f.debug_struct("ClearCache").finish(),
-            ResponseKind::Open(result) => f
-                .debug_tuple("Open")
-                .field(&result.as_ref().map(|_| "<fd>"))
-                .finish(),
-            #[cfg(unix)]
-            ResponseKind::UnixStreamSocket(result) => f
-                .debug_tuple("UnixStreamSocket")
-                .field(&result.as_ref().map(|_| "<fd>"))
-                .finish(),
-            #[cfg(windows)]
-            ResponseKind::ReadDir(result) => f
-                .debug_tuple("ReadDir")
-                .field(&result.as_ref().map(|v| format!("{} entries", v.len())))
-                .finish(),
-            ResponseKind::Remove(result) => f.debug_tuple("Remove").field(result).finish(),
-            ResponseKind::Metadata(result) => f.debug_tuple("Metadata").field(result).finish(),
-            ResponseKind::FsMetadata(result) => f.debug_tuple("FsMetadata").field(result).finish(),
-            ResponseKind::CreateDir(result) => f.debug_tuple("CreateDir").field(result).finish(),
-            ResponseKind::RemoveDir(result) => f.debug_tuple("RemoveDir").field(result).finish(),
-            ResponseKind::Copy(result) => f.debug_tuple("Copy").field(result).finish(),
-            ResponseKind::Rename(result) => f.debug_tuple("Rename").field(result).finish(),
-            ResponseKind::Move(result) => f.debug_tuple("Move").field(result).finish(),
-            ResponseKind::Symlink(result) => f.debug_tuple("Symlink").field(result).finish(),
-            ResponseKind::HardLink(result) => f.debug_tuple("HardLink").field(result).finish(),
-            ResponseKind::SymlinkMetadata(result) => {
-                f.debug_tuple("SymlinkMetadata").field(result).finish()
-            }
-            ResponseKind::Attrs(result) => f.debug_tuple("Attrs").field(result).finish(),
-            ResponseKind::SetAttrs(result) => f.debug_tuple("SetAttrs").field(result).finish(),
-            ResponseKind::Canonicalize(result) => {
-                f.debug_tuple("Canonicalize").field(result).finish()
-            }
-            ResponseKind::ReadLink(result) => f.debug_tuple("ReadLink").field(result).finish(),
-            #[cfg(unix)]
-            ResponseKind::Access(result) => f.debug_tuple("Access").field(result).finish(),
-            ResponseKind::Glob(result) => f
-                .debug_tuple("Glob")
-                .field(&result.as_ref().map(|v| format!("{} paths", v.len())))
-                .finish(),
-            ResponseKind::SetPermissions(result) => {
-                f.debug_tuple("SetPermissions").field(result).finish()
-            }
-            ResponseKind::SetTimes(result) => f.debug_tuple("SetTimes").field(result).finish(),
-            ResponseKind::Chown(result) => f.debug_tuple("Chown").field(result).finish(),
-            ResponseKind::Xattrs(result) => f
-                .debug_tuple("Xattrs")
-                .field(&result.as_ref().map(|v| format!("{} attrs", v.len())))
-                .finish(),
-            ResponseKind::Xattr(result) => f
-                .debug_tuple("Xattr")
-                .field(&result.as_ref().map(|v| format!("{} bytes", v.len())))
-                .finish(),
-            ResponseKind::SetXattr(result) => f.debug_tuple("SetXattr").field(result).finish(),
-            ResponseKind::RemoveXattr(result) => {
-                f.debug_tuple("RemoveXattr").field(result).finish()
-            }
-            ResponseKind::Streams(result) => f
-                .debug_tuple("Streams")
-                .field(&result.as_ref().map(|v| format!("{} streams", v.len())))
-                .finish(),
-        }
-    }
+    Open(Result<OsHandle, WireError>),
+    UnixStreamSocket(Result<OsHandle, WireError>),
+    ReadDir(Result<Vec<DirEntry>, WireError>),
+    Remove(Result<(), WireError>),
+    Metadata(Result<Metadata, WireError>),
+    FsMetadata(Result<FsMetadata, WireError>),
+    CreateDir(Result<(), WireError>),
+    RemoveDir(Result<(), WireError>),
+    Copy(Result<(), WireError>),
+    Rename(Result<(), WireError>),
+    Move(Result<(), WireError>),
+    Symlink(Result<(), WireError>),
+    HardLink(Result<(), WireError>),
+    SymlinkMetadata(Result<Metadata, WireError>),
+    Attrs(Result<Attrs, WireError>),
+    SetAttrs(Result<(), WireError>),
+    Canonicalize(Result<WirePath, WireError>),
+    ReadLink(Result<WirePath, WireError>),
+    Access(Result<(), WireError>),
+    Glob(Result<Vec<WirePath>, WireError>),
+    SetPermissions(Result<(), WireError>),
+    SetTimes(Result<(), WireError>),
+    Chown(Result<(), WireError>),
+    Xattrs(Result<Vec<XattrEntry>, WireError>),
+    Xattr(Result<Vec<u8>, WireError>),
+    SetXattr(Result<(), WireError>),
+    RemoveXattr(Result<(), WireError>),
+    Streams(Result<Vec<StreamEntry>, WireError>),
 }

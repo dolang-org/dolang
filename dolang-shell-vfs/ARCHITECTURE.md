@@ -35,3 +35,9 @@ parent console.
 Path-based operations execute on the RPC server. Operations whose names begin
 with `file_` act locally on a file handle that the server already transferred
 to the client.
+
+VFS operations return the crate's `Error` type. Errors without a raw system
+code retain their original `io::Error` locally. System errors carry the raw
+code, originating operating system, `ErrorKind`, and formatted message across
+RPC. A client must not interpret a foreign raw code using the host platform's
+error tables.

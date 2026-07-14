@@ -171,19 +171,11 @@ impl Direct {
             free,
             available,
             block_size: 0,
-            blocks: None,
-            blocks_free: None,
-            blocks_available: None,
-            files: None,
-            files_free: None,
-            files_available: None,
-            fragment_size: None,
-            unix_flags: None,
-            fsid: None,
-            name_max: Some(max_component),
-            win_flags: Some(flags),
-            volume_serial_number: Some(serial),
-            component_length_max: Some(max_component),
+            family: crate::FsMetadataFamily::Windows(crate::WindowsFsMetadata {
+                flags,
+                volume_serial_number: serial,
+                component_length_max: max_component,
+            }),
         })
     }
 
@@ -205,19 +197,11 @@ impl Direct {
             free,
             available,
             block_size: 0,
-            blocks: None,
-            blocks_free: None,
-            blocks_available: None,
-            files: None,
-            files_free: None,
-            files_available: None,
-            fragment_size: None,
-            unix_flags: None,
-            fsid: None,
-            name_max: Some(max_component),
-            win_flags: Some(flags),
-            volume_serial_number: Some(serial),
-            component_length_max: Some(max_component),
+            family: crate::FsMetadataFamily::Windows(crate::WindowsFsMetadata {
+                flags,
+                volume_serial_number: serial,
+                component_length_max: max_component,
+            }),
         })
     }
 
@@ -822,7 +806,8 @@ impl Direct {
             .read(true)
             .no_follow(!follow)
             .open(typed_windows_path(path)?)
-            .await?;
+            .await
+            .map_err(crate::Error::into_io_error)?;
         self.impl_file_xattrs(&file.0, namespace).await
     }
 
@@ -847,7 +832,8 @@ impl Direct {
             .read(true)
             .no_follow(!follow)
             .open(typed_windows_path(path)?)
-            .await?;
+            .await
+            .map_err(crate::Error::into_io_error)?;
         self.impl_file_xattr(&file.0, name, namespace).await
     }
 
@@ -864,7 +850,8 @@ impl Direct {
             .write(true)
             .no_follow(!follow)
             .open(typed_windows_path(path)?)
-            .await?;
+            .await
+            .map_err(crate::Error::into_io_error)?;
         self.impl_file_set_xattr(&file.0, name, namespace, value)
             .await
     }
@@ -882,7 +869,8 @@ impl Direct {
             .write(true)
             .no_follow(!follow)
             .open(typed_windows_path(path)?)
-            .await?;
+            .await
+            .map_err(crate::Error::into_io_error)?;
         self.impl_file_remove_xattr(&file.0, name, namespace).await
     }
 

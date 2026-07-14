@@ -1,5 +1,8 @@
 use super::{Direct, DirectChild, DirectCommand};
-use crate::{Attrs, ChownIdentity, FsMetadata, StreamEntry, XattrEntry, XattrNamespace};
+use crate::{
+    Attrs, ChownIdentity, FsMetadata, FsMetadataFamily, StreamEntry, UnixFsMetadata,
+    UnixFsMetadataPlatform, XattrEntry, XattrNamespace,
+};
 #[cfg(target_os = "linux")]
 use std::os::fd::RawFd;
 use std::{
@@ -93,22 +96,28 @@ impl Direct {
             free: u64::from(stat.f_bfree).saturating_mul(unit_size),
             available: u64::from(stat.f_bavail).saturating_mul(unit_size),
             block_size: u32::try_from(stat.f_bsize).unwrap_or(u32::MAX),
-            blocks: Some(stat.f_blocks.into()),
-            blocks_free: Some(stat.f_bfree.into()),
-            blocks_available: Some(stat.f_bavail.into()),
-            files: Some(stat.f_files.into()),
-            files_free: Some(stat.f_ffree.into()),
-            files_available: Some(stat.f_favail.into()),
-            fragment_size: Some(u32::try_from(stat.f_frsize).unwrap_or(u32::MAX)),
-            unix_flags: Some(stat.f_flag.into()),
-            #[cfg(target_os = "linux")]
-            fsid: Some(stat.f_fsid),
-            #[cfg(not(target_os = "linux"))]
-            fsid: None,
-            name_max: Some(u32::try_from(stat.f_namemax).unwrap_or(u32::MAX)),
-            win_flags: None,
-            volume_serial_number: None,
-            component_length_max: None,
+            family: FsMetadataFamily::Unix(UnixFsMetadata {
+                blocks: stat.f_blocks.into(),
+                blocks_free: stat.f_bfree.into(),
+                blocks_available: stat.f_bavail.into(),
+                files: stat.f_files.into(),
+                files_free: stat.f_ffree.into(),
+                files_available: stat.f_favail.into(),
+                fragment_size: u32::try_from(stat.f_frsize).unwrap_or(u32::MAX),
+                #[cfg(target_os = "linux")]
+                fsid: Some(stat.f_fsid),
+                #[cfg(not(target_os = "linux"))]
+                fsid: None,
+                name_max: u32::try_from(stat.f_namemax).unwrap_or(u32::MAX),
+                #[cfg(target_os = "linux")]
+                platform: UnixFsMetadataPlatform::Linux {
+                    flags: stat.f_flag.into(),
+                },
+                #[cfg(target_os = "macos")]
+                platform: UnixFsMetadataPlatform::Macos {
+                    flags: stat.f_flag.into(),
+                },
+            }),
         }
     }
 

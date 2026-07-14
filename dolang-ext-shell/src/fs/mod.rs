@@ -785,7 +785,7 @@ async fn create_temp_dir<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     parent: Utf8TypedPath<'_>,
-) -> io::Result<Utf8TypedPathBuf> {
+) -> dolang_shell_vfs::Result<Utf8TypedPathBuf> {
     let mut rng = rand::rng();
     let vfs = global.local.get(strand).vfs();
     for attempt in 0..1000 {
@@ -804,7 +804,8 @@ async fn create_temp_dir<'v, 's>(
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
         "failed to create temporary directory after many attempts",
-    ))
+    )
+    .into())
 }
 
 pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {

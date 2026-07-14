@@ -642,9 +642,10 @@ async fn file_metadata() {
 
     assert_eq!(metadata.len, 11);
     assert_eq!(metadata.file_type, FileType::File);
-    assert!(metadata.mode != 0);
-    assert!(metadata.ino != 0);
-    assert!(metadata.nlink > 0);
+    let unix = metadata.unix().unwrap();
+    assert!(unix.mode != 0);
+    assert!(unix.ino != 0);
+    assert!(unix.nlink > 0);
 
     server_task.abort();
     let _ = server_task.await;
@@ -664,8 +665,9 @@ async fn dir_metadata() {
     let metadata = client.metadata(typed(&subdir)).await.unwrap();
 
     assert_eq!(metadata.file_type, FileType::Dir);
-    assert!(metadata.mode != 0);
-    assert!(metadata.mode != 0);
+    let unix = metadata.unix().unwrap();
+    assert!(unix.mode != 0);
+    assert!(unix.mode != 0);
 
     server_task.abort();
     let _ = server_task.await;
@@ -753,8 +755,9 @@ async fn chown_by_numeric_id() {
         .unwrap();
 
     let metadata = client.metadata(typed(&test_file)).await.unwrap();
-    assert_eq!(metadata.uid, getuid().as_raw());
-    assert_eq!(metadata.gid, getgid().as_raw());
+    let unix = metadata.unix().unwrap();
+    assert_eq!(unix.uid, getuid().as_raw());
+    assert_eq!(unix.gid, getgid().as_raw());
 
     server_task.abort();
     let _ = server_task.await;
@@ -785,8 +788,9 @@ async fn chown_by_name() {
         .unwrap();
 
     let metadata = client.metadata(typed(&test_file)).await.unwrap();
-    assert_eq!(metadata.uid, getuid().as_raw());
-    assert_eq!(metadata.gid, getgid().as_raw());
+    let unix = metadata.unix().unwrap();
+    assert_eq!(unix.uid, getuid().as_raw());
+    assert_eq!(unix.gid, getgid().as_raw());
 
     server_task.abort();
     let _ = server_task.await;
