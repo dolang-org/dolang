@@ -311,7 +311,11 @@ impl Connection {
         let env: HashMap<_, _> = std::env::vars().collect();
         let cwd = WirePath::try_from(std::env::current_dir().unwrap_or_default())
             .expect("current directory must be UTF-8");
-        ResponseKind::Query { env, cwd }
+        ResponseKind::Query {
+            env,
+            cwd,
+            target: crate::TargetInfo::current(),
+        }
     }
 
     async fn handle_open(&self, req: OpenRequest) -> ResponseKind {

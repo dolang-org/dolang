@@ -30,7 +30,7 @@ use tokio::net::windows::named_pipe::NamedPipeServer;
 use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
 use crate::{
     Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions, PipeRecv,
-    PipeSend, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
+    PipeSend, Query, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
     XattrEntry,
     direct::DirectFile,
     protocol::{
@@ -42,14 +42,6 @@ use crate::{
         WirePath, XattrRequest, XattrsRequest,
     },
 };
-
-/// Query result containing the daemon's environment and working directory.
-pub struct Query {
-    /// Environment variables from the daemon's process.
-    pub env: HashMap<String, String>,
-    /// Daemon's current working directory.
-    pub cwd: PathBuf,
-}
 
 /// Client for connecting to the agent daemon and spawning processes.
 #[derive(Clone)]
@@ -261,9 +253,10 @@ impl Client {
     /// Query the daemon's environment variables and current working directory.
     pub async fn query(&self) -> crate::Result<Query> {
         match self.request(RequestKind::Query).await? {
-            ResponseKind::Query { env, cwd } => Ok(Query {
+            ResponseKind::Query { env, cwd, target } => Ok(Query {
                 env,
-                cwd: cwd.try_into()?,
+                cwd: cwd.into(),
+                target,
             }),
             response => Err(unexpected(response).into()),
         }
@@ -769,6 +762,10 @@ impl Vfs for Client {
 
     fn pipe(&self) -> io::Result<(PipeSend, PipeRecv)> {
         crate::pipe::pipe()
+    }
+
+    async fn query(&self) -> crate::Result<Query> {
+        Client::query(self).await
     }
 
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> crate::Result<ReadDir> {

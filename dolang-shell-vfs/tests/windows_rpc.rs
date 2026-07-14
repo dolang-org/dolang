@@ -8,7 +8,8 @@ use std::{
 };
 
 use dolang_shell_vfs::{
-    AnyVfs, Child, Client, Command, OpenOptions, Server, Utf8TypedPath, Utf8WindowsPath, Vfs,
+    AnyVfs, Child, Client, Command, OpenOptions, Server, TargetInfo, Utf8TypedPath,
+    Utf8WindowsPath, Vfs,
 };
 use tempfile::tempdir;
 use tokio::{
@@ -68,6 +69,18 @@ async fn connected_pair() -> (Client, JoinHandle<std::io::Result<()>>) {
     let client =
         unsafe { Client::from_named_pipe_server(client_pipe, current_process_handle()).unwrap() };
     (client, server_task)
+}
+
+#[tokio::test]
+async fn query_reports_server_target_including_wine() {
+    let (client, server_task) = connected_pair().await;
+
+    let query = client.query().await.unwrap();
+    assert_eq!(query.target, TargetInfo::current());
+    assert_eq!(query.target.is_wine, Some(is_wine()));
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
 }
 
 #[tokio::test]

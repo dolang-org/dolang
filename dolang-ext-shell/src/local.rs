@@ -8,7 +8,7 @@ use std::{
 };
 
 use dolang::runtime::{Strand, strand};
-use dolang_shell_vfs::AnyVfs;
+use dolang_shell_vfs::{AnyVfs, TargetInfo};
 use dolang_shell_vfs::{Utf8TypedPathBuf, typed_path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,6 +155,7 @@ pub(crate) struct Local {
     cwd: RefCell<Utf8TypedPathBuf>,
     env: RefCell<Rc<Env>>,
     vfs: RefCell<AnyVfs>,
+    target: RefCell<TargetInfo>,
     channel_mode: Cell<ChannelMode>,
 }
 
@@ -167,6 +168,7 @@ impl<'v> strand::Local<'v> for Local {
                 Default::default(),
             ))),
             vfs: RefCell::new(AnyVfs::default()),
+            target: RefCell::new(TargetInfo::current()),
             channel_mode: Cell::new(ChannelMode::Line),
         }
     }
@@ -176,6 +178,7 @@ impl<'v> strand::Local<'v> for Local {
             cwd: self.cwd.clone(),
             env: self.env.clone(),
             vfs: self.vfs.clone(),
+            target: self.target.clone(),
             channel_mode: Cell::new(self.channel_mode.get()),
         }
     }
@@ -204,6 +207,14 @@ impl Local {
 
     pub(crate) fn vfs(&self) -> AnyVfs {
         self.vfs.borrow().clone()
+    }
+
+    pub(crate) fn target(&self) -> TargetInfo {
+        self.target.borrow().clone()
+    }
+
+    pub(crate) fn replace_target(&self, target: TargetInfo) -> TargetInfo {
+        mem::replace(&mut *self.target.borrow_mut(), target)
     }
 
     pub(crate) fn channel_mode(&self) -> ChannelMode {

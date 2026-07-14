@@ -25,5 +25,5 @@ def sys_reports_basic_information()
     assert_throws $FieldError do os.is_wine
 
   assert_type $CpuInfo $cpu
-  assert $cpu.arch
+  assert (cpu.arch == :X86_64: || cpu.arch == :AARCH64:)
   assert (cpu.logical_count >= 1)

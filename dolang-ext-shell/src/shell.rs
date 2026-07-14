@@ -26,7 +26,7 @@ use crate::{
 
 #[cfg(windows)]
 use dolang_shell_vfs::WindowsSession;
-use dolang_shell_vfs::{AnyVfs, Client, Query, Utf8TypedPathBuf};
+use dolang_shell_vfs::{AnyVfs, Client, Query, TargetInfo, Utf8TypedPathBuf};
 use std::collections::HashMap;
 #[cfg(unix)]
 use std::path::PathBuf;
@@ -59,6 +59,7 @@ pub(crate) struct Context {
     client: Client,
     cwd: Utf8TypedPathBuf,
     env: Rc<LocalEnv>,
+    target: TargetInfo,
 }
 
 impl Context {
@@ -73,11 +74,13 @@ impl Context {
         let orig_cwd = local.replace_cwd(self.cwd.clone());
         let orig_env =
             local.replace_env(Rc::new(LocalEnv::derived(self.env.clone(), HashMap::new())));
+        let orig_target = local.replace_target(self.target.clone());
         let res = f(strand).await;
         let local = global.local.get(strand);
         local.replace_vfs(orig);
         local.replace_cwd(orig_cwd);
         local.replace_env(orig_env);
+        local.replace_target(orig_target);
         res
     }
 
@@ -339,8 +342,7 @@ impl<'v> Object<'v> for Vfs {
                 let native = dolang_shell_vfs::native_path(path.to_path()).into_sys(strand)?;
                 error::io_result(strand, Client::connect(native).await)?
             };
-            let Query { env, cwd } = error::io_result(strand, client.query().await)?;
-            let cwd = dolang_shell_vfs::typed_path(cwd).into_sys(strand)?;
+            let Query { env, cwd, target } = error::io_result(strand, client.query().await)?;
             let env = Rc::new(LocalEnv::new(None, true, env));
             let source =
                 VfsSource::Unix(dolang_shell_vfs::native_path(path.to_path()).into_sys(strand)?);
@@ -349,7 +351,12 @@ impl<'v> Object<'v> for Vfs {
                 strand,
                 Vfs,
                 VfsAnnex {
-                    handle: Context { client, env, cwd },
+                    handle: Context {
+                        client,
+                        env,
+                        cwd,
+                        target,
+                    },
                     source,
                     global,
                 },
@@ -394,15 +401,19 @@ impl<'v> Object<'v> for Vfs {
                 } else {
                     WindowsSession::launch_unelevated(cwd).await
                 };
-                let (session, Query { env, cwd }) = error::io_result(strand, result)?;
-                let cwd = dolang_shell_vfs::typed_path(cwd).into_sys(strand)?;
+                let (session, Query { env, cwd, target }) = error::io_result(strand, result)?;
                 let client = session.client().clone();
                 let env = Rc::new(LocalEnv::new(None, true, env));
                 global.types.vfs.create_with_annex(
                     strand,
                     Vfs,
                     VfsAnnex {
-                        handle: Context { client, env, cwd },
+                        handle: Context {
+                            client,
+                            env,
+                            cwd,
+                            target,
+                        },
                         source: VfsSource::Windows(session),
                         global,
                     },
@@ -546,6 +557,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     .expect("current directory is UTF-8"),
             );
             let orig_env = local.replace_env(Rc::new(LocalEnv::root()));
+            let orig_target = local.replace_target(TargetInfo::current());
 
             let result = func.call(strand, args, out).await;
 
@@ -553,6 +565,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             local.replace_vfs(orig_vfs);
             local.replace_cwd(orig_cwd);
             local.replace_env(orig_env);
+            local.replace_target(orig_target);
 
             result
         })

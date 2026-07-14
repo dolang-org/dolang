@@ -7,20 +7,18 @@ pub enum OperatingSystem {
     Linux,
     Macos,
     Windows,
-    Other(String),
 }
 
 impl OperatingSystem {
     pub fn current() -> Self {
-        if cfg!(target_os = "linux") {
-            Self::Linux
-        } else if cfg!(target_os = "macos") {
-            Self::Macos
-        } else if cfg!(windows) {
-            Self::Windows
-        } else {
-            Self::Other(std::env::consts::OS.to_owned())
-        }
+        #[cfg(target_os = "linux")]
+        return Self::Linux;
+        #[cfg(target_os = "macos")]
+        return Self::Macos;
+        #[cfg(windows)]
+        return Self::Windows;
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+        compile_error!("unsupported target operating system");
     }
 }
 

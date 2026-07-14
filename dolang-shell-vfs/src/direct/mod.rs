@@ -20,7 +20,7 @@ use wax::{
 
 use crate::{
     Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions, PipeRecv,
-    PipeSend, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
+    PipeSend, Query, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
     XattrEntry, XattrNamespace, metadata_from_std, native_path, typed_path,
 };
 
@@ -692,6 +692,10 @@ impl Vfs for Direct {
 
     fn pipe(&self) -> io::Result<(PipeSend, PipeRecv)> {
         crate::pipe::pipe()
+    }
+
+    async fn query(&self) -> crate::Result<Query> {
+        Query::current()
     }
 
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> crate::Result<ReadDir> {

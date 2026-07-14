@@ -31,6 +31,95 @@ mod windows;
 pub use error::{Error, OperatingSystem, Result, SystemError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Architecture {
+    X86_64,
+    Aarch64,
+}
+
+impl Architecture {
+    pub fn current() -> Self {
+        #[cfg(target_arch = "x86_64")]
+        return Self::X86_64;
+        #[cfg(target_arch = "aarch64")]
+        return Self::Aarch64;
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        compile_error!("unsupported target architecture");
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperatingSystemFamily {
+    Unix,
+    Windows,
+}
+
+impl OperatingSystem {
+    pub fn family(&self) -> OperatingSystemFamily {
+        match self {
+            Self::Linux | Self::Macos => OperatingSystemFamily::Unix,
+            Self::Windows => OperatingSystemFamily::Windows,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetInfo {
+    pub operating_system: OperatingSystem,
+    pub architecture: Architecture,
+    pub logical_cpu_count: u32,
+    pub is_wine: Option<bool>,
+}
+
+impl TargetInfo {
+    pub fn current() -> Self {
+        Self {
+            operating_system: OperatingSystem::current(),
+            architecture: Architecture::current(),
+            logical_cpu_count: std::thread::available_parallelism()
+                .map_or(1, |count| u32::try_from(count.get()).unwrap_or(u32::MAX)),
+            is_wine: current_wine_status(),
+        }
+    }
+}
+
+#[cfg(windows)]
+fn current_wine_status() -> Option<bool> {
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    use windows_sys::core::w;
+
+    const WINE_GET_VERSION: &[u8] = b"wine_get_version\0";
+
+    let ntdll = unsafe { GetModuleHandleW(w!("ntdll.dll")) };
+    Some(!ntdll.is_null() && unsafe { GetProcAddress(ntdll, WINE_GET_VERSION.as_ptr()) }.is_some())
+}
+
+#[cfg(not(windows))]
+fn current_wine_status() -> Option<bool> {
+    None
+}
+
+/// Snapshot of a VFS target's initial process context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Query {
+    /// Environment variables from the target process.
+    pub env: HashMap<String, String>,
+    /// Target process's current working directory.
+    pub cwd: Utf8TypedPathBuf,
+    /// Target operating system and processor information.
+    pub target: TargetInfo,
+}
+
+impl Query {
+    pub fn current() -> crate::Result<Self> {
+        Ok(Self {
+            env: std::env::vars().collect(),
+            cwd: typed_path(std::env::current_dir()?)?,
+            target: TargetInfo::current(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileType {
     File,
     Dir,
@@ -663,6 +752,7 @@ pub trait Vfs {
     fn open_options(&self) -> Self::OpenOptions<'_>;
     fn command(&self, program: Utf8TypedPath<'_>) -> Self::Command<'_>;
     fn pipe(&self) -> io::Result<(Self::PipeSend, Self::PipeRecv)>;
+    async fn query(&self) -> Result<Query>;
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> Result<ReadDir>;
     async fn which(
         &self,
@@ -1313,6 +1403,13 @@ impl Vfs for AnyVfs {
         }
     }
 
+    async fn query(&self) -> crate::Result<Query> {
+        match self {
+            Self::Client(client) => client.query().await,
+            Self::Direct(direct) => direct.query().await,
+        }
+    }
+
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> crate::Result<ReadDir> {
         match self {
             Self::Client(client) => client.read_dir(path).await,
@@ -1621,8 +1718,6 @@ impl Vfs for AnyVfs {
 pub use client::Client;
 /// Builder for constructing spawn requests.
 pub use client::CommandBuilder;
-/// Query result containing the daemon's environment and working directory.
-pub use client::Query;
 /// Agent server for VFS RPC connections.
 pub use server::Server;
 
