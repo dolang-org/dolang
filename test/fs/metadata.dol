@@ -21,7 +21,7 @@ import sys agent
   time:
     - DateTime
 
-#[agent.test remote: false]
+#[agent.test]
 def basic()
   let test_path = "test_metadata.txt"
 
@@ -41,7 +41,7 @@ def basic()
   # Cleanup
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def timestamps()
   let test_path = "test_metadata_time.txt"
 
@@ -60,7 +60,7 @@ def timestamps()
   # Cleanup
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def closed_fails()
   let test_path = "test_metadata_closed.txt"
 
@@ -72,7 +72,7 @@ def closed_fails()
 
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def unix_fields()
   if (sys.os_info().family == :WINDOWS:)
     skip "requires non-Windows"
@@ -96,7 +96,7 @@ def unix_fields()
 
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def windows_attrs()
   if (sys.os_info().family != :WINDOWS:)
     skip "requires Windows"
@@ -144,7 +144,7 @@ def windows_attrs()
 
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def linux_attrs()
   if (sys.os_info().os != :LINUX:)
     skip "requires Linux"
@@ -182,7 +182,7 @@ def linux_attrs()
 
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def macos_attrs()
   if (sys.os_info().os != :MACOS:)
     skip "requires macOS"
@@ -213,7 +213,7 @@ def macos_attrs()
 
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def len_type()
   # Test metadata returns correct len and type for a file
   let test_path = "test_metadata_len.txt"
@@ -229,7 +229,7 @@ def len_type()
 
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def fs_basic()
   let test_path = "test_fs_metadata.txt"
 
@@ -254,7 +254,7 @@ def fs_basic()
 
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def unix_raw()
   if (sys.os_info().family == :WINDOWS:)
     skip "requires non-Windows"

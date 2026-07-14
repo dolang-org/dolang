@@ -19,10 +19,13 @@ pub struct Opaque<M: ?Sized> {
     id: u64,
     marker: PhantomData<fn() -> M>,
 }
-impl<M: ?Sized> Copy for Opaque<M> {}
 impl<M: ?Sized> Clone for Opaque<M> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            owner: self.owner,
+            id: self.id,
+            marker: PhantomData,
+        }
     }
 }
 
@@ -128,8 +131,8 @@ mod tests {
     fn guards_outlive_registration() {
         let mut table = ObjectTable::default();
         let opaque = table.register(Value(42));
-        let guard = table.acquire::<Value>(opaque).unwrap();
-        assert!(table.unregister::<Value>(opaque).unwrap().is_none());
+        let guard = table.acquire::<Value>(opaque.clone()).unwrap();
+        assert!(table.unregister::<Value>(opaque.clone()).unwrap().is_none());
         assert_eq!(guard.0.0, 42);
         assert!(table.acquire::<Value>(opaque).is_err());
     }

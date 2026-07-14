@@ -710,6 +710,38 @@ pub(crate) enum RequestKind {
         file: Opaque<crate::FileMarker>,
         len: u64,
     },
+    FileClone {
+        file: Opaque<crate::FileMarker>,
+    },
+    FileMetadata {
+        file: Opaque<crate::FileMarker>,
+    },
+    FileFsMetadata {
+        file: Opaque<crate::FileMarker>,
+    },
+    FileXattrs {
+        file: Opaque<crate::FileMarker>,
+        namespace: XattrNamespaceRequest,
+    },
+    FileXattr {
+        file: Opaque<crate::FileMarker>,
+        name: String,
+        namespace: Option<String>,
+    },
+    FileStreams {
+        file: Opaque<crate::FileMarker>,
+    },
+    FileSetXattr {
+        file: Opaque<crate::FileMarker>,
+        name: String,
+        namespace: Option<String>,
+        value: Vec<u8>,
+    },
+    FileRemoveXattr {
+        file: Opaque<crate::FileMarker>,
+        name: String,
+        namespace: Option<String>,
+    },
     FileClose {
         file: Opaque<crate::FileMarker>,
     },
@@ -758,6 +790,14 @@ pub(crate) enum ResponseKind {
     FileSeek(Result<u64, WireError>),
     FileFlush(Result<(), WireError>),
     FileSetLen(Result<(), WireError>),
+    FileClone(Result<Opaque<crate::FileMarker>, WireError>),
+    FileMetadata(Result<Metadata, WireError>),
+    FileFsMetadata(Result<FsMetadata, WireError>),
+    FileXattrs(Result<Vec<XattrEntry>, WireError>),
+    FileXattr(Result<Vec<u8>, WireError>),
+    FileStreams(Result<Vec<StreamEntry>, WireError>),
+    FileSetXattr(Result<(), WireError>),
+    FileRemoveXattr(Result<(), WireError>),
     FileClose(Result<(), WireError>),
     UnixStreamSocket(Result<OsHandle, WireError>),
     ReadDir(Result<Vec<DirEntry>, WireError>),

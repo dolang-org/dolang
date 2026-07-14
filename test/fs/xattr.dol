@@ -17,7 +17,7 @@ import agent sys
     - xattrs
     - write
 
-#[agent.test remote: false]
+#[agent.test]
 def module_path_and_file_operations()
   if (sys.os_info().os == :WINDOWS: && sys.os_info().is_wine)
     skip "skipping Windows EA xattr operations under wine"
@@ -48,7 +48,7 @@ def module_path_and_file_operations()
   assert_throws $RuntimeError do
     xattr $path "text"
 
-#[agent.test remote: false]
+#[agent.test]
 def linux_namespace_handling()
   if (sys.os_info().os != :LINUX:)
     skip "requires Linux"
@@ -77,14 +77,14 @@ def linux_namespace_handling()
       break
   assert $saw_explicit
 
-#[agent.test remote: false]
+#[agent.test]
 def rejects_invalid_argument_types()
   let path = Path "file.txt"
   write $path "payload"
 
   assert_throws $TypeError do set_xattr $path bad 1
 
-#[agent.test remote: false]
+#[agent.test]
 def rejects_invalid_namespace_argument()
   if ((sys.os_info().os == :WINDOWS:) && sys.os_info().is_wine)
     skip "skipping Windows EA xattr validation setup under wine"

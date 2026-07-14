@@ -97,7 +97,7 @@ def alternate_data_stream_io()
   assert_eq $parsed.name "ads.txt"
   assert_eq $parsed.stream_name "zone"
 
-#[agent.test remote: false]
+#[agent.test]
 def alternate_data_stream_enumeration()
   if !(sys.os_info().family == :WINDOWS: && !sys.os_info().is_wine)
     skip "requires Windows outside Wine"

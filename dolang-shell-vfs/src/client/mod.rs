@@ -36,7 +36,7 @@ use crate::{
         RemoveRequest, RenameRequest, RequestKind, ResponseKind, SetAttrsRequest,
         SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest, StreamsRequest,
         SymlinkKind, SymlinkRequest, Timestamp, VfsProtocol, WellKnownPathRequest, WirePath,
-        XattrRequest, XattrsRequest,
+        XattrNamespaceRequest, XattrRequest, XattrsRequest,
     },
 };
 
@@ -56,7 +56,7 @@ enum ClientFileInner {
 
 struct RemoteFile {
     client: Client,
-    file: Opaque<crate::FileMarker>,
+    file: Option<Opaque<crate::FileMarker>>,
     pending: Option<PendingFileOperation>,
 }
 
@@ -108,13 +108,20 @@ impl ClientFile {
     fn from_remote(client: Client, file: Opaque<crate::FileMarker>) -> Self {
         Self(ClientFileInner::Remote(RemoteFile {
             client,
-            file,
+            file: Some(file),
             pending: None,
         }))
     }
 }
 
 impl RemoteFile {
+    fn opaque(&self) -> Opaque<crate::FileMarker> {
+        self.file
+            .as_ref()
+            .expect("live remote file has no opaque identity")
+            .clone()
+    }
+
     fn poll_request(
         &mut self,
         cx: &mut Context<'_>,
@@ -124,7 +131,7 @@ impl RemoteFile {
         if self.pending.is_none() {
             self.pending = Some(PendingFileOperation {
                 kind,
-                call: self.client.call(request(self.file)),
+                call: self.client.call(request(self.opaque())),
             });
         }
         let pending = self.pending.as_mut().unwrap();
@@ -160,6 +167,22 @@ impl RemoteFile {
             pending.call.cancel();
             let _ = pending.call.await;
         }
+    }
+}
+
+impl Drop for RemoteFile {
+    fn drop(&mut self) {
+        self.pending.take();
+        let Some(file) = self.file.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let client = self.client.clone();
+        runtime.spawn(async move {
+            let _ = client.request(RequestKind::FileClose { file }).await;
+        });
     }
 }
 
@@ -272,7 +295,7 @@ impl AsyncSeek for ClientFile {
                 file.pending = Some(PendingFileOperation {
                     kind: FileOperationKind::Seek,
                     call: file.client.call(RequestKind::FileSeek {
-                        file: file.file,
+                        file: file.opaque(),
                         position: position.into(),
                     }),
                 });
@@ -309,11 +332,21 @@ impl FileHandle for ClientFile {
                 .await
                 .map(ClientFileInner::Direct)
                 .map(Self),
-            ClientFileInner::Remote(_) => Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "cloning opaque files is not supported",
-            )
-            .into()),
+            ClientFileInner::Remote(file) => {
+                file.idle()?;
+                match file
+                    .client
+                    .request(RequestKind::FileClone {
+                        file: file.opaque(),
+                    })
+                    .await?
+                {
+                    ResponseKind::FileClone(result) => result
+                        .map(|opaque| Self::from_remote(file.client.clone(), opaque))
+                        .map_err(Into::into),
+                    response => Err(unexpected(response).into()),
+                }
+            }
         }
     }
 
@@ -322,9 +355,13 @@ impl FileHandle for ClientFile {
             ClientFileInner::Direct(file) => file.close().await,
             ClientFileInner::Remote(mut file) => {
                 file.cancel_pending().await;
+                let opaque = file
+                    .file
+                    .take()
+                    .expect("live remote file has no opaque identity");
                 match file
                     .client
-                    .request(RequestKind::FileClose { file: file.file })
+                    .request(RequestKind::FileClose { file: opaque })
                     .await?
                 {
                     ResponseKind::FileClose(result) => result.map_err(Into::into),
@@ -342,7 +379,7 @@ impl FileHandle for ClientFile {
                 match file
                     .client
                     .request(RequestKind::FileSetLen {
-                        file: file.file,
+                        file: file.opaque(),
                         len: size,
                     })
                     .await?
@@ -357,14 +394,38 @@ impl FileHandle for ClientFile {
     async fn metadata(&mut self) -> crate::Result<Metadata> {
         match &mut self.0 {
             ClientFileInner::Direct(file) => file.metadata().await,
-            ClientFileInner::Remote(_) => unsupported_file_operation("file metadata"),
+            ClientFileInner::Remote(file) => {
+                file.idle()?;
+                match file
+                    .client
+                    .request(RequestKind::FileMetadata {
+                        file: file.opaque(),
+                    })
+                    .await?
+                {
+                    ResponseKind::FileMetadata(result) => result.map_err(Into::into),
+                    response => Err(unexpected(response).into()),
+                }
+            }
         }
     }
 
     async fn fs_metadata(&mut self) -> crate::Result<FsMetadata> {
         match &mut self.0 {
             ClientFileInner::Direct(file) => file.fs_metadata().await,
-            ClientFileInner::Remote(_) => unsupported_file_operation("filesystem metadata"),
+            ClientFileInner::Remote(file) => {
+                file.idle()?;
+                match file
+                    .client
+                    .request(RequestKind::FileFsMetadata {
+                        file: file.opaque(),
+                    })
+                    .await?
+                {
+                    ResponseKind::FileFsMetadata(result) => result.map_err(Into::into),
+                    response => Err(unexpected(response).into()),
+                }
+            }
         }
     }
 
@@ -374,21 +435,60 @@ impl FileHandle for ClientFile {
     ) -> crate::Result<Vec<XattrEntry>> {
         match &mut self.0 {
             ClientFileInner::Direct(file) => file.xattrs(namespace).await,
-            ClientFileInner::Remote(_) => unsupported_file_operation("extended attributes"),
+            ClientFileInner::Remote(file) => {
+                file.idle()?;
+                match file
+                    .client
+                    .request(RequestKind::FileXattrs {
+                        file: file.opaque(),
+                        namespace: XattrNamespaceRequest::from(namespace),
+                    })
+                    .await?
+                {
+                    ResponseKind::FileXattrs(result) => result.map_err(Into::into),
+                    response => Err(unexpected(response).into()),
+                }
+            }
         }
     }
 
     async fn xattr(&mut self, name: &str, namespace: Option<&str>) -> crate::Result<Vec<u8>> {
         match &mut self.0 {
             ClientFileInner::Direct(file) => file.xattr(name, namespace).await,
-            ClientFileInner::Remote(_) => unsupported_file_operation("extended attributes"),
+            ClientFileInner::Remote(file) => {
+                file.idle()?;
+                match file
+                    .client
+                    .request(RequestKind::FileXattr {
+                        file: file.opaque(),
+                        name: name.to_owned(),
+                        namespace: namespace.map(str::to_owned),
+                    })
+                    .await?
+                {
+                    ResponseKind::FileXattr(result) => result.map_err(Into::into),
+                    response => Err(unexpected(response).into()),
+                }
+            }
         }
     }
 
     async fn streams(&mut self) -> crate::Result<Vec<StreamEntry>> {
         match &mut self.0 {
             ClientFileInner::Direct(file) => file.streams().await,
-            ClientFileInner::Remote(_) => unsupported_file_operation("alternate streams"),
+            ClientFileInner::Remote(file) => {
+                file.idle()?;
+                match file
+                    .client
+                    .request(RequestKind::FileStreams {
+                        file: file.opaque(),
+                    })
+                    .await?
+                {
+                    ResponseKind::FileStreams(result) => result.map_err(Into::into),
+                    response => Err(unexpected(response).into()),
+                }
+            }
         }
     }
 
@@ -400,14 +500,43 @@ impl FileHandle for ClientFile {
     ) -> crate::Result<()> {
         match &mut self.0 {
             ClientFileInner::Direct(file) => file.set_xattr(name, namespace, value).await,
-            ClientFileInner::Remote(_) => unsupported_file_operation("extended attributes"),
+            ClientFileInner::Remote(file) => {
+                file.idle()?;
+                match file
+                    .client
+                    .request(RequestKind::FileSetXattr {
+                        file: file.opaque(),
+                        name: name.to_owned(),
+                        namespace: namespace.map(str::to_owned),
+                        value: value.to_vec(),
+                    })
+                    .await?
+                {
+                    ResponseKind::FileSetXattr(result) => result.map_err(Into::into),
+                    response => Err(unexpected(response).into()),
+                }
+            }
         }
     }
 
     async fn remove_xattr(&mut self, name: &str, namespace: Option<&str>) -> crate::Result<()> {
         match &mut self.0 {
             ClientFileInner::Direct(file) => file.remove_xattr(name, namespace).await,
-            ClientFileInner::Remote(_) => unsupported_file_operation("extended attributes"),
+            ClientFileInner::Remote(file) => {
+                file.idle()?;
+                match file
+                    .client
+                    .request(RequestKind::FileRemoveXattr {
+                        file: file.opaque(),
+                        name: name.to_owned(),
+                        namespace: namespace.map(str::to_owned),
+                    })
+                    .await?
+                {
+                    ResponseKind::FileRemoveXattr(result) => result.map_err(Into::into),
+                    response => Err(unexpected(response).into()),
+                }
+            }
         }
     }
 
@@ -420,14 +549,6 @@ impl FileHandle for ClientFile {
             ClientFileInner::Remote(file) => Err(Self(ClientFileInner::Remote(file))),
         }
     }
-}
-
-fn unsupported_file_operation<T>(operation: &str) -> crate::Result<T> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        format!("{operation} is not supported for opaque files"),
-    )
-    .into())
 }
 
 fn wire_io(error: crate::protocol::WireError) -> io::Error {
@@ -1533,5 +1654,104 @@ impl Vfs for Client {
             ResponseKind::Chown(result) => result.map_err(crate::Error::from),
             response => Err(unexpected(response).into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use tempfile::tempdir;
+
+    use super::{Client, ClientFileInner};
+    use crate::{FileHandle as _, Server, Vfs as _, protocol::RequestKind};
+
+    async fn open_remote_file(
+        client: &Client,
+        path: crate::Utf8TypedPath<'_>,
+    ) -> super::ClientFile {
+        let mut options = client.open_options();
+        options.read(true).write(true).create(true).truncate(true);
+        crate::OpenOptions::open(&options, path).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn dropping_remote_file_unregisters_opaque_identity() {
+        let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
+        let server = tokio::spawn(Server::new(server_stream).serve());
+        let client = Client::new(client_stream);
+        let temp = tempdir().unwrap();
+        let path = crate::typed_path(temp.path().join("file")).unwrap();
+        let file = open_remote_file(&client, path.to_path()).await;
+        let opaque = match &file.0 {
+            ClientFileInner::Remote(file) => file.opaque(),
+            ClientFileInner::Direct(_) => panic!("remote open returned a direct file"),
+        };
+
+        drop(file);
+
+        for attempt in 0..100 {
+            let response = client
+                .request(RequestKind::FileMetadata {
+                    file: opaque.clone(),
+                })
+                .await
+                .unwrap();
+            let crate::protocol::ResponseKind::FileMetadata(result) = response else {
+                panic!("file metadata returned the wrong response");
+            };
+            match result {
+                Err(error) => {
+                    assert_eq!(
+                        crate::Error::from(error).kind(),
+                        io::ErrorKind::InvalidInput
+                    );
+                    break;
+                }
+                Ok(_) if attempt < 99 => tokio::task::yield_now().await,
+                Ok(_) => panic!("dropped opaque file remained registered"),
+            }
+        }
+
+        client.stop().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    #[test]
+    fn dropping_remote_file_without_runtime_does_not_panic() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (file, client, server, temp) = runtime.block_on(async {
+            let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
+            let server = tokio::spawn(Server::new(server_stream).serve());
+            let client = Client::new(client_stream);
+            let temp = tempdir().unwrap();
+            let path = crate::typed_path(temp.path().join("file")).unwrap();
+            let file = open_remote_file(&client, path.to_path()).await;
+            (file, client, server, temp)
+        });
+
+        drop(runtime);
+        drop(file);
+        drop(client);
+        drop(server);
+        drop(temp);
+    }
+
+    #[tokio::test]
+    async fn explicit_close_consumes_remote_cleanup_identity() {
+        let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
+        let server = tokio::spawn(Server::new(server_stream).serve());
+        let client = Client::new(client_stream);
+        let temp = tempdir().unwrap();
+        let path = crate::typed_path(temp.path().join("file")).unwrap();
+        let file = open_remote_file(&client, path.to_path()).await;
+
+        file.close().await.unwrap();
+
+        client.stop().await.unwrap();
+        server.await.unwrap().unwrap();
     }
 }
