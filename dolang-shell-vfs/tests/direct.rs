@@ -499,6 +499,34 @@ async fn direct_well_known_home_dir_prefers_absolute_home_override() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn direct_well_known_temp_dir_prefers_tmpdir_override() {
+    let direct = Direct::default();
+    let env = HashMap::from([(String::from("TMPDIR"), Some(String::from("/tmp/test-temp")))]);
+
+    let path = direct
+        .well_known_path(dolang_shell_vfs::WellKnownPath::TempDir, &env)
+        .await
+        .unwrap();
+
+    assert_eq!(path.as_str(), "/tmp/test-temp");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn direct_well_known_temp_dir_falls_back_to_tmp() {
+    let direct = Direct::default();
+    let env = HashMap::from([(String::from("TMPDIR"), None)]);
+
+    let path = direct
+        .well_known_path(dolang_shell_vfs::WellKnownPath::TempDir, &env)
+        .await
+        .unwrap();
+
+    assert_eq!(path.as_str(), "/tmp");
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn direct_well_known_home_dir_rejects_relative_home_override() {
     let direct = Direct::default();
     let env = HashMap::from([(String::from("HOME"), Some(String::from("relative-home")))]);

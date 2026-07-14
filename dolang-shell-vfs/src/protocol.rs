@@ -5,7 +5,7 @@ use dolang_rpc::{OsHandle, Protocol};
 use serde::{Deserialize, Serialize};
 
 pub(crate) use crate::{
-    Attrs, ChownIdentity, DirEntry, FsMetadata, Metadata, OperatingSystem, StreamEntry,
+    Attrs, ChownIdentity, DirEntry, FsMetadata, Metadata, OperatingSystem, StreamEntry, TargetInfo,
     WellKnownPath, XattrEntry, XattrNamespace,
 };
 
@@ -166,7 +166,7 @@ impl From<crate::Error> for WireError {
                 message: error.to_string(),
             },
             crate::Error::System(error) => Self::System {
-                operating_system: error.operating_system().clone(),
+                operating_system: *error.operating_system(),
                 code: error.code(),
                 kind: error.kind().into(),
                 message: error.message().to_owned(),
@@ -288,10 +288,10 @@ impl TryFrom<WirePath> for PathBuf {
 mod tests {
     use std::io;
 
-    use super::{WireError, WirePath, WirePathKind};
+    use super::{ResponseKind, WireError, WirePath, WirePathKind};
     use crate::{
-        Error, OperatingSystem, SystemError, Utf8TypedPath, Utf8TypedPathBuf, Utf8UnixPath,
-        Utf8WindowsPath,
+        Architecture, Error, OperatingSystem, ProcessStatus, SystemError, TargetInfo,
+        Utf8TypedPath, Utf8TypedPathBuf, Utf8UnixPath, Utf8WindowsPath,
     };
 
     #[test]
@@ -359,6 +359,45 @@ mod tests {
         assert!(error.system().is_none());
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert_eq!(error.to_string(), "bad reply");
+    }
+
+    #[test]
+    fn wire_query_preserves_cross_target_identity() {
+        let response = ResponseKind::Query {
+            env: [("Path".to_owned(), r"C:\Windows".to_owned())].into(),
+            cwd: WirePath::from(Utf8TypedPath::Windows(Utf8WindowsPath::new(r"C:\work"))),
+            target: TargetInfo {
+                operating_system: OperatingSystem::Windows,
+                architecture: Architecture::Aarch64,
+                logical_cpu_count: 24,
+                is_wine: Some(true),
+            },
+        };
+
+        let encoded = postcard::to_stdvec(&response).unwrap();
+        let decoded: ResponseKind = postcard::from_bytes(&encoded).unwrap();
+        let ResponseKind::Query { env, cwd, target } = decoded else {
+            panic!("query response changed variant");
+        };
+
+        assert_eq!(env["Path"], r"C:\Windows");
+        assert_eq!(Utf8TypedPathBuf::from(cwd).as_str(), r"C:\work");
+        assert_eq!(target.operating_system, OperatingSystem::Windows);
+        assert_eq!(target.architecture, Architecture::Aarch64);
+        assert_eq!(target.logical_cpu_count, 24);
+        assert_eq!(target.is_wine, Some(true));
+    }
+
+    #[test]
+    fn wire_process_status_is_platform_independent() {
+        for status in [ProcessStatus::Exited(42), ProcessStatus::Signaled(9)] {
+            let encoded = postcard::to_stdvec(&ResponseKind::Spawn(Ok(status))).unwrap();
+            let decoded: ResponseKind = postcard::from_bytes(&encoded).unwrap();
+            let ResponseKind::Spawn(Ok(decoded)) = decoded else {
+                panic!("spawn response changed variant");
+            };
+            assert_eq!(decoded, status);
+        }
     }
 
     use std::path::PathBuf;
@@ -638,10 +677,11 @@ pub(crate) enum RequestKind {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum ResponseKind {
-    Spawn(Result<i32, WireError>),
+    Spawn(Result<crate::ProcessStatus, WireError>),
     Query {
         env: HashMap<String, String>,
         cwd: WirePath,
+        target: TargetInfo,
     },
     Which(Option<WirePath>),
     WellKnownPath(Result<WirePath, WireError>),

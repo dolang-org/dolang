@@ -2,7 +2,7 @@
 #![cfg(unix)]
 use dolang_shell_vfs::{
     AccessFlags, AnyVfs, Child, ChownIdentity, Client, Command, Direct, FileHandle, FileType,
-    OpenOptions, Utf8TypedPath, Utf8UnixPath, Vfs,
+    OpenOptions, TargetInfo, Utf8TypedPath, Utf8UnixPath, Vfs,
 };
 use nix::unistd::{Group, User, getgid, getuid};
 use std::os::unix::fs::FileTypeExt;
@@ -32,6 +32,14 @@ async fn start_server(socket_path: &Path) -> JoinHandle<()> {
 
 async fn connect_client(socket_path: &Path) -> Client {
     Client::connect(socket_path).await.unwrap()
+}
+
+#[tokio::test]
+async fn direct_query_reports_host_target() {
+    let query = Direct::default().query().await.unwrap();
+    assert!(!query.env.is_empty());
+    assert!(query.cwd.is_absolute());
+    assert_eq!(query.target, TargetInfo::current());
 }
 
 #[tokio::test]

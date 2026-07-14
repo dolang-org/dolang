@@ -888,9 +888,9 @@ Changes the permissions of the file or directory at this path.
 
 #### Errors
 
-| Exception      | Condition                                             |
-| -------------- | ----------------------------------------------------- |
-| `RuntimeError` | The operation is used on a non-Unix platform or fails |
+| Exception   | Condition                                             |
+| ----------- | ----------------------------------------------------- |
+| `sys.Error` | The target does not support the operation or it fails |
 
 #### Example
 
@@ -939,7 +939,8 @@ this path.
 **Platform Notes:**
 
 - **Unix:** Available
-- **Windows:** Not available
+- **Windows:** Raises [`sys.Error`](../sys/error.md) with an
+  unsupported-operation error
 
 #### Parameters
 

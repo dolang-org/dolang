@@ -1,4 +1,4 @@
-use std::{fmt, io, marker::PhantomData, process::ExitStatus};
+use std::{fmt, io, marker::PhantomData};
 
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Strand, Type, object::TypeBuilder, value::TypeObject,
@@ -22,6 +22,7 @@ impl<T> Default for SysErrorObject<T> {
 
 pub(crate) struct SysErrorAnnex {
     pub(crate) error: SysErrorSource,
+    pub(crate) operating_system: dolang_shell_vfs::OperatingSystem,
 }
 
 pub(crate) enum SysErrorSource {
@@ -43,15 +44,43 @@ impl SysErrorSource {
         }
     }
 
-    #[cfg(unix)]
     fn errno(&self) -> Option<i32> {
         match self {
-            Self::Io(error) => error.raw_os_error(),
+            Self::Io(error) => {
+                #[cfg(unix)]
+                return error.raw_os_error();
+                #[cfg(not(unix))]
+                {
+                    let _ = error;
+                    None
+                }
+            }
             Self::Vfs(error) => error.system().and_then(|error| {
                 matches!(
                     error.operating_system(),
                     dolang_shell_vfs::OperatingSystem::Linux
                         | dolang_shell_vfs::OperatingSystem::Macos
+                )
+                .then(|| error.code())
+            }),
+        }
+    }
+
+    fn winerror(&self) -> Option<i32> {
+        match self {
+            Self::Io(error) => {
+                #[cfg(windows)]
+                return error.raw_os_error();
+                #[cfg(not(windows))]
+                {
+                    let _ = error;
+                    None
+                }
+            }
+            Self::Vfs(error) => error.system().and_then(|error| {
+                matches!(
+                    error.operating_system(),
+                    dolang_shell_vfs::OperatingSystem::Windows
                 )
                 .then(|| error.code())
             }),
@@ -79,15 +108,34 @@ impl<'v, T: SysErrorType<'v>> Object<'v> for SysErrorObject<T> {
     type Type = ();
     type TypeAnnex = ();
 
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        #[cfg(unix)]
-        let builder = builder.get("errno", |this, strand, out| {
-            if let Some(errno) = this.annex().error.errno() {
-                Output::set(strand, out, i64::from(errno));
-            }
-            Ok(())
-        });
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let errno = builder.sym("errno");
+        let winerror = builder.sym("winerror");
         builder
+            .get("errno", move |this, strand, out| {
+                if matches!(
+                    this.annex().operating_system,
+                    dolang_shell_vfs::OperatingSystem::Windows
+                ) {
+                    return Err(Error::field(strand, errno));
+                }
+                if let Some(errno) = this.annex().error.errno() {
+                    Output::set(strand, out, i64::from(errno));
+                }
+                Ok(())
+            })
+            .get("winerror", move |this, strand, out| {
+                if !matches!(
+                    this.annex().operating_system,
+                    dolang_shell_vfs::OperatingSystem::Windows
+                ) {
+                    return Err(Error::field(strand, winerror));
+                }
+                if let Some(winerror) = this.annex().error.winerror() {
+                    Output::set(strand, out, i64::from(winerror));
+                }
+                Ok(())
+            })
     }
 
     fn display<'a, 's>(
@@ -152,12 +200,16 @@ fn create_sys_error<'v, 's, T: SysErrorType<'v>>(
     strand: &mut Strand<'v, 's>,
     ty: Type<'v, SysErrorObject<T>>,
     error: SysErrorSource,
+    operating_system: dolang_shell_vfs::OperatingSystem,
 ) -> Error<'v, 's> {
     Error::object_with_annex(
         strand,
         ty,
         SysErrorObject::<T>::default(),
-        SysErrorAnnex { error },
+        SysErrorAnnex {
+            error,
+            operating_system,
+        },
     )
 }
 
@@ -165,18 +217,14 @@ pub(crate) struct ProcError;
 
 pub(crate) struct ProcErrorAnnex {
     pub(crate) name: String,
-    pub(crate) status: ExitStatus,
+    pub(crate) status: dolang_shell_vfs::ProcessStatus,
+    pub(crate) operating_system: dolang_shell_vfs::OperatingSystem,
 }
 
 impl ProcErrorAnnex {
     fn message(&self) -> String {
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt;
-
-            if let Some(signal) = self.status.signal() {
-                return format!("{} terminated by signal: {}", self.name, signal);
-            }
+        if let Some(signal) = self.status.signal() {
+            return format!("{} terminated by signal: {}", self.name, signal);
         }
 
         if let Some(code) = self.status.code() {
@@ -195,7 +243,7 @@ impl<'v> Object<'v> for ProcError {
     type TypeAnnex = ();
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let builder =
+        let mut builder =
             builder
                 .nominal_supertype(TypeObject::RuntimeError)
                 .get("rc", |this, strand, out| {
@@ -204,16 +252,19 @@ impl<'v> Object<'v> for ProcError {
                     }
                     Ok(())
                 });
-        #[cfg(unix)]
-        let builder = builder.get("signal", |this, strand, out| {
-            use std::os::unix::process::ExitStatusExt;
-
+        let signal = builder.sym("signal");
+        builder.get("signal", move |this, strand, out| {
+            if matches!(
+                this.annex().operating_system,
+                dolang_shell_vfs::OperatingSystem::Windows
+            ) {
+                return Err(Error::field(strand, signal));
+            }
             if let Some(signal) = this.annex().status.signal() {
                 Output::set(strand, out, i64::from(signal));
             }
             Ok(())
-        });
-        builder
+        })
     }
 
     fn display<'a, 's>(
@@ -248,20 +299,35 @@ pub(crate) fn vfs_error<'v, 's>(
 
 fn sys_error<'v, 's>(strand: &mut Strand<'v, 's>, error: SysErrorSource) -> Error<'v, 's> {
     let global = strand.state::<Global<'v>>();
+    let operating_system = global.local.get(strand).target().operating_system;
     match classify_io_error_kind(error.kind()) {
-        SysErrorClass::Error => create_sys_error::<SysError>(strand, global.types.sys_error, error),
-        SysErrorClass::NotFoundError => {
-            create_sys_error::<NotFoundError>(strand, global.types.not_found, error)
+        SysErrorClass::Error => {
+            create_sys_error::<SysError>(strand, global.types.sys_error, error, operating_system)
         }
-        SysErrorClass::PermissionDeniedError => {
-            create_sys_error::<PermissionDeniedError>(strand, global.types.permission_denied, error)
-        }
-        SysErrorClass::AlreadyExistsError => {
-            create_sys_error::<AlreadyExistsError>(strand, global.types.already_exists, error)
-        }
-        SysErrorClass::TimedOutError => {
-            create_sys_error::<TimedOutError>(strand, global.types.timed_out, error)
-        }
+        SysErrorClass::NotFoundError => create_sys_error::<NotFoundError>(
+            strand,
+            global.types.not_found,
+            error,
+            operating_system,
+        ),
+        SysErrorClass::PermissionDeniedError => create_sys_error::<PermissionDeniedError>(
+            strand,
+            global.types.permission_denied,
+            error,
+            operating_system,
+        ),
+        SysErrorClass::AlreadyExistsError => create_sys_error::<AlreadyExistsError>(
+            strand,
+            global.types.already_exists,
+            error,
+            operating_system,
+        ),
+        SysErrorClass::TimedOutError => create_sys_error::<TimedOutError>(
+            strand,
+            global.types.timed_out,
+            error,
+            operating_system,
+        ),
     }
 }
 
@@ -301,9 +367,10 @@ impl<T, E: ErrorExt> ResultExt<T> for std::result::Result<T, E> {
 pub(crate) fn proc_status_error<'v, 's>(
     strand: &mut Strand<'v, 's>,
     name: &str,
-    status: ExitStatus,
+    status: dolang_shell_vfs::ProcessStatus,
 ) -> Error<'v, 's> {
     let global = strand.state::<Global<'v>>();
+    let operating_system = global.local.get(strand).target().operating_system;
     Error::object_with_annex(
         strand,
         global.types.proc_error,
@@ -311,6 +378,7 @@ pub(crate) fn proc_status_error<'v, 's>(
         ProcErrorAnnex {
             name: name.to_owned(),
             status,
+            operating_system,
         },
     )
 }

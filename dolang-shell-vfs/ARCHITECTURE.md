@@ -41,3 +41,10 @@ code retain their original `io::Error` locally. System errors carry the raw
 code, originating operating system, `ErrorKind`, and formatted message across
 RPC. A client must not interpret a foreign raw code using the host platform's
 error tables.
+
+The initial VFS query returns a snapshot of the target environment, working
+directory, operating system, architecture, logical CPU count, and Wine status.
+Operating systems and architectures are closed enums covering the project's
+supported ports. The shell stores the target snapshot in strand-local context,
+so system information follows nested VFS contexts rather than the interpreter
+host.

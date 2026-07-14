@@ -403,6 +403,31 @@ impl Direct {
         Self::known_folder(&FOLDERID_LocalAppData)
     }
 
+    pub(super) fn temp_dir_platform(
+        env: &HashMap<String, Option<String>>,
+    ) -> Result<PathBuf, io::Error> {
+        let override_value = |key: &str| match env
+            .iter()
+            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(key))
+        {
+            Some((_, value)) => value.clone(),
+            None => std::env::var(key).ok(),
+        };
+        for key in ["TMP", "TEMP"] {
+            if let Some(value) = override_value(key) {
+                let path = PathBuf::from(value);
+                if path.is_absolute() {
+                    return Ok(path);
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{key} must be an absolute path"),
+                ));
+            }
+        }
+        Ok(std::env::temp_dir())
+    }
+
     fn nt_error(status: windows_sys::Win32::Foundation::NTSTATUS) -> io::Error {
         io::Error::from_raw_os_error(unsafe { RtlNtStatusToDosError(status) } as i32)
     }

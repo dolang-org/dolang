@@ -92,9 +92,7 @@ pub(crate) struct Syms<'v> {
     pub(crate) stdout: Sym<'v, 'v>,
     pub(crate) symlink: Sym<'v, 'v>,
     pub(crate) unknown: Sym<'v, 'v>,
-    #[cfg(unix)]
     pub(crate) follow: Sym<'v, 'v>,
-    #[cfg(unix)]
     pub(crate) group: Sym<'v, 'v>,
 }
 
@@ -216,9 +214,7 @@ impl<'v> Global<'v> {
                 stdout: builder.sym("stdout"),
                 symlink: builder.sym("SYMLINK"),
                 unknown: builder.sym("UNKNOWN"),
-                #[cfg(unix)]
                 follow: builder.sym("follow"),
-                #[cfg(unix)]
                 group: builder.sym("group"),
             },
             local: builder.local(),

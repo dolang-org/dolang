@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     io,
     path::{Path, PathBuf},
-    process::{ExitStatus, Stdio},
+    process::Stdio,
     sync::Arc,
 };
 
@@ -20,8 +20,8 @@ use wax::{
 
 use crate::{
     Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions, PipeRecv,
-    PipeSend, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
-    XattrEntry, XattrNamespace, metadata_from_std, native_path, typed_path,
+    PipeSend, ProcessStatus, Query, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs,
+    WellKnownPath, XattrEntry, XattrNamespace, metadata_from_std, native_path, typed_path,
 };
 
 use std::{
@@ -301,12 +301,12 @@ impl DirectChild {
 }
 
 impl Child for DirectChild {
-    async fn wait(&mut self) -> crate::Result<ExitStatus> {
-        self.inner.wait().await.map_err(Into::into)
+    async fn wait(&mut self) -> crate::Result<ProcessStatus> {
+        ProcessStatus::from_native(self.inner.wait().await?).map_err(Into::into)
     }
 
-    async fn terminate(self) -> crate::Result<ExitStatus> {
-        self.impl_terminate().await.map_err(Into::into)
+    async fn terminate(self) -> crate::Result<ProcessStatus> {
+        ProcessStatus::from_native(self.impl_terminate().await?).map_err(Into::into)
     }
 }
 
@@ -694,6 +694,10 @@ impl Vfs for Direct {
         crate::pipe::pipe()
     }
 
+    async fn query(&self) -> crate::Result<Query> {
+        Query::current()
+    }
+
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> crate::Result<ReadDir> {
         ReadDir::open(&native_path(path)?).await.map_err(Into::into)
     }
@@ -722,6 +726,7 @@ impl Vfs for Direct {
         let path = match key {
             WellKnownPath::HomeDir => Self::home_dir_platform(env),
             WellKnownPath::CacheDir => Self::cache_dir_platform(env),
+            WellKnownPath::TempDir => Self::temp_dir_platform(env),
         }?;
         Ok(typed_path(path)?)
     }

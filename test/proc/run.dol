@@ -16,6 +16,7 @@ import agent proc sys
     - cat
     - grep
   std:
+    - FieldError
     - nulliter
     - RuntimeError
   time:
@@ -169,8 +170,12 @@ def missing_program_yields_sys_error()
   let err = assert_throws $sys.NotFoundError do
     run __dolang_missing_program__
   assert_type $sys.Error $err
-  if !is_windows
+  if is_windows
+    assert_throws $FieldError do err.errno
+    assert_type $int $err.winerror
+  else
     assert_eq $err.errno 2
+    assert_throws $FieldError do err.winerror
 
 #[agent.test]
 def non_zero_exit_yields_proc_error()
@@ -181,7 +186,9 @@ def non_zero_exit_yields_proc_error()
     assert_throws $proc.Error do
       run sh -c "exit 42"
   assert_eq $err.rc 42
-  if !is_windows
+  if is_windows
+    assert_throws $FieldError do err.signal
+  else
     assert_eq $err.signal nil
   let expected = if is_windows
     "cmd exited with status: 42"
@@ -196,8 +203,7 @@ def signaled_process_yields_proc_error()
   let err = assert_throws $proc.Error do
     run sh -c r"kill -TERM $$"
   assert_eq $err.rc nil
-  if !is_windows
-    assert_eq $err.signal 15
+  assert_eq $err.signal 15
   assert_eq (str err) "sh terminated by signal: 15"
 
 #[agent.test]

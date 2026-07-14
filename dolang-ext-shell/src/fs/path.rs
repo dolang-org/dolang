@@ -17,7 +17,7 @@ use dolang::runtime::{
     value::TypeObject,
 };
 use dolang_shell_vfs::Utf8WindowsPrefix;
-use dolang_shell_vfs::{Attrs, Utf8TypedPath, Utf8TypedPathBuf, Vfs, target_path_type};
+use dolang_shell_vfs::{Attrs, Utf8TypedPath, Utf8TypedPathBuf, Vfs};
 
 use super::file::File;
 
@@ -37,6 +37,18 @@ pub(crate) struct PathAnnex<'v> {
     stream_type: Option<String>,
 }
 
+fn target_path_type<'v>(
+    strand: &Strand<'v, '_>,
+    global: State<'v, Global<'v>>,
+) -> typed_path::PathType {
+    global
+        .local
+        .get(strand)
+        .target()
+        .operating_system
+        .path_type()
+}
+
 pub(crate) fn path_from_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
@@ -47,14 +59,16 @@ pub(crate) fn path_from_value<'v, 's>(
     } else if let Some(path) = global.types.windows_path.downcast(value) {
         Ok(path.annex().typed_path_buf())
     } else if let Some(str) = value.as_str(strand) {
-        Ok(strand.access(|x| match target_path_type() {
+        let target = target_path_type(strand, global);
+        Ok(strand.access(|x| match target {
             typed_path::PathType::Unix => Utf8TypedPathBuf::from_unix(str.as_str(x)),
             typed_path::PathType::Windows => Utf8TypedPathBuf::from_windows(str.as_str(x)),
         }))
     } else {
         Err(Error::type_error(strand, "expected Path or str"))
     }?;
-    convert_path_type(strand, path, &target_path_type())
+    let target = target_path_type(strand, global);
+    convert_path_type(strand, path, &target)
 }
 
 fn path_path_type(path: Utf8TypedPath<'_>) -> typed_path::PathType {
@@ -82,7 +96,8 @@ fn any_path_from_value<'v, 's>(
     } else if let Some(path) = global.types.windows_path.downcast(value) {
         Ok(path.annex().typed_path_buf())
     } else if let Some(value) = value.as_str(strand) {
-        Ok(strand.access(|x| match target_path_type() {
+        let target = target_path_type(strand, global);
+        Ok(strand.access(|x| match target {
             typed_path::PathType::Unix => Utf8TypedPathBuf::from_unix(value.as_str(x)),
             typed_path::PathType::Windows => Utf8TypedPathBuf::from_windows(value.as_str(x)),
         }))
@@ -441,7 +456,8 @@ impl<'v> Object<'v> for Path {
         let global = strand.state::<Global<'v>>();
         let ([path], []) = unpack!(strand, args, 1, 0)?;
         let path = any_path_from_value(strand, global, &path)?;
-        let path = convert_path_type(strand, path, &target_path_type())?;
+        let target = target_path_type(strand, global);
+        let path = convert_path_type(strand, path, &target)?;
         create_path(strand, global, path, out)
     }
 
@@ -465,7 +481,7 @@ impl<'v> Object<'v> for Path {
                     Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
                 }
             }
-            let buf = buf.unwrap_or_else(|| match target_path_type() {
+            let buf = buf.unwrap_or_else(|| match target_path_type(strand, global) {
                 typed_path::PathType::Unix => Utf8TypedPathBuf::from_unix(""),
                 typed_path::PathType::Windows => Utf8TypedPathBuf::from_windows(""),
             });
@@ -1031,7 +1047,6 @@ macro_rules! impl_concrete_path {
                 } else {
                     builder
                 };
-                #[cfg(unix)]
                 let builder = builder.method("chown", async move |this, strand, args, _out| {
                     let global = this.annex().global;
                     let path = this.annex().as_path().to_path_buf();

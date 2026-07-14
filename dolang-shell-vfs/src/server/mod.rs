@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    process::ExitStatus,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -14,7 +13,7 @@ use dolang_rpc::{CallContext, DefaultHandle, OsHandle};
 #[cfg(unix)]
 use nix::sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, bind, connect, socket};
 #[cfg(unix)]
-use std::os::{fd::AsRawFd, unix::io::OwnedFd, unix::process::ExitStatusExt};
+use std::os::{fd::AsRawFd, unix::io::OwnedFd};
 use tokio::io;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeClient;
@@ -304,14 +303,18 @@ impl Connection {
             Ok(exit) => exit,
             Err(_) => child.terminate().await,
         };
-        ResponseKind::Spawn(exit.map(exit_status_to_raw).map_err(wire_error))
+        ResponseKind::Spawn(exit.map_err(wire_error))
     }
 
     async fn handle_query(&self) -> ResponseKind {
         let env: HashMap<_, _> = std::env::vars().collect();
         let cwd = WirePath::try_from(std::env::current_dir().unwrap_or_default())
             .expect("current directory must be UTF-8");
-        ResponseKind::Query { env, cwd }
+        ResponseKind::Query {
+            env,
+            cwd,
+            target: crate::TargetInfo::current(),
+        }
     }
 
     async fn handle_open(&self, req: OpenRequest) -> ResponseKind {
@@ -701,14 +704,4 @@ impl Connection {
 
 fn wire_error(error: impl Into<crate::Error>) -> crate::protocol::WireError {
     error.into().into()
-}
-
-#[cfg(unix)]
-fn exit_status_to_raw(status: ExitStatus) -> i32 {
-    status.into_raw()
-}
-
-#[cfg(windows)]
-fn exit_status_to_raw(status: ExitStatus) -> i32 {
-    status.code().unwrap_or(-1)
 }

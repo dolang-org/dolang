@@ -43,7 +43,6 @@ use crate::{
 
 use glob::{GlobIter, GlobIterAnnex};
 
-#[cfg(unix)]
 use dolang::runtime::Value;
 
 pub(super) async fn read_into_spare(
@@ -369,7 +368,12 @@ async fn symlink<'v, 's>(
     dst: Utf8TypedPath<'_>,
 ) -> Result<'v, 's, ()> {
     let cwd = global.local.get(strand).cwd().clone();
-    let target = dolang_shell_vfs::target_path_type();
+    let target = global
+        .local
+        .get(strand)
+        .target()
+        .operating_system
+        .path_type();
     let src = convert_path_type(strand, src.to_path_buf(), &target)?;
     let dst = safe_concat(strand, cwd.to_path(), dst)?;
     let local = global.local.get(strand);
@@ -402,7 +406,12 @@ async fn symlink_dir<'v, 's>(
     src: Utf8TypedPath<'_>,
     dst: Utf8TypedPath<'_>,
 ) -> Result<'v, 's, ()> {
-    let target = dolang_shell_vfs::target_path_type();
+    let target = global
+        .local
+        .get(strand)
+        .target()
+        .operating_system
+        .path_type();
     let src = convert_path_type(strand, src.to_path_buf(), &target)?;
     let dst = prepend_cwd(strand, global, dst)?;
     let local = global.local.get(strand);
@@ -419,7 +428,12 @@ async fn symlink_file<'v, 's>(
     src: Utf8TypedPath<'_>,
     dst: Utf8TypedPath<'_>,
 ) -> Result<'v, 's, ()> {
-    let target = dolang_shell_vfs::target_path_type();
+    let target = global
+        .local
+        .get(strand)
+        .target()
+        .operating_system
+        .path_type();
     let src = convert_path_type(strand, src.to_path_buf(), &target)?;
     let dst = prepend_cwd(strand, global, dst)?;
     let local = global.local.get(strand);
@@ -467,25 +481,23 @@ async fn chmod<'v, 's>(
     path: Utf8TypedPath<'_>,
     mode: u32,
 ) -> Result<'v, 's, ()> {
-    #[cfg(unix)]
-    {
-        let path = prepend_cwd(strand, global, path)?;
-        let local = global.local.get(strand);
-        let vfs = local.vfs();
-        let perm = dolang_shell_vfs::Permissions::from_mode(mode);
-        vfs.set_permissions(path.to_path(), perm)
-            .await
-            .into_sys(strand)?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (global, path, mode);
-        Err(Error::runtime(
-            strand,
+    if matches!(
+        global.local.get(strand).target().operating_system.family(),
+        dolang_shell_vfs::OperatingSystemFamily::Windows
+    ) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
             "chmod is not supported on this platform",
-        ))
+        )
+        .into_sys(strand));
     }
+    let path = prepend_cwd(strand, global, path)?;
+    let vfs = global.local.get(strand).vfs();
+    let perm = dolang_shell_vfs::Permissions::from_mode(mode);
+    vfs.set_permissions(path.to_path(), perm)
+        .await
+        .into_sys(strand)?;
+    Ok(())
 }
 
 fn parse_timestamp_arg<'v, 's>(
@@ -558,7 +570,6 @@ async fn set_timestamps<'v, 's>(
     Ok(())
 }
 
-#[cfg(unix)]
 fn parse_chown_identity<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
@@ -582,7 +593,6 @@ fn parse_chown_identity<'v, 's>(
     }
 }
 
-#[cfg(unix)]
 fn parse_chown_common<'v, 's, 'a>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
@@ -638,7 +648,6 @@ fn parse_chown_common<'v, 's, 'a>(
     Ok((path, user, group, follow))
 }
 
-#[cfg(unix)]
 async fn chown<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
@@ -751,12 +760,20 @@ async fn glob<'v, 's>(
         None => false,
     };
 
-    let root = root.unwrap_or_else(|| match dolang_shell_vfs::target_path_type() {
-        dolang_shell_vfs::PathType::Unix => {
-            Utf8TypedPath::Unix(dolang_shell_vfs::Utf8UnixPath::new(""))
-        }
-        dolang_shell_vfs::PathType::Windows => {
-            Utf8TypedPath::Windows(dolang_shell_vfs::Utf8WindowsPath::new(""))
+    let root = root.unwrap_or_else(|| {
+        match global
+            .local
+            .get(strand)
+            .target()
+            .operating_system
+            .path_type()
+        {
+            dolang_shell_vfs::PathType::Unix => {
+                Utf8TypedPath::Unix(dolang_shell_vfs::Utf8UnixPath::new(""))
+            }
+            dolang_shell_vfs::PathType::Windows => {
+                Utf8TypedPath::Windows(dolang_shell_vfs::Utf8WindowsPath::new(""))
+            }
         }
     });
     let abs_root = prepend_cwd(strand, global, root)?;
@@ -1212,7 +1229,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let path = path_from_value(strand, global, &path)?;
             set_timestamps(strand, global, path.to_path(), modified, accessed, created).await
         });
-    #[cfg(unix)]
     let module = module.function("chown", async move |strand, args, _out| {
         let (path, user, group, follow) = parse_chown_common(strand, global, args, None)?;
         chown(strand, global, path.to_path(), user, group, follow).await
@@ -1265,14 +1281,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     }
                     None => {
                         let local = global.local.get(strand);
-                        if cfg!(windows) {
-                            dolang_shell_vfs::typed_path(std::env::temp_dir()).into_sys(strand)?
-                        } else {
-                            match local.env().get("TMPDIR") {
-                                Some(dir) => local.cwd().join(dir.as_ref()),
-                                None => Utf8TypedPathBuf::from_unix("/tmp"),
-                            }
-                        }
+                        let env = local.env().flatten_delta();
+                        local
+                            .vfs()
+                            .well_known_path(WellKnownPath::TempDir, &env)
+                            .await
+                            .into_sys(strand)?
                     }
                 };
                 let temp_path = create_temp_dir(strand, global, parent.to_path())

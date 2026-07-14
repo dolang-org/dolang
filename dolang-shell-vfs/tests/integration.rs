@@ -1,6 +1,6 @@
 #![deny(warnings)]
 #![cfg(unix)]
-use dolang_shell_vfs::{Child, Command, Utf8TypedPath, Utf8UnixPath, Vfs};
+use dolang_shell_vfs::{Child, Command, TargetInfo, Utf8TypedPath, Utf8UnixPath, Vfs};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
@@ -229,6 +229,7 @@ async fn client_query() {
 
     assert!(!query.env.is_empty(), "env should not be empty");
     assert!(query.cwd.is_absolute(), "cwd should be absolute path");
+    assert_eq!(query.target, TargetInfo::current());
 
     stop_daemon(&socket_path).await;
 }

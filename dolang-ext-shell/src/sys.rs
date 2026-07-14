@@ -1,22 +1,10 @@
-use std::env::consts;
-
 use dolang::{
     compile::Compiler,
-    runtime::{Object, Output, State, Sym, object::TypeBuilder, unpack, vm::Builder},
+    runtime::{Error, Object, Output, State, Sym, object::TypeBuilder, unpack, vm::Builder},
 };
+use dolang_shell_vfs::{Architecture, OperatingSystem, OperatingSystemFamily};
 
 use crate::global::Global;
-
-#[cfg(windows)]
-fn is_wine() -> bool {
-    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
-    use windows_sys::core::w;
-
-    const WINE_GET_VERSION: &[u8] = b"wine_get_version\0";
-
-    let ntdll = unsafe { GetModuleHandleW(w!("ntdll.dll")) };
-    !ntdll.is_null() && unsafe { GetProcAddress(ntdll, WINE_GET_VERSION.as_ptr()) }.is_some()
-}
 
 pub(crate) fn configure_compiler<'a>(compiler: &mut Compiler<'a>) {
     compiler.prelude().import_module("sys");
@@ -27,8 +15,7 @@ pub(crate) struct OsInfo;
 pub(crate) struct OsInfoAnnex<'v> {
     os: Sym<'v, 'v>,
     family: Sym<'v, 'v>,
-    #[cfg(windows)]
-    is_wine: bool,
+    is_wine: Option<bool>,
 }
 
 impl<'v> Object<'v> for OsInfo {
@@ -38,8 +25,9 @@ impl<'v> Object<'v> for OsInfo {
     type Type = ();
     type TypeAnnex = ();
 
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let builder = builder
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let is_wine = builder.sym("is_wine");
+        builder
             .get("os", |this, strand, out| {
                 Output::set(strand, out, this.annex().os);
                 Ok(())
@@ -47,15 +35,14 @@ impl<'v> Object<'v> for OsInfo {
             .get("family", |this, strand, out| {
                 Output::set(strand, out, this.annex().family);
                 Ok(())
-            });
-
-        #[cfg(windows)]
-        let builder = builder.get("is_wine", |this, strand, out| {
-            Output::set(strand, out, this.annex().is_wine);
-            Ok(())
-        });
-
-        builder
+            })
+            .get("is_wine", move |this, strand, out| {
+                let Some(value) = this.annex().is_wine else {
+                    return Err(Error::field(strand, is_wine));
+                };
+                Output::set(strand, out, value);
+                Ok(())
+            })
     }
 }
 
@@ -63,7 +50,7 @@ pub(crate) struct CpuInfo;
 
 pub(crate) struct CpuInfoAnnex<'v> {
     arch: Sym<'v, 'v>,
-    logical_count: usize,
+    logical_count: u32,
 }
 
 impl<'v> Object<'v> for CpuInfo {
@@ -87,25 +74,34 @@ impl<'v> Object<'v> for CpuInfo {
 }
 
 pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
-    let os = builder.sym(&consts::OS.to_ascii_uppercase());
-    let family = builder.sym(&consts::FAMILY.to_ascii_uppercase());
-    #[cfg(windows)]
-    let is_wine = is_wine();
-    let arch = builder.sym(&consts::ARCH.to_ascii_uppercase());
-    let logical_count = std::thread::available_parallelism().map_or(1, |count| count.get());
+    let linux = builder.sym("LINUX");
+    let macos = builder.sym("MACOS");
+    let windows = builder.sym("WINDOWS");
+    let unix = builder.sym("UNIX");
+    let x86_64 = builder.sym("X86_64");
+    let aarch64 = builder.sym("AARCH64");
 
     builder
         .module("sys")
         .function("os_info", async move |strand, args, out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
+            let target = global.local.get(strand).target();
+            let os = match &target.operating_system {
+                OperatingSystem::Linux => linux,
+                OperatingSystem::Macos => macos,
+                OperatingSystem::Windows => windows,
+            };
+            let family = match target.operating_system.family() {
+                OperatingSystemFamily::Unix => unix,
+                OperatingSystemFamily::Windows => windows,
+            };
             global.types.os_info.create_with_annex(
                 strand,
                 OsInfo,
                 OsInfoAnnex {
                     os,
                     family,
-                    #[cfg(windows)]
-                    is_wine,
+                    is_wine: target.is_wine,
                 },
                 out,
             );
@@ -113,12 +109,17 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         })
         .function("cpu_info", async move |strand, args, out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
+            let target = global.local.get(strand).target();
+            let arch = match target.architecture {
+                Architecture::X86_64 => x86_64,
+                Architecture::Aarch64 => aarch64,
+            };
             global.types.cpu_info.create_with_annex(
                 strand,
                 CpuInfo,
                 CpuInfoAnnex {
                     arch,
-                    logical_count,
+                    logical_count: target.logical_cpu_count,
                 },
                 out,
             );
