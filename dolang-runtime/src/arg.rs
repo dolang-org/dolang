@@ -167,16 +167,12 @@ impl<'v, 'a> Args<'v, 'a> {
     /// Insert a positional value into the headroom slot, expanding the
     /// visible argument range by one.
     ///
-    /// Panics if no headroom remains or if argument iteration has advanced
-    /// beyond the reserved headroom region.
+    /// Panics if no leading slot remains. Consumed leading arguments can be
+    /// reused as headroom, including arguments skipped by a trailing pack.
     pub(crate) fn prepend_self(&mut self, value: Value<'v>) {
         assert!(
             self.index > 0,
             "prepend_self called with no available headroom"
-        );
-        assert!(
-            self.index <= self.headroom,
-            "prepend_self called after argument iteration advanced"
         );
         self.index -= 1;
         unsafe { self.content.write_unchecked(self.index, value) };
@@ -347,6 +343,27 @@ impl<'v, 'a> Args<'v, 'a> {
             None
         };
         Ok((unsafe { required.assume_init() }, optional, var))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Arg, Args};
+    use crate::Value;
+    use std::cell::UnsafeCell;
+
+    #[test]
+    fn prepend_self_reuses_a_consumed_leading_argument() {
+        let slots = [UnsafeCell::new(Value::NIL), UnsafeCell::new(Value::NIL)];
+        let sig = [None];
+        let mut args = unsafe { Args::new(&slots, &sig, 1) };
+
+        assert!(matches!(args.next(), Some(Arg::Pos(_))));
+        assert!(args.next().is_none());
+
+        args.prepend_self(Value::NIL);
+        assert!(matches!(args.next(), Some(Arg::Pos(_))));
+        assert!(args.next().is_none());
     }
 }
 
