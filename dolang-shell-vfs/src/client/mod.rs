@@ -2,7 +2,9 @@ use std::{
     collections::HashMap,
     io,
     path::{Path, PathBuf},
+    pin::Pin,
     process::ExitStatus,
+    task::{Context, Poll},
 };
 
 #[cfg(unix)]
@@ -18,7 +20,7 @@ use std::os::windows::{
 };
 
 use dolang_rpc::{Call, DefaultHandle, OsHandle};
-use tokio::fs::File;
+use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 #[cfg(unix)]
 use tokio::net::UnixStream;
 #[cfg(windows)]
@@ -27,9 +29,10 @@ use tokio::net::windows::named_pipe::NamedPipeServer;
 #[cfg(unix)]
 use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
 use crate::{
-    Attrs, Child, ChownIdentity, Command, FsMetadata, Metadata, Permissions, PipeRecv, PipeSend,
-    ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry,
-    direct::Direct,
+    Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions, PipeRecv,
+    PipeSend, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
+    XattrEntry,
+    direct::DirectFile,
     protocol::{
         AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
         FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
@@ -52,7 +55,107 @@ pub struct Query {
 #[derive(Clone)]
 pub struct Client {
     rpc: dolang_rpc::Client<VfsProtocol>,
-    direct: Direct,
+}
+
+#[derive(Debug)]
+pub struct ClientFile(DirectFile);
+
+impl ClientFile {
+    fn from_std(file: std::fs::File) -> Self {
+        Self(DirectFile::from_std(file))
+    }
+}
+
+impl AsyncRead for ClientFile {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for ClientFile {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+impl AsyncSeek for ClientFile {
+    fn start_seek(mut self: Pin<&mut Self>, position: io::SeekFrom) -> io::Result<()> {
+        Pin::new(&mut self.0).start_seek(position)
+    }
+
+    fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
+        Pin::new(&mut self.0).poll_complete(cx)
+    }
+}
+
+impl FileHandle for ClientFile {
+    async fn try_clone(&self) -> io::Result<Self> {
+        self.0.try_clone().await.map(Self)
+    }
+
+    async fn close(self) -> io::Result<()> {
+        self.0.close().await
+    }
+
+    async fn set_len(&mut self, size: u64) -> io::Result<()> {
+        self.0.set_len(size).await
+    }
+
+    async fn metadata(&mut self) -> io::Result<Metadata> {
+        self.0.metadata().await
+    }
+
+    async fn fs_metadata(&mut self) -> io::Result<FsMetadata> {
+        self.0.fs_metadata().await
+    }
+
+    async fn xattrs(
+        &mut self,
+        namespace: crate::XattrNamespace<'_>,
+    ) -> io::Result<Vec<XattrEntry>> {
+        self.0.xattrs(namespace).await
+    }
+
+    async fn xattr(&mut self, name: &str, namespace: Option<&str>) -> io::Result<Vec<u8>> {
+        self.0.xattr(name, namespace).await
+    }
+
+    async fn streams(&mut self) -> io::Result<Vec<StreamEntry>> {
+        self.0.streams().await
+    }
+
+    async fn set_xattr(
+        &mut self,
+        name: &str,
+        namespace: Option<&str>,
+        value: &[u8],
+    ) -> io::Result<()> {
+        self.0.set_xattr(name, namespace, value).await
+    }
+
+    async fn remove_xattr(&mut self, name: &str, namespace: Option<&str>) -> io::Result<()> {
+        self.0.remove_xattr(name, namespace).await
+    }
+
+    async fn try_into_std(self) -> Result<std::fs::File, Self> {
+        self.0.try_into_std().await.map_err(Self)
+    }
 }
 
 impl Client {
@@ -71,10 +174,7 @@ impl Client {
     #[cfg(unix)]
     fn from_std_stream(stream: StdUnixStream) -> Result<Self, io::Error> {
         let rpc = dolang_rpc::Client::from_unix_stream(stream)?;
-        Ok(Self {
-            rpc,
-            direct: Direct::default(),
-        })
+        Ok(Self { rpc })
     }
 
     /// Starts a VFS client on the server end of a connected Windows named pipe.
@@ -89,10 +189,7 @@ impl Client {
         server_process: OwnedHandle,
     ) -> Result<Self, io::Error> {
         let rpc = unsafe { dolang_rpc::Client::from_named_pipe_server(pipe, server_process)? };
-        Ok(Self {
-            rpc,
-            direct: Direct::default(),
-        })
+        Ok(Self { rpc })
     }
 
     fn call(&self, request: RequestKind) -> Call<ResponseKind> {
@@ -319,6 +416,9 @@ pub struct CommandBuilder<'a> {
     stdin_handle: Option<DefaultHandle>,
     stdout_handle: Option<DefaultHandle>,
     stderr_handle: Option<DefaultHandle>,
+    stdin_file: Option<ClientFile>,
+    stdout_file: Option<ClientFile>,
+    stderr_file: Option<ClientFile>,
 }
 
 pub struct ClientChild<'a> {
@@ -337,6 +437,9 @@ impl<'a> CommandBuilder<'a> {
             stdin_handle: None,
             stdout_handle: None,
             stderr_handle: None,
+            stdin_file: None,
+            stdout_file: None,
+            stderr_file: None,
         }
     }
 }
@@ -371,6 +474,9 @@ impl Child for ClientChild<'_> {
 
 impl<'a> Command for CommandBuilder<'a> {
     type Child = ClientChild<'a>;
+    type File = ClientFile;
+    type PipeSend = PipeSend;
+    type PipeRecv = PipeRecv;
 
     fn arg(&mut self, arg: &str) -> &mut Self {
         self.args.push(arg.to_owned());
@@ -393,71 +499,93 @@ impl<'a> Command for CommandBuilder<'a> {
     }
 
     fn stdin_pipe(&mut self, pipe: PipeRecv) -> io::Result<&mut Self> {
+        self.stdin_file = None;
         self.stdin_handle = Some(pipe.into_blocking_handle()?);
         Ok(self)
     }
 
     fn stdout_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
+        self.stdout_file = None;
         self.stdout_handle = Some(pipe.into_blocking_handle()?);
         Ok(self)
     }
 
     fn stdin_inherit(&mut self) -> io::Result<&mut Self> {
+        self.stdin_file = None;
         self.stdin_handle = Some(clone_stdin_handle()?);
         Ok(self)
     }
 
     fn stdout_inherit(&mut self) -> io::Result<&mut Self> {
+        self.stdout_file = None;
         self.stdout_handle = Some(clone_stdout_handle()?);
         Ok(self)
     }
 
-    fn stdin_handle(&mut self, handle: DefaultHandle) -> &mut Self {
-        self.stdin_handle = Some(handle);
-        self
+    fn stdin_handle(&mut self, handle: ClientFile) -> io::Result<&mut Self> {
+        self.stdin_handle = None;
+        self.stdin_file = Some(handle);
+        Ok(self)
     }
 
-    fn stdout_handle(&mut self, handle: DefaultHandle) -> &mut Self {
-        self.stdout_handle = Some(handle);
-        self
+    fn stdout_handle(&mut self, handle: ClientFile) -> io::Result<&mut Self> {
+        self.stdout_handle = None;
+        self.stdout_file = Some(handle);
+        Ok(self)
     }
 
     fn stdin_null(&mut self) -> &mut Self {
+        self.stdin_file = None;
         self.stdin_handle = None;
         self
     }
 
     fn stdout_null(&mut self) -> &mut Self {
+        self.stdout_file = None;
         self.stdout_handle = None;
         self
     }
 
     fn stderr_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
+        self.stderr_file = None;
         self.stderr_handle = Some(pipe.into_blocking_handle()?);
         Ok(self)
     }
 
     fn stderr_inherit(&mut self) -> io::Result<&mut Self> {
+        self.stderr_file = None;
         self.stderr_handle = Some(clone_stderr_handle()?);
         Ok(self)
     }
 
     fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self> {
+        self.stderr_file = None;
         self.stderr_handle = Some(clone_stdout_handle()?);
         Ok(self)
     }
 
-    fn stderr_handle(&mut self, handle: DefaultHandle) -> &mut Self {
-        self.stderr_handle = Some(handle);
-        self
+    fn stderr_handle(&mut self, handle: ClientFile) -> io::Result<&mut Self> {
+        self.stderr_handle = None;
+        self.stderr_file = Some(handle);
+        Ok(self)
     }
 
     fn stderr_null(&mut self) -> &mut Self {
+        self.stderr_file = None;
         self.stderr_handle = None;
         self
     }
 
-    async fn spawn(self) -> io::Result<Self::Child> {
+    async fn spawn(mut self) -> io::Result<Self::Child> {
+        if let Some(file) = self.stdin_file.take() {
+            self.stdin_handle = Some(file.0.try_into_std().await.unwrap().into());
+        }
+        if let Some(file) = self.stdout_file.take() {
+            self.stdout_handle = Some(file.0.try_into_std().await.unwrap().into());
+        }
+        if let Some(file) = self.stderr_file.take() {
+            self.stderr_handle = Some(file.0.try_into_std().await.unwrap().into());
+        }
         let req = SpawnRequest {
             program: self.program,
             args: self.args,
@@ -554,7 +682,7 @@ impl<'a> OpenOptions<'a> {
         self
     }
 
-    async fn open_wire(&self, path: WirePath) -> Result<File, io::Error> {
+    async fn open_wire(&self, path: WirePath) -> Result<ClientFile, io::Error> {
         let req = OpenRequest {
             path,
             read: self.read,
@@ -568,20 +696,22 @@ impl<'a> OpenOptions<'a> {
 
         match self.client.request(RequestKind::Open(req)).await? {
             ResponseKind::Open(result) => result
-                .map(|fd| File::from_std(fd.into_inner().into()))
+                .map(|fd| ClientFile::from_std(fd.into_inner().into()))
                 .map_err(io::Error::from_raw_os_error),
             response => Err(unexpected(response)),
         }
     }
 
     /// Open the file at the given path.
-    pub async fn open(&self, path: impl AsRef<Path>) -> Result<File, io::Error> {
+    pub async fn open(&self, path: impl AsRef<Path>) -> Result<ClientFile, io::Error> {
         self.open_wire(path.as_ref().to_path_buf().try_into()?)
             .await
     }
 }
 
 impl crate::OpenOptions for OpenOptions<'_> {
+    type File = ClientFile;
+
     fn read(&mut self, read: bool) -> &mut Self {
         self.read(read)
     }
@@ -610,12 +740,15 @@ impl crate::OpenOptions for OpenOptions<'_> {
         self.no_follow(no_follow)
     }
 
-    async fn open(&self, path: Utf8TypedPath<'_>) -> Result<File, io::Error> {
+    async fn open(&self, path: Utf8TypedPath<'_>) -> Result<ClientFile, io::Error> {
         self.open_wire(path.into()).await
     }
 }
 
 impl Vfs for Client {
+    type File = ClientFile;
+    type PipeSend = PipeSend;
+    type PipeRecv = PipeRecv;
     type OpenOptions<'a>
         = OpenOptions<'a>
     where
@@ -633,11 +766,15 @@ impl Vfs for Client {
         CommandBuilder::new(self, program)
     }
 
+    fn pipe(&self) -> io::Result<(PipeSend, PipeRecv)> {
+        crate::pipe::pipe()
+    }
+
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> Result<ReadDir, io::Error> {
         #[cfg(unix)]
         {
             let file = crate::OpenOptions::open(self.open_options().read(true), path).await?;
-            ReadDir::from_fd(file.into_std().await.into())
+            ReadDir::from_fd(file.try_into_std().await.unwrap().into())
         }
         #[cfg(windows)]
         {
@@ -689,52 +826,6 @@ impl Vfs for Client {
 
     async fn clear_cache(&self) -> Result<(), io::Error> {
         Client::clear_cache(self).await
-    }
-
-    async fn file_fs_metadata(&self, file: &File) -> Result<FsMetadata, io::Error> {
-        self.direct.file_fs_metadata(file).await
-    }
-
-    async fn file_xattrs(
-        &self,
-        file: &File,
-        namespace: crate::XattrNamespace<'_>,
-    ) -> Result<Vec<XattrEntry>, io::Error> {
-        self.direct.file_xattrs(file, namespace).await
-    }
-
-    async fn file_xattr(
-        &self,
-        file: &File,
-        name: &str,
-        namespace: Option<&str>,
-    ) -> Result<Vec<u8>, io::Error> {
-        self.direct.file_xattr(file, name, namespace).await
-    }
-
-    async fn file_streams(&self, file: &File) -> Result<Vec<StreamEntry>, io::Error> {
-        self.direct.file_streams(file).await
-    }
-
-    async fn file_set_xattr(
-        &self,
-        file: &File,
-        name: &str,
-        namespace: Option<&str>,
-        value: &[u8],
-    ) -> Result<(), io::Error> {
-        self.direct
-            .file_set_xattr(file, name, namespace, value)
-            .await
-    }
-
-    async fn file_remove_xattr(
-        &self,
-        file: &File,
-        name: &str,
-        namespace: Option<&str>,
-    ) -> Result<(), io::Error> {
-        self.direct.file_remove_xattr(file, name, namespace).await
     }
 
     async fn xattrs(

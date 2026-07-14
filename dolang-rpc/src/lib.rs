@@ -10,9 +10,7 @@ mod transport;
 use ::serde::{Serialize, de::DeserializeOwned};
 use bytes::{Buf, Bytes, BytesMut};
 pub use client::{Call, Client};
-#[cfg(any(unix, windows))]
-pub use handle::DefaultHandle;
-pub use handle::OsHandle;
+pub use handle::{DefaultHandle, OsHandle};
 pub use opaque::{InvalidOpaque, Opaque, OpaqueGuard, OpaqueResource};
 pub use server::{CallContext, RequestCancelled, Server};
 use transport::{RecvFrame, SendFrame};

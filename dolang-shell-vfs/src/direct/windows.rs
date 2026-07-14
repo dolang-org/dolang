@@ -823,7 +823,7 @@ impl Direct {
             .no_follow(!follow)
             .open(typed_windows_path(path)?)
             .await?;
-        self.impl_file_xattrs(&file, namespace).await
+        self.impl_file_xattrs(&file.0, namespace).await
     }
 
     pub(super) async fn impl_streams(
@@ -848,7 +848,7 @@ impl Direct {
             .no_follow(!follow)
             .open(typed_windows_path(path)?)
             .await?;
-        self.impl_file_xattr(&file, name, namespace).await
+        self.impl_file_xattr(&file.0, name, namespace).await
     }
 
     pub(super) async fn impl_set_xattr(
@@ -865,7 +865,7 @@ impl Direct {
             .no_follow(!follow)
             .open(typed_windows_path(path)?)
             .await?;
-        self.impl_file_set_xattr(&file, name, namespace, value)
+        self.impl_file_set_xattr(&file.0, name, namespace, value)
             .await
     }
 
@@ -883,7 +883,7 @@ impl Direct {
             .no_follow(!follow)
             .open(typed_windows_path(path)?)
             .await?;
-        self.impl_file_remove_xattr(&file, name, namespace).await
+        self.impl_file_remove_xattr(&file.0, name, namespace).await
     }
 
     pub(super) async fn impl_file_xattrs(

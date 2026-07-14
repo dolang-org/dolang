@@ -1,6 +1,6 @@
 use std::{
     cell::UnsafeCell,
-    io::{Read, Write},
+    io::{self, Read, Write},
     mem::{self, transmute},
 };
 
@@ -13,6 +13,7 @@ use dolang::runtime::{
     value::{TypeObject, View},
     vm::Builder,
 };
+use dolang_ext_shell::FileHandle as _;
 use tokio::task;
 use zip::write::SimpleFileOptions;
 
@@ -521,8 +522,15 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     let file = dolang_ext_shell::open(strand, path.as_ref(), "r")
                         .await
                         .into_do(strand)?
-                        .into_std()
-                        .await;
+                        .try_into_std()
+                        .await
+                        .map_err(|_| {
+                            io::Error::new(
+                                io::ErrorKind::Unsupported,
+                                "VFS file has no native representation",
+                            )
+                        })
+                        .into_do(strand)?;
 
                     let archive = task::spawn_blocking(move || ZipArchive::new(file))
                         .await
@@ -536,8 +544,15 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     let file = dolang_ext_shell::open(strand, path.as_ref(), "w")
                         .await
                         .into_do(strand)?
-                        .into_std()
-                        .await;
+                        .try_into_std()
+                        .await
+                        .map_err(|_| {
+                            io::Error::new(
+                                io::ErrorKind::Unsupported,
+                                "VFS file has no native representation",
+                            )
+                        })
+                        .into_do(strand)?;
 
                     let writer = ZipWriter::new(file);
                     ArchiveInner::WriteAppend(Box::new(writer))
@@ -547,8 +562,15 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     let file = dolang_ext_shell::open(strand, path.as_ref(), "r+")
                         .await
                         .into_do(strand)?
-                        .into_std()
-                        .await;
+                        .try_into_std()
+                        .await
+                        .map_err(|_| {
+                            io::Error::new(
+                                io::ErrorKind::Unsupported,
+                                "VFS file has no native representation",
+                            )
+                        })
+                        .into_do(strand)?;
 
                     let writer = task::spawn_blocking(move || ZipWriter::new_append(file))
                         .await

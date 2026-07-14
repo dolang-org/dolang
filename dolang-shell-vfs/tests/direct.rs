@@ -7,8 +7,8 @@ use std::io;
 use std::path::Path;
 
 use dolang_shell_vfs::{
-    Child, Command, Direct, FileType, OpenOptions, Utf8TypedPath, Utf8UnixPath, Utf8WindowsPath,
-    Vfs,
+    Child, Command, Direct, FileHandle, FileType, OpenOptions, Utf8TypedPath, Utf8UnixPath,
+    Utf8WindowsPath, Vfs,
 };
 use tempfile::tempdir;
 
@@ -175,9 +175,14 @@ async fn direct_file_fs_metadata_basic() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("fsmeta-file.txt");
     tokio::fs::write(&path, "hello").await.unwrap();
-    let file = tokio::fs::File::open(&path).await.unwrap();
+    let mut file = direct
+        .open_options()
+        .read(true)
+        .open(typed(&path))
+        .await
+        .unwrap();
 
-    let metadata = direct.file_fs_metadata(&file).await.unwrap();
+    let metadata = file.fs_metadata().await.unwrap();
     assert!(metadata.capacity > 0);
     assert!(metadata.free > 0);
     assert!(metadata.available > 0);
@@ -282,13 +287,13 @@ async fn direct_windows_streams() {
     tokio::fs::write(&path, "base").await.unwrap();
     tokio::fs::write(&stream_path, "stream").await.unwrap();
 
-    let file = direct
+    let mut file = direct
         .open_options()
         .read(true)
         .open(typed(&path))
         .await
         .unwrap();
-    let streams = direct.file_streams(&file).await.unwrap();
+    let streams = file.streams().await.unwrap();
     assert!(streams.iter().any(|entry| {
         entry.name.is_empty()
             && entry.r#type == "DATA"

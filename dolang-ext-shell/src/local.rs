@@ -8,7 +8,7 @@ use std::{
 };
 
 use dolang::runtime::{Strand, strand};
-use dolang_shell_vfs::ClientOrDirect;
+use dolang_shell_vfs::AnyVfs;
 use dolang_shell_vfs::{Utf8TypedPathBuf, typed_path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,16 +29,15 @@ impl Env {
         Self {
             parent: None,
             baseline: true,
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(not(windows))]
             vars: env::vars().map(|(k, v)| (k, Some(v))).collect(),
-            #[cfg(target_os = "windows")]
+            #[cfg(windows)]
             vars: env::vars()
                 .map(|(k, v)| (k.to_ascii_uppercase(), Some(v)))
                 .collect(),
         }
     }
 
-    #[cfg(any(unix, windows))]
     pub(crate) fn new(
         parent: Option<Rc<Env>>,
         baseline: bool,
@@ -47,9 +46,9 @@ impl Env {
         Self {
             parent,
             baseline,
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(not(windows))]
             vars: values.into_iter().map(|(k, v)| (k, Some(v))).collect(),
-            #[cfg(target_os = "windows")]
+            #[cfg(windows)]
             vars: values
                 .into_iter()
                 .map(|(k, v)| (k.to_ascii_uppercase(), Some(v)))
@@ -155,7 +154,7 @@ impl Env {
 pub(crate) struct Local {
     cwd: RefCell<Utf8TypedPathBuf>,
     env: RefCell<Rc<Env>>,
-    vfs: RefCell<ClientOrDirect>,
+    vfs: RefCell<AnyVfs>,
     channel_mode: Cell<ChannelMode>,
 }
 
@@ -167,7 +166,7 @@ impl<'v> strand::Local<'v> for Local {
                 Rc::new(Env::root()),
                 Default::default(),
             ))),
-            vfs: RefCell::new(ClientOrDirect::default()),
+            vfs: RefCell::new(AnyVfs::default()),
             channel_mode: Cell::new(ChannelMode::Line),
         }
     }
@@ -199,11 +198,11 @@ impl Local {
         mem::replace(&mut *self.env.borrow_mut(), env)
     }
 
-    pub(crate) fn replace_vfs(&self, vfs: ClientOrDirect) -> ClientOrDirect {
+    pub(crate) fn replace_vfs(&self, vfs: AnyVfs) -> AnyVfs {
         mem::replace(&mut *self.vfs.borrow_mut(), vfs)
     }
 
-    pub(crate) fn vfs(&self) -> ClientOrDirect {
+    pub(crate) fn vfs(&self) -> AnyVfs {
         self.vfs.borrow().clone()
     }
 

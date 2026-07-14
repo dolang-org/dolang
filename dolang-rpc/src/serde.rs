@@ -4,11 +4,12 @@ use std::os::fd::{BorrowedFd, IntoRawFd};
 use std::os::windows::io::{BorrowedHandle, IntoRawHandle};
 use std::{cell::RefCell, fmt, io, marker::PhantomData, ptr};
 
-#[cfg(any(unix, windows))]
-use ::serde::de::IntoDeserializer;
 use ::serde::{
     Deserialize, Serialize,
-    de::{self, DeserializeSeed, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor},
+    de::{
+        self, DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess, VariantAccess,
+        Visitor,
+    },
     ser::{self},
 };
 use postcard::ser_flavors::{ExtendFlavor, Flavor};
@@ -418,9 +419,8 @@ impl<'frame, C: ser::SerializeStructVariant, F: SendFrame<'frame>> ser::Serializ
     }
 }
 
-#[cfg(any(unix, windows))]
 struct RawHandleSerializer;
-#[cfg(any(unix, windows))]
+
 impl ser::Serializer for RawHandleSerializer {
     type Ok = usize;
     type Error = Error;
@@ -568,7 +568,7 @@ impl ser::Serializer for RawHandleSerializer {
         raw_error()
     }
 }
-#[cfg(any(unix, windows))]
+
 fn raw_error<T>() -> Result<T, Error> {
     Err(Error::Message("invalid OsHandle representation".into()))
 }

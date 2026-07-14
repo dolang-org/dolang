@@ -8,8 +8,7 @@ use std::{
 };
 
 use dolang_shell_vfs::{
-    Child, Client, ClientOrDirect, Command, OpenOptions, Server, Utf8TypedPath, Utf8WindowsPath,
-    Vfs, pipe,
+    AnyVfs, Child, Client, Command, OpenOptions, Server, Utf8TypedPath, Utf8WindowsPath, Vfs,
 };
 use tempfile::tempdir;
 use tokio::{
@@ -80,7 +79,7 @@ async fn client_or_direct_routes_path_and_open_operations() {
     std::fs::write(subdir.join("one.txt"), "one").unwrap();
 
     let (client, server_task) = connected_pair().await;
-    let vfs = ClientOrDirect::from(client.clone());
+    let vfs = AnyVfs::from(client.clone());
     assert!(vfs.as_client().is_some());
 
     let mut options = vfs.open_options();
@@ -106,9 +105,9 @@ async fn client_or_direct_routes_path_and_open_operations() {
 #[tokio::test]
 async fn spawn_transfers_standard_stream_handles() {
     let (client, server_task) = connected_pair().await;
-    let (mut stdin_send, stdin_recv) = pipe().unwrap();
-    let (stdout_send, mut stdout_recv) = pipe().unwrap();
-    let (stderr_send, mut stderr_recv) = pipe().unwrap();
+    let (mut stdin_send, stdin_recv) = client.pipe().unwrap();
+    let (stdout_send, mut stdout_recv) = client.pipe().unwrap();
+    let (stderr_send, mut stderr_recv) = client.pipe().unwrap();
 
     let mut command = client.command(typed_str("cmd.exe"));
     command

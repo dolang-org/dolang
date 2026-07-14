@@ -42,9 +42,9 @@ features = ["dir", "fs", "signal", "term", "user"]
 [target.'cfg(unix)'.dependencies.libc]
 version = "0.2"
 
-[target.'cfg(target_os = "windows")'.dependencies.dunce]
+[target.'cfg(windows)'.dependencies.dunce]
 version = "1"
 
-[target.'cfg(target_os = "windows")'.dependencies.windows-sys]
+[target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.61"
 features = ["Win32_Storage_FileSystem", "Win32_System_LibraryLoader"]

@@ -7,7 +7,8 @@ use std::{
 };
 
 use tokio::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File as TokioFile, OpenOptions},
+    io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf},
     process::Command as TokioCommand,
     sync::Mutex,
 };
@@ -18,9 +19,14 @@ use wax::{
 };
 
 use crate::{
-    Attrs, Child, ChownIdentity, Command, DefaultHandle, FsMetadata, Metadata, Permissions,
-    PipeRecv, PipeSend, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
-    XattrEntry, XattrNamespace, native_path, typed_path,
+    Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions, PipeRecv,
+    PipeSend, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
+    XattrEntry, XattrNamespace, metadata_from_std, native_path, typed_path,
+};
+
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
 };
 
 #[cfg(unix)]
@@ -53,11 +59,125 @@ pub struct DirectCommand<'a> {
     stdin: Option<Stdio>,
     stdout: Option<Stdio>,
     stderr: Option<Stdio>,
+    stdin_file: Option<DirectFile>,
+    stdout_file: Option<DirectFile>,
+    stderr_file: Option<DirectFile>,
     error: Option<io::Error>,
 }
 
 pub struct DirectChild {
     inner: tokio::process::Child,
+}
+
+#[derive(Debug)]
+pub struct DirectFile(TokioFile);
+
+impl DirectFile {
+    pub(crate) fn from_std(file: std::fs::File) -> Self {
+        Self(TokioFile::from_std(file))
+    }
+}
+
+impl AsyncRead for DirectFile {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for DirectFile {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+impl AsyncSeek for DirectFile {
+    fn start_seek(mut self: Pin<&mut Self>, position: io::SeekFrom) -> io::Result<()> {
+        Pin::new(&mut self.0).start_seek(position)
+    }
+
+    fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
+        Pin::new(&mut self.0).poll_complete(cx)
+    }
+}
+
+impl FileHandle for DirectFile {
+    async fn try_clone(&self) -> io::Result<Self> {
+        self.0.try_clone().await.map(Self)
+    }
+
+    async fn close(mut self) -> io::Result<()> {
+        use tokio::io::AsyncWriteExt as _;
+        let result = self.0.flush().await;
+        let file = self.0;
+        let _ = tokio::task::spawn_blocking(move || drop(file)).await;
+        result
+    }
+
+    async fn set_len(&mut self, size: u64) -> io::Result<()> {
+        self.0.set_len(size).await
+    }
+
+    async fn metadata(&mut self) -> io::Result<Metadata> {
+        self.0.metadata().await.map(metadata_from_std)
+    }
+
+    async fn fs_metadata(&mut self) -> io::Result<FsMetadata> {
+        let file = self.0.try_clone().await?;
+        tokio::task::spawn_blocking(move || Direct::fs_metadata_from_file(&file))
+            .await
+            .unwrap_or_else(|_| Err(io::Error::other("failed to join fs metadata query task")))
+    }
+
+    async fn xattrs(&mut self, namespace: XattrNamespace<'_>) -> io::Result<Vec<XattrEntry>> {
+        Direct::default().impl_file_xattrs(&self.0, namespace).await
+    }
+
+    async fn xattr(&mut self, name: &str, namespace: Option<&str>) -> io::Result<Vec<u8>> {
+        Direct::default()
+            .impl_file_xattr(&self.0, name, namespace)
+            .await
+    }
+
+    async fn streams(&mut self) -> io::Result<Vec<StreamEntry>> {
+        Direct::default().impl_file_streams(&self.0).await
+    }
+
+    async fn set_xattr(
+        &mut self,
+        name: &str,
+        namespace: Option<&str>,
+        value: &[u8],
+    ) -> io::Result<()> {
+        Direct::default()
+            .impl_file_set_xattr(&self.0, name, namespace, value)
+            .await
+    }
+
+    async fn remove_xattr(&mut self, name: &str, namespace: Option<&str>) -> io::Result<()> {
+        Direct::default()
+            .impl_file_remove_xattr(&self.0, name, namespace)
+            .await
+    }
+
+    async fn try_into_std(self) -> Result<std::fs::File, Self> {
+        Ok(self.0.into_std().await)
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -152,6 +272,9 @@ impl<'a> DirectCommand<'a> {
             stdin: None,
             stdout: None,
             stderr: None,
+            stdin_file: None,
+            stdout_file: None,
+            stderr_file: None,
             error: program.err(),
         }
     }
@@ -175,6 +298,9 @@ impl Child for DirectChild {
 
 impl Command for DirectCommand<'_> {
     type Child = DirectChild;
+    type File = DirectFile;
+    type PipeSend = PipeSend;
+    type PipeRecv = PipeRecv;
 
     fn arg(&mut self, arg: &str) -> &mut Self {
         self.args.push(arg.to_owned());
@@ -200,70 +326,83 @@ impl Command for DirectCommand<'_> {
     }
 
     fn stdin_pipe(&mut self, pipe: PipeRecv) -> io::Result<&mut Self> {
+        self.stdin_file = None;
         self.stdin = Some(pipe.into_stdio()?);
         Ok(self)
     }
 
     fn stdout_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
+        self.stdout_file = None;
         self.stdout = Some(pipe.into_stdio()?);
         Ok(self)
     }
 
     fn stdin_inherit(&mut self) -> io::Result<&mut Self> {
+        self.stdin_file = None;
         self.stdin = Some(Stdio::inherit());
         Ok(self)
     }
 
     fn stdout_inherit(&mut self) -> io::Result<&mut Self> {
+        self.stdout_file = None;
         self.stdout = Some(Stdio::inherit());
         Ok(self)
     }
 
-    fn stdin_handle(&mut self, handle: DefaultHandle) -> &mut Self {
-        self.stdin = Some(Stdio::from(handle));
-        self
+    fn stdin_handle(&mut self, handle: DirectFile) -> io::Result<&mut Self> {
+        self.stdin = None;
+        self.stdin_file = Some(handle);
+        Ok(self)
     }
 
-    fn stdout_handle(&mut self, handle: DefaultHandle) -> &mut Self {
-        self.stdout = Some(Stdio::from(handle));
-        self
+    fn stdout_handle(&mut self, handle: DirectFile) -> io::Result<&mut Self> {
+        self.stdout = None;
+        self.stdout_file = Some(handle);
+        Ok(self)
     }
 
     fn stdin_null(&mut self) -> &mut Self {
+        self.stdin_file = None;
         self.stdin = Some(Stdio::null());
         self
     }
 
     fn stdout_null(&mut self) -> &mut Self {
+        self.stdout_file = None;
         self.stdout = Some(Stdio::null());
         self
     }
 
     fn stderr_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
+        self.stderr_file = None;
         self.stderr = Some(pipe.into_stdio()?);
         Ok(self)
     }
 
     fn stderr_inherit(&mut self) -> io::Result<&mut Self> {
+        self.stderr_file = None;
         self.stderr = Some(Stdio::inherit());
         Ok(self)
     }
 
     fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self> {
+        self.stderr_file = None;
         self.impl_stderr_inherit_stdout()
     }
 
-    fn stderr_handle(&mut self, handle: DefaultHandle) -> &mut Self {
-        self.stderr = Some(Stdio::from(handle));
-        self
+    fn stderr_handle(&mut self, handle: DirectFile) -> io::Result<&mut Self> {
+        self.stderr = None;
+        self.stderr_file = Some(handle);
+        Ok(self)
     }
 
     fn stderr_null(&mut self) -> &mut Self {
+        self.stderr_file = None;
         self.stderr = Some(Stdio::null());
         self
     }
 
-    async fn spawn(self) -> io::Result<Self::Child> {
+    async fn spawn(mut self) -> io::Result<Self::Child> {
         if let Some(error) = self.error {
             return Err(error);
         }
@@ -277,6 +416,16 @@ impl Command for DirectCommand<'_> {
             .resolve(&self.program, path_override, self.cwd.as_deref())
             .await;
         let resolved = resolved.ok_or_else(Direct::program_not_found_error)?;
+
+        if let Some(file) = self.stdin_file.take() {
+            self.stdin = Some(Stdio::from(file.0.into_std().await));
+        }
+        if let Some(file) = self.stdout_file.take() {
+            self.stdout = Some(Stdio::from(file.0.into_std().await));
+        }
+        if let Some(file) = self.stderr_file.take() {
+            self.stderr = Some(Stdio::from(file.0.into_std().await));
+        }
 
         let mut command = TokioCommand::new(&resolved);
         command.args(&self.args);
@@ -325,6 +474,8 @@ impl DirectOpenOptions {
 }
 
 impl crate::OpenOptions for DirectOpenOptions {
+    type File = DirectFile;
+
     fn read(&mut self, read: bool) -> &mut Self {
         self.read = read;
         self
@@ -360,8 +511,11 @@ impl crate::OpenOptions for DirectOpenOptions {
         self
     }
 
-    async fn open(&self, path: Utf8TypedPath<'_>) -> Result<File, io::Error> {
-        self.as_tokio().open(native_path(path)?).await
+    async fn open(&self, path: Utf8TypedPath<'_>) -> Result<DirectFile, io::Error> {
+        self.as_tokio()
+            .open(native_path(path)?)
+            .await
+            .map(DirectFile)
     }
 }
 
@@ -501,6 +655,9 @@ impl Direct {
 }
 
 impl Vfs for Direct {
+    type File = DirectFile;
+    type PipeSend = PipeSend;
+    type PipeRecv = PipeRecv;
     type OpenOptions<'a>
         = DirectOpenOptions
     where
@@ -516,6 +673,10 @@ impl Vfs for Direct {
 
     fn command(&self, program: Utf8TypedPath<'_>) -> Self::Command<'_> {
         DirectCommand::new(self, program)
+    }
+
+    fn pipe(&self) -> io::Result<(PipeSend, PipeRecv)> {
+        crate::pipe::pipe()
     }
 
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> Result<ReadDir, io::Error> {
@@ -606,46 +767,6 @@ impl Vfs for Direct {
             .await
     }
 
-    async fn file_xattrs(
-        &self,
-        file: &File,
-        namespace: XattrNamespace<'_>,
-    ) -> Result<Vec<XattrEntry>, io::Error> {
-        self.impl_file_xattrs(file, namespace).await
-    }
-
-    async fn file_xattr(
-        &self,
-        file: &File,
-        name: &str,
-        namespace: Option<&str>,
-    ) -> Result<Vec<u8>, io::Error> {
-        self.impl_file_xattr(file, name, namespace).await
-    }
-
-    async fn file_streams(&self, file: &File) -> Result<Vec<StreamEntry>, io::Error> {
-        self.impl_file_streams(file).await
-    }
-
-    async fn file_set_xattr(
-        &self,
-        file: &File,
-        name: &str,
-        namespace: Option<&str>,
-        value: &[u8],
-    ) -> Result<(), io::Error> {
-        self.impl_file_set_xattr(file, name, namespace, value).await
-    }
-
-    async fn file_remove_xattr(
-        &self,
-        file: &File,
-        name: &str,
-        namespace: Option<&str>,
-    ) -> Result<(), io::Error> {
-        self.impl_file_remove_xattr(file, name, namespace).await
-    }
-
     async fn remove(
         &self,
         path: Utf8TypedPath<'_>,
@@ -674,13 +795,6 @@ impl Vfs for Direct {
         fs::metadata(native_path(path)?)
             .await
             .map(crate::metadata_from_std)
-    }
-
-    async fn file_fs_metadata(&self, file: &File) -> Result<FsMetadata, io::Error> {
-        let file = file.try_clone().await?;
-        tokio::task::spawn_blocking(move || Self::fs_metadata_from_file(&file))
-            .await
-            .unwrap_or_else(|_| Err(io::Error::other("failed to join fs metadata query task")))
     }
 
     async fn fs_metadata(

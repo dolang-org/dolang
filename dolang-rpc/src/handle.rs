@@ -6,9 +6,6 @@ use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 #[cfg(windows)]
 use std::os::windows::io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle};
 
-#[cfg(unix)]
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
-#[cfg(windows)]
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 // This must have a unique address: the serde wrappers use pointer identity to
@@ -31,11 +28,7 @@ pub type DefaultHandle = std::os::windows::io::OwnedHandle;
 ///
 /// Direct attachment serialization is available only through an
 /// attachment-capable session transport.
-#[cfg(any(unix, windows))]
 pub struct OsHandle<T = DefaultHandle>(T);
-
-#[cfg(not(any(unix, windows)))]
-pub struct OsHandle<T>(T);
 
 impl<T> OsHandle<T> {
     pub fn new(value: T) -> Self {

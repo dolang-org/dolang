@@ -20,7 +20,7 @@ use dolang_rpc::DefaultHandle;
 #[cfg(windows)]
 use tokio::task::JoinHandle;
 
-pub fn pipe() -> io::Result<(PipeSend, PipeRecv)> {
+pub(crate) fn pipe() -> io::Result<(PipeSend, PipeRecv)> {
     #[cfg(unix)]
     {
         let (send, recv) = tokio::net::unix::pipe::pipe()?;
@@ -76,6 +76,7 @@ impl PipeSend {
         }
     }
 
+    // FIXME: this should be crate-private but is used by a unit test
     pub fn into_stdio(self) -> io::Result<Stdio> {
         #[cfg(unix)]
         {
@@ -97,7 +98,7 @@ impl PipeSend {
         }
     }
 
-    pub fn into_blocking_handle(self) -> io::Result<DefaultHandle> {
+    pub(crate) fn into_blocking_handle(self) -> io::Result<DefaultHandle> {
         #[cfg(unix)]
         {
             self.0.into_blocking_fd()
@@ -113,11 +114,6 @@ impl PipeSend {
             let pipe = Arc::try_unwrap(self.inner).or_else(|inner| inner.try_clone())?;
             Ok(OwnedHandle::from(pipe))
         }
-    }
-
-    #[cfg(unix)]
-    pub fn into_blocking_fd(self) -> io::Result<OwnedFd> {
-        self.0.into_blocking_fd()
     }
 }
 
@@ -141,6 +137,7 @@ impl PipeRecv {
         }
     }
 
+    // FIXME: this should be crate-private but is used by a unit test
     pub fn into_stdio(self) -> io::Result<Stdio> {
         #[cfg(unix)]
         {
@@ -162,7 +159,7 @@ impl PipeRecv {
         }
     }
 
-    pub fn into_blocking_handle(self) -> io::Result<DefaultHandle> {
+    pub(crate) fn into_blocking_handle(self) -> io::Result<DefaultHandle> {
         #[cfg(unix)]
         {
             self.0.into_blocking_fd()
@@ -178,11 +175,6 @@ impl PipeRecv {
             let pipe = Arc::try_unwrap(self.inner).or_else(|inner| inner.try_clone())?;
             Ok(OwnedHandle::from(pipe))
         }
-    }
-
-    #[cfg(unix)]
-    pub fn into_blocking_fd(self) -> io::Result<OwnedFd> {
-        self.0.into_blocking_fd()
     }
 }
 

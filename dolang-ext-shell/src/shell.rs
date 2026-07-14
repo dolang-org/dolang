@@ -26,17 +26,13 @@ use crate::{
 
 #[cfg(windows)]
 use dolang_shell_vfs::WindowsSession;
-#[cfg(any(unix, windows))]
-use dolang_shell_vfs::{Client, ClientOrDirect, Query, Utf8TypedPathBuf};
-#[cfg(any(unix, windows))]
+use dolang_shell_vfs::{AnyVfs, Client, Query, Utf8TypedPathBuf};
 use std::collections::HashMap;
 #[cfg(unix)]
 use std::path::PathBuf;
 
-#[cfg(any(unix, windows))]
 use dolang::runtime::error::ResultExt;
 
-#[cfg(any(unix, windows))]
 use crate::error;
 
 /// Exit error.
@@ -58,7 +54,6 @@ impl Display for Exit {
 
 impl std::error::Error for Exit {}
 
-#[cfg(any(unix, windows))]
 #[derive(Clone)]
 pub(crate) struct Context {
     client: Client,
@@ -66,7 +61,6 @@ pub(crate) struct Context {
     env: Rc<LocalEnv>,
 }
 
-#[cfg(any(unix, windows))]
 impl Context {
     pub(crate) async fn enter<'v, 's, R>(
         &self,
@@ -75,7 +69,7 @@ impl Context {
         f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> R,
     ) -> R {
         let local = global.local.get(strand);
-        let orig = local.replace_vfs(ClientOrDirect::from(self.client.clone()));
+        let orig = local.replace_vfs(AnyVfs::from(self.client.clone()));
         let orig_cwd = local.replace_cwd(self.cwd.clone());
         let orig_env =
             local.replace_env(Rc::new(LocalEnv::derived(self.env.clone(), HashMap::new())));
@@ -265,17 +259,14 @@ impl<'v> Object<'v> for Stderr {
     }
 }
 
-#[cfg(any(unix, windows))]
 pub(crate) struct Vfs;
 
-#[cfg(any(unix, windows))]
 pub(crate) struct VfsAnnex<'v> {
     handle: Context,
     source: VfsSource,
     global: State<'v, Global<'v>>,
 }
 
-#[cfg(any(unix, windows))]
 enum VfsSource {
     #[cfg(unix)]
     Unix(PathBuf),
@@ -283,7 +274,6 @@ enum VfsSource {
     Windows(WindowsSession),
 }
 
-#[cfg(any(unix, windows))]
 impl<'v> Object<'v> for Vfs {
     const NAME: &'v str = "Vfs";
     const MODULE: &'v str = "shell";
@@ -436,8 +426,8 @@ pub(crate) fn configure_compiler<'a>(compiler: &mut Compiler<'a>) {
 pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
     let env_ty = builder.register_type::<EnvObject>();
 
-    let mut module = builder.module("shell");
-    module = module
+    builder
+        .module("shell")
         .function(
             "exit",
             async move |strand, args: dolang::runtime::Args<'v, '_>, _| {
@@ -598,14 +588,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 let _ = local.replace_cwd(path);
                 Ok(())
             }
-        });
-
-    #[cfg(any(unix, windows))]
-    {
-        module = module.value("Vfs", global.types.vfs);
-    }
-
-    module.commit();
+        })
+        .value("Vfs", global.types.vfs)
+        .commit();
 
     // Register Stdin and Stdout types with global
     let _stdin_ty = builder.register_type::<Stdin>();

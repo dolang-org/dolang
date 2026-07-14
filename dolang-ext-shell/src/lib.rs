@@ -28,6 +28,7 @@ pub use crate::global::ProgramSource;
 use dolang::runtime::{Error, Output, Result, Strand, Value, Vm};
 #[cfg(unix)]
 use dolang_shell_vfs::Client;
+pub use dolang_shell_vfs::FileHandle;
 #[cfg(unix)]
 use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
 pub use shell::Exit;
@@ -125,7 +126,7 @@ pub async fn open<'v, 's>(
     strand: &mut Strand<'v, 's>,
     path: &path::Path,
     mode: &str,
-) -> io::Result<tokio::fs::File> {
+) -> io::Result<dolang_shell_vfs::AnyFile> {
     match mode {
         "r" | "w" | "a" | "r+" | "w+" | "a+" => {}
         _ => return Err(io::Error::other(format!("invalid mode: {}", mode))),
