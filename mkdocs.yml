@@ -99,6 +99,8 @@ nav:
       - api/fs/metadata.md
       - api/fs/path.md
       - api/fs/stream-entry.md
+      - api/fs/unix-path.md
+      - api/fs/windows-path.md
       - api/fs/xattr-entry.md
     - glob:
       - api/glob/index.md
