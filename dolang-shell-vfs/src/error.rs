@@ -2,7 +2,7 @@ use std::{fmt, io};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatingSystem {
     Linux,
     Macos,
@@ -19,6 +19,13 @@ impl OperatingSystem {
         return Self::Windows;
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         compile_error!("unsupported target operating system");
+    }
+
+    pub const fn path_type(&self) -> typed_path::PathType {
+        match self {
+            Self::Linux | Self::Macos => typed_path::PathType::Unix,
+            Self::Windows => typed_path::PathType::Windows,
+        }
     }
 }
 

@@ -401,6 +401,12 @@ impl Direct {
         }
     }
 
+    pub(super) fn temp_dir_platform(
+        env: &HashMap<String, Option<String>>,
+    ) -> Result<PathBuf, io::Error> {
+        Ok(Self::absolute_env_path(env, "TMPDIR")?.unwrap_or_else(|| PathBuf::from("/tmp")))
+    }
+
     pub(super) fn unix_xattr_namespace(
         namespace: XattrNamespace<'_>,
     ) -> io::Result<Option<Vec<u8>>> {

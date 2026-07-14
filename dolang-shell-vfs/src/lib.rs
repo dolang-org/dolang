@@ -8,7 +8,6 @@ use std::{
     io,
     path::PathBuf,
     pin::Pin,
-    process::ExitStatus,
     task::{Context, Poll},
 };
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
@@ -34,6 +33,49 @@ pub use error::{Error, OperatingSystem, Result, SystemError};
 pub enum Architecture {
     X86_64,
     Aarch64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProcessStatus {
+    Exited(i32),
+    Signaled(i32),
+}
+
+impl ProcessStatus {
+    pub const fn success(self) -> bool {
+        matches!(self, Self::Exited(0))
+    }
+
+    pub const fn code(self) -> Option<i32> {
+        match self {
+            Self::Exited(code) => Some(code),
+            Self::Signaled(_) => None,
+        }
+    }
+
+    pub const fn signal(self) -> Option<i32> {
+        match self {
+            Self::Exited(_) => None,
+            Self::Signaled(signal) => Some(signal),
+        }
+    }
+
+    pub(crate) fn from_native(status: std::process::ExitStatus) -> io::Result<Self> {
+        if let Some(code) = status.code() {
+            return Ok(Self::Exited(code));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if let Some(signal) = status.signal() {
+                return Ok(Self::Signaled(signal));
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "process returned an unrepresentable terminal status",
+        ))
+    }
 }
 
 impl Architecture {
@@ -467,6 +509,7 @@ impl Attrs {
 pub enum WellKnownPath {
     HomeDir,
     CacheDir,
+    TempDir,
 }
 
 pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
@@ -704,8 +747,8 @@ pub trait FileHandle: AsyncRead + AsyncWrite + AsyncSeek + Unpin + Sized {
 
 #[allow(async_fn_in_trait)]
 pub trait Child {
-    async fn wait(&mut self) -> Result<ExitStatus>;
-    async fn terminate(self) -> Result<ExitStatus>
+    async fn wait(&mut self) -> Result<ProcessStatus>;
+    async fn terminate(self) -> Result<ProcessStatus>
     where
         Self: Sized;
 }
@@ -1078,14 +1121,14 @@ pub enum AnyChild<'a> {
 }
 
 impl Child for AnyChild<'_> {
-    async fn wait(&mut self) -> crate::Result<ExitStatus> {
+    async fn wait(&mut self) -> crate::Result<ProcessStatus> {
         match self {
             Self::Client(child) => child.wait().await,
             Self::Direct(child) => child.wait().await,
         }
     }
 
-    async fn terminate(self) -> crate::Result<ExitStatus> {
+    async fn terminate(self) -> crate::Result<ProcessStatus> {
         match self {
             Self::Client(child) => child.terminate().await,
             Self::Direct(child) => (*child).terminate().await,

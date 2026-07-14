@@ -343,7 +343,7 @@ impl<'v> Object<'v> for Vfs {
                 error::io_result(strand, Client::connect(native).await)?
             };
             let Query { env, cwd, target } = error::io_result(strand, client.query().await)?;
-            let env = Rc::new(LocalEnv::new(None, true, env));
+            let env = Rc::new(LocalEnv::new(None, true, env, target.operating_system));
             let source =
                 VfsSource::Unix(dolang_shell_vfs::native_path(path.to_path()).into_sys(strand)?);
 
@@ -403,7 +403,7 @@ impl<'v> Object<'v> for Vfs {
                 };
                 let (session, Query { env, cwd, target }) = error::io_result(strand, result)?;
                 let client = session.client().clone();
-                let env = Rc::new(LocalEnv::new(None, true, env));
+                let env = Rc::new(LocalEnv::new(None, true, env, target.operating_system));
                 global.types.vfs.create_with_annex(
                     strand,
                     Vfs,

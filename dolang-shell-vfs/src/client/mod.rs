@@ -3,7 +3,6 @@ use std::{
     io,
     path::{Path, PathBuf},
     pin::Pin,
-    process::ExitStatus,
     task::{Context, Poll},
 };
 
@@ -11,13 +10,9 @@ use std::{
 use std::os::unix::{
     io::{AsFd, OwnedFd},
     net::UnixStream as StdUnixStream,
-    process::ExitStatusExt,
 };
 #[cfg(windows)]
-use std::os::windows::{
-    io::{AsHandle, OwnedHandle},
-    process::ExitStatusExt,
-};
+use std::os::windows::io::{AsHandle, OwnedHandle};
 
 use dolang_rpc::{Call, DefaultHandle, OsHandle};
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
@@ -30,8 +25,8 @@ use tokio::net::windows::named_pipe::NamedPipeServer;
 use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
 use crate::{
     Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions, PipeRecv,
-    PipeSend, Query, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
-    XattrEntry,
+    PipeSend, ProcessStatus, Query, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs,
+    WellKnownPath, XattrEntry,
     direct::DirectFile,
     protocol::{
         AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
@@ -342,16 +337,6 @@ fn unexpected(response: ResponseKind) -> io::Error {
     io::Error::other(format!("unexpected RPC response: {response:?}"))
 }
 
-#[cfg(unix)]
-fn exit_status_from_raw(raw: i32) -> ExitStatus {
-    ExitStatus::from_raw(raw)
-}
-
-#[cfg(windows)]
-fn exit_status_from_raw(raw: i32) -> ExitStatus {
-    ExitStatus::from_raw(raw as u32)
-}
-
 fn clone_stdin_handle() -> io::Result<DefaultHandle> {
     #[cfg(unix)]
     {
@@ -439,28 +424,24 @@ impl<'a> CommandBuilder<'a> {
 }
 
 impl Child for ClientChild<'_> {
-    async fn wait(&mut self) -> crate::Result<ExitStatus> {
+    async fn wait(&mut self) -> crate::Result<ProcessStatus> {
         let result = match self.inner.take() {
             Some(inner) => inner.await.map_err(rpc_error).map_err(crate::Error::from),
             None => return Err(io::Error::other("child already waited").into()),
         }?;
         match result {
-            ResponseKind::Spawn(result) => {
-                result.map(exit_status_from_raw).map_err(crate::Error::from)
-            }
+            ResponseKind::Spawn(result) => result.map_err(crate::Error::from),
             response => Err(unexpected(response).into()),
         }
     }
 
-    async fn terminate(self) -> crate::Result<ExitStatus> {
+    async fn terminate(self) -> crate::Result<ProcessStatus> {
         let Some(mut inner) = self.inner else {
             return Err(io::Error::other("child already waited").into());
         };
         inner.cancel();
         match inner.await.map_err(rpc_error).map_err(crate::Error::from)? {
-            ResponseKind::Spawn(result) => {
-                result.map(exit_status_from_raw).map_err(crate::Error::from)
-            }
+            ResponseKind::Spawn(result) => result.map_err(crate::Error::from),
             response => Err(unexpected(response).into()),
         }
     }

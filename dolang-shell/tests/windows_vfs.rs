@@ -32,7 +32,10 @@ async fn embedded_vfs_mode_serves_and_stops() {
 
     let client = unsafe { Client::from_named_pipe_server(pipe, process).unwrap() };
     let query = client.query().await.unwrap();
-    assert_eq!(query.cwd, std::env::current_dir().unwrap());
+    assert_eq!(
+        query.cwd,
+        dolang_shell_vfs::typed_path(std::env::current_dir().unwrap()).unwrap()
+    );
 
     let current_exe = std::env::current_exe().unwrap();
     let current_exe = Utf8TypedPath::Windows(Utf8WindowsPath::new(current_exe.to_str().unwrap()));

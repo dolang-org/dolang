@@ -166,7 +166,7 @@ impl From<crate::Error> for WireError {
                 message: error.to_string(),
             },
             crate::Error::System(error) => Self::System {
-                operating_system: error.operating_system().clone(),
+                operating_system: *error.operating_system(),
                 code: error.code(),
                 kind: error.kind().into(),
                 message: error.message().to_owned(),
@@ -290,8 +290,8 @@ mod tests {
 
     use super::{ResponseKind, WireError, WirePath, WirePathKind};
     use crate::{
-        Architecture, Error, OperatingSystem, SystemError, TargetInfo, Utf8TypedPath,
-        Utf8TypedPathBuf, Utf8UnixPath, Utf8WindowsPath,
+        Architecture, Error, OperatingSystem, ProcessStatus, SystemError, TargetInfo,
+        Utf8TypedPath, Utf8TypedPathBuf, Utf8UnixPath, Utf8WindowsPath,
     };
 
     #[test]
@@ -386,6 +386,18 @@ mod tests {
         assert_eq!(target.architecture, Architecture::Aarch64);
         assert_eq!(target.logical_cpu_count, 24);
         assert_eq!(target.is_wine, Some(true));
+    }
+
+    #[test]
+    fn wire_process_status_is_platform_independent() {
+        for status in [ProcessStatus::Exited(42), ProcessStatus::Signaled(9)] {
+            let encoded = postcard::to_stdvec(&ResponseKind::Spawn(Ok(status))).unwrap();
+            let decoded: ResponseKind = postcard::from_bytes(&encoded).unwrap();
+            let ResponseKind::Spawn(Ok(decoded)) = decoded else {
+                panic!("spawn response changed variant");
+            };
+            assert_eq!(decoded, status);
+        }
     }
 
     use std::path::PathBuf;
@@ -665,7 +677,7 @@ pub(crate) enum RequestKind {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum ResponseKind {
-    Spawn(Result<i32, WireError>),
+    Spawn(Result<crate::ProcessStatus, WireError>),
     Query {
         env: HashMap<String, String>,
         cwd: WirePath,

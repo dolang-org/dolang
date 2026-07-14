@@ -11,8 +11,8 @@ catch Error: err
 
 `str(err)` returns the underlying system error message.
 
-On Unix, `Error` exposes an `errno` field containing the underlying OS
-error number when one exists:
+`Error` exposes an `errno` field containing the underlying Unix error number
+when one exists:
 
 ```
 try
@@ -21,7 +21,11 @@ catch Error: err
   assert_eq $err.errno 2
 ```
 
-If the failure did not originate from an OS errno, `errno` is `nil`.
+On Windows, accessing `errno` raises [`FieldError`](../std/field-error.md). For
+Unix failures without an OS error number, `errno` is `nil`.
+
+On Windows, `winerror` contains the underlying Win32 error code when one
+exists. On Unix, accessing `winerror` raises `FieldError`.
 
 ## Inherits
 

@@ -14,6 +14,8 @@ catch Error: err
 - `rc`: the numeric exit status, or `nil` if the process did not exit normally
 - `signal` on Unix: the fatal signal number, or `nil` when not applicable
 
+On Windows, accessing `signal` raises [`FieldError`](../std/field-error.md).
+
 On Unix, a signaled process reports `signal` instead of `rc`:
 
 ```

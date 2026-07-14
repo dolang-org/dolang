@@ -24,8 +24,6 @@ use crate::{
     local::ChannelMode,
     pipe_channel::{self, RecvGuard, SendGuard},
 };
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
 
 pub(crate) struct Program;
 
@@ -509,8 +507,7 @@ async fn run_monitor<'v, 's>(
         }
         Ok(())
     } else {
-        #[cfg(unix)]
-        if res.signal() == Some(libc::SIGPIPE) {
+        if res.signal() == Some(13) {
             return Err(Error::sink_stop(strand));
         }
 
@@ -541,7 +538,7 @@ async fn run<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let vfs = local.vfs();
-    let program = match dolang_shell_vfs::target_path_type() {
+    let program = match local.target().operating_system.path_type() {
         dolang_shell_vfs::PathType::Unix => {
             Utf8TypedPath::Unix(dolang_shell_vfs::Utf8UnixPath::new(name))
         }

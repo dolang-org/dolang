@@ -864,9 +864,9 @@ Changes the permissions of a file or directory.
 
 #### Errors
 
-| Exception      | Condition                                             |
-| -------------- | ----------------------------------------------------- |
-| `RuntimeError` | The operation is used on a non-Unix platform or fails |
+| Exception   | Condition                                             |
+| ----------- | ----------------------------------------------------- |
+| `sys.Error` | The target does not support the operation or it fails |
 
 #### Example
 
@@ -974,7 +974,8 @@ Changes the owner and/or group of a file, directory, or symlink target.
 **Platform Notes:**
 
 - **Unix:** Available
-- **Windows:** Not available
+- **Windows:** Raises [`sys.Error`](../sys/error.md) with an
+  unsupported-operation error
 
 #### Parameters
 
@@ -1033,7 +1034,7 @@ removes the directory recursively upon return or error.
 
 **Platform Notes:**
 
-The default parent of the temporary directory is chosen as follows:
+The active VFS target chooses the default parent as follows:
 
 - **Windows:** Uses the directory returned by
   [`GetTempPath2`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppath2a)
