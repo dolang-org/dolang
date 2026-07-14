@@ -871,3 +871,74 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         })
         .commit();
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        future::Future,
+        task::{Context, Poll},
+    };
+
+    use futures::task::noop_waker;
+
+    use super::{ForkLimitScope, acquire_scopes};
+
+    #[test]
+    fn spurious_acquire_poll_does_not_duplicate_waiter() {
+        let scope = ForkLimitScope::new(1, None);
+        scope.acquire_fresh();
+        let scopes = [scope.clone()];
+        let mut acquire = Box::pin(acquire_scopes(&scopes));
+        let waker = noop_waker();
+        let mut context = Context::from_waker(&waker);
+
+        assert!(acquire.as_mut().poll(&mut context).is_pending());
+        assert!(acquire.as_mut().poll(&mut context).is_pending());
+        assert_eq!(scope.waiters.borrow().len(), 1);
+
+        scope.release_one();
+        let Poll::Ready(permit) = acquire.as_mut().poll(&mut context) else {
+            panic!("released slot did not wake the acquire future");
+        };
+        permit.release_all();
+        assert_eq!(scope.active.get(), 0);
+    }
+
+    #[test]
+    fn limit_scope_wakes_waiters_in_arrival_order() {
+        let scope = ForkLimitScope::new(1, None);
+        scope.acquire_fresh();
+        let waker = noop_waker();
+
+        let first = scope.try_acquire(&waker).unwrap();
+        let second = scope.try_acquire(&waker).unwrap();
+        scope.release_one();
+
+        let waiters = scope.waiters.borrow();
+        assert_eq!(waiters.len(), 1);
+        assert_eq!(waiters.front().unwrap().0, second);
+        assert_ne!(first, second);
+        drop(waiters);
+        scope.nevermind(second);
+    }
+
+    #[test]
+    fn dropping_partial_acquire_releases_outer_permits() {
+        let outer = ForkLimitScope::new(1, None);
+        let inner = ForkLimitScope::new(1, Some(outer.clone()));
+        inner.acquire_fresh();
+        let scopes = [outer.clone(), inner.clone()];
+        let mut acquire = Box::pin(acquire_scopes(&scopes));
+        let waker = noop_waker();
+        let mut context = Context::from_waker(&waker);
+
+        assert!(acquire.as_mut().poll(&mut context).is_pending());
+        assert_eq!(outer.active.get(), 1);
+        assert_eq!(inner.waiters.borrow().len(), 1);
+
+        drop(acquire);
+        assert_eq!(outer.active.get(), 0);
+        assert!(inner.waiters.borrow().is_empty());
+        inner.release_one();
+    }
+}
