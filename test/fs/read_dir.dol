@@ -15,7 +15,7 @@ def populate_read_dir_tree root
   (root / "read_dir_case/src/mod.rs").write "pub fn mod_() {}\n"
   (nested / "skip.rs").write "pub fn skip() {}\n"
 
-#[agent.test remote: false]
+#[agent.test]
 def basic_entries()
   let root = cd()
   populate_read_dir_tree $root
@@ -25,7 +25,7 @@ def basic_entries()
 
   assert (count > 0)
 
-#[agent.test remote: false]
+#[agent.test]
 def path_entries()
   let root = cd()
   populate_read_dir_tree $root

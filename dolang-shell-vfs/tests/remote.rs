@@ -5,7 +5,8 @@ use std::io::{self, SeekFrom};
 #[cfg(target_os = "linux")]
 use dolang_shell_vfs::XattrNamespace;
 use dolang_shell_vfs::{
-    Client, Command, FileHandle, FileType, OpenOptions, Server, Vfs, typed_path,
+    Client, Command, DirEntry, Direct, FileHandle, FileType, OpenOptions, ReadDir, Server, Vfs,
+    typed_path,
 };
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -53,16 +54,51 @@ async fn path_operations_work_over_generic_stream() {
 }
 
 #[tokio::test]
-async fn handle_operations_are_unsupported_remotely() {
+async fn process_operations_are_unsupported_remotely() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
     let path = typed_path(temp.path().join("file")).unwrap();
 
-    let error = client.read_dir(path.to_path()).await.unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
-
     let error = client.command(path.to_path()).spawn().await.err().unwrap();
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+async fn collect_entries(mut read_dir: ReadDir) -> Vec<DirEntry> {
+    let mut entries = Vec::new();
+    while let Some(entry) = read_dir.next_entry().await.unwrap() {
+        entries.push(entry);
+    }
+    assert!(read_dir.next_entry().await.unwrap().is_none());
+    assert!(read_dir.next_entry().await.unwrap().is_none());
+    entries.sort_by(|left, right| left.file_name().cmp(right.file_name()));
+    entries
+}
+
+#[tokio::test]
+async fn directory_enumeration_round_trip_over_generic_stream() {
+    let (client, server_task) = connected_pair().await;
+    let direct = Direct::default();
+    let temp = tempdir().unwrap();
+
+    let empty = temp.path().join("empty");
+    let small = temp.path().join("small");
+    let mixed = temp.path().join("mixed");
+    std::fs::create_dir(&empty).unwrap();
+    std::fs::create_dir(&small).unwrap();
+    std::fs::create_dir(&mixed).unwrap();
+    std::fs::write(small.join("only.txt"), "one").unwrap();
+    std::fs::write(mixed.join("file.txt"), "file").unwrap();
+    std::fs::create_dir(mixed.join("directory")).unwrap();
+
+    for path in [&empty, &small, &mixed] {
+        let path = typed_path(path.to_path_buf()).unwrap();
+        let remote = collect_entries(client.read_dir(path.to_path()).await.unwrap()).await;
+        let local = collect_entries(direct.read_dir(path.to_path()).await.unwrap()).await;
+        assert_eq!(remote, local);
+    }
 
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();
