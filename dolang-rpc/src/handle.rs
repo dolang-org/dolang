@@ -14,7 +14,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 // This must have a unique address: the serde wrappers use pointer identity to
 // ensure only this private newtype can invoke the unsafe handle path.
 static OS_HANDLE_TYPE_BYTES: [u8; 20] = *b"dolang_rpc::OsHandle";
-pub(crate) const OS_HANDLE_TYPE: &str = match str::from_utf8(&OS_HANDLE_TYPE_BYTES) {
+pub(crate) static OS_HANDLE_TYPE: &str = match str::from_utf8(&OS_HANDLE_TYPE_BYTES) {
     Ok(value) => value,
     Err(_) => panic!("invalid handle type marker"),
 };

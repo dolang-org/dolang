@@ -320,7 +320,7 @@ return
     help: check for coding/formatting errors
     do |args|
       let spec = Spec $args
-      spec.cargo clippy
+      spec.cargo clippy --all-targets
       show cargo fmt --check
       show rumdl check
 
