@@ -846,6 +846,7 @@ dependencies = [
  "shlex 2.0.1",
  "time",
  "tokio",
+ "typed-path",
  "windows-sys 0.61.2",
 ]
 
@@ -1094,6 +1095,7 @@ dependencies = [
  "serde",
  "tempfile",
  "tokio",
+ "typed-path",
  "wax",
  "which",
  "windows-sys 0.61.2",

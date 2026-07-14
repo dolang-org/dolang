@@ -1,7 +1,25 @@
 # Path
 
-Path objects represent filesystem paths and provide methods for path
-manipulation and file operations.
+Abstract supertype for [`UnixPath`](unix-path.md) and
+[`WindowsPath`](windows-path.md).
+
+## Constructor
+
+### `Path(path)`
+
+Creates the path type used by the active filesystem. Strings are not inspected
+for drive or UNC prefixes when selecting the type.
+
+**Parameters:**
+
+| Name   | Type                                      | Description |
+| ------ | ----------------------------------------- | ----------- |
+| `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path value  |
+
+**Returns:** [`UnixPath`](unix-path.md) or [`WindowsPath`](windows-path.md).
+
+Path strings retain the separator form stored by `typed-path`; converting a
+path to a string does not normalize it to forward slashes.
 
 ## Fields
 

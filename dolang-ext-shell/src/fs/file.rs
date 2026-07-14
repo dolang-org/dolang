@@ -2,7 +2,7 @@
 use std::os::fd::{AsFd, OwnedFd};
 use std::{
     io::{self, SeekFrom},
-    mem, path, result, str,
+    mem, result, str,
 };
 
 use bstr::ByteSlice;
@@ -12,7 +12,7 @@ use dolang::runtime::{
     unpack,
     value::{BinEmbryo, TypeObject, View},
 };
-use dolang_shell_vfs::{OpenOptions, Vfs};
+use dolang_shell_vfs::{OpenOptions, Utf8TypedPath, Vfs};
 use tokio::{
     fs,
     io::{AsyncSeekExt, AsyncWriteExt},
@@ -85,15 +85,29 @@ pub(crate) struct FileAnnex<'v> {
 pub(crate) async fn open<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &path::Path,
+    path: Utf8TypedPath<'_>,
     mode: &str,
-) -> io::Result<fs::File> {
+) -> Result<'v, 's, fs::File> {
+    let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
-    let path = local.cwd().as_ref().join(path);
     let vfs = local.vfs();
     let mut opts = vfs.open_options();
     configure_options(&mut opts, mode);
-    opts.open(&path).await
+    opts.open(path.to_path()).await.into_sys(strand)
+}
+
+pub(crate) async fn open_native<'v>(
+    strand: &Strand<'v, '_>,
+    global: State<'v, Global<'v>>,
+    path: Utf8TypedPath<'_>,
+    mode: &str,
+) -> io::Result<fs::File> {
+    let local = global.local.get(strand);
+    let path = local.cwd().join(path.as_str());
+    let vfs = local.vfs();
+    let mut opts = vfs.open_options();
+    configure_options(&mut opts, mode);
+    opts.open(path.to_path()).await
 }
 
 impl<'v> File<'v> {
@@ -158,7 +172,7 @@ impl<'v> File<'v> {
     pub(crate) async fn open<'s>(
         strand: &mut Strand<'v, 's>,
         global: State<'v, Global<'v>>,
-        path: &path::Path,
+        path: Utf8TypedPath<'_>,
         opt1: Option<Slot<'v, '_>>,
         opt2: Option<Slot<'v, '_>>,
         out: Slot<'v, '_>,
@@ -195,7 +209,7 @@ impl<'v> File<'v> {
             }
         }
 
-        let file = open(strand, global, path, &mode).await.into_sys(strand)?;
+        let file = open(strand, global, path, &mode).await?;
 
         if let Some(block) = block {
             strand

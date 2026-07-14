@@ -8,7 +8,7 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use dolang_rpc::{CallContext, DefaultHandle, OsHandle};
 #[cfg(unix)]
@@ -27,16 +27,20 @@ use tokio::{
 #[cfg(unix)]
 use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
 use crate::{
-    Child as _, Command as _, Direct, OpenOptions as _, Permissions, Vfs,
+    Child as _, Command as _, Direct, OpenOptions as _, Permissions, Utf8TypedPath, Vfs,
     protocol::{
         AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
         FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
         ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind,
         SetAttrsRequest, SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest,
-        StreamsRequest, SymlinkKind, SymlinkRequest, VfsProtocol, WellKnownPathRequest,
+        StreamsRequest, SymlinkKind, SymlinkRequest, VfsProtocol, WellKnownPathRequest, WirePath,
         XattrRequest, XattrsRequest,
     },
 };
+
+fn request_path(path: &WirePath) -> Utf8TypedPath<'_> {
+    path.into()
+}
 
 struct Connection {
     server: Arc<ServerState>,
@@ -221,22 +225,26 @@ impl Connection {
 
     async fn handle_which(
         &self,
-        program: std::path::PathBuf,
+        program: WirePath,
         path: Option<String>,
-        cwd: Option<std::path::PathBuf>,
+        cwd: Option<WirePath>,
     ) -> ResponseKind {
         let resolved = self
             .server
             .direct
-            .which(&program, path.as_deref(), cwd.as_deref())
+            .which(
+                request_path(&program),
+                path.as_deref(),
+                cwd.as_ref().map(request_path),
+            )
             .await;
 
-        ResponseKind::Which(resolved.unwrap_or(None))
+        ResponseKind::Which(resolved.unwrap_or(None).map(Into::into))
     }
 
     async fn handle_well_known_path(&self, req: WellKnownPathRequest) -> ResponseKind {
         let result = self.server.direct.well_known_path(req.key, &req.env).await;
-        ResponseKind::WellKnownPath(result.map_err(io_error_code))
+        ResponseKind::WellKnownPath(result.map(Into::into).map_err(io_error_code))
     }
 
     async fn handle_spawn_rpc(
@@ -244,13 +252,13 @@ impl Connection {
         context: &mut CallContext<VfsProtocol>,
         req: SpawnRequest,
     ) -> ResponseKind {
-        let mut cmd = self.server.direct.command(&req.program);
+        let mut cmd = self.server.direct.command(request_path(&req.program));
         for arg in &req.args {
             cmd.arg(arg);
         }
 
         if let Some(cwd) = &req.cwd {
-            cmd.current_dir(cwd);
+            cmd.current_dir(request_path(cwd));
         }
 
         for (k, v) in &req.env {
@@ -296,7 +304,8 @@ impl Connection {
 
     async fn handle_query(&self) -> ResponseKind {
         let env: HashMap<_, _> = std::env::vars().collect();
-        let cwd = std::env::current_dir().unwrap_or_default();
+        let cwd = WirePath::try_from(std::env::current_dir().unwrap_or_default())
+            .expect("current directory must be UTF-8");
         ResponseKind::Query { env, cwd }
     }
 
@@ -310,7 +319,7 @@ impl Connection {
             .truncate(req.truncate)
             .no_follow(req.no_follow);
 
-        match opts.open(&req.path).await {
+        match opts.open(request_path(&req.path)).await {
             Ok(file) => {
                 let handle: DefaultHandle = file.into_std().await.into();
                 ResponseKind::Open(Ok(OsHandle::new(handle)))
@@ -320,9 +329,9 @@ impl Connection {
     }
 
     #[cfg(windows)]
-    async fn handle_read_dir(&self, path: std::path::PathBuf) -> ResponseKind {
+    async fn handle_read_dir(&self, path: WirePath) -> ResponseKind {
         let result = async {
-            let mut read_dir = self.server.direct.read_dir(path).await?;
+            let mut read_dir = self.server.direct.read_dir(request_path(&path)).await?;
             let mut entries = Vec::new();
             while let Some(entry) = read_dir.next_entry().await? {
                 entries.push(entry);
@@ -344,11 +353,13 @@ impl Connection {
             )?;
 
             if let Some(path) = req.bind {
+                let path = PathBuf::try_from(path).map_err(|_| nix::errno::Errno::EINVAL)?;
                 let addr = UnixAddr::new(&path)?;
                 bind(fd.as_raw_fd(), &addr)?;
             }
 
             if let Some(path) = req.connect {
+                let path = PathBuf::try_from(path).map_err(|_| nix::errno::Errno::EINVAL)?;
                 let addr = UnixAddr::new(&path)?;
                 connect(fd.as_raw_fd(), &addr)?;
             }
@@ -368,26 +379,32 @@ impl Connection {
         ResponseKind::Remove(Self::io_result(
             self.server
                 .direct
-                .remove(&req.path, req.all, req.ignore)
+                .remove(request_path(&req.path), req.all, req.ignore)
                 .await,
         ))
     }
 
     async fn handle_metadata(&self, req: MetadataRequest) -> ResponseKind {
         ResponseKind::Metadata(Self::io_result(
-            self.server.direct.metadata(&req.path).await,
+            self.server.direct.metadata(request_path(&req.path)).await,
         ))
     }
 
     async fn handle_fs_metadata(&self, req: FsMetadataRequest) -> ResponseKind {
         ResponseKind::FsMetadata(Self::io_result(
-            self.server.direct.fs_metadata(&req.path, req.follow).await,
+            self.server
+                .direct
+                .fs_metadata(request_path(&req.path), req.follow)
+                .await,
         ))
     }
 
     async fn handle_create_dir(&self, req: CreateDirRequest) -> ResponseKind {
         ResponseKind::CreateDir(Self::io_result(
-            self.server.direct.create_dir(&req.path, req.all).await,
+            self.server
+                .direct
+                .create_dir(request_path(&req.path), req.all)
+                .await,
         ))
     }
 
@@ -395,26 +412,35 @@ impl Connection {
         ResponseKind::RemoveDir(Self::io_result(
             self.server
                 .direct
-                .remove_dir(&req.path, req.all, req.ignore)
+                .remove_dir(request_path(&req.path), req.all, req.ignore)
                 .await,
         ))
     }
 
     async fn handle_copy(&self, req: CopyRequest) -> ResponseKind {
         ResponseKind::Copy(Self::io_result(
-            self.server.direct.copy(&req.from, &req.to, req.all).await,
+            self.server
+                .direct
+                .copy(request_path(&req.from), request_path(&req.to), req.all)
+                .await,
         ))
     }
 
     async fn handle_rename(&self, req: RenameRequest) -> ResponseKind {
         ResponseKind::Rename(Self::io_result(
-            self.server.direct.rename(&req.from, &req.to).await,
+            self.server
+                .direct
+                .rename(request_path(&req.from), request_path(&req.to))
+                .await,
         ))
     }
 
     async fn handle_move(&self, req: MoveRequest) -> ResponseKind {
         ResponseKind::Move(Self::io_result(
-            self.server.direct.move_(&req.from, &req.to, req.all).await,
+            self.server
+                .direct
+                .move_(request_path(&req.from), request_path(&req.to), req.all)
+                .await,
         ))
     }
 
@@ -423,49 +449,83 @@ impl Connection {
             SymlinkKind::Infer => {
                 self.server
                     .direct
-                    .symlink(&req.cwd, &req.src, &req.dst)
+                    .symlink(
+                        request_path(&req.cwd),
+                        request_path(&req.src),
+                        request_path(&req.dst),
+                    )
                     .await
             }
-            SymlinkKind::Dir => self.server.direct.symlink_dir(&req.src, &req.dst).await,
-            SymlinkKind::File => self.server.direct.symlink_file(&req.src, &req.dst).await,
+            SymlinkKind::Dir => {
+                self.server
+                    .direct
+                    .symlink_dir(request_path(&req.src), request_path(&req.dst))
+                    .await
+            }
+            SymlinkKind::File => {
+                self.server
+                    .direct
+                    .symlink_file(request_path(&req.src), request_path(&req.dst))
+                    .await
+            }
         };
         ResponseKind::Symlink(Self::io_result(result))
     }
 
     async fn handle_hard_link(&self, req: HardLinkRequest) -> ResponseKind {
         ResponseKind::HardLink(Self::io_result(
-            self.server.direct.hard_link(&req.src, &req.dst).await,
+            self.server
+                .direct
+                .hard_link(request_path(&req.src), request_path(&req.dst))
+                .await,
         ))
     }
 
     async fn handle_symlink_metadata(&self, req: MetadataRequest) -> ResponseKind {
         ResponseKind::SymlinkMetadata(Self::io_result(
-            self.server.direct.symlink_metadata(&req.path).await,
+            self.server
+                .direct
+                .symlink_metadata(request_path(&req.path))
+                .await,
         ))
     }
 
     async fn handle_attrs(&self, req: AttrsRequest) -> ResponseKind {
         ResponseKind::Attrs(Self::io_result(
-            self.server.direct.attrs(&req.path, req.follow).await,
+            self.server
+                .direct
+                .attrs(request_path(&req.path), req.follow)
+                .await,
         ))
     }
 
     async fn handle_set_attrs(&self, req: SetAttrsRequest) -> ResponseKind {
         ResponseKind::SetAttrs(Self::io_result(
-            self.server.direct.set_attrs(&req.path, req.attrs).await,
+            self.server
+                .direct
+                .set_attrs(request_path(&req.path), req.attrs)
+                .await,
         ))
     }
 
     async fn handle_canonicalize(&self, req: CanonicalizeRequest) -> ResponseKind {
-        ResponseKind::Canonicalize(Self::io_result(
-            self.server.direct.canonicalize(&req.path).await,
-        ))
+        let result = self
+            .server
+            .direct
+            .canonicalize(request_path(&req.path))
+            .await
+            .map(Into::into);
+        ResponseKind::Canonicalize(Self::io_result(result))
     }
 
     async fn handle_read_link(&self, req: ReadLinkRequest) -> ResponseKind {
-        ResponseKind::ReadLink(Self::io_result(
-            self.server.direct.read_link(&req.path).await,
-        ))
+        let result = self
+            .server
+            .direct
+            .read_link(request_path(&req.path))
+            .await
+            .map(Into::into);
+        ResponseKind::ReadLink(Self::io_result(result))
     }
 
     #[cfg(unix)]
@@ -476,6 +536,10 @@ impl Connection {
         let mode = req.mode;
 
         tokio::task::spawn_blocking(move || {
+            let path = match PathBuf::try_from(path) {
+                Ok(path) => path,
+                Err(_) => return ResponseKind::Access(Err(libc::EINVAL)),
+            };
             let flags = AccessFlags::from_bits(mode).unwrap_or(AccessFlags::empty());
             match access(&path, flags) {
                 Ok(()) => ResponseKind::Access(Ok(())),
@@ -490,8 +554,14 @@ impl Connection {
         ResponseKind::Glob(Self::io_result(
             self.server
                 .direct
-                .glob(req.pattern, &req.root, req.follow_symlinks, req.max_depth)
-                .await,
+                .glob(
+                    req.pattern,
+                    request_path(&req.root),
+                    req.follow_symlinks,
+                    req.max_depth,
+                )
+                .await
+                .map(|paths| paths.into_iter().map(Into::into).collect()),
         ))
     }
 
@@ -499,7 +569,7 @@ impl Connection {
         ResponseKind::SetPermissions(Self::io_result(
             self.server
                 .direct
-                .set_permissions(&req.path, Permissions::from_mode(req.mode))
+                .set_permissions(request_path(&req.path), Permissions::from_mode(req.mode))
                 .await,
         ))
     }
@@ -517,7 +587,7 @@ impl Connection {
         ResponseKind::SetTimes(Self::io_result(
             self.server
                 .direct
-                .set_times(&req.path, accessed, modified, created)
+                .set_times(request_path(&req.path), accessed, modified, created)
                 .await,
         ))
     }
@@ -526,7 +596,7 @@ impl Connection {
         ResponseKind::Chown(Self::io_result(
             self.server
                 .direct
-                .chown(&req.path, req.user, req.group, req.follow)
+                .chown(request_path(&req.path), req.user, req.group, req.follow)
                 .await,
         ))
     }
@@ -535,7 +605,11 @@ impl Connection {
         ResponseKind::Xattrs(Self::io_result(
             self.server
                 .direct
-                .xattrs(&req.path, req.namespace.as_borrowed(), req.follow)
+                .xattrs(
+                    request_path(&req.path),
+                    req.namespace.as_borrowed(),
+                    req.follow,
+                )
                 .await,
         ))
     }
@@ -544,7 +618,12 @@ impl Connection {
         ResponseKind::Xattr(Self::io_result(
             self.server
                 .direct
-                .xattr(&req.path, &req.name, req.namespace.as_deref(), req.follow)
+                .xattr(
+                    request_path(&req.path),
+                    &req.name,
+                    req.namespace.as_deref(),
+                    req.follow,
+                )
                 .await,
         ))
     }
@@ -554,7 +633,7 @@ impl Connection {
             self.server
                 .direct
                 .set_xattr(
-                    &req.path,
+                    request_path(&req.path),
                     &req.name,
                     req.namespace.as_deref(),
                     &req.value,
@@ -568,14 +647,22 @@ impl Connection {
         ResponseKind::RemoveXattr(Self::io_result(
             self.server
                 .direct
-                .remove_xattr(&req.path, &req.name, req.namespace.as_deref(), req.follow)
+                .remove_xattr(
+                    request_path(&req.path),
+                    &req.name,
+                    req.namespace.as_deref(),
+                    req.follow,
+                )
                 .await,
         ))
     }
 
     async fn handle_streams(&self, req: StreamsRequest) -> ResponseKind {
         ResponseKind::Streams(Self::io_result(
-            self.server.direct.streams(&req.path, req.follow).await,
+            self.server
+                .direct
+                .streams(request_path(&req.path), req.follow)
+                .await,
         ))
     }
 }

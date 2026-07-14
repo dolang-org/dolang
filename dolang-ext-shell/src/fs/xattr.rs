@@ -4,7 +4,7 @@ use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder,
     value::TypeObject,
 };
-use dolang_shell_vfs::{Vfs, XattrEntry as VfsXattrEntry, XattrNamespace};
+use dolang_shell_vfs::{Utf8TypedPath, Vfs, XattrEntry as VfsXattrEntry, XattrNamespace};
 
 use crate::{error::ResultExt as _, global::Global, util};
 
@@ -77,7 +77,7 @@ pub(crate) fn parse_name<'v, 's>(
 pub(crate) async fn path_list<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: Utf8TypedPath<'_>,
     namespace: Option<Slot<'v, '_>>,
     follow: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
@@ -104,11 +104,11 @@ pub(crate) async fn path_list<'v, 's>(
             }
         }
     };
+    let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
-    let path = local.cwd().as_ref().join(path);
     let entries = local
         .vfs()
-        .xattrs(&path, namespace, follow)
+        .xattrs(path.to_path(), namespace, follow)
         .await
         .into_sys(strand)?;
     create_xattr_iter(strand, global, entries, out)
@@ -117,7 +117,7 @@ pub(crate) async fn path_list<'v, 's>(
 pub(crate) async fn path_get<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: Utf8TypedPath<'_>,
     name: &Value<'v>,
     namespace: Option<Slot<'v, '_>>,
     follow: Option<Slot<'v, '_>>,
@@ -128,11 +128,11 @@ pub(crate) async fn path_get<'v, 's>(
         .map(|follow| util::bool(strand, follow, "follow"))
         .transpose()?
         .unwrap_or(true);
+    let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
-    let path = local.cwd().as_ref().join(path);
     let value = local
         .vfs()
-        .xattr(&path, &name, namespace.as_deref(), follow)
+        .xattr(path.to_path(), &name, namespace.as_deref(), follow)
         .await
         .into_sys(strand)?;
     Output::set(strand, out, value.as_slice());
@@ -142,7 +142,7 @@ pub(crate) async fn path_get<'v, 's>(
 pub(crate) async fn path_set<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: Utf8TypedPath<'_>,
     name: &Value<'v>,
     namespace: Option<Slot<'v, '_>>,
     value: &Value<'v>,
@@ -154,11 +154,11 @@ pub(crate) async fn path_set<'v, 's>(
         .map(|follow| util::bool(strand, follow, "follow"))
         .transpose()?
         .unwrap_or(true);
+    let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
-    let path = local.cwd().as_ref().join(path);
     local
         .vfs()
-        .set_xattr(&path, &name, namespace.as_deref(), &value, follow)
+        .set_xattr(path.to_path(), &name, namespace.as_deref(), &value, follow)
         .await
         .into_sys(strand)
 }
@@ -166,7 +166,7 @@ pub(crate) async fn path_set<'v, 's>(
 pub(crate) async fn path_remove<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: &std::path::Path,
+    path: Utf8TypedPath<'_>,
     name: &Value<'v>,
     namespace: Option<Slot<'v, '_>>,
     follow: Option<Slot<'v, '_>>,
@@ -176,11 +176,11 @@ pub(crate) async fn path_remove<'v, 's>(
         .map(|follow| util::bool(strand, follow, "follow"))
         .transpose()?
         .unwrap_or(true);
+    let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
-    let path = local.cwd().as_ref().join(path);
     local
         .vfs()
-        .remove_xattr(&path, &name, namespace.as_deref(), follow)
+        .remove_xattr(path.to_path(), &name, namespace.as_deref(), follow)
         .await
         .into_sys(strand)
 }

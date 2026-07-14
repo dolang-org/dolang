@@ -34,7 +34,7 @@ use sqlite_plugin::{
     vfs::{RegisterOpts, Vfs, VfsHandle, VfsResult, register_static},
 };
 
-use dolang_shell_vfs::{Client, Vfs as _};
+use dolang_shell_vfs::{Client, Utf8TypedPath, Utf8UnixPath, Vfs as _};
 
 // Shadow libc's F_RDLCK/F_WRLCK/F_UNLCK with i32 versions.
 // On Linux these constants are already i32; on macOS they are i16.
@@ -715,7 +715,7 @@ impl Vfs for ShellVfs {
         let client = get_shell_client();
         block_on_shell(async move {
             client
-                .remove(&path, false, false)
+                .remove(Utf8TypedPath::Unix(Utf8UnixPath::new(&path)), false, false)
                 .await
                 .map_err(|e| map_io_err(e, SQLITE_IOERR_DELETE_NOENT, SQLITE_IOERR_DELETE))
         })
@@ -958,7 +958,7 @@ impl Vfs for ShellVfs {
             let client = get_shell_client();
             let _ = block_on_shell(async move {
                 client
-                    .remove(&path, false, false)
+                    .remove(Utf8TypedPath::Unix(Utf8UnixPath::new(&path)), false, false)
                     .await
                     .map_err(|_| SQLITE_IOERR)
             });
@@ -1203,7 +1203,7 @@ impl Vfs for ShellVfs {
             let client = get_shell_client();
             let _ = block_on_shell(async move {
                 client
-                    .remove(&path, false, false)
+                    .remove(Utf8TypedPath::Unix(Utf8UnixPath::new(&path)), false, false)
                     .await
                     .map_err(|_| SQLITE_IOERR)
             });

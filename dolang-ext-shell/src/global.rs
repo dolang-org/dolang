@@ -27,7 +27,7 @@ use crate::{
         file::File,
         fs_metadata::FsMetadata,
         metadata::Metadata,
-        path::{Path, PathComponentsIter},
+        path::{Path, PathComponentsIter, UnixPath, WindowsPath},
         readdir::DirEntry,
         stream::{StreamEntry, StreamIter},
         xattr::{XattrEntry, XattrIter},
@@ -46,6 +46,8 @@ use crate::fs::readdir::DirEntryIter;
 
 pub(crate) struct Types<'v> {
     pub(crate) path: Type<'v, Path>,
+    pub(crate) unix_path: Type<'v, UnixPath>,
+    pub(crate) windows_path: Type<'v, WindowsPath>,
     pub(crate) path_components_iter: Type<'v, PathComponentsIter>,
     pub(crate) attrs: Type<'v, Attrs>,
     pub(crate) xattr_entry: Type<'v, XattrEntry>,
@@ -139,6 +141,16 @@ impl<'v> Global<'v> {
             .nominal_supertype(TypeObject::RuntimeError)
             .build();
 
+        let path = builder.register_type::<Path>();
+        let unix_path = builder
+            .build_type::<UnixPath>((), ())
+            .nominal_supertype(path)
+            .build();
+        let windows_path = builder
+            .build_type::<WindowsPath>((), ())
+            .nominal_supertype(path)
+            .build();
+
         Self {
             terminal: Terminal {
                 writer: Mutex::new(Box::pin(stderr())),
@@ -147,7 +159,9 @@ impl<'v> Global<'v> {
             },
             types: Types {
                 file: builder.register_type(),
-                path: builder.register_type(),
+                path,
+                unix_path,
+                windows_path,
                 path_components_iter: builder.register_type(),
                 attrs: builder.register_type(),
                 xattr_entry: builder.register_type(),

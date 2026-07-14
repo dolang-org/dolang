@@ -1,6 +1,6 @@
 #![deny(warnings)]
 #![cfg(unix)]
-use dolang_shell_vfs::{Child, Command, Vfs};
+use dolang_shell_vfs::{Child, Command, Utf8TypedPath, Utf8UnixPath, Vfs};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
@@ -10,6 +10,10 @@ use tempfile::tempdir;
 use tokio::time::timeout;
 
 const AGENT_BIN: &str = env!("CARGO_BIN_EXE_dolang-shell-vfs");
+
+fn typed_str(path: &str) -> Utf8TypedPath<'_> {
+    Utf8TypedPath::Unix(Utf8UnixPath::new(path))
+}
 
 fn find_free_socket_path() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempdir().unwrap();
@@ -182,7 +186,7 @@ async fn multiple_clients() {
             .expect("timeout connecting")
             .expect("failed to connect");
 
-            let cmd = client.command("true");
+            let cmd = client.command(typed_str("true"));
             let mut child = cmd.spawn().await.expect("failed to spawn");
             let status = child.wait().await.expect("failed to get status");
 

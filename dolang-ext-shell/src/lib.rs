@@ -73,7 +73,8 @@ pub fn datetime<'v>(
 /// Get current working directory of strand
 pub fn cwd<'v>(strand: &Strand<'v, '_>) -> PathBuf {
     let global = strand.state::<Global<'v>>();
-    global.local.get(strand).cwd().as_ref().into()
+    dolang_shell_vfs::native_path(global.local.get(strand).cwd().to_path())
+        .expect("local working directory has the host path style")
 }
 
 /// Set arguments for `shell.args` object
@@ -100,8 +101,10 @@ pub async fn set_program<'v, 's>(
 
 pub fn as_path<'v, 'a>(vm: &Vm<'v>, value: &'a Value<'v>) -> Option<PathBuf> {
     let global = vm.state::<Global<'v>>();
-    if let Some(path) = global.types.path.downcast(value) {
-        Some(path.annex().inner.clone())
+    if let Some(path) = global.types.unix_path.downcast(value) {
+        dolang_shell_vfs::native_path(path.annex().inner.to_path()).ok()
+    } else if let Some(path) = global.types.windows_path.downcast(value) {
+        dolang_shell_vfs::native_path(path.annex().typed_path_buf().to_path()).ok()
     } else {
         value.as_str(vm).map(|s| PathBuf::from(s.to_string()))
     }
@@ -113,6 +116,7 @@ pub fn path<'v, 's>(
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let global = strand.state::<Global<'v>>();
+    let path = dolang_shell_vfs::typed_path(path).map_err(|e| Error::runtime(strand, e))?;
     fs::path::create_path(strand, global, path, out)
 }
 
@@ -127,7 +131,13 @@ pub async fn open<'v, 's>(
         _ => return Err(io::Error::other(format!("invalid mode: {}", mode))),
     }
     let global = strand.state::<Global<'v>>();
-    fs::file::open(strand, global, path, mode).await
+    fs::file::open_native(
+        strand,
+        global,
+        dolang_shell_vfs::typed_path(path.to_owned())?.to_path(),
+        mode,
+    )
+    .await
 }
 
 #[cfg(unix)]

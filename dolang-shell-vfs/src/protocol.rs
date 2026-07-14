@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 
 use dolang_rpc::{OsHandle, Protocol};
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,135 @@ pub(crate) struct VfsProtocol;
 impl Protocol for VfsProtocol {
     type Request = RequestKind;
     type Response = ResponseKind;
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WirePathKind {
+    Unix,
+    Windows,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WirePath {
+    kind: WirePathKind,
+    path: String,
+}
+
+impl WirePath {
+    pub(crate) fn empty_like(path: crate::Utf8TypedPath<'_>) -> Self {
+        Self {
+            kind: match path {
+                crate::Utf8TypedPath::Unix(_) => WirePathKind::Unix,
+                crate::Utf8TypedPath::Windows(_) => WirePathKind::Windows,
+            },
+            path: String::new(),
+        }
+    }
+}
+
+impl From<crate::Utf8TypedPath<'_>> for WirePath {
+    fn from(path: crate::Utf8TypedPath<'_>) -> Self {
+        match path {
+            crate::Utf8TypedPath::Unix(path) => Self {
+                kind: WirePathKind::Unix,
+                path: path.as_str().to_owned(),
+            },
+            crate::Utf8TypedPath::Windows(path) => Self {
+                kind: WirePathKind::Windows,
+                path: path.as_str().to_owned(),
+            },
+        }
+    }
+}
+
+impl From<crate::Utf8TypedPathBuf> for WirePath {
+    fn from(path: crate::Utf8TypedPathBuf) -> Self {
+        path.to_path().into()
+    }
+}
+
+impl<'a> From<&'a WirePath> for crate::Utf8TypedPath<'a> {
+    fn from(path: &'a WirePath) -> Self {
+        match path.kind {
+            WirePathKind::Unix => crate::Utf8TypedPath::Unix(crate::Utf8UnixPath::new(&path.path)),
+            WirePathKind::Windows => {
+                crate::Utf8TypedPath::Windows(crate::Utf8WindowsPath::new(&path.path))
+            }
+        }
+    }
+}
+
+impl From<WirePath> for crate::Utf8TypedPathBuf {
+    fn from(path: WirePath) -> Self {
+        match path.kind {
+            WirePathKind::Unix => crate::Utf8TypedPathBuf::from_unix(path.path),
+            WirePathKind::Windows => crate::Utf8TypedPathBuf::from_windows(path.path),
+        }
+    }
+}
+
+impl TryFrom<PathBuf> for WirePath {
+    type Error = io::Error;
+
+    fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
+        crate::typed_path(path).map(Into::into)
+    }
+}
+
+impl TryFrom<WirePath> for PathBuf {
+    type Error = io::Error;
+
+    fn try_from(path: WirePath) -> Result<Self, Self::Error> {
+        crate::native_path(crate::Utf8TypedPathBuf::from(path).to_path())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WirePath, WirePathKind};
+    use crate::{Utf8TypedPath, Utf8TypedPathBuf, Utf8UnixPath, Utf8WindowsPath};
+
+    #[test]
+    fn wire_path_preserves_unix_kind_and_literal_form() {
+        let wire = WirePath::from(Utf8TypedPath::Unix(Utf8UnixPath::new(r"foo\bar/baz")));
+        assert_eq!(wire.kind, WirePathKind::Unix);
+        assert_eq!(wire.path, r"foo\bar/baz");
+
+        let borrowed = Utf8TypedPath::from(&wire);
+        assert!(matches!(borrowed, Utf8TypedPath::Unix(_)));
+        assert_eq!(borrowed.as_str(), r"foo\bar/baz");
+
+        let owned = Utf8TypedPathBuf::from(wire);
+        assert!(matches!(owned, Utf8TypedPathBuf::Unix(_)));
+        assert_eq!(owned.as_str(), r"foo\bar/baz");
+    }
+
+    #[test]
+    fn wire_path_preserves_windows_kind_and_literal_form() {
+        let wire = WirePath::from(Utf8TypedPath::Windows(Utf8WindowsPath::new(r"C:\foo/bar")));
+        assert_eq!(wire.kind, WirePathKind::Windows);
+        assert_eq!(wire.path, r"C:\foo/bar");
+
+        let borrowed = Utf8TypedPath::from(&wire);
+        assert!(matches!(borrowed, Utf8TypedPath::Windows(_)));
+        assert_eq!(borrowed.as_str(), r"C:\foo/bar");
+
+        let owned = Utf8TypedPathBuf::from(wire);
+        assert!(matches!(owned, Utf8TypedPathBuf::Windows(_)));
+        assert_eq!(owned.as_str(), r"C:\foo/bar");
+    }
+
+    #[test]
+    fn native_conversion_rejects_the_other_path_kind() {
+        let wire = if cfg!(windows) {
+            WirePath::from(Utf8TypedPath::Unix(Utf8UnixPath::new("foo")))
+        } else {
+            WirePath::from(Utf8TypedPath::Windows(Utf8WindowsPath::new("foo")))
+        };
+        assert!(PathBuf::try_from(wire).is_err());
+    }
+
+    use std::path::PathBuf;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -47,10 +176,10 @@ impl XattrNamespaceRequest {
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct SpawnRequest {
-    pub(crate) program: PathBuf,
+    pub(crate) program: WirePath,
     pub(crate) args: Vec<String>,
     pub(crate) env: HashMap<String, Option<String>>,
-    pub(crate) cwd: Option<PathBuf>,
+    pub(crate) cwd: Option<WirePath>,
     pub(crate) stdin_fd: Option<OsHandle>,
     pub(crate) stdout_fd: Option<OsHandle>,
     pub(crate) stderr_fd: Option<OsHandle>,
@@ -72,7 +201,7 @@ impl std::fmt::Debug for SpawnRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct OpenRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) read: bool,
     pub(crate) write: bool,
     pub(crate) append: bool,
@@ -85,70 +214,70 @@ pub(crate) struct OpenRequest {
 #[cfg(unix)]
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct UnixStreamSocketRequest {
-    pub(crate) bind: Option<PathBuf>,
-    pub(crate) connect: Option<PathBuf>,
+    pub(crate) bind: Option<WirePath>,
+    pub(crate) connect: Option<WirePath>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct RemoveRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) all: bool,
     pub(crate) ignore: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct CreateDirRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) all: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct RemoveDirRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) all: bool,
     pub(crate) ignore: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct MetadataRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct FsMetadataRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) follow: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct AttrsRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) follow: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct SetAttrsRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) attrs: Attrs,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct CopyRequest {
-    pub(crate) from: PathBuf,
-    pub(crate) to: PathBuf,
+    pub(crate) from: WirePath,
+    pub(crate) to: WirePath,
     pub(crate) all: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct RenameRequest {
-    pub(crate) from: PathBuf,
-    pub(crate) to: PathBuf,
+    pub(crate) from: WirePath,
+    pub(crate) to: WirePath,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct MoveRequest {
-    pub(crate) from: PathBuf,
-    pub(crate) to: PathBuf,
+    pub(crate) from: WirePath,
+    pub(crate) to: WirePath,
     pub(crate) all: bool,
 }
 
@@ -161,39 +290,39 @@ pub(crate) enum SymlinkKind {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct SymlinkRequest {
-    pub(crate) cwd: PathBuf,
-    pub(crate) src: PathBuf,
-    pub(crate) dst: PathBuf,
+    pub(crate) cwd: WirePath,
+    pub(crate) src: WirePath,
+    pub(crate) dst: WirePath,
     pub(crate) kind: SymlinkKind,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct HardLinkRequest {
-    pub(crate) src: PathBuf,
-    pub(crate) dst: PathBuf,
+    pub(crate) src: WirePath,
+    pub(crate) dst: WirePath,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct CanonicalizeRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct ReadLinkRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
 }
 
 #[cfg(unix)]
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct AccessRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) mode: i32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct GlobRequest {
     pub(crate) pattern: String,
-    pub(crate) root: PathBuf,
+    pub(crate) root: WirePath,
     pub(crate) follow_symlinks: bool,
     pub(crate) max_depth: Option<usize>,
 }
@@ -206,7 +335,7 @@ pub(crate) struct WellKnownPathRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct SetPermissionsRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) mode: u32,
 }
 
@@ -218,7 +347,7 @@ pub(crate) struct Timestamp {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct SetTimesRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) accessed: Option<Timestamp>,
     pub(crate) modified: Option<Timestamp>,
     pub(crate) created: Option<Timestamp>,
@@ -226,7 +355,7 @@ pub(crate) struct SetTimesRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct ChownRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) user: Option<ChownIdentity>,
     pub(crate) group: Option<ChownIdentity>,
     pub(crate) follow: bool,
@@ -234,20 +363,20 @@ pub(crate) struct ChownRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct XattrsRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) namespace: XattrNamespaceRequest,
     pub(crate) follow: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct StreamsRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) follow: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct XattrRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) name: String,
     pub(crate) namespace: Option<String>,
     pub(crate) follow: bool,
@@ -255,7 +384,7 @@ pub(crate) struct XattrRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct SetXattrRequest {
-    pub(crate) path: PathBuf,
+    pub(crate) path: WirePath,
     pub(crate) name: String,
     pub(crate) namespace: Option<String>,
     pub(crate) value: Vec<u8>,
@@ -267,9 +396,9 @@ pub(crate) enum RequestKind {
     Spawn(SpawnRequest),
     Query,
     Which {
-        program: PathBuf,
+        program: WirePath,
         path: Option<String>,
-        cwd: Option<PathBuf>,
+        cwd: Option<WirePath>,
     },
     WellKnownPath(WellKnownPathRequest),
     Stop,
@@ -279,7 +408,7 @@ pub(crate) enum RequestKind {
     UnixStreamSocket(UnixStreamSocketRequest),
     #[cfg(windows)]
     ReadDir {
-        path: PathBuf,
+        path: WirePath,
     },
     Remove(RemoveRequest),
     Metadata(MetadataRequest),
@@ -314,10 +443,10 @@ pub(crate) enum ResponseKind {
     Spawn(Result<i32, i32>),
     Query {
         env: HashMap<String, String>,
-        cwd: PathBuf,
+        cwd: WirePath,
     },
-    Which(Option<PathBuf>),
-    WellKnownPath(Result<PathBuf, i32>),
+    Which(Option<WirePath>),
+    WellKnownPath(Result<WirePath, i32>),
     Stop,
     ClearCache,
     Open(Result<OsHandle, i32>),
@@ -338,11 +467,11 @@ pub(crate) enum ResponseKind {
     SymlinkMetadata(Result<Metadata, i32>),
     Attrs(Result<Attrs, i32>),
     SetAttrs(Result<(), i32>),
-    Canonicalize(Result<PathBuf, i32>),
-    ReadLink(Result<PathBuf, i32>),
+    Canonicalize(Result<WirePath, i32>),
+    ReadLink(Result<WirePath, i32>),
     #[cfg(unix)]
     Access(Result<(), i32>),
-    Glob(Result<Vec<PathBuf>, i32>),
+    Glob(Result<Vec<WirePath>, i32>),
     SetPermissions(Result<(), i32>),
     SetTimes(Result<(), i32>),
     Chown(Result<(), i32>),

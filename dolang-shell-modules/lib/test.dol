@@ -33,6 +33,10 @@ class ModuleCompileError: std.RuntimeError
     self.path = path
     self.output = output
 
+def module_name path
+  let name = str $path.without_ext()
+  name.replace "\\" "/"
+
 class Harness
   field module_jobs jobs filter timeout
   field errors = []
@@ -48,7 +52,7 @@ class Harness
         throw args.Error "invalid --filter glob: $filter"
 
   def matches_filter self path test
-     self.#filter.matches (str $ path.without_ext() / test)
+     self.#filter.matches "$(module_name path)/$test"
 
   def record_test self
     self.#total = (self.#total + 1)
@@ -74,7 +78,7 @@ class Harness
       self.#record_error $e $(strand.error_backtrace()) $path $name
 
   def run_module self path tests
-    progress.show message: (str $ path.without_ext()) total: $tests.len do |w|
+    progress.show message: (module_name path) total: $tests.len do |w|
       strand.fork
         for name func = tests
           do progress.show message: $name do |_|
@@ -99,7 +103,7 @@ class Harness
     let rc = 0
     let skipped = 0
     for e bt path test = self.#errors
-      let module = path.without_ext()
+      let module = module_name $path
       if (type e Skip)
         if test
           if e.message

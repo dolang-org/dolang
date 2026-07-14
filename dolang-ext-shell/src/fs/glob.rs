@@ -1,25 +1,26 @@
-use std::{collections::VecDeque, path::PathBuf};
+use std::collections::VecDeque;
 
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand,
     object::{TypeBuilder, Unpack, UnpackItem},
     value::TypeObject,
 };
+use dolang_shell_vfs::Utf8TypedPathBuf;
 
 use crate::{
-    fs::path::{Path, PathAnnex},
+    fs::path::{PathAnnex, create_path_annex},
     global::Global,
 };
 
 /// Iterator over glob results, yielding Path objects.
 pub(crate) struct GlobIter {
-    pub(crate) paths: VecDeque<PathBuf>,
+    pub(crate) paths: VecDeque<Utf8TypedPathBuf>,
 }
 
 pub(crate) struct GlobIterAnnex<'v> {
     pub(crate) global: State<'v, Global<'v>>,
     /// Prefix to prepend to each result path.
-    pub(crate) prefix: PathBuf,
+    pub(crate) prefix: Utf8TypedPathBuf,
 }
 
 impl<'v> Object<'v> for GlobIter {
@@ -56,11 +57,8 @@ impl<'v> Object<'v> for GlobIter {
             Some(path) => {
                 // Prepend prefix if present (used by Path::glob)
                 // Create a new Path object for this result
-                let annex = PathAnnex::try_new(strand, annex.prefix.join(&path), global)?;
-                global
-                    .types
-                    .path
-                    .create_with_annex(strand, Path, annex, out);
+                let annex = PathAnnex::try_new(strand, annex.prefix.join(path.as_str()), global)?;
+                create_path_annex(strand, annex, out);
                 Ok(true)
             }
             None => Ok(false),

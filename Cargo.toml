@@ -8,6 +8,9 @@ license = "Apache-2.0 OR MIT"
 repository = "https://github.com/bkoropoff/dolang"
 rust-version = "1.93"
 
+[workspace.dependencies]
+typed-path = "0.12.3"
+
 [profile.dist]
 inherits = "release"
 codegen-units = 1

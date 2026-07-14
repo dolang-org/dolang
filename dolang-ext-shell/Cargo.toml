@@ -19,6 +19,7 @@ linkme = "0.3.35"
 futures = "0.3.31"
 rand = "0.10"
 bstr = "1.12.1"
+typed-path.workspace = true
 shlex = "2.0"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 

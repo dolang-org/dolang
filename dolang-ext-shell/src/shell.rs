@@ -18,21 +18,20 @@ use dolang::{
 
 use crate::{
     env::Env as EnvObject,
-    error::ErrorExt,
-    fs::path::{Path, PathAnnex, path_from_value},
+    error::{ErrorExt, ResultExt as _},
+    fs::path::{PathAnnex, create_path_annex, path_from_value},
     global::{Global, ProgramSource},
     local::Env as LocalEnv,
 };
 
-#[cfg(any(unix, windows))]
-use std::collections::HashMap;
-#[cfg(any(unix, windows))]
-use std::path::PathBuf;
-
 #[cfg(windows)]
 use dolang_shell_vfs::WindowsSession;
 #[cfg(any(unix, windows))]
-use dolang_shell_vfs::{Client, ClientOrDirect, Query};
+use dolang_shell_vfs::{Client, ClientOrDirect, Query, Utf8TypedPathBuf};
+#[cfg(any(unix, windows))]
+use std::collections::HashMap;
+#[cfg(unix)]
+use std::path::PathBuf;
 
 #[cfg(any(unix, windows))]
 use dolang::runtime::error::ResultExt;
@@ -63,7 +62,7 @@ impl std::error::Error for Exit {}
 #[derive(Clone)]
 pub(crate) struct Context {
     client: Client,
-    cwd: PathBuf,
+    cwd: Utf8TypedPathBuf,
     env: Rc<LocalEnv>,
 }
 
@@ -338,25 +337,30 @@ impl<'v> Object<'v> for Vfs {
             };
 
             let client = if let Some(parent_client) = parent_client {
+                let native = dolang_shell_vfs::native_path(path.to_path()).into_sys(strand)?;
                 let fd = error::io_result(
                     strand,
                     parent_client
-                        .unix_stream_socket(None::<&std::path::Path>, Some(path.as_path()))
+                        .unix_stream_socket(None::<&std::path::Path>, Some(native.as_path()))
                         .await,
                 )?;
                 error::io_result(strand, Client::try_from(fd))?
             } else {
-                error::io_result(strand, Client::connect(&path).await)?
+                let native = dolang_shell_vfs::native_path(path.to_path()).into_sys(strand)?;
+                error::io_result(strand, Client::connect(native).await)?
             };
             let Query { env, cwd } = error::io_result(strand, client.query().await)?;
+            let cwd = dolang_shell_vfs::typed_path(cwd).into_sys(strand)?;
             let env = Rc::new(LocalEnv::new(None, true, env));
+            let source =
+                VfsSource::Unix(dolang_shell_vfs::native_path(path.to_path()).into_sys(strand)?);
 
             global.types.vfs.create_with_annex(
                 strand,
                 Vfs,
                 VfsAnnex {
                     handle: Context { client, env, cwd },
-                    source: VfsSource::Unix(path),
+                    source,
                     global,
                 },
                 out,
@@ -393,13 +397,15 @@ impl<'v> Object<'v> for Vfs {
                     None => true,
                 };
                 let global = strand.vm().state::<Global<'v>>();
-                let cwd = global.local.get(strand).cwd().as_ref().to_owned();
+                let cwd = global.local.get(strand).cwd().clone();
+                let cwd = dolang_shell_vfs::native_path(cwd.to_path()).into_sys(strand)?;
                 let result = if elevate {
                     WindowsSession::launch(cwd).await
                 } else {
                     WindowsSession::launch_unelevated(cwd).await
                 };
                 let (session, Query { env, cwd }) = error::io_result(strand, result)?;
+                let cwd = dolang_shell_vfs::typed_path(cwd).into_sys(strand)?;
                 let client = session.client().clone();
                 let env = Rc::new(LocalEnv::new(None, true, env));
                 global.types.vfs.create_with_annex(
@@ -514,11 +520,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .get("program", move |strand, out| {
             match global.program.borrow().as_ref() {
                 Some(ProgramSource::Path(path)) => {
-                    let annex = PathAnnex::try_new(strand, path.clone(), global)?;
-                    global
-                        .types
-                        .path
-                        .create_with_annex(strand, Path, annex, out);
+                    let path = dolang_shell_vfs::typed_path(path.clone()).into_sys(strand)?;
+                    let annex = PathAnnex::try_new(strand, path, global)?;
+                    create_path_annex(strand, annex, out);
                 }
                 Some(ProgramSource::Module(name)) => Output::set(strand, out, name.as_str()),
                 None => Output::set(strand, out, Nil),
@@ -526,15 +530,17 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             Ok(())
         })
         .object("env", env_ty, EnvObject { global })
-        .object_with_annex(
-            "exe",
-            global.types.path,
-            Path,
-            PathAnnex::new(
-                std::env::current_exe().expect("could not get current exe"),
+        .get("exe", move |strand, out| {
+            let annex = PathAnnex::new(
+                dolang_shell_vfs::typed_path(
+                    std::env::current_exe().expect("could not get current exe"),
+                )
+                .expect("current executable path is UTF-8"),
                 global,
-            ),
-        )
+            );
+            create_path_annex(strand, annex, out);
+            Ok(())
+        })
         .function("host", async move |strand, mut args, out| {
             let func = match args.next() {
                 None => return Err(Error::missing_positional(strand, 0)),
@@ -545,7 +551,10 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let local = global.local.get(strand);
 
             let orig_vfs = local.replace_vfs(Default::default());
-            let orig_cwd = local.replace_cwd(std::env::current_dir().unwrap());
+            let orig_cwd = local.replace_cwd(
+                dolang_shell_vfs::typed_path(std::env::current_dir().unwrap())
+                    .expect("current directory is UTF-8"),
+            );
             let orig_env = local.replace_env(Rc::new(LocalEnv::root()));
 
             let result = func.call(strand, args, out).await;
@@ -558,16 +567,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             result
         })
         .function("cd", async move |strand, mut args, out| {
-            use crate::fs::path::{Path, PathAnnex};
+            use crate::fs::path::PathAnnex;
 
             let dir = match args.next() {
                 None => {
-                    let cwd = global.local.get(strand).cwd().as_ref().to_owned();
+                    let cwd = global.local.get(strand).cwd().clone();
                     let annex = PathAnnex::try_new(strand, cwd, global)?;
-                    global
-                        .types
-                        .path
-                        .create_with_annex(strand, Path, annex, out);
+                    create_path_annex(strand, annex, out);
                     return Ok(());
                 }
                 Some(Arg::Pos(slot)) => slot,
@@ -576,7 +582,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let dir = path_from_value(strand, global, &dir)?;
             let local = global.local.get(strand);
 
-            let path = local.cwd().as_ref().join(&dir);
+            let path = local.cwd().join(dir.as_str());
             let func = match args.next() {
                 None => None,
                 Some(Arg::Pos(slot)) => Some(slot),
