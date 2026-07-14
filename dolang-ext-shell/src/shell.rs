@@ -22,6 +22,7 @@ use crate::{
     fs::path::{PathAnnex, create_path_annex, path_from_value},
     global::{Global, ProgramSource},
     local::Env as LocalEnv,
+    util,
 };
 
 #[cfg(windows)]
@@ -317,10 +318,15 @@ impl<'v> Object<'v> for Vfs {
             .await
     }
 
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let remote_sym = builder.sym("remote");
         #[cfg(unix)]
         let builder = builder.type_method("unix_socket", async move |_this, strand, args, out| {
-            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            let ([path], [remote]) = unpack!(strand, args, 1, 0, remote_sym = None)?;
+            let remote = remote
+                .map(|value| util::bool(strand, value, "remote"))
+                .transpose()?
+                .unwrap_or(false);
             let global = strand.vm().state::<Global<'v>>();
             let path = path_from_value(strand, global, &path)?;
 
@@ -337,10 +343,18 @@ impl<'v> Object<'v> for Vfs {
                         .unix_stream_socket(None::<&std::path::Path>, Some(native.as_path()))
                         .await,
                 )?;
-                error::io_result(strand, Client::try_from(fd))?
+                if remote {
+                    error::io_result(strand, Client::from_remote_fd(fd))?
+                } else {
+                    error::io_result(strand, Client::try_from(fd))?
+                }
             } else {
                 let native = dolang_shell_vfs::native_path(path.to_path()).into_sys(strand)?;
-                error::io_result(strand, Client::connect(native).await)?
+                if remote {
+                    error::io_result(strand, Client::connect_remote(native).await)?
+                } else {
+                    error::io_result(strand, Client::connect(native).await)?
+                }
             };
             let Query { env, cwd, target } = error::io_result(strand, client.query().await)?;
             let env = Rc::new(LocalEnv::new(None, true, env, target.operating_system));
@@ -386,18 +400,25 @@ impl<'v> Object<'v> for Vfs {
         #[cfg(windows)]
         let builder =
             builder.type_method("windows_admin", async move |_this, strand, args, out| {
-                let ([], [elevate]) = unpack!(strand, args, 0, 0, elevate = None)?;
+                let ([], [elevate, remote]) =
+                    unpack!(strand, args, 0, 0, elevate = None, remote_sym = None)?;
                 let elevate = match elevate {
-                    Some(elevate) => elevate
-                        .as_bool(strand)
-                        .ok_or_else(|| Error::type_error(strand, "elevate: expected bool"))?,
+                    Some(elevate) => util::bool(strand, elevate, "elevate")?,
                     None => true,
                 };
+                let remote = remote
+                    .map(|value| util::bool(strand, value, "remote"))
+                    .transpose()?
+                    .unwrap_or(false);
                 let global = strand.vm().state::<Global<'v>>();
                 let cwd = global.local.get(strand).cwd().clone();
                 let cwd = dolang_shell_vfs::native_path(cwd.to_path()).into_sys(strand)?;
-                let result = if elevate {
+                let result = if elevate && remote {
+                    WindowsSession::launch_remote(cwd).await
+                } else if elevate {
                     WindowsSession::launch(cwd).await
+                } else if remote {
+                    WindowsSession::launch_unelevated_remote(cwd).await
                 } else {
                     WindowsSession::launch_unelevated(cwd).await
                 };

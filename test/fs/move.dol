@@ -11,7 +11,7 @@ import agent
     - create_dir
     - Path
 
-#[agent.test]
+#[agent.test remote: false]
 def move_file()
   let src = Path "source.txt"
   let dst = Path "dest.txt"
@@ -34,7 +34,7 @@ def move_directory_requires_all()
   assert_throws $RuntimeError do
     move $src $dst
 
-#[agent.test]
+#[agent.test remote: false]
 def move_directory_with_all()
   let src = Path "src"
   let nested = (src / "nested")
@@ -50,7 +50,7 @@ def move_directory_with_all()
   open (dst / "nested" / "file.txt") r do |f|
     assert_eq (f.read()) "nested move"
 
-#[agent.test]
+#[agent.test remote: false]
 def path_move_method()
   let src = Path "source.txt"
   let dst = Path "dest.txt"

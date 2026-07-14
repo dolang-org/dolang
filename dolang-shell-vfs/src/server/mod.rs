@@ -1,9 +1,6 @@
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 #[cfg(unix)]
@@ -14,7 +11,7 @@ use dolang_rpc::{CallContext, DefaultHandle, OsHandle};
 use nix::sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, bind, connect, socket};
 #[cfg(unix)]
 use std::os::{fd::AsRawFd, unix::io::OwnedFd};
-use tokio::io;
+use tokio::io::{self, AsyncRead, AsyncWrite};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeClient;
 #[cfg(unix)]
@@ -24,16 +21,16 @@ use tokio::{
 };
 
 use crate::{
-    Child as _, Command as _, Direct, FileHandle as _, OpenOptions as _, Permissions,
-    Utf8TypedPath, Vfs,
+    AnyFile, AnyVfs, Child as _, Command as _, Direct, FileHandle as _, OpenOptions as _,
+    Permissions, SessionMode, Utf8TypedPath, Vfs,
     protocol::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
         CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
-        MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest,
-        RequestKind, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
-        SetXattrRequest, SpawnRequest, StreamsRequest, SymlinkKind, SymlinkRequest,
-        UnixStreamSocketRequest, VfsProtocol, WellKnownPathRequest, WirePath, XattrRequest,
-        XattrsRequest,
+        MoveRequest, OpenRequest, QueryResponse, ReadLinkRequest, RemoveDirRequest, RemoveRequest,
+        RenameRequest, RequestKind, ResponseKind, SetAttrsRequest, SetPermissionsRequest,
+        SetTimesRequest, SetXattrRequest, SpawnRequest, StreamsRequest, SymlinkKind,
+        SymlinkRequest, UnixStreamSocketRequest, VfsProtocol, WellKnownPathRequest, WirePath,
+        XattrRequest, XattrsRequest,
     },
 };
 
@@ -43,10 +40,11 @@ fn request_path(path: &WirePath) -> Utf8TypedPath<'_> {
 
 struct Connection {
     server: Arc<ServerState>,
+    mode: SessionMode,
 }
 
 struct ServerState {
-    direct: Direct,
+    vfs: AnyVfs,
     #[cfg(unix)]
     shutdown_tx: watch::Sender<()>,
 }
@@ -54,13 +52,37 @@ struct ServerState {
 /// Agent server that handles VFS RPC requests.
 pub struct Server {
     #[cfg(unix)]
-    listener: UnixListener,
-    #[cfg(windows)]
-    rpc: dolang_rpc::Server<VfsProtocol>,
+    listener: Option<UnixListener>,
+    rpc: Option<dolang_rpc::Server<VfsProtocol>>,
+    mode: SessionMode,
     shared: Arc<ServerState>,
 }
 
 impl Server {
+    /// Creates an opaque-only VFS server over a bidirectional byte stream.
+    pub fn new<T>(stream: T) -> Self
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        Self {
+            #[cfg(unix)]
+            listener: None,
+            rpc: Some(dolang_rpc::Server::new(stream)),
+            mode: SessionMode::Remote,
+            shared: Self::state(),
+        }
+    }
+
+    fn state() -> Arc<ServerState> {
+        #[cfg(unix)]
+        let (shutdown_tx, _) = watch::channel(());
+        Arc::new(ServerState {
+            vfs: AnyVfs::from(Direct::default()),
+            #[cfg(unix)]
+            shutdown_tx,
+        })
+    }
+
     /// Bind to a socket path and create a server.
     #[cfg(unix)]
     pub async fn bind(path: impl AsRef<Path>) -> Result<Self, io::Error> {
@@ -70,13 +92,11 @@ impl Server {
     /// Create a server from an existing `UnixListener`.
     #[cfg(unix)]
     fn from_listener(listener: UnixListener) -> Self {
-        let (shutdown_tx, _) = watch::channel(());
         Self {
-            listener,
-            shared: Arc::new(ServerState {
-                direct: Direct::default(),
-                shutdown_tx,
-            }),
+            listener: Some(listener),
+            rpc: None,
+            mode: SessionMode::Native,
+            shared: Self::state(),
         }
     }
 
@@ -84,10 +104,11 @@ impl Server {
     #[cfg(windows)]
     pub fn from_named_pipe_client(pipe: NamedPipeClient) -> Result<Self, io::Error> {
         Ok(Self {
-            rpc: dolang_rpc::Server::from_named_pipe_client(pipe)?,
-            shared: Arc::new(ServerState {
-                direct: Direct::default(),
-            }),
+            #[cfg(unix)]
+            listener: None,
+            rpc: Some(dolang_rpc::Server::from_named_pipe_client(pipe)?),
+            mode: SessionMode::Native,
+            shared: Self::state(),
         })
     }
 
@@ -97,6 +118,7 @@ impl Server {
         let rpc = dolang_rpc::Server::<VfsProtocol>::from_unix_stream(stream.into_std()?)?;
         let connection = Arc::new(Connection {
             server: self.shared.clone(),
+            mode: SessionMode::Native,
         });
         tokio::spawn(async move {
             let stop = Arc::new(AtomicBool::new(false));
@@ -114,12 +136,12 @@ impl Server {
     ///
     /// Each connection spawns a handler task that processes requests.
     #[cfg(unix)]
-    pub async fn accept(&self) -> Result<(), io::Error> {
+    pub async fn accept(self) -> Result<(), io::Error> {
         let mut shutdown_rx = self.shared.shutdown_tx.subscribe();
 
         loop {
             tokio::select! {
-                res = self.listener.accept() => {
+                res = self.listener.as_ref().unwrap().accept() => {
                     let _ = self.handle_accept(res);
                 }
                 _ = shutdown_rx.changed() => {
@@ -129,14 +151,18 @@ impl Server {
         }
     }
 
-    /// Serves one connected Windows named-pipe session.
-    #[cfg(windows)]
-    pub async fn serve(self) -> Result<(), io::Error> {
+    /// Serves one connected VFS session.
+    pub async fn serve(mut self) -> Result<(), io::Error> {
         let connection = Arc::new(Connection {
             server: self.shared,
+            mode: self.mode,
         });
         let stop = Arc::new(AtomicBool::new(false));
-        match serve_connection(self.rpc, connection, stop).await {
+        let rpc = self
+            .rpc
+            .take()
+            .expect("server does not own a connected session");
+        match serve_connection(rpc, connection, stop).await {
             Ok(()) => Ok(()),
             Err(dolang_rpc::Error::ConnectionClosed) => Ok(()),
             Err(dolang_rpc::Error::Io(error))
@@ -172,6 +198,13 @@ async fn serve_connection(
 }
 
 impl Connection {
+    fn unsupported(operation: &str) -> crate::protocol::WireError {
+        wire_error(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("{operation} is not supported by a remote VFS session"),
+        ))
+    }
+
     fn wire_result<T, E>(
         result: std::result::Result<T, E>,
     ) -> std::result::Result<T, crate::protocol::WireError>
@@ -190,8 +223,7 @@ impl Connection {
             RequestKind::WellKnownPath(request) => self.handle_well_known_path(request).await,
             RequestKind::Stop | RequestKind::Spawn(_) => unreachable!(),
             RequestKind::ClearCache => {
-                let _ = self.server.direct.clear_cache().await;
-                ResponseKind::ClearCache
+                ResponseKind::ClearCache(Self::wire_result(self.server.vfs.clear_cache().await))
             }
             RequestKind::Open(request) => self.handle_open(request).await,
             RequestKind::UnixStreamSocket(request) => self.handle_unix_stream_socket(request).await,
@@ -232,7 +264,7 @@ impl Connection {
     ) -> ResponseKind {
         let resolved = self
             .server
-            .direct
+            .vfs
             .which(
                 request_path(&program),
                 path.as_deref(),
@@ -240,11 +272,15 @@ impl Connection {
             )
             .await;
 
-        ResponseKind::Which(resolved.unwrap_or(None).map(Into::into))
+        ResponseKind::Which(
+            resolved
+                .map(|path| path.map(Into::into))
+                .map_err(wire_error),
+        )
     }
 
     async fn handle_well_known_path(&self, req: WellKnownPathRequest) -> ResponseKind {
-        let result = self.server.direct.well_known_path(req.key, &req.env).await;
+        let result = self.server.vfs.well_known_path(req.key, &req.env).await;
         ResponseKind::WellKnownPath(result.map(Into::into).map_err(wire_error))
     }
 
@@ -253,7 +289,10 @@ impl Connection {
         context: &mut CallContext<VfsProtocol>,
         req: SpawnRequest,
     ) -> ResponseKind {
-        let mut cmd = self.server.direct.command(request_path(&req.program));
+        if self.mode == SessionMode::Remote {
+            return ResponseKind::Spawn(Err(Self::unsupported("process spawning")));
+        }
+        let mut cmd = self.server.vfs.command(request_path(&req.program));
         for arg in &req.args {
             cmd.arg(arg);
         }
@@ -274,20 +313,26 @@ impl Connection {
         }
 
         if let Some(handle) = req.stdin_fd {
-            cmd.stdin_handle(crate::DirectFile::from_std(handle.into_inner().into()))
-                .unwrap();
+            cmd.stdin_handle(AnyFile::Direct(crate::DirectFile::from_std(
+                handle.into_inner().into(),
+            )))
+            .unwrap();
         } else {
             cmd.stdin_null();
         }
         if let Some(handle) = req.stdout_fd {
-            cmd.stdout_handle(crate::DirectFile::from_std(handle.into_inner().into()))
-                .unwrap();
+            cmd.stdout_handle(AnyFile::Direct(crate::DirectFile::from_std(
+                handle.into_inner().into(),
+            )))
+            .unwrap();
         } else {
             cmd.stdout_null();
         }
         if let Some(handle) = req.stderr_fd {
-            cmd.stderr_handle(crate::DirectFile::from_std(handle.into_inner().into()))
-                .unwrap();
+            cmd.stderr_handle(AnyFile::Direct(crate::DirectFile::from_std(
+                handle.into_inner().into(),
+            )))
+            .unwrap();
         } else {
             cmd.stderr_null();
         }
@@ -307,18 +352,20 @@ impl Connection {
     }
 
     async fn handle_query(&self) -> ResponseKind {
-        let env: HashMap<_, _> = std::env::vars().collect();
-        let cwd = WirePath::try_from(std::env::current_dir().unwrap_or_default())
-            .expect("current directory must be UTF-8");
-        ResponseKind::Query {
-            env,
-            cwd,
-            target: crate::TargetInfo::current(),
-        }
+        ResponseKind::Query(Self::wire_result(self.server.vfs.query().await.map(
+            |query| QueryResponse {
+                env: query.env,
+                cwd: query.cwd.into(),
+                target: query.target,
+            },
+        )))
     }
 
     async fn handle_open(&self, req: OpenRequest) -> ResponseKind {
-        let mut opts = self.server.direct.open_options();
+        if self.mode == SessionMode::Remote {
+            return ResponseKind::Open(Err(Self::unsupported("opening files")));
+        }
+        let mut opts = self.server.vfs.open_options();
         opts.read(req.read)
             .write(req.write)
             .append(req.append)
@@ -337,8 +384,11 @@ impl Connection {
     }
 
     async fn handle_read_dir(&self, path: WirePath) -> ResponseKind {
+        if self.mode == SessionMode::Remote {
+            return ResponseKind::ReadDir(Err(Self::unsupported("reading directories")));
+        }
         let result: crate::Result<Vec<crate::DirEntry>> = async {
-            let mut read_dir = self.server.direct.read_dir(request_path(&path)).await?;
+            let mut read_dir = self.server.vfs.read_dir(request_path(&path)).await?;
             let mut entries = Vec::new();
             while let Some(entry) = read_dir.next_entry().await? {
                 entries.push(entry);
@@ -351,6 +401,9 @@ impl Connection {
 
     #[cfg(unix)]
     async fn handle_unix_stream_socket(&self, req: UnixStreamSocketRequest) -> ResponseKind {
+        if self.mode == SessionMode::Remote {
+            return ResponseKind::UnixStreamSocket(Err(Self::unsupported("Unix stream sockets")));
+        }
         let result = tokio::task::spawn_blocking(move || {
             let fd = socket(
                 AddressFamily::Unix,
@@ -397,7 +450,7 @@ impl Connection {
     async fn handle_remove(&self, req: RemoveRequest) -> ResponseKind {
         ResponseKind::Remove(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .remove(request_path(&req.path), req.all, req.ignore)
                 .await,
         ))
@@ -405,14 +458,14 @@ impl Connection {
 
     async fn handle_metadata(&self, req: MetadataRequest) -> ResponseKind {
         ResponseKind::Metadata(Self::wire_result(
-            self.server.direct.metadata(request_path(&req.path)).await,
+            self.server.vfs.metadata(request_path(&req.path)).await,
         ))
     }
 
     async fn handle_fs_metadata(&self, req: FsMetadataRequest) -> ResponseKind {
         ResponseKind::FsMetadata(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .fs_metadata(request_path(&req.path), req.follow)
                 .await,
         ))
@@ -421,7 +474,7 @@ impl Connection {
     async fn handle_create_dir(&self, req: CreateDirRequest) -> ResponseKind {
         ResponseKind::CreateDir(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .create_dir(request_path(&req.path), req.all)
                 .await,
         ))
@@ -430,7 +483,7 @@ impl Connection {
     async fn handle_remove_dir(&self, req: RemoveDirRequest) -> ResponseKind {
         ResponseKind::RemoveDir(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .remove_dir(request_path(&req.path), req.all, req.ignore)
                 .await,
         ))
@@ -439,7 +492,7 @@ impl Connection {
     async fn handle_copy(&self, req: CopyRequest) -> ResponseKind {
         ResponseKind::Copy(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .copy(request_path(&req.from), request_path(&req.to), req.all)
                 .await,
         ))
@@ -448,7 +501,7 @@ impl Connection {
     async fn handle_rename(&self, req: RenameRequest) -> ResponseKind {
         ResponseKind::Rename(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .rename(request_path(&req.from), request_path(&req.to))
                 .await,
         ))
@@ -457,7 +510,7 @@ impl Connection {
     async fn handle_move(&self, req: MoveRequest) -> ResponseKind {
         ResponseKind::Move(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .move_(request_path(&req.from), request_path(&req.to), req.all)
                 .await,
         ))
@@ -467,7 +520,7 @@ impl Connection {
         let result = match req.kind {
             SymlinkKind::Infer => {
                 self.server
-                    .direct
+                    .vfs
                     .symlink(
                         request_path(&req.cwd),
                         request_path(&req.src),
@@ -477,13 +530,13 @@ impl Connection {
             }
             SymlinkKind::Dir => {
                 self.server
-                    .direct
+                    .vfs
                     .symlink_dir(request_path(&req.src), request_path(&req.dst))
                     .await
             }
             SymlinkKind::File => {
                 self.server
-                    .direct
+                    .vfs
                     .symlink_file(request_path(&req.src), request_path(&req.dst))
                     .await
             }
@@ -494,7 +547,7 @@ impl Connection {
     async fn handle_hard_link(&self, req: HardLinkRequest) -> ResponseKind {
         ResponseKind::HardLink(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .hard_link(request_path(&req.src), request_path(&req.dst))
                 .await,
         ))
@@ -503,7 +556,7 @@ impl Connection {
     async fn handle_symlink_metadata(&self, req: MetadataRequest) -> ResponseKind {
         ResponseKind::SymlinkMetadata(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .symlink_metadata(request_path(&req.path))
                 .await,
         ))
@@ -512,7 +565,7 @@ impl Connection {
     async fn handle_attrs(&self, req: AttrsRequest) -> ResponseKind {
         ResponseKind::Attrs(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .attrs(request_path(&req.path), req.follow)
                 .await,
         ))
@@ -521,7 +574,7 @@ impl Connection {
     async fn handle_set_attrs(&self, req: SetAttrsRequest) -> ResponseKind {
         ResponseKind::SetAttrs(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .set_attrs(request_path(&req.path), req.attrs)
                 .await,
         ))
@@ -530,7 +583,7 @@ impl Connection {
     async fn handle_canonicalize(&self, req: CanonicalizeRequest) -> ResponseKind {
         let result = self
             .server
-            .direct
+            .vfs
             .canonicalize(request_path(&req.path))
             .await
             .map(Into::into);
@@ -540,7 +593,7 @@ impl Connection {
     async fn handle_read_link(&self, req: ReadLinkRequest) -> ResponseKind {
         let result = self
             .server
-            .direct
+            .vfs
             .read_link(request_path(&req.path))
             .await
             .map(Into::into);
@@ -588,7 +641,7 @@ impl Connection {
     async fn handle_glob(&self, req: GlobRequest) -> ResponseKind {
         ResponseKind::Glob(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .glob(
                     req.pattern,
                     request_path(&req.root),
@@ -603,7 +656,7 @@ impl Connection {
     async fn handle_set_permissions(&self, req: SetPermissionsRequest) -> ResponseKind {
         ResponseKind::SetPermissions(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .set_permissions(request_path(&req.path), Permissions::from_mode(req.mode))
                 .await,
         ))
@@ -621,7 +674,7 @@ impl Connection {
             .map(|timestamp| (timestamp.secs, timestamp.nanos));
         ResponseKind::SetTimes(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .set_times(request_path(&req.path), accessed, modified, created)
                 .await,
         ))
@@ -630,7 +683,7 @@ impl Connection {
     async fn handle_chown(&self, req: ChownRequest) -> ResponseKind {
         ResponseKind::Chown(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .chown(request_path(&req.path), req.user, req.group, req.follow)
                 .await,
         ))
@@ -639,7 +692,7 @@ impl Connection {
     async fn handle_xattrs(&self, req: XattrsRequest) -> ResponseKind {
         ResponseKind::Xattrs(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .xattrs(
                     request_path(&req.path),
                     req.namespace.as_borrowed(),
@@ -652,7 +705,7 @@ impl Connection {
     async fn handle_xattr(&self, req: XattrRequest) -> ResponseKind {
         ResponseKind::Xattr(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .xattr(
                     request_path(&req.path),
                     &req.name,
@@ -666,7 +719,7 @@ impl Connection {
     async fn handle_set_xattr(&self, req: SetXattrRequest) -> ResponseKind {
         ResponseKind::SetXattr(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .set_xattr(
                     request_path(&req.path),
                     &req.name,
@@ -681,7 +734,7 @@ impl Connection {
     async fn handle_remove_xattr(&self, req: XattrRequest) -> ResponseKind {
         ResponseKind::RemoveXattr(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .remove_xattr(
                     request_path(&req.path),
                     &req.name,
@@ -695,7 +748,7 @@ impl Connection {
     async fn handle_streams(&self, req: StreamsRequest) -> ResponseKind {
         ResponseKind::Streams(Self::wire_result(
             self.server
-                .direct
+                .vfs
                 .streams(request_path(&req.path), req.follow)
                 .await,
         ))
@@ -704,4 +757,42 @@ impl Connection {
 
 fn wire_error(error: impl Into<crate::Error>) -> crate::protocol::WireError {
     error.into().into()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::Server;
+    use crate::protocol::{OpenRequest, RequestKind, ResponseKind, VfsProtocol, WirePath};
+
+    #[tokio::test]
+    async fn remote_server_replies_without_serializing_a_handle() {
+        let (client_stream, server_stream) = tokio::io::duplex(4096);
+        let server = tokio::spawn(Server::new(server_stream).serve());
+        let client = dolang_rpc::Client::<VfsProtocol>::new(client_stream);
+
+        let response = client
+            .call(RequestKind::Open(OpenRequest {
+                path: WirePath::empty_like(
+                    crate::typed_path(std::env::temp_dir()).unwrap().to_path(),
+                ),
+                read: true,
+                write: false,
+                append: false,
+                create: false,
+                create_new: false,
+                truncate: false,
+                no_follow: false,
+            }))
+            .await
+            .unwrap();
+        let ResponseKind::Open(Err(error)) = response else {
+            panic!("remote open did not return an error");
+        };
+        assert_eq!(crate::Error::from(error).kind(), io::ErrorKind::Unsupported);
+
+        let _ = client.call(RequestKind::Stop).await.unwrap();
+        server.await.unwrap().unwrap();
+    }
 }

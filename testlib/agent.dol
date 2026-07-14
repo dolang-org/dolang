@@ -13,9 +13,9 @@ if (sys.os_info().family != :WINDOWS:)
   if !vfs_bin
     throw "couldn't find dolang-shell-vfs in DOLANG_SHELL_VFS"
 
-def with_vfs block
+def with_vfs remote block
   if (sys.os_info().family == :WINDOWS:)
-    let vfs = Vfs.windows_admin elevate: false
+    let vfs = Vfs.windows_admin elevate: false remote: $remote
     try
       vfs $block
     finally
@@ -29,22 +29,25 @@ def with_vfs block
         do run $vfs_bin $socket
         do
           strand.next()
-          let vfs = Vfs.unix_socket $socket
+          let vfs = Vfs.unix_socket $socket remote: $remote
           return vfs $block
 
 pub def test
   :name = nil
   :windows_vfs = true
+  :remote = true
   func = nil
 do
   if (func == nil)
-    return do |func| test :name :windows_vfs $func
+    return do |func| test :name :windows_vfs :remote $func
   name = (name || str(func))
   # Wrap func to run in temp directory since it will likely create files
   let func = do fs.with_temp_dir do |dir| cd $dir $func
   if (sys.os_info().family == :WINDOWS: && !windows_vfs)
     unittest.test :name $func
   else
-    unittest.test name: "$(name)_client" do with_vfs $func
+    unittest.test name: "$(name)_local" do with_vfs false $func
+    if remote
+      unittest.test name: "$(name)_remote" do with_vfs true $func
     unittest.test name: "$(name)_direct" $func
     func

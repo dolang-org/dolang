@@ -12,7 +12,7 @@ let INSERTS_PER_STRAND = 4
 let WAL_STRAND_COUNT = 16
 let WAL_INSERTS_PER_STRAND = 8
 
-#[agent.test windows_vfs: false]
+#[agent.test windows_vfs: false remote: false]
 def concurrent_writers()
   let db = Path "test.db"
   sqlite.open $db do |conn|
@@ -29,7 +29,7 @@ def concurrent_writers()
       let rows = [...stmt.query()]
       assert_eq $rows.len (STRAND_COUNT * INSERTS_PER_STRAND)
 
-#[agent.test windows_vfs: false]
+#[agent.test windows_vfs: false remote: false]
 def wal()
   let db = Path "test.db"
   sqlite.open $db do |conn|

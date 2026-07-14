@@ -10,7 +10,7 @@ import agent
     - create_dir
     - Path
 
-#[agent.test]
+#[agent.test remote: false]
 def symlink_file()
   let target = Path "target.txt"
   let link = Path "link.txt"
@@ -29,7 +29,7 @@ def symlink_file()
   let resolved = link.read_link()
   assert_eq $resolved $target
 
-#[agent.test]
+#[agent.test remote: false]
 def symlink_dir_creates_directory_symlink()
   let target = Path "target_dir"
   let link = Path "link_dir"
@@ -46,7 +46,7 @@ def symlink_dir_creates_directory_symlink()
     let contents = f.read()
     assert_eq $contents "in target dir"
 
-#[agent.test]
+#[agent.test remote: false]
 def symlink_file_creates_file_symlink()
   let target = Path "target.txt"
   let link = Path "link.txt"
@@ -61,7 +61,7 @@ def symlink_file_creates_file_symlink()
     let contents = f.read()
     assert_eq $contents "file target"
 
-#[agent.test]
+#[agent.test remote: false]
 def symlink_metadata_follows_by_default()
   let target = Path "target.txt"
   let link = Path "link.txt"
@@ -74,7 +74,7 @@ def symlink_metadata_follows_by_default()
   let meta = link.metadata()
   assert_eq $meta.type :FILE:
 
-#[agent.test]
+#[agent.test remote: false]
 def symlink_metadata_nofollow()
   let target = Path "target.txt"
   let link = Path "link.txt"
@@ -87,7 +87,7 @@ def symlink_metadata_nofollow()
   let meta = link.metadata(false)
   assert_eq $meta.type :SYMLINK:
 
-#[agent.test]
+#[agent.test remote: false]
 def broken_symlink()
   let target = Path "nonexistent.txt"
   let link = Path "broken_link.txt"

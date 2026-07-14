@@ -25,16 +25,16 @@ use tokio::net::windows::named_pipe::NamedPipeServer;
 use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
 use crate::{
     Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions, PipeRecv,
-    PipeSend, ProcessStatus, Query, ReadDir, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs,
-    WellKnownPath, XattrEntry,
+    PipeSend, ProcessStatus, Query, ReadDir, SessionMode, StreamEntry, Utf8TypedPath,
+    Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry,
     direct::DirectFile,
     protocol::{
         AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
         FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
-        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind,
-        SetAttrsRequest, SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest,
-        StreamsRequest, SymlinkKind, SymlinkRequest, Timestamp, VfsProtocol, WellKnownPathRequest,
-        WirePath, XattrRequest, XattrsRequest,
+        QueryResponse, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest,
+        RequestKind, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
+        SetXattrRequest, SpawnRequest, StreamsRequest, SymlinkKind, SymlinkRequest, Timestamp,
+        VfsProtocol, WellKnownPathRequest, WirePath, XattrRequest, XattrsRequest,
     },
 };
 
@@ -42,6 +42,7 @@ use crate::{
 #[derive(Clone)]
 pub struct Client {
     rpc: dolang_rpc::Client<VfsProtocol>,
+    mode: SessionMode,
 }
 
 #[derive(Debug)]
@@ -146,10 +147,27 @@ impl FileHandle for ClientFile {
 }
 
 impl Client {
+    /// Starts an opaque-only VFS client on a bidirectional byte stream.
+    pub fn new<T>(stream: T) -> Self
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        Self {
+            rpc: dolang_rpc::Client::new(stream),
+            mode: SessionMode::Remote,
+        }
+    }
+
     /// Connect to an agent daemon at the given socket path.
     #[cfg(unix)]
     pub async fn connect(path: impl AsRef<Path>) -> crate::Result<Self> {
         Self::from_stream(UnixStream::connect(path).await?).await
+    }
+
+    /// Connect to an agent using opaque-only generic framing over a Unix socket.
+    #[cfg(unix)]
+    pub async fn connect_remote(path: impl AsRef<Path>) -> crate::Result<Self> {
+        Ok(Self::new(UnixStream::connect(path).await?))
     }
 
     /// Connect using an existing `UnixStream`.
@@ -161,7 +179,18 @@ impl Client {
     #[cfg(unix)]
     fn from_std_stream(stream: StdUnixStream) -> crate::Result<Self> {
         let rpc = dolang_rpc::Client::from_unix_stream(stream)?;
-        Ok(Self { rpc })
+        Ok(Self {
+            rpc,
+            mode: SessionMode::Native,
+        })
+    }
+
+    /// Use an owned Unix socket descriptor with opaque-only generic framing.
+    #[cfg(unix)]
+    pub fn from_remote_fd(value: OwnedFd) -> crate::Result<Self> {
+        let stream = StdUnixStream::from(value);
+        stream.set_nonblocking(true)?;
+        Ok(Self::new(UnixStream::from_std(stream)?))
     }
 
     /// Starts a VFS client on the server end of a connected Windows named pipe.
@@ -176,7 +205,18 @@ impl Client {
         server_process: OwnedHandle,
     ) -> crate::Result<Self> {
         let rpc = unsafe { dolang_rpc::Client::from_named_pipe_server(pipe, server_process)? };
-        Ok(Self { rpc })
+        Ok(Self {
+            rpc,
+            mode: SessionMode::Native,
+        })
+    }
+
+    fn unsupported<T>(&self, operation: &str) -> crate::Result<T> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("{operation} is not supported by a remote VFS session"),
+        )
+        .into())
     }
 
     fn call(&self, request: RequestKind) -> Call<ResponseKind> {
@@ -205,6 +245,9 @@ impl Client {
         B: AsRef<Path>,
         C: AsRef<Path>,
     {
+        if self.mode == SessionMode::Remote {
+            return self.unsupported("Unix stream sockets");
+        }
         let req = UnixStreamSocketRequest {
             bind: bind
                 .map(|p| WirePath::try_from(p.as_ref().to_path_buf()))
@@ -248,11 +291,13 @@ impl Client {
     /// Query the daemon's environment variables and current working directory.
     pub async fn query(&self) -> crate::Result<Query> {
         match self.request(RequestKind::Query).await? {
-            ResponseKind::Query { env, cwd, target } => Ok(Query {
-                env,
-                cwd: cwd.into(),
-                target,
-            }),
+            ResponseKind::Query(result) => result
+                .map(|QueryResponse { env, cwd, target }| Query {
+                    env,
+                    cwd: cwd.into(),
+                    target,
+                })
+                .map_err(crate::Error::from),
             response => Err(unexpected(response).into()),
         }
     }
@@ -272,7 +317,10 @@ impl Client {
                 .transpose()?,
         };
         match self.request(request).await? {
-            ResponseKind::Which(result) => result.map(TryInto::try_into).transpose(),
+            ResponseKind::Which(result) => result
+                .map_err(crate::Error::from)?
+                .map(TryInto::try_into)
+                .transpose(),
             response => Err(unexpected(response).into()),
         }
     }
@@ -303,7 +351,7 @@ impl Client {
     /// Clear the server's path resolution cache.
     pub async fn clear_cache(&self) -> crate::Result<()> {
         match self.request(RequestKind::ClearCache).await? {
-            ResponseKind::ClearCache => Ok(()),
+            ResponseKind::ClearCache(result) => result.map_err(crate::Error::from),
             response => Err(unexpected(response).into()),
         }
     }
@@ -552,6 +600,9 @@ impl<'a> Command for CommandBuilder<'a> {
     }
 
     async fn spawn(mut self) -> crate::Result<Self::Child> {
+        if self.client.mode == SessionMode::Remote {
+            return self.client.unsupported("process spawning");
+        }
         if let Some(file) = self.stdin_file.take() {
             self.stdin_handle = Some(file.0.try_into_std().await.unwrap().into());
         }
@@ -658,6 +709,9 @@ impl<'a> OpenOptions<'a> {
     }
 
     async fn open_wire(&self, path: WirePath) -> crate::Result<ClientFile> {
+        if self.client.mode == SessionMode::Remote {
+            return self.client.unsupported("opening files");
+        }
         let req = OpenRequest {
             path,
             read: self.read,
@@ -750,6 +804,9 @@ impl Vfs for Client {
     }
 
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> crate::Result<ReadDir> {
+        if self.mode == SessionMode::Remote {
+            return self.unsupported("reading directories");
+        }
         match self
             .request(RequestKind::ReadDir { path: path.into() })
             .await?
@@ -773,7 +830,9 @@ impl Vfs for Client {
             cwd: cwd.map(Into::into),
         };
         match self.request(request).await? {
-            ResponseKind::Which(result) => Ok(result.map(Into::into)),
+            ResponseKind::Which(result) => result
+                .map(|path| path.map(Into::into))
+                .map_err(crate::Error::from),
             response => Err(unexpected(response).into()),
         }
     }
