@@ -65,7 +65,10 @@ impl WindowsSession {
         let should_stop = !self.stopped.replace(true);
         let mut guard = should_stop.then(|| ProcessGuard::new(&self.process));
         let stop_result = if should_stop {
-            self.client.stop().await
+            self.client
+                .stop()
+                .await
+                .map_err(crate::Error::into_io_error)
         } else {
             Ok(())
         };
@@ -94,8 +97,9 @@ async fn launch_with(
 
     connect_or_exit(&pipe, &process).await?;
     let client_process = process.as_handle().try_clone_to_owned()?;
-    let client = unsafe { Client::from_named_pipe_server(pipe, client_process)? };
-    let query = client.query().await?;
+    let client = unsafe { Client::from_named_pipe_server(pipe, client_process) }
+        .map_err(crate::Error::into_io_error)?;
+    let query = client.query().await.map_err(crate::Error::into_io_error)?;
     guard.disarm();
 
     Ok((

@@ -5,7 +5,6 @@ pub use dolang_rpc::DefaultHandle;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    ffi::OsString,
     io,
     path::PathBuf,
     pin::Pin,
@@ -17,11 +16,9 @@ pub use typed_path::{
     PathType, Utf8TypedPath, Utf8TypedPathBuf, Utf8UnixPath, Utf8UnixPathBuf, Utf8WindowsPath,
     Utf8WindowsPathBuf, Utf8WindowsPrefix,
 };
-#[cfg(windows)]
-use windows_sys::Win32::System::SystemServices::FILE_READ_ONLY_VOLUME;
-
 mod client;
 mod direct;
+mod error;
 mod pipe;
 mod protocol;
 mod read_dir;
@@ -30,6 +27,8 @@ mod server;
 mod service;
 #[cfg(windows)]
 mod windows;
+
+pub use error::{Error, OperatingSystem, Result, SystemError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileType {
@@ -84,6 +83,17 @@ pub struct Metadata {
     pub mtime_nsec: i64,
     pub ctime: i64,
     pub ctime_nsec: i64,
+    pub family: MetadataFamily,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MetadataFamily {
+    Unix(UnixMetadata),
+    Windows(WindowsMetadata),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnixMetadata {
     pub mode: u32,
     pub dev: u64,
     pub ino: u64,
@@ -93,32 +103,52 @@ pub struct Metadata {
     pub rdev: u64,
     pub blksize: u64,
     pub blocks: u64,
-    #[cfg(windows)]
-    pub win_attrs: u32,
-    #[cfg(target_os = "macos")]
-    pub unix_flags: u32,
+    pub platform: UnixMetadataPlatform,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UnixMetadataPlatform {
+    Linux,
+    Macos { flags: u32 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowsMetadata {
+    pub mode: u32,
+    pub attrs: u32,
 }
 
 impl Metadata {
+    pub fn unix(&self) -> Option<&UnixMetadata> {
+        match &self.family {
+            MetadataFamily::Unix(metadata) => Some(metadata),
+            MetadataFamily::Windows(_) => None,
+        }
+    }
+
+    pub fn windows(&self) -> Option<&WindowsMetadata> {
+        match &self.family {
+            MetadataFamily::Unix(_) => None,
+            MetadataFamily::Windows(metadata) => Some(metadata),
+        }
+    }
+
     pub fn permissions(&self) -> Permissions {
-        Permissions::from_mode(self.mode)
+        let mode = match &self.family {
+            MetadataFamily::Unix(metadata) => metadata.mode,
+            MetadataFamily::Windows(metadata) => metadata.mode,
+        };
+        Permissions::from_mode(mode)
     }
 
     pub fn attrs(&self) -> Attrs {
-        #[cfg(any(windows, target_os = "macos"))]
-        {
-            #[cfg(windows)]
-            {
-                Attrs::from_win_attrs(self.win_attrs)
-            }
-            #[cfg(target_os = "macos")]
-            {
-                Attrs::from_macos_flags(self.unix_flags)
-            }
-        }
-        #[cfg(not(any(windows, target_os = "macos")))]
-        {
-            Attrs::default()
+        match &self.family {
+            MetadataFamily::Windows(metadata) => Attrs::from_win_attrs(metadata.attrs),
+            MetadataFamily::Unix(UnixMetadata {
+                platform: UnixMetadataPlatform::Macos { flags },
+                ..
+            }) => Attrs::from_macos_flags(*flags),
+            MetadataFamily::Unix(_) => Attrs::default(),
         }
     }
 }
@@ -129,123 +159,118 @@ pub struct FsMetadata {
     pub free: u64,
     pub available: u64,
     pub block_size: u32,
-    pub blocks: Option<u64>,
-    pub blocks_free: Option<u64>,
-    pub blocks_available: Option<u64>,
-    pub files: Option<u64>,
-    pub files_free: Option<u64>,
-    pub files_available: Option<u64>,
-    pub fragment_size: Option<u32>,
-    pub unix_flags: Option<u64>,
+    pub family: FsMetadataFamily,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FsMetadataFamily {
+    Unix(UnixFsMetadata),
+    Windows(WindowsFsMetadata),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnixFsMetadata {
+    pub blocks: u64,
+    pub blocks_free: u64,
+    pub blocks_available: u64,
+    pub files: u64,
+    pub files_free: u64,
+    pub files_available: u64,
+    pub fragment_size: u32,
     pub fsid: Option<u64>,
-    pub name_max: Option<u32>,
-    pub win_flags: Option<u32>,
-    pub volume_serial_number: Option<u32>,
-    pub component_length_max: Option<u32>,
+    pub name_max: u32,
+    pub platform: UnixFsMetadataPlatform,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UnixFsMetadataPlatform {
+    Linux { flags: u64 },
+    Macos { flags: u64 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowsFsMetadata {
+    pub flags: u32,
+    pub volume_serial_number: u32,
+    pub component_length_max: u32,
 }
 
 impl FsMetadata {
+    pub fn unix(&self) -> Option<&UnixFsMetadata> {
+        match &self.family {
+            FsMetadataFamily::Unix(metadata) => Some(metadata),
+            FsMetadataFamily::Windows(_) => None,
+        }
+    }
+
+    pub fn windows(&self) -> Option<&WindowsFsMetadata> {
+        match &self.family {
+            FsMetadataFamily::Unix(_) => None,
+            FsMetadataFamily::Windows(metadata) => Some(metadata),
+        }
+    }
+
     #[allow(clippy::unnecessary_cast)]
     pub fn read_only(&self) -> bool {
-        #[cfg(unix)]
-        if let Some(flags) = self.unix_flags {
-            return flags & libc::ST_RDONLY as u64 != 0;
+        match &self.family {
+            FsMetadataFamily::Unix(metadata) => metadata.platform.flags() & 1 != 0,
+            FsMetadataFamily::Windows(metadata) => metadata.flags & 0x0008_0000 != 0,
         }
-        #[cfg(windows)]
-        if let Some(flags) = self.win_flags {
-            return flags & FILE_READ_ONLY_VOLUME != 0;
-        }
-        false
     }
 
     #[allow(clippy::unnecessary_cast)]
     pub fn no_suid(&self) -> Option<bool> {
-        #[cfg(unix)]
-        {
-            self.unix_flags
-                .map(|flags| flags & libc::ST_NOSUID as u64 != 0)
-        }
-        #[cfg(not(unix))]
-        {
-            None
+        match &self.family {
+            FsMetadataFamily::Unix(metadata) => Some(metadata.platform.flags() & 2 != 0),
+            FsMetadataFamily::Windows(_) => None,
         }
     }
 
     #[allow(clippy::unnecessary_cast)]
     pub fn no_exec(&self) -> Option<bool> {
-        #[cfg(target_os = "linux")]
-        {
-            self.unix_flags
-                .map(|flags| flags & libc::ST_NOEXEC as u64 != 0)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            None
-        }
+        self.linux_flag(8)
     }
 
     #[allow(clippy::unnecessary_cast)]
     pub fn synchronous(&self) -> Option<bool> {
-        #[cfg(target_os = "linux")]
-        {
-            self.unix_flags
-                .map(|flags| flags & libc::ST_SYNCHRONOUS as u64 != 0)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            None
-        }
+        self.linux_flag(16)
     }
 
     #[allow(clippy::unnecessary_cast)]
     pub fn no_dev(&self) -> Option<bool> {
-        #[cfg(target_os = "linux")]
-        {
-            self.unix_flags
-                .map(|flags| flags & libc::ST_NODEV as u64 != 0)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            None
-        }
+        self.linux_flag(4)
     }
 
     #[allow(clippy::unnecessary_cast)]
     pub fn no_atime(&self) -> Option<bool> {
-        #[cfg(target_os = "linux")]
-        {
-            self.unix_flags
-                .map(|flags| flags & libc::ST_NOATIME as u64 != 0)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            None
-        }
+        self.linux_flag(1024)
     }
 
     #[allow(clippy::unnecessary_cast)]
     pub fn no_dir_atime(&self) -> Option<bool> {
-        #[cfg(target_os = "linux")]
-        {
-            self.unix_flags
-                .map(|flags| flags & libc::ST_NODIRATIME as u64 != 0)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            None
-        }
+        self.linux_flag(2048)
     }
 
     #[allow(clippy::unnecessary_cast)]
     pub fn relatime(&self) -> Option<bool> {
-        #[cfg(target_os = "linux")]
-        {
-            self.unix_flags
-                .map(|flags| flags & libc::MS_RELATIME as u64 != 0)
+        self.linux_flag(1 << 21)
+    }
+
+    fn linux_flag(&self, flag: u64) -> Option<bool> {
+        match &self.family {
+            FsMetadataFamily::Unix(UnixFsMetadata {
+                platform: UnixFsMetadataPlatform::Linux { flags },
+                ..
+            }) => Some(flags & flag != 0),
+            _ => None,
         }
-        #[cfg(not(target_os = "linux"))]
-        {
-            None
+    }
+}
+
+impl UnixFsMetadataPlatform {
+    pub fn flags(&self) -> u64 {
+        match self {
+            Self::Linux { flags } | Self::Macos { flags } => *flags,
         }
     }
 }
@@ -318,45 +343,32 @@ impl Attrs {
             && self.unix_flags.is_none()
     }
 
-    #[cfg(windows)]
     pub fn from_win_attrs(attrs: u32) -> Self {
-        use windows_sys::Win32::Storage::FileSystem::{
-            FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_ENCRYPTED,
-            FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_OFFLINE,
-            FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM,
-            FILE_ATTRIBUTE_TEMPORARY,
-        };
-
         Self {
-            readonly: Some(attrs & FILE_ATTRIBUTE_READONLY != 0),
-            hidden: Some(attrs & FILE_ATTRIBUTE_HIDDEN != 0),
-            system: Some(attrs & FILE_ATTRIBUTE_SYSTEM != 0),
-            archive: Some(attrs & FILE_ATTRIBUTE_ARCHIVE != 0),
-            reparse_point: Some(attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0),
-            compressed: Some(attrs & FILE_ATTRIBUTE_COMPRESSED != 0),
-            encrypted: Some(attrs & FILE_ATTRIBUTE_ENCRYPTED != 0),
-            temporary: Some(attrs & FILE_ATTRIBUTE_TEMPORARY != 0),
-            offline: Some(attrs & FILE_ATTRIBUTE_OFFLINE != 0),
-            not_content_indexed: Some(attrs & FILE_ATTRIBUTE_NOT_CONTENT_INDEXED != 0),
+            readonly: Some(attrs & 0x0000_0001 != 0),
+            hidden: Some(attrs & 0x0000_0002 != 0),
+            system: Some(attrs & 0x0000_0004 != 0),
+            archive: Some(attrs & 0x0000_0020 != 0),
+            reparse_point: Some(attrs & 0x0000_0400 != 0),
+            compressed: Some(attrs & 0x0000_0800 != 0),
+            encrypted: Some(attrs & 0x0000_4000 != 0),
+            temporary: Some(attrs & 0x0000_0100 != 0),
+            offline: Some(attrs & 0x0000_1000 != 0),
+            not_content_indexed: Some(attrs & 0x0000_2000 != 0),
             win_attrs: Some(attrs),
             ..Self::default()
         }
     }
 
-    #[cfg(target_os = "macos")]
     pub fn from_macos_flags(flags: u32) -> Self {
-        use nix::sys::stat::FileFlag;
-
-        let flags = FileFlag::from_bits_truncate(flags);
-
         Self {
-            hidden: Some(flags.contains(FileFlag::UF_HIDDEN)),
-            compressed: Some(flags.contains(FileFlag::UF_COMPRESSED)),
-            immutable: Some(flags.contains(FileFlag::UF_IMMUTABLE)),
-            append_only: Some(flags.contains(FileFlag::UF_APPEND)),
-            no_dump: Some(flags.contains(FileFlag::UF_NODUMP)),
-            opaque: Some(flags.contains(FileFlag::UF_OPAQUE)),
-            unix_flags: Some(flags.bits()),
+            hidden: Some(flags & 0x0000_8000 != 0),
+            compressed: Some(flags & 0x0000_0020 != 0),
+            immutable: Some(flags & 0x0000_0002 != 0),
+            append_only: Some(flags & 0x0000_0004 != 0),
+            no_dump: Some(flags & 0x0000_0001 != 0),
+            opaque: Some(flags & 0x0000_0008 != 0),
+            unix_flags: Some(flags),
             ..Self::default()
         }
     }
@@ -397,17 +409,23 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
             mtime_nsec: metadata.mtime_nsec(),
             ctime: metadata.ctime(),
             ctime_nsec: metadata.ctime_nsec(),
-            mode,
-            dev: metadata.dev(),
-            ino: metadata.ino(),
-            nlink: metadata.nlink(),
-            uid: metadata.uid(),
-            gid: metadata.gid(),
-            rdev: metadata.rdev(),
-            blksize: metadata.blksize(),
-            blocks: metadata.blocks(),
-            #[cfg(target_os = "macos")]
-            unix_flags: metadata.st_flags(),
+            family: MetadataFamily::Unix(UnixMetadata {
+                mode,
+                dev: metadata.dev(),
+                ino: metadata.ino(),
+                nlink: metadata.nlink(),
+                uid: metadata.uid(),
+                gid: metadata.gid(),
+                rdev: metadata.rdev(),
+                blksize: metadata.blksize(),
+                blocks: metadata.blocks(),
+                #[cfg(target_os = "linux")]
+                platform: UnixMetadataPlatform::Linux,
+                #[cfg(target_os = "macos")]
+                platform: UnixMetadataPlatform::Macos {
+                    flags: metadata.st_flags(),
+                },
+            }),
         }
     }
 
@@ -434,20 +452,14 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
             mtime_nsec: i64::from(system_time_to_parts(metadata.modified().ok()).1),
             ctime: system_time_to_parts(metadata.created().ok()).0,
             ctime_nsec: i64::from(system_time_to_parts(metadata.created().ok()).1),
-            mode: if metadata.permissions().readonly() {
-                0o444
-            } else {
-                0o666
-            },
-            dev: 0,
-            ino: 0,
-            nlink: 0,
-            uid: 0,
-            gid: 0,
-            rdev: 0,
-            blksize: 0,
-            blocks: 0,
-            win_attrs: metadata.file_attributes(),
+            family: MetadataFamily::Windows(WindowsMetadata {
+                mode: if metadata.permissions().readonly() {
+                    0o444
+                } else {
+                    0o666
+                },
+                attrs: metadata.file_attributes(),
+            }),
         }
     }
 }
@@ -508,18 +520,27 @@ pub struct StreamEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirEntry {
-    file_name: OsString,
-    ino: u64,
+    file_name: String,
     file_type: FileType,
+    family: DirEntryFamily,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DirEntryFamily {
+    Unix { ino: u64 },
+    Windows,
 }
 
 impl DirEntry {
     pub fn file_name(&self) -> &std::ffi::OsStr {
-        &self.file_name
+        std::ffi::OsStr::new(&self.file_name)
     }
 
-    pub fn ino(&self) -> u64 {
-        self.ino
+    pub fn ino(&self) -> Option<u64> {
+        match self.family {
+            DirEntryFamily::Unix { ino } => Some(ino),
+            DirEntryFamily::Windows => None,
+        }
     }
 
     pub fn file_type(&self) -> FileType {
@@ -575,32 +596,27 @@ pub trait OpenOptions {
     fn create_new(&mut self, create_new: bool) -> &mut Self;
     fn truncate(&mut self, truncate: bool) -> &mut Self;
     fn no_follow(&mut self, no_follow: bool) -> &mut Self;
-    async fn open(&self, path: Utf8TypedPath<'_>) -> Result<Self::File, io::Error>;
+    async fn open(&self, path: Utf8TypedPath<'_>) -> Result<Self::File>;
 }
 
 pub trait FileHandle: AsyncRead + AsyncWrite + AsyncSeek + Unpin + Sized {
-    async fn try_clone(&self) -> io::Result<Self>;
-    async fn close(self) -> io::Result<()>;
-    async fn set_len(&mut self, size: u64) -> io::Result<()>;
-    async fn metadata(&mut self) -> io::Result<Metadata>;
-    async fn fs_metadata(&mut self) -> io::Result<FsMetadata>;
-    async fn xattrs(&mut self, namespace: XattrNamespace<'_>) -> io::Result<Vec<XattrEntry>>;
-    async fn xattr(&mut self, name: &str, namespace: Option<&str>) -> io::Result<Vec<u8>>;
-    async fn streams(&mut self) -> io::Result<Vec<StreamEntry>>;
-    async fn set_xattr(
-        &mut self,
-        name: &str,
-        namespace: Option<&str>,
-        value: &[u8],
-    ) -> io::Result<()>;
-    async fn remove_xattr(&mut self, name: &str, namespace: Option<&str>) -> io::Result<()>;
-    async fn try_into_std(self) -> Result<std::fs::File, Self>;
+    async fn try_clone(&self) -> Result<Self>;
+    async fn close(self) -> Result<()>;
+    async fn set_len(&mut self, size: u64) -> Result<()>;
+    async fn metadata(&mut self) -> Result<Metadata>;
+    async fn fs_metadata(&mut self) -> Result<FsMetadata>;
+    async fn xattrs(&mut self, namespace: XattrNamespace<'_>) -> Result<Vec<XattrEntry>>;
+    async fn xattr(&mut self, name: &str, namespace: Option<&str>) -> Result<Vec<u8>>;
+    async fn streams(&mut self) -> Result<Vec<StreamEntry>>;
+    async fn set_xattr(&mut self, name: &str, namespace: Option<&str>, value: &[u8]) -> Result<()>;
+    async fn remove_xattr(&mut self, name: &str, namespace: Option<&str>) -> Result<()>;
+    async fn try_into_std(self) -> std::result::Result<std::fs::File, Self>;
 }
 
 #[allow(async_fn_in_trait)]
 pub trait Child {
-    async fn wait(&mut self) -> Result<ExitStatus, io::Error>;
-    async fn terminate(self) -> Result<ExitStatus, io::Error>
+    async fn wait(&mut self) -> Result<ExitStatus>;
+    async fn terminate(self) -> Result<ExitStatus>
     where
         Self: Sized;
 }
@@ -629,7 +645,7 @@ pub trait Command {
     fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self>;
     fn stderr_handle(&mut self, handle: Self::File) -> io::Result<&mut Self>;
     fn stderr_null(&mut self) -> &mut Self;
-    async fn spawn(self) -> io::Result<Self::Child>;
+    async fn spawn(self) -> Result<Self::Child>;
 }
 
 #[allow(async_fn_in_trait)]
@@ -647,32 +663,32 @@ pub trait Vfs {
     fn open_options(&self) -> Self::OpenOptions<'_>;
     fn command(&self, program: Utf8TypedPath<'_>) -> Self::Command<'_>;
     fn pipe(&self) -> io::Result<(Self::PipeSend, Self::PipeRecv)>;
-    async fn read_dir(&self, path: Utf8TypedPath<'_>) -> Result<ReadDir, io::Error>;
+    async fn read_dir(&self, path: Utf8TypedPath<'_>) -> Result<ReadDir>;
     async fn which(
         &self,
         program: Utf8TypedPath<'_>,
         path: Option<&str>,
         cwd: Option<Utf8TypedPath<'_>>,
-    ) -> Result<Option<Utf8TypedPathBuf>, io::Error>;
+    ) -> Result<Option<Utf8TypedPathBuf>>;
     async fn well_known_path(
         &self,
         key: WellKnownPath,
         env: &HashMap<String, Option<String>>,
-    ) -> Result<Utf8TypedPathBuf, io::Error>;
-    async fn clear_cache(&self) -> Result<(), io::Error>;
+    ) -> Result<Utf8TypedPathBuf>;
+    async fn clear_cache(&self) -> Result<()>;
     async fn xattrs(
         &self,
         path: Utf8TypedPath<'_>,
         namespace: XattrNamespace<'_>,
         follow: bool,
-    ) -> Result<Vec<XattrEntry>, io::Error>;
+    ) -> Result<Vec<XattrEntry>>;
     async fn xattr(
         &self,
         path: Utf8TypedPath<'_>,
         name: &str,
         namespace: Option<&str>,
         follow: bool,
-    ) -> Result<Vec<u8>, io::Error>;
+    ) -> Result<Vec<u8>>;
     async fn set_xattr(
         &self,
         path: Utf8TypedPath<'_>,
@@ -680,105 +696,60 @@ pub trait Vfs {
         namespace: Option<&str>,
         value: &[u8],
         follow: bool,
-    ) -> Result<(), io::Error>;
+    ) -> Result<()>;
     async fn remove_xattr(
         &self,
         path: Utf8TypedPath<'_>,
         name: &str,
         namespace: Option<&str>,
         follow: bool,
-    ) -> Result<(), io::Error>;
-    async fn streams(
-        &self,
-        path: Utf8TypedPath<'_>,
-        follow: bool,
-    ) -> Result<Vec<StreamEntry>, io::Error>;
+    ) -> Result<()>;
+    async fn streams(&self, path: Utf8TypedPath<'_>, follow: bool) -> Result<Vec<StreamEntry>>;
 
-    async fn remove(
-        &self,
-        path: Utf8TypedPath<'_>,
-        all: bool,
-        ignore: bool,
-    ) -> Result<(), io::Error>;
-    async fn metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata, io::Error>;
-    async fn fs_metadata(
-        &self,
-        path: Utf8TypedPath<'_>,
-        follow: bool,
-    ) -> Result<FsMetadata, io::Error>;
-    async fn create_dir(&self, path: Utf8TypedPath<'_>, all: bool) -> Result<(), io::Error>;
-    async fn remove_dir(
-        &self,
-        path: Utf8TypedPath<'_>,
-        all: bool,
-        ignore: bool,
-    ) -> Result<(), io::Error>;
-    async fn copy(
-        &self,
-        from: Utf8TypedPath<'_>,
-        to: Utf8TypedPath<'_>,
-        all: bool,
-    ) -> Result<(), io::Error>;
-    async fn rename(&self, from: Utf8TypedPath<'_>, to: Utf8TypedPath<'_>)
-    -> Result<(), io::Error>;
-    async fn move_(
-        &self,
-        from: Utf8TypedPath<'_>,
-        to: Utf8TypedPath<'_>,
-        all: bool,
-    ) -> Result<(), io::Error>;
+    async fn remove(&self, path: Utf8TypedPath<'_>, all: bool, ignore: bool) -> Result<()>;
+    async fn metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata>;
+    async fn fs_metadata(&self, path: Utf8TypedPath<'_>, follow: bool) -> Result<FsMetadata>;
+    async fn create_dir(&self, path: Utf8TypedPath<'_>, all: bool) -> Result<()>;
+    async fn remove_dir(&self, path: Utf8TypedPath<'_>, all: bool, ignore: bool) -> Result<()>;
+    async fn copy(&self, from: Utf8TypedPath<'_>, to: Utf8TypedPath<'_>, all: bool) -> Result<()>;
+    async fn rename(&self, from: Utf8TypedPath<'_>, to: Utf8TypedPath<'_>) -> Result<()>;
+    async fn move_(&self, from: Utf8TypedPath<'_>, to: Utf8TypedPath<'_>, all: bool) -> Result<()>;
     async fn symlink(
         &self,
         cwd: Utf8TypedPath<'_>,
         src: Utf8TypedPath<'_>,
         dst: Utf8TypedPath<'_>,
-    ) -> Result<(), io::Error>;
-    async fn hard_link(
-        &self,
-        src: Utf8TypedPath<'_>,
-        dst: Utf8TypedPath<'_>,
-    ) -> Result<(), io::Error>;
-    async fn symlink_dir(
-        &self,
-        src: Utf8TypedPath<'_>,
-        dst: Utf8TypedPath<'_>,
-    ) -> Result<(), io::Error>;
-    async fn symlink_file(
-        &self,
-        src: Utf8TypedPath<'_>,
-        dst: Utf8TypedPath<'_>,
-    ) -> Result<(), io::Error>;
-    async fn symlink_metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata, io::Error>;
-    async fn attrs(&self, path: Utf8TypedPath<'_>, follow: bool) -> Result<Attrs, io::Error>;
-    async fn set_attrs(&self, path: Utf8TypedPath<'_>, attrs: Attrs) -> Result<(), io::Error>;
-    async fn canonicalize(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf, io::Error>;
-    async fn read_link(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf, io::Error>;
+    ) -> Result<()>;
+    async fn hard_link(&self, src: Utf8TypedPath<'_>, dst: Utf8TypedPath<'_>) -> Result<()>;
+    async fn symlink_dir(&self, src: Utf8TypedPath<'_>, dst: Utf8TypedPath<'_>) -> Result<()>;
+    async fn symlink_file(&self, src: Utf8TypedPath<'_>, dst: Utf8TypedPath<'_>) -> Result<()>;
+    async fn symlink_metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata>;
+    async fn attrs(&self, path: Utf8TypedPath<'_>, follow: bool) -> Result<Attrs>;
+    async fn set_attrs(&self, path: Utf8TypedPath<'_>, attrs: Attrs) -> Result<()>;
+    async fn canonicalize(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf>;
+    async fn read_link(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf>;
     async fn glob(
         &self,
         pattern: impl Into<String>,
         root: Utf8TypedPath<'_>,
         follow_symlinks: bool,
         max_depth: Option<usize>,
-    ) -> Result<Vec<Utf8TypedPathBuf>, io::Error>;
-    async fn set_permissions(
-        &self,
-        path: Utf8TypedPath<'_>,
-        perm: Permissions,
-    ) -> Result<(), io::Error>;
+    ) -> Result<Vec<Utf8TypedPathBuf>>;
+    async fn set_permissions(&self, path: Utf8TypedPath<'_>, perm: Permissions) -> Result<()>;
     async fn set_times(
         &self,
         path: Utf8TypedPath<'_>,
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
-    ) -> Result<(), io::Error>;
+    ) -> Result<()>;
     async fn chown(
         &self,
         path: Utf8TypedPath<'_>,
         user: Option<ChownIdentity>,
         group: Option<ChownIdentity>,
         follow: bool,
-    ) -> Result<(), io::Error>;
+    ) -> Result<()>;
 }
 
 pub use direct::{Direct, DirectFile, DirectOpenOptions};
@@ -847,41 +818,41 @@ impl AsyncSeek for AnyFile {
 }
 
 impl FileHandle for AnyFile {
-    async fn try_clone(&self) -> io::Result<Self> {
+    async fn try_clone(&self) -> crate::Result<Self> {
         match self {
             Self::Client(file) => file.try_clone().await.map(Self::Client),
             Self::Direct(file) => file.try_clone().await.map(Self::Direct),
         }
     }
 
-    async fn close(self) -> io::Result<()> {
+    async fn close(self) -> crate::Result<()> {
         match self {
             Self::Client(file) => file.close().await,
             Self::Direct(file) => file.close().await,
         }
     }
 
-    async fn set_len(&mut self, size: u64) -> io::Result<()> {
+    async fn set_len(&mut self, size: u64) -> crate::Result<()> {
         match_file!(self, file => file.set_len(size).await)
     }
 
-    async fn metadata(&mut self) -> io::Result<Metadata> {
+    async fn metadata(&mut self) -> crate::Result<Metadata> {
         match_file!(self, file => file.metadata().await)
     }
 
-    async fn fs_metadata(&mut self) -> io::Result<FsMetadata> {
+    async fn fs_metadata(&mut self) -> crate::Result<FsMetadata> {
         match_file!(self, file => file.fs_metadata().await)
     }
 
-    async fn xattrs(&mut self, namespace: XattrNamespace<'_>) -> io::Result<Vec<XattrEntry>> {
+    async fn xattrs(&mut self, namespace: XattrNamespace<'_>) -> crate::Result<Vec<XattrEntry>> {
         match_file!(self, file => file.xattrs(namespace).await)
     }
 
-    async fn xattr(&mut self, name: &str, namespace: Option<&str>) -> io::Result<Vec<u8>> {
+    async fn xattr(&mut self, name: &str, namespace: Option<&str>) -> crate::Result<Vec<u8>> {
         match_file!(self, file => file.xattr(name, namespace).await)
     }
 
-    async fn streams(&mut self) -> io::Result<Vec<StreamEntry>> {
+    async fn streams(&mut self) -> crate::Result<Vec<StreamEntry>> {
         match_file!(self, file => file.streams().await)
     }
 
@@ -890,15 +861,15 @@ impl FileHandle for AnyFile {
         name: &str,
         namespace: Option<&str>,
         value: &[u8],
-    ) -> io::Result<()> {
+    ) -> crate::Result<()> {
         match_file!(self, file => file.set_xattr(name, namespace, value).await)
     }
 
-    async fn remove_xattr(&mut self, name: &str, namespace: Option<&str>) -> io::Result<()> {
+    async fn remove_xattr(&mut self, name: &str, namespace: Option<&str>) -> crate::Result<()> {
         match_file!(self, file => file.remove_xattr(name, namespace).await)
     }
 
-    async fn try_into_std(self) -> Result<std::fs::File, Self> {
+    async fn try_into_std(self) -> std::result::Result<std::fs::File, Self> {
         match self {
             Self::Client(file) => file.try_into_std().await.map_err(Self::Client),
             Self::Direct(file) => file.try_into_std().await.map_err(Self::Direct),
@@ -998,7 +969,7 @@ impl OpenOptions for AnyOpenOptions<'_> {
         self
     }
 
-    async fn open(&self, path: Utf8TypedPath<'_>) -> Result<AnyFile, io::Error> {
+    async fn open(&self, path: Utf8TypedPath<'_>) -> crate::Result<AnyFile> {
         match self {
             Self::Client(opts) => OpenOptions::open(opts, path).await.map(AnyFile::Client),
             Self::Direct(opts) => OpenOptions::open(opts, path).await.map(AnyFile::Direct),
@@ -1017,14 +988,14 @@ pub enum AnyChild<'a> {
 }
 
 impl Child for AnyChild<'_> {
-    async fn wait(&mut self) -> Result<ExitStatus, io::Error> {
+    async fn wait(&mut self) -> crate::Result<ExitStatus> {
         match self {
             Self::Client(child) => child.wait().await,
             Self::Direct(child) => child.wait().await,
         }
     }
 
-    async fn terminate(self) -> Result<ExitStatus, io::Error> {
+    async fn terminate(self) -> crate::Result<ExitStatus> {
         match self {
             Self::Client(child) => child.terminate().await,
             Self::Direct(child) => (*child).terminate().await,
@@ -1260,7 +1231,7 @@ impl<'a> Command for AnyCommand<'a> {
         self
     }
 
-    async fn spawn(self) -> io::Result<Self::Child> {
+    async fn spawn(self) -> crate::Result<Self::Child> {
         match self {
             Self::Client(builder) => builder.spawn().await.map(AnyChild::Client),
             Self::Direct(builder) => builder.spawn().await.map(Box::new).map(AnyChild::Direct),
@@ -1342,7 +1313,7 @@ impl Vfs for AnyVfs {
         }
     }
 
-    async fn read_dir(&self, path: Utf8TypedPath<'_>) -> Result<ReadDir, io::Error> {
+    async fn read_dir(&self, path: Utf8TypedPath<'_>) -> crate::Result<ReadDir> {
         match self {
             Self::Client(client) => client.read_dir(path).await,
             Self::Direct(direct) => direct.read_dir(path).await,
@@ -1354,7 +1325,7 @@ impl Vfs for AnyVfs {
         program: Utf8TypedPath<'_>,
         path: Option<&str>,
         cwd: Option<Utf8TypedPath<'_>>,
-    ) -> Result<Option<Utf8TypedPathBuf>, io::Error> {
+    ) -> crate::Result<Option<Utf8TypedPathBuf>> {
         match self {
             Self::Client(client) => Vfs::which(client, program, path, cwd).await,
             Self::Direct(direct) => Vfs::which(direct, program, path, cwd).await,
@@ -1365,14 +1336,14 @@ impl Vfs for AnyVfs {
         &self,
         key: WellKnownPath,
         env: &HashMap<String, Option<String>>,
-    ) -> Result<Utf8TypedPathBuf, io::Error> {
+    ) -> crate::Result<Utf8TypedPathBuf> {
         match self {
             Self::Client(client) => Vfs::well_known_path(client, key, env).await,
             Self::Direct(direct) => Vfs::well_known_path(direct, key, env).await,
         }
     }
 
-    async fn clear_cache(&self) -> Result<(), io::Error> {
+    async fn clear_cache(&self) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.clear_cache().await,
             Self::Direct(direct) => direct.clear_cache().await,
@@ -1384,7 +1355,7 @@ impl Vfs for AnyVfs {
         path: Utf8TypedPath<'_>,
         namespace: XattrNamespace<'_>,
         follow: bool,
-    ) -> Result<Vec<XattrEntry>, io::Error> {
+    ) -> crate::Result<Vec<XattrEntry>> {
         match self {
             Self::Client(client) => client.xattrs(path, namespace, follow).await,
             Self::Direct(direct) => direct.xattrs(path, namespace, follow).await,
@@ -1395,7 +1366,7 @@ impl Vfs for AnyVfs {
         &self,
         path: Utf8TypedPath<'_>,
         follow: bool,
-    ) -> Result<Vec<StreamEntry>, io::Error> {
+    ) -> crate::Result<Vec<StreamEntry>> {
         match self {
             Self::Client(client) => client.streams(path, follow).await,
             Self::Direct(direct) => direct.streams(path, follow).await,
@@ -1408,7 +1379,7 @@ impl Vfs for AnyVfs {
         name: &str,
         namespace: Option<&str>,
         follow: bool,
-    ) -> Result<Vec<u8>, io::Error> {
+    ) -> crate::Result<Vec<u8>> {
         match self {
             Self::Client(client) => client.xattr(path, name, namespace, follow).await,
             Self::Direct(direct) => direct.xattr(path, name, namespace, follow).await,
@@ -1422,7 +1393,7 @@ impl Vfs for AnyVfs {
         namespace: Option<&str>,
         value: &[u8],
         follow: bool,
-    ) -> Result<(), io::Error> {
+    ) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.set_xattr(path, name, namespace, value, follow).await,
             Self::Direct(direct) => direct.set_xattr(path, name, namespace, value, follow).await,
@@ -1435,26 +1406,21 @@ impl Vfs for AnyVfs {
         name: &str,
         namespace: Option<&str>,
         follow: bool,
-    ) -> Result<(), io::Error> {
+    ) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.remove_xattr(path, name, namespace, follow).await,
             Self::Direct(direct) => direct.remove_xattr(path, name, namespace, follow).await,
         }
     }
 
-    async fn remove(
-        &self,
-        path: Utf8TypedPath<'_>,
-        all: bool,
-        ignore: bool,
-    ) -> Result<(), io::Error> {
+    async fn remove(&self, path: Utf8TypedPath<'_>, all: bool, ignore: bool) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.remove(path, all, ignore).await,
             Self::Direct(direct) => direct.remove(path, all, ignore).await,
         }
     }
 
-    async fn metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata, io::Error> {
+    async fn metadata(&self, path: Utf8TypedPath<'_>) -> crate::Result<Metadata> {
         match self {
             Self::Client(client) => client.metadata(path).await,
             Self::Direct(direct) => direct.metadata(path).await,
@@ -1465,14 +1431,14 @@ impl Vfs for AnyVfs {
         &self,
         path: Utf8TypedPath<'_>,
         follow: bool,
-    ) -> Result<FsMetadata, io::Error> {
+    ) -> crate::Result<FsMetadata> {
         match self {
             Self::Client(client) => client.fs_metadata(path, follow).await,
             Self::Direct(direct) => direct.fs_metadata(path, follow).await,
         }
     }
 
-    async fn create_dir(&self, path: Utf8TypedPath<'_>, all: bool) -> Result<(), io::Error> {
+    async fn create_dir(&self, path: Utf8TypedPath<'_>, all: bool) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.create_dir(path, all).await,
             Self::Direct(direct) => direct.create_dir(path, all).await,
@@ -1484,7 +1450,7 @@ impl Vfs for AnyVfs {
         path: Utf8TypedPath<'_>,
         all: bool,
         ignore: bool,
-    ) -> Result<(), io::Error> {
+    ) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.remove_dir(path, all, ignore).await,
             Self::Direct(direct) => direct.remove_dir(path, all, ignore).await,
@@ -1496,18 +1462,14 @@ impl Vfs for AnyVfs {
         from: Utf8TypedPath<'_>,
         to: Utf8TypedPath<'_>,
         all: bool,
-    ) -> Result<(), io::Error> {
+    ) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.copy(from, to, all).await,
             Self::Direct(direct) => direct.copy(from, to, all).await,
         }
     }
 
-    async fn rename(
-        &self,
-        from: Utf8TypedPath<'_>,
-        to: Utf8TypedPath<'_>,
-    ) -> Result<(), io::Error> {
+    async fn rename(&self, from: Utf8TypedPath<'_>, to: Utf8TypedPath<'_>) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.rename(from, to).await,
             Self::Direct(direct) => direct.rename(from, to).await,
@@ -1519,7 +1481,7 @@ impl Vfs for AnyVfs {
         from: Utf8TypedPath<'_>,
         to: Utf8TypedPath<'_>,
         all: bool,
-    ) -> Result<(), io::Error> {
+    ) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.move_(from, to, all).await,
             Self::Direct(direct) => direct.move_(from, to, all).await,
@@ -1531,18 +1493,14 @@ impl Vfs for AnyVfs {
         cwd: Utf8TypedPath<'_>,
         src: Utf8TypedPath<'_>,
         dst: Utf8TypedPath<'_>,
-    ) -> Result<(), io::Error> {
+    ) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.symlink(cwd, src, dst).await,
             Self::Direct(direct) => direct.symlink(cwd, src, dst).await,
         }
     }
 
-    async fn hard_link(
-        &self,
-        src: Utf8TypedPath<'_>,
-        dst: Utf8TypedPath<'_>,
-    ) -> Result<(), io::Error> {
+    async fn hard_link(&self, src: Utf8TypedPath<'_>, dst: Utf8TypedPath<'_>) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.hard_link(src, dst).await,
             Self::Direct(direct) => direct.hard_link(src, dst).await,
@@ -1553,7 +1511,7 @@ impl Vfs for AnyVfs {
         &self,
         src: Utf8TypedPath<'_>,
         dst: Utf8TypedPath<'_>,
-    ) -> Result<(), io::Error> {
+    ) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.symlink_dir(src, dst).await,
             Self::Direct(direct) => direct.symlink_dir(src, dst).await,
@@ -1564,42 +1522,42 @@ impl Vfs for AnyVfs {
         &self,
         src: Utf8TypedPath<'_>,
         dst: Utf8TypedPath<'_>,
-    ) -> Result<(), io::Error> {
+    ) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.symlink_file(src, dst).await,
             Self::Direct(direct) => direct.symlink_file(src, dst).await,
         }
     }
 
-    async fn symlink_metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata, io::Error> {
+    async fn symlink_metadata(&self, path: Utf8TypedPath<'_>) -> crate::Result<Metadata> {
         match self {
             Self::Client(client) => client.symlink_metadata(path).await,
             Self::Direct(direct) => direct.symlink_metadata(path).await,
         }
     }
 
-    async fn attrs(&self, path: Utf8TypedPath<'_>, follow: bool) -> Result<Attrs, io::Error> {
+    async fn attrs(&self, path: Utf8TypedPath<'_>, follow: bool) -> crate::Result<Attrs> {
         match self {
             Self::Client(client) => client.attrs(path, follow).await,
             Self::Direct(direct) => direct.attrs(path, follow).await,
         }
     }
 
-    async fn set_attrs(&self, path: Utf8TypedPath<'_>, attrs: Attrs) -> Result<(), io::Error> {
+    async fn set_attrs(&self, path: Utf8TypedPath<'_>, attrs: Attrs) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.set_attrs(path, attrs).await,
             Self::Direct(direct) => direct.set_attrs(path, attrs).await,
         }
     }
 
-    async fn canonicalize(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf, io::Error> {
+    async fn canonicalize(&self, path: Utf8TypedPath<'_>) -> crate::Result<Utf8TypedPathBuf> {
         match self {
             Self::Client(client) => client.canonicalize(path).await,
             Self::Direct(direct) => direct.canonicalize(path).await,
         }
     }
 
-    async fn read_link(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf, io::Error> {
+    async fn read_link(&self, path: Utf8TypedPath<'_>) -> crate::Result<Utf8TypedPathBuf> {
         match self {
             Self::Client(client) => client.read_link(path).await,
             Self::Direct(direct) => direct.read_link(path).await,
@@ -1612,7 +1570,7 @@ impl Vfs for AnyVfs {
         root: Utf8TypedPath<'_>,
         follow_symlinks: bool,
         max_depth: Option<usize>,
-    ) -> Result<Vec<Utf8TypedPathBuf>, io::Error> {
+    ) -> crate::Result<Vec<Utf8TypedPathBuf>> {
         let pattern = pattern.into();
 
         match self {
@@ -1625,7 +1583,7 @@ impl Vfs for AnyVfs {
         &self,
         path: Utf8TypedPath<'_>,
         perm: Permissions,
-    ) -> Result<(), io::Error> {
+    ) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.set_permissions(path, perm).await,
             Self::Direct(direct) => direct.set_permissions(path, perm).await,
@@ -1638,7 +1596,7 @@ impl Vfs for AnyVfs {
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
-    ) -> Result<(), io::Error> {
+    ) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.set_times(path, accessed, modified, created).await,
             Self::Direct(direct) => direct.set_times(path, accessed, modified, created).await,
@@ -1651,7 +1609,7 @@ impl Vfs for AnyVfs {
         user: Option<ChownIdentity>,
         group: Option<ChownIdentity>,
         follow: bool,
-    ) -> Result<(), io::Error> {
+    ) -> crate::Result<()> {
         match self {
             Self::Client(client) => client.chown(path, user, group, follow).await,
             Self::Direct(direct) => direct.chown(path, user, group, follow).await,

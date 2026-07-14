@@ -19,8 +19,7 @@ pub(crate) struct DirEntryAnnex<'v> {
     pub(crate) global: State<'v, Global<'v>>,
     pub(crate) name: String,
     pub(crate) file_type: FileType,
-    #[cfg(unix)]
-    pub(crate) ino: u64,
+    pub(crate) ino: Option<u64>,
 }
 
 pub(crate) struct DirEntryIter {
@@ -45,7 +44,6 @@ pub(crate) fn create_dir_entry<'v, 's>(
             global,
             name,
             file_type: entry.file_type(),
-            #[cfg(unix)]
             ino: entry.ino(),
         },
         out,
@@ -68,8 +66,9 @@ impl<'v> Object<'v> for DirEntry {
         write!(w, "<fs.DirEntry {:?}>", this.annex().name).into_do(strand)
     }
 
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let builder = builder
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let ino = builder.sym("ino");
+        builder
             .get("name", |this, strand, out| {
                 Output::set(strand, out, this.annex().name.as_str());
                 Ok(())
@@ -81,13 +80,10 @@ impl<'v> Object<'v> for DirEntry {
                     file_type_to_sym(this.annex().file_type, this.annex().global),
                 );
                 Ok(())
-            });
-        #[cfg(unix)]
-        let builder = builder.get("ino", |this, strand, out| {
-            Output::set(strand, out, this.annex().ino);
-            Ok(())
-        });
-        builder
+            })
+            .get("ino", move |this, strand, out| {
+                crate::util::option_field(strand, this.annex().ino, ino, out)
+            })
     }
 }
 

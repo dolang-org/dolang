@@ -61,13 +61,13 @@ fn gen_temp_path() -> String {
     format!("/tmp/etilqs_{hex}")
 }
 
-/// Maps an `io::Error` to a SQLite error code, following the same logic as
+/// Maps a shell VFS error to a SQLite error code, following the same logic as
 /// `sqliteErrorFromPosixError` in os_unix.c.
 ///
 /// - `NotFound`        → `not_found_code` (caller supplies context-appropriate code)
 /// - `PermissionDenied`, `AlreadyExists` → `SQLITE_CANTOPEN`
 /// - Anything else    → `default_code`
-fn map_io_err(err: std::io::Error, not_found_code: i32, default_code: i32) -> i32 {
+fn map_vfs_err(err: dolang_shell_vfs::Error, not_found_code: i32, default_code: i32) -> i32 {
     match err.kind() {
         std::io::ErrorKind::NotFound => not_found_code,
         std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::AlreadyExists => SQLITE_CANTOPEN,
@@ -522,7 +522,7 @@ fn open_or_join_shm(handle: &mut ShellFileHandle) -> VfsResult<()> {
                             .read(true)
                             .open(&shm_path_clone)
                             .await
-                            .map_err(|e| map_io_err(e, SQLITE_CANTOPEN, SQLITE_IOERR_SHMOPEN))?;
+                            .map_err(|e| map_vfs_err(e, SQLITE_CANTOPEN, SQLITE_IOERR_SHMOPEN))?;
                         Ok::<_, i32>((f.try_into_std().await.map_err(|_| SQLITE_CANTOPEN)?, true))
                     }
                 }
@@ -651,7 +651,7 @@ impl Vfs for ShellVfs {
                 let tokio_file = open_opts
                     .open(&path)
                     .await
-                    .map_err(|e| map_io_err(e, SQLITE_CANTOPEN, SQLITE_IOERR))?;
+                    .map_err(|e| map_vfs_err(e, SQLITE_CANTOPEN, SQLITE_IOERR))?;
                 tokio_file.try_into_std().await.map_err(|_| SQLITE_CANTOPEN)
             })?;
             (file, delete_on_close)
@@ -668,7 +668,7 @@ impl Vfs for ShellVfs {
                     .create_new(true)
                     .open(&tp)
                     .await
-                    .map_err(|e| map_io_err(e, SQLITE_CANTOPEN, SQLITE_IOERR))?;
+                    .map_err(|e| map_vfs_err(e, SQLITE_CANTOPEN, SQLITE_IOERR))?;
                 tokio_file.try_into_std().await.map_err(|_| SQLITE_CANTOPEN)
             })?;
             (file, Some(temp_path))
@@ -717,7 +717,7 @@ impl Vfs for ShellVfs {
             client
                 .remove(Utf8TypedPath::Unix(Utf8UnixPath::new(&path)), false, false)
                 .await
-                .map_err(|e| map_io_err(e, SQLITE_IOERR_DELETE_NOENT, SQLITE_IOERR_DELETE))
+                .map_err(|e| map_vfs_err(e, SQLITE_IOERR_DELETE_NOENT, SQLITE_IOERR_DELETE))
         })
     }
 

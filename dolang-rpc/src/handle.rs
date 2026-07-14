@@ -1,4 +1,4 @@
-use std::{fmt::Formatter, marker::PhantomData, str};
+use std::{fmt, fmt::Formatter, marker::PhantomData, str};
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
@@ -29,6 +29,12 @@ pub type DefaultHandle = std::os::windows::io::OwnedHandle;
 /// Direct attachment serialization is available only through an
 /// attachment-capable session transport.
 pub struct OsHandle<T = DefaultHandle>(T);
+
+impl<T> fmt::Debug for OsHandle<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("OsHandle(..)")
+    }
+}
 
 impl<T> OsHandle<T> {
     pub fn new(value: T) -> Self {

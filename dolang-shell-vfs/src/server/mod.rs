@@ -24,18 +24,17 @@ use tokio::{
     sync::watch,
 };
 
-#[cfg(unix)]
-use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
 use crate::{
     Child as _, Command as _, Direct, FileHandle as _, OpenOptions as _, Permissions,
     Utf8TypedPath, Vfs,
     protocol::{
-        AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
-        FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenRequest,
-        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind,
-        SetAttrsRequest, SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest,
-        StreamsRequest, SymlinkKind, SymlinkRequest, VfsProtocol, WellKnownPathRequest, WirePath,
-        XattrRequest, XattrsRequest,
+        AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
+        CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
+        MoveRequest, OpenRequest, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest,
+        RequestKind, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
+        SetXattrRequest, SpawnRequest, StreamsRequest, SymlinkKind, SymlinkRequest,
+        UnixStreamSocketRequest, VfsProtocol, WellKnownPathRequest, WirePath, XattrRequest,
+        XattrsRequest,
     },
 };
 
@@ -174,8 +173,13 @@ async fn serve_connection(
 }
 
 impl Connection {
-    fn io_result<T>(result: io::Result<T>) -> Result<T, i32> {
-        result.map_err(io_error_code)
+    fn wire_result<T, E>(
+        result: std::result::Result<T, E>,
+    ) -> std::result::Result<T, crate::protocol::WireError>
+    where
+        E: Into<crate::Error>,
+    {
+        result.map_err(wire_error)
     }
 
     async fn handle(&self, kind: RequestKind) -> ResponseKind {
@@ -191,9 +195,7 @@ impl Connection {
                 ResponseKind::ClearCache
             }
             RequestKind::Open(request) => self.handle_open(request).await,
-            #[cfg(unix)]
             RequestKind::UnixStreamSocket(request) => self.handle_unix_stream_socket(request).await,
-            #[cfg(windows)]
             RequestKind::ReadDir { path } => self.handle_read_dir(path).await,
             RequestKind::Remove(request) => self.handle_remove(request).await,
             RequestKind::Metadata(request) => self.handle_metadata(request).await,
@@ -210,7 +212,6 @@ impl Connection {
             RequestKind::SetAttrs(request) => self.handle_set_attrs(request).await,
             RequestKind::Canonicalize(request) => self.handle_canonicalize(request).await,
             RequestKind::ReadLink(request) => self.handle_read_link(request).await,
-            #[cfg(unix)]
             RequestKind::Access(request) => self.handle_access(request).await,
             RequestKind::Glob(request) => self.handle_glob(request).await,
             RequestKind::SetPermissions(request) => self.handle_set_permissions(request).await,
@@ -245,7 +246,7 @@ impl Connection {
 
     async fn handle_well_known_path(&self, req: WellKnownPathRequest) -> ResponseKind {
         let result = self.server.direct.well_known_path(req.key, &req.env).await;
-        ResponseKind::WellKnownPath(result.map(Into::into).map_err(io_error_code))
+        ResponseKind::WellKnownPath(result.map(Into::into).map_err(wire_error))
     }
 
     async fn handle_spawn_rpc(
@@ -295,7 +296,7 @@ impl Connection {
         let mut child = match cmd.spawn().await {
             Ok(child) => child,
             Err(e) => {
-                return ResponseKind::Spawn(Err(io_error_code(e)));
+                return ResponseKind::Spawn(Err(wire_error(e)));
             }
         };
 
@@ -303,7 +304,7 @@ impl Connection {
             Ok(exit) => exit,
             Err(_) => child.terminate().await,
         };
-        ResponseKind::Spawn(exit.map(exit_status_to_raw).map_err(io_error_code))
+        ResponseKind::Spawn(exit.map(exit_status_to_raw).map_err(wire_error))
     }
 
     async fn handle_query(&self) -> ResponseKind {
@@ -328,13 +329,12 @@ impl Connection {
                 let handle: DefaultHandle = file.try_into_std().await.unwrap().into();
                 ResponseKind::Open(Ok(OsHandle::new(handle)))
             }
-            Err(e) => ResponseKind::Open(Err(io_error_code(e))),
+            Err(e) => ResponseKind::Open(Err(wire_error(e))),
         }
     }
 
-    #[cfg(windows)]
     async fn handle_read_dir(&self, path: WirePath) -> ResponseKind {
-        let result = async {
+        let result: crate::Result<Vec<crate::DirEntry>> = async {
             let mut read_dir = self.server.direct.read_dir(request_path(&path)).await?;
             let mut entries = Vec::new();
             while let Some(entry) = read_dir.next_entry().await? {
@@ -343,7 +343,7 @@ impl Connection {
             Ok(entries)
         }
         .await;
-        ResponseKind::ReadDir(Self::io_result(result))
+        ResponseKind::ReadDir(Self::wire_result(result))
     }
 
     #[cfg(unix)]
@@ -374,13 +374,25 @@ impl Connection {
 
         match result {
             Ok(Ok(fd)) => ResponseKind::UnixStreamSocket(Ok(OsHandle::new(fd))),
-            Ok(Err(e)) => ResponseKind::UnixStreamSocket(Err(e as i32)),
-            Err(_) => ResponseKind::UnixStreamSocket(Err(libc::EIO)),
+            Ok(Err(e)) => ResponseKind::UnixStreamSocket(Err(wire_error(
+                io::Error::from_raw_os_error(e as i32),
+            ))),
+            Err(_) => ResponseKind::UnixStreamSocket(Err(wire_error(
+                io::Error::from_raw_os_error(libc::EIO),
+            ))),
         }
     }
 
+    #[cfg(not(unix))]
+    async fn handle_unix_stream_socket(&self, _req: UnixStreamSocketRequest) -> ResponseKind {
+        ResponseKind::UnixStreamSocket(Err(wire_error(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Unix stream sockets are not supported on this platform",
+        ))))
+    }
+
     async fn handle_remove(&self, req: RemoveRequest) -> ResponseKind {
-        ResponseKind::Remove(Self::io_result(
+        ResponseKind::Remove(Self::wire_result(
             self.server
                 .direct
                 .remove(request_path(&req.path), req.all, req.ignore)
@@ -389,13 +401,13 @@ impl Connection {
     }
 
     async fn handle_metadata(&self, req: MetadataRequest) -> ResponseKind {
-        ResponseKind::Metadata(Self::io_result(
+        ResponseKind::Metadata(Self::wire_result(
             self.server.direct.metadata(request_path(&req.path)).await,
         ))
     }
 
     async fn handle_fs_metadata(&self, req: FsMetadataRequest) -> ResponseKind {
-        ResponseKind::FsMetadata(Self::io_result(
+        ResponseKind::FsMetadata(Self::wire_result(
             self.server
                 .direct
                 .fs_metadata(request_path(&req.path), req.follow)
@@ -404,7 +416,7 @@ impl Connection {
     }
 
     async fn handle_create_dir(&self, req: CreateDirRequest) -> ResponseKind {
-        ResponseKind::CreateDir(Self::io_result(
+        ResponseKind::CreateDir(Self::wire_result(
             self.server
                 .direct
                 .create_dir(request_path(&req.path), req.all)
@@ -413,7 +425,7 @@ impl Connection {
     }
 
     async fn handle_remove_dir(&self, req: RemoveDirRequest) -> ResponseKind {
-        ResponseKind::RemoveDir(Self::io_result(
+        ResponseKind::RemoveDir(Self::wire_result(
             self.server
                 .direct
                 .remove_dir(request_path(&req.path), req.all, req.ignore)
@@ -422,7 +434,7 @@ impl Connection {
     }
 
     async fn handle_copy(&self, req: CopyRequest) -> ResponseKind {
-        ResponseKind::Copy(Self::io_result(
+        ResponseKind::Copy(Self::wire_result(
             self.server
                 .direct
                 .copy(request_path(&req.from), request_path(&req.to), req.all)
@@ -431,7 +443,7 @@ impl Connection {
     }
 
     async fn handle_rename(&self, req: RenameRequest) -> ResponseKind {
-        ResponseKind::Rename(Self::io_result(
+        ResponseKind::Rename(Self::wire_result(
             self.server
                 .direct
                 .rename(request_path(&req.from), request_path(&req.to))
@@ -440,7 +452,7 @@ impl Connection {
     }
 
     async fn handle_move(&self, req: MoveRequest) -> ResponseKind {
-        ResponseKind::Move(Self::io_result(
+        ResponseKind::Move(Self::wire_result(
             self.server
                 .direct
                 .move_(request_path(&req.from), request_path(&req.to), req.all)
@@ -473,11 +485,11 @@ impl Connection {
                     .await
             }
         };
-        ResponseKind::Symlink(Self::io_result(result))
+        ResponseKind::Symlink(Self::wire_result(result))
     }
 
     async fn handle_hard_link(&self, req: HardLinkRequest) -> ResponseKind {
-        ResponseKind::HardLink(Self::io_result(
+        ResponseKind::HardLink(Self::wire_result(
             self.server
                 .direct
                 .hard_link(request_path(&req.src), request_path(&req.dst))
@@ -486,7 +498,7 @@ impl Connection {
     }
 
     async fn handle_symlink_metadata(&self, req: MetadataRequest) -> ResponseKind {
-        ResponseKind::SymlinkMetadata(Self::io_result(
+        ResponseKind::SymlinkMetadata(Self::wire_result(
             self.server
                 .direct
                 .symlink_metadata(request_path(&req.path))
@@ -495,7 +507,7 @@ impl Connection {
     }
 
     async fn handle_attrs(&self, req: AttrsRequest) -> ResponseKind {
-        ResponseKind::Attrs(Self::io_result(
+        ResponseKind::Attrs(Self::wire_result(
             self.server
                 .direct
                 .attrs(request_path(&req.path), req.follow)
@@ -504,7 +516,7 @@ impl Connection {
     }
 
     async fn handle_set_attrs(&self, req: SetAttrsRequest) -> ResponseKind {
-        ResponseKind::SetAttrs(Self::io_result(
+        ResponseKind::SetAttrs(Self::wire_result(
             self.server
                 .direct
                 .set_attrs(request_path(&req.path), req.attrs)
@@ -519,7 +531,7 @@ impl Connection {
             .canonicalize(request_path(&req.path))
             .await
             .map(Into::into);
-        ResponseKind::Canonicalize(Self::io_result(result))
+        ResponseKind::Canonicalize(Self::wire_result(result))
     }
 
     async fn handle_read_link(&self, req: ReadLinkRequest) -> ResponseKind {
@@ -529,7 +541,7 @@ impl Connection {
             .read_link(request_path(&req.path))
             .await
             .map(Into::into);
-        ResponseKind::ReadLink(Self::io_result(result))
+        ResponseKind::ReadLink(Self::wire_result(result))
     }
 
     #[cfg(unix)]
@@ -542,20 +554,36 @@ impl Connection {
         tokio::task::spawn_blocking(move || {
             let path = match PathBuf::try_from(path) {
                 Ok(path) => path,
-                Err(_) => return ResponseKind::Access(Err(libc::EINVAL)),
+                Err(_) => {
+                    return ResponseKind::Access(Err(wire_error(io::Error::from_raw_os_error(
+                        libc::EINVAL,
+                    ))));
+                }
             };
             let flags = AccessFlags::from_bits(mode).unwrap_or(AccessFlags::empty());
             match access(&path, flags) {
                 Ok(()) => ResponseKind::Access(Ok(())),
-                Err(e) => ResponseKind::Access(Err(e as i32)),
+                Err(e) => {
+                    ResponseKind::Access(Err(wire_error(io::Error::from_raw_os_error(e as i32))))
+                }
             }
         })
         .await
-        .unwrap_or(ResponseKind::Access(Err(libc::EIO)))
+        .unwrap_or_else(|_| {
+            ResponseKind::Access(Err(wire_error(io::Error::from_raw_os_error(libc::EIO))))
+        })
+    }
+
+    #[cfg(not(unix))]
+    async fn handle_access(&self, _req: AccessRequest) -> ResponseKind {
+        ResponseKind::Access(Err(wire_error(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "POSIX access checks are not supported on this platform",
+        ))))
     }
 
     async fn handle_glob(&self, req: GlobRequest) -> ResponseKind {
-        ResponseKind::Glob(Self::io_result(
+        ResponseKind::Glob(Self::wire_result(
             self.server
                 .direct
                 .glob(
@@ -570,7 +598,7 @@ impl Connection {
     }
 
     async fn handle_set_permissions(&self, req: SetPermissionsRequest) -> ResponseKind {
-        ResponseKind::SetPermissions(Self::io_result(
+        ResponseKind::SetPermissions(Self::wire_result(
             self.server
                 .direct
                 .set_permissions(request_path(&req.path), Permissions::from_mode(req.mode))
@@ -588,7 +616,7 @@ impl Connection {
         let created = req
             .created
             .map(|timestamp| (timestamp.secs, timestamp.nanos));
-        ResponseKind::SetTimes(Self::io_result(
+        ResponseKind::SetTimes(Self::wire_result(
             self.server
                 .direct
                 .set_times(request_path(&req.path), accessed, modified, created)
@@ -597,7 +625,7 @@ impl Connection {
     }
 
     async fn handle_chown(&self, req: ChownRequest) -> ResponseKind {
-        ResponseKind::Chown(Self::io_result(
+        ResponseKind::Chown(Self::wire_result(
             self.server
                 .direct
                 .chown(request_path(&req.path), req.user, req.group, req.follow)
@@ -606,7 +634,7 @@ impl Connection {
     }
 
     async fn handle_xattrs(&self, req: XattrsRequest) -> ResponseKind {
-        ResponseKind::Xattrs(Self::io_result(
+        ResponseKind::Xattrs(Self::wire_result(
             self.server
                 .direct
                 .xattrs(
@@ -619,7 +647,7 @@ impl Connection {
     }
 
     async fn handle_xattr(&self, req: XattrRequest) -> ResponseKind {
-        ResponseKind::Xattr(Self::io_result(
+        ResponseKind::Xattr(Self::wire_result(
             self.server
                 .direct
                 .xattr(
@@ -633,7 +661,7 @@ impl Connection {
     }
 
     async fn handle_set_xattr(&self, req: SetXattrRequest) -> ResponseKind {
-        ResponseKind::SetXattr(Self::io_result(
+        ResponseKind::SetXattr(Self::wire_result(
             self.server
                 .direct
                 .set_xattr(
@@ -648,7 +676,7 @@ impl Connection {
     }
 
     async fn handle_remove_xattr(&self, req: XattrRequest) -> ResponseKind {
-        ResponseKind::RemoveXattr(Self::io_result(
+        ResponseKind::RemoveXattr(Self::wire_result(
             self.server
                 .direct
                 .remove_xattr(
@@ -662,7 +690,7 @@ impl Connection {
     }
 
     async fn handle_streams(&self, req: StreamsRequest) -> ResponseKind {
-        ResponseKind::Streams(Self::io_result(
+        ResponseKind::Streams(Self::wire_result(
             self.server
                 .direct
                 .streams(request_path(&req.path), req.follow)
@@ -671,12 +699,8 @@ impl Connection {
     }
 }
 
-fn io_error_code(error: io::Error) -> i32 {
-    #[cfg(unix)]
-    let fallback = libc::EIO;
-    #[cfg(windows)]
-    let fallback = windows_sys::Win32::Foundation::ERROR_GEN_FAILURE as i32;
-    error.raw_os_error().unwrap_or(fallback)
+fn wire_error(error: impl Into<crate::Error>) -> crate::protocol::WireError {
+    error.into().into()
 }
 
 #[cfg(unix)]

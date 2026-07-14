@@ -150,8 +150,9 @@ async fn direct_metadata_windows_attributes() {
 
     let metadata = direct.metadata(typed(&path)).await.unwrap();
 
-    assert_ne!(metadata.win_attrs, 0);
-    assert_ne!(metadata.win_attrs & 0x0000_0001, 0);
+    let windows = metadata.windows().unwrap();
+    assert_ne!(windows.attrs, 0);
+    assert_ne!(windows.attrs & 0x0000_0001, 0);
     assert_eq!(metadata.attrs().readonly, Some(true));
 }
 
