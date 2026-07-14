@@ -461,6 +461,11 @@ pub(crate) struct OpenRequest {
     pub(crate) handle_preference: OpenHandlePreference,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct ReadDirResponse {
+    pub(crate) entries: Vec<DirEntry>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub(crate) enum OpenHandlePreference {
     NativePreferred,
@@ -800,7 +805,7 @@ pub(crate) enum ResponseKind {
     FileRemoveXattr(Result<(), WireError>),
     FileClose(Result<(), WireError>),
     UnixStreamSocket(Result<OsHandle, WireError>),
-    ReadDir(Result<Vec<DirEntry>, WireError>),
+    ReadDir(Result<ReadDirResponse, WireError>),
     Remove(Result<(), WireError>),
     Metadata(Result<Metadata, WireError>),
     FsMetadata(Result<FsMetadata, WireError>),

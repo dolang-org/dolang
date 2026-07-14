@@ -32,8 +32,8 @@ use crate::{
     protocol::{
         AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
         FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenHandle,
-        OpenHandlePreference, OpenRequest, QueryResponse, ReadLinkRequest, RemoveDirRequest,
-        RemoveRequest, RenameRequest, RequestKind, ResponseKind, SetAttrsRequest,
+        OpenHandlePreference, OpenRequest, QueryResponse, ReadDirResponse, ReadLinkRequest,
+        RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind, SetAttrsRequest,
         SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest, StreamsRequest,
         SymlinkKind, SymlinkRequest, Timestamp, VfsProtocol, WellKnownPathRequest, WirePath,
         XattrNamespaceRequest, XattrRequest, XattrsRequest,
@@ -1216,15 +1216,12 @@ impl Vfs for Client {
     }
 
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> crate::Result<ReadDir> {
-        if self.mode == SessionMode::Remote {
-            return self.unsupported("reading directories");
-        }
         match self
             .request(RequestKind::ReadDir { path: path.into() })
             .await?
         {
             ResponseKind::ReadDir(result) => result
-                .map(ReadDir::from_entries)
+                .map(|ReadDirResponse { entries }| ReadDir::from_entries(entries))
                 .map_err(crate::Error::from),
             response => Err(unexpected(response).into()),
         }

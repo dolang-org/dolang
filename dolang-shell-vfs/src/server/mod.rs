@@ -27,11 +27,11 @@ use crate::{
     protocol::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
         CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
-        MoveRequest, OpenHandle, OpenHandlePreference, OpenRequest, QueryResponse, ReadLinkRequest,
-        RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind, SetAttrsRequest,
-        SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest, StreamsRequest,
-        SymlinkKind, SymlinkRequest, UnixStreamSocketRequest, VfsProtocol, WellKnownPathRequest,
-        WirePath, XattrRequest, XattrsRequest,
+        MoveRequest, OpenHandle, OpenHandlePreference, OpenRequest, QueryResponse, ReadDirResponse,
+        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind,
+        SetAttrsRequest, SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest,
+        StreamsRequest, SymlinkKind, SymlinkRequest, UnixStreamSocketRequest, VfsProtocol,
+        WellKnownPathRequest, WirePath, XattrRequest, XattrsRequest,
     },
 };
 
@@ -679,16 +679,13 @@ impl Connection {
     }
 
     async fn handle_read_dir(&self, path: WirePath) -> ResponseKind {
-        if self.mode == SessionMode::Remote {
-            return ResponseKind::ReadDir(Err(Self::unsupported("reading directories")));
-        }
-        let result: crate::Result<Vec<crate::DirEntry>> = async {
+        let result: crate::Result<ReadDirResponse> = async {
             let mut read_dir = self.server.vfs.read_dir(request_path(&path)).await?;
             let mut entries = Vec::new();
             while let Some(entry) = read_dir.next_entry().await? {
                 entries.push(entry);
             }
-            Ok(entries)
+            Ok(ReadDirResponse { entries })
         }
         .await;
         ResponseKind::ReadDir(Self::wire_result(result))
