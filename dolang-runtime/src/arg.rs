@@ -346,27 +346,6 @@ impl<'v, 'a> Args<'v, 'a> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{Arg, Args};
-    use crate::Value;
-    use std::cell::UnsafeCell;
-
-    #[test]
-    fn prepend_self_reuses_a_consumed_leading_argument() {
-        let slots = [UnsafeCell::new(Value::NIL), UnsafeCell::new(Value::NIL)];
-        let sig = [None];
-        let mut args = unsafe { Args::new(&slots, &sig, 1) };
-
-        assert!(matches!(args.next(), Some(Arg::Pos(_))));
-        assert!(args.next().is_none());
-
-        args.prepend_self(Value::NIL);
-        assert!(matches!(args.next(), Some(Arg::Pos(_))));
-        assert!(args.next().is_none());
-    }
-}
-
 /// Unpacks [`Args`] into required and optional positional and key arguments
 ///
 /// Invoke as:
@@ -541,4 +520,25 @@ macro_rules! method {
     ($strand: expr, $rcvr: expr, $method: expr, $out: expr) => {
         method!(impl $strand, $rcvr, $method, $out, {}, {}, { })
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Arg, Args};
+    use crate::Value;
+    use std::cell::UnsafeCell;
+
+    #[test]
+    fn prepend_self_reuses_a_consumed_leading_argument() {
+        let slots = [UnsafeCell::new(Value::NIL), UnsafeCell::new(Value::NIL)];
+        let sig = [None];
+        let mut args = unsafe { Args::new(&slots, &sig, 1) };
+
+        assert!(matches!(args.next(), Some(Arg::Pos(_))));
+        assert!(args.next().is_none());
+
+        args.prepend_self(Value::NIL);
+        assert!(matches!(args.next(), Some(Arg::Pos(_))));
+        assert!(args.next().is_none());
+    }
 }
