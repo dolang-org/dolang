@@ -20,6 +20,7 @@ do
   with_temp_dir parent: $runtime_dir do |subdir|
     subdir.chmod 0o700
     let socket = (subdir / "socket")
+    let input = strand.input()
     pipeline
       do env DOLANG_SHELL_VFS: $agent do sudo -E
         if (user != nil)
@@ -28,7 +29,7 @@ do
       do
         strand.next()
         let a = Vfs.unix_socket $socket
-        return a $thunk
+        return strand.redirect input: $input do a $thunk
 
 def run_command
   cmd

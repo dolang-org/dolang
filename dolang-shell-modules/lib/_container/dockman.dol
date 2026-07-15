@@ -347,6 +347,7 @@ pub class Runtime
     with_temp_dir parent: $runtime_dir() do |subdir|
       subdir.chmod 0o700
       let socket = (subdir / "socket")
+      let input = strand.input()
       pipeline
         do self.cli run --rm -i
           --entrypoint $ctr_agent
@@ -356,7 +357,7 @@ pub class Runtime
         do
           strand.next()
           let agent = Vfs.unix_socket $socket
-          return agent $thunk
+          return strand.redirect input: $input do agent $thunk
 
   def run_direct self ctr cmd argv
     self.cli run --rm -i $ctr $cmd ...argv
