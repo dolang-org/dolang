@@ -53,7 +53,7 @@ fn stdin_command() -> (&'static str, [&'static str; 2]) {
 
 #[cfg(windows)]
 fn stdin_command() -> (&'static str, [&'static str; 2]) {
-    ("cmd", ["/C", "findstr /X remote-input"])
+    ("cmd", ["/C", "findstr remote-input"])
 }
 
 #[cfg(unix)]
@@ -63,17 +63,17 @@ fn stdout_command() -> (&'static str, [&'static str; 2]) {
 
 #[cfg(windows)]
 fn stdout_command() -> (&'static str, [&'static str; 2]) {
-    ("cmd", ["/C", "echo|set /p=remote-stdout"])
+    ("cmd", ["/C", "echo remote-stdout"])
 }
 
 #[cfg(unix)]
 fn stderr_command() -> (&'static str, [&'static str; 2]) {
-    ("sh", ["-c", "printf remote-stderr >&2"])
+    ("sh", ["-c", "echo remote-stderr >&2"])
 }
 
 #[cfg(windows)]
 fn stderr_command() -> (&'static str, [&'static str; 2]) {
-    ("cmd", ["/C", "echo|set /p=remote-stderr 1>&2"])
+    ("cmd", ["/C", "echo remote-stderr 1>&2"])
 }
 
 #[cfg(unix)]
@@ -163,6 +163,89 @@ async fn null_stdio_processes_work_over_generic_stream() {
 }
 
 #[tokio::test]
+async fn opaque_pipe_transfers_bytes_and_reports_eof() {
+    let (client, server_task) = connected_pair().await;
+    let (mut send, mut recv) = client.pipe().await.unwrap();
+
+    send.write_all(b"remote pipe").await.unwrap();
+    send.shutdown().await.unwrap();
+    send.shutdown().await.unwrap();
+
+    let mut data = Vec::new();
+    recv.read_to_end(&mut data).await.unwrap();
+    assert_eq!(data, b"remote pipe");
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn opaque_pipe_clones_have_independent_ownership() {
+    let (client, server_task) = connected_pair().await;
+    let (mut send, mut recv) = client.pipe().await.unwrap();
+    let mut clone = send.try_clone().await.unwrap();
+
+    send.shutdown().await.unwrap();
+    clone.write_all(b"from clone").await.unwrap();
+    clone.shutdown().await.unwrap();
+
+    let mut data = Vec::new();
+    recv.read_to_end(&mut data).await.unwrap();
+    assert_eq!(data, b"from clone");
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn opaque_pipe_reports_broken_pipe_after_receiver_drop() {
+    let (client, server_task) = connected_pair().await;
+    let (mut send, recv) = client.pipe().await.unwrap();
+    drop(recv);
+
+    let error = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match send.write_all(&[0; 4096]).await {
+                Ok(()) => tokio::task::yield_now().await,
+                Err(error) => break error,
+            }
+        }
+    })
+    .await
+    .expect("remote receiver close did not reach the server");
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn opaque_pipe_connects_remote_children_without_client_relay() {
+    let (client, server_task) = connected_pair().await;
+    let (send, recv) = client.pipe().await.unwrap();
+
+    let mut producer = command_with_args(&client, stdout_command());
+    producer.stdout(send).unwrap();
+    let mut consumer = command_with_args(
+        &client,
+        if cfg!(windows) {
+            ("cmd", ["/C", "findstr remote-stdout"])
+        } else {
+            ("sh", ["-c", "read line; test \"$line\" = remote-stdout"])
+        },
+    );
+    consumer.stdin(recv).unwrap();
+
+    let mut consumer = consumer.spawn().await.unwrap();
+    let mut producer = producer.spawn().await.unwrap();
+    assert!(producer.wait().await.unwrap().success());
+    assert!(consumer.wait().await.unwrap().success());
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn retained_files_can_be_used_for_remote_stdio() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
@@ -218,7 +301,7 @@ async fn retained_files_can_be_used_for_remote_stdio() {
     let mut stderr_data = String::new();
     stdout.read_to_string(&mut stdout_data).await.unwrap();
     stderr.read_to_string(&mut stderr_data).await.unwrap();
-    assert_eq!(stdout_data, "remote-stdout");
+    assert_eq!(stdout_data.trim_end(), "remote-stdout");
     assert_eq!(stderr_data.trim_end(), "remote-stderr");
 
     client.stop().await.unwrap();
@@ -226,16 +309,10 @@ async fn retained_files_can_be_used_for_remote_stdio() {
 }
 
 #[tokio::test]
-async fn native_stdio_is_unsupported_over_generic_stream() {
+async fn inherited_stdio_is_unsupported_over_generic_stream() {
     let (client, server_task) = connected_pair().await;
     let mut command = command_with_args(&client, successful_command());
     command.stdin_inherit().unwrap();
-    let error = command.spawn().await.err().unwrap();
-    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
-
-    let (send, _recv) = client.pipe().unwrap();
-    let mut command = command_with_args(&client, successful_command());
-    command.stdout(send).unwrap();
     let error = command.spawn().await.err().unwrap();
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
 

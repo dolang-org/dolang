@@ -118,9 +118,9 @@ async fn client_or_direct_routes_path_and_open_operations() {
 #[tokio::test]
 async fn spawn_transfers_standard_stream_handles() {
     let (client, server_task) = connected_pair().await;
-    let (mut stdin_send, stdin_recv) = client.pipe().unwrap();
-    let (stdout_send, mut stdout_recv) = client.pipe().unwrap();
-    let (stderr_send, mut stderr_recv) = client.pipe().unwrap();
+    let (mut stdin_send, stdin_recv) = client.pipe().await.unwrap();
+    let (stdout_send, mut stdout_recv) = client.pipe().await.unwrap();
+    let (stderr_send, mut stderr_recv) = client.pipe().await.unwrap();
 
     let mut command = client.command(typed_str("cmd.exe"));
     command

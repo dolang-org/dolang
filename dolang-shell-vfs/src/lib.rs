@@ -797,7 +797,7 @@ pub trait Vfs {
 
     fn open_options(&self) -> Self::OpenOptions<'_>;
     fn command(&self, program: Utf8TypedPath<'_>) -> Self::Command<'_>;
-    fn pipe(&self) -> io::Result<(Self::StdioSend, Self::StdioRecv)>;
+    async fn pipe(&self) -> Result<(Self::StdioSend, Self::StdioRecv)>;
     async fn query(&self) -> Result<Query>;
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> Result<ReadDir>;
     async fn which(
@@ -1408,10 +1408,10 @@ impl Vfs for AnyVfs {
         }
     }
 
-    fn pipe(&self) -> io::Result<(StdioSend, StdioRecv)> {
+    async fn pipe(&self) -> crate::Result<(StdioSend, StdioRecv)> {
         match self {
-            Self::Client(client) => client.pipe(),
-            Self::Direct(direct) => direct.pipe(),
+            Self::Client(client) => client.pipe().await,
+            Self::Direct(direct) => direct.pipe().await,
         }
     }
 

@@ -187,7 +187,7 @@ async fn configure_negotiated_input<'v, 's>(
 ) -> Result<'v, 's, Option<RecvGuard>> {
     let recv_result = pipe_channel::negotiate_recv(input, strand, global).await?;
     if let Some(guard) = recv_result {
-        let pipe = guard.recv_pipe().into_sys(strand)?;
+        let pipe = guard.recv_pipe().await.into_sys(strand)?;
         command.stdin(pipe).into_sys(strand)?;
         Ok(Some(guard))
     } else {
@@ -203,7 +203,7 @@ async fn configure_negotiated_output<'v, 's>(
 ) -> Result<'v, 's, Option<SendGuard>> {
     let send_result = pipe_channel::negotiate_send(output, strand, global).await?;
     if let Some(guard) = send_result {
-        let pipe = guard.send_pipe().into_sys(strand)?;
+        let pipe = guard.send_pipe().await.into_sys(strand)?;
         command.stdout(pipe).into_sys(strand)?;
         Ok(Some(guard))
     } else {
@@ -576,7 +576,7 @@ async fn run<'v, 's>(
     };
 
     if !stdin_negotiated && !configure_direct_input(strand, global, &mut command, input).await? {
-        let (parent_stdin, child_stdin) = vfs.pipe().into_sys(strand)?;
+        let (parent_stdin, child_stdin) = vfs.pipe().await.into_sys(strand)?;
         command.stdin(child_stdin).into_sys(strand)?;
         stdin_pipe = Some(parent_stdin);
     }
@@ -586,7 +586,14 @@ async fn run<'v, 's>(
     if stderr_merge {
         if stdout_negotiated {
             command
-                .stderr(send_guard.as_ref().unwrap().send_pipe().into_sys(strand)?)
+                .stderr(
+                    send_guard
+                        .as_ref()
+                        .unwrap()
+                        .send_pipe()
+                        .await
+                        .into_sys(strand)?,
+                )
                 .into_sys(strand)?;
         } else if stdout_direct {
             if output.is_nil() || output.eq(strand, Singleton::IterNull) {
@@ -603,14 +610,14 @@ async fn run<'v, 's>(
                 }
             }
         } else {
-            let (child_stdout, parent_stdout) = vfs.pipe().into_sys(strand)?;
-            let child_stderr = child_stdout.try_clone().into_sys(strand)?;
+            let (child_stdout, parent_stdout) = vfs.pipe().await.into_sys(strand)?;
+            let child_stderr = child_stdout.try_clone().await.into_sys(strand)?;
             command.stdout(child_stdout).into_sys(strand)?;
             command.stderr(child_stderr).into_sys(strand)?;
             stdout_pipe = Some(parent_stdout);
         }
     } else if !stdout_direct {
-        let (child_stdout, parent_stdout) = vfs.pipe().into_sys(strand)?;
+        let (child_stdout, parent_stdout) = vfs.pipe().await.into_sys(strand)?;
         command.stdout(child_stdout).into_sys(strand)?;
         stdout_pipe = Some(parent_stdout);
     }
@@ -620,7 +627,7 @@ async fn run<'v, 's>(
         && !stderr_negotiated
         && !configure_direct_stderr(strand, global, &mut command, stderr).await?
     {
-        let (child_stderr, parent_stderr) = vfs.pipe().into_sys(strand)?;
+        let (child_stderr, parent_stderr) = vfs.pipe().await.into_sys(strand)?;
         command.stderr(child_stderr).into_sys(strand)?;
         stderr_pipe = Some(parent_stderr);
     }

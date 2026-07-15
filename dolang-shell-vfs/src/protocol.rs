@@ -449,6 +449,12 @@ pub(crate) struct SpawnRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct PipeResponse {
+    pub(crate) send: Opaque<crate::StdioSendMarker>,
+    pub(crate) recv: Opaque<crate::StdioRecvMarker>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum StdioRecvTarget {
     Null,
     Native(OsHandle),
@@ -718,6 +724,7 @@ pub(crate) enum RequestKind {
     WellKnownPath(WellKnownPathRequest),
     Stop,
     ClearCache,
+    Pipe,
     Open(OpenRequest),
     FileRead {
         file: Opaque<crate::FileMarker>,
@@ -747,7 +754,21 @@ pub(crate) enum RequestKind {
     StdioSendClose {
         stdio: Opaque<crate::StdioSendMarker>,
     },
+    StdioSendWrite {
+        stdio: Opaque<crate::StdioSendMarker>,
+        data: Vec<u8>,
+    },
+    StdioSendClone {
+        stdio: Opaque<crate::StdioSendMarker>,
+    },
     StdioRecvClose {
+        stdio: Opaque<crate::StdioRecvMarker>,
+    },
+    StdioRecvRead {
+        stdio: Opaque<crate::StdioRecvMarker>,
+        len: usize,
+    },
+    StdioRecvClone {
         stdio: Opaque<crate::StdioRecvMarker>,
     },
     FileMetadata {
@@ -824,6 +845,7 @@ pub(crate) enum ResponseKind {
     WellKnownPath(Result<WirePath, WireError>),
     Stop,
     ClearCache(Result<(), WireError>),
+    Pipe(Result<PipeResponse, WireError>),
     Open(Result<OpenHandle, WireError>),
     FileRead(Result<Vec<u8>, WireError>),
     FileWrite(Result<usize, WireError>),
@@ -833,7 +855,11 @@ pub(crate) enum ResponseKind {
     FileToStdioSend(Result<Opaque<crate::StdioSendMarker>, WireError>),
     FileToStdioRecv(Result<Opaque<crate::StdioRecvMarker>, WireError>),
     StdioSendClose(Result<(), WireError>),
+    StdioSendWrite(Result<usize, WireError>),
+    StdioSendClone(Result<Opaque<crate::StdioSendMarker>, WireError>),
     StdioRecvClose(Result<(), WireError>),
+    StdioRecvRead(Result<Vec<u8>, WireError>),
+    StdioRecvClone(Result<Opaque<crate::StdioRecvMarker>, WireError>),
     FileMetadata(Result<Metadata, WireError>),
     FileFsMetadata(Result<FsMetadata, WireError>),
     FileXattrs(Result<Vec<XattrEntry>, WireError>),

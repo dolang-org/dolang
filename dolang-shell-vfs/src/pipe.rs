@@ -105,7 +105,7 @@ impl StdioSend {
         Self::Native(NativeStdioSend::File(file))
     }
 
-    pub fn try_clone(&self) -> io::Result<Self> {
+    pub async fn try_clone(&self) -> io::Result<Self> {
         match self {
             #[cfg(unix)]
             Self::Native(NativeStdioSend::Pipe(pipe)) => {
@@ -121,10 +121,10 @@ impl StdioSend {
                     pending: None,
                 }))
             }
-            _ => Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "this stdio send resource cannot be cloned synchronously",
-            )),
+            Self::Native(NativeStdioSend::File(file)) => {
+                Ok(Self::Native(NativeStdioSend::File(file.try_clone().await?)))
+            }
+            Self::Remote(remote) => remote.try_clone().await.map(Self::Remote),
         }
     }
 
@@ -187,7 +187,7 @@ impl StdioRecv {
         Self::Native(NativeStdioRecv::File(file))
     }
 
-    pub fn try_clone(&self) -> io::Result<Self> {
+    pub async fn try_clone(&self) -> io::Result<Self> {
         match self {
             #[cfg(unix)]
             Self::Native(NativeStdioRecv::Pipe(pipe)) => {
@@ -204,10 +204,10 @@ impl StdioRecv {
                     ready: None,
                 }))
             }
-            _ => Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "this stdio receive resource cannot be cloned synchronously",
-            )),
+            Self::Native(NativeStdioRecv::File(file)) => {
+                Ok(Self::Native(NativeStdioRecv::File(file.try_clone().await?)))
+            }
+            Self::Remote(remote) => remote.try_clone().await.map(Self::Remote),
         }
     }
 

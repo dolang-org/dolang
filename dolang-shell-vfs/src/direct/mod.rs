@@ -761,8 +761,8 @@ impl Vfs for Direct {
         DirectCommand::new(self, program)
     }
 
-    fn pipe(&self) -> io::Result<(StdioSend, StdioRecv)> {
-        crate::pipe::pipe()
+    async fn pipe(&self) -> crate::Result<(StdioSend, StdioRecv)> {
+        crate::pipe::pipe().map_err(Into::into)
     }
 
     async fn query(&self) -> crate::Result<Query> {

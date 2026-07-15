@@ -344,6 +344,7 @@ impl FileHandle for ClientFile {
                             StdioSend::Remote(RemoteStdioSend {
                                 client: file.client.clone(),
                                 stdio: Some(stdio),
+                                pending: None,
                             })
                         })
                         .map_err(Into::into),
@@ -370,6 +371,7 @@ impl FileHandle for ClientFile {
                             StdioRecv::Remote(RemoteStdioRecv {
                                 client: file.client.clone(),
                                 stdio: Some(stdio),
+                                pending: None,
                             })
                         })
                         .map_err(Into::into),
@@ -897,17 +899,26 @@ enum ClientChildState {
 pub struct RemoteStdioSend {
     client: Client,
     stdio: Option<Opaque<crate::StdioSendMarker>>,
+    pending: Option<(StdioSendOperation, Call<ResponseKind>)>,
 }
 
 pub struct RemoteStdioRecv {
     client: Client,
     stdio: Option<Opaque<crate::StdioRecvMarker>>,
+    pending: Option<Call<ResponseKind>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StdioSendOperation {
+    Write,
+    Close,
 }
 
 impl std::fmt::Debug for RemoteStdioSend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RemoteStdioSend")
             .field("stdio", &self.stdio)
+            .field("pending", &self.pending.as_ref().map(|p| p.0))
             .finish_non_exhaustive()
     }
 }
@@ -916,41 +927,187 @@ impl std::fmt::Debug for RemoteStdioRecv {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RemoteStdioRecv")
             .field("stdio", &self.stdio)
+            .field("pending", &self.pending.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl AsyncWrite for RemoteStdioSend {
     fn poll_write(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-        _buf: &[u8],
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Poll::Ready(Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "remote stdio I/O is not implemented",
-        )))
+        if self.pending.is_none() {
+            let Some(stdio) = &self.stdio else {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "stdio send resource is closed",
+                )));
+            };
+            self.pending = Some((
+                StdioSendOperation::Write,
+                self.client.call(RequestKind::StdioSendWrite {
+                    stdio: stdio.clone(),
+                    data: buf.to_vec(),
+                }),
+            ));
+        }
+        let (operation, call) = self.pending.as_mut().unwrap();
+        if *operation != StdioSendOperation::Write {
+            return Poll::Ready(Err(io::Error::other(
+                "write polled while stdio send close is pending",
+            )));
+        }
+        match Pin::new(call).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(result) => {
+                self.pending = None;
+                match result.map_err(rpc_error)? {
+                    ResponseKind::StdioSendWrite(result) => Poll::Ready(result.map_err(wire_io)),
+                    response => Poll::Ready(Err(unexpected(response))),
+                }
+            }
+        }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let Some((operation, call)) = self.pending.as_mut() else {
+            return Poll::Ready(Ok(()));
+        };
+        if *operation != StdioSendOperation::Write {
+            return Poll::Ready(Err(io::Error::other(
+                "flush polled while stdio send close is pending",
+            )));
+        }
+        match Pin::new(call).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(result) => {
+                self.pending = None;
+                match result.map_err(rpc_error)? {
+                    ResponseKind::StdioSendWrite(result) => {
+                        Poll::Ready(result.map(|_| ()).map_err(wire_io))
+                    }
+                    response => Poll::Ready(Err(unexpected(response))),
+                }
+            }
+        }
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.stdio.is_none() {
+            return Poll::Ready(Ok(()));
+        }
+        if self.pending.is_none() {
+            let stdio = self.stdio.as_ref().unwrap().clone();
+            self.pending = Some((
+                StdioSendOperation::Close,
+                self.client.call(RequestKind::StdioSendClose { stdio }),
+            ));
+        }
+        let (operation, call) = self.pending.as_mut().unwrap();
+        if *operation != StdioSendOperation::Close {
+            return Poll::Ready(Err(io::Error::other(
+                "shutdown polled while stdio send write is pending",
+            )));
+        }
+        match Pin::new(call).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(result) => {
+                self.pending = None;
+                match result.map_err(rpc_error)? {
+                    ResponseKind::StdioSendClose(result) => match result.map_err(wire_io) {
+                        Ok(()) => {
+                            self.stdio.take();
+                            Poll::Ready(Ok(()))
+                        }
+                        Err(error) => Poll::Ready(Err(error)),
+                    },
+                    response => Poll::Ready(Err(unexpected(response))),
+                }
+            }
+        }
     }
 }
 
 impl AsyncRead for RemoteStdioRecv {
     fn poll_read(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-        _buf: &mut ReadBuf<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        Poll::Ready(Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "remote stdio I/O is not implemented",
-        )))
+        if self.pending.is_none() {
+            if buf.remaining() == 0 {
+                return Poll::Ready(Ok(()));
+            }
+            let Some(stdio) = &self.stdio else {
+                return Poll::Ready(Ok(()));
+            };
+            self.pending = Some(self.client.call(RequestKind::StdioRecvRead {
+                stdio: stdio.clone(),
+                len: buf.remaining(),
+            }));
+        }
+        match Pin::new(self.pending.as_mut().unwrap()).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(result) => {
+                self.pending = None;
+                match result.map_err(rpc_error)? {
+                    ResponseKind::StdioRecvRead(result) => match result.map_err(wire_io) {
+                        Ok(data) => {
+                            buf.put_slice(&data);
+                            Poll::Ready(Ok(()))
+                        }
+                        Err(error) => Poll::Ready(Err(error)),
+                    },
+                    response => Poll::Ready(Err(unexpected(response))),
+                }
+            }
+        }
+    }
+}
+
+async fn best_effort_close_stdio_send(client: Client, stdio: Opaque<crate::StdioSendMarker>) {
+    for _ in 0..4 {
+        let Ok(ResponseKind::StdioSendClose(result)) = client
+            .request(RequestKind::StdioSendClose {
+                stdio: stdio.clone(),
+            })
+            .await
+        else {
+            return;
+        };
+        match result {
+            Ok(()) => return,
+            Err(error)
+                if crate::Error::from(error.clone()).kind() == io::ErrorKind::ResourceBusy =>
+            {
+                tokio::task::yield_now().await;
+            }
+            Err(_) => return,
+        }
+    }
+}
+
+async fn best_effort_close_stdio_recv(client: Client, stdio: Opaque<crate::StdioRecvMarker>) {
+    for _ in 0..4 {
+        let Ok(ResponseKind::StdioRecvClose(result)) = client
+            .request(RequestKind::StdioRecvClose {
+                stdio: stdio.clone(),
+            })
+            .await
+        else {
+            return;
+        };
+        match result {
+            Ok(()) => return,
+            Err(error)
+                if crate::Error::from(error.clone()).kind() == io::ErrorKind::ResourceBusy =>
+            {
+                tokio::task::yield_now().await;
+            }
+            Err(_) => return,
+        }
     }
 }
 
@@ -963,15 +1120,41 @@ impl Drop for RemoteStdioSend {
             return;
         };
         let client = self.client.clone();
-        runtime.spawn(async move {
-            let _ = client.request(RequestKind::StdioSendClose { stdio }).await;
-        });
+        runtime.spawn(best_effort_close_stdio_send(client, stdio));
     }
 }
 
 impl RemoteStdioSend {
     pub(crate) fn disarm_cleanup(&mut self) {
         self.stdio.take();
+    }
+
+    pub(crate) async fn try_clone(&self) -> io::Result<Self> {
+        if self.pending.is_some() {
+            return Err(io::Error::other(
+                "cannot clone stdio send while an operation is pending",
+            ));
+        }
+        let stdio = self.stdio.as_ref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "stdio send resource is closed")
+        })?;
+        match self
+            .client
+            .request(RequestKind::StdioSendClone {
+                stdio: stdio.clone(),
+            })
+            .await
+            .map_err(crate::Error::into_io_error)?
+        {
+            ResponseKind::StdioSendClone(result) => result
+                .map(|stdio| Self {
+                    client: self.client.clone(),
+                    stdio: Some(stdio),
+                    pending: None,
+                })
+                .map_err(wire_io),
+            response => Err(unexpected(response)),
+        }
     }
 }
 
@@ -984,15 +1167,44 @@ impl Drop for RemoteStdioRecv {
             return;
         };
         let client = self.client.clone();
-        runtime.spawn(async move {
-            let _ = client.request(RequestKind::StdioRecvClose { stdio }).await;
-        });
+        runtime.spawn(best_effort_close_stdio_recv(client, stdio));
     }
 }
 
 impl RemoteStdioRecv {
     pub(crate) fn disarm_cleanup(&mut self) {
         self.stdio.take();
+    }
+
+    pub(crate) async fn try_clone(&self) -> io::Result<Self> {
+        if self.pending.is_some() {
+            return Err(io::Error::other(
+                "cannot clone stdio receive while an operation is pending",
+            ));
+        }
+        let stdio = self.stdio.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "stdio receive resource is closed",
+            )
+        })?;
+        match self
+            .client
+            .request(RequestKind::StdioRecvClone {
+                stdio: stdio.clone(),
+            })
+            .await
+            .map_err(crate::Error::into_io_error)?
+        {
+            ResponseKind::StdioRecvClone(result) => result
+                .map(|stdio| Self {
+                    client: self.client.clone(),
+                    stdio: Some(stdio),
+                    pending: None,
+                })
+                .map_err(wire_io),
+            response => Err(unexpected(response)),
+        }
     }
 }
 
@@ -1459,8 +1671,29 @@ impl Vfs for Client {
         CommandBuilder::new(self, program)
     }
 
-    fn pipe(&self) -> io::Result<(StdioSend, StdioRecv)> {
-        crate::pipe::pipe()
+    async fn pipe(&self) -> crate::Result<(StdioSend, StdioRecv)> {
+        if self.mode == SessionMode::Native {
+            return crate::Direct::default().pipe().await;
+        }
+        match self.request(RequestKind::Pipe).await? {
+            ResponseKind::Pipe(result) => result
+                .map(|pipe| {
+                    (
+                        StdioSend::Remote(RemoteStdioSend {
+                            client: self.clone(),
+                            stdio: Some(pipe.send),
+                            pending: None,
+                        }),
+                        StdioRecv::Remote(RemoteStdioRecv {
+                            client: self.clone(),
+                            stdio: Some(pipe.recv),
+                            pending: None,
+                        }),
+                    )
+                })
+                .map_err(Into::into),
+            response => Err(unexpected(response).into()),
+        }
     }
 
     async fn query(&self) -> crate::Result<Query> {
@@ -1911,6 +2144,7 @@ mod tests {
     use std::io;
 
     use tempfile::tempdir;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
     use super::{Client, ClientChildState, ClientFileInner};
     use crate::{
@@ -1980,6 +2214,54 @@ mod tests {
                 Ok(_) => panic!("dropped opaque file remained registered"),
             }
         }
+
+        client.stop().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn opaque_pipe_rejects_wrong_type_and_stale_identity() {
+        let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
+        let server = tokio::spawn(Server::new(server_stream).serve());
+        let client = Client::new(client_stream);
+        let (mut send, mut recv) = client.pipe().await.unwrap();
+        let send_opaque = match &send {
+            crate::StdioSend::Remote(send) => send.stdio.as_ref().unwrap().clone(),
+            crate::StdioSend::Native(_) => panic!("remote pipe returned a native send end"),
+        };
+
+        let encoded = postcard::to_allocvec(&send_opaque).unwrap();
+        let wrong: dolang_rpc::Opaque<crate::StdioRecvMarker> =
+            postcard::from_bytes(&encoded).unwrap();
+        let response = client
+            .request(RequestKind::StdioRecvClose { stdio: wrong })
+            .await
+            .unwrap();
+        let crate::protocol::ResponseKind::StdioRecvClose(result) = response else {
+            panic!("stdio receive close returned the wrong response");
+        };
+        assert_eq!(
+            crate::Error::from(result.unwrap_err()).kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        send.write_all(b"still live").await.unwrap();
+        let mut data = [0; 10];
+        recv.read_exact(&mut data).await.unwrap();
+        assert_eq!(&data, b"still live");
+        send.shutdown().await.unwrap();
+
+        let response = client
+            .request(RequestKind::StdioSendClose { stdio: send_opaque })
+            .await
+            .unwrap();
+        let crate::protocol::ResponseKind::StdioSendClose(result) = response else {
+            panic!("stdio send close returned the wrong response");
+        };
+        assert_eq!(
+            crate::Error::from(result.unwrap_err()).kind(),
+            io::ErrorKind::InvalidInput
+        );
 
         client.stop().await.unwrap();
         server.await.unwrap().unwrap();
