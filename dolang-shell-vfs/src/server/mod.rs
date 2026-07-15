@@ -30,8 +30,8 @@ use crate::{
         MoveRequest, OpenHandle, OpenHandlePreference, OpenRequest, QueryResponse, ReadDirResponse,
         ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind,
         SetAttrsRequest, SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest,
-        StreamsRequest, SymlinkKind, SymlinkRequest, UnixStreamSocketRequest, VfsProtocol,
-        WellKnownPathRequest, WirePath, XattrRequest, XattrsRequest,
+        StdioTarget, StreamsRequest, SymlinkKind, SymlinkRequest, UnixStreamSocketRequest,
+        VfsProtocol, WellKnownPathRequest, WirePath, XattrRequest, XattrsRequest,
     },
 };
 
@@ -339,9 +339,6 @@ impl Connection {
         context: &mut CallContext<VfsProtocol>,
         req: SpawnRequest,
     ) -> ResponseKind {
-        if self.mode == SessionMode::Remote {
-            return ResponseKind::Spawn(Err(Self::unsupported("process spawning")));
-        }
         let mut cmd = self.server.vfs.command(request_path(&req.program));
         for arg in &req.args {
             cmd.arg(arg);
@@ -362,29 +359,11 @@ impl Connection {
             };
         }
 
-        if let Some(handle) = req.stdin_fd {
-            cmd.stdin_handle(AnyFile::Direct(crate::DirectFile::from_std(
-                handle.into_inner().into(),
-            )))
-            .unwrap();
-        } else {
-            cmd.stdin_null();
-        }
-        if let Some(handle) = req.stdout_fd {
-            cmd.stdout_handle(AnyFile::Direct(crate::DirectFile::from_std(
-                handle.into_inner().into(),
-            )))
-            .unwrap();
-        } else {
-            cmd.stdout_null();
-        }
-        if let Some(handle) = req.stderr_fd {
-            cmd.stderr_handle(AnyFile::Direct(crate::DirectFile::from_std(
-                handle.into_inner().into(),
-            )))
-            .unwrap();
-        } else {
-            cmd.stderr_null();
+        if let Err(error) = self
+            .configure_spawn_stdio(context, &mut cmd, req.stdin, req.stdout, req.stderr)
+            .await
+        {
+            return ResponseKind::Spawn(Err(error));
         }
 
         let mut child = match cmd.spawn().await {
@@ -399,6 +378,55 @@ impl Connection {
             Err(_) => child.terminate().await,
         };
         ResponseKind::Spawn(exit.map_err(wire_error))
+    }
+
+    async fn spawn_stdio_file(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        target: StdioTarget,
+    ) -> Result<Option<AnyFile>, crate::protocol::WireError> {
+        match target {
+            StdioTarget::Null => Ok(None),
+            StdioTarget::Native(handle) => {
+                if self.mode == SessionMode::Remote {
+                    return Err(Self::unsupported("native process stdio"));
+                }
+                Ok(Some(AnyFile::Direct(crate::DirectFile::from_std(
+                    handle.into_inner().into(),
+                ))))
+            }
+            StdioTarget::Opaque(file) => {
+                let file = Self::retained_file(context, file)?;
+                let file = file.0.lock().await;
+                file.try_clone().await.map(Some).map_err(wire_error)
+            }
+        }
+    }
+
+    async fn configure_spawn_stdio(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        command: &mut crate::AnyCommand<'_>,
+        stdin: StdioTarget,
+        stdout: StdioTarget,
+        stderr: StdioTarget,
+    ) -> Result<(), crate::protocol::WireError> {
+        if let Some(file) = self.spawn_stdio_file(context, stdin).await? {
+            command.stdin_handle(file).map_err(wire_error)?;
+        } else {
+            command.stdin_null();
+        }
+        if let Some(file) = self.spawn_stdio_file(context, stdout).await? {
+            command.stdout_handle(file).map_err(wire_error)?;
+        } else {
+            command.stdout_null();
+        }
+        if let Some(file) = self.spawn_stdio_file(context, stderr).await? {
+            command.stderr_handle(file).map_err(wire_error)?;
+        } else {
+            command.stderr_null();
+        }
+        Ok(())
     }
 
     async fn handle_query(&self) -> ResponseKind {

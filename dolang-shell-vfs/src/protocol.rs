@@ -443,9 +443,16 @@ pub(crate) struct SpawnRequest {
     pub(crate) args: Vec<String>,
     pub(crate) env: HashMap<String, Option<String>>,
     pub(crate) cwd: Option<WirePath>,
-    pub(crate) stdin_fd: Option<OsHandle>,
-    pub(crate) stdout_fd: Option<OsHandle>,
-    pub(crate) stderr_fd: Option<OsHandle>,
+    pub(crate) stdin: StdioTarget,
+    pub(crate) stdout: StdioTarget,
+    pub(crate) stderr: StdioTarget,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) enum StdioTarget {
+    Null,
+    Native(OsHandle),
+    Opaque(Opaque<crate::FileMarker>),
 }
 
 #[derive(Serialize, Deserialize, Debug)]

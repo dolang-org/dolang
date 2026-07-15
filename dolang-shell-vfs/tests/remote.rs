@@ -5,8 +5,8 @@ use std::io::{self, SeekFrom};
 #[cfg(target_os = "linux")]
 use dolang_shell_vfs::XattrNamespace;
 use dolang_shell_vfs::{
-    Client, Command, DirEntry, Direct, FileHandle, FileType, OpenOptions, ReadDir, Server, Vfs,
-    typed_path,
+    Child, Client, Command, DirEntry, Direct, FileHandle, FileType, OpenOptions, ReadDir, Server,
+    Utf8TypedPath, Utf8UnixPath, Utf8WindowsPath, Vfs, typed_path,
 };
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -16,6 +16,84 @@ async fn connected_pair() -> (Client, tokio::task::JoinHandle<io::Result<()>>) {
     let server = Server::new(server_stream);
     let task = tokio::spawn(server.serve());
     (Client::new(client_stream), task)
+}
+
+fn typed_str(path: &str) -> Utf8TypedPath<'_> {
+    if cfg!(windows) {
+        Utf8TypedPath::Windows(Utf8WindowsPath::new(path))
+    } else {
+        Utf8TypedPath::Unix(Utf8UnixPath::new(path))
+    }
+}
+
+#[cfg(unix)]
+fn successful_command() -> (&'static str, [&'static str; 2]) {
+    ("sh", ["-c", "exit 0"])
+}
+
+#[cfg(windows)]
+fn successful_command() -> (&'static str, [&'static str; 2]) {
+    ("cmd", ["/C", "exit 0"])
+}
+
+#[cfg(unix)]
+fn failing_command() -> (&'static str, [&'static str; 2]) {
+    ("sh", ["-c", "exit 42"])
+}
+
+#[cfg(windows)]
+fn failing_command() -> (&'static str, [&'static str; 2]) {
+    ("cmd", ["/C", "exit 42"])
+}
+
+#[cfg(unix)]
+fn stdin_command() -> (&'static str, [&'static str; 2]) {
+    ("sh", ["-c", "read line; test \"$line\" = remote-input"])
+}
+
+#[cfg(windows)]
+fn stdin_command() -> (&'static str, [&'static str; 2]) {
+    ("cmd", ["/C", "findstr /X remote-input"])
+}
+
+#[cfg(unix)]
+fn stdout_command() -> (&'static str, [&'static str; 2]) {
+    ("sh", ["-c", "printf remote-stdout"])
+}
+
+#[cfg(windows)]
+fn stdout_command() -> (&'static str, [&'static str; 2]) {
+    ("cmd", ["/C", "echo|set /p=remote-stdout"])
+}
+
+#[cfg(unix)]
+fn stderr_command() -> (&'static str, [&'static str; 2]) {
+    ("sh", ["-c", "printf remote-stderr >&2"])
+}
+
+#[cfg(windows)]
+fn stderr_command() -> (&'static str, [&'static str; 2]) {
+    ("cmd", ["/C", "echo|set /p=remote-stderr 1>&2"])
+}
+
+#[cfg(unix)]
+fn long_running_command() -> (&'static str, [&'static str; 2]) {
+    ("sh", ["-c", "sleep 60"])
+}
+
+#[cfg(windows)]
+fn long_running_command() -> (&'static str, [&'static str; 2]) {
+    ("cmd", ["/C", "ping -n 60 127.0.0.1 >nul"])
+}
+
+fn command_with_args<'a>(
+    client: &'a Client,
+    command: (&str, [&str; 2]),
+) -> dolang_shell_vfs::CommandBuilder<'a> {
+    let (program, args) = command;
+    let mut command = client.command(typed_str(program));
+    command.arg(args[0]).arg(args[1]);
+    command
 }
 
 #[tokio::test]
@@ -54,13 +132,123 @@ async fn path_operations_work_over_generic_stream() {
 }
 
 #[tokio::test]
-async fn process_operations_are_unsupported_remotely() {
+async fn null_stdio_processes_work_over_generic_stream() {
+    let (client, server_task) = connected_pair().await;
+
+    let mut child = command_with_args(&client, successful_command())
+        .spawn()
+        .await
+        .unwrap();
+    assert!(child.wait().await.unwrap().success());
+
+    let mut child = command_with_args(&client, failing_command())
+        .spawn()
+        .await
+        .unwrap();
+    let status = child.wait().await.unwrap();
+    assert!(!status.success());
+    assert_eq!(status.code(), Some(42));
+
+    let mut child = client
+        .command(typed_str("nonexistent_command_12345"))
+        .spawn()
+        .await
+        .unwrap();
+    assert!(child.wait().await.is_err());
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn retained_files_can_be_used_for_remote_stdio() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let path = typed_path(temp.path().join("file")).unwrap();
+    let stdin_path = typed_path(temp.path().join("stdin")).unwrap();
+    let stdout_path = typed_path(temp.path().join("stdout")).unwrap();
+    let stderr_path = typed_path(temp.path().join("stderr")).unwrap();
 
-    let error = client.command(path.to_path()).spawn().await.err().unwrap();
+    let mut options = client.open_options();
+    options.read(true).write(true).create(true).truncate(true);
+    let mut stdin = OpenOptions::open(&options, stdin_path.to_path())
+        .await
+        .unwrap();
+    stdin.write_all(b"remote-input\n").await.unwrap();
+    stdin.seek(SeekFrom::Start(0)).await.unwrap();
+    let mut command = command_with_args(&client, stdin_command());
+    command.stdin_handle(stdin).unwrap();
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+
+    let mut options = client.open_options();
+    options.read(true).write(true).create(true).truncate(true);
+    let stdout = OpenOptions::open(&options, stdout_path.to_path())
+        .await
+        .unwrap();
+    let mut command = command_with_args(&client, stdout_command());
+    command.stdout_handle(stdout).unwrap();
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+
+    let mut options = client.open_options();
+    options.read(true).write(true).create(true).truncate(true);
+    let stderr = OpenOptions::open(&options, stderr_path.to_path())
+        .await
+        .unwrap();
+    let mut command = command_with_args(&client, stderr_command());
+    command.stderr_handle(stderr).unwrap();
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+
+    let mut options = client.open_options();
+    options.read(true);
+    let mut stdout = OpenOptions::open(&options, stdout_path.to_path())
+        .await
+        .unwrap();
+    let mut stderr = OpenOptions::open(&options, stderr_path.to_path())
+        .await
+        .unwrap();
+    let mut stdout_data = String::new();
+    let mut stderr_data = String::new();
+    stdout.read_to_string(&mut stdout_data).await.unwrap();
+    stderr.read_to_string(&mut stderr_data).await.unwrap();
+    assert_eq!(stdout_data, "remote-stdout");
+    assert_eq!(stderr_data.trim_end(), "remote-stderr");
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn native_stdio_is_unsupported_over_generic_stream() {
+    let (client, server_task) = connected_pair().await;
+    let mut command = command_with_args(&client, successful_command());
+    command.stdin_inherit().unwrap();
+    let error = command.spawn().await.err().unwrap();
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+
+    let (send, _recv) = client.pipe().unwrap();
+    let mut command = command_with_args(&client, successful_command());
+    command.stdout_pipe(send).unwrap();
+    let error = command.spawn().await.err().unwrap();
+    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn remote_process_can_be_cancelled() {
+    let (client, server_task) = connected_pair().await;
+    let child = command_with_args(&client, long_running_command())
+        .spawn()
+        .await
+        .unwrap();
+    let error = tokio::time::timeout(std::time::Duration::from_secs(10), child.terminate())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::Interrupted);
 
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();
