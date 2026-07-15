@@ -7,9 +7,11 @@ import sys agent
     - Vfs
     - host
   fs:
+    - open
     - with_temp_dir
 
 let launch_cwd = cd()
+let vfs_bin = env.get DOLANG_SHELL_VFS
 
 #[agent.test]
 def resets_context_to_defaults()
@@ -29,3 +31,16 @@ def windows_admin_captures_current_cwd()
     vfs do assert_eq $cd() $dir
   finally
     vfs.stop()
+
+#[test]
+def stdio_vfs_runs_over_strand_stream()
+  with_temp_dir do |dir| cd $dir do
+    let marker = (dir / "marker")
+    let vfs = Vfs do run $vfs_bin --stdio
+    try
+      vfs do
+        open $marker w do |file| file.write "remote"
+    finally
+      vfs.stop()
+
+    open $marker r do |file| assert_eq $file.read() "remote"

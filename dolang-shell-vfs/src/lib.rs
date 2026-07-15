@@ -1738,6 +1738,18 @@ pub use client::CommandBuilder;
 /// Agent server for VFS RPC connections.
 pub use server::Server;
 
+/// Runs one VFS server session over standard input and output.
+pub fn serve_stdio() -> io::Result<()> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            Server::new_split(tokio::io::stdin(), tokio::io::stdout())
+                .serve()
+                .await
+        })
+}
+
 #[cfg(unix)]
 mod unix {
     /// Daemonization errors.

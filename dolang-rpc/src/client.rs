@@ -134,6 +134,23 @@ impl<P: Protocol> Client<P> {
         Self::with_max_frame_size(stream, DEFAULT_MAX_FRAME_SIZE)
     }
 
+    /// Starts a client session on separate byte-stream reader and writer halves.
+    pub fn new_split<R, W>(reader: R, writer: W) -> Self
+    where
+        R: AsyncRead + Send + 'static,
+        W: AsyncWrite + Send + 'static,
+    {
+        let (sender, receiver) = transport::generic(reader, writer);
+        Self::from_transport(
+            transport::AnySender::Generic(sender),
+            transport::AnyReceiver::Generic(receiver),
+            DEFAULT_MAX_FRAME_SIZE,
+            false,
+            #[cfg(windows)]
+            None,
+        )
+    }
+
     /// Starts a client session with an explicit maximum inbound payload size.
     pub fn with_max_frame_size<T>(stream: T, max_frame_size: usize) -> Self
     where

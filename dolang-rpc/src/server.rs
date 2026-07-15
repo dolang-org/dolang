@@ -59,6 +59,19 @@ impl<P: Protocol> Server<P> {
         )
     }
 
+    /// Creates a server over separate byte-stream reader and writer halves.
+    pub fn new_split<R, W>(reader: R, writer: W) -> Self
+    where
+        R: AsyncRead + Send + 'static,
+        W: AsyncWrite + Send + 'static,
+    {
+        let (sender, receiver) = transport::generic(reader, writer);
+        Self::from_transport(
+            transport::AnySender::Generic(sender),
+            transport::AnyReceiver::Generic(receiver),
+        )
+    }
+
     #[cfg(unix)]
     pub fn from_unix_stream(stream: std::os::unix::net::UnixStream) -> std::io::Result<Self> {
         let (sender, receiver) = transport::unix::unix(stream)?;

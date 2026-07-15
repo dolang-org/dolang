@@ -86,7 +86,7 @@ jobs:
 
       - name: Build release binaries (Windows)
         if: matrix.os == 'windows-latest'
-        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang --bin dolang-lsp
+        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang --bin dolang-lsp --bin dolang-shell-vfs
 
       - name: Build release binaries (macOS)
         if: matrix.os == 'macos-latest'
@@ -108,6 +108,7 @@ jobs:
       - name: Run integration tests (Windows)
         if: matrix.os == 'windows-latest'
         run: |
+          $env:DOLANG_SHELL_VFS="${{ github.workspace }}/target/${{ matrix.target }}/dist/dolang-shell-vfs.exe"
           $env:DOLANG_MODULE_PATH="${{ github.workspace }}/testlib"
           cargo run --profile dist --target ${{ matrix.target }} --bin dolang -- -m test -- test
 
@@ -137,6 +138,7 @@ jobs:
           New-Item -ItemType Directory -Path release | Out-Null
           Copy-Item "target/${{ matrix.target }}/dist/dolang.exe" -Destination release/
           Copy-Item "target/${{ matrix.target }}/dist/dolang-lsp.exe" -Destination release/
+          Copy-Item "target/${{ matrix.target }}/dist/dolang-shell-vfs.exe" -Destination release/
           7z a -ttar release.tar ./release/*
           7z a -tgzip $archive release.tar
 

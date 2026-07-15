@@ -1,18 +1,35 @@
 #![deny(warnings)]
 
+use std::error::Error;
+
 #[cfg(unix)]
-fn main() {
-    match dolang_shell_vfs::foreground(std::env::args().nth(1).expect("invalid arguments")) {
-        Ok(()) => {}
-        Err(e) => {
-            eprintln!("error: {}", e);
-            std::process::exit(1);
-        }
-    }
+fn socket(path: &str) -> Result<(), Box<dyn Error>> {
+    dolang_shell_vfs::foreground(path)?;
+    Ok(())
 }
 
 #[cfg(not(unix))]
+fn socket(_path: &str) -> Result<(), Box<dyn Error>> {
+    Err("Unix socket mode is only supported on Unix".into())
+}
+
+fn run() -> Result<(), Box<dyn Error>> {
+    let mut args = std::env::args().skip(1);
+    let mode = args.next().ok_or("missing socket path or --stdio")?;
+    if args.next().is_some() {
+        return Err("too many arguments".into());
+    }
+    if mode == "--stdio" {
+        dolang_shell_vfs::serve_stdio()?;
+        Ok(())
+    } else {
+        socket(&mode)
+    }
+}
+
 fn main() {
-    eprintln!("error: only supported on unix");
-    std::process::exit(1);
+    if let Err(error) = run() {
+        eprintln!("error: {error}");
+        std::process::exit(1);
+    }
 }

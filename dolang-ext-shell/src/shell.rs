@@ -8,8 +8,8 @@ use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use dolang::{
     compile::Compiler,
     runtime::{
-        Arg, Error, Instance, Object, Output, Result, Slot, State, Strand,
-        object::TypeBuilder,
+        Arg, Error, Instance, Object, Output, Result, Slot, State, Strand, method,
+        object::{Mut, TypeBuilder},
         unpack,
         value::{Empty, Nil, TypeObject},
         vm::Builder,
@@ -22,7 +22,7 @@ use crate::{
     fs::path::{PathAnnex, create_path_annex, path_from_value},
     global::{Global, ProgramSource},
     local::Env as LocalEnv,
-    util,
+    pipe_channel, util,
 };
 
 #[cfg(windows)]
@@ -85,7 +85,6 @@ impl Context {
         res
     }
 
-    #[cfg(unix)]
     pub(crate) fn client(&self) -> &Client {
         &self.client
     }
@@ -272,6 +271,7 @@ pub(crate) struct VfsAnnex<'v> {
 }
 
 enum VfsSource {
+    Stream,
     #[cfg(unix)]
     Unix(PathBuf),
     #[cfg(windows)]
@@ -281,6 +281,7 @@ enum VfsSource {
 impl<'v> Object<'v> for Vfs {
     const NAME: &'v str = "Vfs";
     const MODULE: &'v str = "shell";
+    const SLOTS: usize = 1;
     type Annex = VfsAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
@@ -291,11 +292,74 @@ impl<'v> Object<'v> for Vfs {
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
         match &this.annex().source {
+            VfsSource::Stream => write!(w, "<shell.Vfs stream>").into_do(strand),
             #[cfg(unix)]
             VfsSource::Unix(socket) => write!(w, "<shell.Vfs socket: {socket:?}>").into_do(strand),
             #[cfg(windows)]
             VfsSource::Windows(_) => write!(w, "<shell.Vfs windows admin>").into_do(strand),
         }
+    }
+
+    async fn new<'a, 's>(
+        _this: dolang::runtime::Type<'v, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        args: dolang::runtime::Args<'v, 'a>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let ([callable], []) = unpack!(strand, args, 1, 0)?;
+        let global = strand.state::<Global<'v>>();
+        strand
+            .with_slots(
+                async move |strand, [mut module, mut stream, mut input, mut output]| {
+                    strand.import("strand", &mut module).await?;
+                    method!(strand, &module, global.syms.stream, &mut stream, callable).await?;
+                    stream.iter(strand, &mut input).await?;
+                    stream.sink(strand, &mut output).await?;
+
+                    let recv_guard = pipe_channel::negotiate_recv(&input, strand, global)
+                        .await?
+                        .ok_or_else(|| {
+                            Error::type_error(strand, "Vfs: stream iterator is not a pipe channel")
+                        })?;
+                    let recv = recv_guard.recv_pipe().await.into_sys(strand)?;
+
+                    let send_guard = pipe_channel::negotiate_send(&output, strand, global)
+                        .await?
+                        .ok_or_else(|| {
+                            Error::type_error(strand, "Vfs: stream sink is not a pipe channel")
+                        })?;
+                    let send = send_guard.send_pipe().await.into_sys(strand)?;
+
+                    let client = Client::new_split(recv, send);
+                    let Query { env, cwd, target } =
+                        error::io_result(strand, client.query().await)?;
+                    drop((recv_guard, send_guard));
+                    let env = Rc::new(LocalEnv::new(None, true, env, target.operating_system));
+                    global.types.vfs.create_with_annex(
+                        strand,
+                        Vfs,
+                        VfsAnnex {
+                            handle: Context {
+                                client,
+                                env,
+                                cwd,
+                                target,
+                            },
+                            source: VfsSource::Stream,
+                            global,
+                        },
+                        &mut out,
+                    );
+                    let this = global.types.vfs.downcast(&out).unwrap();
+                    Output::set(
+                        strand,
+                        Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()),
+                        &stream,
+                    );
+                    Ok(())
+                },
+            )
+            .await
     }
 
     async fn call<'a, 's>(
@@ -387,13 +451,15 @@ impl<'v> Object<'v> for Vfs {
         };
         let builder = builder.method("stop", async move |this, strand, _args, _out| {
             let borrow = this.annex();
-            let result = match &borrow.source {
+            match &borrow.source {
+                VfsSource::Stream => error::io_result(strand, borrow.handle.client().stop().await)?,
                 #[cfg(unix)]
-                VfsSource::Unix(_) => borrow.handle.client().stop().await,
+                VfsSource::Unix(_) => {
+                    error::io_result(strand, borrow.handle.client().stop().await)?
+                }
                 #[cfg(windows)]
-                VfsSource::Windows(session) => session.stop().await,
-            };
-            error::io_result(strand, result)?;
+                VfsSource::Windows(session) => error::io_result(strand, session.stop().await)?,
+            }
             Ok(())
         });
 

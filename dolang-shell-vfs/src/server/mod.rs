@@ -99,6 +99,21 @@ impl Server {
         }
     }
 
+    /// Creates an opaque-only VFS server on separate reader and writer streams.
+    pub fn new_split<R, W>(reader: R, writer: W) -> Self
+    where
+        R: AsyncRead + Send + 'static,
+        W: AsyncWrite + Send + 'static,
+    {
+        Self {
+            #[cfg(unix)]
+            listener: None,
+            rpc: Some(dolang_rpc::Server::new_split(reader, writer)),
+            mode: SessionMode::Remote,
+            shared: Self::state(),
+        }
+    }
+
     fn state() -> Arc<ServerState> {
         #[cfg(unix)]
         let (shutdown_tx, _) = watch::channel(());

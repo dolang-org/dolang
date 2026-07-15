@@ -18,6 +18,15 @@ async fn connected_pair() -> (Client, tokio::task::JoinHandle<io::Result<()>>) {
     (Client::new(client_stream), task)
 }
 
+async fn connected_split_pair() -> (Client, tokio::task::JoinHandle<io::Result<()>>) {
+    let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
+    let (client_reader, client_writer) = tokio::io::split(client_stream);
+    let (server_reader, server_writer) = tokio::io::split(server_stream);
+    let server = Server::new_split(server_reader, server_writer);
+    let task = tokio::spawn(server.serve());
+    (Client::new_split(client_reader, client_writer), task)
+}
+
 fn typed_str(path: &str) -> Utf8TypedPath<'_> {
     if cfg!(windows) {
         Utf8TypedPath::Windows(Utf8WindowsPath::new(path))
@@ -127,6 +136,15 @@ async fn path_operations_work_over_generic_stream() {
         .await
         .unwrap();
 
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn query_and_stop_work_over_split_streams() {
+    let (client, server_task) = connected_split_pair().await;
+    let query = client.query().await.unwrap();
+    assert_eq!(query.target, dolang_shell_vfs::TargetInfo::current());
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();
 }

@@ -602,6 +602,18 @@ impl Client {
         }
     }
 
+    /// Starts an opaque-only VFS client on separate reader and writer streams.
+    pub fn new_split<R, W>(reader: R, writer: W) -> Self
+    where
+        R: AsyncRead + Send + 'static,
+        W: AsyncWrite + Send + 'static,
+    {
+        Self {
+            rpc: dolang_rpc::Client::new_split(reader, writer),
+            mode: SessionMode::Remote,
+        }
+    }
+
     /// Connect to an agent daemon at the given socket path.
     #[cfg(unix)]
     pub async fn connect(path: impl AsRef<Path>) -> crate::Result<Self> {
