@@ -516,8 +516,9 @@ impl<'v> Object<'v> for Vfs {
 pub(crate) fn configure_compiler<'a>(compiler: &mut Compiler<'a>) {
     compiler
         .prelude()
+        .import_module("shell")
         .import_items("shell")
-        .items(["echo", "exit", "env", "cd", "print", "host"])
+        .items(["echo", "exit", "env", "cd", "print"])
         .commit();
 }
 

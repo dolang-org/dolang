@@ -363,12 +363,10 @@ impl Backend {
     fn default_settings(path: &Path) -> Settings {
         let mut prelude = vec![
             Import::Module("shell".into()),
-            Import::Module("sys".into()),
             Import::Item("shell".into(), "cd".into()),
             Import::Item("shell".into(), "echo".into()),
             Import::Item("shell".into(), "env".into()),
             Import::Item("shell".into(), "exit".into()),
-            Import::Item("shell".into(), "host".into()),
             Import::Item("shell".into(), "print".into()),
             Import::Item("proc".into(), "sub".into()),
             Import::ModuleAs("proc.run".into(), "run".into()),
