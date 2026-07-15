@@ -66,7 +66,7 @@ struct RemoteFile {
 
 struct PendingFileOperation {
     kind: FileOperationKind,
-    call: Call<ResponseKind>,
+    call: Call<VfsProtocol>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -663,7 +663,7 @@ impl Client {
         .into())
     }
 
-    fn call(&self, request: RequestKind) -> Call<ResponseKind> {
+    fn call(&self, request: RequestKind) -> Call<VfsProtocol> {
         self.rpc.call(request)
     }
 
@@ -922,13 +922,13 @@ enum ClientChildState {
 pub struct RemoteStdioSend {
     client: Client,
     stdio: Option<Opaque<crate::StdioSendMarker>>,
-    pending: Option<(StdioSendOperation, Call<ResponseKind>)>,
+    pending: Option<(StdioSendOperation, Call<VfsProtocol>)>,
 }
 
 pub struct RemoteStdioRecv {
     client: Client,
     stdio: Option<Opaque<crate::StdioRecvMarker>>,
-    pending: Option<Call<ResponseKind>>,
+    pending: Option<Call<VfsProtocol>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
