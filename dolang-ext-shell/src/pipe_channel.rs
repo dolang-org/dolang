@@ -23,8 +23,8 @@ use crate::{
     local::ChannelMode,
 };
 
-type PipeSend = <AnyVfs as Vfs>::PipeSend;
-type PipeRecv = <AnyVfs as Vfs>::PipeRecv;
+type StdioSend = <AnyVfs as Vfs>::StdioSend;
+type StdioRecv = <AnyVfs as Vfs>::StdioRecv;
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -37,13 +37,6 @@ enum EndState<T> {
 }
 
 impl<T> EndState<T> {
-    fn as_ref(&self) -> Option<&T> {
-        match self {
-            Self::Present(value) => Some(value),
-            Self::Absent | Self::Taken => None,
-        }
-    }
-
     fn is_present(&self) -> bool {
         matches!(self, Self::Present(_))
     }
@@ -102,8 +95,8 @@ struct PipeChannelShared {
     /// Whether PipeReceiver's GC slot 0 is logically occupied, and if so how it was written.
     buffered: BufferedValue,
     state: PipeState,
-    send_end: EndState<PipeSend>,
-    recv_end: EndState<BufReader<PipeRecv>>,
+    send_end: EndState<StdioSend>,
+    recv_end: EndState<BufReader<StdioRecv>>,
     send_closed: bool,
     recv_closed: bool,
     send_wakers: VecDeque<Waker>,
@@ -202,7 +195,7 @@ impl PipeChannelShared {
         self.wake_negotiators();
     }
 
-    fn restore_send_end(&mut self, sender: PipeSend) {
+    fn restore_send_end(&mut self, sender: StdioSend) {
         if self.send_closed {
             drop(sender);
             self.wake_senders();
@@ -223,20 +216,6 @@ impl PipeChannelShared {
         }
     }
 
-    fn receiver(&self) -> Option<&PipeRecv> {
-        match (&self.state, &self.recv_end) {
-            (PipeState::RecvPipe | PipeState::Direct, EndState::Present(fd)) => Some(fd.get_ref()),
-            _ => None,
-        }
-    }
-
-    fn sender(&self) -> Option<&PipeSend> {
-        match &self.state {
-            PipeState::RecvPipe | PipeState::SendPipe | PipeState::Direct => self.send_end.as_ref(),
-            PipeState::Draining | PipeState::Value => None,
-        }
-    }
-
     fn discard_recv_buffer(&mut self) {
         self.recv_end = match mem::replace(&mut self.recv_end, EndState::Taken) {
             EndState::Absent => EndState::Absent,
@@ -246,7 +225,7 @@ impl PipeChannelShared {
     }
 }
 
-async fn drain_pipe(mut reader: BufReader<PipeRecv>, send_end: &mut PipeSend) -> io::Result<()> {
+async fn drain_pipe(mut reader: BufReader<StdioRecv>, send_end: &mut StdioSend) -> io::Result<()> {
     let mut buf = [0u8; 8192];
     loop {
         let n = reader.read(&mut buf).await?;
@@ -280,11 +259,11 @@ fn take_buffered_bytes<'v, 's>(
 
 struct SendEndGuard {
     shared: Rc<RefCell<PipeChannelShared>>,
-    end: Option<PipeSend>,
+    end: Option<StdioSend>,
 }
 
 impl SendEndGuard {
-    fn new(shared: Rc<RefCell<PipeChannelShared>>, end: PipeSend) -> Self {
+    fn new(shared: Rc<RefCell<PipeChannelShared>>, end: StdioSend) -> Self {
         Self {
             shared,
             end: Some(end),
@@ -304,20 +283,20 @@ impl SendEndGuard {
     }
 }
 
-impl AsRef<PipeSend> for SendEndGuard {
-    fn as_ref(&self) -> &PipeSend {
+impl AsRef<StdioSend> for SendEndGuard {
+    fn as_ref(&self) -> &StdioSend {
         self.end.as_ref().unwrap()
     }
 }
 
-impl AsMut<PipeSend> for SendEndGuard {
-    fn as_mut(&mut self) -> &mut PipeSend {
+impl AsMut<StdioSend> for SendEndGuard {
+    fn as_mut(&mut self) -> &mut StdioSend {
         self.end.as_mut().unwrap()
     }
 }
 
 impl Deref for SendEndGuard {
-    type Target = PipeSend;
+    type Target = StdioSend;
 
     fn deref(&self) -> &Self::Target {
         self.as_ref()
@@ -340,7 +319,7 @@ impl Drop for SendEndGuard {
 
 struct RecvEndGuard {
     shared: Rc<RefCell<PipeChannelShared>>,
-    end: Option<BufReader<PipeRecv>>,
+    end: Option<BufReader<StdioRecv>>,
 }
 
 impl RecvEndGuard {
@@ -361,20 +340,20 @@ impl RecvEndGuard {
     }
 }
 
-impl AsRef<BufReader<PipeRecv>> for RecvEndGuard {
-    fn as_ref(&self) -> &BufReader<PipeRecv> {
+impl AsRef<BufReader<StdioRecv>> for RecvEndGuard {
+    fn as_ref(&self) -> &BufReader<StdioRecv> {
         self.end.as_ref().unwrap()
     }
 }
 
-impl AsMut<BufReader<PipeRecv>> for RecvEndGuard {
-    fn as_mut(&mut self) -> &mut BufReader<PipeRecv> {
+impl AsMut<BufReader<StdioRecv>> for RecvEndGuard {
+    fn as_mut(&mut self) -> &mut BufReader<StdioRecv> {
         self.end.as_mut().unwrap()
     }
 }
 
 impl Deref for RecvEndGuard {
-    type Target = BufReader<PipeRecv>;
+    type Target = BufReader<StdioRecv>;
 
     fn deref(&self) -> &Self::Target {
         self.as_ref()
@@ -420,12 +399,10 @@ pub(crate) struct RecvGuard {
 }
 
 impl RecvGuard {
-    pub(crate) fn recv_pipe(&self) -> io::Result<PipeRecv> {
-        let inner = self.shared.borrow();
-        inner
-            .receiver()
-            .ok_or_else(|| io::Error::other("pipe: consumer end closed"))
-            .and_then(PipeRecv::try_clone)
+    pub(crate) async fn recv_pipe(&self) -> io::Result<StdioRecv> {
+        let reader = RecvEndGuard::take(&self.shared)
+            .map_err(|_| io::Error::other("pipe: consumer end closed"))?;
+        reader.get_ref().try_clone().await
     }
 }
 
@@ -440,12 +417,10 @@ pub(crate) struct SendGuard {
 }
 
 impl SendGuard {
-    pub(crate) fn send_pipe(&self) -> io::Result<PipeSend> {
-        let inner = self.shared.borrow();
-        inner
-            .sender()
-            .ok_or_else(|| io::Error::other("pipe: producer end closed"))
-            .and_then(PipeSend::try_clone)
+    pub(crate) async fn send_pipe(&self) -> io::Result<StdioSend> {
+        let sender = SendEndGuard::take(&self.shared)
+            .map_err(|_| io::Error::other("pipe: producer end closed"))?;
+        sender.try_clone().await
     }
 }
 
@@ -476,62 +451,84 @@ pub(crate) async fn negotiate_recv<'v, 's>(
         return Ok(None);
     };
     let shared = &inst.annex().shared;
-    let ready = future::poll_fn(|cx| {
-        let mut inner = shared.borrow_mut();
-        match inner.state {
-            PipeState::Value => Poll::Ready(true),
-            PipeState::SendPipe | PipeState::Draining if !inner.recv_end.is_taken() => {
-                Poll::Ready(true)
+    let mut fresh_pipe = None;
+    let (send_end, old_recv_end, stale_bytes) = loop {
+        let ready = future::poll_fn(|cx| {
+            let mut inner = shared.borrow_mut();
+            match inner.state {
+                PipeState::Value => Poll::Ready(true),
+                PipeState::SendPipe | PipeState::Draining if !inner.recv_end.is_taken() => {
+                    Poll::Ready(true)
+                }
+                PipeState::RecvPipe => Poll::Ready(false),
+                _ => {
+                    inner.negotiate_wakers.push_back(cx.waker().clone());
+                    Poll::Pending
+                }
             }
-            PipeState::RecvPipe => Poll::Ready(false),
-            _ => {
-                inner.negotiate_wakers.push_back(cx.waker().clone());
-                Poll::Pending
-            }
+        })
+        .await;
+
+        if !ready {
+            return Err(Error::concurrency_msg(strand, "program owns channel end"));
         }
-    })
-    .await;
 
-    if !ready {
-        return Err(Error::concurrency_msg(strand, "program owns channel end"));
-    }
+        let needs_pipe = {
+            let inner = shared.borrow();
+            matches!(inner.state, PipeState::Value)
+                || matches!(inner.state, PipeState::Draining) && !inner.send_closed
+        };
+        if needs_pipe && fresh_pipe.is_none() {
+            fresh_pipe = Some(
+                global
+                    .local
+                    .get(strand)
+                    .vfs()
+                    .pipe()
+                    .await
+                    .into_sys(strand)?,
+            );
+            continue;
+        }
 
-    let (send_end, old_recv_end, stale_bytes) = {
-        let mut inner = shared.borrow_mut();
-        match &mut inner.state {
-            PipeState::Value => {
-                let stale_bytes = take_buffered_bytes(inst, strand, &mut inner)?;
-                let (w, r) = global.local.get(strand).vfs().pipe().into_sys(strand)?;
-                inner.recv_end.set_present(BufReader::new(r));
-                inner.send_end = EndState::Taken;
-                inner.state = PipeState::RecvPipe;
-                inner.wake_senders();
-                (Some(w), None, stale_bytes)
-            }
-            PipeState::SendPipe => {
-                let send_end = mem::replace(&mut inner.send_end, EndState::Taken);
-                inner.discard_recv_buffer();
-                inner.state = PipeState::Direct;
-                inner.send_end = send_end;
-                (None, None, None)
-            }
-            PipeState::Draining => {
-                if inner.send_closed {
-                    inner.state = PipeState::RecvPipe;
-                    inner.wake_senders();
-                    (None, None, None)
-                } else {
-                    let old_recv_end = inner.recv_end.take().unwrap();
-                    let (w, r) = global.local.get(strand).vfs().pipe().into_sys(strand)?;
+        let result = {
+            let mut inner = shared.borrow_mut();
+            match &mut inner.state {
+                PipeState::Value => {
+                    let stale_bytes = take_buffered_bytes(inst, strand, &mut inner)?;
+                    let (w, r) = fresh_pipe.take().unwrap();
                     inner.recv_end.set_present(BufReader::new(r));
                     inner.send_end = EndState::Taken;
                     inner.state = PipeState::RecvPipe;
                     inner.wake_senders();
-                    (Some(w), Some(old_recv_end), None)
+                    (Some(w), None, stale_bytes)
                 }
+                PipeState::SendPipe => {
+                    let send_end = mem::replace(&mut inner.send_end, EndState::Taken);
+                    inner.discard_recv_buffer();
+                    inner.state = PipeState::Direct;
+                    inner.send_end = send_end;
+                    (None, None, None)
+                }
+                PipeState::Draining => {
+                    if inner.send_closed {
+                        inner.state = PipeState::RecvPipe;
+                        inner.wake_senders();
+                        (None, None, None)
+                    } else {
+                        let old_recv_end = inner.recv_end.take().unwrap();
+                        let (w, r) = fresh_pipe.take().unwrap();
+                        inner.recv_end.set_present(BufReader::new(r));
+                        inner.send_end = EndState::Taken;
+                        inner.state = PipeState::RecvPipe;
+                        inner.wake_senders();
+                        (Some(w), Some(old_recv_end), None)
+                    }
+                }
+                _ => unreachable!("state changed after readiness was revalidated"),
             }
-            _ => unreachable!("state changed between poll and negotiation (single-threaded)"),
-        }
+        };
+        break result;
     };
 
     let mut send_end = send_end.map(|send_end| SendEndGuard::new(shared.clone(), send_end));
@@ -563,63 +560,82 @@ pub(crate) async fn negotiate_send<'v, 's>(
         return Ok(None);
     };
     let shared = &inst.annex().shared;
-    let ready = future::poll_fn(|cx| {
-        let mut inner = shared.borrow_mut();
-        match inner.state {
-            PipeState::Value => Poll::Ready(true),
-            PipeState::RecvPipe if !inner.send_end.is_taken() => Poll::Ready(true),
-            PipeState::Draining if !inner.recv_end.is_taken() => Poll::Ready(true),
-            PipeState::SendPipe | PipeState::Direct => Poll::Ready(false),
-            _ => {
-                inner.negotiate_wakers.push_back(cx.waker().clone());
-                Poll::Pending
+    let mut fresh_pipe = None;
+    let (send_end, old_recv_end, stale_bytes) = loop {
+        let ready = future::poll_fn(|cx| {
+            let mut inner = shared.borrow_mut();
+            match inner.state {
+                PipeState::Value => Poll::Ready(true),
+                PipeState::RecvPipe if !inner.send_end.is_taken() => Poll::Ready(true),
+                PipeState::Draining if !inner.recv_end.is_taken() => Poll::Ready(true),
+                PipeState::SendPipe | PipeState::Direct => Poll::Ready(false),
+                _ => {
+                    inner.negotiate_wakers.push_back(cx.waker().clone());
+                    Poll::Pending
+                }
             }
-        }
-    })
-    .await;
+        })
+        .await;
 
-    if !ready {
-        return Err(Error::concurrency_msg(strand, "program owns channel end"));
-    }
-
-    let (send_end, old_recv_end, stale_bytes) = {
-        let mut inner = shared.borrow_mut();
-        match &mut inner.state {
-            PipeState::Value => {
-                let send_borrow = inst.borrow(strand)?;
-                let recv_inst = global
-                    .types
-                    .pipe_receiver
-                    .downcast(Ref::slot::<0>(&send_borrow))
-                    .unwrap();
-                let stale_bytes = take_buffered_bytes(recv_inst, strand, &mut inner)?;
-                drop(inner);
-                inner = shared.borrow_mut();
-                drop(send_borrow);
-                let (w, r) = global.local.get(strand).vfs().pipe().into_sys(strand)?;
-                inner.send_end = EndState::Taken;
-                inner.recv_end.set_present(BufReader::new(r));
-                inner.state = PipeState::SendPipe;
-                inner.wake_receivers();
-                (Some(w), None, stale_bytes)
-            }
-            PipeState::RecvPipe => {
-                let send_end = inner.send_end.take().unwrap();
-                inner.send_end = EndState::Taken;
-                inner.state = PipeState::Direct;
-                (Some(send_end), None, None)
-            }
-            PipeState::Draining => {
-                let old_recv_end = inner.recv_end.take().unwrap();
-                let (w, r) = global.local.get(strand).vfs().pipe().into_sys(strand)?;
-                inner.send_end = EndState::Taken;
-                inner.recv_end.set_present(BufReader::new(r));
-                inner.state = PipeState::SendPipe;
-                inner.wake_receivers();
-                (Some(w), Some(old_recv_end), None)
-            }
-            _ => unreachable!(),
+        if !ready {
+            return Err(Error::concurrency_msg(strand, "program owns channel end"));
         }
+
+        let needs_pipe = matches!(
+            shared.borrow().state,
+            PipeState::Value | PipeState::Draining
+        );
+        if needs_pipe && fresh_pipe.is_none() {
+            fresh_pipe = Some(
+                global
+                    .local
+                    .get(strand)
+                    .vfs()
+                    .pipe()
+                    .await
+                    .into_sys(strand)?,
+            );
+            continue;
+        }
+
+        let result = {
+            let mut inner = shared.borrow_mut();
+            match &mut inner.state {
+                PipeState::Value => {
+                    let send_borrow = inst.borrow(strand)?;
+                    let recv_inst = global
+                        .types
+                        .pipe_receiver
+                        .downcast(Ref::slot::<0>(&send_borrow))
+                        .unwrap();
+                    let stale_bytes = take_buffered_bytes(recv_inst, strand, &mut inner)?;
+                    drop(send_borrow);
+                    let (w, r) = fresh_pipe.take().unwrap();
+                    inner.send_end = EndState::Taken;
+                    inner.recv_end.set_present(BufReader::new(r));
+                    inner.state = PipeState::SendPipe;
+                    inner.wake_receivers();
+                    (Some(w), None, stale_bytes)
+                }
+                PipeState::RecvPipe => {
+                    let send_end = inner.send_end.take().unwrap();
+                    inner.send_end = EndState::Taken;
+                    inner.state = PipeState::Direct;
+                    (Some(send_end), None, None)
+                }
+                PipeState::Draining => {
+                    let old_recv_end = inner.recv_end.take().unwrap();
+                    let (w, r) = fresh_pipe.take().unwrap();
+                    inner.send_end = EndState::Taken;
+                    inner.recv_end.set_present(BufReader::new(r));
+                    inner.state = PipeState::SendPipe;
+                    inner.wake_receivers();
+                    (Some(w), Some(old_recv_end), None)
+                }
+                _ => unreachable!("state changed after readiness was revalidated"),
+            }
+        };
+        break result;
     };
 
     let mut send_end = send_end.map(|send_end| SendEndGuard::new(shared.clone(), send_end));

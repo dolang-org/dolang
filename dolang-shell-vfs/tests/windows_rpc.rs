@@ -8,7 +8,7 @@ use std::{
 };
 
 use dolang_shell_vfs::{
-    AnyVfs, Child, Client, Command, OpenOptions, Server, TargetInfo, Utf8TypedPath,
+    AnyVfs, Child, Client, Command, FileHandle, OpenOptions, Server, TargetInfo, Utf8TypedPath,
     Utf8WindowsPath, Vfs,
 };
 use tempfile::tempdir;
@@ -118,9 +118,9 @@ async fn client_or_direct_routes_path_and_open_operations() {
 #[tokio::test]
 async fn spawn_transfers_standard_stream_handles() {
     let (client, server_task) = connected_pair().await;
-    let (mut stdin_send, stdin_recv) = client.pipe().unwrap();
-    let (stdout_send, mut stdout_recv) = client.pipe().unwrap();
-    let (stderr_send, mut stderr_recv) = client.pipe().unwrap();
+    let (mut stdin_send, stdin_recv) = client.pipe().await.unwrap();
+    let (stdout_send, mut stdout_recv) = client.pipe().await.unwrap();
+    let (stderr_send, mut stderr_recv) = client.pipe().await.unwrap();
 
     let mut command = client.command(typed_str("cmd.exe"));
     command
@@ -129,9 +129,9 @@ async fn spawn_transfers_standard_stream_handles() {
         .arg("/s")
         .arg("/c")
         .arg("set /p line=& echo out:!line!& echo err:!line! 1>&2");
-    command.stdin_pipe(stdin_recv).unwrap();
-    command.stdout_pipe(stdout_send).unwrap();
-    command.stderr_pipe(stderr_send).unwrap();
+    command.stdin(stdin_recv).unwrap();
+    command.stdout(stdout_send).unwrap();
+    command.stderr(stderr_send).unwrap();
     let mut child = command.spawn().await.unwrap();
 
     stdin_send.write_all(b"hello\r\n").await.unwrap();
@@ -151,14 +151,57 @@ async fn spawn_transfers_standard_stream_handles() {
 }
 
 #[tokio::test]
+async fn file_stdio_is_reopened_without_overlapped() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("stdio.txt");
+    let (client, server_task) = connected_pair().await;
+
+    let mut options = client.open_options();
+    options.write(true).create(true).truncate(true);
+    let output = OpenOptions::open(&options, typed(&path)).await.unwrap();
+    let mut command = client.command(typed_str("cmd.exe"));
+    command
+        .arg("/d")
+        .arg("/s")
+        .arg("/c")
+        .arg("echo first")
+        .stdout(output.to_stdio_send().await.unwrap())
+        .unwrap();
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+    drop(output);
+
+    let mut options = client.open_options();
+    options.append(true);
+    let output = OpenOptions::open(&options, typed(&path)).await.unwrap();
+    let mut command = client.command(typed_str("cmd.exe"));
+    command
+        .arg("/d")
+        .arg("/s")
+        .arg("/c")
+        .arg("echo second")
+        .stdout(output.to_stdio_send().await.unwrap())
+        .unwrap();
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+    drop(output);
+
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(contents.contains("first"), "contents were {contents:?}");
+    assert!(contents.contains("second"), "contents were {contents:?}");
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn spawn_failure_returns_remote_os_error() {
     let (client, server_task) = connected_pair().await;
-    let mut child = client
+    let result = client
         .command(typed_str("dolang-command-that-does-not-exist.exe"))
         .spawn()
-        .await
-        .unwrap();
-    assert!(child.wait().await.is_err());
+        .await;
+    assert!(result.is_err());
 
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();

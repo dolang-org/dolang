@@ -12,7 +12,7 @@ use dolang::runtime::{
     value::{Nil, Singleton},
     vm::Builder,
 };
-use dolang_shell_vfs::{AnyFile, AnyVfs, Child as _, Command, Utf8TypedPath, Vfs};
+use dolang_shell_vfs::{AnyVfs, Child as _, Command, Utf8TypedPath, Vfs};
 
 use crate::{
     error::{self, ResultExt as _},
@@ -27,8 +27,8 @@ use crate::{
 
 pub(crate) struct Program;
 
-type PipeSend = <AnyVfs as Vfs>::PipeSend;
-type PipeRecv = <AnyVfs as Vfs>::PipeRecv;
+type StdioSend = <AnyVfs as Vfs>::StdioSend;
+type StdioRecv = <AnyVfs as Vfs>::StdioRecv;
 
 pub(crate) struct ProgramAnnex<'v> {
     name: String,
@@ -182,13 +182,13 @@ async fn cleanup_io<'v, 's>(
 async fn configure_negotiated_input<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    command: &mut impl Command<PipeRecv = PipeRecv>,
+    command: &mut impl Command<StdioRecv = StdioRecv>,
     input: &Value<'v>,
 ) -> Result<'v, 's, Option<RecvGuard>> {
     let recv_result = pipe_channel::negotiate_recv(input, strand, global).await?;
     if let Some(guard) = recv_result {
-        let pipe = guard.recv_pipe().into_sys(strand)?;
-        command.stdin_pipe(pipe).into_sys(strand)?;
+        let pipe = guard.recv_pipe().await.into_sys(strand)?;
+        command.stdin(pipe).into_sys(strand)?;
         Ok(Some(guard))
     } else {
         Ok(None)
@@ -198,13 +198,13 @@ async fn configure_negotiated_input<'v, 's>(
 async fn configure_negotiated_output<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    command: &mut impl Command<PipeSend = PipeSend>,
+    command: &mut impl Command<StdioSend = StdioSend>,
     output: &Value<'v>,
 ) -> Result<'v, 's, Option<SendGuard>> {
     let send_result = pipe_channel::negotiate_send(output, strand, global).await?;
     if let Some(guard) = send_result {
-        let pipe = guard.send_pipe().into_sys(strand)?;
-        command.stdout_pipe(pipe).into_sys(strand)?;
+        let pipe = guard.send_pipe().await.into_sys(strand)?;
+        command.stdout(pipe).into_sys(strand)?;
         Ok(Some(guard))
     } else {
         Ok(None)
@@ -214,7 +214,7 @@ async fn configure_negotiated_output<'v, 's>(
 async fn configure_direct_input<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    command: &mut impl Command<File = AnyFile>,
+    command: &mut impl Command<StdioRecv = StdioRecv>,
     input: &Value<'v>,
 ) -> Result<'v, 's, bool> {
     if input.is_nil() || input.eq(strand, Singleton::IterNull) {
@@ -226,9 +226,9 @@ async fn configure_direct_input<'v, 's>(
         return Ok(true);
     }
     if let Some(file) = global.types.file.downcast(input)
-        && let Some(handle) = File::command_handle(file, strand).await?
+        && let Some(stdio) = File::command_recv(file, strand).await?
     {
-        command.stdin_handle(handle).into_sys(strand)?;
+        command.stdin(stdio).into_sys(strand)?;
         return Ok(true);
     }
     Ok(false)
@@ -237,7 +237,7 @@ async fn configure_direct_input<'v, 's>(
 async fn configure_direct_output<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    command: &mut impl Command<File = AnyFile>,
+    command: &mut impl Command<StdioSend = StdioSend>,
     output: &Value<'v>,
 ) -> Result<'v, 's, bool> {
     if output.is_nil() || output.eq(strand, Singleton::IterNull) {
@@ -252,9 +252,9 @@ async fn configure_direct_output<'v, 's>(
         return Ok(true);
     }
     if let Some(file) = global.types.file.downcast(output)
-        && let Some(handle) = File::command_handle(file, strand).await?
+        && let Some(stdio) = File::command_send(file, strand).await?
     {
-        command.stdout_handle(handle).into_sys(strand)?;
+        command.stdout(stdio).into_sys(strand)?;
         return Ok(true);
     }
     Ok(false)
@@ -263,7 +263,7 @@ async fn configure_direct_output<'v, 's>(
 async fn configure_direct_stderr<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    command: &mut impl Command<File = AnyFile>,
+    command: &mut impl Command<StdioSend = StdioSend>,
     stderr: &Value<'v>,
 ) -> Result<'v, 's, bool> {
     if stderr.is_nil() || stderr.eq(strand, Singleton::IterNull) {
@@ -278,9 +278,9 @@ async fn configure_direct_stderr<'v, 's>(
         return Ok(true);
     }
     if let Some(file) = global.types.file.downcast(stderr)
-        && let Some(handle) = File::command_handle(file, strand).await?
+        && let Some(stdio) = File::command_send(file, strand).await?
     {
-        command.stderr_handle(handle).into_sys(strand)?;
+        command.stderr(stdio).into_sys(strand)?;
         return Ok(true);
     }
     Ok(false)
@@ -576,8 +576,8 @@ async fn run<'v, 's>(
     };
 
     if !stdin_negotiated && !configure_direct_input(strand, global, &mut command, input).await? {
-        let (parent_stdin, child_stdin) = vfs.pipe().into_sys(strand)?;
-        command.stdin_pipe(child_stdin).into_sys(strand)?;
+        let (parent_stdin, child_stdin) = vfs.pipe().await.into_sys(strand)?;
+        command.stdin(child_stdin).into_sys(strand)?;
         stdin_pipe = Some(parent_stdin);
     }
 
@@ -586,7 +586,14 @@ async fn run<'v, 's>(
     if stderr_merge {
         if stdout_negotiated {
             command
-                .stderr_pipe(send_guard.as_ref().unwrap().send_pipe().into_sys(strand)?)
+                .stderr(
+                    send_guard
+                        .as_ref()
+                        .unwrap()
+                        .send_pipe()
+                        .await
+                        .into_sys(strand)?,
+                )
                 .into_sys(strand)?;
         } else if stdout_direct {
             if output.is_nil() || output.eq(strand, Singleton::IterNull) {
@@ -596,22 +603,22 @@ async fn run<'v, 's>(
             } else {
                 if let Some(file) = global.types.file.downcast(output) {
                     command
-                        .stderr_handle(File::command_handle(file, strand).await?.unwrap())
+                        .stderr(File::command_send(file, strand).await?.unwrap())
                         .into_sys(strand)?;
                 } else {
                     unreachable!("stdout direct path should have been direct-fd capable")
                 }
             }
         } else {
-            let (child_stdout, parent_stdout) = vfs.pipe().into_sys(strand)?;
-            let child_stderr = child_stdout.try_clone().into_sys(strand)?;
-            command.stdout_pipe(child_stdout).into_sys(strand)?;
-            command.stderr_pipe(child_stderr).into_sys(strand)?;
+            let (child_stdout, parent_stdout) = vfs.pipe().await.into_sys(strand)?;
+            let child_stderr = child_stdout.try_clone().await.into_sys(strand)?;
+            command.stdout(child_stdout).into_sys(strand)?;
+            command.stderr(child_stderr).into_sys(strand)?;
             stdout_pipe = Some(parent_stdout);
         }
     } else if !stdout_direct {
-        let (child_stdout, parent_stdout) = vfs.pipe().into_sys(strand)?;
-        command.stdout_pipe(child_stdout).into_sys(strand)?;
+        let (child_stdout, parent_stdout) = vfs.pipe().await.into_sys(strand)?;
+        command.stdout(child_stdout).into_sys(strand)?;
         stdout_pipe = Some(parent_stdout);
     }
 
@@ -620,8 +627,8 @@ async fn run<'v, 's>(
         && !stderr_negotiated
         && !configure_direct_stderr(strand, global, &mut command, stderr).await?
     {
-        let (child_stderr, parent_stderr) = vfs.pipe().into_sys(strand)?;
-        command.stderr_pipe(child_stderr).into_sys(strand)?;
+        let (child_stderr, parent_stderr) = vfs.pipe().await.into_sys(strand)?;
+        command.stderr(child_stderr).into_sys(strand)?;
         stderr_pipe = Some(parent_stderr);
     }
 

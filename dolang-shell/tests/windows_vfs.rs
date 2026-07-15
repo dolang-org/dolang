@@ -3,12 +3,13 @@
 
 use std::{
     os::windows::io::AsHandle,
-    process::Command,
+    process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
 };
 
 use dolang_shell_vfs::{Client, Utf8TypedPath, Utf8WindowsPath, Vfs as _};
 use tokio::net::windows::named_pipe::ServerOptions;
+use tokio::process::Command as TokioCommand;
 
 static NEXT_PIPE: AtomicU64 = AtomicU64::new(0);
 
@@ -44,4 +45,26 @@ async fn embedded_vfs_mode_serves_and_stops() {
 
     client.stop().await.unwrap();
     assert!(child.wait().unwrap().success());
+}
+
+#[tokio::test]
+async fn embedded_vfs_stdio_mode_serves_and_stops() {
+    let mut child = TokioCommand::new(env!("CARGO_BIN_EXE_dolang"))
+        .args(["--vfs", "--stdio"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let client = Client::new_split(stdout, stdin);
+
+    let query = client.query().await.unwrap();
+    assert_eq!(
+        query.cwd,
+        dolang_shell_vfs::typed_path(std::env::current_dir().unwrap()).unwrap()
+    );
+
+    client.stop().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
 }

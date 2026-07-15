@@ -3,7 +3,7 @@ use std::{
     future::Future,
     io,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
     task::{Context, Poll},
 };
 
@@ -39,12 +39,26 @@ enum Message<Q> {
 
 struct Inner<P: Protocol> {
     outgoing: mpsc::UnboundedSender<Message<P::Request>>,
-    core: Arc<Core<P::Response>>,
+    pending: Mutex<Pending<P::Response>>,
     next_id: Mutex<u64>,
     tasks: Mutex<Option<Tasks>>,
-    request_keepalive: Arc<Mutex<HashMap<u64, P::Request>>>,
+    request_keepalive: Mutex<HashMap<u64, P::Request>>,
     #[cfg(windows)]
     _peer_process: Option<OwnedHandle>,
+}
+
+struct Writer<P: Protocol> {
+    transport: transport::AnySender,
+    outgoing: mpsc::UnboundedReceiver<Message<P::Request>>,
+    inner: Weak<Inner<P>>,
+    keep_requests_alive: bool,
+}
+
+struct Reader<P: Protocol> {
+    transport: transport::AnyReceiver,
+    inner: Weak<Inner<P>>,
+    max_frame_size: usize,
+    buffered: BytesMut,
 }
 
 struct Tasks {
@@ -75,13 +89,22 @@ impl<P: Protocol> Drop for Inner<P> {
         if let Some(tasks) = self.tasks.get_mut().unwrap().as_mut() {
             tasks.shutdown();
         }
-        fail(&self.core, Error::ConnectionClosed);
+        self.fail(Error::ConnectionClosed);
     }
 }
 
-struct Core<R> {
-    cancel: Arc<dyn Fn(u64) + Send + Sync>,
-    pending: Mutex<Pending<R>>,
+impl<P: Protocol> Inner<P> {
+    fn complete(&self, id: u64, result: Result<P::Response, Error>) {
+        if let Some(tx) = self.pending.lock().unwrap().remove(&id) {
+            let _ = tx.send(result);
+        }
+    }
+
+    fn fail(&self, error: Error) {
+        for (_, tx) in std::mem::take(&mut *self.pending.lock().unwrap()) {
+            let _ = tx.send(Err(error.copy()));
+        }
+    }
 }
 
 /// A cloneable request endpoint.
@@ -98,12 +121,34 @@ impl<P: Protocol> Clone for Client<P> {
 }
 
 impl<P: Protocol> Client<P> {
+    /// Returns whether both clients refer to the same RPC session.
+    pub fn is_same_session(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Starts a client session on a bidirectional byte stream.
     pub fn new<T>(stream: T) -> Self
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         Self::with_max_frame_size(stream, DEFAULT_MAX_FRAME_SIZE)
+    }
+
+    /// Starts a client session on separate byte-stream reader and writer halves.
+    pub fn new_split<R, W>(reader: R, writer: W) -> Self
+    where
+        R: AsyncRead + Send + 'static,
+        W: AsyncWrite + Send + 'static,
+    {
+        let (sender, receiver) = transport::generic(reader, writer);
+        Self::from_transport(
+            transport::AnySender::Generic(sender),
+            transport::AnyReceiver::Generic(receiver),
+            DEFAULT_MAX_FRAME_SIZE,
+            false,
+            #[cfg(windows)]
+            None,
+        )
     }
 
     /// Starts a client session with an explicit maximum inbound payload size.
@@ -203,39 +248,35 @@ impl<P: Protocol> Client<P> {
         #[cfg(windows)] peer_process: Option<OwnedHandle>,
     ) -> Self {
         let (outgoing, outgoing_rx) = mpsc::unbounded_channel();
-        let cancel_outgoing = outgoing.clone();
-        let core = Arc::new(Core {
-            cancel: Arc::new(move |id| {
-                let _ = cancel_outgoing.send(Message::Cancel { id });
-            }),
-            pending: Mutex::new(HashMap::new()),
-        });
         let inner = Arc::new(Inner {
             outgoing,
-            core: core.clone(),
+            pending: Mutex::new(HashMap::new()),
             next_id: Mutex::new(0),
             tasks: Mutex::new(None),
-            request_keepalive: Arc::new(Mutex::new(HashMap::new())),
+            request_keepalive: Mutex::new(HashMap::new()),
             #[cfg(windows)]
             _peer_process: peer_process,
         });
         let (writer_shutdown, writer_stop) = oneshot::channel();
         let (reader_shutdown, reader_stop) = oneshot::channel();
-        let writer = tokio::spawn(writer::<P>(
-            sender,
-            outgoing_rx,
-            core.clone(),
-            inner.request_keepalive.clone(),
-            keep_requests_alive,
-            writer_stop,
-        ));
-        let reader = tokio::spawn(reader::<P>(
-            receiver,
-            core,
-            inner.request_keepalive.clone(),
-            max_frame_size,
-            reader_stop,
-        ));
+        let writer = tokio::spawn(
+            Writer {
+                transport: sender,
+                outgoing: outgoing_rx,
+                inner: Arc::downgrade(&inner),
+                keep_requests_alive,
+            }
+            .run(writer_stop),
+        );
+        let reader = tokio::spawn(
+            Reader {
+                transport: receiver,
+                inner: Arc::downgrade(&inner),
+                max_frame_size,
+                buffered: BytesMut::with_capacity(8192),
+            }
+            .run(reader_stop),
+        );
         *inner.tasks.lock().unwrap() = Some(Tasks {
             writer_shutdown: Some(writer_shutdown),
             reader_shutdown: Some(reader_shutdown),
@@ -248,14 +289,14 @@ impl<P: Protocol> Client<P> {
     /// Stops the session and waits for its background tasks to exit.
     pub async fn close(self) {
         let tasks = self.inner.tasks.lock().unwrap().take();
-        fail(&self.inner.core, Error::ConnectionClosed);
+        self.inner.fail(Error::ConnectionClosed);
         if let Some(tasks) = tasks {
             tasks.join().await;
         }
     }
 
     /// Begins one request.
-    pub fn call(&self, request: P::Request) -> Call<P::Response> {
+    pub fn call(&self, request: P::Request) -> Call<P> {
         let (tx, rx) = oneshot::channel();
         let tasks = self.inner.tasks.lock().unwrap();
         let id = {
@@ -269,11 +310,11 @@ impl<P: Protocol> Client<P> {
             return Call {
                 id,
                 rx,
-                inner: self.inner.core.clone(),
+                inner: self.inner.clone(),
                 cancel_sent: true,
             };
         }
-        self.inner.core.pending.lock().unwrap().insert(id, tx);
+        self.inner.pending.lock().unwrap().insert(id, tx);
         let queued = self
             .inner
             .outgoing
@@ -281,12 +322,12 @@ impl<P: Protocol> Client<P> {
             .is_ok();
         drop(tasks);
         if !queued {
-            complete(&self.inner.core, id, Err(Error::ConnectionClosed));
+            self.inner.complete(id, Err(Error::ConnectionClosed));
         }
         Call {
             id,
             rx,
-            inner: self.inner.core.clone(),
+            inner: self.inner.clone(),
             cancel_sent: !queued,
         }
     }
@@ -342,25 +383,25 @@ mod windows_tests {
 }
 
 /// An in-progress RPC request.
-pub struct Call<R> {
+pub struct Call<P: Protocol> {
     id: u64,
-    rx: oneshot::Receiver<Result<R, Error>>,
-    inner: Arc<Core<R>>,
+    rx: oneshot::Receiver<Result<P::Response, Error>>,
+    inner: Arc<Inner<P>>,
     cancel_sent: bool,
 }
 
-impl<R> Call<R> {
+impl<P: Protocol> Call<P> {
     /// Requests cancellation. The call remains awaitable.
     pub fn cancel(&mut self) {
         if !self.cancel_sent {
             self.cancel_sent = true;
-            (self.inner.cancel)(self.id);
+            let _ = self.inner.outgoing.send(Message::Cancel { id: self.id });
         }
     }
 }
 
-impl<R> Future for Call<R> {
-    type Output = Result<R, Error>;
+impl<P: Protocol> Future for Call<P> {
+    type Output = Result<P::Response, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match Pin::new(&mut self.rx).poll(cx) {
@@ -372,116 +413,104 @@ impl<R> Future for Call<R> {
     }
 }
 
-impl<R> Drop for Call<R> {
+impl<P: Protocol> Drop for Call<P> {
     fn drop(&mut self) {
         self.cancel();
         self.inner.pending.lock().unwrap().remove(&self.id);
     }
 }
 
-fn complete<R>(inner: &Core<R>, id: u64, result: Result<R, Error>) {
-    if let Some(tx) = inner.pending.lock().unwrap().remove(&id) {
-        let _ = tx.send(result);
-    }
-}
-
-fn fail<R>(inner: &Core<R>, error: Error) {
-    for (_, tx) in std::mem::take(&mut *inner.pending.lock().unwrap()) {
-        let _ = tx.send(Err(error.copy()));
-    }
-}
-
-async fn writer<P: Protocol>(
-    mut transport: transport::AnySender,
-    mut outgoing: mpsc::UnboundedReceiver<Message<P::Request>>,
-    inner: Arc<Core<P::Response>>,
-    request_keepalive: Arc<Mutex<HashMap<u64, P::Request>>>,
-    keep_requests_alive: bool,
-    mut shutdown: oneshot::Receiver<()>,
-) {
-    loop {
-        let outgoing = tokio::select! {
-            outgoing = outgoing.recv() => outgoing,
-            _ = &mut shutdown => return,
-        };
-        let Some(outgoing) = outgoing else {
-            return;
-        };
-        let result = tokio::select! {
-            result = async {
-                match outgoing {
-                    Message::Request { id, value } => {
-                        let mut frame = transport.send();
-                        let result = match encode(Kind::Request, id, &value, &mut frame) {
-                            Ok(mut message) => frame.finish(&mut message).await.map_err(Error::from),
-                            Err(error) => {
-                                drop(frame);
-                                Err(error)
-                            }
-                        };
-                        if result.is_ok() && keep_requests_alive {
-                            request_keepalive.lock().unwrap().insert(id, value);
-                        }
-                        result
-                    }
-                    Message::Cancel { id } => {
-                        let mut message = encode_empty(Kind::Cancel, id);
-                        transport
-                            .send()
-                            .finish(&mut message)
-                            .await
-                            .map_err(Error::from)
-                    }
+impl<P: Protocol> Writer<P> {
+    async fn handle_request(&mut self, id: u64, value: P::Request) -> bool {
+        let mut frame = self.transport.send();
+        let result = match encode(Kind::Request, id, &value, &mut frame) {
+            Ok(mut message) => frame.finish(&mut message).await.map_err(Error::from),
+            Err(err) => {
+                if let Some(inner) = self.inner.upgrade() {
+                    inner.complete(id, Err(err));
+                } else {
+                    return true;
                 }
-            } => result,
-            _ = &mut shutdown => return,
+                return false;
+            }
         };
-        if let Err(error) = result {
-            fail(&inner, error);
-            return;
+        let Some(inner) = self.inner.upgrade() else {
+            return true;
+        };
+        if result.is_ok() && self.keep_requests_alive {
+            inner.request_keepalive.lock().unwrap().insert(id, value);
+        }
+        if let Err(err) = result {
+            inner.complete(id, Err(err));
+            return true;
+        }
+        false
+    }
+
+    async fn run(mut self, mut shutdown: oneshot::Receiver<()>) {
+        loop {
+            let outgoing = tokio::select! {
+                outgoing = self.outgoing.recv() => outgoing,
+                _ = &mut shutdown => return,
+            };
+            let Some(outgoing) = outgoing else {
+                return;
+            };
+            let exit = tokio::select! {
+                result = async {
+                    match outgoing {
+                        Message::Request { id, value } => self.handle_request(id, value).await,
+                        Message::Cancel { id } => {
+                            let mut message = encode_empty(Kind::Cancel, id);
+                            self.transport
+                                .send()
+                                .finish(&mut message).await.is_err()
+                        }
+                    }
+                } => result,
+                _ = &mut shutdown => return,
+            };
+            if exit {
+                break;
+            }
         }
     }
 }
 
-async fn reader<P: Protocol>(
-    mut transport: transport::AnyReceiver,
-    inner: Arc<Core<P::Response>>,
-    request_keepalive: Arc<Mutex<HashMap<u64, P::Request>>>,
-    max: usize,
-    mut shutdown: oneshot::Receiver<()>,
-) {
-    let mut buffered = BytesMut::with_capacity(8192);
-    loop {
-        let mut frame = transport.recv();
-        let message = tokio::select! {
-            message = read_message(&mut frame, &mut buffered, max) => message,
-            _ = &mut shutdown => return,
-        };
-        match message {
-            Ok((Kind::Response, id, payload)) => match decode(&payload, &mut frame) {
-                Ok(response) => {
-                    request_keepalive.lock().unwrap().remove(&id);
-                    complete(&inner, id, Ok(response));
+impl<P: Protocol> Reader<P> {
+    async fn run(mut self, mut shutdown: oneshot::Receiver<()>) {
+        loop {
+            let mut frame = self.transport.recv();
+            let message = tokio::select! {
+                message = read_message(&mut frame, &mut self.buffered, self.max_frame_size) => message,
+                _ = &mut shutdown => return,
+            };
+            let Some(inner) = self.inner.upgrade() else {
+                return;
+            };
+            match message {
+                Ok((Kind::Response, id, payload)) => match decode(&payload, &mut frame) {
+                    Ok(response) => {
+                        inner.request_keepalive.lock().unwrap().remove(&id);
+                        inner.complete(id, Ok(response));
+                    }
+                    Err(error) => {
+                        inner.fail(error);
+                        return;
+                    }
+                },
+                Ok((Kind::Error, id, _)) => {
+                    inner.request_keepalive.lock().unwrap().remove(&id);
+                    inner.complete(id, Err(Error::Cancelled));
                 }
-                Err(error) => {
-                    fail(&inner, error);
+                Ok((kind, _, _)) => {
+                    inner.fail(Error::Protocol(format!("unexpected {kind:?} frame")));
                     return;
                 }
-            },
-            Ok((Kind::Error, id, _)) => {
-                request_keepalive.lock().unwrap().remove(&id);
-                complete(&inner, id, Err(Error::Cancelled));
-            }
-            Ok((kind, _, _)) => {
-                fail(
-                    &inner,
-                    Error::Protocol(format!("unexpected {kind:?} frame")),
-                );
-                return;
-            }
-            Err(error) => {
-                fail(&inner, error);
-                return;
+                Err(error) => {
+                    inner.fail(error);
+                    return;
+                }
             }
         }
     }

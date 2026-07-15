@@ -23,15 +23,16 @@ use tokio::{
 
 use crate::{
     AnyFile, AnyVfs, Child as _, Command as _, Direct, FileHandle as _, OpenOptions as _,
-    Permissions, SessionMode, Utf8TypedPath, Vfs,
+    Permissions, SessionMode, StdioRecv, StdioSend, Utf8TypedPath, Vfs,
     protocol::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
         CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
-        MoveRequest, OpenHandle, OpenHandlePreference, OpenRequest, QueryResponse, ReadDirResponse,
-        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind,
-        SetAttrsRequest, SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest,
-        StreamsRequest, SymlinkKind, SymlinkRequest, UnixStreamSocketRequest, VfsProtocol,
-        WellKnownPathRequest, WirePath, XattrRequest, XattrsRequest,
+        MoveRequest, OpenHandle, OpenHandlePreference, OpenRequest, PipeResponse, QueryResponse,
+        ReadDirResponse, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest,
+        RequestKind, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
+        SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget, StreamsRequest,
+        SymlinkKind, SymlinkRequest, UnixStreamSocketRequest, VfsProtocol, WellKnownPathRequest,
+        WirePath, XattrRequest, XattrsRequest,
     },
 };
 
@@ -48,6 +49,24 @@ struct RetainedFile(Mutex<AnyFile>);
 
 impl OpaqueResource for RetainedFile {
     type Marker = crate::FileMarker;
+}
+
+struct RetainedStdioSend(Mutex<StdioSend>);
+
+impl OpaqueResource for RetainedStdioSend {
+    type Marker = crate::StdioSendMarker;
+}
+
+struct RetainedStdioRecv(Mutex<StdioRecv>);
+
+impl OpaqueResource for RetainedStdioRecv {
+    type Marker = crate::StdioRecvMarker;
+}
+
+struct RetainedChild(Mutex<crate::AnyChild>);
+
+impl OpaqueResource for RetainedChild {
+    type Marker = crate::ChildMarker;
 }
 
 struct ServerState {
@@ -75,6 +94,21 @@ impl Server {
             #[cfg(unix)]
             listener: None,
             rpc: Some(dolang_rpc::Server::new(stream)),
+            mode: SessionMode::Remote,
+            shared: Self::state(),
+        }
+    }
+
+    /// Creates an opaque-only VFS server on separate reader and writer streams.
+    pub fn new_split<R, W>(reader: R, writer: W) -> Self
+    where
+        R: AsyncRead + Send + 'static,
+        W: AsyncWrite + Send + 'static,
+    {
+        Self {
+            #[cfg(unix)]
+            listener: None,
+            rpc: Some(dolang_rpc::Server::new_split(reader, writer)),
             mode: SessionMode::Remote,
             shared: Self::state(),
         }
@@ -194,6 +228,11 @@ async fn serve_connection(
 ) -> Result<(), dolang_rpc::Error> {
     rpc.serve(async move |context, request| match request {
         RequestKind::Spawn(request) => connection.handle_spawn_rpc(context, request).await,
+        RequestKind::ChildWait { child } => connection.handle_child_wait(context, child).await,
+        RequestKind::ChildTerminate { child } => {
+            connection.handle_child_terminate(context, child).await
+        }
+        RequestKind::ChildClose { child } => connection.handle_child_close(context, child),
         RequestKind::Stop => {
             stop.store(true, Ordering::Release);
             context.shutdown();
@@ -209,6 +248,13 @@ impl Connection {
         wire_error(io::Error::new(
             io::ErrorKind::Unsupported,
             format!("{operation} is not supported by a remote VFS session"),
+        ))
+    }
+
+    fn invalid_opaque(kind: &str) -> crate::protocol::WireError {
+        wire_error(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid opaque {kind}"),
         ))
     }
 
@@ -228,10 +274,15 @@ impl Connection {
                 self.handle_which(program, path, cwd).await
             }
             RequestKind::WellKnownPath(request) => self.handle_well_known_path(request).await,
-            RequestKind::Stop | RequestKind::Spawn(_) => unreachable!(),
+            RequestKind::Stop
+            | RequestKind::Spawn(_)
+            | RequestKind::ChildWait { .. }
+            | RequestKind::ChildTerminate { .. }
+            | RequestKind::ChildClose { .. } => unreachable!(),
             RequestKind::ClearCache => {
                 ResponseKind::ClearCache(Self::wire_result(self.server.vfs.clear_cache().await))
             }
+            RequestKind::Pipe => self.handle_pipe(context).await,
             RequestKind::Open(request) => self.handle_open(context, request).await,
             RequestKind::FileRead { file, len } => self.handle_file_read(context, file, len).await,
             RequestKind::FileWrite { file, data } => {
@@ -244,7 +295,30 @@ impl Connection {
             RequestKind::FileSetLen { file, len } => {
                 self.handle_file_set_len(context, file, len).await
             }
-            RequestKind::FileClone { file } => self.handle_file_clone(context, file).await,
+            RequestKind::FileToStdioSend { file } => {
+                self.handle_file_to_stdio_send(context, file).await
+            }
+            RequestKind::FileToStdioRecv { file } => {
+                self.handle_file_to_stdio_recv(context, file).await
+            }
+            RequestKind::StdioSendClose { stdio } => {
+                ResponseKind::StdioSendClose(Self::close_stdio_send(context, stdio))
+            }
+            RequestKind::StdioSendWrite { stdio, data } => {
+                self.handle_stdio_send_write(context, stdio, data).await
+            }
+            RequestKind::StdioSendClone { stdio } => {
+                self.handle_stdio_send_clone(context, stdio).await
+            }
+            RequestKind::StdioRecvClose { stdio } => {
+                ResponseKind::StdioRecvClose(Self::close_stdio_recv(context, stdio))
+            }
+            RequestKind::StdioRecvRead { stdio, len } => {
+                self.handle_stdio_recv_read(context, stdio, len).await
+            }
+            RequestKind::StdioRecvClone { stdio } => {
+                self.handle_stdio_recv_clone(context, stdio).await
+            }
             RequestKind::FileMetadata { file } => self.handle_file_metadata(context, file).await,
             RequestKind::FileFsMetadata { file } => {
                 self.handle_file_fs_metadata(context, file).await
@@ -339,9 +413,6 @@ impl Connection {
         context: &mut CallContext<VfsProtocol>,
         req: SpawnRequest,
     ) -> ResponseKind {
-        if self.mode == SessionMode::Remote {
-            return ResponseKind::Spawn(Err(Self::unsupported("process spawning")));
-        }
         let mut cmd = self.server.vfs.command(request_path(&req.program));
         for arg in &req.args {
             cmd.arg(arg);
@@ -362,43 +433,179 @@ impl Connection {
             };
         }
 
-        if let Some(handle) = req.stdin_fd {
-            cmd.stdin_handle(AnyFile::Direct(crate::DirectFile::from_std(
-                handle.into_inner().into(),
-            )))
-            .unwrap();
-        } else {
-            cmd.stdin_null();
-        }
-        if let Some(handle) = req.stdout_fd {
-            cmd.stdout_handle(AnyFile::Direct(crate::DirectFile::from_std(
-                handle.into_inner().into(),
-            )))
-            .unwrap();
-        } else {
-            cmd.stdout_null();
-        }
-        if let Some(handle) = req.stderr_fd {
-            cmd.stderr_handle(AnyFile::Direct(crate::DirectFile::from_std(
-                handle.into_inner().into(),
-            )))
-            .unwrap();
-        } else {
-            cmd.stderr_null();
+        if let Err(error) = self
+            .configure_spawn_stdio(context, &mut cmd, req.stdin, req.stdout, req.stderr)
+            .await
+        {
+            return ResponseKind::Spawn(Err(error));
         }
 
-        let mut child = match cmd.spawn().await {
+        let child = match cmd.spawn().await {
             Ok(child) => child,
             Err(e) => {
                 return ResponseKind::Spawn(Err(wire_error(e)));
             }
         };
+        ResponseKind::Spawn(Ok(context.register(RetainedChild(Mutex::new(child)))))
+    }
 
-        let exit = match context.cancel_guard(async |_| child.wait().await).await {
-            Ok(exit) => exit,
-            Err(_) => child.terminate().await,
+    fn spawn_stdio_recv(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        target: StdioRecvTarget,
+    ) -> Result<Option<StdioRecv>, crate::protocol::WireError> {
+        match target {
+            StdioRecvTarget::Null => Ok(None),
+            StdioRecvTarget::Native(handle) => {
+                if self.mode == SessionMode::Remote {
+                    return Err(Self::unsupported("native process stdio"));
+                }
+                Ok(Some(StdioRecv::from_file(tokio::fs::File::from_std(
+                    handle.into_inner().into(),
+                ))))
+            }
+            StdioRecvTarget::Opaque(stdio) => {
+                let stdio = context
+                    .unregister::<RetainedStdioRecv>(stdio)
+                    .map_err(|_| Self::invalid_opaque("stdio receive"))?;
+                let Some(stdio) = stdio else {
+                    return Err(wire_error(io::Error::new(
+                        io::ErrorKind::ResourceBusy,
+                        "opaque stdio receive is in use",
+                    )));
+                };
+                Ok(Some(stdio.0.into_inner()))
+            }
+        }
+    }
+
+    fn spawn_stdio_send(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        target: StdioSendTarget,
+    ) -> Result<Option<StdioSend>, crate::protocol::WireError> {
+        match target {
+            StdioSendTarget::Null => Ok(None),
+            StdioSendTarget::Native(handle) => {
+                if self.mode == SessionMode::Remote {
+                    return Err(Self::unsupported("native process stdio"));
+                }
+                Ok(Some(StdioSend::from_file(tokio::fs::File::from_std(
+                    handle.into_inner().into(),
+                ))))
+            }
+            StdioSendTarget::Opaque(stdio) => {
+                let stdio = context
+                    .unregister::<RetainedStdioSend>(stdio)
+                    .map_err(|_| Self::invalid_opaque("stdio send"))?;
+                let Some(stdio) = stdio else {
+                    return Err(wire_error(io::Error::new(
+                        io::ErrorKind::ResourceBusy,
+                        "opaque stdio send is in use",
+                    )));
+                };
+                Ok(Some(stdio.0.into_inner()))
+            }
+        }
+    }
+
+    async fn configure_spawn_stdio(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        command: &mut crate::AnyCommand<'_>,
+        stdin: StdioRecvTarget,
+        stdout: StdioSendTarget,
+        stderr: StdioSendTarget,
+    ) -> Result<(), crate::protocol::WireError> {
+        let stdin = self.spawn_stdio_recv(context, stdin);
+        let stdout = self.spawn_stdio_send(context, stdout);
+        let stderr = self.spawn_stdio_send(context, stderr);
+        let (stdin, stdout, stderr) = (stdin?, stdout?, stderr?);
+
+        if let Some(stdio) = stdin {
+            command.stdin(stdio).map_err(wire_error)?;
+        } else {
+            command.stdin_null();
+        }
+        if let Some(stdio) = stdout {
+            command.stdout(stdio).map_err(wire_error)?;
+        } else {
+            command.stdout_null();
+        }
+        if let Some(stdio) = stderr {
+            command.stderr(stdio).map_err(wire_error)?;
+        } else {
+            command.stderr_null();
+        }
+        Ok(())
+    }
+
+    fn take_child(
+        context: &CallContext<VfsProtocol>,
+        child: dolang_rpc::Opaque<crate::ChildMarker>,
+    ) -> Result<RetainedChild, crate::protocol::WireError> {
+        context
+            .unregister::<RetainedChild>(child)
+            .map_err(|_| {
+                wire_error(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "invalid opaque child",
+                ))
+            })?
+            .ok_or_else(|| {
+                wire_error(io::Error::new(
+                    io::ErrorKind::ResourceBusy,
+                    "opaque child is in use",
+                ))
+            })
+    }
+
+    async fn handle_child_wait(
+        &self,
+        context: &mut CallContext<VfsProtocol>,
+        child: dolang_rpc::Opaque<crate::ChildMarker>,
+    ) -> ResponseKind {
+        let result = match Self::take_child(context, child) {
+            Ok(child) => {
+                let mut child = child.0.into_inner();
+                match context.cancel_guard(async |_| child.wait().await).await {
+                    Ok(result) => result,
+                    Err(_) => child.terminate().await,
+                }
+                .map_err(wire_error)
+            }
+            Err(error) => Err(error),
         };
-        ResponseKind::Spawn(exit.map_err(wire_error))
+        ResponseKind::ChildWait(result)
+    }
+
+    async fn handle_child_terminate(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        child: dolang_rpc::Opaque<crate::ChildMarker>,
+    ) -> ResponseKind {
+        let result = match Self::take_child(context, child) {
+            Ok(child) => child.0.into_inner().terminate().await.map_err(wire_error),
+            Err(error) => Err(error),
+        };
+        ResponseKind::ChildTerminate(result)
+    }
+
+    fn handle_child_close(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        child: dolang_rpc::Opaque<crate::ChildMarker>,
+    ) -> ResponseKind {
+        let result = context
+            .unregister::<RetainedChild>(child)
+            .map(|_| ())
+            .map_err(|_| {
+                wire_error(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "invalid opaque child",
+                ))
+            });
+        ResponseKind::ChildClose(result)
     }
 
     async fn handle_query(&self) -> ResponseKind {
@@ -409,6 +616,134 @@ impl Connection {
                 target: query.target,
             },
         )))
+    }
+
+    async fn handle_pipe(&self, context: &CallContext<VfsProtocol>) -> ResponseKind {
+        let result = self
+            .server
+            .vfs
+            .pipe()
+            .await
+            .map(|(send, recv)| PipeResponse {
+                send: context.register(RetainedStdioSend(Mutex::new(send))),
+                recv: context.register(RetainedStdioRecv(Mutex::new(recv))),
+            });
+        ResponseKind::Pipe(result.map_err(wire_error))
+    }
+
+    fn retained_stdio_send(
+        context: &CallContext<VfsProtocol>,
+        stdio: dolang_rpc::Opaque<crate::StdioSendMarker>,
+    ) -> Result<dolang_rpc::OpaqueGuard<RetainedStdioSend>, crate::protocol::WireError> {
+        context
+            .acquire::<RetainedStdioSend>(stdio)
+            .map_err(|_| Self::invalid_opaque("stdio send"))
+    }
+
+    fn retained_stdio_recv(
+        context: &CallContext<VfsProtocol>,
+        stdio: dolang_rpc::Opaque<crate::StdioRecvMarker>,
+    ) -> Result<dolang_rpc::OpaqueGuard<RetainedStdioRecv>, crate::protocol::WireError> {
+        context
+            .acquire::<RetainedStdioRecv>(stdio)
+            .map_err(|_| Self::invalid_opaque("stdio receive"))
+    }
+
+    fn close_stdio_send(
+        context: &CallContext<VfsProtocol>,
+        stdio: dolang_rpc::Opaque<crate::StdioSendMarker>,
+    ) -> Result<(), crate::protocol::WireError> {
+        match context
+            .unregister::<RetainedStdioSend>(stdio)
+            .map_err(|_| Self::invalid_opaque("stdio send"))?
+        {
+            Some(_) => Ok(()),
+            None => Err(wire_error(io::Error::new(
+                io::ErrorKind::ResourceBusy,
+                "opaque stdio send is in use",
+            ))),
+        }
+    }
+
+    fn close_stdio_recv(
+        context: &CallContext<VfsProtocol>,
+        stdio: dolang_rpc::Opaque<crate::StdioRecvMarker>,
+    ) -> Result<(), crate::protocol::WireError> {
+        match context
+            .unregister::<RetainedStdioRecv>(stdio)
+            .map_err(|_| Self::invalid_opaque("stdio receive"))?
+        {
+            Some(_) => Ok(()),
+            None => Err(wire_error(io::Error::new(
+                io::ErrorKind::ResourceBusy,
+                "opaque stdio receive is in use",
+            ))),
+        }
+    }
+
+    async fn handle_stdio_send_write(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        stdio: dolang_rpc::Opaque<crate::StdioSendMarker>,
+        data: Vec<u8>,
+    ) -> ResponseKind {
+        let result = async {
+            let stdio = Self::retained_stdio_send(context, stdio)?;
+            stdio.0.lock().await.write(&data).await.map_err(wire_error)
+        }
+        .await;
+        ResponseKind::StdioSendWrite(result)
+    }
+
+    async fn handle_stdio_send_clone(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        stdio: dolang_rpc::Opaque<crate::StdioSendMarker>,
+    ) -> ResponseKind {
+        let result = async {
+            let stdio = Self::retained_stdio_send(context, stdio)?;
+            let clone = stdio.0.lock().await.try_clone().await.map_err(wire_error)?;
+            Ok(context.register(RetainedStdioSend(Mutex::new(clone))))
+        }
+        .await;
+        ResponseKind::StdioSendClone(result)
+    }
+
+    async fn handle_stdio_recv_read(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        stdio: dolang_rpc::Opaque<crate::StdioRecvMarker>,
+        len: usize,
+    ) -> ResponseKind {
+        let result = async {
+            let stdio = Self::retained_stdio_recv(context, stdio)?;
+            let mut data = vec![0; len];
+            let len = stdio
+                .0
+                .lock()
+                .await
+                .read(&mut data)
+                .await
+                .map_err(wire_error)?;
+            data.truncate(len);
+            Ok(data)
+        }
+        .await;
+        ResponseKind::StdioRecvRead(result)
+    }
+
+    async fn handle_stdio_recv_clone(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        stdio: dolang_rpc::Opaque<crate::StdioRecvMarker>,
+    ) -> ResponseKind {
+        let result = async {
+            let stdio = Self::retained_stdio_recv(context, stdio)?;
+            let clone = stdio.0.lock().await.try_clone().await.map_err(wire_error)?;
+            Ok(context.register(RetainedStdioRecv(Mutex::new(clone))))
+        }
+        .await;
+        ResponseKind::StdioRecvClone(result)
     }
 
     async fn handle_open(
@@ -526,18 +861,44 @@ impl Connection {
         ResponseKind::FileSetLen(result)
     }
 
-    async fn handle_file_clone(
+    async fn handle_file_to_stdio_send(
         &self,
         context: &CallContext<VfsProtocol>,
         file: dolang_rpc::Opaque<crate::FileMarker>,
     ) -> ResponseKind {
         let result = async {
             let file = Self::retained_file(context, file)?;
-            let file = file.0.lock().await.try_clone().await.map_err(wire_error)?;
-            Ok(context.register(RetainedFile(Mutex::new(file))))
+            let stdio = file
+                .0
+                .lock()
+                .await
+                .to_stdio_send()
+                .await
+                .map_err(wire_error)?;
+            Ok(context.register(RetainedStdioSend(Mutex::new(stdio))))
         }
         .await;
-        ResponseKind::FileClone(result)
+        ResponseKind::FileToStdioSend(result)
+    }
+
+    async fn handle_file_to_stdio_recv(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            let stdio = file
+                .0
+                .lock()
+                .await
+                .to_stdio_recv()
+                .await
+                .map_err(wire_error)?;
+            Ok(context.register(RetainedStdioRecv(Mutex::new(stdio))))
+        }
+        .await;
+        ResponseKind::FileToStdioRecv(result)
     }
 
     async fn handle_file_metadata(

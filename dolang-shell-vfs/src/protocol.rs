@@ -144,7 +144,7 @@ impl From<WireErrorKind> for io::ErrorKind {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) enum WireError {
     Io {
         kind: WireErrorKind,
@@ -398,10 +398,10 @@ mod tests {
     #[test]
     fn wire_process_status_is_platform_independent() {
         for status in [ProcessStatus::Exited(42), ProcessStatus::Signaled(9)] {
-            let encoded = postcard::to_stdvec(&ResponseKind::Spawn(Ok(status))).unwrap();
+            let encoded = postcard::to_stdvec(&ResponseKind::ChildWait(Ok(status))).unwrap();
             let decoded: ResponseKind = postcard::from_bytes(&encoded).unwrap();
-            let ResponseKind::Spawn(Ok(decoded)) = decoded else {
-                panic!("spawn response changed variant");
+            let ResponseKind::ChildWait(Ok(decoded)) = decoded else {
+                panic!("child wait response changed variant");
             };
             assert_eq!(decoded, status);
         }
@@ -443,9 +443,29 @@ pub(crate) struct SpawnRequest {
     pub(crate) args: Vec<String>,
     pub(crate) env: HashMap<String, Option<String>>,
     pub(crate) cwd: Option<WirePath>,
-    pub(crate) stdin_fd: Option<OsHandle>,
-    pub(crate) stdout_fd: Option<OsHandle>,
-    pub(crate) stderr_fd: Option<OsHandle>,
+    pub(crate) stdin: StdioRecvTarget,
+    pub(crate) stdout: StdioSendTarget,
+    pub(crate) stderr: StdioSendTarget,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct PipeResponse {
+    pub(crate) send: Opaque<crate::StdioSendMarker>,
+    pub(crate) recv: Opaque<crate::StdioRecvMarker>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) enum StdioRecvTarget {
+    Null,
+    Native(OsHandle),
+    Opaque(Opaque<crate::StdioRecvMarker>),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) enum StdioSendTarget {
+    Null,
+    Native(OsHandle),
+    Opaque(Opaque<crate::StdioSendMarker>),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -686,6 +706,15 @@ pub(crate) struct SetXattrRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum RequestKind {
     Spawn(SpawnRequest),
+    ChildWait {
+        child: Opaque<crate::ChildMarker>,
+    },
+    ChildTerminate {
+        child: Opaque<crate::ChildMarker>,
+    },
+    ChildClose {
+        child: Opaque<crate::ChildMarker>,
+    },
     Query,
     Which {
         program: WirePath,
@@ -695,6 +724,7 @@ pub(crate) enum RequestKind {
     WellKnownPath(WellKnownPathRequest),
     Stop,
     ClearCache,
+    Pipe,
     Open(OpenRequest),
     FileRead {
         file: Opaque<crate::FileMarker>,
@@ -715,8 +745,31 @@ pub(crate) enum RequestKind {
         file: Opaque<crate::FileMarker>,
         len: u64,
     },
-    FileClone {
+    FileToStdioSend {
         file: Opaque<crate::FileMarker>,
+    },
+    FileToStdioRecv {
+        file: Opaque<crate::FileMarker>,
+    },
+    StdioSendClose {
+        stdio: Opaque<crate::StdioSendMarker>,
+    },
+    StdioSendWrite {
+        stdio: Opaque<crate::StdioSendMarker>,
+        data: Vec<u8>,
+    },
+    StdioSendClone {
+        stdio: Opaque<crate::StdioSendMarker>,
+    },
+    StdioRecvClose {
+        stdio: Opaque<crate::StdioRecvMarker>,
+    },
+    StdioRecvRead {
+        stdio: Opaque<crate::StdioRecvMarker>,
+        len: usize,
+    },
+    StdioRecvClone {
+        stdio: Opaque<crate::StdioRecvMarker>,
     },
     FileMetadata {
         file: Opaque<crate::FileMarker>,
@@ -783,19 +836,30 @@ pub(crate) enum RequestKind {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum ResponseKind {
-    Spawn(Result<crate::ProcessStatus, WireError>),
+    Spawn(Result<Opaque<crate::ChildMarker>, WireError>),
+    ChildWait(Result<crate::ProcessStatus, WireError>),
+    ChildTerminate(Result<crate::ProcessStatus, WireError>),
+    ChildClose(Result<(), WireError>),
     Query(Result<QueryResponse, WireError>),
     Which(Result<Option<WirePath>, WireError>),
     WellKnownPath(Result<WirePath, WireError>),
     Stop,
     ClearCache(Result<(), WireError>),
+    Pipe(Result<PipeResponse, WireError>),
     Open(Result<OpenHandle, WireError>),
     FileRead(Result<Vec<u8>, WireError>),
     FileWrite(Result<usize, WireError>),
     FileSeek(Result<u64, WireError>),
     FileFlush(Result<(), WireError>),
     FileSetLen(Result<(), WireError>),
-    FileClone(Result<Opaque<crate::FileMarker>, WireError>),
+    FileToStdioSend(Result<Opaque<crate::StdioSendMarker>, WireError>),
+    FileToStdioRecv(Result<Opaque<crate::StdioRecvMarker>, WireError>),
+    StdioSendClose(Result<(), WireError>),
+    StdioSendWrite(Result<usize, WireError>),
+    StdioSendClone(Result<Opaque<crate::StdioSendMarker>, WireError>),
+    StdioRecvClose(Result<(), WireError>),
+    StdioRecvRead(Result<Vec<u8>, WireError>),
+    StdioRecvClone(Result<Opaque<crate::StdioRecvMarker>, WireError>),
     FileMetadata(Result<Metadata, WireError>),
     FileFsMetadata(Result<FsMetadata, WireError>),
     FileXattrs(Result<Vec<XattrEntry>, WireError>),

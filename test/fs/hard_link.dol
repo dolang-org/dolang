@@ -10,7 +10,7 @@ import agent sys
     - open
     - Path
 
-#[agent.test remote: false]
+#[agent.test]
 def fs_hard_link_creates_linked_file()
   let target = Path "target.txt"
   let link = Path "link.txt"
@@ -27,7 +27,7 @@ def fs_hard_link_creates_linked_file()
     assert (target.metadata().nlink >= 2)
     assert (link.metadata().nlink >= 2)
 
-#[agent.test remote: false]
+#[agent.test]
 def path_hard_link_creates_linked_file()
   let target = Path "target.txt"
   let link = Path "link.txt"

@@ -45,6 +45,46 @@ async fn multiplexes_out_of_order_calls() {
 }
 
 #[tokio::test]
+async fn split_transport_round_trip() {
+    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_reader, client_writer) = tokio::io::split(client_io);
+    let (server_reader, server_writer) = tokio::io::split(server_io);
+    let server = Server::<Test>::new_split(server_reader, server_writer);
+    let server = tokio::spawn(server.serve(async |context, request| match request {
+        Request::Echo(value) => Response(value),
+        Request::Shutdown => {
+            context.shutdown();
+            Response(0)
+        }
+        Request::Delay(_) => unreachable!(),
+    }));
+    let client = Client::<Test>::new_split(client_reader, client_writer);
+    assert_eq!(client.call(Request::Echo(7)).await.unwrap(), Response(7));
+    assert_eq!(client.call(Request::Shutdown).await.unwrap(), Response(0));
+    assert!(server.await.unwrap().is_ok());
+}
+
+#[tokio::test]
+async fn split_transport_flushes_buffered_writers() {
+    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_reader, client_writer) = tokio::io::split(client_io);
+    let (server_reader, server_writer) = tokio::io::split(server_io);
+    let server = Server::<Test>::new_split(server_reader, tokio::io::BufWriter::new(server_writer));
+    let server = tokio::spawn(server.serve(async |context, request| match request {
+        Request::Echo(value) => Response(value),
+        Request::Shutdown => {
+            context.shutdown();
+            Response(0)
+        }
+        Request::Delay(_) => unreachable!(),
+    }));
+    let client = Client::<Test>::new_split(client_reader, tokio::io::BufWriter::new(client_writer));
+    assert_eq!(client.call(Request::Echo(7)).await.unwrap(), Response(7));
+    assert_eq!(client.call(Request::Shutdown).await.unwrap(), Response(0));
+    assert!(server.await.unwrap().is_ok());
+}
+
+#[tokio::test]
 async fn unguarded_cancellation_aborts_handler() {
     let (client_io, server_io) = tokio::io::duplex(4096);
     let dropped = Arc::new(AtomicBool::new(false));

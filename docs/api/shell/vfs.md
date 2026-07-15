@@ -2,6 +2,30 @@
 
 `Vfs` runs code in another filesystem and process context.
 
+## Constructor
+
+### `Vfs func`
+
+Runs `func` on a background stream and connects to a VFS server over its input
+and output. The function must launch a program that speaks the VFS protocol.
+The `Vfs` retains the background stream for its lifetime.
+
+**Parameters:**
+
+| Name   | Type     | Description                 |
+| ------ | -------- | --------------------------- |
+| `func` | callable | VFS server launcher         |
+
+**Returns:** `Vfs`
+
+```
+let remote = Vfs do run ssh host dolang-shell-vfs --stdio
+```
+
+The `--stdio` mode reads the protocol from standard input and writes it to
+standard output. The launched program must not write other output to standard
+output; diagnostics may use standard error.
+
 ## Class Methods
 
 ### `unix_socket path`
@@ -76,8 +100,9 @@ This is commonly used for containers, but it is not limited to them.
 
 ### `stop()`
 
-Stops the connected VFS server. On Windows, it also waits for the elevated
-process to exit.
+Sends a stop request to the connected VFS server. On Windows, it also waits for
+the elevated process to exit. For a callable-backed `Vfs`, it does not
+explicitly join the launcher strand.
 
 ```
 a.stop()

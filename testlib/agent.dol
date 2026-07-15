@@ -24,13 +24,14 @@ def with_vfs remote block
     fs.with_temp_dir do |dir|
       dir.chmod 0o700
       let socket = (dir / "socket")
+      let input = strand.input()
 
       pipeline
         do run $vfs_bin $socket
         do
           strand.next()
           let vfs = Vfs.unix_socket $socket remote: $remote
-          return vfs $block
+          return strand.redirect input: $input do vfs $block
 
 pub def test
   :name = nil

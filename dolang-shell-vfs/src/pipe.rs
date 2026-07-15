@@ -5,357 +5,440 @@ use std::{
     task::{Context, Poll},
 };
 
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use dolang_rpc::DefaultHandle;
+use tokio::{
+    fs::File,
+    io::{AsyncRead, AsyncWrite, ReadBuf},
+};
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, OwnedFd};
 #[cfg(windows)]
 use std::{
-    io::{PipeReader as StdPipeReader, PipeWriter as StdPipeWriter, Read as _, Write as _},
+    io::{PipeReader, PipeWriter, Read as _, Write as _},
     os::windows::io::OwnedHandle,
     sync::Arc,
 };
-
-use dolang_rpc::DefaultHandle;
 #[cfg(windows)]
 use tokio::task::JoinHandle;
 
-pub(crate) fn pipe() -> io::Result<(PipeSend, PipeRecv)> {
+#[derive(Debug)]
+pub enum StdioSend {
+    Native(NativeStdioSend),
+    Remote(crate::client::RemoteStdioSend),
+}
+
+#[derive(Debug)]
+pub enum StdioRecv {
+    Native(NativeStdioRecv),
+    Remote(crate::client::RemoteStdioRecv),
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+pub enum NativeStdioSend {
+    Pipe(tokio::net::unix::pipe::Sender),
+    File(File),
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+pub enum NativeStdioRecv {
+    Pipe(tokio::net::unix::pipe::Receiver),
+    File(File),
+}
+
+#[cfg(windows)]
+#[derive(Debug)]
+pub enum NativeStdioSend {
+    Pipe {
+        inner: Arc<PipeWriter>,
+        pending: Option<JoinHandle<io::Result<usize>>>,
+    },
+    File(File),
+}
+
+#[cfg(windows)]
+#[derive(Debug)]
+pub enum NativeStdioRecv {
+    Pipe {
+        inner: Arc<PipeReader>,
+        pending: Option<JoinHandle<(Vec<u8>, io::Result<usize>)>>,
+        ready: Option<(Vec<u8>, usize)>,
+    },
+    File(File),
+}
+
+pub(crate) fn pipe() -> io::Result<(StdioSend, StdioRecv)> {
     #[cfg(unix)]
     {
         let (send, recv) = tokio::net::unix::pipe::pipe()?;
-        Ok((PipeSend(send), PipeRecv(recv)))
+        Ok((
+            StdioSend::Native(NativeStdioSend::Pipe(send)),
+            StdioRecv::Native(NativeStdioRecv::Pipe(recv)),
+        ))
     }
-
     #[cfg(windows)]
     {
         let (recv, send) = std::io::pipe()?;
-        Ok((PipeSend::new(send), PipeRecv::new(recv)))
-    }
-}
-
-#[cfg(unix)]
-#[derive(Debug)]
-pub struct PipeSend(tokio::net::unix::pipe::Sender);
-
-#[cfg(unix)]
-#[derive(Debug)]
-pub struct PipeRecv(tokio::net::unix::pipe::Receiver);
-
-#[cfg(windows)]
-#[derive(Debug)]
-pub struct PipeSend {
-    inner: Arc<StdPipeWriter>,
-    pending: Option<JoinHandle<io::Result<usize>>>,
-}
-
-#[cfg(windows)]
-#[derive(Debug)]
-pub struct PipeRecv {
-    inner: Arc<StdPipeReader>,
-    pending: Option<JoinHandle<(Vec<u8>, io::Result<usize>)>>,
-    ready: Option<(Vec<u8>, usize)>,
-}
-
-impl PipeSend {
-    pub fn try_clone(&self) -> io::Result<Self> {
-        #[cfg(unix)]
-        {
-            let fd = self.0.as_fd().try_clone_to_owned()?;
-            Ok(Self(
-                tokio::net::unix::pipe::Sender::from_owned_fd_unchecked(fd)?,
-            ))
-        }
-
-        #[cfg(windows)]
-        {
-            Ok(Self {
-                inner: Arc::new(self.inner.try_clone()?),
+        Ok((
+            StdioSend::Native(NativeStdioSend::Pipe {
+                inner: Arc::new(send),
                 pending: None,
-            })
-        }
-    }
-
-    // FIXME: this should be crate-private but is used by a unit test
-    pub fn into_stdio(self) -> io::Result<Stdio> {
-        #[cfg(unix)]
-        {
-            let fd: OwnedFd = self.0.into_blocking_fd()?;
-            Ok(Stdio::from(fd))
-        }
-
-        #[cfg(windows)]
-        {
-            if self.pending.is_some() {
-                return Err(io::Error::other(
-                    "cannot convert PipeSend into Stdio while an async write is in flight",
-                ));
-            }
-
-            Arc::try_unwrap(self.inner)
-                .or_else(|inner| inner.try_clone())
-                .map(Stdio::from)
-        }
-    }
-
-    pub(crate) fn into_blocking_handle(self) -> io::Result<DefaultHandle> {
-        #[cfg(unix)]
-        {
-            self.0.into_blocking_fd()
-        }
-
-        #[cfg(windows)]
-        {
-            if self.pending.is_some() {
-                return Err(io::Error::other(
-                    "cannot convert PipeSend into a handle while an async write is in flight",
-                ));
-            }
-            let pipe = Arc::try_unwrap(self.inner).or_else(|inner| inner.try_clone())?;
-            Ok(OwnedHandle::from(pipe))
-        }
-    }
-}
-
-impl PipeRecv {
-    pub fn try_clone(&self) -> io::Result<Self> {
-        #[cfg(unix)]
-        {
-            let fd = self.0.as_fd().try_clone_to_owned()?;
-            Ok(Self(
-                tokio::net::unix::pipe::Receiver::from_owned_fd_unchecked(fd)?,
-            ))
-        }
-
-        #[cfg(windows)]
-        {
-            Ok(Self {
-                inner: Arc::new(self.inner.try_clone()?),
+            }),
+            StdioRecv::Native(NativeStdioRecv::Pipe {
+                inner: Arc::new(recv),
                 pending: None,
                 ready: None,
-            })
+            }),
+        ))
+    }
+}
+
+impl StdioSend {
+    pub(crate) fn disarm_remote_cleanup(&mut self) {
+        if let Self::Remote(remote) = self {
+            remote.disarm_cleanup();
         }
     }
+    pub(crate) fn from_file(file: File) -> Self {
+        Self::Native(NativeStdioSend::File(file))
+    }
 
-    // FIXME: this should be crate-private but is used by a unit test
-    pub fn into_stdio(self) -> io::Result<Stdio> {
-        #[cfg(unix)]
-        {
-            let fd: OwnedFd = self.0.into_blocking_fd()?;
-            Ok(Stdio::from(fd))
-        }
-
-        #[cfg(windows)]
-        {
-            if self.pending.is_some() {
-                return Err(io::Error::other(
-                    "cannot convert PipeRecv into Stdio while an async read is in flight",
-                ));
+    pub async fn try_clone(&self) -> io::Result<Self> {
+        match self {
+            #[cfg(unix)]
+            Self::Native(NativeStdioSend::Pipe(pipe)) => {
+                let fd = pipe.as_fd().try_clone_to_owned()?;
+                Ok(Self::Native(NativeStdioSend::Pipe(
+                    tokio::net::unix::pipe::Sender::from_owned_fd_unchecked(fd)?,
+                )))
             }
-
-            Arc::try_unwrap(self.inner)
-                .or_else(|inner| inner.try_clone())
-                .map(Stdio::from)
-        }
-    }
-
-    pub(crate) fn into_blocking_handle(self) -> io::Result<DefaultHandle> {
-        #[cfg(unix)]
-        {
-            self.0.into_blocking_fd()
-        }
-
-        #[cfg(windows)]
-        {
-            if self.pending.is_some() {
-                return Err(io::Error::other(
-                    "cannot convert PipeRecv into a handle while an async read is in flight",
-                ));
+            #[cfg(windows)]
+            Self::Native(NativeStdioSend::Pipe { inner, .. }) => {
+                Ok(Self::Native(NativeStdioSend::Pipe {
+                    inner: Arc::new(inner.try_clone()?),
+                    pending: None,
+                }))
             }
-            let pipe = Arc::try_unwrap(self.inner).or_else(|inner| inner.try_clone())?;
-            Ok(OwnedHandle::from(pipe))
+            Self::Native(NativeStdioSend::File(file)) => {
+                Ok(Self::Native(NativeStdioSend::File(file.try_clone().await?)))
+            }
+            Self::Remote(remote) => remote.try_clone().await.map(Self::Remote),
+        }
+    }
+
+    pub async fn into_stdio(self) -> io::Result<Stdio> {
+        match self {
+            Self::Native(NativeStdioSend::File(file)) => Ok(Stdio::from(file.into_std().await)),
+            #[cfg(unix)]
+            Self::Native(NativeStdioSend::Pipe(pipe)) => {
+                let fd: OwnedFd = pipe.into_blocking_fd()?;
+                Ok(Stdio::from(fd))
+            }
+            #[cfg(windows)]
+            Self::Native(NativeStdioSend::Pipe { inner, pending }) => {
+                if pending.is_some() {
+                    return Err(io::Error::other(
+                        "cannot convert StdioSend while an async write is in flight",
+                    ));
+                }
+                Arc::try_unwrap(inner)
+                    .or_else(|inner| inner.try_clone())
+                    .map(Stdio::from)
+            }
+            Self::Remote(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "remote stdio cannot be converted to a native handle",
+            )),
+        }
+    }
+
+    pub(crate) async fn into_blocking_handle(self) -> io::Result<DefaultHandle> {
+        match self {
+            Self::Native(NativeStdioSend::File(file)) => Ok(file.into_std().await.into()),
+            #[cfg(unix)]
+            Self::Native(NativeStdioSend::Pipe(pipe)) => pipe.into_blocking_fd(),
+            #[cfg(windows)]
+            Self::Native(NativeStdioSend::Pipe { inner, pending }) => {
+                if pending.is_some() {
+                    return Err(io::Error::other(
+                        "cannot convert StdioSend while an async write is in flight",
+                    ));
+                }
+                let pipe = Arc::try_unwrap(inner).or_else(|inner| inner.try_clone())?;
+                Ok(OwnedHandle::from(pipe))
+            }
+            Self::Remote(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "remote stdio has no native handle",
+            )),
         }
     }
 }
 
-impl TryFrom<PipeSend> for Stdio {
-    type Error = io::Error;
+impl StdioRecv {
+    pub(crate) fn disarm_remote_cleanup(&mut self) {
+        if let Self::Remote(remote) = self {
+            remote.disarm_cleanup();
+        }
+    }
+    pub(crate) fn from_file(file: File) -> Self {
+        Self::Native(NativeStdioRecv::File(file))
+    }
 
-    fn try_from(value: PipeSend) -> Result<Self, Self::Error> {
-        value.into_stdio()
+    pub async fn try_clone(&self) -> io::Result<Self> {
+        match self {
+            #[cfg(unix)]
+            Self::Native(NativeStdioRecv::Pipe(pipe)) => {
+                let fd = pipe.as_fd().try_clone_to_owned()?;
+                Ok(Self::Native(NativeStdioRecv::Pipe(
+                    tokio::net::unix::pipe::Receiver::from_owned_fd_unchecked(fd)?,
+                )))
+            }
+            #[cfg(windows)]
+            Self::Native(NativeStdioRecv::Pipe { inner, .. }) => {
+                Ok(Self::Native(NativeStdioRecv::Pipe {
+                    inner: Arc::new(inner.try_clone()?),
+                    pending: None,
+                    ready: None,
+                }))
+            }
+            Self::Native(NativeStdioRecv::File(file)) => {
+                Ok(Self::Native(NativeStdioRecv::File(file.try_clone().await?)))
+            }
+            Self::Remote(remote) => remote.try_clone().await.map(Self::Remote),
+        }
+    }
+
+    pub async fn into_stdio(self) -> io::Result<Stdio> {
+        match self {
+            Self::Native(NativeStdioRecv::File(file)) => Ok(Stdio::from(file.into_std().await)),
+            #[cfg(unix)]
+            Self::Native(NativeStdioRecv::Pipe(pipe)) => {
+                let fd: OwnedFd = pipe.into_blocking_fd()?;
+                Ok(Stdio::from(fd))
+            }
+            #[cfg(windows)]
+            Self::Native(NativeStdioRecv::Pipe { inner, pending, .. }) => {
+                if pending.is_some() {
+                    return Err(io::Error::other(
+                        "cannot convert StdioRecv while an async read is in flight",
+                    ));
+                }
+                Arc::try_unwrap(inner)
+                    .or_else(|inner| inner.try_clone())
+                    .map(Stdio::from)
+            }
+            Self::Remote(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "remote stdio cannot be converted to a native handle",
+            )),
+        }
+    }
+
+    pub(crate) async fn into_blocking_handle(self) -> io::Result<DefaultHandle> {
+        match self {
+            Self::Native(NativeStdioRecv::File(file)) => Ok(file.into_std().await.into()),
+            #[cfg(unix)]
+            Self::Native(NativeStdioRecv::Pipe(pipe)) => pipe.into_blocking_fd(),
+            #[cfg(windows)]
+            Self::Native(NativeStdioRecv::Pipe { inner, pending, .. }) => {
+                if pending.is_some() {
+                    return Err(io::Error::other(
+                        "cannot convert StdioRecv while an async read is in flight",
+                    ));
+                }
+                let pipe = Arc::try_unwrap(inner).or_else(|inner| inner.try_clone())?;
+                Ok(OwnedHandle::from(pipe))
+            }
+            Self::Remote(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "remote stdio has no native handle",
+            )),
+        }
     }
 }
 
-impl TryFrom<PipeRecv> for Stdio {
-    type Error = io::Error;
-
-    fn try_from(value: PipeRecv) -> Result<Self, Self::Error> {
-        value.into_stdio()
-    }
-}
-
-#[cfg(unix)]
-impl AsyncWrite for PipeSend {
+impl AsyncWrite for StdioSend {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.0).poll_write(cx, buf)
+        match &mut *self {
+            Self::Native(native) => Pin::new(native).poll_write(cx, buf),
+            Self::Remote(remote) => Pin::new(remote).poll_write(cx, buf),
+        }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.0).poll_flush(cx)
+        match &mut *self {
+            Self::Native(native) => Pin::new(native).poll_flush(cx),
+            Self::Remote(remote) => Pin::new(remote).poll_flush(cx),
+        }
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.0).poll_shutdown(cx)
+        match &mut *self {
+            Self::Native(native) => Pin::new(native).poll_shutdown(cx),
+            Self::Remote(remote) => Pin::new(remote).poll_shutdown(cx),
+        }
     }
 }
 
-#[cfg(unix)]
-impl AsyncRead for PipeRecv {
+impl AsyncRead for StdioRecv {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.0).poll_read(cx, buf)
+        match &mut *self {
+            Self::Native(native) => Pin::new(native).poll_read(cx, buf),
+            Self::Remote(remote) => Pin::new(remote).poll_read(cx, buf),
+        }
+    }
+}
+
+#[cfg(unix)]
+impl AsyncWrite for NativeStdioSend {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match &mut *self {
+            Self::Pipe(pipe) => Pin::new(pipe).poll_write(cx, buf),
+            Self::File(file) => Pin::new(file).poll_write(cx, buf),
+        }
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match &mut *self {
+            Self::Pipe(pipe) => Pin::new(pipe).poll_flush(cx),
+            Self::File(file) => Pin::new(file).poll_flush(cx),
+        }
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match &mut *self {
+            Self::Pipe(pipe) => Pin::new(pipe).poll_shutdown(cx),
+            Self::File(file) => Pin::new(file).poll_shutdown(cx),
+        }
+    }
+}
+
+#[cfg(unix)]
+impl AsyncRead for NativeStdioRecv {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match &mut *self {
+            Self::Pipe(pipe) => Pin::new(pipe).poll_read(cx, buf),
+            Self::File(file) => Pin::new(file).poll_read(cx, buf),
+        }
     }
 }
 
 #[cfg(windows)]
-impl PipeSend {
-    fn new(inner: StdPipeWriter) -> Self {
-        Self {
-            inner: Arc::new(inner),
-            pending: None,
+impl AsyncWrite for NativeStdioSend {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match &mut *self {
+            Self::File(file) => Pin::new(file).poll_write(cx, buf),
+            Self::Pipe { inner, pending } => {
+                if let Some(task) = pending {
+                    return match Pin::new(task).poll(cx) {
+                        Poll::Pending => Poll::Pending,
+                        Poll::Ready(Ok(result)) => {
+                            *pending = None;
+                            Poll::Ready(result)
+                        }
+                        Poll::Ready(Err(error)) => {
+                            *pending = None;
+                            Poll::Ready(Err(io::Error::other(error)))
+                        }
+                    };
+                }
+                let inner = Arc::clone(inner);
+                let data = buf.to_vec();
+                *pending = Some(tokio::task::spawn_blocking(move || (&*inner).write(&data)));
+                self.poll_write(cx, &[])
+            }
         }
     }
-
-    fn poll_pending_write(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
-        let Some(pending) = &mut self.pending else {
-            return Poll::Ready(Ok(0));
-        };
-
-        match Pin::new(pending).poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(result)) => {
-                self.pending = None;
-                Poll::Ready(result)
-            }
-            Poll::Ready(Err(err)) => {
-                self.pending = None;
-                Poll::Ready(Err(io::Error::other(err)))
-            }
-        }
-    }
-
-    fn poll_pending_write_completion(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match self.poll_pending_write(cx) {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.as_mut().poll_write(cx, &[]) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(_)) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
         }
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.poll_flush(cx)
     }
 }
 
 #[cfg(windows)]
-impl AsyncWrite for PipeSend {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        if self.pending.is_some() {
-            return self.poll_pending_write(cx);
-        }
-
-        let inner = Arc::clone(&self.inner);
-        let data = buf.to_vec();
-        self.pending = Some(tokio::task::spawn_blocking(move || {
-            let mut writer = &*inner;
-            writer.write(&data)
-        }));
-        self.poll_pending_write(cx)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.poll_pending_write_completion(cx)
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.poll_pending_write_completion(cx)
-    }
-}
-
-#[cfg(windows)]
-impl PipeRecv {
-    fn new(inner: StdPipeReader) -> Self {
-        Self {
-            inner: Arc::new(inner),
-            pending: None,
-            ready: None,
-        }
-    }
-}
-
-#[cfg(windows)]
-impl AsyncRead for PipeRecv {
+impl AsyncRead for NativeStdioRecv {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        if let Some((data, len)) = &mut self.ready {
-            let copy_len = (*len).min(buf.remaining());
-            buf.put_slice(&data[..copy_len]);
-            if copy_len == *len {
-                self.ready = None;
-            } else {
-                data.drain(..copy_len);
-                *len -= copy_len;
-            }
-            return Poll::Ready(Ok(()));
-        }
-
-        if self.pending.is_none() {
-            if buf.remaining() == 0 {
-                return Poll::Ready(Ok(()));
-            }
-
-            let inner = Arc::clone(&self.inner);
-            let cap = buf.remaining();
-            self.pending = Some(tokio::task::spawn_blocking(move || {
-                let mut data = vec![0; cap];
-                let mut reader = &*inner;
-                let result = reader.read(&mut data);
-                (data, result)
-            }));
-        }
-
-        let Some(pending) = &mut self.pending else {
-            return Poll::Ready(Ok(()));
-        };
-
-        match Pin::new(pending).poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok((data, Ok(n)))) => {
-                self.pending = None;
-                let copy_len = n.min(buf.remaining());
-                buf.put_slice(&data[..copy_len]);
-                if copy_len < n {
-                    self.ready = Some((data[copy_len..n].to_vec(), n - copy_len));
+        match &mut *self {
+            Self::File(file) => Pin::new(file).poll_read(cx, buf),
+            Self::Pipe {
+                inner,
+                pending,
+                ready,
+            } => {
+                if let Some((data, len)) = ready {
+                    let n = (*len).min(buf.remaining());
+                    buf.put_slice(&data[..n]);
+                    if n == *len {
+                        *ready = None;
+                    } else {
+                        data.drain(..n);
+                        *len -= n;
+                    }
+                    return Poll::Ready(Ok(()));
                 }
-                Poll::Ready(Ok(()))
-            }
-            Poll::Ready(Ok((_data, Err(err)))) => {
-                self.pending = None;
-                Poll::Ready(Err(err))
-            }
-            Poll::Ready(Err(err)) => {
-                self.pending = None;
-                Poll::Ready(Err(io::Error::other(err)))
+                if pending.is_none() {
+                    if buf.remaining() == 0 {
+                        return Poll::Ready(Ok(()));
+                    }
+                    let inner = Arc::clone(inner);
+                    let cap = buf.remaining();
+                    *pending = Some(tokio::task::spawn_blocking(move || {
+                        let mut data = vec![0; cap];
+                        let result = (&*inner).read(&mut data);
+                        (data, result)
+                    }));
+                }
+                match Pin::new(pending.as_mut().unwrap()).poll(cx) {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(Ok((data, Ok(len)))) => {
+                        *pending = None;
+                        let n = len.min(buf.remaining());
+                        buf.put_slice(&data[..n]);
+                        if n < len {
+                            *ready = Some((data[n..len].to_vec(), len - n));
+                        }
+                        Poll::Ready(Ok(()))
+                    }
+                    Poll::Ready(Ok((_, Err(error)))) => {
+                        *pending = None;
+                        Poll::Ready(Err(error))
+                    }
+                    Poll::Ready(Err(error)) => {
+                        *pending = None;
+                        Poll::Ready(Err(io::Error::other(error)))
+                    }
+                }
             }
         }
     }

@@ -39,15 +39,15 @@ receives requests and sends responses.
 
 ```rust
 impl<P: Protocol> Client<P> {
-    fn call(&self, request: P::Request) -> Call<P::Response>;
+    fn call(&self, request: P::Request) -> Call<P>;
 }
 
-impl<R> Call<R> {
+impl<P: Protocol> Call<P> {
     fn cancel(&mut self);
 }
 
-impl<R> Future for Call<R> {
-    type Output = Result<R, Error>;
+impl<P: Protocol> Future for Call<P> {
+    type Output = Result<P::Response, Error>;
     // ...
 }
 ```

@@ -349,12 +349,14 @@ return
           install_bin $spec $bin_dir dolang
           install_bin $spec $bin_dir dolang-lsp
 
-          if is_linux
-            let musl_spec = Spec $args
+          let vfs_spec = if is_linux
+            Spec $args
               profile: dist
               tuple: $(spec.tuple.without_suffix "-gnu")-musl
-            musl_spec.cargo build --bin dolang-shell-vfs
-            install_bin $musl_spec $bin_dir dolang-shell-vfs
+          else
+            spec
+          vfs_spec.cargo build --bin dolang-shell-vfs
+          install_bin $vfs_spec $bin_dir dolang-shell-vfs
 
   publish:
     help: publish workspace crates in dependency order

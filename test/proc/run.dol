@@ -29,19 +29,19 @@ let is_windows = (sys.os_info().family == :WINDOWS:)
 def yield()
   sleep 0.01
 
-#[agent.test remote: false]
+#[agent.test]
 def echo()
   let res = sub $echo hello world
   assert_eq $res "hello world"
 
-#[agent.test remote: false]
+#[agent.test]
 def cat()
   let path = Path "fixture.txt"
   path.write "[package]\nname = fixture\n"
   let content = sub $cat $path
   assert (content.starts_with "[package]")
 
-#[agent.test remote: false]
+#[agent.test]
 def grep()
   let path = Path "fixture.toml"
   path.write |
@@ -58,7 +58,7 @@ def grep()
     - "[dependencies.dolang]"
     - "[dependencies.dolang-shell-vfs]"
 
-#[agent.test remote: false]
+#[agent.test]
 def pipeline()
   let path = Path "fixture.toml"
   path.write |
@@ -80,7 +80,7 @@ def pipeline()
     - "[dependencies.dolang]"
     - "[dependencies.dolang-shell-vfs]"
 
-#[agent.test remote: false]
+#[agent.test]
 def path_selector()
   let name = if is_windows
     "cmd.exe"
@@ -96,7 +96,7 @@ def path_selector()
       prog ok
       run $path ok
 
-#[agent.test remote: false]
+#[agent.test]
 def pipe_deferred_recv_transition()
   if is_windows
     skip "windows polyfill not yet adequate"
@@ -107,7 +107,7 @@ def pipe_deferred_recv_transition()
       cat()
   assert_eq $res foo
 
-#[agent.test remote: false]
+#[agent.test]
 def pipe_receive_side_value_flush()
   if is_windows
     skip "windows polyfill not yet adequate"
@@ -118,7 +118,7 @@ def pipe_receive_side_value_flush()
       cat()
   assert_eq $res foo
 
-#[agent.test remote: false]
+#[agent.test]
 def pipe_send_side_value_flush()
   if is_windows
     skip "windows polyfill not yet adequate"
@@ -131,7 +131,7 @@ def pipe_send_side_value_flush()
       cat()
   assert_eq $res "foo\nfoo"
 
-#[agent.test remote: false]
+#[agent.test]
 def pipeline_and_io_mode_use_matching_encodings()
   if is_windows
     skip "windows polyfill not yet adequate"
@@ -141,7 +141,7 @@ def pipeline_and_io_mode_use_matching_encodings()
 
   out = []
   sub do io_mode :CHUNK: do cat stdin: ["foo", "bar"] stdout: $out
-  assert_eq $out [b"foobar"]
+  assert_eq (b"".join out) b"foobar"
 
   let res = pipeline
     do io_mode :LINE: do strand.put "foo"
@@ -165,7 +165,7 @@ def pipeline_and_io_mode_use_matching_encodings()
     do io_mode :CHUNK: do collect()
   assert_eq $res [b"foo\n"]
 
-#[agent.test remote: false]
+#[agent.test]
 def missing_program_yields_sys_error()
   let err = assert_throws $sys.NotFoundError do
     run __dolang_missing_program__
@@ -177,7 +177,7 @@ def missing_program_yields_sys_error()
     assert_eq $err.errno 2
     assert_throws $FieldError do err.winerror
 
-#[agent.test remote: false]
+#[agent.test]
 def non_zero_exit_yields_proc_error()
   let err = if is_windows
     assert_throws $proc.Error do
@@ -196,7 +196,7 @@ def non_zero_exit_yields_proc_error()
     "sh exited with status: 42"
   assert_eq (str err) $expected
 
-#[agent.test remote: false]
+#[agent.test]
 def signaled_process_yields_proc_error()
   if is_windows
     skip "requires Unix"
@@ -206,7 +206,7 @@ def signaled_process_yields_proc_error()
   assert_eq $err.signal 15
   assert_eq (str err) "sh terminated by signal: 15"
 
-#[agent.test remote: false]
+#[agent.test]
 def proc_error_is_caught_by_runtime_error()
   if is_windows
     assert_throws $RuntimeError do

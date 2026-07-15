@@ -39,6 +39,7 @@ def run_agent
 do
   let socket = "$(runtime_dir())/toolbox-shell-vfs-$name"
   let agent = agent_bin()
+  let input = strand.input()
   pipeline
     do run_command
       - $agent
@@ -52,7 +53,7 @@ do
       strand.next()
       let agent = Vfs.unix_socket $socket
       try
-        return agent $thunk
+        return strand.redirect input: $input do agent $thunk
       finally
         fs.remove $socket
 

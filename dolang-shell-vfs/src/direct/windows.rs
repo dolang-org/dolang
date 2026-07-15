@@ -833,7 +833,7 @@ impl Direct {
             .open(typed_windows_path(path)?)
             .await
             .map_err(crate::Error::into_io_error)?;
-        self.impl_file_xattrs(&file.0, namespace).await
+        self.impl_file_xattrs(&file.inner, namespace).await
     }
 
     pub(super) async fn impl_streams(
@@ -859,7 +859,7 @@ impl Direct {
             .open(typed_windows_path(path)?)
             .await
             .map_err(crate::Error::into_io_error)?;
-        self.impl_file_xattr(&file.0, name, namespace).await
+        self.impl_file_xattr(&file.inner, name, namespace).await
     }
 
     pub(super) async fn impl_set_xattr(
@@ -877,7 +877,7 @@ impl Direct {
             .open(typed_windows_path(path)?)
             .await
             .map_err(crate::Error::into_io_error)?;
-        self.impl_file_set_xattr(&file.0, name, namespace, value)
+        self.impl_file_set_xattr(&file.inner, name, namespace, value)
             .await
     }
 
@@ -896,7 +896,8 @@ impl Direct {
             .open(typed_windows_path(path)?)
             .await
             .map_err(crate::Error::into_io_error)?;
-        self.impl_file_remove_xattr(&file.0, name, namespace).await
+        self.impl_file_remove_xattr(&file.inner, name, namespace)
+            .await
     }
 
     pub(super) async fn impl_file_xattrs(

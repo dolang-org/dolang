@@ -10,7 +10,7 @@ import agent
     - create_dir
     - Path
 
-#[agent.test remote: false]
+#[agent.test]
 def copy_file()
   let src = Path "source.txt"
   let dst = Path "dest.txt"
@@ -24,7 +24,7 @@ def copy_file()
     let contents = f.read()
     assert_eq $contents "hello world"
 
-#[agent.test remote: false]
+#[agent.test]
 def copy_over_existing_file()
   let src = Path "source.txt"
   let dst = Path "dest.txt"
@@ -59,7 +59,7 @@ def copy_directory_requires_all()
   assert_throws $RuntimeError do
     copy $src $dst
 
-#[agent.test remote: false]
+#[agent.test]
 def copy_directory_with_all()
   let src = Path "src"
   let nested = (src / "nested")
@@ -75,7 +75,7 @@ def copy_directory_with_all()
     let contents = f.read()
     assert_eq $contents "nested content"
 
-#[agent.test remote: false]
+#[agent.test]
 def path_copy_method()
   let src = Path "source.txt"
   let dst = Path "dest.txt"
@@ -89,7 +89,7 @@ def path_copy_method()
     let contents = f.read()
     assert_eq $contents "copied with method"
 
-#[agent.test remote: false]
+#[agent.test]
 def copy_to_non_existent_directory_fails()
   let src = Path "source.txt"
   let dst = (Path "nonexistent" / "dest.txt")

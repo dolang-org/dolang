@@ -14,17 +14,17 @@ def populate block
   Path("build.rs").write ""
   block()
 
-#[agent.test remote: false]
+#[agent.test]
 #[populate]
 def basic()
   assert_eq [...glob "*.rs"] [Path "build.rs"]
 
-#[agent.test remote: false]
+#[agent.test]
 #[populate]
 def max_depth()
   assert_eq [...glob "**/*.rs" max_depth: 1] [Path "build.rs"]
 
-#[agent.test remote: false]
+#[agent.test]
 #[populate]
 def path()
   assert_eq [...Path("src").glob("*.rs")] [Path "src/foo.rs", Path "src/lib.rs"]

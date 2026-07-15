@@ -11,7 +11,7 @@ use tokio::{
 
 #[tokio::test]
 async fn pipe_round_trip() {
-    let (mut send, mut recv) = Direct::default().pipe().unwrap();
+    let (mut send, mut recv) = Direct::default().pipe().await.unwrap();
 
     send.write_all(b"hello world").await.unwrap();
     drop(send);
@@ -23,7 +23,7 @@ async fn pipe_round_trip() {
 
 #[tokio::test]
 async fn pipe_reports_eof_after_sender_drop() {
-    let (send, mut recv) = Direct::default().pipe().unwrap();
+    let (send, mut recv) = Direct::default().pipe().await.unwrap();
     drop(send);
 
     let mut buf = [0; 16];
@@ -33,8 +33,8 @@ async fn pipe_reports_eof_after_sender_drop() {
 
 #[tokio::test]
 async fn pipe_reports_write_failure_after_receiver_drop() {
-    let (mut send, recv) = Direct::default().pipe().unwrap();
-    let mut child = close_stdin_immediately(recv.into_stdio().unwrap());
+    let (mut send, recv) = Direct::default().pipe().await.unwrap();
+    let mut child = close_stdin_immediately(recv.into_stdio().await.unwrap());
     let status = child.wait().await.unwrap();
     assert!(status.success());
 
@@ -63,8 +63,8 @@ async fn pipe_reports_write_failure_after_receiver_drop() {
 
 #[tokio::test]
 async fn pipe_recv_can_be_used_as_child_stdin() {
-    let (mut send, recv) = Direct::default().pipe().unwrap();
-    let child = cat_stdin_to_stdout(recv.into_stdio().unwrap());
+    let (mut send, recv) = Direct::default().pipe().await.unwrap();
+    let child = cat_stdin_to_stdout(recv.into_stdio().await.unwrap());
 
     #[cfg(unix)]
     send.write_all(b"hello from stdin").await.unwrap();
@@ -79,8 +79,8 @@ async fn pipe_recv_can_be_used_as_child_stdin() {
 
 #[tokio::test]
 async fn pipe_send_can_be_used_as_child_stdout() {
-    let (send, mut recv) = Direct::default().pipe().unwrap();
-    let mut child = write_hello_to_stdout(send.into_stdio().unwrap());
+    let (send, mut recv) = Direct::default().pipe().await.unwrap();
+    let mut child = write_hello_to_stdout(send.into_stdio().await.unwrap());
 
     let mut buf = Vec::new();
     recv.read_to_end(&mut buf).await.unwrap();

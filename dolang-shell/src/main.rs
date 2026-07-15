@@ -56,6 +56,13 @@ fn run_vfs_mode(args: impl IntoIterator<Item = OsString>) -> Option<i32> {
             eprintln!("error: {message}");
             Some(2)
         }
+        VfsMode::Stdio => Some(match dolang_shell_vfs::serve_stdio() {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("error: VFS server failed: {error}");
+                1
+            }
+        }),
         VfsMode::Server(pipe_name) => Some(match dolang_shell_vfs::serve_named_pipe(pipe_name) {
             Ok(()) => 0,
             Err(error) => {
@@ -70,6 +77,7 @@ fn run_vfs_mode(args: impl IntoIterator<Item = OsString>) -> Option<i32> {
 #[derive(Debug, PartialEq, Eq)]
 enum VfsMode {
     Shell,
+    Stdio,
     Server(OsString),
     Error(&'static str),
 }
@@ -82,12 +90,16 @@ fn parse_vfs_mode(args: impl IntoIterator<Item = OsString>) -> VfsMode {
     }
 
     let Some(pipe_name) = args.next() else {
-        return VfsMode::Error("--vfs requires a named-pipe path");
+        return VfsMode::Error("--vfs requires --stdio or a named-pipe path");
     };
     if args.next().is_some() {
-        return VfsMode::Error("--vfs accepts exactly one named-pipe path");
+        return VfsMode::Error("--vfs accepts exactly one mode argument");
     }
-    VfsMode::Server(pipe_name)
+    if pipe_name == OsStr::new("--stdio") {
+        VfsMode::Stdio
+    } else {
+        VfsMode::Server(pipe_name)
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -106,13 +118,14 @@ mod tests {
             parse_vfs_mode(args(&["--vfs", r"\\.\pipe\test"])),
             VfsMode::Server(r"\\.\pipe\test".into())
         );
+        assert_eq!(parse_vfs_mode(args(&["--vfs", "--stdio"])), VfsMode::Stdio);
         assert_eq!(
             parse_vfs_mode(args(&["--vfs"])),
-            VfsMode::Error("--vfs requires a named-pipe path")
+            VfsMode::Error("--vfs requires --stdio or a named-pipe path")
         );
         assert_eq!(
             parse_vfs_mode(args(&["--vfs", "pipe", "extra"])),
-            VfsMode::Error("--vfs accepts exactly one named-pipe path")
+            VfsMode::Error("--vfs accepts exactly one mode argument")
         );
     }
 }

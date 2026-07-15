@@ -11,7 +11,7 @@ import agent
     - create_dir
     - Path
 
-#[agent.test remote: false]
+#[agent.test]
 def rename_file()
   let old_path = Path "old_name.txt"
   let new_path = Path "new_name.txt"
@@ -27,7 +27,7 @@ def rename_file()
     let contents = f.read()
     assert_eq $contents "test content"
 
-#[agent.test remote: false]
+#[agent.test]
 def rename_to_different_directory()
   let subdir = Path "subdir"
   create_dir $subdir
@@ -45,7 +45,7 @@ def rename_to_different_directory()
     let contents = f.read()
     assert_eq $contents "moved content"
 
-#[agent.test remote: false]
+#[agent.test]
 def rename_over_existing_file()
   let path1 = Path "file1.txt"
   let path2 = Path "file2.txt"
@@ -71,7 +71,7 @@ def rename_non_existent_file_fails()
   assert_throws $RuntimeError do
     rename $src $dst
 
-#[agent.test remote: false]
+#[agent.test]
 def path_rename_method()
   let src = Path "source.txt"
   let dst = Path "dest.txt"
