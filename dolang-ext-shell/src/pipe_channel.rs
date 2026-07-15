@@ -23,8 +23,8 @@ use crate::{
     local::ChannelMode,
 };
 
-type PipeSend = <AnyVfs as Vfs>::PipeSend;
-type PipeRecv = <AnyVfs as Vfs>::PipeRecv;
+type StdioSend = <AnyVfs as Vfs>::StdioSend;
+type StdioRecv = <AnyVfs as Vfs>::StdioRecv;
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -102,8 +102,8 @@ struct PipeChannelShared {
     /// Whether PipeReceiver's GC slot 0 is logically occupied, and if so how it was written.
     buffered: BufferedValue,
     state: PipeState,
-    send_end: EndState<PipeSend>,
-    recv_end: EndState<BufReader<PipeRecv>>,
+    send_end: EndState<StdioSend>,
+    recv_end: EndState<BufReader<StdioRecv>>,
     send_closed: bool,
     recv_closed: bool,
     send_wakers: VecDeque<Waker>,
@@ -202,7 +202,7 @@ impl PipeChannelShared {
         self.wake_negotiators();
     }
 
-    fn restore_send_end(&mut self, sender: PipeSend) {
+    fn restore_send_end(&mut self, sender: StdioSend) {
         if self.send_closed {
             drop(sender);
             self.wake_senders();
@@ -223,14 +223,14 @@ impl PipeChannelShared {
         }
     }
 
-    fn receiver(&self) -> Option<&PipeRecv> {
+    fn receiver(&self) -> Option<&StdioRecv> {
         match (&self.state, &self.recv_end) {
             (PipeState::RecvPipe | PipeState::Direct, EndState::Present(fd)) => Some(fd.get_ref()),
             _ => None,
         }
     }
 
-    fn sender(&self) -> Option<&PipeSend> {
+    fn sender(&self) -> Option<&StdioSend> {
         match &self.state {
             PipeState::RecvPipe | PipeState::SendPipe | PipeState::Direct => self.send_end.as_ref(),
             PipeState::Draining | PipeState::Value => None,
@@ -246,7 +246,7 @@ impl PipeChannelShared {
     }
 }
 
-async fn drain_pipe(mut reader: BufReader<PipeRecv>, send_end: &mut PipeSend) -> io::Result<()> {
+async fn drain_pipe(mut reader: BufReader<StdioRecv>, send_end: &mut StdioSend) -> io::Result<()> {
     let mut buf = [0u8; 8192];
     loop {
         let n = reader.read(&mut buf).await?;
@@ -280,11 +280,11 @@ fn take_buffered_bytes<'v, 's>(
 
 struct SendEndGuard {
     shared: Rc<RefCell<PipeChannelShared>>,
-    end: Option<PipeSend>,
+    end: Option<StdioSend>,
 }
 
 impl SendEndGuard {
-    fn new(shared: Rc<RefCell<PipeChannelShared>>, end: PipeSend) -> Self {
+    fn new(shared: Rc<RefCell<PipeChannelShared>>, end: StdioSend) -> Self {
         Self {
             shared,
             end: Some(end),
@@ -304,20 +304,20 @@ impl SendEndGuard {
     }
 }
 
-impl AsRef<PipeSend> for SendEndGuard {
-    fn as_ref(&self) -> &PipeSend {
+impl AsRef<StdioSend> for SendEndGuard {
+    fn as_ref(&self) -> &StdioSend {
         self.end.as_ref().unwrap()
     }
 }
 
-impl AsMut<PipeSend> for SendEndGuard {
-    fn as_mut(&mut self) -> &mut PipeSend {
+impl AsMut<StdioSend> for SendEndGuard {
+    fn as_mut(&mut self) -> &mut StdioSend {
         self.end.as_mut().unwrap()
     }
 }
 
 impl Deref for SendEndGuard {
-    type Target = PipeSend;
+    type Target = StdioSend;
 
     fn deref(&self) -> &Self::Target {
         self.as_ref()
@@ -340,7 +340,7 @@ impl Drop for SendEndGuard {
 
 struct RecvEndGuard {
     shared: Rc<RefCell<PipeChannelShared>>,
-    end: Option<BufReader<PipeRecv>>,
+    end: Option<BufReader<StdioRecv>>,
 }
 
 impl RecvEndGuard {
@@ -361,20 +361,20 @@ impl RecvEndGuard {
     }
 }
 
-impl AsRef<BufReader<PipeRecv>> for RecvEndGuard {
-    fn as_ref(&self) -> &BufReader<PipeRecv> {
+impl AsRef<BufReader<StdioRecv>> for RecvEndGuard {
+    fn as_ref(&self) -> &BufReader<StdioRecv> {
         self.end.as_ref().unwrap()
     }
 }
 
-impl AsMut<BufReader<PipeRecv>> for RecvEndGuard {
-    fn as_mut(&mut self) -> &mut BufReader<PipeRecv> {
+impl AsMut<BufReader<StdioRecv>> for RecvEndGuard {
+    fn as_mut(&mut self) -> &mut BufReader<StdioRecv> {
         self.end.as_mut().unwrap()
     }
 }
 
 impl Deref for RecvEndGuard {
-    type Target = BufReader<PipeRecv>;
+    type Target = BufReader<StdioRecv>;
 
     fn deref(&self) -> &Self::Target {
         self.as_ref()
@@ -420,12 +420,12 @@ pub(crate) struct RecvGuard {
 }
 
 impl RecvGuard {
-    pub(crate) fn recv_pipe(&self) -> io::Result<PipeRecv> {
+    pub(crate) fn recv_pipe(&self) -> io::Result<StdioRecv> {
         let inner = self.shared.borrow();
         inner
             .receiver()
             .ok_or_else(|| io::Error::other("pipe: consumer end closed"))
-            .and_then(PipeRecv::try_clone)
+            .and_then(StdioRecv::try_clone)
     }
 }
 
@@ -440,12 +440,12 @@ pub(crate) struct SendGuard {
 }
 
 impl SendGuard {
-    pub(crate) fn send_pipe(&self) -> io::Result<PipeSend> {
+    pub(crate) fn send_pipe(&self) -> io::Result<StdioSend> {
         let inner = self.shared.borrow();
         inner
             .sender()
             .ok_or_else(|| io::Error::other("pipe: producer end closed"))
-            .and_then(PipeSend::try_clone)
+            .and_then(StdioSend::try_clone)
     }
 }
 

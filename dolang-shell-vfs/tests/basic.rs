@@ -1,8 +1,8 @@
 #![deny(warnings)]
 #![cfg(unix)]
 use dolang_shell_vfs::{
-    AccessFlags, AnyVfs, Child, ChownIdentity, Client, Command, Direct, FileHandle, FileType,
-    OpenOptions, TargetInfo, Utf8TypedPath, Utf8UnixPath, Vfs,
+    AccessFlags, Child, ChownIdentity, Client, Command, Direct, FileHandle, FileType, TargetInfo,
+    Utf8TypedPath, Utf8UnixPath, Vfs,
 };
 use nix::unistd::{Group, User, getgid, getuid};
 use std::os::unix::fs::FileTypeExt;
@@ -297,7 +297,10 @@ async fn fd_passing() {
         .await
         .unwrap();
     let mut command = client.command(typed_str("echo"));
-    command.arg("hello_world").stdout_handle(output).unwrap();
+    command
+        .arg("hello_world")
+        .stdout(output.to_stdio_send().await.unwrap())
+        .unwrap();
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
 
@@ -311,54 +314,6 @@ async fn fd_passing() {
 
     server_task.abort();
     let _ = server_task.await;
-}
-
-#[tokio::test]
-async fn client_or_direct_rejects_mismatched_file_handles() {
-    let dir = tempdir().unwrap();
-    let socket_path = dir.path().join("test.sock");
-    let path = dir.path().join("output.txt");
-    let server_task = start_server(&socket_path).await;
-    let client = connect_client(&socket_path).await;
-
-    let direct_vfs = AnyVfs::from(Direct::default());
-    let client_vfs = AnyVfs::from(client.clone());
-
-    let direct_file = direct_vfs
-        .open_options()
-        .write(true)
-        .create(true)
-        .open(typed(&path))
-        .await
-        .unwrap();
-    let mut client_command = client_vfs.command(typed_str("echo"));
-    assert_eq!(
-        client_command
-            .stdout_handle(direct_file)
-            .err()
-            .unwrap()
-            .kind(),
-        std::io::ErrorKind::InvalidInput
-    );
-
-    let client_file = client_vfs
-        .open_options()
-        .write(true)
-        .open(typed(&path))
-        .await
-        .unwrap();
-    let mut direct_command = direct_vfs.command(typed_str("echo"));
-    assert_eq!(
-        direct_command
-            .stdout_handle(client_file)
-            .err()
-            .unwrap()
-            .kind(),
-        std::io::ErrorKind::InvalidInput
-    );
-
-    client.stop().await.unwrap();
-    server_task.await.unwrap();
 }
 
 #[tokio::test]

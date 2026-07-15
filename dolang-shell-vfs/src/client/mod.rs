@@ -25,8 +25,8 @@ use tokio::net::windows::named_pipe::NamedPipeServer;
 #[cfg(unix)]
 use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
 use crate::{
-    Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions, PipeRecv,
-    PipeSend, ProcessStatus, Query, ReadDir, SessionMode, StreamEntry, Utf8TypedPath,
+    Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions,
+    ProcessStatus, Query, ReadDir, SessionMode, StdioRecv, StdioSend, StreamEntry, Utf8TypedPath,
     Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry,
     direct::DirectFile,
     protocol::{
@@ -34,9 +34,9 @@ use crate::{
         FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenHandle,
         OpenHandlePreference, OpenRequest, QueryResponse, ReadDirResponse, ReadLinkRequest,
         RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind, SetAttrsRequest,
-        SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest, StdioTarget,
-        StreamsRequest, SymlinkKind, SymlinkRequest, Timestamp, VfsProtocol, WellKnownPathRequest,
-        WirePath, XattrNamespaceRequest, XattrRequest, XattrsRequest,
+        SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest, StdioRecvTarget,
+        StdioSendTarget, StreamsRequest, SymlinkKind, SymlinkRequest, Timestamp, VfsProtocol,
+        WellKnownPathRequest, WirePath, XattrNamespaceRequest, XattrRequest, XattrsRequest,
     },
 };
 
@@ -101,8 +101,10 @@ impl std::fmt::Debug for RemoteFile {
 }
 
 impl ClientFile {
-    fn from_std(file: std::fs::File) -> Self {
-        Self(ClientFileInner::Direct(DirectFile::from_std(file)))
+    fn from_std(file: std::fs::File, read: bool, write: bool, append: bool) -> Self {
+        Self(ClientFileInner::Direct(DirectFile::from_std(
+            file, read, write, append,
+        )))
     }
 
     fn from_remote(client: Client, file: Opaque<crate::FileMarker>) -> Self {
@@ -111,12 +113,6 @@ impl ClientFile {
             file: Some(file),
             pending: None,
         }))
-    }
-
-    fn disarm_remote_cleanup(&mut self) {
-        if let ClientFileInner::Remote(file) = &mut self.0 {
-            file.file.take();
-        }
     }
 }
 
@@ -331,24 +327,51 @@ impl AsyncSeek for ClientFile {
 }
 
 impl FileHandle for ClientFile {
-    async fn try_clone(&self) -> crate::Result<Self> {
+    async fn to_stdio_send(&self) -> crate::Result<StdioSend> {
         match &self.0 {
-            ClientFileInner::Direct(file) => file
-                .try_clone()
-                .await
-                .map(ClientFileInner::Direct)
-                .map(Self),
+            ClientFileInner::Direct(file) => file.to_stdio_send().await,
             ClientFileInner::Remote(file) => {
                 file.idle()?;
                 match file
                     .client
-                    .request(RequestKind::FileClone {
+                    .request(RequestKind::FileToStdioSend {
                         file: file.opaque(),
                     })
                     .await?
                 {
-                    ResponseKind::FileClone(result) => result
-                        .map(|opaque| Self::from_remote(file.client.clone(), opaque))
+                    ResponseKind::FileToStdioSend(result) => result
+                        .map(|stdio| {
+                            StdioSend::Remote(RemoteStdioSend {
+                                client: file.client.clone(),
+                                stdio: Some(stdio),
+                            })
+                        })
+                        .map_err(Into::into),
+                    response => Err(unexpected(response).into()),
+                }
+            }
+        }
+    }
+
+    async fn to_stdio_recv(&self) -> crate::Result<StdioRecv> {
+        match &self.0 {
+            ClientFileInner::Direct(file) => file.to_stdio_recv().await,
+            ClientFileInner::Remote(file) => {
+                file.idle()?;
+                match file
+                    .client
+                    .request(RequestKind::FileToStdioRecv {
+                        file: file.opaque(),
+                    })
+                    .await?
+                {
+                    ResponseKind::FileToStdioRecv(result) => result
+                        .map(|stdio| {
+                            StdioRecv::Remote(RemoteStdioRecv {
+                                client: file.client.clone(),
+                                stdio: Some(stdio),
+                            })
+                        })
                         .map_err(Into::into),
                     response => Err(unexpected(response).into()),
                 }
@@ -855,9 +878,9 @@ pub struct CommandBuilder<'a> {
     args: Vec<String>,
     env: HashMap<String, Option<String>>,
     cwd: Option<WirePath>,
-    stdin: ClientStdio,
-    stdout: ClientStdio,
-    stderr: ClientStdio,
+    stdin: ClientRecv,
+    stdout: ClientSend,
+    stderr: ClientSend,
 }
 
 pub struct ClientChild {
@@ -871,10 +894,118 @@ enum ClientChildState {
     Lost(crate::protocol::WireError),
 }
 
-enum ClientStdio {
+pub struct RemoteStdioSend {
+    client: Client,
+    stdio: Option<Opaque<crate::StdioSendMarker>>,
+}
+
+pub struct RemoteStdioRecv {
+    client: Client,
+    stdio: Option<Opaque<crate::StdioRecvMarker>>,
+}
+
+impl std::fmt::Debug for RemoteStdioSend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteStdioSend")
+            .field("stdio", &self.stdio)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for RemoteStdioRecv {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteStdioRecv")
+            .field("stdio", &self.stdio)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AsyncWrite for RemoteStdioSend {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Poll::Ready(Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "remote stdio I/O is not implemented",
+        )))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncRead for RemoteStdioRecv {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Poll::Ready(Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "remote stdio I/O is not implemented",
+        )))
+    }
+}
+
+impl Drop for RemoteStdioSend {
+    fn drop(&mut self) {
+        let Some(stdio) = self.stdio.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let client = self.client.clone();
+        runtime.spawn(async move {
+            let _ = client.request(RequestKind::StdioSendClose { stdio }).await;
+        });
+    }
+}
+
+impl RemoteStdioSend {
+    pub(crate) fn disarm_cleanup(&mut self) {
+        self.stdio.take();
+    }
+}
+
+impl Drop for RemoteStdioRecv {
+    fn drop(&mut self) {
+        let Some(stdio) = self.stdio.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let client = self.client.clone();
+        runtime.spawn(async move {
+            let _ = client.request(RequestKind::StdioRecvClose { stdio }).await;
+        });
+    }
+}
+
+impl RemoteStdioRecv {
+    pub(crate) fn disarm_cleanup(&mut self) {
+        self.stdio.take();
+    }
+}
+
+enum ClientRecv {
     Null,
     Native(DefaultHandle),
-    File(ClientFile),
+    Resource(StdioRecv),
+}
+
+enum ClientSend {
+    Null,
+    Native(DefaultHandle),
+    Resource(StdioSend),
 }
 
 impl<'a> CommandBuilder<'a> {
@@ -885,40 +1016,65 @@ impl<'a> CommandBuilder<'a> {
             args: Vec::new(),
             env: HashMap::new(),
             cwd: None,
-            stdin: ClientStdio::Null,
-            stdout: ClientStdio::Null,
-            stderr: ClientStdio::Null,
+            stdin: ClientRecv::Null,
+            stdout: ClientSend::Null,
+            stderr: ClientSend::Null,
         }
     }
 
-    async fn prepare_stdio(
+    async fn prepare_recv(
         client: &Client,
-        stdio: ClientStdio,
-    ) -> crate::Result<(StdioTarget, Option<ClientFile>)> {
+        stdio: ClientRecv,
+    ) -> crate::Result<(StdioRecvTarget, Option<StdioRecv>)> {
         match stdio {
-            ClientStdio::Null => Ok((StdioTarget::Null, None)),
-            ClientStdio::Native(handle) => {
+            ClientRecv::Null => Ok((StdioRecvTarget::Null, None)),
+            ClientRecv::Native(handle) => {
                 if client.mode == SessionMode::Remote {
                     return client.unsupported("native process stdio");
                 }
-                Ok((StdioTarget::Native(OsHandle::new(handle)), None))
+                Ok((StdioRecvTarget::Native(OsHandle::new(handle)), None))
             }
-            ClientStdio::File(file) => match &file.0 {
-                ClientFileInner::Direct(_) => {
+            ClientRecv::Resource(stdio) => match stdio {
+                StdioRecv::Native(_) => {
                     if client.mode == SessionMode::Remote {
                         return client.unsupported("native process stdio");
                     }
-                    let file = file.try_into_std().await.map_err(|_| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            "process stdio file has no native handle",
-                        )
-                    })?;
-                    Ok((StdioTarget::Native(OsHandle::new(file.into())), None))
+                    let handle = stdio.into_blocking_handle().await?;
+                    Ok((StdioRecvTarget::Native(OsHandle::new(handle)), None))
                 }
-                ClientFileInner::Remote(file_inner) => {
-                    file_inner.idle()?;
-                    Ok((StdioTarget::Opaque(file_inner.opaque()), Some(file)))
+                StdioRecv::Remote(remote) => {
+                    let opaque = remote.stdio.as_ref().unwrap().clone();
+                    let stdio = StdioRecv::Remote(remote);
+                    Ok((StdioRecvTarget::Opaque(opaque), Some(stdio)))
+                }
+            },
+        }
+    }
+
+    async fn prepare_send(
+        client: &Client,
+        stdio: ClientSend,
+    ) -> crate::Result<(StdioSendTarget, Option<StdioSend>)> {
+        match stdio {
+            ClientSend::Null => Ok((StdioSendTarget::Null, None)),
+            ClientSend::Native(handle) => {
+                if client.mode == SessionMode::Remote {
+                    return client.unsupported("native process stdio");
+                }
+                Ok((StdioSendTarget::Native(OsHandle::new(handle)), None))
+            }
+            ClientSend::Resource(stdio) => match stdio {
+                StdioSend::Native(_) => {
+                    if client.mode == SessionMode::Remote {
+                        return client.unsupported("native process stdio");
+                    }
+                    let handle = stdio.into_blocking_handle().await?;
+                    Ok((StdioSendTarget::Native(OsHandle::new(handle)), None))
+                }
+                StdioSend::Remote(remote) => {
+                    let opaque = remote.stdio.as_ref().unwrap().clone();
+                    let stdio = StdioSend::Remote(remote);
+                    Ok((StdioSendTarget::Opaque(opaque), Some(stdio)))
                 }
             },
         }
@@ -1009,9 +1165,8 @@ impl Child for ClientChild {
 
 impl<'a> Command for CommandBuilder<'a> {
     type Child = ClientChild;
-    type File = ClientFile;
-    type PipeSend = PipeSend;
-    type PipeRecv = PipeRecv;
+    type StdioSend = StdioSend;
+    type StdioRecv = StdioRecv;
 
     fn arg(&mut self, arg: &str) -> &mut Self {
         self.args.push(arg.to_owned());
@@ -1033,68 +1188,53 @@ impl<'a> Command for CommandBuilder<'a> {
         self
     }
 
-    fn stdin_pipe(&mut self, pipe: PipeRecv) -> io::Result<&mut Self> {
-        self.stdin = ClientStdio::Native(pipe.into_blocking_handle()?);
+    fn stdin(&mut self, stdio: StdioRecv) -> io::Result<&mut Self> {
+        self.stdin = ClientRecv::Resource(stdio);
         Ok(self)
     }
 
-    fn stdout_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
-        self.stdout = ClientStdio::Native(pipe.into_blocking_handle()?);
+    fn stdout(&mut self, stdio: StdioSend) -> io::Result<&mut Self> {
+        self.stdout = ClientSend::Resource(stdio);
         Ok(self)
     }
 
     fn stdin_inherit(&mut self) -> io::Result<&mut Self> {
-        self.stdin = ClientStdio::Native(clone_stdin_handle()?);
+        self.stdin = ClientRecv::Native(clone_stdin_handle()?);
         Ok(self)
     }
 
     fn stdout_inherit(&mut self) -> io::Result<&mut Self> {
-        self.stdout = ClientStdio::Native(clone_stdout_handle()?);
-        Ok(self)
-    }
-
-    fn stdin_handle(&mut self, handle: ClientFile) -> io::Result<&mut Self> {
-        self.stdin = ClientStdio::File(handle);
-        Ok(self)
-    }
-
-    fn stdout_handle(&mut self, handle: ClientFile) -> io::Result<&mut Self> {
-        self.stdout = ClientStdio::File(handle);
+        self.stdout = ClientSend::Native(clone_stdout_handle()?);
         Ok(self)
     }
 
     fn stdin_null(&mut self) -> &mut Self {
-        self.stdin = ClientStdio::Null;
+        self.stdin = ClientRecv::Null;
         self
     }
 
     fn stdout_null(&mut self) -> &mut Self {
-        self.stdout = ClientStdio::Null;
+        self.stdout = ClientSend::Null;
         self
     }
 
-    fn stderr_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
-        self.stderr = ClientStdio::Native(pipe.into_blocking_handle()?);
+    fn stderr(&mut self, stdio: StdioSend) -> io::Result<&mut Self> {
+        self.stderr = ClientSend::Resource(stdio);
         Ok(self)
     }
 
     fn stderr_inherit(&mut self) -> io::Result<&mut Self> {
-        self.stderr = ClientStdio::Native(clone_stderr_handle()?);
+        self.stderr = ClientSend::Native(clone_stderr_handle()?);
         Ok(self)
     }
 
     fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self> {
-        self.stderr = ClientStdio::Native(clone_stdout_handle()?);
-        Ok(self)
-    }
-
-    fn stderr_handle(&mut self, handle: ClientFile) -> io::Result<&mut Self> {
-        self.stderr = ClientStdio::File(handle);
+        self.stderr = ClientSend::Native(clone_stdout_handle()?);
         Ok(self)
     }
 
     fn stderr_null(&mut self) -> &mut Self {
-        self.stderr = ClientStdio::Null;
+        self.stderr = ClientSend::Null;
         self
     }
 
@@ -1109,13 +1249,9 @@ impl<'a> Command for CommandBuilder<'a> {
             stdout,
             stderr,
         } = self;
-        let (stdin, stdin_file) = Self::prepare_stdio(client, stdin).await?;
-        let (stdout, stdout_file) = Self::prepare_stdio(client, stdout).await?;
-        let (stderr, stderr_file) = Self::prepare_stdio(client, stderr).await?;
-        let mut stdio_files: Vec<_> = [stdin_file, stdout_file, stderr_file]
-            .into_iter()
-            .flatten()
-            .collect();
+        let (stdin, mut stdin_resource) = Self::prepare_recv(client, stdin).await?;
+        let (stdout, mut stdout_resource) = Self::prepare_send(client, stdout).await?;
+        let (stderr, mut stderr_resource) = Self::prepare_send(client, stderr).await?;
         let req = SpawnRequest {
             program,
             args,
@@ -1127,8 +1263,14 @@ impl<'a> Command for CommandBuilder<'a> {
         };
         match client.request(RequestKind::Spawn(req)).await? {
             ResponseKind::Spawn(result) => {
-                for file in &mut stdio_files {
-                    file.disarm_remote_cleanup();
+                if let Some(stdio) = &mut stdin_resource {
+                    stdio.disarm_remote_cleanup();
+                }
+                if let Some(stdio) = &mut stdout_resource {
+                    stdio.disarm_remote_cleanup();
+                }
+                if let Some(stdio) = &mut stderr_resource {
+                    stdio.disarm_remote_cleanup();
                 }
                 result
                     .map(|child| ClientChild {
@@ -1241,7 +1383,12 @@ impl<'a> OpenOptions<'a> {
 
         match self.client.request(RequestKind::Open(req)).await? {
             ResponseKind::Open(result) => match result.map_err(crate::Error::from)? {
-                OpenHandle::Native(handle) => Ok(ClientFile::from_std(handle.into_inner().into())),
+                OpenHandle::Native(handle) => Ok(ClientFile::from_std(
+                    handle.into_inner().into(),
+                    self.read,
+                    self.write,
+                    self.append,
+                )),
                 OpenHandle::Opaque(file) => Ok(ClientFile::from_remote(self.client.clone(), file)),
             },
             response => Err(unexpected(response).into()),
@@ -1293,8 +1440,8 @@ impl crate::OpenOptions for OpenOptions<'_> {
 
 impl Vfs for Client {
     type File = ClientFile;
-    type PipeSend = PipeSend;
-    type PipeRecv = PipeRecv;
+    type StdioSend = StdioSend;
+    type StdioRecv = StdioRecv;
     type OpenOptions<'a>
         = OpenOptions<'a>
     where
@@ -1312,7 +1459,7 @@ impl Vfs for Client {
         CommandBuilder::new(self, program)
     }
 
-    fn pipe(&self) -> io::Result<(PipeSend, PipeRecv)> {
+    fn pipe(&self) -> io::Result<(StdioSend, StdioRecv)> {
         crate::pipe::pipe()
     }
 

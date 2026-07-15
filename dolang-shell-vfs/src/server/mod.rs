@@ -23,15 +23,16 @@ use tokio::{
 
 use crate::{
     AnyFile, AnyVfs, Child as _, Command as _, Direct, FileHandle as _, OpenOptions as _,
-    Permissions, SessionMode, Utf8TypedPath, Vfs,
+    Permissions, SessionMode, StdioRecv, StdioSend, Utf8TypedPath, Vfs,
     protocol::{
         AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
         CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
         MoveRequest, OpenHandle, OpenHandlePreference, OpenRequest, QueryResponse, ReadDirResponse,
         ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind,
         SetAttrsRequest, SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest,
-        StdioTarget, StreamsRequest, SymlinkKind, SymlinkRequest, UnixStreamSocketRequest,
-        VfsProtocol, WellKnownPathRequest, WirePath, XattrRequest, XattrsRequest,
+        StdioRecvTarget, StdioSendTarget, StreamsRequest, SymlinkKind, SymlinkRequest,
+        UnixStreamSocketRequest, VfsProtocol, WellKnownPathRequest, WirePath, XattrRequest,
+        XattrsRequest,
     },
 };
 
@@ -48,6 +49,18 @@ struct RetainedFile(Mutex<AnyFile>);
 
 impl OpaqueResource for RetainedFile {
     type Marker = crate::FileMarker;
+}
+
+struct RetainedStdioSend(StdioSend);
+
+impl OpaqueResource for RetainedStdioSend {
+    type Marker = crate::StdioSendMarker;
+}
+
+struct RetainedStdioRecv(StdioRecv);
+
+impl OpaqueResource for RetainedStdioRecv {
+    type Marker = crate::StdioRecvMarker;
 }
 
 struct RetainedChild(Mutex<crate::AnyChild>);
@@ -223,6 +236,13 @@ impl Connection {
         ))
     }
 
+    fn invalid_opaque(kind: &str) -> crate::protocol::WireError {
+        wire_error(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid opaque {kind}"),
+        ))
+    }
+
     fn wire_result<T, E>(
         result: std::result::Result<T, E>,
     ) -> std::result::Result<T, crate::protocol::WireError>
@@ -259,7 +279,24 @@ impl Connection {
             RequestKind::FileSetLen { file, len } => {
                 self.handle_file_set_len(context, file, len).await
             }
-            RequestKind::FileClone { file } => self.handle_file_clone(context, file).await,
+            RequestKind::FileToStdioSend { file } => {
+                self.handle_file_to_stdio_send(context, file).await
+            }
+            RequestKind::FileToStdioRecv { file } => {
+                self.handle_file_to_stdio_recv(context, file).await
+            }
+            RequestKind::StdioSendClose { stdio } => ResponseKind::StdioSendClose(
+                context
+                    .unregister::<RetainedStdioSend>(stdio)
+                    .map(|_| ())
+                    .map_err(|_| Self::invalid_opaque("stdio send")),
+            ),
+            RequestKind::StdioRecvClose { stdio } => ResponseKind::StdioRecvClose(
+                context
+                    .unregister::<RetainedStdioRecv>(stdio)
+                    .map(|_| ())
+                    .map_err(|_| Self::invalid_opaque("stdio receive")),
+            ),
             RequestKind::FileMetadata { file } => self.handle_file_metadata(context, file).await,
             RequestKind::FileFsMetadata { file } => {
                 self.handle_file_fs_metadata(context, file).await
@@ -390,35 +427,62 @@ impl Connection {
         ResponseKind::Spawn(Ok(context.register(RetainedChild(Mutex::new(child)))))
     }
 
-    fn spawn_stdio_file(
+    fn spawn_stdio_recv(
         &self,
         context: &CallContext<VfsProtocol>,
-        target: StdioTarget,
-    ) -> Result<Option<AnyFile>, crate::protocol::WireError> {
+        target: StdioRecvTarget,
+    ) -> Result<Option<StdioRecv>, crate::protocol::WireError> {
         match target {
-            StdioTarget::Null => Ok(None),
-            StdioTarget::Native(handle) => {
+            StdioRecvTarget::Null => Ok(None),
+            StdioRecvTarget::Native(handle) => {
                 if self.mode == SessionMode::Remote {
                     return Err(Self::unsupported("native process stdio"));
                 }
-                Ok(Some(AnyFile::Direct(crate::DirectFile::from_std(
+                Ok(Some(StdioRecv::from_file(tokio::fs::File::from_std(
                     handle.into_inner().into(),
                 ))))
             }
-            StdioTarget::Opaque(file) => {
-                let file = context.unregister::<RetainedFile>(file).map_err(|_| {
-                    wire_error(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "invalid opaque file",
-                    ))
-                })?;
-                let Some(file) = file else {
+            StdioRecvTarget::Opaque(stdio) => {
+                let stdio = context
+                    .unregister::<RetainedStdioRecv>(stdio)
+                    .map_err(|_| Self::invalid_opaque("stdio receive"))?;
+                let Some(stdio) = stdio else {
                     return Err(wire_error(io::Error::new(
                         io::ErrorKind::ResourceBusy,
-                        "opaque file is in use",
+                        "opaque stdio receive is in use",
                     )));
                 };
-                Ok(Some(file.0.into_inner()))
+                Ok(Some(stdio.0))
+            }
+        }
+    }
+
+    fn spawn_stdio_send(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        target: StdioSendTarget,
+    ) -> Result<Option<StdioSend>, crate::protocol::WireError> {
+        match target {
+            StdioSendTarget::Null => Ok(None),
+            StdioSendTarget::Native(handle) => {
+                if self.mode == SessionMode::Remote {
+                    return Err(Self::unsupported("native process stdio"));
+                }
+                Ok(Some(StdioSend::from_file(tokio::fs::File::from_std(
+                    handle.into_inner().into(),
+                ))))
+            }
+            StdioSendTarget::Opaque(stdio) => {
+                let stdio = context
+                    .unregister::<RetainedStdioSend>(stdio)
+                    .map_err(|_| Self::invalid_opaque("stdio send"))?;
+                let Some(stdio) = stdio else {
+                    return Err(wire_error(io::Error::new(
+                        io::ErrorKind::ResourceBusy,
+                        "opaque stdio send is in use",
+                    )));
+                };
+                Ok(Some(stdio.0))
             }
         }
     }
@@ -427,27 +491,27 @@ impl Connection {
         &self,
         context: &CallContext<VfsProtocol>,
         command: &mut crate::AnyCommand<'_>,
-        stdin: StdioTarget,
-        stdout: StdioTarget,
-        stderr: StdioTarget,
+        stdin: StdioRecvTarget,
+        stdout: StdioSendTarget,
+        stderr: StdioSendTarget,
     ) -> Result<(), crate::protocol::WireError> {
-        let stdin = self.spawn_stdio_file(context, stdin);
-        let stdout = self.spawn_stdio_file(context, stdout);
-        let stderr = self.spawn_stdio_file(context, stderr);
+        let stdin = self.spawn_stdio_recv(context, stdin);
+        let stdout = self.spawn_stdio_send(context, stdout);
+        let stderr = self.spawn_stdio_send(context, stderr);
         let (stdin, stdout, stderr) = (stdin?, stdout?, stderr?);
 
-        if let Some(file) = stdin {
-            command.stdin_handle(file).map_err(wire_error)?;
+        if let Some(stdio) = stdin {
+            command.stdin(stdio).map_err(wire_error)?;
         } else {
             command.stdin_null();
         }
-        if let Some(file) = stdout {
-            command.stdout_handle(file).map_err(wire_error)?;
+        if let Some(stdio) = stdout {
+            command.stdout(stdio).map_err(wire_error)?;
         } else {
             command.stdout_null();
         }
-        if let Some(file) = stderr {
-            command.stderr_handle(file).map_err(wire_error)?;
+        if let Some(stdio) = stderr {
+            command.stderr(stdio).map_err(wire_error)?;
         } else {
             command.stderr_null();
         }
@@ -647,18 +711,44 @@ impl Connection {
         ResponseKind::FileSetLen(result)
     }
 
-    async fn handle_file_clone(
+    async fn handle_file_to_stdio_send(
         &self,
         context: &CallContext<VfsProtocol>,
         file: dolang_rpc::Opaque<crate::FileMarker>,
     ) -> ResponseKind {
         let result = async {
             let file = Self::retained_file(context, file)?;
-            let file = file.0.lock().await.try_clone().await.map_err(wire_error)?;
-            Ok(context.register(RetainedFile(Mutex::new(file))))
+            let stdio = file
+                .0
+                .lock()
+                .await
+                .to_stdio_send()
+                .await
+                .map_err(wire_error)?;
+            Ok(context.register(RetainedStdioSend(stdio)))
         }
         .await;
-        ResponseKind::FileClone(result)
+        ResponseKind::FileToStdioSend(result)
+    }
+
+    async fn handle_file_to_stdio_recv(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            let stdio = file
+                .0
+                .lock()
+                .await
+                .to_stdio_recv()
+                .await
+                .map_err(wire_error)?;
+            Ok(context.register(RetainedStdioRecv(stdio)))
+        }
+        .await;
+        ResponseKind::FileToStdioRecv(result)
     }
 
     async fn handle_file_metadata(

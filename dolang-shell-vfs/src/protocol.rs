@@ -443,16 +443,23 @@ pub(crate) struct SpawnRequest {
     pub(crate) args: Vec<String>,
     pub(crate) env: HashMap<String, Option<String>>,
     pub(crate) cwd: Option<WirePath>,
-    pub(crate) stdin: StdioTarget,
-    pub(crate) stdout: StdioTarget,
-    pub(crate) stderr: StdioTarget,
+    pub(crate) stdin: StdioRecvTarget,
+    pub(crate) stdout: StdioSendTarget,
+    pub(crate) stderr: StdioSendTarget,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub(crate) enum StdioTarget {
+pub(crate) enum StdioRecvTarget {
     Null,
     Native(OsHandle),
-    Opaque(Opaque<crate::FileMarker>),
+    Opaque(Opaque<crate::StdioRecvMarker>),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) enum StdioSendTarget {
+    Null,
+    Native(OsHandle),
+    Opaque(Opaque<crate::StdioSendMarker>),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -731,8 +738,17 @@ pub(crate) enum RequestKind {
         file: Opaque<crate::FileMarker>,
         len: u64,
     },
-    FileClone {
+    FileToStdioSend {
         file: Opaque<crate::FileMarker>,
+    },
+    FileToStdioRecv {
+        file: Opaque<crate::FileMarker>,
+    },
+    StdioSendClose {
+        stdio: Opaque<crate::StdioSendMarker>,
+    },
+    StdioRecvClose {
+        stdio: Opaque<crate::StdioRecvMarker>,
     },
     FileMetadata {
         file: Opaque<crate::FileMarker>,
@@ -814,7 +830,10 @@ pub(crate) enum ResponseKind {
     FileSeek(Result<u64, WireError>),
     FileFlush(Result<(), WireError>),
     FileSetLen(Result<(), WireError>),
-    FileClone(Result<Opaque<crate::FileMarker>, WireError>),
+    FileToStdioSend(Result<Opaque<crate::StdioSendMarker>, WireError>),
+    FileToStdioRecv(Result<Opaque<crate::StdioRecvMarker>, WireError>),
+    StdioSendClose(Result<(), WireError>),
+    StdioRecvClose(Result<(), WireError>),
     FileMetadata(Result<Metadata, WireError>),
     FileFsMetadata(Result<FsMetadata, WireError>),
     FileXattrs(Result<Vec<XattrEntry>, WireError>),

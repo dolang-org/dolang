@@ -122,10 +122,10 @@ impl<'v> File<'v> {
         )
     }
 
-    pub(crate) async fn command_handle<'a, 's>(
+    pub(crate) async fn command_send<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Option<AnyFile>> {
+    ) -> Result<'v, 's, Option<dolang_shell_vfs::StdioSend>> {
         let borrow = this.borrow(strand)?;
         if !borrow.buf.is_empty() {
             return Ok(None);
@@ -134,7 +134,22 @@ impl<'v> File<'v> {
             .file
             .as_ref()
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-        file_ref.try_clone().await.map(Some).into_sys(strand)
+        file_ref.to_stdio_send().await.map(Some).into_sys(strand)
+    }
+
+    pub(crate) async fn command_recv<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, Option<dolang_shell_vfs::StdioRecv>> {
+        let borrow = this.borrow(strand)?;
+        if !borrow.buf.is_empty() {
+            return Ok(None);
+        }
+        let file_ref = borrow
+            .file
+            .as_ref()
+            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+        file_ref.to_stdio_recv().await.map(Some).into_sys(strand)
     }
 
     async fn logical_position<'s>(&mut self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, u64> {

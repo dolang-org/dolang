@@ -738,7 +738,8 @@ pub trait OpenOptions {
 }
 
 pub trait FileHandle: AsyncRead + AsyncWrite + AsyncSeek + Unpin + Sized {
-    async fn try_clone(&self) -> Result<Self>;
+    async fn to_stdio_send(&self) -> Result<StdioSend>;
+    async fn to_stdio_recv(&self) -> Result<StdioRecv>;
     async fn close(self) -> Result<()>;
     async fn set_len(&mut self, size: u64) -> Result<()>;
     async fn metadata(&mut self) -> Result<Metadata>;
@@ -762,26 +763,22 @@ pub trait Child {
 #[allow(async_fn_in_trait)]
 pub trait Command {
     type Child: Child;
-    type File: FileHandle;
-    type PipeSend: AsyncWrite + Unpin;
-    type PipeRecv: AsyncRead + Unpin;
+    type StdioSend: AsyncWrite + Unpin;
+    type StdioRecv: AsyncRead + Unpin;
 
     fn arg(&mut self, arg: &str) -> &mut Self;
     fn env(&mut self, key: &str, val: &str) -> &mut Self;
     fn env_remove(&mut self, key: &str) -> &mut Self;
     fn current_dir(&mut self, dir: Utf8TypedPath<'_>) -> &mut Self;
-    fn stdin_pipe(&mut self, pipe: Self::PipeRecv) -> io::Result<&mut Self>;
-    fn stdout_pipe(&mut self, pipe: Self::PipeSend) -> io::Result<&mut Self>;
+    fn stdin(&mut self, stdio: Self::StdioRecv) -> io::Result<&mut Self>;
+    fn stdout(&mut self, stdio: Self::StdioSend) -> io::Result<&mut Self>;
     fn stdin_inherit(&mut self) -> io::Result<&mut Self>;
     fn stdout_inherit(&mut self) -> io::Result<&mut Self>;
-    fn stdin_handle(&mut self, handle: Self::File) -> io::Result<&mut Self>;
-    fn stdout_handle(&mut self, handle: Self::File) -> io::Result<&mut Self>;
     fn stdin_null(&mut self) -> &mut Self;
     fn stdout_null(&mut self) -> &mut Self;
-    fn stderr_pipe(&mut self, pipe: Self::PipeSend) -> io::Result<&mut Self>;
+    fn stderr(&mut self, stdio: Self::StdioSend) -> io::Result<&mut Self>;
     fn stderr_inherit(&mut self) -> io::Result<&mut Self>;
     fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self>;
-    fn stderr_handle(&mut self, handle: Self::File) -> io::Result<&mut Self>;
     fn stderr_null(&mut self) -> &mut Self;
     async fn spawn(self) -> Result<Self::Child>;
 }
@@ -789,18 +786,18 @@ pub trait Command {
 #[allow(async_fn_in_trait)]
 pub trait Vfs {
     type File: FileHandle;
-    type PipeSend: AsyncWrite + Unpin;
-    type PipeRecv: AsyncRead + Unpin;
+    type StdioSend: AsyncWrite + Unpin;
+    type StdioRecv: AsyncRead + Unpin;
     type OpenOptions<'a>: OpenOptions<File = Self::File>
     where
         Self: 'a;
-    type Command<'a>: Command<File = Self::File, PipeSend = Self::PipeSend, PipeRecv = Self::PipeRecv>
+    type Command<'a>: Command<StdioSend = Self::StdioSend, StdioRecv = Self::StdioRecv>
     where
         Self: 'a;
 
     fn open_options(&self) -> Self::OpenOptions<'_>;
     fn command(&self, program: Utf8TypedPath<'_>) -> Self::Command<'_>;
-    fn pipe(&self) -> io::Result<(Self::PipeSend, Self::PipeRecv)>;
+    fn pipe(&self) -> io::Result<(Self::StdioSend, Self::StdioRecv)>;
     async fn query(&self) -> Result<Query>;
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> Result<ReadDir>;
     async fn which(
@@ -892,11 +889,17 @@ pub trait Vfs {
 }
 
 pub use direct::{Direct, DirectFile, DirectOpenOptions};
-pub use pipe::{PipeRecv, PipeSend};
+pub use pipe::{StdioRecv, StdioSend};
 
 /// Marker for a regular file retained by a VFS RPC session.
 #[derive(Debug)]
 pub struct FileMarker;
+
+#[derive(Debug)]
+pub struct StdioSendMarker;
+
+#[derive(Debug)]
+pub struct StdioRecvMarker;
 
 /// Marker for a child process retained by a VFS RPC session.
 #[derive(Debug)]
@@ -965,10 +968,17 @@ impl AsyncSeek for AnyFile {
 }
 
 impl FileHandle for AnyFile {
-    async fn try_clone(&self) -> crate::Result<Self> {
+    async fn to_stdio_send(&self) -> crate::Result<StdioSend> {
         match self {
-            Self::Client(file) => file.try_clone().await.map(Self::Client),
-            Self::Direct(file) => file.try_clone().await.map(Self::Direct),
+            Self::Client(file) => file.to_stdio_send().await,
+            Self::Direct(file) => file.to_stdio_send().await,
+        }
+    }
+
+    async fn to_stdio_recv(&self) -> crate::Result<StdioRecv> {
+        match self {
+            Self::Client(file) => file.to_stdio_recv().await,
+            Self::Direct(file) => file.to_stdio_recv().await,
         }
     }
 
@@ -1152,9 +1162,8 @@ impl Child for AnyChild {
 
 impl<'a> Command for AnyCommand<'a> {
     type Child = AnyChild;
-    type File = AnyFile;
-    type PipeSend = PipeSend;
-    type PipeRecv = PipeRecv;
+    type StdioSend = StdioSend;
+    type StdioRecv = StdioRecv;
 
     fn arg(&mut self, arg: &str) -> &mut Self {
         match self {
@@ -1204,25 +1213,25 @@ impl<'a> Command for AnyCommand<'a> {
         self
     }
 
-    fn stdin_pipe(&mut self, pipe: PipeRecv) -> io::Result<&mut Self> {
+    fn stdin(&mut self, stdio: StdioRecv) -> io::Result<&mut Self> {
         match self {
             Self::Client(builder) => {
-                builder.stdin_pipe(pipe)?;
+                builder.stdin(stdio)?;
             }
             Self::Direct(builder) => {
-                builder.stdin_pipe(pipe)?;
+                builder.stdin(stdio)?;
             }
         }
         Ok(self)
     }
 
-    fn stdout_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
+    fn stdout(&mut self, stdio: StdioSend) -> io::Result<&mut Self> {
         match self {
             Self::Client(builder) => {
-                builder.stdout_pipe(pipe)?;
+                builder.stdout(stdio)?;
             }
             Self::Direct(builder) => {
-                builder.stdout_pipe(pipe)?;
+                builder.stdout(stdio)?;
             }
         }
         Ok(self)
@@ -1252,42 +1261,6 @@ impl<'a> Command for AnyCommand<'a> {
         Ok(self)
     }
 
-    fn stdin_handle(&mut self, handle: AnyFile) -> io::Result<&mut Self> {
-        match (&mut *self, handle) {
-            (Self::Client(builder), AnyFile::Client(file)) => {
-                builder.stdin_handle(file)?;
-            }
-            (Self::Direct(builder), AnyFile::Direct(file)) => {
-                builder.stdin_handle(file)?;
-            }
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "file handle belongs to a different VFS backend",
-                ));
-            }
-        }
-        Ok(self)
-    }
-
-    fn stdout_handle(&mut self, handle: AnyFile) -> io::Result<&mut Self> {
-        match (&mut *self, handle) {
-            (Self::Client(builder), AnyFile::Client(file)) => {
-                builder.stdout_handle(file)?;
-            }
-            (Self::Direct(builder), AnyFile::Direct(file)) => {
-                builder.stdout_handle(file)?;
-            }
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "file handle belongs to a different VFS backend",
-                ));
-            }
-        }
-        Ok(self)
-    }
-
     fn stdin_null(&mut self) -> &mut Self {
         match self {
             Self::Client(builder) => {
@@ -1312,13 +1285,13 @@ impl<'a> Command for AnyCommand<'a> {
         self
     }
 
-    fn stderr_pipe(&mut self, pipe: PipeSend) -> io::Result<&mut Self> {
+    fn stderr(&mut self, stdio: StdioSend) -> io::Result<&mut Self> {
         match self {
             Self::Client(builder) => {
-                builder.stderr_pipe(pipe)?;
+                builder.stderr(stdio)?;
             }
             Self::Direct(builder) => {
-                builder.stderr_pipe(pipe)?;
+                builder.stderr(stdio)?;
             }
         }
         Ok(self)
@@ -1343,24 +1316,6 @@ impl<'a> Command for AnyCommand<'a> {
             }
             Self::Direct(builder) => {
                 builder.stderr_inherit_stdout()?;
-            }
-        }
-        Ok(self)
-    }
-
-    fn stderr_handle(&mut self, handle: AnyFile) -> io::Result<&mut Self> {
-        match (&mut *self, handle) {
-            (Self::Client(builder), AnyFile::Client(file)) => {
-                builder.stderr_handle(file)?;
-            }
-            (Self::Direct(builder), AnyFile::Direct(file)) => {
-                builder.stderr_handle(file)?;
-            }
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "file handle belongs to a different VFS backend",
-                ));
             }
         }
         Ok(self)
@@ -1428,8 +1383,8 @@ impl AnyVfs {
 
 impl Vfs for AnyVfs {
     type File = AnyFile;
-    type PipeSend = PipeSend;
-    type PipeRecv = PipeRecv;
+    type StdioSend = StdioSend;
+    type StdioRecv = StdioRecv;
     type OpenOptions<'a>
         = AnyOpenOptions<'a>
     where
@@ -1453,7 +1408,7 @@ impl Vfs for AnyVfs {
         }
     }
 
-    fn pipe(&self) -> io::Result<(PipeSend, PipeRecv)> {
+    fn pipe(&self) -> io::Result<(StdioSend, StdioRecv)> {
         match self {
             Self::Client(client) => client.pipe(),
             Self::Direct(direct) => direct.pipe(),

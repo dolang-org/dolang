@@ -8,7 +8,7 @@ use std::{
 };
 
 use dolang_shell_vfs::{
-    AnyVfs, Child, Client, Command, OpenOptions, Server, TargetInfo, Utf8TypedPath,
+    AnyVfs, Child, Client, Command, FileHandle, OpenOptions, Server, TargetInfo, Utf8TypedPath,
     Utf8WindowsPath, Vfs,
 };
 use tempfile::tempdir;
@@ -129,9 +129,9 @@ async fn spawn_transfers_standard_stream_handles() {
         .arg("/s")
         .arg("/c")
         .arg("set /p line=& echo out:!line!& echo err:!line! 1>&2");
-    command.stdin_pipe(stdin_recv).unwrap();
-    command.stdout_pipe(stdout_send).unwrap();
-    command.stderr_pipe(stderr_send).unwrap();
+    command.stdin(stdin_recv).unwrap();
+    command.stdout(stdout_send).unwrap();
+    command.stderr(stderr_send).unwrap();
     let mut child = command.spawn().await.unwrap();
 
     stdin_send.write_all(b"hello\r\n").await.unwrap();
@@ -145,6 +145,50 @@ async fn spawn_transfers_standard_stream_handles() {
     stderr_recv.read_to_string(&mut stderr).await.unwrap();
     assert!(stdout.contains("out:hello"), "stdout was {stdout:?}");
     assert!(stderr.contains("err:hello"), "stderr was {stderr:?}");
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn file_stdio_is_reopened_without_overlapped() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("stdio.txt");
+    let (client, server_task) = connected_pair().await;
+
+    let mut options = client.open_options();
+    options.write(true).create(true).truncate(true);
+    let output = OpenOptions::open(&options, typed(&path)).await.unwrap();
+    let mut command = client.command(typed_str("cmd.exe"));
+    command
+        .arg("/d")
+        .arg("/s")
+        .arg("/c")
+        .arg("echo first")
+        .stdout(output.to_stdio_send().await.unwrap())
+        .unwrap();
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+    drop(output);
+
+    let mut options = client.open_options();
+    options.append(true);
+    let output = OpenOptions::open(&options, typed(&path)).await.unwrap();
+    let mut command = client.command(typed_str("cmd.exe"));
+    command
+        .arg("/d")
+        .arg("/s")
+        .arg("/c")
+        .arg("echo second")
+        .stdout(output.to_stdio_send().await.unwrap())
+        .unwrap();
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+    drop(output);
+
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(contents.contains("first"), "contents were {contents:?}");
+    assert!(contents.contains("second"), "contents were {contents:?}");
 
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();

@@ -178,7 +178,7 @@ async fn retained_files_can_be_used_for_remote_stdio() {
     stdin.write_all(b"remote-input\n").await.unwrap();
     stdin.seek(SeekFrom::Start(0)).await.unwrap();
     let mut command = command_with_args(&client, stdin_command());
-    command.stdin_handle(stdin).unwrap();
+    command.stdin(stdin.to_stdio_recv().await.unwrap()).unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
 
@@ -188,7 +188,9 @@ async fn retained_files_can_be_used_for_remote_stdio() {
         .await
         .unwrap();
     let mut command = command_with_args(&client, stdout_command());
-    command.stdout_handle(stdout).unwrap();
+    command
+        .stdout(stdout.to_stdio_send().await.unwrap())
+        .unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
 
@@ -198,7 +200,9 @@ async fn retained_files_can_be_used_for_remote_stdio() {
         .await
         .unwrap();
     let mut command = command_with_args(&client, stderr_command());
-    command.stderr_handle(stderr).unwrap();
+    command
+        .stderr(stderr.to_stdio_send().await.unwrap())
+        .unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
 
@@ -231,7 +235,7 @@ async fn native_stdio_is_unsupported_over_generic_stream() {
 
     let (send, _recv) = client.pipe().unwrap();
     let mut command = command_with_args(&client, successful_command());
-    command.stdout_pipe(send).unwrap();
+    command.stdout(send).unwrap();
     let error = command.spawn().await.err().unwrap();
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
 
@@ -309,12 +313,11 @@ async fn regular_file_round_trip_over_generic_stream() {
     assert_eq!(file.metadata().await.unwrap().len, 6);
     assert!(file.fs_metadata().await.unwrap().capacity > 0);
 
-    let mut clone = file.try_clone().await.unwrap();
-    assert_eq!(clone.seek(SeekFrom::Current(0)).await.unwrap(), 6);
+    let stdio = file.to_stdio_recv().await.unwrap();
+    drop(stdio);
     assert_eq!(file.seek(SeekFrom::Start(0)).await.unwrap(), 0);
-    assert_eq!(clone.seek(SeekFrom::Current(0)).await.unwrap(), 0);
     let mut data = Vec::new();
-    clone.read_to_end(&mut data).await.unwrap();
+    file.read_to_end(&mut data).await.unwrap();
     assert_eq!(data, b"abcdef");
 
     let mut file = file.try_into_std().await.unwrap_err();
@@ -326,12 +329,6 @@ async fn regular_file_round_trip_over_generic_stream() {
     file.read_to_end(&mut data).await.unwrap();
     assert_eq!(data, b"abc");
     file.close().await.unwrap();
-
-    assert_eq!(clone.seek(SeekFrom::Start(0)).await.unwrap(), 0);
-    data.clear();
-    clone.read_to_end(&mut data).await.unwrap();
-    assert_eq!(data, b"abc");
-    clone.close().await.unwrap();
 
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();
