@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     future::Future,
     io,
+    io::IsTerminal,
     path::{Path, PathBuf},
     pin::Pin,
     task::{Context, Poll},
@@ -16,11 +17,14 @@ use std::os::unix::{
 use std::os::windows::io::{AsHandle, OwnedHandle};
 
 use dolang_rpc::{Call, DefaultHandle, Opaque, OsHandle};
-use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 #[cfg(unix)]
 use tokio::net::UnixStream;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeServer;
+use tokio::{
+    io::{AsyncRead, AsyncSeek, AsyncWrite, AsyncWriteExt, ReadBuf},
+    task::JoinHandle,
+};
 
 #[cfg(unix)]
 use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
@@ -888,6 +892,25 @@ pub struct CommandBuilder<'a> {
 pub struct ClientChild {
     client: Client,
     state: ClientChildState,
+    relays: ClientRelays,
+}
+
+#[derive(Default)]
+struct ClientRelays {
+    stdin: Option<JoinHandle<()>>,
+    outputs: Vec<JoinHandle<()>>,
+}
+
+#[derive(Clone, Copy)]
+enum HostOutput {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Default)]
+struct PreparedRelays {
+    stdin: Option<StdioSend>,
+    outputs: Vec<(StdioRecv, HostOutput)>,
 }
 
 enum ClientChildState {
@@ -1210,12 +1233,14 @@ impl RemoteStdioRecv {
 
 enum ClientRecv {
     Null,
+    Inherit,
     Native(DefaultHandle),
     Resource(StdioRecv),
 }
 
 enum ClientSend {
     Null,
+    Inherit(HostOutput),
     Native(DefaultHandle),
     Resource(StdioSend),
 }
@@ -1237,9 +1262,21 @@ impl<'a> CommandBuilder<'a> {
     async fn prepare_recv(
         client: &Client,
         stdio: ClientRecv,
+        relays: &mut PreparedRelays,
     ) -> crate::Result<(StdioRecvTarget, Option<StdioRecv>)> {
         match stdio {
             ClientRecv::Null => Ok((StdioRecvTarget::Null, None)),
+            ClientRecv::Inherit => {
+                let (send, recv) = client.pipe().await?;
+                relays.stdin = Some(send);
+                let StdioRecv::Remote(remote) = recv else {
+                    return Err(io::Error::other(
+                        "remote pipe unexpectedly returned a native receive endpoint",
+                    )
+                    .into());
+                };
+                Self::prepare_remote_recv(client, remote)
+            }
             ClientRecv::Native(handle) => {
                 if client.mode == SessionMode::Remote {
                     return client.unsupported("native process stdio");
@@ -1254,21 +1291,45 @@ impl<'a> CommandBuilder<'a> {
                     let handle = stdio.into_blocking_handle().await?;
                     Ok((StdioRecvTarget::Native(OsHandle::new(handle)), None))
                 }
-                StdioRecv::Remote(remote) => {
-                    let opaque = remote.stdio.as_ref().unwrap().clone();
-                    let stdio = StdioRecv::Remote(remote);
-                    Ok((StdioRecvTarget::Opaque(opaque), Some(stdio)))
-                }
+                StdioRecv::Remote(remote) => Self::prepare_remote_recv(client, remote),
             },
         }
+    }
+
+    fn prepare_remote_recv(
+        client: &Client,
+        remote: RemoteStdioRecv,
+    ) -> crate::Result<(StdioRecvTarget, Option<StdioRecv>)> {
+        if !client.rpc.is_same_session(&remote.client.rpc) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "stdio receive belongs to a different VFS session",
+            )
+            .into());
+        }
+        let opaque = remote.stdio.as_ref().unwrap().clone();
+        let stdio = StdioRecv::Remote(remote);
+        Ok((StdioRecvTarget::Opaque(opaque), Some(stdio)))
     }
 
     async fn prepare_send(
         client: &Client,
         stdio: ClientSend,
+        relays: &mut PreparedRelays,
     ) -> crate::Result<(StdioSendTarget, Option<StdioSend>)> {
         match stdio {
             ClientSend::Null => Ok((StdioSendTarget::Null, None)),
+            ClientSend::Inherit(output) => {
+                let (send, recv) = client.pipe().await?;
+                relays.outputs.push((recv, output));
+                let StdioSend::Remote(remote) = send else {
+                    return Err(io::Error::other(
+                        "remote pipe unexpectedly returned a native send endpoint",
+                    )
+                    .into());
+                };
+                Self::prepare_remote_send(client, remote)
+            }
             ClientSend::Native(handle) => {
                 if client.mode == SessionMode::Remote {
                     return client.unsupported("native process stdio");
@@ -1283,13 +1344,93 @@ impl<'a> CommandBuilder<'a> {
                     let handle = stdio.into_blocking_handle().await?;
                     Ok((StdioSendTarget::Native(OsHandle::new(handle)), None))
                 }
-                StdioSend::Remote(remote) => {
-                    let opaque = remote.stdio.as_ref().unwrap().clone();
-                    let stdio = StdioSend::Remote(remote);
-                    Ok((StdioSendTarget::Opaque(opaque), Some(stdio)))
-                }
+                StdioSend::Remote(remote) => Self::prepare_remote_send(client, remote),
             },
         }
+    }
+
+    fn prepare_remote_send(
+        client: &Client,
+        remote: RemoteStdioSend,
+    ) -> crate::Result<(StdioSendTarget, Option<StdioSend>)> {
+        if !client.rpc.is_same_session(&remote.client.rpc) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "stdio send belongs to a different VFS session",
+            )
+            .into());
+        }
+        let opaque = remote.stdio.as_ref().unwrap().clone();
+        let stdio = StdioSend::Remote(remote);
+        Ok((StdioSendTarget::Opaque(opaque), Some(stdio)))
+    }
+
+    async fn prepare_outputs(
+        client: &Client,
+        stdout: ClientSend,
+        stderr: ClientSend,
+        relays: &mut PreparedRelays,
+    ) -> crate::Result<(
+        (StdioSendTarget, Option<StdioSend>),
+        (StdioSendTarget, Option<StdioSend>),
+    )> {
+        if client.mode == SessionMode::Remote
+            && matches!(stdout, ClientSend::Inherit(HostOutput::Stdout))
+            && matches!(stderr, ClientSend::Inherit(HostOutput::Stdout))
+        {
+            let (send, recv) = client.pipe().await?;
+            let stderr = send.try_clone().await?;
+            relays.outputs.push((recv, HostOutput::Stdout));
+            let stdout = Self::prepare_send(client, ClientSend::Resource(send), relays).await?;
+            let stderr = Self::prepare_send(client, ClientSend::Resource(stderr), relays).await?;
+            Ok((stdout, stderr))
+        } else {
+            let stdout = Self::prepare_send(client, stdout, relays).await?;
+            let stderr = Self::prepare_send(client, stderr, relays).await?;
+            Ok((stdout, stderr))
+        }
+    }
+}
+
+async fn relay_stdin(mut send: StdioSend) {
+    let mut stdin = tokio::io::stdin();
+    let _ = tokio::io::copy(&mut stdin, &mut send).await;
+    let _ = send.shutdown().await;
+}
+
+async fn relay_output<W>(mut recv: StdioRecv, mut output: W)
+where
+    W: AsyncWrite + Unpin,
+{
+    let _ = tokio::io::copy(&mut recv, &mut output).await;
+    let _ = output.flush().await;
+}
+
+impl PreparedRelays {
+    fn start(self) -> ClientRelays {
+        let stdin = self.stdin.map(|send| tokio::spawn(relay_stdin(send)));
+        let outputs = self
+            .outputs
+            .into_iter()
+            .map(|(recv, output)| match output {
+                HostOutput::Stdout => tokio::spawn(relay_output(recv, tokio::io::stdout())),
+                HostOutput::Stderr => tokio::spawn(relay_output(recv, tokio::io::stderr())),
+            })
+            .collect();
+        ClientRelays { stdin, outputs }
+    }
+}
+
+impl ClientRelays {
+    fn abort_stdin(&mut self) {
+        if let Some(stdin) = self.stdin.take() {
+            stdin.abort();
+        }
+    }
+
+    fn finish(&mut self) {
+        self.abort_stdin();
+        self.outputs.clear();
     }
 }
 
@@ -1315,6 +1456,7 @@ impl ClientChild {
 
 impl Drop for ClientChild {
     fn drop(&mut self) {
+        self.relays.finish();
         let ClientChildState::Live(child) = &self.state else {
             return;
         };
@@ -1345,6 +1487,7 @@ impl Child for ClientChild {
             .await?
         {
             ResponseKind::ChildWait(result) => {
+                self.relays.finish();
                 self.store_result(&result);
                 self.result().unwrap()
             }
@@ -1353,6 +1496,7 @@ impl Child for ClientChild {
     }
 
     async fn terminate(mut self) -> crate::Result<ProcessStatus> {
+        self.relays.abort_stdin();
         if let Some(result) = self.result() {
             return result;
         }
@@ -1367,6 +1511,7 @@ impl Child for ClientChild {
             .await?
         {
             ResponseKind::ChildTerminate(result) => {
+                self.relays.finish();
                 self.store_result(&result);
                 self.result().unwrap()
             }
@@ -1401,22 +1546,50 @@ impl<'a> Command for CommandBuilder<'a> {
     }
 
     fn stdin(&mut self, stdio: StdioRecv) -> io::Result<&mut Self> {
+        if let StdioRecv::Remote(remote) = &stdio
+            && !self.client.rpc.is_same_session(&remote.client.rpc)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "stdio receive belongs to a different VFS session",
+            ));
+        }
         self.stdin = ClientRecv::Resource(stdio);
         Ok(self)
     }
 
     fn stdout(&mut self, stdio: StdioSend) -> io::Result<&mut Self> {
+        if let StdioSend::Remote(remote) = &stdio
+            && !self.client.rpc.is_same_session(&remote.client.rpc)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "stdio send belongs to a different VFS session",
+            ));
+        }
         self.stdout = ClientSend::Resource(stdio);
         Ok(self)
     }
 
     fn stdin_inherit(&mut self) -> io::Result<&mut Self> {
-        self.stdin = ClientRecv::Native(clone_stdin_handle()?);
+        self.stdin = if self.client.mode == SessionMode::Remote {
+            if std::io::stdin().is_terminal() {
+                ClientRecv::Null
+            } else {
+                ClientRecv::Inherit
+            }
+        } else {
+            ClientRecv::Native(clone_stdin_handle()?)
+        };
         Ok(self)
     }
 
     fn stdout_inherit(&mut self) -> io::Result<&mut Self> {
-        self.stdout = ClientSend::Native(clone_stdout_handle()?);
+        self.stdout = if self.client.mode == SessionMode::Remote {
+            ClientSend::Inherit(HostOutput::Stdout)
+        } else {
+            ClientSend::Native(clone_stdout_handle()?)
+        };
         Ok(self)
     }
 
@@ -1431,17 +1604,33 @@ impl<'a> Command for CommandBuilder<'a> {
     }
 
     fn stderr(&mut self, stdio: StdioSend) -> io::Result<&mut Self> {
+        if let StdioSend::Remote(remote) = &stdio
+            && !self.client.rpc.is_same_session(&remote.client.rpc)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "stdio send belongs to a different VFS session",
+            ));
+        }
         self.stderr = ClientSend::Resource(stdio);
         Ok(self)
     }
 
     fn stderr_inherit(&mut self) -> io::Result<&mut Self> {
-        self.stderr = ClientSend::Native(clone_stderr_handle()?);
+        self.stderr = if self.client.mode == SessionMode::Remote {
+            ClientSend::Inherit(HostOutput::Stderr)
+        } else {
+            ClientSend::Native(clone_stderr_handle()?)
+        };
         Ok(self)
     }
 
     fn stderr_inherit_stdout(&mut self) -> io::Result<&mut Self> {
-        self.stderr = ClientSend::Native(clone_stdout_handle()?);
+        self.stderr = if self.client.mode == SessionMode::Remote {
+            ClientSend::Inherit(HostOutput::Stdout)
+        } else {
+            ClientSend::Native(clone_stdout_handle()?)
+        };
         Ok(self)
     }
 
@@ -1461,9 +1650,10 @@ impl<'a> Command for CommandBuilder<'a> {
             stdout,
             stderr,
         } = self;
-        let (stdin, mut stdin_resource) = Self::prepare_recv(client, stdin).await?;
-        let (stdout, mut stdout_resource) = Self::prepare_send(client, stdout).await?;
-        let (stderr, mut stderr_resource) = Self::prepare_send(client, stderr).await?;
+        let mut relays = PreparedRelays::default();
+        let (stdin, mut stdin_resource) = Self::prepare_recv(client, stdin, &mut relays).await?;
+        let ((stdout, mut stdout_resource), (stderr, mut stderr_resource)) =
+            Self::prepare_outputs(client, stdout, stderr, &mut relays).await?;
         let req = SpawnRequest {
             program,
             args,
@@ -1488,6 +1678,7 @@ impl<'a> Command for CommandBuilder<'a> {
                     .map(|child| ClientChild {
                         client: client.clone(),
                         state: ClientChildState::Live(child),
+                        relays: relays.start(),
                     })
                     .map_err(Into::into)
             }

@@ -309,15 +309,47 @@ async fn retained_files_can_be_used_for_remote_stdio() {
 }
 
 #[tokio::test]
-async fn inherited_stdio_is_unsupported_over_generic_stream() {
+async fn inherited_stdio_is_relayed_over_generic_stream() {
     let (client, server_task) = connected_pair().await;
     let mut command = command_with_args(&client, successful_command());
     command.stdin_inherit().unwrap();
-    let error = command.spawn().await.err().unwrap();
-    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    command.stdout_inherit().unwrap();
+    command.stderr_inherit_stdout().unwrap();
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+
+    let mut command = command_with_args(&client, successful_command());
+    command.stderr_inherit().unwrap();
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+
+    let mut command = client.command(typed_str("nonexistent_command_12345"));
+    command.stdin_inherit().unwrap();
+    command.stdout_inherit().unwrap();
+    assert!(command.spawn().await.is_err());
 
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn opaque_stdio_is_rejected_by_a_different_client_session() {
+    let (first, first_server) = connected_pair().await;
+    let (second, second_server) = connected_pair().await;
+    let (send, recv) = first.pipe().await.unwrap();
+
+    let mut command = command_with_args(&second, successful_command());
+    let error = command.stdout(send).err().unwrap();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+
+    let mut command = command_with_args(&second, successful_command());
+    let error = command.stdin(recv).err().unwrap();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+
+    first.stop().await.unwrap();
+    second.stop().await.unwrap();
+    first_server.await.unwrap().unwrap();
+    second_server.await.unwrap().unwrap();
 }
 
 #[tokio::test]

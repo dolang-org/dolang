@@ -98,6 +98,11 @@ impl<P: Protocol> Clone for Client<P> {
 }
 
 impl<P: Protocol> Client<P> {
+    /// Returns whether both clients refer to the same RPC session.
+    pub fn is_same_session(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Starts a client session on a bidirectional byte stream.
     pub fn new<T>(stream: T) -> Self
     where

@@ -772,6 +772,11 @@ pub trait Command {
     fn current_dir(&mut self, dir: Utf8TypedPath<'_>) -> &mut Self;
     fn stdin(&mut self, stdio: Self::StdioRecv) -> io::Result<&mut Self>;
     fn stdout(&mut self, stdio: Self::StdioSend) -> io::Result<&mut Self>;
+    /// Inherit the host process's standard input.
+    ///
+    /// Opaque remote clients treat terminal input as null because Tokio cannot
+    /// cancel an outstanding terminal read. Redirected input is relayed to the
+    /// remote process.
     fn stdin_inherit(&mut self) -> io::Result<&mut Self>;
     fn stdout_inherit(&mut self) -> io::Result<&mut Self>;
     fn stdin_null(&mut self) -> &mut Self;
