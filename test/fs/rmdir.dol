@@ -20,7 +20,7 @@ def remove_dir_removes_empty_directory()
   remove_dir $to_remove
   assert $!to_remove.exists()
 
-#[agent.test remote: false]
+#[agent.test]
 def remove_dir_fails_on_non_empty_directory()
   let parent = Path "parent"
   let child = (parent / "file.txt")
@@ -73,7 +73,7 @@ def path_remove_dir_method()
   path.remove_dir()
   assert $!path.exists()
 
-#[agent.test remote: false]
+#[agent.test]
 def remove_dir_all_fails_when_tree_contains_files()
   let parent = Path "parent"
   let child = (parent / "child")
@@ -88,7 +88,7 @@ def remove_dir_all_fails_when_tree_contains_files()
   assert $parent.exists()
   assert $file.exists()
 
-#[agent.test remote: false]
+#[agent.test]
 def remove_dir_all_ignore_prunes_only_empty_branches()
   let parent = Path "parent"
   let keep = (parent / "keep")
@@ -133,7 +133,7 @@ def remove_dir_fails_on_non_existent_directory()
   assert_throws $RuntimeError do
     remove_dir $nonexistent
 
-#[agent.test remote: false]
+#[agent.test]
 def remove_dir_fails_on_file()
   let file_path = Path "a_file.txt"
 

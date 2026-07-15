@@ -13,7 +13,7 @@ import agent sys
   time:
     - DateTime
 
-#[agent.test remote: false]
+#[agent.test]
 def set_timestamps_updates_timestamps()
   let test_path = "test_utime.txt"
   let first_modified = DateTime.from_unix(1234)

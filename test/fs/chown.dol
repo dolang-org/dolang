@@ -19,7 +19,7 @@ import agent
 import std:
   - RuntimeError
 
-#[agent.test remote: false]
+#[agent.test]
 def numeric_id()
   let test_path = "test_chown_ids.txt"
 
@@ -34,7 +34,7 @@ def numeric_id()
 
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def user_and_group_name()
   let test_path = "test_chown_names.txt"
 
@@ -51,7 +51,7 @@ def user_and_group_name()
 
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def group_only()
   let test_path = "test_chown_group.txt"
 
@@ -66,7 +66,7 @@ def group_only()
 
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def requires_user_or_group()
   let test_path = "test_chown_missing.txt"
 
@@ -78,7 +78,7 @@ def requires_user_or_group()
 
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def unknown_user_fails()
   let test_path = "test_chown_unknown.txt"
 
@@ -90,7 +90,7 @@ def unknown_user_fails()
 
   remove $test_path
 
-#[agent.test remote: false]
+#[agent.test]
 def follow_controls_symlink_handling()
   let link_path = "test_chown_link"
   let missing_target = "test_chown_missing_target"
