@@ -144,7 +144,7 @@ impl From<WireErrorKind> for io::ErrorKind {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) enum WireError {
     Io {
         kind: WireErrorKind,
@@ -398,10 +398,10 @@ mod tests {
     #[test]
     fn wire_process_status_is_platform_independent() {
         for status in [ProcessStatus::Exited(42), ProcessStatus::Signaled(9)] {
-            let encoded = postcard::to_stdvec(&ResponseKind::Spawn(Ok(status))).unwrap();
+            let encoded = postcard::to_stdvec(&ResponseKind::ChildWait(Ok(status))).unwrap();
             let decoded: ResponseKind = postcard::from_bytes(&encoded).unwrap();
-            let ResponseKind::Spawn(Ok(decoded)) = decoded else {
-                panic!("spawn response changed variant");
+            let ResponseKind::ChildWait(Ok(decoded)) = decoded else {
+                panic!("child wait response changed variant");
             };
             assert_eq!(decoded, status);
         }
@@ -693,6 +693,15 @@ pub(crate) struct SetXattrRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum RequestKind {
     Spawn(SpawnRequest),
+    ChildWait {
+        child: Opaque<crate::ChildMarker>,
+    },
+    ChildTerminate {
+        child: Opaque<crate::ChildMarker>,
+    },
+    ChildClose {
+        child: Opaque<crate::ChildMarker>,
+    },
     Query,
     Which {
         program: WirePath,
@@ -790,7 +799,10 @@ pub(crate) enum RequestKind {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum ResponseKind {
-    Spawn(Result<crate::ProcessStatus, WireError>),
+    Spawn(Result<Opaque<crate::ChildMarker>, WireError>),
+    ChildWait(Result<crate::ProcessStatus, WireError>),
+    ChildTerminate(Result<crate::ProcessStatus, WireError>),
+    ChildClose(Result<(), WireError>),
     Query(Result<QueryResponse, WireError>),
     Which(Result<Option<WirePath>, WireError>),
     WellKnownPath(Result<WirePath, WireError>),

@@ -50,6 +50,12 @@ impl OpaqueResource for RetainedFile {
     type Marker = crate::FileMarker;
 }
 
+struct RetainedChild(Mutex<crate::AnyChild>);
+
+impl OpaqueResource for RetainedChild {
+    type Marker = crate::ChildMarker;
+}
+
 struct ServerState {
     vfs: AnyVfs,
     #[cfg(unix)]
@@ -194,6 +200,11 @@ async fn serve_connection(
 ) -> Result<(), dolang_rpc::Error> {
     rpc.serve(async move |context, request| match request {
         RequestKind::Spawn(request) => connection.handle_spawn_rpc(context, request).await,
+        RequestKind::ChildWait { child } => connection.handle_child_wait(context, child).await,
+        RequestKind::ChildTerminate { child } => {
+            connection.handle_child_terminate(context, child).await
+        }
+        RequestKind::ChildClose { child } => connection.handle_child_close(context, child),
         RequestKind::Stop => {
             stop.store(true, Ordering::Release);
             context.shutdown();
@@ -228,7 +239,11 @@ impl Connection {
                 self.handle_which(program, path, cwd).await
             }
             RequestKind::WellKnownPath(request) => self.handle_well_known_path(request).await,
-            RequestKind::Stop | RequestKind::Spawn(_) => unreachable!(),
+            RequestKind::Stop
+            | RequestKind::Spawn(_)
+            | RequestKind::ChildWait { .. }
+            | RequestKind::ChildTerminate { .. }
+            | RequestKind::ChildClose { .. } => unreachable!(),
             RequestKind::ClearCache => {
                 ResponseKind::ClearCache(Self::wire_result(self.server.vfs.clear_cache().await))
             }
@@ -366,21 +381,16 @@ impl Connection {
             return ResponseKind::Spawn(Err(error));
         }
 
-        let mut child = match cmd.spawn().await {
+        let child = match cmd.spawn().await {
             Ok(child) => child,
             Err(e) => {
                 return ResponseKind::Spawn(Err(wire_error(e)));
             }
         };
-
-        let exit = match context.cancel_guard(async |_| child.wait().await).await {
-            Ok(exit) => exit,
-            Err(_) => child.terminate().await,
-        };
-        ResponseKind::Spawn(exit.map_err(wire_error))
+        ResponseKind::Spawn(Ok(context.register(RetainedChild(Mutex::new(child)))))
     }
 
-    async fn spawn_stdio_file(
+    fn spawn_stdio_file(
         &self,
         context: &CallContext<VfsProtocol>,
         target: StdioTarget,
@@ -396,9 +406,19 @@ impl Connection {
                 ))))
             }
             StdioTarget::Opaque(file) => {
-                let file = Self::retained_file(context, file)?;
-                let file = file.0.lock().await;
-                file.try_clone().await.map(Some).map_err(wire_error)
+                let file = context.unregister::<RetainedFile>(file).map_err(|_| {
+                    wire_error(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid opaque file",
+                    ))
+                })?;
+                let Some(file) = file else {
+                    return Err(wire_error(io::Error::new(
+                        io::ErrorKind::ResourceBusy,
+                        "opaque file is in use",
+                    )));
+                };
+                Ok(Some(file.0.into_inner()))
             }
         }
     }
@@ -411,22 +431,95 @@ impl Connection {
         stdout: StdioTarget,
         stderr: StdioTarget,
     ) -> Result<(), crate::protocol::WireError> {
-        if let Some(file) = self.spawn_stdio_file(context, stdin).await? {
+        let stdin = self.spawn_stdio_file(context, stdin);
+        let stdout = self.spawn_stdio_file(context, stdout);
+        let stderr = self.spawn_stdio_file(context, stderr);
+        let (stdin, stdout, stderr) = (stdin?, stdout?, stderr?);
+
+        if let Some(file) = stdin {
             command.stdin_handle(file).map_err(wire_error)?;
         } else {
             command.stdin_null();
         }
-        if let Some(file) = self.spawn_stdio_file(context, stdout).await? {
+        if let Some(file) = stdout {
             command.stdout_handle(file).map_err(wire_error)?;
         } else {
             command.stdout_null();
         }
-        if let Some(file) = self.spawn_stdio_file(context, stderr).await? {
+        if let Some(file) = stderr {
             command.stderr_handle(file).map_err(wire_error)?;
         } else {
             command.stderr_null();
         }
         Ok(())
+    }
+
+    fn take_child(
+        context: &CallContext<VfsProtocol>,
+        child: dolang_rpc::Opaque<crate::ChildMarker>,
+    ) -> Result<RetainedChild, crate::protocol::WireError> {
+        context
+            .unregister::<RetainedChild>(child)
+            .map_err(|_| {
+                wire_error(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "invalid opaque child",
+                ))
+            })?
+            .ok_or_else(|| {
+                wire_error(io::Error::new(
+                    io::ErrorKind::ResourceBusy,
+                    "opaque child is in use",
+                ))
+            })
+    }
+
+    async fn handle_child_wait(
+        &self,
+        context: &mut CallContext<VfsProtocol>,
+        child: dolang_rpc::Opaque<crate::ChildMarker>,
+    ) -> ResponseKind {
+        let result = match Self::take_child(context, child) {
+            Ok(child) => {
+                let mut child = child.0.into_inner();
+                match context.cancel_guard(async |_| child.wait().await).await {
+                    Ok(result) => result,
+                    Err(_) => child.terminate().await,
+                }
+                .map_err(wire_error)
+            }
+            Err(error) => Err(error),
+        };
+        ResponseKind::ChildWait(result)
+    }
+
+    async fn handle_child_terminate(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        child: dolang_rpc::Opaque<crate::ChildMarker>,
+    ) -> ResponseKind {
+        let result = match Self::take_child(context, child) {
+            Ok(child) => child.0.into_inner().terminate().await.map_err(wire_error),
+            Err(error) => Err(error),
+        };
+        ResponseKind::ChildTerminate(result)
+    }
+
+    fn handle_child_close(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        child: dolang_rpc::Opaque<crate::ChildMarker>,
+    ) -> ResponseKind {
+        let result = context
+            .unregister::<RetainedChild>(child)
+            .map(|_| ())
+            .map_err(|_| {
+                wire_error(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "invalid opaque child",
+                ))
+            });
+        ResponseKind::ChildClose(result)
     }
 
     async fn handle_query(&self) -> ResponseKind {

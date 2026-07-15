@@ -898,6 +898,10 @@ pub use pipe::{PipeRecv, PipeSend};
 #[derive(Debug)]
 pub struct FileMarker;
 
+/// Marker for a child process retained by a VFS RPC session.
+#[derive(Debug)]
+pub struct ChildMarker;
+
 #[derive(Debug)]
 pub enum AnyFile {
     Client(client::ClientFile),
@@ -1125,12 +1129,12 @@ pub enum AnyCommand<'a> {
     Direct(direct::DirectCommand<'a>),
 }
 
-pub enum AnyChild<'a> {
-    Client(client::ClientChild<'a>),
+pub enum AnyChild {
+    Client(client::ClientChild),
     Direct(Box<direct::DirectChild>),
 }
 
-impl Child for AnyChild<'_> {
+impl Child for AnyChild {
     async fn wait(&mut self) -> crate::Result<ProcessStatus> {
         match self {
             Self::Client(child) => child.wait().await,
@@ -1147,7 +1151,7 @@ impl Child for AnyChild<'_> {
 }
 
 impl<'a> Command for AnyCommand<'a> {
-    type Child = AnyChild<'a>;
+    type Child = AnyChild;
     type File = AnyFile;
     type PipeSend = PipeSend;
     type PipeRecv = PipeRecv;

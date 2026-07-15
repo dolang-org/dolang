@@ -139,7 +139,10 @@ async fn null_stdio_processes_work_over_generic_stream() {
         .spawn()
         .await
         .unwrap();
-    assert!(child.wait().await.unwrap().success());
+    let status = child.wait().await.unwrap();
+    assert!(status.success());
+    assert_eq!(child.wait().await.unwrap(), status);
+    assert_eq!(child.terminate().await.unwrap(), status);
 
     let mut child = command_with_args(&client, failing_command())
         .spawn()
@@ -149,12 +152,11 @@ async fn null_stdio_processes_work_over_generic_stream() {
     assert!(!status.success());
     assert_eq!(status.code(), Some(42));
 
-    let mut child = client
+    let result = client
         .command(typed_str("nonexistent_command_12345"))
         .spawn()
-        .await
-        .unwrap();
-    assert!(child.wait().await.is_err());
+        .await;
+    assert!(result.is_err());
 
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();
@@ -238,17 +240,17 @@ async fn native_stdio_is_unsupported_over_generic_stream() {
 }
 
 #[tokio::test]
-async fn remote_process_can_be_cancelled() {
+async fn remote_process_can_be_terminated() {
     let (client, server_task) = connected_pair().await;
     let child = command_with_args(&client, long_running_command())
         .spawn()
         .await
         .unwrap();
-    let error = tokio::time::timeout(std::time::Duration::from_secs(10), child.terminate())
+    let status = tokio::time::timeout(std::time::Duration::from_secs(10), child.terminate())
         .await
         .unwrap()
-        .unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        .unwrap();
+    assert!(!status.success());
 
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();

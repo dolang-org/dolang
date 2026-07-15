@@ -112,6 +112,12 @@ impl ClientFile {
             pending: None,
         }))
     }
+
+    fn disarm_remote_cleanup(&mut self) {
+        if let ClientFileInner::Remote(file) = &mut self.0 {
+            file.file.take();
+        }
+    }
 }
 
 impl RemoteFile {
@@ -832,7 +838,7 @@ fn clone_stderr_handle() -> io::Result<DefaultHandle> {
 /// # Example
 ///
 /// ```ignore
-/// let status = client
+/// let child = client
 ///     .command("ls")
 ///     .arg("-l")
 ///     .arg("/tmp")
@@ -854,10 +860,15 @@ pub struct CommandBuilder<'a> {
     stderr: ClientStdio,
 }
 
-pub struct ClientChild<'a> {
-    inner: Option<Call<ResponseKind>>,
-    stdio_files: Vec<ClientFile>,
-    marker: std::marker::PhantomData<&'a Client>,
+pub struct ClientChild {
+    client: Client,
+    state: ClientChildState,
+}
+
+enum ClientChildState {
+    Live(Opaque<crate::ChildMarker>),
+    Exited(ProcessStatus),
+    Lost(crate::protocol::WireError),
 }
 
 enum ClientStdio {
@@ -914,34 +925,90 @@ impl<'a> CommandBuilder<'a> {
     }
 }
 
-impl Child for ClientChild<'_> {
-    async fn wait(&mut self) -> crate::Result<ProcessStatus> {
-        let result = match self.inner.take() {
-            Some(inner) => inner.await.map_err(rpc_error).map_err(crate::Error::from),
-            None => return Err(io::Error::other("child already waited").into()),
+impl ClientChild {
+    fn result(&self) -> Option<crate::Result<ProcessStatus>> {
+        match &self.state {
+            ClientChildState::Live(_) => None,
+            ClientChildState::Exited(status) => Some(Ok(*status)),
+            ClientChildState::Lost(error) => Some(Err(error.clone().into())),
+        }
+    }
+
+    fn store_result(
+        &mut self,
+        result: &std::result::Result<ProcessStatus, crate::protocol::WireError>,
+    ) {
+        self.state = match result {
+            Ok(status) => ClientChildState::Exited(*status),
+            Err(error) => ClientChildState::Lost(error.clone()),
         };
-        self.stdio_files.clear();
-        let result = result?;
-        match result {
-            ResponseKind::Spawn(result) => result.map_err(crate::Error::from),
+    }
+}
+
+impl Drop for ClientChild {
+    fn drop(&mut self) {
+        let ClientChildState::Live(child) = &self.state else {
+            return;
+        };
+        let child = child.clone();
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let client = self.client.clone();
+        runtime.spawn(async move {
+            let _ = client.request(RequestKind::ChildClose { child }).await;
+        });
+    }
+}
+
+impl Child for ClientChild {
+    async fn wait(&mut self) -> crate::Result<ProcessStatus> {
+        if let Some(result) = self.result() {
+            return result;
+        }
+        let ClientChildState::Live(child) = &self.state else {
+            unreachable!();
+        };
+        match self
+            .client
+            .request(RequestKind::ChildWait {
+                child: child.clone(),
+            })
+            .await?
+        {
+            ResponseKind::ChildWait(result) => {
+                self.store_result(&result);
+                self.result().unwrap()
+            }
             response => Err(unexpected(response).into()),
         }
     }
 
-    async fn terminate(self) -> crate::Result<ProcessStatus> {
-        let Some(mut inner) = self.inner else {
-            return Err(io::Error::other("child already waited").into());
+    async fn terminate(mut self) -> crate::Result<ProcessStatus> {
+        if let Some(result) = self.result() {
+            return result;
+        }
+        let ClientChildState::Live(child) = &self.state else {
+            unreachable!();
         };
-        inner.cancel();
-        match inner.await.map_err(rpc_error).map_err(crate::Error::from)? {
-            ResponseKind::Spawn(result) => result.map_err(crate::Error::from),
+        match self
+            .client
+            .request(RequestKind::ChildTerminate {
+                child: child.clone(),
+            })
+            .await?
+        {
+            ResponseKind::ChildTerminate(result) => {
+                self.store_result(&result);
+                self.result().unwrap()
+            }
             response => Err(unexpected(response).into()),
         }
     }
 }
 
 impl<'a> Command for CommandBuilder<'a> {
-    type Child = ClientChild<'a>;
+    type Child = ClientChild;
     type File = ClientFile;
     type PipeSend = PipeSend;
     type PipeRecv = PipeRecv;
@@ -1045,6 +1112,10 @@ impl<'a> Command for CommandBuilder<'a> {
         let (stdin, stdin_file) = Self::prepare_stdio(client, stdin).await?;
         let (stdout, stdout_file) = Self::prepare_stdio(client, stdout).await?;
         let (stderr, stderr_file) = Self::prepare_stdio(client, stderr).await?;
+        let mut stdio_files: Vec<_> = [stdin_file, stdout_file, stderr_file]
+            .into_iter()
+            .flatten()
+            .collect();
         let req = SpawnRequest {
             program,
             args,
@@ -1054,14 +1125,20 @@ impl<'a> Command for CommandBuilder<'a> {
             stdout,
             stderr,
         };
-        Ok(ClientChild {
-            inner: Some(client.call(RequestKind::Spawn(req))),
-            stdio_files: [stdin_file, stdout_file, stderr_file]
-                .into_iter()
-                .flatten()
-                .collect(),
-            marker: std::marker::PhantomData,
-        })
+        match client.request(RequestKind::Spawn(req)).await? {
+            ResponseKind::Spawn(result) => {
+                for file in &mut stdio_files {
+                    file.disarm_remote_cleanup();
+                }
+                result
+                    .map(|child| ClientChild {
+                        client: client.clone(),
+                        state: ClientChildState::Live(child),
+                    })
+                    .map_err(Into::into)
+            }
+            response => Err(unexpected(response).into()),
+        }
     }
 }
 
@@ -1688,8 +1765,27 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{Client, ClientFileInner};
-    use crate::{FileHandle as _, Server, Vfs as _, protocol::RequestKind};
+    use super::{Client, ClientChildState, ClientFileInner};
+    use crate::{
+        Child as _, Command as _, FileHandle as _, Server, Vfs as _, protocol::RequestKind,
+    };
+
+    #[cfg(unix)]
+    fn successful_command(client: &Client) -> super::CommandBuilder<'_> {
+        let mut command =
+            client.command(crate::Utf8TypedPath::Unix(crate::Utf8UnixPath::new("sh")));
+        command.arg("-c").arg("exit 0");
+        command
+    }
+
+    #[cfg(windows)]
+    fn successful_command(client: &Client) -> super::CommandBuilder<'_> {
+        let mut command = client.command(crate::Utf8TypedPath::Windows(
+            crate::Utf8WindowsPath::new("cmd"),
+        ));
+        command.arg("/C").arg("exit 0");
+        command
+    }
 
     async fn open_remote_file(
         client: &Client,
@@ -1775,6 +1871,35 @@ mod tests {
         let file = open_remote_file(&client, path.to_path()).await;
 
         file.close().await.unwrap();
+
+        client.stop().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn child_wait_caches_wire_error() {
+        let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
+        let server = tokio::spawn(Server::new(server_stream).serve());
+        let client = Client::new(client_stream);
+        let mut child = successful_command(&client).spawn().await.unwrap();
+        let ClientChildState::Live(opaque) = &child.state else {
+            panic!("new child is not live");
+        };
+        let response = client
+            .request(RequestKind::ChildClose {
+                child: opaque.clone(),
+            })
+            .await
+            .unwrap();
+        let crate::protocol::ResponseKind::ChildClose(Ok(())) = response else {
+            panic!("child close returned the wrong response");
+        };
+
+        let first = child.wait().await.unwrap_err();
+        let second = child.wait().await.unwrap_err();
+        assert_eq!(first.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(second.kind(), first.kind());
+        assert_eq!(second.to_string(), first.to_string());
 
         client.stop().await.unwrap();
         server.await.unwrap().unwrap();

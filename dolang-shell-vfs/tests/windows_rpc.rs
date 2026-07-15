@@ -153,12 +153,11 @@ async fn spawn_transfers_standard_stream_handles() {
 #[tokio::test]
 async fn spawn_failure_returns_remote_os_error() {
     let (client, server_task) = connected_pair().await;
-    let mut child = client
+    let result = client
         .command(typed_str("dolang-command-that-does-not-exist.exe"))
         .spawn()
-        .await
-        .unwrap();
-    assert!(child.wait().await.is_err());
+        .await;
+    assert!(result.is_err());
 
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();

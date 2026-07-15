@@ -93,12 +93,10 @@ async fn spawn_failure() {
     let server_task = start_server(&socket_path).await;
 
     let client = connect_client(&socket_path).await;
-    let mut child = client
+    let result = client
         .command(typed_str("nonexistent_command_12345"))
         .spawn()
-        .await
-        .unwrap();
-    let result = child.wait().await;
+        .await;
 
     assert!(result.is_err());
 
