@@ -230,7 +230,7 @@ impl<'frame> SendFrame<'frame> for GenericSend<'frame> {
                 ));
             }
         }
-        Ok(())
+        self.0.0.flush().await
     }
 }
 
