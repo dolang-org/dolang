@@ -147,6 +147,7 @@ nav:
     - shell:
       - api/shell/index.md
       - api/shell/vfs.md
+    - ssh: api/ssh.md
     - shlex: api/shlex.md
     - sqlite:
       - api/sqlite/index.md

@@ -1,0 +1,96 @@
+import _ssh
+
+# Runs `block` on `host` through SSH and a remote VFS. Filesystem access and
+# spawned programs use the remote VFS for the duration of the block.
+#
+# `identity:` and `jump:` may be repeated. TTY allocation and SSH escape
+# processing are disabled. Agent forwarding is disabled unless
+# `forward_agent` is true. Advanced settings not represented here continue to
+# come from SSH configuration.
+#
+# The SSH session is terminated when `block` exits, including during unwind.
+#
+# # Parameters
+#
+# | Name                 | Type     | Description                                      |
+# | -------------------- | -------- | ------------------------------------------------ |
+# | `host`               | `str`    | SSH destination                                  |
+# | `block`              | callable | Block to run                                     |
+# | `user`               | `str?`   | Remote user                                      |
+# | `port`               | `int?`   | SSH server port                                  |
+# | `identity`           | `*`      | Identity file; may be repeated                   |
+# | `identities_only`    | `bool?`  | Restrict authentication to configured identities |
+# | `forward_agent`      | `bool?`  | Forward the authentication agent                 |
+# | `jump`               | `str*`   | Jump host; may be repeated                       |
+# | `connect_timeout`    | `int?`   | Connection timeout in seconds                    |
+# | `keepalive_interval` | `int?`   | Protocol keepalive interval in seconds           |
+# | `keepalive_count`    | `int?`   | Unanswered keepalives allowed                    |
+# | `batch`              | `bool?`  | Disable interactive prompts                      |
+# | `host_key`           | `sym?`   | `:DEFAULT:`, `:STRICT:`, or `:ACCEPT_NEW:`       |
+# | `command`            | `array?` | Remote VFS command arguments                     |
+#
+# # Returns
+#
+# The result of `block`.
+#
+# # Errors
+#
+# | Error                | Condition                                      |
+# | -------------------- | ---------------------------------------------- |
+# | `proc.Error`         | SSH exits unsuccessfully                       |
+# | `sys.Error`          | SSH or the remote VFS cannot be contacted      |
+# | `ValueError`         | `host_key` is not a supported policy           |
+# | `UnexpectedKeyError` | An unrecognized keyword option is passed       |
+# | `UnexpectedPosError` | An unexpected positional argument is passed    |
+#
+# # Example
+#
+# ```
+# import proc.run:
+#   - git
+#   - cargo
+#
+# let checkout = Path /srv/build/project
+#
+# ssh.with build.example.com
+#   user: builder
+#   identity: ~/.ssh/build
+#   jump: bastion.example.com
+#   batch: true
+#   host_key: :STRICT:
+#   do
+#     checkout.remove all: true ignore: true
+#     checkout.parent.mkdir all: true
+#     git clone https://github.com/example/project.git $checkout
+#     cd $checkout do
+#       cargo build --release
+# ```
+pub def with
+  host
+  block
+  :user = nil
+  :port = nil
+  :identities_only = false
+  :forward_agent = false
+  :connect_timeout = nil
+  :keepalive_interval = nil
+  :keepalive_count = nil
+  :batch = false
+  :host_key = :DEFAULT:
+  :command = ["dolang-shell-vfs", "--stdio"]
+  ...options
+do
+  _ssh.with_program ssh
+    $host
+    $block
+    :user
+    :port
+    :identities_only
+    :forward_agent
+    :connect_timeout
+    :keepalive_interval
+    :keepalive_count
+    :batch
+    :host_key
+    :command
+    ...options

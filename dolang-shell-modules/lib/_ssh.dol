@@ -1,0 +1,109 @@
+import
+  shell:
+    - Vfs
+  std:
+    - UnexpectedKeyError
+    - UnexpectedPosError
+    - ValueError
+
+def yes_no value
+  if value
+    "yes"
+  else
+    "no"
+
+pub def build_command
+  host
+  :user = nil
+  :port = nil
+  :identities_only = false
+  :forward_agent = false
+  :connect_timeout = nil
+  :keepalive_interval = nil
+  :keepalive_count = nil
+  :batch = false
+  :host_key = :DEFAULT:
+  :command = ["dolang-shell-vfs", "--stdio"]
+  ...options
+do
+  let identities = []
+  let jumps = []
+  for key value = options
+    if (key == :identity:)
+      identities.push $value
+    else if (key == :jump:)
+      jumps.push $value
+    else
+      if (type key int)
+        throw UnexpectedPosError $key
+      else
+        throw UnexpectedKeyError $key
+
+  let argv = ["ssh", "-T", "-e", "none"]
+  if forward_agent
+    argv.push -A
+  else
+    argv.push -a
+  argv.push -o "IdentitiesOnly=$(yes_no identities_only)"
+  argv.push -o "BatchMode=$(yes_no batch)"
+
+  if (user != nil)
+    argv.push -l $user
+  if (port != nil)
+    argv.push -p $port
+  for identity = identities
+    argv.push -i $identity
+  if (jumps.len > 0)
+    argv.push -J $(",".join jumps)
+  if (connect_timeout != nil)
+    argv.push -o "ConnectTimeout=$connect_timeout"
+  if (keepalive_interval != nil)
+    argv.push -o "ServerAliveInterval=$keepalive_interval"
+  if (keepalive_count != nil)
+    argv.push -o "ServerAliveCountMax=$keepalive_count"
+
+  if (host_key == :STRICT:)
+    argv.push -o StrictHostKeyChecking=yes
+  else if (host_key == :ACCEPT_NEW:)
+    argv.push -o StrictHostKeyChecking=accept-new
+  else if (host_key != :DEFAULT:)
+    throw ValueError "ssh.with: invalid host-key policy: $host_key"
+
+  argv.push -- $host ...command
+  argv
+
+pub def with_program
+  executable
+  host
+  block
+  :user = nil
+  :port = nil
+  :identities_only = false
+  :forward_agent = false
+  :connect_timeout = nil
+  :keepalive_interval = nil
+  :keepalive_count = nil
+  :batch = false
+  :host_key = :DEFAULT:
+  :command = ["dolang-shell-vfs", "--stdio"]
+  ...options
+do
+  let argv = build_command
+    $host
+    :user
+    :port
+    :identities_only
+    :forward_agent
+    :connect_timeout
+    :keepalive_interval
+    :keepalive_count
+    :batch
+    :host_key
+    :command
+    ...options
+  argv[0] = executable
+  let vfs = Vfs do run ...argv
+  try
+    vfs $block
+  finally
+    vfs.stop()
