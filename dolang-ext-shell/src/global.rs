@@ -98,6 +98,7 @@ pub(crate) struct Syms<'v> {
     pub(crate) unknown: Sym<'v, 'v>,
     pub(crate) follow: Sym<'v, 'v>,
     pub(crate) group: Sym<'v, 'v>,
+    pub(crate) join: Sym<'v, 'v>,
 }
 
 pub enum ProgramSource {
@@ -224,6 +225,7 @@ impl<'v> Global<'v> {
                 unknown: builder.sym("UNKNOWN"),
                 follow: builder.sym("follow"),
                 group: builder.sym("group"),
+                join: builder.sym("join"),
             },
             local: builder.local(),
             args: RefCell::new(Vec::new()),

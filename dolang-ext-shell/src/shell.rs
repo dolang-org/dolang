@@ -337,13 +337,23 @@ impl<'v> Object<'v> for Vfs {
                     let send = send_guard.send_pipe().await.into_sys(strand)?;
 
                     let client = Client::new_split(recv, send);
+                    let query = match client.query().await {
+                        Ok(query) => query,
+                        Err(query_error) => {
+                            let join = global.syms.join;
+                            match method!(strand, &stream, join, &mut module).await {
+                                Ok(()) => return Err(query_error.into_sys(strand)),
+                                Err(launcher_error) => return Err(launcher_error),
+                            }
+                        }
+                    };
                     let Query {
                         env,
                         cwd,
                         current_exe,
                         target,
                         security,
-                    } = error::io_result(strand, client.query().await)?;
+                    } = query;
                     drop((recv_guard, send_guard));
                     let env = Rc::new(LocalEnv::new(None, true, env, target.operating_system));
                     global.types.vfs.create_with_annex(
