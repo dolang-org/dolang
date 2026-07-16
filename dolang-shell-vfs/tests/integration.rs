@@ -1,6 +1,8 @@
 #![deny(warnings)]
 #![cfg(unix)]
-use dolang_shell_vfs::{Child, Command, TargetInfo, Utf8TypedPath, Utf8UnixPath, Vfs};
+use dolang_shell_vfs::{
+    Child, Command, SecurityInfo, TargetInfo, Utf8TypedPath, Utf8UnixPath, Vfs,
+};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
@@ -234,6 +236,7 @@ async fn client_query() {
         "current executable should be absolute"
     );
     assert_eq!(query.target, TargetInfo::current());
+    assert_eq!(query.security, SecurityInfo::current().unwrap());
 
     stop_daemon(&socket_path).await;
 }

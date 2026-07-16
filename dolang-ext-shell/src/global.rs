@@ -34,6 +34,7 @@ use crate::{
     local::Local,
     pipe_channel::{PipeReceiver, PipeSender},
     program::Program,
+    security::{TokenInfo, UnixInfo},
     shell::{Stderr, Stdin, Stdout, Vfs},
     sys::{CpuInfo, OsInfo},
     time::{DateTime, Duration},
@@ -64,6 +65,8 @@ pub(crate) struct Types<'v> {
     pub(crate) duration: Type<'v, Duration>,
     pub(crate) os_info: Type<'v, OsInfo>,
     pub(crate) cpu_info: Type<'v, CpuInfo>,
+    pub(crate) unix_info: Type<'v, UnixInfo>,
+    pub(crate) token_info: Type<'v, TokenInfo>,
     pub(crate) sys_error: Type<'v, SysErrorObject<SysError>>,
     pub(crate) not_found: Type<'v, SysErrorObject<NotFoundError>>,
     pub(crate) permission_denied: Type<'v, SysErrorObject<PermissionDeniedError>>,
@@ -175,6 +178,8 @@ impl<'v> Global<'v> {
                 duration: builder.register_type::<Duration>(),
                 os_info: builder.register_type(),
                 cpu_info: builder.register_type(),
+                unix_info: builder.register_type(),
+                token_info: builder.register_type(),
                 sys_error,
                 not_found: builder
                     .build_type::<SysErrorObject<NotFoundError>>((), ())

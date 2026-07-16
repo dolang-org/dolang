@@ -8,7 +8,7 @@ use std::{
 };
 
 use dolang::runtime::{Strand, strand};
-use dolang_shell_vfs::{AnyVfs, OperatingSystem, OperatingSystemFamily, TargetInfo};
+use dolang_shell_vfs::{AnyVfs, OperatingSystem, OperatingSystemFamily, SecurityInfo, TargetInfo};
 use dolang_shell_vfs::{Utf8TypedPathBuf, typed_path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,6 +164,7 @@ pub(crate) struct Local {
     vfs: RefCell<AnyVfs>,
     vfs_exe: RefCell<Option<Utf8TypedPathBuf>>,
     target: RefCell<TargetInfo>,
+    security: RefCell<Option<SecurityInfo>>,
     channel_mode: Cell<ChannelMode>,
 }
 
@@ -178,6 +179,7 @@ impl<'v> strand::Local<'v> for Local {
             vfs: RefCell::new(AnyVfs::default()),
             vfs_exe: RefCell::new(None),
             target: RefCell::new(TargetInfo::current()),
+            security: RefCell::new(None),
             channel_mode: Cell::new(ChannelMode::Line),
         }
     }
@@ -189,6 +191,7 @@ impl<'v> strand::Local<'v> for Local {
             vfs: self.vfs.clone(),
             vfs_exe: self.vfs_exe.clone(),
             target: self.target.clone(),
+            security: self.security.clone(),
             channel_mode: Cell::new(self.channel_mode.get()),
         }
     }
@@ -236,6 +239,14 @@ impl Local {
 
     pub(crate) fn replace_target(&self, target: TargetInfo) -> TargetInfo {
         mem::replace(&mut *self.target.borrow_mut(), target)
+    }
+
+    pub(crate) fn security(&self) -> Option<SecurityInfo> {
+        self.security.borrow().clone()
+    }
+
+    pub(crate) fn replace_security(&self, security: Option<SecurityInfo>) -> Option<SecurityInfo> {
+        mem::replace(&mut *self.security.borrow_mut(), security)
     }
 
     pub(crate) fn channel_mode(&self) -> ChannelMode {

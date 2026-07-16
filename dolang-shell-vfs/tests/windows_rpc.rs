@@ -2,14 +2,16 @@
 #![deny(warnings)]
 
 use std::{
-    os::windows::io::{FromRawHandle, OwnedHandle},
+    mem,
+    os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
     path::Path,
+    ptr,
     sync::atomic::{AtomicU64, Ordering},
 };
 
 use dolang_shell_vfs::{
-    AnyVfs, Child, Client, Command, FileHandle, OpenOptions, Server, TargetInfo, Utf8TypedPath,
-    Utf8WindowsPath, Vfs,
+    AnyVfs, Child, Client, Command, FileHandle, OpenOptions, SecurityInfo, Server, TargetInfo,
+    Utf8TypedPath, Utf8WindowsPath, Vfs,
 };
 use tempfile::tempdir;
 use tokio::{
@@ -17,8 +19,12 @@ use tokio::{
     net::windows::named_pipe::{ClientOptions, ServerOptions},
     task::JoinHandle,
 };
+use windows_sys::Win32::Security::{
+    GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
+};
 use windows_sys::Win32::System::Threading::{
-    GetCurrentProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+    GetCurrentProcess, GetCurrentProcessId, OpenProcess, OpenProcessToken,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
 };
 
 fn is_wine() -> bool {
@@ -32,7 +38,39 @@ fn is_wine() -> bool {
     }
 }
 
+fn is_elevated() -> bool {
+    let mut token = ptr::null_mut();
+    assert_ne!(
+        unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) },
+        0
+    );
+    let token = unsafe { OwnedHandle::from_raw_handle(token) };
+    let mut elevation: TOKEN_ELEVATION = unsafe { mem::zeroed() };
+    let mut returned = 0;
+    assert_ne!(
+        unsafe {
+            GetTokenInformation(
+                token.as_raw_handle(),
+                TokenElevation,
+                (&raw mut elevation).cast(),
+                u32::try_from(mem::size_of::<TOKEN_ELEVATION>()).unwrap(),
+                &mut returned,
+            )
+        },
+        0
+    );
+    elevation.TokenIsElevated != 0
+}
+
 static NEXT_PIPE: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn direct_security_info_reports_token_elevation() {
+    let SecurityInfo::Windows(info) = SecurityInfo::current().unwrap() else {
+        panic!("Windows query returned Unix security information");
+    };
+    assert_eq!(info.is_elevated, is_elevated());
+}
 
 fn typed(path: &Path) -> Utf8TypedPath<'_> {
     Utf8TypedPath::Windows(Utf8WindowsPath::new(path.to_str().unwrap()))
@@ -78,6 +116,7 @@ async fn query_reports_server_target_including_wine() {
     let query = client.query().await.unwrap();
     assert_eq!(query.target, TargetInfo::current());
     assert_eq!(query.target.is_wine, Some(is_wine()));
+    assert_eq!(query.security, SecurityInfo::current().unwrap());
 
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();

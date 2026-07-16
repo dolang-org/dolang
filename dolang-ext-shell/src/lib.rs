@@ -9,6 +9,7 @@ mod local;
 mod pipe_channel;
 mod proc;
 mod program;
+mod security;
 mod shell;
 mod shlex;
 mod sys;

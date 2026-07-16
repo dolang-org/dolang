@@ -1,0 +1,34 @@
+import sys
+  std:
+    - UnsupportedError
+    - bool
+    - int
+    - tuple
+  test:
+    - assert_throws
+    - assert_type
+    - test
+  security:
+    - TokenInfo
+    - UnixInfo
+    - token_info
+    - unix_info
+
+#[test]
+def reports_security_information_for_target()
+  if (sys.os_info().family == :UNIX:)
+    let info = unix_info()
+    assert_type $UnixInfo $info
+    assert_type $int $info.uid
+    assert_type $int $info.gid
+    assert_type $int $info.euid
+    assert_type $int $info.egid
+    assert_type $tuple $info.group_ids
+    for group_id = info.group_ids
+      assert_type $int $group_id
+    assert_throws $UnsupportedError do token_info()
+  else
+    let info = token_info()
+    assert_type $TokenInfo $info
+    assert_type $bool $info.is_elevated
+    assert_throws $UnsupportedError do unix_info()

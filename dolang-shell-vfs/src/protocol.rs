@@ -5,8 +5,8 @@ use dolang_rpc::{Opaque, OsHandle, Protocol};
 use serde::{Deserialize, Serialize};
 
 pub(crate) use crate::{
-    Attrs, ChownIdentity, DirEntry, FsMetadata, Metadata, OperatingSystem, StreamEntry, TargetInfo,
-    WellKnownPath, XattrEntry, XattrNamespace,
+    Attrs, ChownIdentity, DirEntry, FsMetadata, Metadata, OperatingSystem, SecurityInfo,
+    StreamEntry, TargetInfo, WellKnownPath, XattrEntry, XattrNamespace,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -209,6 +209,7 @@ pub(crate) struct QueryResponse {
     pub(crate) cwd: WirePath,
     pub(crate) current_exe: WirePath,
     pub(crate) target: TargetInfo,
+    pub(crate) security: SecurityInfo,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]

@@ -615,6 +615,7 @@ impl Connection {
                 cwd: query.cwd.into(),
                 current_exe: query.current_exe.into(),
                 target: query.target,
+                security: query.security,
             },
         )))
     }

@@ -214,6 +214,10 @@ nav:
       - api/strand/sender.md
       - api/strand/receiver.md
     - sudo: api/sudo.md
+    - security:
+      - api/security/index.md
+      - api/security/unixinfo.md
+      - api/security/tokeninfo.md
     - sys:
       - api/sys/index.md
       - api/sys/osinfo.md
