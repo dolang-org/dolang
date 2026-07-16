@@ -36,7 +36,7 @@ use crate::{
 
 use prim::Prim;
 use repr::{Decode, Repr};
-use view::{Array, Bin, Dict, ObjectView, Record, Str, Tuple, View};
+use view::{Array, Bin, Dict, ObjectView, Record, Str, Tuple as TupleView, View};
 
 pub(crate) enum Case<'v, 'a> {
     Prim(Prim),
@@ -316,6 +316,20 @@ impl<'v> Value<'v> {
             },
             Case::Prim(_) => None,
         }
+    }
+
+    /// Downcasts an object without checking its vtable.
+    ///
+    /// # Safety
+    ///
+    /// The value must directly contain an object of type `T`.
+    pub(crate) unsafe fn downcast_ref_unchecked<T: ?Sized + Protocol<'v>>(
+        &self,
+    ) -> gc::Borrow<'v, '_, Header, T> {
+        let Case::Object(object) = self.case() else {
+            unsafe { std::hint::unreachable_unchecked() }
+        };
+        unsafe { gc::Borrow::from_raw(object.into_raw().cast()) }
     }
 
     /// Downcast `self` to the native type `T`, looking through [`ClassInstance`] native
@@ -1461,7 +1475,7 @@ impl<'v> Value<'v> {
                 }
                 // Tuple
                 if let Some(tuple) = self.downcast_native(vm, bt.tuple) {
-                    return View::Tuple(Tuple::from_borrow(tuple));
+                    return View::Tuple(TupleView::from_borrow(tuple));
                 }
                 // Fallback: unknown GC object
                 View::Object(unsafe { ObjectView::from_ptr(obj.into_raw()) })
@@ -2034,6 +2048,34 @@ impl<'v, A: Input<'v>, B: Input<'v>> Input<'v> for (A, B) {
             InputBy::Value(value, _) => value,
         };
         InputBy::Value(Value::from_object(tuple::tuple(vm, [first, second])), None)
+    }
+}
+
+/// Input wrapper that creates an immutable tuple from a Rust iterator.
+pub struct AsTuple<T>(Option<T>);
+
+impl<T> AsTuple<T> {
+    /// Wrap values for conversion into an immutable tuple.
+    pub fn new(values: T) -> Self {
+        Self(Some(values))
+    }
+}
+
+impl<'v, T, I> Input<'v> for AsTuple<T>
+where
+    T: IntoIterator<Item = I>,
+    I: Input<'v>,
+{
+    #[allow(private_interfaces)]
+    fn input_take<'a>(&'a mut self, vm: &'a Vm<'v>, _: private::Sealed) -> InputBy<'v, 'a> {
+        let values = self
+            .0
+            .take()
+            .expect("AsTuple input used more than once")
+            .into_iter()
+            .map(|value| Value::from_input(vm, value))
+            .collect::<Vec<_>>();
+        InputBy::Value(Value::from_object(tuple::tuple(vm, values)), None)
     }
 }
 

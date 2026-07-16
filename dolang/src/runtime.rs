@@ -8,7 +8,8 @@ pub use dolang_runtime::{
 /// Value manipulation
 pub mod value {
     pub use dolang_runtime::value::{
-        BinEmbryo, Empty, Input, Nil, Output, Root, Singleton, Slot, StrEmbryo, TypeObject, Value,
+        AsTuple, BinEmbryo, Empty, Input, Nil, Output, Root, Singleton, Slot, StrEmbryo,
+        TypeObject, Value,
         view::{
             Array, Bin, Dict, DictPairs, ObjectId, ObjectView, PinBin, PinStr, Record, RecordPairs,
             Str, Tuple, View,
@@ -32,6 +33,10 @@ pub mod object {
     pub use dolang_runtime::object::native::{
         Instance, Mut, Object, Ref, Spread, SpreadContext, Type, TypeBuilder, TypeMut, TypeRef,
         Unpack, UnpackItem,
+    };
+    pub use dolang_runtime::object::{
+        array_view::{ArrayLike, ArrayView},
+        dict_view::{DictLike, DictView, DictViewSink},
     };
 }
 

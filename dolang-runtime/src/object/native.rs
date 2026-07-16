@@ -498,6 +498,15 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
         }
     }
 
+    /// Reconstructs an instance from a value without checking its native vtable.
+    ///
+    /// # Safety
+    ///
+    /// `value` must directly contain an `ObjectWrap<T>`.
+    pub(crate) unsafe fn from_value_unchecked(value: &'a Value<'v>) -> Self {
+        Self::new(unsafe { value.downcast_ref_unchecked() })
+    }
+
     /// Borrow content immutably
     #[inline]
     pub fn borrow<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, Ref<'v, 'a, T>> {
