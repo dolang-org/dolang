@@ -12,11 +12,14 @@ module paths. The **current directory is not searched by default**.
 
 Modules are resolved in this order:
 
-1. **Site directory**:
+1. Paths supplied with repeatable **`--module-path <path>`** options, in the
+   order specified
+2. **Site directory**:
    - `~/.local/share/dolang/site/` (Unix)
    - `%APPDATA%\dolang\site\` (Windows)
-2. **`DOLANG_MODULE_PATH` environment variable**: additional paths,
-   separated by `:` on Unix or `;` on Windows
+
+For example, `dolang --module-path ./lib --module-path ../shared script.dol`
+searches `./lib`, then `../shared`, then the site directory.
 
 ### File Resolution
 

@@ -9,6 +9,7 @@ use wax::{Glob, walk::Entry as _};
 #[derive(Debug)]
 pub(crate) struct Cli {
     pub(crate) path: Option<PathBuf>,
+    pub(crate) module_paths: Vec<PathBuf>,
     pub(crate) main: bool,
     pub(crate) args: Vec<String>,
     pub(crate) check: bool,
@@ -38,6 +39,7 @@ pub(crate) fn parse_from(
         };
         return ParseOutcome::Run(Cli {
             path: Some(PathBuf::from(implicit_main)),
+            module_paths: Vec::new(),
             main: true,
             args,
             check: false,
@@ -47,6 +49,7 @@ pub(crate) fn parse_from(
     }
 
     let mut path = None;
+    let mut module_paths = Vec::new();
     let mut main = false;
     let mut check = false;
     let mut compile = None;
@@ -105,6 +108,16 @@ pub(crate) fn parse_from(
                     compile = Some(PathBuf::from(output));
                     continue;
                 }
+                Some("--module-path") => {
+                    let Some(module_path) = args.next() else {
+                        return ParseOutcome::Error(missing_value_error(
+                            &program,
+                            "--module-path <PATH>",
+                        ));
+                    };
+                    module_paths.push(PathBuf::from(module_path));
+                    continue;
+                }
                 Some("--strict") => {
                     strict = true;
                     continue;
@@ -131,6 +144,7 @@ pub(crate) fn parse_from(
 
     ParseOutcome::Run(Cli {
         path,
+        module_paths,
         main,
         args,
         check,
@@ -173,6 +187,7 @@ Options:
   -m, --main              Run a bundled main entrypoint
       --check             Check syntax without executing
       --compile <OUTPUT>  Compile to bytecode file
+      --module-path <PATH>  Add a module search path
       --strict            Treat warnings as errors
   -h, --help              Print help"
     )
@@ -367,6 +382,30 @@ mod tests {
             panic!("expected error");
         };
         assert!(error.contains("a value is required for '--compile <OUTPUT>'"));
+    }
+
+    #[test]
+    fn module_path_requires_path() {
+        let ParseOutcome::Error(error) = parse_from(args(["dolang", "--module-path"]), None) else {
+            panic!("expected error");
+        };
+        assert!(error.contains("a value is required for '--module-path <PATH>'"));
+    }
+
+    #[test]
+    fn module_paths_preserve_command_line_order() {
+        let cli = parse_ok([
+            "dolang",
+            "--module-path",
+            "first",
+            "--module-path",
+            "second",
+            "file.dol",
+        ]);
+        assert_eq!(
+            cli.module_paths,
+            [PathBuf::from("first"), PathBuf::from("second")]
+        );
     }
 
     #[test]

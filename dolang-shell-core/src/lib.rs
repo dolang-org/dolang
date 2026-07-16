@@ -113,8 +113,9 @@ fn run(config: Arc<dyn Config>) -> i32 {
             }
 
             let strict_mode = cli.strict;
+            let module_paths = cli.module_paths.clone();
             builder.importer(async move |strand, name, out| {
-                let path = load::find_module_file(strand, name).await?;
+                let path = load::find_module_file(strand, name, &module_paths).await?;
                 load::load(
                     strand,
                     &path,
