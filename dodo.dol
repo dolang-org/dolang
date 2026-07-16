@@ -173,7 +173,7 @@ def install_bin_symlink spec bin_dir from to
   let src = (bin_dir / bin.name).absolute()
   let dst = src.with_stem $to
   let tmp = dst.add_ext tmp
-  symlink_file $src $tmp
+  symlink_file (src.relative bin_dir) $tmp
   tmp.rename $dst
   echo "link: $dst -> $src"
 
