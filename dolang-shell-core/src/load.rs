@@ -5,11 +5,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(target_family = "windows")]
-const PATH_SEPARATOR: &str = ";";
-#[cfg(not(target_family = "windows"))]
-const PATH_SEPARATOR: &str = ":";
-
 use directories::ProjectDirs;
 use tokio::fs;
 
@@ -127,29 +122,21 @@ pub(crate) fn dirs<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, Projec
         .ok_or_else(|| Error::runtime(strand, "can't locate application directories"))
 }
 
-fn get_module_search_paths<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, Vec<PathBuf>> {
-    let mut paths = Vec::new();
-
-    // Add default site directory
+fn get_module_search_paths<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    module_paths: &[PathBuf],
+) -> Result<'v, 's, Vec<PathBuf>> {
+    let mut paths = module_paths.to_vec();
     paths.push(dirs(strand)?.data_dir().join("site"));
-
-    // Add environment variable paths
-    if let Ok(module_path) = std::env::var("DOLANG_MODULE_PATH") {
-        for path in module_path.split(PATH_SEPARATOR) {
-            if !path.is_empty() {
-                paths.push(PathBuf::from(path));
-            }
-        }
-    }
-
     Ok(paths)
 }
 
 pub(crate) async fn find_module_file<'v, 's>(
     strand: &mut Strand<'v, 's>,
     name: &str,
+    module_paths: &[PathBuf],
 ) -> Result<'v, 's, PathBuf> {
-    let search_paths = get_module_search_paths(strand)?;
+    let search_paths = get_module_search_paths(strand, module_paths)?;
     let mut relative_path = PathBuf::new();
 
     relative_path.extend(name.split('.'));

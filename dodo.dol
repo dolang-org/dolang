@@ -144,8 +144,8 @@ def cargo_test spec rest
   spec.cargo test ...rest
 
 def shell_test spec tests
-  env DOLANG_MODULE_PATH: testlib do
-    spec.cargo_vfs run --bin dolang -- -m test ...(tests || default_shell_tests())
+  spec.cargo_vfs run --bin dolang -- --module-path testlib -m test
+    ...(tests || default_shell_tests())
 
 def both_test spec
   cargo_test $spec []
@@ -255,11 +255,10 @@ return
       env
         DO_EXPORT_DOT: $Path("dot").absolute()
         VFS: (spec.bin "dolang-shell-vfs")
-        DOLANG_MODULE_PATH: testlib
         do
           spec.cargo llvm-cov --no-report test
-          spec.cargo llvm-cov run --no-report --bin dolang -- -m test
-            ...default_shell_tests()
+          spec.cargo llvm-cov run --no-report --bin dolang --
+            --module-path testlib -m test ...default_shell_tests()
 
   "cov-dump":
     help: write coverage summaries to disk
