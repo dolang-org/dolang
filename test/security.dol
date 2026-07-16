@@ -1,18 +1,39 @@
 import sys
   std:
+    - ImmutableError
     - UnsupportedError
+    - bin
     - bool
     - int
+    - str
     - tuple
   test:
+    - assert_eq
     - assert_throws
     - assert_type
     - test
   security:
+    - Sid
+    - TokenGroup
     - TokenInfo
     - UnixInfo
     - token_info
     - unix_info
+
+#[test]
+def sid_converts_between_structural_forms()
+  let sid = Sid S-1-5-32-544
+  assert_type $Sid $sid
+  assert_eq $sid.revision 1
+  assert_eq $sid.identifier_authority 5
+  assert_eq $sid.sub_authority_count 2
+  assert_type $tuple $sid.sub_authorities
+  assert_eq $sid.sub_authorities[0] 32
+  assert_eq $sid.sub_authorities[1] 544
+  assert_eq (str sid) S-1-5-32-544
+  let bytes = sid.to_bin()
+  assert_type $bin $bytes
+  assert_eq (str(Sid(bytes))) S-1-5-32-544
 
 #[test]
 def reports_security_information_for_target()
@@ -31,4 +52,32 @@ def reports_security_information_for_target()
     let info = token_info()
     assert_type $TokenInfo $info
     assert_type $bool $info.is_elevated
+    assert_type $Sid $info.user_sid
+    assert_type $Sid $info.owner_sid
+    assert_type $Sid $info.primary_group_sid
+    let groups = info.groups
+    assert_type $int $groups.len
+    assert_type $TokenGroup $groups[0]
+    let snapshot = [...groups]
+    assert_eq $snapshot.len $groups.len
+    let first ...rest = groups
+    assert_type $TokenGroup $first
+    assert_eq (snapshot[1..].len) (array(rest).len)
+    assert_throws $ImmutableError do
+      groups[0] = nil
+    for group = groups
+      assert_type $TokenGroup $group
+      assert_type $Sid $group.sid
+      assert_type $int $group.attributes
+      assert_type $bool $group.mandatory
+      assert_type $bool $group.enabled_by_default
+      assert_type $bool $group.enabled
+      assert_type $bool $group.owner
+      assert_type $bool $group.use_for_deny_only
+      assert_type $bool $group.integrity
+      assert_type $bool $group.integrity_enabled
+      assert_type $bool $group.resource
+      assert_type $bool $group.logon_id
+      if group.logon_id
+        assert_eq (str group.sid) (str info.logon_sid)
     assert_throws $UnsupportedError do unix_info()

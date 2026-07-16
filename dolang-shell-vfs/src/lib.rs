@@ -24,10 +24,12 @@ mod read_dir;
 mod server;
 #[cfg(unix)]
 mod service;
+mod sid;
 #[cfg(windows)]
 mod windows;
 
 pub use error::{Error, OperatingSystem, Result, SystemError};
+pub use sid::{Sid, SidError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionMode {
@@ -221,6 +223,28 @@ fn current_group_ids(euid: nix::unistd::Uid, egid: nix::unistd::Gid) -> crate::R
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowsTokenInfo {
     pub is_elevated: bool,
+    pub user_sid: Sid,
+    pub owner_sid: Sid,
+    pub primary_group_sid: Sid,
+    pub groups: Vec<TokenGroup>,
+}
+
+/// A Windows token group SID and its attribute mask.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenGroup {
+    pub sid: Sid,
+    pub attributes: u32,
+}
+
+impl WindowsTokenInfo {
+    /// Returns the logon SID identified by the token group attributes.
+    pub fn logon_sid(&self) -> Option<&Sid> {
+        const SE_GROUP_LOGON_ID: u32 = 0xC000_0000;
+        self.groups
+            .iter()
+            .find(|group| group.attributes & SE_GROUP_LOGON_ID == SE_GROUP_LOGON_ID)
+            .map(|group| &group.sid)
+    }
 }
 
 #[cfg(windows)]
@@ -229,34 +253,101 @@ impl WindowsTokenInfo {
         use std::{
             io, mem,
             os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
-            ptr,
+            ptr, slice,
         };
         use windows_sys::Win32::{
-            Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
+            Foundation::HANDLE,
+            Security::{
+                GetLengthSid, GetTokenInformation, IsValidSid, PSID, TOKEN_ELEVATION, TOKEN_GROUPS,
+                TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_PRIMARY_GROUP, TOKEN_QUERY, TOKEN_USER,
+                TokenElevation, TokenGroups, TokenOwner, TokenPrimaryGroup, TokenUser,
+            },
             System::Threading::{GetCurrentProcess, OpenProcessToken},
         };
+
+        fn query(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> io::Result<Vec<usize>> {
+            let mut required = 0;
+            unsafe {
+                GetTokenInformation(token, class, ptr::null_mut(), 0, &mut required);
+            }
+            if required == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let word_size = mem::size_of::<usize>();
+            let mut buffer = vec![0usize; (required as usize).div_ceil(word_size)];
+            if unsafe {
+                GetTokenInformation(
+                    token,
+                    class,
+                    buffer.as_mut_ptr().cast(),
+                    required,
+                    &mut required,
+                )
+            } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(buffer)
+        }
+
+        unsafe fn copy_sid(sid: PSID) -> io::Result<Sid> {
+            if sid.is_null() || unsafe { IsValidSid(sid) } == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid token SID",
+                ));
+            }
+            let length = unsafe { GetLengthSid(sid) } as usize;
+            let bytes = unsafe { slice::from_raw_parts(sid.cast::<u8>(), length) };
+            Sid::from_bytes(bytes)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        }
+
+        unsafe fn view<T>(buffer: &[usize]) -> &T {
+            unsafe { &*buffer.as_ptr().cast::<T>() }
+        }
 
         let mut token = ptr::null_mut();
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
             return Err(io::Error::last_os_error().into());
         }
         let token = unsafe { OwnedHandle::from_raw_handle(token) };
-        let mut elevation: TOKEN_ELEVATION = unsafe { mem::zeroed() };
-        let mut returned = 0;
-        if unsafe {
-            GetTokenInformation(
-                token.as_raw_handle(),
-                TokenElevation,
-                (&raw mut elevation).cast(),
-                u32::try_from(mem::size_of::<TOKEN_ELEVATION>()).unwrap(),
-                &mut returned,
+        let token = token.as_raw_handle();
+
+        let elevation = query(token, TokenElevation)?;
+        let user = query(token, TokenUser)?;
+        let owner = query(token, TokenOwner)?;
+        let primary_group = query(token, TokenPrimaryGroup)?;
+        let groups = query(token, TokenGroups)?;
+
+        let elevation = unsafe { view::<TOKEN_ELEVATION>(&elevation) };
+        let user = unsafe { copy_sid(view::<TOKEN_USER>(&user).User.Sid) }?;
+        let owner = unsafe { copy_sid(view::<TOKEN_OWNER>(&owner).Owner) }?;
+        let primary_group =
+            unsafe { copy_sid(view::<TOKEN_PRIMARY_GROUP>(&primary_group).PrimaryGroup) }?;
+        let groups_info = unsafe { view::<TOKEN_GROUPS>(&groups) };
+        let native_groups = unsafe {
+            slice::from_raw_parts(
+                groups_info.Groups.as_ptr(),
+                usize::try_from(groups_info.GroupCount).unwrap(),
             )
-        } == 0
-        {
-            return Err(io::Error::last_os_error().into());
-        }
+        };
+        let groups = native_groups
+            .iter()
+            .map(|group| {
+                Ok(TokenGroup {
+                    sid: unsafe { copy_sid(group.Sid) }?,
+                    attributes: group.Attributes,
+                })
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+
         Ok(Self {
             is_elevated: elevation.TokenIsElevated != 0,
+            user_sid: user,
+            owner_sid: owner,
+            primary_group_sid: primary_group,
+            groups,
         })
     }
 }
