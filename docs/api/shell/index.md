@@ -86,6 +86,15 @@ context.
 
 Return value of the executed callable
 
+### `vfs_exe()`
+
+Returns the current executable reported by the active VFS context, or `nil`
+when running on the host filesystem.
+
+#### Returns
+
+[`fs.Path`](../fs/path.md) or `nil`.
+
 ## Values
 
 ### `env`
@@ -108,4 +117,5 @@ Identifies what `dolang` is executing.
 
 ### `exe`
 
-The path to the current `dolang` executable.
+An [`fs.Path`](../fs/path.md) containing the path returned by the host for the
+current `dolang` executable. The path is not automatically canonicalized.

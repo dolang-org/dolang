@@ -222,7 +222,7 @@ path.open r do |file|
   echo $content
 ```
 
-### `metadata :follow = false`
+### `metadata :follow = true`
 
 Gets metadata for the file at this path.
 

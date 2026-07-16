@@ -110,20 +110,16 @@ class Spec
     else
       path
 
-  pub def with_vfs self func
-    env DOLANG_SHELL_VFS: $self.bin("dolang-shell-vfs") $func
-
   pub def cargo self cmd ...rest
-    self.with_vfs do
-      show cargo
-        if self.channel
-          +$self.channel
-        $cmd --target $self.tuple
-        if (self.profile == "release")
-          --$self.profile
-        else if (self.profile != "debug")
-          --profile $self.profile
-        ...self.#extra ...rest
+    show cargo
+      if self.channel
+        +$self.channel
+      $cmd --target $self.tuple
+      if (self.profile == "release")
+        --$self.profile
+      else if (self.profile != "debug")
+        --profile $self.profile
+      ...self.#extra ...rest
 
   pub def cargo_vfs self ...rest
     self.cargo build --bin dolang-shell-vfs

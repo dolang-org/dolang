@@ -744,15 +744,23 @@ impl Client {
         }
     }
 
-    /// Query the daemon's environment variables and current working directory.
+    /// Query the daemon's initial process context.
     pub async fn query(&self) -> crate::Result<Query> {
         match self.request(RequestKind::Query).await? {
             ResponseKind::Query(result) => result
-                .map(|QueryResponse { env, cwd, target }| Query {
-                    env,
-                    cwd: cwd.into(),
-                    target,
-                })
+                .map(
+                    |QueryResponse {
+                         env,
+                         cwd,
+                         current_exe,
+                         target,
+                     }| Query {
+                        env,
+                        cwd: cwd.into(),
+                        current_exe: current_exe.into(),
+                        target,
+                    },
+                )
                 .map_err(crate::Error::from),
             response => Err(unexpected(response).into()),
         }

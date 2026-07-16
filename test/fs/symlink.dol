@@ -1,8 +1,12 @@
 import agent
+  std:
+    - UnexpectedPosError
   test:
     - assert
     - assert_eq
+    - assert_throws
   fs:
+    - metadata
     - open
     - symlink
     - symlink_dir
@@ -84,8 +88,10 @@ def symlink_metadata_nofollow()
 
   symlink $target $link
 
-  let meta = link.metadata(false)
+  let meta = link.metadata follow: false
   assert_eq $meta.type :SYMLINK:
+  assert_throws $UnexpectedPosError do link.metadata false
+  assert_throws $UnexpectedPosError do metadata $link false
 
 #[agent.test]
 def broken_symlink()

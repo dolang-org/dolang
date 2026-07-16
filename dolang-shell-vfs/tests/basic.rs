@@ -39,6 +39,7 @@ async fn direct_query_reports_host_target() {
     let query = Direct::default().query().await.unwrap();
     assert!(!query.env.is_empty());
     assert!(query.cwd.is_absolute());
+    assert!(query.current_exe.is_absolute());
     assert_eq!(query.target, TargetInfo::current());
 }
 

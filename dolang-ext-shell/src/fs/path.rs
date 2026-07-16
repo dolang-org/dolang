@@ -612,7 +612,7 @@ macro_rules! impl_concrete_path {
                         File::open(strand, annex.global, annex.as_path(), opt1, opt2, out).await
                     })
                     .method("metadata", async move |this, strand, args, out| {
-                        let ([], [follow]) = unpack!(strand, args, 0, 1)?;
+                        let ([], [follow]) = unpack!(strand, args, 0, 0, follow = None)?;
                         let follow = match follow {
                             Some(v) => v
                                 .as_bool(strand)

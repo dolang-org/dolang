@@ -1,0 +1,15 @@
+import
+  fs:
+    - Path
+  shell:
+    - exe
+  test:
+    - assert_eq
+    - assert_type
+    - test
+
+#[test]
+def current_exe_is_a_file_path()
+  assert_type $Path $exe
+  assert_eq $exe.exists() true
+  assert_eq $exe.metadata().type :FILE:

@@ -1,4 +1,4 @@
-import sys agent
+import sys agent _vfs
   test:
     - assert_eq
     - skip
@@ -6,12 +6,14 @@ import sys agent
   shell:
     - Vfs
     - host
+    - vfs_exe
   fs:
+    - Path
     - open
     - with_temp_dir
 
 let launch_cwd = cd()
-let vfs_bin = env.get DOLANG_SHELL_VFS
+let vfs_bin = _vfs.bin()
 
 #[agent.test]
 def resets_context_to_defaults()
@@ -36,9 +38,14 @@ def windows_admin_captures_current_cwd()
 def stdio_vfs_runs_over_strand_stream()
   with_temp_dir do |dir| cd $dir do
     let marker = (dir / "marker")
+    let expected_exe = (Path vfs_bin).canonical()
+    assert_eq $vfs_exe() nil
     let vfs = Vfs do run $vfs_bin --stdio
     try
       vfs do
+        assert_eq $vfs_exe() $expected_exe
+        assert_eq $_vfs.bin() $expected_exe
+        host do assert_eq $vfs_exe() nil
         open $marker w do |file| file.write "remote"
     finally
       vfs.stop()

@@ -229,6 +229,10 @@ async fn client_query() {
 
     assert!(!query.env.is_empty(), "env should not be empty");
     assert!(query.cwd.is_absolute(), "cwd should be absolute path");
+    assert!(
+        query.current_exe.is_absolute(),
+        "current executable should be absolute"
+    );
     assert_eq!(query.target, TargetInfo::current());
 
     stop_daemon(&socket_path).await;

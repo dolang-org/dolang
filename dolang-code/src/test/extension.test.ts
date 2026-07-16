@@ -72,14 +72,13 @@ suite("Tool Resolution", () => {
         assert.strictEqual(resolved.path, downloaded);
     });
 
-    test("shell execution resolves both shell and shell-vfs", async function () {
+    test("shell execution resolves the shell", async function () {
         if (process.platform === "win32") {
             this.skip();
         }
 
         const root = await fs.mkdtemp(path.join(os.tmpdir(), "dolang-code-test-"));
         const shell = await createExecutable(root, "path", "shell");
-        const agent = await createExecutable(root, "path", "shell-vfs");
 
         const resolved = await resolveExecutionTools({
             context: createContext(root),
@@ -88,7 +87,6 @@ suite("Tool Resolution", () => {
         });
 
         assert.strictEqual(resolved.shell.path, shell);
-        assert.strictEqual(resolved.agent.path, agent);
     });
 
     test("missing tool error reports attempted sources", async () => {

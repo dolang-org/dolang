@@ -1,4 +1,4 @@
-import http digest progress json patch strand proc time
+import http digest progress json patch strand proc time _vfs
   std:
     - RuntimeError
   strand:
@@ -14,7 +14,6 @@ import http digest progress json patch strand proc time
     - Vfs
   _container.common:
     - runtime_dir
-    - agent_bin
     - cache_dir
     - cache_root
 
@@ -341,7 +340,7 @@ pub class Runtime
     let ctr_subdir = Path /tmp/dolang-shell-vfs-dir
     let ctr_socket = (ctr_subdir / "socket")
     let ctr_agent = Path "/tmp/dolang-shell-vfs"
-    let agent_bin = agent_bin()
+    let agent_bin = _vfs.bin()
     let uopt = self.mount_uopt()
 
     with_temp_dir parent: $runtime_dir() do |subdir|
@@ -368,7 +367,7 @@ pub class Runtime
   pub def build self :pull = :MISSING: :mounts = [] :from ...args
     with_temp_dir parent: $runtime_dir() do |subdir|
       subdir.chmod 0o700
-      let b = Builder $self $subdir $agent_bin() $mounts
+      let b = Builder $self $subdir $_vfs.bin() $mounts
       b.build $from :pull ...args
 
   pub def images self :all = false :filter = nil
@@ -656,7 +655,7 @@ pub class Builder
       --entrypoint env
       -v $self.#subdir:$self.#ctr_subdir:rw,z$(self.#runtime.mount_uopt())
       -v $self.#bin:$self.#ctr_agent:ro,z$(self.#runtime.mount_uopt())
-      $img DOLANG_SHELL_VFS=$self.#ctr_agent
+      $img 
       $self.#ctr_agent $self.#ctr_socket
     self.#wait_socket()
     self.#ctr_id = ctr_id

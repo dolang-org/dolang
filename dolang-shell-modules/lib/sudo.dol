@@ -1,8 +1,6 @@
-import xdg
+import xdg _vfs
   shell:
     - Vfs
-  _container.common:
-    - agent_bin
   fs:
     - with_temp_dir
   proc.run:
@@ -15,14 +13,14 @@ def run_agent
   :user = nil
 do
   let runtime_dir = xdg.runtime_dir()
-  let agent = agent_bin()
+  let agent = _vfs.bin()
 
   with_temp_dir parent: $runtime_dir do |subdir|
     subdir.chmod 0o700
     let socket = (subdir / "socket")
     let input = strand.input()
     pipeline
-      do env DOLANG_SHELL_VFS: $agent do sudo -E
+      do sudo -E
         if (user != nil)
           -u $user
         $agent $socket

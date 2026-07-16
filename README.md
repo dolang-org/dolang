@@ -80,7 +80,7 @@ cargo build --release --bin dolang --bin dolang-shell-vfs
 ./target/release/dolang
 
 # Or run a script
-env DOLANG_SHELL_VFS=./target/release/dolang-shell-vfs ./target/release/dolang example/cow.dol
+env ./target/release/dolang example/cow.dol
 ```
 
 ## Acknowledgements

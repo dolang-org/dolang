@@ -17,7 +17,8 @@ VS Code extension providing language support for the Do programming language.
 
 - VS Code 1.75.0 or later
 - One of:
-    - `dolang`, `dolang-shell-vfs`, and `dolang-lsp` in `PATH`
+    - `dolang` and `dolang-lsp` in `PATH`; on Unix, `dolang-shell-vfs` must be
+      installed beside `dolang`
     - explicit tool paths in VS Code settings
     - automatic download from GitHub release assets
 
@@ -43,7 +44,6 @@ Customize execution behavior in VS Code settings:
 - `dolang.autoSaveBeforeRun` (default: true): Auto-save files before running
 - `dolang.runInTerminal` (default: true): Execute scripts in integrated terminal
 - `dolang.path`: Explicit path to `dolang`
-- `dolang.vfs.path`: Explicit path to `dolang-shell-vfs`
 - `dolang.lsp.path`: Explicit path to `dolang-lsp`
 
 Tool resolution order is:

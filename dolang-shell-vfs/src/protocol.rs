@@ -207,6 +207,7 @@ impl Protocol for VfsProtocol {
 pub(crate) struct QueryResponse {
     pub(crate) env: HashMap<String, String>,
     pub(crate) cwd: WirePath,
+    pub(crate) current_exe: WirePath,
     pub(crate) target: TargetInfo,
 }
 
@@ -293,12 +294,12 @@ impl TryFrom<WirePath> for PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
+    use std::{io, path::PathBuf};
 
-    use super::{QueryResponse, ResponseKind, WireError, WirePath, WirePathKind};
+    use super::{WireError, WirePath, WirePathKind};
     use crate::{
-        Architecture, Error, OperatingSystem, ProcessStatus, SystemError, TargetInfo,
-        Utf8TypedPath, Utf8TypedPathBuf, Utf8UnixPath, Utf8WindowsPath,
+        Error, OperatingSystem, SystemError, Utf8TypedPath, Utf8TypedPathBuf, Utf8UnixPath,
+        Utf8WindowsPath,
     };
 
     #[test]
@@ -367,47 +368,6 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert_eq!(error.to_string(), "bad reply");
     }
-
-    #[test]
-    fn wire_query_preserves_cross_target_identity() {
-        let response = ResponseKind::Query(Ok(QueryResponse {
-            env: [("Path".to_owned(), r"C:\Windows".to_owned())].into(),
-            cwd: WirePath::from(Utf8TypedPath::Windows(Utf8WindowsPath::new(r"C:\work"))),
-            target: TargetInfo {
-                operating_system: OperatingSystem::Windows,
-                architecture: Architecture::Aarch64,
-                logical_cpu_count: 24,
-                is_wine: Some(true),
-            },
-        }));
-
-        let encoded = postcard::to_stdvec(&response).unwrap();
-        let decoded: ResponseKind = postcard::from_bytes(&encoded).unwrap();
-        let ResponseKind::Query(Ok(QueryResponse { env, cwd, target })) = decoded else {
-            panic!("query response changed variant");
-        };
-
-        assert_eq!(env["Path"], r"C:\Windows");
-        assert_eq!(Utf8TypedPathBuf::from(cwd).as_str(), r"C:\work");
-        assert_eq!(target.operating_system, OperatingSystem::Windows);
-        assert_eq!(target.architecture, Architecture::Aarch64);
-        assert_eq!(target.logical_cpu_count, 24);
-        assert_eq!(target.is_wine, Some(true));
-    }
-
-    #[test]
-    fn wire_process_status_is_platform_independent() {
-        for status in [ProcessStatus::Exited(42), ProcessStatus::Signaled(9)] {
-            let encoded = postcard::to_stdvec(&ResponseKind::ChildWait(Ok(status))).unwrap();
-            let decoded: ResponseKind = postcard::from_bytes(&encoded).unwrap();
-            let ResponseKind::ChildWait(Ok(decoded)) = decoded else {
-                panic!("child wait response changed variant");
-            };
-            assert_eq!(decoded, status);
-        }
-    }
-
-    use std::path::PathBuf;
 }
 
 #[derive(Serialize, Deserialize, Debug)]

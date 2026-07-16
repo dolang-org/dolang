@@ -1,4 +1,4 @@
-import test: unittest
+import test: unittest _vfs
   shell:
     - Vfs
   strand:
@@ -6,12 +6,7 @@ import test: unittest
   - sys
   - fs
 
-let vfs_bin = nil
-
-if (sys.os_info().family != :WINDOWS:)
-  vfs_bin = env.get DOLANG_SHELL_VFS
-  if !vfs_bin
-    throw "couldn't find dolang-shell-vfs in DOLANG_SHELL_VFS"
+let vfs_bin = _vfs.bin()
 
 def with_vfs remote block
   if (sys.os_info().family == :WINDOWS:)

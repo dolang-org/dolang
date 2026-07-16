@@ -28,7 +28,7 @@ const TOOL_METADATA: Record<
     ToolName,
     {
         binaryName: string;
-        settingKey: string;
+        settingKey?: string;
         displayName: string;
     }
 > = {
@@ -39,7 +39,6 @@ const TOOL_METADATA: Record<
     },
     "shell-vfs": {
         binaryName: "dolang-shell-vfs",
-        settingKey: "vfs.path",
         displayName: "dolang-shell-vfs"
     },
     lsp: {
@@ -62,7 +61,8 @@ export async function resolveTool(
     const configuration = options.configuration ?? vscode.workspace.getConfiguration("dolang");
     const attempts: string[] = [];
 
-    const configured = configuration.get<string>(TOOL_METADATA[tool].settingKey)?.trim();
+    const settingKey = TOOL_METADATA[tool].settingKey;
+    const configured = settingKey ? configuration.get<string>(settingKey)?.trim() : undefined;
     if (configured) {
         attempts.push(`configured path (${configured})`);
         if (await isExecutableFile(configured)) {
@@ -95,13 +95,9 @@ export async function resolveExecutionTools(
     options: ToolResolverOptions
 ): Promise<{
     readonly shell: ResolvedTool;
-    readonly agent: ResolvedTool;
 }> {
-    const [shell, agent] = await Promise.all([
-        resolveTool("shell", options),
-        resolveTool("shell-vfs", options)
-    ]);
-    return { shell, agent };
+    const shell = await resolveTool("shell", options);
+    return { shell };
 }
 
 export function binaryFileName(tool: ToolName): string {

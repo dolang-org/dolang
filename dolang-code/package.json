@@ -37,11 +37,6 @@
                 "default": "",
                 "description": "Absolute path to the `dolang` executable. When unset, the extension tries PATH and then downloads a GitHub release bundle."
             },
-            "dolang.vfs.path": {
-                "type": "string",
-                "default": "",
-                "description": "Absolute path to the `dolang-shell-vfs` executable. When unset, the extension tries PATH and then downloads a GitHub release bundle."
-            },
             "dolang.lsp.path": {
                 "type": "string",
                 "default": "",

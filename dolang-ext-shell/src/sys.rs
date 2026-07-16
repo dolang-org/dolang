@@ -6,8 +6,7 @@ use dolang_shell_vfs::{Architecture, OperatingSystem, OperatingSystemFamily};
 
 use crate::global::Global;
 
-pub(crate) fn configure_compiler<'a>(_compiler: &mut Compiler<'a>) {
-}
+pub(crate) fn configure_compiler<'a>(_compiler: &mut Compiler<'a>) {}
 
 pub(crate) struct OsInfo;
 

@@ -153,6 +153,8 @@ pub struct Query {
     pub env: HashMap<String, String>,
     /// Target process's current working directory.
     pub cwd: Utf8TypedPathBuf,
+    /// Path to the target process's current executable.
+    pub current_exe: Utf8TypedPathBuf,
     /// Target operating system and processor information.
     pub target: TargetInfo,
 }
@@ -162,6 +164,7 @@ impl Query {
         Ok(Self {
             env: std::env::vars().collect(),
             cwd: typed_path(std::env::current_dir()?)?,
+            current_exe: typed_path(std::env::current_exe()?)?,
             target: TargetInfo::current(),
         })
     }

@@ -61,10 +61,10 @@ export class DoShellRunner {
             scriptPath = document.fileName;
         }
 
-        const { shell, agent } = await this.resolveExecutionTools();
+        const { shell } = await this.resolveExecutionTools();
 
         // Create new terminal for each execution
-        const terminal = this.createScriptTerminal(shell.path, agent.path, scriptPath);
+        const terminal = this.createScriptTerminal(shell.path, scriptPath);
         terminal.show();
     }
 
@@ -81,14 +81,11 @@ export class DoShellRunner {
 
     private createScriptTerminal(
         shellPath: string,
-        agentPath: string,
         scriptPath: string
     ): vscode.Terminal {
         const timestamp = new Date().toLocaleTimeString();
         const separator = `--- Running ${path.basename(scriptPath)} at ${timestamp} ---`;
         const keepTerminalCmd = this.getKeepTerminalCommand();
-        const env = { DOLANG_SHELL_VFS: agentPath };
-
         if (keepTerminalCmd) {
             // Use shell command to keep terminal open
             const isWindows = process.platform === "win32";
@@ -102,8 +99,7 @@ export class DoShellRunner {
                 shellPath: shellPath_wrapper,
                 shellArgs: shellArgs_wrapper,
                 cwd: path.dirname(scriptPath),
-                message: separator,
-                env
+                message: separator
             });
         } else {
             // Direct execution
@@ -112,14 +108,13 @@ export class DoShellRunner {
                 shellPath,
                 shellArgs: [scriptPath],
                 cwd: path.dirname(scriptPath),
-                message: separator,
-                env
+                message: separator
             });
         }
     }
 
     public async openInteractiveShell(): Promise<void> {
-        const { shell, agent } = await this.resolveExecutionTools();
+        const { shell } = await this.resolveExecutionTools();
 
         const workspaceFolders = vscode.workspace.workspaceFolders;
         const cwd =
@@ -127,22 +122,16 @@ export class DoShellRunner {
                 ? workspaceFolders[0].uri.fsPath
                 : undefined;
 
-        const terminal = this.createShellTerminal(shell.path, agent.path, cwd);
+        const terminal = this.createShellTerminal(shell.path, cwd);
         terminal.show();
     }
 
-    private createShellTerminal(
-        shellPath: string,
-        agentPath: string,
-        cwd?: string
-    ): vscode.Terminal {
-        const env = { DOLANG_SHELL_VFS: agentPath };
+    private createShellTerminal(shellPath: string, cwd?: string): vscode.Terminal {
         return vscode.window.createTerminal({
             name: "Do Interactive Shell",
             shellPath,
             cwd,
-            message: "--- Do Interactive Shell ---\nType Do commands or use Ctrl+D to exit\n",
-            env
+            message: "--- Do Interactive Shell ---\nType Do commands or use Ctrl+D to exit\n"
         });
     }
 

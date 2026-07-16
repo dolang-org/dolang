@@ -1,0 +1,23 @@
+import shell sys
+
+pub def bin exe = nil
+  let vfs_exe = shell.vfs_exe()
+  if vfs_exe
+    return vfs_exe
+
+  let exe = (exe || shell.exe).canonical()
+  let bin = exe.with_stem "dolang-shell-vfs"
+  let bin_meta = bin.metadata follow: false
+
+  if (bin_meta.type != :FILE:)
+    throw "VFS helper is not a regular file: $bin"
+  if (sys.os_info().family != :WINDOWS:)
+    let exe_meta = exe.metadata follow: false
+    if (bin_meta.uid != exe_meta.uid)
+      throw "VFS helper owner does not match interpreter: $bin"
+    if (bin_meta.gid != exe_meta.gid)
+      throw "VFS helper group does not match interpreter: $bin"
+    if ((bin_meta.mode & 0o7777) != (exe_meta.mode & 0o7777))
+      throw "VFS helper permissions do not match interpreter: $bin"
+
+  bin

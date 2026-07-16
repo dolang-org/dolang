@@ -1,0 +1,73 @@
+import sys _vfs
+  fs:
+    - symlink_file
+    - with_temp_dir
+  test:
+    - assert
+    - assert_eq
+    - skip
+    - test
+
+if (sys.os_info().family == :WINDOWS:)
+  skip "requires Unix metadata"
+
+def make_file path mode
+  path.open w do |file| file.write "fixture"
+  path.chmod $mode
+
+def fails block
+  try
+    block()
+    false
+  catch _
+    true
+
+#[test]
+def resolves_matching_sibling()
+  with_temp_dir do |dir|
+    let exe = (dir / "dolang")
+    let helper = (dir / "dolang-shell-vfs")
+    make_file $exe 0o755
+    make_file $helper 0o755
+
+    assert_eq (_vfs.bin exe) $helper.canonical()
+
+#[test]
+def rejects_non_regular_sibling()
+  with_temp_dir do |dir|
+    let exe = (dir / "dolang")
+    let helper = (dir / "dolang-shell-vfs")
+    make_file $exe 0o755
+    helper.create_dir()
+
+    assert $fails do _vfs.bin $exe
+
+#[test]
+def rejects_symlink_sibling()
+  with_temp_dir do |dir|
+    let exe = (dir / "dolang")
+    let target = (dir / "target")
+    let helper = (dir / "dolang-shell-vfs")
+    make_file $exe 0o755
+    make_file $target 0o755
+    symlink_file $target $helper
+
+    assert $fails do _vfs.bin $exe
+
+#[test]
+def rejects_permission_mismatch()
+  with_temp_dir do |dir|
+    let exe = (dir / "dolang")
+    let helper = (dir / "dolang-shell-vfs")
+    make_file $exe 0o755
+    make_file $helper 0o700
+
+    assert $fails do _vfs.bin $exe
+
+#[test]
+def rejects_missing_sibling()
+  with_temp_dir do |dir|
+    let exe = (dir / "dolang")
+    make_file $exe 0o755
+
+    assert $fails do _vfs.bin $exe

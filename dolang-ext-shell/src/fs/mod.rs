@@ -905,7 +905,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             Ok(())
         })
         .function("metadata", async move |strand, args, out| {
-            let ([path], [follow]) = unpack!(strand, args, 1, 1)?;
+            let ([path], [follow]) = unpack!(strand, args, 1, 0, follow = None)?;
             let path = path_from_value(strand, global, &path)?;
             let follow = match follow {
                 Some(v) => v

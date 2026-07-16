@@ -162,6 +162,7 @@ pub(crate) struct Local {
     cwd: RefCell<Utf8TypedPathBuf>,
     env: RefCell<Rc<Env>>,
     vfs: RefCell<AnyVfs>,
+    vfs_exe: RefCell<Option<Utf8TypedPathBuf>>,
     target: RefCell<TargetInfo>,
     channel_mode: Cell<ChannelMode>,
 }
@@ -175,6 +176,7 @@ impl<'v> strand::Local<'v> for Local {
                 Default::default(),
             ))),
             vfs: RefCell::new(AnyVfs::default()),
+            vfs_exe: RefCell::new(None),
             target: RefCell::new(TargetInfo::current()),
             channel_mode: Cell::new(ChannelMode::Line),
         }
@@ -185,6 +187,7 @@ impl<'v> strand::Local<'v> for Local {
             cwd: self.cwd.clone(),
             env: self.env.clone(),
             vfs: self.vfs.clone(),
+            vfs_exe: self.vfs_exe.clone(),
             target: self.target.clone(),
             channel_mode: Cell::new(self.channel_mode.get()),
         }
@@ -214,6 +217,17 @@ impl Local {
 
     pub(crate) fn vfs(&self) -> AnyVfs {
         self.vfs.borrow().clone()
+    }
+
+    pub(crate) fn vfs_exe(&self) -> Option<Utf8TypedPathBuf> {
+        self.vfs_exe.borrow().clone()
+    }
+
+    pub(crate) fn replace_vfs_exe(
+        &self,
+        exe: Option<Utf8TypedPathBuf>,
+    ) -> Option<Utf8TypedPathBuf> {
+        mem::replace(&mut *self.vfs_exe.borrow_mut(), exe)
     }
 
     pub(crate) fn target(&self) -> TargetInfo {

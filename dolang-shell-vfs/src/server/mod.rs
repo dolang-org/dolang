@@ -613,6 +613,7 @@ impl Connection {
             |query| QueryResponse {
                 env: query.env,
                 cwd: query.cwd.into(),
+                current_exe: query.current_exe.into(),
                 target: query.target,
             },
         )))
