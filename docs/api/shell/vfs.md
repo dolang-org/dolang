@@ -24,7 +24,9 @@ let remote = Vfs do run ssh host dolang-shell-vfs --stdio
 
 The `--stdio` mode reads the protocol from standard input and writes it to
 standard output. The launched program must not write other output to standard
-output; diagnostics may use standard error.
+output; diagnostics may use standard error. If the launcher exits before the
+VFS handshake completes, its error is reported instead of the resulting VFS
+disconnect.
 
 ## Class Methods
 

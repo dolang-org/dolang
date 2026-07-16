@@ -1,0 +1,89 @@
+import _ssh proc sys
+  test:
+    - assert_eq
+    - assert_throws
+    - skip
+    - test
+  fs:
+    - with_temp_dir
+  std:
+    - RuntimeError
+    - UnexpectedKeyError
+    - UnexpectedPosError
+    - ValueError
+  _vfs
+
+#[test]
+def command_options()
+  let argv = _ssh.build_command example
+    user: alice
+    port: 2222
+    identity: id-a
+    jump: jump-a
+    identity: id-b
+    jump: jump-b
+    identities_only: true
+    forward_agent: true
+    connect_timeout: 10
+    keepalive_interval: 15
+    keepalive_count: 4
+    batch: true
+    host_key: :STRICT:
+    command: ["agent", "--stdio", "extra"]
+  assert_eq $argv $
+    ssh -T -e none -A -o IdentitiesOnly=yes -o BatchMode=yes -l
+    alice -p 2222 -i id-a -i id-b -J jump-a,jump-b -o ConnectTimeout=10
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=yes
+    -- example agent --stdio extra
+
+#[test]
+def command_defaults_and_host_key()
+  let argv = _ssh.build_command example host_key: :ACCEPT_NEW:
+  assert_eq $argv $
+    ssh -T -e none -a -o IdentitiesOnly=no -o BatchMode=no -o
+    StrictHostKeyChecking=accept-new -- example dolang-shell-vfs --stdio
+
+  assert_throws $ValueError do _ssh.build_command example host_key: :UNKNOWN:
+  assert_throws $UnexpectedKeyError do _ssh.build_command example unknown: value
+  assert_throws $UnexpectedPosError do _ssh.build_command example extra
+
+#[test]
+def with_uses_stdio_vfs()
+  if (sys.os_info().family == :WINDOWS:)
+    skip "requires the Unix SSH test shim"
+
+  with_temp_dir do |dir|
+    let shim = (dir / "ssh")
+    shim.write r|
+      #!/bin/sh
+      set -eu
+
+      while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+          shift
+      done
+      shift
+      host=$1
+      shift
+      if [ "$host" = "fail" ]; then
+          exit 42
+      fi
+      exec "$@"
+    shim.chmod 0o755
+
+    let marker = (dir / "marker")
+    let block = do marker.write remote
+    _ssh.with_program $shim example $block
+      command: [_vfs.bin(), "--stdio"]
+
+    assert_eq $marker.read() remote
+
+    let err = assert_throws $RuntimeError do
+      _ssh.with_program $shim example
+        command: [_vfs.bin(), "--stdio"]
+        do throw RuntimeError "block failed"
+    assert_eq $str(err) "block failed"
+
+    let err = assert_throws $proc.Error do
+      _ssh.with_program $shim fail $block
+        command: [_vfs.bin(), "--stdio"]
+    assert_eq $err.rc 42

@@ -1,6 +1,7 @@
 import sys agent _vfs
   test:
     - assert_eq
+    - assert_throws
     - skip
     - test
   shell:
@@ -11,6 +12,8 @@ import sys agent _vfs
     - Path
     - open
     - with_temp_dir
+  std:
+    - RuntimeError
 
 let launch_cwd = cd()
 let vfs_bin = _vfs.bin()
@@ -51,3 +54,9 @@ def stdio_vfs_runs_over_strand_stream()
       vfs.stop()
 
     open $marker r do |file| assert_eq $file.read() "remote"
+
+#[test]
+def stdio_vfs_reports_launcher_error()
+  let err = assert_throws $RuntimeError do
+    Vfs do throw RuntimeError "launcher failed"
+  assert_eq $str(err) "launcher failed"
