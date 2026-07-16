@@ -3,11 +3,9 @@ use dolang::runtime::{
     vm::{Builder, Stateful},
 };
 
-use crate::url::{QueryIter, SegmentIter, Url};
+use crate::url::Url;
 
 pub(crate) struct Types<'v> {
-    pub(crate) query_iter: Type<'v, QueryIter>,
-    pub(crate) segment_iter: Type<'v, SegmentIter>,
     pub(crate) url: Type<'v, Url>,
 }
 
@@ -25,8 +23,6 @@ impl<'v> Global<'v> {
     pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
         Self {
             types: Types {
-                query_iter: builder.register_type(),
-                segment_iter: builder.register_type(),
                 url: builder.register_type(),
             },
         }

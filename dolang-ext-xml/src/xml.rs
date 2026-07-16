@@ -98,12 +98,9 @@ fn create_node_inner<'v, 's>(
     state: State<'v, Global<'v>>,
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    state.node_type.create_with_annex(
-        strand,
-        Node { tag, attrs },
-        NodeAnnex { global: state },
-        &mut *out,
-    );
+    state
+        .node_type
+        .create_with_annex(strand, Node { tag, attrs }, NodeAnnex, &mut *out);
     let mut borrow = state.node_type.downcast(&*out).unwrap().borrow_mut_unwrap();
     Output::set(strand, Mut::slot_mut::<CHILDREN>(&mut borrow), Empty::Array);
     Ok(())

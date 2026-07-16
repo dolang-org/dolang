@@ -70,7 +70,7 @@ def division_operator()
 #[agent.test]
 def components_absolute_path()
   let path = (Path "subdir" / "file.txt")
-  let parts = [...path.components()]
+  let parts = [...path.components]
 
   assert_eq $parts[(parts.len - 2)] "subdir"
   assert_eq $parts[(parts.len - 1)] "file.txt"

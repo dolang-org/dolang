@@ -1,13 +1,9 @@
-use std::{
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use std::{collections::HashMap, rc::Rc};
 
 use dolang::runtime::{
-    Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Value, call,
-    object::{Spread, SpreadContext, TypeBuilder, Unpack, UnpackItem},
+    Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
+    object::{DictLike, DictView, DictViewSink, Spread, SpreadContext, TypeBuilder, Unpack},
     unpack,
-    value::TypeObject,
 };
 
 use crate::{global::Global, local};
@@ -16,164 +12,62 @@ pub(crate) struct Env<'v> {
     pub(crate) global: State<'v, Global<'v>>,
 }
 
-pub(crate) struct EnvIter {
-    items: HashMap<String, String>,
-}
+struct EnvView;
 
-impl EnvIter {
-    fn new(items: HashMap<String, String>) -> Self {
-        Self { items }
+impl<'v> DictLike<'v> for EnvView {
+    type Object = Env<'v>;
+    const MODULE: &'v str = "shell";
+    const NAME: &'v str = "Env";
+
+    fn len(this: Instance<'v, '_, Env<'v>>, strand: &mut Strand<'v, '_>) -> usize {
+        this.borrow_unwrap()
+            .global
+            .local
+            .get(strand)
+            .env()
+            .effective_map()
+            .len()
     }
-}
 
-fn set_pair<'v, 's>(strand: &mut Strand<'v, 's>, out: &mut Slot<'v, '_>, key: &str, value: &str) {
-    Output::set(strand, out, (key, value))
-}
+    fn get<'a, 's>(
+        this: Instance<'v, '_, Env<'v>>,
+        strand: &'a mut Strand<'v, 's>,
+        key: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        let Some(key) = key.as_str(strand) else {
+            return Ok(false);
+        };
+        let global = this.borrow(strand)?.global;
+        let env = global.local.get(strand).env();
+        if let Some(value) = strand.access(|x| env.get(key.as_str(x))) {
+            Output::set(strand, out, value.as_ref());
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 
-fn take_any<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    items: &mut HashMap<String, String>,
-    out: &mut Slot<'v, '_>,
-) -> Result<'v, 's, bool> {
-    let Some(key) = items.keys().next().cloned() else {
-        return Ok(false);
-    };
-    let value = items.remove(&key).unwrap();
-    set_pair(strand, out, &key, &value);
-    Ok(true)
-}
+    fn set<'a, 's>(
+        this: Instance<'v, '_, Env<'v>>,
+        strand: &'a mut Strand<'v, 's>,
+        key: Slot<'v, 'a>,
+        value: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        <Env<'v> as Object>::assign(this, strand, key, value)
+    }
 
-fn spread_items<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    items: &HashMap<String, String>,
-    context: SpreadContext,
-    sink: &mut dyn Spread<'v, 's>,
-) -> Result<'v, 's, ()> {
-    strand.with_slots_sync(|strand, [mut pair, mut key_slot, mut value_slot]| {
-        for (key, value) in items {
-            if context == SpreadContext::Pairs {
-                Output::set(strand, &mut key_slot, key.as_str());
-                Output::set(strand, &mut value_slot, value.as_str());
-                sink.keyed(
-                    strand,
-                    Slot::reborrow(&mut key_slot),
-                    Slot::reborrow(&mut value_slot),
-                )?;
-            } else {
-                set_pair(strand, &mut pair, key, value);
-                sink.positional(strand, Slot::reborrow(&mut pair))?;
-            }
+    fn flatten<'s>(
+        this: Instance<'v, '_, Env<'v>>,
+        strand: &mut Strand<'v, 's>,
+        sink: &mut DictViewSink<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let global = this.borrow(strand)?.global;
+        for (key, value) in global.local.get(strand).env().effective_map() {
+            sink.push(strand, key.as_str(), value.as_str());
         }
         Ok(())
-    })
-}
-
-fn get_sym<'a, 'v>(
-    strand: &Strand<'v, '_>,
-    items: &'a HashMap<String, String>,
-    key: Sym<'v, '_>,
-) -> Option<&'a str> {
-    items.get(key.as_str(strand)).map(String::as_str)
-}
-
-fn get_value_key<'a, 'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    items: &'a HashMap<String, String>,
-    key: &Value<'v>,
-) -> std::result::Result<Option<(&'a str, &'a str)>, Error<'v, 's>> {
-    let key = key
-        .as_str(strand)
-        .ok_or_else(|| Error::missing_key(strand, key))?
-        .to_string();
-    Ok(items
-        .get_key_value(&key)
-        .map(|(key, value)| (key.as_str(), value.as_str())))
-}
-
-fn unpack_items<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    items: &mut HashMap<String, String>,
-    mut unpack: Unpack<'v, '_>,
-    mut rest_out: impl FnMut(
-        &mut Strand<'v, 's>,
-        Slot<'v, '_>,
-        HashMap<String, String>,
-    ) -> Result<'v, 's, ()>,
-) -> Result<'v, 's, ()> {
-    if unpack.required() != 0 {
-        return Err(Error::missing_positional(strand, 0));
     }
-
-    let mut matched = HashSet::new();
-    let mut rest_slot = None;
-
-    for item in unpack.iter() {
-        match item {
-            UnpackItem::Pos { slot, default } => {
-                Output::set(
-                    strand,
-                    slot,
-                    default.expect("required positionals rejected"),
-                );
-            }
-            UnpackItem::SymKey {
-                key,
-                mut slot,
-                default,
-            } => {
-                let key_str = key.as_str(strand);
-                if !matched.insert(key_str.to_string()) {
-                    return Err(Error::unexpected_key(strand, key));
-                }
-                if let Some(value) = get_sym(strand, items, key) {
-                    Output::set(strand, Slot::reborrow(&mut slot), value);
-                } else if let Some(default) = default {
-                    Output::set(strand, slot, default);
-                } else {
-                    return Err(Error::missing_key(strand, key));
-                }
-            }
-            UnpackItem::ConstKey {
-                key,
-                mut slot,
-                default,
-            } => {
-                let Some(key_str) = key.as_str(strand) else {
-                    return Err(Error::missing_key(strand, key));
-                };
-                if !matched.insert(key_str.to_string()) {
-                    return Err(Error::unexpected_key(strand, key));
-                }
-                if let Some((_, value)) = get_value_key(strand, items, key)? {
-                    Output::set(strand, Slot::reborrow(&mut slot), value);
-                } else if let Some(default) = default {
-                    Output::set(strand, slot, default);
-                } else {
-                    return Err(Error::missing_key(strand, key));
-                }
-            }
-            UnpackItem::Rest { slot } => {
-                rest_slot = Some(slot);
-            }
-        }
-    }
-
-    if unpack.exhaustive()
-        && let Some(key) = items.keys().find(|key| !matched.contains(*key))
-    {
-        return Err(Error::unexpected_key(strand, key.as_str()));
-    }
-
-    for key in &matched {
-        let _ = items.remove(key);
-    }
-
-    if let Some(slot) = rest_slot {
-        let rest = std::mem::take(items);
-        return rest_out(strand, slot, rest);
-    }
-
-    Ok(())
 }
 
 impl<'v> Object<'v> for Env<'v> {
@@ -249,13 +143,7 @@ impl<'v> Object<'v> for Env<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = this.borrow(strand)?.global;
-        let items = global.local.get(strand).env().effective_map();
-        global
-            .types
-            .env_iter
-            .create(strand, EnvIter::new(items), out);
-        Ok(())
+        DictView::<EnvView>::input(this, strand, out)
     }
 
     async fn spread<'a, 's>(
@@ -264,9 +152,7 @@ impl<'v> Object<'v> for Env<'v> {
         context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        let global = this.borrow(strand)?.global;
-        let items = global.local.get(strand).env().effective_map();
-        spread_items(strand, &items, context, sink)
+        DictView::<EnvView>::spread(this, strand, context, sink)
     }
 
     async fn unpack<'a, 's>(
@@ -274,15 +160,7 @@ impl<'v> Object<'v> for Env<'v> {
         strand: &'a mut Strand<'v, 's>,
         unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = this.borrow(strand)?.global;
-        let mut items = global.local.get(strand).env().effective_map();
-        unpack_items(strand, &mut items, unpack, |strand, out, rest| {
-            global
-                .types
-                .env_iter
-                .create(strand, EnvIter::new(rest), out);
-            Ok(())
-        })
+        DictView::<EnvView>::unpack(this, strand, unpack)
     }
 
     async fn call<'a, 's>(
@@ -313,60 +191,5 @@ impl<'v> Object<'v> for Env<'v> {
         let local = me.global.local.get(strand);
         let _ = local.replace_env(env);
         res
-    }
-}
-
-impl<'v> Object<'v> for EnvIter {
-    const NAME: &'v str = "EnvIter";
-    const MODULE: &'v str = "shell";
-    type Annex = ();
-    type Type = ();
-    type TypeAnnex = ();
-
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.supertype(TypeObject::Iter)
-    }
-
-    async fn input<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
-        Ok(())
-    }
-
-    async fn next<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        let mut env_iter = this.borrow_mut(strand)?;
-        take_any(strand, &mut env_iter.items, &mut out)
-    }
-
-    async fn unpack<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        unpack: Unpack<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let mut items = this.borrow(strand)?.items.clone();
-        unpack_items(strand, &mut items, unpack, |strand, out, rest| {
-            this.borrow_mut_unwrap().items = rest;
-            Output::set(strand, out, this);
-            Ok(())
-        })?;
-        this.borrow_mut_unwrap().items = items;
-        Ok(())
-    }
-
-    async fn spread<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
-        sink: &'a mut dyn Spread<'v, 's>,
-    ) -> Result<'v, 's, ()> {
-        let env_iter = this.borrow(strand)?;
-        spread_items(strand, &env_iter.items, context, sink)
     }
 }

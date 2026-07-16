@@ -20,9 +20,11 @@ n.push "content"
 
 ## Fields
 
-| Field | Type  | Description              |
-| ----- | ----- | ------------------------ |
-| `tag` | `str` | The element's tag name   |
+| Field      | Type      | Description                    |
+| ---------- | --------- | ------------------------------ |
+| `tag`      | `str`     | The element's tag name         |
+| `attrs`    | dict-like | Ordered attribute view         |
+| `children` | array-like| Ordered child view             |
 
 The `tag` field can be read and written:
 
@@ -43,11 +45,9 @@ n["id"] = "123"
 assert_eq $n["id"] "123"
 ```
 
-## Methods
+### `attrs`
 
-### `attrs()`
-
-Returns an iterator over the node's attributes, yielding `[key, val]` pairs.
+Mutable dictionary-like view of the node's attributes.
 
 #### Returns
 
@@ -56,16 +56,16 @@ comprehensions.
 
 ```
 let el = from_str r#"<foo x="1" y="2"/>"#
-for k v = el.attrs()
+for k v = el.attrs
   echo "$k = $v"
 
 # Or use with dict comprehension
-let attrs = {...el.attrs()}
+let attrs = {...el.attrs}
 ```
 
-### `children()`
+### `children`
 
-Returns an iterator over the node's children.
+Immutable array-like view of the node's children.
 
 #### Returns
 
@@ -74,9 +74,11 @@ An iterator yielding child nodes (which may be `Node` or
 
 ```
 let el = from_str "<root><a/><b/></root>"
-for child = el.children()
+for child = el.children
   echo $child.tag
 ```
+
+## Methods
 
 ### `traverse()`
 

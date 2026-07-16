@@ -1,9 +1,9 @@
 use std::fmt;
 
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value,
     error::ResultExt,
-    object::{Mut, Ref, Spread, SpreadContext, TypeBuilder},
+    object::{ArrayLike, ArrayView, DictLike, DictView, DictViewSink, Mut, Ref, TypeBuilder},
     unpack,
     value::{Empty, Nil, TypeObject},
 };
@@ -18,15 +18,96 @@ pub(crate) struct Node {
     pub(crate) attrs: Vec<(String, String)>,
 }
 
-pub(crate) struct NodeAnnex<'v> {
-    pub(crate) global: State<'v, Global<'v>>,
+pub(crate) struct NodeAnnex;
+
+struct Children;
+
+impl<'v> ArrayLike<'v> for Children {
+    type Object = Node;
+    const MODULE: &'v str = "xml";
+    const NAME: &'v str = "Children";
+
+    fn len(this: Instance<'v, '_, Node>, strand: &mut Strand<'v, '_>) -> usize {
+        Ref::slot::<CHILDREN>(&this.borrow_unwrap())
+            .as_array(strand)
+            .unwrap()
+            .len(strand)
+            .expect("conflicting child array borrow")
+    }
+
+    fn get<'a, 's>(
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        index: usize,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let found = Ref::slot::<CHILDREN>(&this.borrow(strand)?)
+            .as_array(strand)
+            .unwrap()
+            .get(strand, index, out)?;
+        debug_assert!(found);
+        Ok(())
+    }
+}
+
+struct Attrs;
+
+impl<'v> DictLike<'v> for Attrs {
+    type Object = Node;
+    const MODULE: &'v str = "xml";
+    const NAME: &'v str = "Attrs";
+
+    fn len(this: Instance<'v, '_, Node>, _strand: &mut Strand<'v, '_>) -> usize {
+        this.borrow_unwrap().attrs.len()
+    }
+
+    fn get<'a, 's>(
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        key: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        let Some(key) = key.as_str(strand) else {
+            return Ok(false);
+        };
+        let borrow = this.borrow(strand)?;
+        if let Some((_, value)) =
+            strand.access(|x| borrow.attrs.iter().find(|(name, _)| name == key.as_str(x)))
+        {
+            Output::set(strand, out, value.as_str());
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn set<'a, 's>(
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        key: Slot<'v, 'a>,
+        value: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        <Node as Object>::assign(this, strand, key, value)
+    }
+
+    fn flatten<'s>(
+        this: Instance<'v, '_, Node>,
+        strand: &mut Strand<'v, 's>,
+        sink: &mut DictViewSink<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let borrow = this.borrow(strand)?;
+        for (key, value) in &borrow.attrs {
+            sink.push(strand, key.as_str(), value.as_str());
+        }
+        Ok(())
+    }
 }
 
 impl<'v> Object<'v> for Node {
     const MODULE: &'static str = "xml";
     const NAME: &'static str = "Node";
     const SLOTS: usize = 1;
-    type Annex = NodeAnnex<'v>;
+    type Annex = NodeAnnex;
     type Type = ();
     type TypeAnnex = ();
 
@@ -41,14 +122,13 @@ impl<'v> Object<'v> for Node {
             .as_str(strand)
             .ok_or_else(|| Error::type_error(strand, "expected str"))?
             .to_string();
-        let state = strand.state::<Global<'v>>();
         this.create_with_annex(
             strand,
             Node {
                 tag,
                 attrs: Vec::new(),
             },
-            NodeAnnex { global: state },
+            NodeAnnex,
             &mut out,
         );
         let mut borrow = this.downcast(&out).unwrap().borrow_mut_unwrap();
@@ -123,19 +203,13 @@ impl<'v> Object<'v> for Node {
                     .to_string();
                 Ok(())
             })
-            .method("attrs", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                let borrow = this.borrow(strand)?;
-                let attrs = borrow.attrs.clone();
-                let ty = this.annex().global.attrs_iter_type;
-                ty.create(strand, AttrsIter { attrs, index: 0 }, out);
+            .get("attrs", |this, strand, out| {
+                Output::set(strand, out, DictView::<Attrs>::new(this));
                 Ok(())
             })
-            .method("children", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                Ref::slot::<CHILDREN>(&this.borrow(strand)?)
-                    .iter(strand, out)
-                    .await
+            .get("children", |this, strand, out| {
+                Output::set(strand, out, ArrayView::<Children>::new(this));
+                Ok(())
             })
             .method("push", async move |this, strand, args, out| {
                 let ([child], []) = unpack!(strand, args, 1, 0)?;
@@ -221,86 +295,5 @@ impl<'v> Object<'v> for TraverseIter {
             }
             Ok(true)
         })
-    }
-}
-
-/// Lazy iterator over a node's attributes, yielding `[key, val]` arrays per item.
-pub(crate) struct AttrsIter {
-    pub(crate) attrs: Vec<(String, String)>,
-    pub(crate) index: usize,
-}
-
-impl<'v> Object<'v> for AttrsIter {
-    const MODULE: &'static str = "xml";
-    const NAME: &'static str = "AttrsIter";
-    const SLOTS: usize = 0;
-    type Annex = ();
-    type Type = ();
-    type TypeAnnex = ();
-
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.supertype(TypeObject::Iter)
-    }
-
-    async fn input<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
-        Ok(())
-    }
-
-    async fn next<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        let mut borrow = this.borrow_mut(strand)?;
-        let idx = borrow.index;
-        if idx >= borrow.attrs.len() {
-            return Ok(false);
-        }
-        let (key, val) = &borrow.attrs[idx];
-        // Yield a 2-element array [key, val] so callers can do `for k v = node.attrs()`
-        Output::set(strand, &mut out, Empty::Array);
-        let arr = out.as_array(strand).unwrap();
-        arr.push(strand, key.as_str()).unwrap();
-        arr.push(strand, val.as_str()).unwrap();
-        borrow.index += 1;
-        Ok(true)
-    }
-
-    async fn spread<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
-        sink: &'a mut dyn Spread<'v, 's>,
-    ) -> Result<'v, 's, ()> {
-        let borrow = this.borrow(strand)?;
-        strand
-            .with_slots(
-                async move |strand, [mut pair, mut key_slot, mut val_slot]| {
-                    for (key, val) in &borrow.attrs {
-                        if context == SpreadContext::Pairs {
-                            Output::set(strand, &mut key_slot, key.as_str());
-                            Output::set(strand, &mut val_slot, val.as_str());
-                            sink.keyed(
-                                strand,
-                                Slot::reborrow(&mut key_slot),
-                                Slot::reborrow(&mut val_slot),
-                            )?;
-                        } else {
-                            Output::set(strand, &mut pair, Empty::Array);
-                            let arr = pair.as_array(strand).unwrap();
-                            arr.push(strand, key.as_str()).unwrap();
-                            arr.push(strand, val.as_str()).unwrap();
-                            sink.positional(strand, Slot::reborrow(&mut pair))?;
-                        }
-                    }
-                    Ok(())
-                },
-            )
-            .await
     }
 }

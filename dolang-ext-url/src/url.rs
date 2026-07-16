@@ -6,9 +6,9 @@ use std::{
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     error::ResultExt,
-    object::TypeBuilder,
+    object::{ArrayLike, ArrayView, DictLike, DictView, DictViewSink, TypeBuilder},
     unpack,
-    value::{Nil, Str, TypeObject},
+    value::{Nil, Str},
     vm::Builder,
 };
 use percent_encoding::percent_decode_str;
@@ -52,39 +52,85 @@ impl<'v, 'a> UrlOrStr<'v, 'a> {
     }
 }
 
-pub(crate) struct QueryIter {
-    index: usize,
-    pairs: Vec<(String, String)>,
-}
+struct Segments;
 
-impl QueryIter {
-    fn new(url: &url::Url) -> Self {
-        Self {
-            index: 0,
-            pairs: url
-                .query_pairs()
-                .map(|(key, value)| (key.into_owned(), value.into_owned()))
-                .collect(),
-        }
+impl<'v> ArrayLike<'v> for Segments {
+    type Object = Url;
+    const MODULE: &'v str = "url";
+    const NAME: &'v str = "Segments";
+
+    fn len(this: Instance<'v, '_, Url>, _strand: &mut Strand<'v, '_>) -> usize {
+        this.annex()
+            .inner
+            .path_segments()
+            .into_iter()
+            .flatten()
+            .count()
+    }
+
+    fn get<'a, 's>(
+        this: Instance<'v, '_, Url>,
+        strand: &'a mut Strand<'v, 's>,
+        index: usize,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let annex = this.annex();
+        let segment = annex
+            .inner
+            .path_segments()
+            .into_iter()
+            .flatten()
+            .nth(index)
+            .expect("array view index was normalized");
+        Output::set(strand, out, decode_segment(segment).as_str());
+        Ok(())
     }
 }
 
-pub(crate) struct SegmentIter {
-    index: usize,
-    segments: Vec<String>,
-}
+struct Query;
 
-impl SegmentIter {
-    fn new(url: &url::Url) -> Self {
-        Self {
-            index: 0,
-            segments: url
-                .path_segments()
-                .into_iter()
-                .flatten()
-                .map(decode_segment)
-                .collect(),
+impl<'v> DictLike<'v> for Query {
+    type Object = Url;
+    const MODULE: &'v str = "url";
+    const NAME: &'v str = "Query";
+
+    fn len(this: Instance<'v, '_, Url>, _strand: &mut Strand<'v, '_>) -> usize {
+        this.annex().inner.query_pairs().count()
+    }
+
+    fn get<'a, 's>(
+        this: Instance<'v, '_, Url>,
+        strand: &'a mut Strand<'v, 's>,
+        key: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        let Some(key) = key.as_str(strand) else {
+            return Ok(false);
+        };
+        let found = strand.access(|x| {
+            this.annex()
+                .inner
+                .query_pairs()
+                .find(|(candidate, _)| candidate == key.as_str(x))
+                .map(|(_, value)| value.into_owned())
+        });
+        if let Some(value) = found {
+            Output::set(strand, out, value.as_str());
+            Ok(true)
+        } else {
+            Ok(false)
         }
+    }
+
+    fn flatten<'s>(
+        this: Instance<'v, '_, Url>,
+        strand: &mut Strand<'v, 's>,
+        sink: &mut DictViewSink<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        for (key, value) in this.annex().inner.query_pairs() {
+            sink.push(strand, key.as_ref(), value.as_ref());
+        }
+        Ok(())
     }
 }
 
@@ -232,23 +278,12 @@ impl<'v> Object<'v> for Url {
                 }
                 Ok(())
             })
-            .method("segments", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = this.annex().global;
-                global.types.segment_iter.create(
-                    strand,
-                    SegmentIter::new(&this.annex().inner),
-                    out,
-                );
+            .get("segments", |this, strand, out| {
+                Output::set(strand, out, ArrayView::<Segments>::new(this));
                 Ok(())
             })
-            .method("query", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = this.annex().global;
-                global
-                    .types
-                    .query_iter
-                    .create(strand, QueryIter::new(&this.annex().inner), out);
+            .get("query", |this, strand, out| {
+                Output::set(strand, out, DictView::<Query>::new(this));
                 Ok(())
             })
             .method("with_query_raw", async move |this, strand, args, out| {
@@ -353,76 +388,6 @@ impl<'v> Object<'v> for Url {
         }
         create_url_with_global(this.annex().global, strand, url, out);
         Ok(())
-    }
-}
-
-impl<'v> Object<'v> for QueryIter {
-    const NAME: &'v str = "QueryIter";
-    const MODULE: &'v str = "url";
-    type Annex = ();
-    type Type = ();
-    type TypeAnnex = ();
-
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.supertype(TypeObject::Iter)
-    }
-
-    async fn input<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
-        Ok(())
-    }
-
-    async fn next<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        let mut borrow = this.borrow_mut(strand)?;
-        let Some((key, value)) = borrow.pairs.get(borrow.index).cloned() else {
-            return Ok(false);
-        };
-        borrow.index += 1;
-        Output::set(strand, out, (key.as_str(), value.as_str()));
-        Ok(true)
-    }
-}
-
-impl<'v> Object<'v> for SegmentIter {
-    const NAME: &'v str = "SegmentIter";
-    const MODULE: &'v str = "url";
-    type Annex = ();
-    type Type = ();
-    type TypeAnnex = ();
-
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.supertype(TypeObject::Iter)
-    }
-
-    async fn input<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
-        Ok(())
-    }
-
-    async fn next<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        let mut borrow = this.borrow_mut(strand)?;
-        let Some(segment) = borrow.segments.get(borrow.index).cloned() else {
-            return Ok(false);
-        };
-        borrow.index += 1;
-        Output::set(strand, out, segment.as_str());
-        Ok(true)
     }
 }
 
