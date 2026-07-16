@@ -1,10 +1,12 @@
 #![deny(warnings)]
 #![cfg(unix)]
 use dolang_shell_vfs::{
-    AccessFlags, Child, ChownIdentity, Client, Command, Direct, FileHandle, FileType, TargetInfo,
-    Utf8TypedPath, Utf8UnixPath, Vfs,
+    AccessFlags, Child, ChownIdentity, Client, Command, Direct, FileHandle, FileType, SecurityInfo,
+    TargetInfo, Utf8TypedPath, Utf8UnixPath, Vfs,
 };
-use nix::unistd::{Group, User, getgid, getuid};
+#[cfg(not(target_os = "macos"))]
+use nix::unistd::getgroups;
+use nix::unistd::{Group, User, getegid, geteuid, getgid, getuid};
 use std::os::unix::fs::FileTypeExt;
 use std::{
     os::fd::{AsRawFd, OwnedFd},
@@ -41,6 +43,24 @@ async fn direct_query_reports_host_target() {
     assert!(query.cwd.is_absolute());
     assert!(query.current_exe.is_absolute());
     assert_eq!(query.target, TargetInfo::current());
+    let SecurityInfo::Unix(security) = query.security else {
+        panic!("Unix query returned Windows security information");
+    };
+    assert_eq!(security.uid, getuid().as_raw());
+    assert_eq!(security.gid, getgid().as_raw());
+    assert_eq!(security.euid, geteuid().as_raw());
+    assert_eq!(security.egid, getegid().as_raw());
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(
+        security.group_ids,
+        getgroups()
+            .unwrap()
+            .into_iter()
+            .map(|gid| gid.as_raw())
+            .collect::<Vec<_>>()
+    );
+    #[cfg(target_os = "macos")]
+    assert!(security.group_ids.contains(&getegid().as_raw()));
 }
 
 #[tokio::test]

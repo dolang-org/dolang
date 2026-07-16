@@ -754,11 +754,13 @@ impl Client {
                          cwd,
                          current_exe,
                          target,
+                         security,
                      }| Query {
                         env,
                         cwd: cwd.into(),
                         current_exe: current_exe.into(),
                         target,
+                        security,
                     },
                 )
                 .map_err(crate::Error::from),

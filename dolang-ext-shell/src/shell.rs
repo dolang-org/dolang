@@ -27,7 +27,7 @@ use crate::{
 
 #[cfg(windows)]
 use dolang_shell_vfs::WindowsSession;
-use dolang_shell_vfs::{AnyVfs, Client, Query, TargetInfo, Utf8TypedPathBuf};
+use dolang_shell_vfs::{AnyVfs, Client, Query, SecurityInfo, TargetInfo, Utf8TypedPathBuf};
 use std::collections::HashMap;
 #[cfg(unix)]
 use std::path::PathBuf;
@@ -62,6 +62,7 @@ pub(crate) struct Context {
     current_exe: Utf8TypedPathBuf,
     env: Rc<LocalEnv>,
     target: TargetInfo,
+    security: SecurityInfo,
 }
 
 impl Context {
@@ -78,6 +79,7 @@ impl Context {
         let orig_env =
             local.replace_env(Rc::new(LocalEnv::derived(self.env.clone(), HashMap::new())));
         let orig_target = local.replace_target(self.target.clone());
+        let orig_security = local.replace_security(Some(self.security.clone()));
         let res = f(strand).await;
         let local = global.local.get(strand);
         local.replace_vfs(orig);
@@ -85,6 +87,7 @@ impl Context {
         local.replace_cwd(orig_cwd);
         local.replace_env(orig_env);
         local.replace_target(orig_target);
+        local.replace_security(orig_security);
         res
     }
 
@@ -339,6 +342,7 @@ impl<'v> Object<'v> for Vfs {
                         cwd,
                         current_exe,
                         target,
+                        security,
                     } = error::io_result(strand, client.query().await)?;
                     drop((recv_guard, send_guard));
                     let env = Rc::new(LocalEnv::new(None, true, env, target.operating_system));
@@ -352,6 +356,7 @@ impl<'v> Object<'v> for Vfs {
                                 cwd,
                                 current_exe,
                                 target,
+                                security,
                             },
                             source: VfsSource::Stream,
                             global,
@@ -433,6 +438,7 @@ impl<'v> Object<'v> for Vfs {
                 cwd,
                 current_exe,
                 target,
+                security,
             } = error::io_result(strand, client.query().await)?;
             let env = Rc::new(LocalEnv::new(None, true, env, target.operating_system));
             let source =
@@ -448,6 +454,7 @@ impl<'v> Object<'v> for Vfs {
                         cwd,
                         current_exe,
                         target,
+                        security,
                     },
                     source,
                     global,
@@ -509,6 +516,7 @@ impl<'v> Object<'v> for Vfs {
                         cwd,
                         current_exe,
                         target,
+                        security,
                     },
                 ) = error::io_result(strand, result)?;
                 let client = session.client().clone();
@@ -523,6 +531,7 @@ impl<'v> Object<'v> for Vfs {
                             cwd,
                             current_exe,
                             target,
+                            security,
                         },
                         source: VfsSource::Windows(session),
                         global,
@@ -681,6 +690,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             );
             let orig_env = local.replace_env(Rc::new(LocalEnv::root()));
             let orig_target = local.replace_target(TargetInfo::current());
+            let orig_security = local.replace_security(None);
 
             let result = func.call(strand, args, out).await;
 
@@ -690,6 +700,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             local.replace_cwd(orig_cwd);
             local.replace_env(orig_env);
             local.replace_target(orig_target);
+            local.replace_security(orig_security);
 
             result
         })

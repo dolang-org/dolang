@@ -118,6 +118,149 @@ pub struct TargetInfo {
     pub is_wine: Option<bool>,
 }
 
+/// Snapshot of a VFS target's process security context.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SecurityInfo {
+    Unix(UnixSecurityInfo),
+    Windows(WindowsTokenInfo),
+}
+
+impl SecurityInfo {
+    pub fn current() -> crate::Result<Self> {
+        #[cfg(unix)]
+        return Ok(Self::Unix(UnixSecurityInfo::current()?));
+        #[cfg(windows)]
+        return Ok(Self::Windows(WindowsTokenInfo::current()?));
+    }
+}
+
+/// Unix identity information for a VFS target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnixSecurityInfo {
+    pub uid: u32,
+    pub gid: u32,
+    pub euid: u32,
+    pub egid: u32,
+    pub group_ids: Vec<u32>,
+}
+
+#[cfg(unix)]
+impl UnixSecurityInfo {
+    fn current() -> crate::Result<Self> {
+        use nix::unistd::{getegid, geteuid, getgid, getuid};
+
+        let euid = geteuid();
+        let egid = getegid();
+
+        Ok(Self {
+            uid: getuid().as_raw(),
+            gid: getgid().as_raw(),
+            euid: euid.as_raw(),
+            egid: egid.as_raw(),
+            group_ids: current_group_ids(euid, egid)?,
+        })
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn current_group_ids(_euid: nix::unistd::Uid, _egid: nix::unistd::Gid) -> crate::Result<Vec<u32>> {
+    Ok(nix::unistd::getgroups()
+        .map_err(io::Error::from)?
+        .into_iter()
+        .map(|gid| gid.as_raw())
+        .collect())
+}
+
+#[cfg(target_os = "macos")]
+fn current_group_ids(euid: nix::unistd::Uid, egid: nix::unistd::Gid) -> crate::Result<Vec<u32>> {
+    use std::{ffi::CString, ptr, slice};
+
+    // macOS limits the public getgroups/getgrouplist interfaces and resolves
+    // extended memberships through opendirectoryd. This SPI returns the full
+    // list in a libc-allocated buffer owned by the caller.
+    unsafe extern "C" {
+        fn getgrouplist_2(
+            name: *const libc::c_char,
+            base_gid: libc::gid_t,
+            groups: *mut *mut libc::gid_t,
+        ) -> i32;
+    }
+
+    let user = nix::unistd::User::from_uid(euid)
+        .map_err(io::Error::from)?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "effective user not found"))?;
+    let name = CString::new(user.name)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "user name contains NUL"))?;
+    let mut groups = ptr::null_mut();
+    let count = unsafe { getgrouplist_2(name.as_ptr(), egid.as_raw(), &mut groups) };
+    if count < 0 {
+        if !groups.is_null() {
+            unsafe { libc::free(groups.cast()) };
+        }
+        return Err(io::Error::other("getgrouplist_2 failed").into());
+    }
+    if count == 0 {
+        if !groups.is_null() {
+            unsafe { libc::free(groups.cast()) };
+        }
+        return Ok(Vec::new());
+    }
+    if count > 0 && groups.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "getgrouplist_2 returned a null group list",
+        )
+        .into());
+    }
+    let result = unsafe { slice::from_raw_parts(groups, count as usize) }.to_vec();
+    unsafe { libc::free(groups.cast()) };
+    Ok(result)
+}
+
+/// Windows token information for a VFS target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowsTokenInfo {
+    pub is_elevated: bool,
+}
+
+#[cfg(windows)]
+impl WindowsTokenInfo {
+    fn current() -> crate::Result<Self> {
+        use std::{
+            io, mem,
+            os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+            ptr,
+        };
+        use windows_sys::Win32::{
+            Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
+            System::Threading::{GetCurrentProcess, OpenProcessToken},
+        };
+
+        let mut token = ptr::null_mut();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let mut elevation: TOKEN_ELEVATION = unsafe { mem::zeroed() };
+        let mut returned = 0;
+        if unsafe {
+            GetTokenInformation(
+                token.as_raw_handle(),
+                TokenElevation,
+                (&raw mut elevation).cast(),
+                u32::try_from(mem::size_of::<TOKEN_ELEVATION>()).unwrap(),
+                &mut returned,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error().into());
+        }
+        Ok(Self {
+            is_elevated: elevation.TokenIsElevated != 0,
+        })
+    }
+}
+
 impl TargetInfo {
     pub fn current() -> Self {
         Self {
@@ -157,6 +300,8 @@ pub struct Query {
     pub current_exe: Utf8TypedPathBuf,
     /// Target operating system and processor information.
     pub target: TargetInfo,
+    /// Target process security information.
+    pub security: SecurityInfo,
 }
 
 impl Query {
@@ -166,6 +311,7 @@ impl Query {
             cwd: typed_path(std::env::current_dir()?)?,
             current_exe: typed_path(std::env::current_exe()?)?,
             target: TargetInfo::current(),
+            security: SecurityInfo::current()?,
         })
     }
 }
