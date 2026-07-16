@@ -157,6 +157,15 @@ echo $path.stream_type  # DATA
 two `:` separators in that component are rejected, and an explicit stream type
 must start with `$`.
 
+### `components`
+
+Immutable array-like view of the lexical path components.
+
+```
+let path = Path "alpha/beta/gamma"
+assert_eq [...path.components] ["alpha", "beta", "gamma"]
+```
+
 ## Class Methods
 
 ### `(init) path`
@@ -653,23 +662,6 @@ echo path.add_ext "gz"  # archive.tar.gz
 
 let file = Path "report"
 echo file.add_ext "txt"  # report.txt
-```
-
-### `components()`
-
-Returns an iterator over the lexical components of the path.
-
-#### Returns
-
-Iterator of [`str`](../std/str.md)
-
-```
-let path = Path "alpha/beta/gamma"
-assert_eq [...path.components()] ["alpha", "beta", "gamma"]
-
-let first ...rest = path.components()
-assert_eq $first "alpha"
-assert_eq [...rest] ["beta", "gamma"]
 ```
 
 ### `canonical()`

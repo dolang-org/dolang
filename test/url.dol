@@ -1,6 +1,7 @@
 import
   std:
     - hash
+    - ImmutableError
     - TypeError
   test:
     - assert
@@ -24,9 +25,9 @@ def parse()
   assert_eq $parsed.name "c"
   assert_eq $parsed.fragment "frag"
   assert_eq $parsed.query_raw "x=1&x=2&empty=&space=hello+world"
-  assert_eq [...parsed.segments()] ["a b", "c"]
+  assert_eq [...parsed.segments] ["a b", "c"]
 
-  let query1 = [...parsed.query()]
+  let query1 = [...parsed.query]
   assert_eq $query1.len 4
   assert_eq $query1[0][0] "x"
   assert_eq $query1[0][1] "1"
@@ -37,10 +38,17 @@ def parse()
   assert_eq $query1[3][0] "space"
   assert_eq $query1[3][1] "hello world"
 
-  let query2 = [...parsed.query()]
+  let query2 = [...parsed.query]
   assert_eq $query2.len 4
   assert_eq $query2[0][0] "x"
   assert_eq $query2[3][1] "hello world"
+  assert_eq $parsed.query["x"] "1"
+  assert_eq $parsed.query.count("x") 2
+  assert (parsed.query.contains "space" "hello world")
+  assert_eq [...parsed.query.values("x")] ["1", "2"]
+  assert_eq $parsed.query.copy().len 4
+  assert_throws $ImmutableError do
+    parsed.query["x"] = "changed"
 
 #[test]
 def with_query_fragment()
@@ -60,7 +68,7 @@ def append()
   let encoded = (Url "https://example.com" / "a b" / "c/d")
   assert_eq $encoded.path "/a%20b/c%2Fd"
   assert_eq $encoded.name "c/d"
-  assert_eq [...encoded.segments()] ["a b", "c/d"]
+  assert_eq [...encoded.segments] ["a b", "c/d"]
 
   let href_base = Url "https://user:pass@example.com:8443/old/path?old=1#old"
   let href = (href_base / "/new/path?x=1#frag")

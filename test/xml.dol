@@ -22,17 +22,17 @@ def parse_basic_elements()
 def parse_children_and_mixed_content()
   let el = from_str "<greeting>hello</greeting>"
   assert_eq $el.tag "greeting"
-  let cs = [...el.children()]
+  let cs = [...el.children]
   assert_eq $cs[0] "hello"
 
   let el = from_str "<root><child/></root>"
   assert_eq $el.tag "root"
-  let cs = [...el.children()]
+  let cs = [...el.children]
   assert_eq $cs[0].tag "child"
 
   let el = from_str "<root>before<mid/>after</root>"
   assert_eq $el.tag "root"
-  let cs = [...el.children()]
+  let cs = [...el.children]
   assert_eq $cs[0] "before"
   assert_eq $cs[1].tag "mid"
   assert_eq $cs[2] "after"
@@ -41,20 +41,20 @@ def parse_children_and_mixed_content()
 def parse_nested_and_multiple_children()
   let el = from_str "<a><b><c>deep</c></b></a>"
   assert_eq $el.tag "a"
-  let l1 = [...el.children()]
+  let l1 = [...el.children]
   assert_eq $l1[0].tag "b"
-  let l2 = [...l1[0].children()]
+  let l2 = [...l1[0].children]
   assert_eq $l2[0].tag "c"
-  let l3 = [...l2[0].children()]
+  let l3 = [...l2[0].children]
   assert_eq $l3[0] "deep"
 
   let el = from_str r#"<items><item id="1">first</item><item id="2">second</item></items>"#
   assert_eq $el.tag "items"
-  let items = [...el.children()]
+  let items = [...el.children]
   assert_eq $items[0]["id"] "1"
-  assert_eq $[...items[0].children()][0] "first"
+  assert_eq $[...items[0].children][0] "first"
   assert_eq $items[1]["id"] "2"
-  assert_eq $[...items[1].children()][0] "second"
+  assert_eq $[...items[1].children][0] "second"
 
 #[test]
 def ignores_xml_declaration()
@@ -80,7 +80,7 @@ def round_trip_nodes()
   let s = to_str $n
   let parsed = from_str $s
   assert_eq $parsed.tag "greeting"
-  assert_eq $[...parsed.children()][0] "hello world"
+  assert_eq $[...parsed.children][0] "hello world"
 
 #[test]
 def round_trip_nested_and_escaped_content()
@@ -91,22 +91,25 @@ def round_trip_nested_and_escaped_content()
   let s = to_str $outer
   let parsed = from_str $s
   assert_eq $parsed.tag "outer"
-  let parsed_children = [...parsed.children()]
+  let parsed_children = [...parsed.children]
   assert_eq $parsed_children[0].tag "inner"
-  assert_eq $[...parsed_children[0].children()][0] "content"
+  assert_eq $[...parsed_children[0].children][0] "content"
 
   let n = Node "data"
   n.push "a < b & c > d"
   let s = to_str $n
   let parsed = from_str $s
-  assert_eq $"".join(parsed.children()) "a < b & c > d"
+  assert_eq $"".join(parsed.children) "a < b & c > d"
 
 #[test]
 def attrs_and_tag_are_mutable()
   let el = from_str r#"<foo x="1" y="2"/>"#
-  let a = {...el.attrs()}
+  let a = {...el.attrs}
   assert_eq $a["x"] "1"
   assert_eq $a["y"] "2"
+  assert_eq $el.attrs["x"] "1"
+  el.attrs["x"] = "changed"
+  assert_eq $el["x"] "changed"
 
   let n = Node "old"
   n.tag = "new"
@@ -140,7 +143,7 @@ def namespace_handling()
   let doc2 = from_str $rt
   assert_eq $doc2.tag "soap:Envelope"
   assert_eq $doc2["xmlns:soap"] "http://schemas.xmlsoap.org/soap/envelope/"
-  let body = [...doc2.children()]
+  let body = [...doc2.children]
   assert_eq $body[0].tag "soap:Body"
 
 #[test]

@@ -16,7 +16,6 @@ use tokio::{
 };
 
 use crate::{
-    env::EnvIter,
     error::{
         AlreadyExistsError, NotFoundError, PermissionDeniedError, ProcError, SysError,
         SysErrorObject, TimedOutError,
@@ -26,7 +25,7 @@ use crate::{
         file::File,
         fs_metadata::FsMetadata,
         metadata::Metadata,
-        path::{Path, PathComponentsIter, UnixPath, WindowsPath},
+        path::{Path, UnixPath, WindowsPath},
         readdir::{DirEntry, DirEntryIter},
         stream::{StreamEntry, StreamIter},
         xattr::{XattrEntry, XattrIter},
@@ -44,7 +43,6 @@ pub(crate) struct Types<'v> {
     pub(crate) path: Type<'v, Path>,
     pub(crate) unix_path: Type<'v, UnixPath>,
     pub(crate) windows_path: Type<'v, WindowsPath>,
-    pub(crate) path_components_iter: Type<'v, PathComponentsIter>,
     pub(crate) attrs: Type<'v, Attrs>,
     pub(crate) xattr_entry: Type<'v, XattrEntry>,
     pub(crate) xattr_iter: Type<'v, XattrIter>,
@@ -58,7 +56,6 @@ pub(crate) struct Types<'v> {
     pub(crate) glob_iter: Type<'v, crate::fs::glob::GlobIter>,
     pub(crate) program: Type<'v, Program>,
     pub(crate) stdin: Type<'v, Stdin>,
-    pub(crate) env_iter: Type<'v, EnvIter>,
     pub(crate) stdout: Type<'v, Stdout>,
     pub(crate) stderr: Type<'v, Stderr>,
     pub(crate) date_time: Type<'v, DateTime>,
@@ -158,7 +155,6 @@ impl<'v> Global<'v> {
                 path,
                 unix_path,
                 windows_path,
-                path_components_iter: builder.register_type(),
                 attrs: builder.register_type(),
                 xattr_entry: builder.register_type(),
                 xattr_iter: builder.register_type(),
@@ -171,7 +167,6 @@ impl<'v> Global<'v> {
                 glob_iter: builder.register_type(),
                 program: builder.register_type(),
                 stdin: builder.register_type(),
-                env_iter: builder.register_type(),
                 stdout: builder.register_type(),
                 stderr: builder.register_type(),
                 date_time: builder.register_type::<DateTime>(),

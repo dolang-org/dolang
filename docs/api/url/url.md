@@ -54,7 +54,7 @@ The explicit port number, or `nil` if not present.
 
 The serialized path component.
 
-This preserves percent-encoding. Use [`segments()`](#segments) for decoded
+This preserves percent-encoding. Use [`segments`](#segments) for decoded
 path segments.
 
 ### `name`
@@ -72,11 +72,9 @@ The raw query string without the leading `?`, or `nil` if absent.
 
 The decoded fragment string, or `nil` if absent.
 
-## Methods
+### `segments`
 
-### `segments()`
-
-Returns a fresh iterator of decoded path segments.
+Immutable array-like view of decoded path segments.
 
 #### Returns
 
@@ -86,12 +84,12 @@ iterator of [`str`](../std/str.md)
 
 ```
 let url = Url "https://example.com/a%20b/c"
-assert_eq [...url.segments()] ["a b", "c"]
+assert_eq [...url.segments] ["a b", "c"]
 ```
 
-### `query()`
+### `query`
 
-Returns a fresh iterator of decoded query pairs.
+Immutable dictionary-like view of decoded query pairs.
 
 Duplicate keys and original ordering are preserved.
 
@@ -103,11 +101,13 @@ iterator of `(str, str)` tuples
 
 ```
 let url = Url "https://example.com?q=a+b&q=c"
-let pairs = [...url.query()]
+let pairs = [...url.query]
 assert_eq $pairs[0][0] "q"
 assert_eq $pairs[0][1] "a b"
 assert_eq $pairs[1][1] "c"
 ```
+
+## Methods
 
 ### `with_query_raw query`
 

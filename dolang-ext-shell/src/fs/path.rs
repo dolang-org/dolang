@@ -1,7 +1,7 @@
 use std::{
-    collections::VecDeque,
     fmt,
     hash::{Hash, Hasher},
+    marker::PhantomData,
 };
 
 use crate::{
@@ -12,9 +12,8 @@ use crate::{
 use dolang::runtime::{
     Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     error::ResultExt,
-    object::{TypeBuilder, Unpack, UnpackItem},
+    object::{ArrayLike, ArrayView, TypeBuilder},
     unpack,
-    value::TypeObject,
 };
 use dolang_shell_vfs::Utf8WindowsPrefix;
 use dolang_shell_vfs::{Attrs, Utf8TypedPath, Utf8TypedPathBuf, Vfs};
@@ -24,10 +23,6 @@ use super::file::File;
 pub(crate) struct Path;
 pub(crate) struct UnixPath;
 pub(crate) struct WindowsPath;
-
-pub(crate) struct PathComponentsIter {
-    components: VecDeque<String>,
-}
 
 pub(crate) struct PathAnnex<'v> {
     pub(crate) inner: Utf8TypedPathBuf,
@@ -360,82 +355,36 @@ fn with_added_extension(path: Utf8TypedPath<'_>, ext: &str) -> Utf8TypedPathBuf 
     path.with_file_name(name)
 }
 
-impl<'v> Object<'v> for PathComponentsIter {
-    const NAME: &'v str = "PathComponentsIter";
+trait ConcretePath<'v>: Object<'v, Annex = PathAnnex<'v>> {}
+impl<'v> ConcretePath<'v> for UnixPath {}
+impl<'v> ConcretePath<'v> for WindowsPath {}
+
+struct Components<T>(PhantomData<T>);
+
+impl<'v, T: ConcretePath<'v>> ArrayLike<'v> for Components<T> {
+    type Object = T;
     const MODULE: &'v str = "fs";
-    type Annex = ();
-    type Type = ();
-    type TypeAnnex = ();
+    const NAME: &'v str = "PathComponents";
 
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.supertype(TypeObject::Iter)
+    fn len(this: Instance<'v, '_, T>, _strand: &mut Strand<'v, '_>) -> usize {
+        this.annex().as_path().components().count()
     }
 
-    async fn input<'a, 's>(
-        this: Instance<'v, 'a, Self>,
+    fn get<'a, 's>(
+        this: Instance<'v, '_, T>,
         strand: &'a mut Strand<'v, 's>,
+        index: usize,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
-        Ok(())
-    }
-
-    async fn next<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        match this.borrow_mut(strand)?.components.pop_front() {
-            Some(component) => {
-                Output::set(strand, out, component.as_str());
-                Ok(true)
-            }
-            None => Ok(false),
-        }
-    }
-
-    async fn unpack<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        mut unpack: Unpack<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        if let Some(key) = unpack.first_required_key() {
-            return Err(Error::missing_key(strand, key));
-        }
-
-        let required_pos = unpack.required();
-        let optional_pos = unpack.optional();
-        let total_pos = required_pos + optional_pos;
-        let available = this.borrow(strand)?.components.len();
-
-        if available < required_pos {
-            return Err(Error::missing_positional(strand, available));
-        }
-
-        if unpack.exhaustive() && available > total_pos {
-            return Err(Error::unexpected_positional(strand, total_pos));
-        }
-
-        let mut pos_index = 0usize;
-        for item in unpack.iter() {
-            match item {
-                UnpackItem::Pos { mut slot, default } => {
-                    if pos_index < available {
-                        if !Self::next(this, strand, Slot::reborrow(&mut slot)).await? {
-                            unreachable!("checked availability above")
-                        }
-                    } else {
-                        Output::set(strand, slot, default.unwrap());
-                    }
-                    pos_index += 1;
-                }
-                UnpackItem::SymKey { slot, default, .. }
-                | UnpackItem::ConstKey { slot, default, .. } => {
-                    Output::set(strand, slot, default.unwrap());
-                }
-                UnpackItem::Rest { slot } => Output::set(strand, slot, this),
-            }
-        }
+        let component = this
+            .annex()
+            .as_path()
+            .components()
+            .nth(index)
+            .expect("array view index was normalized")
+            .as_str()
+            .to_owned();
+        Output::set(strand, out, component.as_str());
         Ok(())
     }
 }
@@ -1055,19 +1004,8 @@ macro_rules! impl_concrete_path {
                     super::chown(strand, global, path.to_path(), user, group, follow).await
                 });
                 builder
-                    .method("components", async move |this, strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
-                        let components = this
-                            .annex()
-                            .as_path()
-                            .components()
-                            .map(|component| component.as_str().to_owned())
-                            .collect();
-                        this.annex().global.types.path_components_iter.create(
-                            strand,
-                            PathComponentsIter { components },
-                            out,
-                        );
+                    .get("components", |this, strand, out| {
+                        Output::set(strand, out, ArrayView::<Components<$path>>::new(this));
                         Ok(())
                     })
                     .method("glob", async move |this, strand, args, out| {

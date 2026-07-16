@@ -1,10 +1,12 @@
 pub(crate) mod arg;
 pub(crate) mod array;
+pub mod array_view;
 pub(crate) mod backtrace;
 pub(crate) mod bin;
 pub(crate) mod channel;
 pub(crate) mod class;
 pub(crate) mod dict;
+pub mod dict_view;
 pub(crate) mod error;
 pub(crate) mod float;
 pub(crate) mod function;
@@ -95,6 +97,8 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) array_sink: TypeHandle<'v, array::Sink<'v>>,
     pub(crate) array_pairs: TypeHandle<'v, array::Pairs<'v>>,
     pub(crate) array: TypeHandle<'v, array::Array<'v>>,
+    pub(crate) array_view: TypeHandle<'v, array_view::View<'v>>,
+    pub(crate) array_view_iter: TypeHandle<'v, array_view::Iter<'v>>,
     pub(crate) backtrace: TypeHandle<'v, backtrace::Backtrace<'v>>,
     pub(crate) backtrace_iter: TypeHandle<'v, backtrace::Iter<'v>>,
     pub(crate) backtrace_frame: TypeHandle<'v, backtrace::Frame<'v>>,
@@ -113,6 +117,8 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) dict_key_values: TypeHandle<'v, kv::KeyValues<'v, dict::Dict<'v>>>,
     pub(crate) dict_unpack: TypeHandle<'v, dict::Unpack<'v>>,
     pub(crate) dict: TypeHandle<'v, dict::Dict<'v>>,
+    pub(crate) dict_view: TypeHandle<'v, dict_view::View<'v>>,
+    pub(crate) dict_view_iter: TypeHandle<'v, dict_view::Iter<'v>>,
     pub(crate) set_iter: TypeHandle<'v, set::Iter<'v>>,
     pub(crate) set: TypeHandle<'v, set::Set<'v>>,
     pub(crate) strand_handle: TypeHandle<'v, strand::Handle<'v>>,
@@ -191,6 +197,8 @@ impl<'v> BuiltinTypes<'v> {
             array_sink: types.register_type_handle(),
             array_pairs: types.register_type_handle(),
             array: types.register_type_handle(),
+            array_view: types.register_type_handle(),
+            array_view_iter: types.register_type_handle(),
             backtrace: types.register_type_handle(),
             backtrace_iter: types.register_type_handle(),
             backtrace_frame: types.register_type_handle(),
@@ -209,6 +217,8 @@ impl<'v> BuiltinTypes<'v> {
             dict_values: types.register_type_handle(),
             dict_key_values: types.register_type_handle(),
             dict: types.register_type_handle(),
+            dict_view: types.register_type_handle(),
+            dict_view_iter: types.register_type_handle(),
             dict_unpack: types.register_type_handle(),
             set_iter: types.register_type_handle(),
             set: types.register_type_handle(),

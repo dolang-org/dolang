@@ -54,15 +54,15 @@ def path_api()
   let stem3 = Path "Makefile"
   assert_eq $stem3.stem "Makefile"
 
-  # Test components iterator
-  let components = (Path "alpha/beta/gamma").components()
+  # Test components view
+  let components = (Path "alpha/beta/gamma").components
   assert_eq [...components] ["alpha", "beta", "gamma"]
 
-  let unpacked = (Path "alpha/beta/gamma").components()
+  let unpacked = (Path "alpha/beta/gamma").components
   let first ...rest = unpacked
   assert_eq $first "alpha"
   assert_eq [...rest] ["beta", "gamma"]
-  assert_eq (unpacked.next default: :done:) :done:
+  assert_eq $unpacked[0] "alpha"
 
   # Test extension rewrite methods
   let without_ext1 = Path "file.txt"
@@ -292,7 +292,7 @@ def windows_path_stream_fields()
   assert_eq $unnamed_stream.stream_name ""
   assert_eq $unnamed_stream.stream_type "DATA"
 
-  let stream_components = [...(WindowsPath r"dir/file.txt:zone:$DATA").components()]
+  let stream_components = [...(WindowsPath r"dir/file.txt:zone:$DATA").components]
   assert_eq $stream_components[(stream_components.len - 1)] r"file.txt:zone:$DATA"
 
   assert_throws $ValueError do WindowsPath "file.txt:zone:DATA"
