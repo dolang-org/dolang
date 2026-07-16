@@ -1,0 +1,30 @@
+import sudo sys security
+  shell:
+    - Vfs
+
+# Returns if you currently have effective administrator privileges
+pub def query()
+  if (sys.os_info().family == :WINDOWS:)
+    security.token_info().is_elevated
+  else
+    (security.unix_info().euid == 0)
+
+# Attempts to run `block` with administrator privileges:
+# - On Windows, elevate privileges with UAC
+# - On Unix systems, use `sudo`
+# 
+# If the current user already possesses administrator privileges,
+# `block` is simply run.
+pub def with block
+  if (sys.os_info().family == :WINDOWS:)
+    if security.token_info().is_elevated
+      return block()
+    let vfs = Vfs.windows_admin()
+    try
+      vfs $block
+    finally
+      vfs.stop()
+  else
+    if (security.unix_info().euid == 0)
+      return block()
+    sudo.with $block
