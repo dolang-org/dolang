@@ -1,8 +1,10 @@
-import sys
+import sys admin
   fs:
     - Path
     - create_dir
     - remove
+    - with_temp_dir
+    - symlink_file
 
 let MIRI_CRATES =
   - dolang-bytecode
@@ -151,6 +153,13 @@ def both_test spec
   cargo_test $spec []
   shell_test $spec nil
 
+def can_write_dir path
+  try
+    create_dir $path all: true
+    with_temp_dir parent: $path do |_| true
+  catch sys.PermissionDeniedError: _
+    false
+
 def install_bin spec bin_dir name
   let bin = spec.bin(name)
   let dst = (bin_dir / bin.name).absolute()
@@ -158,6 +167,15 @@ def install_bin spec bin_dir name
   bin.copy $tmp
   tmp.rename $dst
   echo "installed: $dst"
+
+def install_bin_symlink spec bin_dir from to
+  let bin = spec.bin(from)
+  let src = (bin_dir / bin.name).absolute()
+  let dst = src.with_stem $to
+  let tmp = dst.add_ext tmp
+  symlink_file $src $tmp
+  tmp.rename $dst
+  echo "link: $dst -> $src"
 
 return
   common:
@@ -333,25 +351,34 @@ return
     do |args|
       let spec = Spec $args profile: dist
       let is_linux = spec.tuple.ends_with "-linux-gnu"
+      let vfs_spec = if is_linux
+        Spec $args
+          profile: dist
+          tuple: $(spec.tuple.without_suffix "-gnu")-musl
+      else
+        spec
+
       env
         if is_linux
           ZSTD_SYS_USE_PKG_CONFIG: 1
         do
           spec.cargo build --bin dolang --bin dolang-lsp
-
-          let bin_dir = (args.prefix / "bin")
-          create_dir $bin_dir all: true
-          install_bin $spec $bin_dir dolang
-          install_bin $spec $bin_dir dolang-lsp
-
-          let vfs_spec = if is_linux
-            Spec $args
-              profile: dist
-              tuple: $(spec.tuple.without_suffix "-gnu")-musl
-          else
-            spec
           vfs_spec.cargo build --bin dolang-shell-vfs
-          install_bin $vfs_spec $bin_dir dolang-shell-vfs
+
+      let bin_dir = (args.prefix / "bin")
+
+      let context = if can_write_dir $bin_dir
+        do |block| block()
+      else
+        admin.with
+
+      context do
+        create_dir $bin_dir all: true
+        install_bin $spec $bin_dir dolang
+        install_bin $spec $bin_dir dolang-lsp
+        install_bin_symlink $spec $bin_dir dolang dodo
+        install_bin_symlink $spec $bin_dir dolang dolang-test
+        install_bin $vfs_spec $bin_dir dolang-shell-vfs
 
   publish:
     help: publish workspace crates in dependency order

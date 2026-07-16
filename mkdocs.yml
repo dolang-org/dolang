@@ -63,6 +63,7 @@ nav:
   - lsp.md
   - examples.md
   - Reference:
+    - admin: api/admin.md
     - args: api/args.md
     - base64: api/base64.md
     - compile:
