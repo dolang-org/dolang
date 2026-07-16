@@ -149,6 +149,31 @@ async fn query_and_stop_work_over_split_streams() {
     server_task.await.unwrap().unwrap();
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn unix_identity_lookup_works_over_rpc() {
+    use nix::unistd::{getegid, geteuid};
+
+    let (client, server_task) = connected_pair().await;
+    let uid = geteuid().as_raw();
+    let gid = getegid().as_raw();
+    let user = client.user_name(uid).await.unwrap();
+    let group = client.group_name(gid).await.unwrap();
+    assert_eq!(client.user_id(&user).await.unwrap(), uid);
+    assert_eq!(client.group_id(&group).await.unwrap(), gid);
+    assert_eq!(
+        client
+            .user_id("dolang-user-that-does-not-exist")
+            .await
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::NotFound
+    );
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
 #[tokio::test]
 async fn null_stdio_processes_work_over_generic_stream() {
     let (client, server_task) = connected_pair().await;

@@ -270,6 +270,24 @@ impl Connection {
     async fn handle(&self, context: &CallContext<VfsProtocol>, kind: RequestKind) -> ResponseKind {
         match kind {
             RequestKind::Query => self.handle_query().await,
+            RequestKind::UserName { uid } => {
+                ResponseKind::UserName(Self::wire_result(self.server.vfs.user_name(uid).await))
+            }
+            RequestKind::UserId { name } => {
+                ResponseKind::UserId(Self::wire_result(self.server.vfs.user_id(&name).await))
+            }
+            RequestKind::GroupName { gid } => {
+                ResponseKind::GroupName(Self::wire_result(self.server.vfs.group_name(gid).await))
+            }
+            RequestKind::GroupId { name } => {
+                ResponseKind::GroupId(Self::wire_result(self.server.vfs.group_id(&name).await))
+            }
+            RequestKind::SidName { sid } => {
+                ResponseKind::SidName(Self::wire_result(self.server.vfs.sid_name(&sid).await))
+            }
+            RequestKind::AccountName { name } => ResponseKind::AccountName(Self::wire_result(
+                self.server.vfs.account_name(&name).await,
+            )),
             RequestKind::Which { program, path, cwd } => {
                 self.handle_which(program, path, cwd).await
             }

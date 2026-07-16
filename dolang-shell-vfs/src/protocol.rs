@@ -5,8 +5,8 @@ use dolang_rpc::{Opaque, OsHandle, Protocol};
 use serde::{Deserialize, Serialize};
 
 pub(crate) use crate::{
-    Attrs, ChownIdentity, DirEntry, FsMetadata, Metadata, OperatingSystem, SecurityInfo,
-    StreamEntry, TargetInfo, WellKnownPath, XattrEntry, XattrNamespace,
+    Attrs, ChownIdentity, DirEntry, FsMetadata, Metadata, OperatingSystem, SecurityInfo, Sid,
+    SidName, StreamEntry, TargetInfo, WellKnownPath, XattrEntry, XattrNamespace,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -677,6 +677,24 @@ pub(crate) enum RequestKind {
         child: Opaque<crate::ChildMarker>,
     },
     Query,
+    UserName {
+        uid: u32,
+    },
+    UserId {
+        name: String,
+    },
+    GroupName {
+        gid: u32,
+    },
+    GroupId {
+        name: String,
+    },
+    SidName {
+        sid: Sid,
+    },
+    AccountName {
+        name: String,
+    },
     Which {
         program: WirePath,
         path: Option<String>,
@@ -802,6 +820,12 @@ pub(crate) enum ResponseKind {
     ChildTerminate(Result<crate::ProcessStatus, WireError>),
     ChildClose(Result<(), WireError>),
     Query(Result<QueryResponse, WireError>),
+    UserName(Result<String, WireError>),
+    UserId(Result<u32, WireError>),
+    GroupName(Result<String, WireError>),
+    GroupId(Result<u32, WireError>),
+    SidName(Result<SidName, WireError>),
+    AccountName(Result<SidName, WireError>),
     Which(Result<Option<WirePath>, WireError>),
     WellKnownPath(Result<WirePath, WireError>),
     Stop,

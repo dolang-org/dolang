@@ -47,6 +47,56 @@ pub(super) enum UnixXattrTarget<'a> {
 }
 
 impl Direct {
+    pub(super) async fn impl_user_name(&self, uid: u32) -> crate::Result<String> {
+        tokio::task::spawn_blocking(move || {
+            nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))
+                .map_err(io::Error::from)?
+                .map(|user| user.name)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "user ID not found"))
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::other("user lookup task failed")))
+        .map_err(Into::into)
+    }
+
+    pub(super) async fn impl_user_id(&self, name: &str) -> crate::Result<u32> {
+        let name = name.to_owned();
+        tokio::task::spawn_blocking(move || {
+            nix::unistd::User::from_name(&name)
+                .map_err(io::Error::from)?
+                .map(|user| user.uid.as_raw())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "user name not found"))
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::other("user lookup task failed")))
+        .map_err(Into::into)
+    }
+
+    pub(super) async fn impl_group_name(&self, gid: u32) -> crate::Result<String> {
+        tokio::task::spawn_blocking(move || {
+            nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(gid))
+                .map_err(io::Error::from)?
+                .map(|group| group.name)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "group ID not found"))
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::other("group lookup task failed")))
+        .map_err(Into::into)
+    }
+
+    pub(super) async fn impl_group_id(&self, name: &str) -> crate::Result<u32> {
+        let name = name.to_owned();
+        tokio::task::spawn_blocking(move || {
+            nix::unistd::Group::from_name(&name)
+                .map_err(io::Error::from)?
+                .map(|group| group.gid.as_raw())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "group name not found"))
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::other("group lookup task failed")))
+        .map_err(Into::into)
+    }
+
     pub(super) fn program_not_found_error() -> io::Error {
         io::Error::from_raw_os_error(libc::ENOENT)
     }

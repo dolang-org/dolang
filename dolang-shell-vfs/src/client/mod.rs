@@ -30,8 +30,8 @@ use tokio::{
 use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
 use crate::{
     Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions,
-    ProcessStatus, Query, ReadDir, SessionMode, StdioRecv, StdioSend, StreamEntry, Utf8TypedPath,
-    Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry,
+    ProcessStatus, Query, ReadDir, SessionMode, Sid, SidName, StdioRecv, StdioSend, StreamEntry,
+    Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry,
     direct::DirectFile,
     protocol::{
         AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
@@ -764,6 +764,66 @@ impl Client {
                     },
                 )
                 .map_err(crate::Error::from),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    pub async fn user_name(&self, uid: u32) -> crate::Result<String> {
+        match self.request(RequestKind::UserName { uid }).await? {
+            ResponseKind::UserName(result) => result.map_err(Into::into),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    pub async fn user_id(&self, name: &str) -> crate::Result<u32> {
+        match self
+            .request(RequestKind::UserId {
+                name: name.to_owned(),
+            })
+            .await?
+        {
+            ResponseKind::UserId(result) => result.map_err(Into::into),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    pub async fn group_name(&self, gid: u32) -> crate::Result<String> {
+        match self.request(RequestKind::GroupName { gid }).await? {
+            ResponseKind::GroupName(result) => result.map_err(Into::into),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    pub async fn group_id(&self, name: &str) -> crate::Result<u32> {
+        match self
+            .request(RequestKind::GroupId {
+                name: name.to_owned(),
+            })
+            .await?
+        {
+            ResponseKind::GroupId(result) => result.map_err(Into::into),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    pub async fn sid_name(&self, sid: &Sid) -> crate::Result<SidName> {
+        match self
+            .request(RequestKind::SidName { sid: sid.clone() })
+            .await?
+        {
+            ResponseKind::SidName(result) => result.map_err(Into::into),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    pub async fn account_name(&self, name: &str) -> crate::Result<SidName> {
+        match self
+            .request(RequestKind::AccountName {
+                name: name.to_owned(),
+            })
+            .await?
+        {
+            ResponseKind::AccountName(result) => result.map_err(Into::into),
             response => Err(unexpected(response).into()),
         }
     }
@@ -1911,6 +1971,30 @@ impl Vfs for Client {
 
     async fn query(&self) -> crate::Result<Query> {
         Client::query(self).await
+    }
+
+    async fn user_name(&self, uid: u32) -> crate::Result<String> {
+        Client::user_name(self, uid).await
+    }
+
+    async fn user_id(&self, name: &str) -> crate::Result<u32> {
+        Client::user_id(self, name).await
+    }
+
+    async fn group_name(&self, gid: u32) -> crate::Result<String> {
+        Client::group_name(self, gid).await
+    }
+
+    async fn group_id(&self, name: &str) -> crate::Result<u32> {
+        Client::group_id(self, name).await
+    }
+
+    async fn sid_name(&self, sid: &Sid) -> crate::Result<SidName> {
+        Client::sid_name(self, sid).await
+    }
+
+    async fn account_name(&self, name: &str) -> crate::Result<SidName> {
+        Client::account_name(self, name).await
     }
 
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> crate::Result<ReadDir> {
