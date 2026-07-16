@@ -64,6 +64,32 @@ async fn direct_query_reports_host_target() {
 }
 
 #[tokio::test]
+async fn direct_resolves_unix_user_and_group_names() {
+    let vfs = Direct::default();
+    let uid = geteuid().as_raw();
+    let gid = getegid().as_raw();
+    let user = vfs.user_name(uid).await.unwrap();
+    let group = vfs.group_name(gid).await.unwrap();
+    assert_eq!(vfs.user_id(&user).await.unwrap(), uid);
+    assert_eq!(vfs.group_id(&group).await.unwrap(), gid);
+
+    assert_eq!(
+        vfs.user_id("dolang-user-that-does-not-exist")
+            .await
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert_eq!(
+        vfs.group_id("dolang-group-that-does-not-exist")
+            .await
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
+}
+
+#[tokio::test]
 async fn basic_spawn() {
     let dir = tempdir().unwrap();
     let socket_path = dir.path().join("test.sock");

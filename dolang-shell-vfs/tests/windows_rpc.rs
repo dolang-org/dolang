@@ -123,6 +123,35 @@ async fn query_reports_server_target_including_wine() {
 }
 
 #[tokio::test]
+async fn windows_account_lookup_round_trips_over_rpc() {
+    let SecurityInfo::Windows(info) = SecurityInfo::current().unwrap() else {
+        unreachable!()
+    };
+    let (client, server_task) = connected_pair().await;
+    let name = client.sid_name(&info.user_sid).await.unwrap();
+    let qualified = if name.domain.is_empty() {
+        name.name.clone()
+    } else {
+        format!("{}\\{}", name.domain, name.name)
+    };
+    assert_eq!(
+        client.account_name(&qualified).await.unwrap().sid,
+        info.user_sid
+    );
+    assert_eq!(
+        client
+            .account_name("dolang-account-that-does-not-exist")
+            .await
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn client_or_direct_routes_path_and_open_operations() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("remote.txt");

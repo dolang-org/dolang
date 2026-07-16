@@ -1,4 +1,6 @@
 import sys
+  sys:
+    - NotFoundError
   std:
     - ImmutableError
     - UnsupportedError
@@ -14,11 +16,16 @@ import sys
     - test
   security:
     - Sid
+    - SidName
     - TokenGroup
     - TokenInfo
     - UnixInfo
     - token_info
     - unix_info
+    - user_name
+    - user_id
+    - group_name
+    - group_id
 
 #[test]
 def sid_converts_between_structural_forms()
@@ -47,7 +54,17 @@ def reports_security_information_for_target()
     assert_type $tuple $info.group_ids
     for group_id = info.group_ids
       assert_type $int $group_id
+    let user = user_name $info.euid
+    let group = group_name $info.egid
+    assert_type $str $user
+    assert_type $str $group
+    assert_eq (user_id user) $info.euid
+    assert_eq (user_id(user_name())) $info.uid
+    assert_eq (group_id group) $info.egid
+    assert_throws $NotFoundError do user_id dolang-user-that-does-not-exist
+    assert_throws $NotFoundError do group_id dolang-group-that-does-not-exist
     assert_throws $UnsupportedError do token_info()
+    assert_throws $UnsupportedError do (Sid "S-1-5-32-544").lookup()
   else
     let info = token_info()
     assert_type $TokenInfo $info
@@ -55,6 +72,20 @@ def reports_security_information_for_target()
     assert_type $Sid $info.user_sid
     assert_type $Sid $info.owner_sid
     assert_type $Sid $info.primary_group_sid
+    let sid_name = info.user_sid.lookup()
+    assert_type $SidName $sid_name
+    assert_type $Sid $sid_name.sid
+    assert_type $str $sid_name.name
+    assert_type $str $sid_name.domain
+    assert_type $str $sid_name.qualified_name
+    assert_eq (user_name()) $sid_name.name
+    let by_sid = SidName.lookup $info.user_sid
+    let by_name = SidName.lookup $sid_name.qualified_name
+    assert_eq (str by_sid.sid) (str info.user_sid)
+    assert_eq (str by_name.sid) (str info.user_sid)
+    assert_eq $sid_name.kind :USER:
+    assert_throws $NotFoundError do SidName.lookup dolang-account-that-does-not-exist
+    assert_throws $UnsupportedError do user_name 0
     let groups = info.groups
     assert_type $int $groups.len
     assert_type $TokenGroup $groups[0]

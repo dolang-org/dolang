@@ -13,7 +13,8 @@ use dolang::{
     },
 };
 use dolang_shell_vfs::{
-    SecurityInfo, Sid as VfsSid, TokenGroup as VfsTokenGroup, UnixSecurityInfo, WindowsTokenInfo,
+    OperatingSystemFamily, SecurityInfo, Sid as VfsSid, SidName as VfsSidName, SidNameUse,
+    TokenGroup as VfsTokenGroup, UnixSecurityInfo, Vfs as _, WindowsTokenInfo,
 };
 
 use crate::{error, global::Global};
@@ -157,6 +158,20 @@ impl<'v> Object<'v> for Sid {
                 Output::set(strand, out, bytes.as_slice());
                 Ok(())
             })
+            .method("lookup", async move |this, strand, args, mut out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let sid = this.annex().clone();
+                let global = strand.state::<Global<'v>>();
+                if global.local.get(strand).target().operating_system.family()
+                    != OperatingSystemFamily::Windows
+                {
+                    return Err(Error::not_supported(strand));
+                }
+                let vfs = global.local.get(strand).vfs();
+                let name = error::io_result(strand, vfs.sid_name(&sid).await)?;
+                create_sid_name(strand, global, name, &mut out);
+                Ok(())
+            })
     }
 
     fn display<'a, 's>(
@@ -173,6 +188,106 @@ impl<'v> Object<'v> for Sid {
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
         write!(w, "<security.Sid {}>", this.annex().as_ref()).into_do(strand)
+    }
+}
+
+pub(crate) struct SidName;
+
+fn create_sid_name<'v>(
+    strand: &mut Strand<'v, '_>,
+    global: State<'v, Global<'v>>,
+    name: VfsSidName,
+    out: &mut Slot<'v, '_>,
+) {
+    global
+        .types
+        .sid_name
+        .create_with_annex(strand, SidName, name, out);
+}
+
+impl<'v> Object<'v> for SidName {
+    const NAME: &'v str = "SidName";
+    const MODULE: &'v str = "security";
+    type Annex = VfsSidName;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let user = builder.sym("USER");
+        let group = builder.sym("GROUP");
+        let domain = builder.sym("DOMAIN");
+        let alias = builder.sym("ALIAS");
+        let well_known_group = builder.sym("WELL_KNOWN_GROUP");
+        let deleted_account = builder.sym("DELETED_ACCOUNT");
+        let invalid = builder.sym("INVALID");
+        let unknown = builder.sym("UNKNOWN");
+        let computer = builder.sym("COMPUTER");
+        let label = builder.sym("LABEL");
+        let logon_session = builder.sym("LOGON_SESSION");
+        builder
+            .get("sid", |this, strand, mut out| {
+                let global = strand.state::<Global<'v>>();
+                create_sid(strand, global, this.annex().sid.clone(), &mut out);
+                Ok(())
+            })
+            .get("name", |this, strand, out| {
+                Output::set(strand, out, this.annex().name.as_str());
+                Ok(())
+            })
+            .get("domain", |this, strand, out| {
+                Output::set(strand, out, this.annex().domain.as_str());
+                Ok(())
+            })
+            .get("qualified_name", |this, strand, out| {
+                if this.annex().domain.is_empty() {
+                    Output::set(strand, out, this.annex().name.as_str());
+                } else {
+                    let name = format!("{}\\{}", this.annex().domain, this.annex().name);
+                    Output::set(strand, out, name.as_str());
+                }
+                Ok(())
+            })
+            .get("kind", move |this, strand, out| {
+                let kind = match this.annex().kind {
+                    SidNameUse::User => user,
+                    SidNameUse::Group => group,
+                    SidNameUse::Domain => domain,
+                    SidNameUse::Alias => alias,
+                    SidNameUse::WellKnownGroup => well_known_group,
+                    SidNameUse::DeletedAccount => deleted_account,
+                    SidNameUse::Invalid => invalid,
+                    SidNameUse::Unknown => unknown,
+                    SidNameUse::Computer => computer,
+                    SidNameUse::Label => label,
+                    SidNameUse::LogonSession => logon_session,
+                };
+                Output::set(strand, out, kind);
+                Ok(())
+            })
+            .type_method("lookup", async move |_this, strand, args, mut out| {
+                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                let global = strand.state::<Global<'v>>();
+                if global.local.get(strand).target().operating_system.family()
+                    != OperatingSystemFamily::Windows
+                {
+                    return Err(Error::not_supported(strand));
+                }
+                let vfs = global.local.get(strand).vfs();
+                let name = if let Some(sid) = global.types.sid.downcast(&value) {
+                    let sid = sid.annex().clone();
+                    error::io_result(strand, vfs.sid_name(&sid).await)?
+                } else if let Some(value) = value.as_str(strand) {
+                    let value = value.to_string();
+                    error::io_result(strand, vfs.account_name(&value).await)?
+                } else {
+                    return Err(Error::type_error(
+                        strand,
+                        "SidName.lookup: expected Sid or str",
+                    ));
+                };
+                create_sid_name(strand, global, name, &mut out);
+                Ok(())
+            })
     }
 }
 
@@ -427,8 +542,82 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 Ok(())
             },
         )
+        .function("user_name", async move |strand, args, out| {
+            let ([], [uid]) = unpack!(strand, args, 0, 1)?;
+            let family = global.local.get(strand).target().operating_system.family();
+            let vfs = global.local.get(strand).vfs();
+            let name = match (family, uid) {
+                (OperatingSystemFamily::Unix, Some(uid)) => {
+                    let uid = uid.to_u32(strand)?;
+                    error::io_result(strand, vfs.user_name(uid).await)?
+                }
+                (OperatingSystemFamily::Unix, None) => {
+                    let SecurityInfo::Unix(info) = security_info(strand, global)? else {
+                        unreachable!("Unix target returned Windows security information")
+                    };
+                    error::io_result(strand, vfs.user_name(info.uid).await)?
+                }
+                (OperatingSystemFamily::Windows, Some(_)) => {
+                    return Err(Error::not_supported(strand));
+                }
+                (OperatingSystemFamily::Windows, None) => {
+                    let SecurityInfo::Windows(info) = security_info(strand, global)? else {
+                        unreachable!("Windows target returned Unix security information")
+                    };
+                    error::io_result(strand, vfs.sid_name(&info.user_sid).await)?.name
+                }
+            };
+            Output::set(strand, out, name.as_str());
+            Ok(())
+        })
+        .function("user_id", async move |strand, args, out| {
+            let ([name], []) = unpack!(strand, args, 1, 0)?;
+            if global.local.get(strand).target().operating_system.family()
+                != OperatingSystemFamily::Unix
+            {
+                return Err(Error::not_supported(strand));
+            }
+            let name = name
+                .as_str(strand)
+                .ok_or_else(|| Error::type_error(strand, "user_id: expected str"))?
+                .to_string();
+            let vfs = global.local.get(strand).vfs();
+            let uid = error::io_result(strand, vfs.user_id(&name).await)?;
+            Output::set(strand, out, uid);
+            Ok(())
+        })
+        .function("group_name", async move |strand, args, out| {
+            let ([gid], []) = unpack!(strand, args, 1, 0)?;
+            if global.local.get(strand).target().operating_system.family()
+                != OperatingSystemFamily::Unix
+            {
+                return Err(Error::not_supported(strand));
+            }
+            let gid = gid.to_u32(strand)?;
+            let vfs = global.local.get(strand).vfs();
+            let name = error::io_result(strand, vfs.group_name(gid).await)?;
+            Output::set(strand, out, name.as_str());
+            Ok(())
+        })
+        .function("group_id", async move |strand, args, out| {
+            let ([name], []) = unpack!(strand, args, 1, 0)?;
+            if global.local.get(strand).target().operating_system.family()
+                != OperatingSystemFamily::Unix
+            {
+                return Err(Error::not_supported(strand));
+            }
+            let name = name
+                .as_str(strand)
+                .ok_or_else(|| Error::type_error(strand, "group_id: expected str"))?
+                .to_string();
+            let vfs = global.local.get(strand).vfs();
+            let gid = error::io_result(strand, vfs.group_id(&name).await)?;
+            Output::set(strand, out, gid);
+            Ok(())
+        })
         .value("UnixInfo", global.types.unix_info)
         .value("Sid", global.types.sid)
+        .value("SidName", global.types.sid_name)
         .value("TokenGroup", global.types.token_group)
         .value("TokenInfo", global.types.token_info)
         .commit();

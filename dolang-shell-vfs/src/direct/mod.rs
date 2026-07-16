@@ -20,7 +20,7 @@ use wax::{
 
 use crate::{
     Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions,
-    ProcessStatus, Query, ReadDir, StdioRecv, StdioSend, StreamEntry, Utf8TypedPath,
+    ProcessStatus, Query, ReadDir, Sid, SidName, StdioRecv, StdioSend, StreamEntry, Utf8TypedPath,
     Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry, XattrNamespace, metadata_from_std,
     native_path, typed_path,
 };
@@ -767,6 +767,70 @@ impl Vfs for Direct {
 
     async fn query(&self) -> crate::Result<Query> {
         Query::current()
+    }
+
+    async fn user_name(&self, uid: u32) -> crate::Result<String> {
+        #[cfg(unix)]
+        return self.impl_user_name(uid).await;
+        #[cfg(windows)]
+        {
+            let _ = uid;
+            Err(io::Error::new(io::ErrorKind::Unsupported, "Unix users are not supported").into())
+        }
+    }
+
+    async fn user_id(&self, name: &str) -> crate::Result<u32> {
+        #[cfg(unix)]
+        return self.impl_user_id(name).await;
+        #[cfg(windows)]
+        {
+            let _ = name;
+            Err(io::Error::new(io::ErrorKind::Unsupported, "Unix users are not supported").into())
+        }
+    }
+
+    async fn group_name(&self, gid: u32) -> crate::Result<String> {
+        #[cfg(unix)]
+        return self.impl_group_name(gid).await;
+        #[cfg(windows)]
+        {
+            let _ = gid;
+            Err(io::Error::new(io::ErrorKind::Unsupported, "Unix groups are not supported").into())
+        }
+    }
+
+    async fn group_id(&self, name: &str) -> crate::Result<u32> {
+        #[cfg(unix)]
+        return self.impl_group_id(name).await;
+        #[cfg(windows)]
+        {
+            let _ = name;
+            Err(io::Error::new(io::ErrorKind::Unsupported, "Unix groups are not supported").into())
+        }
+    }
+
+    async fn sid_name(&self, sid: &Sid) -> crate::Result<SidName> {
+        #[cfg(windows)]
+        return self.impl_sid_name(sid).await;
+        #[cfg(unix)]
+        {
+            let _ = sid;
+            Err(io::Error::new(io::ErrorKind::Unsupported, "Windows SIDs are not supported").into())
+        }
+    }
+
+    async fn account_name(&self, name: &str) -> crate::Result<SidName> {
+        #[cfg(windows)]
+        return self.impl_account_name(name).await;
+        #[cfg(unix)]
+        {
+            let _ = name;
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Windows accounts are not supported",
+            )
+            .into())
+        }
     }
 
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> crate::Result<ReadDir> {

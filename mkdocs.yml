@@ -218,6 +218,7 @@ nav:
     - security:
       - api/security/index.md
       - api/security/sid.md
+      - api/security/sidname.md
       - api/security/tokengroup.md
       - api/security/unixinfo.md
       - api/security/tokeninfo.md

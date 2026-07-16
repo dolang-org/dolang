@@ -236,6 +236,31 @@ pub struct TokenGroup {
     pub attributes: u32,
 }
 
+/// Classification returned by Windows account-name lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SidNameUse {
+    User,
+    Group,
+    Domain,
+    Alias,
+    WellKnownGroup,
+    DeletedAccount,
+    Invalid,
+    Unknown,
+    Computer,
+    Label,
+    LogonSession,
+}
+
+/// A Windows SID together with its resolved account name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SidName {
+    pub sid: Sid,
+    pub name: String,
+    pub domain: String,
+    pub kind: SidNameUse,
+}
+
 impl WindowsTokenInfo {
     /// Returns the logon SID identified by the token group attributes.
     pub fn logon_sid(&self) -> Option<&Sid> {
@@ -1044,6 +1069,12 @@ pub trait Vfs {
     fn command(&self, program: Utf8TypedPath<'_>) -> Self::Command<'_>;
     async fn pipe(&self) -> Result<(Self::StdioSend, Self::StdioRecv)>;
     async fn query(&self) -> Result<Query>;
+    async fn user_name(&self, uid: u32) -> Result<String>;
+    async fn user_id(&self, name: &str) -> Result<u32>;
+    async fn group_name(&self, gid: u32) -> Result<String>;
+    async fn group_id(&self, name: &str) -> Result<u32>;
+    async fn sid_name(&self, sid: &Sid) -> Result<SidName>;
+    async fn account_name(&self, name: &str) -> Result<SidName>;
     async fn read_dir(&self, path: Utf8TypedPath<'_>) -> Result<ReadDir>;
     async fn which(
         &self,
@@ -1664,6 +1695,48 @@ impl Vfs for AnyVfs {
         match self {
             Self::Client(client) => client.query().await,
             Self::Direct(direct) => direct.query().await,
+        }
+    }
+
+    async fn user_name(&self, uid: u32) -> crate::Result<String> {
+        match self {
+            Self::Client(client) => client.user_name(uid).await,
+            Self::Direct(direct) => direct.user_name(uid).await,
+        }
+    }
+
+    async fn user_id(&self, name: &str) -> crate::Result<u32> {
+        match self {
+            Self::Client(client) => client.user_id(name).await,
+            Self::Direct(direct) => direct.user_id(name).await,
+        }
+    }
+
+    async fn group_name(&self, gid: u32) -> crate::Result<String> {
+        match self {
+            Self::Client(client) => client.group_name(gid).await,
+            Self::Direct(direct) => direct.group_name(gid).await,
+        }
+    }
+
+    async fn group_id(&self, name: &str) -> crate::Result<u32> {
+        match self {
+            Self::Client(client) => client.group_id(name).await,
+            Self::Direct(direct) => direct.group_id(name).await,
+        }
+    }
+
+    async fn sid_name(&self, sid: &Sid) -> crate::Result<SidName> {
+        match self {
+            Self::Client(client) => client.sid_name(sid).await,
+            Self::Direct(direct) => direct.sid_name(sid).await,
+        }
+    }
+
+    async fn account_name(&self, name: &str) -> crate::Result<SidName> {
+        match self {
+            Self::Client(client) => client.account_name(name).await,
+            Self::Direct(direct) => direct.account_name(name).await,
         }
     }
 

@@ -36,6 +36,18 @@ Sub-authorities as an immutable [`tuple`](../std/tuple.md).
 
 ## Methods
 
+### `lookup()`
+
+Resolves the SID in the active Windows VFS target.
+
+**Returns:** [`SidName`](./sidname.md)
+
+**Errors:**
+
+- Raises [`sys.NotFoundError`](../sys/not-found-error.md) when the SID is
+  unmapped.
+- Raises `UnsupportedError` for Unix targets.
+
 ### `to_bin()`
 
 Returns the native Windows packet representation.

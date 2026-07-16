@@ -1,7 +1,7 @@
 use super::{Direct, DirectChild, DirectCommand, DirectOpenOptions};
 use crate::{
-    Attrs, ChownIdentity, FsMetadata, OpenOptions as _, StreamEntry, Utf8TypedPath,
-    Utf8WindowsPath, XattrEntry, XattrNamespace,
+    Attrs, ChownIdentity, FsMetadata, OpenOptions as _, Sid, SidName, SidNameUse, StreamEntry,
+    Utf8TypedPath, Utf8WindowsPath, XattrEntry, XattrNamespace,
 };
 use std::{
     collections::HashMap,
@@ -26,9 +26,19 @@ use windows_sys::{
     },
     Win32::{
         Foundation::{
-            ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF, ERROR_MORE_DATA, GENERIC_READ, GENERIC_WRITE,
-            INVALID_HANDLE_VALUE, RtlNtStatusToDosError, S_OK, STATUS_BUFFER_OVERFLOW,
-            STATUS_BUFFER_TOO_SMALL, STATUS_NO_EAS_ON_FILE, STATUS_NO_MORE_EAS, STATUS_SUCCESS,
+            ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA,
+            ERROR_NONE_MAPPED, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
+            RtlNtStatusToDosError, S_OK, STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL,
+            STATUS_NO_EAS_ON_FILE, STATUS_NO_MORE_EAS, STATUS_SUCCESS,
+        },
+        Security::{
+            LookupAccountNameW, LookupAccountSidW, SidTypeAlias as SID_TYPE_ALIAS,
+            SidTypeComputer as SID_TYPE_COMPUTER,
+            SidTypeDeletedAccount as SID_TYPE_DELETED_ACCOUNT, SidTypeDomain as SID_TYPE_DOMAIN,
+            SidTypeGroup as SID_TYPE_GROUP, SidTypeInvalid as SID_TYPE_INVALID,
+            SidTypeLabel as SID_TYPE_LABEL, SidTypeLogonSession as SID_TYPE_LOGON_SESSION,
+            SidTypeUnknown as SID_TYPE_UNKNOWN, SidTypeUser as SID_TYPE_USER,
+            SidTypeWellKnownGroup as SID_TYPE_WELL_KNOWN_GROUP,
         },
         Storage::FileSystem::{
             COMPRESSION_FORMAT_DEFAULT, COMPRESSION_FORMAT_NONE, CreateFileW,
@@ -60,6 +70,153 @@ fn typed_windows_path(path: &Path) -> io::Result<Utf8TypedPath<'_>> {
 }
 
 impl Direct {
+    fn sid_name_use(value: i32) -> io::Result<SidNameUse> {
+        match value {
+            SID_TYPE_USER => Ok(SidNameUse::User),
+            SID_TYPE_GROUP => Ok(SidNameUse::Group),
+            SID_TYPE_DOMAIN => Ok(SidNameUse::Domain),
+            SID_TYPE_ALIAS => Ok(SidNameUse::Alias),
+            SID_TYPE_WELL_KNOWN_GROUP => Ok(SidNameUse::WellKnownGroup),
+            SID_TYPE_DELETED_ACCOUNT => Ok(SidNameUse::DeletedAccount),
+            SID_TYPE_INVALID => Ok(SidNameUse::Invalid),
+            SID_TYPE_UNKNOWN => Ok(SidNameUse::Unknown),
+            SID_TYPE_COMPUTER => Ok(SidNameUse::Computer),
+            SID_TYPE_LABEL => Ok(SidNameUse::Label),
+            SID_TYPE_LOGON_SESSION => Ok(SidNameUse::LogonSession),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "LookupAccount returned an invalid SID name use",
+            )),
+        }
+    }
+
+    fn lookup_error(error: io::Error) -> crate::Error {
+        if error.raw_os_error() == Some(ERROR_NONE_MAPPED as i32) {
+            crate::SystemError::new(
+                crate::OperatingSystem::Windows,
+                ERROR_NONE_MAPPED as i32,
+                io::ErrorKind::NotFound,
+                error.to_string(),
+            )
+            .into()
+        } else {
+            error.into()
+        }
+    }
+
+    fn wide_result(buffer: &[u16], len: u32) -> String {
+        let len = usize::try_from(len)
+            .unwrap_or(buffer.len())
+            .min(buffer.len());
+        let value = &buffer[..len];
+        let value = value.strip_suffix(&[0]).unwrap_or(value);
+        String::from_utf16_lossy(value)
+    }
+
+    fn lookup_sid_name(sid: Sid) -> crate::Result<SidName> {
+        let mut sid_bytes = sid.to_bytes();
+        let mut name_len = 0;
+        let mut domain_len = 0;
+        let mut kind = 0;
+        unsafe {
+            LookupAccountSidW(
+                ptr::null(),
+                sid_bytes.as_mut_ptr().cast(),
+                ptr::null_mut(),
+                &mut name_len,
+                ptr::null_mut(),
+                &mut domain_len,
+                &mut kind,
+            );
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32) {
+            return Err(Self::lookup_error(error));
+        }
+        let mut name = vec![0u16; usize::try_from(name_len).unwrap()];
+        let mut domain = vec![0u16; usize::try_from(domain_len).unwrap()];
+        if unsafe {
+            LookupAccountSidW(
+                ptr::null(),
+                sid_bytes.as_mut_ptr().cast(),
+                name.as_mut_ptr(),
+                &mut name_len,
+                domain.as_mut_ptr(),
+                &mut domain_len,
+                &mut kind,
+            )
+        } == 0
+        {
+            return Err(Self::lookup_error(io::Error::last_os_error()));
+        }
+        Ok(SidName {
+            sid,
+            name: Self::wide_result(&name, name_len),
+            domain: Self::wide_result(&domain, domain_len),
+            kind: Self::sid_name_use(kind)?,
+        })
+    }
+
+    pub(super) async fn impl_sid_name(&self, sid: &Sid) -> crate::Result<SidName> {
+        let sid = sid.clone();
+        tokio::task::spawn_blocking(move || Self::lookup_sid_name(sid))
+            .await
+            .unwrap_or_else(|_| Err(io::Error::other("SID lookup task failed").into()))
+    }
+
+    pub(super) async fn impl_account_name(&self, name: &str) -> crate::Result<SidName> {
+        let name = name.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let name: Vec<u16> = OsString::from(name)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let mut sid_len = 0;
+            let mut domain_len = 0;
+            let mut kind = 0;
+            unsafe {
+                LookupAccountNameW(
+                    ptr::null(),
+                    name.as_ptr(),
+                    ptr::null_mut(),
+                    &mut sid_len,
+                    ptr::null_mut(),
+                    &mut domain_len,
+                    &mut kind,
+                );
+            }
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32) {
+                return Err(Self::lookup_error(error));
+            }
+            let word_size = mem::size_of::<usize>();
+            let mut sid = vec![0usize; usize::try_from(sid_len).unwrap().div_ceil(word_size)];
+            let mut domain = vec![0u16; usize::try_from(domain_len).unwrap()];
+            if unsafe {
+                LookupAccountNameW(
+                    ptr::null(),
+                    name.as_ptr(),
+                    sid.as_mut_ptr().cast(),
+                    &mut sid_len,
+                    domain.as_mut_ptr(),
+                    &mut domain_len,
+                    &mut kind,
+                )
+            } == 0
+            {
+                return Err(Self::lookup_error(io::Error::last_os_error()));
+            }
+            let bytes = unsafe {
+                slice::from_raw_parts(sid.as_ptr().cast::<u8>(), usize::try_from(sid_len).unwrap())
+            };
+            let sid = Sid::from_bytes(bytes)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            Self::lookup_sid_name(sid)
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::other("account lookup task failed").into()))
+    }
+
     pub(super) fn program_not_found_error() -> io::Error {
         io::Error::from_raw_os_error(ERROR_FILE_NOT_FOUND as i32)
     }
