@@ -4,10 +4,12 @@ The `security` module reports the security identity of the active VFS target.
 
 ## Types
 
-| Type                          | Description                        |
-| ----------------------------- | ---------------------------------- |
-| [`UnixInfo`](./unixinfo.md)   | Unix process identity information  |
-| [`TokenInfo`](./tokeninfo.md) | Windows process token information  |
+| Type                            | Description                         |
+| ------------------------------- | ----------------------------------- |
+| [`Sid`](./sid.md)               | Windows security identifier         |
+| [`TokenGroup`](./tokengroup.md) | Windows token group membership      |
+| [`UnixInfo`](./unixinfo.md)     | Unix process identity information   |
+| [`TokenInfo`](./tokeninfo.md)   | Windows process token information   |
 
 ## Functions
 
