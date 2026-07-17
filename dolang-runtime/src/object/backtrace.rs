@@ -1,7 +1,7 @@
-use std::{fmt, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use crate::{
-    error::{BacktraceIter, Error, Result, ResultExt, UnwindEntry},
+    error::{BacktraceIter, Error, Result, UnwindEntry},
     gc::{Collect, arena::Visit},
     strand::Strand,
     sym::{self, Sym},
@@ -81,9 +81,9 @@ impl<'v> Protocol<'v> for Backtrace<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<backtrace>").into_do(strand)
+        crate::fmt!(strand, w, "<backtrace>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -161,9 +161,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<backtrace.iter>").into_do(strand)
+        crate::fmt!(strand, w, "<backtrace.iter>")
     }
 
     async fn op_next<'a, 's>(
@@ -216,9 +216,9 @@ impl<'v> Protocol<'v> for Frame<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<backtrace frame>").into_do(strand)
+        crate::fmt!(strand, w, "<backtrace frame>")
     }
 
     fn op_get<'a, 's>(
@@ -293,9 +293,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type strand.Backtrace>").into_do(strand)
+        crate::fmt!(strand, w, "<type strand.Backtrace>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

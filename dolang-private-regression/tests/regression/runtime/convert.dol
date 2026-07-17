@@ -1,3 +1,6 @@
+import std:
+  - arg
+
 def assert_err block msg
   let res = try
     block()
@@ -48,3 +51,11 @@ assert_eq  (str(1.0 / 0.0)) "inf"
 assert_eq  (str(-1.0 / 0.0)) "-inf"
 assert_eq  (str(0.0 / 0.0)) "NaN"
 assert_eq  (str "foo") "foo"
+
+# Streaming conversions through a native object's formatting implementation
+let foo = makefoo()
+assert_eq (str foo) "foo"
+assert_eq (dbg foo) "foo"
+assert_eq (arg foo) "foo"
+assert_eq "before-$(foo)-after" "before-foo-after"
+assert_eq (",".join [foo, 2, [3]]) "foo,2,[3]"

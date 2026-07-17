@@ -35,6 +35,8 @@ assert_eq [..."a,b,c".rsplit ","] ["c", "b", "a"]
 assert_eq [..."a,b,c".rsplit "," limit: 1] ["c", "a,b"]
 assert_eq [..."a,b,c".rsplit "," limit: -1] ["b,c", "a"]
 assert_eq (",".join ["a", "b", "c"]) "a,b,c"
+assert_eq (",".join []) ""
+assert_eq (",".join (["only"])) "only"
 assert_eq ("foo bar foo".replace "foo" "baz") "baz bar baz"
 assert_eq ("banana".replace "na" "") "ba"
 assert_eq ("abc".replace "" "-") "-a-b-c-"

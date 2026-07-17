@@ -1,8 +1,8 @@
-use std::{fmt, hash::DefaultHasher, ops::ControlFlow};
+use std::{hash::DefaultHasher, ops::ControlFlow};
 
 use crate::{
     arg::Args,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::{
         iter,
@@ -208,7 +208,7 @@ impl<'v> Protocol<'v> for Range<'v> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         Self::op_debug(this, strand, w)
     }
@@ -216,20 +216,20 @@ impl<'v> Protocol<'v> for Range<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
-        write!(w, "<range start: ").into_do(strand)?;
+        crate::fmt!(strand, w, "<range start: ")?;
         borrow.start.op_debug(strand, &mut *w)?;
         if !borrow.end.is_nil() {
-            write!(w, ", end: ").into_do(strand)?;
+            crate::fmt!(strand, w, ", end: ")?;
             borrow.end.op_debug(strand, &mut *w)?;
         }
         if !borrow.step.is_nil() {
-            write!(w, ", step: ").into_do(strand)?;
+            crate::fmt!(strand, w, ", step: ")?;
             borrow.step.op_debug(strand, &mut *w)?;
         }
-        write!(w, ">").into_do(strand)
+        crate::fmt!(strand, w, ">")
     }
 
     fn op_eq<'a, 's>(
@@ -404,7 +404,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         Self::op_debug(this, strand, w)
     }
@@ -412,9 +412,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<range iterator>").into_do(strand)
+        crate::fmt!(strand, w, "<range iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -503,10 +503,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        use crate::error::ResultExt;
-        write!(w, "<type std.range>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.range>")
     }
 
     async fn op_call<'a, 's>(

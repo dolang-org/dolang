@@ -1,11 +1,9 @@
-use std::fmt;
+use dolang::runtime::object::fmt;
 
 use dolang::{
     compile::Compiler,
     runtime::{
-        Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
-        error::ResultExt as _,
-        method,
+        Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value, method,
         object::{ArrayLike, ArrayView, Mut, Ref, TypeBuilder},
         unpack,
         value::{AsTuple, Empty, Nil, View},
@@ -178,17 +176,17 @@ impl<'v> Object<'v> for Sid {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().as_ref()).into_do(strand)
+        fmt!(strand, w, "{}", this.annex().as_ref())
     }
 
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<security.Sid {}>", this.annex().as_ref()).into_do(strand)
+        fmt!(strand, w, "<security.Sid {}>", this.annex().as_ref())
     }
 }
 

@@ -5,6 +5,8 @@ use std::{
 
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+use dolang::runtime::object::fmt;
+
 use dolang::{
     compile::Compiler,
     runtime::{
@@ -31,8 +33,6 @@ use dolang_shell_vfs::{AnyVfs, Client, Query, SecurityInfo, TargetInfo, Utf8Type
 use std::collections::HashMap;
 #[cfg(unix)]
 use std::path::PathBuf;
-
-use dolang::runtime::error::ResultExt;
 
 use crate::error;
 
@@ -295,14 +295,18 @@ impl<'v> Object<'v> for Vfs {
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
         match &this.annex().source {
-            VfsSource::Stream => write!(w, "<shell.Vfs stream>").into_do(strand),
+            VfsSource::Stream => fmt!(strand, w, "<shell.Vfs stream>"),
             #[cfg(unix)]
-            VfsSource::Unix(socket) => write!(w, "<shell.Vfs socket: {socket:?}>").into_do(strand),
+            VfsSource::Unix(socket) => {
+                fmt!(strand, w, "<shell.Vfs socket: {socket:?}>")
+            }
             #[cfg(windows)]
-            VfsSource::Windows(_) => write!(w, "<shell.Vfs windows admin>").into_do(strand),
+            VfsSource::Windows(_) => {
+                fmt!(strand, w, "<shell.Vfs windows admin>")
+            }
         }
     }
 

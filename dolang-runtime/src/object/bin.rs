@@ -1,5 +1,4 @@
 use std::{
-    fmt,
     hash::{DefaultHasher, Hash},
     ops::ControlFlow,
 };
@@ -7,7 +6,7 @@ use std::{
 use crate::{
     arg::Args,
     bytecode::Variadic,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::protocol::GcObj,
     sig,
@@ -77,17 +76,17 @@ impl<'v> Protocol<'v> for [u8] {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", BStr::new(this.receiver.get())).into_do(strand)
+        crate::fmt!(strand, w, "{}", BStr::new(this.receiver.get()))
     }
 
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "b{:?}", BStr::new(this.receiver.get())).into_do(strand)
+        crate::fmt!(strand, w, "b{:?}", BStr::new(this.receiver.get()))
     }
 
     fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &'a mut Strand<'v, 's>) -> bool {
@@ -522,7 +521,7 @@ impl<'v> Protocol<'v> for Split<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let forward = this.borrow_mut(strand)?.forward;
         let label = if forward {
@@ -530,7 +529,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         } else {
             "<bin rsplit>"
         };
-        write!(w, "{label}").into_do(strand)
+        crate::fmt!(strand, w, "{label}")
     }
 
     async fn op_iter<'a, 's>(
@@ -656,9 +655,9 @@ impl<'v> Protocol<'v> for Class {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type std.bin>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.bin>")
     }
 
     async fn op_call<'a, 's>(

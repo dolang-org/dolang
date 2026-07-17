@@ -1,11 +1,11 @@
-use std::{borrow::Cow, fmt, marker::PhantomData, ops::ControlFlow, ptr::NonNull};
+use std::{borrow::Cow, marker::PhantomData, ops::ControlFlow, ptr::NonNull};
 
 use dolang_util::alias;
 
 use crate::{
     Program,
     arg::Args,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     frame::{CallFrame, Upvars},
     gc::{Collect, Gc, arena::Visit},
     strand::{Pinned, Strand},
@@ -157,19 +157,19 @@ impl<'v> Protocol<'v> for NativeFunction<'v> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
-        write!(w, "{}.{}", borrow.module, borrow.name).into_do(strand)
+        crate::fmt!(strand, w, "{}.{}", borrow.module, borrow.name)
     }
 
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
-        write!(w, "<{}.{}>", borrow.module, borrow.name).into_do(strand)
+        crate::fmt!(strand, w, "<{}.{}>", borrow.module, borrow.name)
     }
 
     async fn op_call<'a, 's>(
@@ -255,7 +255,7 @@ impl<'v> Protocol<'v> for Function<'v> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
         let module = borrow
@@ -269,23 +269,22 @@ impl<'v> Protocol<'v> for Function<'v> {
             .get(borrow.id)
             .map(|d| &borrow.module.debug_strtab()[d.name.clone()]);
         match (module, name) {
-            (None, None) => write!(w, "?.?"),
-            (None, Some(name)) => write!(w, "{name}"),
-            (Some(module), None) if borrow.id == 0 => write!(w, "{module}"),
-            (Some(module), None) => write!(w, "{module}.?"),
-            (Some(module), Some(name)) => write!(w, "{module}.{name}"),
+            (None, None) => crate::fmt!(strand, w, "?.?"),
+            (None, Some(name)) => crate::fmt!(strand, w, "{name}"),
+            (Some(module), None) if borrow.id == 0 => crate::fmt!(strand, w, "{module}"),
+            (Some(module), None) => crate::fmt!(strand, w, "{module}.?"),
+            (Some(module), Some(name)) => crate::fmt!(strand, w, "{module}.{name}"),
         }
-        .into_do(strand)
     }
 
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<").into_do(strand)?;
+        crate::fmt!(strand, w, "<")?;
         Self::op_display(this, strand, w)?;
-        write!(w, ">").into_do(strand)
+        crate::fmt!(strand, w, ">")
     }
 }
 
@@ -317,10 +316,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        use crate::error::ResultExt;
-        write!(w, "<type std.func>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.func>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

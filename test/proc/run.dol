@@ -26,6 +26,12 @@ import agent proc sys
 
 let is_windows = (sys.os_info().family == :WINDOWS:)
 
+class Rendered
+  pub field value = "rendered"
+
+  def (str) self
+    self.value
+
 def yield()
   sleep 0.01
 
@@ -130,6 +136,19 @@ def pipe_send_side_value_flush()
       yield()
       cat()
   assert_eq $res "foo\nfoo"
+
+#[agent.test]
+def formatted_values_stream_to_capture_and_pipe()
+  if is_windows
+    skip "windows polyfill not yet adequate"
+
+  let res = sub do strand.put (Rendered())
+  assert_eq $res rendered
+
+  res = sub do pipeline
+    do strand.put (Rendered())
+    do cat()
+  assert_eq $res rendered
 
 #[agent.test]
 def pipeline_and_io_mode_use_matching_encodings()

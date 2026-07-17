@@ -1,5 +1,4 @@
 use std::{
-    fmt,
     hash::{Hash, Hasher},
     marker::PhantomData,
 };
@@ -9,9 +8,10 @@ use crate::{
     fs::{path_absolute, path_relative},
     global::Global,
 };
+use dolang::runtime::object::fmt;
+
 use dolang::runtime::{
     Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
-    error::ResultExt,
     object::{ArrayLike, ArrayView, TypeBuilder},
     unpack,
 };
@@ -465,25 +465,25 @@ macro_rules! impl_concrete_path {
             fn debug<'a, 's>(
                 this: Instance<'v, 'a, Self>,
                 strand: &'a mut Strand<'v, 's>,
-                w: &mut dyn fmt::Write,
+                w: &mut dyn dolang::runtime::Format<'v>,
             ) -> Result<'v, 's, ()> {
-                write!(w, "<Path {:?}>", this.annex().display()).into_do(strand)
+                fmt!(strand, w, "<Path {:?}>", this.annex().display())
             }
 
             fn display<'a, 's>(
                 this: Instance<'v, 'a, Self>,
                 strand: &'a mut Strand<'v, 's>,
-                w: &mut dyn fmt::Write,
+                w: &mut dyn dolang::runtime::Format<'v>,
             ) -> Result<'v, 's, ()> {
-                write!(w, "{}", this.annex().display()).into_do(strand)
+                fmt!(strand, w, "{}", this.annex().display())
             }
 
             fn display_arg<'a, 's>(
                 this: Instance<'v, 'a, Self>,
                 strand: &'a mut Strand<'v, 's>,
-                w: &mut dyn fmt::Write,
+                w: &mut dyn dolang::runtime::Format<'v>,
             ) -> Result<'v, 's, ()> {
-                write!(w, "{}", this.annex().display()).into_do(strand)
+                fmt!(strand, w, "{}", this.annex().display())
             }
 
             fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {

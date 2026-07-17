@@ -1,7 +1,6 @@
-use std::{
-    fmt,
-    hash::{Hash, Hasher},
-};
+use std::hash::{Hash, Hasher};
+
+use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
@@ -197,17 +196,17 @@ impl<'v> Object<'v> for Url {
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<url.Url {:?}>", this.annex().inner.as_str()).into_do(strand)
+        fmt!(strand, w, "<url.Url {:?}>", this.annex().inner.as_str())
     }
 
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().inner).into_do(strand)
+        fmt!(strand, w, "{}", this.annex().inner)
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {

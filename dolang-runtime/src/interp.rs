@@ -30,7 +30,7 @@ use crate::{
     strand::{Strand, StrandInner},
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, Slots, Value},
+    value::{Output, Slot, Slots, StrEmbryo, Value},
     vm::{ImportCacheEntry, ImportGuard, Vm},
 };
 
@@ -297,9 +297,9 @@ impl<'v> Vm<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let mut acc = String::new();
+        let mut acc = StrEmbryo::new();
         for arg in args {
             let value = match arg {
                 Arg::Pos(mut slot) => slot.take(),
@@ -307,7 +307,7 @@ impl<'v> Vm<'v> {
             };
             value.op_display(strand, &mut acc)?;
         }
-        out.store(Value::from_str(strand, &acc));
+        acc.finish(strand, out);
         Ok(())
     }
 
@@ -336,9 +336,9 @@ impl<'v> Vm<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let mut acc = String::new();
+        let mut acc = StrEmbryo::new();
         for arg in args {
             let value = match arg {
                 Arg::Pos(mut slot) => slot.take(),
@@ -346,7 +346,7 @@ impl<'v> Vm<'v> {
             };
             value.op_display_arg(strand, &mut acc)?;
         }
-        out.store(Value::from_str(strand, &acc));
+        acc.finish(strand, out);
         Ok(())
     }
 

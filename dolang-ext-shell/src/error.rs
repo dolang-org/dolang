@@ -1,5 +1,7 @@
 use std::{fmt, io, marker::PhantomData};
 
+use dolang::runtime::object::fmt;
+
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Strand, Type, object::TypeBuilder, value::TypeObject,
 };
@@ -142,19 +144,19 @@ impl<'v, T: SysErrorType<'v>> Object<'v> for SysErrorObject<T> {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().message()).map_err(|err| Error::runtime(strand, err))
+        fmt!(strand, w, "{}", this.annex().message())
     }
 
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<sys.{} ", T::NAME).map_err(|err| Error::runtime(strand, err))?;
+        fmt!(strand, w, "<sys.{} ", T::NAME)?;
         Self::display(this, strand, w)?;
-        write!(w, ">").map_err(|err| Error::runtime(strand, err))
+        fmt!(strand, w, ">")
     }
 }
 
@@ -277,19 +279,19 @@ impl<'v> Object<'v> for ProcError {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().message()).map_err(|err| Error::runtime(strand, err))
+        fmt!(strand, w, "{}", this.annex().message())
     }
 
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<proc.Error ").map_err(|err| Error::runtime(strand, err))?;
+        fmt!(strand, w, "<proc.Error ")?;
         Self::display(this, strand, w)?;
-        write!(w, ">").map_err(|err| Error::runtime(strand, err))
+        fmt!(strand, w, ">")
     }
 }
 

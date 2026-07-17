@@ -1,9 +1,9 @@
-use std::{collections::HashSet, fmt, ops::ControlFlow};
+use std::{collections::HashSet, ops::ControlFlow};
 
 use crate::{
     arg::{Arg, Args},
     bytecode::Variadic,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::{BoundMethod, iter, sym::SymObj},
     sig,
@@ -290,9 +290,9 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<args>").into_do(strand)
+        crate::fmt!(strand, w, "<args>")
     }
 
     async fn op_iter<'a, 's>(
@@ -481,9 +481,9 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<arg iter>").into_do(strand)
+        crate::fmt!(strand, w, "<arg iter>")
     }
 
     async fn op_iter<'a, 's>(

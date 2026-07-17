@@ -1,5 +1,4 @@
 use std::{
-    fmt,
     hash::{DefaultHasher, Hasher},
     marker::PhantomData,
     ptr::{self, NonNull},
@@ -173,7 +172,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
     fn op_display_arg<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         Self::op_display(this, strand, w)
     }
@@ -181,7 +180,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         Self::op_debug(this, strand, w)
     }
@@ -189,7 +188,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()>;
 
     fn op_bool<'a, 's>(_this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
@@ -620,7 +619,7 @@ pub(crate) struct Vtbl<'v> {
         this: NonNull<Header>,
         strand: &'a mut Strand<'v, 's>,
         op: FmtOp,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
         _: &'a &'v (),
     ) -> Result<'v, 's, ()>,
     op_bool: for<'a, 's> fn(
@@ -1021,7 +1020,7 @@ fn op_fmt_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     this: NonNull<Header>,
     strand: &'a mut Strand<'v, 's>,
     op: FmtOp,
-    w: &mut dyn fmt::Write,
+    w: &mut dyn crate::value::Format<'v>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
     unsafe {
@@ -1363,19 +1362,19 @@ pub(crate) trait Dispatch<'v, 'a> {
     fn op_display_arg<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()>;
 
     fn op_display<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()>;
 
     fn op_debug<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()>;
 
     fn op_bool<'s>(&self, strand: &'a mut Strand<'v, 's>) -> bool;
@@ -1638,7 +1637,7 @@ impl<'v, 'a, T: AsHeader> Dispatch<'v, 'a> for T {
     fn op_display_arg<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         unsafe { invoke!(self, op_fmt, strand, FmtOp::DisplayArg, w) }
     }
@@ -1646,7 +1645,7 @@ impl<'v, 'a, T: AsHeader> Dispatch<'v, 'a> for T {
     fn op_display<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         unsafe { invoke!(self, op_fmt, strand, FmtOp::Display, w) }
     }
@@ -1654,7 +1653,7 @@ impl<'v, 'a, T: AsHeader> Dispatch<'v, 'a> for T {
     fn op_debug<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         unsafe { invoke!(self, op_fmt, strand, FmtOp::Debug, w) }
     }
@@ -1985,12 +1984,14 @@ pub(crate) async fn dispatch_native_method<'v, 's>(
     };
     match method.tag() {
         sym::STR_METHOD => {
-            let s = this.to_string(strand)?;
-            Output::set(strand, out, s.as_str());
+            let mut format = crate::value::StrEmbryo::new();
+            this.display(strand, &mut format)?;
+            format.finish(strand, out);
         }
         sym::DBG_METHOD => {
-            let s = this.to_debug(strand)?;
-            Output::set(strand, out, s.as_str());
+            let mut format = crate::value::StrEmbryo::new();
+            this.debug(strand, &mut format)?;
+            format.finish(strand, out);
         }
         sym::BOOL_METHOD => {
             let b = this.op_bool(strand);

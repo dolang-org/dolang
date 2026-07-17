@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    fmt, mem,
+    mem,
     ops::ControlFlow,
     pin::Pin,
     task::{self, Poll, Waker},
@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     arg::Args,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{self, Collect, arena::Visit},
     strand::{Strand, StrandInner},
     sym::{self, Sym},
@@ -225,9 +225,9 @@ impl<'v> Protocol<'v> for Receiver<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<channel recv>").into_do(strand)
+        crate::fmt!(strand, w, "<channel recv>")
     }
 
     fn op_next<'a, 's>(
@@ -348,9 +348,9 @@ impl<'v> Protocol<'v> for Sender<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<channel send>").into_do(strand)
+        crate::fmt!(strand, w, "<channel send>")
     }
 
     fn op_put<'a, 's>(

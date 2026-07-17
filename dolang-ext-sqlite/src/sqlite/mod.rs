@@ -1,10 +1,11 @@
 use std::{
     cell::Cell,
     ffi::{CStr, CString},
-    fmt,
     path::Path,
     ptr,
 };
+
+use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
     Error, Instance, Object, Result, State, Strand, call, error::ResultExt, method, unpack,
@@ -279,9 +280,9 @@ impl<'v> Object<'v> for SqliteError {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().1).into_do(strand)
+        fmt!(strand, w, "{}", this.annex().1)
     }
 }
 
@@ -295,8 +296,8 @@ impl<'v> Object<'v> for SqliteBusy {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().1).into_do(strand)
+        fmt!(strand, w, "{}", this.annex().1)
     }
 }

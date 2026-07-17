@@ -1,4 +1,6 @@
-use std::{borrow::Cow, fmt, mem};
+use std::{borrow::Cow, mem};
+
+use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value, call,
@@ -429,9 +431,10 @@ impl<'v> Object<'v> for Captures<'v> {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", &this.borrow(strand)?.caps[0]).into_do(strand)
+        let borrow = this.borrow(strand)?;
+        fmt!(strand, w, "{}", &borrow.caps[0])
     }
 
     fn index<'a, 's>(
@@ -538,9 +541,10 @@ impl<'v> Object<'v> for Match<'v> {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.borrow(strand)?.match_.as_str()).into_do(strand)
+        let borrow = this.borrow(strand)?;
+        fmt!(strand, w, "{}", borrow.match_.as_str())
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {

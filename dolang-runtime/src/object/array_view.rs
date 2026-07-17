@@ -1,6 +1,6 @@
 //! Lazy array-like projections over native objects.
 
-use std::{fmt, marker::PhantomData, ops::ControlFlow, ptr};
+use std::{marker::PhantomData, ops::ControlFlow, ptr};
 
 use dolang_bytecode::Variadic;
 
@@ -189,10 +189,9 @@ fn debug<'v, 's>(
     module: &str,
     name: &str,
     strand: &mut Strand<'v, 's>,
-    w: &mut dyn fmt::Write,
+    w: &mut dyn crate::value::Format<'v>,
 ) -> Result<'v, 's, ()> {
-    use crate::error::ResultExt as _;
-    write!(w, "<{module}.{name}>").into_do(strand)
+    crate::fmt!(strand, w, "<{module}.{name}>")
 }
 
 fn normalize<'v, 's>(
@@ -216,7 +215,7 @@ impl<'v> Protocol<'v> for View<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         debug(borrow.glue.module(), borrow.glue.name(), strand, w)
@@ -357,7 +356,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         debug(borrow.glue.module(), borrow.glue.name(), strand, w)
