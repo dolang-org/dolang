@@ -8,6 +8,8 @@ use dolang_shell_vfs::{
     Child, Client, Command, DirEntry, Direct, FileHandle, FileType, OpenOptions, ReadDir, Server,
     Utf8TypedPath, Utf8UnixPath, Utf8WindowsPath, Vfs, typed_path,
 };
+#[cfg(windows)]
+use dolang_shell_vfs::{DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION};
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
@@ -480,6 +482,48 @@ async fn regular_file_round_trip_over_generic_stream() {
     data.clear();
     file.read_to_end(&mut data).await.unwrap();
     assert_eq!(data, b"abc");
+    file.close().await.unwrap();
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn security_descriptor_round_trip_over_generic_stream() {
+    let (client, server_task) = connected_pair().await;
+    let temp = tempdir().unwrap();
+    let path = typed_path(temp.path().join("security")).unwrap();
+    std::fs::write(path.to_path().as_str(), "hello").unwrap();
+
+    let descriptor = client
+        .sec_desc(
+            path.to_path(),
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            true,
+        )
+        .await
+        .unwrap();
+    assert!(descriptor.owner().is_some());
+    assert!(descriptor.dacl_loaded());
+    let dacl = client
+        .sec_desc(path.to_path(), DACL_SECURITY_INFORMATION, true)
+        .await
+        .unwrap();
+    if let Err(error) = client.set_sec_desc(path.to_path(), &dacl, true).await {
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    }
+
+    let mut options = client.open_options();
+    options.read(true);
+    let mut file = OpenOptions::open(&options, path.to_path()).await.unwrap();
+    assert!(
+        file.sec_desc(OWNER_SECURITY_INFORMATION)
+            .await
+            .unwrap()
+            .owner()
+            .is_some()
+    );
     file.close().await.unwrap();
 
     client.stop().await.unwrap();

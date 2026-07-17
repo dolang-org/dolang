@@ -164,6 +164,40 @@ open data.txt r do |file|
   echo "Available: $(meta.available)"
 ```
 
+### `sec_desc :owner = true :group = true :dacl = true :sacl = false`
+
+Gets selected parts of the Windows security descriptor through this file's
+existing handle.
+
+**Parameters:**
+
+| Name    | Type                     | Description                |
+| ------- | ------------------------ | -------------------------- |
+| `owner` | [`bool`](../std/bool.md) | Load the owner SID         |
+| `group` | [`bool`](../std/bool.md) | Load the primary group SID |
+| `dacl`  | [`bool`](../std/bool.md) | Load the discretionary ACL |
+| `sacl`  | [`bool`](../std/bool.md) | Load the system ACL        |
+
+**Returns:** [`SecDesc`](../security/secdesc.md)
+
+The operation raises a permission error if the file was opened without the
+necessary Windows access rights. Other platforms raise `UnsupportedError`.
+
+### `set_sec_desc desc`
+
+Applies the components selected by a security descriptor's `mask` through
+this file's existing handle.
+
+**Parameters:**
+
+| Name   | Type                                | Description                  |
+| ------ | ----------------------------------- | ---------------------------- |
+| `desc` | [`SecDesc`](../security/secdesc.md) | Security descriptor to apply |
+
+The operation raises a permission error if the file was opened without the
+necessary Windows access rights. Windows may normalize the resulting
+descriptor. Other platforms raise `UnsupportedError`.
+
 ### `xattrs :namespace?`
 
 Lists extended attributes for this file.

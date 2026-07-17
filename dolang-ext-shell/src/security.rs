@@ -13,11 +13,12 @@ use dolang::{
     },
 };
 use dolang_shell_vfs::{
-    OperatingSystemFamily, SecurityInfo, Sid as VfsSid, SidName as VfsSidName, SidNameUse,
-    TokenGroup as VfsTokenGroup, UnixSecurityInfo, Vfs as _, WindowsTokenInfo,
+    OperatingSystemFamily, SecDesc as VfsSecDesc, SecurityInfo, Sid as VfsSid,
+    SidName as VfsSidName, SidNameUse, TokenGroup as VfsTokenGroup, UnixSecurityInfo, Vfs as _,
+    WindowsTokenInfo,
 };
 
-use crate::{error, global::Global};
+use crate::{error, global::Global, util};
 
 const SE_GROUP_MANDATORY: u32 = 0x0000_0001;
 const SE_GROUP_ENABLED_BY_DEFAULT: u32 = 0x0000_0002;
@@ -188,6 +189,256 @@ impl<'v> Object<'v> for Sid {
         w: &mut dyn fmt::Write,
     ) -> Result<'v, 's, ()> {
         write!(w, "<security.Sid {}>", this.annex().as_ref()).into_do(strand)
+    }
+}
+
+pub(crate) struct SecDesc;
+
+pub(crate) fn create_sec_desc<'v>(
+    strand: &mut Strand<'v, '_>,
+    global: State<'v, Global<'v>>,
+    sec_desc: VfsSecDesc,
+    out: &mut Slot<'v, '_>,
+) {
+    global
+        .types
+        .sec_desc
+        .create_with_annex(strand, SecDesc, sec_desc, out);
+}
+
+pub(crate) fn sec_desc_from_value<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    value: &Value<'v>,
+) -> Result<'v, 's, VfsSecDesc> {
+    global
+        .types
+        .sec_desc
+        .downcast(value)
+        .map(|value| value.annex().clone())
+        .ok_or_else(|| Error::type_error(strand, "expected security.SecDesc"))
+}
+
+impl<'v> Object<'v> for SecDesc {
+    const NAME: &'v str = "SecDesc";
+    const MODULE: &'v str = "security";
+    type Annex = VfsSecDesc;
+    type Type = ();
+    type TypeAnnex = ();
+
+    async fn new<'a, 's>(
+        this: Type<'v, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let ([value], []) = unpack!(strand, args, 1, 0)?;
+        let Some(value) = value.as_bin(strand) else {
+            return Err(Error::type_error(strand, "SecDesc: expected bin"));
+        };
+        let bytes = value.to_vec();
+        let descriptor = VfsSecDesc::from_bytes(&bytes)
+            .map_err(|error| Error::value(strand, error.to_string()))?;
+        this.create_with_annex(strand, SecDesc, descriptor, out);
+        Ok(())
+    }
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        fn control_field<'v, 's>(
+            _this: Instance<'v, '_, SecDesc>,
+            strand: &mut Strand<'v, 's>,
+            out: impl Output<'v>,
+            field: dolang::runtime::Sym<'v, '_>,
+            loaded: bool,
+            value: bool,
+        ) -> Result<'v, 's, ()> {
+            if !loaded {
+                return Err(Error::field(strand, field));
+            }
+            Output::set(strand, out, value);
+            Ok(())
+        }
+
+        let rm_control = builder.sym("rm_control");
+        let owner = builder.sym("owner");
+        let group = builder.sym("group");
+        let owner_defaulted = builder.sym("owner_defaulted");
+        let group_defaulted = builder.sym("group_defaulted");
+        let dacl_present = builder.sym("dacl_present");
+        let dacl_defaulted = builder.sym("dacl_defaulted");
+        let dacl_auto_inherit_required = builder.sym("dacl_auto_inherit_required");
+        let dacl_auto_inherited = builder.sym("dacl_auto_inherited");
+        let dacl_protected = builder.sym("dacl_protected");
+        let sacl_present = builder.sym("sacl_present");
+        let sacl_defaulted = builder.sym("sacl_defaulted");
+        let sacl_auto_inherit_required = builder.sym("sacl_auto_inherit_required");
+        let sacl_auto_inherited = builder.sym("sacl_auto_inherited");
+        let sacl_protected = builder.sym("sacl_protected");
+
+        builder
+            .get("revision", |this, strand, out| {
+                Output::set(strand, out, this.annex().revision());
+                Ok(())
+            })
+            .get("control", |this, strand, out| {
+                Output::set(strand, out, this.annex().control());
+                Ok(())
+            })
+            .get("mask", |this, strand, out| {
+                Output::set(strand, out, this.annex().mask());
+                Ok(())
+            })
+            .get("rm_control_valid", |this, strand, out| {
+                Output::set(strand, out, this.annex().rm_control_valid());
+                Ok(())
+            })
+            .get("rm_control", move |this, strand, out| {
+                util::option_field(strand, this.annex().rm_control(), rm_control, out)
+            })
+            .get("owner", move |this, strand, mut out| {
+                let descriptor = this.annex();
+                let Some(value) = descriptor.owner().filter(|_| descriptor.owner_loaded()) else {
+                    return Err(Error::field(strand, owner));
+                };
+                let global = strand.state::<Global<'v>>();
+                create_sid(strand, global, value.clone(), &mut out);
+                Ok(())
+            })
+            .get("group", move |this, strand, mut out| {
+                let descriptor = this.annex();
+                let Some(value) = descriptor.group().filter(|_| descriptor.group_loaded()) else {
+                    return Err(Error::field(strand, group));
+                };
+                let global = strand.state::<Global<'v>>();
+                create_sid(strand, global, value.clone(), &mut out);
+                Ok(())
+            })
+            .get("owner_defaulted", move |this, strand, out| {
+                control_field(
+                    this,
+                    strand,
+                    out,
+                    owner_defaulted,
+                    this.annex().owner_loaded(),
+                    this.annex().owner_defaulted(),
+                )
+            })
+            .get("group_defaulted", move |this, strand, out| {
+                control_field(
+                    this,
+                    strand,
+                    out,
+                    group_defaulted,
+                    this.annex().group_loaded(),
+                    this.annex().group_defaulted(),
+                )
+            })
+            .get("dacl_present", move |this, strand, out| {
+                control_field(
+                    this,
+                    strand,
+                    out,
+                    dacl_present,
+                    this.annex().dacl_loaded(),
+                    this.annex().dacl_present(),
+                )
+            })
+            .get("dacl_defaulted", move |this, strand, out| {
+                control_field(
+                    this,
+                    strand,
+                    out,
+                    dacl_defaulted,
+                    this.annex().dacl_loaded(),
+                    this.annex().dacl_defaulted(),
+                )
+            })
+            .get("dacl_auto_inherit_required", move |this, strand, out| {
+                control_field(
+                    this,
+                    strand,
+                    out,
+                    dacl_auto_inherit_required,
+                    this.annex().dacl_loaded(),
+                    this.annex().dacl_auto_inherit_required(),
+                )
+            })
+            .get("dacl_auto_inherited", move |this, strand, out| {
+                control_field(
+                    this,
+                    strand,
+                    out,
+                    dacl_auto_inherited,
+                    this.annex().dacl_loaded(),
+                    this.annex().dacl_auto_inherited(),
+                )
+            })
+            .get("dacl_protected", move |this, strand, out| {
+                control_field(
+                    this,
+                    strand,
+                    out,
+                    dacl_protected,
+                    this.annex().dacl_loaded(),
+                    this.annex().dacl_protected(),
+                )
+            })
+            .get("sacl_present", move |this, strand, out| {
+                control_field(
+                    this,
+                    strand,
+                    out,
+                    sacl_present,
+                    this.annex().sacl_loaded(),
+                    this.annex().sacl_present(),
+                )
+            })
+            .get("sacl_defaulted", move |this, strand, out| {
+                control_field(
+                    this,
+                    strand,
+                    out,
+                    sacl_defaulted,
+                    this.annex().sacl_loaded(),
+                    this.annex().sacl_defaulted(),
+                )
+            })
+            .get("sacl_auto_inherit_required", move |this, strand, out| {
+                control_field(
+                    this,
+                    strand,
+                    out,
+                    sacl_auto_inherit_required,
+                    this.annex().sacl_loaded(),
+                    this.annex().sacl_auto_inherit_required(),
+                )
+            })
+            .get("sacl_auto_inherited", move |this, strand, out| {
+                control_field(
+                    this,
+                    strand,
+                    out,
+                    sacl_auto_inherited,
+                    this.annex().sacl_loaded(),
+                    this.annex().sacl_auto_inherited(),
+                )
+            })
+            .get("sacl_protected", move |this, strand, out| {
+                control_field(
+                    this,
+                    strand,
+                    out,
+                    sacl_protected,
+                    this.annex().sacl_loaded(),
+                    this.annex().sacl_protected(),
+                )
+            })
+            .method("to_bin", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let bytes = this.annex().to_bytes();
+                Output::set(strand, out, bytes.as_slice());
+                Ok(())
+            })
     }
 }
 
@@ -616,6 +867,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             Ok(())
         })
         .value("UnixInfo", global.types.unix_info)
+        .value("SecDesc", global.types.sec_desc)
         .value("Sid", global.types.sid)
         .value("SidName", global.types.sid_name)
         .value("TokenGroup", global.types.token_group)

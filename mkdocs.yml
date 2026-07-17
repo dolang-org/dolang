@@ -218,6 +218,7 @@ nav:
     - sudo: api/sudo.md
     - security:
       - api/security/index.md
+      - api/security/secdesc.md
       - api/security/sid.md
       - api/security/sidname.md
       - api/security/tokengroup.md

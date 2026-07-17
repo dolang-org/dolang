@@ -286,6 +286,39 @@ let meta = path.fs_metadata()
 echo "Capacity: $(meta.capacity)"
 ```
 
+### `sec_desc :owner = true :group = true :dacl = true :sacl = false :follow = true`
+
+Gets selected parts of the Windows security descriptor.
+
+**Parameters:**
+
+| Name     | Type                     | Description                         |
+| -------- | ------------------------ | ----------------------------------- |
+| `owner`  | [`bool`](../std/bool.md) | Load the owner SID                  |
+| `group`  | [`bool`](../std/bool.md) | Load the primary group SID          |
+| `dacl`   | [`bool`](../std/bool.md) | Load the discretionary ACL          |
+| `sacl`   | [`bool`](../std/bool.md) | Load the system ACL                 |
+| `follow` | [`bool`](../std/bool.md) | Follow the final symbolic link      |
+
+**Returns:** [`SecDesc`](../security/secdesc.md)
+
+SACL access requires `SeSecurityPrivilege`. Other platforms raise
+`UnsupportedError`.
+
+### `set_sec_desc desc :follow = true`
+
+Applies the components selected by a security descriptor's `mask`.
+
+**Parameters:**
+
+| Name     | Type                                      | Description                    |
+| -------- | ----------------------------------------- | ------------------------------ |
+| `desc`   | [`SecDesc`](../security/secdesc.md)       | Security descriptor to apply   |
+| `follow` | [`bool`](../std/bool.md)                  | Follow the final symbolic link |
+
+Windows may normalize the resulting descriptor when associating it with the
+filesystem object. Other platforms raise `UnsupportedError`.
+
 ### `attrs :follow = true`
 
 Gets filesystem attributes for this path.

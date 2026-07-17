@@ -541,6 +541,10 @@ impl<'v> Object<'v> for File<'v> {
         let end_sym = builder.sym("end");
         let namespace = builder.sym("namespace");
         let any = builder.sym("ANY");
+        let owner = builder.sym("owner");
+        let group = builder.sym("group");
+        let dacl = builder.sym("dacl");
+        let sacl = builder.sym("sacl");
         builder
             .supertype(TypeObject::Iter)
             .supertype(TypeObject::Sink)
@@ -608,6 +612,41 @@ impl<'v> Object<'v> for File<'v> {
                 this.borrow_mut(strand)?
                     .fs_metadata(strand, this.annex().global, out)
                     .await
+            })
+            .method("sec_desc", async move |this, strand, args, mut out| {
+                let ([], [owner, group, dacl, sacl]) = unpack!(
+                    strand,
+                    args,
+                    0,
+                    0,
+                    owner = None,
+                    group = None,
+                    dacl = None,
+                    sacl = None
+                )?;
+                let mask = super::sec_desc_mask(strand, owner, group, dacl, sacl)?;
+                let global = this.annex().global;
+                let descriptor = {
+                    let mut borrow = this.borrow_mut(strand)?;
+                    let file = borrow
+                        .file
+                        .as_mut()
+                        .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+                    file.sec_desc(mask).await.into_sys(strand)?
+                };
+                crate::security::create_sec_desc(strand, global, descriptor, &mut out);
+                Ok(())
+            })
+            .method("set_sec_desc", async move |this, strand, args, _out| {
+                let ([descriptor], []) = unpack!(strand, args, 1, 0)?;
+                let global = this.annex().global;
+                let descriptor = crate::security::sec_desc_from_value(strand, global, &descriptor)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                let file = borrow
+                    .file
+                    .as_mut()
+                    .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+                file.set_sec_desc(&descriptor).await.into_sys(strand)
             })
             .method("xattrs", async move |this, strand, args, out| {
                 let ([], [namespace]) = unpack!(strand, args, 0, 0, namespace = None)?;

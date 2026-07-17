@@ -130,5 +130,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .value("PermissionDeniedError", global.types.permission_denied)
         .value("AlreadyExistsError", global.types.already_exists)
         .value("TimedOutError", global.types.timed_out)
+        .value("UnsupportedError", global.types.unsupported)
         .commit();
 }

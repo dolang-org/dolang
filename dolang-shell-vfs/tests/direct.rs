@@ -10,6 +10,10 @@ use dolang_shell_vfs::{
     Child, Command, Direct, FileHandle, FileType, OpenOptions, Utf8TypedPath, Utf8UnixPath,
     Utf8WindowsPath, Vfs,
 };
+#[cfg(windows)]
+use dolang_shell_vfs::{
+    DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+};
 use tempfile::tempdir;
 
 fn typed(path: &Path) -> Utf8TypedPath<'_> {
@@ -187,6 +191,59 @@ async fn direct_file_fs_metadata_basic() {
     assert!(metadata.capacity > 0);
     assert!(metadata.free > 0);
     assert!(metadata.available > 0);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn direct_security_descriptor_path_and_file() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("security.txt");
+    tokio::fs::write(&path, "hello").await.unwrap();
+
+    let mask = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+    let descriptor = direct.sec_desc(typed(&path), mask, true).await.unwrap();
+    assert_eq!(descriptor.mask(), mask);
+    assert!(descriptor.owner_loaded());
+    assert!(descriptor.owner().is_some());
+    assert!(descriptor.group_loaded());
+    assert!(descriptor.dacl_loaded());
+
+    let dacl = direct
+        .sec_desc(typed(&path), DACL_SECURITY_INFORMATION, true)
+        .await
+        .unwrap();
+    match direct.set_sec_desc(typed(&path), &dacl, true).await {
+        Ok(()) => {
+            let round_trip = direct
+                .sec_desc(typed(&path), DACL_SECURITY_INFORMATION, true)
+                .await
+                .unwrap();
+            assert_eq!(round_trip.dacl(), dacl.dacl());
+        }
+        Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied),
+    }
+
+    let mut file = direct
+        .open_options()
+        .read(true)
+        .open(typed(&path))
+        .await
+        .unwrap();
+    let file_descriptor = file.sec_desc(OWNER_SECURITY_INFORMATION).await.unwrap();
+    assert!(file_descriptor.owner().is_some());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn direct_security_descriptors_are_unsupported() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("security.txt");
+    tokio::fs::write(&path, "hello").await.unwrap();
+
+    let error = direct.sec_desc(typed(&path), 0, true).await.unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
 }
 
 #[cfg(unix)]

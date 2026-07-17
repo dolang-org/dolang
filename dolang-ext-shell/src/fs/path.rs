@@ -491,6 +491,10 @@ macro_rules! impl_concrete_path {
                 let ignore = builder.sym("ignore");
                 let max_depth = builder.sym("max_depth");
                 let follow = builder.sym("follow");
+                let owner = builder.sym("owner");
+                let group = builder.sym("group");
+                let dacl = builder.sym("dacl");
+                let sacl = builder.sym("sacl");
                 let namespace = builder.sym("namespace");
                 let modified = builder.sym("modified");
                 let accessed = builder.sym("accessed");
@@ -581,6 +585,52 @@ macro_rules! impl_concrete_path {
                         };
                         let annex = this.annex();
                         super::fs_metadata(strand, annex.global, annex.as_path(), follow, out).await
+                    })
+                    .method("sec_desc", async move |this, strand, args, out| {
+                        let ([], [owner, group, dacl, sacl, follow]) = unpack!(
+                            strand,
+                            args,
+                            0,
+                            0,
+                            owner = None,
+                            group = None,
+                            dacl = None,
+                            sacl = None,
+                            follow = None
+                        )?;
+                        let mask = super::sec_desc_mask(strand, owner, group, dacl, sacl)?;
+                        let follow = match follow {
+                            Some(value) => value.as_bool(strand).ok_or_else(|| {
+                                Error::type_error(strand, "follow: expected bool")
+                            })?,
+                            None => true,
+                        };
+                        let annex = this.annex();
+                        super::sec_desc(strand, annex.global, annex.as_path(), mask, follow, out)
+                            .await
+                    })
+                    .method("set_sec_desc", async move |this, strand, args, _out| {
+                        let ([descriptor], [follow]) = unpack!(strand, args, 1, 0, follow = None)?;
+                        let annex = this.annex();
+                        let descriptor = crate::security::sec_desc_from_value(
+                            strand,
+                            annex.global,
+                            &descriptor,
+                        )?;
+                        let follow = match follow {
+                            Some(value) => value.as_bool(strand).ok_or_else(|| {
+                                Error::type_error(strand, "follow: expected bool")
+                            })?,
+                            None => true,
+                        };
+                        super::set_sec_desc(
+                            strand,
+                            annex.global,
+                            annex.as_path(),
+                            &descriptor,
+                            follow,
+                        )
+                        .await
                     })
                     .method("attrs", async move |this, strand, args, out| {
                         let ([], [follow]) = unpack!(strand, args, 0, 0, follow = None)?;

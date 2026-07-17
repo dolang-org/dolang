@@ -20,9 +20,9 @@ use wax::{
 
 use crate::{
     Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions,
-    ProcessStatus, Query, ReadDir, Sid, SidName, StdioRecv, StdioSend, StreamEntry, Utf8TypedPath,
-    Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry, XattrNamespace, metadata_from_std,
-    native_path, typed_path,
+    ProcessStatus, Query, ReadDir, SecDesc, Sid, SidName, StdioRecv, StdioSend, StreamEntry,
+    Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry, XattrNamespace,
+    metadata_from_std, native_path, typed_path,
 };
 
 use std::{
@@ -225,6 +225,23 @@ impl FileHandle for DirectFile {
         tokio::task::spawn_blocking(move || Direct::fs_metadata_from_file(&file))
             .await
             .unwrap_or_else(|_| Err(io::Error::other("failed to join fs metadata query task")))
+            .map_err(Into::into)
+    }
+
+    async fn sec_desc(&mut self, mask: u32) -> crate::Result<SecDesc> {
+        let file = self.inner.try_clone().await?;
+        tokio::task::spawn_blocking(move || Direct::sec_desc_from_file(&file, mask))
+            .await
+            .unwrap_or_else(|_| Err(io::Error::other("failed to join security descriptor task")))
+            .map_err(Into::into)
+    }
+
+    async fn set_sec_desc(&mut self, sec_desc: &SecDesc) -> crate::Result<()> {
+        let file = self.inner.try_clone().await?;
+        let sec_desc = sec_desc.clone();
+        tokio::task::spawn_blocking(move || Direct::set_sec_desc_file(&file, &sec_desc))
+            .await
+            .unwrap_or_else(|_| Err(io::Error::other("failed to join security descriptor task")))
             .map_err(Into::into)
     }
 
@@ -964,6 +981,33 @@ impl Vfs for Direct {
         tokio::task::spawn_blocking(move || Self::fs_metadata_from_path(&path, follow))
             .await
             .unwrap_or_else(|_| Err(io::Error::other("failed to join fs metadata query task")))
+            .map_err(Into::into)
+    }
+
+    async fn sec_desc(
+        &self,
+        path: Utf8TypedPath<'_>,
+        mask: u32,
+        follow: bool,
+    ) -> crate::Result<SecDesc> {
+        let path = native_path(path)?;
+        tokio::task::spawn_blocking(move || Self::sec_desc_from_path(&path, mask, follow))
+            .await
+            .unwrap_or_else(|_| Err(io::Error::other("failed to join security descriptor task")))
+            .map_err(Into::into)
+    }
+
+    async fn set_sec_desc(
+        &self,
+        path: Utf8TypedPath<'_>,
+        sec_desc: &SecDesc,
+        follow: bool,
+    ) -> crate::Result<()> {
+        let path = native_path(path)?;
+        let sec_desc = sec_desc.clone();
+        tokio::task::spawn_blocking(move || Self::set_sec_desc_path(&path, &sec_desc, follow))
+            .await
+            .unwrap_or_else(|_| Err(io::Error::other("failed to join security descriptor task")))
             .map_err(Into::into)
     }
 

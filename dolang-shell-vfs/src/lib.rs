@@ -21,6 +21,7 @@ mod error;
 mod pipe;
 mod protocol;
 mod read_dir;
+mod sec_desc;
 mod server;
 #[cfg(unix)]
 mod service;
@@ -29,6 +30,10 @@ mod sid;
 mod windows;
 
 pub use error::{Error, OperatingSystem, Result, SystemError};
+pub use sec_desc::{
+    ALL_SECURITY_INFORMATION, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
+    OWNER_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION, SecDesc, SecDescError,
+};
 pub use sid::{Sid, SidError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1009,6 +1014,8 @@ pub trait FileHandle: AsyncRead + AsyncWrite + AsyncSeek + Unpin + Sized {
     async fn set_len(&mut self, size: u64) -> Result<()>;
     async fn metadata(&mut self) -> Result<Metadata>;
     async fn fs_metadata(&mut self) -> Result<FsMetadata>;
+    async fn sec_desc(&mut self, mask: u32) -> Result<SecDesc>;
+    async fn set_sec_desc(&mut self, sec_desc: &SecDesc) -> Result<()>;
     async fn xattrs(&mut self, namespace: XattrNamespace<'_>) -> Result<Vec<XattrEntry>>;
     async fn xattr(&mut self, name: &str, namespace: Option<&str>) -> Result<Vec<u8>>;
     async fn streams(&mut self) -> Result<Vec<StreamEntry>>;
@@ -1121,6 +1128,13 @@ pub trait Vfs {
     async fn remove(&self, path: Utf8TypedPath<'_>, all: bool, ignore: bool) -> Result<()>;
     async fn metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata>;
     async fn fs_metadata(&self, path: Utf8TypedPath<'_>, follow: bool) -> Result<FsMetadata>;
+    async fn sec_desc(&self, path: Utf8TypedPath<'_>, mask: u32, follow: bool) -> Result<SecDesc>;
+    async fn set_sec_desc(
+        &self,
+        path: Utf8TypedPath<'_>,
+        sec_desc: &SecDesc,
+        follow: bool,
+    ) -> Result<()>;
     async fn create_dir(&self, path: Utf8TypedPath<'_>, all: bool) -> Result<()>;
     async fn remove_dir(&self, path: Utf8TypedPath<'_>, all: bool, ignore: bool) -> Result<()>;
     async fn copy(&self, from: Utf8TypedPath<'_>, to: Utf8TypedPath<'_>, all: bool) -> Result<()>;
@@ -1275,6 +1289,14 @@ impl FileHandle for AnyFile {
 
     async fn fs_metadata(&mut self) -> crate::Result<FsMetadata> {
         match_file!(self, file => file.fs_metadata().await)
+    }
+
+    async fn sec_desc(&mut self, mask: u32) -> crate::Result<SecDesc> {
+        match_file!(self, file => file.sec_desc(mask).await)
+    }
+
+    async fn set_sec_desc(&mut self, sec_desc: &SecDesc) -> crate::Result<()> {
+        match_file!(self, file => file.set_sec_desc(sec_desc).await)
     }
 
     async fn xattrs(&mut self, namespace: XattrNamespace<'_>) -> crate::Result<Vec<XattrEntry>> {
@@ -1862,6 +1884,30 @@ impl Vfs for AnyVfs {
         match self {
             Self::Client(client) => client.fs_metadata(path, follow).await,
             Self::Direct(direct) => direct.fs_metadata(path, follow).await,
+        }
+    }
+
+    async fn sec_desc(
+        &self,
+        path: Utf8TypedPath<'_>,
+        mask: u32,
+        follow: bool,
+    ) -> crate::Result<SecDesc> {
+        match self {
+            Self::Client(client) => client.sec_desc(path, mask, follow).await,
+            Self::Direct(direct) => direct.sec_desc(path, mask, follow).await,
+        }
+    }
+
+    async fn set_sec_desc(
+        &self,
+        path: Utf8TypedPath<'_>,
+        sec_desc: &SecDesc,
+        follow: bool,
+    ) -> crate::Result<()> {
+        match self {
+            Self::Client(client) => client.set_sec_desc(path, sec_desc, follow).await,
+            Self::Direct(direct) => direct.set_sec_desc(path, sec_desc, follow).await,
         }
     }
 
