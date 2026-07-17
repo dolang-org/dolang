@@ -144,7 +144,7 @@ fn run(config: Arc<dyn Config>) -> i32 {
                     let res =
                         Redirect::new(strand)
                             .input(stdin)
-                            .output(stdout)
+                            .output(&stdout)
                             .enter(async |strand| {
                                 dolang_ext_shell::set_args(strand, cli.args.drain(..)).await?;
                                 dolang_ext_shell::set_program(
@@ -193,6 +193,16 @@ fn run(config: Arc<dyn Config>) -> i32 {
                                 _ = tokio::signal::ctrl_c(), if !ct.is_canceled() => { ct.cancel() }
                             }
                         }
+                    };
+
+                    // Tokio stdout/stderr handles can retain buffered output
+                    // when the runtime shuts down. Flush the exact stdout sink
+                    // installed above and the shell extension's stderr writer
+                    // while both are still alive.
+                    let flush = dolang_ext_shell::flush(strand, &stdout).await;
+                    let res = match (res, flush) {
+                        (result @ Err(_), _) => result,
+                        (Ok(()), flush) => flush,
                     };
 
                     match res {

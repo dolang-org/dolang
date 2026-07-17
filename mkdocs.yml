@@ -147,6 +147,10 @@ nav:
     - shell:
       - api/shell/index.md
       - api/shell/vfs.md
+    - term:
+      - api/term/index.md
+      - api/term/style.md
+      - api/term/text.md
     - ssh: api/ssh.md
     - shlex: api/shlex.md
     - sqlite:

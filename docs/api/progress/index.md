@@ -1,8 +1,8 @@
 # progress
 
 The `progress` module provides terminal progress bars and spinners. It
-coordinates output so that `echo`, `print`, and child process output do not
-clobber progress indicators.
+coordinates output so that `term.echo`, `term.print`, and child process output
+do not clobber progress indicators.
 
 Progress state is implicit: `progress.with` activates a progress context for the
 current scope, and `progress.show` creates widgets at the appropriate
@@ -46,21 +46,21 @@ properties.
 
 **Properties** (all optional):
 
-| Property | Type                   | Description                                       |
-| -------- | ---------------------- | ------------------------------------------------- |
-| `width`  | [`int`](../std/int.md) | Character width (bar, message, icon only)         |
-| `fg`     | [`str`](../std/str.md) | Foreground color name                             |
-| `bg`     | [`str`](../std/str.md) | Background color name                             |
-| `attrs`  | array of `str`         | Text attributes                                   |
-| `alt`    | dict                   | Alt style for unfilled bar portion (bar only)     |
+| Property | Type                                           | Description                                   |
+| -------- | ---------------------------------------------- | --------------------------------------------- |
+| `width`  | [`int`](../std/int.md)                         | Character width (bar, message, icon only)     |
+| `fg`     | [`sym`](../std/sym.md)                         | Foreground color                              |
+| `bg`     | [`sym`](../std/sym.md)                         | Background color                              |
+| `attrs`  | array of `str`                                 | Text attributes                               |
+| `alt`    | dict                                           | Alt style for unfilled bar portion (bar only) |
 
 The `alt` sub-dict accepts the same `fg`, `bg`, and `attrs` properties. The
-default alt style for `bar` is `fg: "blue"`.
+default alt style for `bar` is `fg: :BLUE:`.
 
-**Color names:** `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`,
-`white`. Append `:bright` for bright variants (e.g. `cyan:bright`,
-`green:bright`). Use `bright` alone to brighten the default color without
-changing it.
+**Color names:** `:BLACK:`, `:RED:`, `:GREEN:`, `:YELLOW:`, `:BLUE:`,
+`:MAGENTA:`, `:CYAN:`, and `:WHITE:`. Prefix the name with `BRIGHT_` for bright
+variants, such as `:BRIGHT_CYAN:`. Use `:BRIGHT:` alone to brighten the default
+color.
 
 **Attributes:** `bold`, `dim`, `italic`, `underlined`, `blink`, `reverse`,
 `hidden`, `strikethrough`
@@ -82,17 +82,17 @@ progress.with
   style:
     bar:
       width: 30
-      fg: green
+      fg: :GREEN:
       alt:
-        fg: black
+        fg: :BLACK:
         attrs:
           - dim
     message:
-      fg: white
+      fg: :WHITE:
       attrs:
         - bold
     position:
-      fg: yellow
+      fg: :YELLOW:
   do progress.show message: "working" do |w|
     # ...
 ```

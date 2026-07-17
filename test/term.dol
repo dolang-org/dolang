@@ -1,0 +1,79 @@
+import
+  shell
+  term
+  test:
+    - assert_eq
+    - assert_throws
+    - test
+  std:
+    - TypeError
+    - ValueError
+
+let ESC = str b"\x1b"
+
+#[test]
+def text_string_coercion()
+  let text = term.style("red", fg: :RED:, bold: true)
+  assert_eq (type text) $term.Text
+  assert_eq (str text) "$ESC[1;31mred$ESC[0m"
+  assert_eq (str $ term.style :VALUE:) VALUE
+
+  assert_eq (str $ term.style("indexed", fg: 123)) "$ESC[38;5;123mindexed$ESC[0m"
+  assert_eq (str $ term.style("rgb", fg: [1, 2, 3])) "$ESC[38;2;1;2;3mrgb$ESC[0m"
+  assert_eq (
+    str $ term.style("rgb", bg: tuple([4, 5, 6]))
+  ) "$ESC[48;2;4;5;6mrgb$ESC[0m"
+
+  assert_throws $ValueError do term.style fg: 256 text
+  assert_throws $ValueError do term.style fg: [1, 2] text
+  assert_throws $TypeError do term.style fg: [1, "x", 3] text
+
+#[test]
+def reusable_styles()
+  let warning = term.style fg: :YELLOW: bold: true
+  assert_eq (type warning) $term.Style
+  assert_eq (str $ warning("Warning")) "$ESC[1;33mWarning$ESC[0m"
+
+  let urgent = warning fg: :RED: underline: true
+  assert_eq (type urgent) $term.Style
+  assert_eq (str $ urgent("Failure")) "$ESC[1;4;31mFailure$ESC[0m"
+
+  let ambient = urgent fg: :INHERIT: bold: :INHERIT:
+  assert_eq (str $ ambient("Notice")) "$ESC[4mNotice$ESC[0m"
+
+  let plain = ambient underline: :INHERIT:
+  assert_eq (str $ plain("plain")) plain
+  assert_eq (str $ term.style("text", fg: :INHERIT:)) text
+
+  assert_throws $ValueError do warning bold: false
+
+#[test]
+def nested_styles()
+  let inner = term.preformat("$ESC[31minner$ESC[0m after")
+  let text = term.style("outer ", inner, " outer", bold: true)
+  assert_eq (
+    str text
+  ) "$ESC[1mouter $ESC[31minner$ESC[0m$ESC[1m after outer$ESC[0m"
+
+  assert_throws $ValueError do term.style bold: false text
+  assert_throws $TypeError do term.style fg: RED text
+
+#[test]
+def preformatted_text()
+  let text = term.preformat("$ESC[38;5;123mindexed$ESC[0m plain")
+  assert_eq (type text) $term.Text
+  assert_eq (str text) "$ESC[38;5;123mindexed$ESC[0m plain"
+
+#[test]
+def text_indent()
+  let text = term.preformat("$ESC[31mred\nblue$ESC[0m\n")
+  let indented = text.indent(2)
+  assert_eq (type indented) $term.Text
+  assert_eq (str indented) "  $ESC[31mred\n  blue$ESC[0m\n"
+  assert_eq (text.indent(0)) $text
+
+  let blank = term.preformat("a\n\nb").indent(2)
+  assert_eq (str blank) "  a\n  \n  b"
+
+  assert_throws $ValueError do text.indent(-1)
+  assert_throws $TypeError do text.indent("2")

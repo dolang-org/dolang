@@ -158,6 +158,10 @@ impl Stdout {
     pub(crate) fn new() -> Self {
         Self(io::stdout())
     }
+
+    pub(crate) async fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush().await
+    }
 }
 
 impl Default for Stdout {
@@ -204,8 +208,7 @@ impl<'v> Object<'v> for Stdout {
             writer
                 .write_all(b"\n")
                 .await
-                .map_err(|e| e.into_sys(strand))?;
-            writer.flush().await.map_err(|e| e.into_sys(strand))
+                .map_err(|e| e.into_sys(strand))
         } else {
             this.borrow_mut(strand)?
                 .0
@@ -216,7 +219,7 @@ impl<'v> Object<'v> for Stdout {
     }
 }
 
-/// Sink that writes to the current terminal writer (echo/print destination).
+/// Sink that writes to the current terminal writer (`term.echo`/`term.print` destination).
 ///
 /// When terminal output is redirected via `with_terminal`, this writes to the
 /// redirect target. Otherwise it writes to stderr.
@@ -263,8 +266,7 @@ impl<'v> Object<'v> for Stderr {
         writer
             .write_all(b"\n")
             .await
-            .map_err(|e| e.into_sys(strand))?;
-        writer.flush().await.map_err(|e| e.into_sys(strand))
+            .map_err(|e| e.into_sys(strand))
     }
 }
 
@@ -564,7 +566,7 @@ pub(crate) fn configure_compiler<'a>(compiler: &mut Compiler<'a>) {
         .prelude()
         .import_module("shell")
         .import_items("shell")
-        .items(["echo", "exit", "env", "cd", "print"])
+        .items(["exit", "env", "cd"])
         .commit();
 }
 
@@ -587,63 +589,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 Err(Error::abort(strand, Exit { code }))
             },
         )
-        .function("echo", async move |strand, args, _| {
-            // Collect formatted args before taking the writer, so to_arg
-            // errors don't require restoring the writer.
-            let mut parts: Vec<(Option<String>, String)> = Vec::new();
-            for arg in args {
-                match arg {
-                    Arg::Pos(value) => {
-                        parts.push((None, value.to_arg(strand)?));
-                    }
-                    Arg::Key(sym, value) => {
-                        let key = sym.as_str(strand).to_owned();
-                        let arg = value.to_arg(strand)?;
-                        parts.push((Some(key), arg));
-                    }
-                }
-            }
-            let mut writer = global.terminal.writer.lock().await;
-            let mut space = false;
-            for (key, arg) in &parts {
-                if space {
-                    writer
-                        .write_all(b" ")
-                        .await
-                        .map_err(|e| e.into_sys(strand))?;
-                }
-                space = true;
-                if let Some(key) = key {
-                    writer
-                        .write_all(key.as_bytes())
-                        .await
-                        .map_err(|e| e.into_sys(strand))?;
-                    writer
-                        .write_all(b": ")
-                        .await
-                        .map_err(|e| e.into_sys(strand))?;
-                }
-                writer
-                    .write_all(arg.as_bytes())
-                    .await
-                    .map_err(|e| e.into_sys(strand))?;
-            }
-            writer
-                .write_all(b"\n")
-                .await
-                .map_err(|e| e.into_sys(strand))?;
-            writer.flush().await.map_err(|e| e.into_sys(strand))
-        })
-        .function("print", async move |strand, args, _| {
-            let ([arg], []) = unpack!(strand, args, 1, 0)?;
-            let arg = arg.to_arg(strand)?;
-            let mut writer = global.terminal.writer.lock().await;
-            writer
-                .write_all(arg.as_bytes())
-                .await
-                .map_err(|e| e.into_sys(strand))?;
-            writer.flush().await.map_err(|e| e.into_sys(strand))
-        })
         .get("args", move |strand, mut out| {
             Output::set(strand, &mut out, Empty::Array);
             let array = out.as_array(strand).unwrap();

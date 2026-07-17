@@ -36,6 +36,7 @@ use crate::{
     security::{SecDesc, Sid, SidName, TokenGroup, TokenInfo, UnixInfo},
     shell::{Stderr, Stdin, Stdout, Vfs},
     sys::{CpuInfo, OsInfo},
+    term::{StyleObject, Text},
     time::{DateTime, Duration},
 };
 
@@ -78,6 +79,8 @@ pub(crate) struct Types<'v> {
     pub(crate) pipe_receiver: Type<'v, PipeReceiver>,
     pub(crate) pipe_sender: Type<'v, PipeSender>,
     pub(crate) vfs: Type<'v, Vfs>,
+    pub(crate) text: Type<'v, Text>,
+    pub(crate) style: Type<'v, StyleObject>,
 }
 
 pub(crate) struct Syms<'v> {
@@ -125,6 +128,8 @@ pub(crate) struct Terminal {
     /// Whether stdout was a terminal at startup (cached to avoid repeated
     /// syscalls).
     pub(crate) stdout_is_terminal: bool,
+    /// Whether stderr was a terminal at startup.
+    pub(crate) stderr_is_terminal: bool,
 }
 
 pub struct Tag;
@@ -155,6 +160,7 @@ impl<'v> Global<'v> {
                 writer: Mutex::new(Box::pin(stderr())),
                 redirected: Cell::new(false),
                 stdout_is_terminal: std::io::stdout().is_terminal(),
+                stderr_is_terminal: std::io::stderr().is_terminal(),
             },
             types: Types {
                 file: builder.register_type(),
@@ -212,6 +218,8 @@ impl<'v> Global<'v> {
                 pipe_receiver: builder.register_type(),
                 pipe_sender: builder.register_type(),
                 vfs: builder.register_type(),
+                text: builder.register_type(),
+                style: builder.register_type(),
             },
             syms: Syms {
                 any: builder.sym("ANY"),

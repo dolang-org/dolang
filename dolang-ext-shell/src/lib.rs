@@ -13,6 +13,7 @@ mod security;
 mod shell;
 mod shlex;
 mod sys;
+mod term;
 mod time;
 mod util;
 
@@ -34,6 +35,7 @@ pub use dolang_shell_vfs::FileHandle;
 use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
 pub use shell::Exit;
 use tokio::io::AsyncWrite;
+use tokio::io::AsyncWriteExt;
 
 use crate::global::Global;
 
@@ -50,6 +52,32 @@ pub fn stdout<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
         .types
         .stdout
         .create(strand, shell::Stdout::new(), out)
+}
+
+/// Flush the shell's stdout sink and terminal stderr writer.
+///
+/// `stdout` must be the value installed as the shell's output sink so the
+/// precise Tokio handle used for output is flushed before VM shutdown.
+pub async fn flush<'v, 's>(strand: &mut Strand<'v, 's>, stdout: &Value<'v>) -> Result<'v, 's, ()> {
+    let global = strand.state::<Global<'v>>();
+    let stdout = global
+        .types
+        .stdout
+        .downcast(stdout)
+        .ok_or_else(|| Error::type_error(strand, "stdout sink: expected shell.Stdout"))?;
+    stdout
+        .borrow_mut(strand)?
+        .flush()
+        .await
+        .map_err(|error| Error::runtime(strand, error))?;
+    global
+        .terminal
+        .writer
+        .lock()
+        .await
+        .flush()
+        .await
+        .map_err(|error| Error::runtime(strand, error))
 }
 
 pub fn as_datetime<'v>(vm: &Vm<'v>, value: &Value<'v>) -> Option<std::time::SystemTime> {
@@ -154,7 +182,7 @@ pub fn is_terminal() -> bool {
     std::io::stderr().is_terminal()
 }
 
-/// Redirect terminal output (echo/print and default child stderr)
+/// Redirect terminal output (`term.echo`/`term.print` and default child stderr)
 /// through the provided writer for the duration of the callback.
 ///
 /// Only one redirect may be active per VM. Returns an error if stderr
@@ -194,6 +222,21 @@ pub async fn with_terminal<'v, 's>(
 
     let result = f(strand).await;
 
+    // Flush the temporary writer before restoring the original terminal
+    // destination. This is particularly important for progress writers,
+    // which buffer partial lines.
+    let flush_result = {
+        let global = strand.state::<Global<'v>>();
+        global
+            .terminal
+            .writer
+            .lock()
+            .await
+            .flush()
+            .await
+            .map_err(|error| Error::runtime(strand, error))
+    };
+
     // Restore
     let global = strand.state::<Global<'v>>();
     {
@@ -204,7 +247,7 @@ pub async fn with_terminal<'v, 's>(
     #[cfg(unix)]
     drop(echo_guard);
 
-    result
+    result.and(flush_result)
 }
 
 #[cfg(unix)]

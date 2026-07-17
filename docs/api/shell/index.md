@@ -10,35 +10,6 @@ The `shell` module provides shell-context values and functions.
 
 ## Functions
 
-### `echo ...args`
-
-Prints arguments to the terminal output, separated by spaces, followed by a
-newline.
-
-#### Parameters
-
-| Name      | Type | Description                            |
-| --------- | ---- | -------------------------------------- |
-| `...args` |      | values to print (converted with `arg`) |
-
-#### Returns
-
-`nil`
-
-### `print arg`
-
-Prints one value to the terminal output without a trailing newline.
-
-#### Parameters
-
-| Name  | Type | Description                 |
-| ----- | ---- | --------------------------- |
-| `arg` |      | value to print              |
-
-#### Returns
-
-`nil`
-
 ### `exit code?`
 
 Exits the current shell with the given status code.
