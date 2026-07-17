@@ -12,6 +12,10 @@ import
 let ESC = str b"\x1b"
 
 #[test]
+def terminal_detection()
+  assert_eq (type term.have_terminal) $bool
+
+#[test]
 def text_string_coercion()
   let text = term.style("red", fg: :RED:, bold: true)
   assert_eq (type text) $term.Text

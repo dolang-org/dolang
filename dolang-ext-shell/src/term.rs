@@ -965,6 +965,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .module("term")
         .value("Text", global.types.text)
         .value("Style", global.types.style)
+        .value("have_terminal", global.terminal.stderr_is_terminal)
         .function("echo", async move |strand, args, _| {
             let ansi = global.terminal.stderr_is_terminal;
             let mut output = String::new();

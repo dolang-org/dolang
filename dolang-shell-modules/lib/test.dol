@@ -60,8 +60,10 @@ class Harness
   def matches_filter self path test
      self.#filter.matches "$(module_name path)/$test"
 
-  def record_test self
+  def record_test self path name
     self.#total = (self.#total + 1)
+    if !term.have_terminal
+      echo "run: $(module_name path)/$name"
 
   def record_success self
     self.#success = (self.#success + 1)
@@ -76,7 +78,7 @@ class Harness
     self.#errors.push [err, bt, path, test]
 
   def run_test self path name func
-    self.#record_test()
+    self.#record_test $path $name
     try
       self.#with_timeout $func
       self.#record_success()

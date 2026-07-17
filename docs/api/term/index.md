@@ -41,6 +41,12 @@ must be between 0 and 255. Color options also accept `:INHERIT:`.
 - A color name is unknown, a numeric value is out of range, or an RGB value
   does not contain three integers.
 
+## Values
+
+### `have_terminal`
+
+Whether stderr was a terminal when the process started.
+
 ## Functions
 
 ### `echo ...args`
