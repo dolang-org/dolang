@@ -4,53 +4,22 @@ Concurrency primitives.
 
 ## Types
 
-| Type               | Description                        |
-| ------------------ | ---------------------------------- |
-| [`Key`](./key.md)  | Strand-local storage key           |
+| Type                           | Description                         |
+| ------------------------------ | ----------------------------------- |
+| [`Key`](./key.md)              | Strand-local storage key            |
+| [`Resource`](./resource.md)    | Scoped concurrency admission limit  |
 
 ## Functions
 
-### `limit count block`
-
-Runs `block` with a transitive fork budget.
-
-`strand.limit` caps the total number of active `fork` workers anywhere under
-the scoped block. Nested `strand.limit` scopes compose by adding another
-constraint.
-
-#### Parameters
-
-| Name    | Type                   | Description                                 |
-| ------- | ---------------------- | ------------------------------------------- |
-| `count` | [`int`](../std/int.md) | maximum active descendant fork workers      |
-| `block` | func                   | code to run under the transitive limit      |
-
-#### Returns
-
-The block result.
-
-```
-let results = strand.limit 256 do
-  fork limit: 16
-    - do fetch_user 1
-    - do fetch_user 2
-    - do fetch_user 3
-```
-
-Here `fork limit:` controls immediate fan-out at that call site, while
-`strand.limit` controls the total active `fork` workers across the nested
-subtree.
-
-### `fork ...blocks :limit?`
+### `fork ...blocks`
 
 Executes multiple blocks concurrently and returns their results as an array.
 
 #### Parameters
 
-| Name        | Type                   | Description                                                      |
-| ----------- | ---------------------- | ---------------------------------------------------------------- |
-| `...blocks` | func                   | callables to execute concurrently                                |
-| `limit`     | [`int`](../std/int.md) | maximum number of worker strands to run at once (default: all)   |
+| Name        | Type | Description                       |
+| ----------- | ---- | --------------------------------- |
+| `...blocks` | func | callables to execute concurrently |
 
 #### Returns
 
@@ -65,19 +34,60 @@ let results = fork
 assert_eq $results [42, "hello", 3]
 ```
 
-With `limit`, work is still returned in input order, but only up to that many
-worker strands run concurrently:
+Use [`map`](#map-count-func-input-output) for bounded concurrent work over an
+iterator and [`Resource`](./resource.md) for application-defined admission
+limits.
+
+### `map count func :input? :output?`
+
+Applies `func` concurrently to values pulled lazily from an iterator.
+
+#### Parameters
+
+| Name     | Type                   | Description                                      |
+| -------- | ---------------------- | ------------------------------------------------ |
+| `count`  | [`int`](../std/int.md) | number of worker strands                         |
+| `func`   | func                   | callable applied to each input value             |
+| `input`  | input?                 | source; defaults to the strand-local iterator    |
+| `output` | output?                | destination; defaults to the strand-local sink   |
+
+Results are sent as workers complete. The function returns `nil` after the
+input is exhausted and every worker has finished.
 
 ```
-let results = fork limit: 2
-  - do fetch_user 1
-  - do fetch_user 2
-  - do fetch_user 3
+let results = []
+map 4 input: (range 20) output: $results do |value|
+  fetch $value
 ```
 
-This `limit` only applies to that fork site. Use
-[`strand.limit`](#limit-count-block) to cap total nested fork work across a
-larger scope.
+As a pipeline stage:
+
+```
+let results = pipeline
+  do from (range 20)
+  do map 4 do |value| fetch $value
+  do collect()
+```
+
+### `pool count input func`
+
+Executes `func` over an iterator with a fixed number of scoped worker strands.
+
+#### Parameters
+
+| Name    | Type                   | Description                           |
+| ------- | ---------------------- | ------------------------------------- |
+| `count` | [`int`](../std/int.md) | number of worker strands              |
+| `input` | input                  | source consumed lazily by the workers |
+| `func`  | func                   | callable applied to each input value  |
+
+Block results are discarded. The function returns `nil` after the input is
+exhausted and every worker has finished.
+
+```
+pool 4 $urls do |url|
+  download $url
+```
 
 ### `pipeline stage ...stages :input? :output?`
 
@@ -159,6 +169,8 @@ Spawns `func` as a background strand with input and output channels
 pre-wired, returning a [Stream](./stream.md) handle. The callable runs with its
 ambient input and output connected to the stream's channels, so it can use
 `next` to read values fed in from outside and `put` to send values out.
+The background strand does not inherit active [`Resource`](./resource.md)
+reservations from its creator.
 
 #### Parameters
 

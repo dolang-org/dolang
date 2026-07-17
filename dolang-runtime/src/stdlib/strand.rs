@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     pin::Pin,
     rc::Rc,
     task::{self, Poll, Waker},
@@ -21,7 +21,7 @@ use crate::{
     },
     strand::{InterruptToken, Local, LocalKey, LocalRootKey, Redirect, Strand},
     unpack,
-    value::{Empty, Output, Slot, Value},
+    value::{Empty, Output, Singleton, Slot, Value},
     vm::{Builder, State, Stateful},
 };
 
@@ -46,22 +46,22 @@ fn pipe_pair<'v>(
     }
 }
 
-struct ForkLimitScope {
+struct ResourceInner {
+    id: u64,
     limit: usize,
     active: Cell<usize>,
     next_id: Cell<u64>,
     waiters: RefCell<VecDeque<(u64, Waker)>>,
-    parent: Option<Rc<ForkLimitScope>>,
 }
 
-impl ForkLimitScope {
-    fn new(limit: usize, parent: Option<Rc<ForkLimitScope>>) -> Rc<Self> {
+impl ResourceInner {
+    fn new(id: u64, limit: usize) -> Rc<Self> {
         Rc::new(Self {
+            id,
             limit,
             next_id: Cell::new(0),
             active: Cell::new(0),
             waiters: Default::default(),
-            parent,
         })
     }
 
@@ -71,112 +71,126 @@ impl ForkLimitScope {
         id
     }
 
-    fn try_acquire(&self, waker: &Waker) -> Option<u64> {
-        if self.active.get() < self.limit {
+    fn try_acquire(self: &Rc<Self>) -> Option<ResourcePermit> {
+        if self.active.get() < self.limit && self.waiters.borrow().is_empty() {
             self.active.set(self.active.get() + 1);
-            None
+            Some(ResourcePermit(self.clone()))
         } else {
-            let id = self.next_id();
-            self.waiters.borrow_mut().push_back((id, waker.clone()));
-            Some(id)
+            None
         }
-    }
-
-    fn nevermind(&self, id: u64) {
-        self.waiters.borrow_mut().retain(|(i, _)| *i != id)
-    }
-
-    fn acquire_fresh(&self) {
-        debug_assert_eq!(self.active.get(), 0);
-        self.active.set(1);
     }
 
     fn release_one(&self) {
         let active = self.active.get();
         debug_assert!(active > 0);
         self.active.set(active - 1);
-        if let Some((_, waker)) = self.waiters.borrow_mut().pop_front() {
-            waker.wake();
+        if let Some((_, waker)) = self.waiters.borrow().front() {
+            waker.wake_by_ref();
         }
     }
 }
 
-impl Drop for ForkLimitScope {
+impl Drop for ResourceInner {
     fn drop(&mut self) {
         assert!(self.waiters.get_mut().is_empty());
     }
 }
 
-struct PermitChain {
-    scopes: Vec<Rc<ForkLimitScope>>,
+struct ResourcePermit(Rc<ResourceInner>);
+
+impl Drop for ResourcePermit {
+    fn drop(&mut self) {
+        self.0.release_one()
+    }
 }
 
-impl PermitChain {
-    fn release_all(&self) {
-        for scope in self.scopes.iter().rev() {
-            scope.release_one();
+struct AcquireResource {
+    resource: Rc<ResourceInner>,
+    id: Option<u64>,
+}
+
+impl Future for AcquireResource {
+    type Output = ResourcePermit;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        if let Some(id) = self.id {
+            let mut waiters = self.resource.waiters.borrow_mut();
+            let is_front = waiters.front().is_some_and(|(waiter, _)| *waiter == id);
+            if is_front && self.resource.active.get() < self.resource.limit {
+                waiters.pop_front();
+                self.resource.active.set(self.resource.active.get() + 1);
+                if self.resource.active.get() < self.resource.limit
+                    && let Some((_, waker)) = waiters.front()
+                {
+                    waker.wake_by_ref();
+                }
+                drop(waiters);
+                self.id = None;
+                return Poll::Ready(ResourcePermit(self.resource.clone()));
+            }
+            if let Some((_, waker)) = waiters.iter_mut().find(|(waiter, _)| *waiter == id) {
+                waker.clone_from(cx.waker());
+            }
+            return Poll::Pending;
+        }
+
+        if let Some(permit) = self.resource.try_acquire() {
+            return Poll::Ready(permit);
+        }
+
+        let id = self.resource.next_id();
+        self.resource
+            .waiters
+            .borrow_mut()
+            .push_back((id, cx.waker().clone()));
+        self.id = Some(id);
+        Poll::Pending
+    }
+}
+
+impl Drop for AcquireResource {
+    fn drop(&mut self) {
+        if let Some(id) = self.id.take() {
+            let mut waiters = self.resource.waiters.borrow_mut();
+            let was_front = waiters.front().is_some_and(|(waiter, _)| *waiter == id);
+            waiters.retain(|(waiter, _)| *waiter != id);
+            if was_front
+                && self.resource.active.get() < self.resource.limit
+                && let Some((_, waker)) = waiters.front()
+            {
+                waker.wake_by_ref();
+            }
         }
     }
 }
 
-struct ForkLimitLocal {
-    scope: RefCell<Option<Rc<ForkLimitScope>>>,
-    permit: RefCell<Option<PermitChain>>,
+fn acquire_resource(resource: Rc<ResourceInner>) -> AcquireResource {
+    AcquireResource { resource, id: None }
 }
 
-impl ForkLimitLocal {
-    fn current_scope(&self) -> Option<Rc<ForkLimitScope>> {
-        self.scope.borrow().clone()
-    }
-
-    fn replace_scope(&self, scope: Option<Rc<ForkLimitScope>>) -> Option<Rc<ForkLimitScope>> {
-        self.scope.replace(scope)
-    }
-
-    fn take_permit(&self) -> Option<PermitChain> {
-        self.permit.borrow_mut().take()
-    }
-
-    fn store_permit(&self, permit: PermitChain) {
-        *self.permit.borrow_mut() = Some(permit);
-    }
-
-    fn has_permit(&self) -> bool {
-        self.permit.borrow().is_some()
-    }
-
-    fn push_permit_scope(&self, scope: Rc<ForkLimitScope>) {
-        let mut permit = self.permit.borrow_mut();
-        let permit = permit.as_mut().expect("fork worker missing permit");
-        scope.acquire_fresh();
-        permit.scopes.push(scope);
-    }
-
-    fn pop_permit_scope(&self) {
-        let mut permit_ref = self.permit.borrow_mut();
-        let permit = permit_ref.as_mut().expect("fork worker missing permit");
-        let scope = permit.scopes.pop().expect("permit chain missing scope");
-        scope.release_one();
-        let empty = permit.scopes.is_empty();
-        drop(permit_ref);
-        if empty {
-            self.permit.borrow_mut().take();
-        }
-    }
+struct HeldResource {
+    resource: Rc<ResourceInner>,
+    depth: usize,
+    _permit: ResourcePermit,
 }
 
-impl<'v> Local<'v> for ForkLimitLocal {
+#[derive(Default)]
+struct ResourceLocal {
+    held: RefCell<Vec<HeldResource>>,
+    inherited: HashSet<u64>,
+}
+
+impl<'v> Local<'v> for ResourceLocal {
     fn init() -> Self {
-        Self {
-            scope: RefCell::new(None),
-            permit: RefCell::new(None),
-        }
+        Self::default()
     }
 
     fn inherit(&self, _strand: &Strand<'v, '_>) -> Self {
+        let mut inherited = self.inherited.clone();
+        inherited.extend(self.held.borrow().iter().map(|entry| entry.resource.id));
         Self {
-            scope: RefCell::new(self.current_scope()),
-            permit: RefCell::new(None),
+            held: RefCell::default(),
+            inherited,
         }
     }
 }
@@ -202,10 +216,12 @@ impl<'v> Local<'v> for StrandLocalData {
 
 struct StrandTypes<'v> {
     key: Type<'v, Key>,
+    resource: Type<'v, Resource>,
 }
 
 struct StrandState<'v> {
-    fork_limit: LocalKey<'v, ForkLimitLocal>,
+    resource: LocalKey<'v, ResourceLocal>,
+    next_resource_id: Cell<u64>,
     local: LocalKey<'v, StrandLocalData>,
     local_root: LocalRootKey<'v>,
     types: StrandTypes<'v>,
@@ -215,6 +231,55 @@ struct StrandStateTag;
 
 impl<'v> Stateful<'v> for StrandState<'v> {
     type Tag = StrandStateTag;
+}
+
+struct Resource;
+
+struct ResourceAnnex {
+    inner: Rc<ResourceInner>,
+}
+
+impl<'v> Object<'v> for Resource {
+    const NAME: &'v str = "Resource";
+    const MODULE: &'v str = "strand";
+    type Annex = ResourceAnnex;
+    type Type = ();
+    type TypeAnnex = ();
+
+    async fn new<'a, 's>(
+        this: Type<'v, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        args: crate::arg::Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let ([limit], []) = unpack!(strand, args, 1, 0)?;
+        let limit = limit.to_index(strand)?;
+        if limit == 0 {
+            return Err(Error::value(
+                strand,
+                "strand.Resource: count must be positive",
+            ));
+        }
+        let state = strand.state::<StrandState<'v>>();
+        let id = state.next_resource_id.get();
+        state.next_resource_id.set(id.strict_add(1));
+        this.create_with_annex(
+            strand,
+            Resource,
+            ResourceAnnex {
+                inner: ResourceInner::new(id, limit),
+            },
+            out,
+        );
+        Ok(())
+    }
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.method("with", async move |this, strand, args, out| {
+            let ([block], []) = unpack!(strand, args, 1, 0)?;
+            resource_with(strand, this.annex().inner.clone(), block, out).await
+        })
+    }
 }
 
 struct Key;
@@ -305,109 +370,153 @@ fn unique_local_root<'v, 's>(
     Ok(root)
 }
 
-fn flatten_scope_chain(scope: Option<Rc<ForkLimitScope>>) -> Vec<Rc<ForkLimitScope>> {
-    let mut scopes = Vec::new();
-    let mut current = scope;
-    while let Some(scope) = current {
-        current = scope.parent.clone();
-        scopes.push(scope);
-    }
-    scopes.reverse();
-    scopes
-}
-
-struct Acquire<'a> {
-    scopes: &'a [Rc<ForkLimitScope>],
-    acquired: usize,
-    id: Option<u64>,
-}
-
-impl<'a> Future for Acquire<'a> {
-    type Output = PermitChain;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        for scope in &self.scopes[self.acquired..] {
-            if let Some(id) = self.id.take() {
-                scope.nevermind(id);
-            }
-            if let Some(id) = scope.try_acquire(cx.waker()) {
-                self.id = Some(id);
-                return Poll::Pending;
-            } else {
-                self.acquired += 1;
-            }
-        }
-        self.acquired = 0;
-        Poll::Ready(PermitChain {
-            scopes: self.scopes.to_vec(),
-        })
-    }
-}
-
-impl<'a> Drop for Acquire<'a> {
-    fn drop(&mut self) {
-        if let Some(id) = self.id.take() {
-            self.scopes[self.acquired].nevermind(id)
-        }
-        for scope in self.scopes[..self.acquired].iter().rev() {
-            scope.release_one();
-        }
-    }
-}
-
-fn acquire_scopes(scopes: &[Rc<ForkLimitScope>]) -> Acquire<'_> {
-    Acquire {
-        scopes,
-        acquired: 0,
-        id: None,
-    }
-}
-
-async fn acquire_permit<'v, 's>(
+async fn resource_with<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    state: State<'v, StrandState<'v>>,
+    resource: Rc<ResourceInner>,
+    block: Slot<'v, '_>,
+    out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let scopes = flatten_scope_chain(state.fork_limit.get(strand).current_scope());
-    if scopes.is_empty() {
-        return Ok(());
-    }
-    let permit = acquire_scopes(&scopes).await;
-    state.fork_limit.get(strand).store_permit(permit);
-    Ok(())
-}
+    let state = strand.state::<StrandState<'v>>();
 
-async fn restore_prior_permit<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    state: State<'v, StrandState<'v>>,
-    prior: Option<PermitChain>,
-) -> Result<'v, 's, ()> {
-    let Some(prior) = prior else {
-        return Ok(());
+    if state.resource.get(strand).inherited.contains(&resource.id) {
+        return strand
+            .interrupt_guard(async move |strand| call!(strand, block, out).await)
+            .await;
+    }
+
+    let reentrant = {
+        let mut held = state.resource.get(strand).held.borrow_mut();
+        if let Some(entry) = held
+            .iter_mut()
+            .find(|entry| entry.resource.id == resource.id)
+        {
+            entry.depth += 1;
+            true
+        } else {
+            false
+        }
     };
-    if prior.scopes.is_empty() {
-        return Ok(());
+
+    if !reentrant {
+        let acquire = resource.clone();
+        let permit = strand
+            .interrupt_guard(async move |_strand| Ok(acquire_resource(acquire).await))
+            .await?;
+        state
+            .resource
+            .get(strand)
+            .held
+            .borrow_mut()
+            .push(HeldResource {
+                resource: resource.clone(),
+                depth: 1,
+                _permit: permit,
+            });
     }
-    let permit = acquire_scopes(&prior.scopes).await;
-    state.fork_limit.get(strand).store_permit(permit);
-    Ok(())
+
+    let result = strand
+        .interrupt_guard(async move |strand| call!(strand, block, out).await)
+        .await;
+
+    let mut held = state.resource.get(strand).held.borrow_mut();
+    let index = held
+        .iter()
+        .position(|entry| entry.resource.id == resource.id)
+        .expect("resource scope missing on exit");
+    if held[index].depth == 1 {
+        held.remove(index);
+    } else {
+        held[index].depth -= 1;
+    }
+    result
+}
+
+async fn map_workers<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    count: usize,
+    input: Slot<'v, '_>,
+    output: Slot<'v, '_>,
+    block: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    strand
+        .with_interrupt_mask(true, async move |strand| {
+            let shared_input = &input;
+            let shared_output = &output;
+            let shared_block = &block;
+            let mut strands = Vec::with_capacity(count);
+            let interrupt = strand.interrupt_token().nested();
+            for _ in 0..count {
+                strands.push(
+                    strand.spawn_scoped(Some(interrupt.clone()), async move |strand| {
+                        let result = strand
+                            .with_slots(
+                                async move |strand,
+                                            [
+                                    mut input,
+                                    mut output,
+                                    mut block,
+                                    mut item,
+                                    mut mapped,
+                                ]| {
+                                    Output::set(strand, &mut input, shared_input);
+                                    Output::set(strand, &mut output, shared_output);
+                                    Output::set(strand, &mut block, shared_block);
+                                    while input.next(strand, &mut item).await? {
+                                        call!(strand, &block, &mut mapped, &item).await?;
+                                        output.put(strand, &mut mapped).await?;
+                                        strand.check_trap_gc()?;
+                                    }
+                                    Ok(())
+                                },
+                            )
+                            .await;
+                        if result.is_err() {
+                            strand.interrupt_token().cancel();
+                        }
+                        result
+                    }),
+                );
+            }
+            let mut first_err: Option<Error<'v, '_>> = None;
+            for result in join_all(strands).await {
+                if let Err(error) = result
+                    && first_err.as_ref().is_none_or(|previous| {
+                        previous.kind() == ErrorKind::Canceled
+                            && error.kind() != ErrorKind::Canceled
+                    })
+                {
+                    first_err = Some(error);
+                }
+            }
+            if let Some(error) = first_err {
+                Err(error)
+            } else {
+                Ok(())
+            }
+        })
+        .await
 }
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
-    let fork_limit = builder.local();
+    let resource = builder.local();
     let local = builder.local();
     let local_root = builder.local_root();
     let key = builder.register_type();
+    let resource_type = builder.register_type();
     let state = builder.register_state(StrandState {
-        fork_limit,
+        resource,
+        next_resource_id: Cell::new(0),
         local,
         local_root,
-        types: StrandTypes { key },
+        types: StrandTypes {
+            key,
+            resource: resource_type,
+        },
     });
     let input_key = builder.sym("input");
     let output_key = builder.sym("output");
     let backtrace_key = builder.sym("backtrace");
     let close = builder.sym("close");
-    let limit_key = builder.sym("limit");
     let default_key = builder.sym("default");
     let else_key = builder.sym("else");
     let strand_class = builder.singletons().strand.dup();
@@ -418,6 +527,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("Strand", &strand_class)
         .value("Backtrace", &backtrace_class)
         .value("Key", state.types.key)
+        .value("Resource", state.types.resource)
         // Implicit I/O functions (moved from former std.iter)
         .function_with_slots("put", async move |strand, args, _, [mut tmp]| {
             let ([value], []) = unpack!(strand, args, 1, 0)?;
@@ -517,28 +627,6 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             )));
             Ok(())
         })
-        .function("limit", async move |strand, args, mut out| {
-            let ([limit, block], []) = unpack!(strand, args, 2, 0)?;
-            let limit = limit.to_index(strand)?;
-            if limit == 0 {
-                return Err(Error::value(strand, "strand.limit: limit must be positive"));
-            }
-            let scope = ForkLimitScope::new(limit, state.fork_limit.get(strand).current_scope());
-            let prev_scope = state
-                .fork_limit
-                .get(strand)
-                .replace_scope(Some(scope.clone()));
-            let had_permit = state.fork_limit.get(strand).has_permit();
-            if had_permit {
-                state.fork_limit.get(strand).push_permit_scope(scope);
-            }
-            let res = call!(strand, block, &mut out).await;
-            if had_permit {
-                state.fork_limit.get(strand).pop_permit_scope();
-            }
-            state.fork_limit.get(strand).replace_scope(prev_scope);
-            res
-        })
         .function("pipeline", async move |strand, args, out| {
             let mut thunks = Vec::new();
             let mut redir_input = None;
@@ -560,12 +648,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             // We must avoid being dropped until we've awaited all strands we create
             strand
                 .with_interrupt_mask(true, async move |strand| {
-                    let prior_permit = state.fork_limit.get(strand).take_permit();
-                    if let Some(permit) = prior_permit.as_ref() {
-                        permit.release_all();
-                    }
-
-                    let result = async {
+                    async {
                         let mut last_recv = Value::NIL;
                         let mut out = Some(out);
                         let mut strands = Vec::new();
@@ -658,10 +741,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                         }
                         Ok(())
                     }
-                    .await;
-
-                    restore_prior_permit(strand, state, prior_permit).await?;
-                    result
+                    .await
                 })
                 .await
         })
@@ -780,13 +860,47 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             out.store(Value::from_object(handle));
             Ok(())
         })
+        .function_with_slots(
+            "map",
+            async move |strand, args, _, [mut input, mut output]| {
+                let ([count, block], [arg_input, arg_output]) =
+                    unpack!(strand, args, 2, 0, input_key = None, output_key = None)?;
+                let count = count.to_index(strand)?;
+                if count == 0 {
+                    return Err(Error::value(strand, "strand.map: count must be positive"));
+                }
+                if let Some(arg_input) = arg_input {
+                    arg_input.iter(strand, &mut input).await?;
+                } else {
+                    strand.input(&mut input);
+                }
+                if let Some(arg_output) = arg_output {
+                    arg_output.sink(strand, &mut output).await?;
+                } else {
+                    strand.output(&mut output);
+                }
+
+                map_workers(strand, count, input, output, block).await
+            },
+        )
+        .function_with_slots(
+            "pool",
+            async move |strand, args, _, [mut input, mut output]| {
+                let ([count, arg_input, block], []) = unpack!(strand, args, 3, 0)?;
+                let count = count.to_index(strand)?;
+                if count == 0 {
+                    return Err(Error::value(strand, "strand.pool: count must be positive"));
+                }
+                arg_input.iter(strand, &mut input).await?;
+                Output::set(strand, &mut output, Singleton::IterNull);
+                map_workers(strand, count, input, output, block).await
+            },
+        )
         .function("fork", async move |strand, args, out| {
             let mut thunks = Vec::new();
-            let mut limit = None;
             for arg in args {
                 match arg {
                     Arg::Pos(thunk) => thunks.push(thunk),
-                    Arg::Key(sym, slot) if sym == limit_key => limit = Some(slot.to_index(strand)?),
                     Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
                 }
             }
@@ -795,47 +909,27 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             // We must avoid being dropped until we've awaited all strands we create
             strand
                 .with_interrupt_mask(true, async move |strand| {
-                    let prior_permit = state.fork_limit.get(strand).take_permit();
-                    if let Some(permit) = prior_permit.as_ref() {
-                        permit.release_all();
-                    }
-
                     let result = async {
                         let results =
                             RefCell::new((0..count).map(|_| Value::NIL).collect::<Vec<_>>());
-                        let work = RefCell::new(thunks.into_iter().enumerate());
-                        let num_workers = limit.unwrap_or(count).min(count);
-                        let mut strands = Vec::new();
+                        let mut strands = Vec::with_capacity(count);
                         let interrupt = strand.interrupt_token().nested();
-                        for _ in 0..num_workers {
+                        for (i, thunk) in thunks.into_iter().enumerate() {
                             let results = &results;
-                            let work = &work;
                             strands.push(strand.spawn_scoped(
                                 Some(interrupt.clone()),
                                 async move |strand| {
-                                    while let Some((i, thunk)) = { work.borrow_mut().next() } {
-                                        if let Err(e) = acquire_permit(strand, state).await {
-                                            strand.interrupt_token().cancel();
-                                            return Err(e);
-                                        }
-                                        let res = strand
-                                            .with_slots(async move |strand, [mut tmp]| {
-                                                call!(strand, thunk, &mut tmp).await?;
-                                                results.borrow_mut()[i] = tmp.take();
-                                                Ok(())
-                                            })
-                                            .await;
-                                        if let Some(permit) =
-                                            state.fork_limit.get(strand).take_permit()
-                                        {
-                                            permit.release_all();
-                                        }
-                                        if let Err(e) = res {
-                                            strand.interrupt_token().cancel();
-                                            return Err(e);
-                                        }
+                                    let result = strand
+                                        .with_slots(async move |strand, [mut tmp]| {
+                                            call!(strand, thunk, &mut tmp).await?;
+                                            results.borrow_mut()[i] = tmp.take();
+                                            Ok(())
+                                        })
+                                        .await;
+                                    if result.is_err() {
+                                        strand.interrupt_token().cancel();
                                     }
-                                    Ok(())
+                                    result
                                 },
                             ));
                         }
@@ -856,9 +950,6 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                         Ok(results.into_inner())
                     }
                     .await;
-
-                    restore_prior_permit(strand, state, prior_permit).await?;
-
                     let results = result?;
                     strand
                         .vm()
@@ -881,64 +972,49 @@ mod tests {
 
     use futures::task::noop_waker;
 
-    use super::{ForkLimitScope, acquire_scopes};
+    use super::{ResourceInner, acquire_resource};
 
     #[test]
     fn spurious_acquire_poll_does_not_duplicate_waiter() {
-        let scope = ForkLimitScope::new(1, None);
-        scope.acquire_fresh();
-        let scopes = [scope.clone()];
-        let mut acquire = Box::pin(acquire_scopes(&scopes));
+        let resource = ResourceInner::new(0, 1);
+        let held = resource.try_acquire().unwrap();
+        let mut acquire = Box::pin(acquire_resource(resource.clone()));
         let waker = noop_waker();
         let mut context = Context::from_waker(&waker);
 
         assert!(acquire.as_mut().poll(&mut context).is_pending());
         assert!(acquire.as_mut().poll(&mut context).is_pending());
-        assert_eq!(scope.waiters.borrow().len(), 1);
+        assert_eq!(resource.waiters.borrow().len(), 1);
 
-        scope.release_one();
+        drop(held);
         let Poll::Ready(permit) = acquire.as_mut().poll(&mut context) else {
-            panic!("released slot did not wake the acquire future");
+            panic!("released resource did not wake the acquire future");
         };
-        permit.release_all();
-        assert_eq!(scope.active.get(), 0);
+        drop(permit);
+        assert_eq!(resource.active.get(), 0);
     }
 
     #[test]
-    fn limit_scope_wakes_waiters_in_arrival_order() {
-        let scope = ForkLimitScope::new(1, None);
-        scope.acquire_fresh();
-        let waker = noop_waker();
-
-        let first = scope.try_acquire(&waker).unwrap();
-        let second = scope.try_acquire(&waker).unwrap();
-        scope.release_one();
-
-        let waiters = scope.waiters.borrow();
-        assert_eq!(waiters.len(), 1);
-        assert_eq!(waiters.front().unwrap().0, second);
-        assert_ne!(first, second);
-        drop(waiters);
-        scope.nevermind(second);
-    }
-
-    #[test]
-    fn dropping_partial_acquire_releases_outer_permits() {
-        let outer = ForkLimitScope::new(1, None);
-        let inner = ForkLimitScope::new(1, Some(outer.clone()));
-        inner.acquire_fresh();
-        let scopes = [outer.clone(), inner.clone()];
-        let mut acquire = Box::pin(acquire_scopes(&scopes));
+    fn resource_wakes_waiters_in_arrival_order() {
+        let resource = ResourceInner::new(0, 1);
+        let held = resource.try_acquire().unwrap();
         let waker = noop_waker();
         let mut context = Context::from_waker(&waker);
+        let mut first = Box::pin(acquire_resource(resource.clone()));
+        let mut second = Box::pin(acquire_resource(resource.clone()));
 
-        assert!(acquire.as_mut().poll(&mut context).is_pending());
-        assert_eq!(outer.active.get(), 1);
-        assert_eq!(inner.waiters.borrow().len(), 1);
+        assert!(first.as_mut().poll(&mut context).is_pending());
+        assert!(second.as_mut().poll(&mut context).is_pending());
+        drop(held);
 
-        drop(acquire);
-        assert_eq!(outer.active.get(), 0);
-        assert!(inner.waiters.borrow().is_empty());
-        inner.release_one();
+        let Poll::Ready(first_permit) = first.as_mut().poll(&mut context) else {
+            panic!("first waiter was not admitted");
+        };
+        assert!(second.as_mut().poll(&mut context).is_pending());
+        drop(first_permit);
+        let Poll::Ready(second_permit) = second.as_mut().poll(&mut context) else {
+            panic!("second waiter was not admitted");
+        };
+        drop(second_permit);
     }
 }
