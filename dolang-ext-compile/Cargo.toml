@@ -11,5 +11,11 @@ rust-version.workspace = true
 test = false
 doctest = false
 
+[features]
+default = []
+diagnostic-rendering = ["dep:annotate-snippets", "dep:console"]
+
 [dependencies]
 dolang = { path = "../dolang", version = "0.1.0" }
+annotate-snippets = { version = "0.12.10", optional = true }
+console = { version = "0.16.2", optional = true }

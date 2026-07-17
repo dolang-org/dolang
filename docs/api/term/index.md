@@ -121,6 +121,32 @@ let formatted = preformat input
 echo $formatted
 ```
 
+### `render_error error :backtrace?`
+
+Formats an error value and backtrace for terminal presentation.
+The returned text does not include a final newline.
+
+**Parameters:**
+
+| Name        | Type                                      | Description                            |
+| ----------- | ----------------------------------------- | -------------------------------------- |
+| `error`     |                                           | Error value or message                 |
+| `backtrace` | [`strand.Backtrace`](../strand/index.md)? | Explicit backtrace; defaults to active |
+
+**Returns:** [`Text`](./text.md)
+
+**Errors:**
+
+- `backtrace` is present and is not a `strand.Backtrace`.
+- `backtrace` is omitted outside an active exception handler.
+
+```
+try
+  operation()
+catch error: e
+  print $render_error(e)
+```
+
 Ordinary values preserve newlines and tabs but remove other C0/C1 controls and
 escape sequences. Raw stdout and stderr sinks are unchanged and are not
 sanitized by this module.

@@ -1,4 +1,4 @@
-import args compile diagnostic load progress strand
+import args compile load progress strand
   fs:
     - Path
   glob:
@@ -120,14 +120,14 @@ class Harness
         rc = 1
         echo "module compilation failed: $module"
         for diag = e.output.diagnostics
-          diagnostic.print_compile_diag $diag
+          echo $diag.render()
       else
         rc = 1
         if test
           echo "test failed: $module/$test"
         else
           echo "module failed: $module"
-        diagnostic.print_error $e backtrace: $bt
+        print $term.render_error(e, backtrace: bt)
     if skipped
       echo "tests passed: $(self.#success)/$(self.#total - skipped) ($skipped skipped)"
     else

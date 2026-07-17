@@ -719,18 +719,9 @@ dependencies = [
 name = "dolang-ext-compile"
 version = "0.1.0"
 dependencies = [
- "dolang",
-]
-
-[[package]]
-name = "dolang-ext-diagnostic"
-version = "0.1.0"
-dependencies = [
  "annotate-snippets",
- "anstyle",
  "console",
  "dolang",
- "dolang-ext-compile",
 ]
 
 [[package]]
@@ -834,8 +825,11 @@ dependencies = [
 name = "dolang-ext-shell"
 version = "0.1.0"
 dependencies = [
+ "anstyle",
  "bstr",
+ "console",
  "dolang",
+ "dolang-ext-compile",
  "dolang-shell-vfs",
  "dunce",
  "futures",
@@ -1029,7 +1023,6 @@ dependencies = [
  "dolang",
  "dolang-ext-base64",
  "dolang-ext-compile",
- "dolang-ext-diagnostic",
  "dolang-ext-digest",
  "dolang-ext-glob",
  "dolang-ext-http",
@@ -1063,7 +1056,6 @@ dependencies = [
  "directories",
  "dolang",
  "dolang-ext-compile",
- "dolang-ext-diagnostic",
  "dolang-ext-load",
  "dolang-ext-shell",
  "libc",

@@ -17,6 +17,9 @@ use dolang::{
     },
 };
 
+#[cfg(feature = "diagnostic-rendering")]
+use dolang::runtime::{error::ErrorKind as RuntimeErrorKind, method};
+
 pub(crate) struct Types<'v> {
     result: Type<'v, ResultObject>,
     diagnostic: Type<'v, Diagnostic>,
@@ -162,21 +165,6 @@ fn severity<'v>(global: State<'v, Global<'v>>, severity: compile::Severity) -> S
         compile::Severity::Warning => global.syms.warning,
         _ => global.syms.warning,
     }
-}
-
-pub fn extract_diagnostic<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    value: &Value<'v>,
-    out: Slot<'v, '_>,
-) -> Result<'v, 's, (Diag, String)> {
-    let global = strand.state::<Global<'v>>();
-    let Some(diag) = global.types.diagnostic.downcast(value) else {
-        return Err(Error::type_error(strand, "expected compile.Diagnostic"));
-    };
-    let borrow = diag.borrow(strand)?;
-    Output::set(strand, out, Ref::slot::<DIAG_SOURCE>(&borrow));
-    let annex = diag.annex();
-    Ok((annex.diag.clone(), annex.path.clone()))
 }
 
 fn create_pos<'v>(
@@ -587,6 +575,67 @@ impl<'v> Object<'v> for Diagnostic {
     type TypeAnnex = ();
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        #[cfg(feature = "diagnostic-rendering")]
+        let mut builder = builder;
+
+        #[cfg(feature = "diagnostic-rendering")]
+        let builder = {
+            let preformat = builder.sym("preformat");
+            builder.method_with_slots(
+                "render",
+                async move |this, strand, args, out, [mut term]| {
+                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    let rendered = {
+                        let borrow = this.borrow(strand)?;
+                        let source = Ref::slot::<DIAG_SOURCE>(&borrow).view(strand.vm());
+                        match source {
+                            View::Str(_) => (),
+                            View::Bin(bin) => {
+                                if strand.access(|access| {
+                                    std::str::from_utf8(bin.as_slice(access)).is_err()
+                                }) {
+                                    return Err(Error::type_error(
+                                        strand,
+                                        "source: expected valid utf-8",
+                                    ));
+                                }
+                            }
+                            _ => {
+                                return Err(Error::type_error(
+                                    strand,
+                                    "source: expected `str` or `bin`",
+                                ));
+                            }
+                        }
+                        strand.access(|access| {
+                            let source = match source {
+                                View::Str(value) => value.as_str(access),
+                                View::Bin(value) => {
+                                    std::str::from_utf8(value.as_slice(access)).unwrap()
+                                }
+                                _ => unreachable!(),
+                            };
+                            crate::render::render_compile_diag(
+                                &this.annex().path,
+                                source,
+                                &this.annex().diag,
+                                crate::render::ColorMode::Always,
+                            )
+                        })
+                    };
+
+                    match strand.import("term", &mut term).await {
+                        Ok(()) => method!(strand, &term, preformat, out, rendered.as_str()).await,
+                        Err(error) if error.kind() == RuntimeErrorKind::Import => {
+                            Output::set(strand, out, rendered.as_str());
+                            Ok(())
+                        }
+                        Err(error) => Err(error),
+                    }
+                },
+            )
+        };
+
         builder
             .get("severity", |this, strand, out| {
                 Output::set(

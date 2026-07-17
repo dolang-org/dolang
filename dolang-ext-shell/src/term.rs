@@ -734,6 +734,20 @@ fn create_text<'v>(
     text.finish(strand, Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()));
 }
 
+fn create_preformatted_text<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    value: &str,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let mut text = StrEmbryo::new();
+    let mut filter = Filter::new(&mut text, FilterMode::Preformat);
+    filter.write_str(strand, value)?;
+    filter.finish(strand)?;
+    create_text(strand, global, text, out);
+    Ok(())
+}
+
 fn create_style<'v>(
     strand: &mut Strand<'v, '_>,
     global: State<'v, Global<'v>>,
@@ -945,6 +959,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         colors,
         inherit,
     } = keys;
+    let backtrace = builder.sym("backtrace");
 
     builder
         .module("term")
@@ -1068,12 +1083,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "preformat: expected str"))?
                 .pin();
-            let mut text = StrEmbryo::new();
-            let mut filter = Filter::new(&mut text, FilterMode::Preformat);
-            filter.write_str(strand, &value)?;
-            filter.finish(strand)?;
-            create_text(strand, global, text, out);
-            Ok(())
+            create_preformatted_text(strand, global, &value, out)
+        })
+        .function("render_error", async move |strand, args, out| {
+            let ([error], [backtrace]) = unpack!(strand, args, 1, 0, backtrace = None)?;
+            let rendered =
+                crate::diagnostic::render_error_value(strand, &error, backtrace.as_deref())?;
+            create_preformatted_text(strand, global, &rendered, out)
         })
         .commit();
 }

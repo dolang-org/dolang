@@ -1,5 +1,6 @@
 #![deny(warnings)]
 
+mod diagnostic;
 mod env;
 mod error;
 mod extension;
@@ -38,6 +39,8 @@ use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 
 use crate::global::Global;
+
+pub use diagnostic::{print_compile_diag_stderr, print_error_stderr, render_message_backtrace};
 
 /// Instantiate wrapper iterator around stdin
 pub fn stdin<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {

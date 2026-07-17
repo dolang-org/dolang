@@ -2,5 +2,8 @@
 
 mod compile;
 mod extension;
+#[cfg(feature = "diagnostic-rendering")]
+mod render;
 
-pub use compile::extract_diagnostic;
+#[cfg(feature = "diagnostic-rendering")]
+pub use render::{ColorMode, render_compile_diag};

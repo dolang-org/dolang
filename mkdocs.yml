@@ -75,7 +75,6 @@ nav:
       - api/compile/annotation.md
       - api/compile/note.md
       - api/compile/patch.md
-    - diagnostic: api/diagnostic.md
     - digest:
       - api/digest/index.md
       - api/digest/blake3.md

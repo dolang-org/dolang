@@ -1,4 +1,4 @@
-import compile diagnostic digest fs load std shell
+import compile digest fs load std shell
 
 # Convenience helpers for the common “compile if needed, cache, then execute”
 # workflow.
@@ -112,7 +112,7 @@ def compile_cached path mode name cache prelude synthetic inject
   else
     compile_module $path $name $prelude $synthetic $inject
   for diag = compiled.diagnostics
-    diagnostic.print_compile_diag $diag
+    echo $diag.render()
   if !compiled.ok
     throw std.CompileError "failed to compile $(path.relative())"
   cache.write $compiled.bytecode
