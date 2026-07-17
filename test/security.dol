@@ -2,6 +2,7 @@ import sys
   sys:
     - NotFoundError
   std:
+    - FieldError
     - ImmutableError
     - UnsupportedError
     - bin
@@ -15,6 +16,7 @@ import sys
     - assert_type
     - test
   security:
+    - SecDesc
     - Sid
     - SidName
     - TokenGroup
@@ -41,6 +43,37 @@ def sid_converts_between_structural_forms()
   let bytes = sid.to_bin()
   assert_type $bin $bytes
   assert_eq (str(Sid(bytes))) S-1-5-32-544
+
+#[test]
+def security_descriptor_converts_self_relative_packets()
+  let packet = b"\x01\x5a\x15\xd0\x14\x00\x00\x00\x20\x00\x00\x00\x00\x00\x00\x00\x30\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x05\x12\x00\x00\x00\x01\x02\x00\x00\x00\x00\x00\x05\x20\x00\x00\x00\x20\x02\x00\x00\x02\x00\x08\x00\x00\x00\x00\x00"
+  let descriptor = SecDesc $packet
+  assert_type $SecDesc $descriptor
+  assert_eq $descriptor.revision 1
+  assert_eq $descriptor.mask 15
+  assert_eq $descriptor.control 20501
+  assert_eq $descriptor.rm_control_valid true
+  assert_eq $descriptor.rm_control 90
+  assert_eq (str descriptor.owner) S-1-5-18
+  assert_eq (str descriptor.group) S-1-5-32-544
+  assert_eq $descriptor.owner_defaulted true
+  assert_eq $descriptor.group_defaulted false
+  assert_eq $descriptor.dacl_present true
+  assert_eq $descriptor.dacl_defaulted false
+  assert_eq $descriptor.dacl_auto_inherit_required false
+  assert_eq $descriptor.dacl_auto_inherited false
+  assert_eq $descriptor.dacl_protected true
+  assert_eq $descriptor.sacl_present true
+  assert_eq $descriptor.sacl_defaulted false
+  assert_eq $descriptor.sacl_auto_inherit_required false
+  assert_eq $descriptor.sacl_auto_inherited false
+  assert_eq $descriptor.sacl_protected false
+  assert_eq $descriptor.to_bin() $packet
+
+  let empty = SecDesc b"\x01\x00\x00\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+  assert_throws $FieldError do empty.owner
+  assert_throws $FieldError do empty.group
+  assert_throws $FieldError do empty.rm_control
 
 #[test]
 def reports_security_information_for_target()

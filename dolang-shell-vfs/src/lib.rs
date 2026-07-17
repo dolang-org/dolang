@@ -21,6 +21,7 @@ mod error;
 mod pipe;
 mod protocol;
 mod read_dir;
+mod sec_desc;
 mod server;
 #[cfg(unix)]
 mod service;
@@ -29,6 +30,7 @@ mod sid;
 mod windows;
 
 pub use error::{Error, OperatingSystem, Result, SystemError};
+pub use sec_desc::{SecDesc, SecDescError};
 pub use sid::{Sid, SidError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

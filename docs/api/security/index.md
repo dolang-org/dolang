@@ -6,6 +6,7 @@ The `security` module reports the security identity of the active VFS target.
 
 | Type                            | Description                         |
 | ------------------------------- | ----------------------------------- |
+| [`SecDesc`](./secdesc.md)       | Windows security descriptor         |
 | [`Sid`](./sid.md)               | Windows security identifier         |
 | [`SidName`](./sidname.md)       | Resolved Windows account identity   |
 | [`TokenGroup`](./tokengroup.md) | Windows token group membership      |
