@@ -52,12 +52,7 @@ pub(crate) fn compile<'v, 's, 'a>(
                 _ => (),
             }
             let disp = path.display().to_string();
-            dolang_ext_diagnostic::print_compile_diag_stderr(
-                &disp,
-                source,
-                &diag,
-                dolang_ext_diagnostic::ColorMode::Auto,
-            );
+            dolang_ext_shell::print_compile_diag_stderr(&disp, source, &diag);
             if errors > 10 {
                 ControlFlow::Break(Stop)
             } else {

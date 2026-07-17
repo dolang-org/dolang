@@ -65,10 +65,6 @@ optional = true
 path = "../dolang-ext-compile"
 version = "0.1.0"
 
-[dependencies.dolang-ext-diagnostic]
-path = "../dolang-ext-diagnostic"
-version = "0.1.0"
-
 [dependencies.dolang-ext-load]
 path = "../dolang-ext-load"
 version = "0.1.0"

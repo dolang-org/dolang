@@ -23,7 +23,7 @@ use tokio::io::AsyncWrite;
 
 use crate::{
     global::Global,
-    style::{self, DEFAULT_ICON, Mode, Style, StyleKeys, Units},
+    style::{self, Color, ColorKeys, DEFAULT_ICON, Mode, Style, StyleKeys, Units},
 };
 
 // --- Strand-local state ---
@@ -337,6 +337,27 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
     let icon_kw = builder.sym("icon");
     let units_kw = builder.sym("units");
     let tick_kw = builder.sym("tick");
+    let mut colors = [
+        ("BLACK", Color::Black),
+        ("RED", Color::Red),
+        ("GREEN", Color::Green),
+        ("YELLOW", Color::Yellow),
+        ("BLUE", Color::Blue),
+        ("MAGENTA", Color::Magenta),
+        ("CYAN", Color::Cyan),
+        ("WHITE", Color::White),
+        ("BRIGHT_BLACK", Color::BrightBlack),
+        ("BRIGHT_RED", Color::BrightRed),
+        ("BRIGHT_GREEN", Color::BrightGreen),
+        ("BRIGHT_YELLOW", Color::BrightYellow),
+        ("BRIGHT_BLUE", Color::BrightBlue),
+        ("BRIGHT_MAGENTA", Color::BrightMagenta),
+        ("BRIGHT_CYAN", Color::BrightCyan),
+        ("BRIGHT_WHITE", Color::BrightWhite),
+        ("BRIGHT", Color::Bright),
+    ]
+    .map(|(name, color)| (builder.sym(name), color));
+    colors.sort_unstable_by_key(|(symbol, _)| *symbol);
     let style_keys = StyleKeys {
         bar: builder.sym("bar"),
         spinner: builder.sym("spinner"),
@@ -350,6 +371,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         bg: builder.sym("bg"),
         attrs: builder.sym("attrs"),
         alt: builder.sym("alt"),
+        colors: ColorKeys { values: colors },
     };
 
     builder

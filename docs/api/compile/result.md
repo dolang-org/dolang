@@ -22,9 +22,8 @@ compilation.
 ## Example
 
 ```
-import diagnostic
 let result = compile "example.dol" "let =\n"
 if !result.ok
   for diag = result.diagnostics
-    diagnostic.print_compile_diag $diag
+    echo $diag.render()
 ```

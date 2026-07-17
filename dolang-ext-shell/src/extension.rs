@@ -10,7 +10,9 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::{fs, global::Global, pipe_channel, proc, program, security, shell, shlex, sys, time};
+use crate::{
+    fs, global::Global, pipe_channel, proc, program, security, shell, shlex, sys, term, time,
+};
 
 /// Shell extension
 pub struct Shell;
@@ -38,6 +40,7 @@ impl Extension for Shell {
 
     fn apply_compiler(&self, compiler: &mut Compiler) -> Result<(), Infallible> {
         shell::configure_compiler(compiler);
+        term::configure_compiler(compiler);
         security::configure_compiler(compiler);
         sys::configure_compiler(compiler);
         proc::configure_compiler(compiler);
@@ -51,6 +54,7 @@ impl Extension for Shell {
         let global = builder.register_state(global);
         pipe_channel::install(builder);
         shell::configure_vm(builder, global);
+        term::configure_vm(builder, global);
         security::configure_vm(builder, global);
         sys::configure_vm(builder, global);
         proc::configure_vm(builder, global);

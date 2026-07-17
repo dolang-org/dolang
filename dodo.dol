@@ -51,7 +51,6 @@ let PUBLISH_CRATES =
   - dolang-ext-zip
   - dolang-ext-sqlite
   - dolang-ext-progress
-  - dolang-ext-diagnostic
   - dolang-ext-load
   - dolang-shell-core
   - dolang-shell-modules

@@ -55,12 +55,18 @@ The shell automatically imports a set of functions and objects into scope.
 
 | Name                                       | Description                                             |
 | ------------------------------------------ | ------------------------------------------------------- |
-| [`echo`](../api/shell/index.md#echo-args)  | Print arguments to terminal, separated by spaces        |
 | [`exit`](../api/shell/index.md#exit-code)  | Exit with a status code (default: 0)                    |
 | [`cd`](../api/shell/index.md#cd-path-func) | Change directory; optionally run func in new dir        |
 | [`env`](../api/shell/index.md#env)         | Access environment variables                            |
 | [`args`](../api/shell/index.md#args)       | Command-line arguments ([`array`](../api/std/array.md)) |
 | [`program`](../api/shell/index.md#program) | Script [`Path`](../api/fs/path.md) or `-m` module name  |
+
+### `term`
+
+| Name                                               | Description                                   |
+| -------------------------------------------------- | --------------------------------------------- |
+| [`echo`](../api/term/index.md#echo-args)           | Print sanitized arguments separated by spaces |
+| [`print`](../api/term/index.md#print-options-args) | Print concatenated terminal output            |
 
 ### `proc`
 

@@ -74,45 +74,18 @@ impl Color {
     }
 }
 
-impl TryFrom<&str> for Color {
-    type Error = String;
-
-    fn try_from(s: &str) -> std::result::Result<Self, Self::Error> {
-        use Color::*;
-        if s == "bright" {
-            return Ok(Bright);
-        }
-        let (base, bright) = match s.strip_suffix(":bright") {
-            Some(base) => (base, true),
-            None => (s, false),
-        };
-        let color = match base {
-            "black" => Black,
-            "red" => Red,
-            "green" => Green,
-            "yellow" => Yellow,
-            "blue" => Blue,
-            "magenta" => Magenta,
-            "cyan" => Cyan,
-            "white" => White,
-            _ => return Err(format!("unknown color: '{s}'")),
-        };
-        Ok(if bright {
-            match color {
-                Black => BrightBlack,
-                Red => BrightRed,
-                Green => BrightGreen,
-                Yellow => BrightYellow,
-                Blue => BrightBlue,
-                Magenta => BrightMagenta,
-                Cyan => BrightCyan,
-                White => BrightWhite,
-                _ => unreachable!(),
-            }
-        } else {
-            color
-        })
-    }
+fn parse_color_value<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+    name: &str,
+    colors: ColorKeys<'v>,
+) -> Result<'v, 's, Color> {
+    let value = value
+        .as_sym(strand)
+        .ok_or_else(|| Error::type_error(strand, format!("style: {name}: expected `sym`")))?;
+    colors
+        .get(value)
+        .ok_or_else(|| Error::value(strand, format!("style: {name}: unknown color")))
 }
 
 #[derive(Clone, Copy)]
@@ -385,6 +358,24 @@ pub(crate) struct StyleKeys<'v> {
     pub(crate) bg: Sym<'v, 'v>,
     pub(crate) attrs: Sym<'v, 'v>,
     pub(crate) alt: Sym<'v, 'v>,
+    pub(crate) colors: ColorKeys<'v>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ColorKeys<'v> {
+    pub(crate) values: [(Sym<'v, 'v>, Color); 17],
+}
+
+impl<'v> ColorKeys<'v> {
+    fn get<'a>(self, value: Sym<'v, 'a>) -> Option<Color>
+    where
+        'v: 'a,
+    {
+        self.values
+            .binary_search_by_key(&value, |(symbol, _)| -> Sym<'v, 'a> { *symbol })
+            .ok()
+            .map(|index| self.values[index].1)
+    }
 }
 
 fn parse_element_style<'v, 's>(
@@ -396,25 +387,11 @@ fn parse_element_style<'v, 's>(
     strand.with_slots_sync(|strand, [mut slot]| {
         // fg
         if cat.index(strand, keys.fg, &mut slot).is_ok() && !slot.is_nil() {
-            let s = slot
-                .as_str(strand)
-                .ok_or_else(|| Error::type_error(strand, "style: fg: expected `str`"))?
-                .to_string();
-            es.fg = Some(
-                Color::try_from(s.as_str())
-                    .map_err(|e| Error::runtime(strand, format!("style: fg: {e}")))?,
-            );
+            es.fg = Some(parse_color_value(strand, &slot, "fg", keys.colors)?);
         }
         // bg
         if cat.index(strand, keys.bg, &mut slot).is_ok() && !slot.is_nil() {
-            let s = slot
-                .as_str(strand)
-                .ok_or_else(|| Error::type_error(strand, "style: bg: expected `str`"))?
-                .to_string();
-            es.bg = Some(
-                Color::try_from(s.as_str())
-                    .map_err(|e| Error::runtime(strand, format!("style: bg: {e}")))?,
-            );
+            es.bg = Some(parse_color_value(strand, &slot, "bg", keys.colors)?);
         }
         // attrs
         if cat.index(strand, keys.attrs, &mut slot).is_ok() && !slot.is_nil() {

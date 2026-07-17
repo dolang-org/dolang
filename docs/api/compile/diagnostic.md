@@ -32,11 +32,19 @@ An array of [`Note`](./note.md) objects with extra context or help.
 
 An array of [`Patch`](./patch.md) objects describing suggested edits.
 
+## Methods
+
+### `render`
+
+Renders the diagnostic for terminal presentation. The rendered value does not
+include a final newline.
+
+**Returns:** [`term.Text`](../term/text.md)
+
 ## Example
 
 ```
 let result = compile "bad.dol" "let =\n"
-import diagnostic
 for diag = result.diagnostics
-  diagnostic.print_compile_diag $diag
+  echo $diag.render()
 ```
