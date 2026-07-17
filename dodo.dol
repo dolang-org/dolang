@@ -219,6 +219,15 @@ return
       let spec = Spec $args
       spec.cargo build ...args.args
 
+  run:
+    help: run dolang
+    - arg: args
+      help: additional arguments to dolang
+      collect: true
+    do |args|
+      let spec = Spec $args
+      spec.cargo_vfs run --bin dolang -- ...args.args
+
   "cargo-test":
     help: run cargo tests
     - arg: args
