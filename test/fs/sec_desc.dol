@@ -1,0 +1,41 @@
+import sys std agent
+  test:
+    - assert_eq
+    - assert_throws
+    - assert_type
+  fs:
+    - Path
+    - open
+    - remove
+    - sec_desc
+    - set_sec_desc
+  security:
+    - SecDesc
+
+#[agent.test]
+def query_security_descriptors()
+  let path = Path test_sec_desc.txt
+  open $path w do |file|
+    file.write security
+
+  if (sys.os_info().family == :WINDOWS:)
+    let descriptor = path.sec_desc()
+    assert_type $SecDesc $descriptor
+    assert_eq $descriptor.mask 7
+    let shallow = path.sec_desc owner: false group: false dacl: false
+    assert_eq $shallow.mask 0
+    assert_type $SecDesc (sec_desc "test_sec_desc.txt")
+    set_sec_desc test_sec_desc.txt $shallow
+    open $path r do |file|
+      assert_type $SecDesc $file.sec_desc()
+  else
+    assert_throws $std.UnsupportedError do path.sec_desc()
+    assert_throws $sys.UnsupportedError do path.sec_desc()
+    assert_throws $sys.UnsupportedError do sec_desc test_sec_desc.txt
+    let empty = SecDesc b"\x01\x00\x00\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    assert_throws $sys.UnsupportedError do set_sec_desc test_sec_desc.txt $empty
+    open $path r do |file|
+      assert_throws $std.UnsupportedError do file.sec_desc()
+      assert_throws $sys.UnsupportedError do file.sec_desc()
+
+  remove $path

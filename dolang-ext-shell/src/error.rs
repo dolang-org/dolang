@@ -11,6 +11,7 @@ pub(crate) struct NotFoundError;
 pub(crate) struct PermissionDeniedError;
 pub(crate) struct AlreadyExistsError;
 pub(crate) struct TimedOutError;
+pub(crate) struct UnsupportedError;
 
 pub(crate) struct SysErrorObject<T>(PhantomData<T>);
 
@@ -177,6 +178,10 @@ impl<'v> SysErrorType<'v> for TimedOutError {
     const NAME: &'v str = "TimedOutError";
 }
 
+impl<'v> SysErrorType<'v> for UnsupportedError {
+    const NAME: &'v str = "UnsupportedError";
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SysErrorClass {
     Error,
@@ -184,6 +189,7 @@ enum SysErrorClass {
     PermissionDeniedError,
     AlreadyExistsError,
     TimedOutError,
+    UnsupportedError,
 }
 
 fn classify_io_error_kind(kind: io::ErrorKind) -> SysErrorClass {
@@ -192,6 +198,7 @@ fn classify_io_error_kind(kind: io::ErrorKind) -> SysErrorClass {
         io::ErrorKind::PermissionDenied => SysErrorClass::PermissionDeniedError,
         io::ErrorKind::AlreadyExists => SysErrorClass::AlreadyExistsError,
         io::ErrorKind::TimedOut => SysErrorClass::TimedOutError,
+        io::ErrorKind::Unsupported => SysErrorClass::UnsupportedError,
         _ => SysErrorClass::Error,
     }
 }
@@ -328,6 +335,12 @@ fn sys_error<'v, 's>(strand: &mut Strand<'v, 's>, error: SysErrorSource) -> Erro
             error,
             operating_system,
         ),
+        SysErrorClass::UnsupportedError => create_sys_error::<UnsupportedError>(
+            strand,
+            global.types.unsupported,
+            error,
+            operating_system,
+        ),
     }
 }
 
@@ -405,6 +418,10 @@ mod test {
         assert_eq!(
             classify_io_error_kind(ErrorKind::TimedOut),
             SysErrorClass::TimedOutError
+        );
+        assert_eq!(
+            classify_io_error_kind(ErrorKind::Unsupported),
+            SysErrorClass::UnsupportedError
         );
         assert_eq!(
             classify_io_error_kind(ErrorKind::InvalidInput),

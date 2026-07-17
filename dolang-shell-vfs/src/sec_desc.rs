@@ -10,11 +10,11 @@ use crate::Sid;
 
 const REVISION: u8 = 1;
 
-const OWNER_SECURITY_INFORMATION: u32 = 0x0000_0001;
-const GROUP_SECURITY_INFORMATION: u32 = 0x0000_0002;
-const DACL_SECURITY_INFORMATION: u32 = 0x0000_0004;
-const SACL_SECURITY_INFORMATION: u32 = 0x0000_0008;
-const ALL_SECURITY_INFORMATION: u32 = OWNER_SECURITY_INFORMATION
+pub const OWNER_SECURITY_INFORMATION: u32 = 0x0000_0001;
+pub const GROUP_SECURITY_INFORMATION: u32 = 0x0000_0002;
+pub const DACL_SECURITY_INFORMATION: u32 = 0x0000_0004;
+pub const SACL_SECURITY_INFORMATION: u32 = 0x0000_0008;
+pub const ALL_SECURITY_INFORMATION: u32 = OWNER_SECURITY_INFORMATION
     | GROUP_SECURITY_INFORMATION
     | DACL_SECURITY_INFORMATION
     | SACL_SECURITY_INFORMATION;
@@ -99,6 +99,11 @@ impl SecDesc {
 
     /// Parses a self-relative Windows security descriptor packet.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, SecDescError> {
+        Self::from_bytes_with_mask(bytes, ALL_SECURITY_INFORMATION)
+    }
+
+    /// Parses the selected components of a self-relative Windows security descriptor packet.
+    pub fn from_bytes_with_mask(bytes: &[u8], mask: u32) -> Result<Self, SecDescError> {
         if bytes.len() < SELF_RELATIVE_HEADER_LEN {
             return Err(SecDescError::PacketLength);
         }
@@ -109,8 +114,8 @@ impl SecDesc {
             return Err(SecDescError::NotSelfRelative);
         }
 
-        let owner = parse_sid(bytes, packet_offset(bytes, 4)?, "owner")?;
-        let group = parse_sid(bytes, packet_offset(bytes, 8)?, "group")?;
+        let owner_offset = packet_offset(bytes, 4)?;
+        let group_offset = packet_offset(bytes, 8)?;
         let sacl_offset = packet_offset(bytes, 12)?;
         let dacl_offset = packet_offset(bytes, 16)?;
         if control & SE_SACL_PRESENT == 0 && sacl_offset != 0 {
@@ -119,18 +124,25 @@ impl SecDesc {
         if control & SE_DACL_PRESENT == 0 && dacl_offset != 0 {
             return Err(SecDescError::AclNotPresent("DACL"));
         }
-        let sacl = parse_acl(bytes, sacl_offset, "SACL")?;
-        let dacl = parse_acl(bytes, dacl_offset, "DACL")?;
+        let owner = (mask & OWNER_SECURITY_INFORMATION != 0)
+            .then(|| parse_sid(bytes, owner_offset, "owner"))
+            .transpose()?
+            .flatten();
+        let group = (mask & GROUP_SECURITY_INFORMATION != 0)
+            .then(|| parse_sid(bytes, group_offset, "group"))
+            .transpose()?
+            .flatten();
+        let sacl = (mask & SACL_SECURITY_INFORMATION != 0)
+            .then(|| parse_acl(bytes, sacl_offset, "SACL"))
+            .transpose()?
+            .flatten();
+        let dacl = (mask & DACL_SECURITY_INFORMATION != 0)
+            .then(|| parse_acl(bytes, dacl_offset, "DACL"))
+            .transpose()?
+            .flatten();
 
         Self::new(
-            ALL_SECURITY_INFORMATION,
-            revision,
-            rm_control,
-            control,
-            owner,
-            group,
-            dacl,
-            sacl,
+            mask, revision, rm_control, control, owner, group, dacl, sacl,
         )
     }
 
@@ -720,6 +732,36 @@ mod tests {
         assert_eq!(descriptor.sacl(), None);
         assert_eq!(descriptor.dacl(), Some(&packet[48..]));
         assert_eq!(descriptor.to_bytes(), packet);
+    }
+
+    #[test]
+    fn self_relative_parser_tracks_selected_components() {
+        let descriptor = SecDesc::new(
+            ALL_SECURITY_INFORMATION,
+            1,
+            0,
+            SE_DACL_PRESENT | SE_DACL_PROTECTED,
+            Some(sid("S-1-5-18")),
+            Some(sid("S-1-5-32-544")),
+            Some(acl(8)),
+            None,
+        )
+        .unwrap();
+        let packet = descriptor.to_bytes();
+
+        let selected = SecDesc::from_bytes_with_mask(&packet, DACL_SECURITY_INFORMATION).unwrap();
+        assert_eq!(selected.mask(), DACL_SECURITY_INFORMATION);
+        assert!(!selected.owner_loaded());
+        assert_eq!(selected.owner(), None);
+        assert!(selected.dacl_loaded());
+        assert_eq!(selected.dacl(), Some(acl(8).as_slice()));
+        assert!(selected.dacl_protected());
+
+        let empty = SecDesc::from_bytes_with_mask(&packet, 0).unwrap();
+        assert_eq!(empty.mask(), 0);
+        assert_eq!(empty.control(), SE_DACL_PRESENT | SE_DACL_PROTECTED);
+        assert_eq!(empty.owner(), None);
+        assert_eq!(empty.dacl(), None);
     }
 
     #[test]

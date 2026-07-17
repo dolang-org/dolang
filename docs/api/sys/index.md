@@ -14,6 +14,7 @@ types.
 | [`PermissionDeniedError`](./permission-denied-error.md) | Subtype for permission failures               |
 | [`AlreadyExistsError`](./already-exists-error.md)       | Subtype for existing-path conflicts           |
 | [`TimedOutError`](./timed-out-error.md)                 | Subtype for timed-out system operations       |
+| [`UnsupportedError`](./unsupported-error.md)            | Subtype for unsupported system operations     |
 
 ## Functions
 

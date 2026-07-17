@@ -344,6 +344,37 @@ echo "Available: $(meta.available)"
 echo "Readonly: $(meta.read_only)"
 ```
 
+### `sec_desc path :owner? :group? :dacl? :sacl? :follow?`
+
+Gets selected parts of a Windows security descriptor.
+
+#### Parameters
+
+| Name     | Type                                      | Description                    |
+| -------- | ----------------------------------------- | ------------------------------ |
+| `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to query                  |
+| `owner`  | [`bool`](../std/bool.md)                  | Load the owner SID             |
+| `group`  | [`bool`](../std/bool.md)                  | Load the primary group SID     |
+| `dacl`   | [`bool`](../std/bool.md)                  | Load the discretionary ACL     |
+| `sacl`   | [`bool`](../std/bool.md)                  | Load the system ACL            |
+| `follow` | [`bool`](../std/bool.md)                  | Follow the final symbolic link |
+
+#### Returns
+
+[`SecDesc`](../security/secdesc.md)
+
+### `set_sec_desc path desc :follow = true`
+
+Applies the components selected by a Windows security descriptor's `mask`.
+
+#### Parameters
+
+| Name     | Type                                      | Description                    |
+| -------- | ----------------------------------------- | ------------------------------ |
+| `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to update                 |
+| `desc`   | [`SecDesc`](../security/secdesc.md)       | Security descriptor to apply   |
+| `follow` | [`bool`](../std/bool.md)                  | Follow the final symbolic link |
+
 ### `attrs path :follow = true`
 
 Gets filesystem attributes for the given path.

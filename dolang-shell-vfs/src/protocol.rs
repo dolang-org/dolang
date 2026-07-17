@@ -5,8 +5,8 @@ use dolang_rpc::{Opaque, OsHandle, Protocol};
 use serde::{Deserialize, Serialize};
 
 pub(crate) use crate::{
-    Attrs, ChownIdentity, DirEntry, FsMetadata, Metadata, OperatingSystem, SecurityInfo, Sid,
-    SidName, StreamEntry, TargetInfo, WellKnownPath, XattrEntry, XattrNamespace,
+    Attrs, ChownIdentity, DirEntry, FsMetadata, Metadata, OperatingSystem, SecDesc, SecurityInfo,
+    Sid, SidName, StreamEntry, TargetInfo, WellKnownPath, XattrEntry, XattrNamespace,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -524,6 +524,20 @@ pub(crate) struct FsMetadataRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct SecDescRequest {
+    pub(crate) path: WirePath,
+    pub(crate) mask: u32,
+    pub(crate) follow: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct SetSecDescRequest {
+    pub(crate) path: WirePath,
+    pub(crate) sec_desc: SecDesc,
+    pub(crate) follow: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct AttrsRequest {
     pub(crate) path: WirePath,
     pub(crate) follow: bool,
@@ -756,6 +770,14 @@ pub(crate) enum RequestKind {
     FileFsMetadata {
         file: Opaque<crate::FileMarker>,
     },
+    FileSecDesc {
+        file: Opaque<crate::FileMarker>,
+        mask: u32,
+    },
+    FileSetSecDesc {
+        file: Opaque<crate::FileMarker>,
+        sec_desc: SecDesc,
+    },
     FileXattrs {
         file: Opaque<crate::FileMarker>,
         namespace: XattrNamespaceRequest,
@@ -789,6 +811,8 @@ pub(crate) enum RequestKind {
     Remove(RemoveRequest),
     Metadata(MetadataRequest),
     FsMetadata(FsMetadataRequest),
+    SecDesc(SecDescRequest),
+    SetSecDesc(SetSecDescRequest),
     CreateDir(CreateDirRequest),
     RemoveDir(RemoveDirRequest),
     Copy(CopyRequest),
@@ -847,6 +871,8 @@ pub(crate) enum ResponseKind {
     StdioRecvClone(Result<Opaque<crate::StdioRecvMarker>, WireError>),
     FileMetadata(Result<Metadata, WireError>),
     FileFsMetadata(Result<FsMetadata, WireError>),
+    FileSecDesc(Result<SecDesc, WireError>),
+    FileSetSecDesc(Result<(), WireError>),
     FileXattrs(Result<Vec<XattrEntry>, WireError>),
     FileXattr(Result<Vec<u8>, WireError>),
     FileStreams(Result<Vec<StreamEntry>, WireError>),
@@ -858,6 +884,8 @@ pub(crate) enum ResponseKind {
     Remove(Result<(), WireError>),
     Metadata(Result<Metadata, WireError>),
     FsMetadata(Result<FsMetadata, WireError>),
+    SecDesc(Result<SecDesc, WireError>),
+    SetSecDesc(Result<(), WireError>),
     CreateDir(Result<(), WireError>),
     RemoveDir(Result<(), WireError>),
     Copy(Result<(), WireError>),

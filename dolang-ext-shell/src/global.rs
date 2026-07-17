@@ -18,7 +18,7 @@ use tokio::{
 use crate::{
     error::{
         AlreadyExistsError, NotFoundError, PermissionDeniedError, ProcError, SysError,
-        SysErrorObject, TimedOutError,
+        SysErrorObject, TimedOutError, UnsupportedError,
     },
     fs::{
         attrs::Attrs,
@@ -73,6 +73,7 @@ pub(crate) struct Types<'v> {
     pub(crate) permission_denied: Type<'v, SysErrorObject<PermissionDeniedError>>,
     pub(crate) already_exists: Type<'v, SysErrorObject<AlreadyExistsError>>,
     pub(crate) timed_out: Type<'v, SysErrorObject<TimedOutError>>,
+    pub(crate) unsupported: Type<'v, SysErrorObject<UnsupportedError>>,
     pub(crate) proc_error: Type<'v, ProcError>,
     pub(crate) pipe_receiver: Type<'v, PipeReceiver>,
     pub(crate) pipe_sender: Type<'v, PipeSender>,
@@ -201,6 +202,11 @@ impl<'v> Global<'v> {
                     .build_type::<SysErrorObject<TimedOutError>>((), ())
                     .nominal_supertype(sys_error)
                     .nominal_supertype(TypeObject::TimedOutError)
+                    .build(),
+                unsupported: builder
+                    .build_type::<SysErrorObject<UnsupportedError>>((), ())
+                    .nominal_supertype(sys_error)
+                    .nominal_supertype(TypeObject::UnsupportedError)
                     .build(),
                 proc_error: builder.register_type(),
                 pipe_receiver: builder.register_type(),

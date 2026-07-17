@@ -29,10 +29,10 @@ use crate::{
         CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
         MoveRequest, OpenHandle, OpenHandlePreference, OpenRequest, PipeResponse, QueryResponse,
         ReadDirResponse, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest,
-        RequestKind, ResponseKind, SetAttrsRequest, SetPermissionsRequest, SetTimesRequest,
-        SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget, StreamsRequest,
-        SymlinkKind, SymlinkRequest, UnixStreamSocketRequest, VfsProtocol, WellKnownPathRequest,
-        WirePath, XattrRequest, XattrsRequest,
+        RequestKind, ResponseKind, SecDescRequest, SetAttrsRequest, SetPermissionsRequest,
+        SetSecDescRequest, SetTimesRequest, SetXattrRequest, SpawnRequest, StdioRecvTarget,
+        StdioSendTarget, StreamsRequest, SymlinkKind, SymlinkRequest, UnixStreamSocketRequest,
+        VfsProtocol, WellKnownPathRequest, WirePath, XattrRequest, XattrsRequest,
     },
 };
 
@@ -341,6 +341,12 @@ impl Connection {
             RequestKind::FileFsMetadata { file } => {
                 self.handle_file_fs_metadata(context, file).await
             }
+            RequestKind::FileSecDesc { file, mask } => {
+                self.handle_file_sec_desc(context, file, mask).await
+            }
+            RequestKind::FileSetSecDesc { file, sec_desc } => {
+                self.handle_file_set_sec_desc(context, file, sec_desc).await
+            }
             RequestKind::FileXattrs { file, namespace } => {
                 self.handle_file_xattrs(context, file, namespace).await
             }
@@ -373,6 +379,8 @@ impl Connection {
             RequestKind::Remove(request) => self.handle_remove(request).await,
             RequestKind::Metadata(request) => self.handle_metadata(request).await,
             RequestKind::FsMetadata(request) => self.handle_fs_metadata(request).await,
+            RequestKind::SecDesc(request) => self.handle_sec_desc(request).await,
+            RequestKind::SetSecDesc(request) => self.handle_set_sec_desc(request).await,
             RequestKind::CreateDir(request) => self.handle_create_dir(request).await,
             RequestKind::RemoveDir(request) => self.handle_remove_dir(request).await,
             RequestKind::Copy(request) => self.handle_copy(request).await,
@@ -947,6 +955,39 @@ impl Connection {
         ResponseKind::FileFsMetadata(result)
     }
 
+    async fn handle_file_sec_desc(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+        mask: u32,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0.lock().await.sec_desc(mask).await.map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileSecDesc(result)
+    }
+
+    async fn handle_file_set_sec_desc(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+        sec_desc: crate::SecDesc,
+    ) -> ResponseKind {
+        let result = async {
+            let file = Self::retained_file(context, file)?;
+            file.0
+                .lock()
+                .await
+                .set_sec_desc(&sec_desc)
+                .await
+                .map_err(wire_error)
+        }
+        .await;
+        ResponseKind::FileSetSecDesc(result)
+    }
+
     async fn handle_file_xattrs(
         &self,
         context: &CallContext<VfsProtocol>,
@@ -1140,6 +1181,24 @@ impl Connection {
             self.server
                 .vfs
                 .fs_metadata(request_path(&req.path), req.follow)
+                .await,
+        ))
+    }
+
+    async fn handle_sec_desc(&self, req: SecDescRequest) -> ResponseKind {
+        ResponseKind::SecDesc(Self::wire_result(
+            self.server
+                .vfs
+                .sec_desc(request_path(&req.path), req.mask, req.follow)
+                .await,
+        ))
+    }
+
+    async fn handle_set_sec_desc(&self, req: SetSecDescRequest) -> ResponseKind {
+        ResponseKind::SetSecDesc(Self::wire_result(
+            self.server
+                .vfs
+                .set_sec_desc(request_path(&req.path), &req.sec_desc, req.follow)
                 .await,
         ))
     }

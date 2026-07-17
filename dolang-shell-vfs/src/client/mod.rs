@@ -30,17 +30,18 @@ use tokio::{
 use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
 use crate::{
     Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions,
-    ProcessStatus, Query, ReadDir, SessionMode, Sid, SidName, StdioRecv, StdioSend, StreamEntry,
-    Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry,
+    ProcessStatus, Query, ReadDir, SecDesc, SessionMode, Sid, SidName, StdioRecv, StdioSend,
+    StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry,
     direct::DirectFile,
     protocol::{
         AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
         FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenHandle,
         OpenHandlePreference, OpenRequest, QueryResponse, ReadDirResponse, ReadLinkRequest,
-        RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind, SetAttrsRequest,
-        SetPermissionsRequest, SetTimesRequest, SetXattrRequest, SpawnRequest, StdioRecvTarget,
-        StdioSendTarget, StreamsRequest, SymlinkKind, SymlinkRequest, Timestamp, VfsProtocol,
-        WellKnownPathRequest, WirePath, XattrNamespaceRequest, XattrRequest, XattrsRequest,
+        RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind, SecDescRequest,
+        SetAttrsRequest, SetPermissionsRequest, SetSecDescRequest, SetTimesRequest,
+        SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget, StreamsRequest,
+        SymlinkKind, SymlinkRequest, Timestamp, VfsProtocol, WellKnownPathRequest, WirePath,
+        XattrNamespaceRequest, XattrRequest, XattrsRequest,
     },
 };
 
@@ -458,6 +459,46 @@ impl FileHandle for ClientFile {
                     .await?
                 {
                     ResponseKind::FileFsMetadata(result) => result.map_err(Into::into),
+                    response => Err(unexpected(response).into()),
+                }
+            }
+        }
+    }
+
+    async fn sec_desc(&mut self, mask: u32) -> crate::Result<SecDesc> {
+        match &mut self.0 {
+            ClientFileInner::Direct(file) => file.sec_desc(mask).await,
+            ClientFileInner::Remote(file) => {
+                file.idle()?;
+                match file
+                    .client
+                    .request(RequestKind::FileSecDesc {
+                        file: file.opaque(),
+                        mask,
+                    })
+                    .await?
+                {
+                    ResponseKind::FileSecDesc(result) => result.map_err(Into::into),
+                    response => Err(unexpected(response).into()),
+                }
+            }
+        }
+    }
+
+    async fn set_sec_desc(&mut self, sec_desc: &SecDesc) -> crate::Result<()> {
+        match &mut self.0 {
+            ClientFileInner::Direct(file) => file.set_sec_desc(sec_desc).await,
+            ClientFileInner::Remote(file) => {
+                file.idle()?;
+                match file
+                    .client
+                    .request(RequestKind::FileSetSecDesc {
+                        file: file.opaque(),
+                        sec_desc: sec_desc.clone(),
+                    })
+                    .await?
+                {
+                    ResponseKind::FileSetSecDesc(result) => result.map_err(Into::into),
                     response => Err(unexpected(response).into()),
                 }
             }
@@ -2171,6 +2212,40 @@ impl Vfs for Client {
         };
         match self.request(RequestKind::FsMetadata(request)).await? {
             ResponseKind::FsMetadata(result) => result.map_err(crate::Error::from),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    async fn sec_desc(
+        &self,
+        path: Utf8TypedPath<'_>,
+        mask: u32,
+        follow: bool,
+    ) -> crate::Result<SecDesc> {
+        let request = SecDescRequest {
+            path: path.into(),
+            mask,
+            follow,
+        };
+        match self.request(RequestKind::SecDesc(request)).await? {
+            ResponseKind::SecDesc(result) => result.map_err(crate::Error::from),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    async fn set_sec_desc(
+        &self,
+        path: Utf8TypedPath<'_>,
+        sec_desc: &SecDesc,
+        follow: bool,
+    ) -> crate::Result<()> {
+        let request = SetSecDescRequest {
+            path: path.into(),
+            sec_desc: sec_desc.clone(),
+            follow,
+        };
+        match self.request(RequestKind::SetSecDesc(request)).await? {
+            ResponseKind::SetSecDesc(result) => result.map_err(crate::Error::from),
             response => Err(unexpected(response).into()),
         }
     }

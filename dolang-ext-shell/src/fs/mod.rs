@@ -4,7 +4,9 @@ use dolang::runtime::{
     vm::Builder,
 };
 use dolang_shell_vfs::{
-    Attrs, FileHandle, FileType, OpenOptions, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
+    Attrs, DACL_SECURITY_INFORMATION, FileHandle, FileType, GROUP_SECURITY_INFORMATION,
+    OWNER_SECURITY_INFORMATION, OpenOptions, SACL_SECURITY_INFORMATION, SecDesc, Utf8TypedPath,
+    Utf8TypedPathBuf, Vfs, WellKnownPath,
 };
 use std::{
     future::poll_fn,
@@ -37,9 +39,80 @@ use crate::{
         readdir::{DirEntryIter, DirEntryIterAnnex},
     },
     global::Global,
+    security,
     time::datetime_to_system_time,
     util,
 };
+
+fn sec_desc_mask<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    owner: Option<Slot<'v, '_>>,
+    group: Option<Slot<'v, '_>>,
+    dacl: Option<Slot<'v, '_>>,
+    sacl: Option<Slot<'v, '_>>,
+) -> Result<'v, 's, u32> {
+    fn selected<'v, 's>(
+        strand: &mut Strand<'v, 's>,
+        value: Option<Slot<'v, '_>>,
+        default: bool,
+    ) -> Result<'v, 's, bool> {
+        value
+            .map(|value| util::bool(strand, value, "security descriptor component"))
+            .transpose()
+            .map(|value| value.unwrap_or(default))
+    }
+    let mut mask = 0;
+    if selected(strand, owner, true)? {
+        mask |= OWNER_SECURITY_INFORMATION;
+    }
+    if selected(strand, group, true)? {
+        mask |= GROUP_SECURITY_INFORMATION;
+    }
+    if selected(strand, dacl, true)? {
+        mask |= DACL_SECURITY_INFORMATION;
+    }
+    if selected(strand, sacl, false)? {
+        mask |= SACL_SECURITY_INFORMATION;
+    }
+    Ok(mask)
+}
+
+async fn sec_desc<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    path: Utf8TypedPath<'_>,
+    mask: u32,
+    follow: bool,
+    mut out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let path = prepend_cwd(strand, global, path)?;
+    let descriptor = global
+        .local
+        .get(strand)
+        .vfs()
+        .sec_desc(path.to_path(), mask, follow)
+        .await
+        .into_sys(strand)?;
+    security::create_sec_desc(strand, global, descriptor, &mut out);
+    Ok(())
+}
+
+async fn set_sec_desc<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    path: Utf8TypedPath<'_>,
+    descriptor: &SecDesc,
+    follow: bool,
+) -> Result<'v, 's, ()> {
+    let path = prepend_cwd(strand, global, path)?;
+    global
+        .local
+        .get(strand)
+        .vfs()
+        .set_sec_desc(path.to_path(), descriptor, follow)
+        .await
+        .into_sys(strand)
+}
 
 use glob::{GlobIter, GlobIterAnnex};
 
@@ -841,6 +914,10 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
     let ignore = builder.sym("ignore");
     let max_depth = builder.sym("max_depth");
     let follow = builder.sym("follow");
+    let owner = builder.sym("owner");
+    let group = builder.sym("group");
+    let dacl = builder.sym("dacl");
+    let sacl = builder.sym("sacl");
     let namespace = builder.sym("namespace");
     let modified = builder.sym("modified");
     let accessed = builder.sym("accessed");
@@ -925,6 +1002,40 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 None => true,
             };
             fs_metadata(strand, global, path.to_path(), follow, out).await
+        })
+        .function("sec_desc", async move |strand, args, out| {
+            let ([path], [owner, group, dacl, sacl, follow]) = unpack!(
+                strand,
+                args,
+                1,
+                0,
+                owner = None,
+                group = None,
+                dacl = None,
+                sacl = None,
+                follow = None
+            )?;
+            let path = path_from_value(strand, global, &path)?;
+            let mask = sec_desc_mask(strand, owner, group, dacl, sacl)?;
+            let follow = match follow {
+                Some(value) => value
+                    .as_bool(strand)
+                    .ok_or_else(|| Error::type_error(strand, "follow: expected bool"))?,
+                None => true,
+            };
+            sec_desc(strand, global, path.to_path(), mask, follow, out).await
+        })
+        .function("set_sec_desc", async move |strand, args, _out| {
+            let ([path, descriptor], [follow]) = unpack!(strand, args, 2, 0, follow = None)?;
+            let path = path_from_value(strand, global, &path)?;
+            let descriptor = security::sec_desc_from_value(strand, global, &descriptor)?;
+            let follow = match follow {
+                Some(value) => value
+                    .as_bool(strand)
+                    .ok_or_else(|| Error::type_error(strand, "follow: expected bool"))?,
+                None => true,
+            };
+            set_sec_desc(strand, global, path.to_path(), &descriptor, follow).await
         })
         .function("attrs", async move |strand, args, out| {
             let ([path], [follow]) = unpack!(strand, args, 1, 0, follow = None)?;

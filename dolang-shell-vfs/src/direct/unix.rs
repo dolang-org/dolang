@@ -1,6 +1,6 @@
 use super::{Direct, DirectChild, DirectCommand};
 use crate::{
-    Attrs, ChownIdentity, FsMetadata, FsMetadataFamily, StreamEntry, UnixFsMetadata,
+    Attrs, ChownIdentity, FsMetadata, FsMetadataFamily, SecDesc, StreamEntry, UnixFsMetadata,
     UnixFsMetadataPlatform, XattrEntry, XattrNamespace,
 };
 #[cfg(target_os = "linux")]
@@ -47,6 +47,42 @@ pub(super) enum UnixXattrTarget<'a> {
 }
 
 impl Direct {
+    pub(super) fn sec_desc_from_path(
+        _path: &Path,
+        _mask: u32,
+        _follow: bool,
+    ) -> io::Result<SecDesc> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "security descriptors are only supported on Windows",
+        ))
+    }
+
+    pub(super) fn set_sec_desc_path(
+        _path: &Path,
+        _descriptor: &SecDesc,
+        _follow: bool,
+    ) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "security descriptors are only supported on Windows",
+        ))
+    }
+
+    pub(super) fn sec_desc_from_file(_file: &File, _mask: u32) -> io::Result<SecDesc> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "security descriptors are only supported on Windows",
+        ))
+    }
+
+    pub(super) fn set_sec_desc_file(_file: &File, _descriptor: &SecDesc) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "security descriptors are only supported on Windows",
+        ))
+    }
+
     pub(super) async fn impl_user_name(&self, uid: u32) -> crate::Result<String> {
         tokio::task::spawn_blocking(move || {
             nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))

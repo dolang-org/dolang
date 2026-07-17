@@ -194,6 +194,31 @@ impl<'v> Object<'v> for Sid {
 
 pub(crate) struct SecDesc;
 
+pub(crate) fn create_sec_desc<'v>(
+    strand: &mut Strand<'v, '_>,
+    global: State<'v, Global<'v>>,
+    sec_desc: VfsSecDesc,
+    out: &mut Slot<'v, '_>,
+) {
+    global
+        .types
+        .sec_desc
+        .create_with_annex(strand, SecDesc, sec_desc, out);
+}
+
+pub(crate) fn sec_desc_from_value<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    value: &Value<'v>,
+) -> Result<'v, 's, VfsSecDesc> {
+    global
+        .types
+        .sec_desc
+        .downcast(value)
+        .map(|value| value.annex().clone())
+        .ok_or_else(|| Error::type_error(strand, "expected security.SecDesc"))
+}
+
 impl<'v> Object<'v> for SecDesc {
     const NAME: &'v str = "SecDesc";
     const MODULE: &'v str = "security";
