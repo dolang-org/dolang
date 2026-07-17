@@ -1,11 +1,11 @@
-use std::{cell::OnceCell, fmt, ops::ControlFlow};
+use std::{cell::OnceCell, ops::ControlFlow};
 
 use dolang_util::alias;
 
 use crate::{
     arg::Args,
     call,
-    error::{Error, ErrorKind, Result, ResultExt},
+    error::{Error, ErrorKind, Result},
     gc::{Annex, Collect, arena::Visit},
     method,
     object::{
@@ -49,9 +49,9 @@ impl<'v> Protocol<'v> for Getter {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type Getter>").into_do(strand)
+        crate::fmt!(strand, w, "<type Getter>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -88,9 +88,9 @@ impl<'v> Protocol<'v> for Setter {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type Setter>").into_do(strand)
+        crate::fmt!(strand, w, "<type Setter>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -246,13 +246,13 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let this = this.get();
         if let Some(module_name) = &this.module_name {
-            write!(w, "<type {module_name}.{}>", this.name).into_do(strand)
+            crate::fmt!(strand, w, "<type {module_name}.{}>", this.name)
         } else {
-            write!(w, "<type {}>", this.name).into_do(strand)
+            crate::fmt!(strand, w, "<type {}>", this.name)
         }
     }
 
@@ -706,7 +706,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let res = {
             let w = &mut *w;
@@ -717,7 +717,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     let result = result
                         .as_str_raw(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected str result"))?;
-                    write!(w, "{result}").into_do(strand)?;
+                    crate::fmt!(strand, w, "{result}")?;
                     Ok(false)
                 })?,
                 Some(ClassEntry::Delegate(slot)) => {
@@ -740,7 +740,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         match annex.class.entry_by_tag(sym::DBG_METHOD) {
@@ -749,7 +749,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 let result = result
                     .as_str_raw(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected str result"))?;
-                write!(w, "{result}").into_do(strand)
+                crate::fmt!(strand, w, "{result}")
             }),
             Some(ClassEntry::Delegate(slot)) => {
                 let native = annex.natives[*slot]
@@ -759,9 +759,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             }
             _ => {
                 if let Some(module) = &annex.class.module_name {
-                    write!(w, "<{module}.{}>", annex.class.name).into_do(strand)
+                    crate::fmt!(strand, w, "<{module}.{}>", annex.class.name)
                 } else {
-                    write!(w, "<{}>", annex.class.name).into_do(strand)
+                    crate::fmt!(strand, w, "<{}>", annex.class.name)
                 }
             }
         }
@@ -770,7 +770,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     fn op_display_arg<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let res = {
             let w = &mut *w;
@@ -783,7 +783,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                         let result = result
                             .as_str_raw(strand)
                             .ok_or_else(|| Error::type_error(strand, "expected str result"))?;
-                        write!(w, "{result}").into_do(strand)?;
+                        crate::fmt!(strand, w, "{result}")?;
                         Ok(false)
                     })?
                 }

@@ -1,10 +1,10 @@
-use std::{fmt, hash::DefaultHasher, ops::ControlFlow};
+use std::{hash::DefaultHasher, ops::ControlFlow};
 
 use dolang_util::alias;
 
 use crate::{
     arg::Args,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::{
         BoundMethod,
@@ -57,9 +57,9 @@ impl<'v> Protocol<'v> for f64 {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", *this.get()).into_do(strand)
+        crate::fmt!(strand, w, "{}", *this.get())
     }
 
     fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
@@ -230,25 +230,25 @@ impl<'v> Protocol<'v> for Verbatim {
     fn op_display_arg<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.get().text).into_do(strand)
+        crate::fmt!(strand, w, "{}", this.get().text)
     }
 
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.get().value).into_do(strand)
+        crate::fmt!(strand, w, "{}", this.get().value)
     }
 
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{:?}", this.get().value).into_do(strand)
+        crate::fmt!(strand, w, "{:?}", this.get().value)
     }
 
     fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
@@ -411,9 +411,9 @@ impl<'v> Protocol<'v> for Float {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type std.float>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.float>")
     }
 
     async fn op_call<'a, 's>(

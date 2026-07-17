@@ -1,5 +1,17 @@
 #![deny(warnings)]
 
+/// Writes formatted data to a [`Format`](crate::value::Format) destination.
+#[macro_export]
+macro_rules! fmt {
+    ($strand:expr, $destination:expr, $($arg:tt)*) => {
+        $crate::value::Format::write_fmt(
+            $destination,
+            $strand,
+            format_args!($($arg)*),
+        )
+    };
+}
+
 pub mod arg;
 pub mod error;
 pub mod frame;

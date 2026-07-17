@@ -1,10 +1,10 @@
 //! Builtin primitive type class objects
 
-use std::{fmt, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use crate::{
     arg::Args,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::{
         BoundMethod,
@@ -44,9 +44,9 @@ impl<'v> Protocol<'v> for Value {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type value>").into_do(strand)
+        crate::fmt!(strand, w, "<type value>")
     }
 
     async fn op_call<'a, 's>(
@@ -93,9 +93,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type>").into_do(strand)
+        crate::fmt!(strand, w, "<type>")
     }
 
     async fn op_call<'a, 's>(
@@ -169,9 +169,9 @@ impl<'v> Protocol<'v> for Bool {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type std.bool>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.bool>")
     }
 
     async fn op_call<'a, 's>(
@@ -273,9 +273,9 @@ impl<'v> Protocol<'v> for ArgsType {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type std.args>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.args>")
     }
 
     async fn op_call<'a, 's>(
@@ -305,8 +305,8 @@ impl<'v> Protocol<'v> for NilType {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type std.Nil>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.Nil>")
     }
 }

@@ -1,4 +1,6 @@
-use std::{fmt, io, time::SystemTime};
+use std::{io, time::SystemTime};
+
+use dolang::runtime::object::fmt;
 
 use dolang::{
     compile::Compiler,
@@ -94,13 +96,17 @@ impl DurationAnnex {
         self.total_nanos as f64 / NANOS_PER_SEC_F64
     }
 
-    fn write_seconds(&self, w: &mut dyn fmt::Write) -> fmt::Result {
+    fn write_seconds<'v, 's>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        w: &mut dyn dolang::runtime::Format<'v>,
+    ) -> Result<'v, 's, ()> {
         if self.total_nanos == 0 {
-            return write!(w, "0s");
+            return fmt!(strand, w, "0s");
         }
 
         if self.total_nanos < 0 {
-            write!(w, "-")?;
+            fmt!(strand, w, "-")?;
         }
 
         let abs_nanos = self.total_nanos.unsigned_abs();
@@ -108,7 +114,7 @@ impl DurationAnnex {
         let nanos = abs_nanos % (NANOS_PER_SEC_I128 as u128);
 
         if nanos == 0 {
-            return write!(w, "{}s", secs);
+            return fmt!(strand, w, "{}s", secs);
         }
 
         let mut frac = format!("{:09}", nanos);
@@ -116,7 +122,7 @@ impl DurationAnnex {
             frac.pop();
         }
 
-        write!(w, "{}.{}s", secs, frac)
+        fmt!(strand, w, "{}.{}s", secs, frac)
     }
 
     fn to_std_duration<'v, 's>(
@@ -330,20 +336,20 @@ impl<'v> Object<'v> for DateTime {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let formatted = format_datetime_rfc3339(strand, &this.annex())?;
-        write!(w, "{}", formatted).into_do(strand)
+        fmt!(strand, w, "{}", formatted)
     }
 
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<DateTime ").into_do(strand)?;
+        fmt!(strand, w, "<DateTime ")?;
         Self::display(this, strand, w)?;
-        write!(w, ">").into_do(strand)
+        fmt!(strand, w, ">")
     }
 
     fn eq<'a, 's>(
@@ -417,19 +423,19 @@ impl<'v> Object<'v> for Duration {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        this.annex().write_seconds(w).into_do(strand)
+        this.annex().write_seconds(strand, w)
     }
 
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<Duration ").into_do(strand)?;
+        fmt!(strand, w, "<Duration ")?;
         Self::display(this, strand, w)?;
-        write!(w, ">").into_do(strand)
+        fmt!(strand, w, ">")
     }
 
     fn eq<'a, 's>(

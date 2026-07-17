@@ -1,8 +1,8 @@
-use std::fmt;
+use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value, error::ResultExt as _,
-    object::TypeBuilder, value::TypeObject,
+    Error, Instance, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder,
+    value::TypeObject,
 };
 use dolang_shell_vfs::{
     DirEntry as VfsDirEntry, FileType, ReadDir, Utf8TypedPath, Utf8TypedPathBuf,
@@ -61,9 +61,9 @@ impl<'v> Object<'v> for DirEntry {
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<fs.DirEntry {:?}>", this.annex().name).into_do(strand)
+        fmt!(strand, w, "<fs.DirEntry {:?}>", this.annex().name)
     }
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {

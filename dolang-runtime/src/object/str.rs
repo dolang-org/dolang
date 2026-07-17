@@ -1,5 +1,4 @@
 use std::{
-    fmt,
     hash::{DefaultHasher, Hash},
     ops::ControlFlow,
 };
@@ -7,14 +6,14 @@ use std::{
 use crate::{
     arg::Args,
     bytecode::Variadic,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::protocol::GcObj,
     sig,
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{self, Output, Slot, Slots, Value},
+    value::{self, Output, Slot, Slots, StrEmbryo, Value},
     vm::Vm,
 };
 
@@ -75,29 +74,28 @@ impl<'v> Protocol<'v> for str {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.receiver.get()).into_do(strand)
+        crate::fmt!(strand, w, "{}", this.receiver.get())
     }
 
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "\"").into_do(strand)?;
+        crate::fmt!(strand, w, "\"")?;
         for char in this.receiver.get().chars() {
             match char {
-                '"' | '\\' | '$' => write!(w, "\\{char}"),
-                '\t' => write!(w, "\\t"),
-                '\r' => write!(w, "\\r"),
-                '\n' => write!(w, "\\n"),
-                '\0' => write!(w, "\0"),
-                _ => write!(w, "{char}"),
-            }
-            .into_do(strand)?
+                '"' | '\\' | '$' => crate::fmt!(strand, w, "\\{char}"),
+                '\t' => crate::fmt!(strand, w, "\\t"),
+                '\r' => crate::fmt!(strand, w, "\\r"),
+                '\n' => crate::fmt!(strand, w, "\\n"),
+                '\0' => crate::fmt!(strand, w, "\0"),
+                _ => crate::fmt!(strand, w, "{char}"),
+            }?
         }
-        write!(w, "\"").into_do(strand)
+        crate::fmt!(strand, w, "\"")
     }
 
     fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &'a mut Strand<'v, 's>) -> bool {
@@ -159,7 +157,7 @@ impl<'v> Protocol<'v> for str {
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let me = this.get();
 
@@ -293,16 +291,16 @@ impl<'v> Protocol<'v> for str {
                         } else {
                             strand.input(&mut input)
                         }
-                        let mut acc = String::new();
+                        let mut acc = StrEmbryo::new();
                         if input.next(strand, &mut value).await? {
                             value.op_display(strand, &mut acc)?;
                         }
                         while input.next(strand, &mut value).await? {
-                            acc.push_str(this.receiver.get());
+                            acc.extend(strand, this.receiver.get());
                             value.op_display(strand, &mut acc)?;
                             strand.check_trap_gc()?;
                         }
-                        out.store(Value::from_str(strand, &acc));
+                        acc.finish(strand, out);
                         Ok(())
                     })
                     .await
@@ -547,7 +545,7 @@ impl<'v> Protocol<'v> for Split<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let forward = this.borrow_mut(strand)?.forward;
         let label = if forward {
@@ -555,7 +553,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         } else {
             "<str rsplit>"
         };
-        write!(w, "{label}").into_do(strand)
+        crate::fmt!(strand, w, "{label}")
     }
 
     async fn op_iter<'a, 's>(
@@ -681,9 +679,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type std.str>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.str>")
     }
 
     async fn op_call<'a, 's>(
@@ -694,8 +692,9 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         // Constructor: str(value) - convert to string
         let ([value], _) = unpack!(strand, args, 1, 0)?;
-        let str = value.to_string(strand)?;
-        Output::set(strand, out, str.as_str());
+        let mut format = StrEmbryo::new();
+        value.display(strand, &mut format)?;
+        format.finish(strand, out);
         Ok(())
     }
 
@@ -771,13 +770,15 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
+        mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
                 let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
-                let s = value.to_string(strand)?;
-                let native = Value::from_str(strand, s.as_str());
+                let mut format = StrEmbryo::new();
+                value.display(strand, &mut format)?;
+                format.finish(strand, &mut out);
+                let native = out.take();
                 self_val.op_fill(strand, &strand.singletons().str, native)?;
                 Ok(())
             }

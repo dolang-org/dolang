@@ -1,11 +1,11 @@
-use std::{borrow::Cow, fmt, mem, ops::ControlFlow};
+use std::{borrow::Cow, mem, ops::ControlFlow};
 
 use dolang_util::alias;
 
 use crate::{
     Program,
     arg::Args,
-    error::{Error, ErrorKind, Result, ResultExt},
+    error::{Error, ErrorKind, Result},
     frame::Upvars,
     gc::{Collect, Gc, arena::Visit},
     object::{
@@ -102,7 +102,7 @@ impl<'v> Protocol<'v> for Module<'v> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
         let name = borrow
@@ -111,17 +111,17 @@ impl<'v> Protocol<'v> for Module<'v> {
             .as_ref()
             .map(|r| &borrow.loaded.debug_strtab()[r.clone()])
             .unwrap_or("?");
-        write!(w, "{name}").into_do(strand)
+        crate::fmt!(strand, w, "{name}")
     }
 
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<").into_do(strand)?;
+        crate::fmt!(strand, w, "<")?;
         Self::op_display(this, strand, w)?;
-        write!(w, ">").into_do(strand)
+        crate::fmt!(strand, w, ">")
     }
 
     fn op_get<'a, 's>(
@@ -220,9 +220,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<module iterator>").into_do(strand)
+        crate::fmt!(strand, w, "<module iterator>")
     }
 
     async fn op_next<'a, 's>(
@@ -318,19 +318,19 @@ impl<'v> Protocol<'v> for Native<'v> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.get().name).into_do(strand)
+        crate::fmt!(strand, w, "{}", this.get().name)
     }
 
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<").into_do(strand)?;
+        crate::fmt!(strand, w, "<")?;
         Self::op_display(this, strand, w)?;
-        write!(w, ">").into_do(strand)
+        crate::fmt!(strand, w, ">")
     }
 
     fn op_get<'a, 's>(
@@ -480,7 +480,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         match &borrow.inner {
@@ -491,21 +491,21 @@ impl<'v> Protocol<'v> for Namespace<'v> {
                     .as_ref()
                     .map(|r| &module.loaded.debug_strtab()[r.clone()])
                     .unwrap_or("?");
-                write!(w, "{name}").into_do(strand)
+                crate::fmt!(strand, w, "{name}")
             }
             NamespaceInner::Custom(value) => value.op_display(strand, w),
-            NamespaceInner::Empty => write!(w, "namespace").into_do(strand),
+            NamespaceInner::Empty => crate::fmt!(strand, w, "namespace"),
         }
     }
 
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<").into_do(strand)?;
+        crate::fmt!(strand, w, "<")?;
         Self::op_display(this, strand, w)?;
-        write!(w, ">").into_do(strand)
+        crate::fmt!(strand, w, ">")
     }
 
     fn op_get<'a, 's>(
@@ -631,9 +631,8 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        use crate::error::ResultExt;
-        write!(w, "<type std.module>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.module>")
     }
 }

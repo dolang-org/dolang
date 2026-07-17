@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt, mem, path::PathBuf, result};
+use std::{borrow::Cow, mem, path::PathBuf, result};
 
 #[cfg(unix)]
 use std::os::unix::ffi::OsStringExt;
@@ -9,6 +9,8 @@ use diffy::{
     binary::{BinaryBlock, BinaryPatch},
     patch_set::{FileMode, FileOperation, FilePatch, ParseOptions, PatchKind, PatchSet},
 };
+use dolang::runtime::object::fmt;
+
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
     error::ResultExt,
@@ -368,19 +370,19 @@ impl<'v> Object<'v> for ParseError {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().message).map_err(|err| Error::runtime(strand, err))
+        fmt!(strand, w, "{}", this.annex().message)
     }
 
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<patch.ParseError ").map_err(|err| Error::runtime(strand, err))?;
+        fmt!(strand, w, "<patch.ParseError ")?;
         Self::display(this, strand, w)?;
-        write!(w, ">").map_err(|err| Error::runtime(strand, err))
+        fmt!(strand, w, ">")
     }
 }
 
@@ -398,19 +400,19 @@ impl<'v> Object<'v> for ApplyError {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().message).map_err(|err| Error::runtime(strand, err))
+        fmt!(strand, w, "{}", this.annex().message)
     }
 
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<patch.ApplyError ").map_err(|err| Error::runtime(strand, err))?;
+        fmt!(strand, w, "<patch.ApplyError ")?;
         Self::display(this, strand, w)?;
-        write!(w, ">").map_err(|err| Error::runtime(strand, err))
+        fmt!(strand, w, ">")
     }
 }
 

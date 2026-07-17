@@ -1,13 +1,12 @@
 use std::{
     cell::Cell,
-    fmt,
     hash::{DefaultHasher, Hash, Hasher},
     ops::ControlFlow,
 };
 
 use crate::{
     arg::Args,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     strand::Strand,
     sym::{self, Sym},
@@ -325,9 +324,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<set iterator>").into_do(strand)
+        crate::fmt!(strand, w, "<set iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -410,9 +409,9 @@ impl<'v> Protocol<'v> for Set<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "set([").into_do(strand)?;
+        crate::fmt!(strand, w, "set([")?;
         let borrow = this.borrow(strand)?;
         let mut first = true;
         unsafe {
@@ -421,13 +420,13 @@ impl<'v> Protocol<'v> for Set<'v> {
                     continue;
                 };
                 if !first {
-                    write!(w, ", ").into_do(strand)?;
+                    crate::fmt!(strand, w, ", ")?;
                 }
                 bucket.as_ref().value.op_debug(strand, w)?;
                 first = false;
             }
         }
-        write!(w, "])").into_do(strand)
+        crate::fmt!(strand, w, "])")
     }
 
     fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
@@ -786,9 +785,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type std.set>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.set>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

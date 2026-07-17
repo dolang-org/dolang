@@ -1,12 +1,12 @@
 //! Lazy dictionary-like projections over native objects.
 
-use std::{fmt, marker::PhantomData, ops::ControlFlow, ptr};
+use std::{marker::PhantomData, ops::ControlFlow, ptr};
 
 use dolang_bytecode::Variadic;
 
 use crate::{
     arg::Args,
-    error::{Error, Result, ResultExt as _},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::{
         BoundMethod, dict,
@@ -460,9 +460,9 @@ fn debug<'v, 's>(
     module: &str,
     name: &str,
     strand: &mut Strand<'v, 's>,
-    w: &mut dyn fmt::Write,
+    w: &mut dyn crate::value::Format<'v>,
 ) -> Result<'v, 's, ()> {
-    write!(w, "<{module}.{name}>").into_do(strand)
+    crate::fmt!(strand, w, "<{module}.{name}>")
 }
 
 impl<'v> Protocol<'v> for View<'v> {
@@ -477,7 +477,7 @@ impl<'v> Protocol<'v> for View<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let view = this.borrow(strand)?;
         debug(view.glue.module(), view.glue.name(), strand, w)
@@ -621,9 +621,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<dictionary view iterator>").into_do(strand)
+        crate::fmt!(strand, w, "<dictionary view iterator>")
     }
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,

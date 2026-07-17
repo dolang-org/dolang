@@ -9,7 +9,7 @@ use dolang_util::alias;
 
 use crate::{
     arg::Args,
-    error::{Error, ErrorKind, Result, ResultExt},
+    error::{Error, ErrorKind, Result},
     gc::{Collect, arena::Visit},
     strand::Strand,
     unpack,
@@ -168,17 +168,17 @@ impl<'v> Protocol<'v> for Boxed<'v> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.get()).into_do(strand)
+        crate::fmt!(strand, w, "{}", this.get())
     }
 
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<error: {}>", this.get()).into_do(strand)
+        crate::fmt!(strand, w, "<error: {}>", this.get())
     }
 }
 
@@ -210,9 +210,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type Error>").into_do(strand)
+        crate::fmt!(strand, w, "<type Error>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -272,9 +272,9 @@ impl<'v> Protocol<'v> for VariantType {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type std.error.{}>", variant_name(this.get().0)).into_do(strand)
+        crate::fmt!(strand, w, "<type std.error.{}>", variant_name(this.get().0))
     }
 
     fn op_inspect<'a>(this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

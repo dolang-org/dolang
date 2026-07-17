@@ -1,8 +1,9 @@
-use std::{fmt, str::FromStr};
+use std::str::FromStr;
+
+use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
-    error::ResultExt,
     object::TypeBuilder,
     unpack,
     value::{Str, View},
@@ -114,9 +115,9 @@ impl<'v> Object<'v> for Glob {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().glob).into_do(strand)
+        fmt!(strand, w, "{}", this.annex().glob)
     }
 }
 

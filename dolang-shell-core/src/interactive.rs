@@ -1,10 +1,4 @@
-use std::{
-    borrow::Cow,
-    fmt::{self, Write},
-    ops::ControlFlow,
-    path::Path,
-    string::String,
-};
+use std::{borrow::Cow, fmt::Write, ops::ControlFlow, path::Path, string::String};
 
 use dolang::{
     compile::{Context, Diag, Mode, Origin, Span, Token},
@@ -48,7 +42,7 @@ impl<'v> Object<'v> for DynamicPrelude<'v> {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
         Self::debug(this, strand, w)
     }

@@ -1,12 +1,11 @@
 use std::{
-    fmt,
     hash::{DefaultHasher, Hash},
     ops::ControlFlow,
 };
 
 use crate::{
     arg::Args,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     strand::Strand,
     sym::Tag,
@@ -47,25 +46,25 @@ impl<'v> Protocol<'v> for SymObj {
     fn op_display_arg<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, ":{}:", this.get().name).into_do(strand)
+        crate::fmt!(strand, w, ":{}:", this.get().name)
     }
 
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.get().name).into_do(strand)
+        crate::fmt!(strand, w, "{}", this.get().name)
     }
 
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<sym {}>", this.get().name).into_do(strand)
+        crate::fmt!(strand, w, "<sym {}>", this.get().name)
     }
 
     fn op_eq<'a, 's>(
@@ -128,9 +127,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type std.sym>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.sym>")
     }
 
     async fn op_call<'a, 's>(

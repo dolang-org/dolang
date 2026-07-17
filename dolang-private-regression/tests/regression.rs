@@ -1,6 +1,8 @@
 #![deny(warnings)]
 
 mod detail {
+    use dolang::runtime::object::fmt;
+
     use dolang::{
         compile::{self, Compiler, Mode},
         runtime::{
@@ -8,9 +10,9 @@ mod detail {
             vm::Builder,
         },
     };
-    use dolang_runtime::{error::ResultExt, strand::Strand};
+    use dolang_runtime::strand::Strand;
     use std::{
-        fmt, io,
+        io,
         ops::ControlFlow,
         path::{Path, PathBuf},
         pin::Pin,
@@ -106,7 +108,7 @@ mod detail {
         fn display<'a, 's>(
             this: Instance<'v, 'a, Self>,
             strand: &'a mut Strand<'v, 's>,
-            w: &mut dyn fmt::Write,
+            w: &mut dyn dolang::runtime::Format<'v>,
         ) -> runtime::Result<'v, 's, ()> {
             Self::debug(this, strand, w)
         }
@@ -114,9 +116,9 @@ mod detail {
         fn debug<'a, 's>(
             _this: Instance<'v, 'a, Self>,
             strand: &'a mut Strand<'v, 's>,
-            w: &mut dyn fmt::Write,
+            w: &mut dyn dolang::runtime::Format<'v>,
         ) -> runtime::Result<'v, 's, ()> {
-            write!(w, "foo").into_do(strand)
+            fmt!(strand, w, "foo")
         }
     }
 

@@ -10,7 +10,7 @@ use std::{
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
+    Error, Format, Instance, Object, Output, Result, Slot, State, Strand, Value,
     object::{Mut, Ref, TypeBuilder},
     unpack,
     value::{Nil, TypeObject, View},
@@ -25,6 +25,15 @@ use crate::{
 
 type StdioSend = <AnyVfs as Vfs>::StdioSend;
 type StdioRecv = <AnyVfs as Vfs>::StdioRecv;
+
+struct BytesFormat(Vec<u8>);
+
+impl<'v> Format<'v> for BytesFormat {
+    fn write_str<'s>(&mut self, _strand: &mut Strand<'v, 's>, s: &str) -> Result<'v, 's, ()> {
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
+    }
+}
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -717,12 +726,12 @@ fn encode_value<'v, 's>(
         }
         View::Bin(s) => Ok(s.into()),
         _ => {
-            let s = value.to_string(strand)?;
-            let mut bytes = s.as_bytes().to_vec();
+            let mut format = BytesFormat(Vec::new());
+            value.display(strand, &mut format)?;
             if channel_mode == ChannelMode::Line {
-                bytes.push(b'\n');
+                format.0.push(b'\n');
             }
-            Ok(bytes)
+            Ok(format.0)
         }
     }
 }

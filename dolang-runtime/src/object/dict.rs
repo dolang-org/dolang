@@ -1,6 +1,5 @@
 use std::{
     cell::{Cell, RefCell},
-    fmt,
     ops::ControlFlow,
 };
 
@@ -9,7 +8,7 @@ use bitvec::bitbox;
 use crate::{
     arg::{Arg, Args},
     call,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     sig,
     strand::Strand,
@@ -215,9 +214,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<dict iterator>").into_do(strand)
+        crate::fmt!(strand, w, "<dict iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -320,9 +319,9 @@ impl<'v> Protocol<'v> for Unpack<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<dict unpack iter>").into_do(strand)
+        crate::fmt!(strand, w, "<dict unpack iter>")
     }
 
     async fn op_iter<'a, 's>(
@@ -404,7 +403,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         kv::Inner::op_debug(this, strand, w, "{", "}", ", ")
     }
@@ -749,10 +748,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        use crate::error::ResultExt;
-        write!(w, "<type std.dict>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.dict>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

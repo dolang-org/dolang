@@ -1,12 +1,10 @@
-use std::fmt;
-
 use futures::future::MaybeDone;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
+use dolang::runtime::object::fmt;
+
 use dolang::runtime::{
-    Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Value,
-    error::ResultExt as _,
-    method,
+    Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Value, method,
     object::TypeBuilder,
     unpack,
     value::{Nil, Singleton},
@@ -755,9 +753,9 @@ impl<'v> Object<'v> for Program {
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<proc.Program {:?}>", this.annex().name).into_do(strand)
+        fmt!(strand, w, "<proc.Program {:?}>", this.annex().name)
     }
 }
 

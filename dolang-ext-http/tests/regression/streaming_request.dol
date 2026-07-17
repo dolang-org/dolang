@@ -1,5 +1,11 @@
 import http
 
+class RequestBody
+  pub field value = "custom body"
+
+  def (str) self
+    self.value
+
 # Test backward compatibility with string body
 http.post $TEST_URL/post body: "simple string" do |res|
   assert_eq $res.status 201
@@ -14,6 +20,11 @@ http.post $TEST_URL/post body: b"hello" do |res|
 http.post $TEST_URL/post body: ["hello", "world"] do |res|
   assert_eq $res.status 201
   assert_eq $res.text() "helloworld"
+
+# Test streaming values formatted through the public runtime sink API
+http.post $TEST_URL/post body: [RequestBody()] do |res|
+  assert_eq $res.status 201
+  assert_eq $res.text() "custom body"
 
 # Test streaming from array of binary data (no delimiters)
 http.post $TEST_URL/post body: [b"hello", b"world"] do |res|

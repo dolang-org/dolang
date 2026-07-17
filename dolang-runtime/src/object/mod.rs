@@ -26,11 +26,11 @@ pub(crate) mod sym;
 pub(crate) mod tuple;
 pub(crate) mod types;
 
-use std::{fmt, ops::ControlFlow, ptr::NonNull};
+use std::{ops::ControlFlow, ptr::NonNull};
 
 use crate::{
     arg::Args,
-    error::{ErrorKind, Result, ResultExt},
+    error::{ErrorKind, Result},
     gc::{self, Collect, arena::Visit},
     object::protocol::Recv,
     strand::Strand,
@@ -522,12 +522,12 @@ impl<'v> Protocol<'v> for BoundMethod<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let me = this.receiver.get();
-        write!(w, "<bound method: {} receiver: ", me.method.name).into_do(strand)?;
+        crate::fmt!(strand, w, "<bound method: {} receiver: ", me.method.name)?;
         me.rcvr.op_debug(strand, w)?;
-        write!(w, ">").into_do(strand)
+        crate::fmt!(strand, w, ">")
     }
 
     async fn op_call<'a, 's>(

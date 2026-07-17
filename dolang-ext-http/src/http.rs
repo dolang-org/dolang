@@ -6,9 +6,11 @@ use std::{
     task::{Context, Poll},
 };
 
+use dolang::runtime::object::fmt;
+
 use dolang::runtime::{
-    Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Type, Value,
-    call,
+    Arg, Args, Error, Format, Instance, Object, Output, Result, Slot, State, Strand, Sym, Type,
+    Value, call,
     error::{ErrorKind, ResultExt as _},
     method,
     object::{Mut, Ref, TypeBuilder},
@@ -38,6 +40,15 @@ use crate::{
 /// Custom error type for body streaming errors
 #[derive(Debug)]
 struct BodyError;
+
+struct BytesFormat(Vec<u8>);
+
+impl<'v> Format<'v> for BytesFormat {
+    fn write_str<'s>(&mut self, _strand: &mut Strand<'v, 's>, s: &str) -> Result<'v, 's, ()> {
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
+    }
+}
 
 impl fmt::Display for BodyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -271,19 +282,19 @@ impl<'v> Object<'v> for ErrorObject {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().inner).map_err(|err| Error::runtime(strand, err))
+        fmt!(strand, w, "{}", this.annex().inner)
     }
 
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<http.Error ").map_err(|err| Error::runtime(strand, err))?;
+        fmt!(strand, w, "<http.Error ")?;
         Self::display(this, strand, w)?;
-        write!(w, ">").map_err(|err| Error::runtime(strand, err))
+        fmt!(strand, w, ">")
     }
 }
 
@@ -345,19 +356,19 @@ impl<'v> Object<'v> for StatusObject {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "{}", this.annex().message).map_err(|err| Error::runtime(strand, err))
+        fmt!(strand, w, "{}", this.annex().message)
     }
 
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<http.Status ").map_err(|err| Error::runtime(strand, err))?;
+        fmt!(strand, w, "<http.Status ")?;
         Self::display(this, strand, w)?;
-        write!(w, ">").map_err(|err| Error::runtime(strand, err))
+        fmt!(strand, w, ">")
     }
 }
 
@@ -406,7 +417,9 @@ async fn pump_request_body<'v, 's>(
                         let mut vec = if let Some(slice) = item.as_bin(strand) {
                             slice.to_vec()
                         } else {
-                            item.to_string(strand)?.into()
+                            let mut format = BytesFormat(Vec::new());
+                            item.display(strand, &mut format)?;
+                            format.0
                         };
 
                         if lines {

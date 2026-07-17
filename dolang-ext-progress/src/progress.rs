@@ -1,15 +1,16 @@
 use std::{
     cell::{Cell, RefCell},
-    fmt, io,
+    io,
     pin::Pin,
     rc::Rc,
     task::{Context as TaskContext, Poll},
     time::Duration,
 };
 
+use dolang::runtime::object::fmt;
+
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, State, Strand, Value, call,
-    error::ResultExt,
     object::TypeBuilder,
     strand::{self, Local},
     unpack,
@@ -559,9 +560,9 @@ impl<'v> Object<'v> for Indicator {
     fn debug<'a, 's>(
         _this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<progress.Indicator>").into_do(strand)
+        fmt!(strand, w, "<progress.Indicator>")
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {

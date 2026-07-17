@@ -1,6 +1,12 @@
 use std::hash::{DefaultHasher, Hasher};
 
-use crate::{arg::Arg, error::Error, unpack, value::Output, vm::Builder};
+use crate::{
+    arg::Arg,
+    error::Error,
+    unpack,
+    value::{Output, StrEmbryo},
+    vm::Builder,
+};
 
 mod property;
 mod strand;
@@ -125,14 +131,16 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         // Core functions
         .function("arg", async move |strand, args, out| {
             let ([value], _) = unpack!(strand, args, 1, 0)?;
-            let str = value.to_arg(strand)?;
-            Output::set(strand, out, str.as_str());
+            let mut format = StrEmbryo::new();
+            value.display_arg(strand, &mut format)?;
+            format.finish(strand, out);
             Ok(())
         })
         .function("dbg", async move |strand, args, out| {
             let ([value], _) = unpack!(strand, args, 1, 0)?;
-            let debug = value.to_debug(strand)?;
-            Output::set(strand, out, debug.as_str());
+            let mut format = StrEmbryo::new();
+            value.debug(strand, &mut format)?;
+            format.finish(strand, out);
             Ok(())
         })
         .function("hash", async move |strand, args, out| {

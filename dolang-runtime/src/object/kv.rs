@@ -1,6 +1,5 @@
 use std::{
     cell::{Cell, RefCell},
-    fmt,
     hash::{DefaultHasher, Hash, Hasher},
     mem,
     ops::ControlFlow,
@@ -11,7 +10,7 @@ use bitvec::boxed::BitBox;
 use crate::{
     bytecode::Variadic,
     call,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     sig::{self, UnpackKeyKind},
     strand::Strand,
@@ -577,9 +576,9 @@ impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Protocol<'v> for Values<'v, T> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<values iterator>").into_do(strand)
+        crate::fmt!(strand, w, "<values iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -663,9 +662,9 @@ impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Protocol<'v> for KeyValues<'v, T> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<key values iterator>").into_do(strand)
+        crate::fmt!(strand, w, "<key values iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -757,9 +756,9 @@ impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Protocol<'v> for Keys<'v, T> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<keys iterator>").into_do(strand)
+        crate::fmt!(strand, w, "<keys iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -852,13 +851,13 @@ impl<'v> Inner<'v> {
     pub(crate) fn op_debug<'a, 's, T: AsRef<Inner<'v>> + Collect + 'v>(
         this: Recv<'v, 'a, T>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
         open: &str,
         close: &str,
         separator: &str,
     ) -> Result<'v, 's, ()> {
         let this_borrow = this.borrow(strand)?;
-        write!(w, "{open}").into_do(strand)?;
+        crate::fmt!(strand, w, "{open}")?;
         let mut index = 0usize;
         let mut next_int_key = Some(0);
         let mut first = true;
@@ -876,7 +875,7 @@ impl<'v> Inner<'v> {
                 if first {
                     first = false
                 } else {
-                    write!(w, "{separator}").into_do(strand)?;
+                    crate::fmt!(strand, w, "{separator}")?;
                 }
                 if let (Some(int_key), Some(expected)) =
                     (bucket.as_ref().key.to_i64(strand).ok(), next_int_key)
@@ -890,15 +889,15 @@ impl<'v> Inner<'v> {
                     }
                 }
                 if let Some(sym) = bucket.as_ref().key.downcast_ref(strand.builtin_types().sym) {
-                    write!(w, "{}", sym.get().name).into_do(strand)?;
+                    crate::fmt!(strand, w, "{}", sym.get().name)?;
                 } else {
                     bucket.as_ref().key.op_debug(strand, w)?;
                 }
-                write!(w, ": ").into_do(strand)?;
+                crate::fmt!(strand, w, ": ")?;
                 bucket.as_ref().value.at(subindex).op_debug(strand, w)?;
             }
         }
-        write!(w, "{close}").into_do(strand)
+        crate::fmt!(strand, w, "{close}")
     }
 
     pub(crate) fn op_hash<'a, 's, T: AsRef<Inner<'v>> + Collect + 'v>(

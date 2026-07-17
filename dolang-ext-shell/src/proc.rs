@@ -1,10 +1,9 @@
-use std::fmt;
+use dolang::runtime::object::fmt;
 
 use dolang::{
     compile::Compiler,
     runtime::{
         Error, Instance, Object, Output, Result, Slot, State, Strand,
-        error::ResultExt,
         object::TypeBuilder,
         strand::Redirect,
         unpack,
@@ -44,9 +43,9 @@ impl<'v> Object<'v> for Capture {
     fn debug<'a, 's>(
         _this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<capture>").into_do(strand)
+        fmt!(strand, w, "<capture>")
     }
 
     async fn output<'a, 's>(
@@ -64,11 +63,7 @@ impl<'v> Object<'v> for Capture {
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut capture = this.borrow_mut(strand)?;
-        if let Some(str) = value.as_str(strand) {
-            strand.access(|x| capture.0.push_str(str.as_str(x)));
-        } else {
-            capture.0.push_str(&value.to_string(strand)?);
-        }
+        value.display(strand, &mut capture.0)?;
         capture.0.push('\n');
         Ok(())
     }

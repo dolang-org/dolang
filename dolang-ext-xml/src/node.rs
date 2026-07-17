@@ -1,8 +1,7 @@
-use std::fmt;
+use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value,
-    error::ResultExt,
     object::{ArrayLike, ArrayView, DictLike, DictView, DictViewSink, Mut, Ref, TypeBuilder},
     unpack,
     value::{Empty, Nil, TypeObject},
@@ -139,10 +138,10 @@ impl<'v> Object<'v> for Node {
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        write!(w, "<xml.Node {}>", borrow.tag).into_do(strand)
+        fmt!(strand, w, "<xml.Node {}>", borrow.tag)
     }
 
     fn index<'a, 's>(

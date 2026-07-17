@@ -1,8 +1,8 @@
-use std::{fmt, future, ops::ControlFlow, rc::Rc, task::Poll, task::Waker};
+use std::{future, ops::ControlFlow, rc::Rc, task::Poll, task::Waker};
 
 use crate::{
     arg::Args,
-    error::{Error, ErrorPair, Result, ResultExt},
+    error::{Error, ErrorPair, Result},
     gc::{Collect, arena::Visit},
     method,
     strand::{InterruptToken, Strand, StrandInner},
@@ -122,15 +122,15 @@ impl<'v> Protocol<'v> for Handle<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let is_stream = !this.borrow(strand)?.stream_output.is_nil();
-        write!(
+        crate::fmt!(
+            strand,
             w,
             "<strand.{}>",
             if is_stream { "Stream" } else { "Strand" }
         )
-        .into_do(strand)
     }
 
     async fn op_mcall<'a, 's>(
@@ -310,9 +310,8 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        use crate::error::ResultExt;
-        write!(w, "<type strand.Strand>").into_do(strand)
+        crate::fmt!(strand, w, "<type strand.Strand>")
     }
 }

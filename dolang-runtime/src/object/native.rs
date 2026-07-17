@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     cell::UnsafeCell,
-    fmt, future,
+    future,
     hash::Hasher,
     marker::PhantomData,
     mem::ManuallyDrop,
@@ -11,7 +11,7 @@ use std::{
 
 use crate::{
     arg::Args,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{
         self, Base, Collect,
         arena::{self, Upcast, Visit},
@@ -587,7 +587,7 @@ pub trait Object<'v>: Sized + 'v {
     fn display_arg<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         Self::display(this, strand, w)
     }
@@ -596,7 +596,7 @@ pub trait Object<'v>: Sized + 'v {
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         Self::debug(this, strand, w)
     }
@@ -607,10 +607,10 @@ pub trait Object<'v>: Sized + 'v {
     fn debug<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let _ = this;
-        write!(w, "<{}.{}>", Self::MODULE, Self::NAME).into_do(strand)
+        crate::fmt!(strand, w, "<{}.{}>", Self::MODULE, Self::NAME)
     }
 
     /// Implements Do call (`func arg...`) operations.
@@ -1256,7 +1256,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         Strand::for_native_frame(
             strand,
@@ -1270,7 +1270,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
     fn op_display_arg<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         Strand::for_native_frame(
             strand,
@@ -1284,7 +1284,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         Strand::for_native_frame(
             strand,
@@ -3038,9 +3038,9 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type: {}.{}>", T::MODULE, T::NAME).into_do(strand)
+        crate::fmt!(strand, w, "<type: {}.{}>", T::MODULE, T::NAME)
     }
 
     fn op_inspect<'a>(this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

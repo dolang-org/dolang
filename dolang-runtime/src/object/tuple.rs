@@ -1,10 +1,10 @@
-use std::{fmt, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use crate::{
     arg::Args,
     bytecode::Variadic,
     call,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{self, Collect, arena::Visit},
     object::protocol::{Protocol, Recv},
     sig::{Unpack, UnpackKeyKind},
@@ -90,18 +90,18 @@ impl<'v> Protocol<'v> for [Value<'v>] {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "(").into_do(strand)?;
+        crate::fmt!(strand, w, "(")?;
         let mut iter = this.receiver.get().iter();
         if let Some(first) = iter.next() {
             first.op_debug(strand, w)?;
             for item in iter {
-                write!(w, ", ").into_do(strand)?;
+                crate::fmt!(strand, w, ", ")?;
                 item.op_debug(strand, w)?;
             }
         }
-        write!(w, ")").into_do(strand)
+        crate::fmt!(strand, w, ")")
     }
 
     fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
@@ -403,9 +403,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<tuple iterator>").into_do(strand)
+        crate::fmt!(strand, w, "<tuple iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -506,9 +506,9 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<tuple pair iterator>").into_do(strand)
+        crate::fmt!(strand, w, "<tuple pair iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -704,10 +704,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        use crate::error::ResultExt;
-        write!(w, "<type std.tuple>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.tuple>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

@@ -1,4 +1,4 @@
-use std::{fmt, mem, ops::ControlFlow};
+use std::{mem, ops::ControlFlow};
 
 use dolang_util::pairsort;
 
@@ -6,7 +6,7 @@ use crate::{
     arg::{Arg, Args},
     bytecode::Variadic,
     call,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     sig::{Unpack, UnpackKeyKind},
     strand::Strand,
@@ -76,9 +76,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<array iterator>").into_do(strand)
+        crate::fmt!(strand, w, "<array iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -181,7 +181,7 @@ impl<'v> Protocol<'v> for Sink<'v> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         Self::op_debug(this, strand, w)
     }
@@ -189,9 +189,9 @@ impl<'v> Protocol<'v> for Sink<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<array sink>").into_do(strand)
+        crate::fmt!(strand, w, "<array sink>")
     }
 
     async fn op_sink<'a, 's>(
@@ -268,7 +268,7 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         Self::op_debug(this, strand, w)
     }
@@ -276,9 +276,9 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<array pair iterator>").into_do(strand)
+        crate::fmt!(strand, w, "<array pair iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -513,10 +513,10 @@ impl<'v> Protocol<'v> for Array<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
         let this_borrow = this.borrow(strand)?;
-        write!(w, "[").into_do(strand)?;
+        crate::fmt!(strand, w, "[")?;
         let inner = &this_borrow.inner;
         let mut iter = inner.iter();
         if let Some(first) = iter.next() {
@@ -525,11 +525,11 @@ impl<'v> Protocol<'v> for Array<'v> {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap()?;
                 }
-                write!(w, ", ").into_do(strand)?;
+                crate::fmt!(strand, w, ", ")?;
                 unsafe { inner.get_unchecked(i) }.op_debug(strand, w)?;
             }
         }
-        write!(w, "]").into_do(strand)
+        crate::fmt!(strand, w, "]")
     }
 
     fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
@@ -1176,9 +1176,9 @@ impl<'v> Protocol<'v> for Type {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Write,
+        w: &mut dyn crate::value::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        write!(w, "<type std.array>").into_do(strand)
+        crate::fmt!(strand, w, "<type std.array>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
