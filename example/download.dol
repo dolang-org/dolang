@@ -35,6 +35,5 @@ args.with
     type: $url.Url
   do |args| progress.with do
     let client = http.Client()
-    strand.fork limit: $args.limit
-      for url = args.urls
-        do download $client $url
+    strand.pool $args.limit $args.urls do |url|
+      download $client $url

@@ -107,14 +107,13 @@ args.with
     type: $url.Url
   do |args| progress.with do
     let client = http.Client()
-    strand.fork limit: $args.limit
-      for url = args.urls
-        do download $client $url
+    strand.pool $args.limit $args.urls do |url|
+      download $client $url
 ```
 
 Things to notice:
 
 - `args.with` declares a full CLI interface with options, types, and help text —
   all as structured data in vertical layout
-- `strand.fork` runs downloads concurrently with a configurable limit
+- `strand.pool` consumes URLs lazily with bounded concurrency
 - `progress.show` tracks each download with bytes-level progress

@@ -214,6 +214,7 @@ nav:
     - strand:
       - api/strand/index.md
       - api/strand/key.md
+      - api/strand/resource.md
       - api/strand/strand.md
       - api/strand/stream.md
       - api/strand/sender.md

@@ -49,8 +49,8 @@ class Harness
   field success total = 0
 
   def (init) self :jobs :module_jobs :filter :timeout
-    self.#module_jobs = module_jobs
-    self.#jobs = jobs
+    self.#module_jobs = strand.Resource $module_jobs
+    self.#jobs = strand.Resource $jobs
     self.#timeout = timeout
     self.#filter = try
         Glob $filter
@@ -89,9 +89,10 @@ class Harness
     progress.show message: (module_name path) total: $tests.len do |w|
       strand.fork
         for name func = tests
-          do progress.show message: $name do |_|
-            self.#run_test $path $name $func
-            w.delta()
+          do self.#jobs.with do
+            progress.show message: $name do |_|
+              self.#run_test $path $name $func
+              w.delta()
 
   def run_file self path
     let source = path.read b
@@ -144,11 +145,11 @@ class Harness
     rc
 
   pub def run self files
-    strand.limit $self.#jobs do progress.with do
+    progress.with do
       progress.show message: modules total: $files.len do |w|
-        strand.fork limit: $self.#module_jobs
+        strand.fork
           for path = files
-            do
+            do self.#module_jobs.with do
               try
                 self.#run_file $path
               catch std.RuntimeError: e

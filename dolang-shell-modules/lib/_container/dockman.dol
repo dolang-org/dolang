@@ -611,9 +611,7 @@ def prefetch_add_urls spec
     let source = parse_source $add[:source:]
     if (type source Url)
       urls.add $source
-  strand.fork limit: 4
-    for url = urls
-      do cache.ensure $url
+  strand.pool 4 $urls do |url| cache.ensure $url
 
 pub class Builder
   field runtime = nil

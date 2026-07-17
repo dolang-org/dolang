@@ -21,7 +21,7 @@ Key features of strands:
 Do distinguishes between two kinds of strands:
 
 **Scoped strands** (used by
-[`strand.fork`](../api/strand/index.md#fork-blocks-limit) and
+[`strand.fork`](../api/strand/index.md#fork-blocks) and
 [`strand.pipeline`](../api/strand/index.md#pipeline-stage-stages-input-output))
 are always joined before the function that creates them returns. You don't need
 to manage them manually, and cancellation propagates automatically from parent
@@ -65,7 +65,7 @@ The returned [Strand](../api/strand/strand.md) handle allows you to:
 
 ### `fork`
 
-The [`strand.fork`](../api/strand/index.md#fork-blocks-limit) function executes
+The [`strand.fork`](../api/strand/index.md#fork-blocks) function executes
 multiple blocks concurrently and returns their results as an array:
 
 ```
@@ -82,22 +82,53 @@ assert_eq $results [42, "hello", 3]
 All blocks become runnable simultaneously and the function waits for all to
 complete. Results are returned in the same order as the input blocks.
 
-`fork limit:` only caps immediate fan-out at one fork site. To constrain total
-fork work across a larger nested region, wrap it in
-[`strand.limit`](../api/strand/index.md#limit-count-block):
+For small homogeneous fan-out, a `for` comprehension can construct the blocks:
 
 ```
-import strand
-
-let results = strand.limit 256 do
-  strand.fork limit: 16
-    - do task_a()
-    - do task_b()
-    - do task_c()
+let results = strand.fork
+  for server = build_servers
+    do build_on $server
 ```
 
-Under `strand.limit`, active fork workers count against the budget, but strands
-blocked only as nested fork coordinators do not.
+### `map`
+
+[`strand.map`](../api/strand/index.md#map-count-func-input-output) applies one
+function concurrently to values pulled lazily from an iterator:
+
+```
+let results = []
+strand.map 8 input: $jobs output: $results do |job|
+  run_job $job
+```
+
+Results are emitted in completion order. To restore input order, enumerate the
+input, preserve each index in the result, and sort after collecting.
+
+[`strand.pool`](../api/strand/index.md#pool-count-input-func) is the scoped
+worker form for a known input when block results are not needed:
+
+```
+strand.pool 8 $jobs do |job|
+  run_job $job
+```
+
+### Resources
+
+[`strand.Resource`](../api/strand/resource.md) provides explicit admission
+limits independent of strand structure:
+
+```
+let network = strand.Resource 16
+
+network.with do
+  fetch_data()
+```
+
+Resource scopes are reentrant and scoped child strands inherit their parent's
+reservations. Background strands created with `spawn` or `stream` do not
+inherit them.
+When acquiring multiple resources, use a consistent order to avoid deadlock.
+Resources do not guard program state and must not be used as mutexes.
 
 ## Pipelines
 
@@ -184,6 +215,10 @@ Several functions are designed to work as pipeline stages:
 - [`strand.where`](../api/strand/index.md#where-predicate) - filters values by a
   predicate
 - [`strand.each`](../api/strand/index.md#each-func) - transforms values
+- [`strand.map`](../api/strand/index.md#map-count-func-input-output) -
+  transforms values concurrently
+- [`strand.pool`](../api/strand/index.md#pool-count-input-func) - runs scoped
+  workers and discards their results
 - [`strand.collect`](../api/strand/index.md#collect-target) - gathers values
   into a collection
 

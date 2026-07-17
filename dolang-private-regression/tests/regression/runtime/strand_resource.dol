@@ -1,0 +1,95 @@
+import
+  strand:
+    - Resource
+    - channel
+    - fork
+    - spawn
+    - stream
+  std:
+    - ValueError
+
+def assert_err_type ty block
+  let res = try
+    block()
+    false
+  catch e
+    assert (type e ty)
+    true
+  assert $res
+
+# Resource scopes cap explicitly admitted work.
+let resource = Resource 2
+let release_send release_recv = channel 8
+let entered_send entered_recv = channel 8
+let active = 0
+let max_active = 0
+let helper = spawn do
+  entered_recv.next()
+  entered_recv.next()
+  for _ = range 4
+    release_send.put ok
+
+let results = fork
+  for i = range 4
+    do
+      resource.with do
+        entered_send.put $i
+        active = (active + 1)
+        if (active > max_active)
+          max_active = active
+        release_recv.next()
+        active = (active - 1)
+        i
+
+helper.join()
+assert_eq $results [0, 1, 2, 3]
+assert_eq $max_active 2
+
+# Entering the same resource again in one strand is reentrant.
+let one = Resource 1
+assert_eq (one.with do one.with do 42) 42
+
+# Scoped child strands inherit reservations from their parent.
+let inherited = one.with do
+  fork
+    - do one.with do 1
+    - do one.with do 2
+assert_eq $inherited [1, 2]
+
+# A background strand does not inherit its parent's reservation.
+let inside = false
+let child = nil
+let started_send started_recv = channel()
+one.with do
+  inside = true
+  child = spawn do
+    started_send.put ok
+    one.with do
+      assert !$inside
+      :CHILD:
+  started_recv.next()
+  inside = false
+assert_eq (child.join()) :CHILD:
+
+# A stream's background strand also starts without inherited reservations.
+let streamed = nil
+let stream_started_send stream_started_recv = channel()
+one.with do
+  inside = true
+  streamed = stream do
+    stream_started_send.put ok
+    one.with do
+      assert !$inside
+      :STREAM:
+  stream_started_recv.next()
+  inside = false
+assert_eq (streamed.join()) :STREAM:
+
+# Errors release reservations.
+try
+  one.with do throw "boom"
+catch _
+  nil
+assert_eq (one.with do 7) 7
+
+assert_err_type $ValueError do Resource 0

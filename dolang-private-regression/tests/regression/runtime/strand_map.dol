@@ -1,0 +1,113 @@
+import
+  strand:
+    - channel
+    - map
+    - pool
+    - pipeline
+    - collect
+    - spawn
+  std:
+    - Iter
+    - ValueError
+
+def assert_err_type ty block
+  let res = try
+    block()
+    false
+  catch e
+    assert (type e ty)
+    true
+  assert $res
+
+# Explicit input and output are consumed lazily by a bounded set of workers.
+class Counting: Iter
+  pub field count = 0
+  field inner = nil
+
+  def (init) self items
+    Iter.(init) self
+    self.#inner = items.iter()
+
+  def (iter) self
+    self
+
+  def (next) self
+    self.count = (self.count + 1)
+    self.#inner.next()
+
+let source = Counting [0, 1, 2, 3]
+let output = []
+let entered_send entered_recv = channel 4
+let release_send release_recv = channel 4
+let helper = spawn do
+  entered_recv.next()
+  entered_recv.next()
+  assert_eq $source.count 2
+  release_send.put ok
+  release_send.put ok
+  entered_recv.next()
+  entered_recv.next()
+  release_send.put ok
+  release_send.put ok
+
+map 2 input: $source output: $output do |value|
+  entered_send.put $value
+  release_recv.next()
+  (value * 2)
+helper.join()
+output.sort()
+assert_eq $output [0, 2, 4, 6]
+
+# Results are sent in completion order.
+let zero_send zero_recv = channel()
+let one_send one_recv = channel()
+let started_send started_recv = channel 2
+let mapped_send mapped_recv = channel()
+let observed = []
+helper = spawn do
+  started_recv.next()
+  started_recv.next()
+  one_send.put ok
+  observed.push $ mapped_recv.next()
+  zero_send.put ok
+  observed.push $ mapped_recv.next()
+map 2 input: [0, 1] output: $mapped_send do |value|
+  started_send.put $value
+  if (value == 1)
+    one_recv.next()
+  else
+    zero_recv.next()
+  value
+helper.join()
+assert_eq $observed [1, 0]
+
+# Multiple workers may suspend directly on a channel iterator.
+let send recv = channel 4
+output = []
+helper = spawn do
+  for value = range 4
+    send.put $value
+  send.close()
+map 3 input: $recv output: $output do |value| (value + 1)
+helper.join()
+output.sort()
+assert_eq $output [1, 2, 3, 4]
+
+# Ambient input/output make map a pipeline stage.
+let piped = pipeline
+  do map 2 input: [1, 2, 3] do |value| (value * 3)
+  do collect()
+piped.sort()
+assert_eq $piped [3, 6, 9]
+
+# A pool consumes a known input and discards block results.
+let pooled = []
+let pool_result = pool 2 [1, 2, 3, 4] do |value|
+  pooled.push $value
+  (value * 2)
+pooled.sort()
+assert_eq $pooled [1, 2, 3, 4]
+assert_eq $pool_result nil
+
+assert_err_type $ValueError do map 0 input: [] output: [] do |value| value
+assert_err_type $ValueError do pool 0 [] do |value| value

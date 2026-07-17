@@ -6,6 +6,9 @@ A `Stream` is a handle to a background strand created by
 automatically. It implements [`Iterable`](../std/iterable.md) for its output
 side and [`Sinkable`](../std/sinkable.md) for its input side.
 
+The background strand does not inherit active
+[`Resource`](./resource.md) reservations from its creator.
+
 ## Fields
 
 ### `done`

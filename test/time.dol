@@ -101,3 +101,29 @@ def timeout_handles_completion_and_cancellation()
         sleep 10
     worker.cancel()
     worker.join()
+
+#[test]
+def canceled_resource_acquisition_retains_outer_resource()
+  let outer = strand.Resource 1
+  let blocked = strand.Resource 1
+  let held_send held_recv = strand.channel()
+  let release_send release_recv = strand.channel()
+  let holder = strand.spawn do blocked.with do
+    held_send.put ok
+    release_recv.next()
+  held_recv.next()
+
+  let inside = false
+  let contender = nil
+  outer.with do
+    try
+      timeout 0 do blocked.with do nil
+    catch TimedOutError: _
+      nil
+    inside = true
+    contender = strand.spawn do outer.with do assert !$inside
+    inside = false
+
+  release_send.put ok
+  holder.join()
+  contender.join()
