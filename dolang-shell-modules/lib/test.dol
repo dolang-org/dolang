@@ -1,10 +1,16 @@
-import args compile load progress strand
+import args compile load progress strand term
   fs:
     - Path
   glob:
     - Glob
-import time:
-  - timeout
+  time:
+    - timeout
+
+let err_style = term.style bold: true fg: :BRIGHT_RED:
+let info_style = term.style fg: :YELLOW:
+let pass_style = term.style fg: :GREEN:
+let name_style = term.style dim: true
+let note_style = term.style bold: true
 
 let collect_key = strand.Key()
 
@@ -106,32 +112,33 @@ class Harness
       let module = module_name $path
       if (type e Skip)
         if test
+          print (info_style "skipped") ": " (name_style "$module/$test")
           if e.message
-            echo "test skipped: $module/$test ($(e.message))"
-          else
-            echo "test skipped: $module/$test"
+            print " (" (note_style e.message) ")"
+          echo()
           skipped = (skipped + 1)
         else
+          print (info_style "skipped") ": " (name_style "$module")
           if e.message
-            echo "module skipped: $module ($(e.message))"
-          else
-            echo "module skipped: $module"
+            print " (" (note_style e.message) ")"
+          echo()
       else if (type e ModuleCompileError)
         rc = 1
-        echo "module compilation failed: $module"
+        print (err_style "failed") ": " (name_style "$module")
+          " (" (note_style "compilation failed") ")\n"
         for diag = e.output.diagnostics
-          echo $diag.render()
+          echo $diag.render().indent(2)
       else
         rc = 1
         if test
-          echo "test failed: $module/$test"
+          print (err_style "failed") ": " (name_style "$module/$test") "\n"
         else
-          echo "module failed: $module"
-        print $term.render_error(e, backtrace: bt)
+          print (err_style "failed") ": " (name_style "$module") "\n"
+        echo $ term.render_error(e, backtrace: bt).indent(2)
+    print (pass_style "passed") ": $(self.#success)/$(self.#total - skipped)"
     if skipped
-      echo "tests passed: $(self.#success)/$(self.#total - skipped) ($skipped skipped)"
-    else
-      echo "tests passed: $(self.#success)/$(self.#total)"
+      print " ($skipped " (info_style "skipped") ")"
+    echo()
     rc
 
   pub def run self files
