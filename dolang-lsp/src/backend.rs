@@ -360,8 +360,8 @@ impl Backend {
         Ok(())
     }
 
-    fn default_settings(path: &Path) -> Settings {
-        let mut prelude = vec![
+    fn default_settings(_path: &Path) -> Settings {
+        let prelude = vec![
             Import::Module("shell".into()),
             Import::ModuleAs("proc.run".into(), "run".into()),
             Import::Item("proc".into(), "sub".into()),
@@ -371,9 +371,6 @@ impl Backend {
             Import::Item("term".into(), "echo".into()),
             Import::Item("term".into(), "print".into()),
         ];
-        if path.file_name().is_some_and(|name| name == "dodo.dol") {
-            prelude.push(Import::ItemAs("dodo".into(), "dodo".into(), "dodo".into()));
-        }
         Settings { prelude }
     }
 

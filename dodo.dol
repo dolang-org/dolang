@@ -269,15 +269,10 @@ return
       help: "arguments to `cargo +nightly fuzz run`"
       collect: true
     do |args|
-      dodo gen-bytecode-fuzz-seeds
+      run cargo run --bin gen-bytecode-seeds
       show cargo +nightly fuzz run bytecode_deserialize
         target/fuzz-corpus/bytecode_deserialize
-        ...args.args
-
-  "fuzz-bytecode-smoke":
-    help: run a short bytecode fuzz smoke test
-    do |_|
-      dodo fuzz-bytecode -- -runs=1000 -max_len=1048576
+        -- ...args.args
 
   cov:
     help: run coverage collection
