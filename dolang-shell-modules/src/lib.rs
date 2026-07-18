@@ -19,6 +19,7 @@ mod tests {
 
     #[test]
     fn lookup_exposes_known_modules() {
+        assert!(get("dodo").is_some());
         assert!(get("test").is_some());
         assert!(get("docker").is_some());
     }

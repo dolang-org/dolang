@@ -1,0 +1,16 @@
+import
+  fs:
+    - with_temp_dir
+  std:
+    - UnexpectedKeyError
+  test: testing
+
+#[testing.test]
+def run_accepts_structural_options_and_trailing_paths()
+  with_temp_dir do |dir|
+    testing.assert_eq (testing.run(dir, jobs: 1, module_jobs: 1)) 0
+
+#[testing.test]
+def run_rejects_keyed_trailing_paths()
+  testing.assert_throws $UnexpectedKeyError do
+    testing.run unexpected: true

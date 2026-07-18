@@ -20,7 +20,7 @@ use rustyline::{
 
 use anstyle::{AnsiColor, Style};
 
-use crate::{diagnostic, load};
+use crate::{cli::PreludeImport, diagnostic, load};
 
 pub(crate) const DYNAMIC_PRELUDE: &str = "$dynamic$";
 
@@ -79,6 +79,7 @@ async fn compile_and_run<'v, 's>(
     path: &str,
     source: &str,
     out: Slot<'v, '_>,
+    prelude: &[PreludeImport],
     strict: bool,
 ) -> Result<'v, 's, ()> {
     let dynamic = dynamic_prelude(strand).await?;
@@ -87,6 +88,7 @@ async fn compile_and_run<'v, 's>(
         Path::new(path),
         source,
         Some(&dynamic),
+        prelude,
         Mode::Repl,
         strict,
     )?);
@@ -161,6 +163,7 @@ fn classify_origin(origin: Option<&Origin>) -> OriginClass {
 
 struct DoHelper {
     dynamic_prelude: Vec<String>,
+    prelude: Vec<PreludeImport>,
 }
 
 impl Completer for DoHelper {
@@ -178,6 +181,7 @@ impl Highlighter for DoHelper {
             Path::new("<repl>"),
             line,
             Some(&self.dynamic_prelude),
+            &self.prelude,
             &mut |_: Diag| ControlFlow::<()>::Continue(()),
             &mut |token: Token,
                   span: Span,
@@ -361,6 +365,7 @@ impl Helper for DoHelper {}
 
 fn create_editor(
     history_path: Option<&Path>,
+    prelude: &[PreludeImport],
 ) -> rustyline::Result<Editor<DoHelper, DefaultHistory>> {
     let builder = Builder::new();
     let config = builder.build();
@@ -373,12 +378,14 @@ fn create_editor(
     }
     editor.set_helper(Some(DoHelper {
         dynamic_prelude: Default::default(),
+        prelude: prelude.to_vec(),
     }));
     Ok(editor)
 }
 
 async fn repl<'v, 's>(
     st: &mut Strand<'v, 's>,
+    custom_prelude: &[PreludeImport],
     strict: bool,
     editor: &mut Editor<DoHelper, DefaultHistory>,
 ) -> Result<'v, 's, ()> {
@@ -398,7 +405,16 @@ async fn repl<'v, 's>(
                 Err(e) => return Err(Error::runtime(st, e)),
             };
             editor.add_history_entry(&line).into_do(st)?;
-            match compile_and_run(st, "<repl>", &line, Slot::reborrow(&mut result), strict).await {
+            match compile_and_run(
+                st,
+                "<repl>",
+                &line,
+                Slot::reborrow(&mut result),
+                custom_prelude,
+                strict,
+            )
+            .await
+            {
                 Err(e) if e.catchable() => {
                     diagnostic::print_backtrace(st, e);
                     continue;
@@ -435,15 +451,19 @@ fn save_history(editor: &mut Editor<DoHelper, DefaultHistory>, history_path: &Pa
     }
 }
 
-pub(crate) async fn main<'v, 's>(strand: &mut Strand<'v, 's>, strict: bool) -> Result<'v, 's, ()> {
+pub(crate) async fn main<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    custom_prelude: &[PreludeImport],
+    strict: bool,
+) -> Result<'v, 's, ()> {
     let dirs = load::dirs(strand)?;
     let history_path = dirs
         .state_dir()
         .unwrap_or_else(|| dirs.data_local_dir())
         .join("history");
-    let mut editor = create_editor(Some(&history_path)).into_do(strand)?;
+    let mut editor = create_editor(Some(&history_path), custom_prelude).into_do(strand)?;
 
-    let res = repl(strand, strict, &mut editor).await;
+    let res = repl(strand, custom_prelude, strict, &mut editor).await;
     save_history(&mut editor, &history_path);
     res
 }

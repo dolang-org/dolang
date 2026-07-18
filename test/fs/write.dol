@@ -8,6 +8,7 @@ import fs:
   - open
   - read
   - write
+  - append
   - remove
   - Path
 
@@ -148,6 +149,23 @@ def fs_write_writes_binary_data()
     assert_eq (write test_path b"Hello") 5
     assert_eq ((Path test_path).read "b") b"Hello"
     remove $test_path
+
+#[agent.test]
+def fs_append_appends_and_creates_text_files()
+    let test_path = "test_fs_append_text.txt"
+    remove $test_path ignore: true
+    assert_eq (append test_path "first") 5
+    assert_eq (append test_path " second") 7
+    assert_eq (read test_path) "first second"
+    remove $test_path
+
+#[agent.test]
+def path_append_appends_binary_data()
+    let test_path = Path "test_path_append_binary.bin"
+    test_path.write b"one"
+    assert_eq (test_path.append b"two") 3
+    assert_eq (test_path.read "b") b"onetwo"
+    test_path.remove()
 
 #[agent.test]
 def path_remove_supports_all_and_ignore()

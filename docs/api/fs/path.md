@@ -410,6 +410,29 @@ let path = Path "output.txt"
 path.write "hello"
 ```
 
+### `append content`
+
+Appends content to the file at this path, creating it if needed.
+
+Equivalent to [`append`](index.md#append-path-content).
+
+#### Parameters
+
+| Name      | Type         | Description       |
+| --------- | ------------ | ----------------- |
+| `content` | `str`\|`bin` | Content to append |
+
+#### Returns
+
+[`int`](../std/int.md) - Number of bytes written
+
+#### Example
+
+```
+let path = Path "output.txt"
+path.append "hello\n"
+```
+
 ### `set_len size`
 
 Truncates the file at this path to the given byte length, creating it if
