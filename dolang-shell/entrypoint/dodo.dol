@@ -15,11 +15,7 @@ def run rules task argv
   args.with args: $argv ...common ...rule
 
 def load path
-  let rules = nil
-  rules = exec.run $path
-    inject:
-      dodo: do |task ...args| run $rules $task $args.pos()
-  rules
+  exec.run $path
 
 let special_rules = set ["common", "default"]
 
