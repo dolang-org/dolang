@@ -1,3 +1,5 @@
+use std::hash::{Hash, Hasher};
+
 use dolang::runtime::object::fmt;
 
 use dolang::{
@@ -11,9 +13,9 @@ use dolang::{
     },
 };
 use dolang_shell_vfs::{
-    OperatingSystemFamily, SecDesc as VfsSecDesc, SecurityInfo, Sid as VfsSid,
-    SidName as VfsSidName, SidNameUse, TokenGroup as VfsTokenGroup, UnixSecurityInfo, Vfs as _,
-    WindowsTokenInfo,
+    Ace as VfsAce, AceType as VfsAceType, Acl as VfsAcl, Guid as VfsGuid, OperatingSystemFamily,
+    SecDesc as VfsSecDesc, SecurityInfo, Sid as VfsSid, SidName as VfsSidName, SidNameUse,
+    TokenGroup as VfsTokenGroup, UnixSecurityInfo, Vfs as _, WindowsTokenInfo,
 };
 
 use crate::{error, global::Global, util};
@@ -190,6 +192,476 @@ impl<'v> Object<'v> for Sid {
     }
 }
 
+pub(crate) struct Guid;
+
+fn create_guid<'v>(
+    strand: &mut Strand<'v, '_>,
+    global: State<'v, Global<'v>>,
+    guid: VfsGuid,
+    out: &mut Slot<'v, '_>,
+) {
+    global.types.guid.create_with_annex(strand, Guid, guid, out);
+}
+
+impl<'v> Object<'v> for Guid {
+    const NAME: &'v str = "Guid";
+    const MODULE: &'v str = "security";
+    type Annex = VfsGuid;
+    type Type = ();
+    type TypeAnnex = ();
+
+    async fn new<'a, 's>(
+        this: Type<'v, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let ([value], []) = unpack!(strand, args, 1, 0)?;
+        let guid = if let Some(value) = value.as_str(strand) {
+            value
+                .to_string()
+                .parse::<VfsGuid>()
+                .map_err(|error| Error::value(strand, error.to_string()))?
+        } else if let Some(value) = value.as_bin(strand) {
+            VfsGuid::from_bytes(&value.to_vec())
+                .map_err(|error| Error::value(strand, error.to_string()))?
+        } else {
+            return Err(Error::type_error(strand, "Guid: expected str or bin"));
+        };
+        this.create_with_annex(strand, Guid, guid, out);
+        Ok(())
+    }
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.method("to_bin", async move |this, strand, args, out| {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            Output::set(strand, out, this.annex().as_bytes().as_slice());
+            Ok(())
+        })
+    }
+
+    fn display<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn dolang::runtime::Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "{}", &*this.annex())
+    }
+
+    fn debug<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn dolang::runtime::Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "<security.Guid {}>", &*this.annex())
+    }
+
+    fn eq<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        let global = strand.state::<Global<'v>>();
+        let Some(other) = global.types.guid.downcast(other) else {
+            return Err(Error::not_supported(strand));
+        };
+        Ok(*this.annex() == *other.annex())
+    }
+
+    fn hash<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        _strand: &'a mut Strand<'v, 's>,
+        hasher: &mut impl Hasher,
+    ) -> Result<'v, 's, ()> {
+        (*this.annex()).hash(hasher);
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum AclComponent {
+    Dacl,
+    Sacl,
+}
+
+pub(crate) struct Acl;
+
+fn create_acl<'v>(
+    strand: &mut Strand<'v, '_>,
+    global: State<'v, Global<'v>>,
+    descriptor: Instance<'v, '_, SecDesc>,
+    component: AclComponent,
+    out: &mut Slot<'v, '_>,
+) {
+    global
+        .types
+        .acl
+        .create_with_annex(strand, Acl, component, &mut *out);
+    let acl = global.types.acl.downcast(&*out).unwrap();
+    Output::set(
+        strand,
+        Mut::slot_mut::<0>(&mut acl.borrow_mut_unwrap()),
+        descriptor,
+    );
+}
+
+fn with_acl<'v, 's, T>(
+    this: Instance<'v, '_, Acl>,
+    strand: &mut Strand<'v, 's>,
+    f: impl FnOnce(VfsAcl<'_>) -> T,
+) -> Result<'v, 's, T> {
+    let global = strand.state::<Global<'v>>();
+    let borrow = this.borrow(strand)?;
+    let descriptor = global
+        .types
+        .sec_desc
+        .downcast(Ref::slot::<0>(&borrow))
+        .expect("Acl root is a SecDesc");
+    let descriptor = descriptor.annex();
+    let acl = match *this.annex() {
+        AclComponent::Dacl => descriptor.dacl(),
+        AclComponent::Sacl => descriptor.sacl(),
+    }
+    .expect("Acl component is non-null");
+    Ok(f(acl))
+}
+
+struct AclAces;
+
+impl<'v> ArrayLike<'v> for AclAces {
+    type Object = Acl;
+
+    const MODULE: &'v str = "security";
+    const NAME: &'v str = "AclAces";
+
+    fn len(this: Instance<'v, '_, Acl>, strand: &mut Strand<'v, '_>) -> usize {
+        with_acl(this, strand, |acl| usize::from(acl.ace_count())).unwrap()
+    }
+
+    fn get<'a, 's>(
+        this: Instance<'v, '_, Acl>,
+        strand: &'a mut Strand<'v, 's>,
+        index: usize,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let global = strand.state::<Global<'v>>();
+        global.types.ace.create_with_annex(
+            strand,
+            Ace,
+            AceAnnex {
+                component: *this.annex(),
+                index,
+            },
+            &mut out,
+        );
+        let ace = global.types.ace.downcast(&out).unwrap();
+        let borrow = this.borrow(strand)?;
+        Output::set(
+            strand,
+            Mut::slot_mut::<0>(&mut ace.borrow_mut_unwrap()),
+            Ref::slot::<0>(&borrow),
+        );
+        Ok(())
+    }
+}
+
+impl<'v> Object<'v> for Acl {
+    const NAME: &'v str = "Acl";
+    const MODULE: &'v str = "security";
+    const SLOTS: usize = 1;
+    type Annex = AclComponent;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder
+            .get("revision", |this, strand, out| {
+                let revision = with_acl(this, strand, |acl| acl.revision())?;
+                Output::set(strand, out, revision);
+                Ok(())
+            })
+            .get("size", |this, strand, out| {
+                let size = with_acl(this, strand, |acl| acl.size())?;
+                Output::set(strand, out, size);
+                Ok(())
+            })
+            .get("ace_count", |this, strand, out| {
+                let count = with_acl(this, strand, |acl| acl.ace_count())?;
+                Output::set(strand, out, count);
+                Ok(())
+            })
+            .get("aces", |this, strand, out| {
+                Output::set(strand, out, ArrayView::<AclAces>::new(this));
+                Ok(())
+            })
+            .method("to_bin", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let bytes = with_acl(this, strand, |acl| acl.as_bytes().to_vec())?;
+                Output::set(strand, out, bytes.as_slice());
+                Ok(())
+            })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct AceAnnex {
+    component: AclComponent,
+    index: usize,
+}
+
+pub(crate) struct Ace;
+
+fn with_ace<'v, 's, T>(
+    this: Instance<'v, '_, Ace>,
+    strand: &mut Strand<'v, 's>,
+    f: impl FnOnce(VfsAce<'_>) -> T,
+) -> Result<'v, 's, T> {
+    let global = strand.state::<Global<'v>>();
+    let borrow = this.borrow(strand)?;
+    let descriptor = global
+        .types
+        .sec_desc
+        .downcast(Ref::slot::<0>(&borrow))
+        .expect("Ace root is a SecDesc");
+    let descriptor = descriptor.annex();
+    let acl = match this.annex().component {
+        AclComponent::Dacl => descriptor.dacl(),
+        AclComponent::Sacl => descriptor.sacl(),
+    }
+    .expect("Ace ACL component is non-null");
+    let ace = acl
+        .aces()
+        .nth(this.annex().index)
+        .expect("Ace array index was normalized");
+    Ok(f(ace))
+}
+
+impl<'v> Object<'v> for Ace {
+    const NAME: &'v str = "Ace";
+    const MODULE: &'v str = "security";
+    const SLOTS: usize = 1;
+    type Annex = AceAnnex;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let mask_field = builder.sym("mask");
+        let sid_field = builder.sym("sid");
+        let object_flags_field = builder.sym("object_flags");
+        let object_type_field = builder.sym("object_type");
+        let inherited_object_type_field = builder.sym("inherited_object_type");
+        let application_data_field = builder.sym("application_data");
+        let successful_access_field = builder.sym("successful_access");
+        let failed_access_field = builder.sym("failed_access");
+        let trust_protected_filter_field = builder.sym("trust_protected_filter");
+
+        let access_allowed = builder.sym("ACCESS_ALLOWED");
+        let access_denied = builder.sym("ACCESS_DENIED");
+        let system_audit = builder.sym("SYSTEM_AUDIT");
+        let system_alarm = builder.sym("SYSTEM_ALARM");
+        let access_allowed_compound = builder.sym("ACCESS_ALLOWED_COMPOUND");
+        let access_allowed_object = builder.sym("ACCESS_ALLOWED_OBJECT");
+        let access_denied_object = builder.sym("ACCESS_DENIED_OBJECT");
+        let system_audit_object = builder.sym("SYSTEM_AUDIT_OBJECT");
+        let system_alarm_object = builder.sym("SYSTEM_ALARM_OBJECT");
+        let access_allowed_callback = builder.sym("ACCESS_ALLOWED_CALLBACK");
+        let access_denied_callback = builder.sym("ACCESS_DENIED_CALLBACK");
+        let access_allowed_callback_object = builder.sym("ACCESS_ALLOWED_CALLBACK_OBJECT");
+        let access_denied_callback_object = builder.sym("ACCESS_DENIED_CALLBACK_OBJECT");
+        let system_audit_callback = builder.sym("SYSTEM_AUDIT_CALLBACK");
+        let system_alarm_callback = builder.sym("SYSTEM_ALARM_CALLBACK");
+        let system_audit_callback_object = builder.sym("SYSTEM_AUDIT_CALLBACK_OBJECT");
+        let system_alarm_callback_object = builder.sym("SYSTEM_ALARM_CALLBACK_OBJECT");
+        let system_mandatory_label = builder.sym("SYSTEM_MANDATORY_LABEL");
+        let system_resource_attribute = builder.sym("SYSTEM_RESOURCE_ATTRIBUTE");
+        let system_scoped_policy_id = builder.sym("SYSTEM_SCOPED_POLICY_ID");
+        let system_process_trust_label = builder.sym("SYSTEM_PROCESS_TRUST_LABEL");
+        let system_access_filter = builder.sym("SYSTEM_ACCESS_FILTER");
+        let unknown = builder.sym("UNKNOWN");
+
+        builder
+            .get("type", move |this, strand, out| {
+                let ace_type = with_ace(this, strand, |ace| ace.ace_type())?;
+                let value = match ace_type {
+                    VfsAceType::AccessAllowed => access_allowed,
+                    VfsAceType::AccessDenied => access_denied,
+                    VfsAceType::SystemAudit => system_audit,
+                    VfsAceType::SystemAlarm => system_alarm,
+                    VfsAceType::AccessAllowedCompound => access_allowed_compound,
+                    VfsAceType::AccessAllowedObject => access_allowed_object,
+                    VfsAceType::AccessDeniedObject => access_denied_object,
+                    VfsAceType::SystemAuditObject => system_audit_object,
+                    VfsAceType::SystemAlarmObject => system_alarm_object,
+                    VfsAceType::AccessAllowedCallback => access_allowed_callback,
+                    VfsAceType::AccessDeniedCallback => access_denied_callback,
+                    VfsAceType::AccessAllowedCallbackObject => access_allowed_callback_object,
+                    VfsAceType::AccessDeniedCallbackObject => access_denied_callback_object,
+                    VfsAceType::SystemAuditCallback => system_audit_callback,
+                    VfsAceType::SystemAlarmCallback => system_alarm_callback,
+                    VfsAceType::SystemAuditCallbackObject => system_audit_callback_object,
+                    VfsAceType::SystemAlarmCallbackObject => system_alarm_callback_object,
+                    VfsAceType::SystemMandatoryLabel => system_mandatory_label,
+                    VfsAceType::SystemResourceAttribute => system_resource_attribute,
+                    VfsAceType::SystemScopedPolicyId => system_scoped_policy_id,
+                    VfsAceType::SystemProcessTrustLabel => system_process_trust_label,
+                    VfsAceType::SystemAccessFilter => system_access_filter,
+                    VfsAceType::Unknown(_) => unknown,
+                };
+                Output::set(strand, out, value);
+                Ok(())
+            })
+            .get("type_code", |this, strand, out| {
+                let value = with_ace(this, strand, |ace| ace.type_code())?;
+                Output::set(strand, out, value);
+                Ok(())
+            })
+            .get("flags", |this, strand, out| {
+                let value = with_ace(this, strand, |ace| ace.flags())?;
+                Output::set(strand, out, value);
+                Ok(())
+            })
+            .get("size", |this, strand, out| {
+                let value = with_ace(this, strand, |ace| ace.size())?;
+                Output::set(strand, out, value);
+                Ok(())
+            })
+            .get("mask", move |this, strand, out| {
+                let Some(value) = with_ace(this, strand, |ace| ace.mask())? else {
+                    return Err(Error::field(strand, mask_field));
+                };
+                Output::set(strand, out, value);
+                Ok(())
+            })
+            .get("sid", move |this, strand, mut out| {
+                let Some(value) = with_ace(this, strand, |ace| ace.sid())? else {
+                    return Err(Error::field(strand, sid_field));
+                };
+                let global = strand.state::<Global<'v>>();
+                create_sid(strand, global, value, &mut out);
+                Ok(())
+            })
+            .get("object_flags", move |this, strand, out| {
+                let Some(value) = with_ace(this, strand, |ace| ace.object_flags())? else {
+                    return Err(Error::field(strand, object_flags_field));
+                };
+                Output::set(strand, out, value);
+                Ok(())
+            })
+            .get("object_type", move |this, strand, mut out| {
+                let (flags, value) =
+                    with_ace(this, strand, |ace| (ace.object_flags(), ace.object_type()))?;
+                if flags.is_none() {
+                    return Err(Error::field(strand, object_type_field));
+                }
+                if let Some(value) = value {
+                    let global = strand.state::<Global<'v>>();
+                    create_guid(strand, global, value, &mut out);
+                } else {
+                    Output::set(strand, out, Nil);
+                }
+                Ok(())
+            })
+            .get("inherited_object_type", move |this, strand, mut out| {
+                let (flags, value) = with_ace(this, strand, |ace| {
+                    (ace.object_flags(), ace.inherited_object_type())
+                })?;
+                if flags.is_none() {
+                    return Err(Error::field(strand, inherited_object_type_field));
+                }
+                if let Some(value) = value {
+                    let global = strand.state::<Global<'v>>();
+                    create_guid(strand, global, value, &mut out);
+                } else {
+                    Output::set(strand, out, Nil);
+                }
+                Ok(())
+            })
+            .get("application_data", move |this, strand, out| {
+                let Some(value) = with_ace(this, strand, |ace| {
+                    ace.application_data().map(<[u8]>::to_vec)
+                })?
+                else {
+                    return Err(Error::field(strand, application_data_field));
+                };
+                Output::set(strand, out, value.as_slice());
+                Ok(())
+            })
+            .get("object_inherit", |this, strand, out| {
+                ace_flag(this, strand, out, 0x01)
+            })
+            .get("container_inherit", |this, strand, out| {
+                ace_flag(this, strand, out, 0x02)
+            })
+            .get("no_propagate_inherit", |this, strand, out| {
+                ace_flag(this, strand, out, 0x04)
+            })
+            .get("inherit_only", |this, strand, out| {
+                ace_flag(this, strand, out, 0x08)
+            })
+            .get("inherited", |this, strand, out| {
+                ace_flag(this, strand, out, 0x10)
+            })
+            .get("critical", |this, strand, out| {
+                ace_flag(this, strand, out, 0x20)
+            })
+            .get("successful_access", move |this, strand, out| {
+                let (kind, flags) = with_ace(this, strand, |ace| (ace.ace_type(), ace.flags()))?;
+                if !ace_is_audit(kind) {
+                    return Err(Error::field(strand, successful_access_field));
+                }
+                Output::set(strand, out, flags & 0x40 != 0);
+                Ok(())
+            })
+            .get("failed_access", move |this, strand, out| {
+                let (kind, flags) = with_ace(this, strand, |ace| (ace.ace_type(), ace.flags()))?;
+                if !ace_is_audit(kind) {
+                    return Err(Error::field(strand, failed_access_field));
+                }
+                Output::set(strand, out, flags & 0x80 != 0);
+                Ok(())
+            })
+            .get("trust_protected_filter", move |this, strand, out| {
+                let (kind, flags) = with_ace(this, strand, |ace| (ace.ace_type(), ace.flags()))?;
+                if kind != VfsAceType::SystemAccessFilter {
+                    return Err(Error::field(strand, trust_protected_filter_field));
+                }
+                Output::set(strand, out, flags & 0x40 != 0);
+                Ok(())
+            })
+            .method("to_bin", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let bytes = with_ace(this, strand, |ace| ace.as_bytes().to_vec())?;
+                Output::set(strand, out, bytes.as_slice());
+                Ok(())
+            })
+    }
+}
+
+fn ace_flag<'v, 's>(
+    this: Instance<'v, '_, Ace>,
+    strand: &mut Strand<'v, 's>,
+    out: impl Output<'v>,
+    flag: u8,
+) -> Result<'v, 's, ()> {
+    let flags = with_ace(this, strand, |ace| ace.flags())?;
+    Output::set(strand, out, flags & flag != 0);
+    Ok(())
+}
+
+const fn ace_is_audit(kind: VfsAceType) -> bool {
+    matches!(
+        kind,
+        VfsAceType::SystemAudit
+            | VfsAceType::SystemAlarm
+            | VfsAceType::SystemAuditObject
+            | VfsAceType::SystemAlarmObject
+            | VfsAceType::SystemAuditCallback
+            | VfsAceType::SystemAlarmCallback
+            | VfsAceType::SystemAuditCallbackObject
+            | VfsAceType::SystemAlarmCallbackObject
+    )
+}
+
 pub(crate) struct SecDesc;
 
 pub(crate) fn create_sec_desc<'v>(
@@ -260,6 +732,8 @@ impl<'v> Object<'v> for SecDesc {
         let rm_control = builder.sym("rm_control");
         let owner = builder.sym("owner");
         let group = builder.sym("group");
+        let dacl = builder.sym("dacl");
+        let sacl = builder.sym("sacl");
         let owner_defaulted = builder.sym("owner_defaulted");
         let group_defaulted = builder.sym("group_defaulted");
         let dacl_present = builder.sym("dacl_present");
@@ -309,6 +783,32 @@ impl<'v> Object<'v> for SecDesc {
                 };
                 let global = strand.state::<Global<'v>>();
                 create_sid(strand, global, value.clone(), &mut out);
+                Ok(())
+            })
+            .get("dacl", move |this, strand, mut out| {
+                let descriptor = this.annex();
+                if !descriptor.dacl_loaded() || !descriptor.dacl_present() {
+                    return Err(Error::field(strand, dacl));
+                }
+                if descriptor.dacl().is_none() {
+                    Output::set(strand, out, Nil);
+                } else {
+                    let global = strand.state::<Global<'v>>();
+                    create_acl(strand, global, this, AclComponent::Dacl, &mut out);
+                }
+                Ok(())
+            })
+            .get("sacl", move |this, strand, mut out| {
+                let descriptor = this.annex();
+                if !descriptor.sacl_loaded() || !descriptor.sacl_present() {
+                    return Err(Error::field(strand, sacl));
+                }
+                if descriptor.sacl().is_none() {
+                    Output::set(strand, out, Nil);
+                } else {
+                    let global = strand.state::<Global<'v>>();
+                    create_acl(strand, global, this, AclComponent::Sacl, &mut out);
+                }
                 Ok(())
             })
             .get("owner_defaulted", move |this, strand, out| {
@@ -865,6 +1365,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             Ok(())
         })
         .value("UnixInfo", global.types.unix_info)
+        .value("Guid", global.types.guid)
+        .value("Acl", global.types.acl)
+        .value("Ace", global.types.ace)
         .value("SecDesc", global.types.sec_desc)
         .value("Sid", global.types.sid)
         .value("SidName", global.types.sid_name)

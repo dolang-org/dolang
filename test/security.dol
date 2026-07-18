@@ -7,6 +7,7 @@ import sys
     - UnsupportedError
     - bin
     - bool
+    - hash
     - int
     - str
     - tuple
@@ -16,6 +17,9 @@ import sys
     - assert_type
     - test
   security:
+    - Ace
+    - Acl
+    - Guid
     - SecDesc
     - Sid
     - SidName
@@ -74,6 +78,68 @@ def security_descriptor_converts_self_relative_packets()
   assert_throws $FieldError do empty.owner
   assert_throws $FieldError do empty.group
   assert_throws $FieldError do empty.rm_control
+
+#[test]
+def guid_converts_between_windows_structural_forms()
+  let guid = Guid 00112233-4455-6677-8899-aabbccddeeff
+  assert_type $Guid $guid
+  assert_eq (str guid) 00112233-4455-6677-8899-aabbccddeeff
+  assert_eq $guid (Guid "00112233-4455-6677-8899-AABBCCDDEEFF")
+  assert_eq (hash guid) (hash(Guid(guid.to_bin())))
+  assert_eq $guid.to_bin() b"\x33\x22\x11\x00\x55\x44\x77\x66\x88\x99\xaa\xbb\xcc\xdd\xee\xff"
+
+#[test]
+def security_descriptor_exposes_acl_and_ace_views()
+  let packet = b"\x01\x00\x04\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x14\x00\x00\x00\x02\x00\x58\x00\x03\x00\x00\x00\x00\x13\x1c\x00\x78\x56\x34\x12\x01\x02\x00\x00\x00\x00\x00\x05\x20\x00\x00\x00\x20\x02\x00\x00\xde\xad\xbe\xef\x0b\x00\x2c\x00\xef\xcd\xab\x90\x01\x00\x00\x00\x33\x22\x11\x00\x55\x44\x77\x66\x88\x99\xaa\xbb\xcc\xdd\xee\xff\x01\x01\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x01\x02\x03\x04\x7f\xa0\x08\x00\x11\x22\x33\x44"
+  let descriptor = SecDesc $packet
+  let acl = descriptor.dacl
+  assert_type $Acl $acl
+  assert_eq $acl.revision 2
+  assert_eq $acl.size 88
+  assert_eq $acl.ace_count 3
+  assert_eq $acl.to_bin() $packet[20..]
+  assert_eq $acl.aces.len 3
+  assert_throws $ImmutableError do
+    acl.aces[0] = nil
+
+  let allowed = acl.aces[0]
+  assert_type $Ace $allowed
+  assert_eq $allowed.type :ACCESS_ALLOWED:
+  assert_eq $allowed.type_code 0
+  assert_eq $allowed.flags 19
+  assert_eq $allowed.size 28
+  assert_eq $allowed.mask 305419896
+  assert_eq (str allowed.sid) S-1-5-32-544
+  assert_eq $allowed.object_inherit true
+  assert_eq $allowed.container_inherit true
+  assert_eq $allowed.inherited true
+  assert_eq $allowed.application_data b"\xde\xad\xbe\xef"
+  assert_throws $FieldError do allowed.object_type
+  assert_throws $FieldError do allowed.successful_access
+
+  let object = acl.aces[1]
+  assert_eq $object.type :ACCESS_ALLOWED_CALLBACK_OBJECT:
+  assert_eq $object.mask 2427178479
+  assert_eq $object.object_flags 1
+  assert_type $Guid $object.object_type
+  assert_eq (str object.object_type) 00112233-4455-6677-8899-aabbccddeeff
+  assert_eq $object.inherited_object_type nil
+  assert_eq (str object.sid) S-1-1-0
+  assert_eq $object.application_data b"\x01\x02\x03\x04"
+
+  let unknown = acl.aces[2]
+  assert_eq $unknown.type :UNKNOWN:
+  assert_eq $unknown.type_code 127
+  assert_eq $unknown.flags 160
+  assert_eq $unknown.to_bin() b"\x7f\xa0\x08\x00\x11\x22\x33\x44"
+  assert_throws $FieldError do unknown.mask
+  assert_throws $FieldError do unknown.application_data
+
+  assert_throws $FieldError do descriptor.sacl
+  let null_dacl = SecDesc b"\x01\x00\x04\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+  assert_eq $null_dacl.dacl nil
+  let absent = SecDesc b"\x01\x00\x00\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+  assert_throws $FieldError do absent.dacl
 
 #[test]
 def reports_security_information_for_target()

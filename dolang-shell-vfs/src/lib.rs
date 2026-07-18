@@ -18,6 +18,7 @@ pub use typed_path::{
 mod client;
 mod direct;
 mod error;
+mod guid;
 mod pipe;
 mod protocol;
 mod read_dir;
@@ -30,9 +31,11 @@ mod sid;
 mod windows;
 
 pub use error::{Error, OperatingSystem, Result, SystemError};
+pub use guid::{Guid, GuidError};
 pub use sec_desc::{
-    ALL_SECURITY_INFORMATION, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
-    OWNER_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION, SecDesc, SecDescError,
+    ALL_SECURITY_INFORMATION, Ace, AceError, AceType, Aces, Acl, AclError,
+    DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+    SACL_SECURITY_INFORMATION, SecDesc, SecDescError,
 };
 pub use sid::{Sid, SidError};
 
