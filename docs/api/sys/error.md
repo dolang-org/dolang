@@ -25,8 +25,8 @@ catch Error: err
   echo $err.code
 ```
 
-The value is [`sys.linux.LinuxErrno`](./linux/linux-errno.md),
-[`sys.macos.MacosErrno`](./macos/macos-errno.md), or
+The value is [`sys.linux.Errno`](./linux/errno.md),
+[`sys.macos.Errno`](./macos/errno.md), or
 [`sys.windows.WinError`](./windows/win-error.md), according to the system where
 the error originated. Errors without a native code expose `nil`.
 

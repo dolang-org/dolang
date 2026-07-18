@@ -10,12 +10,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
 
     builder
         .module("sys.linux")
-        .value("LinuxErrno", global.types.linux_errno)
+        .value("Errno", global.types.linux_errno)
         .commit();
 
     builder
         .module("sys.macos")
-        .value("MacosErrno", global.types.macos_errno)
+        .value("Errno", global.types.macos_errno)
         .commit();
 
     builder

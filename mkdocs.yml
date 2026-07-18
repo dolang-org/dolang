@@ -224,7 +224,7 @@ nav:
       - api/security/index.md
     - security.unix:
       - api/security/unix/index.md
-      - api/security/unix/unixinfo.md
+      - api/security/unix/identity.md
     - security.windows:
       - api/security/windows/index.md
       - api/security/windows/acl.md
@@ -247,10 +247,10 @@ nav:
       - api/sys/unsupported-error.md
     - sys.linux:
       - api/sys/linux/index.md
-      - api/sys/linux/linux-errno.md
+      - api/sys/linux/errno.md
     - sys.macos:
       - api/sys/macos/index.md
-      - api/sys/macos/macos-errno.md
+      - api/sys/macos/errno.md
     - sys.unix:
       - api/sys/unix/index.md
       - api/sys/unix/errno.md

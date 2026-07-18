@@ -1,4 +1,4 @@
-# LinuxErrno
+# Errno
 
 [`sys.unix.Errno`](../unix/errno.md) originating from Linux.
 
