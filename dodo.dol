@@ -400,5 +400,7 @@ return
       help: "arguments to `cargo publish`"
       collect: true
     do |args|
-      for crate = PUBLISH_CRATES
-        show cargo publish -p $crate ...args.args
+      show cargo publish
+        for crate = PUBLISH_CRATES
+          -p $crate
+        ...args.args
