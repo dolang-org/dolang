@@ -20,6 +20,7 @@ use crate::{
         AlreadyExistsError, NotFoundError, PermissionDeniedError, ProcError, SysError,
         SysErrorObject, TimedOutError, UnsupportedError,
     },
+    error_code::{CodeObject, Errno, ErrorCode, LinuxErrno, MacosErrno, WinError},
     fs::{
         attrs::Attrs,
         file::File,
@@ -72,6 +73,11 @@ pub(crate) struct Types<'v> {
     pub(crate) sid_name: Type<'v, SidName>,
     pub(crate) token_group: Type<'v, TokenGroup>,
     pub(crate) token_info: Type<'v, TokenInfo>,
+    pub(crate) error_code: Type<'v, CodeObject<ErrorCode>>,
+    pub(crate) errno: Type<'v, CodeObject<Errno>>,
+    pub(crate) linux_errno: Type<'v, CodeObject<LinuxErrno>>,
+    pub(crate) macos_errno: Type<'v, CodeObject<MacosErrno>>,
+    pub(crate) win_error: Type<'v, CodeObject<WinError>>,
     pub(crate) sys_error: Type<'v, SysErrorObject<SysError>>,
     pub(crate) not_found: Type<'v, SysErrorObject<NotFoundError>>,
     pub(crate) permission_denied: Type<'v, SysErrorObject<PermissionDeniedError>>,
@@ -143,6 +149,11 @@ impl<'v> Stateful<'v> for Global<'v> {
 
 impl<'v> Global<'v> {
     pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+        let error_code = builder.register_type::<CodeObject<ErrorCode>>();
+        let errno = builder
+            .build_type::<CodeObject<Errno>>((), ())
+            .nominal_supertype(error_code)
+            .build();
         let sys_error = builder
             .build_type::<SysErrorObject<SysError>>((), ())
             .nominal_supertype(TypeObject::RuntimeError)
@@ -197,6 +208,20 @@ impl<'v> Global<'v> {
                 sid_name: builder.register_type(),
                 token_group: builder.register_type(),
                 token_info: builder.register_type(),
+                error_code,
+                errno,
+                linux_errno: builder
+                    .build_type::<CodeObject<LinuxErrno>>((), ())
+                    .nominal_supertype(errno)
+                    .build(),
+                macos_errno: builder
+                    .build_type::<CodeObject<MacosErrno>>((), ())
+                    .nominal_supertype(errno)
+                    .build(),
+                win_error: builder
+                    .build_type::<CodeObject<WinError>>((), ())
+                    .nominal_supertype(error_code)
+                    .build(),
                 sys_error,
                 not_found: builder
                     .build_type::<SysErrorObject<NotFoundError>>((), ())

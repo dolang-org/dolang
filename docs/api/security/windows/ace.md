@@ -1,4 +1,4 @@
-# Ace
+# `Ace`
 
 Immutable view of a native Windows access-control entry.
 
@@ -65,14 +65,15 @@ Raises `FieldError` for a non-object ACE.
 
 ### `object_type`
 
-Object-type [`Guid`](./guid.md), or `nil` when the object flag is clear.
+Object-type [`sys.windows.Guid`](../../sys/windows/guid.md), or `nil` when the
+object flag is clear.
 
 Raises `FieldError` for a non-object ACE.
 
 ### `inherited_object_type`
 
-Inherited-object-type [`Guid`](./guid.md), or `nil` when the object flag is
-clear.
+Inherited-object-type [`sys.windows.Guid`](../../sys/windows/guid.md), or `nil`
+when the object flag is clear.
 
 Raises `FieldError` for a non-object ACE.
 
@@ -130,4 +131,4 @@ Raises `FieldError` for other ACE types.
 
 Returns the exact native ACE packet, including application or unknown data.
 
-**Returns:** [`bin`](../std/bin.md)
+**Returns:** [`bin`](../../std/bin.md)

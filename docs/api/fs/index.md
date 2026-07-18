@@ -361,7 +361,7 @@ Gets selected parts of a Windows security descriptor.
 
 #### Returns
 
-[`SecDesc`](../security/secdesc.md)
+[`security.windows.SecDesc`](../security/windows/secdesc.md)
 
 ### `set_sec_desc path desc :follow = true`
 
@@ -369,11 +369,11 @@ Applies the components selected by a Windows security descriptor's `mask`.
 
 #### Parameters
 
-| Name     | Type                                      | Description                    |
-| -------- | ----------------------------------------- | ------------------------------ |
-| `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to update                 |
-| `desc`   | [`SecDesc`](../security/secdesc.md)       | Security descriptor to apply   |
-| `follow` | [`bool`](../std/bool.md)                  | Follow the final symbolic link |
+| Name     | Type                                                         | Description                    |
+| -------- | ------------------------------------------------------------ | ------------------------------ |
+| `path`   | [`str`](../std/str.md)\|[`Path`](path.md)                    | Path to update                 |
+| `desc`   | [`security.windows.SecDesc`](../security/windows/secdesc.md) | Security descriptor to apply   |
+| `follow` | [`bool`](../std/bool.md)                                     | Follow the final symbolic link |
 
 ### `attrs path :follow = true`
 

@@ -1,4 +1,4 @@
-# SecDesc
+# `SecDesc`
 
 Windows security descriptor.
 
@@ -10,9 +10,9 @@ Parses a self-relative security descriptor.
 
 **Parameters:**
 
-| Name    | Type                     | Description                       |
-| ------- | ------------------------ | --------------------------------- |
-| `value` | [`bin`](../std/bin.md)   | Native self-relative packet       |
+| Name    | Type                      | Description                 |
+| ------- | ------------------------- | --------------------------- |
+| `value` | [`bin`](../../std/bin.md) | Native self-relative packet |
 
 **Returns:** `SecDesc`
 
@@ -129,4 +129,4 @@ loaded.
 
 Returns a canonical self-relative security descriptor packet.
 
-**Returns:** [`bin`](../std/bin.md)
+**Returns:** [`bin`](../../std/bin.md)

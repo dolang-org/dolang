@@ -3,11 +3,13 @@
 mod diagnostic;
 mod env;
 mod error;
+mod error_code;
 mod extension;
 mod fs;
 mod global;
 mod local;
 mod pipe_channel;
+mod platform;
 mod proc;
 mod program;
 mod security;

@@ -1,4 +1,4 @@
-# SidName
+# `SidName`
 
 Resolved Windows account identity.
 
@@ -10,16 +10,16 @@ Resolves an account name or [`Sid`](./sid.md) in the active VFS target.
 
 **Parameters:**
 
-| Name    | Type                                      | Description         |
-| ------- | ----------------------------------------- | ------------------- |
-| `value` | [`str`](../std/str.md)\|[`Sid`](./sid.md) | Account name or SID |
+| Name    | Type                                         | Description         |
+| ------- | -------------------------------------------- | ------------------- |
+| `value` | [`str`](../../std/str.md)\|[`Sid`](./sid.md) | Account name or SID |
 
 **Returns:** `SidName`
 
 **Errors:**
 
-- Raises [`sys.NotFoundError`](../sys/not-found-error.md) when the identity is
-  unmapped.
+- Raises [`sys.NotFoundError`](../../sys/not-found-error.md) when the identity
+  is unmapped.
 - Raises `UnsupportedError` for Unix targets.
 
 ## Fields

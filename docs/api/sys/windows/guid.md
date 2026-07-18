@@ -1,4 +1,4 @@
-# Guid
+# `Guid`
 
 Windows globally unique identifier.
 
@@ -10,9 +10,9 @@ Parses a canonical GUID string or native Windows GUID packet.
 
 **Parameters:**
 
-| Name    | Type                                           | Description                        |
-| ------- | ---------------------------------------------- | ---------------------------------- |
-| `value` | [`str`](../std/str.md)\|[`bin`](../std/bin.md) | GUID text or 16-byte native packet |
+| Name    | Type                                                 | Description                        |
+| ------- | ---------------------------------------------------- | ---------------------------------- |
+| `value` | [`str`](../../std/str.md)\|[`bin`](../../std/bin.md) | GUID text or 16-byte native packet |
 
 **Returns:** `Guid`
 
@@ -31,7 +31,7 @@ echo $id
 
 Returns the 16-byte native Windows GUID representation.
 
-**Returns:** [`bin`](../std/bin.md)
+**Returns:** [`bin`](../../std/bin.md)
 
 ## Operators
 

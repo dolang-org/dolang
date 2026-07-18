@@ -300,7 +300,7 @@ Gets selected parts of the Windows security descriptor.
 | `sacl`   | [`bool`](../std/bool.md) | Load the system ACL                 |
 | `follow` | [`bool`](../std/bool.md) | Follow the final symbolic link      |
 
-**Returns:** [`SecDesc`](../security/secdesc.md)
+**Returns:** [`security.windows.SecDesc`](../security/windows/secdesc.md)
 
 SACL access requires `SeSecurityPrivilege`. Other platforms raise
 `UnsupportedError`.
@@ -311,10 +311,10 @@ Applies the components selected by a security descriptor's `mask`.
 
 **Parameters:**
 
-| Name     | Type                                      | Description                    |
-| -------- | ----------------------------------------- | ------------------------------ |
-| `desc`   | [`SecDesc`](../security/secdesc.md)       | Security descriptor to apply   |
-| `follow` | [`bool`](../std/bool.md)                  | Follow the final symbolic link |
+| Name     | Type                                                         | Description                    |
+| -------- | ------------------------------------------------------------ | ------------------------------ |
+| `desc`   | [`security.windows.SecDesc`](../security/windows/secdesc.md) | Security descriptor to apply   |
+| `follow` | [`bool`](../std/bool.md)                                     | Follow the final symbolic link |
 
 Windows may normalize the resulting descriptor when associating it with the
 filesystem object. Other platforms raise `UnsupportedError`.

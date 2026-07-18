@@ -1,4 +1,4 @@
-# UnixInfo
+# `UnixInfo`
 
 Unix process identity information for the active VFS target.
 
@@ -22,4 +22,4 @@ Effective group ID.
 
 ### `group_ids`
 
-Group IDs as an immutable [`tuple`](../std/tuple.md).
+Group IDs as an immutable [`tuple`](../../std/tuple.md).

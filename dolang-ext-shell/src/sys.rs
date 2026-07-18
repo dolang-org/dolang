@@ -125,6 +125,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         })
         .value("OsInfo", global.types.os_info)
         .value("CpuInfo", global.types.cpu_info)
+        .value("ErrorCode", global.types.error_code)
         .value("Error", global.types.sys_error)
         .value("NotFoundError", global.types.not_found)
         .value("PermissionDeniedError", global.types.permission_denied)

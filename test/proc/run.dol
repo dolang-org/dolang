@@ -1,4 +1,4 @@
-import agent proc sys
+import agent proc sys sys.unix sys.windows
   test:
     - assert
     - assert_eq
@@ -189,12 +189,16 @@ def missing_program_yields_sys_error()
   let err = assert_throws $sys.NotFoundError do
     run __dolang_missing_program__
   assert_type $sys.Error $err
+  let code = err.code
+  assert_type $sys.ErrorCode $code
   if is_windows
-    assert_throws $FieldError do err.errno
-    assert_type $int $err.winerror
+    assert_type $sys.windows.WinError $code
+    assert_eq (str code) ERROR_FILE_NOT_FOUND
   else
-    assert_eq $err.errno 2
-    assert_throws $FieldError do err.winerror
+    assert_type $sys.unix.Errno $code
+    assert_eq $code.value 2
+    assert_eq $code.os $sys.os_info().os
+    assert_eq (str code) ENOENT
 
 #[agent.test]
 def non_zero_exit_yields_proc_error()

@@ -1,4 +1,4 @@
-import agent sys
+import agent sys sys.unix sys.linux sys.macos sys.windows
   test:
     - assert
     - assert_eq
@@ -120,8 +120,23 @@ def missing_file_yields_sys_error()
   let err = assert_throws $sys.NotFoundError do
     missing.read()
   assert_type $sys.Error $err
-  if !is_windows
-    assert_eq $err.errno 2
+  let code = err.code
+  assert_type $sys.ErrorCode $code
+  if is_windows
+    assert_type $sys.windows.WinError $code
+    assert_eq $code.value 2
+    assert_eq (str code) ERROR_FILE_NOT_FOUND
+    assert (str(err).ends_with("(ERROR_FILE_NOT_FOUND)"))
+  else
+    assert_type $sys.unix.Errno $code
+    if (sys.os_info().os == :LINUX:)
+      assert_type $sys.linux.LinuxErrno $code
+    else
+      assert_type $sys.macos.MacosErrno $code
+    assert_eq $code.value 2
+    assert_eq $code.os $sys.os_info().os
+    assert_eq (str code) ENOENT
+    assert (str(err).ends_with("(ENOENT)"))
 
 #[agent.test]
 def sys_error_is_caught_by_runtime_error()

@@ -235,6 +235,16 @@ return
     do |args|
       cargo_test (Spec args) $args.args
 
+  "gen-system-error-codes":
+    help: generate system error code lookup tables from public source documents
+    - arg: args
+      help: source arguments for tools/gen_system_error_codes.py
+      collect: true
+    do |args|
+      show python3 tools/gen_system_error_codes.py
+        --output dolang-ext-shell/src/error_code/generated.rs
+        ...args.args
+
   "shell-test":
     help: run shell integration tests
     - arg: args
