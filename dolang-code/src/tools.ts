@@ -4,7 +4,7 @@ import * as path from "path";
 import * as tar from "tar";
 import * as vscode from "vscode";
 
-export type ToolName = "shell" | "shell-vfs" | "lsp";
+export type ToolName = "shell" | "vfs" | "lsp";
 export type ToolSource = "configured" | "path" | "downloaded";
 
 export interface ResolvedTool {
@@ -37,9 +37,9 @@ const TOOL_METADATA: Record<
         settingKey: "path",
         displayName: "dolang"
     },
-    "shell-vfs": {
-        binaryName: "dolang-shell-vfs",
-        displayName: "dolang-shell-vfs"
+    vfs: {
+        binaryName: "dolang-vfs",
+        displayName: "dolang-vfs"
     },
     lsp: {
         binaryName: "dolang-lsp",
@@ -239,7 +239,7 @@ export class GitHubReleaseToolDownloader {
     }
 
     private async ensureBundleExecutables(): Promise<void> {
-        const toolNames: ToolName[] = ["shell", "shell-vfs", "lsp"];
+        const toolNames: ToolName[] = ["shell", "vfs", "lsp"];
         const supportedToolNames = toolNames.filter(tool =>
             isToolSupportedOnPlatform(tool, process.platform)
         );
@@ -268,7 +268,7 @@ export function platformTripleFor(
 }
 
 function isToolSupportedOnPlatform(tool: ToolName, platformName: NodeJS.Platform): boolean {
-    return !(tool === "shell-vfs" && platformName === "win32");
+    return !(tool === "vfs" && platformName === "win32");
 }
 
 function githubPlatform(platformName: NodeJS.Platform): string {

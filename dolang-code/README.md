@@ -17,7 +17,7 @@ VS Code extension providing language support for the Do programming language.
 
 - VS Code 1.75.0 or later
 - One of:
-    - `dolang` and `dolang-lsp` in `PATH`; on Unix, `dolang-shell-vfs` must be
+    - `dolang` and `dolang-lsp` in `PATH`; on Unix, `dolang-vfs` must be
       installed beside `dolang`
     - explicit tool paths in VS Code settings
     - automatic download from GitHub release assets

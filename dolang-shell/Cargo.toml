@@ -14,7 +14,7 @@ path = "src/main.rs"
 
 [features]
 default = ["base64", "digest", "json", "regex", "glob", "http", "zip", "sqlite", "xml", "yaml", "progress", "rand", "toml", "patch"]
-debug = ["dolang-shell-core/debug"]
+debug = ["dolang-shell-main/debug"]
 base64 = ["dep:dolang-ext-base64"]
 digest = ["dep:dolang-ext-digest"]
 json = ["dep:dolang-ext-json", "dolang-ext-http?/json"]
@@ -32,8 +32,8 @@ toml = ["dep:dolang-ext-toml"]
 patch = ["dep:dolang-ext-patch"]
 
 [dependencies]
-[dependencies.dolang-shell-core]
-path = "../dolang-shell-core"
+[dependencies.dolang-shell-main]
+path = "../dolang-shell-main"
 version = "0.1.0"
 
 [dependencies.dolang-shell-modules]

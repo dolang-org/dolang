@@ -23,7 +23,7 @@ pub def build_command
   :keepalive_count = nil
   :batch = false
   :host_key = :DEFAULT:
-  :command = ["dolang-shell-vfs", "--stdio"]
+  :command = ["dolang-vfs", "--stdio"]
   ...options
 do
   let identities = []
@@ -85,7 +85,7 @@ pub def with_program
   :keepalive_count = nil
   :batch = false
   :host_key = :DEFAULT:
-  :command = ["dolang-shell-vfs", "--stdio"]
+  :command = ["dolang-vfs", "--stdio"]
   ...options
 do
   let argv = build_command

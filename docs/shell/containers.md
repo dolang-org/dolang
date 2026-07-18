@@ -1,6 +1,6 @@
 # Container Support
 
-Do can operate inside containers through the `dolang-shell-vfs`
+Do can operate inside containers through the `dolang-vfs`
 daemon. This enables running external programs and accessing the filesystem
 in a container while running on the host.
 
@@ -14,7 +14,7 @@ stdin/stdout/stderr to be piped between host and container.
 ## Setting Up the VFS
 
 1. **Copy the VFS binary into the container.** The VFS binary is
-   `dolang-shell-vfs`.
+   `dolang-vfs`.
 
 2. **Run the VFS daemon with a shared socket.** Mount a host directory into the
    container for the Unix socket. For example:
@@ -24,7 +24,7 @@ stdin/stdout/stderr to be piped between host and container.
     let vfsdir = "$rundir/vfs"
     run.create_dir -p $vfsdir
     run.docker run -v $vfsdir:/tmp/vfs:rw my-container --
-      /tmp/dolang-shell-vfs /tmp/vfs/socket
+      /tmp/dolang-vfs /tmp/vfs/socket
     ```
 
 3. **Connect from Do code:**

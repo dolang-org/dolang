@@ -167,7 +167,7 @@ struct InodeState {
 static INODE_TABLE: LazyLock<Mutex<HashMap<InodeId, Arc<Mutex<InodeState>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Container-aware SQLite VFS that routes file operations through the shell-vfs helper.
+/// Container-aware SQLite VFS that routes file operations through the `dolang-vfs` helper.
 /// This VFS should only be used when a shell VFS client is available.
 pub struct ShellVfs;
 

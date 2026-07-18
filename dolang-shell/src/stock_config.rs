@@ -1,4 +1,4 @@
-use dolang_shell_core::Config;
+use dolang_shell_main::Config;
 
 include!(concat!(env!("OUT_DIR"), "/bundled_entrypoints.rs"));
 

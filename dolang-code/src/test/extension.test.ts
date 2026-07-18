@@ -59,10 +59,10 @@ suite("Tool Resolution", () => {
                 platformTripleFor(process.platform, process.arch),
                 "bundle"
             ),
-            "shell-vfs"
+            "vfs"
         );
 
-        const resolved = await resolveTool("shell-vfs", {
+        const resolved = await resolveTool("vfs", {
             context: createContext(root),
             configuration: createConfiguration(),
             pathEnv: path.join(root, "missing")

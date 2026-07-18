@@ -1,7 +1,7 @@
 # dolang-shell Architecture
 
 Stock `dolang` CLI binary. The reusable interpreter logic now lives in
-`dolang-shell-core`, the stock bundled Do modules live in
+`dolang-shell-main`, the stock bundled Do modules live in
 `dolang-shell-modules`, and stock bundled `--main` entrypoints live here.
 
 - **VM setup**: single-threaded tokio runtime, extension discovery/registration,

@@ -6,7 +6,7 @@ pub def bin exe = nil
     return vfs_exe
 
   let exe = (exe || shell.exe).canonical()
-  let bin = exe.with_stem "dolang-shell-vfs"
+  let bin = exe.with_stem "dolang-vfs"
   let bin_meta = bin.metadata follow: false
 
   if (bin_meta.type != :FILE:)

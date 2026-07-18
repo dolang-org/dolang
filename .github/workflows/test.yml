@@ -83,17 +83,14 @@ jobs:
       - name: Run integration tests (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          cargo build --bin dolang-shell-vfs
-          env \
-            DOLANG_SHELL_VFS="${{ github.workspace }}/target/debug/dolang-shell-vfs" \
-            cargo run --bin dolang -- \
-              --module-path "${{ github.workspace }}/testlib" -m test -- test
+          cargo build --bin dolang-vfs
+          cargo run --bin dolang -- \
+            --module-path "${{ github.workspace }}/testlib" -m test -- test
 
       - name: Run integration tests (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          cargo build --bin dolang-shell-vfs
-          $env:DOLANG_SHELL_VFS="${{ github.workspace }}/target/debug/dolang-shell-vfs.exe"
+          cargo build --bin dolang-vfs
           cargo run --bin dolang -- --module-path "${{ github.workspace }}/testlib" -m test -- test
 
   extension:

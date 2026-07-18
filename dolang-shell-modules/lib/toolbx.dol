@@ -37,7 +37,7 @@ def run_agent
   cd: cd_override = nil
   env: env_override = nil
 do
-  let socket = "$(runtime_dir())/toolbox-shell-vfs-$name"
+  let socket = "$(runtime_dir())/toolbox-vfs-$name"
   let agent = _vfs.bin()
   let input = strand.input()
   pipeline

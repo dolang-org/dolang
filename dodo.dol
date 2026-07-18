@@ -25,37 +25,38 @@ let MKDOCS_BINS =
   - dolang-doc
 
 let PUBLISH_CRATES =
-  - dolang-private-build
-  - dolang-private-bundle
-  - dolang-private-util
   - dolang-rpc
-  - dolang-bytecode
-  - dolang-compile
-  - dolang-runtime
-  - dolang
-  - dolang-private-test
+  - dolang-private-build
+  - dolang-private-util
   - dolang-shell-vfs
-  - dolang-ext-compile
-  - dolang-ext-json
-  - dolang-ext-url
-  - dolang-ext-regex
-  - dolang-ext-glob
-  - dolang-ext-base64
-  - dolang-ext-digest
-  - dolang-ext-rand
-  - dolang-ext-xml
+  - dolang-bytecode
+  - dolang-runtime
+  - dolang-compile
+  - dolang-lsp
+  - dolang
   - dolang-ext-yaml
   - dolang-ext-toml
+  - dolang-ext-regex
+  - dolang-ext-rand
+  - dolang-ext-url
+  - dolang-ext-json
+  - dolang-ext-glob
+  - dolang-ext-digest
+  - dolang-ext-base64
+  - dolang-ext-load
+  - dolang-private-test
+  - dolang-ext-compile
+  - dolang-ext-xml
   - dolang-ext-shell
-  - dolang-ext-http
   - dolang-ext-zip
   - dolang-ext-sqlite
   - dolang-ext-progress
-  - dolang-ext-load
-  - dolang-shell-core
+  - dolang-ext-patch
+  - dolang-ext-http
+  - dolang-shell-main
+  - dolang-private-bundle
   - dolang-shell-modules
   - dolang-shell
-  - dolang-lsp
 
 let TARGETS =
   "x86_64-linux":
@@ -123,7 +124,7 @@ class Spec
       ...self.#extra ...rest
 
   pub def cargo_vfs self ...rest
-    self.cargo build --bin dolang-shell-vfs
+    self.cargo build --bin dolang-vfs
     self.cargo ...rest
 
 def default_shell_tests()
@@ -282,10 +283,10 @@ return
         extra:
           --all-features
       spec.cargo llvm-cov clean
-      spec.cargo llvm-cov --no-report run --ignore-run-fail --bin dolang-shell-vfs
+      spec.cargo llvm-cov --no-report run --ignore-run-fail --bin dolang-vfs
       env
         DO_EXPORT_DOT: $Path("dot").absolute()
-        VFS: (spec.bin "dolang-shell-vfs")
+        VFS: (spec.bin "dolang-vfs")
         do
           spec.cargo llvm-cov --no-report test
           spec.cargo llvm-cov run --no-report --bin dolang --
@@ -376,7 +377,7 @@ return
           ZSTD_SYS_USE_PKG_CONFIG: 1
         do
           spec.cargo build --bin dolang --bin dolang-lsp
-          vfs_spec.cargo build --bin dolang-shell-vfs
+          vfs_spec.cargo build --bin dolang-vfs
 
       let bin_dir = (args.prefix / "bin")
 
@@ -391,7 +392,7 @@ return
         install_bin $spec $bin_dir dolang-lsp
         install_bin_symlink $spec $bin_dir dolang dodo
         install_bin_symlink $spec $bin_dir dolang dolang-test
-        install_bin $vfs_spec $bin_dir dolang-shell-vfs
+        install_bin $vfs_spec $bin_dir dolang-vfs
 
   publish:
     help: publish workspace crates in dependency order

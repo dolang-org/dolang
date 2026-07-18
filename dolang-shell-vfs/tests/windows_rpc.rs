@@ -94,7 +94,7 @@ fn current_process_handle() -> OwnedHandle {
 
 async fn connected_pair() -> (Client, JoinHandle<std::io::Result<()>>) {
     let id = NEXT_PIPE.fetch_add(1, Ordering::Relaxed);
-    let name = format!(r"\\.\pipe\dolang-shell-vfs-{}-{id}", std::process::id());
+    let name = format!(r"\\.\pipe\dolang-vfs-{}-{id}", std::process::id());
     let client_pipe = ServerOptions::new()
         .first_pipe_instance(true)
         .create(&name)

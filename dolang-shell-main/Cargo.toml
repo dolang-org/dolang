@@ -1,5 +1,5 @@
 [package]
-name = "dolang-shell-core"
+name = "dolang-shell-main"
 version = "0.1.0"
 description = "Reusable shell/interpreter core for the Do language."
 edition = "2024"

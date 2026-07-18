@@ -26,7 +26,7 @@ def fails block
 def resolves_matching_sibling()
   with_temp_dir do |dir|
     let exe = (dir / "dolang")
-    let helper = (dir / "dolang-shell-vfs")
+    let helper = (dir / "dolang-vfs")
     make_file $exe 0o755
     make_file $helper 0o755
 
@@ -36,7 +36,7 @@ def resolves_matching_sibling()
 def rejects_non_regular_sibling()
   with_temp_dir do |dir|
     let exe = (dir / "dolang")
-    let helper = (dir / "dolang-shell-vfs")
+    let helper = (dir / "dolang-vfs")
     make_file $exe 0o755
     helper.create_dir()
 
@@ -47,7 +47,7 @@ def rejects_symlink_sibling()
   with_temp_dir do |dir|
     let exe = (dir / "dolang")
     let target = (dir / "target")
-    let helper = (dir / "dolang-shell-vfs")
+    let helper = (dir / "dolang-vfs")
     make_file $exe 0o755
     make_file $target 0o755
     symlink_file $target $helper
@@ -58,7 +58,7 @@ def rejects_symlink_sibling()
 def rejects_permission_mismatch()
   with_temp_dir do |dir|
     let exe = (dir / "dolang")
-    let helper = (dir / "dolang-shell-vfs")
+    let helper = (dir / "dolang-vfs")
     make_file $exe 0o755
     make_file $helper 0o700
 
