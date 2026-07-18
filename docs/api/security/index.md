@@ -67,7 +67,7 @@ Resolves a Unix group name in the active VFS target.
 
 Returns Unix security information captured for the active VFS context.
 
-**Returns:** [`security.unix.UnixInfo`](./unix/unixinfo.md)
+**Returns:** [`security.unix.Identity`](./unix/identity.md)
 
 **Errors:**
 

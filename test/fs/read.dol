@@ -130,9 +130,9 @@ def missing_file_yields_sys_error()
   else
     assert_type $sys.unix.Errno $code
     if (sys.os_info().os == :LINUX:)
-      assert_type $sys.linux.LinuxErrno $code
+      assert_type $sys.linux.Errno $code
     else
-      assert_type $sys.macos.MacosErrno $code
+      assert_type $sys.macos.Errno $code
     assert_eq $code.value 2
     assert_eq $code.os $sys.os_info().os
     assert_eq (str code) ENOENT

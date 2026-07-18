@@ -122,7 +122,7 @@ impl<'v> CodeType<'v> for Errno {
 }
 
 impl<'v> CodeType<'v> for LinuxErrno {
-    const NAME: &'v str = "LinuxErrno";
+    const NAME: &'v str = "Errno";
     const MODULE: &'v str = "sys.linux";
     const ERRNO: bool = true;
 
@@ -134,7 +134,7 @@ impl<'v> CodeType<'v> for LinuxErrno {
 }
 
 impl<'v> CodeType<'v> for MacosErrno {
-    const NAME: &'v str = "MacosErrno";
+    const NAME: &'v str = "Errno";
     const MODULE: &'v str = "sys.macos";
     const ERRNO: bool = true;
 

@@ -27,7 +27,7 @@ import sys
     - group_name
     - group_id
   security.unix:
-    - UnixInfo
+    - Identity
   security.windows:
     - Ace
     - Acl
@@ -221,7 +221,7 @@ def functionally_updates_security_descriptors()
 def reports_security_information_for_target()
   if (sys.os_info().family == :UNIX:)
     let info = unix_info()
-    assert_type $UnixInfo $info
+    assert_type $Identity $info
     assert_type $int $info.uid
     assert_type $int $info.gid
     assert_type $int $info.euid

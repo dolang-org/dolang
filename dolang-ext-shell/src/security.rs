@@ -33,10 +33,10 @@ const SE_GROUP_LOGON_ID: u32 = 0xC000_0000;
 
 pub(crate) fn configure_compiler<'a>(_compiler: &mut Compiler<'a>) {}
 
-pub(crate) struct UnixInfo;
+pub(crate) struct Identity;
 
-impl<'v> Object<'v> for UnixInfo {
-    const NAME: &'v str = "UnixInfo";
+impl<'v> Object<'v> for Identity {
+    const NAME: &'v str = "Identity";
     const MODULE: &'v str = "security.unix";
     const SLOTS: usize = 1;
     type Annex = UnixSecurityInfo;
@@ -1777,9 +1777,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
 
                 global
                     .types
-                    .unix_info
-                    .create_with_annex(strand, UnixInfo, info, &mut out);
-                let this = global.types.unix_info.downcast(&out).unwrap();
+                    .unix_identity
+                    .create_with_annex(strand, Identity, info, &mut out);
+                let this = global.types.unix_identity.downcast(&out).unwrap();
                 Output::set(
                     strand,
                     Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()),
@@ -1907,7 +1907,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
 
     builder
         .module("security.unix")
-        .value("UnixInfo", global.types.unix_info)
+        .value("Identity", global.types.unix_identity)
         .commit();
 
     builder
