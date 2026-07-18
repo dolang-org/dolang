@@ -1,0 +1,24 @@
+import dodo
+  fs:
+    - with_temp_dir
+  test:
+    - assert_eq
+    - test
+
+#[test]
+def run_reuses_loaded_rules_when_reentered()
+  with_temp_dir do |dir|
+    let marker = (dir / "loads")
+    (dir / "dodo.dol").write r|
+      import dodo fs
+
+      fs.append "loads" x
+
+      return
+        inner:
+          do |_args| nil
+        outer:
+          do |_args| dodo.run inner
+
+    cd $dir do dodo.run outer
+    assert_eq $marker.read() x

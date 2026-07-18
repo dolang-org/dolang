@@ -1,4 +1,4 @@
-import args compile load progress strand term
+import compile load progress strand term
   fs:
     - Path
   glob:
@@ -13,24 +13,6 @@ let name_style = term.style dim: true
 let note_style = term.style bold: true
 
 let collect_key = strand.Key()
-
-def parse_jobs value
-  let jobs = try
-    int $value
-  catch std.RuntimeError: _
-    throw args.Error "--jobs expects an integer"
-  if (jobs < 1)
-    throw args.Error "--jobs must be at least 1"
-  jobs
-
-def parse_timeout value
-  let secs = try
-    float $value
-  catch std.RuntimeError: _
-    throw args.Error "--timeout expects a number"
-  if !(secs >= 0)
-    throw args.Error "--timeout must be non-negative"
-  secs
 
 class ModuleCompileError: std.RuntimeError
   pub field path output
@@ -52,10 +34,7 @@ class Harness
     self.#module_jobs = strand.Resource $module_jobs
     self.#jobs = strand.Resource $jobs
     self.#timeout = timeout
-    self.#filter = try
-        Glob $filter
-    catch std.RuntimeError: _
-        throw args.Error "invalid --filter glob: $filter"
+    self.#filter = Glob $filter
 
   def matches_filter self path test
      self.#filter.matches "$(module_name path)/$test"
@@ -145,16 +124,15 @@ class Harness
     rc
 
   pub def run self files
-    progress.with do
-      progress.show message: modules total: $files.len do |w|
-        strand.fork
-          for path = files
-            do self.#module_jobs.with do
-              try
-                self.#run_file $path
-              catch std.RuntimeError: e
-                self.#record_error $e $(strand.error_backtrace()) $path
-              w.delta()
+    progress.show message: modules total: $files.len do |w|
+      strand.fork
+        for path = files
+          do self.#module_jobs.with do
+            try
+              self.#run_file $path
+            catch std.RuntimeError: e
+              self.#record_error $e $(strand.error_backtrace()) $path
+            w.delta()
     self.#report()
 
 class Fixture
@@ -296,39 +274,21 @@ pub def assert_type expected value msg = nil
     else
       throw Assert "$value @ $(type value) <: $expected"
 
-pub def main()
-  args.with
-    help: Run Do unit test modules.
-    - opt: jobs
-      short: j
-      type: $parse_jobs
-      default: 8
-      meta: N
-      help: Max concurrent tests (among all modules)
-    - opt: module-jobs
-      type: $parse_jobs
-      default: 4
-      meta: N
-      help: Max concurrent modules
-    - opt: filter
-      default: **
-      help: Glob filter for test names in `stem/test` form
-    - opt: timeout
-      type: $parse_timeout
-      default: 600
-      meta: SECS
-      help: Max seconds for each test and module load.
-    - arg: paths
-      type: $Path
-      collect: true
-      help: Test directories or files to run.
-    do |p|
-      let :filter :jobs :module_jobs :timeout :paths ... = p
-      let harness = Harness :jobs :module_jobs :filter :timeout
-      let files = []
-      for path = paths
-        if (path.metadata().type == :DIR:)
-          files.push ...path.glob("**/*.dol")
-        else
-          files.push $path
-      exit $ harness.run $files
+# Runs tests discovered under the trailing file and directory paths.
+pub def run
+  :jobs = 8
+  :module_jobs = 4
+  :filter = "**"
+  :timeout = 600
+  ...paths
+do
+  let paths = [...paths.pos_only()]
+  let harness = Harness :jobs :module_jobs :filter :timeout
+  let files = []
+  for path = paths
+    let path = Path $path
+    if (path.metadata().type == :DIR:)
+      files.push ...path.glob("**/*.dol")
+    else
+      files.push $path
+  harness.run $files

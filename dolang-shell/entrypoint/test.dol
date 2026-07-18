@@ -1,3 +1,67 @@
-import test
+import args progress shell test
+  fs:
+    - Path
+  glob:
+    - Glob
 
-test.main()
+def parse_jobs value
+  let jobs = try
+    int $value
+  catch std.RuntimeError: _
+    throw args.Error "--jobs expects an integer"
+  if (jobs < 1)
+    throw args.Error "--jobs must be at least 1"
+  jobs
+
+def parse_timeout value
+  let secs = try
+    float $value
+  catch std.RuntimeError: _
+    throw args.Error "--timeout expects a number"
+  if !(secs >= 0)
+    throw args.Error "--timeout must be non-negative"
+  secs
+
+def parse_filter value
+  try
+    Glob $value
+  catch std.RuntimeError: _
+    throw args.Error "invalid --filter glob: $value"
+  value
+
+args.with args: $shell.args
+  help: Run Do unit test modules.
+  - opt: jobs
+    short: j
+    type: $parse_jobs
+    default: 8
+    meta: N
+    help: Max concurrent tests (among all modules)
+  - opt: module-jobs
+    type: $parse_jobs
+    default: 4
+    meta: N
+    help: Max concurrent modules
+  - opt: filter
+    type: $parse_filter
+    default: **
+    help: Glob filter for test names in `stem/test` form
+  - opt: timeout
+    type: $parse_timeout
+    default: 600
+    meta: SECS
+    help: Max seconds for each test and module load.
+  - arg: paths
+    type: $Path
+    collect: true
+    help: Test directories or files to run.
+  do |p|
+    let :filter :jobs :module_jobs :timeout :paths ... = p
+    let rc = progress.with do
+      test.run
+        jobs: $jobs
+        module_jobs: $module_jobs
+        filter: $filter
+        timeout: $timeout
+        ...paths
+    exit $rc

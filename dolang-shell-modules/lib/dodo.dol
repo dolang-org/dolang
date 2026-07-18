@@ -1,0 +1,67 @@
+import args exec strand
+
+let rules_key = strand.Key()
+let special_rules = set ["common", "default"]
+
+def lookup rules task
+  rules.get $task else: do rules.get (sym task) else: do
+    throw "unknown task: $task"
+
+def dispatch rules task argv
+  let rule = lookup $rules $task
+  let common = rules.get :common: default: {}
+  while (type rule str)
+    rule = lookup $rules $rule
+  if type $rule $func
+    rule = [rule]
+
+  args.with args: $argv ...common ...rule
+
+def load_rules path
+  exec.run $path
+
+def with_rules path block
+  let previous = rules_key.value
+  if (previous != nil)
+    block $previous
+  else
+    let rules = load_rules $path
+    rules_key.value = rules
+    try
+      block $rules
+    finally
+      rules_key.value = previous
+
+def list_rules rules
+  echo "Available tasks:"
+  for k v = rules
+    if special_rules.contains (str k)
+      continue
+    let help = (type v dict && v.get :help:)
+    if help
+      echo "  - $k: $help"
+    else
+      echo "  - $k"
+
+pub def run ...argv
+  let argv = [...argv.pos_only()]
+  args.with args: $argv
+    help: run tasks
+    - flag: list
+      help: list tasks
+    - arg: task
+      type: $str
+      help: task to run
+      divider: true
+      default: default
+    - arg: args
+      type: $str
+      collect: true
+      help: task arguments
+    do |p|
+      let :task :args :list ... = p
+      with_rules "dodo.dol" do |rules|
+        if list
+          list_rules $rules
+        else
+          dispatch $rules $task $args
