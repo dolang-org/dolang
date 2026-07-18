@@ -56,6 +56,22 @@ fn get_action(cli: &Cli) -> Action {
     }
 }
 
+#[cfg(unix)]
+async fn interrupt_signal() -> std::io::Result<()> {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut terminate = signal(SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn interrupt_signal() -> std::io::Result<()> {
+    tokio::signal::ctrl_c().await
+}
+
 /// Run a `dolang`-compatible CLI and return its process exit code.
 ///
 /// Custom binaries can call this after linking any additional extensions they
@@ -202,7 +218,7 @@ fn run(config: Arc<dyn Config>) -> i32 {
                         loop {
                             tokio::select! {
                                 res = (&mut res) => { break res }
-                                _ = tokio::signal::ctrl_c(), if !ct.is_canceled() => { ct.cancel() }
+                                _ = interrupt_signal(), if !ct.is_canceled() => { ct.cancel() }
                             }
                         }
                     };
