@@ -6,7 +6,7 @@ use serde::{
     ser::SerializeTuple,
 };
 
-use crate::Sid;
+use crate::{Guid, Sid};
 
 const REVISION: u8 = 1;
 
@@ -35,7 +35,386 @@ const SE_RM_CONTROL_VALID: u16 = 0x4000;
 const SE_SELF_RELATIVE: u16 = 0x8000;
 
 const ACL_HEADER_LEN: usize = 8;
+const ACE_HEADER_LEN: usize = 4;
 const SELF_RELATIVE_HEADER_LEN: usize = 20;
+
+/// An immutable view of a native Windows access-control list (ACL).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Acl<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> Acl<'a> {
+    /// Parses and validates a complete native ACL packet.
+    pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, AclError> {
+        if bytes.len() < ACL_HEADER_LEN || !bytes.len().is_multiple_of(4) {
+            return Err(AclError::Length(bytes.len()));
+        }
+        let declared = u16::from_le_bytes(bytes[2..4].try_into().unwrap());
+        if usize::from(declared) != bytes.len() {
+            return Err(AclError::Size(declared, bytes.len()));
+        }
+        let count = u16::from_le_bytes(bytes[4..6].try_into().unwrap());
+        let mut offset = ACL_HEADER_LEN;
+        for index in 0..usize::from(count) {
+            let header = bytes
+                .get(offset..offset + ACE_HEADER_LEN)
+                .ok_or(AclError::AceCount(count, index))?;
+            let size = usize::from(u16::from_le_bytes(header[2..4].try_into().unwrap()));
+            let ace = bytes
+                .get(offset..offset.saturating_add(size))
+                .ok_or(AclError::Ace(index, AceError::Bounds(size)))?;
+            Ace::from_bytes(ace).map_err(|error| AclError::Ace(index, error))?;
+            offset += size;
+        }
+        Ok(Self { bytes })
+    }
+
+    /// Returns the exact native ACL packet.
+    pub const fn as_bytes(self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// Returns the ACL revision.
+    pub const fn revision(self) -> u8 {
+        self.bytes[0]
+    }
+
+    /// Returns the declared ACL size.
+    pub fn size(self) -> u16 {
+        u16::from_le_bytes(self.bytes[2..4].try_into().unwrap())
+    }
+
+    /// Returns the number of ACEs declared by the ACL.
+    pub fn ace_count(self) -> u16 {
+        u16::from_le_bytes(self.bytes[4..6].try_into().unwrap())
+    }
+
+    /// Iterates over the validated ACE packets.
+    pub fn aces(self) -> Aces<'a> {
+        Aces {
+            bytes: self.bytes,
+            offset: ACL_HEADER_LEN,
+            remaining: usize::from(self.ace_count()),
+        }
+    }
+}
+
+/// Iterator over the ACEs in an [`Acl`].
+#[derive(Clone, Debug)]
+pub struct Aces<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+    remaining: usize,
+}
+
+impl<'a> Iterator for Aces<'a> {
+    type Item = Ace<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        let size = usize::from(u16::from_le_bytes(
+            self.bytes[self.offset + 2..self.offset + 4]
+                .try_into()
+                .unwrap(),
+        ));
+        let bytes = &self.bytes[self.offset..self.offset + size];
+        self.offset += size;
+        self.remaining -= 1;
+        Some(Ace { bytes })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl ExactSizeIterator for Aces<'_> {}
+
+/// A classified native ACE type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AceType {
+    AccessAllowed,
+    AccessDenied,
+    SystemAudit,
+    SystemAlarm,
+    AccessAllowedCompound,
+    AccessAllowedObject,
+    AccessDeniedObject,
+    SystemAuditObject,
+    SystemAlarmObject,
+    AccessAllowedCallback,
+    AccessDeniedCallback,
+    AccessAllowedCallbackObject,
+    AccessDeniedCallbackObject,
+    SystemAuditCallback,
+    SystemAlarmCallback,
+    SystemAuditCallbackObject,
+    SystemAlarmCallbackObject,
+    SystemMandatoryLabel,
+    SystemResourceAttribute,
+    SystemScopedPolicyId,
+    SystemProcessTrustLabel,
+    SystemAccessFilter,
+    Unknown(u8),
+}
+
+/// An immutable view of a native Windows access-control entry (ACE).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ace<'a> {
+    bytes: &'a [u8],
+}
+
+#[derive(Debug)]
+struct AceBody {
+    mask: u32,
+    sid: Sid,
+    object_flags: Option<u32>,
+    object_type: Option<Guid>,
+    inherited_object_type: Option<Guid>,
+    application_data_at: usize,
+}
+
+impl<'a> Ace<'a> {
+    /// Parses and validates one complete native ACE packet.
+    pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, AceError> {
+        if bytes.len() < ACE_HEADER_LEN {
+            return Err(AceError::Length(bytes.len()));
+        }
+        let declared = u16::from_le_bytes(bytes[2..4].try_into().unwrap());
+        if usize::from(declared) != bytes.len() {
+            return Err(AceError::Size(declared, bytes.len()));
+        }
+        if !bytes.len().is_multiple_of(4) {
+            return Err(AceError::Alignment(bytes.len()));
+        }
+        let this = Self { bytes };
+        if this.has_simple_body() {
+            this.parse_simple_body()?;
+        } else if this.has_object_body() {
+            this.parse_object_body()?;
+        }
+        Ok(this)
+    }
+
+    /// Returns the exact native ACE packet.
+    pub const fn as_bytes(self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// Returns the native ACE type code.
+    pub const fn type_code(self) -> u8 {
+        self.bytes[0]
+    }
+
+    /// Returns the classified ACE type.
+    pub const fn ace_type(self) -> AceType {
+        match self.type_code() {
+            0 => AceType::AccessAllowed,
+            1 => AceType::AccessDenied,
+            2 => AceType::SystemAudit,
+            3 => AceType::SystemAlarm,
+            4 => AceType::AccessAllowedCompound,
+            5 => AceType::AccessAllowedObject,
+            6 => AceType::AccessDeniedObject,
+            7 => AceType::SystemAuditObject,
+            8 => AceType::SystemAlarmObject,
+            9 => AceType::AccessAllowedCallback,
+            10 => AceType::AccessDeniedCallback,
+            11 => AceType::AccessAllowedCallbackObject,
+            12 => AceType::AccessDeniedCallbackObject,
+            13 => AceType::SystemAuditCallback,
+            14 => AceType::SystemAlarmCallback,
+            15 => AceType::SystemAuditCallbackObject,
+            16 => AceType::SystemAlarmCallbackObject,
+            17 => AceType::SystemMandatoryLabel,
+            18 => AceType::SystemResourceAttribute,
+            19 => AceType::SystemScopedPolicyId,
+            20 => AceType::SystemProcessTrustLabel,
+            21 => AceType::SystemAccessFilter,
+            code => AceType::Unknown(code),
+        }
+    }
+
+    /// Returns the native ACE flags byte.
+    pub const fn flags(self) -> u8 {
+        self.bytes[1]
+    }
+
+    /// Returns the declared ACE size.
+    pub fn size(self) -> u16 {
+        u16::from_le_bytes(self.bytes[2..4].try_into().unwrap())
+    }
+
+    /// Returns the access mask for ACE layouts that contain one.
+    pub fn mask(self) -> Option<u32> {
+        self.body().map(|body| body.mask)
+    }
+
+    /// Returns the trustee SID for ACE layouts that contain one.
+    pub fn sid(self) -> Option<Sid> {
+        self.body().map(|body| body.sid)
+    }
+
+    /// Returns object-specific flags for object ACE layouts.
+    pub fn object_flags(self) -> Option<u32> {
+        self.parse_object_body()
+            .ok()
+            .map(|body| body.object_flags.unwrap())
+    }
+
+    /// Returns the optional object-type GUID for object ACE layouts.
+    pub fn object_type(self) -> Option<Guid> {
+        self.parse_object_body().ok()?.object_type
+    }
+
+    /// Returns the optional inherited-object-type GUID for object ACE layouts.
+    pub fn inherited_object_type(self) -> Option<Guid> {
+        self.parse_object_body().ok()?.inherited_object_type
+    }
+
+    /// Returns trailing application data for parsed SID-bearing layouts.
+    pub fn application_data(self) -> Option<&'a [u8]> {
+        self.body()
+            .map(|body| &self.bytes[body.application_data_at..])
+    }
+
+    const fn has_simple_body(self) -> bool {
+        matches!(self.type_code(), 0..=3 | 9..=10 | 13..=14 | 17..=21)
+    }
+
+    const fn has_object_body(self) -> bool {
+        matches!(self.type_code(), 5..=8 | 11..=12 | 15..=16)
+    }
+
+    fn body(self) -> Option<AceBody> {
+        if self.has_simple_body() {
+            self.parse_simple_body().ok()
+        } else if self.has_object_body() {
+            self.parse_object_body().ok()
+        } else {
+            None
+        }
+    }
+
+    fn parse_simple_body(self) -> Result<AceBody, AceError> {
+        let mask = read_u32(self.bytes, 4)?;
+        let (sid, application_data_at) = parse_ace_sid(self.bytes, 8)?;
+        Ok(AceBody {
+            mask,
+            sid,
+            object_flags: None,
+            object_type: None,
+            inherited_object_type: None,
+            application_data_at,
+        })
+    }
+
+    fn parse_object_body(self) -> Result<AceBody, AceError> {
+        let mask = read_u32(self.bytes, 4)?;
+        let object_flags = read_u32(self.bytes, 8)?;
+        let mut offset = 12;
+        let object_type = if object_flags & 1 != 0 {
+            let value =
+                Guid::from_bytes(self.bytes.get(offset..offset + 16).ok_or(AceError::Body)?)
+                    .map_err(|_| AceError::Body)?;
+            offset += 16;
+            Some(value)
+        } else {
+            None
+        };
+        let inherited_object_type = if object_flags & 2 != 0 {
+            let value =
+                Guid::from_bytes(self.bytes.get(offset..offset + 16).ok_or(AceError::Body)?)
+                    .map_err(|_| AceError::Body)?;
+            offset += 16;
+            Some(value)
+        } else {
+            None
+        };
+        let (sid, application_data_at) = parse_ace_sid(self.bytes, offset)?;
+        Ok(AceBody {
+            mask,
+            sid,
+            object_flags: Some(object_flags),
+            object_type,
+            inherited_object_type,
+            application_data_at,
+        })
+    }
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, AceError> {
+    let bytes = bytes.get(offset..offset + 4).ok_or(AceError::Body)?;
+    Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn parse_ace_sid(bytes: &[u8], offset: usize) -> Result<(Sid, usize), AceError> {
+    let header = bytes.get(offset..offset + 8).ok_or(AceError::Sid)?;
+    let length = 8 + usize::from(header[1]) * 4;
+    let sid = bytes.get(offset..offset + length).ok_or(AceError::Sid)?;
+    let sid = Sid::from_bytes(sid).map_err(|_| AceError::Sid)?;
+    Ok((sid, offset + length))
+}
+
+/// Error returned when parsing an ACL.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AclError {
+    Length(usize),
+    Size(u16, usize),
+    AceCount(u16, usize),
+    Ace(usize, AceError),
+}
+
+impl fmt::Display for AclError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Length(length) => write!(f, "ACL packet has invalid length {length}"),
+            Self::Size(declared, actual) => write!(
+                f,
+                "ACL packet declares size {declared}, but contains {actual} bytes"
+            ),
+            Self::AceCount(count, parsed) => write!(
+                f,
+                "ACL declares {count} ACEs, but only {parsed} can be traversed"
+            ),
+            Self::Ace(index, error) => write!(f, "ACE {index} is invalid: {error}"),
+        }
+    }
+}
+
+impl error::Error for AclError {}
+
+/// Error returned when parsing an ACE.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AceError {
+    Length(usize),
+    Size(u16, usize),
+    Alignment(usize),
+    Bounds(usize),
+    Body,
+    Sid,
+}
+
+impl fmt::Display for AceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Length(length) => write!(f, "ACE packet has invalid length {length}"),
+            Self::Size(declared, actual) => write!(
+                f,
+                "ACE packet declares size {declared}, but contains {actual} bytes"
+            ),
+            Self::Alignment(length) => write!(f, "ACE packet length {length} is not aligned"),
+            Self::Bounds(size) => write!(f, "ACE of size {size} exceeds its ACL"),
+            Self::Body => f.write_str("ACE body is truncated"),
+            Self::Sid => f.write_str("ACE contains an invalid SID"),
+        }
+    }
+}
+
+impl error::Error for AceError {}
 
 /// A portable representation of a Windows security descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,9 +603,11 @@ impl SecDesc {
         self.mask & DACL_SECURITY_INFORMATION != 0
     }
 
-    /// Returns the opaque DACL bytes, if the DACL is non-null.
-    pub fn dacl(&self) -> Option<&[u8]> {
-        self.dacl.as_deref()
+    /// Returns the DACL, if it is non-null.
+    pub fn dacl(&self) -> Option<Acl<'_>> {
+        self.dacl
+            .as_deref()
+            .map(|bytes| Acl::from_bytes(bytes).expect("stored DACL was validated"))
     }
 
     /// Returns whether the descriptor marks the DACL as present.
@@ -259,9 +640,11 @@ impl SecDesc {
         self.mask & SACL_SECURITY_INFORMATION != 0
     }
 
-    /// Returns the opaque SACL bytes, if the SACL is non-null.
-    pub fn sacl(&self) -> Option<&[u8]> {
-        self.sacl.as_deref()
+    /// Returns the SACL, if it is non-null.
+    pub fn sacl(&self) -> Option<Acl<'_>> {
+        self.sacl
+            .as_deref()
+            .map(|bytes| Acl::from_bytes(bytes).expect("stored SACL was validated"))
     }
 
     /// Returns whether the descriptor marks the SACL as present.
@@ -365,13 +748,7 @@ fn validate_acl(
     if !present {
         return Err(SecDescError::AclNotPresent(name));
     }
-    if acl.len() < ACL_HEADER_LEN || !acl.len().is_multiple_of(4) {
-        return Err(SecDescError::AclLength(name, acl.len()));
-    }
-    let declared = u16::from_le_bytes(acl[2..4].try_into().unwrap());
-    if usize::from(declared) != acl.len() {
-        return Err(SecDescError::AclSize(name, declared, acl.len()));
-    }
+    Acl::from_bytes(acl).map_err(|error| SecDescError::Acl(name, error))?;
     Ok(())
 }
 
@@ -451,8 +828,7 @@ pub enum SecDescError {
     GroupNotLoaded,
     AclNotLoaded(&'static str),
     AclNotPresent(&'static str),
-    AclLength(&'static str, usize),
-    AclSize(&'static str, u16, usize),
+    Acl(&'static str, AclError),
     PacketLength,
     NotSelfRelative,
     PacketOffset(&'static str, u32),
@@ -471,13 +847,7 @@ impl fmt::Display for SecDescError {
             Self::AclNotPresent(name) => {
                 write!(f, "{name} supplied when its PRESENT control bit is clear")
             }
-            Self::AclLength(name, length) => {
-                write!(f, "{name} packet has invalid length {length}")
-            }
-            Self::AclSize(name, declared, actual) => write!(
-                f,
-                "{name} packet declares size {declared}, but contains {actual} bytes"
-            ),
+            Self::Acl(name, error) => write!(f, "invalid {name}: {error}"),
             Self::PacketLength => f.write_str("security descriptor packet is too short"),
             Self::NotSelfRelative => f.write_str("security descriptor packet is not self-relative"),
             Self::PacketOffset(name, offset) => {
@@ -505,6 +875,122 @@ mod tests {
         value[0] = 2;
         value[2..4].copy_from_slice(&size.to_le_bytes());
         value
+    }
+
+    fn ace(ace_type: u8, flags: u8, mask: u32, sid: &Sid, application: &[u8]) -> Vec<u8> {
+        let mut value = vec![ace_type, flags, 0, 0];
+        value.extend_from_slice(&mask.to_le_bytes());
+        value.extend_from_slice(&sid.to_bytes());
+        value.extend_from_slice(application);
+        let size = u16::try_from(value.len()).unwrap();
+        value[2..4].copy_from_slice(&size.to_le_bytes());
+        value
+    }
+
+    fn acl_with_aces(aces: &[Vec<u8>], tail: &[u8]) -> Vec<u8> {
+        let size = ACL_HEADER_LEN + aces.iter().map(Vec::len).sum::<usize>() + tail.len();
+        let mut value = vec![2, 0];
+        value.extend_from_slice(&u16::try_from(size).unwrap().to_le_bytes());
+        value.extend_from_slice(&u16::try_from(aces.len()).unwrap().to_le_bytes());
+        value.extend_from_slice(&[0, 0]);
+        for ace in aces {
+            value.extend_from_slice(ace);
+        }
+        value.extend_from_slice(tail);
+        value
+    }
+
+    #[test]
+    fn exposes_known_and_unknown_aces_without_losing_bytes() {
+        let trustee = sid("S-1-5-32-544");
+        let known = ace(0, 0x13, 0x1234_5678, &trustee, &[0xde, 0xad, 0xbe, 0xef]);
+        let unknown = vec![0x7f, 0xa0, 8, 0, 0x11, 0x22, 0x33, 0x44];
+        let bytes = acl_with_aces(&[known.clone(), unknown.clone()], &[0xaa, 0xbb, 0xcc, 0xdd]);
+        let acl = Acl::from_bytes(&bytes).unwrap();
+
+        assert_eq!(acl.revision(), 2);
+        assert_eq!(usize::from(acl.size()), bytes.len());
+        assert_eq!(acl.ace_count(), 2);
+        assert_eq!(acl.as_bytes(), bytes);
+
+        let mut aces = acl.aces();
+        let first = aces.next().unwrap();
+        assert_eq!(first.ace_type(), AceType::AccessAllowed);
+        assert_eq!(first.flags(), 0x13);
+        assert_eq!(first.mask(), Some(0x1234_5678));
+        assert_eq!(first.sid(), Some(trustee));
+        assert_eq!(
+            first.application_data(),
+            Some(&[0xde, 0xad, 0xbe, 0xef][..])
+        );
+        assert_eq!(first.as_bytes(), known);
+
+        let second = aces.next().unwrap();
+        assert_eq!(second.ace_type(), AceType::Unknown(0x7f));
+        assert_eq!(second.mask(), None);
+        assert_eq!(second.application_data(), None);
+        assert_eq!(second.as_bytes(), unknown);
+        assert_eq!(aces.next(), None);
+    }
+
+    #[test]
+    fn parses_object_ace_guids_and_application_data() {
+        let object_type: Guid = "00112233-4455-6677-8899-aabbccddeeff".parse().unwrap();
+        let inherited_type: Guid = "ffeeddcc-bbaa-9988-7766-554433221100".parse().unwrap();
+        let trustee = sid("S-1-1-0");
+        for object_flags in 0..=3u32 {
+            let mut bytes = vec![11, 0, 0, 0];
+            bytes.extend_from_slice(&0x90ab_cdefu32.to_le_bytes());
+            bytes.extend_from_slice(&object_flags.to_le_bytes());
+            if object_flags & 1 != 0 {
+                bytes.extend_from_slice(object_type.as_bytes());
+            }
+            if object_flags & 2 != 0 {
+                bytes.extend_from_slice(inherited_type.as_bytes());
+            }
+            bytes.extend_from_slice(&trustee.to_bytes());
+            bytes.extend_from_slice(&[1, 2, 3, 4]);
+            let size = u16::try_from(bytes.len()).unwrap();
+            bytes[2..4].copy_from_slice(&size.to_le_bytes());
+
+            let ace = Ace::from_bytes(&bytes).unwrap();
+            assert_eq!(ace.ace_type(), AceType::AccessAllowedCallbackObject);
+            assert_eq!(ace.object_flags(), Some(object_flags));
+            assert_eq!(
+                ace.object_type(),
+                (object_flags & 1 != 0).then_some(object_type)
+            );
+            assert_eq!(
+                ace.inherited_object_type(),
+                (object_flags & 2 != 0).then_some(inherited_type)
+            );
+            assert_eq!(ace.sid(), Some(trustee.clone()));
+            assert_eq!(ace.application_data(), Some(&[1, 2, 3, 4][..]));
+        }
+    }
+
+    #[test]
+    fn rejects_untraversable_or_malformed_aces() {
+        let mut count_mismatch = acl(8);
+        count_mismatch[4..6].copy_from_slice(&1u16.to_le_bytes());
+        assert_eq!(
+            Acl::from_bytes(&count_mismatch),
+            Err(AclError::AceCount(1, 0))
+        );
+
+        let malformed = vec![0, 0, 8, 0, 0, 0, 0, 0];
+        let bytes = acl_with_aces(&[malformed], &[]);
+        assert_eq!(
+            Acl::from_bytes(&bytes),
+            Err(AclError::Ace(0, AceError::Sid))
+        );
+
+        let overrun = vec![0x7f, 0, 12, 0, 0, 0, 0, 0];
+        let bytes = acl_with_aces(&[overrun], &[]);
+        assert_eq!(
+            Acl::from_bytes(&bytes),
+            Err(AclError::Ace(0, AceError::Bounds(12)))
+        );
     }
 
     #[test]
@@ -555,7 +1041,7 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(present.dacl(), Some(bytes.as_slice()));
+        assert_eq!(present.dacl().map(Acl::as_bytes), Some(bytes.as_slice()));
     }
 
     #[test]
@@ -588,7 +1074,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_only_the_acl_packet_boundary() {
+    fn validates_acl_packet_and_ace_boundaries() {
         assert!(matches!(
             SecDesc::new(
                 DACL_SECURITY_INFORMATION,
@@ -600,7 +1086,7 @@ mod tests {
                 Some(vec![0; 4]),
                 None,
             ),
-            Err(SecDescError::AclLength("DACL", 4))
+            Err(SecDescError::Acl("DACL", AclError::Length(4)))
         ));
 
         let mut wrong_size = acl(8);
@@ -616,11 +1102,11 @@ mod tests {
                 Some(wrong_size),
                 None,
             ),
-            Err(SecDescError::AclSize("DACL", 8, 12))
+            Err(SecDescError::Acl("DACL", AclError::Size(8, 12)))
         ));
 
         let mut opaque = acl(12);
-        opaque[4..].copy_from_slice(&[0xff; 8]);
+        opaque[8..].copy_from_slice(&[0xff; 4]);
         let descriptor = SecDesc::new(
             DACL_SECURITY_INFORMATION,
             1,
@@ -632,7 +1118,10 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(descriptor.dacl(), Some(opaque.as_slice()));
+        assert_eq!(
+            descriptor.dacl().map(Acl::as_bytes),
+            Some(opaque.as_slice())
+        );
     }
 
     #[test]
@@ -730,7 +1219,7 @@ mod tests {
         assert_eq!(descriptor.group().unwrap().to_string(), "S-1-5-32-544");
         assert!(descriptor.sacl_present());
         assert_eq!(descriptor.sacl(), None);
-        assert_eq!(descriptor.dacl(), Some(&packet[48..]));
+        assert_eq!(descriptor.dacl().map(Acl::as_bytes), Some(&packet[48..]));
         assert_eq!(descriptor.to_bytes(), packet);
     }
 
@@ -754,7 +1243,7 @@ mod tests {
         assert!(!selected.owner_loaded());
         assert_eq!(selected.owner(), None);
         assert!(selected.dacl_loaded());
-        assert_eq!(selected.dacl(), Some(acl(8).as_slice()));
+        assert_eq!(selected.dacl().map(Acl::as_bytes), Some(acl(8).as_slice()));
         assert!(selected.dacl_protected());
 
         let empty = SecDesc::from_bytes_with_mask(&packet, 0).unwrap();

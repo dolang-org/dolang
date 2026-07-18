@@ -1,6 +1,6 @@
 # SecDesc
 
-Windows security descriptor with opaque access-control lists.
+Windows security descriptor.
 
 ## Constructor
 
@@ -59,6 +59,18 @@ Raises `FieldError` when the owner was not loaded or is absent.
 Primary group [`Sid`](./sid.md).
 
 Raises `FieldError` when the group was not loaded or is absent.
+
+### `dacl`
+
+Discretionary [`Acl`](./acl.md), or `nil` for a present null ACL.
+
+Raises `FieldError` when the DACL was not loaded or is not present.
+
+### `sacl`
+
+System [`Acl`](./acl.md), or `nil` for a present null ACL.
+
+Raises `FieldError` when the SACL was not loaded or is not present.
 
 ### `owner_defaulted`
 
