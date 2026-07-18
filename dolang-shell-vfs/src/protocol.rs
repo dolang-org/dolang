@@ -199,8 +199,14 @@ impl From<WireError> for crate::Error {
 pub(crate) struct VfsProtocol;
 
 impl Protocol for VfsProtocol {
-    type Request = RequestKind;
+    type Request = Request;
     type Response = ResponseKind;
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct Request {
+    pub(crate) vfs: Option<Opaque<crate::VfsMarker>>,
+    pub(crate) kind: RequestKind,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -487,9 +493,14 @@ impl From<FileSeekFrom> for io::SeekFrom {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct UnixStreamSocketRequest {
-    pub(crate) bind: Option<WirePath>,
-    pub(crate) connect: Option<WirePath>,
+pub(crate) struct UnixVfsRequest {
+    pub(crate) path: WirePath,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) enum OpenVfsHandle {
+    Native(OsHandle),
+    Opaque(Opaque<crate::VfsMarker>),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -804,7 +815,7 @@ pub(crate) enum RequestKind {
     FileClose {
         file: Opaque<crate::FileMarker>,
     },
-    UnixStreamSocket(UnixStreamSocketRequest),
+    UnixVfs(UnixVfsRequest),
     ReadDir {
         path: WirePath,
     },
@@ -839,6 +850,7 @@ pub(crate) enum RequestKind {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum ResponseKind {
+    Error(WireError),
     Spawn(Result<Opaque<crate::ChildMarker>, WireError>),
     ChildWait(Result<crate::ProcessStatus, WireError>),
     ChildTerminate(Result<crate::ProcessStatus, WireError>),
@@ -879,7 +891,7 @@ pub(crate) enum ResponseKind {
     FileSetXattr(Result<(), WireError>),
     FileRemoveXattr(Result<(), WireError>),
     FileClose(Result<(), WireError>),
-    UnixStreamSocket(Result<OsHandle, WireError>),
+    UnixVfs(Result<OpenVfsHandle, WireError>),
     ReadDir(Result<ReadDirResponse, WireError>),
     Remove(Result<(), WireError>),
     Metadata(Result<Metadata, WireError>),

@@ -29,6 +29,12 @@ async fn connected_split_pair() -> (Client, tokio::task::JoinHandle<io::Result<(
     (Client::new_split(client_reader, client_writer), task)
 }
 
+#[cfg(unix)]
+async fn socket_server(path: &std::path::Path) -> tokio::task::JoinHandle<io::Result<()>> {
+    let server = Server::bind(path).await.unwrap();
+    tokio::spawn(server.accept())
+}
+
 fn typed_str(path: &str) -> Utf8TypedPath<'_> {
     if cfg!(windows) {
         Utf8TypedPath::Windows(Utf8WindowsPath::new(path))
@@ -105,6 +111,100 @@ fn command_with_args<'a>(
     let mut command = client.command(typed_str(program));
     command.arg(args[0]).arg(args[1]);
     command
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn opaque_session_chains_to_unix_vfs() {
+    let temp = tempdir().unwrap();
+    let socket = temp.path().join("inner.sock");
+    let inner_task = socket_server(&socket).await;
+    let (outer, outer_task) = connected_pair().await;
+
+    let socket = typed_path(socket).unwrap();
+    let inner = outer.unix_socket(socket.to_path()).await.unwrap();
+    assert_eq!(
+        inner.query().await.unwrap().target,
+        dolang_shell_vfs::TargetInfo::current()
+    );
+
+    let dir = typed_path(temp.path().join("through-chain")).unwrap();
+    inner.create_dir(dir.to_path(), false).await.unwrap();
+    let file_path = dir.join("file");
+    let mut options = inner.open_options();
+    options.write(true).create_new(true);
+    let mut file = OpenOptions::open(&options, file_path.to_path())
+        .await
+        .unwrap();
+    file.write_all(b"chained").await.unwrap();
+    file.close().await.unwrap();
+    let mut entries = inner.read_dir(dir.to_path()).await.unwrap();
+    assert_eq!(
+        entries.next_entry().await.unwrap().unwrap().file_name(),
+        "file"
+    );
+
+    let (program, args) = successful_command();
+    let mut command = inner.command(typed_str(program));
+    command.arg(args[0]).arg(args[1]);
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+
+    inner.as_client().unwrap().stop().await.unwrap();
+    inner_task.await.unwrap().unwrap();
+    assert_eq!(
+        outer.query().await.unwrap().target,
+        dolang_shell_vfs::TargetInfo::current()
+    );
+    outer.stop().await.unwrap();
+    outer_task.await.unwrap().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn opaque_session_supports_multiple_vfs_hops() {
+    let temp = tempdir().unwrap();
+    let middle_socket = temp.path().join("middle.sock");
+    let inner_socket = temp.path().join("inner.sock");
+    let middle_task = socket_server(&middle_socket).await;
+    let inner_task = socket_server(&inner_socket).await;
+    let (outer, outer_task) = connected_pair().await;
+
+    let middle_path = typed_path(middle_socket).unwrap();
+    let inner_path = typed_path(inner_socket).unwrap();
+    let middle = outer.unix_socket(middle_path.to_path()).await.unwrap();
+    let inner = middle.unix_socket(inner_path.to_path()).await.unwrap();
+    assert_eq!(
+        inner.query().await.unwrap().target,
+        dolang_shell_vfs::TargetInfo::current()
+    );
+
+    inner.as_client().unwrap().stop().await.unwrap();
+    inner_task.await.unwrap().unwrap();
+    middle.as_client().unwrap().stop().await.unwrap();
+    middle_task.await.unwrap().unwrap();
+    outer.stop().await.unwrap();
+    outer_task.await.unwrap().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn outer_teardown_does_not_stop_retained_vfs_daemon() {
+    let temp = tempdir().unwrap();
+    let socket = temp.path().join("inner.sock");
+    let inner_task = socket_server(&socket).await;
+    let (outer, outer_task) = connected_pair().await;
+
+    let socket_path = typed_path(socket.clone()).unwrap();
+    let inner = outer.unix_socket(socket_path.to_path()).await.unwrap();
+    drop(inner);
+    outer.stop().await.unwrap();
+    outer_task.await.unwrap().unwrap();
+
+    let direct = Client::connect(&socket).await.unwrap();
+    direct.query().await.unwrap();
+    direct.stop().await.unwrap();
+    inner_task.await.unwrap().unwrap();
 }
 
 #[tokio::test]

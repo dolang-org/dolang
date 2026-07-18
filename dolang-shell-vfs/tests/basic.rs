@@ -7,11 +7,7 @@ use dolang_shell_vfs::{
 #[cfg(not(target_os = "macos"))]
 use nix::unistd::getgroups;
 use nix::unistd::{Group, User, getegid, geteuid, getgid, getuid};
-use std::os::unix::fs::FileTypeExt;
-use std::{
-    os::fd::{AsRawFd, OwnedFd},
-    path::Path,
-};
+use std::{os::fd::OwnedFd, path::Path};
 
 use tempfile::tempdir;
 use tokio::task::JoinHandle;
@@ -491,126 +487,33 @@ async fn file_create_new() {
 }
 
 #[tokio::test]
-async fn unix_stream_socket_unbound() {
+async fn unix_vfs_connects_to_another_server() {
     let dir = tempdir().unwrap();
-    let socket_path = dir.path().join("test.sock");
-
-    let server_task = start_server(&socket_path).await;
+    let socket_path = dir.path().join("outer.sock");
+    let inner_path = dir.path().join("inner.sock");
+    let outer_task = start_server(&socket_path).await;
+    let inner_task = start_server(&inner_path).await;
 
     let client = connect_client(&socket_path).await;
-    let fd = client
-        .unix_stream_socket::<&Path, &Path>(None, None)
-        .await
-        .unwrap();
-    assert!(fd.as_raw_fd() >= 0);
+    let inner = client.unix_socket(typed(&inner_path)).await.unwrap();
+    assert_eq!(inner.query().await.unwrap().target, TargetInfo::current());
 
-    drop(fd);
-    server_task.abort();
-    let _ = server_task.await;
+    inner.as_client().unwrap().stop().await.unwrap();
+    client.stop().await.unwrap();
+    inner_task.await.unwrap();
+    outer_task.await.unwrap();
 }
 
 #[tokio::test]
-async fn unix_stream_socket_bind_only() {
+async fn unix_vfs_connect_missing() {
     let dir = tempdir().unwrap();
-    let socket_path = dir.path().join("test.sock");
-    let bind_path = dir.path().join("bound.sock");
-
-    let server_task = start_server(&socket_path).await;
-
-    let client = connect_client(&socket_path).await;
-    let fd = client
-        .unix_stream_socket(Some(&bind_path), None::<&Path>)
-        .await
-        .unwrap();
-
-    let metadata = std::fs::symlink_metadata(&bind_path).unwrap();
-    assert!(metadata.file_type().is_socket());
-
-    drop(fd);
-    server_task.abort();
-    let _ = server_task.await;
-}
-
-#[tokio::test]
-async fn unix_stream_socket_connect_only() {
-    let dir = tempdir().unwrap();
-    let socket_path = dir.path().join("test.sock");
-    let peer_path = dir.path().join("peer.sock");
-
-    let server_task = start_server(&socket_path).await;
-
-    let listener = tokio::net::UnixListener::bind(&peer_path).unwrap();
-
-    let client = connect_client(&socket_path).await;
-    let fd = client
-        .unix_stream_socket(None::<&Path>, Some(&peer_path))
-        .await
-        .unwrap();
-    let _accepted = listener.accept().await.unwrap();
-
-    drop(fd);
-    server_task.abort();
-    let _ = server_task.await;
-}
-
-#[tokio::test]
-async fn unix_stream_socket_bind_and_connect() {
-    let dir = tempdir().unwrap();
-    let socket_path = dir.path().join("test.sock");
-    let bind_path = dir.path().join("bound.sock");
-    let peer_path = dir.path().join("peer.sock");
-
-    let server_task = start_server(&socket_path).await;
-
-    let listener = tokio::net::UnixListener::bind(&peer_path).unwrap();
-
-    let client = connect_client(&socket_path).await;
-    let fd = client
-        .unix_stream_socket(Some(&bind_path), Some(&peer_path))
-        .await
-        .unwrap();
-
-    let metadata = std::fs::symlink_metadata(&bind_path).unwrap();
-    assert!(metadata.file_type().is_socket());
-    let _accepted = listener.accept().await.unwrap();
-
-    drop(fd);
-    server_task.abort();
-    let _ = server_task.await;
-}
-
-#[tokio::test]
-async fn unix_stream_socket_bind_conflict() {
-    let dir = tempdir().unwrap();
-    let socket_path = dir.path().join("test.sock");
-    let bind_path = dir.path().join("bound.sock");
-
-    let server_task = start_server(&socket_path).await;
-
-    let _existing = tokio::net::UnixListener::bind(&bind_path).unwrap();
-
-    let client = connect_client(&socket_path).await;
-    let result = client
-        .unix_stream_socket(Some(&bind_path), None::<&Path>)
-        .await;
-    assert!(result.is_err());
-
-    server_task.abort();
-    let _ = server_task.await;
-}
-
-#[tokio::test]
-async fn unix_stream_socket_connect_missing() {
-    let dir = tempdir().unwrap();
-    let socket_path = dir.path().join("test.sock");
+    let socket_path = dir.path().join("outer.sock");
     let missing_path = dir.path().join("missing.sock");
 
     let server_task = start_server(&socket_path).await;
 
     let client = connect_client(&socket_path).await;
-    let result = client
-        .unix_stream_socket(None::<&Path>, Some(&missing_path))
-        .await;
+    let result = client.unix_socket(typed(&missing_path)).await;
     assert!(result.is_err());
 
     server_task.abort();

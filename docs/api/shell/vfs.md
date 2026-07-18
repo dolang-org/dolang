@@ -34,6 +34,10 @@ disconnect.
 
 Connects to a running `dolang-shell-vfs` daemon on Unix.
 
+The socket path is resolved in the active VFS context. This allows connecting
+to a daemon reachable only from another remote or container VFS. A direct
+non-Unix context reports that Unix VFS connections are unsupported.
+
 The working directory in which the `dolang-shell-vfs` process started becomes
 the context's initial working directory.
 

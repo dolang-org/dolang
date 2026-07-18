@@ -1074,6 +1074,7 @@ pub trait Vfs {
 
     fn open_options(&self) -> Self::OpenOptions<'_>;
     fn command(&self, program: Utf8TypedPath<'_>) -> Self::Command<'_>;
+    async fn unix_socket(&self, path: Utf8TypedPath<'_>) -> Result<AnyVfs>;
     async fn pipe(&self) -> Result<(Self::StdioSend, Self::StdioRecv)>;
     async fn query(&self) -> Result<Query>;
     async fn user_name(&self, uid: u32) -> Result<String>;
@@ -1184,6 +1185,10 @@ pub use pipe::{StdioRecv, StdioSend};
 /// Marker for a regular file retained by a VFS RPC session.
 #[derive(Debug)]
 pub struct FileMarker;
+
+/// Marker for another VFS retained by a VFS RPC session.
+#[derive(Debug)]
+pub struct VfsMarker;
 
 #[derive(Debug)]
 pub struct StdioSendMarker;
@@ -1703,6 +1708,13 @@ impl Vfs for AnyVfs {
         match self {
             Self::Client(client) => AnyCommand::Client(client.command(program)),
             Self::Direct(direct) => AnyCommand::Direct(direct.command(program)),
+        }
+    }
+
+    async fn unix_socket(&self, path: Utf8TypedPath<'_>) -> crate::Result<AnyVfs> {
+        match self {
+            Self::Client(client) => client.unix_socket(path).await,
+            Self::Direct(direct) => direct.unix_socket(path).await,
         }
     }
 
