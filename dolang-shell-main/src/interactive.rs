@@ -436,12 +436,14 @@ fn save_history(editor: &mut Editor<DoHelper, DefaultHistory>, history_path: &Pa
 }
 
 pub(crate) async fn main<'v, 's>(strand: &mut Strand<'v, 's>, strict: bool) -> Result<'v, 's, ()> {
-    let history_path = load::dirs(strand)?.state_dir().map(|p| p.join("history"));
-    let mut editor = create_editor(history_path.as_deref()).into_do(strand)?;
+    let dirs = load::dirs(strand)?;
+    let history_path = dirs
+        .state_dir()
+        .unwrap_or_else(|| dirs.data_local_dir())
+        .join("history");
+    let mut editor = create_editor(Some(&history_path)).into_do(strand)?;
 
     let res = repl(strand, strict, &mut editor).await;
-    if let Some(ref path) = history_path {
-        save_history(&mut editor, path);
-    }
+    save_history(&mut editor, &history_path);
     res
 }
