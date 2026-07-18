@@ -1,4 +1,9 @@
-use std::{error, fmt};
+use std::{
+    borrow::Borrow,
+    error, fmt,
+    hash::{Hash, Hasher},
+    ops::Deref,
+};
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
@@ -38,15 +43,13 @@ const ACL_HEADER_LEN: usize = 8;
 const ACE_HEADER_LEN: usize = 4;
 const SELF_RELATIVE_HEADER_LEN: usize = 20;
 
-/// An immutable view of a native Windows access-control list (ACL).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Acl<'a> {
-    bytes: &'a [u8],
-}
+/// An immutable borrowed native Windows access-control list (ACL).
+#[repr(transparent)]
+pub struct Acl([u8]);
 
-impl<'a> Acl<'a> {
+impl Acl {
     /// Parses and validates a complete native ACL packet.
-    pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, AclError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<&Self, AclError> {
         if bytes.len() < ACL_HEADER_LEN || !bytes.len().is_multiple_of(4) {
             return Err(AclError::Length(bytes.len()));
         }
@@ -67,36 +70,63 @@ impl<'a> Acl<'a> {
             Ace::from_bytes(ace).map_err(|error| AclError::Ace(index, error))?;
             offset += size;
         }
-        Ok(Self { bytes })
+        // SAFETY: Acl is transparent over [u8], and the packet was validated above.
+        Ok(unsafe { &*(bytes as *const [u8] as *const Self) })
     }
 
     /// Returns the exact native ACL packet.
-    pub const fn as_bytes(self) -> &'a [u8] {
-        self.bytes
+    pub const fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
 
     /// Returns the ACL revision.
-    pub const fn revision(self) -> u8 {
-        self.bytes[0]
+    pub const fn revision(&self) -> u8 {
+        self.0[0]
     }
 
     /// Returns the declared ACL size.
-    pub fn size(self) -> u16 {
-        u16::from_le_bytes(self.bytes[2..4].try_into().unwrap())
+    pub fn size(&self) -> u16 {
+        u16::from_le_bytes(self.0[2..4].try_into().unwrap())
     }
 
     /// Returns the number of ACEs declared by the ACL.
-    pub fn ace_count(self) -> u16 {
-        u16::from_le_bytes(self.bytes[4..6].try_into().unwrap())
+    pub fn ace_count(&self) -> u16 {
+        u16::from_le_bytes(self.0[4..6].try_into().unwrap())
     }
 
     /// Iterates over the validated ACE packets.
-    pub fn aces(self) -> Aces<'a> {
+    pub fn aces(&self) -> Aces<'_> {
         Aces {
-            bytes: self.bytes,
+            bytes: &self.0,
             offset: ACL_HEADER_LEN,
             remaining: usize::from(self.ace_count()),
         }
+    }
+}
+
+impl fmt::Debug for Acl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Acl").field(&&self.0).finish()
+    }
+}
+
+impl PartialEq for Acl {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for Acl {}
+
+impl Hash for Acl {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl AsRef<Acl> for Acl {
+    fn as_ref(&self) -> &Acl {
+        self
     }
 }
 
@@ -109,7 +139,7 @@ pub struct Aces<'a> {
 }
 
 impl<'a> Iterator for Aces<'a> {
-    type Item = Ace<'a>;
+    type Item = &'a Ace;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.remaining == 0 {
@@ -123,7 +153,8 @@ impl<'a> Iterator for Aces<'a> {
         let bytes = &self.bytes[self.offset..self.offset + size];
         self.offset += size;
         self.remaining -= 1;
-        Some(Ace { bytes })
+        // SAFETY: the containing ACL validated every ACE packet.
+        Some(unsafe { &*(bytes as *const [u8] as *const Ace) })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -161,11 +192,9 @@ pub enum AceType {
     Unknown(u8),
 }
 
-/// An immutable view of a native Windows access-control entry (ACE).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Ace<'a> {
-    bytes: &'a [u8],
-}
+/// An immutable borrowed native Windows access-control entry (ACE).
+#[repr(transparent)]
+pub struct Ace([u8]);
 
 #[derive(Debug)]
 struct AceBody {
@@ -177,9 +206,9 @@ struct AceBody {
     application_data_at: usize,
 }
 
-impl<'a> Ace<'a> {
+impl Ace {
     /// Parses and validates one complete native ACE packet.
-    pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, AceError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<&Self, AceError> {
         if bytes.len() < ACE_HEADER_LEN {
             return Err(AceError::Length(bytes.len()));
         }
@@ -190,7 +219,8 @@ impl<'a> Ace<'a> {
         if !bytes.len().is_multiple_of(4) {
             return Err(AceError::Alignment(bytes.len()));
         }
-        let this = Self { bytes };
+        // SAFETY: Ace is transparent over [u8]. Validation below only reads it.
+        let this = unsafe { &*(bytes as *const [u8] as *const Self) };
         if this.has_simple_body() {
             this.parse_simple_body()?;
         } else if this.has_object_body() {
@@ -200,17 +230,17 @@ impl<'a> Ace<'a> {
     }
 
     /// Returns the exact native ACE packet.
-    pub const fn as_bytes(self) -> &'a [u8] {
-        self.bytes
+    pub const fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
 
     /// Returns the native ACE type code.
-    pub const fn type_code(self) -> u8 {
-        self.bytes[0]
+    pub const fn type_code(&self) -> u8 {
+        self.0[0]
     }
 
     /// Returns the classified ACE type.
-    pub const fn ace_type(self) -> AceType {
+    pub const fn ace_type(&self) -> AceType {
         match self.type_code() {
             0 => AceType::AccessAllowed,
             1 => AceType::AccessDenied,
@@ -239,57 +269,56 @@ impl<'a> Ace<'a> {
     }
 
     /// Returns the native ACE flags byte.
-    pub const fn flags(self) -> u8 {
-        self.bytes[1]
+    pub const fn flags(&self) -> u8 {
+        self.0[1]
     }
 
     /// Returns the declared ACE size.
-    pub fn size(self) -> u16 {
-        u16::from_le_bytes(self.bytes[2..4].try_into().unwrap())
+    pub fn size(&self) -> u16 {
+        u16::from_le_bytes(self.0[2..4].try_into().unwrap())
     }
 
     /// Returns the access mask for ACE layouts that contain one.
-    pub fn mask(self) -> Option<u32> {
+    pub fn mask(&self) -> Option<u32> {
         self.body().map(|body| body.mask)
     }
 
     /// Returns the trustee SID for ACE layouts that contain one.
-    pub fn sid(self) -> Option<Sid> {
+    pub fn sid(&self) -> Option<Sid> {
         self.body().map(|body| body.sid)
     }
 
     /// Returns object-specific flags for object ACE layouts.
-    pub fn object_flags(self) -> Option<u32> {
+    pub fn object_flags(&self) -> Option<u32> {
         self.parse_object_body()
             .ok()
             .map(|body| body.object_flags.unwrap())
     }
 
     /// Returns the optional object-type GUID for object ACE layouts.
-    pub fn object_type(self) -> Option<Guid> {
+    pub fn object_type(&self) -> Option<Guid> {
         self.parse_object_body().ok()?.object_type
     }
 
     /// Returns the optional inherited-object-type GUID for object ACE layouts.
-    pub fn inherited_object_type(self) -> Option<Guid> {
+    pub fn inherited_object_type(&self) -> Option<Guid> {
         self.parse_object_body().ok()?.inherited_object_type
     }
 
     /// Returns trailing application data for parsed SID-bearing layouts.
-    pub fn application_data(self) -> Option<&'a [u8]> {
-        self.body()
-            .map(|body| &self.bytes[body.application_data_at..])
+    pub fn application_data(&self) -> Option<&[u8]> {
+        self.body().map(|body| &self.0[body.application_data_at..])
     }
 
-    const fn has_simple_body(self) -> bool {
+    const fn has_simple_body(&self) -> bool {
         matches!(self.type_code(), 0..=3 | 9..=10 | 13..=14 | 17..=21)
     }
 
-    const fn has_object_body(self) -> bool {
+    const fn has_object_body(&self) -> bool {
         matches!(self.type_code(), 5..=8 | 11..=12 | 15..=16)
     }
 
-    fn body(self) -> Option<AceBody> {
+    fn body(&self) -> Option<AceBody> {
         if self.has_simple_body() {
             self.parse_simple_body().ok()
         } else if self.has_object_body() {
@@ -299,9 +328,9 @@ impl<'a> Ace<'a> {
         }
     }
 
-    fn parse_simple_body(self) -> Result<AceBody, AceError> {
-        let mask = read_u32(self.bytes, 4)?;
-        let (sid, application_data_at) = parse_ace_sid(self.bytes, 8)?;
+    fn parse_simple_body(&self) -> Result<AceBody, AceError> {
+        let mask = read_u32(&self.0, 4)?;
+        let (sid, application_data_at) = parse_ace_sid(&self.0, 8)?;
         Ok(AceBody {
             mask,
             sid,
@@ -312,29 +341,27 @@ impl<'a> Ace<'a> {
         })
     }
 
-    fn parse_object_body(self) -> Result<AceBody, AceError> {
-        let mask = read_u32(self.bytes, 4)?;
-        let object_flags = read_u32(self.bytes, 8)?;
+    fn parse_object_body(&self) -> Result<AceBody, AceError> {
+        let mask = read_u32(&self.0, 4)?;
+        let object_flags = read_u32(&self.0, 8)?;
         let mut offset = 12;
         let object_type = if object_flags & 1 != 0 {
-            let value =
-                Guid::from_bytes(self.bytes.get(offset..offset + 16).ok_or(AceError::Body)?)
-                    .map_err(|_| AceError::Body)?;
+            let value = Guid::from_bytes(self.0.get(offset..offset + 16).ok_or(AceError::Body)?)
+                .map_err(|_| AceError::Body)?;
             offset += 16;
             Some(value)
         } else {
             None
         };
         let inherited_object_type = if object_flags & 2 != 0 {
-            let value =
-                Guid::from_bytes(self.bytes.get(offset..offset + 16).ok_or(AceError::Body)?)
-                    .map_err(|_| AceError::Body)?;
+            let value = Guid::from_bytes(self.0.get(offset..offset + 16).ok_or(AceError::Body)?)
+                .map_err(|_| AceError::Body)?;
             offset += 16;
             Some(value)
         } else {
             None
         };
-        let (sid, application_data_at) = parse_ace_sid(self.bytes, offset)?;
+        let (sid, application_data_at) = parse_ace_sid(&self.0, offset)?;
         Ok(AceBody {
             mask,
             sid,
@@ -345,6 +372,349 @@ impl<'a> Ace<'a> {
         })
     }
 }
+
+impl fmt::Debug for Ace {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Ace").field(&&self.0).finish()
+    }
+}
+
+impl PartialEq for Ace {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for Ace {}
+
+impl Hash for Ace {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl AsRef<Ace> for Ace {
+    fn as_ref(&self) -> &Ace {
+        self
+    }
+}
+
+/// Options shared by the supported ACE builders.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AceBuildOptions {
+    pub flags: u8,
+    pub object_type: Option<Guid>,
+    pub inherited_object_type: Option<Guid>,
+    pub callback: bool,
+    pub application_data: Vec<u8>,
+}
+
+/// An owned, validated native Windows ACE packet.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AceBuf(Box<[u8]>);
+
+impl AceBuf {
+    /// Takes ownership of a raw packet after validating it.
+    pub fn try_from_bytes(bytes: impl Into<Box<[u8]>>) -> Result<Self, AceError> {
+        let bytes = bytes.into();
+        Ace::from_bytes(&bytes)?;
+        Ok(Self(bytes))
+    }
+
+    /// Builds an access-allowed ACE.
+    pub fn allow(sid: &Sid, mask: u32, options: AceBuildOptions) -> Result<Self, AceBuildError> {
+        Self::build(AceFamily::Allow, sid, mask, false, false, options)
+    }
+
+    /// Builds an access-denied ACE.
+    pub fn deny(sid: &Sid, mask: u32, options: AceBuildOptions) -> Result<Self, AceBuildError> {
+        Self::build(AceFamily::Deny, sid, mask, false, false, options)
+    }
+
+    /// Builds a system-audit ACE.
+    pub fn audit(
+        sid: &Sid,
+        mask: u32,
+        successful: bool,
+        failed: bool,
+        options: AceBuildOptions,
+    ) -> Result<Self, AceBuildError> {
+        if !successful && !failed {
+            return Err(AceBuildError::AuditOutcome);
+        }
+        if options.flags & 0xc0 != 0 {
+            return Err(AceBuildError::AuditFlags);
+        }
+        Self::build(AceFamily::Audit, sid, mask, successful, failed, options)
+    }
+
+    fn build(
+        family: AceFamily,
+        sid: &Sid,
+        mask: u32,
+        successful: bool,
+        failed: bool,
+        options: AceBuildOptions,
+    ) -> Result<Self, AceBuildError> {
+        let object = options.object_type.is_some() || options.inherited_object_type.is_some();
+        let type_code = match (family, options.callback, object) {
+            (AceFamily::Allow, false, false) => 0,
+            (AceFamily::Deny, false, false) => 1,
+            (AceFamily::Audit, false, false) => 2,
+            (AceFamily::Allow, false, true) => 5,
+            (AceFamily::Deny, false, true) => 6,
+            (AceFamily::Audit, false, true) => 7,
+            (AceFamily::Allow, true, false) => 9,
+            (AceFamily::Deny, true, false) => 10,
+            (AceFamily::Allow, true, true) => 11,
+            (AceFamily::Deny, true, true) => 12,
+            (AceFamily::Audit, true, false) => 13,
+            (AceFamily::Audit, true, true) => 15,
+        };
+        let mut flags = options.flags;
+        if successful {
+            flags |= 0x40;
+        }
+        if failed {
+            flags |= 0x80;
+        }
+
+        let mut bytes = vec![type_code, flags, 0, 0];
+        bytes.extend_from_slice(&mask.to_le_bytes());
+        if object {
+            let object_flags = u32::from(options.object_type.is_some())
+                | (u32::from(options.inherited_object_type.is_some()) << 1);
+            bytes.extend_from_slice(&object_flags.to_le_bytes());
+            if let Some(value) = options.object_type {
+                bytes.extend_from_slice(value.as_bytes());
+            }
+            if let Some(value) = options.inherited_object_type {
+                bytes.extend_from_slice(value.as_bytes());
+            }
+        }
+        bytes.extend_from_slice(&sid.to_bytes());
+        bytes.extend_from_slice(&options.application_data);
+        bytes.resize(bytes.len().next_multiple_of(4), 0);
+        let size = u16::try_from(bytes.len()).map_err(|_| AceBuildError::Size(bytes.len()))?;
+        bytes[2..4].copy_from_slice(&size.to_le_bytes());
+        Ok(Self(bytes.into_boxed_slice()))
+    }
+
+    /// Returns the owned packet bytes.
+    pub fn into_boxed_bytes(self) -> Box<[u8]> {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy)]
+enum AceFamily {
+    Allow,
+    Deny,
+    Audit,
+}
+
+impl Deref for AceBuf {
+    type Target = Ace;
+
+    fn deref(&self) -> &Self::Target {
+        // The constructor invariant guarantees validation.
+        unsafe { &*(&*self.0 as *const [u8] as *const Ace) }
+    }
+}
+
+impl AsRef<Ace> for AceBuf {
+    fn as_ref(&self) -> &Ace {
+        self
+    }
+}
+
+impl Borrow<Ace> for AceBuf {
+    fn borrow(&self) -> &Ace {
+        self
+    }
+}
+
+impl ToOwned for Ace {
+    type Owned = AceBuf;
+
+    fn to_owned(&self) -> Self::Owned {
+        AceBuf(self.0.into())
+    }
+}
+
+impl Serialize for AceBuf {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for AceBuf {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes = Box::<[u8]>::deserialize(deserializer)?;
+        Self::try_from_bytes(bytes).map_err(de::Error::custom)
+    }
+}
+
+/// An owned, validated native Windows ACL packet.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AclBuf(Box<[u8]>);
+
+impl AclBuf {
+    /// Takes ownership of a raw packet after validating it.
+    pub fn try_from_bytes(bytes: impl Into<Box<[u8]>>) -> Result<Self, AclError> {
+        let bytes = bytes.into();
+        Acl::from_bytes(&bytes)?;
+        Ok(Self(bytes))
+    }
+
+    /// Builds an ACL from already-validated ACE packets.
+    pub fn from_aces<I, A>(aces: I, revision: Option<u8>) -> Result<Self, AclBuildError>
+    where
+        I: IntoIterator<Item = A>,
+        A: AsRef<Ace>,
+    {
+        let aces: Vec<A> = aces.into_iter().collect();
+        let mut size = ACL_HEADER_LEN;
+        let mut has_object = false;
+        for ace in &aces {
+            let ace = ace.as_ref();
+            size = size
+                .checked_add(ace.as_bytes().len())
+                .ok_or(AclBuildError::Size(usize::MAX))?;
+            has_object |= matches!(
+                ace.ace_type(),
+                AceType::AccessAllowedObject
+                    | AceType::AccessDeniedObject
+                    | AceType::SystemAuditObject
+                    | AceType::SystemAlarmObject
+                    | AceType::AccessAllowedCallbackObject
+                    | AceType::AccessDeniedCallbackObject
+                    | AceType::SystemAuditCallbackObject
+                    | AceType::SystemAlarmCallbackObject
+            );
+        }
+        let count = u16::try_from(aces.len()).map_err(|_| AclBuildError::Count(aces.len()))?;
+        let size16 = u16::try_from(size).map_err(|_| AclBuildError::Size(size))?;
+        let revision = revision.unwrap_or(if has_object { 4 } else { 2 });
+        if !matches!(revision, 2 | 4) {
+            return Err(AclBuildError::Revision(revision));
+        }
+        if revision == 2 && has_object {
+            return Err(AclBuildError::ObjectRevision);
+        }
+
+        let mut bytes = Vec::with_capacity(size);
+        bytes.extend_from_slice(&[revision, 0]);
+        bytes.extend_from_slice(&size16.to_le_bytes());
+        bytes.extend_from_slice(&count.to_le_bytes());
+        bytes.extend_from_slice(&[0, 0]);
+        for ace in &aces {
+            bytes.extend_from_slice(ace.as_ref().as_bytes());
+        }
+        Ok(Self(bytes.into_boxed_slice()))
+    }
+
+    /// Returns the owned packet bytes.
+    pub fn into_boxed_bytes(self) -> Box<[u8]> {
+        self.0
+    }
+}
+
+impl Deref for AclBuf {
+    type Target = Acl;
+
+    fn deref(&self) -> &Self::Target {
+        // The constructor invariant guarantees validation.
+        unsafe { &*(&*self.0 as *const [u8] as *const Acl) }
+    }
+}
+
+impl AsRef<Acl> for AclBuf {
+    fn as_ref(&self) -> &Acl {
+        self
+    }
+}
+
+impl Borrow<Acl> for AclBuf {
+    fn borrow(&self) -> &Acl {
+        self
+    }
+}
+
+impl ToOwned for Acl {
+    type Owned = AclBuf;
+
+    fn to_owned(&self) -> Self::Owned {
+        AclBuf(self.0.into())
+    }
+}
+
+impl Serialize for AclBuf {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for AclBuf {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes = Box::<[u8]>::deserialize(deserializer)?;
+        Self::try_from_bytes(bytes).map_err(de::Error::custom)
+    }
+}
+
+/// Error returned when building an ACE.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AceBuildError {
+    AuditOutcome,
+    AuditFlags,
+    Size(usize),
+}
+
+impl fmt::Display for AceBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AuditOutcome => f.write_str("audit ACE requires a successful or failed outcome"),
+            Self::AuditFlags => f.write_str("audit outcome bits must not be supplied in flags"),
+            Self::Size(size) => write!(f, "ACE packet size {size} exceeds the native limit"),
+        }
+    }
+}
+
+impl error::Error for AceBuildError {}
+
+/// Error returned when building an ACL.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AclBuildError {
+    Revision(u8),
+    ObjectRevision,
+    Count(usize),
+    Size(usize),
+}
+
+impl fmt::Display for AclBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Revision(revision) => write!(f, "unsupported ACL revision {revision}"),
+            Self::ObjectRevision => f.write_str("ACL revision 2 cannot contain object ACEs"),
+            Self::Count(count) => write!(f, "ACL ACE count {count} exceeds the native limit"),
+            Self::Size(size) => write!(f, "ACL packet size {size} exceeds the native limit"),
+        }
+    }
+}
+
+impl error::Error for AclBuildError {}
 
 fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, AceError> {
     let bytes = bytes.get(offset..offset + 4).ok_or(AceError::Body)?;
@@ -425,8 +795,30 @@ pub struct SecDesc {
     control: u16,
     owner: Option<Sid>,
     group: Option<Sid>,
-    dacl: Option<Vec<u8>>,
-    sacl: Option<Vec<u8>>,
+    dacl: Option<AclBuf>,
+    sacl: Option<AclBuf>,
+}
+
+/// A functional update to a [`SecDesc`].
+#[derive(Clone, Debug, Default)]
+pub struct SecDescUpdate {
+    pub owner: Option<Option<Sid>>,
+    pub group: Option<Option<Sid>>,
+    pub dacl: Option<Option<AclBuf>>,
+    pub sacl: Option<Option<AclBuf>>,
+    pub owner_defaulted: Option<bool>,
+    pub group_defaulted: Option<bool>,
+    pub dacl_present: Option<bool>,
+    pub dacl_defaulted: Option<bool>,
+    pub dacl_auto_inherit_required: Option<bool>,
+    pub dacl_auto_inherited: Option<bool>,
+    pub dacl_protected: Option<bool>,
+    pub sacl_present: Option<bool>,
+    pub sacl_defaulted: Option<bool>,
+    pub sacl_auto_inherit_required: Option<bool>,
+    pub sacl_auto_inherited: Option<bool>,
+    pub sacl_protected: Option<bool>,
+    pub rm_control: Option<Option<u8>>,
 }
 
 impl SecDesc {
@@ -451,17 +843,17 @@ impl SecDesc {
         if mask & GROUP_SECURITY_INFORMATION == 0 && group.is_some() {
             return Err(SecDescError::GroupNotLoaded);
         }
-        validate_acl(
+        let dacl = validate_acl(
             "DACL",
             mask & DACL_SECURITY_INFORMATION != 0,
             control & SE_DACL_PRESENT != 0,
-            dacl.as_deref(),
+            dacl,
         )?;
-        validate_acl(
+        let sacl = validate_acl(
             "SACL",
             mask & SACL_SECURITY_INFORMATION != 0,
             control & SE_SACL_PRESENT != 0,
-            sacl.as_deref(),
+            sacl,
         )?;
 
         Ok(Self {
@@ -532,10 +924,12 @@ impl SecDesc {
         bytes[1] = self.rm_control;
         bytes[2..4].copy_from_slice(&(self.control | SE_SELF_RELATIVE).to_le_bytes());
 
-        append_component(&mut bytes, 4, self.owner.as_ref().map(Sid::to_bytes));
-        append_component(&mut bytes, 8, self.group.as_ref().map(Sid::to_bytes));
-        append_component(&mut bytes, 12, self.sacl.clone());
-        append_component(&mut bytes, 16, self.dacl.clone());
+        let owner = self.owner.as_ref().map(Sid::to_bytes);
+        let group = self.group.as_ref().map(Sid::to_bytes);
+        append_component(&mut bytes, 4, owner.as_deref());
+        append_component(&mut bytes, 8, group.as_deref());
+        append_component(&mut bytes, 12, self.sacl.as_deref().map(Acl::as_bytes));
+        append_component(&mut bytes, 16, self.dacl.as_deref().map(Acl::as_bytes));
         bytes
     }
 
@@ -604,10 +998,8 @@ impl SecDesc {
     }
 
     /// Returns the DACL, if it is non-null.
-    pub fn dacl(&self) -> Option<Acl<'_>> {
-        self.dacl
-            .as_deref()
-            .map(|bytes| Acl::from_bytes(bytes).expect("stored DACL was validated"))
+    pub fn dacl(&self) -> Option<&Acl> {
+        self.dacl.as_deref()
     }
 
     /// Returns whether the descriptor marks the DACL as present.
@@ -641,10 +1033,8 @@ impl SecDesc {
     }
 
     /// Returns the SACL, if it is non-null.
-    pub fn sacl(&self) -> Option<Acl<'_>> {
-        self.sacl
-            .as_deref()
-            .map(|bytes| Acl::from_bytes(bytes).expect("stored SACL was validated"))
+    pub fn sacl(&self) -> Option<&Acl> {
+        self.sacl.as_deref()
     }
 
     /// Returns whether the descriptor marks the SACL as present.
@@ -671,6 +1061,209 @@ impl SecDesc {
     pub const fn sacl_protected(&self) -> bool {
         self.control & SE_SACL_PROTECTED != 0
     }
+
+    /// Returns a new descriptor with the supplied component and control updates.
+    pub fn with(&self, update: SecDescUpdate) -> Result<Self, SecDescError> {
+        let mut mask = self.mask;
+        let mut control = self.control;
+
+        let owner = match update.owner {
+            Some(value) => {
+                mask |= OWNER_SECURITY_INFORMATION;
+                value
+            }
+            None => self.owner.clone(),
+        };
+        let group = match update.group {
+            Some(value) => {
+                mask |= GROUP_SECURITY_INFORMATION;
+                value
+            }
+            None => self.group.clone(),
+        };
+
+        let (dacl, dacl_explicit) = match update.dacl {
+            Some(value) => {
+                mask |= DACL_SECURITY_INFORMATION;
+                set_control(&mut control, SE_DACL_PRESENT, true);
+                (value, true)
+            }
+            None => (self.dacl.clone(), false),
+        };
+        let (sacl, sacl_explicit) = match update.sacl {
+            Some(value) => {
+                mask |= SACL_SECURITY_INFORMATION;
+                set_control(&mut control, SE_SACL_PRESENT, true);
+                (value, true)
+            }
+            None => (self.sacl.clone(), false),
+        };
+
+        let dacl = apply_presence(
+            "DACL",
+            &mut mask,
+            &mut control,
+            DACL_SECURITY_INFORMATION,
+            SE_DACL_PRESENT,
+            update.dacl_present,
+            dacl_explicit,
+            dacl,
+        )?;
+        let sacl = apply_presence(
+            "SACL",
+            &mut mask,
+            &mut control,
+            SACL_SECURITY_INFORMATION,
+            SE_SACL_PRESENT,
+            update.sacl_present,
+            sacl_explicit,
+            sacl,
+        )?;
+
+        apply_component_flag(
+            "owner",
+            mask & OWNER_SECURITY_INFORMATION != 0,
+            &mut control,
+            SE_OWNER_DEFAULTED,
+            update.owner_defaulted,
+        )?;
+        apply_component_flag(
+            "group",
+            mask & GROUP_SECURITY_INFORMATION != 0,
+            &mut control,
+            SE_GROUP_DEFAULTED,
+            update.group_defaulted,
+        )?;
+        for (name, loaded, flag, value) in [
+            (
+                "DACL",
+                mask & DACL_SECURITY_INFORMATION != 0,
+                SE_DACL_DEFAULTED,
+                update.dacl_defaulted,
+            ),
+            (
+                "DACL",
+                mask & DACL_SECURITY_INFORMATION != 0,
+                SE_DACL_AUTO_INHERIT_REQ,
+                update.dacl_auto_inherit_required,
+            ),
+            (
+                "DACL",
+                mask & DACL_SECURITY_INFORMATION != 0,
+                SE_DACL_AUTO_INHERITED,
+                update.dacl_auto_inherited,
+            ),
+            (
+                "DACL",
+                mask & DACL_SECURITY_INFORMATION != 0,
+                SE_DACL_PROTECTED,
+                update.dacl_protected,
+            ),
+            (
+                "SACL",
+                mask & SACL_SECURITY_INFORMATION != 0,
+                SE_SACL_DEFAULTED,
+                update.sacl_defaulted,
+            ),
+            (
+                "SACL",
+                mask & SACL_SECURITY_INFORMATION != 0,
+                SE_SACL_AUTO_INHERIT_REQ,
+                update.sacl_auto_inherit_required,
+            ),
+            (
+                "SACL",
+                mask & SACL_SECURITY_INFORMATION != 0,
+                SE_SACL_AUTO_INHERITED,
+                update.sacl_auto_inherited,
+            ),
+            (
+                "SACL",
+                mask & SACL_SECURITY_INFORMATION != 0,
+                SE_SACL_PROTECTED,
+                update.sacl_protected,
+            ),
+        ] {
+            apply_component_flag(name, loaded, &mut control, flag, value)?;
+        }
+
+        let rm_control = match update.rm_control {
+            Some(Some(value)) => {
+                set_control(&mut control, SE_RM_CONTROL_VALID, true);
+                value
+            }
+            Some(None) => {
+                set_control(&mut control, SE_RM_CONTROL_VALID, false);
+                0
+            }
+            None => self.rm_control,
+        };
+
+        Ok(Self {
+            mask,
+            revision: self.revision,
+            rm_control,
+            control,
+            owner,
+            group,
+            dacl,
+            sacl,
+        })
+    }
+}
+
+fn set_control(control: &mut u16, flag: u16, value: bool) {
+    if value {
+        *control |= flag;
+    } else {
+        *control &= !flag;
+    }
+}
+
+fn apply_component_flag(
+    name: &'static str,
+    loaded: bool,
+    control: &mut u16,
+    flag: u16,
+    value: Option<bool>,
+) -> Result<(), SecDescError> {
+    if let Some(value) = value {
+        if !loaded {
+            return Err(SecDescError::ComponentNotLoaded(name));
+        }
+        set_control(control, flag, value);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_presence(
+    name: &'static str,
+    mask: &mut u32,
+    control: &mut u16,
+    mask_flag: u32,
+    present_flag: u16,
+    requested: Option<bool>,
+    explicit: bool,
+    mut acl: Option<AclBuf>,
+) -> Result<Option<AclBuf>, SecDescError> {
+    if let Some(present) = requested {
+        let was_loaded = *mask & mask_flag != 0;
+        if !present {
+            if explicit {
+                return Err(SecDescError::AclPresenceConflict(name));
+            }
+            acl = None;
+            set_control(control, present_flag, false);
+        } else {
+            if !explicit && (!was_loaded || *control & present_flag == 0) {
+                return Err(SecDescError::AclPresenceRequiresValue(name));
+            }
+            set_control(control, present_flag, true);
+        }
+        *mask |= mask_flag;
+    }
+    Ok(acl)
 }
 
 fn packet_offset(bytes: &[u8], at: usize) -> Result<usize, SecDescError> {
@@ -724,23 +1317,23 @@ fn parse_acl(
     Ok(Some(acl.to_vec()))
 }
 
-fn append_component(bytes: &mut Vec<u8>, offset_at: usize, component: Option<Vec<u8>>) {
+fn append_component(bytes: &mut Vec<u8>, offset_at: usize, component: Option<&[u8]>) {
     let Some(component) = component else {
         return;
     };
     let offset = u32::try_from(bytes.len()).expect("security descriptor exceeds 4 GiB");
     bytes[offset_at..offset_at + 4].copy_from_slice(&offset.to_le_bytes());
-    bytes.extend_from_slice(&component);
+    bytes.extend_from_slice(component);
 }
 
 fn validate_acl(
     name: &'static str,
     loaded: bool,
     present: bool,
-    acl: Option<&[u8]>,
-) -> Result<(), SecDescError> {
+    acl: Option<Vec<u8>>,
+) -> Result<Option<AclBuf>, SecDescError> {
     let Some(acl) = acl else {
-        return Ok(());
+        return Ok(None);
     };
     if !loaded {
         return Err(SecDescError::AclNotLoaded(name));
@@ -748,8 +1341,9 @@ fn validate_acl(
     if !present {
         return Err(SecDescError::AclNotPresent(name));
     }
-    Acl::from_bytes(acl).map_err(|error| SecDescError::Acl(name, error))?;
-    Ok(())
+    AclBuf::try_from_bytes(acl.into_boxed_slice())
+        .map(Some)
+        .map_err(|error| SecDescError::Acl(name, error))
 }
 
 impl Serialize for SecDesc {
@@ -828,6 +1422,9 @@ pub enum SecDescError {
     GroupNotLoaded,
     AclNotLoaded(&'static str),
     AclNotPresent(&'static str),
+    AclPresenceConflict(&'static str),
+    AclPresenceRequiresValue(&'static str),
+    ComponentNotLoaded(&'static str),
     Acl(&'static str, AclError),
     PacketLength,
     NotSelfRelative,
@@ -846,6 +1443,18 @@ impl fmt::Display for SecDescError {
             Self::AclNotLoaded(name) => write!(f, "{name} supplied when it was not loaded"),
             Self::AclNotPresent(name) => {
                 write!(f, "{name} supplied when its PRESENT control bit is clear")
+            }
+            Self::AclPresenceConflict(name) => {
+                write!(f, "{name} cannot be supplied with presence false")
+            }
+            Self::AclPresenceRequiresValue(name) => {
+                write!(
+                    f,
+                    "{name} presence true requires an existing or supplied ACL"
+                )
+            }
+            Self::ComponentNotLoaded(name) => {
+                write!(f, "cannot update control flags for unloaded {name}")
             }
             Self::Acl(name, error) => write!(f, "invalid {name}: {error}"),
             Self::PacketLength => f.write_str("security descriptor packet is too short"),
@@ -1299,6 +1908,178 @@ mod tests {
         assert_eq!(
             SecDesc::from_bytes(&packet),
             Err(SecDescError::PacketOffset("owner", 20))
+        );
+    }
+
+    #[test]
+    fn owned_ace_builders_select_layouts_and_pad_application_data() {
+        let trustee = sid("S-1-1-0");
+        let object_type: Guid = "00112233-4455-6677-8899-aabbccddeeff".parse().unwrap();
+        let basic = AceBuf::allow(
+            &trustee,
+            0x1234,
+            AceBuildOptions {
+                flags: 0x03,
+                application_data: vec![1, 2, 3],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(basic.ace_type(), AceType::AccessAllowed);
+        assert_eq!(basic.flags(), 0x03);
+        assert_eq!(basic.application_data(), Some(&[1, 2, 3, 0][..]));
+        assert_eq!(Ace::from_bytes(basic.as_bytes()).unwrap(), &*basic);
+
+        let object = AceBuf::deny(
+            &trustee,
+            u32::MAX,
+            AceBuildOptions {
+                object_type: Some(object_type),
+                callback: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(object.ace_type(), AceType::AccessDeniedCallbackObject);
+        assert_eq!(object.object_flags(), Some(1));
+        assert_eq!(object.object_type(), Some(object_type));
+        assert_eq!(object.inherited_object_type(), None);
+    }
+
+    #[test]
+    fn audit_builder_enforces_outcomes_and_reserves_audit_flags() {
+        let trustee = sid("S-1-5-18");
+        assert_eq!(
+            AceBuf::audit(&trustee, 1, false, false, AceBuildOptions::default()),
+            Err(AceBuildError::AuditOutcome)
+        );
+        assert_eq!(
+            AceBuf::audit(
+                &trustee,
+                1,
+                true,
+                false,
+                AceBuildOptions {
+                    flags: 0x40,
+                    ..Default::default()
+                },
+            ),
+            Err(AceBuildError::AuditFlags)
+        );
+        let audit = AceBuf::audit(&trustee, 1, true, true, AceBuildOptions::default()).unwrap();
+        assert_eq!(audit.ace_type(), AceType::SystemAudit);
+        assert_eq!(audit.flags(), 0xc0);
+    }
+
+    #[test]
+    fn acl_builder_preserves_packets_and_selects_revision() {
+        let trustee = sid("S-1-1-0");
+        let basic = AceBuf::allow(&trustee, 1, AceBuildOptions::default()).unwrap();
+        let object = AceBuf::allow(
+            &trustee,
+            2,
+            AceBuildOptions {
+                object_type: Some("00000000-0000-0000-0000-000000000000".parse().unwrap()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let acl = AclBuf::from_aces([&*basic], None).unwrap();
+        assert_eq!(acl.revision(), 2);
+        assert_eq!(acl.aces().next().unwrap().as_bytes(), basic.as_bytes());
+
+        let acl = AclBuf::from_aces([&*basic, &*object], None).unwrap();
+        assert_eq!(acl.revision(), 4);
+        assert_eq!(
+            AclBuf::from_aces([&*object], Some(2)),
+            Err(AclBuildError::ObjectRevision)
+        );
+        assert_eq!(
+            AclBuf::from_aces([&*basic], Some(3)),
+            Err(AclBuildError::Revision(3))
+        );
+        assert_eq!(Acl::from_bytes(acl.as_bytes()).unwrap(), &*acl);
+    }
+
+    #[test]
+    fn owned_packets_validate_raw_and_serde_inputs() {
+        let trustee = sid("S-1-1-0");
+        let ace = AceBuf::allow(&trustee, 1, AceBuildOptions::default()).unwrap();
+        let encoded = postcard::to_stdvec(&ace).unwrap();
+        assert_eq!(postcard::from_bytes::<AceBuf>(&encoded).unwrap(), ace);
+        assert!(AceBuf::try_from_bytes(vec![0, 0, 4, 0].into_boxed_slice()).is_err());
+
+        let acl = AclBuf::from_aces([&*ace], None).unwrap();
+        let encoded = postcard::to_stdvec(&acl).unwrap();
+        assert_eq!(postcard::from_bytes::<AclBuf>(&encoded).unwrap(), acl);
+        let mut malformed = acl.as_bytes().to_vec();
+        malformed[2] = 0;
+        assert!(AclBuf::try_from_bytes(malformed.into_boxed_slice()).is_err());
+    }
+
+    #[test]
+    fn functional_updates_cover_component_states_and_controls() {
+        let descriptor = SecDesc::new(0, 1, 0, 0, None, None, None, None).unwrap();
+        let concrete = AclBuf::from_aces(std::iter::empty::<&Ace>(), None).unwrap();
+        let updated = descriptor
+            .with(SecDescUpdate {
+                owner: Some(Some(sid("S-1-5-18"))),
+                dacl: Some(Some(concrete.clone())),
+                owner_defaulted: Some(true),
+                dacl_protected: Some(true),
+                rm_control: Some(Some(0x5a)),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!descriptor.owner_loaded());
+        assert_eq!(updated.owner().unwrap().to_string(), "S-1-5-18");
+        assert_eq!(updated.dacl(), Some(&*concrete));
+        assert!(updated.dacl_present());
+        assert!(updated.owner_defaulted());
+        assert!(updated.dacl_protected());
+        assert_eq!(updated.rm_control(), Some(0x5a));
+
+        let null = updated
+            .with(SecDescUpdate {
+                dacl: Some(None),
+                rm_control: Some(None),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(null.dacl_present());
+        assert_eq!(null.dacl(), None);
+        assert_eq!(null.rm_control(), None);
+
+        let absent = null
+            .with(SecDescUpdate {
+                dacl_present: Some(false),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(absent.dacl_loaded());
+        assert!(!absent.dacl_present());
+        assert_eq!(
+            descriptor.with(SecDescUpdate {
+                dacl_present: Some(true),
+                ..Default::default()
+            }),
+            Err(SecDescError::AclPresenceRequiresValue("DACL"))
+        );
+        let unloaded_present =
+            SecDesc::new(0, 1, 0, SE_DACL_PRESENT, None, None, None, None).unwrap();
+        assert_eq!(
+            unloaded_present.with(SecDescUpdate {
+                dacl_present: Some(true),
+                ..Default::default()
+            }),
+            Err(SecDescError::AclPresenceRequiresValue("DACL"))
+        );
+        assert_eq!(
+            descriptor.with(SecDescUpdate {
+                dacl_protected: Some(true),
+                ..Default::default()
+            }),
+            Err(SecDescError::ComponentNotLoaded("DACL"))
         );
     }
 }

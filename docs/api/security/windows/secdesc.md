@@ -4,7 +4,7 @@ Windows security descriptor.
 
 ## Constructor
 
-### `SecDesc(value)`
+### `SecDesc value`
 
 Parses a self-relative security descriptor.
 
@@ -19,6 +19,40 @@ Parses a self-relative security descriptor.
 **Errors:**
 
 - Raises `ValueError` when the packet is malformed or is not self-relative.
+
+### `SecDesc ...options`
+
+Constructs a security descriptor from components and control fields.
+
+**Returns:** `SecDesc`
+
+## Component options
+
+The constructor and [`with`](#with-options) accept these options:
+
+| Name                         | Type                             | Description                   |
+| ---------------------------- | -------------------------------- | ----------------------------- |
+| `owner`                      | [`Sid`](./sid.md)\|`nil`         | Owner, or loaded absent owner |
+| `group`                      | [`Sid`](./sid.md)\|`nil`         | Group, or loaded absent group |
+| `dacl`                       | [`Acl`](./acl.md)\|`nil`         | DACL, or present null DACL    |
+| `sacl`                       | [`Acl`](./acl.md)\|`nil`         | SACL, or present null SACL    |
+| `owner_defaulted`            | [`bool`](../../std/bool.md)      | Owner defaulted flag          |
+| `group_defaulted`            | [`bool`](../../std/bool.md)      | Group defaulted flag          |
+| `dacl_present`               | [`bool`](../../std/bool.md)      | DACL presence                 |
+| `dacl_defaulted`             | [`bool`](../../std/bool.md)      | DACL defaulted flag           |
+| `dacl_auto_inherit_required` | [`bool`](../../std/bool.md)      | DACL inheritance request      |
+| `dacl_auto_inherited`        | [`bool`](../../std/bool.md)      | DACL inherited flag           |
+| `dacl_protected`             | [`bool`](../../std/bool.md)      | DACL protection               |
+| `sacl_present`               | [`bool`](../../std/bool.md)      | SACL presence                 |
+| `sacl_defaulted`             | [`bool`](../../std/bool.md)      | SACL defaulted flag           |
+| `sacl_auto_inherit_required` | [`bool`](../../std/bool.md)      | SACL inheritance request      |
+| `sacl_auto_inherited`        | [`bool`](../../std/bool.md)      | SACL inherited flag           |
+| `sacl_protected`             | [`bool`](../../std/bool.md)      | SACL protection               |
+| `rm_control`                 | [`int`](../../std/int.md)\|`nil` | RM control byte, or clear it  |
+
+Setting ACL presence to false creates a loaded absent ACL. Presence true
+requires a supplied or existing present ACL. Control fields require the
+corresponding component to be loaded or supplied.
 
 ## Fields
 
@@ -124,6 +158,12 @@ ACL-related fields raise `FieldError` when the corresponding ACL was not
 loaded.
 
 ## Methods
+
+### `with ...options`
+
+Returns a descriptor with selected components or control fields replaced.
+
+**Returns:** `SecDesc`
 
 ### `to_bin()`
 

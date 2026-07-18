@@ -2,6 +2,58 @@
 
 Immutable view of a native Windows access-control entry.
 
+## Class Methods
+
+### `allow sid mask ...options`
+
+Constructs an access-allowed ACE.
+
+**Parameters:**
+
+| Name                    | Type                                             | Description               |
+| ----------------------- | ------------------------------------------------ | ------------------------- |
+| `sid`                   | [`Sid`](./sid.md)                                | Trustee                   |
+| `mask`                  | [`int`](../../std/int.md)                        | Access mask               |
+| `flags`                 | [`int`](../../std/int.md)?                       | Native ACE flags          |
+| `object_type`           | [`sys.windows.Guid`](../../sys/windows/guid.md)? | Object type               |
+| `inherited_object_type` | [`sys.windows.Guid`](../../sys/windows/guid.md)? | Inherited object type     |
+| `callback`              | [`bool`](../../std/bool.md)?                     | Build a callback ACE      |
+| `application_data`      | [`bin`](../../std/bin.md)?                       | Trailing application data |
+
+**Returns:** `Ace`
+
+Application data is zero-padded to DWORD alignment.
+
+### `deny sid mask ...options`
+
+Constructs an access-denied ACE. Parameters match
+[`allow`](#allow-sid-mask-options).
+
+**Returns:** `Ace`
+
+### `audit sid mask :successful :failed ...options`
+
+Constructs a system-audit ACE.
+
+**Parameters:**
+
+| Name         | Type                        | Description             |
+| ------------ | --------------------------- | ----------------------- |
+| `sid`        | [`Sid`](./sid.md)           | Trustee                 |
+| `mask`       | [`int`](../../std/int.md)   | Access mask             |
+| `successful` | [`bool`](../../std/bool.md) | Audit successful access |
+| `failed`     | [`bool`](../../std/bool.md) | Audit failed access     |
+
+The remaining optional parameters match
+[`allow`](#allow-sid-mask-options).
+
+**Returns:** `Ace`
+
+**Errors:**
+
+- Raises `ValueError` when both outcomes are false or `flags` contains audit
+  outcome bits.
+
 ## Fields
 
 ### `type`

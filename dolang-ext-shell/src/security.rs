@@ -13,9 +13,10 @@ use dolang::{
     },
 };
 use dolang_shell_vfs::{
-    Ace as VfsAce, AceType as VfsAceType, Acl as VfsAcl, Guid as VfsGuid, OperatingSystemFamily,
-    SecDesc as VfsSecDesc, SecurityInfo, Sid as VfsSid, SidName as VfsSidName, SidNameUse,
-    TokenGroup as VfsTokenGroup, UnixSecurityInfo, Vfs as _, WindowsTokenInfo,
+    Ace as VfsAce, AceBuf as VfsAceBuf, AceBuildOptions, AceType as VfsAceType, Acl as VfsAcl,
+    AclBuf as VfsAclBuf, Guid as VfsGuid, OperatingSystemFamily, SecDesc as VfsSecDesc,
+    SecDescUpdate as VfsSecDescUpdate, SecurityInfo, Sid as VfsSid, SidName as VfsSidName,
+    SidNameUse, TokenGroup as VfsTokenGroup, UnixSecurityInfo, Vfs as _, WindowsTokenInfo,
 };
 
 use crate::{error, global::Global, util};
@@ -283,10 +284,14 @@ impl<'v> Object<'v> for Guid {
     }
 }
 
-#[derive(Clone, Copy)]
 pub(crate) enum AclComponent {
     Dacl,
     Sacl,
+}
+
+pub(crate) enum AclAnnex {
+    Component(AclComponent),
+    Owned(VfsAclBuf),
 }
 
 pub(crate) struct Acl;
@@ -301,7 +306,7 @@ fn create_acl<'v>(
     global
         .types
         .acl
-        .create_with_annex(strand, Acl, component, &mut *out);
+        .create_with_annex(strand, Acl, AclAnnex::Component(component), &mut *out);
     let acl = global.types.acl.downcast(&*out).unwrap();
     Output::set(
         strand,
@@ -313,8 +318,11 @@ fn create_acl<'v>(
 fn with_acl<'v, 's, T>(
     this: Instance<'v, '_, Acl>,
     strand: &mut Strand<'v, 's>,
-    f: impl FnOnce(VfsAcl<'_>) -> T,
+    f: impl FnOnce(&VfsAcl) -> T,
 ) -> Result<'v, 's, T> {
+    if let AclAnnex::Owned(acl) = &*this.annex() {
+        return Ok(f(acl));
+    }
     let global = strand.state::<Global<'v>>();
     let borrow = this.borrow(strand)?;
     let descriptor = global
@@ -323,9 +331,10 @@ fn with_acl<'v, 's, T>(
         .downcast(Ref::slot::<0>(&borrow))
         .expect("Acl root is a SecDesc");
     let descriptor = descriptor.annex();
-    let acl = match *this.annex() {
-        AclComponent::Dacl => descriptor.dacl(),
-        AclComponent::Sacl => descriptor.sacl(),
+    let acl = match &*this.annex() {
+        AclAnnex::Component(AclComponent::Dacl) => descriptor.dacl(),
+        AclAnnex::Component(AclComponent::Sacl) => descriptor.sacl(),
+        AclAnnex::Owned(_) => unreachable!(),
     }
     .expect("Acl component is non-null");
     Ok(f(acl))
@@ -350,21 +359,15 @@ impl<'v> ArrayLike<'v> for AclAces {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Global<'v>>();
-        global.types.ace.create_with_annex(
-            strand,
-            Ace,
-            AceAnnex {
-                component: *this.annex(),
-                index,
-            },
-            &mut out,
-        );
+        global
+            .types
+            .ace
+            .create_with_annex(strand, Ace, AceAnnex::InAcl(index), &mut out);
         let ace = global.types.ace.downcast(&out).unwrap();
-        let borrow = this.borrow(strand)?;
         Output::set(
             strand,
             Mut::slot_mut::<0>(&mut ace.borrow_mut_unwrap()),
-            Ref::slot::<0>(&borrow),
+            this,
         );
         Ok(())
     }
@@ -374,9 +377,41 @@ impl<'v> Object<'v> for Acl {
     const NAME: &'v str = "Acl";
     const MODULE: &'v str = "security.windows";
     const SLOTS: usize = 1;
-    type Annex = AclComponent;
+    type Annex = AclAnnex;
     type Type = ();
     type TypeAnnex = ();
+
+    async fn new<'a, 's>(
+        this: Type<'v, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        args: Args<'v, 'a>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let revision_sym = strand.state::<Global<'v>>().syms.revision;
+        let ([mut iterable], [revision]) = unpack!(strand, args, 1, 0, revision_sym = None)?;
+        let revision = revision
+            .map(|value| value.to_i64(strand))
+            .transpose()
+            .map_err(|_| Error::type_error(strand, "revision: expected int"))?
+            .map(|value| {
+                u8::try_from(value).map_err(|_| Error::value(strand, "revision: expected 2 or 4"))
+            })
+            .transpose()?;
+
+        let global = strand.state::<Global<'v>>();
+        iterable.iter(strand, &mut out).await?;
+        let mut aces = Vec::new();
+        while out.next(strand, &mut iterable).await? {
+            let ace = global.types.ace.downcast(&iterable).ok_or_else(|| {
+                Error::type_error(strand, "Acl: iterable must contain security.windows.Ace")
+            })?;
+            aces.push(with_ace(ace, strand, VfsAce::to_owned)?);
+        }
+        let acl = VfsAclBuf::from_aces(&aces, revision)
+            .map_err(|error| Error::value(strand, error.to_string()))?;
+        this.create_with_annex(strand, Acl, AclAnnex::Owned(acl), out);
+        Ok(())
+    }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
@@ -408,37 +443,113 @@ impl<'v> Object<'v> for Acl {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct AceAnnex {
-    component: AclComponent,
-    index: usize,
+pub(crate) enum AceAnnex {
+    InAcl(usize),
+    Owned(VfsAceBuf),
 }
 
 pub(crate) struct Ace;
 
+fn ace_u32<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+    name: &'static str,
+) -> Result<'v, 's, u32> {
+    let value = value
+        .to_i64(strand)
+        .map_err(|_| Error::type_error(strand, format!("{name}: expected int")))?;
+    u32::try_from(value).map_err(|_| Error::value(strand, format!("{name}: out of range")))
+}
+
+fn ace_u8<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+    name: &'static str,
+) -> Result<'v, 's, u8> {
+    let value = ace_u32(strand, value, name)?;
+    u8::try_from(value).map_err(|_| Error::value(strand, format!("{name}: out of range")))
+}
+
+fn ace_bool<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+    name: &'static str,
+) -> Result<'v, 's, bool> {
+    value
+        .as_bool(strand)
+        .ok_or_else(|| Error::type_error(strand, format!("{name}: expected bool")))
+}
+
+fn ace_options<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    flags: Option<&Value<'v>>,
+    object_type: Option<&Value<'v>>,
+    inherited_object_type: Option<&Value<'v>>,
+    callback: Option<&Value<'v>>,
+    application_data: Option<&Value<'v>>,
+) -> Result<'v, 's, AceBuildOptions> {
+    let guid = |strand: &mut Strand<'v, 's>, value: &Value<'v>, name| {
+        global
+            .types
+            .guid
+            .downcast(value)
+            .map(|value| *value.annex())
+            .ok_or_else(|| Error::type_error(strand, format!("{name}: expected sys.windows.Guid")))
+    };
+    Ok(AceBuildOptions {
+        flags: flags
+            .map(|value| ace_u8(strand, value, "flags"))
+            .transpose()?
+            .unwrap_or(0),
+        object_type: object_type
+            .map(|value| guid(strand, value, "object_type"))
+            .transpose()?,
+        inherited_object_type: inherited_object_type
+            .map(|value| guid(strand, value, "inherited_object_type"))
+            .transpose()?,
+        callback: callback
+            .map(|value| ace_bool(strand, value, "callback"))
+            .transpose()?
+            .unwrap_or(false),
+        application_data: application_data
+            .map(|value| {
+                value
+                    .as_bin(strand)
+                    .map(|value| value.to_vec())
+                    .ok_or_else(|| Error::type_error(strand, "application_data: expected bin"))
+            })
+            .transpose()?
+            .unwrap_or_default(),
+    })
+}
+
 fn with_ace<'v, 's, T>(
     this: Instance<'v, '_, Ace>,
     strand: &mut Strand<'v, 's>,
-    f: impl FnOnce(VfsAce<'_>) -> T,
+    f: impl FnOnce(&VfsAce) -> T,
 ) -> Result<'v, 's, T> {
+    if let AceAnnex::Owned(ace) = &*this.annex() {
+        return Ok(f(ace));
+    }
     let global = strand.state::<Global<'v>>();
     let borrow = this.borrow(strand)?;
-    let descriptor = global
+    let acl = global
         .types
-        .sec_desc
+        .acl
         .downcast(Ref::slot::<0>(&borrow))
-        .expect("Ace root is a SecDesc");
-    let descriptor = descriptor.annex();
-    let acl = match this.annex().component {
-        AclComponent::Dacl => descriptor.dacl(),
-        AclComponent::Sacl => descriptor.sacl(),
-    }
-    .expect("Ace ACL component is non-null");
-    let ace = acl
-        .aces()
-        .nth(this.annex().index)
-        .expect("Ace array index was normalized");
-    Ok(f(ace))
+        .expect("Ace root is an Acl");
+    let index = match &*this.annex() {
+        AceAnnex::InAcl(index) => *index,
+        AceAnnex::Owned(_) => unreachable!(),
+    };
+    with_acl(acl, strand, |acl| {
+        let ace = acl
+            .aces()
+            .nth(index)
+            .expect("Ace array index was normalized");
+        f(ace)
+    })
 }
 
 impl<'v> Object<'v> for Ace {
@@ -450,6 +561,13 @@ impl<'v> Object<'v> for Ace {
     type TypeAnnex = ();
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let flags = builder.sym("flags");
+        let object_type = builder.sym("object_type");
+        let inherited_object_type = builder.sym("inherited_object_type");
+        let callback = builder.sym("callback");
+        let application_data = builder.sym("application_data");
+        let successful = builder.sym("successful");
+        let failed = builder.sym("failed");
         let mask_field = builder.sym("mask");
         let sid_field = builder.sym("sid");
         let object_flags_field = builder.sym("object_flags");
@@ -485,6 +603,130 @@ impl<'v> Object<'v> for Ace {
         let unknown = builder.sym("UNKNOWN");
 
         builder
+            .type_method("allow", async move |this, strand, args, out| {
+                let (
+                    [sid, mask],
+                    [
+                        flags_value,
+                        object_type_value,
+                        inherited_value,
+                        callback_value,
+                        application_value,
+                    ],
+                ) = unpack!(
+                    strand,
+                    args,
+                    2,
+                    0,
+                    flags = None,
+                    object_type = None,
+                    inherited_object_type = None,
+                    callback = None,
+                    application_data = None
+                )?;
+                let global = strand.state::<Global<'v>>();
+                let sid = global.types.sid.downcast(&sid).ok_or_else(|| {
+                    Error::type_error(strand, "sid: expected security.windows.Sid")
+                })?;
+                let mask = ace_u32(strand, &mask, "mask")?;
+                let options = ace_options(
+                    strand,
+                    global,
+                    flags_value.as_deref(),
+                    object_type_value.as_deref(),
+                    inherited_value.as_deref(),
+                    callback_value.as_deref(),
+                    application_value.as_deref(),
+                )?;
+                let ace = VfsAceBuf::allow(&sid.annex(), mask, options)
+                    .map_err(|error| Error::value(strand, error.to_string()))?;
+                this.create_with_annex(strand, Ace, AceAnnex::Owned(ace), out);
+                Ok(())
+            })
+            .type_method("deny", async move |this, strand, args, out| {
+                let (
+                    [sid, mask],
+                    [
+                        flags_value,
+                        object_type_value,
+                        inherited_value,
+                        callback_value,
+                        application_value,
+                    ],
+                ) = unpack!(
+                    strand,
+                    args,
+                    2,
+                    0,
+                    flags = None,
+                    object_type = None,
+                    inherited_object_type = None,
+                    callback = None,
+                    application_data = None
+                )?;
+                let global = strand.state::<Global<'v>>();
+                let sid = global.types.sid.downcast(&sid).ok_or_else(|| {
+                    Error::type_error(strand, "sid: expected security.windows.Sid")
+                })?;
+                let mask = ace_u32(strand, &mask, "mask")?;
+                let options = ace_options(
+                    strand,
+                    global,
+                    flags_value.as_deref(),
+                    object_type_value.as_deref(),
+                    inherited_value.as_deref(),
+                    callback_value.as_deref(),
+                    application_value.as_deref(),
+                )?;
+                let ace = VfsAceBuf::deny(&sid.annex(), mask, options)
+                    .map_err(|error| Error::value(strand, error.to_string()))?;
+                this.create_with_annex(strand, Ace, AceAnnex::Owned(ace), out);
+                Ok(())
+            })
+            .type_method("audit", async move |this, strand, args, out| {
+                let (
+                    [sid, mask, successful_value, failed_value],
+                    [
+                        flags_value,
+                        object_type_value,
+                        inherited_value,
+                        callback_value,
+                        application_value,
+                    ],
+                ) = unpack!(
+                    strand,
+                    args,
+                    2,
+                    0,
+                    successful,
+                    failed,
+                    flags = None,
+                    object_type = None,
+                    inherited_object_type = None,
+                    callback = None,
+                    application_data = None
+                )?;
+                let global = strand.state::<Global<'v>>();
+                let sid = global.types.sid.downcast(&sid).ok_or_else(|| {
+                    Error::type_error(strand, "sid: expected security.windows.Sid")
+                })?;
+                let mask = ace_u32(strand, &mask, "mask")?;
+                let successful = ace_bool(strand, &successful_value, "successful")?;
+                let failed = ace_bool(strand, &failed_value, "failed")?;
+                let options = ace_options(
+                    strand,
+                    global,
+                    flags_value.as_deref(),
+                    object_type_value.as_deref(),
+                    inherited_value.as_deref(),
+                    callback_value.as_deref(),
+                    application_value.as_deref(),
+                )?;
+                let ace = VfsAceBuf::audit(&sid.annex(), mask, successful, failed, options)
+                    .map_err(|error| Error::value(strand, error.to_string()))?;
+                this.create_with_annex(strand, Ace, AceAnnex::Owned(ace), out);
+                Ok(())
+            })
             .get("type", move |this, strand, out| {
                 let ace_type = with_ace(this, strand, |ace| ace.ace_type())?;
                 let value = match ace_type {
@@ -669,6 +911,125 @@ const fn ace_is_audit(kind: VfsAceType) -> bool {
 
 pub(crate) struct SecDesc;
 
+fn update_sid<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    value: Option<&Value<'v>>,
+    name: &'static str,
+) -> Result<'v, 's, Option<Option<VfsSid>>> {
+    value
+        .map(|value| {
+            if value.is_nil() {
+                Ok(None)
+            } else {
+                global
+                    .types
+                    .sid
+                    .downcast(value)
+                    .map(|value| Some((*value.annex()).clone()))
+                    .ok_or_else(|| {
+                        Error::type_error(
+                            strand,
+                            format!("{name}: expected security.windows.Sid or nil"),
+                        )
+                    })
+            }
+        })
+        .transpose()
+}
+
+fn update_acl<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    value: Option<&Value<'v>>,
+    name: &'static str,
+) -> Result<'v, 's, Option<Option<VfsAclBuf>>> {
+    value
+        .map(|value| {
+            if value.is_nil() {
+                Ok(None)
+            } else {
+                let value = global.types.acl.downcast(value).ok_or_else(|| {
+                    Error::type_error(
+                        strand,
+                        format!("{name}: expected security.windows.Acl or nil"),
+                    )
+                })?;
+                with_acl(value, strand, |acl| Some(acl.to_owned()))
+            }
+        })
+        .transpose()
+}
+
+fn update_bool<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: Option<&Value<'v>>,
+    name: &'static str,
+) -> Result<'v, 's, Option<bool>> {
+    value.map(|value| ace_bool(strand, value, name)).transpose()
+}
+
+fn sec_desc_update<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    [
+        owner,
+        group,
+        dacl,
+        sacl,
+        owner_defaulted,
+        group_defaulted,
+        dacl_present,
+        dacl_defaulted,
+        dacl_auto_inherit_required,
+        dacl_auto_inherited,
+        dacl_protected,
+        sacl_present,
+        sacl_defaulted,
+        sacl_auto_inherit_required,
+        sacl_auto_inherited,
+        sacl_protected,
+        rm_control,
+    ]: [Option<&Value<'v>>; 17],
+) -> Result<'v, 's, VfsSecDescUpdate> {
+    let rm_control = rm_control
+        .map(|value| {
+            if value.is_nil() {
+                Ok(None)
+            } else {
+                ace_u8(strand, value, "rm_control").map(Some)
+            }
+        })
+        .transpose()?;
+    Ok(VfsSecDescUpdate {
+        owner: update_sid(strand, global, owner, "owner")?,
+        group: update_sid(strand, global, group, "group")?,
+        dacl: update_acl(strand, global, dacl, "dacl")?,
+        sacl: update_acl(strand, global, sacl, "sacl")?,
+        owner_defaulted: update_bool(strand, owner_defaulted, "owner_defaulted")?,
+        group_defaulted: update_bool(strand, group_defaulted, "group_defaulted")?,
+        dacl_present: update_bool(strand, dacl_present, "dacl_present")?,
+        dacl_defaulted: update_bool(strand, dacl_defaulted, "dacl_defaulted")?,
+        dacl_auto_inherit_required: update_bool(
+            strand,
+            dacl_auto_inherit_required,
+            "dacl_auto_inherit_required",
+        )?,
+        dacl_auto_inherited: update_bool(strand, dacl_auto_inherited, "dacl_auto_inherited")?,
+        dacl_protected: update_bool(strand, dacl_protected, "dacl_protected")?,
+        sacl_present: update_bool(strand, sacl_present, "sacl_present")?,
+        sacl_defaulted: update_bool(strand, sacl_defaulted, "sacl_defaulted")?,
+        sacl_auto_inherit_required: update_bool(
+            strand,
+            sacl_auto_inherit_required,
+            "sacl_auto_inherit_required",
+        )?,
+        sacl_auto_inherited: update_bool(strand, sacl_auto_inherited, "sacl_auto_inherited")?,
+        sacl_protected: update_bool(strand, sacl_protected, "sacl_protected")?,
+        rm_control,
+    })
+}
+
 pub(crate) fn create_sec_desc<'v>(
     strand: &mut Strand<'v, '_>,
     global: State<'v, Global<'v>>,
@@ -707,13 +1068,107 @@ impl<'v> Object<'v> for SecDesc {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], []) = unpack!(strand, args, 1, 0)?;
-        let Some(value) = value.as_bin(strand) else {
-            return Err(Error::type_error(strand, "SecDesc: expected bin"));
+        let global = strand.state::<Global<'v>>();
+        let owner = global.syms.owner;
+        let group = global.syms.group;
+        let dacl = global.syms.dacl;
+        let sacl = global.syms.sacl;
+        let owner_defaulted = global.syms.owner_defaulted;
+        let group_defaulted = global.syms.group_defaulted;
+        let dacl_present = global.syms.dacl_present;
+        let dacl_defaulted = global.syms.dacl_defaulted;
+        let dacl_auto_inherit_required = global.syms.dacl_auto_inherit_required;
+        let dacl_auto_inherited = global.syms.dacl_auto_inherited;
+        let dacl_protected = global.syms.dacl_protected;
+        let sacl_present = global.syms.sacl_present;
+        let sacl_defaulted = global.syms.sacl_defaulted;
+        let sacl_auto_inherit_required = global.syms.sacl_auto_inherit_required;
+        let sacl_auto_inherited = global.syms.sacl_auto_inherited;
+        let sacl_protected = global.syms.sacl_protected;
+        let rm_control = global.syms.rm_control;
+        let (
+            [],
+            [
+                value,
+                owner_value,
+                group_value,
+                dacl_value,
+                sacl_value,
+                owner_defaulted_value,
+                group_defaulted_value,
+                dacl_present_value,
+                dacl_defaulted_value,
+                dacl_auto_inherit_required_value,
+                dacl_auto_inherited_value,
+                dacl_protected_value,
+                sacl_present_value,
+                sacl_defaulted_value,
+                sacl_auto_inherit_required_value,
+                sacl_auto_inherited_value,
+                sacl_protected_value,
+                rm_control_value,
+            ],
+        ) = unpack!(
+            strand,
+            args,
+            0,
+            1,
+            owner = None,
+            group = None,
+            dacl = None,
+            sacl = None,
+            owner_defaulted = None,
+            group_defaulted = None,
+            dacl_present = None,
+            dacl_defaulted = None,
+            dacl_auto_inherit_required = None,
+            dacl_auto_inherited = None,
+            dacl_protected = None,
+            sacl_present = None,
+            sacl_defaulted = None,
+            sacl_auto_inherit_required = None,
+            sacl_auto_inherited = None,
+            sacl_protected = None,
+            rm_control = None
+        )?;
+        let values = [
+            owner_value.as_deref(),
+            group_value.as_deref(),
+            dacl_value.as_deref(),
+            sacl_value.as_deref(),
+            owner_defaulted_value.as_deref(),
+            group_defaulted_value.as_deref(),
+            dacl_present_value.as_deref(),
+            dacl_defaulted_value.as_deref(),
+            dacl_auto_inherit_required_value.as_deref(),
+            dacl_auto_inherited_value.as_deref(),
+            dacl_protected_value.as_deref(),
+            sacl_present_value.as_deref(),
+            sacl_defaulted_value.as_deref(),
+            sacl_auto_inherit_required_value.as_deref(),
+            sacl_auto_inherited_value.as_deref(),
+            sacl_protected_value.as_deref(),
+            rm_control_value.as_deref(),
+        ];
+        let descriptor = if let Some(value) = value {
+            if values.iter().any(|value| value.is_some()) {
+                return Err(Error::value(
+                    strand,
+                    "SecDesc: packet form does not accept component options",
+                ));
+            }
+            let value = value
+                .as_bin(strand)
+                .ok_or_else(|| Error::type_error(strand, "SecDesc: expected bin"))?;
+            VfsSecDesc::from_bytes(&value.to_vec())
+                .map_err(|error| Error::value(strand, error.to_string()))?
+        } else {
+            let descriptor = VfsSecDesc::new(0, 1, 0, 0, None, None, None, None)
+                .expect("empty security descriptor is valid");
+            descriptor
+                .with(sec_desc_update(strand, global, values)?)
+                .map_err(|error| Error::value(strand, error.to_string()))?
         };
-        let bytes = value.to_vec();
-        let descriptor = VfsSecDesc::from_bytes(&bytes)
-            .map_err(|error| Error::value(strand, error.to_string()))?;
         this.create_with_annex(strand, SecDesc, descriptor, out);
         Ok(())
     }
@@ -935,6 +1390,85 @@ impl<'v> Object<'v> for SecDesc {
                     this.annex().sacl_loaded(),
                     this.annex().sacl_protected(),
                 )
+            })
+            .method("with", async move |this, strand, args, out| {
+                let (
+                    [],
+                    [
+                        owner_value,
+                        group_value,
+                        dacl_value,
+                        sacl_value,
+                        owner_defaulted_value,
+                        group_defaulted_value,
+                        dacl_present_value,
+                        dacl_defaulted_value,
+                        dacl_auto_inherit_required_value,
+                        dacl_auto_inherited_value,
+                        dacl_protected_value,
+                        sacl_present_value,
+                        sacl_defaulted_value,
+                        sacl_auto_inherit_required_value,
+                        sacl_auto_inherited_value,
+                        sacl_protected_value,
+                        rm_control_value,
+                    ],
+                ) = unpack!(
+                    strand,
+                    args,
+                    0,
+                    0,
+                    owner = None,
+                    group = None,
+                    dacl = None,
+                    sacl = None,
+                    owner_defaulted = None,
+                    group_defaulted = None,
+                    dacl_present = None,
+                    dacl_defaulted = None,
+                    dacl_auto_inherit_required = None,
+                    dacl_auto_inherited = None,
+                    dacl_protected = None,
+                    sacl_present = None,
+                    sacl_defaulted = None,
+                    sacl_auto_inherit_required = None,
+                    sacl_auto_inherited = None,
+                    sacl_protected = None,
+                    rm_control = None
+                )?;
+                let global = strand.state::<Global<'v>>();
+                let update = sec_desc_update(
+                    strand,
+                    global,
+                    [
+                        owner_value.as_deref(),
+                        group_value.as_deref(),
+                        dacl_value.as_deref(),
+                        sacl_value.as_deref(),
+                        owner_defaulted_value.as_deref(),
+                        group_defaulted_value.as_deref(),
+                        dacl_present_value.as_deref(),
+                        dacl_defaulted_value.as_deref(),
+                        dacl_auto_inherit_required_value.as_deref(),
+                        dacl_auto_inherited_value.as_deref(),
+                        dacl_protected_value.as_deref(),
+                        sacl_present_value.as_deref(),
+                        sacl_defaulted_value.as_deref(),
+                        sacl_auto_inherit_required_value.as_deref(),
+                        sacl_auto_inherited_value.as_deref(),
+                        sacl_protected_value.as_deref(),
+                        rm_control_value.as_deref(),
+                    ],
+                )?;
+                let descriptor = this
+                    .annex()
+                    .with(update)
+                    .map_err(|error| Error::value(strand, error.to_string()))?;
+                global
+                    .types
+                    .sec_desc
+                    .create_with_annex(strand, SecDesc, descriptor, out);
+                Ok(())
             })
             .method("to_bin", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
