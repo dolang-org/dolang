@@ -96,5 +96,7 @@ a do
   run.echo "Container directory: $(cd())"
 ```
 
-The `Vfs.unix_socket` class method is available only on Unix. Windows
-provides `Vfs.windows_admin()` for an elevated local context instead.
+`Vfs.unix_socket` connects in the active VFS context. A direct Windows context
+does not support Unix sockets, but a selected remote Unix VFS can connect to
+another Unix-socket daemon. Windows provides `Vfs.windows_admin()` for an
+elevated local context.

@@ -18,21 +18,23 @@ use dolang::{
     },
 };
 
+#[cfg(windows)]
+use crate::util;
 use crate::{
     env::Env as EnvObject,
     error::{ErrorExt, ResultExt as _},
     fs::path::{PathAnnex, create_path_annex, path_from_value},
     global::{Global, ProgramSource},
     local::Env as LocalEnv,
-    pipe_channel, util,
+    pipe_channel,
 };
 
 #[cfg(windows)]
 use dolang_shell_vfs::WindowsSession;
-use dolang_shell_vfs::{AnyVfs, Client, Query, SecurityInfo, TargetInfo, Utf8TypedPathBuf};
+use dolang_shell_vfs::{
+    AnyVfs, Client, Query, SecurityInfo, TargetInfo, Utf8TypedPathBuf, Vfs as _,
+};
 use std::collections::HashMap;
-#[cfg(unix)]
-use std::path::PathBuf;
 
 use crate::error;
 
@@ -280,8 +282,7 @@ pub(crate) struct VfsAnnex<'v> {
 
 enum VfsSource {
     Stream,
-    #[cfg(unix)]
-    Unix(PathBuf),
+    Unix(Utf8TypedPathBuf),
     #[cfg(windows)]
     Windows(WindowsSession),
 }
@@ -301,7 +302,6 @@ impl<'v> Object<'v> for Vfs {
     ) -> Result<'v, 's, ()> {
         match &this.annex().source {
             VfsSource::Stream => fmt!(strand, w, "<shell.Vfs stream>"),
-            #[cfg(unix)]
             VfsSource::Unix(socket) => {
                 fmt!(strand, w, "<shell.Vfs socket: {socket:?}>")
             }
@@ -411,44 +411,19 @@ impl<'v> Object<'v> for Vfs {
             .await
     }
 
-    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let remote_sym = builder.sym("remote");
-        #[cfg(unix)]
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let builder = builder.type_method("unix_socket", async move |_this, strand, args, out| {
-            let ([path], [remote]) = unpack!(strand, args, 1, 0, remote_sym = None)?;
-            let remote = remote
-                .map(|value| util::bool(strand, value, "remote"))
-                .transpose()?
-                .unwrap_or(false);
+            let ([path], []) = unpack!(strand, args, 1, 0)?;
             let global = strand.vm().state::<Global<'v>>();
             let path = path_from_value(strand, global, &path)?;
-
-            let parent_client = {
-                let local = global.local.get(strand);
-                local.vfs().into_client()
-            };
-
-            let client = if let Some(parent_client) = parent_client {
-                let native = dolang_shell_vfs::native_path(path.to_path()).into_sys(strand)?;
-                let fd = error::io_result(
+            let vfs = global.local.get(strand).vfs();
+            let vfs = error::io_result(strand, vfs.unix_socket(path.to_path()).await)?;
+            let client = vfs.into_client().ok_or_else(|| {
+                Error::runtime(
                     strand,
-                    parent_client
-                        .unix_stream_socket(None::<&std::path::Path>, Some(native.as_path()))
-                        .await,
-                )?;
-                if remote {
-                    error::io_result(strand, Client::from_remote_fd(fd))?
-                } else {
-                    error::io_result(strand, Client::try_from(fd))?
-                }
-            } else {
-                let native = dolang_shell_vfs::native_path(path.to_path()).into_sys(strand)?;
-                if remote {
-                    error::io_result(strand, Client::connect_remote(native).await)?
-                } else {
-                    error::io_result(strand, Client::connect(native).await)?
-                }
-            };
+                    "Unix VFS connection did not return a client backend",
+                )
+            })?;
             let Query {
                 env,
                 cwd,
@@ -457,8 +432,7 @@ impl<'v> Object<'v> for Vfs {
                 security,
             } = error::io_result(strand, client.query().await)?;
             let env = Rc::new(LocalEnv::new(None, true, env, target.operating_system));
-            let source =
-                VfsSource::Unix(dolang_shell_vfs::native_path(path.to_path()).into_sys(strand)?);
+            let source = VfsSource::Unix(path.clone());
 
             global.types.vfs.create_with_annex(
                 strand,
@@ -481,16 +455,16 @@ impl<'v> Object<'v> for Vfs {
         });
 
         #[cfg(windows)]
-        let (builder, elevate) = {
+        let (builder, elevate, remote_sym) = {
             let mut builder = builder;
             let elevate = builder.sym("elevate");
-            (builder, elevate)
+            let remote_sym = builder.sym("remote");
+            (builder, elevate, remote_sym)
         };
         let builder = builder.method("stop", async move |this, strand, _args, _out| {
             let borrow = this.annex();
             match &borrow.source {
                 VfsSource::Stream => error::io_result(strand, borrow.handle.client().stop().await)?,
-                #[cfg(unix)]
                 VfsSource::Unix(_) => {
                     error::io_result(strand, borrow.handle.client().stop().await)?
                 }

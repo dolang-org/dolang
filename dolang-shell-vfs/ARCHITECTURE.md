@@ -8,6 +8,19 @@ It has two backends:
 - Direct filesystem access and process spawning
 - An RPC client which forwards to a server running the direct backend.
 
+An RPC client may carry an opaque VFS selector. The selector names an `AnyVfs`
+retained by the outer session, allowing the same request protocol and handlers
+to operate through another remote backend. Every request carries the optional
+selector; retained files, stdio ends, and children are associated with that
+VFS domain.
+
+Opening a Unix-socket VFS through a native direct session transfers the
+connected socket back to the caller, avoiding request forwarding. When the
+outer transport cannot transfer handles, the server retains the connected
+client and returns an opaque VFS selector instead. Stopping a selected VFS
+stops and releases only that backend. Outer-session teardown drops retained
+clients without stopping their independent daemons.
+
 The Unix socket VFS normally exchanges raw file descriptors with `SCM_RIGHTS`.
 An opaque-only client instead asks the server to retain regular files and
 performs byte I/O, seeking, flushing, and truncation through typed opaque RPC

@@ -31,9 +31,11 @@ stdout line splitting, exit code handling) is shared.
 
 The container context (`Context` in `shell.rs`) holds a shell VFS `Client`,
 container-local cwd, and a scoped `Env`. It is stored in `Local` and accessed
-via `local.vfs()`. The `shell.Vfs.unix_socket()` class method connects to the
-shell VFS Unix socket and queries its environment/cwd before installing that
-context for the strand.
+via `local.vfs()`. The `shell.Vfs.unix_socket()` class method asks the active
+VFS to connect to the shell VFS Unix socket and queries its environment/cwd
+before installing that context for the strand. A direct connection uses native
+handle transfer; an opaque outer session retains the inner client and forwards
+requests through an opaque VFS selector.
 
 ## Pipe Channels (Unix)
 

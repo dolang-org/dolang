@@ -29,6 +29,14 @@ impl<M: ?Sized> Clone for Opaque<M> {
     }
 }
 
+impl<M: ?Sized> PartialEq for Opaque<M> {
+    fn eq(&self, other: &Self) -> bool {
+        self.owner == other.owner && self.id == other.id
+    }
+}
+
+impl<M: ?Sized> Eq for Opaque<M> {}
+
 impl<M: ?Sized> fmt::Debug for Opaque<M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Opaque")

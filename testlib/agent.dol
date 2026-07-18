@@ -15,6 +15,12 @@ def with_vfs remote block
       vfs $block
     finally
       vfs.stop()
+  else if remote
+    let vfs = Vfs do run $vfs_bin --stdio
+    try
+      vfs $block
+    finally
+      vfs.stop()
   else
     fs.with_temp_dir do |dir|
       dir.chmod 0o700
@@ -25,7 +31,7 @@ def with_vfs remote block
         do run $vfs_bin $socket
         do
           strand.next()
-          let vfs = Vfs.unix_socket $socket remote: $remote
+          let vfs = Vfs.unix_socket $socket
           return strand.redirect input: $input do vfs $block
 
 pub def test

@@ -27,7 +27,7 @@ use tokio::{
 };
 
 #[cfg(unix)]
-use crate::protocol::{AccessRequest, UnixStreamSocketRequest};
+use crate::protocol::AccessRequest;
 use crate::{
     Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions,
     ProcessStatus, Query, ReadDir, SecDesc, SessionMode, Sid, SidName, StdioRecv, StdioSend,
@@ -36,12 +36,12 @@ use crate::{
     protocol::{
         AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
         FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenHandle,
-        OpenHandlePreference, OpenRequest, QueryResponse, ReadDirResponse, ReadLinkRequest,
-        RemoveDirRequest, RemoveRequest, RenameRequest, RequestKind, ResponseKind, SecDescRequest,
-        SetAttrsRequest, SetPermissionsRequest, SetSecDescRequest, SetTimesRequest,
-        SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget, StreamsRequest,
-        SymlinkKind, SymlinkRequest, Timestamp, VfsProtocol, WellKnownPathRequest, WirePath,
-        XattrNamespaceRequest, XattrRequest, XattrsRequest,
+        OpenHandlePreference, OpenRequest, OpenVfsHandle, QueryResponse, ReadDirResponse,
+        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
+        ResponseKind, SecDescRequest, SetAttrsRequest, SetPermissionsRequest, SetSecDescRequest,
+        SetTimesRequest, SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget,
+        StreamsRequest, SymlinkKind, SymlinkRequest, Timestamp, UnixVfsRequest, VfsProtocol,
+        WellKnownPathRequest, WirePath, XattrNamespaceRequest, XattrRequest, XattrsRequest,
     },
 };
 
@@ -50,6 +50,7 @@ use crate::{
 pub struct Client {
     rpc: dolang_rpc::Client<VfsProtocol>,
     mode: SessionMode,
+    vfs: Option<Opaque<crate::VfsMarker>>,
 }
 
 pub struct ClientFile(ClientFileInner);
@@ -152,7 +153,10 @@ impl RemoteFile {
             Poll::Pending => Poll::Pending,
             Poll::Ready(result) => {
                 self.pending = None;
-                Poll::Ready(result.map_err(rpc_error))
+                Poll::Ready(match result.map_err(rpc_error)? {
+                    ResponseKind::Error(error) => Err(wire_io(error)),
+                    response => Ok(response),
+                })
             }
         }
     }
@@ -632,6 +636,10 @@ fn wire_io(error: crate::protocol::WireError) -> io::Error {
 }
 
 impl Client {
+    fn is_same_vfs(&self, other: &Self) -> bool {
+        self.rpc.is_same_session(&other.rpc) && self.vfs == other.vfs
+    }
+
     /// Starts an opaque-only VFS client on a bidirectional byte stream.
     pub fn new<T>(stream: T) -> Self
     where
@@ -640,6 +648,7 @@ impl Client {
         Self {
             rpc: dolang_rpc::Client::new(stream),
             mode: SessionMode::Remote,
+            vfs: None,
         }
     }
 
@@ -652,6 +661,7 @@ impl Client {
         Self {
             rpc: dolang_rpc::Client::new_split(reader, writer),
             mode: SessionMode::Remote,
+            vfs: None,
         }
     }
 
@@ -659,12 +669,6 @@ impl Client {
     #[cfg(unix)]
     pub async fn connect(path: impl AsRef<Path>) -> crate::Result<Self> {
         Self::from_stream(UnixStream::connect(path).await?).await
-    }
-
-    /// Connect to an agent using opaque-only generic framing over a Unix socket.
-    #[cfg(unix)]
-    pub async fn connect_remote(path: impl AsRef<Path>) -> crate::Result<Self> {
-        Ok(Self::new(UnixStream::connect(path).await?))
     }
 
     /// Connect using an existing `UnixStream`.
@@ -679,15 +683,8 @@ impl Client {
         Ok(Self {
             rpc,
             mode: SessionMode::Native,
+            vfs: None,
         })
-    }
-
-    /// Use an owned Unix socket descriptor with opaque-only generic framing.
-    #[cfg(unix)]
-    pub fn from_remote_fd(value: OwnedFd) -> crate::Result<Self> {
-        let stream = StdUnixStream::from(value);
-        stream.set_nonblocking(true)?;
-        Ok(Self::new(UnixStream::from_std(stream)?))
     }
 
     /// Starts a VFS client on the server end of a connected Windows named pipe.
@@ -705,6 +702,7 @@ impl Client {
         Ok(Self {
             rpc,
             mode: SessionMode::Native,
+            vfs: None,
         })
     }
 
@@ -717,47 +715,50 @@ impl Client {
     }
 
     fn call(&self, request: RequestKind) -> Call<VfsProtocol> {
-        self.rpc.call(request)
+        self.rpc.call(Request {
+            vfs: self.vfs.clone(),
+            kind: request,
+        })
     }
 
     async fn request(&self, request: RequestKind) -> crate::Result<ResponseKind> {
-        self.call(request)
+        let response = self
+            .call(request)
             .await
             .map_err(rpc_error)
-            .map_err(Into::into)
+            .map_err(crate::Error::from)?;
+        match response {
+            ResponseKind::Error(error) => Err(crate::Error::from(error)),
+            response => Ok(response),
+        }
     }
 
-    /// Create a Unix stream socket in the agent namespace and return its descriptor.
-    ///
-    /// If `bind` is provided, the socket is bound to that pathname first. If `connect`
-    /// is provided, the socket is then connected to that pathname. Either or both may
-    /// be omitted.
-    #[cfg(unix)]
-    pub async fn unix_stream_socket<B, C>(
-        &self,
-        bind: Option<B>,
-        connect: Option<C>,
-    ) -> crate::Result<OwnedFd>
-    where
-        B: AsRef<Path>,
-        C: AsRef<Path>,
-    {
-        if self.mode == SessionMode::Remote {
-            return self.unsupported("Unix stream sockets");
-        }
-        let req = UnixStreamSocketRequest {
-            bind: bind
-                .map(|p| WirePath::try_from(p.as_ref().to_path_buf()))
-                .transpose()?,
-            connect: connect
-                .map(|p| WirePath::try_from(p.as_ref().to_path_buf()))
-                .transpose()?,
-        };
-
-        match self.request(RequestKind::UnixStreamSocket(req)).await? {
-            ResponseKind::UnixStreamSocket(result) => {
-                result.map(OsHandle::into_inner).map_err(crate::Error::from)
-            }
+    async fn unix_vfs(&self, path: Utf8TypedPath<'_>) -> crate::Result<crate::AnyVfs> {
+        let request = UnixVfsRequest { path: path.into() };
+        match self.request(RequestKind::UnixVfs(request)).await? {
+            ResponseKind::UnixVfs(result) => match result.map_err(crate::Error::from)? {
+                OpenVfsHandle::Native(handle) => {
+                    #[cfg(unix)]
+                    {
+                        Ok(Self::try_from(handle.into_inner())?.into())
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = handle;
+                        Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "received a native Unix VFS connection on a non-Unix host",
+                        )
+                        .into())
+                    }
+                }
+                OpenVfsHandle::Opaque(vfs) => Ok(Self {
+                    rpc: self.rpc.clone(),
+                    mode: self.mode,
+                    vfs: Some(vfs),
+                }
+                .into()),
+            },
             response => Err(unexpected(response).into()),
         }
     }
@@ -1110,6 +1111,7 @@ impl AsyncWrite for RemoteStdioSend {
             Poll::Ready(result) => {
                 self.pending = None;
                 match result.map_err(rpc_error)? {
+                    ResponseKind::Error(error) => Poll::Ready(Err(wire_io(error))),
                     ResponseKind::StdioSendWrite(result) => Poll::Ready(result.map_err(wire_io)),
                     response => Poll::Ready(Err(unexpected(response))),
                 }
@@ -1131,6 +1133,7 @@ impl AsyncWrite for RemoteStdioSend {
             Poll::Ready(result) => {
                 self.pending = None;
                 match result.map_err(rpc_error)? {
+                    ResponseKind::Error(error) => Poll::Ready(Err(wire_io(error))),
                     ResponseKind::StdioSendWrite(result) => {
                         Poll::Ready(result.map(|_| ()).map_err(wire_io))
                     }
@@ -1162,6 +1165,7 @@ impl AsyncWrite for RemoteStdioSend {
             Poll::Ready(result) => {
                 self.pending = None;
                 match result.map_err(rpc_error)? {
+                    ResponseKind::Error(error) => Poll::Ready(Err(wire_io(error))),
                     ResponseKind::StdioSendClose(result) => match result.map_err(wire_io) {
                         Ok(()) => {
                             self.stdio.take();
@@ -1199,6 +1203,7 @@ impl AsyncRead for RemoteStdioRecv {
             Poll::Ready(result) => {
                 self.pending = None;
                 match result.map_err(rpc_error)? {
+                    ResponseKind::Error(error) => Poll::Ready(Err(wire_io(error))),
                     ResponseKind::StdioRecvRead(result) => match result.map_err(wire_io) {
                         Ok(data) => {
                             buf.put_slice(&data);
@@ -1423,7 +1428,7 @@ impl<'a> CommandBuilder<'a> {
         client: &Client,
         remote: RemoteStdioRecv,
     ) -> crate::Result<(StdioRecvTarget, Option<StdioRecv>)> {
-        if !client.rpc.is_same_session(&remote.client.rpc) {
+        if !client.is_same_vfs(&remote.client) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "stdio receive belongs to a different VFS session",
@@ -1476,7 +1481,7 @@ impl<'a> CommandBuilder<'a> {
         client: &Client,
         remote: RemoteStdioSend,
     ) -> crate::Result<(StdioSendTarget, Option<StdioSend>)> {
-        if !client.rpc.is_same_session(&remote.client.rpc) {
+        if !client.is_same_vfs(&remote.client) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "stdio send belongs to a different VFS session",
@@ -1670,7 +1675,7 @@ impl<'a> Command for CommandBuilder<'a> {
 
     fn stdin(&mut self, stdio: StdioRecv) -> io::Result<&mut Self> {
         if let StdioRecv::Remote(remote) = &stdio
-            && !self.client.rpc.is_same_session(&remote.client.rpc)
+            && !self.client.is_same_vfs(&remote.client)
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -1683,7 +1688,7 @@ impl<'a> Command for CommandBuilder<'a> {
 
     fn stdout(&mut self, stdio: StdioSend) -> io::Result<&mut Self> {
         if let StdioSend::Remote(remote) = &stdio
-            && !self.client.rpc.is_same_session(&remote.client.rpc)
+            && !self.client.is_same_vfs(&remote.client)
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -1728,7 +1733,7 @@ impl<'a> Command for CommandBuilder<'a> {
 
     fn stderr(&mut self, stdio: StdioSend) -> io::Result<&mut Self> {
         if let StdioSend::Remote(remote) = &stdio
-            && !self.client.rpc.is_same_session(&remote.client.rpc)
+            && !self.client.is_same_vfs(&remote.client)
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -1983,6 +1988,10 @@ impl Vfs for Client {
 
     fn command(&self, program: Utf8TypedPath<'_>) -> Self::Command<'_> {
         CommandBuilder::new(self, program)
+    }
+
+    async fn unix_socket(&self, path: Utf8TypedPath<'_>) -> crate::Result<crate::AnyVfs> {
+        self.unix_vfs(path).await
     }
 
     async fn pipe(&self) -> crate::Result<(StdioSend, StdioRecv)> {
@@ -2637,6 +2646,68 @@ mod tests {
 
         client.stop().await.unwrap();
         server.await.unwrap().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn resource_operations_use_the_handle_route() {
+        let temp = tempdir().unwrap();
+        let socket = temp.path().join("inner.sock");
+        let inner_server = Server::bind(&socket).await.unwrap();
+        let inner_task = tokio::spawn(inner_server.accept());
+
+        let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
+        let outer_task = tokio::spawn(Server::new(server_stream).serve());
+        let root = Client::new(client_stream);
+        let path = crate::typed_path(socket).unwrap();
+        let selected = root
+            .unix_socket(path.to_path())
+            .await
+            .unwrap()
+            .into_client()
+            .unwrap();
+
+        let (mut send, mut recv) = root.pipe().await.unwrap();
+        send.write_all(b"root").await.unwrap();
+        let mut data = [0; 4];
+        recv.read_exact(&mut data).await.unwrap();
+        assert_eq!(&data, b"root");
+
+        let send_opaque = match &send {
+            crate::StdioSend::Remote(send) => send.stdio.as_ref().unwrap().clone(),
+            crate::StdioSend::Native(_) => panic!("remote pipe returned a native send end"),
+        };
+        let response = selected
+            .request(RequestKind::StdioSendClose {
+                stdio: send_opaque.clone(),
+            })
+            .await
+            .unwrap();
+        let crate::protocol::ResponseKind::StdioSendClose(result) = response else {
+            panic!("stdio close returned the wrong response");
+        };
+        result.unwrap();
+        let mut eof = [0; 1];
+        assert_eq!(recv.read(&mut eof).await.unwrap(), 0);
+
+        let encoded = postcard::to_allocvec(&send_opaque).unwrap();
+        let wrong_vfs: dolang_rpc::Opaque<crate::VfsMarker> =
+            postcard::from_bytes(&encoded).unwrap();
+        let mut wrong_client = root.clone();
+        wrong_client.vfs = Some(wrong_vfs);
+        assert_eq!(
+            wrong_client.query().await.unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        selected.stop().await.unwrap();
+        assert_eq!(
+            selected.query().await.unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        inner_task.await.unwrap().unwrap();
+        root.stop().await.unwrap();
+        outer_task.await.unwrap().unwrap();
     }
 
     #[test]
