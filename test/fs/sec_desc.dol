@@ -9,7 +9,7 @@ import sys std agent
     - remove
     - sec_desc
     - set_sec_desc
-  security:
+  security.windows:
     - SecDesc
 
 #[agent.test]

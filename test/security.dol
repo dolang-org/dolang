@@ -1,4 +1,6 @@
 import sys
+  sys.windows:
+    - Guid
   sys:
     - NotFoundError
   std:
@@ -17,21 +19,22 @@ import sys
     - assert_type
     - test
   security:
-    - Ace
-    - Acl
-    - Guid
-    - SecDesc
-    - Sid
-    - SidName
-    - TokenGroup
-    - TokenInfo
-    - UnixInfo
     - token_info
     - unix_info
     - user_name
     - user_id
     - group_name
     - group_id
+  security.unix:
+    - UnixInfo
+  security.windows:
+    - Ace
+    - Acl
+    - SecDesc
+    - Sid
+    - SidName
+    - TokenGroup
+    - TokenInfo
 
 #[test]
 def sid_converts_between_structural_forms()

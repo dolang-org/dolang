@@ -1,4 +1,4 @@
-# TokenGroup
+# `TokenGroup`
 
 Windows access token group membership.
 

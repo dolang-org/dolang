@@ -9,6 +9,7 @@ types.
 | ------------------------------------------------------- | --------------------------------------------- |
 | [`OsInfo`](./osinfo.md)                                 | Operating system target information           |
 | [`CpuInfo`](./cpuinfo.md)                               | CPU target information                        |
+| [`ErrorCode`](./error-code.md)                          | Native system error code                      |
 | [`Error`](./error.md)                                   | Error raised for system and I/O failures      |
 | [`NotFoundError`](./not-found-error.md)                 | Subtype for missing files, paths, or programs |
 | [`PermissionDeniedError`](./permission-denied-error.md) | Subtype for permission failures               |

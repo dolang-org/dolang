@@ -1,4 +1,4 @@
-# TokenInfo
+# `TokenInfo`
 
 Windows process token information for the active VFS target.
 

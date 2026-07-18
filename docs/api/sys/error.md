@@ -9,23 +9,26 @@ catch Error: err
   echo $str(err)
 ```
 
-`str(err)` returns the underlying system error message.
+`str(err)` returns the underlying system error message and appends the native
+symbolic code in parentheses when it is known.
 
-`Error` exposes an `errno` field containing the underlying Unix error number
-when one exists:
+## Fields
+
+### `code`
+
+`code` contains the underlying native system error code when one exists:
 
 ```
 try
   fs.read "/definitely/missing"
 catch Error: err
-  assert_eq $err.errno 2
+  echo $err.code
 ```
 
-On Windows, accessing `errno` raises [`FieldError`](../std/field-error.md). For
-Unix failures without an OS error number, `errno` is `nil`.
-
-On Windows, `winerror` contains the underlying Win32 error code when one
-exists. On Unix, accessing `winerror` raises `FieldError`.
+The value is [`sys.linux.LinuxErrno`](./linux/linux-errno.md),
+[`sys.macos.MacosErrno`](./macos/macos-errno.md), or
+[`sys.windows.WinError`](./windows/win-error.md), according to the system where
+the error originated. Errors without a native code expose `nil`.
 
 ## Inherits
 

@@ -6,7 +6,7 @@ use dolang::runtime::{
     Error, Instance, Object, Output, Result, Strand, Type, object::TypeBuilder, value::TypeObject,
 };
 
-use crate::global::Global;
+use crate::{error_code, global::Global};
 
 pub(crate) struct SysError;
 pub(crate) struct NotFoundError;
@@ -35,7 +35,14 @@ pub(crate) enum SysErrorSource {
 
 impl SysErrorAnnex {
     fn message(&self) -> String {
-        self.error.to_string()
+        let message = self.error.to_string();
+        let Some((operating_system, code)) = self.error.system_code(self.operating_system) else {
+            return message;
+        };
+        let Some(name) = error_code::system_code_name(operating_system, code) else {
+            return message;
+        };
+        format!("{message} ({name})")
     }
 }
 
@@ -47,46 +54,17 @@ impl SysErrorSource {
         }
     }
 
-    fn errno(&self) -> Option<i32> {
+    fn system_code(
+        &self,
+        default_operating_system: dolang_shell_vfs::OperatingSystem,
+    ) -> Option<(dolang_shell_vfs::OperatingSystem, i32)> {
         match self {
-            Self::Io(error) => {
-                #[cfg(unix)]
-                return error.raw_os_error();
-                #[cfg(not(unix))]
-                {
-                    let _ = error;
-                    None
-                }
-            }
-            Self::Vfs(error) => error.system().and_then(|error| {
-                matches!(
-                    error.operating_system(),
-                    dolang_shell_vfs::OperatingSystem::Linux
-                        | dolang_shell_vfs::OperatingSystem::Macos
-                )
-                .then(|| error.code())
-            }),
-        }
-    }
-
-    fn winerror(&self) -> Option<i32> {
-        match self {
-            Self::Io(error) => {
-                #[cfg(windows)]
-                return error.raw_os_error();
-                #[cfg(not(windows))]
-                {
-                    let _ = error;
-                    None
-                }
-            }
-            Self::Vfs(error) => error.system().and_then(|error| {
-                matches!(
-                    error.operating_system(),
-                    dolang_shell_vfs::OperatingSystem::Windows
-                )
-                .then(|| error.code())
-            }),
+            Self::Io(error) => error
+                .raw_os_error()
+                .map(|code| (default_operating_system, code)),
+            Self::Vfs(error) => error
+                .system()
+                .map(|error| (*error.operating_system(), error.code())),
         }
     }
 }
@@ -111,34 +89,17 @@ impl<'v, T: SysErrorType<'v>> Object<'v> for SysErrorObject<T> {
     type Type = ();
     type TypeAnnex = ();
 
-    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let errno = builder.sym("errno");
-        let winerror = builder.sym("winerror");
-        builder
-            .get("errno", move |this, strand, out| {
-                if matches!(
-                    this.annex().operating_system,
-                    dolang_shell_vfs::OperatingSystem::Windows
-                ) {
-                    return Err(Error::field(strand, errno));
-                }
-                if let Some(errno) = this.annex().error.errno() {
-                    Output::set(strand, out, i64::from(errno));
-                }
-                Ok(())
-            })
-            .get("winerror", move |this, strand, out| {
-                if !matches!(
-                    this.annex().operating_system,
-                    dolang_shell_vfs::OperatingSystem::Windows
-                ) {
-                    return Err(Error::field(strand, winerror));
-                }
-                if let Some(winerror) = this.annex().error.winerror() {
-                    Output::set(strand, out, i64::from(winerror));
-                }
-                Ok(())
-            })
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.get("code", |this, strand, out| {
+            if let Some((operating_system, code)) = this
+                .annex()
+                .error
+                .system_code(this.annex().operating_system)
+            {
+                error_code::create_system_code(strand, operating_system, code, out);
+            }
+            Ok(())
+        })
     }
 
     fn display<'a, 's>(
@@ -376,6 +337,72 @@ pub(crate) trait ResultExt<T> {
 impl<T, E: ErrorExt> ResultExt<T> for std::result::Result<T, E> {
     fn into_sys<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
         self.map_err(|error| error.into_sys(strand))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use dolang_shell_vfs::{OperatingSystem, SystemError};
+
+    use super::{SysErrorAnnex, SysErrorSource};
+
+    #[test]
+    fn io_error_without_native_code_has_no_system_code() {
+        let error = SysErrorSource::Io(io::Error::other("synthetic"));
+        assert_eq!(error.system_code(OperatingSystem::Linux), None);
+    }
+
+    #[test]
+    fn vfs_system_code_preserves_its_origin() {
+        let error = SysErrorSource::Vfs(
+            SystemError::new(
+                OperatingSystem::Windows,
+                2,
+                io::ErrorKind::NotFound,
+                "missing",
+            )
+            .into(),
+        );
+        assert_eq!(
+            error.system_code(OperatingSystem::Linux),
+            Some((OperatingSystem::Windows, 2))
+        );
+    }
+
+    #[test]
+    fn sys_error_message_appends_known_symbolic_code() {
+        let error = SysErrorAnnex {
+            error: SysErrorSource::Vfs(
+                SystemError::new(
+                    OperatingSystem::Linux,
+                    2,
+                    io::ErrorKind::NotFound,
+                    "missing",
+                )
+                .into(),
+            ),
+            operating_system: OperatingSystem::Linux,
+        };
+        assert_eq!(error.message(), "missing (ENOENT)");
+    }
+
+    #[test]
+    fn sys_error_message_leaves_unknown_code_numeric_only() {
+        let error = SysErrorAnnex {
+            error: SysErrorSource::Vfs(
+                SystemError::new(
+                    OperatingSystem::Linux,
+                    i32::MAX,
+                    io::ErrorKind::Other,
+                    "unknown",
+                )
+                .into(),
+            ),
+            operating_system: OperatingSystem::Linux,
+        };
+        assert_eq!(error.message(), "unknown");
     }
 }
 

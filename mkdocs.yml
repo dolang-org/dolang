@@ -222,21 +222,42 @@ nav:
     - sudo: api/sudo.md
     - security:
       - api/security/index.md
-      - api/security/secdesc.md
-      - api/security/sid.md
-      - api/security/sidname.md
-      - api/security/tokengroup.md
-      - api/security/unixinfo.md
-      - api/security/tokeninfo.md
+      - unix:
+        - api/security/unix/index.md
+        - api/security/unix/unixinfo.md
+      - windows:
+        - api/security/windows/index.md
+        - api/security/windows/acl.md
+        - api/security/windows/ace.md
+        - api/security/windows/secdesc.md
+        - api/security/windows/sid.md
+        - api/security/windows/sidname.md
+        - api/security/windows/tokengroup.md
+        - api/security/windows/tokeninfo.md
     - sys:
       - api/sys/index.md
-      - api/sys/osinfo.md
-      - api/sys/cpuinfo.md
       - api/sys/already-exists-error.md
+      - api/sys/cpuinfo.md
+      - api/sys/error-code.md
       - api/sys/error.md
       - api/sys/not-found-error.md
+      - api/sys/osinfo.md
       - api/sys/permission-denied-error.md
       - api/sys/timed-out-error.md
+      - api/sys/unsupported-error.md
+    - sys.linux:
+      - api/sys/linux/index.md
+      - api/sys/linux/linux-errno.md
+    - sys.macos:
+      - api/sys/macos/index.md
+      - api/sys/macos/macos-errno.md
+    - sys.unix:
+      - api/sys/unix/index.md
+      - api/sys/unix/errno.md
+    - sys.windows:
+      - api/sys/windows/index.md
+      - api/sys/windows/guid.md
+      - api/sys/windows/win-error.md
     - systemd: api/systemd.md
     - test:
       - api/test/index.md

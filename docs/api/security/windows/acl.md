@@ -1,4 +1,4 @@
-# Acl
+# `Acl`
 
 Immutable view of a native Windows access-control list.
 
@@ -26,4 +26,4 @@ Lazy immutable array view of [`Ace`](./ace.md) values.
 
 Returns the exact native ACL packet.
 
-**Returns:** [`bin`](../std/bin.md)
+**Returns:** [`bin`](../../std/bin.md)

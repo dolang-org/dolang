@@ -178,7 +178,7 @@ existing handle.
 | `dacl`  | [`bool`](../std/bool.md) | Load the discretionary ACL |
 | `sacl`  | [`bool`](../std/bool.md) | Load the system ACL        |
 
-**Returns:** [`SecDesc`](../security/secdesc.md)
+**Returns:** [`security.windows.SecDesc`](../security/windows/secdesc.md)
 
 The operation raises a permission error if the file was opened without the
 necessary Windows access rights. Other platforms raise `UnsupportedError`.
@@ -190,9 +190,9 @@ this file's existing handle.
 
 **Parameters:**
 
-| Name   | Type                                | Description                  |
-| ------ | ----------------------------------- | ---------------------------- |
-| `desc` | [`SecDesc`](../security/secdesc.md) | Security descriptor to apply |
+| Name   | Type                                                         | Description                  |
+| ------ | ------------------------------------------------------------ | ---------------------------- |
+| `desc` | [`security.windows.SecDesc`](../security/windows/secdesc.md) | Security descriptor to apply |
 
 The operation raises a permission error if the file was opened without the
 necessary Windows access rights. Windows may normalize the resulting

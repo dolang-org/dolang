@@ -36,7 +36,7 @@ pub(crate) struct UnixInfo;
 
 impl<'v> Object<'v> for UnixInfo {
     const NAME: &'v str = "UnixInfo";
-    const MODULE: &'v str = "security";
+    const MODULE: &'v str = "security.unix";
     const SLOTS: usize = 1;
     type Annex = UnixSecurityInfo;
     type Type = ();
@@ -109,7 +109,7 @@ fn sid_from_value<'v, 's>(
 
 impl<'v> Object<'v> for Sid {
     const NAME: &'v str = "Sid";
-    const MODULE: &'v str = "security";
+    const MODULE: &'v str = "security.windows";
     const SLOTS: usize = 1;
     type Annex = VfsSid;
     type Type = ();
@@ -188,7 +188,12 @@ impl<'v> Object<'v> for Sid {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        fmt!(strand, w, "<security.Sid {}>", this.annex().as_ref())
+        fmt!(
+            strand,
+            w,
+            "<security.windows.Sid {}>",
+            this.annex().as_ref()
+        )
     }
 }
 
@@ -205,7 +210,7 @@ fn create_guid<'v>(
 
 impl<'v> Object<'v> for Guid {
     const NAME: &'v str = "Guid";
-    const MODULE: &'v str = "security";
+    const MODULE: &'v str = "sys.windows";
     type Annex = VfsGuid;
     type Type = ();
     type TypeAnnex = ();
@@ -253,7 +258,7 @@ impl<'v> Object<'v> for Guid {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn dolang::runtime::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        fmt!(strand, w, "<security.Guid {}>", &*this.annex())
+        fmt!(strand, w, "<sys.windows.Guid {}>", &*this.annex())
     }
 
     fn eq<'a, 's>(
@@ -331,7 +336,7 @@ struct AclAces;
 impl<'v> ArrayLike<'v> for AclAces {
     type Object = Acl;
 
-    const MODULE: &'v str = "security";
+    const MODULE: &'v str = "security.windows";
     const NAME: &'v str = "AclAces";
 
     fn len(this: Instance<'v, '_, Acl>, strand: &mut Strand<'v, '_>) -> usize {
@@ -367,7 +372,7 @@ impl<'v> ArrayLike<'v> for AclAces {
 
 impl<'v> Object<'v> for Acl {
     const NAME: &'v str = "Acl";
-    const MODULE: &'v str = "security";
+    const MODULE: &'v str = "security.windows";
     const SLOTS: usize = 1;
     type Annex = AclComponent;
     type Type = ();
@@ -438,7 +443,7 @@ fn with_ace<'v, 's, T>(
 
 impl<'v> Object<'v> for Ace {
     const NAME: &'v str = "Ace";
-    const MODULE: &'v str = "security";
+    const MODULE: &'v str = "security.windows";
     const SLOTS: usize = 1;
     type Annex = AceAnnex;
     type Type = ();
@@ -686,12 +691,12 @@ pub(crate) fn sec_desc_from_value<'v, 's>(
         .sec_desc
         .downcast(value)
         .map(|value| value.annex().clone())
-        .ok_or_else(|| Error::type_error(strand, "expected security.SecDesc"))
+        .ok_or_else(|| Error::type_error(strand, "expected security.windows.SecDesc"))
 }
 
 impl<'v> Object<'v> for SecDesc {
     const NAME: &'v str = "SecDesc";
-    const MODULE: &'v str = "security";
+    const MODULE: &'v str = "security.windows";
     type Annex = VfsSecDesc;
     type Type = ();
     type TypeAnnex = ();
@@ -956,7 +961,7 @@ fn create_sid_name<'v>(
 
 impl<'v> Object<'v> for SidName {
     const NAME: &'v str = "SidName";
-    const MODULE: &'v str = "security";
+    const MODULE: &'v str = "security.windows";
     type Annex = VfsSidName;
     type Type = ();
     type TypeAnnex = ();
@@ -1044,7 +1049,7 @@ pub(crate) struct TokenGroup;
 
 impl<'v> Object<'v> for TokenGroup {
     const NAME: &'v str = "TokenGroup";
-    const MODULE: &'v str = "security";
+    const MODULE: &'v str = "security.windows";
     const SLOTS: usize = 1;
     type Annex = VfsTokenGroup;
     type Type = ();
@@ -1113,7 +1118,7 @@ struct TokenGroups;
 impl<'v> ArrayLike<'v> for TokenGroups {
     type Object = TokenInfo;
 
-    const MODULE: &'v str = "security";
+    const MODULE: &'v str = "security.windows";
     const NAME: &'v str = "TokenGroups";
 
     fn len(this: Instance<'v, '_, Self::Object>, _strand: &mut Strand<'v, '_>) -> usize {
@@ -1152,7 +1157,7 @@ impl<'v> ArrayLike<'v> for TokenGroups {
 
 impl<'v> Object<'v> for TokenInfo {
     const NAME: &'v str = "TokenInfo";
-    const MODULE: &'v str = "security";
+    const MODULE: &'v str = "security.windows";
     const SLOTS: usize = 4;
     type Annex = WindowsTokenInfo;
     type Type = ();
@@ -1364,8 +1369,15 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             Output::set(strand, out, gid);
             Ok(())
         })
+        .commit();
+
+    builder
+        .module("security.unix")
         .value("UnixInfo", global.types.unix_info)
-        .value("Guid", global.types.guid)
+        .commit();
+
+    builder
+        .module("security.windows")
         .value("Acl", global.types.acl)
         .value("Ace", global.types.ace)
         .value("SecDesc", global.types.sec_desc)

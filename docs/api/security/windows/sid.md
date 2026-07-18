@@ -1,4 +1,4 @@
-# Sid
+# `Sid`
 
 Windows security identifier.
 
@@ -10,9 +10,9 @@ Constructs a SID from its canonical string or native binary representation.
 
 **Parameters:**
 
-| Name    | Type                                           | Description        |
-| ------- | ---------------------------------------------- | ------------------ |
-| `value` | [`str`](../std/str.md)\|[`bin`](../std/bin.md) | SID representation |
+| Name    | Type                                                 | Description        |
+| ------- | ---------------------------------------------------- | ------------------ |
+| `value` | [`str`](../../std/str.md)\|[`bin`](../../std/bin.md) | SID representation |
 
 **Returns:** `Sid`
 
@@ -32,7 +32,7 @@ Number of sub-authorities.
 
 ### `sub_authorities`
 
-Sub-authorities as an immutable [`tuple`](../std/tuple.md).
+Sub-authorities as an immutable [`tuple`](../../std/tuple.md).
 
 ## Methods
 
@@ -44,7 +44,7 @@ Resolves the SID in the active Windows VFS target.
 
 **Errors:**
 
-- Raises [`sys.NotFoundError`](../sys/not-found-error.md) when the SID is
+- Raises [`sys.NotFoundError`](../../sys/not-found-error.md) when the SID is
   unmapped.
 - Raises `UnsupportedError` for Unix targets.
 
@@ -52,7 +52,7 @@ Resolves the SID in the active Windows VFS target.
 
 Returns the native Windows packet representation.
 
-**Returns:** [`bin`](../std/bin.md)
+**Returns:** [`bin`](../../std/bin.md)
 
 ```
 let sid = Sid S-1-5-32-544

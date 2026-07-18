@@ -2,19 +2,8 @@
 
 The `security` module reports the security identity of the active VFS target.
 
-## Types
-
-| Type                            | Description                        |
-| ------------------------------- | ---------------------------------- |
-| [`Guid`](./guid.md)             | Windows globally unique identifier |
-| [`Acl`](./acl.md)               | Windows access-control list        |
-| [`Ace`](./ace.md)               | Windows access-control entry       |
-| [`SecDesc`](./secdesc.md)       | Windows security descriptor        |
-| [`Sid`](./sid.md)               | Windows security identifier        |
-| [`SidName`](./sidname.md)       | Resolved Windows account identity  |
-| [`TokenGroup`](./tokengroup.md) | Windows token group membership     |
-| [`UnixInfo`](./unixinfo.md)     | Unix process identity information  |
-| [`TokenInfo`](./tokeninfo.md)   | Windows process token information  |
+Platform-specific types are exposed by [`security.unix`](./unix/index.md) and
+[`security.windows`](./windows/index.md).
 
 ## Functions
 
@@ -78,7 +67,7 @@ Resolves a Unix group name in the active VFS target.
 
 Returns Unix security information captured for the active VFS context.
 
-**Returns:** [`UnixInfo`](./unixinfo.md)
+**Returns:** [`security.unix.UnixInfo`](./unix/unixinfo.md)
 
 **Errors:**
 
@@ -93,7 +82,7 @@ echo "uid=$info.uid euid=$info.euid"
 
 Returns Windows token information captured for the active VFS context.
 
-**Returns:** [`TokenInfo`](./tokeninfo.md)
+**Returns:** [`security.windows.TokenInfo`](./windows/tokeninfo.md)
 
 **Errors:**
 
