@@ -98,10 +98,11 @@ let branch = sub do git rev-parse --abbrev-ref HEAD
 echo "Building on $kernel, branch $branch"
 ```
 
-## Container Transparency
+## VFS
 
-Do can run programs and access files inside containers while running on the
-host:
+Do can run ordinary blocks in the context of containers, on SSH hosts, or with
+administrator privileges. Filesystem access, launching external programs,
+environment variables, working directory, and more follow the selected target:
 
 ```
 import shlex
@@ -115,7 +116,7 @@ def read_key ctr path key
     for line = file
       let k v = line.split = limit: 1
       if (k == key)
-        return next(shlex.split v)
+        return shlex.split(v).next()
 
 echo $ read_key ubuntu:24.04 /etc/os-release PRETTY_NAME
 ```
@@ -127,7 +128,8 @@ echo $ read_key ubuntu:24.04 /etc/os-release PRETTY_NAME
 build and run containers ([podman](./api/podman/index.md),
 [docker](./api/docker/index.md),
 [toolbx](./api/toolbx.md)), parse CLI arguments
-([`args`](./api/args.md)), elevate privileges ([`sudo`](./api/sudo.md)), read
+([`args`](./api/args.md)), elevate privileges ([`admin`](./api/admin.md),
+[`sudo`](./api/sudo.md)), read
 system configuration ([`systemd`](./api/systemd.md), [`xdg`](./api/xdg.md)),
 and show friendly [progress indicators](./api/progress/index.md).
 
@@ -143,5 +145,5 @@ and show friendly [progress indicators](./api/progress/index.md).
 
 **New to Do?** Start with the [Language Guide](./language/overview.md).
 
-**Learn by example?** Check out [Examples](./examples.md) showing real-world use
-cases.
+**Building a script?** Follow the
+[command-line tool worked example](./shell/cli-tools.md).

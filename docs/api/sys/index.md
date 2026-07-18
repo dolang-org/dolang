@@ -1,7 +1,7 @@
 # sys
 
-The `sys` module exposes facts about the current target system and system error
-types.
+The `sys` module exposes basic information and types associated with systems
+and platforms supported by Do.
 
 ## Types
 
@@ -21,7 +21,7 @@ types.
 
 ### `os_info()`
 
-Returns target operating system information.
+Returns operating system information for the current VFS target.
 
 ```
 if (sys.os_info().family == :WINDOWS:)
@@ -30,7 +30,7 @@ if (sys.os_info().family == :WINDOWS:)
 
 ### `cpu_info()`
 
-Returns target CPU information.
+Returns CPU information for the current VFS target.
 
 ```
 let info = sys.cpu_info()

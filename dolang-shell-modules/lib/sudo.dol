@@ -40,13 +40,25 @@ do
     --
     $cmd ...args
 
-# Run a verbatim command through `sudo`.
+# Runs a verbatim command through `sudo`.
 #
-# Pass `user` to run as a user other than root.
+# # Parameters
 #
-# **Example:**
+# | Name   | Type   | Description                        |
+# | ------ | ------ | ---------------------------------- |
+# | `cmd`  |        | Program to run                     |
+# | `user` | `str?` | Account to use instead of root     |
+# | `args` | `*`    | Arguments passed verbatim to `cmd` |
+#
+# # Returns
+#
+# `nil`
+#
+# # Example
+#
 # ```
-# i
+# sudo.run install -m 0644 example.conf /etc/example.conf
+# ```
 pub def run
   cmd
   :user = nil
@@ -54,17 +66,26 @@ pub def run
 do
   run_command $cmd :user ...args.pos_only()
 
-# Run a function with elevated privileges via `sudo`.
+# Runs a block with elevated privileges through `sudo`.
 #
-# Filesystem access and spawned programs will be redirected for
-# the duration of the function.
+# Filesystem access and spawned programs use a temporary elevated VFS for the
+# duration of the block. Pass `user` to run as an account other than root.
 #
-# Pass `user` to run as a specific user instead of root.
+# # Parameters
 #
-# **Example:**
+# | Name   | Type     | Description                    |
+# | ------ | -------- | ------------------------------ |
+# | `func` | callable | Block to run                   |
+# | `user` | `str?`   | Account to use instead of root |
+#
+# # Returns
+#
+# The result of `func`.
+#
+# # Example
+#
 # ```
-# import fs
-# let shadow = sudo.with do fs.read /etc/shadow
+# sudo.with do run cat /etc/shadow
 # ```
 pub def with
   func

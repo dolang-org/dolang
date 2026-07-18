@@ -134,7 +134,7 @@ open input.txt r do |in| open output.txt w do |out|
 
 ### `spawn func`
 
-Spawns `func` to run concurrently in a background strand, returning a
+Runs `func` concurrently in a background strand, returning a
 [Strand](strand.md) handle for managing it.
 
 #### Parameters
@@ -157,20 +157,18 @@ let result = worker.join()
 echo "Result: $result"
 ```
 
-The strand runs independently in the background. Use the returned Strand's
-[`join`](strand.md#join) method to wait for completion and get the result,
-or [`cancel`](strand.md#cancel) to request early termination.
+Use the returned `Strand`'s [`join`](strand.md#join) method to wait for
+completion and get the result, or [`cancel`](strand.md#cancel) to request early
+termination.
 
-See [Strand](strand.md) for the handle's fields and methods.
+Background strands do not inherit active [`Resource`](./resource.md)
+reservations or the strand-local values of `Key`s.
 
 ### `stream func`
 
-Spawns `func` as a background strand with input and output channels
-pre-wired, returning a [Stream](./stream.md) handle. The callable runs with its
-ambient input and output connected to the stream's channels, so it can use
-`next` to read values fed in from outside and `put` to send values out.
-The background strand does not inherit active [`Resource`](./resource.md)
-reservations from its creator.
+Runs `func` in a background strand with its strand-local input `Iter` and
+output `Sink` connected to channels. The returned [Stream](./stream.md) handle
+can be used to communicate with it.
 
 #### Parameters
 
@@ -202,12 +200,9 @@ s.join()
 assert_eq $results[1] [2, 4, 6]
 ```
 
-See [Stream](./stream.md) for the handle's fields and methods.
-
 ### `channel buffer?`
 
-Creates a new channel for communication between strands. Returns a
-`[sender, receiver]` pair.
+Creates a new channel for communication between strands.
 
 #### Parameters
 
@@ -217,7 +212,9 @@ Creates a new channel for communication between strands. Returns a
 
 #### Returns
 
-`[sender, receiver]`
+`(`[`Sender`](sender.md)`, `[`Receiver`](receiver.md)`)`
+
+#### Example
 
 ```
 let send recv = channel()  # unbuffered channel
@@ -238,8 +235,8 @@ A pipeline stage that emits all values from an iterable to its output.
 
 ### `where predicate`
 
-A pipeline stage that filters values. Reads from input, tests each value with
-the predicate, and writes passing values to output.
+A pipeline stage that filters values. Reads from its input, tests each value
+with the predicate, and writes passing values to ts output.
 
 #### Parameters
 
@@ -249,8 +246,8 @@ the predicate, and writes passing values to output.
 
 ### `each func`
 
-A pipeline stage that transforms values. Reads from input, calls `func` on
-each value, and writes the result to output.
+A pipeline stage that transforms values. Reads from its input, calls `func` on
+each value, and writes the result to its output.
 
 #### Parameters
 
@@ -265,9 +262,9 @@ target).
 
 #### Parameters
 
-| Name     | Type   | Description                                    |
-| -------- | ------ | ---------------------------------------------- |
-| `target` | output | collection to add to (defaults to a new array) |
+| Name     | Type   | Description                                      |
+| -------- | ------ | ------------------------------------------------ |
+| `target` | output | collection to add to (defaults to a new `array`) |
 
 #### Returns
 

@@ -15,8 +15,8 @@ Modules are resolved in this order:
 1. Paths supplied with repeatable **`--module-path <path>`** options, in the
    order specified
 2. **Site directory**:
-   - `~/.local/share/dolang/site/` (Unix)
-   - `%APPDATA%\dolang\site\` (Windows)
+     - `~/.local/share/dolang/site/` (Unix)
+     - `%APPDATA%\dolang\site\` (Windows)
 
 For example, `dolang --module-path ./lib --module-path ../shared script.dol`
 searches `./lib`, then `../shared`, then the site directory.

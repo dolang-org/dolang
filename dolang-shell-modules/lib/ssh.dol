@@ -1,14 +1,17 @@
 import _ssh
 
-# Runs `block` on `host` through SSH and a remote VFS. Filesystem access and
-# spawned programs use the remote VFS for the duration of the block.
+# Runs `block` on `host` through SSH and a remote VFS. Filesystem access,
+# spawned programs, environment, working directory, system information, and
+# security queries use the remote target for the duration of the block.
 #
 # `identity:` and `jump:` may be repeated. TTY allocation and SSH escape
 # processing are disabled. Agent forwarding is disabled unless
 # `forward_agent` is true. Advanced settings not represented here continue to
 # come from SSH configuration.
 #
-# The SSH session is terminated when `block` exits, including during unwind.
+# The remote host must provide `dolang-vfs` in its command search path unless
+# `command` supplies another location. The SSH session is terminated when
+# `block` exits, including during unwind.
 #
 # # Parameters
 #
