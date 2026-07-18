@@ -7,9 +7,17 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  FORCE_COLOR: 3
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: >-
+      dolang --strict --no-cache
+      --import dodo --import fs
+      {0}
 
 jobs:
   build-release:
@@ -31,6 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Setup Dolang
+        id: dolang
+        uses: ./.github/actions/setup-dolang
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -41,124 +53,66 @@ jobs:
 
       - name: Install LLVM (macOS only)
         if: matrix.os == 'macos-latest'
-        run: brew install llvm
-
-      - name: Set LIBCLANG_PATH (macOS only)
-        if: matrix.os == 'macos-latest'
-        run: echo "LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib" >> "$GITHUB_ENV"
+        run: |
+          run brew install llvm
+          fs.append $env["GITHUB_ENV"] |
+            LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib
 
       - name: Install musl target (Linux only)
         if: matrix.os == 'ubuntu-latest'
-        run: rustup target add x86_64-unknown-linux-musl
+        run: run rustup target add x86_64-unknown-linux-musl
 
       - name: Install Packages (Linux only)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          # Add Docker's official GPG key:
-          sudo apt update
-          sudo apt install ca-certificates curl
-          sudo install -m 0755 -d /etc/apt/keyrings
-          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-          sudo chmod a+r /etc/apt/keyrings/docker.asc
+          import systemd http sudo proc.run:
+            - apt
 
-          # Add the repository to Apt sources:
-          sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
-          Types: deb
-          URIs: https://download.docker.com/linux/ubuntu
-          Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
-          Components: stable
-          Signed-By: /etc/apt/keyrings/docker.asc
-          EOF
+          bind systemd.os_release()
+            "UBUNTU_CODENAME": ubuntu_codename = nil
+            "VERSION_CODENAME": version_codename
+            ...
 
-          # Install packages
-          sudo apt update
-          sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin llvm libclang-dev
+          sudo.with do
+            http.get https://download.docker.com/linux/ubuntu/gpg do |resp|
+              fs.write /etc/apt/keyrings/docker.asc $resp.body()
+            fs.set_metadata mode: 0o644 /etc/apt/keyrings/docker.asc
 
-      - name: Install LLVM (Linux only)
-        if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y llvm libclang-dev
+            fs.write /etc/apt/sources.list.d/docker.sources |
+              Types: deb
+              URIs: https://download.docker.com/linux/ubuntu
+              Suites: $(ubuntu_codename || version_codename)
+              Components: stable
+              Signed-By: /etc/apt/keyrings/docker.asc
 
-      - name: Build release binaries (Linux host target)
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang --bin dolang-lsp
-        env:
-          ZSTD_SYS_USE_PKG_CONFIG: "1"
+            apt update
+            apt install
+              docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+              docker-compose-plugin llvm libclang-dev
 
-      - name: Build release binaries (Windows)
-        if: matrix.os == 'windows-latest'
-        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang --bin dolang-lsp --bin dolang-vfs
-
-      - name: Build release binaries (macOS)
-        if: matrix.os == 'macos-latest'
-        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang --bin dolang-lsp --bin dolang-vfs
-
-      - name: Build dolang-vfs (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo build --profile dist --target x86_64-unknown-linux-musl -p dolang-shell-vfs
-
-      - name: Stage release layout (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Build and install release binaries
         run: |
-          mkdir release
-          cp target/${{ matrix.target }}/dist/dolang release/
-          cp target/${{ matrix.target }}/dist/dolang-lsp release/
-          cp target/x86_64-unknown-linux-musl/dist/dolang-vfs release/
+          dodo.run install --prefix release
 
-      - name: Stage release layout (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path release | Out-Null
-          Copy-Item "target/${{ matrix.target }}/dist/dolang.exe" -Destination release/
-          Copy-Item "target/${{ matrix.target }}/dist/dolang-lsp.exe" -Destination release/
-          Copy-Item "target/${{ matrix.target }}/dist/dolang-vfs.exe" -Destination release/
+      - name: Run integration tests
+        run: run release/bin/dolang --module-path testlib -m test -- test
 
-      - name: Stage release layout (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          mkdir release
-          cp target/${{ matrix.target }}/dist/dolang release/
-          cp target/${{ matrix.target }}/dist/dolang-lsp release/
-          cp target/${{ matrix.target }}/dist/dolang-vfs release/
-
-      - name: Run integration tests (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          ./release/dolang --module-path "${{ github.workspace }}/testlib" -m test -- test
-        env:
-          ZSTD_SYS_USE_PKG_CONFIG: "1"
-
-      - name: Run integration tests (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          ./release/dolang.exe --module-path "${{ github.workspace }}/testlib" -m test -- test
-
-      - name: Run integration tests (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          ./release/dolang --module-path "${{ github.workspace }}/testlib" -m test -- test
-
-      - name: Package release (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Package release (Unix)
+        if: matrix.os != 'windows-latest'
         shell: bash
         run: |
           archive="dolang-${{ matrix.artifact_name }}.tar.gz"
-          tar -C release -czf "$archive" dolang dolang-lsp dolang-vfs
+          tar -C release/bin -czf "$archive" dolang dolang-lsp dolang-vfs
 
       - name: Package release (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           $archive = "dolang-${{ matrix.artifact_name }}.tar.gz"
-          7z a -ttar release.tar ./release/*
+          Push-Location release/bin
+          7z a -ttar ../../release.tar dolang.exe dolang-lsp.exe dolang-vfs.exe
+          Pop-Location
           7z a -tgzip $archive release.tar
-
-      - name: Package release (macOS)
-        if: matrix.os == 'macos-latest'
-        shell: bash
-        run: |
-          archive="dolang-${{ matrix.artifact_name }}.tar.gz"
-          tar -C release -czf "$archive" dolang dolang-lsp dolang-vfs
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -173,6 +127,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Setup Dolang
+        id: dolang
+        uses: ./.github/actions/setup-dolang
+
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
@@ -182,19 +140,19 @@ jobs:
 
       - name: Install extension dependencies
         working-directory: dolang-code
-        run: npm ci
+        run: run npm ci
 
       - name: Build extension
         working-directory: dolang-code
-        run: npm run compile
+        run: run npm run compile
 
       - name: Run extension tests
         working-directory: dolang-code
-        run: xvfb-run -a npm test
+        run: run xvfb-run -a npm test
 
       - name: Build release VSIX
         working-directory: dolang-code
-        run: npm run package:vsix
+        run: run npm run package:vsix
 
       - name: Upload release VSIX artifact
         uses: actions/upload-artifact@v6
@@ -220,7 +178,8 @@ jobs:
           merge-multiple: true
 
       - name: Extract version from tag
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+        run: fs.append $env["GITHUB_ENV"] |
+          VERSION=$(env["GITHUB_REF"].without_prefix "refs/tags/")
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2
