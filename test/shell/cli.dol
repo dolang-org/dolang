@@ -1,0 +1,26 @@
+import
+  fs:
+    - with_temp_dir
+  shell:
+    - exe
+  test:
+    - assert_eq
+    - test
+
+#[test]
+def custom_prelude_imports_and_no_cache()
+  with_temp_dir do |dir|
+    let script = (dir / "snippet.dol")
+    let output = (dir / "output.txt")
+    script.write r|
+      writefile $shell.args[0] "first"
+      appendfile $shell.args[0] " second"
+
+    run $exe
+      --no-cache
+      --import shell
+      --import-item fs.write=writefile
+      --import-item fs.append=appendfile
+      $script $output
+
+    assert_eq $output.read() "first second"

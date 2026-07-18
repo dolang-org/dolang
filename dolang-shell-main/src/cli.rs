@@ -10,11 +10,26 @@ use wax::{Glob, walk::Entry as _};
 pub(crate) struct Cli {
     pub(crate) path: Option<PathBuf>,
     pub(crate) module_paths: Vec<PathBuf>,
+    pub(crate) prelude: Vec<PreludeImport>,
     pub(crate) main: bool,
     pub(crate) args: Vec<String>,
     pub(crate) check: bool,
     pub(crate) compile: Option<PathBuf>,
     pub(crate) strict: bool,
+    pub(crate) cache: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum PreludeImport {
+    Module {
+        module: String,
+        bind: Option<String>,
+    },
+    Item {
+        module: String,
+        item: String,
+        bind: Option<String>,
+    },
 }
 
 #[derive(Debug)]
@@ -40,20 +55,24 @@ pub(crate) fn parse_from(
         return ParseOutcome::Run(Cli {
             path: Some(PathBuf::from(implicit_main)),
             module_paths: Vec::new(),
+            prelude: Vec::new(),
             main: true,
             args,
             check: false,
             compile: None,
             strict: false,
+            cache: true,
         });
     }
 
     let mut path = None;
     let mut module_paths = Vec::new();
+    let mut prelude = Vec::new();
     let mut main = false;
     let mut check = false;
     let mut compile = None;
     let mut strict = false;
+    let mut cache = true;
     let mut trailing = Vec::new();
     let mut stop_options = false;
 
@@ -118,6 +137,54 @@ pub(crate) fn parse_from(
                     module_paths.push(PathBuf::from(module_path));
                     continue;
                 }
+                Some("--import") => {
+                    let Some(value) = args.next() else {
+                        return ParseOutcome::Error(missing_value_error(
+                            &program,
+                            "--import <MODULE[=NAME]>",
+                        ));
+                    };
+                    let value = match into_string(value) {
+                        Ok(value) => value,
+                        Err(message) => {
+                            return ParseOutcome::Error(argument_error(&program, message));
+                        }
+                    };
+                    let (module, bind) = split_alias(value);
+                    prelude.push(PreludeImport::Module { module, bind });
+                    continue;
+                }
+                Some("--import-item") => {
+                    let Some(value) = args.next() else {
+                        return ParseOutcome::Error(missing_value_error(
+                            &program,
+                            "--import-item <MODULE.ITEM[=NAME]>",
+                        ));
+                    };
+                    let value = match into_string(value) {
+                        Ok(value) => value,
+                        Err(message) => {
+                            return ParseOutcome::Error(argument_error(&program, message));
+                        }
+                    };
+                    let (qualified, bind) = split_alias(value);
+                    let Some((module, item)) = qualified.rsplit_once('.') else {
+                        return ParseOutcome::Error(argument_error(
+                            &program,
+                            "--import-item requires MODULE.ITEM[=NAME]",
+                        ));
+                    };
+                    prelude.push(PreludeImport::Item {
+                        module: module.to_owned(),
+                        item: item.to_owned(),
+                        bind,
+                    });
+                    continue;
+                }
+                Some("--no-cache") => {
+                    cache = false;
+                    continue;
+                }
                 Some("--strict") => {
                     strict = true;
                     continue;
@@ -145,12 +212,21 @@ pub(crate) fn parse_from(
     ParseOutcome::Run(Cli {
         path,
         module_paths,
+        prelude,
         main,
         args,
         check,
         compile,
         strict,
+        cache,
     })
+}
+
+fn split_alias(value: String) -> (String, Option<String>) {
+    match value.split_once('=') {
+        Some((value, bind)) => (value.to_owned(), Some(bind.to_owned())),
+        None => (value, None),
+    }
 }
 
 fn program_name(program: Option<&OsStr>) -> String {
@@ -188,6 +264,9 @@ Options:
       --check             Check syntax without executing
       --compile <OUTPUT>  Compile to bytecode file
       --module-path <PATH>  Add a module search path
+      --import <MODULE[=NAME]>  Add a module to the prelude
+      --import-item <MODULE.ITEM[=NAME]>  Add a module item to the prelude
+      --no-cache          Disable the bytecode cache
       --strict            Treat warnings as errors
   -h, --help              Print help"
     )
@@ -318,7 +397,7 @@ mod tests {
         path::PathBuf,
     };
 
-    use super::{Cli, ParseOutcome, infer_implicit_entrypoint, parse_from};
+    use super::{Cli, ParseOutcome, PreludeImport, infer_implicit_entrypoint, parse_from};
 
     #[test]
     fn shell_help_before_target_exits() {
@@ -406,6 +485,74 @@ mod tests {
             cli.module_paths,
             [PathBuf::from("first"), PathBuf::from("second")]
         );
+    }
+
+    #[test]
+    fn prelude_imports_preserve_kind_alias_and_order() {
+        let cli = parse_ok([
+            "dolang",
+            "--import",
+            "fs",
+            "--import",
+            "shell=sh",
+            "--import-item",
+            "fs.open",
+            "--import-item",
+            "fs.write=writefile",
+            "file.dol",
+        ]);
+        assert_eq!(
+            cli.prelude,
+            [
+                PreludeImport::Module {
+                    module: "fs".to_owned(),
+                    bind: None,
+                },
+                PreludeImport::Module {
+                    module: "shell".to_owned(),
+                    bind: Some("sh".to_owned()),
+                },
+                PreludeImport::Item {
+                    module: "fs".to_owned(),
+                    item: "open".to_owned(),
+                    bind: None,
+                },
+                PreludeImport::Item {
+                    module: "fs".to_owned(),
+                    item: "write".to_owned(),
+                    bind: Some("writefile".to_owned()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn import_item_uses_last_dot_as_separator() {
+        let cli = parse_ok(["dolang", "--import-item", "foo.bar.item", "file.dol"]);
+        assert_eq!(
+            cli.prelude,
+            [PreludeImport::Item {
+                module: "foo.bar".to_owned(),
+                item: "item".to_owned(),
+                bind: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn import_item_requires_qualified_name() {
+        let ParseOutcome::Error(error) =
+            parse_from(args(["dolang", "--import-item", "item", "file.dol"]), None)
+        else {
+            panic!("expected error");
+        };
+        assert!(error.contains("--import-item requires MODULE.ITEM[=NAME]"));
+    }
+
+    #[test]
+    fn no_cache_disables_cache() {
+        let cli = parse_ok(["dolang", "--no-cache", "file.dol"]);
+        assert!(!cli.cache);
     }
 
     #[test]

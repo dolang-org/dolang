@@ -5,6 +5,7 @@ use dolang::{
     runtime::{Bytecode, Result, Strand},
 };
 
+use crate::cli::PreludeImport;
 use crate::load;
 
 pub enum Action {
@@ -18,7 +19,9 @@ pub(crate) async fn main<'v, 's>(
     path: &Path,
     action: Action,
     entrypoint: Option<&'static [u8]>,
+    prelude: &[PreludeImport],
     strict: bool,
+    cache: bool,
 ) -> Result<'v, 's, ()> {
     match action {
         Action::Run => {
@@ -27,12 +30,14 @@ pub(crate) async fn main<'v, 's>(
                     if let Some(entrypoint) = entrypoint {
                         Bytecode::new(entrypoint).run(strand, tmp).await
                     } else {
-                        load::load(strand, path, Mode::Script, strict, tmp).await
+                        load::load(strand, path, Mode::Script, prelude, strict, cache, tmp).await
                     }
                 })
                 .await
         }
-        Action::Check => load::compile_only(strand, path, strict).await,
-        Action::Compile(output) => load::compile_to_file(strand, path, &output, strict).await,
+        Action::Check => load::compile_only(strand, path, prelude, strict).await,
+        Action::Compile(output) => {
+            load::compile_to_file(strand, path, &output, prelude, strict).await
+        }
     }
 }

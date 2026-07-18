@@ -23,6 +23,19 @@ Other flags:
 
 - `--check` -- check syntax without executing
 - `--compile <OUTPUT>` -- compile to bytecode file
+- `--import <MODULE[=NAME]>` -- add a module to the prelude
+- `--import-item <MODULE.ITEM[=NAME]>` -- add a module item to the prelude
+- `--no-cache` -- disable reading and writing the bytecode cache
+
+Prelude options are repeatable. An alias after `=` changes the name bound in
+the script:
+
+```
+dolang --import fs \
+  --import-item fs.open \
+  --import-item fs.append=append_file \
+  script.dol
+```
 
 Scripts can use a shebang for direct execution:
 

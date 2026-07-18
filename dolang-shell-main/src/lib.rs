@@ -113,6 +113,7 @@ fn run(config: Arc<dyn Config>) -> i32 {
             }
 
             let strict_mode = cli.strict;
+            let cache = cli.cache;
             let module_paths = cli.module_paths.clone();
             builder.importer(async move |strand, name, out| {
                 let path = load::find_module_file(strand, name, &module_paths).await?;
@@ -120,7 +121,9 @@ fn run(config: Arc<dyn Config>) -> i32 {
                     strand,
                     &path,
                     compile::Mode::Module { name },
+                    &[],
                     strict_mode,
+                    cache,
                     out,
                 )
                 .await
@@ -178,9 +181,18 @@ fn run(config: Arc<dyn Config>) -> i32 {
                                     } else {
                                         None
                                     };
-                                    batch::main(strand, path, action, entrypoint, cli.strict).await
+                                    batch::main(
+                                        strand,
+                                        path,
+                                        action,
+                                        entrypoint,
+                                        &cli.prelude,
+                                        cli.strict,
+                                        cli.cache,
+                                    )
+                                    .await
                                 } else {
-                                    interactive::main(strand, cli.strict).await
+                                    interactive::main(strand, &cli.prelude, cli.strict).await
                                 }
                             });
 

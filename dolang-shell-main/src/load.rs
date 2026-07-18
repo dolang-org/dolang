@@ -17,7 +17,7 @@ use dolang::{
     },
 };
 
-use crate::interactive::DYNAMIC_PRELUDE;
+use crate::{cli::PreludeImport, interactive::DYNAMIC_PRELUDE};
 
 #[derive(Debug)]
 struct Stop;
@@ -35,6 +35,7 @@ pub(crate) fn compile<'v, 's, 'a>(
     path: &'a Path,
     source: &'a str,
     dynamic: Option<&[String]>,
+    prelude: &[PreludeImport],
     mode: Mode,
     strict: bool,
 ) -> Result<'v, 's, Vec<u8>> {
@@ -42,7 +43,7 @@ pub(crate) fn compile<'v, 's, 'a>(
     let mut errors = 0usize;
     let mut warnings = 0usize;
 
-    let compiler = compile_setup(path, source, dynamic, mode);
+    let compiler = compile_setup(path, source, dynamic, prelude, mode);
 
     compiler
         .compile(&mut out, &mut |diag: Diag| -> ControlFlow<Stop> {
@@ -74,6 +75,7 @@ fn compile_setup<'a>(
     path: &'a Path,
     source: &'a str,
     dynamic: Option<&'a [String]>,
+    prelude: &[PreludeImport],
     mode: Mode<'a>,
 ) -> Compiler<'a> {
     let mut compiler = Compiler::new(Path::new(path), source.as_bytes());
@@ -81,6 +83,37 @@ fn compile_setup<'a>(
     compiler.mode(mode);
     for ext in compiler.extensions() {
         ext.apply(&mut compiler).unwrap();
+    }
+    for import in prelude {
+        match import {
+            PreludeImport::Module { module, bind: None } => {
+                compiler.prelude().import_module(module);
+            }
+            PreludeImport::Module {
+                module,
+                bind: Some(bind),
+            } => {
+                compiler.prelude().import_module_with_name(module, bind);
+            }
+            PreludeImport::Item {
+                module,
+                item,
+                bind: None,
+            } => {
+                compiler.prelude().import_items(module).item(item).commit();
+            }
+            PreludeImport::Item {
+                module,
+                item,
+                bind: Some(bind),
+            } => {
+                compiler
+                    .prelude()
+                    .import_items(module)
+                    .item_with_name(item, bind)
+                    .commit();
+            }
+        }
     }
     if let Some(dynamic) = dynamic {
         compiler
@@ -97,10 +130,11 @@ pub(crate) fn analyze<'a, D: EmitDiag, T: EmitToken<Break = D::Break>>(
     path: &'a Path,
     source: &'a str,
     dynamic: Option<&[String]>,
+    prelude: &[PreludeImport],
     diags: &mut D,
     tokens: &mut T,
 ) -> std::result::Result<(), compile::Error<D::Break>> {
-    let compiler = compile_setup(path, source, dynamic, Mode::Repl);
+    let compiler = compile_setup(path, source, dynamic, prelude, Mode::Repl);
     compiler.analyze(diags, tokens)
 }
 
@@ -156,11 +190,12 @@ pub(crate) async fn find_module_file<'v, 's>(
 async fn compile_script<'v, 's>(
     strand: &mut Strand<'v, 's>,
     path: &Path,
+    prelude: &[PreludeImport],
     strict: bool,
 ) -> Result<'v, 's, Vec<u8>> {
     if fs::try_exists(path).await.into_do(strand)? {
         let source = fs::read_to_string(path).await.into_do(strand)?;
-        compile(strand, path, &source, None, Mode::Script, strict)
+        compile(strand, path, &source, None, prelude, Mode::Script, strict)
     } else {
         Err(Error::runtime(
             strand,
@@ -172,9 +207,10 @@ async fn compile_script<'v, 's>(
 pub(crate) async fn compile_only<'v, 's>(
     strand: &mut Strand<'v, 's>,
     path: &Path,
+    prelude: &[PreludeImport],
     strict: bool,
 ) -> Result<'v, 's, ()> {
-    compile_script(strand, path, strict).await?;
+    compile_script(strand, path, prelude, strict).await?;
     Ok(())
 }
 
@@ -182,9 +218,10 @@ pub(crate) async fn compile_to_file<'v, 's>(
     strand: &mut Strand<'v, 's>,
     path: &Path,
     output: &Path,
+    prelude: &[PreludeImport],
     strict: bool,
 ) -> Result<'v, 's, ()> {
-    let data = compile_script(strand, path, strict).await?;
+    let data = compile_script(strand, path, prelude, strict).await?;
     fs::write(output, &data).await.into_do(strand)?;
     Ok(())
 }
@@ -193,26 +230,20 @@ pub(crate) async fn load<'v, 's>(
     strand: &mut Strand<'v, 's>,
     path: &Path,
     mode: Mode<'_>,
+    prelude: &[PreludeImport],
     strict: bool,
+    cache: bool,
     mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let mut bc = dirs(strand)?.cache_dir().join("bytecode").clone();
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(path.as_os_str().as_encoded_bytes());
-    match mode {
-        Mode::Script => hasher.update(b"script"),
-        Mode::Module { name } => {
-            hasher.update(b"module");
-            hasher.update(name.as_bytes())
-        }
-        Mode::Repl => hasher.update(b"repl"),
-        _ => hasher.update(b"unknown"),
-    };
-    bc.push(hasher.finalize().to_hex().as_str());
-    bc.set_extension("dolc");
+    let bc = cache
+        .then(|| cache_path(strand, path, &mode, prelude, strict))
+        .transpose()?;
 
-    if fs::try_exists(&bc).await.into_do(strand)? && !file_is_newer(&bc, path).await {
-        let data = fs::read(&bc).await.into_do(strand)?;
+    if let Some(bc) = &bc
+        && fs::try_exists(bc).await.into_do(strand)?
+        && !file_is_newer(bc, path).await
+    {
+        let data = fs::read(bc).await.into_do(strand)?;
         let bytecode = Bytecode::new(data);
         match bytecode.run(strand, &mut out).await {
             Ok(()) => return Ok(()),
@@ -221,12 +252,82 @@ pub(crate) async fn load<'v, 's>(
         }
     }
     let source = fs::read_to_string(path).await.into_do(strand)?;
-    let data = compile(strand, path, &source, None, mode, strict)?;
-    fs::create_dir_all(bc.parent().unwrap())
-        .await
-        .into_do(strand)?;
-    fs::write(&bc, &data).await.into_do(strand)?;
+    let data = compile(strand, path, &source, None, prelude, mode, strict)?;
+    if let Some(bc) = &bc {
+        fs::create_dir_all(bc.parent().unwrap())
+            .await
+            .into_do(strand)?;
+        fs::write(bc, &data).await.into_do(strand)?;
+    }
     let bytecode = Bytecode::new(data);
     bytecode.run(strand, &mut out).await?;
     Ok(())
+}
+
+fn cache_path<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    path: &Path,
+    mode: &Mode<'_>,
+    prelude: &[PreludeImport],
+    strict: bool,
+) -> Result<'v, 's, PathBuf> {
+    let mut bc = dirs(strand)?.cache_dir().join("bytecode").clone();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"dolang-shell-cache-v2");
+    hash_bytes(&mut hasher, path.as_os_str().as_encoded_bytes());
+    match mode {
+        Mode::Script => {
+            hasher.update(b"script");
+        }
+        Mode::Module { name } => {
+            hasher.update(b"module");
+            hash_string(&mut hasher, name);
+        }
+        Mode::Repl => {
+            hasher.update(b"repl");
+        }
+        _ => {
+            hasher.update(b"unknown");
+        }
+    }
+    hasher.update(&[u8::from(strict)]);
+    for import in prelude {
+        match import {
+            PreludeImport::Module { module, bind } => {
+                hasher.update(b"module");
+                hash_string(&mut hasher, module);
+                hash_optional_string(&mut hasher, bind.as_deref());
+            }
+            PreludeImport::Item { module, item, bind } => {
+                hasher.update(b"item");
+                hash_string(&mut hasher, module);
+                hash_string(&mut hasher, item);
+                hash_optional_string(&mut hasher, bind.as_deref());
+            }
+        }
+    }
+    bc.push(hasher.finalize().to_hex().as_str());
+    bc.set_extension("dolc");
+    Ok(bc)
+}
+
+fn hash_string(hasher: &mut blake3::Hasher, value: &str) {
+    hash_bytes(hasher, value.as_bytes());
+}
+
+fn hash_bytes(hasher: &mut blake3::Hasher, value: &[u8]) {
+    hasher.update(&(value.len() as u64).to_le_bytes());
+    hasher.update(value);
+}
+
+fn hash_optional_string(hasher: &mut blake3::Hasher, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hasher.update(b"some");
+            hash_string(hasher, value);
+        }
+        None => {
+            hasher.update(b"none");
+        }
+    }
 }
