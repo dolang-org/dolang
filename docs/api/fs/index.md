@@ -151,8 +151,7 @@ let data = read "archive.bin" "b"
 Writes the entire contents of a file in one call, creating or truncating the
 file.
 
-Binary values are written as raw bytes. All other values are converted to a
-string first.
+Binary values are written as raw bytes and strings as UTF-8 text.
 
 #### Parameters
 
@@ -170,6 +169,28 @@ string first.
 ```
 write "message.txt" "hello"
 write "data.bin" b"\x01\x02\x03"
+```
+
+### `append path content`
+
+Appends content to a file, creating it if needed.
+
+#### Parameters
+
+| Name      | Type                                      | Description                 |
+| --------- | ----------------------------------------- | --------------------------- |
+| `path`    | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file to append  |
+| `content` | `str`\|`bin`                              | Content to append           |
+
+#### Returns
+
+[`int`](../std/int.md) - Number of bytes written
+
+#### Example
+
+```
+append "messages.txt" "another message\n"
+append "data.bin" b"\x04\x05"
 ```
 
 ### `set_len path size`

@@ -722,6 +722,11 @@ macro_rules! impl_concrete_path {
                         let annex = this.annex();
                         super::write(strand, annex.global, annex.as_path(), data, out).await
                     })
+                    .method("append", async move |this, strand, args, out| {
+                        let ([data], []) = unpack!(strand, args, 1, 0)?;
+                        let annex = this.annex();
+                        super::append(strand, annex.global, annex.as_path(), data, out).await
+                    })
                     .method("set_len", async move |this, strand, args, _out| {
                         let ([size], []) = unpack!(strand, args, 1, 0)?;
                         let size = size.to_i64(strand).map_err(|_| {

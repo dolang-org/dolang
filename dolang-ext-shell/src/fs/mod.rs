@@ -347,7 +347,28 @@ async fn write<'v, 's>(
     data: Slot<'v, '_>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let mut file = file::open(strand, global, path, "w").await?;
+    write_with_mode(strand, global, path, data, out, "w").await
+}
+
+async fn append<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    path: Utf8TypedPath<'_>,
+    data: Slot<'v, '_>,
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    write_with_mode(strand, global, path, data, out, "a").await
+}
+
+async fn write_with_mode<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    path: Utf8TypedPath<'_>,
+    data: Slot<'v, '_>,
+    out: impl Output<'v>,
+    mode: &str,
+) -> Result<'v, 's, ()> {
+    let mut file = file::open(strand, global, path, mode).await?;
     let bytes_written = match data.view(strand) {
         View::Str(s) => {
             let s = s.pin();
@@ -1109,6 +1130,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let ([path, data], []) = unpack!(strand, args, 2, 0)?;
             let path = path_from_value(strand, global, &path)?;
             write(strand, global, path.to_path(), data, out).await
+        })
+        .function("append", async move |strand, args, out| {
+            let ([path, data], []) = unpack!(strand, args, 2, 0)?;
+            let path = path_from_value(strand, global, &path)?;
+            append(strand, global, path.to_path(), data, out).await
         })
         .function("set_len", async move |strand, args, _out| {
             let ([path, size], []) = unpack!(strand, args, 2, 0)?;
