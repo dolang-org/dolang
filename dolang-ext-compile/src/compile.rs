@@ -94,6 +94,7 @@ pub(crate) struct ResultAnnex {
 pub(crate) struct DiagnosticAnnex<'v> {
     global: State<'v, Global<'v>>,
     diag: Diag,
+    #[cfg(feature = "diagnostic-rendering")]
     path: String,
 }
 
@@ -255,12 +256,16 @@ fn create_diagnostic<'v, 's>(
     diag: Diag,
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
+    #[cfg(not(feature = "diagnostic-rendering"))]
+    let _ = path;
+
     global.types.diagnostic.create_with_annex(
         strand,
         Diagnostic,
         DiagnosticAnnex {
             global,
             diag,
+            #[cfg(feature = "diagnostic-rendering")]
             path: path.to_owned(),
         },
         &mut *out,
