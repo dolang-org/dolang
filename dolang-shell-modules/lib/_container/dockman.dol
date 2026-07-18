@@ -337,9 +337,9 @@ pub class Runtime
       ""
 
   pub def with self ctr thunk
-    let ctr_subdir = Path /tmp/dolang-shell-vfs-dir
+    let ctr_subdir = Path /tmp/dolang-vfs-dir
     let ctr_socket = (ctr_subdir / "socket")
-    let ctr_agent = Path "/tmp/dolang-shell-vfs"
+    let ctr_agent = Path "/tmp/dolang-vfs"
     let agent_bin = _vfs.bin()
     let uopt = self.mount_uopt()
 
@@ -631,9 +631,9 @@ pub class Builder
     self.#bin = bin
     self.#mounts = mounts
     self.#socket = (subdir / "socket")
-    self.#ctr_subdir = Path /tmp/dolang-shell-vfs-dir
+    self.#ctr_subdir = Path /tmp/dolang-vfs-dir
     self.#ctr_socket = (self.#ctr_subdir / "socket")
-    self.#ctr_agent = Path "/tmp/dolang-shell-vfs"
+    self.#ctr_agent = Path "/tmp/dolang-vfs"
 
   def wait_socket self
     for _ = 0..SOCKET_SPINS

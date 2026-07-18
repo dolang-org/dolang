@@ -1,4 +1,4 @@
-# dolang-shell-core Architecture
+# dolang-shell-main Architecture
 
 Reusable interpreter core for `dolang`-style binaries.
 

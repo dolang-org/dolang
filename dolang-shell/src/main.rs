@@ -45,7 +45,7 @@ fn main() {
         process::exit(code);
     }
 
-    process::exit(dolang_shell_core::main(stock_config::StockConfig));
+    process::exit(dolang_shell_main::main(stock_config::StockConfig));
 }
 
 #[cfg(windows)]

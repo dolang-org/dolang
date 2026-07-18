@@ -11,7 +11,7 @@ use std::time::Duration;
 use tempfile::tempdir;
 use tokio::time::timeout;
 
-const AGENT_BIN: &str = env!("CARGO_BIN_EXE_dolang-shell-vfs");
+const AGENT_BIN: &str = env!("CARGO_BIN_EXE_dolang-vfs");
 
 fn typed_str(path: &str) -> Utf8TypedPath<'_> {
     Utf8TypedPath::Unix(Utf8UnixPath::new(path))

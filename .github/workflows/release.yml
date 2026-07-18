@@ -86,13 +86,13 @@ jobs:
 
       - name: Build release binaries (Windows)
         if: matrix.os == 'windows-latest'
-        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang --bin dolang-lsp --bin dolang-shell-vfs
+        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang --bin dolang-lsp --bin dolang-vfs
 
       - name: Build release binaries (macOS)
         if: matrix.os == 'macos-latest'
-        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang --bin dolang-lsp --bin dolang-shell-vfs
+        run: cargo build --profile dist --target ${{ matrix.target }} --bin dolang --bin dolang-lsp --bin dolang-vfs
 
-      - name: Build dolang-shell-vfs (Linux)
+      - name: Build dolang-vfs (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: cargo build --profile dist --target x86_64-unknown-linux-musl -p dolang-shell-vfs
 
@@ -102,7 +102,7 @@ jobs:
           mkdir release
           cp target/${{ matrix.target }}/dist/dolang release/
           cp target/${{ matrix.target }}/dist/dolang-lsp release/
-          cp target/x86_64-unknown-linux-musl/dist/dolang-shell-vfs release/
+          cp target/x86_64-unknown-linux-musl/dist/dolang-vfs release/
 
       - name: Stage release layout (Windows)
         if: matrix.os == 'windows-latest'
@@ -111,7 +111,7 @@ jobs:
           New-Item -ItemType Directory -Path release | Out-Null
           Copy-Item "target/${{ matrix.target }}/dist/dolang.exe" -Destination release/
           Copy-Item "target/${{ matrix.target }}/dist/dolang-lsp.exe" -Destination release/
-          Copy-Item "target/${{ matrix.target }}/dist/dolang-shell-vfs.exe" -Destination release/
+          Copy-Item "target/${{ matrix.target }}/dist/dolang-vfs.exe" -Destination release/
 
       - name: Stage release layout (macOS)
         if: matrix.os == 'macos-latest'
@@ -119,7 +119,7 @@ jobs:
           mkdir release
           cp target/${{ matrix.target }}/dist/dolang release/
           cp target/${{ matrix.target }}/dist/dolang-lsp release/
-          cp target/${{ matrix.target }}/dist/dolang-shell-vfs release/
+          cp target/${{ matrix.target }}/dist/dolang-vfs release/
 
       - name: Run integration tests (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -143,7 +143,7 @@ jobs:
         shell: bash
         run: |
           archive="dolang-${{ matrix.artifact_name }}.tar.gz"
-          tar -C release -czf "$archive" dolang dolang-lsp dolang-shell-vfs
+          tar -C release -czf "$archive" dolang dolang-lsp dolang-vfs
 
       - name: Package release (Windows)
         if: matrix.os == 'windows-latest'
@@ -158,7 +158,7 @@ jobs:
         shell: bash
         run: |
           archive="dolang-${{ matrix.artifact_name }}.tar.gz"
-          tar -C release -czf "$archive" dolang dolang-lsp dolang-shell-vfs
+          tar -C release -czf "$archive" dolang dolang-lsp dolang-vfs
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

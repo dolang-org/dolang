@@ -77,7 +77,7 @@ pub def with
   :keepalive_count = nil
   :batch = false
   :host_key = :DEFAULT:
-  :command = ["dolang-shell-vfs", "--stdio"]
+  :command = ["dolang-vfs", "--stdio"]
   ...options
 do
   _ssh.with_program ssh

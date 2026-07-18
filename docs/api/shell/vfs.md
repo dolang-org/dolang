@@ -19,7 +19,7 @@ The `Vfs` retains the background stream for its lifetime.
 **Returns:** `Vfs`
 
 ```
-let remote = Vfs do run ssh host dolang-shell-vfs --stdio
+let remote = Vfs do run ssh host dolang-vfs --stdio
 ```
 
 The `--stdio` mode reads the protocol from standard input and writes it to
@@ -32,13 +32,13 @@ disconnect.
 
 ### `unix_socket path`
 
-Connects to a running `dolang-shell-vfs` daemon on Unix.
+Connects to a running `dolang-vfs` daemon on Unix.
 
 The socket path is resolved in the active VFS context. This allows connecting
 to a daemon reachable only from another remote or container VFS. A direct
 non-Unix context reports that Unix VFS connections are unsupported.
 
-The working directory in which the `dolang-shell-vfs` process started becomes
+The working directory in which the `dolang-vfs` process started becomes
 the context's initial working directory.
 
 **Parameters:**

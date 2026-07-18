@@ -41,7 +41,7 @@ def command_defaults_and_host_key()
   let argv = _ssh.build_command example host_key: :ACCEPT_NEW:
   assert_eq $argv $
     ssh -T -e none -a -o IdentitiesOnly=no -o BatchMode=no -o
-    StrictHostKeyChecking=accept-new -- example dolang-shell-vfs --stdio
+    StrictHostKeyChecking=accept-new -- example dolang-vfs --stdio
 
   assert_throws $ValueError do _ssh.build_command example host_key: :UNKNOWN:
   assert_throws $UnexpectedKeyError do _ssh.build_command example unknown: value

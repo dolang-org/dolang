@@ -1039,14 +1039,14 @@ dependencies = [
  "dolang-ext-yaml",
  "dolang-ext-zip",
  "dolang-private-bundle",
- "dolang-shell-core",
+ "dolang-shell-main",
  "dolang-shell-modules",
  "dolang-shell-vfs",
  "tokio",
 ]
 
 [[package]]
-name = "dolang-shell-core"
+name = "dolang-shell-main"
 version = "0.1.0"
 dependencies = [
  "anstyle",

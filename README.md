@@ -74,7 +74,7 @@ progress.with do podman.build
 
 ```bash
 # Build the project
-cargo build --release --bin dolang --bin dolang-shell-vfs
+cargo build --release --bin dolang --bin dolang-vfs
 
 # Run the shell
 ./target/release/dolang
