@@ -2,19 +2,44 @@ import sudo sys security
   shell:
     - Vfs
 
-# Returns if you currently have effective administrator privileges
+# Reports whether the active target has effective administrator privileges.
+#
+# On Windows, this checks whether the access token is elevated. On Unix, it
+# checks whether the effective user ID is zero.
+#
+# # Returns
+#
+# `bool`
 pub def query()
   if (sys.os_info().family == :WINDOWS:)
     security.token_info().is_elevated
   else
     (security.unix_info().euid == 0)
 
-# Attempts to run `block` with administrator privileges:
-# - On Windows, elevate privileges with UAC
-# - On Unix systems, use `sudo`
-# 
-# If the current user already possesses administrator privileges,
-# `block` is simply run.
+# Runs `block` with administrator privileges.
+#
+# Windows uses UAC and Unix uses `sudo`. If the current context already has
+# administrator privileges, `block` runs directly.
+#
+# Filesystem access and spawned programs use the elevated VFS for the duration
+# of the block.
+#
+# # Parameters
+#
+# | Name    | Type     | Description  |
+# | ------- | -------- | ------------ |
+# | `block` | callable | Block to run |
+#
+# # Returns
+#
+# The result of `block`.
+#
+# # Example
+#
+# ```
+# admin.with do
+#   echo "administrator: $(admin.query())"
+# ```
 pub def with block
   if (sys.os_info().family == :WINDOWS:)
     if security.token_info().is_elevated

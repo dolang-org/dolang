@@ -1,6 +1,8 @@
 # Vfs
 
-`Vfs` runs code in another filesystem and process context.
+`Vfs` runs code in another execution context. Filesystem access, external
+programs, environment, working directory, target system information, and
+security identity follow the selected context.
 
 ## Constructor
 
@@ -101,8 +103,12 @@ Entering a `Vfs` context affects the operations that are routed through it:
 - [`shell.cd`](../shell/index.md#cd-path-func) changes that context's working
   directory
 - [`fs`](../fs/index.md) operations use that context's filesystem view
+- [`sys`](../sys/index.md) reports that context's operating system and CPU
+- [`security`](../security/index.md) reports that context's identity
 
-This is commonly used for containers, but it is not limited to them.
+Only VFS-aware operations follow the context. Other network clients and native
+resources remain in the interpreter process unless their documentation says
+otherwise.
 
 ### `stop()`
 
@@ -113,6 +119,3 @@ explicitly join the launcher strand.
 ```
 a.stop()
 ```
-
-See the [Container Support](../../shell/containers.md) guide for setup
-instructions.

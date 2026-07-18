@@ -6,7 +6,7 @@ The `shell` module provides shell-context values and functions.
 
 | Name                            | Description                                              |
 | ------------------------------- | -------------------------------------------------------- |
-| [`Vfs`](./vfs.md)               | Shell VFS context handle                                 |
+| [`Vfs`](./vfs.md)               | Execution context handle                                 |
 
 ## Functions
 
@@ -43,8 +43,8 @@ Current working directory (no arguments), or result of `func`.
 
 ### `host func ...args`
 
-Executes a callable in a fresh host context, regardless of the current
-context.
+Executes a callable in the interpreter's original host context, regardless of
+the current or nested VFS contexts.
 
 #### Parameters
 

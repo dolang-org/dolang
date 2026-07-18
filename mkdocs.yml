@@ -30,6 +30,7 @@ theme:
 
 markdown_extensions:
   - admonition
+  - footnotes
   - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
@@ -59,9 +60,13 @@ nav:
   - Shell Guide:
     - shell/overview.md
     - shell/modules.md
-    - shell/containers.md
+    - shell/cli-tools.md
+    - VFS:
+      - shell/vfs/index.md
+      - shell/vfs/containers.md
+      - shell/vfs/ssh.md
+      - shell/vfs/admin.md
   - lsp.md
-  - examples.md
   - Reference:
     - admin: api/admin.md
     - args: api/args.md
