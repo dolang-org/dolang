@@ -7,6 +7,7 @@ import sys
     - FieldError
     - ImmutableError
     - UnsupportedError
+    - ValueError
     - bin
     - bool
     - hash
@@ -143,6 +144,78 @@ def security_descriptor_exposes_acl_and_ace_views()
   assert_eq $null_dacl.dacl nil
   let absent = SecDesc b"\x01\x00\x00\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
   assert_throws $FieldError do absent.dacl
+
+#[test]
+def constructs_aces_and_acls()
+  let sid = Sid S-1-1-0
+  let guid = Guid 00112233-4455-6677-8899-aabbccddeeff
+  let allowed = Ace.allow(sid, 305419896, flags: 3, application_data: b"\x01\x02\x03")
+  assert_type $Ace $allowed
+  assert_eq $allowed.type :ACCESS_ALLOWED:
+  assert_eq $allowed.flags 3
+  assert_eq $allowed.mask 305419896
+  assert_eq $allowed.application_data b"\x01\x02\x03\x00"
+
+  let denied = Ace.deny(sid, 1, object_type: guid, callback: true)
+  assert_eq $denied.type :ACCESS_DENIED_CALLBACK_OBJECT:
+  assert_eq $denied.object_flags 1
+  assert_eq $denied.object_type $guid
+
+  let audited = Ace.audit(sid, 2, successful: true, failed: false)
+  assert_eq $audited.type :SYSTEM_AUDIT:
+  assert_eq $audited.successful_access true
+  assert_eq $audited.failed_access false
+  assert_throws $ValueError do
+    Ace.audit $sid 2 successful: false failed: false
+  assert_throws $ValueError do
+    Ace.audit $sid 2 successful: true failed: false flags: 64
+
+  let acl = Acl [allowed, denied, audited]
+  assert_type $Acl $acl
+  assert_eq $acl.revision 4
+  assert_eq $acl.ace_count 3
+  assert_eq $acl.aces[0].to_bin() $allowed.to_bin()
+  assert_eq $acl.aces[1].to_bin() $denied.to_bin()
+  assert_eq $acl.aces[2].to_bin() $audited.to_bin()
+  assert_throws $ValueError do Acl [denied] revision: 2
+
+#[test]
+def functionally_updates_security_descriptors()
+  let empty = SecDesc b"\x01\x00\x00\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+  let sid = Sid S-1-5-18
+  let acl = Acl []
+  let updated = empty.with
+    owner: $sid
+    dacl: $acl
+    owner_defaulted: true
+    dacl_protected: true
+    rm_control: 90
+  let constructed = SecDesc
+    owner: $sid
+    dacl: $acl
+    owner_defaulted: true
+    dacl_protected: true
+    rm_control: 90
+  assert_eq $constructed.to_bin() $updated.to_bin()
+  assert_eq (str updated.owner) S-1-5-18
+  assert_eq $updated.owner_defaulted true
+  assert_eq $updated.dacl_present true
+  assert_eq $updated.dacl_protected true
+  assert_eq $updated.dacl.to_bin() $acl.to_bin()
+  assert_eq $updated.rm_control 90
+  assert_throws $FieldError do empty.owner
+
+  let null = updated.with(dacl: nil, rm_control: nil)
+  assert_eq $null.dacl nil
+  assert_eq $null.rm_control_valid false
+  let absent = null.with(dacl_present: false)
+  assert_eq $absent.dacl_present false
+  assert_throws $FieldError do absent.dacl
+  assert_throws $ValueError do empty.with(dacl_present: true)
+  assert_throws $ValueError do updated.with(dacl: acl, dacl_present: false)
+  let loaded_absent = SecDesc(dacl_present: false)
+  assert_eq $loaded_absent.dacl_present false
+  assert_throws $ValueError do SecDesc(empty.to_bin(), dacl: acl)
 
 #[test]
 def reports_security_information_for_target()

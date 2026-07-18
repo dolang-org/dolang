@@ -222,18 +222,18 @@ nav:
     - sudo: api/sudo.md
     - security:
       - api/security/index.md
-      - unix:
-        - api/security/unix/index.md
-        - api/security/unix/unixinfo.md
-      - windows:
-        - api/security/windows/index.md
-        - api/security/windows/acl.md
-        - api/security/windows/ace.md
-        - api/security/windows/secdesc.md
-        - api/security/windows/sid.md
-        - api/security/windows/sidname.md
-        - api/security/windows/tokengroup.md
-        - api/security/windows/tokeninfo.md
+    - security.unix:
+      - api/security/unix/index.md
+      - api/security/unix/unixinfo.md
+    - security.windows:
+      - api/security/windows/index.md
+      - api/security/windows/acl.md
+      - api/security/windows/ace.md
+      - api/security/windows/secdesc.md
+      - api/security/windows/sid.md
+      - api/security/windows/sidname.md
+      - api/security/windows/tokengroup.md
+      - api/security/windows/tokeninfo.md
     - sys:
       - api/sys/index.md
       - api/sys/already-exists-error.md
