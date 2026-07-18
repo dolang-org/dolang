@@ -1,6 +1,6 @@
 [package]
 name = "dolang-private-bundle"
-version = "0.1.0"
+version = "0.1.1"
 description = "Build script helpers for bundling Do bytecode resources."
 edition = "2024"
 license.workspace = true
@@ -12,8 +12,8 @@ test = false
 doctest = false
 
 [dependencies]
-dolang = { path = "../dolang", version = "0.1.0" }
-dolang-ext-shell = { path = "../dolang-ext-shell", version = "0.1.0" }
+dolang = { path = "../dolang", version = "0.1.1" }
+dolang-ext-shell = { path = "../dolang-ext-shell", version = "0.1.1" }
 
 [features]
 debug = ["dolang/debug"]

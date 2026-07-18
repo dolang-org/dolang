@@ -1,6 +1,6 @@
 [package]
 name = "dolang-shell-modules"
-version = "0.1.0"
+version = "0.1.1"
 description = "Stock embedded Do modules for the shell."
 edition = "2024"
 license.workspace = true
@@ -12,8 +12,8 @@ test = false
 doctest = false
 
 [build-dependencies]
-dolang-private-bundle = { path = "../dolang-private-bundle", version = "0.1.0" }
-dolang-ext-shell = { path = "../dolang-ext-shell", version = "0.1.0" }
+dolang-private-bundle = { path = "../dolang-private-bundle", version = "0.1.1" }
+dolang-ext-shell = { path = "../dolang-ext-shell", version = "0.1.1" }
 
 [features]
 debug = ["dolang-private-bundle/debug"]

@@ -1,6 +1,6 @@
 [package]
 name = "dolang-shell"
-version = "0.1.0"
+version = "0.1.1"
 description = "Stock command-line shell binary for the Do language."
 edition = "2024"
 license.workspace = true
@@ -34,106 +34,106 @@ patch = ["dep:dolang-ext-patch"]
 [dependencies]
 [dependencies.dolang-shell-main]
 path = "../dolang-shell-main"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang-shell-modules]
 path = "../dolang-shell-modules"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
+version = "0.1.1"
 
 [target.'cfg(windows)'.dependencies.dolang-shell-vfs]
 path = "../dolang-shell-vfs"
-version = "0.1.0"
+version = "0.1.1"
 
 [target.'cfg(windows)'.dev-dependencies]
 tokio = { version = "1.48.0", features = ["io-util", "macros", "net", "process", "rt"] }
 
 [dependencies.dolang-ext-digest]
 path = "../dolang-ext-digest"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-base64]
 path = "../dolang-ext-base64"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-compile]
 path = "../dolang-ext-compile"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang-ext-load]
 path = "../dolang-ext-load"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang-ext-json]
 path = "../dolang-ext-json"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-regex]
 path = "../dolang-ext-regex"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-glob]
 path = "../dolang-ext-glob"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-http]
 path = "../dolang-ext-http"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 default-features = false
 
 [dependencies.dolang-ext-url]
 path = "../dolang-ext-url"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-zip]
 path = "../dolang-ext-zip"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-sqlite]
 path = "../dolang-ext-sqlite"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-xml]
 path = "../dolang-ext-xml"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-yaml]
 path = "../dolang-ext-yaml"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-progress]
 path = "../dolang-ext-progress"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-rand]
 path = "../dolang-ext-rand"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-toml]
 path = "../dolang-ext-toml"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-patch]
 path = "../dolang-ext-patch"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [build-dependencies]
-dolang-private-bundle = { path = "../dolang-private-bundle", version = "0.1.0" }
+dolang-private-bundle = { path = "../dolang-private-bundle", version = "0.1.1" }

@@ -1,6 +1,6 @@
 [package]
 name = "dolang-ext-compile"
-version = "0.1.0"
+version = "0.1.1"
 description = "Runtime compilation extension for the Do language."
 edition = "2024"
 license.workspace = true
@@ -16,6 +16,6 @@ default = []
 diagnostic-rendering = ["dep:annotate-snippets", "dep:console"]
 
 [dependencies]
-dolang = { path = "../dolang", version = "0.1.0" }
+dolang = { path = "../dolang", version = "0.1.1" }
 annotate-snippets = { version = "0.12.10", optional = true }
 console = { version = "0.16.2", optional = true }

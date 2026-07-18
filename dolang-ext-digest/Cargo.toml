@@ -1,6 +1,6 @@
 [package]
 name = "dolang-ext-digest"
-version = "0.1.0"
+version = "0.1.1"
 description = "Digest and hashing extension for the Do language."
 edition = "2024"
 license.workspace = true
@@ -20,4 +20,4 @@ sha2 = "0.11.0"
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
+version = "0.1.1"

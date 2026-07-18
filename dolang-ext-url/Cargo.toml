@@ -1,6 +1,6 @@
 [package]
 name = "dolang-ext-url"
-version = "0.1.0"
+version = "0.1.1"
 description = "URL extension for the Do language."
 edition = "2024"
 license.workspace = true
@@ -17,4 +17,4 @@ url = "2"
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
+version = "0.1.1"

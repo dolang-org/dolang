@@ -1,6 +1,6 @@
 [package]
 name = "dolang-ext-yaml"
-version = "0.1.0"
+version = "0.1.1"
 description = "YAML extension for the Do language."
 edition = "2024"
 license.workspace = true
@@ -18,4 +18,4 @@ saphyr-parser = "0.0.6"
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
+version = "0.1.1"

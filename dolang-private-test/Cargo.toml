@@ -1,6 +1,6 @@
 [package]
 name = "dolang-private-test"
-version = "0.1.0"
+version = "0.1.1"
 description = "Test support utilities for Do language crates."
 edition = "2024"
 license.workspace = true
@@ -14,12 +14,12 @@ test = false
 [dependencies]
 annotate-snippets = "0.12.10"
 bstr = "1.12.1"
-dolang = { path = "../dolang", version = "0.1.0" }
+dolang = { path = "../dolang", version = "0.1.1" }
 
 [dependencies.dolang-compile]
 path = "../dolang-compile"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang-runtime]
 path = "../dolang-runtime"
-version = "0.1.0"
+version = "0.1.1"

@@ -27,11 +27,7 @@ impl error::Error for Infallible {}
 impl Extension for YamlExt {
     type Error = Infallible;
     const NAME: &str = "dolang-yaml";
-    const VERSION: Version = Version {
-        major: 0,
-        minor: 1,
-        patch: 0,
-    };
+    const VERSION: Version = dolang::package_version!();
     const DESCRIPTION: &str = "Do YAML Extension";
 
     fn apply_compiler(&self, _compiler: &mut Compiler) -> Result<(), Infallible> {

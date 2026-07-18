@@ -1,6 +1,6 @@
 [package]
 name = "dolang-shell-main"
-version = "0.1.0"
+version = "0.1.1"
 description = "Reusable shell/interpreter core for the Do language."
 edition = "2024"
 license.workspace = true
@@ -30,19 +30,19 @@ features = ["macros", "rt", "io-std", "io-util", "fs", "process", "sync", "signa
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang-ext-shell]
 path = "../dolang-ext-shell"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang-ext-compile]
 path = "../dolang-ext-compile"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang-ext-load]
 path = "../dolang-ext-load"
-version = "0.1.0"
+version = "0.1.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

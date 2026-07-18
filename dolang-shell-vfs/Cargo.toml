@@ -1,6 +1,6 @@
 [package]
 name = "dolang-shell-vfs"
-version = "0.1.0"
+version = "0.1.1"
 description = "Shell VFS daemon for Do language integrations."
 edition = "2024"
 license.workspace = true
@@ -20,7 +20,7 @@ tokio = { version = "1.48.0", features = ["io-std", "io-util", "sync", "rt-multi
 wax = { version = "0.7", features = ["walk"] }
 serde = { version = "1.0", features = ["derive"] }
 which = "8.0"
-dolang-rpc = { path = "../dolang-rpc", version = "0.1.0" }
+dolang-rpc = { path = "../dolang-rpc", version = "0.1.1" }
 typed-path.workspace = true
 
 [target.'cfg(windows)'.dependencies]
