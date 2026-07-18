@@ -173,8 +173,9 @@ impl Server {
             let stop = Arc::new(AtomicBool::new(false));
             let stop_handler = stop.clone();
             let handler = connection.clone();
-            let _ = serve_connection(rpc, handler, stop_handler).await;
+            let _ = dbg!(serve_connection(rpc, handler, stop_handler).await);
             if stop.load(Ordering::Acquire) {
+                eprintln!("stopping on explicit request");
                 let _ = connection.server.shutdown_tx.send(());
             }
         });
