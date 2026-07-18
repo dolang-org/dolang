@@ -1,6 +1,6 @@
 [package]
 name = "dolang-compile"
-version = "0.1.0"
+version = "0.1.1"
 description = "Parser, resolver, and bytecode compiler for the Do language."
 edition = "2024"
 license.workspace = true
@@ -16,11 +16,11 @@ phf = { version = "0.14.0", features = ["macros"] }
 [dependencies.dolang-util]
 package = "dolang-private-util"
 path = "../dolang-private-util"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang-bytecode]
 path = "../dolang-bytecode"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dot-writer]
 version = "0.1.4"

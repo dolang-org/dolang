@@ -1,6 +1,6 @@
 [package]
 name = "dolang-rpc"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Asynchronous RPC with native handle passing on Unix and Windows."
 license.workspace = true

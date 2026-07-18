@@ -7,6 +7,28 @@ use std::{error, ptr::NonNull};
 #[doc(hidden)]
 pub mod __private {
     pub use linkme;
+
+    pub const fn parse_version_component(value: &str) -> u32 {
+        let bytes = value.as_bytes();
+        assert!(!bytes.is_empty(), "empty package version component");
+
+        let mut result = 0_u32;
+        let mut index = 0;
+        while index < bytes.len() {
+            let digit = bytes[index].wrapping_sub(b'0');
+            assert!(digit <= 9, "invalid package version component");
+            result = match result.checked_mul(10) {
+                Some(result) => result,
+                None => panic!("package version component overflow"),
+            };
+            result = match result.checked_add(digit as u32) {
+                Some(result) => result,
+                None => panic!("package version component overflow"),
+            };
+            index += 1;
+        }
+        result
+    }
 }
 
 use linkme::distributed_slice;
@@ -21,6 +43,24 @@ pub struct Version {
     pub major: u32,
     pub minor: u32,
     pub patch: u32,
+}
+
+/// Construct a version from the current Cargo package version.
+#[macro_export]
+macro_rules! package_version {
+    () => {
+        $crate::extension::Version {
+            major: $crate::extension::__private::parse_version_component(env!(
+                "CARGO_PKG_VERSION_MAJOR"
+            )),
+            minor: $crate::extension::__private::parse_version_component(env!(
+                "CARGO_PKG_VERSION_MINOR"
+            )),
+            patch: $crate::extension::__private::parse_version_component(env!(
+                "CARGO_PKG_VERSION_PATCH"
+            )),
+        }
+    };
 }
 
 /// Generic error type returned by extension methods.

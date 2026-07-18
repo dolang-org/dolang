@@ -1,6 +1,6 @@
 [package]
 name = "dolang-ext-load"
-version = "0.1.0"
+version = "0.1.1"
 description = "Dynamic module loading extension for the Do language."
 edition = "2024"
 license.workspace = true
@@ -12,6 +12,6 @@ test = false
 doctest = false
 
 [dependencies]
-dolang = { path = "../dolang", version = "0.1.0" }
+dolang = { path = "../dolang", version = "0.1.1" }
 anstyle = "1.0.14"
 console = "0.16.2"

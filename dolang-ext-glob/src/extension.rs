@@ -28,11 +28,7 @@ impl error::Error for Infallible {}
 impl Extension for GlobExt {
     type Error = Infallible;
     const NAME: &str = "dolang-glob";
-    const VERSION: Version = Version {
-        major: 0,
-        minor: 1,
-        patch: 0,
-    };
+    const VERSION: Version = dolang::package_version!();
     const DESCRIPTION: &str = "Do Glob Extension";
 
     fn apply_compiler(&self, _compiler: &mut Compiler) -> Result<(), Infallible> {

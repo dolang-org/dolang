@@ -1,6 +1,6 @@
 [package]
 name = "dolang-ext-http"
-version = "0.1.0"
+version = "0.1.1"
 description = "HTTP client extension for the Do language."
 edition = "2024"
 license.workspace = true
@@ -24,12 +24,12 @@ url = "2"
 
 [dependencies.dolang-ext-json]
 path = "../dolang-ext-json"
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.dolang-ext-url]
 path = "../dolang-ext-url"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.reqwest]
 version = "0.13.1"
@@ -37,16 +37,16 @@ default-features = false
 features = ["query", "stream", "native-tls", "http2", "cookies", "multipart"]
 
 [build-dependencies]
-dolang-private-build = { path = "../dolang-private-build", version = "0.1.0" }
+dolang-private-build = { path = "../dolang-private-build", version = "0.1.1" }
 
 [dev-dependencies]
-dolang-private-test = { path = "../dolang-private-test", version = "0.1.0" }
+dolang-private-test = { path = "../dolang-private-test", version = "0.1.1" }
 wiremock = "0.6"
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang-ext-shell]
 path = "../dolang-ext-shell"
-version = "0.1.0"
+version = "0.1.1"

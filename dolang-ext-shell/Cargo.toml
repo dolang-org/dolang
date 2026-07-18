@@ -1,6 +1,6 @@
 [package]
 name = "dolang-ext-shell"
-version = "0.1.0"
+version = "0.1.1"
 description = "Shell, process, and filesystem extension for the Do language."
 edition = "2024"
 license.workspace = true
@@ -31,16 +31,16 @@ features = ["macros", "rt", "fs", "process", "io-util", "sync", "io-std", "time"
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang-ext-compile]
 path = "../dolang-ext-compile"
-version = "0.1.0"
+version = "0.1.1"
 features = ["diagnostic-rendering"]
 
 [dependencies.dolang-shell-vfs]
 path = "../dolang-shell-vfs"
-version = "0.1.0"
+version = "0.1.1"
 
 [target.'cfg(unix)'.dependencies.nix]
 version = "0.31"

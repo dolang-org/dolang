@@ -1,6 +1,6 @@
 [package]
 name = "dolang-bytecode"
-version = "0.1.0"
+version = "0.1.1"
 description = "Bytecode format and verification for the Do language."
 edition = "2024"
 license.workspace = true
@@ -19,7 +19,7 @@ features = ["derive"]
 [dependencies.dolang-util]
 package = "dolang-private-util"
 path = "../dolang-private-util"
-version = "0.1.0"
+version = "0.1.1"
 
 [features]
 default = []

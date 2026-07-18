@@ -1,6 +1,6 @@
 [package]
 name = "dolang-ext-zip"
-version = "0.1.0"
+version = "0.1.1"
 description = "ZIP archive extension for the Do language."
 edition = "2024"
 license.workspace = true
@@ -21,8 +21,8 @@ features = ["deflate", "zstd", "time"]
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang-ext-shell]
 path = "../dolang-ext-shell"
-version = "0.1.0"
+version = "0.1.1"

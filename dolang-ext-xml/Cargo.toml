@@ -1,6 +1,6 @@
 [package]
 name = "dolang-ext-xml"
-version = "0.1.0"
+version = "0.1.1"
 description = "XML extension for the Do language."
 edition = "2024"
 license.workspace = true
@@ -16,11 +16,11 @@ quick-xml = "0.40"
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
+version = "0.1.1"
 
 [build-dependencies]
-dolang-private-build = { path = "../dolang-private-build", version = "0.1.0" }
+dolang-private-build = { path = "../dolang-private-build", version = "0.1.1" }
 
 [dev-dependencies]
-dolang-private-test = { path = "../dolang-private-test", version = "0.1.0" }
+dolang-private-test = { path = "../dolang-private-test", version = "0.1.1" }
 futures = "0.3"

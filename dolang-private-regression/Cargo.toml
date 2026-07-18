@@ -13,10 +13,10 @@ test = false
 doctest = false
 
 [dependencies]
-dolang = { path = "../dolang", version = "0.1.0" }
-dolang-runtime = { path = "../dolang-runtime", version = "0.1.0" }
-dolang-private-test = { path = "../dolang-private-test", version = "0.1.0" }
+dolang = { path = "../dolang", version = "0.1.1" }
+dolang-runtime = { path = "../dolang-runtime", version = "0.1.1" }
+dolang-private-test = { path = "../dolang-private-test", version = "0.1.1" }
 futures = "0.3.31"
 
 [build-dependencies]
-dolang-private-build = { path = "../dolang-private-build", version = "0.1.0" }
+dolang-private-build = { path = "../dolang-private-build", version = "0.1.1" }

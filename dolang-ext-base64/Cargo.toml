@@ -1,6 +1,6 @@
 [package]
 name = "dolang-ext-base64"
-version = "0.1.0"
+version = "0.1.1"
 description = "Base64 extension for the Do language."
 edition = "2024"
 license.workspace = true
@@ -16,4 +16,4 @@ base64 = "0.22.1"
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
+version = "0.1.1"

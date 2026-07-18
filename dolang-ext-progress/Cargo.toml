@@ -1,6 +1,6 @@
 [package]
 name = "dolang-ext-progress"
-version = "0.1.0"
+version = "0.1.1"
 description = "Progress reporting extension for the Do language."
 edition = "2024"
 license.workspace = true
@@ -17,15 +17,15 @@ tokio = { version = "1", features = ["io-util"] }
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies.dolang-ext-shell]
 path = "../dolang-ext-shell"
-version = "0.1.0"
+version = "0.1.1"
 
 [build-dependencies]
-dolang-private-build = { path = "../dolang-private-build", version = "0.1.0" }
+dolang-private-build = { path = "../dolang-private-build", version = "0.1.1" }
 
 [dev-dependencies]
-dolang-private-test = { path = "../dolang-private-test", version = "0.1.0" }
+dolang-private-test = { path = "../dolang-private-test", version = "0.1.1" }
 futures = "0.3"

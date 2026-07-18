@@ -1,6 +1,6 @@
 [package]
 name = "dolang-ext-glob"
-version = "0.1.0"
+version = "0.1.1"
 description = "Glob matching extension for the Do language."
 edition = "2024"
 license.workspace = true
@@ -16,4 +16,4 @@ wax = "0.7"
 
 [dependencies.dolang]
 path = "../dolang"
-version = "0.1.0"
+version = "0.1.1"

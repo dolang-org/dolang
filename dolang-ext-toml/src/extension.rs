@@ -27,11 +27,7 @@ impl error::Error for Infallible {}
 impl Extension for TomlExt {
     type Error = Infallible;
     const NAME: &str = "dolang-toml";
-    const VERSION: Version = Version {
-        major: 0,
-        minor: 1,
-        patch: 0,
-    };
+    const VERSION: Version = dolang::package_version!();
     const DESCRIPTION: &str = "Do TOML Extension";
 
     fn apply_compiler(&self, _compiler: &mut Compiler) -> Result<(), Infallible> {
