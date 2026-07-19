@@ -222,6 +222,12 @@ fn render_message_backtrace_frames(
             {
                 out.push('\n');
                 out.push_str(&source_indent);
+                out.push_str(&if use_color {
+                    render_styled(Style::new().dimmed(), "╰─")
+                } else {
+                    "╰─".to_owned()
+                });
+                out.push(' ');
                 out.push_str(&source);
             }
         }
@@ -363,6 +369,7 @@ mod tests {
 
         assert!(rendered.contains("\u{1b}["));
         let plain = console::strip_ansi_codes(&rendered);
+        assert!(plain.contains("╰─   throw \"boom\""));
         assert_eq!(plain.matches("  throw \"boom\"").count(), 1);
     }
 }

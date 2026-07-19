@@ -11,7 +11,7 @@ fn main() {
         out_dir: Path::new(&out_dir),
         output_name: "bundled_entrypoints",
         table_name: "BUNDLED_ENTRYPOINTS",
-        virtual_root: "/<entrypoint>",
+        virtual_root: "<entrypoint>",
         compile_mode: CompileMode::Script,
         name_mode: NameMode::Stem,
     });

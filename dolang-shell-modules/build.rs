@@ -13,7 +13,7 @@ fn main() {
         out_dir: Path::new(&out_dir),
         output_name: "bundled_modules",
         table_name: "BUNDLED_MODULES",
-        virtual_root: "/<bundled>",
+        virtual_root: "<bundled>",
         compile_mode: CompileMode::Module,
         name_mode: NameMode::Module,
     });

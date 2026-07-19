@@ -3,7 +3,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     io::{self, Write},
-    mem, path,
+    mem,
 };
 
 use bytecode::Inst as BcInst;
@@ -235,10 +235,7 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
     }
 
     fn debug_table(&self) -> file::FuncDebug {
-        let path = path::absolute(self.emitter.file.path())
-            .expect("no absolute path?!")
-            .to_string_lossy()
-            .replace("\\", "/");
+        let path = self.emitter.file.path().to_string_lossy();
         let path = self.emitter.debugbintab.borrow_mut().id_str(&path);
         let path = file::StrId {
             start: path.start(),
