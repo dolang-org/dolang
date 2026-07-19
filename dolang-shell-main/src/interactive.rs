@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt::Write, ops::ControlFlow, path::Path, string::String};
+use std::{borrow::Cow, ops::ControlFlow, path::Path, string::String};
 
 use dolang::{
     compile::{Context, Diag, Mode, Origin, Span, Token},
@@ -18,15 +18,9 @@ use rustyline::{
     validate::{ValidationContext, ValidationResult, Validator},
 };
 
-use anstyle::{AnsiColor, Style};
-
 use crate::{cli::PreludeImport, diagnostic, load};
 
 pub(crate) const DYNAMIC_PRELUDE: &str = "$dynamic$";
-
-fn render_styled(style: Style, value: impl std::fmt::Display) -> String {
-    format!("{style}{value}{}", style.render_reset())
-}
 
 pub(crate) struct DynamicPrelude<'v> {
     pub(crate) root: Root<'v>,
@@ -137,30 +131,6 @@ impl Hint for DoHint {
     }
 }
 
-#[derive(Clone, Copy)]
-enum OriginClass {
-    Normal,
-    Param,
-    Function,
-    Module,
-    Prelude,
-    PreludeModule,
-}
-
-fn classify_origin(origin: Option<&Origin>) -> OriginClass {
-    match origin {
-        None | Some(Origin::Bind { .. }) | Some(Origin::Field { .. }) => OriginClass::Normal,
-        Some(Origin::Param { .. }) | Some(Origin::SelfParam { .. }) => OriginClass::Param,
-        Some(Origin::Class { .. }) | Some(Origin::Def { .. }) | Some(Origin::Method { .. }) => {
-            OriginClass::Function
-        }
-        Some(Origin::ImportModule { .. }) => OriginClass::Module,
-        Some(Origin::ImportItem { .. }) => OriginClass::Normal,
-        Some(Origin::PreludeItem { .. }) => OriginClass::Prelude,
-        Some(Origin::PreludeModule { .. }) => OriginClass::PreludeModule,
-    }
-}
-
 struct DoHelper {
     dynamic_prelude: Vec<String>,
     prelude: Vec<PreludeImport>,
@@ -188,7 +158,7 @@ impl Highlighter for DoHelper {
                   origin: Option<Origin>,
                   context: Context|
              -> ControlFlow<()> {
-                tokens.push((token, span, classify_origin(origin.as_ref()), context));
+                tokens.push((token, span, origin, context));
                 ControlFlow::Continue(())
             },
         );
@@ -196,146 +166,12 @@ impl Highlighter for DoHelper {
         if tokens.is_empty() {
             return Cow::Borrowed(line);
         }
-
-        // Sort tokens by span start, then longest
-        tokens.sort_by_key(|(_, span, _, _)| {
-            (
-                span.start().byte_offset(),
-                0isize.checked_sub_unsigned(span.end().byte_offset()),
-            )
-        });
-
-        // Remove overlapping tokens, keeping the first one for each unique span start
-        let mut unique_tokens = Vec::new();
-        for entry in tokens.into_iter() {
-            if unique_tokens.last().is_none_or(
-                |(_, last_span, _, _): &(Token, Span, OriginClass, Context)| {
-                    last_span.start().byte_offset() != entry.1.start().byte_offset()
-                },
-            ) {
-                unique_tokens.push(entry);
-            }
-        }
-
-        let mut result = String::new();
-        let mut last_end = 0;
-        for (token, span, origin, context) in unique_tokens {
-            // Add unhighlighted part
-            let start = span.start().byte_offset();
-            let end = span.end().byte_offset();
-            if start > last_end {
-                result.push_str(&line[last_end..start]);
-            }
-            // Add highlighted token
-            let token_str = &line[start..end];
-            let styled = match token {
-                Token::Comment => render_styled(
-                    Style::new()
-                        .fg_color(Some(AnsiColor::White.into()))
-                        .dimmed(),
-                    token_str,
-                ),
-                Token::Keyword => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Red.into())),
-                    token_str,
-                ),
-                Token::Literal => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Green.into())),
-                    token_str,
-                ),
-                Token::Operator => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Yellow.into())),
-                    token_str,
-                ),
-                Token::StringDelim => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Cyan.into())),
-                    token_str,
-                ),
-                Token::Number => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Magenta.into())),
-                    token_str,
-                ),
-                Token::Constant => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Magenta.into())),
-                    token_str,
-                ),
-                Token::Delim => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Yellow.into())),
-                    token_str,
-                ),
-                Token::Escape => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Yellow.into())),
-                    token_str,
-                ),
-                Token::ModuleName => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Magenta.into())),
-                    token_str,
-                ),
-                Token::ModuleItem => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Cyan.into())),
-                    token_str,
-                ),
-                Token::Field => match context {
-                    Context::Call => render_styled(
-                        Style::new().fg_color(Some(AnsiColor::Blue.into())),
-                        token_str,
-                    ),
-                    Context::None => render_styled(
-                        Style::new().fg_color(Some(AnsiColor::Cyan.into())),
-                        token_str,
-                    ),
-                },
-                Token::Method => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Blue.into())),
-                    token_str,
-                ),
-                Token::Key => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Green.into())),
-                    token_str,
-                ),
-                Token::Sigil => render_styled(
-                    Style::new().fg_color(Some(AnsiColor::White.into())),
-                    token_str,
-                ),
-                Token::Variable => match context {
-                    Context::Call => render_styled(
-                        Style::new().fg_color(Some(AnsiColor::Blue.into())),
-                        token_str,
-                    ),
-                    Context::None => match origin {
-                        OriginClass::Function => render_styled(
-                            Style::new().fg_color(Some(AnsiColor::Blue.into())),
-                            token_str,
-                        ),
-                        OriginClass::Module => render_styled(
-                            Style::new().fg_color(Some(AnsiColor::Magenta.into())),
-                            token_str,
-                        ),
-                        OriginClass::Param => render_styled(
-                            Style::new().fg_color(Some(AnsiColor::Magenta.into())),
-                            token_str,
-                        ),
-                        OriginClass::Prelude => render_styled(
-                            Style::new().fg_color(Some(AnsiColor::Cyan.into())),
-                            token_str,
-                        ),
-                        OriginClass::PreludeModule => render_styled(
-                            Style::new().fg_color(Some(AnsiColor::Magenta.into())),
-                            token_str,
-                        ),
-                        OriginClass::Normal => token_str.to_string(),
-                    },
-                },
-            };
-            write!(result, "{}", styled).unwrap();
-            last_end = end;
-        }
-        // Add remaining part
-        if last_end < line.len() {
-            result.push_str(&line[last_end..]);
-        }
-
-        Cow::Owned(result)
+        Cow::Owned(dolang_ext_shell::highlight_source_range(
+            line,
+            &tokens,
+            0..line.len(),
+            true,
+        ))
     }
 
     fn highlight_char(&self, line: &str, pos: usize, kind: rustyline::highlight::CmdKind) -> bool {

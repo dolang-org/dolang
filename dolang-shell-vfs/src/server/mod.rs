@@ -21,16 +21,16 @@ use tokio::{
 
 use crate::{
     AnyFile, AnyVfs, Child as _, Command as _, Direct, FileHandle as _, OpenOptions as _,
-    Permissions, SessionMode, StdioRecv, StdioSend, Utf8TypedPath, Vfs,
+    SessionMode, StdioRecv, StdioSend, Utf8TypedPath, Vfs,
     protocol::{
-        AccessRequest, AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest,
-        CreateDirRequest, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
-        MoveRequest, OpenHandle, OpenHandlePreference, OpenRequest, OpenVfsHandle, PipeResponse,
-        QueryResponse, ReadDirResponse, ReadLinkRequest, RemoveDirRequest, RemoveRequest,
-        RenameRequest, Request, RequestKind, ResponseKind, SecDescRequest, SetAttrsRequest,
-        SetPermissionsRequest, SetSecDescRequest, SetTimesRequest, SetXattrRequest, SpawnRequest,
-        StdioRecvTarget, StdioSendTarget, StreamsRequest, SymlinkKind, SymlinkRequest,
-        UnixVfsRequest, VfsProtocol, WellKnownPathRequest, WirePath, XattrRequest, XattrsRequest,
+        AccessRequest, CanonicalizeRequest, CopyRequest, CreateDirRequest, FsMetadataRequest,
+        GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenHandle,
+        OpenHandlePreference, OpenRequest, OpenVfsHandle, PipeResponse, QueryResponse,
+        ReadDirResponse, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request,
+        RequestKind, ResponseKind, SecDescRequest, SetMetadataRequest, SetSecDescRequest,
+        SetTimesRequest, SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget,
+        StreamsRequest, SymlinkKind, SymlinkRequest, UnixVfsRequest, VfsProtocol,
+        WellKnownPathRequest, WirePath, XattrRequest, XattrsRequest,
     },
 };
 
@@ -454,15 +454,12 @@ impl Connection {
             RequestKind::Symlink(request) => self.handle_symlink(request).await,
             RequestKind::HardLink(request) => self.handle_hard_link(request).await,
             RequestKind::SymlinkMetadata(request) => self.handle_symlink_metadata(request).await,
-            RequestKind::Attrs(request) => self.handle_attrs(request).await,
-            RequestKind::SetAttrs(request) => self.handle_set_attrs(request).await,
+            RequestKind::SetMetadata(request) => self.handle_set_metadata(request).await,
             RequestKind::Canonicalize(request) => self.handle_canonicalize(request).await,
             RequestKind::ReadLink(request) => self.handle_read_link(request).await,
             RequestKind::Access(request) => self.handle_access(request).await,
             RequestKind::Glob(request) => self.handle_glob(request).await,
-            RequestKind::SetPermissions(request) => self.handle_set_permissions(request).await,
             RequestKind::SetTimes(request) => self.handle_set_times(request).await,
-            RequestKind::Chown(request) => self.handle_chown(request).await,
             RequestKind::Xattrs(request) => self.handle_xattrs(request).await,
             RequestKind::Xattr(request) => self.handle_xattr(request).await,
             RequestKind::SetXattr(request) => self.handle_set_xattr(request).await,
@@ -1359,21 +1356,14 @@ impl Connection {
         ))
     }
 
-    async fn handle_attrs(&self, req: AttrsRequest) -> ResponseKind {
-        ResponseKind::Attrs(Self::wire_result(
-            self.server
-                .vfs
-                .attrs(request_path(&req.path), req.follow)
-                .await,
-        ))
-    }
-
-    async fn handle_set_attrs(&self, req: SetAttrsRequest) -> ResponseKind {
-        ResponseKind::SetAttrs(Self::wire_result(
-            self.server
-                .vfs
-                .set_attrs(request_path(&req.path), req.attrs)
-                .await,
+    async fn handle_set_metadata(&self, req: SetMetadataRequest) -> ResponseKind {
+        let paths: Vec<_> = req
+            .paths
+            .iter()
+            .map(|path| request_path(path).to_path_buf())
+            .collect();
+        ResponseKind::SetMetadata(Self::wire_result(
+            self.server.vfs.set_metadata(&paths, req.patch).await,
         ))
     }
 
@@ -1450,15 +1440,6 @@ impl Connection {
         ))
     }
 
-    async fn handle_set_permissions(&self, req: SetPermissionsRequest) -> ResponseKind {
-        ResponseKind::SetPermissions(Self::wire_result(
-            self.server
-                .vfs
-                .set_permissions(request_path(&req.path), Permissions::from_mode(req.mode))
-                .await,
-        ))
-    }
-
     async fn handle_set_times(&self, req: SetTimesRequest) -> ResponseKind {
         let accessed = req
             .accessed
@@ -1473,15 +1454,6 @@ impl Connection {
             self.server
                 .vfs
                 .set_times(request_path(&req.path), accessed, modified, created)
-                .await,
-        ))
-    }
-
-    async fn handle_chown(&self, req: ChownRequest) -> ResponseKind {
-        ResponseKind::Chown(Self::wire_result(
-            self.server
-                .vfs
-                .chown(request_path(&req.path), req.user, req.group, req.follow)
                 .await,
         ))
     }

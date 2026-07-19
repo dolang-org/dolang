@@ -16,7 +16,7 @@ use dolang::runtime::{
     unpack,
 };
 use dolang_shell_vfs::Utf8WindowsPrefix;
-use dolang_shell_vfs::{Attrs, Utf8TypedPath, Utf8TypedPathBuf, Vfs};
+use dolang_shell_vfs::{AttrFlags, Utf8TypedPath, Utf8TypedPathBuf, Vfs};
 
 use super::file::File;
 
@@ -491,6 +491,8 @@ macro_rules! impl_concrete_path {
                 let ignore = builder.sym("ignore");
                 let max_depth = builder.sym("max_depth");
                 let follow = builder.sym("follow");
+                let mode = builder.sym("mode");
+                let user = builder.sym("user");
                 let owner = builder.sym("owner");
                 let group = builder.sym("group");
                 let dacl = builder.sym("dacl");
@@ -631,17 +633,6 @@ macro_rules! impl_concrete_path {
                             follow,
                         )
                         .await
-                    })
-                    .method("attrs", async move |this, strand, args, out| {
-                        let ([], [follow]) = unpack!(strand, args, 0, 0, follow = None)?;
-                        let follow = match follow {
-                            Some(v) => v
-                                .as_bool(strand)
-                                .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
-                            None => true,
-                        };
-                        let annex = this.annex();
-                        super::get_attrs(strand, annex.global, annex.as_path(), follow, out).await
                     })
                     .method("xattrs", async move |this, strand, args, out| {
                         let ([], [namespace, follow]) =
@@ -844,19 +835,14 @@ macro_rules! impl_concrete_path {
                         let annex = this.annex();
                         super::remove_dir(strand, annex.global, annex.as_path(), all, ignore).await
                     })
-                    .method("chmod", async move |this, strand, args, _out| {
-                        let ([mode], []) = unpack!(strand, args, 1, 0)?;
-                        let mode = mode
-                            .to_i64(strand)
-                            .map_err(|_| Error::type_error(strand, "expected int"))?
-                            as u32;
-                        let annex = this.annex();
-                        super::chmod(strand, annex.global, annex.as_path(), mode).await
-                    })
-                    .method("set_attrs", async move |this, strand, args, _out| {
+                    .method("set_metadata", async move |this, strand, args, _out| {
                         let (
                             [],
                             [
+                                mode,
+                                user,
+                                group,
+                                follow,
                                 readonly,
                                 hidden,
                                 system,
@@ -889,6 +875,10 @@ macro_rules! impl_concrete_path {
                             args,
                             0,
                             0,
+                            mode = None,
+                            user = None,
+                            group = None,
+                            follow = None,
                             readonly = None,
                             hidden = None,
                             system = None,
@@ -916,40 +906,49 @@ macro_rules! impl_concrete_path {
                             extent_format = None,
                             opaque = None
                         )?;
-                        let attrs = Attrs {
-                            readonly: super::parse_attr_bool(strand, readonly)?,
-                            hidden: super::parse_attr_bool(strand, hidden)?,
-                            system: super::parse_attr_bool(strand, system)?,
-                            archive: super::parse_attr_bool(strand, archive)?,
-                            compressed: super::parse_attr_bool(strand, compressed)?,
-                            temporary: super::parse_attr_bool(strand, temporary)?,
-                            offline: super::parse_attr_bool(strand, offline)?,
-                            not_content_indexed: super::parse_attr_bool(
-                                strand,
-                                not_content_indexed,
-                            )?,
-                            immutable: super::parse_attr_bool(strand, immutable)?,
-                            append_only: super::parse_attr_bool(strand, append_only)?,
-                            no_dump: super::parse_attr_bool(strand, no_dump)?,
-                            no_atime: super::parse_attr_bool(strand, no_atime)?,
-                            no_copy_on_write: super::parse_attr_bool(strand, no_copy_on_write)?,
-                            dir_sync: super::parse_attr_bool(strand, dir_sync)?,
-                            casefold: super::parse_attr_bool(strand, casefold)?,
-                            data_journaling: super::parse_attr_bool(strand, data_journaling)?,
-                            no_compress: super::parse_attr_bool(strand, no_compress)?,
-                            project_inherit: super::parse_attr_bool(strand, project_inherit)?,
-                            secure_delete: super::parse_attr_bool(strand, secure_delete)?,
-                            sync: super::parse_attr_bool(strand, sync)?,
-                            no_tail_merge: super::parse_attr_bool(strand, no_tail_merge)?,
-                            top_dir: super::parse_attr_bool(strand, top_dir)?,
-                            undelete: super::parse_attr_bool(strand, undelete)?,
-                            direct_access: super::parse_attr_bool(strand, direct_access)?,
-                            extent_format: super::parse_attr_bool(strand, extent_format)?,
-                            opaque: super::parse_attr_bool(strand, opaque)?,
-                            ..Attrs::default()
-                        };
+                        let attrs = super::attrs_patch(
+                            strand,
+                            [
+                                (AttrFlags::READONLY, readonly),
+                                (AttrFlags::HIDDEN, hidden),
+                                (AttrFlags::SYSTEM, system),
+                                (AttrFlags::ARCHIVE, archive),
+                                (AttrFlags::COMPRESSED, compressed),
+                                (AttrFlags::TEMPORARY, temporary),
+                                (AttrFlags::OFFLINE, offline),
+                                (AttrFlags::NOT_CONTENT_INDEXED, not_content_indexed),
+                                (AttrFlags::IMMUTABLE, immutable),
+                                (AttrFlags::APPEND_ONLY, append_only),
+                                (AttrFlags::NO_DUMP, no_dump),
+                                (AttrFlags::NO_ATIME, no_atime),
+                                (AttrFlags::NO_COPY_ON_WRITE, no_copy_on_write),
+                                (AttrFlags::DIR_SYNC, dir_sync),
+                                (AttrFlags::CASEFOLD, casefold),
+                                (AttrFlags::DATA_JOURNALING, data_journaling),
+                                (AttrFlags::NO_COMPRESS, no_compress),
+                                (AttrFlags::PROJECT_INHERIT, project_inherit),
+                                (AttrFlags::SECURE_DELETE, secure_delete),
+                                (AttrFlags::SYNC, sync),
+                                (AttrFlags::NO_TAIL_MERGE, no_tail_merge),
+                                (AttrFlags::TOP_DIR, top_dir),
+                                (AttrFlags::UNDELETE, undelete),
+                                (AttrFlags::DIRECT_ACCESS, direct_access),
+                                (AttrFlags::EXTENT_FORMAT, extent_format),
+                                (AttrFlags::OPAQUE, opaque),
+                            ],
+                        )?;
+                        let global = this.annex().global;
+                        let patch = super::metadata_patch(
+                            strand, global, mode, user, group, follow, attrs,
+                        )?;
                         let annex = this.annex();
-                        super::set_attrs(strand, annex.global, annex.as_path(), attrs).await
+                        super::set_metadata(
+                            strand,
+                            annex.global,
+                            vec![annex.as_path().to_path_buf()],
+                            patch,
+                        )
+                        .await
                     })
                     .method("set_timestamps", async move |this, strand, args, _out| {
                         let ([], [modified, accessed, created]) = unpack!(
@@ -1051,13 +1050,6 @@ macro_rules! impl_concrete_path {
                 } else {
                     builder
                 };
-                let builder = builder.method("chown", async move |this, strand, args, _out| {
-                    let global = this.annex().global;
-                    let path = this.annex().as_path().to_path_buf();
-                    let (path, user, group, follow) =
-                        super::parse_chown_common(strand, global, args, Some(path))?;
-                    super::chown(strand, global, path.to_path(), user, group, follow).await
-                });
                 builder
                     .get("components", |this, strand, out| {
                         Output::set(strand, out, ArrayView::<Components<$path>>::new(this));

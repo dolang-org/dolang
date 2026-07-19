@@ -47,7 +47,8 @@ impl<'v> Object<'v> for FsMetadata {
         let files_free = builder.sym("files_free");
         let files_available = builder.sym("files_available");
         let fragment_size = builder.sym("fragment_size");
-        let unix_flags = builder.sym("unix_flags");
+        let linux_attrs = builder.sym("linux_attrs");
+        let macos_attrs = builder.sym("macos_attrs");
         let fsid = builder.sym("fsid");
         let name_max = builder.sym("name_max");
         let no_suid = builder.sym("no_suid");
@@ -138,13 +139,19 @@ impl<'v> Object<'v> for FsMetadata {
                     out,
                 )
             })
-            .get("unix_flags", move |this, strand, out| {
-                option_field(
-                    strand,
-                    this.annex().inner.unix().map(|v| v.platform.flags()),
-                    unix_flags,
-                    out,
-                )
+            .get("linux_attrs", move |this, strand, out| {
+                let value = this.annex().inner.unix().and_then(|v| match v.platform {
+                    dolang_shell_vfs::UnixFsMetadataPlatform::Linux { flags } => Some(flags),
+                    dolang_shell_vfs::UnixFsMetadataPlatform::Macos { .. } => None,
+                });
+                option_field(strand, value, linux_attrs, out)
+            })
+            .get("macos_attrs", move |this, strand, out| {
+                let value = this.annex().inner.unix().and_then(|v| match v.platform {
+                    dolang_shell_vfs::UnixFsMetadataPlatform::Linux { .. } => None,
+                    dolang_shell_vfs::UnixFsMetadataPlatform::Macos { flags } => Some(flags),
+                });
+                option_field(strand, value, macos_attrs, out)
             })
             .get("fsid", move |this, strand, out| {
                 option_field(

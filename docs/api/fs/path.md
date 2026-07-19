@@ -319,29 +319,6 @@ Applies the components selected by a security descriptor's `mask`.
 Windows may normalize the resulting descriptor when associating it with the
 filesystem object. Other platforms raise `UnsupportedError`.
 
-### `attrs :follow = true`
-
-Gets filesystem attributes for this path.
-
-Equivalent to [`attrs`](index.md).
-
-#### Parameters
-
-| Name     | Type                     | Description                                                  |
-| -------- | ------------------------ | ------------------------------------------------------------ |
-| `follow` | [`bool`](../std/bool.md) | If `false`, queries attributes for symlink instead of target |
-
-#### Returns
-
-[`Attrs`](attrs.md)
-
-```
-let path = Path "data.txt"
-let a = path.attrs()
-if a.hidden
-  echo hidden
-```
-
 ### `exists()`
 
 Checks if the path exists.
@@ -453,20 +430,23 @@ let path = Path "output.txt"
 path.set_len 0
 ```
 
-### `set_attrs :readonly? :hidden? ...`
+### `set_metadata :mode? :user? :group? :follow = true ...`
 
-Updates filesystem attributes for this path.
+Updates permissions, ownership, and filesystem attributes for this path.
 
-Equivalent to [`set_attrs`](index.md).
+Equivalent to [`set_metadata`](index.md).
 
-Unspecified attributes are left unchanged.
+Unspecified metadata is left unchanged.
+
+On Windows, `user` and `group` accept an account name or
+[`Sid`](../security/windows/sid.md). On Unix, they accept a numeric ID or name.
 
 ```
 let path = Path "data.txt"
-path.set_attrs hidden: true
-path.set_attrs readonly: false
-path.set_attrs no_dump: true
-path.set_attrs opaque: false
+path.set_metadata mode: 0o640 user: "deploy" group: "deploy"
+path.set_metadata hidden: true
+path.set_metadata no_dump: true
+path.set_metadata opaque: false
 ```
 
 ### `xattrs :namespace? :follow = true`
@@ -919,37 +899,6 @@ to_remove.remove_dir all: true
 to_remove.remove_dir all: true ignore: true
 ```
 
-### `chmod mode`
-
-Changes the permissions of the file or directory at this path.
-
-**Platform Notes:**
-
-- **Unix:** Changes file permissions using standard Unix mode bits
-- **Windows:** Raises a runtime error (not supported)
-
-#### Parameters
-
-| Name   | Type                   | Description                          |
-| ------ | ---------------------- | ------------------------------------ |
-| `mode` | [`int`](../std/int.md) | Permission mode bits (e.g., `0o755`) |
-
-#### Errors
-
-| Exception   | Condition                                             |
-| ----------- | ----------------------------------------------------- |
-| `sys.Error` | The target does not support the operation or it fails |
-
-#### Example
-
-```
-let script = Path "script.sh"
-script.chmod 0o755
-
-let shared = Path "/tmp/shared"
-shared.chmod 0o777
-```
-
 ### `set_timestamps :modified? :accessed? :created?`
 
 Updates the timestamps of the file or directory at this path.
@@ -977,40 +926,6 @@ let artifact = Path "artifact.tar"
 artifact.set_timestamps modified: DateTime.from_unix(1700000000)
 artifact.set_timestamps accessed: DateTime.now()
 artifact.set_timestamps created: DateTime.from_unix(1690000000)
-```
-
-### `chown user? :group? :follow = true`
-
-Changes the owner and/or group of the file, directory, or symlink target at
-this path.
-
-**Platform Notes:**
-
-- **Unix:** Available
-- **Windows:** Raises [`sys.Error`](../sys/error.md) with an
-  unsupported-operation error
-
-#### Parameters
-
-| Name     | Type                                           | Description                               |
-| -------- | ---------------------------------------------- | ----------------------------------------- |
-| `user`   | [`int`](../std/int.md)\|[`str`](../std/str.md) | Optional owner UID or user name           |
-| `group`  | [`int`](../std/int.md)\|[`str`](../std/str.md) | Optional group GID or group name          |
-| `follow` | [`bool`](../std/bool.md)                       | If `false`, operate on the symlink itself |
-
-At least one of `user` or `group` must be provided.
-
-#### Example
-
-```
-let script = Path "script.sh"
-script.chown "deploy" group: "deploy"
-
-let shared = Path "/tmp/shared"
-shared.chown group: "build"
-
-let link = Path "current"
-link.chown group: 33 follow: false
 ```
 
 ### `normalize()`

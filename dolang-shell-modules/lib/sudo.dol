@@ -16,7 +16,7 @@ do
   let agent = _vfs.bin()
 
   with_temp_dir parent: $runtime_dir do |subdir|
-    subdir.chmod 0o700
+    subdir.set_metadata mode: 0o700
     let socket = (subdir / "socket")
     let input = strand.input()
     pipeline

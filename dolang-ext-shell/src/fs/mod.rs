@@ -4,9 +4,9 @@ use dolang::runtime::{
     vm::Builder,
 };
 use dolang_shell_vfs::{
-    Attrs, DACL_SECURITY_INFORMATION, FileHandle, FileType, GROUP_SECURITY_INFORMATION,
-    OWNER_SECURITY_INFORMATION, OpenOptions, SACL_SECURITY_INFORMATION, SecDesc, Utf8TypedPath,
-    Utf8TypedPathBuf, Vfs, WellKnownPath,
+    AttrFlags, AttrsPatch, DACL_SECURITY_INFORMATION, FileHandle, FileType,
+    GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, OpenOptions, SACL_SECURITY_INFORMATION,
+    SecDesc, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath,
 };
 use std::{
     future::poll_fn,
@@ -176,21 +176,6 @@ async fn metadata<'v, 's>(
     Ok(())
 }
 
-async fn get_attrs<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    path: Utf8TypedPath<'_>,
-    follow: bool,
-    out: impl Output<'v>,
-) -> Result<'v, 's, ()> {
-    let path = prepend_cwd(strand, global, path)?;
-    let local = global.local.get(strand);
-    let vfs = local.vfs();
-    let attrs = vfs.attrs(path.to_path(), follow).await.into_sys(strand)?;
-    attrs::create_attrs(strand, global, attrs, out);
-    Ok(())
-}
-
 async fn fs_metadata<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
@@ -218,18 +203,64 @@ fn parse_attr_bool<'v, 's>(
         .transpose()
 }
 
-async fn set_attrs<'v, 's>(
+fn attrs_patch<'v, 's, 'a>(
+    strand: &mut Strand<'v, 's>,
+    values: impl IntoIterator<Item = (AttrFlags, Option<Slot<'v, 'a>>)>,
+) -> Result<'v, 's, AttrsPatch>
+where
+    'v: 'a,
+{
+    let mut patch = AttrsPatch::default();
+    for (flag, value) in values {
+        patch.update(flag, parse_attr_bool(strand, value)?);
+    }
+    Ok(patch)
+}
+
+fn metadata_patch<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    path: Utf8TypedPath<'_>,
-    attrs: Attrs,
+    mode: Option<Slot<'v, '_>>,
+    user: Option<Slot<'v, '_>>,
+    group: Option<Slot<'v, '_>>,
+    follow: Option<Slot<'v, '_>>,
+    attrs: AttrsPatch,
+) -> Result<'v, 's, dolang_shell_vfs::MetadataPatch> {
+    let mode = mode.map(|mode| mode.to_u32(strand)).transpose()?;
+    let user = user
+        .map(|user| parse_ownership_identity(strand, global, &user, "user"))
+        .transpose()?;
+    let group = group
+        .map(|group| parse_ownership_identity(strand, global, &group, "group"))
+        .transpose()?;
+    let follow = match follow {
+        Some(follow) => follow
+            .as_bool(strand)
+            .ok_or_else(|| Error::type_error(strand, "follow: expected bool"))?,
+        None => true,
+    };
+    Ok(dolang_shell_vfs::MetadataPatch {
+        mode,
+        user,
+        group,
+        attrs,
+        follow,
+    })
+}
+
+async fn set_metadata<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    paths: Vec<Utf8TypedPathBuf>,
+    patch: dolang_shell_vfs::MetadataPatch,
 ) -> Result<'v, 's, ()> {
-    let path = prepend_cwd(strand, global, path)?;
+    let paths = paths
+        .into_iter()
+        .map(|path| prepend_cwd(strand, global, path.to_path()))
+        .collect::<Result<'v, 's, Vec<_>>>()?;
     let local = global.local.get(strand);
     let vfs = local.vfs();
-    vfs.set_attrs(path.to_path(), attrs)
-        .await
-        .into_sys(strand)?;
+    vfs.set_metadata(&paths, patch).await.into_sys(strand)?;
     Ok(())
 }
 
@@ -579,31 +610,6 @@ async fn remove_dir<'v, 's>(
     }
 }
 
-async fn chmod<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    path: Utf8TypedPath<'_>,
-    mode: u32,
-) -> Result<'v, 's, ()> {
-    if matches!(
-        global.local.get(strand).target().operating_system.family(),
-        dolang_shell_vfs::OperatingSystemFamily::Windows
-    ) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "chmod is not supported on this platform",
-        )
-        .into_sys(strand));
-    }
-    let path = prepend_cwd(strand, global, path)?;
-    let vfs = global.local.get(strand).vfs();
-    let perm = dolang_shell_vfs::Permissions::from_mode(mode);
-    vfs.set_permissions(path.to_path(), perm)
-        .await
-        .into_sys(strand)?;
-    Ok(())
-}
-
 fn parse_timestamp_arg<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
@@ -674,99 +680,32 @@ async fn set_timestamps<'v, 's>(
     Ok(())
 }
 
-fn parse_chown_identity<'v, 's>(
+fn parse_ownership_identity<'v, 's>(
     strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
     value: &Value<'v>,
     field: &'static str,
-) -> Result<'v, 's, dolang_shell_vfs::ChownIdentity> {
+) -> Result<'v, 's, dolang_shell_vfs::OwnershipIdentity> {
     if let Some(value) = value.as_int(strand) {
         let value = u32::try_from(value)
             .map_err(|_| Error::type_error(strand, "expected non-negative int or str"))?;
-        Ok(dolang_shell_vfs::ChownIdentity::Id(value))
+        Ok(dolang_shell_vfs::OwnershipIdentity::Id(value))
     } else if let Some(value) = value.as_str(strand) {
-        Ok(dolang_shell_vfs::ChownIdentity::Name(value.to_string()))
+        Ok(dolang_shell_vfs::OwnershipIdentity::Name(value.to_string()))
+    } else if let Some(value) = global.types.sid.downcast(value) {
+        Ok(dolang_shell_vfs::OwnershipIdentity::Sid(
+            value.annex().clone(),
+        ))
     } else {
         Err(Error::type_error(
             strand,
             match field {
-                "user" => "user: expected int or str",
-                "group" => "group: expected int or str",
-                _ => "expected int or str",
+                "user" => "user: expected int, str, or security.Sid",
+                "group" => "group: expected int, str, or security.Sid",
+                _ => "expected int, str, or security.Sid",
             },
         ))
     }
-}
-
-fn parse_chown_common<'v, 's, 'a>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    args: dolang::runtime::Args<'v, 'a>,
-    path: Option<Utf8TypedPathBuf>,
-) -> Result<
-    'v,
-    's,
-    (
-        Utf8TypedPathBuf,
-        Option<dolang_shell_vfs::ChownIdentity>,
-        Option<dolang_shell_vfs::ChownIdentity>,
-        bool,
-    ),
-> {
-    let mut positional_index = usize::from(path.is_some());
-    let mut path = path;
-    let mut user = None;
-    let mut group = None;
-    let mut follow = true;
-
-    for arg in args {
-        match arg {
-            Arg::Pos(slot) => {
-                if path.is_none() {
-                    path = Some(path_from_value(strand, global, &slot)?);
-                } else if user.is_none() {
-                    user = Some(parse_chown_identity(strand, &slot, "user")?);
-                } else {
-                    return Err(Error::unexpected_positional(strand, positional_index));
-                }
-                positional_index += 1;
-            }
-            Arg::Key(sym, slot) if sym == global.syms.group => {
-                group = Some(parse_chown_identity(strand, &slot, "group")?);
-            }
-            Arg::Key(sym, slot) if sym == global.syms.follow => {
-                follow = slot
-                    .as_bool(strand)
-                    .ok_or_else(|| Error::type_error(strand, "follow: expected bool"))?;
-            }
-            Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
-        }
-    }
-
-    let path = path.ok_or_else(|| Error::missing_positional(strand, 0))?;
-    if user.is_none() && group.is_none() {
-        return Err(Error::runtime(
-            strand,
-            "chown requires at least one of user or group",
-        ));
-    }
-    Ok((path, user, group, follow))
-}
-
-async fn chown<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    path: Utf8TypedPath<'_>,
-    user: Option<dolang_shell_vfs::ChownIdentity>,
-    group: Option<dolang_shell_vfs::ChownIdentity>,
-    follow: bool,
-) -> Result<'v, 's, ()> {
-    let path = prepend_cwd(strand, global, path)?;
-    let local = global.local.get(strand);
-    let vfs = local.vfs();
-    vfs.chown(path.to_path(), user, group, follow)
-        .await
-        .into_sys(strand)?;
-    Ok(())
 }
 
 /// Shared implementation for `fs.absolute` and `Path.absolute`.
@@ -935,6 +874,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
     let ignore = builder.sym("ignore");
     let max_depth = builder.sym("max_depth");
     let follow = builder.sym("follow");
+    let mode = builder.sym("mode");
+    let user = builder.sym("user");
     let owner = builder.sym("owner");
     let group = builder.sym("group");
     let dacl = builder.sym("dacl");
@@ -1058,17 +999,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             };
             set_sec_desc(strand, global, path.to_path(), &descriptor, follow).await
         })
-        .function("attrs", async move |strand, args, out| {
-            let ([path], [follow]) = unpack!(strand, args, 1, 0, follow = None)?;
-            let path = path_from_value(strand, global, &path)?;
-            let follow = match follow {
-                Some(v) => v
-                    .as_bool(strand)
-                    .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
-                None => true,
-            };
-            get_attrs(strand, global, path.to_path(), follow, out).await
-        })
         .function("xattrs", async move |strand, args, out| {
             let ([path], [namespace, follow]) =
                 unpack!(strand, args, 1, 0, namespace = None, follow = None)?;
@@ -1146,10 +1076,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 .map_err(|_| Error::type_error(strand, "size must be a non-negative integer"))?;
             set_len(strand, global, path.to_path(), size).await
         })
-        .function("set_attrs", async move |strand, args, _out| {
+        .function("set_metadata", async move |strand, args, _out| {
             let (
-                [path],
+                [],
                 [
+                    mode,
+                    user,
+                    group,
+                    follow,
                     readonly,
                     hidden,
                     system,
@@ -1177,11 +1111,16 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     extent_format,
                     opaque,
                 ],
+                paths,
             ) = unpack!(
                 strand,
                 args,
-                1,
                 0,
+                0,
+                mode = None,
+                user = None,
+                group = None,
+                follow = None,
                 readonly = None,
                 hidden = None,
                 system = None,
@@ -1207,39 +1146,56 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 undelete = None,
                 direct_access = None,
                 extent_format = None,
-                opaque = None
+                opaque = None,
+                ...
             )?;
-            let path = path_from_value(strand, global, &path)?;
-            let attrs = Attrs {
-                readonly: parse_attr_bool(strand, readonly)?,
-                hidden: parse_attr_bool(strand, hidden)?,
-                system: parse_attr_bool(strand, system)?,
-                archive: parse_attr_bool(strand, archive)?,
-                compressed: parse_attr_bool(strand, compressed)?,
-                temporary: parse_attr_bool(strand, temporary)?,
-                offline: parse_attr_bool(strand, offline)?,
-                not_content_indexed: parse_attr_bool(strand, not_content_indexed)?,
-                immutable: parse_attr_bool(strand, immutable)?,
-                append_only: parse_attr_bool(strand, append_only)?,
-                no_dump: parse_attr_bool(strand, no_dump)?,
-                no_atime: parse_attr_bool(strand, no_atime)?,
-                no_copy_on_write: parse_attr_bool(strand, no_copy_on_write)?,
-                dir_sync: parse_attr_bool(strand, dir_sync)?,
-                casefold: parse_attr_bool(strand, casefold)?,
-                data_journaling: parse_attr_bool(strand, data_journaling)?,
-                no_compress: parse_attr_bool(strand, no_compress)?,
-                project_inherit: parse_attr_bool(strand, project_inherit)?,
-                secure_delete: parse_attr_bool(strand, secure_delete)?,
-                sync: parse_attr_bool(strand, sync)?,
-                no_tail_merge: parse_attr_bool(strand, no_tail_merge)?,
-                top_dir: parse_attr_bool(strand, top_dir)?,
-                undelete: parse_attr_bool(strand, undelete)?,
-                direct_access: parse_attr_bool(strand, direct_access)?,
-                extent_format: parse_attr_bool(strand, extent_format)?,
-                opaque: parse_attr_bool(strand, opaque)?,
-                ..Attrs::default()
-            };
-            set_attrs(strand, global, path.to_path(), attrs).await
+            let attrs = attrs_patch(
+                strand,
+                [
+                    (AttrFlags::READONLY, readonly),
+                    (AttrFlags::HIDDEN, hidden),
+                    (AttrFlags::SYSTEM, system),
+                    (AttrFlags::ARCHIVE, archive),
+                    (AttrFlags::COMPRESSED, compressed),
+                    (AttrFlags::TEMPORARY, temporary),
+                    (AttrFlags::OFFLINE, offline),
+                    (AttrFlags::NOT_CONTENT_INDEXED, not_content_indexed),
+                    (AttrFlags::IMMUTABLE, immutable),
+                    (AttrFlags::APPEND_ONLY, append_only),
+                    (AttrFlags::NO_DUMP, no_dump),
+                    (AttrFlags::NO_ATIME, no_atime),
+                    (AttrFlags::NO_COPY_ON_WRITE, no_copy_on_write),
+                    (AttrFlags::DIR_SYNC, dir_sync),
+                    (AttrFlags::CASEFOLD, casefold),
+                    (AttrFlags::DATA_JOURNALING, data_journaling),
+                    (AttrFlags::NO_COMPRESS, no_compress),
+                    (AttrFlags::PROJECT_INHERIT, project_inherit),
+                    (AttrFlags::SECURE_DELETE, secure_delete),
+                    (AttrFlags::SYNC, sync),
+                    (AttrFlags::NO_TAIL_MERGE, no_tail_merge),
+                    (AttrFlags::TOP_DIR, top_dir),
+                    (AttrFlags::UNDELETE, undelete),
+                    (AttrFlags::DIRECT_ACCESS, direct_access),
+                    (AttrFlags::EXTENT_FORMAT, extent_format),
+                    (AttrFlags::OPAQUE, opaque),
+                ],
+            )?;
+            let patch = metadata_patch(strand, global, mode, user, group, follow, attrs)?;
+            let mut requested_paths = Vec::new();
+            for path in paths {
+                match path {
+                    Arg::Pos(path) => {
+                        let path = path_from_value(strand, global, &path)?;
+                        requested_paths.push(path);
+                    }
+                    Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
+                }
+            }
+            if requested_paths.is_empty() {
+                return Err(Error::missing_positional(strand, 0));
+            }
+            set_metadata(strand, global, requested_paths, patch).await?;
+            Ok(())
         })
         .function("is_absolute", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
@@ -1357,12 +1313,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             }
             Ok(())
         })
-        .function("chmod", async move |strand, args, _out| {
-            let ([path, mode], []) = unpack!(strand, args, 2, 0)?;
-            let path = path_from_value(strand, global, &path)?;
-            let mode = mode.to_u32(strand)?;
-            chmod(strand, global, path.to_path(), mode).await
-        })
         .function("set_timestamps", async move |strand, args, _out| {
             let ([path], [modified, accessed, created]) = unpack!(
                 strand,
@@ -1376,10 +1326,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let path = path_from_value(strand, global, &path)?;
             set_timestamps(strand, global, path.to_path(), modified, accessed, created).await
         });
-    let module = module.function("chown", async move |strand, args, _out| {
-        let (path, user, group, follow) = parse_chown_common(strand, global, args, None)?;
-        chown(strand, global, path.to_path(), user, group, follow).await
-    });
     module
         .function("normal", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
@@ -1454,7 +1400,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         )
         .value("Metadata", global.types.metadata)
         .value("FsMetadata", global.types.fs_metadata)
-        .value("Attrs", global.types.attrs)
         .value("XattrEntry", global.types.xattr_entry)
         .value("StreamEntry", global.types.stream_entry)
         .value("DirEntry", global.types.dir_entry)

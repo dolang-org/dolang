@@ -1,11 +1,19 @@
-use std::{borrow::Cow, path::Path};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    fs,
+    ops::{ControlFlow, Range},
+    path::Path,
+};
 
 use anstyle::{AnsiColor, Style};
 use console::Term;
 use dolang::{
-    compile::Diag,
+    compile::{Compiler, Diag},
     runtime::{Error, Frame, Result, Strand, Value},
 };
+
+use crate::syntax::{SemanticToken, highlight_range};
 
 #[derive(Clone, Copy)]
 pub(crate) enum ColorMode {
@@ -19,6 +27,60 @@ struct RenderedFrame {
     receiver: String,
     method: Option<String>,
     source: Option<(String, u32)>,
+}
+
+struct SourceFile {
+    source: String,
+    tokens: Vec<SemanticToken>,
+}
+
+impl SourceFile {
+    fn open(path: &Path) -> Option<Self> {
+        let source = fs::read_to_string(path).ok()?;
+        let mut tokens = Vec::new();
+        let _ = Compiler::new(path, source.as_bytes()).analyze(
+            &mut |_: Diag| ControlFlow::<()>::Continue(()),
+            &mut |token, span, origin, context| {
+                tokens.push((token, span, origin, context));
+                ControlFlow::<()>::Continue(())
+            },
+        );
+        Some(Self { source, tokens })
+    }
+
+    fn line_range(&self, line: u32) -> Option<Range<usize>> {
+        let wanted = usize::try_from(line).ok()?;
+        let mut start = 0;
+        for (index, value) in self.source.split_inclusive('\n').enumerate() {
+            let end = start + value.len();
+            if index == wanted {
+                let mut end = end - usize::from(value.ends_with('\n'));
+                if end > start && self.source.as_bytes()[end - 1] == b'\r' {
+                    end -= 1;
+                }
+                return Some(start..end);
+            }
+            start = end;
+        }
+        None
+    }
+}
+
+#[derive(Default)]
+struct SourceCache {
+    files: HashMap<String, Option<SourceFile>>,
+}
+
+impl SourceCache {
+    fn render_line(&mut self, path: &str, line: u32, color: bool) -> Option<String> {
+        let file = self
+            .files
+            .entry(path.to_owned())
+            .or_insert_with(|| SourceFile::open(Path::new(path)))
+            .as_ref()?;
+        let range = file.line_range(line)?;
+        Some(highlight_range(&file.source, &file.tokens, range, color))
+    }
 }
 
 fn render_styled(style: Style, value: impl std::fmt::Display) -> String {
@@ -68,6 +130,9 @@ fn render_message_backtrace_frames(
     out.push('\n');
 
     let width = backtrace.len().saturating_sub(1).to_string().len();
+    let source_indent = " ".repeat(width + 4);
+    let mut source_cache = SourceCache::default();
+    let mut rendered_sources = HashSet::new();
     for (i, entry) in backtrace.iter().enumerate() {
         out.push_str("  ");
         out.push_str(&if use_color {
@@ -125,8 +190,9 @@ fn render_message_backtrace_frames(
                 entry.receiver.clone()
             });
         }
-        if let Some((path, line)) = &entry.source {
-            let path = Path::new(path.as_str());
+        if let Some((source_path, line)) = &entry.source {
+            let source_key = (source_path.clone(), *line);
+            let path = Path::new(source_path.as_str());
             let path = cwd
                 .and_then(|cwd| path.strip_prefix(cwd).ok())
                 .unwrap_or(path);
@@ -151,6 +217,13 @@ fn render_message_backtrace_frames(
             } else {
                 format!("{}", line + 1)
             });
+            if rendered_sources.insert(source_key)
+                && let Some(source) = source_cache.render_line(source_path, *line, use_color)
+            {
+                out.push('\n');
+                out.push_str(&source_indent);
+                out.push_str(&source);
+            }
         }
         out.push('\n');
     }
@@ -256,5 +329,40 @@ mod tests {
         let rendered = console::strip_ansi_codes(&rendered);
         assert!(rendered.contains("foo/bar.dol:5"));
         assert!(!rendered.contains(&cwd.display().to_string()));
+    }
+
+    #[test]
+    fn render_message_backtrace_includes_each_source_line_once() {
+        let path = std::env::temp_dir().join(format!(
+            "dolang-backtrace-source-{}.dol",
+            std::process::id()
+        ));
+        fs::write(&path, "def fail()\n  throw \"boom\"\n").unwrap();
+        let path_str = path.to_string_lossy();
+        let frames = [
+            RenderedFrame {
+                module: "m".to_owned(),
+                receiver: "fail".to_owned(),
+                method: None,
+                source: Some((path_str.to_string(), 1)),
+            },
+            RenderedFrame {
+                module: "m".to_owned(),
+                receiver: "fail".to_owned(),
+                method: None,
+                source: Some((path_str.to_string(), 1)),
+            },
+        ];
+        let rendered = render_message_backtrace_frames(
+            "boom",
+            &frames,
+            ColorMode::Always,
+            Some(Path::new("/")),
+        );
+        fs::remove_file(path).unwrap();
+
+        assert!(rendered.contains("\u{1b}["));
+        let plain = console::strip_ansi_codes(&rendered);
+        assert_eq!(plain.matches("  throw \"boom\"").count(), 1);
     }
 }

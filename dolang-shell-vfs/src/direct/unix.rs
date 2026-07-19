@@ -1,8 +1,11 @@
 use super::{Direct, DirectChild, DirectCommand};
 use crate::{
-    Attrs, ChownIdentity, FsMetadata, FsMetadataFamily, SecDesc, StreamEntry, UnixFsMetadata,
-    UnixFsMetadataPlatform, XattrEntry, XattrNamespace,
+    AttrFlags, AttrsPatch, FsMetadata, FsMetadataFamily, Metadata, MetadataPatch,
+    OwnershipIdentity, SecDesc, StreamEntry, UnixFsMetadata, UnixFsMetadataPlatform, XattrEntry,
+    XattrNamespace,
 };
+#[cfg(target_os = "linux")]
+use crate::{MetadataFamily, UnixMetadata, UnixMetadataPlatform};
 #[cfg(target_os = "linux")]
 use std::os::fd::RawFd;
 use std::{
@@ -222,38 +225,8 @@ impl Direct {
     }
 
     #[cfg(target_os = "linux")]
-    fn attrs_from_flags(flags: libc::c_long) -> Attrs {
-        Attrs {
-            compressed: Some(flags & linux_attrs::COMPR != 0),
-            immutable: Some(flags & linux_attrs::IMMUTABLE != 0),
-            append_only: Some(flags & linux_attrs::APPEND != 0),
-            no_dump: Some(flags & linux_attrs::NODUMP != 0),
-            no_atime: Some(flags & linux_attrs::NOATIME != 0),
-            no_copy_on_write: Some(flags & linux_attrs::NOCOW != 0),
-            dir_sync: Some(flags & linux_attrs::DIRSYNC != 0),
-            casefold: Some(flags & linux_attrs::CASEFOLD != 0),
-            data_journaling: Some(flags & linux_attrs::JOURNAL_DATA != 0),
-            no_compress: Some(flags & linux_attrs::NOCOMP != 0),
-            project_inherit: Some(flags & linux_attrs::PROJINHERIT != 0),
-            secure_delete: Some(flags & linux_attrs::SECRM != 0),
-            sync: Some(flags & linux_attrs::SYNC != 0),
-            no_tail_merge: Some(flags & linux_attrs::NOTAIL != 0),
-            top_dir: Some(flags & linux_attrs::TOPDIR != 0),
-            undelete: Some(flags & linux_attrs::UNRM != 0),
-            direct_access: Some(flags & linux_attrs::DAX != 0),
-            extent_format: Some(flags & linux_attrs::EXTENT != 0),
-            unix_flags: u32::try_from(flags).ok(),
-            ..Attrs::default()
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    fn apply_linux_flag(flags: &mut libc::c_long, flag: libc::c_long, value: Option<bool>) {
-        match value {
-            Some(true) => *flags |= flag,
-            Some(false) => *flags &= !flag,
-            None => {}
-        }
+    fn attrs_from_flags(flags: libc::c_long) -> u32 {
+        u32::try_from(flags).unwrap_or_default()
     }
 
     #[cfg(target_os = "linux")]
@@ -274,147 +247,214 @@ impl Direct {
     }
 
     #[cfg(target_os = "linux")]
-    pub(super) fn attrs_from_path(path: PathBuf, _follow: bool) -> io::Result<Attrs> {
+    pub(super) fn attrs_from_path(path: PathBuf, _follow: bool) -> io::Result<u32> {
         let file = std::fs::File::open(path)?;
         unsafe { Self::get_linux_flags(file.as_raw_fd()) }.map(Self::attrs_from_flags)
     }
 
     #[cfg(target_os = "linux")]
-    pub(super) fn set_attrs_path(path: PathBuf, patch: Attrs) -> io::Result<()> {
-        if patch.readonly.is_some()
-            || patch.hidden.is_some()
-            || patch.system.is_some()
-            || patch.archive.is_some()
-            || patch.reparse_point.is_some()
-            || patch.encrypted.is_some()
-            || patch.temporary.is_some()
-            || patch.offline.is_some()
-            || patch.not_content_indexed.is_some()
-            || patch.opaque.is_some()
-            || patch.win_attrs.is_some()
-            || patch.unix_flags.is_some()
+    pub(super) fn metadata_with_attrs(
+        metadata: std::fs::Metadata,
+        file: &File,
+    ) -> io::Result<Metadata> {
+        let mut metadata = crate::metadata_from_std(metadata);
+        if !matches!(
+            metadata.file_type,
+            crate::FileType::File | crate::FileType::Dir
+        ) {
+            return Ok(metadata);
+        }
+        let attrs = match unsafe { Self::get_linux_flags(file.as_raw_fd()) } {
+            Ok(flags) => Some(Self::attrs_from_flags(flags)),
+            Err(error)
+                if matches!(
+                    error.raw_os_error(),
+                    Some(libc::ENOTTY | libc::EOPNOTSUPP | libc::EINVAL | libc::ENXIO)
+                ) =>
+            {
+                None
+            }
+            Err(error) => return Err(error),
+        };
+        let MetadataFamily::Unix(UnixMetadata {
+            platform: UnixMetadataPlatform::Linux { attrs: value },
+            ..
+        }) = &mut metadata.family
+        else {
+            unreachable!();
+        };
+        *value = attrs;
+        Ok(metadata)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn metadata_from_path(path: &Path, follow: bool) -> io::Result<Metadata> {
+        let std_metadata = if follow {
+            std::fs::metadata(path)?
+        } else {
+            std::fs::symlink_metadata(path)?
+        };
+        let mut metadata = crate::metadata_from_std(std_metadata);
+        if !follow
+            || !matches!(
+                metadata.file_type,
+                crate::FileType::File | crate::FileType::Dir
+            )
         {
-            return Err(io::Error::new(
+            return Ok(metadata);
+        }
+        let attrs = match Self::attrs_from_path(path.to_path_buf(), true) {
+            Ok(attrs) => Some(attrs),
+            Err(error)
+                if matches!(
+                    error.raw_os_error(),
+                    Some(libc::ENOTTY | libc::EOPNOTSUPP | libc::EINVAL | libc::ENXIO)
+                ) =>
+            {
+                None
+            }
+            Err(error) => return Err(error),
+        };
+        let MetadataFamily::Unix(UnixMetadata {
+            platform: UnixMetadataPlatform::Linux { attrs: value },
+            ..
+        }) = &mut metadata.family
+        else {
+            unreachable!();
+        };
+        *value = attrs;
+        Ok(metadata)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn validate_attrs_patch(patch: AttrsPatch) -> io::Result<()> {
+        let supported = AttrFlags::COMPRESSED
+            .union(AttrFlags::IMMUTABLE)
+            .union(AttrFlags::APPEND_ONLY)
+            .union(AttrFlags::NO_DUMP)
+            .union(AttrFlags::NO_ATIME)
+            .union(AttrFlags::NO_COPY_ON_WRITE)
+            .union(AttrFlags::DIR_SYNC)
+            .union(AttrFlags::CASEFOLD)
+            .union(AttrFlags::DATA_JOURNALING)
+            .union(AttrFlags::NO_COMPRESS)
+            .union(AttrFlags::PROJECT_INHERIT)
+            .union(AttrFlags::SECURE_DELETE)
+            .union(AttrFlags::SYNC)
+            .union(AttrFlags::NO_TAIL_MERGE)
+            .union(AttrFlags::TOP_DIR)
+            .union(AttrFlags::UNDELETE)
+            .union(AttrFlags::DIRECT_ACCESS)
+            .union(AttrFlags::EXTENT_FORMAT);
+        if !patch.requested().difference(supported).is_empty() {
+            Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "one or more attributes cannot be set on this platform",
-            ));
+            ))
+        } else {
+            Ok(())
         }
+    }
 
-        if patch.is_empty_patch() {
+    #[cfg(target_os = "linux")]
+    pub(super) fn set_attrs_path(path: PathBuf, patch: AttrsPatch) -> io::Result<()> {
+        Self::validate_attrs_patch(patch)?;
+
+        if patch.is_empty() {
             return Ok(());
         }
 
         let file = std::fs::OpenOptions::new().read(true).open(path)?;
         let mut flags = unsafe { Self::get_linux_flags(file.as_raw_fd()) }?;
-        Self::apply_linux_flag(&mut flags, linux_attrs::COMPR, patch.compressed);
-        Self::apply_linux_flag(&mut flags, linux_attrs::IMMUTABLE, patch.immutable);
-        Self::apply_linux_flag(&mut flags, linux_attrs::APPEND, patch.append_only);
-        Self::apply_linux_flag(&mut flags, linux_attrs::NODUMP, patch.no_dump);
-        Self::apply_linux_flag(&mut flags, linux_attrs::NOATIME, patch.no_atime);
-        Self::apply_linux_flag(&mut flags, linux_attrs::NOCOW, patch.no_copy_on_write);
-        Self::apply_linux_flag(&mut flags, linux_attrs::DIRSYNC, patch.dir_sync);
-        Self::apply_linux_flag(&mut flags, linux_attrs::CASEFOLD, patch.casefold);
-        Self::apply_linux_flag(&mut flags, linux_attrs::JOURNAL_DATA, patch.data_journaling);
-        Self::apply_linux_flag(&mut flags, linux_attrs::NOCOMP, patch.no_compress);
-        Self::apply_linux_flag(&mut flags, linux_attrs::PROJINHERIT, patch.project_inherit);
-        Self::apply_linux_flag(&mut flags, linux_attrs::SECRM, patch.secure_delete);
-        Self::apply_linux_flag(&mut flags, linux_attrs::SYNC, patch.sync);
-        Self::apply_linux_flag(&mut flags, linux_attrs::NOTAIL, patch.no_tail_merge);
-        Self::apply_linux_flag(&mut flags, linux_attrs::TOPDIR, patch.top_dir);
-        Self::apply_linux_flag(&mut flags, linux_attrs::UNRM, patch.undelete);
-        Self::apply_linux_flag(&mut flags, linux_attrs::DAX, patch.direct_access);
-        Self::apply_linux_flag(&mut flags, linux_attrs::EXTENT, patch.extent_format);
+        for (semantic, native) in [
+            (AttrFlags::COMPRESSED, linux_attrs::COMPR),
+            (AttrFlags::IMMUTABLE, linux_attrs::IMMUTABLE),
+            (AttrFlags::APPEND_ONLY, linux_attrs::APPEND),
+            (AttrFlags::NO_DUMP, linux_attrs::NODUMP),
+            (AttrFlags::NO_ATIME, linux_attrs::NOATIME),
+            (AttrFlags::NO_COPY_ON_WRITE, linux_attrs::NOCOW),
+            (AttrFlags::DIR_SYNC, linux_attrs::DIRSYNC),
+            (AttrFlags::CASEFOLD, linux_attrs::CASEFOLD),
+            (AttrFlags::DATA_JOURNALING, linux_attrs::JOURNAL_DATA),
+            (AttrFlags::NO_COMPRESS, linux_attrs::NOCOMP),
+            (AttrFlags::PROJECT_INHERIT, linux_attrs::PROJINHERIT),
+            (AttrFlags::SECURE_DELETE, linux_attrs::SECRM),
+            (AttrFlags::SYNC, linux_attrs::SYNC),
+            (AttrFlags::NO_TAIL_MERGE, linux_attrs::NOTAIL),
+            (AttrFlags::TOP_DIR, linux_attrs::TOPDIR),
+            (AttrFlags::UNDELETE, linux_attrs::UNRM),
+            (AttrFlags::DIRECT_ACCESS, linux_attrs::DAX),
+            (AttrFlags::EXTENT_FORMAT, linux_attrs::EXTENT),
+        ] {
+            if patch.set.contains(semantic) {
+                flags |= native;
+            } else if patch.clear.contains(semantic) {
+                flags &= !native;
+            }
+        }
         unsafe { Self::set_linux_flags(file.as_raw_fd(), flags) }
     }
 
     #[cfg(target_os = "macos")]
-    fn attrs_from_flags(flags: libc::c_uint) -> Attrs {
-        use nix::sys::stat::FileFlag;
-
-        let flags = FileFlag::from_bits_truncate(flags);
-        Attrs {
-            hidden: Some(flags.contains(FileFlag::UF_HIDDEN)),
-            compressed: Some(flags.contains(FileFlag::UF_COMPRESSED)),
-            immutable: Some(flags.contains(FileFlag::UF_IMMUTABLE)),
-            append_only: Some(flags.contains(FileFlag::UF_APPEND)),
-            no_dump: Some(flags.contains(FileFlag::UF_NODUMP)),
-            opaque: Some(flags.contains(FileFlag::UF_OPAQUE)),
-            unix_flags: Some(flags.bits()),
-            ..Attrs::default()
-        }
+    pub(super) fn metadata_with_attrs(
+        metadata: std::fs::Metadata,
+        _file: &File,
+    ) -> io::Result<Metadata> {
+        Ok(crate::metadata_from_std(metadata))
     }
 
     #[cfg(target_os = "macos")]
-    fn apply_macos_flag(
-        flags: &mut nix::sys::stat::FileFlag,
-        flag: nix::sys::stat::FileFlag,
-        value: Option<bool>,
-    ) {
-        match value {
-            Some(true) => flags.insert(flag),
-            Some(false) => flags.remove(flag),
-            None => {}
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    pub(super) fn attrs_from_path(path: PathBuf, follow: bool) -> io::Result<Attrs> {
-        let stat = if follow {
-            nix::sys::stat::stat(&path)
+    pub(super) fn metadata_from_path(path: &Path, follow: bool) -> io::Result<Metadata> {
+        let metadata = if follow {
+            std::fs::metadata(path)?
         } else {
-            nix::sys::stat::lstat(&path)
-        }
-        .map_err(io::Error::from)?;
-        Ok(Self::attrs_from_flags(stat.st_flags))
+            std::fs::symlink_metadata(path)?
+        };
+        Ok(crate::metadata_from_std(metadata))
     }
 
     #[cfg(target_os = "macos")]
-    pub(super) fn set_attrs_path(path: PathBuf, patch: Attrs) -> io::Result<()> {
-        use nix::sys::stat::FileFlag;
-
-        if patch.readonly.is_some()
-            || patch.system.is_some()
-            || patch.archive.is_some()
-            || patch.reparse_point.is_some()
-            || patch.compressed.is_some()
-            || patch.encrypted.is_some()
-            || patch.temporary.is_some()
-            || patch.offline.is_some()
-            || patch.not_content_indexed.is_some()
-            || patch.no_atime.is_some()
-            || patch.no_copy_on_write.is_some()
-            || patch.dir_sync.is_some()
-            || patch.casefold.is_some()
-            || patch.data_journaling.is_some()
-            || patch.no_compress.is_some()
-            || patch.project_inherit.is_some()
-            || patch.secure_delete.is_some()
-            || patch.sync.is_some()
-            || patch.no_tail_merge.is_some()
-            || patch.top_dir.is_some()
-            || patch.undelete.is_some()
-            || patch.direct_access.is_some()
-            || patch.extent_format.is_some()
-            || patch.win_attrs.is_some()
-            || patch.unix_flags.is_some()
-        {
-            return Err(io::Error::new(
+    fn validate_attrs_patch(patch: AttrsPatch) -> io::Result<()> {
+        let supported = AttrFlags::HIDDEN
+            .union(AttrFlags::IMMUTABLE)
+            .union(AttrFlags::APPEND_ONLY)
+            .union(AttrFlags::NO_DUMP)
+            .union(AttrFlags::OPAQUE);
+        if !patch.requested().difference(supported).is_empty() {
+            Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "one or more attributes cannot be set on this platform",
-            ));
+            ))
+        } else {
+            Ok(())
         }
+    }
 
-        if patch.is_empty_patch() {
+    #[cfg(target_os = "macos")]
+    pub(super) fn set_attrs_path(path: PathBuf, patch: AttrsPatch) -> io::Result<()> {
+        use nix::sys::stat::FileFlag;
+
+        Self::validate_attrs_patch(patch)?;
+
+        if patch.is_empty() {
             return Ok(());
         }
 
         let stat = nix::sys::stat::stat(&path).map_err(io::Error::from)?;
         let mut flags = FileFlag::from_bits_truncate(stat.st_flags);
-        Self::apply_macos_flag(&mut flags, FileFlag::UF_HIDDEN, patch.hidden);
-        Self::apply_macos_flag(&mut flags, FileFlag::UF_IMMUTABLE, patch.immutable);
-        Self::apply_macos_flag(&mut flags, FileFlag::UF_APPEND, patch.append_only);
-        Self::apply_macos_flag(&mut flags, FileFlag::UF_NODUMP, patch.no_dump);
-        Self::apply_macos_flag(&mut flags, FileFlag::UF_OPAQUE, patch.opaque);
+        for (semantic, native) in [
+            (AttrFlags::HIDDEN, FileFlag::UF_HIDDEN),
+            (AttrFlags::IMMUTABLE, FileFlag::UF_IMMUTABLE),
+            (AttrFlags::APPEND_ONLY, FileFlag::UF_APPEND),
+            (AttrFlags::NO_DUMP, FileFlag::UF_NODUMP),
+            (AttrFlags::OPAQUE, FileFlag::UF_OPAQUE),
+        ] {
+            if patch.set.contains(semantic) {
+                flags.insert(native);
+            } else if patch.clear.contains(semantic) {
+                flags.remove(native);
+            }
+        }
         nix::unistd::chflags(&path, flags).map_err(io::Error::from)
     }
 
@@ -933,8 +973,8 @@ impl Direct {
 
     pub(super) async fn chown_local(
         path: PathBuf,
-        user: Option<ChownIdentity>,
-        group: Option<ChownIdentity>,
+        user: Option<OwnershipIdentity>,
+        group: Option<OwnershipIdentity>,
         follow: bool,
     ) -> io::Result<()> {
         use nix::{
@@ -943,25 +983,43 @@ impl Direct {
         };
         use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
-        fn resolve_user(user: Option<ChownIdentity>) -> Result<Option<Uid>, Errno> {
+        fn resolve_user(user: Option<OwnershipIdentity>) -> io::Result<Option<Uid>> {
             match user {
                 None => Ok(None),
-                Some(ChownIdentity::Id(id)) => Ok(Some(Uid::from_raw(id))),
-                Some(ChownIdentity::Name(name)) => match User::from_name(&name)? {
-                    Some(user) => Ok(Some(user.uid)),
-                    None => Err(Errno::ENOENT),
-                },
+                Some(OwnershipIdentity::Id(id)) => Ok(Some(Uid::from_raw(id))),
+                Some(OwnershipIdentity::Name(name)) => {
+                    match User::from_name(&name).map_err(io::Error::from)? {
+                        Some(user) => Ok(Some(user.uid)),
+                        None => Err(io::Error::new(
+                            io::ErrorKind::NotFound,
+                            format!("user not found: {name}"),
+                        )),
+                    }
+                }
+                Some(OwnershipIdentity::Sid(_)) => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SID ownership identities are not supported on Unix",
+                )),
             }
         }
 
-        fn resolve_group(group: Option<ChownIdentity>) -> Result<Option<Gid>, Errno> {
+        fn resolve_group(group: Option<OwnershipIdentity>) -> io::Result<Option<Gid>> {
             match group {
                 None => Ok(None),
-                Some(ChownIdentity::Id(id)) => Ok(Some(Gid::from_raw(id))),
-                Some(ChownIdentity::Name(name)) => match Group::from_name(&name)? {
-                    Some(group) => Ok(Some(group.gid)),
-                    None => Err(Errno::ENOENT),
-                },
+                Some(OwnershipIdentity::Id(id)) => Ok(Some(Gid::from_raw(id))),
+                Some(OwnershipIdentity::Name(name)) => {
+                    match Group::from_name(&name).map_err(io::Error::from)? {
+                        Some(group) => Ok(Some(group.gid)),
+                        None => Err(io::Error::new(
+                            io::ErrorKind::NotFound,
+                            format!("group not found: {name}"),
+                        )),
+                    }
+                }
+                Some(OwnershipIdentity::Sid(_)) => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SID ownership identities are not supported on Unix",
+                )),
             }
         }
 
@@ -978,10 +1036,8 @@ impl Direct {
         }
 
         tokio::task::spawn_blocking(move || {
-            let user =
-                resolve_user(user).map_err(|err| io::Error::from_raw_os_error(err as i32))?;
-            let group =
-                resolve_group(group).map_err(|err| io::Error::from_raw_os_error(err as i32))?;
+            let user = resolve_user(user)?;
+            let group = resolve_group(group)?;
             let result = if follow {
                 chown(&path, user, group)
             } else {
@@ -990,7 +1046,7 @@ impl Direct {
             result.map_err(|err| io::Error::from_raw_os_error(err as i32))
         })
         .await
-        .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))
+        .unwrap_or_else(|_| Err(io::Error::other("failed to join ownership update task")))
     }
 
     pub(super) async fn impl_symlink(_cwd: &Path, src: &Path, dst: &Path) -> io::Result<()> {
@@ -1152,18 +1208,95 @@ impl Direct {
         .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))
     }
 
-    pub(super) async fn impl_attrs(&self, path: &Path, follow: bool) -> Result<Attrs, io::Error> {
-        let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || Self::attrs_from_path(path, follow))
-            .await
-            .unwrap_or_else(|_| Err(io::Error::other("failed to join attrs query task")))
-    }
-
-    pub(super) async fn impl_set_attrs(&self, path: &Path, attrs: Attrs) -> Result<(), io::Error> {
+    pub(super) async fn impl_set_attrs(
+        &self,
+        path: &Path,
+        attrs: AttrsPatch,
+    ) -> Result<(), io::Error> {
         let path = path.to_path_buf();
         tokio::task::spawn_blocking(move || Self::set_attrs_path(path, attrs))
             .await
             .unwrap_or_else(|_| Err(io::Error::other("failed to join attrs update task")))
+    }
+
+    pub(super) async fn impl_set_metadata(
+        &self,
+        paths: &[PathBuf],
+        mut patch: MetadataPatch,
+    ) -> Result<(), io::Error> {
+        if patch.is_empty() {
+            return Ok(());
+        }
+        if !patch.follow && (patch.mode.is_some() || !patch.attrs.is_empty()) {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "mode and attributes cannot be set without following symlinks on this platform",
+            ));
+        }
+        Self::validate_attrs_patch(patch.attrs)?;
+
+        if patch.user.is_some() || patch.group.is_some() {
+            let user = patch.user;
+            let group = patch.group;
+            (patch.user, patch.group) = tokio::task::spawn_blocking(move || {
+                use nix::unistd::{Group, User};
+
+                let user = match user {
+                    Some(OwnershipIdentity::Name(name)) => User::from_name(&name)
+                        .map_err(io::Error::from)?
+                        .map(|user| Some(OwnershipIdentity::Id(user.uid.as_raw())))
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::NotFound,
+                                format!("user not found: {name}"),
+                            )
+                        })?,
+                    Some(OwnershipIdentity::Sid(_)) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "SID ownership identities are not supported on Unix",
+                        ));
+                    }
+                    value => value,
+                };
+                let group = match group {
+                    Some(OwnershipIdentity::Name(name)) => Group::from_name(&name)
+                        .map_err(io::Error::from)?
+                        .map(|group| Some(OwnershipIdentity::Id(group.gid.as_raw())))
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::NotFound,
+                                format!("group not found: {name}"),
+                            )
+                        })?,
+                    Some(OwnershipIdentity::Sid(_)) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "SID ownership identities are not supported on Unix",
+                        ));
+                    }
+                    value => value,
+                };
+                Ok((user, group))
+            })
+            .await
+            .unwrap_or_else(|_| Err(io::Error::other("failed to join ownership lookup task")))?;
+        }
+
+        for path in paths {
+            if patch.user.is_some() || patch.group.is_some() {
+                self.impl_chown(path, patch.user.clone(), patch.group.clone(), patch.follow)
+                    .await?;
+            }
+            if let Some(mode) = patch.mode {
+                self.impl_set_permissions(path, crate::Permissions::from_mode(mode))
+                    .await?;
+            }
+            if !patch.attrs.is_empty() {
+                self.impl_set_attrs(path, patch.attrs).await?;
+            }
+        }
+        Ok(())
     }
 
     pub(super) async fn impl_canonicalize(&self, path: &Path) -> Result<PathBuf, io::Error> {
@@ -1235,8 +1368,8 @@ impl Direct {
     pub(super) async fn impl_chown(
         &self,
         path: &Path,
-        user: Option<ChownIdentity>,
-        group: Option<ChownIdentity>,
+        user: Option<OwnershipIdentity>,
+        group: Option<OwnershipIdentity>,
         follow: bool,
     ) -> Result<(), io::Error> {
         Self::chown_local(path.to_path_buf(), user, group, follow).await

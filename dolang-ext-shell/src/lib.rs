@@ -15,6 +15,7 @@ mod program;
 mod security;
 mod shell;
 mod shlex;
+mod syntax;
 mod sys;
 mod term;
 mod time;
@@ -43,6 +44,8 @@ use tokio::io::AsyncWriteExt;
 use crate::global::Global;
 
 pub use diagnostic::{print_compile_diag_stderr, print_error_stderr, render_message_backtrace};
+#[doc(hidden)]
+pub use syntax::{SemanticToken, highlight_range as highlight_source_range};
 
 /// Instantiate wrapper iterator around stdin
 pub fn stdin<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {

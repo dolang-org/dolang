@@ -10,7 +10,7 @@ if (sys.os_info().family == :WINDOWS:)
 import agent
   fs:
     - Path
-    - chown
+    - set_metadata
     - open
     - remove
     - symlink
@@ -27,12 +27,29 @@ def numeric_id()
     f.write "ownership"
 
   let before = Path(test_path).metadata()
-  chown $test_path $before.uid group: $before.gid
+  set_metadata $test_path mode: 0o600 user: $before.uid group: $before.gid
   let after = Path(test_path).metadata()
   assert_eq $after.uid $before.uid
   assert_eq $after.gid $before.gid
+  assert_eq (after.mode & 0o777) 0o600
 
   remove $test_path
+
+#[agent.test]
+def multiple_paths()
+  let first = "test_set_metadata_first.txt"
+  let second = "test_set_metadata_second.txt"
+
+  open $first w do |f|
+    f.write "first"
+  open $second w do |f|
+    f.write "second"
+
+  set_metadata $first $second mode: 0o600
+  assert_eq (Path(first).metadata().mode & 0o777) 0o600
+  assert_eq (Path(second).metadata().mode & 0o777) 0o600
+
+  remove $first $second
 
 #[agent.test]
 def user_and_group_name()
@@ -44,7 +61,7 @@ def user_and_group_name()
   let before = Path(test_path).metadata()
   let user = sub $id -un
   let group = sub $id -gn
-  Path(test_path).chown $user group: $group
+  Path(test_path).set_metadata user: $user group: $group
   let after = Path(test_path).metadata()
   assert_eq $after.uid $before.uid
   assert_eq $after.gid $before.gid
@@ -59,7 +76,7 @@ def group_only()
     f.write "ownership"
 
   let before = Path(test_path).metadata()
-  chown $test_path group: $before.gid
+  set_metadata $test_path group: $before.gid
   let after = Path(test_path).metadata()
   assert_eq $after.uid $before.uid
   assert_eq $after.gid $before.gid
@@ -67,14 +84,13 @@ def group_only()
   remove $test_path
 
 #[agent.test]
-def requires_user_or_group()
+def empty_patch_is_noop()
   let test_path = "test_chown_missing.txt"
 
   open $test_path w do |f|
     f.write "ownership"
 
-  assert_throws $RuntimeError do
-    chown $test_path
+  set_metadata $test_path
 
   remove $test_path
 
@@ -86,7 +102,7 @@ def unknown_user_fails()
     f.write "ownership"
 
   assert_throws $RuntimeError do
-    chown $test_path "__dolang_missing_user__"
+    set_metadata $test_path user: "__dolang_missing_user__"
 
   remove $test_path
 
@@ -100,9 +116,9 @@ def follow_controls_symlink_handling()
 
   symlink $missing_target $link_path
 
-  chown $link_path group: $group follow: false
+  set_metadata $link_path group: $group follow: false
 
   assert_throws $sys.NotFoundError do
-    chown $link_path group: $group follow: true
+    set_metadata $link_path group: $group follow: true
 
   remove $link_path

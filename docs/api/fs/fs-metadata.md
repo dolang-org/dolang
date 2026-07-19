@@ -59,9 +59,13 @@ Free file nodes available to unprivileged users.
 
 Filesystem fragment size in bytes.
 
-### `unix_flags`
+### `linux_attrs`
 
-Raw filesystem mount flags.
+Raw Linux filesystem mount attribute mask.
+
+### `macos_attrs`
+
+Raw macOS filesystem mount attribute mask.
 
 ### `fsid`
 

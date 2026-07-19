@@ -8,16 +8,16 @@ import sys agent
   std:
     - RuntimeError
   fs:
-    - Attrs
     - FsMetadata
     - Metadata
     - Path
-    - attrs
     - fs_metadata
     - metadata
     - open
     - remove
-    - set_attrs
+    - set_metadata
+  security.windows:
+    - Sid
   time:
     - DateTime
 
@@ -108,41 +108,58 @@ def windows_attrs()
   open $test_path r do |f|
     let meta = f.metadata()
     assert_type $Metadata $meta
+    assert_type $Sid $meta.user
+    assert_type $Sid $meta.group
     assert_type $int $meta.win_attrs
-    assert_type $Attrs $meta.attrs
-    assert_type $int $meta.attrs.win_attrs
-    assert_type $bool $meta.attrs.readonly
-    assert_type $bool $meta.attrs.hidden
-    assert_type $bool $meta.attrs.system
-    assert_type $bool $meta.attrs.archive
-    assert_type $bool $meta.attrs.reparse_point
-    assert_type $bool $meta.attrs.compressed
-    assert_type $bool $meta.attrs.encrypted
-    assert_type $bool $meta.attrs.temporary
-    assert_type $bool $meta.attrs.offline
-    assert_type $bool $meta.attrs.not_content_indexed
+    assert_type $bool $meta.readonly
+    assert_type $bool $meta.hidden
+    assert_type $bool $meta.system
+    assert_type $bool $meta.archive
+    assert_type $bool $meta.reparse_point
+    assert_type $bool $meta.compressed
+    assert_type $bool $meta.encrypted
+    assert_type $bool $meta.temporary
+    assert_type $bool $meta.offline
+    assert_type $bool $meta.not_content_indexed
 
-    let direct_attrs = attrs $test_path
-    let path_attrs = Path(test_path).attrs()
-    assert_type $Attrs $direct_attrs
-    assert_eq $direct_attrs.win_attrs $path_attrs.win_attrs
+    let path_meta = Path(test_path).metadata()
+    assert_eq $meta.win_attrs $path_meta.win_attrs
 
-    set_attrs $test_path readonly: true
-    let readonly_attrs = attrs $test_path
-    assert_eq $readonly_attrs.readonly true
-    Path(test_path).set_attrs readonly: false
-    let writable_attrs = Path(test_path).attrs()
-    assert_eq $writable_attrs.readonly false
+    set_metadata $test_path readonly: true
+    let readonly_meta = metadata $test_path
+    assert_eq $readonly_meta.readonly true
+    Path(test_path).set_metadata readonly: false
+    let writable_meta = Path(test_path).metadata()
+    assert_eq $writable_meta.readonly false
 
   if !sys.os_info().is_wine
-    set_attrs $test_path compressed: true
-    let compressed_attrs = attrs $test_path
-    assert_eq $compressed_attrs.compressed true
-    Path(test_path).set_attrs compressed: false
-    let uncompressed_attrs = Path(test_path).attrs()
-    assert_eq $uncompressed_attrs.compressed false
+    set_metadata $test_path compressed: true
+    let compressed_meta = metadata $test_path
+    assert_eq $compressed_meta.compressed true
+    Path(test_path).set_metadata compressed: false
+    let uncompressed_meta = Path(test_path).metadata()
+    assert_eq $uncompressed_meta.compressed false
 
   remove $test_path
+
+#[agent.test]
+def windows_batch_attrs()
+  if (sys.os_info().family != :WINDOWS:)
+    skip "requires Windows"
+  let first = "test_metadata_windows_batch_1.txt"
+  let second = "test_metadata_windows_batch_2.txt"
+  open $first w do |f|
+    f.write "one"
+  open $second w do |f|
+    f.write "two"
+
+  set_metadata $first $second readonly: true
+  assert_eq (metadata(first).readonly) true
+  assert_eq (metadata(second).readonly) true
+  set_metadata $first $second readonly: false
+
+  remove $first
+  remove $second
 
 #[agent.test]
 def linux_attrs()
@@ -152,33 +169,33 @@ def linux_attrs()
   open $test_path w do |f|
     f.write "linux attrs test"
 
-  let direct_attrs = attrs $test_path
-  assert_type $Attrs $direct_attrs
-  assert_type $int $direct_attrs.unix_flags
-  assert_type $bool $direct_attrs.immutable
-  assert_type $bool $direct_attrs.append_only
-  assert_type $bool $direct_attrs.no_dump
-  assert_type $bool $direct_attrs.no_atime
-  assert_type $bool $direct_attrs.no_copy_on_write
-  assert_type $bool $direct_attrs.dir_sync
-  assert_type $bool $direct_attrs.casefold
-  assert_type $bool $direct_attrs.data_journaling
-  assert_type $bool $direct_attrs.no_compress
-  assert_type $bool $direct_attrs.project_inherit
-  assert_type $bool $direct_attrs.secure_delete
-  assert_type $bool $direct_attrs.sync
-  assert_type $bool $direct_attrs.no_tail_merge
-  assert_type $bool $direct_attrs.top_dir
-  assert_type $bool $direct_attrs.undelete
-  assert_type $bool $direct_attrs.direct_access
-  assert_type $bool $direct_attrs.extent_format
+  let meta = metadata $test_path
+  assert_type $Metadata $meta
+  assert_type $int $meta.linux_attrs
+  assert_type $bool $meta.immutable
+  assert_type $bool $meta.append_only
+  assert_type $bool $meta.no_dump
+  assert_type $bool $meta.no_atime
+  assert_type $bool $meta.no_copy_on_write
+  assert_type $bool $meta.dir_sync
+  assert_type $bool $meta.casefold
+  assert_type $bool $meta.data_journaling
+  assert_type $bool $meta.no_compress
+  assert_type $bool $meta.project_inherit
+  assert_type $bool $meta.secure_delete
+  assert_type $bool $meta.sync
+  assert_type $bool $meta.no_tail_merge
+  assert_type $bool $meta.top_dir
+  assert_type $bool $meta.undelete
+  assert_type $bool $meta.direct_access
+  assert_type $bool $meta.extent_format
 
-  set_attrs $test_path no_dump: true
-  let no_dump_attrs = attrs $test_path
-  assert_eq $no_dump_attrs.no_dump true
-  Path(test_path).set_attrs no_dump: false
-  let normal_attrs = Path(test_path).attrs()
-  assert_eq $normal_attrs.no_dump false
+  set_metadata $test_path no_dump: true
+  let no_dump_meta = metadata $test_path
+  assert_eq $no_dump_meta.no_dump true
+  Path(test_path).set_metadata no_dump: false
+  let normal_meta = Path(test_path).metadata()
+  assert_eq $normal_meta.no_dump false
 
   remove $test_path
 
@@ -192,24 +209,22 @@ def macos_attrs()
 
   let meta = metadata $test_path
   assert_type $Metadata $meta
-  assert_type $int $meta.unix_flags
-  assert_type $Attrs $meta.attrs
-  assert_type $int $meta.attrs.unix_flags
-  assert_type $bool $meta.attrs.hidden
-  assert_type $bool $meta.attrs.compressed
-  assert_type $bool $meta.attrs.immutable
-  assert_type $bool $meta.attrs.append_only
-  assert_type $bool $meta.attrs.no_dump
-  assert_type $bool $meta.attrs.opaque
+  assert_type $int $meta.macos_attrs
+  assert_type $bool $meta.hidden
+  assert_type $bool $meta.compressed
+  assert_type $bool $meta.immutable
+  assert_type $bool $meta.append_only
+  assert_type $bool $meta.no_dump
+  assert_type $bool $meta.opaque
 
-  set_attrs $test_path hidden: true no_dump: true
-  let hidden_attrs = attrs $test_path
-  assert_eq $hidden_attrs.hidden true
-  assert_eq $hidden_attrs.no_dump true
-  Path(test_path).set_attrs hidden: false no_dump: false
-  let normal_attrs = Path(test_path).attrs()
-  assert_eq $normal_attrs.hidden false
-  assert_eq $normal_attrs.no_dump false
+  set_metadata $test_path hidden: true no_dump: true
+  let hidden_meta = metadata $test_path
+  assert_eq $hidden_meta.hidden true
+  assert_eq $hidden_meta.no_dump true
+  Path(test_path).set_metadata hidden: false no_dump: false
+  let normal_meta = Path(test_path).metadata()
+  assert_eq $normal_meta.hidden false
+  assert_eq $normal_meta.no_dump false
 
   remove $test_path
 
@@ -269,7 +284,10 @@ def unix_raw()
   assert_type $int $meta.files
   assert_type $int $meta.files_free
   assert_type $int $meta.files_available
-  assert_type $int $meta.unix_flags
+  if (sys.os_info().os == :LINUX:)
+    assert_type $int $meta.linux_attrs
+  else
+    assert_type $int $meta.macos_attrs
   assert_type $int $meta.name_max
 
   remove $test_path

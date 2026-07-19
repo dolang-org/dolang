@@ -5,8 +5,8 @@ use dolang_rpc::{Opaque, OsHandle, Protocol};
 use serde::{Deserialize, Serialize};
 
 pub(crate) use crate::{
-    Attrs, ChownIdentity, DirEntry, FsMetadata, Metadata, OperatingSystem, SecDesc, SecurityInfo,
-    Sid, SidName, StreamEntry, TargetInfo, WellKnownPath, XattrEntry, XattrNamespace,
+    DirEntry, FsMetadata, Metadata, MetadataPatch, OperatingSystem, SecDesc, SecurityInfo, Sid,
+    SidName, StreamEntry, TargetInfo, WellKnownPath, XattrEntry, XattrNamespace,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -549,15 +549,9 @@ pub(crate) struct SetSecDescRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct AttrsRequest {
-    pub(crate) path: WirePath,
-    pub(crate) follow: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct SetAttrsRequest {
-    pub(crate) path: WirePath,
-    pub(crate) attrs: Attrs,
+pub(crate) struct SetMetadataRequest {
+    pub(crate) paths: Vec<WirePath>,
+    pub(crate) patch: MetadataPatch,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -631,12 +625,6 @@ pub(crate) struct WellKnownPathRequest {
     pub(crate) env: HashMap<String, Option<String>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct SetPermissionsRequest {
-    pub(crate) path: WirePath,
-    pub(crate) mode: u32,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub(crate) struct Timestamp {
     pub(crate) secs: i64,
@@ -649,14 +637,6 @@ pub(crate) struct SetTimesRequest {
     pub(crate) accessed: Option<Timestamp>,
     pub(crate) modified: Option<Timestamp>,
     pub(crate) created: Option<Timestamp>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct ChownRequest {
-    pub(crate) path: WirePath,
-    pub(crate) user: Option<ChownIdentity>,
-    pub(crate) group: Option<ChownIdentity>,
-    pub(crate) follow: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -832,15 +812,12 @@ pub(crate) enum RequestKind {
     Symlink(SymlinkRequest),
     HardLink(HardLinkRequest),
     SymlinkMetadata(MetadataRequest),
-    Attrs(AttrsRequest),
-    SetAttrs(SetAttrsRequest),
+    SetMetadata(SetMetadataRequest),
     Canonicalize(CanonicalizeRequest),
     ReadLink(ReadLinkRequest),
     Access(AccessRequest),
     Glob(GlobRequest),
-    SetPermissions(SetPermissionsRequest),
     SetTimes(SetTimesRequest),
-    Chown(ChownRequest),
     Xattrs(XattrsRequest),
     Xattr(XattrRequest),
     SetXattr(SetXattrRequest),
@@ -906,15 +883,12 @@ pub(crate) enum ResponseKind {
     Symlink(Result<(), WireError>),
     HardLink(Result<(), WireError>),
     SymlinkMetadata(Result<Metadata, WireError>),
-    Attrs(Result<Attrs, WireError>),
-    SetAttrs(Result<(), WireError>),
+    SetMetadata(Result<(), WireError>),
     Canonicalize(Result<WirePath, WireError>),
     ReadLink(Result<WirePath, WireError>),
     Access(Result<(), WireError>),
     Glob(Result<Vec<WirePath>, WireError>),
-    SetPermissions(Result<(), WireError>),
     SetTimes(Result<(), WireError>),
-    Chown(Result<(), WireError>),
     Xattrs(Result<Vec<XattrEntry>, WireError>),
     Xattr(Result<Vec<u8>, WireError>),
     SetXattr(Result<(), WireError>),

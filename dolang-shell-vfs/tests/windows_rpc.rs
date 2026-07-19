@@ -10,8 +10,8 @@ use std::{
 };
 
 use dolang_shell_vfs::{
-    AnyVfs, Child, Client, Command, FileHandle, OpenOptions, SecurityInfo, Server, TargetInfo,
-    Utf8TypedPath, Utf8WindowsPath, Vfs,
+    AnyVfs, Child, Client, Command, FileHandle, MetadataPatch, OpenOptions, OwnershipIdentity,
+    SecurityInfo, Server, TargetInfo, Utf8TypedPath, Utf8WindowsPath, Vfs,
 };
 use tempfile::tempdir;
 use tokio::{
@@ -146,6 +146,68 @@ async fn windows_account_lookup_round_trips_over_rpc() {
             .kind(),
         std::io::ErrorKind::NotFound
     );
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn windows_metadata_and_ownership_round_trip_over_rpc() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ownership.txt");
+    let second_path = dir.path().join("ownership-2.txt");
+    std::fs::write(&path, b"metadata").unwrap();
+    std::fs::write(&second_path, b"metadata").unwrap();
+    let (client, server_task) = connected_pair().await;
+
+    let metadata = client.metadata(typed(&path)).await.unwrap();
+    let windows = metadata.windows().unwrap();
+    let user = windows.user.clone().expect("owner SID was not fetched");
+    let group = windows.group.clone().expect("group SID was not fetched");
+
+    let mut options = client.open_options();
+    options.read(true);
+    let mut file = OpenOptions::open(&options, typed(&path)).await.unwrap();
+    let file_metadata = file.metadata().await.unwrap();
+    let file_windows = file_metadata.windows().unwrap();
+    assert_eq!(file_windows.user.as_ref(), Some(&user));
+    assert_eq!(file_windows.group.as_ref(), Some(&group));
+
+    if is_elevated() {
+        client
+            .set_metadata(
+                &[
+                    typed(&path).to_path_buf(),
+                    typed(&second_path).to_path_buf(),
+                ],
+                MetadataPatch {
+                    user: Some(OwnershipIdentity::Sid(user.clone())),
+                    ..MetadataPatch::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let name = client.sid_name(&group).await.unwrap();
+        let qualified = if name.domain.is_empty() {
+            name.name
+        } else {
+            format!("{}\\{}", name.domain, name.name)
+        };
+        client
+            .set_metadata(
+                &[
+                    typed(&path).to_path_buf(),
+                    typed(&second_path).to_path_buf(),
+                ],
+                MetadataPatch {
+                    group: Some(OwnershipIdentity::Name(qualified)),
+                    ..MetadataPatch::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
 
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();

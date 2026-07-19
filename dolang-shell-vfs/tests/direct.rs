@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 
+#[cfg(any(windows, target_os = "linux"))]
+use dolang_shell_vfs::{AttrFlags, AttrsPatch, MetadataPatch};
 use dolang_shell_vfs::{
     Child, Command, Direct, FileHandle, FileType, OpenOptions, Utf8TypedPath, Utf8UnixPath,
     Utf8WindowsPath, Vfs,
@@ -23,6 +25,13 @@ fn typed(path: &Path) -> Utf8TypedPath<'_> {
     } else {
         Utf8TypedPath::Unix(Utf8UnixPath::new(path))
     }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn attr_patch(flag: AttrFlags, value: bool) -> AttrsPatch {
+    let mut patch = AttrsPatch::default();
+    patch.update(flag, Some(value));
+    patch
 }
 
 fn typed_str(path: &str) -> Utf8TypedPath<'_> {
@@ -154,10 +163,11 @@ async fn direct_metadata_windows_attributes() {
 
     let metadata = direct.metadata(typed(&path)).await.unwrap();
 
-    let windows = metadata.windows().unwrap();
-    assert_ne!(windows.attrs, 0);
-    assert_ne!(windows.attrs & 0x0000_0001, 0);
-    assert_eq!(metadata.attrs().readonly, Some(true));
+    assert!(metadata.windows().is_some());
+    let attrs = metadata.win_attrs().unwrap();
+    assert_ne!(attrs, 0);
+    assert_ne!(attrs & 0x0000_0001, 0);
+    assert_ne!(attrs & 0x1, 0);
 }
 
 #[tokio::test]
@@ -271,64 +281,84 @@ async fn direct_windows_attrs() {
     tokio::fs::write(&path, "hello").await.unwrap();
 
     direct
-        .set_attrs(
-            typed(&path),
-            dolang_shell_vfs::Attrs {
-                readonly: Some(true),
+        .set_metadata(
+            &[typed(&path).to_path_buf()],
+            MetadataPatch {
+                attrs: attr_patch(AttrFlags::READONLY, true),
                 ..Default::default()
             },
         )
         .await
         .unwrap();
 
-    let attrs = direct.attrs(typed(&path), true).await.unwrap();
-    assert_eq!(attrs.readonly, Some(true));
+    let attrs = direct
+        .metadata(typed(&path))
+        .await
+        .unwrap()
+        .win_attrs()
+        .unwrap();
+    assert_ne!(attrs & 0x1, 0);
 
     direct
-        .set_attrs(
-            typed(&path),
-            dolang_shell_vfs::Attrs {
-                readonly: Some(false),
+        .set_metadata(
+            &[typed(&path).to_path_buf()],
+            MetadataPatch {
+                attrs: attr_patch(AttrFlags::READONLY, false),
                 ..Default::default()
             },
         )
         .await
         .unwrap();
 
-    let attrs = direct.attrs(typed(&path), true).await.unwrap();
-    assert_eq!(attrs.readonly, Some(false));
+    let attrs = direct
+        .metadata(typed(&path))
+        .await
+        .unwrap()
+        .win_attrs()
+        .unwrap();
+    assert_eq!(attrs & 0x1, 0);
 
     if is_wine() {
         return;
     }
 
     direct
-        .set_attrs(
-            typed(&path),
-            dolang_shell_vfs::Attrs {
-                compressed: Some(true),
+        .set_metadata(
+            &[typed(&path).to_path_buf()],
+            MetadataPatch {
+                attrs: attr_patch(AttrFlags::COMPRESSED, true),
                 ..Default::default()
             },
         )
         .await
         .unwrap();
 
-    let attrs = direct.attrs(typed(&path), true).await.unwrap();
-    assert_eq!(attrs.compressed, Some(true));
+    let attrs = direct
+        .metadata(typed(&path))
+        .await
+        .unwrap()
+        .win_attrs()
+        .unwrap();
+    assert_ne!(attrs & 0x800, 0);
 
     direct
-        .set_attrs(
-            typed(&path),
-            dolang_shell_vfs::Attrs {
-                compressed: Some(false),
+        .set_metadata(
+            &[typed(&path).to_path_buf()],
+            MetadataPatch {
+                attrs: attr_patch(AttrFlags::COMPRESSED, false),
                 ..Default::default()
             },
         )
         .await
         .unwrap();
 
-    let attrs = direct.attrs(typed(&path), true).await.unwrap();
-    assert_eq!(attrs.compressed, Some(false));
+    let attrs = direct
+        .metadata(typed(&path))
+        .await
+        .unwrap()
+        .win_attrs()
+        .unwrap();
+    assert_eq!(attrs & 0x800, 0);
 }
 
 #[cfg(windows)]
@@ -374,8 +404,8 @@ async fn direct_linux_attrs() {
     let path = dir.path().join("attrs.txt");
     tokio::fs::write(&path, "hello").await.unwrap();
 
-    let attrs = match direct.attrs(typed(&path), true).await {
-        Ok(attrs) => attrs,
+    let _attrs = match direct.metadata(typed(&path)).await {
+        Ok(metadata) => metadata.linux_attrs().unwrap(),
         Err(err)
             if matches!(
                 err.raw_os_error(),
@@ -386,17 +416,12 @@ async fn direct_linux_attrs() {
         }
         Err(err) => panic!("attrs failed: {err}"),
     };
-    assert!(attrs.unix_flags.is_some());
-    assert!(attrs.immutable.is_some());
-    assert!(attrs.append_only.is_some());
-    assert!(attrs.no_dump.is_some());
-    assert!(attrs.no_atime.is_some());
 
     if let Err(err) = direct
-        .set_attrs(
-            typed(&path),
-            dolang_shell_vfs::Attrs {
-                no_dump: Some(true),
+        .set_metadata(
+            &[typed(&path).to_path_buf()],
+            MetadataPatch {
+                attrs: attr_patch(AttrFlags::NO_DUMP, true),
                 ..Default::default()
             },
         )
@@ -409,24 +434,49 @@ async fn direct_linux_attrs() {
         {
             return;
         }
-        panic!("set_attrs failed: {err}");
+        panic!("set_metadata failed: {err}");
     }
 
-    let attrs = direct.attrs(typed(&path), true).await.unwrap();
-    assert_eq!(attrs.no_dump, Some(true));
+    let attrs = direct
+        .metadata(typed(&path))
+        .await
+        .unwrap()
+        .linux_attrs()
+        .unwrap();
+    assert_ne!(attrs & 0x40, 0);
 
     direct
-        .set_attrs(
-            typed(&path),
-            dolang_shell_vfs::Attrs {
-                no_dump: Some(false),
+        .set_metadata(
+            &[typed(&path).to_path_buf()],
+            MetadataPatch {
+                attrs: attr_patch(AttrFlags::NO_DUMP, false),
                 ..Default::default()
             },
         )
         .await
         .unwrap();
-    let attrs = direct.attrs(typed(&path), true).await.unwrap();
-    assert_eq!(attrs.no_dump, Some(false));
+    let attrs = direct
+        .metadata(typed(&path))
+        .await
+        .unwrap()
+        .linux_attrs()
+        .unwrap();
+    assert_eq!(attrs & 0x40, 0);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn direct_metadata_handles_unix_socket_without_inode_attrs() {
+    use std::os::unix::net::UnixListener;
+
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("metadata.sock");
+    let _listener = UnixListener::bind(&path).unwrap();
+
+    let metadata = direct.metadata(typed(&path)).await.unwrap();
+    assert_eq!(metadata.file_type, FileType::Socket);
+    assert_eq!(metadata.linux_attrs(), None);
 }
 
 #[tokio::test]

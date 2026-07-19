@@ -128,7 +128,6 @@ Gets file metadata.
 | Field       | Type                     | Description                           |
 | ----------- | ------------------------ | ------------------------------------- |
 | `win_attrs` | [`int`](../std/index.md) | Raw Windows file attribute bitmask    |
-| `attrs`     | [`Attrs`](attrs.md)      | Windows attributes from this metadata |
 
 #### Example
 
@@ -144,7 +143,7 @@ open data.txt r do |file|
     echo "Mode: $(meta.mode)"
     echo "Owner: UID=$(meta.uid), GID=$(meta.gid)"
   else
-    echo "Attributes: $(meta.attrs.win_attrs)"
+    echo "Attributes: $(meta.win_attrs)"
 ```
 
 ### `fs_metadata()`
