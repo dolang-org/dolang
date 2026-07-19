@@ -265,7 +265,7 @@ async fn direct_set_times_rejects_created_timestamp() {
     tokio::fs::write(&path, "hello").await.unwrap();
 
     let err = direct
-        .set_times(typed(&path), None, None, Some((1, 0)))
+        .set_times(typed(&path), None, None, Some((1, 0)), true)
         .await
         .unwrap_err();
 
@@ -597,7 +597,7 @@ async fn direct_well_known_home_dir_prefers_absolute_home_override() {
     let env = HashMap::from([(String::from("HOME"), Some(String::from("/tmp/test-home")))]);
 
     let path = direct
-        .well_known_path(dolang_shell_vfs::WellKnownPath::HomeDir, &env)
+        .well_known_path(dolang_shell_vfs::WellKnownPath::HomeDir, None, &env)
         .await
         .unwrap();
 
@@ -611,7 +611,7 @@ async fn direct_well_known_temp_dir_prefers_tmpdir_override() {
     let env = HashMap::from([(String::from("TMPDIR"), Some(String::from("/tmp/test-temp")))]);
 
     let path = direct
-        .well_known_path(dolang_shell_vfs::WellKnownPath::TempDir, &env)
+        .well_known_path(dolang_shell_vfs::WellKnownPath::TempDir, None, &env)
         .await
         .unwrap();
 
@@ -625,7 +625,7 @@ async fn direct_well_known_temp_dir_falls_back_to_tmp() {
     let env = HashMap::from([(String::from("TMPDIR"), None)]);
 
     let path = direct
-        .well_known_path(dolang_shell_vfs::WellKnownPath::TempDir, &env)
+        .well_known_path(dolang_shell_vfs::WellKnownPath::TempDir, None, &env)
         .await
         .unwrap();
 
@@ -639,7 +639,7 @@ async fn direct_well_known_home_dir_rejects_relative_home_override() {
     let env = HashMap::from([(String::from("HOME"), Some(String::from("relative-home")))]);
 
     let err = direct
-        .well_known_path(dolang_shell_vfs::WellKnownPath::HomeDir, &env)
+        .well_known_path(dolang_shell_vfs::WellKnownPath::HomeDir, None, &env)
         .await
         .unwrap_err();
 
@@ -659,7 +659,7 @@ async fn direct_well_known_cache_dir_prefers_xdg_override() {
     ]);
 
     let path = direct
-        .well_known_path(dolang_shell_vfs::WellKnownPath::CacheDir, &env)
+        .well_known_path(dolang_shell_vfs::WellKnownPath::CacheDir, None, &env)
         .await
         .unwrap();
 
@@ -676,7 +676,7 @@ async fn direct_well_known_cache_dir_falls_back_to_home() {
     ]);
 
     let path = direct
-        .well_known_path(dolang_shell_vfs::WellKnownPath::CacheDir, &env)
+        .well_known_path(dolang_shell_vfs::WellKnownPath::CacheDir, None, &env)
         .await
         .unwrap();
 
@@ -696,7 +696,7 @@ async fn direct_well_known_cache_dir_uses_macos_convention() {
     ]);
 
     let path = direct
-        .well_known_path(dolang_shell_vfs::WellKnownPath::CacheDir, &env)
+        .well_known_path(dolang_shell_vfs::WellKnownPath::CacheDir, None, &env)
         .await
         .unwrap();
 

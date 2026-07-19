@@ -4,9 +4,7 @@
 
 ## Constructor
 
-### `UnixPath(path)`
-
-Creates a Unix path without consulting the host platform.
+### `UnixPath path`
 
 **Parameters:**
 

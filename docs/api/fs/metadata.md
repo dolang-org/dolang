@@ -1,16 +1,14 @@
 # Metadata
 
-Filesystem metadata object returned by
-[`metadata`](./index.md),
-[`Path.metadata()`](./path.md), and
-[`File.metadata()`](./file.md).
+Filesystem metadata object returned by [`metadata`](./index.md),
+[`Path.metadata()`](./path.md), and [`File.metadata()`](./file.md).
 
 For filesystem-level capacity and mount metadata, use
 [`FsMetadata`](./fs-metadata.md).
 
 Accessing a field that does not apply to the target platform raises a field
-error. On Linux, `linux_attrs` and applicable semantic attribute fields are
-`nil` when the filesystem does not support querying inode attributes.
+error. `linux_attrs`, `macos_attrs`, and related attribute fields are `nil`
+when the filesystem or file type does not support querying file attributes.
 
 ## Fields
 
@@ -85,7 +83,7 @@ Whether the not-content-indexed attribute is set.
 
 ### `linux_attrs`
 
-Raw Linux inode attribute mask.
+Raw Linux attribute flags.
 
 ### `no_atime`
 
@@ -147,7 +145,7 @@ Whether the extent-format flag is set.
 
 ### `macos_attrs`
 
-Raw macOS file flag mask.
+Raw macOS file flags.
 
 ### `opaque`
 

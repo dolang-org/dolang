@@ -9,8 +9,7 @@ Extended attribute entry returned by
 
 Attribute name.
 
-On Windows, NTFS may report the name with different casing than the original
-query.
+Windows may report the name with different casing than as original set.
 
 ```
 for attr = xattrs "data.txt"

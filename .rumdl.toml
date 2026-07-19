@@ -1,4 +1,5 @@
 [global]
+flavor = "mkdocs"
 disable = ["MD040"]
 
 [MD007]

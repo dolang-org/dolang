@@ -1146,6 +1146,7 @@ pub trait Vfs {
     async fn well_known_path(
         &self,
         key: WellKnownPath,
+        app: Option<&str>,
         env: &HashMap<String, Option<String>>,
     ) -> Result<Utf8TypedPathBuf>;
     async fn clear_cache(&self) -> Result<()>;
@@ -1220,6 +1221,7 @@ pub trait Vfs {
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
+        follow: bool,
     ) -> Result<()>;
 }
 
@@ -1840,11 +1842,12 @@ impl Vfs for AnyVfs {
     async fn well_known_path(
         &self,
         key: WellKnownPath,
+        app: Option<&str>,
         env: &HashMap<String, Option<String>>,
     ) -> crate::Result<Utf8TypedPathBuf> {
         match self {
-            Self::Client(client) => Vfs::well_known_path(client, key, env).await,
-            Self::Direct(direct) => Vfs::well_known_path(direct, key, env).await,
+            Self::Client(client) => Vfs::well_known_path(client, key, app, env).await,
+            Self::Direct(direct) => Vfs::well_known_path(direct, key, app, env).await,
         }
     }
 
@@ -2111,10 +2114,19 @@ impl Vfs for AnyVfs {
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
+        follow: bool,
     ) -> crate::Result<()> {
         match self {
-            Self::Client(client) => client.set_times(path, accessed, modified, created).await,
-            Self::Direct(direct) => direct.set_times(path, accessed, modified, created).await,
+            Self::Client(client) => {
+                client
+                    .set_times(path, accessed, modified, created, follow)
+                    .await
+            }
+            Self::Direct(direct) => {
+                direct
+                    .set_times(path, accessed, modified, created, follow)
+                    .await
+            }
         }
     }
 }

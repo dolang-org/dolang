@@ -490,7 +490,7 @@ macro_rules! impl_concrete_path {
                 let all = builder.sym("all");
                 let ignore = builder.sym("ignore");
                 let max_depth = builder.sym("max_depth");
-                let follow = builder.sym("follow");
+                let resolve = builder.sym("resolve");
                 let mode = builder.sym("mode");
                 let user = builder.sym("user");
                 let owner = builder.sym("owner");
@@ -567,29 +567,19 @@ macro_rules! impl_concrete_path {
                         File::open(strand, annex.global, annex.as_path(), opt1, opt2, out).await
                     })
                     .method("metadata", async move |this, strand, args, out| {
-                        let ([], [follow]) = unpack!(strand, args, 0, 0, follow = None)?;
-                        let follow = match follow {
-                            Some(v) => v
-                                .as_bool(strand)
-                                .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
-                            None => true,
-                        };
+                        let ([], [resolve]) = unpack!(strand, args, 0, 0, resolve = None)?;
                         let annex = this.annex();
+                        let follow = super::resolve_sym(strand, annex.global, resolve, true)?;
                         super::metadata(strand, annex.global, annex.as_path(), follow, out).await
                     })
                     .method("fs_metadata", async move |this, strand, args, out| {
-                        let ([], [follow]) = unpack!(strand, args, 0, 0, follow = None)?;
-                        let follow = match follow {
-                            Some(v) => v
-                                .as_bool(strand)
-                                .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
-                            None => true,
-                        };
+                        let ([], [resolve]) = unpack!(strand, args, 0, 0, resolve = None)?;
                         let annex = this.annex();
+                        let follow = super::resolve_sym(strand, annex.global, resolve, true)?;
                         super::fs_metadata(strand, annex.global, annex.as_path(), follow, out).await
                     })
                     .method("sec_desc", async move |this, strand, args, out| {
-                        let ([], [owner, group, dacl, sacl, follow]) = unpack!(
+                        let ([], [owner, group, dacl, sacl, resolve]) = unpack!(
                             strand,
                             args,
                             0,
@@ -598,33 +588,24 @@ macro_rules! impl_concrete_path {
                             group = None,
                             dacl = None,
                             sacl = None,
-                            follow = None
+                            resolve = None
                         )?;
                         let mask = super::sec_desc_mask(strand, owner, group, dacl, sacl)?;
-                        let follow = match follow {
-                            Some(value) => value.as_bool(strand).ok_or_else(|| {
-                                Error::type_error(strand, "follow: expected bool")
-                            })?,
-                            None => true,
-                        };
                         let annex = this.annex();
+                        let follow = super::resolve_sym(strand, annex.global, resolve, true)?;
                         super::sec_desc(strand, annex.global, annex.as_path(), mask, follow, out)
                             .await
                     })
                     .method("set_sec_desc", async move |this, strand, args, _out| {
-                        let ([descriptor], [follow]) = unpack!(strand, args, 1, 0, follow = None)?;
+                        let ([descriptor], [resolve]) =
+                            unpack!(strand, args, 1, 0, resolve = None)?;
                         let annex = this.annex();
                         let descriptor = crate::security::sec_desc_from_value(
                             strand,
                             annex.global,
                             &descriptor,
                         )?;
-                        let follow = match follow {
-                            Some(value) => value.as_bool(strand).ok_or_else(|| {
-                                Error::type_error(strand, "follow: expected bool")
-                            })?,
-                            None => true,
-                        };
+                        let follow = super::resolve_sym(strand, annex.global, resolve, true)?;
                         super::set_sec_desc(
                             strand,
                             annex.global,
@@ -635,28 +616,34 @@ macro_rules! impl_concrete_path {
                         .await
                     })
                     .method("xattrs", async move |this, strand, args, out| {
-                        let ([], [namespace, follow]) =
-                            unpack!(strand, args, 0, 0, namespace = None, follow = None)?;
+                        let ([], [namespace, resolve]) =
+                            unpack!(strand, args, 0, 0, namespace = None, resolve = None)?;
                         let annex = this.annex();
                         super::xattr::path_list(
                             strand,
                             annex.global,
                             annex.as_path(),
                             namespace,
-                            follow,
+                            resolve,
                             out,
                         )
                         .await
                     })
                     .method("streams", async move |this, strand, args, out| {
-                        let ([], [follow]) = unpack!(strand, args, 0, 0, follow = None)?;
+                        let ([], [resolve]) = unpack!(strand, args, 0, 0, resolve = None)?;
                         let annex = this.annex();
-                        super::stream::path_list(strand, annex.global, annex.as_path(), follow, out)
-                            .await
+                        super::stream::path_list(
+                            strand,
+                            annex.global,
+                            annex.as_path(),
+                            resolve,
+                            out,
+                        )
+                        .await
                     })
                     .method("xattr", async move |this, strand, args, out| {
-                        let ([name], [namespace, follow]) =
-                            unpack!(strand, args, 1, 0, namespace = None, follow = None)?;
+                        let ([name], [namespace, resolve]) =
+                            unpack!(strand, args, 1, 0, namespace = None, resolve = None)?;
                         let annex = this.annex();
                         super::xattr::path_get(
                             strand,
@@ -664,14 +651,14 @@ macro_rules! impl_concrete_path {
                             annex.as_path(),
                             &name,
                             namespace,
-                            follow,
+                            resolve,
                             out,
                         )
                         .await
                     })
                     .method("set_xattr", async move |this, strand, args, _out| {
-                        let ([name, value], [namespace, follow]) =
-                            unpack!(strand, args, 2, 0, namespace = None, follow = None)?;
+                        let ([name, value], [namespace, resolve]) =
+                            unpack!(strand, args, 2, 0, namespace = None, resolve = None)?;
                         let annex = this.annex();
                         super::xattr::path_set(
                             strand,
@@ -680,13 +667,13 @@ macro_rules! impl_concrete_path {
                             &name,
                             namespace,
                             &value,
-                            follow,
+                            resolve,
                         )
                         .await
                     })
                     .method("remove_xattr", async move |this, strand, args, _out| {
-                        let ([name], [namespace, follow]) =
-                            unpack!(strand, args, 1, 0, namespace = None, follow = None)?;
+                        let ([name], [namespace, resolve]) =
+                            unpack!(strand, args, 1, 0, namespace = None, resolve = None)?;
                         let annex = this.annex();
                         super::xattr::path_remove(
                             strand,
@@ -694,7 +681,7 @@ macro_rules! impl_concrete_path {
                             annex.as_path(),
                             &name,
                             namespace,
-                            follow,
+                            resolve,
                         )
                         .await
                     })
@@ -842,7 +829,7 @@ macro_rules! impl_concrete_path {
                                 mode,
                                 user,
                                 group,
-                                follow,
+                                resolve,
                                 readonly,
                                 hidden,
                                 system,
@@ -878,7 +865,7 @@ macro_rules! impl_concrete_path {
                             mode = None,
                             user = None,
                             group = None,
-                            follow = None,
+                            resolve = None,
                             readonly = None,
                             hidden = None,
                             system = None,
@@ -939,7 +926,7 @@ macro_rules! impl_concrete_path {
                         )?;
                         let global = this.annex().global;
                         let patch = super::metadata_patch(
-                            strand, global, mode, user, group, follow, attrs,
+                            strand, global, mode, user, group, resolve, attrs,
                         )?;
                         let annex = this.annex();
                         super::set_metadata(
@@ -951,14 +938,15 @@ macro_rules! impl_concrete_path {
                         .await
                     })
                     .method("set_timestamps", async move |this, strand, args, _out| {
-                        let ([], [modified, accessed, created]) = unpack!(
+                        let ([], [modified, accessed, created, resolve]) = unpack!(
                             strand,
                             args,
                             0,
                             0,
                             modified = None,
                             accessed = None,
-                            created = None
+                            created = None,
+                            resolve = None
                         )?;
                         let annex = this.annex();
                         super::set_timestamps(
@@ -968,6 +956,7 @@ macro_rules! impl_concrete_path {
                             modified,
                             accessed,
                             created,
+                            resolve,
                         )
                         .await
                     });
@@ -1039,7 +1028,7 @@ macro_rules! impl_concrete_path {
                             }
                             Ok(())
                         })
-                        .get("verbatim", |this, strand, out| {
+                        .get("is_verbatim", |this, strand, out| {
                             let annex = this.annex();
                             let verbatim = annex.with_windows_prefix(|prefix| {
                                 prefix.is_some_and(|prefix| prefix.is_verbatim())
@@ -1056,8 +1045,8 @@ macro_rules! impl_concrete_path {
                         Ok(())
                     })
                     .method("glob", async move |this, strand, args, out| {
-                        let ([pattern], [max_depth, follow]) =
-                            unpack!(strand, args, 1, 0, max_depth = None, follow = None)?;
+                        let ([pattern], [max_depth, resolve]) =
+                            unpack!(strand, args, 1, 0, max_depth = None, resolve = None)?;
                         let annex = this.annex();
                         super::glob(
                             strand,
@@ -1065,7 +1054,7 @@ macro_rules! impl_concrete_path {
                             Some(annex.as_path()),
                             pattern,
                             max_depth,
-                            follow,
+                            resolve,
                             out,
                         )
                         .await

@@ -1,14 +1,11 @@
 # Path
 
-Abstract supertype for [`UnixPath`](unix-path.md) and
+Abstract supertype of [`UnixPath`](unix-path.md) and
 [`WindowsPath`](windows-path.md).
 
 ## Constructor
 
-### `Path(path)`
-
-Creates the path type used by the active filesystem. Strings are not inspected
-for drive or UNC prefixes when selecting the type.
+### `Path path`
 
 **Parameters:**
 
@@ -18,14 +15,13 @@ for drive or UNC prefixes when selecting the type.
 
 **Returns:** [`UnixPath`](unix-path.md) or [`WindowsPath`](windows-path.md).
 
-Path strings retain the separator form stored by `typed-path`; converting a
-path to a string does not normalize it to forward slashes.
+The returned path type is chosen according to the current VFS context.
 
 ## Fields
 
 ### `name`
 
-Returns the final component of the path, or `nil` if the path is empty.
+The final component of the path, or `nil` if the path is empty.
 
 ```
 let path = Path /home/user/file.txt
@@ -34,7 +30,7 @@ echo $path.name  # file.txt
 
 ### `stem`
 
-Returns the final component without its last extension, or `nil` if the path is
+The final component without its last extension, or `nil` if the path is
 empty.
 
 ```
@@ -47,8 +43,8 @@ echo $no_ext.stem  # Makefile
 
 ### `parent`
 
-Returns the parent directory as a new Path, or `nil` if the path is empty or
-contains only one component.
+The parent directory as a `Path` of the same subtype, or `nil` if the path is
+empty or contains only one component.
 
 ```
 let path = Path /home/user/file.txt
@@ -58,7 +54,7 @@ echo parent  # /home/user
 
 ### `ext`
 
-Returns the file extension (without the leading dot), or `nil` if the final
+The file extension (without the leading dot), or `nil` if the final
 component has no extension.
 
 ```
@@ -71,7 +67,7 @@ echo $no_ext.ext  # nil
 
 ### `is_absolute`
 
-Returns whether the path is absolute (starts from the filesystem root).
+Whether the path is absolute (starts from the filesystem root).
 
 ```
 let abs = Path "/home/user/file.txt"
@@ -80,82 +76,6 @@ echo $abs.is_absolute  # true
 let rel = Path "./file.txt"
 echo $rel.is_absolute  # false
 ```
-
-## Platform-Specific Fields
-
-### Windows
-
-#### `disk`
-
-Drive letter for `C:`-style and `\\?\C:`-style prefixes, or `nil` otherwise.
-
-```
-let path = Path "C:/work/file.txt"
-echo $path.disk  # C
-```
-
-#### `server`
-
-UNC server name, or `nil` if the path does not use a UNC prefix.
-
-```
-let path = Path "//server/share/file.txt"
-echo $path.server  # server
-```
-
-#### `share`
-
-UNC share name, or `nil` if the path does not use a UNC prefix.
-
-```
-let path = Path "//server/share/file.txt"
-echo $path.share  # share
-```
-
-#### `device`
-
-Device namespace name for `\\.\name` paths, or `nil` otherwise.
-
-```
-let path = Path r"\\.\COM42"
-echo $path.device  # COM42
-```
-
-#### `verbatim`
-
-Returns whether the path uses a verbatim `\\?\...` prefix.
-
-```
-let path = Path r"\\?\C:\work\file.txt"
-echo $path.verbatim  # true
-```
-
-#### `stream_name`
-
-Alternate data stream name from the final path component, or
-`nil` if no stream is specified.
-
-```
-let path = Path "file.txt:zone"
-echo $path.name         # file.txt
-echo $path.stream_name  # zone
-```
-
-Use `stream_name != nil` to test whether a path targets an alternate stream.
-
-#### `stream_type`
-
-Explicit alternate data stream type without the leading `$`, or
-`nil` if no type is specified.
-
-```
-let path = Path "file.txt:zone:$DATA"
-echo $path.stream_type  # DATA
-```
-
-`Path` parses stream syntax only from the final component. Forms with more than
-two `:` separators in that component are rejected, and an explicit stream type
-must start with `$`.
 
 ### `components`
 
@@ -166,15 +86,10 @@ let path = Path "alpha/beta/gamma"
 assert_eq [...path.components] ["alpha", "beta", "gamma"]
 ```
 
+Windows paths carry the alternate data stream specified in the final
+path component if present.
+
 ## Class Methods
-
-### `(init) path`
-
-Constructs a new path.
-
-| Name   | Type          | Description |
-| ------ | ------------- | ----------- |
-| `path` | `str`\|`Path` | The path    |
 
 ### `join ...components`
 
@@ -191,7 +106,7 @@ If any component is an absolute path, it replaces everything before it.
 
 #### Returns
 
-Path
+`Path`
 
 #### Example
 
@@ -208,473 +123,75 @@ echo $abs  # /etc/config.txt
 
 ### `open :mode? :block?`
 
-Opens the file at this path. Equivalent to `open` but with a `Path`
-object.
+Equivalent to [`fs.open`](index.md#open-path-mode-func)
 
-#### Parameters
+### `metadata :resolve = :TARGET:`
 
-| Name    | Type  | Description                                          |
-| ------- | ----- | ---------------------------------------------------- |
-| `mode`  | `str` | File access mode (default: `"r"`)                    |
-| `block` | func  | Callable to run with the file; auto-closes when done |
+Equivalent to [`fs.metadata`](index.md#metadata-path-resolve)
 
-#### Returns
+### `fs_metadata :resolve = :TARGET:`
 
-File
-
-#### Example
-
-```
-let path = Path data.txt
-path.open r do |file|
-  let content = file.read()
-  echo $content
-```
-
-### `metadata :follow = true`
-
-Gets metadata for the file at this path.
-
-#### Parameters
-
-| Name     | Type                     | Description                                                       |
-| -------- | ------------------------ | ----------------------------------------------------------------- |
-| `follow` | [`bool`](../std/bool.md) | If `false`, returns metadata for a symlink rather than its target |
-
-#### Returns
-
-[`Metadata`](metadata.md)
-
-#### Example
-
-```
-let path = Path config.json
-let meta = path.metadata()
-echo "Size: $(meta.len) bytes"
-
-# Get symlink metadata without following
-let link = Path "link.txt"
-let link_meta = link.metadata follow: false
-echo "Link points to: $(link_meta.type)"
-```
-
-### `fs_metadata :follow = true`
-
-Gets filesystem metadata for the filesystem containing this path.
-
-Equivalent to [`fs_metadata`](index.md).
-
-#### Parameters
-
-| Name     | Type                     | Description                                                               |
-| -------- | ------------------------ | ------------------------------------------------------------------------- |
-| `follow` | [`bool`](../std/bool.md) | If `false`, use the symlink's containing filesystem instead of its target |
-
-#### Returns
-
-[`FsMetadata`](fs-metadata.md)
-
-#### Errors
-
-| Exception      | Condition                         |
-| -------------- | --------------------------------- |
-| `RuntimeError` | On Linux, `follow: false` is used |
-
-```
-let path = Path "data.txt"
-let meta = path.fs_metadata()
-echo "Capacity: $(meta.capacity)"
-```
-
-### `sec_desc :owner = true :group = true :dacl = true :sacl = false :follow = true`
-
-Gets selected parts of the Windows security descriptor.
-
-**Parameters:**
-
-| Name     | Type                     | Description                         |
-| -------- | ------------------------ | ----------------------------------- |
-| `owner`  | [`bool`](../std/bool.md) | Load the owner SID                  |
-| `group`  | [`bool`](../std/bool.md) | Load the primary group SID          |
-| `dacl`   | [`bool`](../std/bool.md) | Load the discretionary ACL          |
-| `sacl`   | [`bool`](../std/bool.md) | Load the system ACL                 |
-| `follow` | [`bool`](../std/bool.md) | Follow the final symbolic link      |
-
-**Returns:** [`security.windows.SecDesc`](../security/windows/secdesc.md)
-
-SACL access requires `SeSecurityPrivilege`. Other platforms raise
-`UnsupportedError`.
-
-### `set_sec_desc desc :follow = true`
-
-Applies the components selected by a security descriptor's `mask`.
-
-**Parameters:**
-
-| Name     | Type                                                         | Description                    |
-| -------- | ------------------------------------------------------------ | ------------------------------ |
-| `desc`   | [`security.windows.SecDesc`](../security/windows/secdesc.md) | Security descriptor to apply   |
-| `follow` | [`bool`](../std/bool.md)                                     | Follow the final symbolic link |
-
-Windows may normalize the resulting descriptor when associating it with the
-filesystem object. Other platforms raise `UnsupportedError`.
+Equivalent to [`fs.fs_metadata`](index.md).
 
 ### `exists()`
 
-Checks if the path exists.
-
-Equivalent to the free function [`exists`](index.md#exists-path).
-
-#### Returns
-
-[`bool`](../std/bool.md)
-
-#### Example
-
-```
-let path = Path important.txt
-if path.exists()
-  echo "File exists!"
-else
-  echo "File not found"
-```
+Equivalent to [`fs.exists`](index.md#exists-path).
 
 ### `read mode?`
 
-Reads the entire contents of the file at this path.
-
-Equivalent to [`read`](index.md#read-path-mode).
-
-#### Parameters
-
-| Name   | Type  | Description                                 |
-| ------ | ----- | ------------------------------------------- |
-| `mode` | `str` | Optional mode string; only `"b"` is allowed |
-
-#### Returns
-
-[`str`](../std/str.md)\|[`bin`](../std/bin.md)
-
-#### Example
-
-```
-let path = Path "config.txt"
-let text = path.read()
-let bytes = (Path "archive.bin").read "b"
-```
+Equivalent to [`fs.read`](index.md#read-path-mode).
 
 ### `write content`
 
-Writes the entire contents of the file at this path, creating or truncating
-the file.
-
-Equivalent to [`write`](index.md#write-path-content).
-
-#### Parameters
-
-| Name      | Type | Description    |
-| --------- | ---- | -------------- |
-| `content` | any  | Value to write |
-
-#### Returns
-
-[`int`](../std/int.md) - Number of bytes written
-
-#### Example
-
-```
-let path = Path "output.txt"
-path.write "hello"
-```
+Equivalent to [`fs.write`](index.md#write-path-content).
 
 ### `append content`
 
-Appends content to the file at this path, creating it if needed.
-
-Equivalent to [`append`](index.md#append-path-content).
-
-#### Parameters
-
-| Name      | Type         | Description       |
-| --------- | ------------ | ----------------- |
-| `content` | `str`\|`bin` | Content to append |
-
-#### Returns
-
-[`int`](../std/int.md) - Number of bytes written
-
-#### Example
-
-```
-let path = Path "output.txt"
-path.append "hello\n"
-```
+Equivalent to [`fs.append`](index.md#append-path-content).
 
 ### `set_len size`
 
-Truncates the file at this path to the given byte length, creating it if
-needed.
+Equivalent to [`fs.set_len`](index.md#set_len-path-size).
 
-Equivalent to [`set_len`](index.md#set_len-path-size).
+### `set_metadata :resolve? ...`
 
-#### Parameters
+Equivalent to [`fs.set_metadata`](index.md#set_metadata-resolve-paths).
 
-| Name   | Type                     | Description              |
-| ------ | ------------------------ | ------------------------ |
-| `size` | [`int`](../std/index.md) | New file length in bytes |
+### `xattrs :namespace? :resolve = :TARGET:`
 
-#### Example
+Equivalent to [`fs.xattrs`](index.md).
 
-```
-let path = Path "output.txt"
-path.set_len 0
-```
+### `xattr name :namespace? :resolve = :TARGET:`
 
-### `set_metadata :mode? :user? :group? :follow = true ...`
+Equivalent to [`fs.xattr`](index.md).
 
-Updates permissions, ownership, and filesystem attributes for this path.
+### `set_xattr name value :namespace? :resolve = :TARGET:`
 
-Equivalent to [`set_metadata`](index.md).
+Equivalent to [`fs.set_xattr`](index.md).
 
-Unspecified metadata is left unchanged.
+### `remove_xattr name :namespace? :resolve = :TARGET:`
 
-On Windows, `user` and `group` accept an account name or
-[`Sid`](../security/windows/sid.md). On Unix, they accept a numeric ID or name.
-
-```
-let path = Path "data.txt"
-path.set_metadata mode: 0o640 user: "deploy" group: "deploy"
-path.set_metadata hidden: true
-path.set_metadata no_dump: true
-path.set_metadata opaque: false
-```
-
-### `xattrs :namespace? :follow = true`
-
-Lists extended attributes for this path.
-
-Equivalent to [`xattrs`](index.md).
-
-#### Parameters
-
-| Name        | Type                                            | Description                                                      |
-| ----------- | ----------------------------------------------- | ---------------------------------------------------------------- |
-| `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:ANY:` to list all namespaces |
-| `follow`    | [`bool`](../std/bool.md)                        | If `false`, does not follow a symlink                            |
-
-#### Returns
-
-iterator of [`XattrEntry`](xattr-entry.md)
-
-```
-let path = Path "data.txt"
-for attr = path.xattrs()
-  echo $attr.name
-```
-
-### `streams :follow = true`
-
-Lists alternate data streams for this path.
-
-Equivalent to [`streams`](index.md).
-
-#### Parameters
-
-| Name     | Type                     | Description                           |
-| -------- | ------------------------ | ------------------------------------- |
-| `follow` | [`bool`](../std/bool.md) | If `false`, does not follow a symlink |
-
-#### Returns
-
-iterator of [`StreamEntry`](stream-entry.md)
-
-```
-let path = Path "data.txt"
-for stream = path.streams()
-  echo "$(stream.name) $(stream.type)"
-  echo (path / stream)
-```
-
-### `xattr name :namespace? :follow = true`
-
-Gets an extended attribute value.
-
-Equivalent to [`xattr`](index.md).
-
-#### Parameters
-
-| Name        | Type                                                   | Description                           |
-| ----------- | ------------------------------------------------------ | ------------------------------------- |
-| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
-| `namespace` | [`str`](../std/str.md)?                                | Namespace to query                    |
-| `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
-
-#### Returns
-
-[`bin`](../std/bin.md)
-
-```
-let path = Path "data.txt"
-let value = path.xattr "comment"
-```
-
-### `set_xattr name value :namespace? :follow = true`
-
-Sets an extended attribute value.
-
-Equivalent to
-[`set_xattr`](index.md).
-
-#### Parameters
-
-| Name        | Type                                                   | Description                           |
-| ----------- | ------------------------------------------------------ | ------------------------------------- |
-| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
-| `value`     | [`str`](../std/str.md)\|[`bin`](../std/bin.md)         | Attribute bytes; strings use UTF-8    |
-| `namespace` | [`str`](../std/str.md)?                                | Namespace to update                   |
-| `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
-
-```
-let path = Path "data.txt"
-path.set_xattr "comment" "ready"
-```
-
-### `remove_xattr name :namespace? :follow = true`
-
-Removes an extended attribute.
-
-Equivalent to
-[`remove_xattr`](index.md).
-
-#### Parameters
-
-| Name        | Type                                                   | Description                           |
-| ----------- | ------------------------------------------------------ | ------------------------------------- |
-| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
-| `namespace` | [`str`](../std/str.md)?                                | Namespace to update                   |
-| `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
-
-```
-let path = Path "data.txt"
-path.remove_xattr "comment"
-```
+Equivalent to [`fs.remove_xattr`](index.md).
 
 ### `copy to :all?`
 
-Copies this filesystem entry to `to`.
-
-Equivalent to [`copy`](index.md#copy-from-to-all).
-
-By default this copies a single file or symlink. With `all: true`, it also
-copies directories recursively.
-
-#### Parameters
-
-| Name  | Type                                      | Description                                |
-| ----- | ----------------------------------------- | ------------------------------------------ |
-| `to`  | [`str`](../std/str.md)\|[Path](path.md)   | Destination path                           |
-| `all` | [`bool`](../std/bool.md)                  | If `true`, allows recursive directory copy |
-
-#### Example
-
-```
-let src = Path "source.txt"
-src.copy "backup.txt"
-
-let dir = Path "project"
-dir.copy "project-backup" all: true
-```
+Equivalent to [`fs.copy`](index.md#copy-from-to-all).
 
 ### `rename to`
 
-Renames this path to `to`.
-
-Equivalent to [`rename`](index.md#rename-from-to).
-
-#### Parameters
-
-| Name | Type                                    | Description      |
-| ---- | --------------------------------------- | ---------------- |
-| `to` | [`str`](../std/str.md)\|[Path](path.md) | Destination path |
-
-#### Example
-
-```
-let src = Path "old.txt"
-src.rename "new.txt"
-```
+Equivalent to [`fs.rename`](index.md#rename-from-to).
 
 ### `move to :all?`
 
-Moves this filesystem entry to `to`.
-
-Equivalent to [`move`](index.md#move-from-to-all).
-
-By default this moves a single file or symlink. With `all: true`, it also
-moves directories recursively.
-
-#### Parameters
-
-| Name  | Type                                      | Description                                |
-| ----- | ----------------------------------------- | ------------------------------------------ |
-| `to`  | [`str`](../std/str.md)\|[Path](path.md)   | Destination path                           |
-| `all` | [`bool`](../std/bool.md)                  | If `true`, allows recursive directory move |
-
-#### Example
-
-```
-let src = Path "source.txt"
-src.move "dest.txt"
-
-let dir = Path "project"
-dir.move "archive/project" all: true
-```
+Equivalent to [`fs.move`](index.md#move-from-to-all).
 
 ### `hard_link to`
 
-Creates a hard link at `to` pointing to this existing file.
-
-Equivalent to [`hard_link`](index.md#hard_link-src-dst).
-
-This uses the platform-native hard-link operation. The source must already
-exist, and the link must be created on the same filesystem or volume if the
-platform requires it.
-
-#### Parameters
-
-| Name | Type                                    | Description                         |
-| ---- | --------------------------------------- | ----------------------------------- |
-| `to` | [`str`](../std/str.md)\|[Path](path.md) | Path where the hard link is created |
-
-#### Example
-
-```
-let src = Path "data.txt"
-src.hard_link "data-copy.txt"
-```
+Equivalent to [`fs.hard_link`](index.md#hard_link-src-dst).
 
 ### `entries()`
 
-Reads the entries in the directory at this path.
-
-#### Returns
-
-Iterable of [DirEntry](direntry.md) objects
-
-#### Example
-
-```
-let dir = Path /home/user/docs
-
-# Iterate over directory entries
-for entry = dir.entries()
-  echo "$(entry.name) - $(entry.type)"
-  echo (dir / entry)
-
-# Collect into an array
-let files = [...dir.entries()]
-echo "Found $(files.len) entries"
-```
+Equivalent to [`fs.entries`](index.md#entries-path).
 
 ### `add_ext ext`
 
@@ -702,42 +219,11 @@ echo file.add_ext "txt"  # report.txt
 
 ### `canonical()`
 
-Returns the canonical, absolute form of the path with all intermediate
-components normalized and symbolic links resolved.
-
-#### Returns
-
-[Path](path.md)
-
-#### Example
-
-```
-let rel = Path "./foo/../bar"
-let abs = rel.canonical()
-echo $abs  # Absolute normalized path
-```
+Equivalent to [`fs.canonical`](index.md#canonical-path).
 
 ### `read_link()`
 
-Reads the target of a symbolic link.
-
-#### Returns
-
-[Path](path.md) - The path that the symlink points to
-
-#### Errors
-
-| Exception      | Condition                                         |
-| -------------- | ------------------------------------------------- |
-| `RuntimeError` | The path is not a symbolic link or cannot be read |
-
-#### Example
-
-```
-let link = Path "my_link"
-let target = link.read_link()
-echo "Link points to: $target"
-```
+Equivalent to [`fs.read_link`](index.md#read_link-path).
 
 ### `without_ext()`
 
@@ -821,213 +307,34 @@ echo plain.with_stem "Dockerfile"  # Dockerfile
 
 ### `remove :all? :ignore?`
 
-Removes this path.
-
 Equivalent to [`remove`](index.md#remove-path-all-ignore).
-
-By default this removes a single file or symlink. With `all: true`, it also
-removes directories recursively, similar to `rm -r`. With `ignore: true`,
-missing paths are treated as success.
-
-#### Parameters
-
-| Name     | Type                     | Description                                |
-| -------- | ------------------------ | ------------------------------------------ |
-| `all`    | [`bool`](../std/bool.md) | If `true`, removes directories recursively |
-| `ignore` | [`bool`](../std/bool.md) | If `true`, ignores a missing path          |
-
-#### Example
-
-```
-let file = Path "temp.txt"
-file.remove()
-
-let dir = Path "build"
-dir.remove all: true
-
-dir.remove ignore: true
-```
 
 ### `create_dir :all?`
 
-Creates a directory at this path.
-
-#### Parameters
-
-| Name  | Type                     | Description                               |
-| ----- | ------------------------ | ----------------------------------------- |
-| `all` | [`bool`](../std/bool.md) | If `true`, creates parent directories too |
-
-#### Example
-
-```
-let dir = Path "new_subdir"
-dir.create_dir()
-
-# Create with parents
-let nested = Path "a/b/c"
-nested.create_dir all: true
-```
+Equivalent to [`create_dir`](index.md#create_dir-path-all).
 
 ### `remove_dir :all? :ignore?`
 
-Removes the directory at this path.
+Equivalent to [`remove_dir`](index.md#remove_dir-path-all-ignore).
 
-By default this removes only an empty directory. With `all: true`, it removes
-directories recursively, but only through subtrees that contain directories and
-no files or other non-directory entries. Use
-[`remove`](index.md#remove-path-all-ignore) to delete directories that
-contain files.
+### `set_timestamps :modified? :accessed? :created? :resolve?`
 
-#### Parameters
-
-| Name     | Type                     | Description                                                      |
-| -------- | ------------------------ | ---------------------------------------------------------------- |
-| `all`    | [`bool`](../std/bool.md) | If `true`, recursively prunes only empty directory subtrees      |
-| `ignore` | [`bool`](../std/bool.md) | If `true`, ignores missing directories and file-blocked subtrees |
-
-#### Example
-
-```
-let dir = Path "empty_dir"
-dir.remove_dir()
-
-# Remove an empty directory tree
-let to_remove = Path "old_project"
-to_remove.remove_dir all: true
-
-to_remove.remove_dir all: true ignore: true
-```
-
-### `set_timestamps :modified? :accessed? :created?`
-
-Updates the timestamps of the file or directory at this path.
-
-**Platform Notes:**
-
-- **Unix:** `modified` and `accessed` are available; `created` is not supported
-- **Windows:** `modified`, `accessed`, and `created` are available
-
-Unspecified timestamps are left unchanged.
-
-#### Parameters
-
-| Name       | Type                              | Description                               |
-| ---------- | --------------------------------- | ----------------------------------------- |
-| `modified` | [`DateTime`](../time/datetime.md) | Optional new modification time            |
-| `accessed` | [`DateTime`](../time/datetime.md) | Optional new access time                  |
-| `created`  | [`DateTime`](../time/datetime.md) | Optional new creation time (Windows only) |
-
-```
-import time:
-  - DateTime
-
-let artifact = Path "artifact.tar"
-artifact.set_timestamps modified: DateTime.from_unix(1700000000)
-artifact.set_timestamps accessed: DateTime.now()
-artifact.set_timestamps created: DateTime.from_unix(1690000000)
-```
+Equivalent to
+[`set_timestamps`](index.md#set_timestamps-path-modified-accessed-created-resolve)
 
 ### `normalize()`
 
-Returns a normalized path with `.` and `..` components resolved without
-accessing the filesystem.
-
-#### Returns
-
-[Path](path.md)
-
-#### Example
-
-```
-let messy = Path "./foo/../bar/./baz"
-let clean = messy.normalize()
-echo $clean  # bar/baz
-```
+Equivalent to [`normalize`](index.md#normalize-path)
 
 ### `absolute()`
 
-Returns the absolute form of this path based on the current working directory.
+Equivalent to [`absolute`](index.md#absolute-path)
 
-If the path is already absolute, it is returned unchanged.
+### `relative base?`
 
-#### Returns
+Equivalent to [`relative`](index.md#relative-path-base)
 
-[Path](path.md)
+### `glob pattern :max_depth? :resolve?`
 
-#### Example
-
-```
-let rel = Path "./config.txt"
-let abs = rel.absolute()
-echo $abs  # /current/working/dir/config.txt
-
-# Already absolute paths are unchanged
-let already_abs = Path "/etc/passwd"
-echo $already_abs.absolute()  # /etc/passwd
-```
-
-### `relative(base?)`
-
-Returns this path relative to a base directory.
-
-#### Parameters
-
-| Name   | Type                                      | Description                   |
-| ------ | ----------------------------------------- | ----------------------------- |
-| `base` | [`str`](../std/str.md)\|[`Path`](path.md) | Base directory (default: cwd) |
-
-#### Returns
-
-[Path](path.md) - Relative path, or the original path if it cannot
-be made relative
-
-#### Example
-
-```
-# Relative to current directory
-let path = Path "/home/user/docs/file.txt"
-echo path.relative()  # docs/file.txt (if cwd is /home/user)
-
-# Relative to specific base
-let path2 = Path "/a/b/c/d"
-echo path2.relative "/a/b"  # c/d
-
-# Returns original if no common prefix
-let path3 = Path "/etc/passwd"
-echo path3.relative "/home/user"  # /etc/passwd
-```
-
-### `glob pattern :max_depth? :follow?`
-
-Returns an iterator over paths matching a glob pattern relative to this path.
-
-#### Parameters
-
-| Name        | Type                     | Description                                                       |
-| ----------- | ------------------------ | ----------------------------------------------------------------- |
-| `pattern`   | `str`                    | Glob pattern (e.g., `"*.txt"`, `"**/*.rs"`)                       |
-| `max_depth` | [`int`](../std/int.md)   | Maximum directory depth to traverse (default: unlimited)          |
-| `follow`    | [`bool`](../std/bool.md) | Whether to follow symbolic links when traversing (default: false) |
-
-#### Returns
-
-Iterable of [Path](path.md) objects
-
-#### Example
-
-```
-let src = Path "src"
-
-# Find all Rust files in src directory
-for file = src.glob "*.rs"
-  echo "Source: $file"
-
-# Recursive search
-for file = src.glob "**/*.rs" max_depth: 2
-  echo "Source: $file"
-
-# Follow symlinks
-for entry = src.glob "**/*" follow: true
-  echo "Entry: $entry"
-```
+Equivalent to [`glob`](index.md#glob-pattern-max_depth-resolve), but searches
+within this path. Yielded paths will contain this path as a prefix.

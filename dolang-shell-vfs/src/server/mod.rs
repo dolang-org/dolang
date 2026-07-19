@@ -492,7 +492,11 @@ impl Connection {
     }
 
     async fn handle_well_known_path(&self, req: WellKnownPathRequest) -> ResponseKind {
-        let result = self.server.vfs.well_known_path(req.key, &req.env).await;
+        let result = self
+            .server
+            .vfs
+            .well_known_path(req.key, req.app.as_deref(), &req.env)
+            .await;
         ResponseKind::WellKnownPath(result.map(Into::into).map_err(wire_error))
     }
 
@@ -1453,7 +1457,13 @@ impl Connection {
         ResponseKind::SetTimes(Self::wire_result(
             self.server
                 .vfs
-                .set_times(request_path(&req.path), accessed, modified, created)
+                .set_times(
+                    request_path(&req.path),
+                    accessed,
+                    modified,
+                    created,
+                    req.follow,
+                )
                 .await,
         ))
     }

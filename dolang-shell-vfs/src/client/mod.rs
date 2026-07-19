@@ -896,10 +896,12 @@ impl Client {
     pub async fn well_known_path(
         &self,
         key: WellKnownPath,
+        app: Option<&str>,
         env: &HashMap<String, Option<String>>,
     ) -> crate::Result<PathBuf> {
         let request = WellKnownPathRequest {
             key,
+            app: app.map(str::to_owned),
             env: env.clone(),
         };
         match self.request(RequestKind::WellKnownPath(request)).await? {
@@ -2081,10 +2083,12 @@ impl Vfs for Client {
     async fn well_known_path(
         &self,
         key: WellKnownPath,
+        app: Option<&str>,
         env: &HashMap<String, Option<String>>,
     ) -> crate::Result<Utf8TypedPathBuf> {
         let request = WellKnownPathRequest {
             key,
+            app: app.map(str::to_owned),
             env: env.clone(),
         };
         match self.request(RequestKind::WellKnownPath(request)).await? {
@@ -2465,12 +2469,14 @@ impl Vfs for Client {
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
+        follow: bool,
     ) -> crate::Result<()> {
         let request = SetTimesRequest {
             path: path.into(),
             accessed: accessed.map(|(secs, nanos)| Timestamp { secs, nanos }),
             modified: modified.map(|(secs, nanos)| Timestamp { secs, nanos }),
             created: created.map(|(secs, nanos)| Timestamp { secs, nanos }),
+            follow,
         };
         match self.request(RequestKind::SetTimes(request)).await? {
             ResponseKind::SetTimes(result) => result.map_err(crate::Error::from),

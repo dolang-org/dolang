@@ -584,17 +584,17 @@ leaf modules like `base64.md`):
    native types and Do-defined classes alike (a class is just a type
    defined in Do code). Use a link table:
 
-   ```
-   | Type                    | Description              |
-   | ----------------------- | ------------------------ |
-   | [`State`](./state.md)   | Supertype for ...        |
-   | [`Blake3`](./blake3.md) | BLAKE3 state handle      |
-   ```
+    ```
+    | Type                    | Description              |
+    | ----------------------- | ------------------------ |
+    | [`State`](./state.md)   | Supertype for ...        |
+    | [`Blake3`](./blake3.md) | BLAKE3 state handle      |
+    ```
 
-   Don't list internal/return-only types here — only types the module
-   exports as values. Types that are only returned by functions (e.g.
-   `Result` from `compile`) are mentioned in the relevant function's
-   **Returns:** line and linked to their own page from there.
+    Don't list internal/return-only types here — only types the module
+    exports as values. Types that are only returned by functions (e.g.
+    `Result` from `compile`) are mentioned in the relevant function's
+    **Returns:** line and linked to their own page from there.
 4. `## Functions` — each function as `### \`name args\`` (see below)
 
 **Type pages** (one `.md` file per type):
@@ -604,12 +604,12 @@ leaf modules like `base64.md`):
 2. One-line description, ideally stating what supertype it extends if any
    (e.g. `` [`State`](./state.md) for BLAKE3. ``)
 3. Sections in order, omitting any that don't apply:
-   - `## Constructor` — `### \`TypeName(args)\``; parameters, returns, example
-   - `## Fields` — each as `### \`field_name\`` with description and example
-   - `## Class Methods` — methods on the type object itself
-   - `## Methods` — instance methods, each as `### \`method_name args\``
-   - `## Operators` — if the type overloads `+`, `[]`, iteration, etc.
-   - `## Example` — a longer worked example if the type warrants one
+    - `## Constructor` — `### \`TypeName(args)\``; parameters, returns, example
+    - `## Fields` — each as `### \`field_name\`` with description and example
+    - `## Class Methods` — methods on the type object itself
+    - `## Methods` — instance methods, each as `### \`method_name args\``
+    - `## Operators` — if the type overloads `+`, `[]`, iteration, etc.
+    - `## Example` — a longer worked example if the type warrants one
 
 Each type gets its own page. Don't document a type's full API inline on
 the module page — the module page links to the type page.

@@ -151,7 +151,7 @@ def path_api()
     assert_throws $FieldError do p.server
     assert_throws $FieldError do p.share
     assert_throws $FieldError do p.device
-    assert_throws $FieldError do p.verbatim
+    assert_throws $FieldError do p.is_verbatim
     assert_throws $FieldError do p.stream_name
     assert_throws $FieldError do p.stream_type
 
@@ -231,42 +231,42 @@ def windows_path_fields()
   assert_eq $drive.server nil
   assert_eq $drive.share nil
   assert_eq $drive.device nil
-  assert_eq $drive.verbatim false
+  assert_eq $drive.is_verbatim false
 
   let unc = WindowsPath "//server/share/file.txt"
   assert_eq $unc.disk nil
   assert_eq $unc.server "server"
   assert_eq $unc.share "share"
   assert_eq $unc.device nil
-  assert_eq $unc.verbatim false
+  assert_eq $unc.is_verbatim false
 
   let device = WindowsPath r"\\.\COM42"
   assert_eq $device.disk nil
   assert_eq $device.server nil
   assert_eq $device.share nil
   assert_eq $device.device "COM42"
-  assert_eq $device.verbatim false
+  assert_eq $device.is_verbatim false
 
   let verbatim_drive = WindowsPath r"\\?\C:\work\file.txt"
   assert_eq $verbatim_drive.disk "C"
   assert_eq $verbatim_drive.server nil
   assert_eq $verbatim_drive.share nil
   assert_eq $verbatim_drive.device nil
-  assert_eq $verbatim_drive.verbatim true
+  assert_eq $verbatim_drive.is_verbatim true
 
   let verbatim_unc = WindowsPath r"\\?\UNC\server\share\file.txt"
   assert_eq $verbatim_unc.disk nil
   assert_eq $verbatim_unc.server "server"
   assert_eq $verbatim_unc.share "share"
   assert_eq $verbatim_unc.device nil
-  assert_eq $verbatim_unc.verbatim true
+  assert_eq $verbatim_unc.is_verbatim true
 
   let verbatim = WindowsPath r"\\?\cat_pics"
   assert_eq $verbatim.disk nil
   assert_eq $verbatim.server nil
   assert_eq $verbatim.share nil
   assert_eq $verbatim.device nil
-  assert_eq $verbatim.verbatim true
+  assert_eq $verbatim.is_verbatim true
 
 #[test]
 def windows_path_stream_fields()

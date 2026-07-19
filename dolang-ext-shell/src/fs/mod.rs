@@ -217,13 +217,35 @@ where
     Ok(patch)
 }
 
+pub(crate) fn resolve_sym<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    slot: Option<Slot<'v, '_>>,
+    default: bool,
+) -> Result<'v, 's, bool> {
+    let slot = match slot {
+        Some(slot) => slot,
+        None => return Ok(default),
+    };
+    let sym = slot
+        .as_sym(strand)
+        .ok_or_else(|| Error::type_error(strand, "resolve: expected :TARGET: or :LINK:"))?;
+    if sym == global.syms.target {
+        Ok(true)
+    } else if sym == global.syms.link {
+        Ok(false)
+    } else {
+        Err(Error::value(strand, "resolve: expected :TARGET: or :LINK:"))
+    }
+}
+
 fn metadata_patch<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     mode: Option<Slot<'v, '_>>,
     user: Option<Slot<'v, '_>>,
     group: Option<Slot<'v, '_>>,
-    follow: Option<Slot<'v, '_>>,
+    resolve: Option<Slot<'v, '_>>,
     attrs: AttrsPatch,
 ) -> Result<'v, 's, dolang_shell_vfs::MetadataPatch> {
     let mode = mode.map(|mode| mode.to_u32(strand)).transpose()?;
@@ -233,12 +255,7 @@ fn metadata_patch<'v, 's>(
     let group = group
         .map(|group| parse_ownership_identity(strand, global, &group, "group"))
         .transpose()?;
-    let follow = match follow {
-        Some(follow) => follow
-            .as_bool(strand)
-            .ok_or_else(|| Error::type_error(strand, "follow: expected bool"))?,
-        None => true,
-    };
+    let follow = resolve_sym(strand, global, resolve, true)?;
     Ok(dolang_shell_vfs::MetadataPatch {
         mode,
         user,
@@ -664,6 +681,7 @@ async fn set_timestamps<'v, 's>(
     modified: Option<Slot<'v, '_>>,
     accessed: Option<Slot<'v, '_>>,
     created: Option<Slot<'v, '_>>,
+    resolve: Option<Slot<'v, '_>>,
 ) -> Result<'v, 's, ()> {
     let modified = parse_timestamp_arg(strand, global, modified, "modified")?;
     let accessed = parse_timestamp_arg(strand, global, accessed, "accessed")?;
@@ -671,10 +689,11 @@ async fn set_timestamps<'v, 's>(
     let modified = system_time_to_unix_timestamp(strand, modified)?;
     let accessed = system_time_to_unix_timestamp(strand, accessed)?;
     let created = system_time_to_unix_timestamp(strand, created)?;
+    let follow = resolve_sym(strand, global, resolve, true)?;
     let path = prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     let vfs = local.vfs();
-    vfs.set_times(path.to_path(), accessed, modified, created)
+    vfs.set_times(path.to_path(), accessed, modified, created, follow)
         .await
         .into_sys(strand)?;
     Ok(())
@@ -729,12 +748,13 @@ async fn well_known_path<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     key: WellKnownPath,
+    app: Option<&str>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let local = global.local.get(strand);
     let vfs = local.vfs();
     let env = local.env().flatten_delta();
-    let path = vfs.well_known_path(key, &env).await.into_sys(strand)?;
+    let path = vfs.well_known_path(key, app, &env).await.into_sys(strand)?;
     let annex = PathAnnex::try_new(strand, path, global)?;
     create_path_annex(strand, annex, out);
     Ok(())
@@ -785,7 +805,7 @@ async fn glob<'v, 's>(
     root: Option<Utf8TypedPath<'_>>,
     pattern: Slot<'v, '_>,
     max_depth: Option<Slot<'v, '_>>,
-    follow: Option<Slot<'v, '_>>,
+    resolve: Option<Slot<'v, '_>>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let pattern = pattern
@@ -796,12 +816,7 @@ async fn glob<'v, 's>(
         Some(v) => Some(v.to_usize(strand)?),
         None => None,
     };
-    let follow = match follow {
-        Some(v) => v
-            .as_bool(strand)
-            .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
-        None => false,
-    };
+    let follow = resolve_sym(strand, global, resolve, false)?;
 
     let root = root.unwrap_or_else(|| {
         match global
@@ -873,7 +888,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
     let all = builder.sym("all");
     let ignore = builder.sym("ignore");
     let max_depth = builder.sym("max_depth");
-    let follow = builder.sym("follow");
+    let resolve = builder.sym("resolve");
     let mode = builder.sym("mode");
     let user = builder.sym("user");
     let owner = builder.sym("owner");
@@ -910,6 +925,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
     let direct_access = builder.sym("direct_access");
     let extent_format = builder.sym("extent_format");
     let opaque = builder.sym("opaque");
+    let app = builder.sym("app");
     let module = builder
         .module("fs")
         .function("open", async move |strand, args, out| {
@@ -944,29 +960,19 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             Ok(())
         })
         .function("metadata", async move |strand, args, out| {
-            let ([path], [follow]) = unpack!(strand, args, 1, 0, follow = None)?;
+            let ([path], [resolve]) = unpack!(strand, args, 1, 0, resolve = None)?;
             let path = path_from_value(strand, global, &path)?;
-            let follow = match follow {
-                Some(v) => v
-                    .as_bool(strand)
-                    .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
-                None => true,
-            };
+            let follow = resolve_sym(strand, global, resolve, true)?;
             metadata(strand, global, path.to_path(), follow, out).await
         })
         .function("fs_metadata", async move |strand, args, out| {
-            let ([path], [follow]) = unpack!(strand, args, 1, 0, follow = None)?;
+            let ([path], [resolve]) = unpack!(strand, args, 1, 0, resolve = None)?;
             let path = path_from_value(strand, global, &path)?;
-            let follow = match follow {
-                Some(v) => v
-                    .as_bool(strand)
-                    .ok_or_else(|| Error::type_error(strand, "expected bool"))?,
-                None => true,
-            };
+            let follow = resolve_sym(strand, global, resolve, true)?;
             fs_metadata(strand, global, path.to_path(), follow, out).await
         })
         .function("sec_desc", async move |strand, args, out| {
-            let ([path], [owner, group, dacl, sacl, follow]) = unpack!(
+            let ([path], [owner, group, dacl, sacl, resolve]) = unpack!(
                 strand,
                 args,
                 1,
@@ -975,44 +981,34 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 group = None,
                 dacl = None,
                 sacl = None,
-                follow = None
+                resolve = None
             )?;
             let path = path_from_value(strand, global, &path)?;
             let mask = sec_desc_mask(strand, owner, group, dacl, sacl)?;
-            let follow = match follow {
-                Some(value) => value
-                    .as_bool(strand)
-                    .ok_or_else(|| Error::type_error(strand, "follow: expected bool"))?,
-                None => true,
-            };
+            let follow = resolve_sym(strand, global, resolve, true)?;
             sec_desc(strand, global, path.to_path(), mask, follow, out).await
         })
         .function("set_sec_desc", async move |strand, args, _out| {
-            let ([path, descriptor], [follow]) = unpack!(strand, args, 2, 0, follow = None)?;
+            let ([path, descriptor], [resolve]) = unpack!(strand, args, 2, 0, resolve = None)?;
             let path = path_from_value(strand, global, &path)?;
             let descriptor = security::sec_desc_from_value(strand, global, &descriptor)?;
-            let follow = match follow {
-                Some(value) => value
-                    .as_bool(strand)
-                    .ok_or_else(|| Error::type_error(strand, "follow: expected bool"))?,
-                None => true,
-            };
+            let follow = resolve_sym(strand, global, resolve, true)?;
             set_sec_desc(strand, global, path.to_path(), &descriptor, follow).await
         })
         .function("xattrs", async move |strand, args, out| {
-            let ([path], [namespace, follow]) =
-                unpack!(strand, args, 1, 0, namespace = None, follow = None)?;
+            let ([path], [namespace, resolve]) =
+                unpack!(strand, args, 1, 0, namespace = None, resolve = None)?;
             let path = path_from_value(strand, global, &path)?;
-            xattr::path_list(strand, global, path.to_path(), namespace, follow, out).await
+            xattr::path_list(strand, global, path.to_path(), namespace, resolve, out).await
         })
         .function("streams", async move |strand, args, out| {
-            let ([path], [follow]) = unpack!(strand, args, 1, 0, follow = None)?;
+            let ([path], [resolve]) = unpack!(strand, args, 1, 0, resolve = None)?;
             let path = path_from_value(strand, global, &path)?;
-            stream::path_list(strand, global, path.to_path(), follow, out).await
+            stream::path_list(strand, global, path.to_path(), resolve, out).await
         })
         .function("xattr", async move |strand, args, out| {
-            let ([path, name], [namespace, follow]) =
-                unpack!(strand, args, 2, 0, namespace = None, follow = None)?;
+            let ([path, name], [namespace, resolve]) =
+                unpack!(strand, args, 2, 0, namespace = None, resolve = None)?;
             let path = path_from_value(strand, global, &path)?;
             xattr::path_get(
                 strand,
@@ -1020,14 +1016,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 path.to_path(),
                 &name,
                 namespace,
-                follow,
+                resolve,
                 out,
             )
             .await
         })
         .function("set_xattr", async move |strand, args, _out| {
-            let ([path, name, value], [namespace, follow]) =
-                unpack!(strand, args, 3, 0, namespace = None, follow = None)?;
+            let ([path, name, value], [namespace, resolve]) =
+                unpack!(strand, args, 3, 0, namespace = None, resolve = None)?;
             let path = path_from_value(strand, global, &path)?;
             xattr::path_set(
                 strand,
@@ -1036,15 +1032,15 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 &name,
                 namespace,
                 &value,
-                follow,
+                resolve,
             )
             .await
         })
         .function("remove_xattr", async move |strand, args, _out| {
-            let ([path, name], [namespace, follow]) =
-                unpack!(strand, args, 2, 0, namespace = None, follow = None)?;
+            let ([path, name], [namespace, resolve]) =
+                unpack!(strand, args, 2, 0, namespace = None, resolve = None)?;
             let path = path_from_value(strand, global, &path)?;
-            xattr::path_remove(strand, global, path.to_path(), &name, namespace, follow).await
+            xattr::path_remove(strand, global, path.to_path(), &name, namespace, resolve).await
         })
         .function("exists", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
@@ -1083,7 +1079,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     mode,
                     user,
                     group,
-                    follow,
+                    resolve,
                     readonly,
                     hidden,
                     system,
@@ -1120,7 +1116,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 mode = None,
                 user = None,
                 group = None,
-                follow = None,
+                resolve = None,
                 readonly = None,
                 hidden = None,
                 system = None,
@@ -1180,7 +1176,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     (AttrFlags::OPAQUE, opaque),
                 ],
             )?;
-            let patch = metadata_patch(strand, global, mode, user, group, follow, attrs)?;
+            let patch = metadata_patch(strand, global, mode, user, group, resolve, attrs)?;
             let mut requested_paths = Vec::new();
             for path in paths {
                 match path {
@@ -1205,11 +1201,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         })
         .function("home_dir", async move |strand, args, out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
-            well_known_path(strand, global, WellKnownPath::HomeDir, out).await
+            well_known_path(strand, global, WellKnownPath::HomeDir, None, out).await
         })
         .function("cache_dir", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
-            well_known_path(strand, global, WellKnownPath::CacheDir, out).await
+            let ([], [app]) = unpack!(strand, args, 0, 0, app = None)?;
+            let app = app.and_then(|s| s.as_str(strand).map(|s| s.to_string()));
+            well_known_path(strand, global, WellKnownPath::CacheDir, app.as_deref(), out).await
         })
         .function("copy", async move |strand, args, out| {
             let ([from, to], [all]) = unpack!(strand, args, 2, 0, all = None)?;
@@ -1272,9 +1269,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             entries(strand, global, path, out).await
         })
         .function("glob", async move |strand, args, out| {
-            let ([pattern], [max_depth, follow]) =
-                unpack!(strand, args, 1, 0, max_depth = None, follow = None)?;
-            glob(strand, global, None, pattern, max_depth, follow, out).await
+            let ([pattern], [max_depth, resolve]) =
+                unpack!(strand, args, 1, 0, max_depth = None, resolve = None)?;
+            glob(strand, global, None, pattern, max_depth, resolve, out).await
         })
         .function("create_dir", async move |strand, args, _out| {
             let ([path], [all]) = unpack!(strand, args, 1, 0, all = None)?;
@@ -1314,20 +1311,30 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             Ok(())
         })
         .function("set_timestamps", async move |strand, args, _out| {
-            let ([path], [modified, accessed, created]) = unpack!(
+            let ([path], [modified, accessed, created, resolve]) = unpack!(
                 strand,
                 args,
                 1,
                 0,
                 modified = None,
                 accessed = None,
-                created = None
+                created = None,
+                resolve = None
             )?;
             let path = path_from_value(strand, global, &path)?;
-            set_timestamps(strand, global, path.to_path(), modified, accessed, created).await
+            set_timestamps(
+                strand,
+                global,
+                path.to_path(),
+                modified,
+                accessed,
+                created,
+                resolve,
+            )
+            .await
         });
     module
-        .function("normal", async move |strand, args, out| {
+        .function("normalize", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
             let path = path_from_value(strand, global, &path)?;
             let normalized = path.normalize();
@@ -1363,6 +1370,17 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let path = path_from_value(strand, global, &path)?;
             path_canonical(strand, global, path.to_path(), out).await
         })
+        .function("read_link", async move |strand, args, out| {
+            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            let path = path_from_value(strand, global, &path)?;
+            let path = prepend_cwd(strand, global, path.to_path())?;
+            let local = global.local.get(strand);
+            let vfs = local.vfs();
+            let target = vfs.read_link(path.to_path()).await.into_sys(strand)?;
+            let annex = PathAnnex::try_new(strand, target, global)?;
+            create_path_annex(strand, annex, out);
+            Ok(())
+        })
         .function_with_slots(
             "with_temp_dir",
             async move |strand, args, out, [mut path]| {
@@ -1377,7 +1395,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                         let env = local.env().flatten_delta();
                         local
                             .vfs()
-                            .well_known_path(WellKnownPath::TempDir, &env)
+                            .well_known_path(WellKnownPath::TempDir, None, &env)
                             .await
                             .into_sys(strand)?
                     }

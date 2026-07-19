@@ -88,7 +88,7 @@ def symlink_metadata_nofollow()
 
   symlink $target $link
 
-  let meta = link.metadata follow: false
+  let meta = link.metadata resolve: :LINK:
   assert_eq $meta.type :SYMLINK:
   assert_throws $UnexpectedPosError do link.metadata false
   assert_throws $UnexpectedPosError do metadata $link false

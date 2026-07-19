@@ -622,6 +622,7 @@ pub(crate) struct GlobRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct WellKnownPathRequest {
     pub(crate) key: WellKnownPath,
+    pub(crate) app: Option<String>,
     pub(crate) env: HashMap<String, Option<String>>,
 }
 
@@ -637,6 +638,7 @@ pub(crate) struct SetTimesRequest {
     pub(crate) accessed: Option<Timestamp>,
     pub(crate) modified: Option<Timestamp>,
     pub(crate) created: Option<Timestamp>,
+    pub(crate) follow: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

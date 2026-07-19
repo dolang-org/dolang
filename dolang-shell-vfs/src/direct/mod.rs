@@ -902,11 +902,12 @@ impl Vfs for Direct {
     async fn well_known_path(
         &self,
         key: WellKnownPath,
+        app: Option<&str>,
         env: &HashMap<String, Option<String>>,
     ) -> crate::Result<Utf8TypedPathBuf> {
         let path = match key {
             WellKnownPath::HomeDir => Self::home_dir_platform(env),
-            WellKnownPath::CacheDir => Self::cache_dir_platform(env),
+            WellKnownPath::CacheDir => Self::cache_dir_platform(app, env),
             WellKnownPath::TempDir => Self::temp_dir_platform(env),
         }?;
         Ok(typed_path(path)?)
@@ -1238,8 +1239,9 @@ impl Vfs for Direct {
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
+        follow: bool,
     ) -> crate::Result<()> {
-        self.impl_set_times(&native_path(path)?, accessed, modified, created)
+        self.impl_set_times(&native_path(path)?, accessed, modified, created, follow)
             .await
             .map_err(Into::into)
     }
