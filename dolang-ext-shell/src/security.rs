@@ -71,7 +71,7 @@ impl<'v> Object<'v> for Identity {
 
 pub(crate) struct Sid;
 
-fn create_sid<'v>(
+pub(crate) fn create_sid<'v>(
     strand: &mut Strand<'v, '_>,
     global: State<'v, Global<'v>>,
     sid: VfsSid,

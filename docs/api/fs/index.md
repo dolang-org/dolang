@@ -9,7 +9,6 @@ The `fs` module provides functions and types for filesystem operations.
 | [Path](path.md)                | Supertype for filesystem paths |
 | [UnixPath](unix-path.md)       | Unix path object               |
 | [WindowsPath](windows-path.md) | Windows path object            |
-| [Attrs](attrs.md)              | Filesystem attributes          |
 | [Metadata](metadata.md)        | Immutable filesystem metadata  |
 | [DirEntry](direntry.md)        | Directory entry object         |
 | [XattrEntry](xattr-entry.md)   | Extended attribute entry       |
@@ -318,7 +317,6 @@ Gets file metadata for the given path.
 | Field       | Type                   | Description                             |
 | ----------- | ---------------------- | --------------------------------------- |
 | `win_attrs` | [`int`](../std/int.md) | Raw Windows file attribute bitmask      |
-| `attrs`     | [`Attrs`](attrs.md)    | Windows attributes from this metadata   |
 
 #### Example
 
@@ -330,7 +328,7 @@ echo "Type: $(meta.type)"
 if (sys.os_info().family != :WINDOWS:)
   echo "Mode: $(meta.mode)"
 else
-  echo "Attributes: $(meta.attrs.win_attrs)"
+  echo "Attributes: $(meta.win_attrs)"
 
 # Get symlink metadata without following
 let link_meta = metadata "link.txt" follow: false
@@ -395,33 +393,6 @@ Applies the components selected by a Windows security descriptor's `mask`.
 | `path`   | [`str`](../std/str.md)\|[`Path`](path.md)                    | Path to update                 |
 | `desc`   | [`security.windows.SecDesc`](../security/windows/secdesc.md) | Security descriptor to apply   |
 | `follow` | [`bool`](../std/bool.md)                                     | Follow the final symbolic link |
-
-### `attrs path :follow = true`
-
-Gets filesystem attributes for the given path.
-
-#### Parameters
-
-| Name     | Type                                      | Description                                                  |
-| -------- | ----------------------------------------- | ------------------------------------------------------------ |
-| `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file or directory                                |
-| `follow` | [`bool`](../std/bool.md)                  | If `false`, queries attributes for symlink instead of target |
-
-#### Returns
-
-[`Attrs`](attrs.md)
-
-#### Errors
-
-| Exception      | Condition                                        |
-| -------------- | ------------------------------------------------ |
-| `RuntimeError` | The operation is used on an unsupported platform |
-
-```
-let a = attrs "data.txt"
-if a.hidden
-  echo hidden
-```
 
 ### `xattrs path :namespace? :follow = true`
 
@@ -898,41 +869,6 @@ let unchanged = relative "/etc/passwd" "/home/user"
 echo $unchanged  # /etc/passwd
 ```
 
-### `chmod path mode`
-
-Changes the permissions of a file or directory.
-
-**Platform Notes:**
-
-- **Unix:** Changes file permissions using standard Unix mode bits
-- **Windows:** Raises a runtime error (not supported)
-
-#### Parameters
-
-| Name   | Type                                      | Description                          |
-| ------ | ----------------------------------------- | ------------------------------------ |
-| `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file or directory        |
-| `mode` | [`int`](../std/int.md)                    | Permission mode bits (e.g., `0o755`) |
-
-#### Errors
-
-| Exception   | Condition                                             |
-| ----------- | ----------------------------------------------------- |
-| `sys.Error` | The target does not support the operation or it fails |
-
-#### Example
-
-```
-# Set file permissions to rwxr-xr-x (755)
-chmod "script.sh" 0o755
-
-# Set directory permissions to rwxrwxrwx (777)
-chmod "/tmp/shared" 0o777
-
-# Remove write permissions for group and others
-chmod "readonly.txt" 0o444
-```
-
 ### `set_timestamps path :modified? :accessed? :created?`
 
 Updates the timestamps of a file or directory.
@@ -968,43 +904,54 @@ set_timestamps "cache.db" accessed: DateTime.now()
 set_timestamps "cache.db" created: DateTime.from_unix(1690000000)
 ```
 
-### `set_attrs path :readonly? :hidden? ...`
+### `set_metadata ...paths :mode? :user? :group? :follow = true ...`
 
-Updates filesystem attributes.
+Updates permissions, ownership, and filesystem attributes in one operation.
 
-Unspecified attributes are left unchanged.
+Unspecified metadata is left unchanged. Unix targets support `mode`, numeric or
+named `user` and `group` values, and applicable filesystem attributes. Windows
+targets accept an account name or [`Sid`](../security/windows/sid.md) for `user`
+and `group` and support applicable filesystem attributes.
+Paths are submitted from left to right and processing stops at the first error.
+Within each path, ownership, mode, and attributes are applied in that order.
+Backends may use multiple system operations; atomicity and rollback behavior
+are unspecified.
 
 #### Parameters
 
-| Name                  | Type                                      | Description                       |
-| --------------------- | ----------------------------------------- | --------------------------------- |
-| `path`                | [`str`](../std/str.md)\|[`Path`](path.md) | Path to update                    |
-| `readonly`            | [`bool`](../std/bool.md)                  | Optional readonly attribute value |
-| `hidden`              | [`bool`](../std/bool.md)                  | Optional hidden attribute/flag    |
-| `system`              | [`bool`](../std/bool.md)                  | Optional system attribute value   |
-| `archive`             | [`bool`](../std/bool.md)                  | Optional archive attribute value  |
-| `compressed`          | [`bool`](../std/bool.md)                  | Optional compressed flag          |
-| `temporary`           | [`bool`](../std/bool.md)                  | Optional temporary value          |
-| `offline`             | [`bool`](../std/bool.md)                  | Optional offline value            |
-| `not_content_indexed` | [`bool`](../std/bool.md)                  | Optional indexing attribute value |
-| `immutable`           | [`bool`](../std/bool.md)                  | Optional immutable flag           |
-| `append_only`         | [`bool`](../std/bool.md)                  | Optional append-only flag         |
-| `no_dump`             | [`bool`](../std/bool.md)                  | Optional no-dump flag             |
-| `no_atime`            | [`bool`](../std/bool.md)                  | Optional Linux no-atime flag      |
-| `no_copy_on_write`    | [`bool`](../std/bool.md)                  | Optional Linux no-COW flag        |
-| `dir_sync`            | [`bool`](../std/bool.md)                  | Optional Linux dir-sync flag      |
-| `casefold`            | [`bool`](../std/bool.md)                  | Optional Linux casefold flag      |
-| `data_journaling`     | [`bool`](../std/bool.md)                  | Optional Linux journaling flag    |
-| `no_compress`         | [`bool`](../std/bool.md)                  | Optional Linux no-compress flag   |
-| `project_inherit`     | [`bool`](../std/bool.md)                  | Optional Linux project flag       |
-| `secure_delete`       | [`bool`](../std/bool.md)                  | Optional Linux secure-delete flag |
-| `sync`                | [`bool`](../std/bool.md)                  | Optional Linux sync flag          |
-| `no_tail_merge`       | [`bool`](../std/bool.md)                  | Optional Linux no-tail flag       |
-| `top_dir`             | [`bool`](../std/bool.md)                  | Optional Linux top-dir flag       |
-| `undelete`            | [`bool`](../std/bool.md)                  | Optional Linux undelete flag      |
-| `direct_access`       | [`bool`](../std/bool.md)                  | Optional Linux direct-access flag |
-| `extent_format`       | [`bool`](../std/bool.md)                  | Optional Linux extent flag        |
-| `opaque`              | [`bool`](../std/bool.md)                  | Optional macOS opaque flag        |
+| Name                  | Type                                                                                | Description                       |
+| --------------------- | ----------------------------------------------------------------------------------- | --------------------------------- |
+| `paths`               | ([`str`](../std/str.md)\|[`Path`](path.md))*                                        | Paths to update in order          |
+| `mode`                | [`int`](../std/int.md)                                                              | Optional Unix permission mode     |
+| `user`                | [`int`](../std/int.md)\|[`str`](../std/str.md)\|[`Sid`](../security/windows/sid.md) | Optional owner ID, name, or SID   |
+| `group`               | [`int`](../std/int.md)\|[`str`](../std/str.md)\|[`Sid`](../security/windows/sid.md) | Optional group ID, name, or SID   |
+| `follow`              | [`bool`](../std/bool.md)                                                            | Follow symbolic links             |
+| `readonly`            | [`bool`](../std/bool.md)                                                            | Optional readonly attribute value |
+| `hidden`              | [`bool`](../std/bool.md)                                                            | Optional hidden attribute/flag    |
+| `system`              | [`bool`](../std/bool.md)                                                            | Optional system attribute value   |
+| `archive`             | [`bool`](../std/bool.md)                                                            | Optional archive attribute value  |
+| `compressed`          | [`bool`](../std/bool.md)                                                            | Optional compressed flag          |
+| `temporary`           | [`bool`](../std/bool.md)                                                            | Optional temporary value          |
+| `offline`             | [`bool`](../std/bool.md)                                                            | Optional offline value            |
+| `not_content_indexed` | [`bool`](../std/bool.md)                                                            | Optional indexing attribute value |
+| `immutable`           | [`bool`](../std/bool.md)                                                            | Optional immutable flag           |
+| `append_only`         | [`bool`](../std/bool.md)                                                            | Optional append-only flag         |
+| `no_dump`             | [`bool`](../std/bool.md)                                                            | Optional no-dump flag             |
+| `no_atime`            | [`bool`](../std/bool.md)                                                            | Optional Linux no-atime flag      |
+| `no_copy_on_write`    | [`bool`](../std/bool.md)                                                            | Optional Linux no-COW flag        |
+| `dir_sync`            | [`bool`](../std/bool.md)                                                            | Optional Linux dir-sync flag      |
+| `casefold`            | [`bool`](../std/bool.md)                                                            | Optional Linux casefold flag      |
+| `data_journaling`     | [`bool`](../std/bool.md)                                                            | Optional Linux journaling flag    |
+| `no_compress`         | [`bool`](../std/bool.md)                                                            | Optional Linux no-compress flag   |
+| `project_inherit`     | [`bool`](../std/bool.md)                                                            | Optional Linux project flag       |
+| `secure_delete`       | [`bool`](../std/bool.md)                                                            | Optional Linux secure-delete flag |
+| `sync`                | [`bool`](../std/bool.md)                                                            | Optional Linux sync flag          |
+| `no_tail_merge`       | [`bool`](../std/bool.md)                                                            | Optional Linux no-tail flag       |
+| `top_dir`             | [`bool`](../std/bool.md)                                                            | Optional Linux top-dir flag       |
+| `undelete`            | [`bool`](../std/bool.md)                                                            | Optional Linux undelete flag      |
+| `direct_access`       | [`bool`](../std/bool.md)                                                            | Optional Linux direct-access flag |
+| `extent_format`       | [`bool`](../std/bool.md)                                                            | Optional Linux extent flag        |
+| `opaque`              | [`bool`](../std/bool.md)                                                            | Optional macOS opaque flag        |
 
 #### Errors
 
@@ -1013,40 +960,11 @@ Unspecified attributes are left unchanged.
 | `RuntimeError` | The operation is used on an unsupported platform |
 
 ```
-set_attrs "data.txt" hidden: true
-set_attrs "data.txt" readonly: false
-set_attrs "data.txt" no_dump: true
-set_attrs "data.txt" opaque: false
-```
-
-### `chown path user? :group? :follow = true`
-
-Changes the owner and/or group of a file, directory, or symlink target.
-
-**Platform Notes:**
-
-- **Unix:** Available
-- **Windows:** Raises [`sys.Error`](../sys/error.md) with an
-  unsupported-operation error
-
-#### Parameters
-
-| Name     | Type                                           | Description                               |
-| -------- | ---------------------------------------------- | ----------------------------------------- |
-| `path`   | [`str`](../std/str.md)\|[`Path`](path.md)      | Path to update                            |
-| `user`   | [`int`](../std/int.md)\|[`str`](../std/str.md) | Optional owner UID or user name           |
-| `group`  | [`int`](../std/int.md)\|[`str`](../std/str.md) | Optional group GID or group name          |
-| `follow` | [`bool`](../std/bool.md)                       | If `false`, operate on the symlink itself |
-
-At least one of `user` or `group` must be provided.
-
-#### Example
-
-```
-chown "script.sh" "deploy"
-chown "artifact" group: "build"
-chown "cache" 1000 group: 1000
-chown "link" group: "www-data" follow: false
+set_metadata "script.sh" mode: 0o755 user: "deploy" group: "deploy"
+set_metadata "one.txt" "two.txt" mode: 0o640
+set_metadata "data.txt" hidden: true
+set_metadata "data.txt" no_dump: true
+set_metadata "link" group: "www-data" follow: false
 ```
 
 ### `canonical path`

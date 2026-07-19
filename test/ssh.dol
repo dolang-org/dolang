@@ -68,7 +68,7 @@ def with_uses_stdio_vfs()
           exit 42
       fi
       exec "$@"
-    shim.chmod 0o755
+    shim.set_metadata mode: 0o755
 
     let marker = (dir / "marker")
     let block = do marker.write remote

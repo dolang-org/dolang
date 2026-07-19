@@ -23,7 +23,7 @@ def with_vfs remote block
       vfs.stop()
   else
     fs.with_temp_dir do |dir|
-      dir.chmod 0o700
+      dir.set_metadata mode: 0o700
       let socket = (dir / "socket")
       let input = strand.input()
 

@@ -1,9 +1,9 @@
 use super::{Direct, DirectChild, DirectCommand, DirectOpenOptions};
 use crate::{
-    ALL_SECURITY_INFORMATION, Attrs, ChownIdentity, DACL_SECURITY_INFORMATION, FsMetadata,
-    GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, OpenOptions as _,
-    SACL_SECURITY_INFORMATION, SecDesc, Sid, SidName, SidNameUse, StreamEntry, Utf8TypedPath,
-    Utf8WindowsPath, XattrEntry, XattrNamespace,
+    ALL_SECURITY_INFORMATION, AttrFlags, AttrsPatch, DACL_SECURITY_INFORMATION, FsMetadata,
+    GROUP_SECURITY_INFORMATION, Metadata, MetadataPatch, OWNER_SECURITY_INFORMATION,
+    OpenOptions as _, OwnershipIdentity, SACL_SECURITY_INFORMATION, SecDesc, Sid, SidName,
+    SidNameUse, StreamEntry, Utf8TypedPath, Utf8WindowsPath, XattrEntry, XattrNamespace,
 };
 use std::{
     collections::HashMap,
@@ -419,6 +419,52 @@ impl Direct {
         })
     }
 
+    fn lookup_account_sid(name: &str) -> io::Result<Sid> {
+        let name: Vec<u16> = OsString::from(name)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut sid_len = 0;
+        let mut domain_len = 0;
+        let mut kind = 0;
+        unsafe {
+            LookupAccountNameW(
+                ptr::null(),
+                name.as_ptr(),
+                ptr::null_mut(),
+                &mut sid_len,
+                ptr::null_mut(),
+                &mut domain_len,
+                &mut kind,
+            );
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32) {
+            return Err(error);
+        }
+        let word_size = mem::size_of::<usize>();
+        let mut sid = vec![0usize; usize::try_from(sid_len).unwrap().div_ceil(word_size)];
+        let mut domain = vec![0u16; usize::try_from(domain_len).unwrap()];
+        if unsafe {
+            LookupAccountNameW(
+                ptr::null(),
+                name.as_ptr(),
+                sid.as_mut_ptr().cast(),
+                &mut sid_len,
+                domain.as_mut_ptr(),
+                &mut domain_len,
+                &mut kind,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let bytes = unsafe {
+            slice::from_raw_parts(sid.as_ptr().cast::<u8>(), usize::try_from(sid_len).unwrap())
+        };
+        Sid::from_bytes(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    }
+
     pub(super) async fn impl_sid_name(&self, sid: &Sid) -> crate::Result<SidName> {
         let sid = sid.clone();
         tokio::task::spawn_blocking(move || Self::lookup_sid_name(sid))
@@ -429,50 +475,7 @@ impl Direct {
     pub(super) async fn impl_account_name(&self, name: &str) -> crate::Result<SidName> {
         let name = name.to_owned();
         tokio::task::spawn_blocking(move || {
-            let name: Vec<u16> = OsString::from(name)
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect();
-            let mut sid_len = 0;
-            let mut domain_len = 0;
-            let mut kind = 0;
-            unsafe {
-                LookupAccountNameW(
-                    ptr::null(),
-                    name.as_ptr(),
-                    ptr::null_mut(),
-                    &mut sid_len,
-                    ptr::null_mut(),
-                    &mut domain_len,
-                    &mut kind,
-                );
-            }
-            let error = io::Error::last_os_error();
-            if error.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32) {
-                return Err(Self::lookup_error(error));
-            }
-            let word_size = mem::size_of::<usize>();
-            let mut sid = vec![0usize; usize::try_from(sid_len).unwrap().div_ceil(word_size)];
-            let mut domain = vec![0u16; usize::try_from(domain_len).unwrap()];
-            if unsafe {
-                LookupAccountNameW(
-                    ptr::null(),
-                    name.as_ptr(),
-                    sid.as_mut_ptr().cast(),
-                    &mut sid_len,
-                    domain.as_mut_ptr(),
-                    &mut domain_len,
-                    &mut kind,
-                )
-            } == 0
-            {
-                return Err(Self::lookup_error(io::Error::last_os_error()));
-            }
-            let bytes = unsafe {
-                slice::from_raw_parts(sid.as_ptr().cast::<u8>(), usize::try_from(sid_len).unwrap())
-            };
-            let sid = Sid::from_bytes(bytes)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            let sid = Self::lookup_account_sid(&name).map_err(Self::lookup_error)?;
             Self::lookup_sid_name(sid)
         })
         .await
@@ -602,6 +605,39 @@ impl Direct {
         Self::fs_metadata_from_handle(file.as_handle())
     }
 
+    pub(super) fn metadata_with_security(
+        metadata: std::fs::Metadata,
+        file: &File,
+    ) -> io::Result<Metadata> {
+        let descriptor = Self::sec_desc_from_file(
+            file,
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION,
+        )?;
+        Ok(crate::metadata_with_sids(
+            crate::metadata_from_std(metadata),
+            descriptor.owner().cloned(),
+            descriptor.group().cloned(),
+        ))
+    }
+
+    pub(super) fn metadata_from_path(path: &Path, follow: bool) -> io::Result<Metadata> {
+        let metadata = if follow {
+            std::fs::metadata(path)?
+        } else {
+            std::fs::symlink_metadata(path)?
+        };
+        let descriptor = Self::sec_desc_from_path(
+            path,
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION,
+            follow,
+        )?;
+        Ok(crate::metadata_with_sids(
+            crate::metadata_from_std(metadata),
+            descriptor.owner().cloned(),
+            descriptor.group().cloned(),
+        ))
+    }
+
     pub(super) fn fs_metadata_from_path(path: &Path, follow: bool) -> io::Result<FsMetadata> {
         let root = if follow {
             Self::volume_root_path(&std::fs::canonicalize(path)?)?
@@ -626,16 +662,6 @@ impl Direct {
 
     fn path_wide(path: &Path) -> Vec<u16> {
         path.as_os_str().encode_wide().chain([0]).collect()
-    }
-
-    pub(super) fn attrs_from_path(path: PathBuf, _follow: bool) -> io::Result<Attrs> {
-        let path = Self::path_wide(&path);
-        let attrs = unsafe { GetFileAttributesW(path.as_ptr()) };
-        if attrs == INVALID_FILE_ATTRIBUTES {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(Attrs::from_win_attrs(attrs))
-        }
     }
 
     fn set_windows_compression(path: &[u16], compressed: bool) -> io::Result<()> {
@@ -685,46 +711,30 @@ impl Direct {
         Ok(File::from_std(StdFile::from(handle)))
     }
 
-    pub(super) fn set_attrs_path(path: PathBuf, patch: Attrs) -> io::Result<()> {
-        if patch.reparse_point.is_some()
-            || patch.encrypted.is_some()
-            || patch.immutable.is_some()
-            || patch.append_only.is_some()
-            || patch.no_dump.is_some()
-            || patch.no_atime.is_some()
-            || patch.no_copy_on_write.is_some()
-            || patch.dir_sync.is_some()
-            || patch.casefold.is_some()
-            || patch.data_journaling.is_some()
-            || patch.no_compress.is_some()
-            || patch.project_inherit.is_some()
-            || patch.secure_delete.is_some()
-            || patch.sync.is_some()
-            || patch.no_tail_merge.is_some()
-            || patch.top_dir.is_some()
-            || patch.undelete.is_some()
-            || patch.direct_access.is_some()
-            || patch.extent_format.is_some()
-            || patch.opaque.is_some()
-            || patch.win_attrs.is_some()
-            || patch.unix_flags.is_some()
-        {
-            return Err(io::Error::new(
+    fn validate_attrs_patch(patch: AttrsPatch) -> io::Result<()> {
+        let supported = AttrFlags::READONLY
+            .union(AttrFlags::HIDDEN)
+            .union(AttrFlags::SYSTEM)
+            .union(AttrFlags::ARCHIVE)
+            .union(AttrFlags::COMPRESSED)
+            .union(AttrFlags::TEMPORARY)
+            .union(AttrFlags::OFFLINE)
+            .union(AttrFlags::NOT_CONTENT_INDEXED);
+        if !patch.requested().difference(supported).is_empty() {
+            Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "one or more attributes cannot be set on this platform",
-            ));
+            ))
+        } else {
+            Ok(())
         }
+    }
 
-        if patch.is_empty_patch() {
+    pub(super) fn set_attrs_path(path: PathBuf, patch: AttrsPatch) -> io::Result<()> {
+        Self::validate_attrs_patch(patch)?;
+
+        if patch.is_empty() {
             return Ok(());
-        }
-
-        fn apply(attrs: &mut u32, flag: u32, value: Option<bool>) {
-            match value {
-                Some(true) => *attrs |= flag,
-                Some(false) => *attrs &= !flag,
-                None => {}
-            }
         }
 
         let path = Self::path_wide(&path);
@@ -733,34 +743,43 @@ impl Direct {
             return Err(io::Error::last_os_error());
         }
 
-        apply(&mut attrs, FILE_ATTRIBUTE_READONLY, patch.readonly);
-        apply(&mut attrs, FILE_ATTRIBUTE_HIDDEN, patch.hidden);
-        apply(&mut attrs, FILE_ATTRIBUTE_SYSTEM, patch.system);
-        apply(&mut attrs, FILE_ATTRIBUTE_ARCHIVE, patch.archive);
-        apply(&mut attrs, FILE_ATTRIBUTE_TEMPORARY, patch.temporary);
-        apply(&mut attrs, FILE_ATTRIBUTE_OFFLINE, patch.offline);
-        apply(
-            &mut attrs,
-            FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
-            patch.not_content_indexed,
-        );
+        for (semantic, native) in [
+            (AttrFlags::READONLY, FILE_ATTRIBUTE_READONLY),
+            (AttrFlags::HIDDEN, FILE_ATTRIBUTE_HIDDEN),
+            (AttrFlags::SYSTEM, FILE_ATTRIBUTE_SYSTEM),
+            (AttrFlags::ARCHIVE, FILE_ATTRIBUTE_ARCHIVE),
+            (AttrFlags::TEMPORARY, FILE_ATTRIBUTE_TEMPORARY),
+            (AttrFlags::OFFLINE, FILE_ATTRIBUTE_OFFLINE),
+            (
+                AttrFlags::NOT_CONTENT_INDEXED,
+                FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
+            ),
+        ] {
+            if patch.set.contains(semantic) {
+                attrs |= native;
+            } else if patch.clear.contains(semantic) {
+                attrs &= !native;
+            }
+        }
 
-        if patch.readonly.is_some()
-            || patch.hidden.is_some()
-            || patch.system.is_some()
-            || patch.archive.is_some()
-            || patch.temporary.is_some()
-            || patch.offline.is_some()
-            || patch.not_content_indexed.is_some()
-        {
+        let ordinary = AttrFlags::READONLY
+            .union(AttrFlags::HIDDEN)
+            .union(AttrFlags::SYSTEM)
+            .union(AttrFlags::ARCHIVE)
+            .union(AttrFlags::TEMPORARY)
+            .union(AttrFlags::OFFLINE)
+            .union(AttrFlags::NOT_CONTENT_INDEXED);
+        if patch.requested().intersects(ordinary) {
             let res = unsafe { SetFileAttributesW(path.as_ptr(), attrs) };
             if res == 0 {
                 return Err(io::Error::last_os_error());
             }
         }
 
-        if let Some(compressed) = patch.compressed {
-            Self::set_windows_compression(&path, compressed)?;
+        if patch.set.contains(AttrFlags::COMPRESSED) {
+            Self::set_windows_compression(&path, true)?;
+        } else if patch.clear.contains(AttrFlags::COMPRESSED) {
+            Self::set_windows_compression(&path, false)?;
         }
 
         Ok(())
@@ -1380,18 +1399,79 @@ impl Direct {
         .unwrap_or_else(|e| Err(io::Error::other(e)))
     }
 
-    pub(super) async fn impl_attrs(&self, path: &Path, follow: bool) -> Result<Attrs, io::Error> {
-        let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || Self::attrs_from_path(path, follow))
-            .await
-            .unwrap_or_else(|_| Err(io::Error::other("failed to join attrs query task")))
-    }
+    pub(super) async fn impl_set_metadata(
+        &self,
+        paths: &[PathBuf],
+        patch: MetadataPatch,
+    ) -> Result<(), io::Error> {
+        if patch.is_empty() {
+            return Ok(());
+        }
+        if patch.mode.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "mode cannot be set on this platform",
+            ));
+        }
+        if !patch.follow && !patch.attrs.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "attributes cannot be set without following symlinks on this platform",
+            ));
+        }
+        Self::validate_attrs_patch(patch.attrs)?;
 
-    pub(super) async fn impl_set_attrs(&self, path: &Path, attrs: Attrs) -> Result<(), io::Error> {
-        let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || Self::set_attrs_path(path, attrs))
-            .await
-            .unwrap_or_else(|_| Err(io::Error::other("failed to join attrs update task")))
+        let paths = paths.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let mut resolved_names: HashMap<String, Sid> = HashMap::new();
+            let mut resolve = |identity| match identity {
+                OwnershipIdentity::Sid(sid) => Ok(sid),
+                OwnershipIdentity::Name(name) => {
+                    if let Some(sid) = resolved_names.get(&name) {
+                        Ok(sid.clone())
+                    } else {
+                        let sid = Self::lookup_account_sid(&name)?;
+                        resolved_names.insert(name, sid.clone());
+                        Ok(sid)
+                    }
+                }
+                OwnershipIdentity::Id(_) => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "numeric ownership IDs are not supported on Windows",
+                )),
+            };
+            let user = patch.user.map(&mut resolve).transpose()?;
+            let group = patch.group.map(&mut resolve).transpose()?;
+            let mask = if user.is_some() {
+                OWNER_SECURITY_INFORMATION
+            } else {
+                0
+            } | if group.is_some() {
+                GROUP_SECURITY_INFORMATION
+            } else {
+                0
+            };
+            let descriptor = if mask == 0 {
+                None
+            } else {
+                Some(
+                    SecDesc::new(mask, 1, 0, 0, user, group, None, None)
+                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+                )
+            };
+
+            for path in paths {
+                if let Some(descriptor) = &descriptor {
+                    Self::set_sec_desc_path(&path, descriptor, patch.follow)?;
+                }
+                if !patch.attrs.is_empty() {
+                    Self::set_attrs_path(path, patch.attrs)?;
+                }
+            }
+            Ok(())
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::other("failed to join metadata update task")))
     }
 
     pub(super) async fn impl_canonicalize(&self, path: &Path) -> Result<PathBuf, io::Error> {
@@ -1399,16 +1479,6 @@ impl Direct {
         tokio::task::spawn_blocking(move || dunce::canonicalize(path))
             .await
             .unwrap_or_else(|e| Err(io::Error::other(e)))
-    }
-
-    pub(super) async fn impl_set_permissions(
-        &self,
-        path: &Path,
-        perm: crate::Permissions,
-    ) -> Result<(), io::Error> {
-        let mut permissions = fs::metadata(path).await?.permissions();
-        permissions.set_readonly(perm.readonly());
-        fs::set_permissions(path, permissions).await
     }
 
     pub(super) async fn impl_set_times(
@@ -1443,20 +1513,6 @@ impl Direct {
         })
         .await
         .unwrap_or_else(|e| Err(io::Error::other(e)))
-    }
-
-    pub(super) async fn impl_chown(
-        &self,
-        path: &Path,
-        user: Option<ChownIdentity>,
-        group: Option<ChownIdentity>,
-        follow: bool,
-    ) -> Result<(), io::Error> {
-        let _ = (path, user, group, follow);
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "chown is not supported on this platform",
-        ))
     }
 }
 

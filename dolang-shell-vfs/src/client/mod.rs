@@ -29,19 +29,19 @@ use tokio::{
 #[cfg(unix)]
 use crate::protocol::AccessRequest;
 use crate::{
-    Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions,
-    ProcessStatus, Query, ReadDir, SecDesc, SessionMode, Sid, SidName, StdioRecv, StdioSend,
-    StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry,
+    Child, Command, FileHandle, FsMetadata, Metadata, MetadataPatch, ProcessStatus, Query, ReadDir,
+    SecDesc, SessionMode, Sid, SidName, StdioRecv, StdioSend, StreamEntry, Utf8TypedPath,
+    Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry,
     direct::DirectFile,
     protocol::{
-        AttrsRequest, CanonicalizeRequest, ChownRequest, CopyRequest, CreateDirRequest,
-        FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenHandle,
-        OpenHandlePreference, OpenRequest, OpenVfsHandle, QueryResponse, ReadDirResponse,
-        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
-        ResponseKind, SecDescRequest, SetAttrsRequest, SetPermissionsRequest, SetSecDescRequest,
-        SetTimesRequest, SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget,
-        StreamsRequest, SymlinkKind, SymlinkRequest, Timestamp, UnixVfsRequest, VfsProtocol,
-        WellKnownPathRequest, WirePath, XattrNamespaceRequest, XattrRequest, XattrsRequest,
+        CanonicalizeRequest, CopyRequest, CreateDirRequest, FsMetadataRequest, GlobRequest,
+        HardLinkRequest, MetadataRequest, MoveRequest, OpenHandle, OpenHandlePreference,
+        OpenRequest, OpenVfsHandle, QueryResponse, ReadDirResponse, ReadLinkRequest,
+        RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind, ResponseKind,
+        SecDescRequest, SetMetadataRequest, SetSecDescRequest, SetTimesRequest, SetXattrRequest,
+        SpawnRequest, StdioRecvTarget, StdioSendTarget, StreamsRequest, SymlinkKind,
+        SymlinkRequest, Timestamp, UnixVfsRequest, VfsProtocol, WellKnownPathRequest, WirePath,
+        XattrNamespaceRequest, XattrRequest, XattrsRequest,
     },
 };
 
@@ -2403,24 +2403,17 @@ impl Vfs for Client {
         }
     }
 
-    async fn attrs(&self, path: Utf8TypedPath<'_>, follow: bool) -> crate::Result<Attrs> {
-        let request = AttrsRequest {
-            path: path.into(),
-            follow,
+    async fn set_metadata(
+        &self,
+        paths: &[Utf8TypedPathBuf],
+        patch: MetadataPatch,
+    ) -> crate::Result<()> {
+        let request = SetMetadataRequest {
+            paths: paths.iter().map(|path| path.to_path().into()).collect(),
+            patch,
         };
-        match self.request(RequestKind::Attrs(request)).await? {
-            ResponseKind::Attrs(result) => result.map_err(crate::Error::from),
-            response => Err(unexpected(response).into()),
-        }
-    }
-
-    async fn set_attrs(&self, path: Utf8TypedPath<'_>, attrs: Attrs) -> crate::Result<()> {
-        let request = SetAttrsRequest {
-            path: path.into(),
-            attrs,
-        };
-        match self.request(RequestKind::SetAttrs(request)).await? {
-            ResponseKind::SetAttrs(result) => result.map_err(crate::Error::from),
+        match self.request(RequestKind::SetMetadata(request)).await? {
+            ResponseKind::SetMetadata(result) => result.map_err(crate::Error::from),
             response => Err(unexpected(response).into()),
         }
     }
@@ -2466,21 +2459,6 @@ impl Vfs for Client {
         }
     }
 
-    async fn set_permissions(
-        &self,
-        path: Utf8TypedPath<'_>,
-        perm: Permissions,
-    ) -> crate::Result<()> {
-        let request = SetPermissionsRequest {
-            path: path.into(),
-            mode: perm.mode(),
-        };
-        match self.request(RequestKind::SetPermissions(request)).await? {
-            ResponseKind::SetPermissions(result) => result.map_err(crate::Error::from),
-            response => Err(unexpected(response).into()),
-        }
-    }
-
     async fn set_times(
         &self,
         path: Utf8TypedPath<'_>,
@@ -2496,25 +2474,6 @@ impl Vfs for Client {
         };
         match self.request(RequestKind::SetTimes(request)).await? {
             ResponseKind::SetTimes(result) => result.map_err(crate::Error::from),
-            response => Err(unexpected(response).into()),
-        }
-    }
-
-    async fn chown(
-        &self,
-        path: Utf8TypedPath<'_>,
-        user: Option<ChownIdentity>,
-        group: Option<ChownIdentity>,
-        follow: bool,
-    ) -> crate::Result<()> {
-        let request = ChownRequest {
-            path: path.into(),
-            user,
-            group,
-            follow,
-        };
-        match self.request(RequestKind::Chown(request)).await? {
-            ResponseKind::Chown(result) => result.map_err(crate::Error::from),
             response => Err(unexpected(response).into()),
         }
     }

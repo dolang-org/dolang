@@ -13,7 +13,7 @@ if (sys.os_info().family == :WINDOWS:)
 
 def make_file path mode
   path.open w do |file| file.write "fixture"
-  path.chmod $mode
+  path.set_metadata mode: $mode
 
 def fails block
   try

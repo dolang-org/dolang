@@ -518,14 +518,16 @@ pub struct UnixMetadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UnixMetadataPlatform {
-    Linux,
-    Macos { flags: u32 },
+    Linux { attrs: Option<u32> },
+    Macos { attrs: u32 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowsMetadata {
     pub mode: u32,
     pub attrs: u32,
+    pub user: Option<Sid>,
+    pub group: Option<Sid>,
 }
 
 impl Metadata {
@@ -551,14 +553,30 @@ impl Metadata {
         Permissions::from_mode(mode)
     }
 
-    pub fn attrs(&self) -> Attrs {
+    pub const fn linux_attrs(&self) -> Option<u32> {
         match &self.family {
-            MetadataFamily::Windows(metadata) => Attrs::from_win_attrs(metadata.attrs),
             MetadataFamily::Unix(UnixMetadata {
-                platform: UnixMetadataPlatform::Macos { flags },
+                platform: UnixMetadataPlatform::Linux { attrs },
                 ..
-            }) => Attrs::from_macos_flags(*flags),
-            MetadataFamily::Unix(_) => Attrs::default(),
+            }) => *attrs,
+            _ => None,
+        }
+    }
+
+    pub const fn macos_attrs(&self) -> Option<u32> {
+        match &self.family {
+            MetadataFamily::Unix(UnixMetadata {
+                platform: UnixMetadataPlatform::Macos { attrs },
+                ..
+            }) => Some(*attrs),
+            _ => None,
+        }
+    }
+
+    pub const fn win_attrs(&self) -> Option<u32> {
+        match &self.family {
+            MetadataFamily::Windows(metadata) => Some(metadata.attrs),
+            _ => None,
         }
     }
 }
@@ -686,101 +704,116 @@ impl UnixFsMetadataPlatform {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Attrs {
-    pub readonly: Option<bool>,
-    pub hidden: Option<bool>,
-    pub system: Option<bool>,
-    pub archive: Option<bool>,
-    pub reparse_point: Option<bool>,
-    pub compressed: Option<bool>,
-    pub encrypted: Option<bool>,
-    pub temporary: Option<bool>,
-    pub offline: Option<bool>,
-    pub not_content_indexed: Option<bool>,
-    pub immutable: Option<bool>,
-    pub append_only: Option<bool>,
-    pub no_dump: Option<bool>,
-    pub no_atime: Option<bool>,
-    pub no_copy_on_write: Option<bool>,
-    pub dir_sync: Option<bool>,
-    pub casefold: Option<bool>,
-    pub data_journaling: Option<bool>,
-    pub no_compress: Option<bool>,
-    pub project_inherit: Option<bool>,
-    pub secure_delete: Option<bool>,
-    pub sync: Option<bool>,
-    pub no_tail_merge: Option<bool>,
-    pub top_dir: Option<bool>,
-    pub undelete: Option<bool>,
-    pub direct_access: Option<bool>,
-    pub extent_format: Option<bool>,
-    pub opaque: Option<bool>,
-    pub win_attrs: Option<u32>,
-    pub unix_flags: Option<u32>,
+#[serde(transparent)]
+pub struct AttrFlags(u64);
+
+impl AttrFlags {
+    pub const READONLY: Self = Self(1 << 0);
+    pub const HIDDEN: Self = Self(1 << 1);
+    pub const SYSTEM: Self = Self(1 << 2);
+    pub const ARCHIVE: Self = Self(1 << 3);
+    pub const COMPRESSED: Self = Self(1 << 4);
+    pub const TEMPORARY: Self = Self(1 << 5);
+    pub const OFFLINE: Self = Self(1 << 6);
+    pub const NOT_CONTENT_INDEXED: Self = Self(1 << 7);
+    pub const IMMUTABLE: Self = Self(1 << 8);
+    pub const APPEND_ONLY: Self = Self(1 << 9);
+    pub const NO_DUMP: Self = Self(1 << 10);
+    pub const NO_ATIME: Self = Self(1 << 11);
+    pub const NO_COPY_ON_WRITE: Self = Self(1 << 12);
+    pub const DIR_SYNC: Self = Self(1 << 13);
+    pub const CASEFOLD: Self = Self(1 << 14);
+    pub const DATA_JOURNALING: Self = Self(1 << 15);
+    pub const NO_COMPRESS: Self = Self(1 << 16);
+    pub const PROJECT_INHERIT: Self = Self(1 << 17);
+    pub const SECURE_DELETE: Self = Self(1 << 18);
+    pub const SYNC: Self = Self(1 << 19);
+    pub const NO_TAIL_MERGE: Self = Self(1 << 20);
+    pub const TOP_DIR: Self = Self(1 << 21);
+    pub const UNDELETE: Self = Self(1 << 22);
+    pub const DIRECT_ACCESS: Self = Self(1 << 23);
+    pub const EXTENT_FORMAT: Self = Self(1 << 24);
+    pub const OPAQUE: Self = Self(1 << 25);
+
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const fn contains(self, flag: Self) -> bool {
+        self.0 & flag.0 != 0
+    }
+
+    pub const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub const fn difference(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
 }
 
-impl Attrs {
-    pub fn is_empty_patch(&self) -> bool {
-        self.readonly.is_none()
-            && self.hidden.is_none()
-            && self.system.is_none()
-            && self.archive.is_none()
-            && self.reparse_point.is_none()
-            && self.compressed.is_none()
-            && self.encrypted.is_none()
-            && self.temporary.is_none()
-            && self.offline.is_none()
-            && self.not_content_indexed.is_none()
-            && self.immutable.is_none()
-            && self.append_only.is_none()
-            && self.no_dump.is_none()
-            && self.no_atime.is_none()
-            && self.no_copy_on_write.is_none()
-            && self.dir_sync.is_none()
-            && self.casefold.is_none()
-            && self.data_journaling.is_none()
-            && self.no_compress.is_none()
-            && self.project_inherit.is_none()
-            && self.secure_delete.is_none()
-            && self.sync.is_none()
-            && self.no_tail_merge.is_none()
-            && self.top_dir.is_none()
-            && self.undelete.is_none()
-            && self.direct_access.is_none()
-            && self.extent_format.is_none()
-            && self.opaque.is_none()
-            && self.win_attrs.is_none()
-            && self.unix_flags.is_none()
-    }
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttrsPatch {
+    pub set: AttrFlags,
+    pub clear: AttrFlags,
+}
 
-    pub fn from_win_attrs(attrs: u32) -> Self {
-        Self {
-            readonly: Some(attrs & 0x0000_0001 != 0),
-            hidden: Some(attrs & 0x0000_0002 != 0),
-            system: Some(attrs & 0x0000_0004 != 0),
-            archive: Some(attrs & 0x0000_0020 != 0),
-            reparse_point: Some(attrs & 0x0000_0400 != 0),
-            compressed: Some(attrs & 0x0000_0800 != 0),
-            encrypted: Some(attrs & 0x0000_4000 != 0),
-            temporary: Some(attrs & 0x0000_0100 != 0),
-            offline: Some(attrs & 0x0000_1000 != 0),
-            not_content_indexed: Some(attrs & 0x0000_2000 != 0),
-            win_attrs: Some(attrs),
-            ..Self::default()
+impl AttrsPatch {
+    pub fn update(&mut self, flag: AttrFlags, value: Option<bool>) {
+        match value {
+            Some(true) => {
+                self.set = self.set.union(flag);
+                self.clear = self.clear.difference(flag);
+            }
+            Some(false) => {
+                self.clear = self.clear.union(flag);
+                self.set = self.set.difference(flag);
+            }
+            None => {}
         }
     }
 
-    pub fn from_macos_flags(flags: u32) -> Self {
+    pub const fn requested(self) -> AttrFlags {
+        self.set.union(self.clear)
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.set.is_empty() && self.clear.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetadataPatch {
+    pub mode: Option<u32>,
+    pub user: Option<OwnershipIdentity>,
+    pub group: Option<OwnershipIdentity>,
+    pub attrs: AttrsPatch,
+    pub follow: bool,
+}
+
+impl Default for MetadataPatch {
+    fn default() -> Self {
         Self {
-            hidden: Some(flags & 0x0000_8000 != 0),
-            compressed: Some(flags & 0x0000_0020 != 0),
-            immutable: Some(flags & 0x0000_0002 != 0),
-            append_only: Some(flags & 0x0000_0004 != 0),
-            no_dump: Some(flags & 0x0000_0001 != 0),
-            opaque: Some(flags & 0x0000_0008 != 0),
-            unix_flags: Some(flags),
-            ..Self::default()
+            mode: None,
+            user: None,
+            group: None,
+            attrs: AttrsPatch::default(),
+            follow: true,
         }
+    }
+}
+
+impl MetadataPatch {
+    pub fn is_empty(&self) -> bool {
+        self.mode.is_none() && self.user.is_none() && self.group.is_none() && self.attrs.is_empty()
     }
 }
 
@@ -831,10 +864,10 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
                 blksize: metadata.blksize(),
                 blocks: metadata.blocks(),
                 #[cfg(target_os = "linux")]
-                platform: UnixMetadataPlatform::Linux,
+                platform: UnixMetadataPlatform::Linux { attrs: None },
                 #[cfg(target_os = "macos")]
                 platform: UnixMetadataPlatform::Macos {
-                    flags: metadata.st_flags(),
+                    attrs: metadata.st_flags(),
                 },
             }),
         }
@@ -870,9 +903,25 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
                     0o666
                 },
                 attrs: metadata.file_attributes(),
+                user: None,
+                group: None,
             }),
         }
     }
+}
+
+#[cfg(windows)]
+pub(crate) fn metadata_with_sids(
+    mut metadata: Metadata,
+    user: Option<Sid>,
+    group: Option<Sid>,
+) -> Metadata {
+    let MetadataFamily::Windows(windows) = &mut metadata.family else {
+        unreachable!();
+    };
+    windows.user = user;
+    windows.group = group;
+    metadata
 }
 
 #[cfg(windows)]
@@ -901,9 +950,10 @@ fn system_time_to_parts(time: Option<std::time::SystemTime>) -> (i64, u32) {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ChownIdentity {
+pub enum OwnershipIdentity {
     Id(u32),
     Name(String),
+    Sid(Sid),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1154,8 +1204,7 @@ pub trait Vfs {
     async fn symlink_dir(&self, src: Utf8TypedPath<'_>, dst: Utf8TypedPath<'_>) -> Result<()>;
     async fn symlink_file(&self, src: Utf8TypedPath<'_>, dst: Utf8TypedPath<'_>) -> Result<()>;
     async fn symlink_metadata(&self, path: Utf8TypedPath<'_>) -> Result<Metadata>;
-    async fn attrs(&self, path: Utf8TypedPath<'_>, follow: bool) -> Result<Attrs>;
-    async fn set_attrs(&self, path: Utf8TypedPath<'_>, attrs: Attrs) -> Result<()>;
+    async fn set_metadata(&self, paths: &[Utf8TypedPathBuf], patch: MetadataPatch) -> Result<()>;
     async fn canonicalize(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf>;
     async fn read_link(&self, path: Utf8TypedPath<'_>) -> Result<Utf8TypedPathBuf>;
     async fn glob(
@@ -1165,20 +1214,12 @@ pub trait Vfs {
         follow_symlinks: bool,
         max_depth: Option<usize>,
     ) -> Result<Vec<Utf8TypedPathBuf>>;
-    async fn set_permissions(&self, path: Utf8TypedPath<'_>, perm: Permissions) -> Result<()>;
     async fn set_times(
         &self,
         path: Utf8TypedPath<'_>,
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
-    ) -> Result<()>;
-    async fn chown(
-        &self,
-        path: Utf8TypedPath<'_>,
-        user: Option<ChownIdentity>,
-        group: Option<ChownIdentity>,
-        follow: bool,
     ) -> Result<()>;
 }
 
@@ -2024,17 +2065,14 @@ impl Vfs for AnyVfs {
         }
     }
 
-    async fn attrs(&self, path: Utf8TypedPath<'_>, follow: bool) -> crate::Result<Attrs> {
+    async fn set_metadata(
+        &self,
+        paths: &[Utf8TypedPathBuf],
+        patch: MetadataPatch,
+    ) -> crate::Result<()> {
         match self {
-            Self::Client(client) => client.attrs(path, follow).await,
-            Self::Direct(direct) => direct.attrs(path, follow).await,
-        }
-    }
-
-    async fn set_attrs(&self, path: Utf8TypedPath<'_>, attrs: Attrs) -> crate::Result<()> {
-        match self {
-            Self::Client(client) => client.set_attrs(path, attrs).await,
-            Self::Direct(direct) => direct.set_attrs(path, attrs).await,
+            Self::Client(client) => client.set_metadata(paths, patch).await,
+            Self::Direct(direct) => direct.set_metadata(paths, patch).await,
         }
     }
 
@@ -2067,17 +2105,6 @@ impl Vfs for AnyVfs {
         }
     }
 
-    async fn set_permissions(
-        &self,
-        path: Utf8TypedPath<'_>,
-        perm: Permissions,
-    ) -> crate::Result<()> {
-        match self {
-            Self::Client(client) => client.set_permissions(path, perm).await,
-            Self::Direct(direct) => direct.set_permissions(path, perm).await,
-        }
-    }
-
     async fn set_times(
         &self,
         path: Utf8TypedPath<'_>,
@@ -2088,19 +2115,6 @@ impl Vfs for AnyVfs {
         match self {
             Self::Client(client) => client.set_times(path, accessed, modified, created).await,
             Self::Direct(direct) => direct.set_times(path, accessed, modified, created).await,
-        }
-    }
-
-    async fn chown(
-        &self,
-        path: Utf8TypedPath<'_>,
-        user: Option<ChownIdentity>,
-        group: Option<ChownIdentity>,
-        follow: bool,
-    ) -> crate::Result<()> {
-        match self {
-            Self::Client(client) => client.chown(path, user, group, follow).await,
-            Self::Direct(direct) => direct.chown(path, user, group, follow).await,
         }
     }
 }

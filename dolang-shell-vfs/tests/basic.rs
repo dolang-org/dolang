@@ -1,8 +1,8 @@
 #![deny(warnings)]
 #![cfg(unix)]
 use dolang_shell_vfs::{
-    AccessFlags, Child, ChownIdentity, Client, Command, Direct, FileHandle, FileType, SecurityInfo,
-    TargetInfo, Utf8TypedPath, Utf8UnixPath, Vfs,
+    AccessFlags, Child, Client, Command, Direct, FileHandle, FileType, MetadataPatch,
+    OwnershipIdentity, SecurityInfo, TargetInfo, Utf8TypedPath, Utf8UnixPath, Vfs,
 };
 #[cfg(not(target_os = "macos"))]
 use nix::unistd::getgroups;
@@ -645,7 +645,7 @@ async fn metadata_nonexistent() {
 }
 
 #[tokio::test]
-async fn chown_by_numeric_id() {
+async fn set_metadata_by_numeric_id() {
     let dir = tempdir().unwrap();
     let socket_path = dir.path().join("test.sock");
 
@@ -656,11 +656,14 @@ async fn chown_by_numeric_id() {
 
     let client = connect_client(&socket_path).await;
     client
-        .chown(
-            typed(&test_file),
-            Some(ChownIdentity::Id(getuid().as_raw())),
-            Some(ChownIdentity::Id(getgid().as_raw())),
-            true,
+        .set_metadata(
+            &[typed(&test_file).to_path_buf()],
+            MetadataPatch {
+                mode: Some(0o600),
+                user: Some(OwnershipIdentity::Id(getuid().as_raw())),
+                group: Some(OwnershipIdentity::Id(getgid().as_raw())),
+                ..MetadataPatch::default()
+            },
         )
         .await
         .unwrap();
@@ -669,13 +672,14 @@ async fn chown_by_numeric_id() {
     let unix = metadata.unix().unwrap();
     assert_eq!(unix.uid, getuid().as_raw());
     assert_eq!(unix.gid, getgid().as_raw());
+    assert_eq!(unix.mode & 0o777, 0o600);
 
     server_task.abort();
     let _ = server_task.await;
 }
 
 #[tokio::test]
-async fn chown_by_name() {
+async fn set_metadata_by_name() {
     let dir = tempdir().unwrap();
     let socket_path = dir.path().join("test.sock");
 
@@ -689,11 +693,13 @@ async fn chown_by_name() {
 
     let client = connect_client(&socket_path).await;
     client
-        .chown(
-            typed(&test_file),
-            Some(ChownIdentity::Name(user.name)),
-            Some(ChownIdentity::Name(group.name)),
-            true,
+        .set_metadata(
+            &[typed(&test_file).to_path_buf()],
+            MetadataPatch {
+                user: Some(OwnershipIdentity::Name(user.name)),
+                group: Some(OwnershipIdentity::Name(group.name)),
+                ..MetadataPatch::default()
+            },
         )
         .await
         .unwrap();
@@ -708,7 +714,7 @@ async fn chown_by_name() {
 }
 
 #[tokio::test]
-async fn chown_follow_false_on_dangling_symlink() {
+async fn set_metadata_follow_false_on_dangling_symlink() {
     let dir = tempdir().unwrap();
     let socket_path = dir.path().join("test.sock");
 
@@ -719,21 +725,24 @@ async fn chown_follow_false_on_dangling_symlink() {
 
     let client = connect_client(&socket_path).await;
     client
-        .chown(
-            typed(&link_path),
-            None,
-            Some(ChownIdentity::Id(getgid().as_raw())),
-            false,
+        .set_metadata(
+            &[typed(&link_path).to_path_buf()],
+            MetadataPatch {
+                group: Some(OwnershipIdentity::Id(getgid().as_raw())),
+                follow: false,
+                ..MetadataPatch::default()
+            },
         )
         .await
         .unwrap();
 
     let result = client
-        .chown(
-            typed(&link_path),
-            None,
-            Some(ChownIdentity::Id(getgid().as_raw())),
-            true,
+        .set_metadata(
+            &[typed(&link_path).to_path_buf()],
+            MetadataPatch {
+                group: Some(OwnershipIdentity::Id(getgid().as_raw())),
+                ..MetadataPatch::default()
+            },
         )
         .await;
     assert!(result.is_err());
@@ -743,7 +752,7 @@ async fn chown_follow_false_on_dangling_symlink() {
 }
 
 #[tokio::test]
-async fn chown_unknown_user_errors() {
+async fn set_metadata_unknown_user_errors() {
     let dir = tempdir().unwrap();
     let socket_path = dir.path().join("test.sock");
 
@@ -754,11 +763,14 @@ async fn chown_unknown_user_errors() {
 
     let client = connect_client(&socket_path).await;
     let result = client
-        .chown(
-            typed(&test_file),
-            Some(ChownIdentity::Name("__dolang_missing_user__".to_string())),
-            None,
-            true,
+        .set_metadata(
+            &[typed(&test_file).to_path_buf()],
+            MetadataPatch {
+                user: Some(OwnershipIdentity::Name(
+                    "__dolang_missing_user__".to_string(),
+                )),
+                ..MetadataPatch::default()
+            },
         )
         .await;
     assert!(result.is_err());

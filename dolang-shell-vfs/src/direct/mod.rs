@@ -19,10 +19,9 @@ use wax::{
 };
 
 use crate::{
-    Attrs, Child, ChownIdentity, Command, FileHandle, FsMetadata, Metadata, Permissions,
-    ProcessStatus, Query, ReadDir, SecDesc, Sid, SidName, StdioRecv, StdioSend, StreamEntry,
-    Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry, XattrNamespace,
-    metadata_from_std, native_path, typed_path,
+    Child, Command, FileHandle, FsMetadata, Metadata, MetadataPatch, ProcessStatus, Query, ReadDir,
+    SecDesc, Sid, SidName, StdioRecv, StdioSend, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs,
+    WellKnownPath, XattrEntry, XattrNamespace, native_path, typed_path,
 };
 
 use std::{
@@ -213,11 +212,23 @@ impl FileHandle for DirectFile {
     }
 
     async fn metadata(&mut self) -> crate::Result<Metadata> {
-        self.inner
-            .metadata()
-            .await
-            .map(metadata_from_std)
-            .map_err(Into::into)
+        let metadata = self.inner.metadata().await?;
+        #[cfg(unix)]
+        {
+            let file = self.inner.try_clone().await?;
+            tokio::task::spawn_blocking(move || Direct::metadata_with_attrs(metadata, &file))
+                .await
+                .unwrap_or_else(|_| Err(io::Error::other("failed to join metadata query task")))
+                .map_err(Into::into)
+        }
+        #[cfg(windows)]
+        {
+            let file = self.inner.try_clone().await?;
+            tokio::task::spawn_blocking(move || Direct::metadata_with_security(metadata, &file))
+                .await
+                .unwrap_or_else(|_| Err(io::Error::other("failed to join metadata query task")))
+                .map_err(Into::into)
+        }
     }
 
     async fn fs_metadata(&mut self) -> crate::Result<FsMetadata> {
@@ -984,10 +995,22 @@ impl Vfs for Direct {
     }
 
     async fn metadata(&self, path: Utf8TypedPath<'_>) -> crate::Result<Metadata> {
-        fs::metadata(native_path(path)?)
-            .await
-            .map(crate::metadata_from_std)
-            .map_err(Into::into)
+        #[cfg(unix)]
+        {
+            let path = native_path(path)?;
+            tokio::task::spawn_blocking(move || Self::metadata_from_path(&path, true))
+                .await
+                .unwrap_or_else(|_| Err(io::Error::other("failed to join metadata query task")))
+                .map_err(Into::into)
+        }
+        #[cfg(windows)]
+        {
+            let path = native_path(path)?;
+            tokio::task::spawn_blocking(move || Self::metadata_from_path(&path, true))
+                .await
+                .unwrap_or_else(|_| Err(io::Error::other("failed to join metadata query task")))
+                .map_err(Into::into)
+        }
     }
 
     async fn fs_metadata(
@@ -1125,20 +1148,34 @@ impl Vfs for Direct {
     }
 
     async fn symlink_metadata(&self, path: Utf8TypedPath<'_>) -> crate::Result<Metadata> {
-        fs::symlink_metadata(native_path(path)?)
-            .await
-            .map(crate::metadata_from_std)
-            .map_err(Into::into)
+        #[cfg(unix)]
+        {
+            let path = native_path(path)?;
+            tokio::task::spawn_blocking(move || Self::metadata_from_path(&path, false))
+                .await
+                .unwrap_or_else(|_| Err(io::Error::other("failed to join metadata query task")))
+                .map_err(Into::into)
+        }
+        #[cfg(windows)]
+        {
+            let path = native_path(path)?;
+            tokio::task::spawn_blocking(move || Self::metadata_from_path(&path, false))
+                .await
+                .unwrap_or_else(|_| Err(io::Error::other("failed to join metadata query task")))
+                .map_err(Into::into)
+        }
     }
 
-    async fn attrs(&self, path: Utf8TypedPath<'_>, follow: bool) -> crate::Result<Attrs> {
-        self.impl_attrs(&native_path(path)?, follow)
-            .await
-            .map_err(Into::into)
-    }
-
-    async fn set_attrs(&self, path: Utf8TypedPath<'_>, attrs: Attrs) -> crate::Result<()> {
-        self.impl_set_attrs(&native_path(path)?, attrs)
+    async fn set_metadata(
+        &self,
+        paths: &[Utf8TypedPathBuf],
+        patch: MetadataPatch,
+    ) -> crate::Result<()> {
+        let paths = paths
+            .iter()
+            .map(|path| native_path(path.to_path()))
+            .collect::<io::Result<Vec<_>>>()?;
+        self.impl_set_metadata(&paths, patch)
             .await
             .map_err(Into::into)
     }
@@ -1195,16 +1232,6 @@ impl Vfs for Direct {
         .map_err(Into::into)
     }
 
-    async fn set_permissions(
-        &self,
-        path: Utf8TypedPath<'_>,
-        perm: Permissions,
-    ) -> crate::Result<()> {
-        self.impl_set_permissions(&native_path(path)?, perm)
-            .await
-            .map_err(Into::into)
-    }
-
     async fn set_times(
         &self,
         path: Utf8TypedPath<'_>,
@@ -1213,18 +1240,6 @@ impl Vfs for Direct {
         created: Option<(i64, u32)>,
     ) -> crate::Result<()> {
         self.impl_set_times(&native_path(path)?, accessed, modified, created)
-            .await
-            .map_err(Into::into)
-    }
-
-    async fn chown(
-        &self,
-        path: Utf8TypedPath<'_>,
-        user: Option<ChownIdentity>,
-        group: Option<ChownIdentity>,
-        follow: bool,
-    ) -> crate::Result<()> {
-        self.impl_chown(&native_path(path)?, user, group, follow)
             .await
             .map_err(Into::into)
     }
