@@ -114,7 +114,8 @@ fn render_message_backtrace_frames(
     out.push('\n');
 
     let width = backtrace.len().saturating_sub(1).to_string().len();
-    let source_indent = " ".repeat(width + 4);
+    // Margin marker character consumes last indent space
+    let source_indent = " ".repeat(width + 3);
     let mut source_cache = SourceCache::default();
     let mut rendered_sources = HashSet::new();
     for (i, entry) in backtrace.iter().enumerate() {
@@ -172,8 +173,7 @@ fn render_message_backtrace_frames(
             {
                 out.push('\n');
                 out.push_str(&source_indent);
-                out.push_str(&render_styled(Style::new().dimmed(), "╰─"));
-                out.push(' ');
+                out.push_str(&render_styled(Style::new().dimmed(), "▕"));
                 out.push_str(&source);
             }
         }
@@ -337,7 +337,6 @@ mod tests {
 
         assert!(rendered.contains("\u{1b}["));
         let plain = console::strip_ansi_codes(&rendered);
-        assert!(plain.contains("╰─   throw \"boom\""));
         assert_eq!(plain.matches("  throw \"boom\"").count(), 1);
     }
 }
