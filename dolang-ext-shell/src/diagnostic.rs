@@ -7,19 +7,17 @@ use std::{
 };
 
 use anstyle::{AnsiColor, Style};
-use console::Term;
 use dolang::{
     compile::{Compiler, Diag},
     runtime::{Error, Frame, Result, Strand, Value},
 };
+use tokio::io::AsyncWriteExt;
 
-use crate::syntax::{SemanticToken, highlight_range};
-
-#[derive(Clone, Copy)]
-pub(crate) enum ColorMode {
-    Auto,
-    Always,
-}
+use crate::{
+    global::Global,
+    syntax::{SemanticToken, highlight_range},
+    term,
+};
 
 #[derive(Clone)]
 struct RenderedFrame {
@@ -87,13 +85,6 @@ fn render_styled(style: Style, value: impl std::fmt::Display) -> String {
     format!("{style}{value}{}", style.render_reset())
 }
 
-fn use_color(term: &Term, color: ColorMode) -> bool {
-    match color {
-        ColorMode::Always => true,
-        ColorMode::Auto => term.is_term() && term.features().colors_supported(),
-    }
-}
-
 fn collect_frames<I, F>(backtrace: I) -> Vec<RenderedFrame>
 where
     I: IntoIterator<Item = F>,
@@ -113,20 +104,13 @@ where
 fn render_message_backtrace_frames(
     message: &str,
     backtrace: &[RenderedFrame],
-    color: ColorMode,
     cwd: Option<&Path>,
 ) -> String {
-    let term = Term::stderr();
-    let use_color = use_color(&term, color);
     let mut out = String::new();
-    out.push_str(&if use_color {
-        render_styled(
-            Style::new().fg_color(Some(AnsiColor::Red.into())).bold(),
-            message,
-        )
-    } else {
-        message.to_owned()
-    });
+    out.push_str(&render_styled(
+        Style::new().fg_color(Some(AnsiColor::Red.into())).bold(),
+        message,
+    ));
     out.push('\n');
 
     let width = backtrace.len().saturating_sub(1).to_string().len();
@@ -135,60 +119,35 @@ fn render_message_backtrace_frames(
     let mut rendered_sources = HashSet::new();
     for (i, entry) in backtrace.iter().enumerate() {
         out.push_str("  ");
-        out.push_str(&if use_color {
-            format!(
-                "{}{}",
-                render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Magenta.into())),
-                    format!("{i:>width$}")
-                ),
-                render_styled(Style::new().fg_color(Some(AnsiColor::Yellow.into())), ":")
-            )
-        } else {
-            format!("{i:>width$}:")
-        });
-        out.push(' ');
-        out.push_str(&if use_color {
+        out.push_str(&format!(
+            "{}{}",
             render_styled(
-                Style::new().fg_color(Some(AnsiColor::White.into())),
-                &entry.module,
-            )
-        } else {
-            entry.module.clone()
-        });
-        out.push_str(&if use_color {
-            render_styled(Style::new().dimmed(), ".")
-        } else {
-            ".".to_owned()
-        });
+                Style::new().fg_color(Some(AnsiColor::Magenta.into())),
+                format!("{i:>width$}")
+            ),
+            render_styled(Style::new().fg_color(Some(AnsiColor::Yellow.into())), ":")
+        ));
+        out.push(' ');
+        out.push_str(&render_styled(
+            Style::new().fg_color(Some(AnsiColor::White.into())),
+            &entry.module,
+        ));
+        out.push_str(&render_styled(Style::new().dimmed(), "."));
         if let Some(method) = &entry.method {
-            out.push_str(&if use_color {
-                render_styled(
-                    Style::new().fg_color(Some(AnsiColor::White.into())),
-                    &entry.receiver,
-                )
-            } else {
-                entry.receiver.clone()
-            });
-            out.push_str(&if use_color {
-                render_styled(Style::new().dimmed(), ".")
-            } else {
-                ".".to_owned()
-            });
-            out.push_str(&if use_color {
-                render_styled(Style::new().fg_color(Some(AnsiColor::Blue.into())), method)
-            } else {
-                method.clone()
-            });
+            out.push_str(&render_styled(
+                Style::new().fg_color(Some(AnsiColor::White.into())),
+                &entry.receiver,
+            ));
+            out.push_str(&render_styled(Style::new().dimmed(), "."));
+            out.push_str(&render_styled(
+                Style::new().fg_color(Some(AnsiColor::Blue.into())),
+                method,
+            ));
         } else {
-            out.push_str(&if use_color {
-                render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Blue.into())),
-                    &entry.receiver,
-                )
-            } else {
-                entry.receiver.clone()
-            });
+            out.push_str(&render_styled(
+                Style::new().fg_color(Some(AnsiColor::Blue.into())),
+                &entry.receiver,
+            ));
         }
         if let Some((source_path, line)) = &entry.source {
             let source_key = (source_path.clone(), *line);
@@ -197,36 +156,23 @@ fn render_message_backtrace_frames(
                 .and_then(|cwd| path.strip_prefix(cwd).ok())
                 .unwrap_or(path);
             out.push(' ');
-            out.push_str(&if use_color {
-                render_styled(Style::new().dimmed(), "at")
-            } else {
-                "at".to_owned()
-            });
+            out.push_str(&render_styled(Style::new().dimmed(), "at"));
             out.push(' ');
             out.push_str(&path.display().to_string());
-            out.push_str(&if use_color {
-                render_styled(Style::new().fg_color(Some(AnsiColor::Yellow.into())), ":")
-            } else {
-                ":".to_owned()
-            });
-            out.push_str(&if use_color {
-                render_styled(
-                    Style::new().fg_color(Some(AnsiColor::Magenta.into())),
-                    format!("{}", line + 1),
-                )
-            } else {
-                format!("{}", line + 1)
-            });
+            out.push_str(&render_styled(
+                Style::new().fg_color(Some(AnsiColor::Yellow.into())),
+                ":",
+            ));
+            out.push_str(&render_styled(
+                Style::new().fg_color(Some(AnsiColor::Magenta.into())),
+                format!("{}", line + 1),
+            ));
             if rendered_sources.insert(source_key)
-                && let Some(source) = source_cache.render_line(source_path, *line, use_color)
+                && let Some(source) = source_cache.render_line(source_path, *line, true)
             {
                 out.push('\n');
                 out.push_str(&source_indent);
-                out.push_str(&if use_color {
-                    render_styled(Style::new().dimmed(), "╰─")
-                } else {
-                    "╰─".to_owned()
-                });
+                out.push_str(&render_styled(Style::new().dimmed(), "╰─"));
                 out.push(' ');
                 out.push_str(&source);
             }
@@ -244,7 +190,7 @@ where
 {
     let cwd = std::env::current_dir().ok();
     let frames = collect_frames(backtrace);
-    render_message_backtrace_frames(message, &frames, ColorMode::Auto, cwd.as_deref())
+    render_message_backtrace_frames(message, &frames, cwd.as_deref())
 }
 
 pub(crate) fn render_error_value<'v, 's>(
@@ -268,25 +214,52 @@ pub(crate) fn render_error_value<'v, 's>(
     Ok(render_message_backtrace_frames(
         &message,
         &frames,
-        ColorMode::Always,
         cwd.as_deref(),
     ))
 }
 
-pub fn print_error_stderr<'v, 's>(strand: &mut Strand<'v, 's>, error: Error<'v, 's>) {
-    let message = error.display(strand).to_string();
-    let rendered = render_message_backtrace(&message, error.backtrace());
-    Term::stderr().write_line(&rendered).unwrap();
+async fn write_preformatted_stderr<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    rendered: &str,
+) -> Result<'v, 's, ()> {
+    let global = strand.state::<Global<'v>>();
+    let rendered = term::filter_preformatted(strand, rendered, global.terminal.ansi)?;
+    let global = strand.state::<Global<'v>>();
+    let result = {
+        let mut writer = global.terminal.writer.lock().await;
+        async {
+            writer.write_all(rendered.as_bytes()).await?;
+            writer.write_all(b"\n").await?;
+            writer.flush().await
+        }
+        .await
+    };
+    result.map_err(|error| Error::runtime(strand, error))
 }
 
-pub fn print_compile_diag_stderr(file: &str, source: &str, diag: &Diag) {
+pub async fn print_error_stderr<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    error: Error<'v, 's>,
+) -> Result<'v, 's, ()> {
+    let message = error.display(strand).to_string();
+    let rendered = render_message_backtrace(&message, error.backtrace());
+    drop(error);
+    write_preformatted_stderr(strand, &rendered).await
+}
+
+pub async fn print_compile_diag_stderr<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    file: &str,
+    source: &str,
+    diag: &Diag,
+) -> Result<'v, 's, ()> {
     let rendered = dolang_ext_compile::render_compile_diag(
         file,
         source,
         diag,
-        dolang_ext_compile::ColorMode::Auto,
+        dolang_ext_compile::ColorMode::Always,
     );
-    Term::stderr().write_line(&rendered).unwrap();
+    write_preformatted_stderr(strand, &rendered).await
 }
 
 #[cfg(test)]
@@ -359,12 +332,7 @@ mod tests {
                 source: Some((path_str.to_string(), 1)),
             },
         ];
-        let rendered = render_message_backtrace_frames(
-            "boom",
-            &frames,
-            ColorMode::Always,
-            Some(Path::new("/")),
-        );
+        let rendered = render_message_backtrace_frames("boom", &frames, Some(Path::new("/")));
         fs::remove_file(path).unwrap();
 
         assert!(rendered.contains("\u{1b}["));

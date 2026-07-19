@@ -30,37 +30,40 @@ impl Display for Stop {
 
 impl error::Error for Stop {}
 
-pub(crate) fn compile<'v, 's, 'a>(
+pub(crate) async fn compile<'v, 's, 'a>(
     strand: &mut Strand<'v, 's>,
     path: &'a Path,
     source: &'a str,
     dynamic: Option<&[String]>,
     prelude: &[PreludeImport],
-    mode: Mode,
+    mode: Mode<'a>,
     strict: bool,
 ) -> Result<'v, 's, Vec<u8>> {
     let mut out = Vec::new();
     let mut errors = 0usize;
     let mut warnings = 0usize;
+    let mut diagnostics = Vec::new();
 
     let compiler = compile_setup(path, source, dynamic, prelude, mode);
 
-    compiler
-        .compile(&mut out, &mut |diag: Diag| -> ControlFlow<Stop> {
-            match diag.severity() {
-                Severity::Error => errors += 1,
-                Severity::Warning => warnings += 1,
-                _ => (),
-            }
-            let disp = path.display().to_string();
-            dolang_ext_shell::print_compile_diag_stderr(&disp, source, &diag);
-            if errors > 10 {
-                ControlFlow::Break(Stop)
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .into_do(strand)?;
+    let result = compiler.compile(&mut out, &mut |diag: Diag| -> ControlFlow<Stop> {
+        match diag.severity() {
+            Severity::Error => errors += 1,
+            Severity::Warning => warnings += 1,
+            _ => (),
+        }
+        diagnostics.push(diag);
+        if errors > 10 {
+            ControlFlow::Break(Stop)
+        } else {
+            ControlFlow::Continue(())
+        }
+    });
+    let disp = path.display().to_string();
+    for diag in &diagnostics {
+        dolang_ext_shell::print_compile_diag_stderr(strand, &disp, source, diag).await?;
+    }
+    result.into_do(strand)?;
     if warnings != 0 && strict {
         Err(Error::compile(
             strand,
@@ -195,7 +198,7 @@ async fn compile_script<'v, 's>(
 ) -> Result<'v, 's, Vec<u8>> {
     if fs::try_exists(path).await.into_do(strand)? {
         let source = fs::read_to_string(path).await.into_do(strand)?;
-        compile(strand, path, &source, None, prelude, Mode::Script, strict)
+        compile(strand, path, &source, None, prelude, Mode::Script, strict).await
     } else {
         Err(Error::runtime(
             strand,
@@ -252,7 +255,7 @@ pub(crate) async fn load<'v, 's>(
         }
     }
     let source = fs::read_to_string(path).await.into_do(strand)?;
-    let data = compile(strand, path, &source, None, prelude, mode, strict)?;
+    let data = compile(strand, path, &source, None, prelude, mode, strict).await?;
     if let Some(bc) = &bc {
         fs::create_dir_all(bc.parent().unwrap())
             .await

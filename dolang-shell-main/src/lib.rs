@@ -25,7 +25,6 @@ use crate::terminal_state::TerminalRestoreGuard;
 
 mod batch;
 mod cli;
-mod diagnostic;
 mod interactive;
 mod load;
 mod terminal_state;
@@ -247,7 +246,7 @@ fn run(config: Arc<dyn Config>) -> i32 {
                             if let Some(exit_code) = exit_code {
                                 exit_code
                             } else {
-                                diagnostic::print_backtrace(strand, e);
+                                let _ = dolang_ext_shell::print_error_stderr(strand, e).await;
                                 1
                             }
                         }

@@ -18,7 +18,7 @@ use rustyline::{
     validate::{ValidationContext, ValidationResult, Validator},
 };
 
-use crate::{cli::PreludeImport, diagnostic, load};
+use crate::{cli::PreludeImport, load};
 
 pub(crate) const DYNAMIC_PRELUDE: &str = "$dynamic$";
 
@@ -77,15 +77,18 @@ async fn compile_and_run<'v, 's>(
     strict: bool,
 ) -> Result<'v, 's, ()> {
     let dynamic = dynamic_prelude(strand).await?;
-    let bytecode = Bytecode::new(load::compile(
-        strand,
-        Path::new(path),
-        source,
-        Some(&dynamic),
-        prelude,
-        Mode::Repl,
-        strict,
-    )?);
+    let bytecode = Bytecode::new(
+        load::compile(
+            strand,
+            Path::new(path),
+            source,
+            Some(&dynamic),
+            prelude,
+            Mode::Repl,
+            strict,
+        )
+        .await?,
+    );
     bytecode.run(strand, out).await
 }
 
@@ -252,7 +255,7 @@ async fn repl<'v, 's>(
             .await
             {
                 Err(e) if e.catchable() => {
-                    diagnostic::print_backtrace(st, e);
+                    let _ = dolang_ext_shell::print_error_stderr(st, e).await;
                     continue;
                 }
                 Err(e) => return Err(e),

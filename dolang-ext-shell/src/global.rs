@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    ffi::OsStr,
     io::IsTerminal,
     pin::Pin,
 };
@@ -153,6 +154,22 @@ pub(crate) struct Terminal {
     pub(crate) stdout_is_terminal: bool,
     /// Whether stderr was a terminal at startup.
     pub(crate) stderr_is_terminal: bool,
+    /// Whether ANSI styling should be emitted to stderr.
+    pub(crate) ansi: bool,
+}
+
+fn ansi_enabled(
+    stderr_is_terminal: bool,
+    force_color: Option<&OsStr>,
+    no_color: Option<&OsStr>,
+) -> bool {
+    if let Some(force_color) = force_color {
+        force_color != "0"
+    } else if no_color.is_some_and(|no_color| !no_color.is_empty()) {
+        false
+    } else {
+        stderr_is_terminal
+    }
 }
 
 pub struct Tag;
@@ -183,12 +200,18 @@ impl<'v> Global<'v> {
             .nominal_supertype(path)
             .build();
 
+        let stderr_is_terminal = std::io::stderr().is_terminal();
         Self {
             terminal: Terminal {
                 writer: Mutex::new(Box::pin(stderr())),
                 redirected: Cell::new(false),
                 stdout_is_terminal: std::io::stdout().is_terminal(),
-                stderr_is_terminal: std::io::stderr().is_terminal(),
+                stderr_is_terminal,
+                ansi: ansi_enabled(
+                    stderr_is_terminal,
+                    std::env::var_os("FORCE_COLOR").as_deref(),
+                    std::env::var_os("NO_COLOR").as_deref(),
+                ),
             },
             types: Types {
                 file: builder.register_type(),
@@ -307,5 +330,26 @@ impl<'v> Global<'v> {
             args: RefCell::new(Vec::new()),
             program: RefCell::new(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+
+    use super::ansi_enabled;
+
+    #[test]
+    fn ansi_policy_respects_terminal_and_color_environment() {
+        assert!(ansi_enabled(true, None, None));
+        assert!(!ansi_enabled(false, None, None));
+        assert!(ansi_enabled(true, None, Some(OsStr::new(""))));
+        assert!(!ansi_enabled(true, None, Some(OsStr::new("1"))));
+        assert!(ansi_enabled(
+            false,
+            Some(OsStr::new("1")),
+            Some(OsStr::new(""))
+        ));
+        assert!(!ansi_enabled(true, Some(OsStr::new("0")), None));
     }
 }

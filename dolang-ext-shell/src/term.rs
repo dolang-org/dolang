@@ -748,6 +748,23 @@ fn create_preformatted_text<'v, 's>(
     Ok(())
 }
 
+pub(crate) fn filter_preformatted<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &str,
+    ansi: bool,
+) -> Result<'v, 's, String> {
+    let mut output = String::new();
+    let mode = if ansi {
+        FilterMode::Preformat
+    } else {
+        FilterMode::Plain
+    };
+    let mut filter = Filter::new(&mut output, mode);
+    filter.write_str(strand, value)?;
+    filter.finish(strand)?;
+    Ok(output)
+}
+
 fn create_style<'v>(
     strand: &mut Strand<'v, '_>,
     global: State<'v, Global<'v>>,
@@ -967,7 +984,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .value("Style", global.types.style)
         .value("have_terminal", global.terminal.stderr_is_terminal)
         .function("echo", async move |strand, args, _| {
-            let ansi = global.terminal.stderr_is_terminal;
+            let ansi = global.terminal.ansi;
             let mut output = String::new();
             let mut space = false;
             for arg in args {
@@ -1063,7 +1080,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 global,
                 &mut output,
                 style,
-                global.terminal.stderr_is_terminal,
+                global.terminal.ansi,
                 args,
             )?;
             global
