@@ -390,8 +390,9 @@ return
         create_dir $bin_dir all: true
         install_bin $spec $bin_dir dolang
         install_bin $spec $bin_dir dolang-lsp
-        install_bin_symlink $spec $bin_dir dolang dodo
-        install_bin_symlink $spec $bin_dir dolang dolang-test
+        if (sys.os_info().family != :WINDOWS:)
+          install_bin_symlink $spec $bin_dir dolang dodo
+          install_bin_symlink $spec $bin_dir dolang dolang-test
         install_bin $vfs_spec $bin_dir dolang-vfs
 
   publish:

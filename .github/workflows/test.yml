@@ -9,9 +9,17 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  FORCE_COLOR: 3
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: >-
+      dolang --strict --no-cache
+      --import dodo --import fs
+      {0}
 
 jobs:
   test:
@@ -30,6 +38,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Setup Dolang
+        id: dolang
+        uses: ./.github/actions/setup-dolang
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -40,58 +52,48 @@ jobs:
 
       - name: Reduce debug info (Windows only)
         if: matrix.os == 'windows-latest'
-        shell: bash
         run: |
-          echo "CARGO_PROFILE_DEV_DEBUG=0" >> "$GITHUB_ENV"
-          echo "CARGO_PROFILE_TEST_DEBUG=0" >> "$GITHUB_ENV"
+          fs.append $env["GITHUB_ENV"] |
+            CARGO_PROFILE_DEV_DEBUG=0
+            CARGO_PROFILE_TEST_DEBUG=0
 
       - name: Install LLVM (macOS only)
         if: matrix.os == 'macos-latest'
-        run: brew install llvm
-
-      - name: Set LIBCLANG_PATH (macOS only)
-        if: matrix.os == 'macos-latest'
-        run: echo "LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib" >> "$GITHUB_ENV"
+        run: |
+          run brew install llvm
+          fs.append $env["GITHUB_ENV"] |
+            LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib
 
       - name: Install Packages (Linux only)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          # Add Docker's official GPG key:
-          sudo apt update
-          sudo apt install ca-certificates curl
-          sudo install -m 0755 -d /etc/apt/keyrings
-          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-          sudo chmod a+r /etc/apt/keyrings/docker.asc
+          import systemd http sudo proc.run:
+            - apt
 
-          # Add the repository to Apt sources:
-          sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
-          Types: deb
-          URIs: https://download.docker.com/linux/ubuntu
-          Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
-          Components: stable
-          Signed-By: /etc/apt/keyrings/docker.asc
-          EOF
+          bind systemd.os_release()
+            "UBUNTU_CODENAME": ubuntu_codename = nil
+            "VERSION_CODENAME": version_codename
+            ...
 
-          # Install packages
-          sudo apt update
-          sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin llvm libclang-dev
+          sudo.with do
+            http.get https://download.docker.com/linux/ubuntu/gpg do |resp|
+              fs.write /etc/apt/keyrings/docker.asc $resp.body()
+            fs.set_metadata mode: 0o644 /etc/apt/keyrings/docker.asc
 
-      - name: Run cargo tests
-        run: |
-          cargo test
+            fs.write /etc/apt/sources.list.d/docker.sources |
+              Types: deb
+              URIs: https://download.docker.com/linux/ubuntu
+              Suites: $(ubuntu_codename || version_codename)
+              Components: stable
+              Signed-By: /etc/apt/keyrings/docker.asc
 
-      - name: Run integration tests (Unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          cargo build --bin dolang-vfs
-          cargo run --bin dolang -- \
-            --module-path "${{ github.workspace }}/testlib" -m test -- test
+            apt update
+            apt install
+              docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+              docker-compose-plugin llvm libclang-dev
 
-      - name: Run integration tests (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          cargo build --bin dolang-vfs
-          cargo run --bin dolang -- --module-path "${{ github.workspace }}/testlib" -m test -- test
+      - name: Run tests
+        run: dodo.run test
 
   extension:
     name: VS Code Extension
@@ -99,6 +101,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
+      - name: Setup Dolang
+        id: dolang
+        uses: ./.github/actions/setup-dolang
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -109,19 +115,19 @@ jobs:
 
       - name: Install extension dependencies
         working-directory: dolang-code
-        run: npm ci
+        run: run npm ci
 
       - name: Build extension
         working-directory: dolang-code
-        run: npm run compile
+        run: run npm run compile
 
       - name: Run extension tests
         working-directory: dolang-code
-        run: xvfb-run -a npm test
+        run: run xvfb-run -a npm test
 
       - name: Build preview VSIX
         working-directory: dolang-code
-        run: npm run package:vsix
+        run: run npm run package:vsix
 
       - name: Upload preview VSIX
         uses: actions/upload-artifact@v6
@@ -136,13 +142,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Setup Dolang
+        uses: ./.github/actions/setup-dolang
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Install docs dependencies
-        run: python -m pip install --requirement docs/requirements.txt
+        run: run python -m pip install --requirement docs/requirements.txt
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -151,12 +160,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build docs site
-        run: |
-          cargo build --release --bin dolang-highlight --bin dolang-doc
-          env \
-            DOLANG_HIGHLIGHT=target/release/dolang-highlight \
-            DOLANG_DOC=target/release/dolang-doc \
-            mkdocs build
+        run: dodo.run mkdocs --target x86_64-linux
 
       - name: Upload docs artifact
         uses: actions/upload-artifact@v6

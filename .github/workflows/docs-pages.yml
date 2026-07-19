@@ -6,7 +6,9 @@ on:
     branches:
       - master
     paths:
+      - ".github/actions/setup-dolang/**"
       - ".github/workflows/docs-pages.yml"
+      - "dodo.dol"
       - "docs/**"
       - "lib/**"
       - "mkdocs.yml"
@@ -26,6 +28,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Setup Dolang
+        uses: ./.github/actions/setup-dolang
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -44,12 +49,7 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Build docs site
-        run: |
-          cargo build --release --bin dolang-highlight --bin dolang-doc
-          env \
-            DOLANG_HIGHLIGHT=target/release/dolang-highlight \
-            DOLANG_DOC=target/release/dolang-doc \
-            mkdocs build
+        run: dolang -m dodo mkdocs --target x86_64-linux
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v4

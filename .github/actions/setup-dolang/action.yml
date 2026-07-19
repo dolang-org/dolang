@@ -1,0 +1,68 @@
+name: Setup Dolang
+description: Install the pinned Dolang bootstrap release
+
+inputs:
+  version:
+    description: Dolang release tag to install
+    default: v0.1.1
+
+outputs:
+  target:
+    description: Dodo target name for the current runner
+    value: ${{ steps.setup.outputs.target }}
+
+runs:
+  using: composite
+  steps:
+    - name: Download Dolang
+      id: setup
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        DOLANG_VERSION: ${{ inputs.version }}
+      run: |
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64)
+            artifact=dolang-x86_64-linux-gnu.tar.gz
+            executable=dolang
+            target=x86_64-linux
+            ;;
+          Windows-X64)
+            artifact=dolang-x86_64-windows-msvc.tar.gz
+            executable=dolang.exe
+            target=x86_64-windows
+            ;;
+          macOS-ARM64)
+            artifact=dolang-aarch64-darwin.tar.gz
+            executable=dolang
+            target=aarch64-macos
+            ;;
+          *)
+            echo "Unsupported runner: ${RUNNER_OS}-${RUNNER_ARCH}" >&2
+            exit 1
+            ;;
+        esac
+
+        install_dir="${RUNNER_TEMP}/dolang-bootstrap-${DOLANG_VERSION}"
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          shell_install_dir=$(cygpath -u "$install_dir")
+        else
+          shell_install_dir=$install_dir
+        fi
+
+        mkdir -p "$shell_install_dir"
+        (
+          cd "$shell_install_dir"
+          gh release download "$DOLANG_VERSION" \
+            --pattern "$artifact" \
+            --dir .
+          tar -xzf "$artifact"
+        )
+        if [[ "$RUNNER_OS" != Windows ]]; then
+          chmod +x "$install_dir/$executable"
+        fi
+
+        echo "$install_dir" >> "$GITHUB_PATH"
+        echo "target=$target" >> "$GITHUB_OUTPUT"
+        "$shell_install_dir/$executable" -m dodo --list
