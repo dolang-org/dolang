@@ -511,19 +511,28 @@ impl Direct {
     }
 
     pub(super) fn cache_dir_platform(
+        app: Option<&str>,
         env: &HashMap<String, Option<String>>,
     ) -> Result<PathBuf, io::Error> {
         #[cfg(target_os = "macos")]
         {
-            Ok(Self::home_dir_platform(env)?.join("Library").join("Caches"))
+            let path = Self::home_dir_platform(env)?.join("Library").join("Caches");
+            Ok(match app {
+                Some(app) => path.join(app),
+                None => path,
+            })
         }
         #[cfg(not(target_os = "macos"))]
         {
-            if let Some(cache) = Self::absolute_env_path(env, "XDG_CACHE_HOME")? {
-                Ok(cache)
+            let base = if let Some(cache) = Self::absolute_env_path(env, "XDG_CACHE_HOME")? {
+                cache
             } else {
-                Ok(Self::home_dir_platform(env)?.join(".cache"))
-            }
+                Self::home_dir_platform(env)?.join(".cache")
+            };
+            Ok(match app {
+                Some(app) => base.join(app),
+                None => base,
+            })
         }
     }
 
@@ -1319,6 +1328,7 @@ impl Direct {
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
+        follow: bool,
     ) -> Result<(), io::Error> {
         use nix::{
             fcntl::AT_FDCWD,
@@ -1352,14 +1362,12 @@ impl Direct {
         tokio::task::spawn_blocking(move || {
             let atime = unix_timespec(accessed)?;
             let mtime = unix_timespec(modified)?;
-            utimensat(
-                AT_FDCWD,
-                &path,
-                &atime,
-                &mtime,
-                UtimensatFlags::FollowSymlink,
-            )
-            .map_err(io::Error::from)
+            let flags = if follow {
+                UtimensatFlags::FollowSymlink
+            } else {
+                UtimensatFlags::NoFollowSymlink
+            };
+            utimensat(AT_FDCWD, &path, &atime, &mtime, flags).map_err(io::Error::from)
         })
         .await
         .unwrap_or_else(|_| Err(io::Error::from_raw_os_error(libc::EIO)))

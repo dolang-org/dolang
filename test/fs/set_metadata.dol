@@ -116,9 +116,9 @@ def follow_controls_symlink_handling()
 
   symlink $missing_target $link_path
 
-  set_metadata $link_path group: $group follow: false
+  set_metadata $link_path group: $group resolve: :LINK:
 
   assert_throws $sys.NotFoundError do
-    set_metadata $link_path group: $group follow: true
+    set_metadata $link_path group: $group resolve: :TARGET:
 
   remove $link_path

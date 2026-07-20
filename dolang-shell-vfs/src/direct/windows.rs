@@ -817,9 +817,14 @@ impl Direct {
     }
 
     pub(super) fn cache_dir_platform(
+        app: Option<&str>,
         _env: &HashMap<String, Option<String>>,
     ) -> Result<PathBuf, io::Error> {
-        Self::known_folder(&FOLDERID_LocalAppData)
+        let base = Self::known_folder(&FOLDERID_LocalAppData)?;
+        Ok(match app {
+            Some(app) => base.join(app).join("Cache"),
+            None => base,
+        })
     }
 
     pub(super) fn temp_dir_platform(
@@ -1487,6 +1492,7 @@ impl Direct {
         accessed: Option<(i64, u32)>,
         modified: Option<(i64, u32)>,
         created: Option<(i64, u32)>,
+        follow: bool,
     ) -> Result<(), io::Error> {
         use std::{
             fs::{FileTimes, OpenOptions as StdOpenOptions},
@@ -1496,9 +1502,12 @@ impl Direct {
 
         let path = path.to_path_buf();
         tokio::task::spawn_blocking(move || {
-            let file = StdOpenOptions::new()
-                .access_mode(FILE_WRITE_ATTRIBUTES)
-                .open(path)?;
+            let mut opts = StdOpenOptions::new();
+            opts.access_mode(FILE_WRITE_ATTRIBUTES);
+            if !follow {
+                opts.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            }
+            let file = opts.open(path)?;
             let mut times = FileTimes::new();
             if let Some(accessed) = parts_to_system_time(accessed) {
                 times = times.set_accessed(accessed);

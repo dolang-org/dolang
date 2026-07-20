@@ -294,7 +294,7 @@ async fn client_well_known_path() {
 
     let env = HashMap::from([(String::from("HOME"), Some(String::from("/tmp/test-home")))]);
     let path = client
-        .well_known_path(dolang_shell_vfs::WellKnownPath::HomeDir, &env)
+        .well_known_path(dolang_shell_vfs::WellKnownPath::HomeDir, None, &env)
         .await
         .expect("well-known path should succeed");
 

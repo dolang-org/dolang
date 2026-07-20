@@ -88,17 +88,10 @@ pub(crate) async fn path_list<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     path: Utf8TypedPath<'_>,
-    follow: Option<Slot<'v, '_>>,
+    resolve: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let follow = follow
-        .map(|follow| {
-            follow
-                .as_bool(strand)
-                .ok_or_else(|| Error::type_error(strand, "follow: expected bool"))
-        })
-        .transpose()?
-        .unwrap_or(true);
+    let follow = super::resolve_sym(strand, global, resolve, true)?;
     let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     let entries = local

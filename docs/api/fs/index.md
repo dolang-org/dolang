@@ -14,6 +14,21 @@ The `fs` module provides functions and types for filesystem operations.
 | [XattrEntry](xattr-entry.md)   | Extended attribute entry       |
 | [StreamEntry](stream-entry.md) | Alternate data stream entry    |
 
+## Resolution modes
+
+Many functions accept a `resolve:` parameter that controls how symbolic links
+and other recursive path resolution is handled. Two values are accepted:
+
+- **`:TARGET:`** — Resolve all links to their final target. This is the default
+  for most functions.
+- **`:LINK:`** — Resolve all links except the final
+  component. For example, given a symlink `link -> target`, `metadata link
+  resolve: :LINK:` returns the link's own metadata rather than the target's.
+  This is the default for `glob`.
+
+On Unix, `:LINK:` corresponds to `lstat`-style behavior. On Windows, it applies
+to both symbolic links and other reparse points such as directory junctions.
+
 ## Functions
 
 ### `open path mode? func?`
@@ -252,32 +267,57 @@ Returns the current user's home directory as a [`Path`](path.md).
 
 [`Path`](path.md)
 
-### `cache_dir()`
+### `cache_dir :app?`
 
 Returns the platform-native user cache directory as a [`Path`](path.md).
 
-**Platform behavior:**
+When `app` is given, the result is scoped to that application.
 
-| Platform       | Result                                                                |
-| -------------- | --------------------------------------------------------------------- |
-| Non-macOS Unix | `env["XDG_CACHE_HOME"]`, or `home_dir() / ".cache"` if unset          |
-| macOS          | `home_dir() / "Library" / "Caches"`                                   |
-| Windows        | `FOLDERID_LocalAppData`, typically `home_dir() / "AppData" / "Local"` |
+#### Parameters
+
+| Name  | Type                    | Description      |
+| ----- | ----------------------- | ---------------- |
+| `app` | [`str`](../std/str.md)? | Application name |
+
+#### Platform behavior
+
+Without `app`, the base directories are:
+
+| Platform       | Result                                                                  |
+| -------------- | ----------------------------------------------------------------------- |
+| Non-macOS Unix | `$XDG_CACHE_HOME`, otherwise `~/.cache`                                 |
+| macOS          | `(home_dir() / "Library" / "Caches")`                                   |
+| Windows        | `FOLDERID_LocalAppData`, typically `(home_dir() / "AppData" / "Local")` |
+
+With `app: myapp`:
+
+| Platform       | Result                              |
+| -------------- | ----------------------------------- |
+| Non-macOS Unix | `(cache_dir() / "myapp)"`           |
+| macOS          | `(cache_dir() / "myapp)"`           |
+| Windows        | `(cache_dir() / "myapp" / "Cache")` |
 
 #### Returns
 
 [`Path`](path.md)
 
-### `metadata path :follow = true`
+#### Example
+
+```
+let cache = cache_dir app: blastinator8000
+echo "Cache: $cache"
+```
+
+### `metadata path :resolve?`
 
 Gets file metadata for the given path.
 
 #### Parameters
 
-| Name     | Type                                      | Description                                                 |
-| -------- | ----------------------------------------- | ----------------------------------------------------------- |
-| `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file or directory                               |
-| `follow` | [`bool`](../std/bool.md)                  | If `false`, returns metadata for symlink instead of target. |
+| Name      | Type                                      | Description                                      |
+| --------- | ----------------------------------------- | ------------------------------------------------ |
+| `path`    | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the file or directory                    |
+| `resolve` | `:TARGET:`\|`:LINK:`                      | Resolution mode (see [above](#resolution-modes)) |
 
 #### Returns
 
@@ -331,20 +371,20 @@ else
   echo "Attributes: $(meta.win_attrs)"
 
 # Get symlink metadata without following
-let link_meta = metadata "link.txt" follow: false
+let link_meta = metadata "link.txt" resolve: :LINK:
 echo "Link type: $(link_meta.type)"
 ```
 
-### `fs_metadata path :follow = true`
+### `fs_metadata path :resolve?`
 
 Gets filesystem metadata for the filesystem containing the given path.
 
 #### Parameters
 
-| Name     | Type                                      | Description                                                               |
-| -------- | ----------------------------------------- | ------------------------------------------------------------------------- |
-| `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to resolve                                                           |
-| `follow` | [`bool`](../std/bool.md)                  | If `false`, use the symlink's containing filesystem instead of its target |
+| Name      | Type                                      | Description                                      |
+| --------- | ----------------------------------------- | ------------------------------------------------ |
+| `path`    | [`str`](../std/str.md)\|[`Path`](path.md) | Path to resolve                                  |
+| `resolve` | `:TARGET:`\|`:LINK:`                      | Resolution mode (see [above](#resolution-modes)) |
 
 #### Returns
 
@@ -352,9 +392,9 @@ Gets filesystem metadata for the filesystem containing the given path.
 
 #### Errors
 
-| Exception      | Condition                         |
-| -------------- | --------------------------------- |
-| `RuntimeError` | On Linux, `follow: false` is used |
+| Exception              | Condition                           |
+| ---------------------- | ----------------------------------- |
+| `sys.UnsupportedError` | On Linux, `resolve: :LINK:` is used |
 
 ```
 let meta = fs_metadata "data.txt"
@@ -363,38 +403,38 @@ echo "Available: $(meta.available)"
 echo "Readonly: $(meta.read_only)"
 ```
 
-### `sec_desc path :owner? :group? :dacl? :sacl? :follow?`
+### `sec_desc path :owner? :group? :dacl? :sacl? :resolve?`
 
 Gets selected parts of a Windows security descriptor.
 
 #### Parameters
 
-| Name     | Type                                      | Description                    |
-| -------- | ----------------------------------------- | ------------------------------ |
-| `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to query                  |
-| `owner`  | [`bool`](../std/bool.md)                  | Load the owner SID             |
-| `group`  | [`bool`](../std/bool.md)                  | Load the primary group SID     |
-| `dacl`   | [`bool`](../std/bool.md)                  | Load the discretionary ACL     |
-| `sacl`   | [`bool`](../std/bool.md)                  | Load the system ACL            |
-| `follow` | [`bool`](../std/bool.md)                  | Follow the final symbolic link |
+| Name      | Type                                      | Description                                      |
+| --------- | ----------------------------------------- | ------------------------------------------------ |
+| `path`    | [`str`](../std/str.md)\|[`Path`](path.md) | Path to query                                    |
+| `owner`   | [`bool`](../std/bool.md)                  | Load the owner SID                               |
+| `group`   | [`bool`](../std/bool.md)                  | Load the primary group SID                       |
+| `dacl`    | [`bool`](../std/bool.md)                  | Load the discretionary ACL                       |
+| `sacl`    | [`bool`](../std/bool.md)                  | Load the system ACL                              |
+| `resolve` | `:TARGET:`\|`:LINK:`                      | Resolution mode (see [above](#resolution-modes)) |
 
 #### Returns
 
 [`security.windows.SecDesc`](../security/windows/secdesc.md)
 
-### `set_sec_desc path desc :follow = true`
+### `set_sec_desc path desc :resolve?`
 
 Applies the components selected by a Windows security descriptor's `mask`.
 
 #### Parameters
 
-| Name     | Type                                                         | Description                    |
-| -------- | ------------------------------------------------------------ | ------------------------------ |
-| `path`   | [`str`](../std/str.md)\|[`Path`](path.md)                    | Path to update                 |
-| `desc`   | [`security.windows.SecDesc`](../security/windows/secdesc.md) | Security descriptor to apply   |
-| `follow` | [`bool`](../std/bool.md)                                     | Follow the final symbolic link |
+| Name      | Type                                                         | Description                                      |
+| --------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| `path`    | [`str`](../std/str.md)\|[`Path`](path.md)                    | Path to update                                   |
+| `desc`    | [`security.windows.SecDesc`](../security/windows/secdesc.md) | Security descriptor to apply                     |
+| `resolve` | `:TARGET:`\|`:LINK:`                                         | Resolution mode (see [above](#resolution-modes)) |
 
-### `xattrs path :namespace? :follow = true`
+### `xattrs path :namespace? :resolve?`
 
 Lists extended attributes for the given path.
 
@@ -407,7 +447,7 @@ case from the requested name.
 | ----------- | ----------------------------------------------- | ---------------------------------------------------------------- |
 | `path`      | [`str`](../std/str.md)\|[`Path`](path.md)       | Path to query                                                    |
 | `namespace` | [`str`](../std/str.md)\|[`sym`](../std/sym.md)? | Namespace to query; Linux accepts `:ANY:` to list all namespaces |
-| `follow`    | [`bool`](../std/bool.md)                        | If `false`, does not follow a symlink                            |
+| `resolve`   | `:TARGET:`\|`:LINK:`                            | Resolution mode (see [above](#resolution-modes))                 |
 
 #### Returns
 
@@ -418,7 +458,7 @@ for attr = xattrs "data.txt"
   echo $attr.name
 ```
 
-### `streams path :follow = true`
+### `streams path :resolve?`
 
 Lists alternate data streams for the given path.
 
@@ -426,14 +466,14 @@ This is only supported on Windows.
 
 #### Parameters
 
-| Name     | Type                                      | Description                           |
-| -------- | ----------------------------------------- | ------------------------------------- |
-| `path`   | [`str`](../std/str.md)\|[`Path`](path.md) | Path to query                         |
-| `follow` | [`bool`](../std/bool.md)                  | If `false`, does not follow a symlink |
+| Name      | Type                                      | Description                                      |
+| --------- | ----------------------------------------- | ------------------------------------------------ |
+| `path`    | [`str`](../std/str.md)\|[`Path`](path.md) | Path to query                                    |
+| `resolve` | `:TARGET:`\|`:LINK:`                      | Resolution mode (see [above](#resolution-modes)) |
 
 #### Returns
 
-iterator of [`StreamEntry`](stream-entry.md)
+`Iter` of [`StreamEntry`](stream-entry.md)
 
 ```
 let path = Path data.txt
@@ -443,18 +483,18 @@ open $path r do |file|
     echo (path / stream)
 ```
 
-### `xattr path name :namespace? :follow = true`
+### `xattr path name :namespace? :resolve?`
 
 Gets an extended attribute value.
 
 #### Parameters
 
-| Name        | Type                                                   | Description                           |
-| ----------- | ------------------------------------------------------ | ------------------------------------- |
-| `path`      | [`str`](../std/str.md)\|[`Path`](path.md)              | Path to query                         |
-| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
-| `namespace` | [`str`](../std/str.md)?                                | Namespace to query                    |
-| `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
+| Name        | Type                                                   | Description                                      |
+| ----------- | ------------------------------------------------------ | ------------------------------------------------ |
+| `path`      | [`str`](../std/str.md)\|[`Path`](path.md)              | Path to query                                    |
+| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs`            |
+| `namespace` | [`str`](../std/str.md)?                                | Namespace to query                               |
+| `resolve`   | `:TARGET:`\|`:LINK:`                                   | Resolution mode (see [above](#resolution-modes)) |
 
 #### Returns
 
@@ -464,7 +504,7 @@ Gets an extended attribute value.
 let value = xattr "data.txt" "comment"
 ```
 
-### `set_xattr path name value :namespace? :follow = true`
+### `set_xattr path name value :namespace? :resolve?`
 
 Sets an extended attribute value.
 
@@ -473,31 +513,31 @@ storing an empty value.
 
 #### Parameters
 
-| Name        | Type                                                   | Description                           |
-| ----------- | ------------------------------------------------------ | ------------------------------------- |
-| `path`      | [`str`](../std/str.md)\|[`Path`](path.md)              | Path to update                        |
-| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
-| `value`     | [`str`](../std/str.md)\|[`bin`](../std/bin.md)         | Attribute bytes; strings use UTF-8    |
-| `namespace` | [`str`](../std/str.md)?                                | Namespace to update                   |
-| `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
+| Name        | Type                                                   | Description                                      |
+| ----------- | ------------------------------------------------------ | ------------------------------------------------ |
+| `path`      | [`str`](../std/str.md)\|[`Path`](path.md)              | Path to update                                   |
+| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs`            |
+| `value`     | [`str`](../std/str.md)\|[`bin`](../std/bin.md)         | Attribute bytes; strings use UTF-8               |
+| `namespace` | [`str`](../std/str.md)?                                | Namespace to update                              |
+| `resolve`   | `:TARGET:`\|`:LINK:`                                   | Resolution mode (see [above](#resolution-modes)) |
 
 ```
 set_xattr "data.txt" "comment" "ready"
 set_xattr "data.txt" "raw" b"\x00\x01"
 ```
 
-### `remove_xattr path name :namespace? :follow = true`
+### `remove_xattr path name :namespace? :resolve?`
 
 Removes an extended attribute.
 
 #### Parameters
 
-| Name        | Type                                                   | Description                           |
-| ----------- | ------------------------------------------------------ | ------------------------------------- |
-| `path`      | [`str`](../std/str.md)\|[`Path`](path.md)              | Path to update                        |
-| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs` |
-| `namespace` | [`str`](../std/str.md)?                                | Namespace to update                   |
-| `follow`    | [`bool`](../std/bool.md)                               | If `false`, does not follow a symlink |
+| Name        | Type                                                   | Description                                      |
+| ----------- | ------------------------------------------------------ | ------------------------------------------------ |
+| `path`      | [`str`](../std/str.md)\|[`Path`](path.md)              | Path to update                                   |
+| `name`      | [`str`](../std/str.md)\|[`XattrEntry`](xattr-entry.md) | Attribute name or entry from `xattrs`            |
+| `namespace` | [`str`](../std/str.md)?                                | Namespace to update                              |
+| `resolve`   | `:TARGET:`\|`:LINK:`                                   | Resolution mode (see [above](#resolution-modes)) |
 
 ```
 remove_xattr "data.txt" "comment"
@@ -589,9 +629,9 @@ Creates a symbolic link at `dst` pointing to `src`.
 
 #### Errors
 
-| Exception      | Condition                                |
-| -------------- | ---------------------------------------- |
-| `RuntimeError` | The target cannot be accessed on Windows |
+| Exception           | Condition                                |
+| ------------------- | ---------------------------------------- |
+| `sys.NotFoundError` | The target cannot be accessed on Windows |
 
 #### Example
 
@@ -744,21 +784,21 @@ remove_dir dir_to_remove all: true
 remove_dir cache tmp all: true ignore: true
 ```
 
-### `glob pattern :max_depth? :follow?`
+### `glob pattern :max_depth? :resolve?`
 
 Returns an iterator over paths matching a glob pattern.
 
 #### Parameters
 
-| Name        | Type                     | Description                                                       |
-| ----------- | ------------------------ | ----------------------------------------------------------------- |
-| `pattern`   | `str`                    | Glob pattern (e.g., `"*.txt"`, `"**/*.rs"`)                       |
-| `max_depth` | [`int`](../std/int.md)   | Maximum directory depth to traverse (default: unlimited)          |
-| `follow`    | [`bool`](../std/bool.md) | Whether to follow symbolic links when traversing (default: false) |
+| Name        | Type                   | Description                                                          |
+| ----------- | ---------------------- | -------------------------------------------------------------------- |
+| `pattern`   | `str`                  | Glob pattern (e.g., `"*.txt"`, `"**/*.rs"`)                          |
+| `max_depth` | [`int`](../std/int.md) | Maximum directory depth to traverse (default: unlimited)             |
+| `resolve`   | `:TARGET:`\|`:LINK:`   | Resolution mode (see [above](#resolution-modes)) (default: `:LINK:`) |
 
 #### Returns
 
-Iterable of [`Path`](path.md) objects
+`Iter` of [`Path`](path.md) objects
 
 **Glob pattern syntax:**
 
@@ -780,11 +820,11 @@ for path = glob "**/*.rs" max_depth: 3
   echo "Source: $path"
 
 # Follow symlinks
-for path = glob "**/*" follow: true
+for path = glob "**/*" resolve: :TARGET:
   echo "Entry: $path"
 ```
 
-### `normal path`
+### `normalize path`
 
 Returns a normalized path with `.` and `..` components resolved without
 accessing the filesystem.
@@ -803,12 +843,12 @@ accessing the filesystem.
 
 ```
 # Remove redundant components
-let clean = normal "./foo/../bar/./baz"
+let clean = normalize "./foo/../bar/./baz"
 echo $clean  # bar/baz
 
 # Works with Path objects too
 let path = Path "a/b/../c"
-let norm = normal $path
+let norm = normalize $path
 echo $norm  # a/c
 ```
 
@@ -869,7 +909,7 @@ let unchanged = relative "/etc/passwd" "/home/user"
 echo $unchanged  # /etc/passwd
 ```
 
-### `set_timestamps path :modified? :accessed? :created?`
+### `set_timestamps path :modified? :accessed? :created? :resolve?`
 
 Updates the timestamps of a file or directory.
 
@@ -882,29 +922,33 @@ Unspecified timestamps are left unchanged.
 
 #### Parameters
 
-| Name       | Type                                      | Description                               |
-| ---------- | ----------------------------------------- | ----------------------------------------- |
-| `path`     | [`str`](../std/str.md)\|[`Path`](path.md) | Path to update                            |
-| `modified` | [`DateTime`](../time/datetime.md)         | Optional new modification time            |
-| `accessed` | [`DateTime`](../time/datetime.md)         | Optional new access time                  |
-| `created`  | [`DateTime`](../time/datetime.md)         | Optional new creation time (Windows only) |
+| Name       | Type                                      | Description                                      |
+| ---------- | ----------------------------------------- | ------------------------------------------------ |
+| `path`     | [`str`](../std/str.md)\|[`Path`](path.md) | Path to update                                   |
+| `modified` | [`DateTime`](../time/datetime.md)         | Optional new modification time                   |
+| `accessed` | [`DateTime`](../time/datetime.md)         | Optional new access time                         |
+| `created`  | [`DateTime`](../time/datetime.md)         | Optional new creation time (Windows only)        |
+| `resolve`  | `:TARGET:`\|`:LINK:`                      | Resolution mode (see [above](#resolution-modes)) |
 
 #### Errors
 
-| Exception      | Condition                                                           |
-| -------------- | ------------------------------------------------------------------- |
-| `RuntimeError` | `created` is used on an unsupported platform or the operation fails |
+| Exception                   | Condition                                    |
+| --------------------------- | -------------------------------------------- |
+| `sys.UnsupportedError`      | `created` is used on an unsupported platform |
+| `sys.NotFoundError`         | The path does not exist                      |
+| `sys.PermissionDeniedError` | Permission denied to update timestamps       |
+| `sys.Error`                 | Other I/O errors                             |
 
 ```
 import time:
   - DateTime
 
-set_timestamps "artifact.tar" modified: DateTime.from_unix(1700000000)
-set_timestamps "cache.db" accessed: DateTime.now()
-set_timestamps "cache.db" created: DateTime.from_unix(1690000000)
+set_timestamps "artifact.tar" modified: $DateTime.from_unix(1700000000)
+set_timestamps "cache.db" accessed: $DateTime.now()
+set_timestamps "cache.db" created: $DateTime.from_unix(1690000000)
 ```
 
-### `set_metadata ...paths :mode? :user? :group? :follow = true ...`
+### `set_metadata :resolve? ...paths ...`
 
 Updates permissions, ownership, and filesystem attributes in one operation.
 
@@ -919,52 +963,52 @@ are unspecified.
 
 #### Parameters
 
-| Name                  | Type                                                                                | Description                       |
-| --------------------- | ----------------------------------------------------------------------------------- | --------------------------------- |
-| `paths`               | ([`str`](../std/str.md)\|[`Path`](path.md))*                                        | Paths to update in order          |
-| `mode`                | [`int`](../std/int.md)                                                              | Optional Unix permission mode     |
-| `user`                | [`int`](../std/int.md)\|[`str`](../std/str.md)\|[`Sid`](../security/windows/sid.md) | Optional owner ID, name, or SID   |
-| `group`               | [`int`](../std/int.md)\|[`str`](../std/str.md)\|[`Sid`](../security/windows/sid.md) | Optional group ID, name, or SID   |
-| `follow`              | [`bool`](../std/bool.md)                                                            | Follow symbolic links             |
-| `readonly`            | [`bool`](../std/bool.md)                                                            | Optional readonly attribute value |
-| `hidden`              | [`bool`](../std/bool.md)                                                            | Optional hidden attribute/flag    |
-| `system`              | [`bool`](../std/bool.md)                                                            | Optional system attribute value   |
-| `archive`             | [`bool`](../std/bool.md)                                                            | Optional archive attribute value  |
-| `compressed`          | [`bool`](../std/bool.md)                                                            | Optional compressed flag          |
-| `temporary`           | [`bool`](../std/bool.md)                                                            | Optional temporary value          |
-| `offline`             | [`bool`](../std/bool.md)                                                            | Optional offline value            |
-| `not_content_indexed` | [`bool`](../std/bool.md)                                                            | Optional indexing attribute value |
-| `immutable`           | [`bool`](../std/bool.md)                                                            | Optional immutable flag           |
-| `append_only`         | [`bool`](../std/bool.md)                                                            | Optional append-only flag         |
-| `no_dump`             | [`bool`](../std/bool.md)                                                            | Optional no-dump flag             |
-| `no_atime`            | [`bool`](../std/bool.md)                                                            | Optional Linux no-atime flag      |
-| `no_copy_on_write`    | [`bool`](../std/bool.md)                                                            | Optional Linux no-COW flag        |
-| `dir_sync`            | [`bool`](../std/bool.md)                                                            | Optional Linux dir-sync flag      |
-| `casefold`            | [`bool`](../std/bool.md)                                                            | Optional Linux casefold flag      |
-| `data_journaling`     | [`bool`](../std/bool.md)                                                            | Optional Linux journaling flag    |
-| `no_compress`         | [`bool`](../std/bool.md)                                                            | Optional Linux no-compress flag   |
-| `project_inherit`     | [`bool`](../std/bool.md)                                                            | Optional Linux project flag       |
-| `secure_delete`       | [`bool`](../std/bool.md)                                                            | Optional Linux secure-delete flag |
-| `sync`                | [`bool`](../std/bool.md)                                                            | Optional Linux sync flag          |
-| `no_tail_merge`       | [`bool`](../std/bool.md)                                                            | Optional Linux no-tail flag       |
-| `top_dir`             | [`bool`](../std/bool.md)                                                            | Optional Linux top-dir flag       |
-| `undelete`            | [`bool`](../std/bool.md)                                                            | Optional Linux undelete flag      |
-| `direct_access`       | [`bool`](../std/bool.md)                                                            | Optional Linux direct-access flag |
-| `extent_format`       | [`bool`](../std/bool.md)                                                            | Optional Linux extent flag        |
-| `opaque`              | [`bool`](../std/bool.md)                                                            | Optional macOS opaque flag        |
+| Name                  | Type                                                                                | Description                                      |
+| --------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `paths`               | ([`str`](../std/str.md)\|[`Path`](path.md))*                                        | Paths to update in order                         |
+| `mode`                | [`int`](../std/int.md)                                                              | Optional Unix permission mode                    |
+| `user`                | [`int`](../std/int.md)\|[`str`](../std/str.md)\|[`Sid`](../security/windows/sid.md) | Optional owner ID, name, or SID                  |
+| `group`               | [`int`](../std/int.md)\|[`str`](../std/str.md)\|[`Sid`](../security/windows/sid.md) | Optional group ID, name, or SID                  |
+| `resolve`             | `:TARGET:`\|`:LINK:`                                                                | Resolution mode (see [above](#resolution-modes)) |
+| `readonly`            | [`bool`](../std/bool.md)                                                            | Optional readonly attribute value                |
+| `hidden`              | [`bool`](../std/bool.md)                                                            | Optional hidden attribute/flag                   |
+| `system`              | [`bool`](../std/bool.md)                                                            | Optional system attribute value                  |
+| `archive`             | [`bool`](../std/bool.md)                                                            | Optional archive attribute value                 |
+| `compressed`          | [`bool`](../std/bool.md)                                                            | Optional compressed flag                         |
+| `temporary`           | [`bool`](../std/bool.md)                                                            | Optional temporary value                         |
+| `offline`             | [`bool`](../std/bool.md)                                                            | Optional offline value                           |
+| `not_content_indexed` | [`bool`](../std/bool.md)                                                            | Optional indexing attribute value                |
+| `immutable`           | [`bool`](../std/bool.md)                                                            | Optional immutable flag                          |
+| `append_only`         | [`bool`](../std/bool.md)                                                            | Optional append-only flag                        |
+| `no_dump`             | [`bool`](../std/bool.md)                                                            | Optional no-dump flag                            |
+| `no_atime`            | [`bool`](../std/bool.md)                                                            | Optional Linux no-atime flag                     |
+| `no_copy_on_write`    | [`bool`](../std/bool.md)                                                            | Optional Linux no-COW flag                       |
+| `dir_sync`            | [`bool`](../std/bool.md)                                                            | Optional Linux dir-sync flag                     |
+| `casefold`            | [`bool`](../std/bool.md)                                                            | Optional Linux casefold flag                     |
+| `data_journaling`     | [`bool`](../std/bool.md)                                                            | Optional Linux journaling flag                   |
+| `no_compress`         | [`bool`](../std/bool.md)                                                            | Optional Linux no-compress flag                  |
+| `project_inherit`     | [`bool`](../std/bool.md)                                                            | Optional Linux project flag                      |
+| `secure_delete`       | [`bool`](../std/bool.md)                                                            | Optional Linux secure-delete flag                |
+| `sync`                | [`bool`](../std/bool.md)                                                            | Optional Linux sync flag                         |
+| `no_tail_merge`       | [`bool`](../std/bool.md)                                                            | Optional Linux no-tail flag                      |
+| `top_dir`             | [`bool`](../std/bool.md)                                                            | Optional Linux top-dir flag                      |
+| `undelete`            | [`bool`](../std/bool.md)                                                            | Optional Linux undelete flag                     |
+| `direct_access`       | [`bool`](../std/bool.md)                                                            | Optional Linux direct-access flag                |
+| `extent_format`       | [`bool`](../std/bool.md)                                                            | Optional Linux extent flag                       |
+| `opaque`              | [`bool`](../std/bool.md)                                                            | Optional macOS opaque flag                       |
 
 #### Errors
 
-| Exception      | Condition                                        |
-| -------------- | ------------------------------------------------ |
-| `RuntimeError` | The operation is used on an unsupported platform |
+| Exception              | Condition                                        |
+| ---------------------- | ------------------------------------------------ |
+| `sys.UnsupportedError` | The operation is used on an unsupported platform |
 
 ```
 set_metadata "script.sh" mode: 0o755 user: "deploy" group: "deploy"
 set_metadata "one.txt" "two.txt" mode: 0o640
 set_metadata "data.txt" hidden: true
 set_metadata "data.txt" no_dump: true
-set_metadata "link" group: "www-data" follow: false
+set_metadata "link" group: "www-data" resolve: :LINK:
 ```
 
 ### `canonical path`
@@ -988,6 +1032,36 @@ normalized and symbolic links resolved.
 let abs = canonical "./foo/../bar"
 echo $abs # /current/working/dir/bar (with symlinks resolved)
 
+```
+
+### `read_link path`
+
+Reads the target of a symbolic link.
+
+#### Parameters
+
+| Name   | Type                                      | Description         |
+| ------ | ----------------------------------------- | ------------------- |
+| `path` | [`str`](../std/str.md)\|[`Path`](path.md) | Path to the symlink |
+
+#### Returns
+
+[`Path`](path.md) - The path that the symlink points to
+
+#### Errors
+
+| Exception                   | Condition                                          |
+| --------------------------- | -------------------------------------------------- |
+| `sys.NotFoundError`         | The path does not exist                            |
+| `sys.PermissionDeniedError` | Permission denied to read the symlink              |
+| `sys.UnsupportedError`      | Reading symlinks is not supported on this platform |
+| `sys.Error`                 | Other I/O errors                                   |
+
+#### Example
+
+```
+let link = read_link "./my_link"
+echo "Link points to: $link"
 ```
 
 ### `with_temp_dir func`

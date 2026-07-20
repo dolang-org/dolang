@@ -1,4 +1,4 @@
-import args exec strand
+import args exec strand term proc.run: proc_run
 
 let rules_key = strand.Key()
 let special_rules = set ["common", "default"]
@@ -43,9 +43,33 @@ def list_rules rules
     else
       echo "  - $k"
 
+def highlight_prog prog
+  prog = std.arg $prog
+  term.style bold: true "▶ " $ term.style fg: :BLUE: $prog
+
+def highlight_arg arg
+  arg = std.arg $arg
+  if arg.starts_with "-"
+    term.style fg: :YELLOW: $arg
+  else
+    arg
+
+# Runs the external command `cmd`, first printing a highlighted
+# message showing the command to the terminal
+pub def show ...cmd
+  let prog ...args = cmd.pos_only()
+  print
+    (highlight_prog prog)
+    for arg = args
+      " " (highlight_arg arg)
+    "\n"
+  proc_run ...cmd
+
+# Runs a dodo task from `dodo.dol` in the current directory,
+# equivalnent to running `dolang -m dodo ...argv`, but correctly
+# handles re-entrancy.
 pub def run ...argv
-  let argv = [...argv.pos_only()]
-  args.with args: $argv
+  args.with args: $argv.pos_only()
     help: run tasks
     - flag: list
       help: list tasks

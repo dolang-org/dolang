@@ -7,12 +7,12 @@ pub def bin exe = nil
 
   let exe = (exe || shell.exe).canonical()
   let bin = exe.with_stem "dolang-vfs"
-  let bin_meta = bin.metadata follow: false
+  let bin_meta = bin.metadata resolve: :LINK:
 
   if (bin_meta.type != :FILE:)
     throw "VFS helper is not a regular file: $bin"
   if (sys.os_info().family != :WINDOWS:)
-    let exe_meta = exe.metadata follow: false
+    let exe_meta = exe.metadata resolve: :LINK:
     if (bin_meta.uid != exe_meta.uid)
       throw "VFS helper owner does not match interpreter: $bin"
     if (bin_meta.gid != exe_meta.gid)

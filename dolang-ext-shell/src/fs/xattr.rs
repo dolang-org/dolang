@@ -79,13 +79,10 @@ pub(crate) async fn path_list<'v, 's>(
     global: State<'v, Global<'v>>,
     path: Utf8TypedPath<'_>,
     namespace: Option<Slot<'v, '_>>,
-    follow: Option<Slot<'v, '_>>,
+    resolve: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let follow = follow
-        .map(|follow| util::bool(strand, follow, "follow"))
-        .transpose()?
-        .unwrap_or(true);
+    let follow = super::resolve_sym(strand, global, resolve, true)?;
     let namespace_buf;
     let namespace = match namespace {
         None => XattrNamespace::Default,
@@ -120,14 +117,11 @@ pub(crate) async fn path_get<'v, 's>(
     path: Utf8TypedPath<'_>,
     name: &Value<'v>,
     namespace: Option<Slot<'v, '_>>,
-    follow: Option<Slot<'v, '_>>,
+    resolve: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let (name, namespace) = parse_name(strand, global, name, namespace)?;
-    let follow = follow
-        .map(|follow| util::bool(strand, follow, "follow"))
-        .transpose()?
-        .unwrap_or(true);
+    let follow = super::resolve_sym(strand, global, resolve, true)?;
     let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     let value = local
@@ -146,14 +140,11 @@ pub(crate) async fn path_set<'v, 's>(
     name: &Value<'v>,
     namespace: Option<Slot<'v, '_>>,
     value: &Value<'v>,
-    follow: Option<Slot<'v, '_>>,
+    resolve: Option<Slot<'v, '_>>,
 ) -> Result<'v, 's, ()> {
     let (name, namespace) = parse_name(strand, global, name, namespace)?;
     let value = util::bytes(strand, value, "value")?;
-    let follow = follow
-        .map(|follow| util::bool(strand, follow, "follow"))
-        .transpose()?
-        .unwrap_or(true);
+    let follow = super::resolve_sym(strand, global, resolve, true)?;
     let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     local
@@ -169,13 +160,10 @@ pub(crate) async fn path_remove<'v, 's>(
     path: Utf8TypedPath<'_>,
     name: &Value<'v>,
     namespace: Option<Slot<'v, '_>>,
-    follow: Option<Slot<'v, '_>>,
+    resolve: Option<Slot<'v, '_>>,
 ) -> Result<'v, 's, ()> {
     let (name, namespace) = parse_name(strand, global, name, namespace)?;
-    let follow = follow
-        .map(|follow| util::bool(strand, follow, "follow"))
-        .transpose()?
-        .unwrap_or(true);
+    let follow = super::resolve_sym(strand, global, resolve, true)?;
     let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     local

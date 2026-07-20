@@ -1,20 +1,8 @@
 # DirEntry
 
-DirEntry objects represent individual entries within a directory. They are
-returned by the [`entries()`](index.md#entries-path) function and the
-[`Path.entries()`](path.md#entries) method.
-
-DirEntry objects provide access to an entry's name and file type.
-
-## Creating DirEntry Objects
-
-DirEntry objects are created by iterating over directory entries:
-
-```
-# Iterate and get DirEntry objects
-for entry = entries /home/user/docs
-  echo "$(entry.name) - $(entry.type)"
-```
+Represent individual entries within a directory. The
+[`entries()`](index.md#entries-path) function and the
+[`Path.entries()`](path.md#entries) method return iterators over this type.
 
 ## Fields
 
@@ -25,21 +13,6 @@ Returns the final path component for the entry.
 ```
 for entry = entries .
   echo "Name: $(entry.name)"
-```
-
-## Platform-Specific Fields
-
-### Unix-Only Fields
-
-The following fields are only available on Unix systems:
-
-#### `ino`
-
-The inode number of the file system entry.
-
-```
-for entry = entries .
-  echo "$(entry.name) has inode $(entry.ino)"
 ```
 
 ### `type`
@@ -67,6 +40,21 @@ for entry = entries .
     echo "File: $(entry.name)"
   else if entry.type == :UNKNOWN:
     echo "Unknown type: $(entry.name)"
+```
+
+## Platform-Specific Fields
+
+### Unix-Only Fields
+
+The following fields are only available on Unix systems:
+
+#### `ino`
+
+The inode number of the file system entry.
+
+```
+for entry = entries .
+  echo "$(entry.name) has inode $(entry.ino)"
 ```
 
 ## Usage Examples
