@@ -1,3 +1,4 @@
+import _vfs
 import
   shell:
     - Vfs
@@ -23,7 +24,9 @@ pub def build_command
   :keepalive_count = nil
   :batch = false
   :host_key = :DEFAULT:
-  :command = ["dolang-vfs", "--stdio"]
+  :command = ["dolang-vfs"]
+  :cd = nil
+  :env = {}
   ...options
 do
   let identities = []
@@ -69,7 +72,7 @@ do
   else if (host_key != :DEFAULT:)
     throw ValueError "ssh.with: invalid host-key policy: $host_key"
 
-  argv.push -- $host ...command
+  argv.push -- $host ...command ...(_vfs.vfs_args cd env) --stdio
   argv
 
 pub def with_program
@@ -85,7 +88,9 @@ pub def with_program
   :keepalive_count = nil
   :batch = false
   :host_key = :DEFAULT:
-  :command = ["dolang-vfs", "--stdio"]
+  :command = ["dolang-vfs"]
+  :cd = nil
+  :env = {}
   ...options
 do
   let argv = build_command
@@ -100,6 +105,8 @@ do
     :batch
     :host_key
     :command
+    :cd
+    :env
     ...options
   argv[0] = executable
   let vfs = Vfs do run ...argv

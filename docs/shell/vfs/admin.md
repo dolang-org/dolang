@@ -40,10 +40,12 @@ import fs:
 let shadow = sudo.with do (Path /etc/shadow).read()
 ```
 
-Both accept `user:` to run as an account other than root. `sudo.with` starts a
-`dolang-vfs` daemon through `sudo`, connects through a private Unix socket, and
-cleans up the session when the block returns or throws. Inside an SSH context,
-the same process runs on the remote Unix host.
+Both accept `user:` to run as an account other than root. They also accept `cd:`
+and `env:` overrides. For `sudo.run`, these use sudo's native `-D` and
+`--preserve-env` facilities and remain subject to sudoers policy. `sudo.with`
+starts a `dolang-vfs` daemon through `sudo`, connects through a private Unix
+socket, and cleans up the session when the block returns or throws. Inside an
+SSH context, the same process runs on the remote Unix host.
 
 ## Windows UAC
 
@@ -52,7 +54,7 @@ to its VFS server through a private named pipe. The current working directory
 when the context is created becomes its initial directory. Cancelling the UAC
 prompt raises a permission error.
 
-[`Vfs.windows_admin()`](../../api/shell/vfs.md#windows_admin) exposes the
+[`Vfs.windows_admin()`](../../api/shell/vfs.md#windows_admin-cd-env) exposes the
 lower-level handle when its lifetime must be controlled directly:
 
 ```

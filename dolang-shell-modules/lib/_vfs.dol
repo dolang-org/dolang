@@ -1,4 +1,4 @@
-import shell sys
+import shell sys std
 
 pub def bin exe = nil
   let vfs_exe = shell.vfs_exe()
@@ -21,3 +21,46 @@ pub def bin exe = nil
       throw "VFS helper permissions do not match interpreter: $bin"
 
   bin
+
+def env_key key
+  if (type key str || type key sym)
+    return str $key
+  throw std.TypeError "env key: expected str or sym"
+
+def validate_env overrides
+  if !(type overrides dict)
+    throw std.TypeError "env: expected dict"
+
+def env_pairs overrides
+  validate_env $overrides
+  let pairs = []
+  for key value = overrides
+    let key = env_key $key
+    if (value == :INHERIT:)
+      value = shell.env.get $key
+    pairs.push [key, value]
+  pairs
+
+pub def env_args cd overrides
+  let unsets = []
+  let sets = []
+  let pairs = env_pairs $overrides
+  for k v = pairs
+    if (v == nil)
+      unsets.push -u $k
+    else
+      sets.push "$k=$v"
+  return
+    if cd
+      -C $cd
+    ...unsets ...sets
+
+pub def vfs_args cd overrides
+  return
+    if cd
+      --cd $cd
+    for k v = env_pairs $overrides
+      if (v == nil)
+        --unset $k
+      else
+        --set "$k=$v"

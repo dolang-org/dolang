@@ -15,26 +15,33 @@ import _ssh proc sys
 
 #[test]
 def command_options()
-  let argv = _ssh.build_command example
-    user: alice
-    port: 2222
-    identity: id-a
-    jump: jump-a
-    identity: id-b
-    jump: jump-b
-    identities_only: true
-    forward_agent: true
-    connect_timeout: 10
-    keepalive_interval: 15
-    keepalive_count: 4
-    batch: true
-    host_key: :STRICT:
-    command: ["agent", "--stdio", "extra"]
-  assert_eq $argv $
-    ssh -T -e none -A -o IdentitiesOnly=yes -o BatchMode=yes -l
-    alice -p 2222 -i id-a -i id-b -J jump-a,jump-b -o ConnectTimeout=10
-    -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=yes
-    -- example agent --stdio extra
+  env TEST_DOLANG_SSH_INHERIT: inherited do
+    let argv = _ssh.build_command example
+      user: alice
+      port: 2222
+      identity: id-a
+      jump: jump-a
+      identity: id-b
+      jump: jump-b
+      identities_only: true
+      forward_agent: true
+      connect_timeout: 10
+      keepalive_interval: 15
+      keepalive_count: 4
+      batch: true
+      host_key: :STRICT:
+      command: ["agent", "extra"]
+      cd: /srv/project
+      env:
+        SET: value
+        UNSET: nil
+        TEST_DOLANG_SSH_INHERIT: :INHERIT:
+    assert_eq $argv $
+      ssh -T -e none -A -o IdentitiesOnly=yes -o BatchMode=yes -l
+      alice -p 2222 -i id-a -i id-b -J jump-a,jump-b -o ConnectTimeout=10
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=yes
+      -- example agent extra --cd /srv/project --set SET=value --unset UNSET
+      --set TEST_DOLANG_SSH_INHERIT=inherited --stdio
 
 #[test]
 def command_defaults_and_host_key()
@@ -73,17 +80,17 @@ def with_uses_stdio_vfs()
     let marker = (dir / "marker")
     let block = do marker.write remote
     _ssh.with_program $shim example $block
-      command: [_vfs.bin(), "--stdio"]
+      command: [_vfs.bin()]
 
     assert_eq $marker.read() remote
 
     let err = assert_throws $RuntimeError do
       _ssh.with_program $shim example
-        command: [_vfs.bin(), "--stdio"]
+        command: [_vfs.bin()]
         do throw RuntimeError "block failed"
     assert_eq $str(err) "block failed"
 
     let err = assert_throws $proc.Error do
       _ssh.with_program $shim fail $block
-        command: [_vfs.bin(), "--stdio"]
+        command: [_vfs.bin()]
     assert_eq $err.rc 42

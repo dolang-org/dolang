@@ -1,5 +1,4 @@
-import _vfs
-import
+import _vfs fs
   shell:
     - Vfs
   _container.common:
@@ -8,43 +7,29 @@ import
     - toolbox
   strand:
     - pipeline
-  fs
 
 def run_command
   :name = nil
-  cd: cd_override = nil
-  env: env_override = nil
+  :cd = nil
+  :env = {}
   ...args
 do
   toolbox run
     if (name != nil)
       --container $name
-    -- env -C
-    if (cd_override != nil)
-      $cd_override
-    else
-      $cd()
-    for k v = (env_override || {})
-      if (v == nil)
-        -u (str k)
-      else
-        $(str k)=$v
-    ...args
+    -- env ...(_vfs.env_args cd env) ...args
 
 def run_agent
   thunk
   :name = nil
-  cd: cd_override = nil
-  env: env_override = nil
+  :cd = nil
+  :env = {}
 do
   let socket = "$(runtime_dir())/toolbox-vfs-$name"
   let agent = _vfs.bin()
   let input = strand.input()
   pipeline
-    do run_command $agent --listen $socket
-      :name
-      cd: $cd_override
-      env: (env_override || {})
+    do run_command :cd :env $agent --listen $socket
     do
       strand.next()
       let agent = Vfs.unix_socket $socket
@@ -56,27 +41,19 @@ do
 pub def run
   cmd
   :name = nil
-  cd: cd_override = nil
-  env: env_override = nil
+  :cd = nil
+  :env = {}
   ...args
 do
-  run_command
-    :name
-    cd: $cd_override
-    env: $env_override
-    $cmd ...args.pos_only()
+  run_command :name :cd :env $cmd ...args.pos_only()
 
 # Run a callable inside a toolbox container.
 #
 # The block sees the toolbox filesystem and process environment.
 pub def with
-  thunk
+  block
   :name = nil
-  cd: cd_override = nil
-  env: env_override = nil
+  :cd = nil
+  :env = {}
 do
-  run_agent
-    $thunk
-    :name
-    cd: $cd_override
-    env: $env_override
+  run_agent :name :cd :env $block

@@ -398,13 +398,13 @@ async fn sigint_during_spawn() {
 }
 
 #[tokio::test]
-async fn cwd_flag_changes_query_cwd() {
+async fn cd_flag_changes_query_cwd() {
     let (_dir, socket_path) = find_free_socket_path();
     let target_dir = tempdir().unwrap();
     let target_path = std::fs::canonicalize(target_dir.path()).unwrap();
 
     let mut child = std::process::Command::new(AGENT_BIN)
-        .arg("--cwd")
+        .arg("--cd")
         .arg(&target_path)
         .arg("--listen")
         .arg(&socket_path)
@@ -424,7 +424,7 @@ async fn cwd_flag_changes_query_cwd() {
 
     let query = client.query().await.expect("query should succeed");
     let expected = typed_str(target_path.to_str().unwrap());
-    assert_eq!(query.cwd, expected, "cwd should match --cwd argument");
+    assert_eq!(query.cwd, expected, "cwd should match --cd argument");
 
     stop_daemon(&socket_path).await;
 }
@@ -542,7 +542,7 @@ async fn combined_set_unset_cwd() {
         .arg("VFS_COMBO_B=beta")
         .arg("--unset")
         .arg("VFS_COMBO_B")
-        .arg("--cwd")
+        .arg("--cd")
         .arg(&target_path)
         .arg("--listen")
         .arg(&socket_path)
@@ -572,7 +572,7 @@ async fn combined_set_unset_cwd() {
         "VFS_COMBO_B should be unset"
     );
     let expected = typed_str(target_path.to_str().unwrap());
-    assert_eq!(query.cwd, expected, "cwd should match --cwd");
+    assert_eq!(query.cwd, expected, "cwd should match --cd");
 
     stop_daemon(&socket_path).await;
 }

@@ -30,6 +30,10 @@ through SSH, not an SSH filesystem mount or a TCP port forward. The remote
 command must not write other data to standard output; diagnostics may use
 standard error.
 
+`command:` replaces `dolang-vfs` with a launcher prefix. The client appends
+`--cd`, `--set`, and `--unset` overrides followed by `--stdio`; custom launchers
+must pass through or interpret those trailing `dolang-vfs` arguments.
+
 `ssh.with` stops the VFS session when the block returns or throws. Prefer it to
 constructing a stream-backed `Vfs` manually.
 

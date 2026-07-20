@@ -1,6 +1,4 @@
-import sudo sys security
-  shell:
-    - Vfs
+import sudo sys security shell
 
 # Reports whether the active target has effective administrator privileges.
 #
@@ -40,16 +38,24 @@ pub def query()
 # admin.with do
 #   echo "administrator: $(admin.query())"
 # ```
-pub def with block
+pub def with block :cd = nil :env = {}
   if (sys.os_info().family == :WINDOWS:)
     if security.token_info().is_elevated
-      return block()
-    let vfs = Vfs.windows_admin()
+      return shell.env $env do
+        if (cd != nil)
+          shell.cd $cd $block
+        else
+          block()
+    let vfs = shell.Vfs.windows_admin :cd :env
     try
       vfs $block
     finally
       vfs.stop()
   else
     if (security.unix_info().euid == 0)
-      return block()
-    sudo.with $block
+      return shell.env $env do
+        if (cd != nil)
+          shell.cd $cd $block
+        else
+          block()
+    sudo.with $block :cd :env

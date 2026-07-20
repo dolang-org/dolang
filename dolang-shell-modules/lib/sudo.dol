@@ -1,6 +1,4 @@
-import xdg _vfs
-  shell:
-    - Vfs
+import xdg _vfs shell
   fs:
     - with_temp_dir
   proc.run:
@@ -11,6 +9,8 @@ import xdg _vfs
 def run_agent
   thunk
   :user = nil
+  :cd = nil
+  :env = {}
 do
   let runtime_dir = xdg.runtime_dir()
   let agent = _vfs.bin()
@@ -23,22 +23,27 @@ do
       do sudo -E
         if (user != nil)
           -u $user
-        $agent --listen $socket
+        $agent ...(_vfs.vfs_args cd env) --listen $socket
       do
         strand.next()
-        let a = Vfs.unix_socket $socket
-        return strand.redirect input: $input do a $thunk
+        let a = shell.Vfs.unix_socket $socket
+        return strand.redirect :input do a $thunk
 
 def run_command
   cmd
   :user = nil
+  :cd = nil
+  :env = {}
   ...args
 do
-  sudo
+  shell.env $env do sudo
     if (user != nil)
       -u $user
-    --
-    $cmd ...args
+    if (cd != nil)
+      -D $cd
+    if (env.len > 0)
+      --preserve-env=$(",".join(env.keys()))
+    -- $cmd ...args
 
 # Runs a verbatim command through `sudo`.
 #
@@ -46,9 +51,11 @@ do
 #
 # | Name   | Type   | Description                        |
 # | ------ | ------ | ---------------------------------- |
-# | `cmd`  |        | Program to run                     |
-# | `user` | `str?` | Account to use instead of root     |
-# | `args` | `*`    | Arguments passed verbatim to `cmd` |
+# | `cmd`  |         | Program to run                        |
+# | `user` | `str?`  | Account to use instead of root        |
+# | `cd`   | `Path?` | Working directory requested via sudo  |
+# | `env`  | `dict`  | Environment requested via sudo policy |
+# | `args` | `*`     | Arguments passed verbatim to `cmd`    |
 #
 # # Returns
 #
@@ -62,9 +69,11 @@ do
 pub def run
   cmd
   :user = nil
+  :cd = nil
+  :env = {}
   ...args
 do
-  run_command $cmd :user ...args.pos_only()
+  run_command $cmd :user :cd :env ...args.pos_only()
 
 # Runs a block with elevated privileges through `sudo`.
 #
@@ -77,6 +86,8 @@ do
 # | ------ | -------- | ------------------------------ |
 # | `func` | callable | Block to run                   |
 # | `user` | `str?`   | Account to use instead of root |
+# | `cd`   | `Path?`  | Initial elevated directory     |
+# | `env`  | `dict`   | Initial environment overrides  |
 #
 # # Returns
 #
@@ -90,5 +101,7 @@ do
 pub def with
   func
   :user = nil
+  :cd = nil
+  :env = {}
 do
-  run_agent $func :user
+  run_agent $func :user :cd :env
