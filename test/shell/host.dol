@@ -1,4 +1,6 @@
 import sys agent _vfs
+  strand:
+    - stream
   test:
     - assert_eq
     - assert_throws
@@ -59,6 +61,8 @@ def stdio_vfs_runs_over_strand_stream()
       vfs do
         assert_eq $vfs_exe() $expected_exe
         assert_eq $_vfs.bin() $expected_exe
+        let background = stream do vfs_exe()
+        assert_eq $background.join() $expected_exe
         host do assert_eq $vfs_exe() nil
         open $marker w do |file| file.write "remote"
     finally

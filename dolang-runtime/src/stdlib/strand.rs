@@ -19,7 +19,7 @@ use crate::{
         native::{Object, Type, TypeBuilder},
         tuple,
     },
-    strand::{InterruptToken, Local, LocalKey, LocalRootKey, Redirect, Strand},
+    strand::{InheritKind, InterruptToken, Local, LocalKey, LocalRootKey, Redirect, Strand},
     unpack,
     value::{Empty, Output, Singleton, Slot, Value},
     vm::{Builder, State, Stateful},
@@ -185,12 +185,17 @@ impl<'v> Local<'v> for ResourceLocal {
         Self::default()
     }
 
-    fn inherit(&self, _strand: &Strand<'v, '_>) -> Self {
-        let mut inherited = self.inherited.clone();
-        inherited.extend(self.held.borrow().iter().map(|entry| entry.resource.id));
-        Self {
-            held: RefCell::default(),
-            inherited,
+    fn inherit(&self, _strand: &Strand<'v, '_>, kind: InheritKind) -> Self {
+        match kind {
+            InheritKind::Scoped => {
+                let mut inherited = self.inherited.clone();
+                inherited.extend(self.held.borrow().iter().map(|entry| entry.resource.id));
+                Self {
+                    held: RefCell::default(),
+                    inherited,
+                }
+            }
+            InheritKind::Background => Self::default(),
         }
     }
 }
@@ -206,7 +211,7 @@ impl<'v> Local<'v> for StrandLocalData {
         }
     }
 
-    fn inherit(&self, _strand: &Strand<'v, '_>) -> Self {
+    fn inherit(&self, _strand: &Strand<'v, '_>, _kind: InheritKind) -> Self {
         self.cow.set(true);
         Self {
             cow: Cell::new(true),

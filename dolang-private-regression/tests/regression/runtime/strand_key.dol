@@ -2,6 +2,7 @@ import strand:
   - fork
   - Key
   - spawn
+  - stream
 
 let key = Key()
 assert_eq $key.value nil
@@ -10,11 +11,19 @@ key.value = "parent"
 assert_eq $key.value "parent"
 
 let child = spawn do
-  assert_eq $key.value nil
+  assert_eq $key.value "parent"
   key.value = "child"
   key.value
 
 assert_eq $child.join() "child"
+assert_eq $key.value "parent"
+
+let streamed = stream do
+  assert_eq $key.value "parent"
+  key.value = "stream"
+  key.value
+
+assert_eq $streamed.join() "stream"
 assert_eq $key.value "parent"
 
 let results = fork

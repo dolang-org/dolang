@@ -148,18 +148,28 @@ impl<'v> InterruptToken<'v> {
     }
 }
 
+/// Kind of strand receiving inherited local state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InheritKind {
+    /// A child strand whose lifetime is scoped to its parent.
+    Scoped,
+    /// A detached strand managed by the VM event loop.
+    Background,
+}
+
 /// Strand-local state.
 pub trait Local<'v>: 'v {
     /// Initialize state for main strand.
     fn init() -> Self;
     /// Create inherited state for new strand from current strand.
-    fn inherit(&self, strand: &Strand<'v, '_>) -> Self;
+    fn inherit(&self, strand: &Strand<'v, '_>, kind: InheritKind) -> Self;
 }
 
 pub(crate) struct LocalVtbl<'v> {
     drop: unsafe fn(NonNull<()>),
     init: fn() -> NonNull<()>,
-    inherit: unsafe fn(this: NonNull<()>, strand: &Strand<'v, '_>) -> NonNull<()>,
+    inherit:
+        unsafe fn(this: NonNull<()>, strand: &Strand<'v, '_>, kind: InheritKind) -> NonNull<()>,
 }
 
 impl<'v> LocalVtbl<'v> {
@@ -169,9 +179,9 @@ impl<'v> LocalVtbl<'v> {
                 let _ = unsafe { alias::Box::from_non_null(ptr.cast::<T>()) };
             },
             init: || alias::Box::into_non_null(alias::Box::new(T::init())).cast(),
-            inherit: |this, strand| unsafe {
+            inherit: |this, strand, kind| unsafe {
                 let this: &T = this.cast().as_ref();
-                NonNull::new_unchecked(Box::into_raw(Box::new(this.inherit(strand)))).cast()
+                NonNull::new_unchecked(Box::into_raw(Box::new(this.inherit(strand, kind)))).cast()
             },
         }
     }
@@ -408,12 +418,16 @@ impl<'v> StrandInner<'v> {
         Ok(CallDepthGuard { inner: self })
     }
 
-    pub(crate) fn derived(strand: &Strand<'v, '_>, interrupt: Option<InterruptToken<'v>>) -> Self {
+    pub(crate) fn derived(
+        strand: &Strand<'v, '_>,
+        interrupt: Option<InterruptToken<'v>>,
+        kind: InheritKind,
+    ) -> Self {
         let locals = strand
             .locals
             .iter()
             .zip(strand.inner.locals.iter())
-            .map(|(vtbl, local)| unsafe { (vtbl.inherit)(*local, strand) })
+            .map(|(vtbl, local)| unsafe { (vtbl.inherit)(*local, strand, kind) })
             .collect::<Vec<_>>();
         let borrow = strand.inner.mutable.borrow();
         Self {
@@ -1090,7 +1104,7 @@ impl<'v, 's> Strand<'v, 's> {
         interrupt: Option<InterruptToken<'v>>,
         f: impl for<'ss> AsyncFnOnce(&mut Strand<'v, 'ss>) -> Result<'v, 'ss, R>,
     ) -> Result<'v, 's, R> {
-        let strand = StrandInner::derived(self, interrupt);
+        let strand = StrandInner::derived(self, interrupt, InheritKind::Scoped);
         // Safety: strand is at a stable address (async fn generator state is heap-allocated)
         // and the leader's StrandGroup outlives this scoped strand.
         unsafe { strand.init_group_member(self.inner) };
@@ -1142,7 +1156,8 @@ impl<'v, 's> Strand<'v, 's> {
         let close_on_exit = stream.is_some();
 
         // Create StrandInner
-        let mut inner = StrandInner::new(self.vm(), Some(interrupt.clone()));
+        let mut inner =
+            StrandInner::derived(self, Some(interrupt.clone()), InheritKind::Background);
         inner.call_depth.set(0);
         inner.start = callable;
 

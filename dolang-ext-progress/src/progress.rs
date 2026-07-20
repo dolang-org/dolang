@@ -70,7 +70,7 @@ impl<'v> Local<'v> for ProgressLocal {
         }
     }
 
-    fn inherit(&self, _strand: &strand::Strand<'v, '_>) -> Self {
+    fn inherit(&self, _strand: &strand::Strand<'v, '_>, _kind: strand::InheritKind) -> Self {
         Self {
             depth: Cell::new(self.depth.get()),
             parent_id: Cell::new(self.parent_id.get()),

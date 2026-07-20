@@ -184,7 +184,7 @@ impl<'v> strand::Local<'v> for Local {
         }
     }
 
-    fn inherit(&self, _strand: &Strand<'v, '_>) -> Self {
+    fn inherit(&self, _strand: &Strand<'v, '_>, _kind: strand::InheritKind) -> Self {
         Self {
             cwd: self.cwd.clone(),
             env: self.env.clone(),
