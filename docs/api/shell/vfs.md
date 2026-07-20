@@ -93,12 +93,12 @@ let admin = Vfs.windows_admin()
 
 ## Methods
 
-### `(call) func ...args`
+### `with func ...args`
 
-Call the `Vfs` with a block to execute code in that VFS context:
+Executes a callable in the `Vfs` context:
 
 ```
-a do
+a.with do
   # Commands here use the VFS context
   # env and cd also use that context
   run.ls /

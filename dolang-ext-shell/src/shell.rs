@@ -386,26 +386,6 @@ impl<'v> Object<'v> for Vfs {
             .await
     }
 
-    async fn call<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        mut args: dolang::runtime::Args<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let func = match args.next() {
-            None => return Err(Error::missing_positional(strand, 0)),
-            Some(Arg::Pos(slot)) => slot,
-            Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
-        };
-        let borrow = this.annex();
-        borrow
-            .handle
-            .enter(strand, borrow.global, async move |strand| {
-                func.call(strand, args, out).await
-            })
-            .await
-    }
-
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let builder = builder.type_method("unix_socket", async move |_this, strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
@@ -447,6 +427,21 @@ impl<'v> Object<'v> for Vfs {
                 out,
             );
             Ok(())
+        });
+
+        let builder = builder.method("with", async move |this, strand, mut args, out| {
+            let func = match args.next() {
+                None => return Err(Error::missing_positional(strand, 0)),
+                Some(Arg::Pos(slot)) => slot,
+                Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
+            };
+            let borrow = this.annex();
+            borrow
+                .handle
+                .enter(strand, borrow.global, async move |strand| {
+                    func.call(strand, args, out).await
+                })
+                .await
         });
 
         let (builder, elevate_sym, cd_sym, env_sym) = {
@@ -637,7 +632,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             }
             Ok(())
         })
-        .function("host", async move |strand, mut args, out| {
+        .function("with_host", async move |strand, mut args, out| {
             let func = match args.next() {
                 None => return Err(Error::missing_positional(strand, 0)),
                 Some(Arg::Pos(slot)) => slot,

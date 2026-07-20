@@ -25,6 +25,6 @@ pub def build_windows_command command :cd = nil :env = {}
 pub def with_command argv block
   let vfs = Vfs do run ...argv
   try
-    vfs $block
+    vfs.with $block
   finally
     vfs.stop()

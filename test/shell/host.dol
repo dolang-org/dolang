@@ -8,7 +8,7 @@ import sys agent _vfs
     - test
   shell:
     - Vfs
-    - host
+    - with_host
     - vfs_exe
   fs:
     - Path
@@ -23,7 +23,7 @@ let vfs_bin = _vfs.bin()
 #[agent.test]
 def resets_context_to_defaults()
   # Change directory, re-enter host context
-  with_temp_dir do |dir| cd $dir do host do
+  with_temp_dir do |dir| cd $dir do with_host do
     # Should be back to original directory
     assert_eq $cd() $launch_cwd
 
@@ -42,7 +42,7 @@ def windows_admin_captures_current_cwd()
           TEST_DOLANG_WINDOWS_UNSET: nil
           TEST_DOLANG_WINDOWS_INHERIT: :INHERIT:
       try
-        vfs do
+        vfs.with do
           assert_eq $cd() $dir
           assert_eq $env["TEST_DOLANG_WINDOWS_STRING"] "42"
           assert_eq $env["TEST_DOLANG_WINDOWS_INHERIT"] inherited
@@ -58,12 +58,12 @@ def stdio_vfs_runs_over_strand_stream()
     assert_eq $vfs_exe() nil
     let vfs = Vfs do run $vfs_bin --stdio
     try
-      vfs do
+      vfs.with do
         assert_eq $vfs_exe() $expected_exe
         assert_eq $_vfs.bin() $expected_exe
         let background = stream do vfs_exe()
         assert_eq $background.join() $expected_exe
-        host do assert_eq $vfs_exe() nil
+        with_host do assert_eq $vfs_exe() nil
         open $marker w do |file| file.write "remote"
     finally
       vfs.stop()

@@ -111,6 +111,6 @@ do
   argv[0] = executable
   let vfs = Vfs do run ...argv
   try
-    vfs $block
+    vfs.with $block
   finally
     vfs.stop()

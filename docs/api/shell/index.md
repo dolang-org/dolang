@@ -41,7 +41,7 @@ changed only for the duration of that call, then restored.
 
 Current working directory (no arguments), or result of `func`.
 
-### `host func ...args`
+### `with_host func ...args`
 
 Executes a callable in the interpreter's original host context, regardless of
 the current or nested VFS contexts.

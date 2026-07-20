@@ -9,7 +9,8 @@ VFS[^vfs] contexts power [containers](./containers.md),
 
 ## Context Scope
 
-Call a [`Vfs`](../../api/shell/vfs.md) with a block to enter its context:
+Call [`Vfs.with`](../../api/shell/vfs.md#with-func-args) with a block to enter
+its context:
 
 ```
 import sys
@@ -20,7 +21,7 @@ import sys
 
 let remote = Vfs do run ssh -T -e none server.example.com dolang-vfs --stdio
 try
-  remote do
+  remote.with do
     echo $sys.os_info().os
     run hostname
     echo $Path(".").canonical()
@@ -75,18 +76,18 @@ the user's responsibility.
 
 ## Returning to the Host
 
-[`shell.host`](../../api/shell/index.md#host-func-args) temporarily returns to
-the interpreter's original host context:
+[`shell.with_host`](../../api/shell/index.md#with_host-func-args) temporarily
+returns to the interpreter's original host context:
 
 ```
-remote do
+remote.with do
   let remote_name = sub do run hostname
-  host do
+  with_host do
     echo "remote: $remote_name"
     echo "local: $(sub do run hostname)"
 ```
 
-`host` temporarily reverts the VFS context to the interpreter's startup
+`with_host` temporarily reverts the VFS context to the interpreter's startup
 context, including its original working directory and environment.
 
 ## Connections

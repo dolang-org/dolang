@@ -22,8 +22,8 @@ echo $release["PRETTY_NAME"]
 strings or symbols; `nil` unsets a variable and `:INHERIT:` copies its current
 strand value into the container.
 
-Use [`host`](./index.md#returning-to-the-host) to temporarily return to the host
-VFS context:
+Use [`with_host`](./index.md#returning-to-the-host) to temporarily return to the
+host VFS context:
 
 ```
 import podman
@@ -32,7 +32,7 @@ import fs:
 
 podman.with ubuntu:24.04 do
   let release = Path("/etc/os-release").read()
-  host do Path("release.txt").write $release
+  with_host do Path("release.txt").write $release
 ```
 
 ## Building Images
@@ -108,7 +108,7 @@ import shell:
 
 let agent = Vfs.unix_socket /run/container-vfs/socket
 try
-  agent do run cat /etc/os-release
+  agent.with do run cat /etc/os-release
 finally
   agent.stop()
 ```

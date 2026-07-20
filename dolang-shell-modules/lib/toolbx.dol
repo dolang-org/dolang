@@ -34,7 +34,7 @@ do
       strand.next()
       let agent = Vfs.unix_socket $socket
       try
-        return strand.redirect input: $input do agent $thunk
+        return strand.redirect input: $input do agent.with $thunk
       finally
         fs.remove $socket
 

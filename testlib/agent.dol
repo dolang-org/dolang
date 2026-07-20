@@ -12,13 +12,13 @@ def with_vfs remote block
   if remote
     let vfs = Vfs do run $vfs_bin --stdio
     try
-      vfs $block
+      vfs.with $block
     finally
       vfs.stop()
   else if (sys.os_info().family == :WINDOWS:)
     let vfs = Vfs.windows_admin elevate: false
     try
-      vfs $block
+      vfs.with $block
     finally
       vfs.stop()
   else
@@ -32,7 +32,7 @@ def with_vfs remote block
         do
           strand.next()
           let vfs = Vfs.unix_socket $socket
-          return strand.redirect input: $input do vfs $block
+          return strand.redirect input: $input do vfs.with $block
 
 pub def test
   :name = nil

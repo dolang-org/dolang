@@ -356,7 +356,7 @@ pub class Runtime
         do
           strand.next()
           let agent = Vfs.unix_socket $socket
-          return strand.redirect input: $input do agent $thunk
+          return strand.redirect input: $input do agent.with $thunk
 
   def run_direct self ctr cmd cd env argv
     self.cli run --rm -i --entrypoint env $ctr
@@ -673,18 +673,18 @@ pub class Builder
       self.#ctr_id = nil
 
   def step_run self thunk
-      self.#agent $thunk
+      self.#agent.with $thunk
 
   def resolve_target self target leaf
     target = Path $target
-    self.#agent do
+    self.#agent.with do
       if (target.exists() && target.metadata().type == :DIR:)
         (target / leaf)
       else
         target
 
   def copy_to_target self target chmod copy_data
-    self.#agent do
+    self.#agent.with do
       target.parent.create_dir all: true
       target.open wb do |dest|
         copy_data $dest
@@ -752,7 +752,7 @@ pub class Builder
         else if (kind == :DELETE:)
           let source = p.source
           w.message = "delete: $source"
-          self.#agent do
+          self.#agent.with do
             let result = p.apply (source.read "b")
             if (result.len != 0)
               throw "delete patch did not produce empty output: $source"
@@ -764,7 +764,7 @@ pub class Builder
             w.message = "modify: $source"
           else
             w.message = "$kind: $source => $target"
-          self.#agent do
+          self.#agent.with do
             let result = p.apply (p.source.read "b")
             self.#add_content $result $p.target nil
             if (kind == :MOVE: && p.source != p.target)
