@@ -41,9 +41,7 @@ do
   let agent = _vfs.bin()
   let input = strand.input()
   pipeline
-    do run_command
-      - $agent
-      - $socket
+    do run_command $agent --listen $socket
       :name
       cd: $cd_override
       env: (env_override || {})

@@ -25,6 +25,7 @@ async fn embedded_vfs_mode_serves_and_stops() {
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_dolang"))
         .arg("--vfs")
+        .arg("--connect")
         .arg(&pipe_name)
         .spawn()
         .unwrap();

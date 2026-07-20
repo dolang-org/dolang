@@ -12,8 +12,7 @@ use std::{
 
 use rand::{RngExt, distr::Alphanumeric};
 use tokio::{
-    net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions},
-    runtime::Builder,
+    net::windows::named_pipe::{NamedPipeServer, ServerOptions},
     sync::oneshot,
     time,
 };
@@ -32,7 +31,7 @@ use windows_sys::Win32::{
     },
 };
 
-use crate::{Client, Query, Server};
+use crate::{Client, Query};
 
 const EXIT_STARTUP_FAILURE: u32 = 1;
 
@@ -179,15 +178,6 @@ impl Drop for WindowsSession {
     }
 }
 
-/// Runs one VFS server session on a parent-created named pipe.
-pub fn serve_named_pipe(pipe_name: impl AsRef<OsStr>) -> io::Result<()> {
-    let runtime = Builder::new_current_thread().enable_all().build()?;
-    runtime.block_on(async move {
-        let pipe = ClientOptions::new().open(pipe_name)?;
-        Server::from_named_pipe_client(pipe)?.serve().await
-    })
-}
-
 fn random_pipe_name() -> OsString {
     let mut rng = rand::rng();
     let suffix: String = (0..32)
@@ -207,7 +197,7 @@ fn create_pipe(name: &OsStr) -> io::Result<NamedPipeServer> {
 fn launch_elevated(executable: &Path, pipe_name: &OsStr, cwd: &Path) -> io::Result<OwnedHandle> {
     let verb = wide_null(OsStr::new("runas"));
     let executable = wide_null(executable.as_os_str());
-    let parameters = command_line([OsStr::new("--vfs"), pipe_name]);
+    let parameters = command_line([OsStr::new("--vfs"), OsStr::new("--connect"), pipe_name]);
     let cwd = wide_null(cwd.as_os_str());
     let mut info: SHELLEXECUTEINFOW = unsafe { mem::zeroed() };
     info.cbSize = size_of::<SHELLEXECUTEINFOW>() as u32;
@@ -239,6 +229,7 @@ fn launch_elevated(executable: &Path, pipe_name: &OsStr, cwd: &Path) -> io::Resu
 fn launch_process(executable: &Path, pipe_name: &OsStr, cwd: &Path) -> io::Result<OwnedHandle> {
     let child = std::process::Command::new(executable)
         .arg("--vfs")
+        .arg("--connect")
         .arg(pipe_name)
         .current_dir(cwd)
         .spawn()?;
@@ -390,8 +381,8 @@ mod tests {
     #[test]
     fn quotes_windows_arguments() {
         assert_eq!(
-            display_command_line(&["--vfs", r"\\.\pipe\plain"]),
-            r"--vfs \\.\pipe\plain"
+            display_command_line(&["--vfs", "--connect", r"\\.\pipe\plain"]),
+            r"--vfs --connect \\.\pipe\plain"
         );
         assert_eq!(
             display_command_line(&["", "two words"]),
