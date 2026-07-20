@@ -16,7 +16,7 @@ defaults:
   run:
     shell: >-
       dolang --strict --no-cache
-      --import dodo --import fs
+      --import dodo --import fs --import sys
       {0}
 
 jobs:
@@ -97,22 +97,15 @@ jobs:
       - name: Run integration tests
         run: run release/bin/dolang --module-path testlib -m test -- test
 
-      - name: Package release (Unix)
-        if: matrix.os != 'windows-latest'
-        shell: bash
+      - name: Package release
         run: |
-          archive="dolang-${{ matrix.artifact_name }}.tar.gz"
-          tar -C release/bin -czf "$archive" dolang dolang-lsp dolang-vfs
-
-      - name: Package release (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $archive = "dolang-${{ matrix.artifact_name }}.tar.gz"
-          Push-Location release/bin
-          7z a -ttar ../../release.tar dolang.exe dolang-lsp.exe dolang-vfs.exe
-          Pop-Location
-          7z a -tgzip $archive release.tar
+          let archive = "dolang-${{ matrix.artifact_name }}.tar.gz"
+          if (sys.os_info().family == :WINDOWS:)
+            cd release/bin do
+              run 7z a -ttar ../../release.tar dolang.exe dolang-lsp.exe dolang-vfs.exe
+            run 7z a -tgzip $archive release.tar
+          else
+            run tar -C release/bin -czf "$archive" dolang dolang-lsp dolang-vfs
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -171,6 +164,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Setup Dolang
+        id: dolang
+        uses: ./.github/actions/setup-dolang
+
       - name: Download all artifacts
         uses: actions/download-artifact@v6
         with:
@@ -178,8 +175,9 @@ jobs:
           merge-multiple: true
 
       - name: Extract version from tag
-        run: fs.append $env["GITHUB_ENV"] |
-          VERSION=$(env["GITHUB_REF"].without_prefix "refs/tags/")
+        run: |
+          fs.append $env["GITHUB_ENV"] |
+            VERSION=$(env["GITHUB_REF"].without_prefix "refs/tags/")
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2
