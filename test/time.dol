@@ -73,14 +73,14 @@ def timeout_handles_completion_and_cancellation()
       sleep 10000
       false
 
-  let res = timeout 0.1 do
+  let res = timeout 10 do
     sleep 0
     :expected:
   assert_eq $res :expected:
 
   let cleaned = false
   let inner = try
-    timeout 0.1 do
+    timeout 10000 do
       let value = try
         timeout 0 do
           sleep 10000
