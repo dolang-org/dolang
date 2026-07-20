@@ -24,8 +24,8 @@ let podman = PodmanRuntime()
 # Run a verbatim command in a temporary Podman container from `image`.
 #
 # Returns `nil`.
-pub def run image cmd ...args
-  podman.run $image $cmd ...args
+pub def run image cmd :cd = nil :env = {} ...args
+  podman.run $image $cmd :cd :env ...args
 
 # Run a function in a temporary Podman container from `image`.
 #
@@ -35,8 +35,8 @@ pub def run image cmd ...args
 # # Returns
 #
 # The result of `func`
-pub def with image func
-  podman.with $image $func
+pub def with image func :cd = nil :env = {}
+  podman.with $image $func :cd :env
 
 # Build a container image with `podman`
 #
@@ -96,9 +96,11 @@ pub def with image func
 pub def build
   :pull = :missing:
   :mounts = []
+  :cd = nil
+  :env = {}
   :from ...args
 do
-  podman.build :pull :mounts :from ...args
+  podman.build :pull :mounts :cd :env :from ...args
 
 # List images, returning an iterator of `Image` objects
 #

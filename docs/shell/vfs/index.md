@@ -94,7 +94,8 @@ context, including its original working directory and environment.
 [`Vfs func`](../../api/shell/vfs.md#vfs-func) connects to a `dolang-vfs --stdio`
 server over any callable-backed byte stream.
 [`Vfs.unix_socket`](../../api/shell/vfs.md#unix_socket-path) connects to a
-daemon on Unix, and [`Vfs.windows_admin`](../../api/shell/vfs.md#windows_admin)
+daemon on Unix, and
+[`Vfs.windows_admin`](../../api/shell/vfs.md#windows_admin-cd-env)
 uses a private named pipe for Windows UAC elevation.
 
 Unix-socket connections are resolved through the active context. This makes it

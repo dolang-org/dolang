@@ -76,9 +76,9 @@ pub fn main(args: impl IntoIterator<Item = impl AsRef<OsStr>>) -> io::Result<()>
             env_ops.push(EnvOp::Unset(name));
             continue;
         }
-        if s == "--cwd" {
+        if s == "--cd" {
             let Some(next) = args.next() else {
-                return Err(io::Error::other("--cwd requires a path"));
+                return Err(io::Error::other("--cd requires a path"));
             };
             cwd = Some(PathBuf::from(next.as_ref()));
             continue;

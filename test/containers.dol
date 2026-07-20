@@ -48,7 +48,15 @@ def clean_container name block
 
 #[test]
 def read_ubuntu_release()
-  bind runtime.with ubuntu:24.04 do systemd.os_release()
+  let overrides =
+    TEST_DOLANG_CONTAINER_SET: "value"
+    TEST_DOLANG_CONTAINER_UNSET: nil
+  let release = runtime.with ubuntu:24.04 cd: /tmp env: $overrides do
+    assert_eq $cd() /tmp
+    assert_eq $env["TEST_DOLANG_CONTAINER_SET"] value
+    assert_eq $env.get("TEST_DOLANG_CONTAINER_UNSET", default: nil) nil
+    systemd.os_release()
+  bind release
     "NAME": name
     "VERSION_ID": ver
     ...
@@ -66,7 +74,12 @@ def read_fedora_packages()
 
 #[test]
 def run_direct_command()
-  let release = sub do runtime.run ubuntu:24.04 cat /etc/os-release
+  let overrides =
+    TEST_DOLANG_CONTAINER_SET: value
+    TEST_DOLANG_CONTAINER_UNSET: nil
+  let script = r#"printf "%s\n%s\n%s\n" "$PWD" "$TEST_DOLANG_CONTAINER_SET" "${TEST_DOLANG_CONTAINER_UNSET-unset}"; cat /etc/os-release"#
+  let release = sub do runtime.run ubuntu:24.04 /bin/sh -c $script cd: /tmp env: $overrides
+  assert $ release.starts_with "/tmp\nvalue\nunset\n"
   assert $ release.contains "NAME=\"Ubuntu\""
   assert $ release.contains "VERSION_ID=\"24.04\""
 
@@ -78,10 +91,17 @@ else
 #[test]
 def image_build_inspect_remove()
   let image_tag = "dolang-test-image-inspect-remove:latest"
+  let overrides = {TEST_DOLANG_CONTAINER_BUILD: "value"}
+  let build_step = do
+    assert_eq $cd() /tmp
+    assert_eq $env["TEST_DOLANG_CONTAINER_BUILD"] value
+    run touch /test-marker
   # Build a minimal image
   let built = runtime.build
     from: ubuntu:24.04
-    run: do run touch /test-marker
+    cd: /tmp
+    env: $overrides
+    run: $build_step
     tag: $image_tag
 
   # Inspect via image()

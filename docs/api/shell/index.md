@@ -66,6 +66,18 @@ when running on the host filesystem.
 
 [`fs.Path`](../fs/path.md) or `nil`.
 
+### `env overrides func`
+
+Runs `func` with scoped environment overrides. Keys may be strings or symbols.
+`nil` unsets a variable and `:INHERIT:` captures its current strand value.
+
+**Parameters:**
+
+| Name        | Type                     | Description           |
+| ----------- | ------------------------ | --------------------- |
+| `overrides` | [`dict`](../std/dict.md) | Environment overrides |
+| `func`      | callable                 | Block to run          |
+
 ## Values
 
 ### `env`

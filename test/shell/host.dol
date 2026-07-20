@@ -30,12 +30,23 @@ def windows_admin_captures_current_cwd()
   if (sys.os_info().family != :WINDOWS:)
     skip "requires Windows"
 
-  let dir = (launch_cwd / "test")
-  let vfs = cd $dir do Vfs.windows_admin elevate: false
-  try
-    vfs do assert_eq $cd() $dir
-  finally
-    vfs.stop()
+  with_temp_dir do |dir|
+    env TEST_DOLANG_WINDOWS_INHERIT: inherited TEST_DOLANG_WINDOWS_UNSET: present do
+      let vfs = Vfs.windows_admin
+        elevate: false
+        cd: $dir
+        env:
+          "TEST_DOLANG_WINDOWS_STRING": 42
+          TEST_DOLANG_WINDOWS_UNSET: nil
+          TEST_DOLANG_WINDOWS_INHERIT: :INHERIT:
+      try
+        vfs do
+          assert_eq $cd() $dir
+          assert_eq $env["TEST_DOLANG_WINDOWS_STRING"] "42"
+          assert_eq $env["TEST_DOLANG_WINDOWS_INHERIT"] inherited
+          assert_eq $env.get("TEST_DOLANG_WINDOWS_UNSET", default: nil) nil
+      finally
+        vfs.stop()
 
 #[test]
 def stdio_vfs_runs_over_strand_stream()

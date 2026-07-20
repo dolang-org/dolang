@@ -18,6 +18,10 @@ let release = podman.with ubuntu:24.04 do
 echo $release["PRETTY_NAME"]
 ```
 
+`run`, `with`, and `build` accept `cd:` and `env:`. Environment keys may be
+strings or symbols; `nil` unsets a variable and `:INHERIT:` copies its current
+strand value into the container.
+
 Use [`host`](./index.md#returning-to-the-host) to temporarily return to the host
 VFS context:
 

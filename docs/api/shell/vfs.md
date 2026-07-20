@@ -55,12 +55,21 @@ the context's initial working directory.
 let a = Vfs.unix_socket /tmp/agent/socket
 ```
 
-### `windows_admin()`
+### `windows_admin :cd? :env?`
 
 Launches an elevated copy of the current `dolang.exe` on Windows.
 
 The calling strand's current working directory becomes the context's initial
-working directory.
+working directory unless `cd:` overrides it. `env:` accepts string or symbol
+keys; `nil` unsets a variable and `:INHERIT:` captures the calling strand's
+current value.
+
+**Parameters:**
+
+| Name  | Type                     | Description           |
+| ----- | ------------------------ | --------------------- |
+| `cd`  | [`Path`](../fs/path.md)? | Initial directory     |
+| `env` | [`dict`](../std/dict.md) | Environment overrides |
 
 Windows displays a User Account Control prompt. Cancelling the prompt raises a
 system error.

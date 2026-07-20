@@ -4,6 +4,7 @@ use dolang::runtime::{
     Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
     object::{DictLike, DictView, DictViewSink, Spread, SpreadContext, TypeBuilder, Unpack},
     unpack,
+    value::View,
 };
 
 use crate::{global::Global, local};
@@ -170,18 +171,59 @@ impl<'v> Object<'v> for Env<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut vars = HashMap::new();
+        let mut first_positional = true;
         let func = loop {
             match args.next() {
                 None => return Err(Error::missing_positional(strand, 0)),
+                Some(Arg::Pos(slot)) if first_positional => {
+                    first_positional = false;
+                    let View::Dict(dict) = slot.view(strand) else {
+                        break slot;
+                    };
+                    let mut pairs = dict.pairs();
+                    strand.with_slots_sync(|strand, [mut key, mut value]| {
+                        while pairs.next(strand, &mut key, &mut value)? {
+                            let key = match key.view(strand) {
+                                View::Str(key) => key.to_string(),
+                                View::Sym(key) => key.as_str(strand).to_string(),
+                                _ => {
+                                    return Err(Error::type_error(
+                                        strand,
+                                        "env key: expected str or sym",
+                                    ));
+                                }
+                            };
+                            let value = if value.is_nil() {
+                                None
+                            } else if value.as_sym(strand)
+                                == Some(this.borrow(strand)?.global.syms.inherit)
+                            {
+                                this.borrow(strand)?
+                                    .global
+                                    .local
+                                    .get(strand)
+                                    .env()
+                                    .get(&key)
+                                    .map(|value| value.into_owned())
+                            } else {
+                                Some(value.to_string(strand)?)
+                            };
+                            vars.insert(key, value);
+                        }
+                        Ok(())
+                    })?;
+                }
                 Some(Arg::Pos(slot)) => break slot,
-                Some(Arg::Key(sym, slot)) => vars.insert(
-                    sym.as_str(strand).to_string(),
-                    if slot.is_nil() {
-                        None
-                    } else {
-                        Some(slot.to_string(strand)?)
-                    },
-                ),
+                Some(Arg::Key(sym, slot)) => {
+                    vars.insert(
+                        sym.as_str(strand).to_string(),
+                        if slot.is_nil() {
+                            None
+                        } else {
+                            Some(slot.to_string(strand)?)
+                        },
+                    );
+                }
             };
         };
         let me = this.borrow(strand)?;

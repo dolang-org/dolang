@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    collections::HashMap,
     ffi::{OsStr, OsString},
     io, mem,
     os::windows::{
@@ -44,26 +45,38 @@ pub struct WindowsSession {
 
 impl WindowsSession {
     /// Launches an elevated copy of the current executable and connects to it.
-    pub async fn launch(cwd: impl Into<PathBuf>) -> io::Result<(Self, Query)> {
-        launch_with(cwd.into(), launch_elevated, false).await
+    pub async fn launch(
+        cwd: impl Into<PathBuf>,
+        env: HashMap<String, Option<String>>,
+    ) -> io::Result<(Self, Query)> {
+        launch_with(cwd.into(), env, launch_elevated, false).await
     }
 
     /// Launches an elevated session using opaque-only generic framing.
     #[doc(hidden)]
-    pub async fn launch_remote(cwd: impl Into<PathBuf>) -> io::Result<(Self, Query)> {
-        launch_with(cwd.into(), launch_elevated, true).await
+    pub async fn launch_remote(
+        cwd: impl Into<PathBuf>,
+        env: HashMap<String, Option<String>>,
+    ) -> io::Result<(Self, Query)> {
+        launch_with(cwd.into(), env, launch_elevated, true).await
     }
 
     /// Launches a non-elevated copy of the current executable for automated tests.
     #[doc(hidden)]
-    pub async fn launch_unelevated(cwd: impl Into<PathBuf>) -> io::Result<(Self, Query)> {
-        launch_with(cwd.into(), launch_process, false).await
+    pub async fn launch_unelevated(
+        cwd: impl Into<PathBuf>,
+        env: HashMap<String, Option<String>>,
+    ) -> io::Result<(Self, Query)> {
+        launch_with(cwd.into(), env, launch_process, false).await
     }
 
     /// Launches a non-elevated session using opaque-only generic framing.
     #[doc(hidden)]
-    pub async fn launch_unelevated_remote(cwd: impl Into<PathBuf>) -> io::Result<(Self, Query)> {
-        launch_with(cwd.into(), launch_process, true).await
+    pub async fn launch_unelevated_remote(
+        cwd: impl Into<PathBuf>,
+        env: HashMap<String, Option<String>>,
+    ) -> io::Result<(Self, Query)> {
+        launch_with(cwd.into(), env, launch_process, true).await
     }
 
     /// Returns the VFS RPC client for this session.
@@ -98,13 +111,15 @@ impl WindowsSession {
 
 async fn launch_with(
     cwd: PathBuf,
-    launcher: impl FnOnce(&Path, &OsStr, &Path) -> io::Result<OwnedHandle> + Send + 'static,
+    env: HashMap<String, Option<String>>,
+    launcher: impl FnOnce(&Path, &[OsString], &Path) -> io::Result<OwnedHandle> + Send + 'static,
     remote: bool,
 ) -> io::Result<(WindowsSession, Query)> {
     let pipe_name = random_pipe_name();
     let pipe = create_pipe(&pipe_name)?;
     let executable = std::env::current_exe()?;
-    let process = launch_on_sta_thread(executable, pipe_name, cwd, launcher).await?;
+    let args = launch_args(pipe_name, env);
+    let process = launch_on_sta_thread(executable, args, cwd, launcher).await?;
     let guard = ProcessGuard::new(&process);
 
     connect_or_exit(&pipe, &process).await?;
@@ -128,18 +143,37 @@ async fn launch_with(
     ))
 }
 
+fn launch_args(pipe_name: OsString, env: HashMap<String, Option<String>>) -> Vec<OsString> {
+    let mut args = vec![OsString::from("--vfs")];
+    for (key, value) in env {
+        match value {
+            Some(value) => {
+                args.push(OsString::from("--set"));
+                args.push(OsString::from(format!("{key}={value}")));
+            }
+            None => {
+                args.push(OsString::from("--unset"));
+                args.push(OsString::from(key));
+            }
+        }
+    }
+    args.push(OsString::from("--connect"));
+    args.push(pipe_name);
+    args
+}
+
 async fn launch_on_sta_thread(
     executable: impl Into<std::path::PathBuf>,
-    pipe_name: OsString,
+    args: Vec<OsString>,
     cwd: PathBuf,
-    launcher: impl FnOnce(&Path, &OsStr, &Path) -> io::Result<OwnedHandle> + Send + 'static,
+    launcher: impl FnOnce(&Path, &[OsString], &Path) -> io::Result<OwnedHandle> + Send + 'static,
 ) -> io::Result<OwnedHandle> {
     let executable = executable.into();
     let (tx, rx) = oneshot::channel();
     std::thread::Builder::new()
         .name("dolang-vfs-launch".into())
         .spawn(move || {
-            let result = with_sta_com(|| launcher(&executable, &pipe_name, &cwd));
+            let result = with_sta_com(|| launcher(&executable, &args, &cwd));
             let _ = tx.send(result);
         })?;
     rx.await
@@ -194,10 +228,10 @@ fn create_pipe(name: &OsStr) -> io::Result<NamedPipeServer> {
         .create(name)
 }
 
-fn launch_elevated(executable: &Path, pipe_name: &OsStr, cwd: &Path) -> io::Result<OwnedHandle> {
+fn launch_elevated(executable: &Path, args: &[OsString], cwd: &Path) -> io::Result<OwnedHandle> {
     let verb = wide_null(OsStr::new("runas"));
     let executable = wide_null(executable.as_os_str());
-    let parameters = command_line([OsStr::new("--vfs"), OsStr::new("--connect"), pipe_name]);
+    let parameters = command_line(args.iter().map(OsString::as_os_str));
     let cwd = wide_null(cwd.as_os_str());
     let mut info: SHELLEXECUTEINFOW = unsafe { mem::zeroed() };
     info.cbSize = size_of::<SHELLEXECUTEINFOW>() as u32;
@@ -226,11 +260,9 @@ fn launch_elevated(executable: &Path, pipe_name: &OsStr, cwd: &Path) -> io::Resu
     Ok(unsafe { OwnedHandle::from_raw_handle(info.hProcess as _) })
 }
 
-fn launch_process(executable: &Path, pipe_name: &OsStr, cwd: &Path) -> io::Result<OwnedHandle> {
+fn launch_process(executable: &Path, args: &[OsString], cwd: &Path) -> io::Result<OwnedHandle> {
     let child = std::process::Command::new(executable)
-        .arg("--vfs")
-        .arg("--connect")
-        .arg(pipe_name)
+        .args(args)
         .current_dir(cwd)
         .spawn()?;
     child.as_handle().try_clone_to_owned()
@@ -395,10 +427,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn launch_arguments_apply_environment_before_connect_mode() {
+        let args = launch_args(
+            OsString::from(r"\\.\pipe\test"),
+            HashMap::from([
+                ("SET".to_string(), Some("value with spaces".to_string())),
+                ("UNSET".to_string(), None),
+            ]),
+        );
+        let args: Vec<_> = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args.first().map(String::as_str), Some("--vfs"));
+        assert_eq!(args[args.len() - 2], "--connect");
+        assert_eq!(args.last().map(String::as_str), Some(r"\\.\pipe\test"));
+        assert!(
+            args.windows(2)
+                .any(|args| args == ["--set", "SET=value with spaces"])
+        );
+        assert!(args.windows(2).any(|args| args == ["--unset", "UNSET"]));
+    }
+
     #[tokio::test]
     async fn launcher_errors_are_reported_without_uac() {
         let error = match launch_with(
             std::env::current_dir().unwrap(),
+            HashMap::new(),
             |_, _, _| Err(io::Error::other("launch failed")),
             false,
         )
