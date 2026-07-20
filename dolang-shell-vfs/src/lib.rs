@@ -1127,6 +1127,12 @@ pub trait Vfs {
     fn open_options(&self) -> Self::OpenOptions<'_>;
     fn command(&self, program: Utf8TypedPath<'_>) -> Self::Command<'_>;
     async fn unix_socket(&self, path: Utf8TypedPath<'_>) -> Result<AnyVfs>;
+    async fn windows_admin(
+        &self,
+        cwd: Utf8TypedPath<'_>,
+        env: HashMap<String, Option<String>>,
+        elevate: bool,
+    ) -> Result<VfsSession>;
     async fn pipe(&self) -> Result<(Self::StdioSend, Self::StdioRecv)>;
     async fn query(&self) -> Result<Query>;
     async fn user_name(&self, uid: u32) -> Result<String>;
@@ -1695,6 +1701,45 @@ pub enum AnyVfs {
     Direct(Direct),
 }
 
+/// An owned connection to a VFS process whose lifetime is tied to the connection.
+pub struct VfsSession {
+    client: Client,
+    #[cfg(windows)]
+    windows: Option<windows::AdminSession>,
+}
+
+impl VfsSession {
+    pub(crate) fn from_client(client: Client) -> Self {
+        Self {
+            client,
+            #[cfg(windows)]
+            windows: None,
+        }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn from_windows(session: windows::AdminSession) -> Self {
+        Self {
+            client: session.client().clone(),
+            windows: Some(session),
+        }
+    }
+
+    /// Returns the client for the owned VFS connection.
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Stops the VFS server and waits for an owned process to exit.
+    pub async fn stop(&self) -> Result<()> {
+        #[cfg(windows)]
+        if let Some(session) = &self.windows {
+            return session.stop().await.map_err(Into::into);
+        }
+        self.client.stop().await
+    }
+}
+
 impl Default for AnyVfs {
     fn default() -> Self {
         Self::Direct(Direct::default())
@@ -1760,6 +1805,18 @@ impl Vfs for AnyVfs {
         match self {
             Self::Client(client) => client.unix_socket(path).await,
             Self::Direct(direct) => direct.unix_socket(path).await,
+        }
+    }
+
+    async fn windows_admin(
+        &self,
+        cwd: Utf8TypedPath<'_>,
+        env: HashMap<String, Option<String>>,
+        elevate: bool,
+    ) -> crate::Result<VfsSession> {
+        match self {
+            Self::Client(client) => client.windows_admin(cwd, env, elevate).await,
+            Self::Direct(direct) => direct.windows_admin(cwd, env, elevate).await,
         }
     }
 
@@ -2144,4 +2201,4 @@ pub use service::main;
 pub use nix::unistd::AccessFlags;
 
 #[cfg(windows)]
-pub use windows::WindowsSession;
+pub use windows::AdminSession;

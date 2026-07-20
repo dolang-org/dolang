@@ -2,7 +2,7 @@
 
 Do can perform operations indirectly through the `dolang-vfs` companion program.
 VFS[^vfs] contexts power [containers](./containers.md),
-[SSH remoting](./ssh.md), and
+[SSH remoting](./ssh.md), [WSL transitions](./wsl.md), and
 [privilege elevation](./admin.md).
 
 [^vfs]: Versatile Familiar Spirit
@@ -66,9 +66,9 @@ context even when another context is current.
 Handles remain valid only while their originating VFS context remains
 connected. Calling `stop()`, losing the connection, or leaving a helper that
 owns a block-scoped connection invalidates its handles. `ssh.with`,
-`docker.with`, `podman.with`, `sudo.with`, and `admin.with` all tear down the
-context upon leaving the provided block, so any I/O to `File`s opened in the
-block must also take place within it.
+`docker.with`, `podman.with`, `wsl.with_linux`, `wsl.with_windows`, `sudo.with`,
+and `admin.with` all tear down the context upon leaving the provided block, so
+any I/O to `File`s opened in the block must also take place within it.
 
 Manually constructed `Vfs` instances are not automatically torn down; that is
 the user's responsibility.
@@ -98,13 +98,15 @@ daemon on Unix, and
 [`Vfs.windows_admin`](../../api/shell/vfs.md#windows_admin-cd-env)
 uses a private named pipe for Windows UAC elevation.
 
-Unix-socket connections are resolved through the active context. This makes it
-possible to enter an SSH host and then connect to a container VFS reachable
-from that host.
+Unix-socket and Windows administrator connections are resolved through the
+active context. This makes it possible to enter an SSH host and then connect to
+a container VFS reachable from that host, or to elevate a Windows host VFS from
+WSL.
 
 Call `stop()` when a manually created handle is no longer needed. Prefer
-helpers such as `ssh.with`, `docker.with`, `podman.with`, and `admin.with`; they
-clean up their VFS sessions when the block returns or throws.
+helpers such as `ssh.with`, `docker.with`, `podman.with`, `wsl.with_linux`, and
+`admin.with`; they clean up their VFS sessions when the block returns or
+throws.
 
 ## Limitations
 

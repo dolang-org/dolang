@@ -45,7 +45,7 @@ fn program_name_from_value<'v, 's>(
         let path = if path.is_absolute() {
             path
         } else {
-            global.local.get(strand).cwd().join(path.as_str())
+            global.local.get(strand).cwd().join(path)
         };
         Ok(path.as_str().to_owned())
     } else if let Some(name) = value.as_str(strand) {

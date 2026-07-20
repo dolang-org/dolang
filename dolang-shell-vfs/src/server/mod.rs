@@ -30,7 +30,7 @@ use crate::{
         RequestKind, ResponseKind, SecDescRequest, SetMetadataRequest, SetSecDescRequest,
         SetTimesRequest, SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget,
         StreamsRequest, SymlinkKind, SymlinkRequest, UnixVfsRequest, VfsProtocol,
-        WellKnownPathRequest, WirePath, XattrRequest, XattrsRequest,
+        WellKnownPathRequest, WindowsAdminRequest, WirePath, XattrRequest, XattrsRequest,
     },
 };
 
@@ -42,11 +42,25 @@ fn request_path(path: &WirePath) -> Utf8TypedPath<'_> {
 struct Connection {
     server: Arc<ServerState>,
     mode: SessionMode,
-    #[cfg(unix)]
-    vfs: Option<dolang_rpc::Opaque<crate::VfsMarker>>,
 }
 
-struct RetainedVfs(AnyVfs);
+struct RetainedVfs {
+    vfs: AnyVfs,
+    session: Option<crate::VfsSession>,
+}
+
+impl RetainedVfs {
+    fn plain(vfs: AnyVfs) -> Self {
+        Self { vfs, session: None }
+    }
+
+    fn session(session: crate::VfsSession) -> Self {
+        Self {
+            vfs: session.client().clone().into(),
+            session: Some(session),
+        }
+    }
+}
 
 impl OpaqueResource for RetainedVfs {
     type Marker = crate::VfsMarker;
@@ -167,7 +181,6 @@ impl Server {
         let connection = Arc::new(Connection {
             server: self.shared.clone(),
             mode: SessionMode::Native,
-            vfs: None,
         });
         tokio::spawn(async move {
             let stop = Arc::new(AtomicBool::new(false));
@@ -205,8 +218,6 @@ impl Server {
         let connection = Arc::new(Connection {
             server: self.shared,
             mode: self.mode,
-            #[cfg(unix)]
-            vfs: None,
         });
         let stop = Arc::new(AtomicBool::new(false));
         let rpc = self
@@ -272,13 +283,11 @@ impl Connection {
             .map_err(|_| Self::invalid_opaque("VFS"))?;
         Ok(Self {
             server: Arc::new(ServerState {
-                vfs: selected.0.clone(),
+                vfs: selected.vfs.clone(),
                 #[cfg(unix)]
                 shutdown_tx: self.server.shutdown_tx.clone(),
             }),
             mode: self.mode,
-            #[cfg(unix)]
-            vfs: Some(vfs),
         })
     }
 
@@ -297,9 +306,15 @@ impl Connection {
             Ok(retained) => retained,
             Err(_) => return ResponseKind::Error(Self::invalid_opaque("VFS")),
         };
-        let client = retained.0.as_client().cloned();
+        let client = retained.vfs.as_client().cloned();
         drop(retained);
-        let _ = context.unregister::<RetainedVfs>(vfs);
+        let retained = context.unregister::<RetainedVfs>(vfs).ok().flatten();
+        if let Some(session) = retained.and_then(|retained| retained.session) {
+            return match session.stop().await {
+                Ok(()) => ResponseKind::Stop,
+                Err(error) => ResponseKind::Error(wire_error(error)),
+            };
+        }
         let Some(client) = client else {
             return ResponseKind::Error(Self::invalid_opaque("VFS"));
         };
@@ -440,6 +455,7 @@ impl Connection {
             }
             RequestKind::FileClose { file } => self.handle_file_close(context, file).await,
             RequestKind::UnixVfs(request) => self.handle_unix_vfs(context, request).await,
+            RequestKind::WindowsAdmin(request) => self.handle_windows_admin(context, request).await,
             RequestKind::ReadDir { path } => self.handle_read_dir(path).await,
             RequestKind::Remove(request) => self.handle_remove(request).await,
             RequestKind::Metadata(request) => self.handle_metadata(request).await,
@@ -1200,10 +1216,7 @@ impl Connection {
         req: UnixVfsRequest,
     ) -> ResponseKind {
         #[cfg(unix)]
-        if self.mode == SessionMode::Native
-            && self.vfs.is_none()
-            && matches!(self.server.vfs, AnyVfs::Direct(_))
-        {
+        if self.mode == SessionMode::Native && matches!(self.server.vfs, AnyVfs::Direct(_)) {
             let result: crate::Result<OwnedFd> = async {
                 let path = crate::native_path(request_path(&req.path))?;
                 let stream = UnixStream::connect(path).await?;
@@ -1222,7 +1235,22 @@ impl Connection {
                 .vfs
                 .unix_socket(request_path(&req.path))
                 .await
-                .map(|vfs| OpenVfsHandle::Opaque(context.register(RetainedVfs(vfs))))
+                .map(|vfs| OpenVfsHandle::Opaque(context.register(RetainedVfs::plain(vfs))))
+                .map_err(wire_error),
+        )
+    }
+
+    async fn handle_windows_admin(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        req: WindowsAdminRequest,
+    ) -> ResponseKind {
+        ResponseKind::WindowsAdmin(
+            self.server
+                .vfs
+                .windows_admin(request_path(&req.cwd), req.env, req.elevate)
+                .await
+                .map(|session| context.register(RetainedVfs::session(session)))
                 .map_err(wire_error),
         )
     }

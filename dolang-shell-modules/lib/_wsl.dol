@@ -1,0 +1,30 @@
+import _vfs
+import shell:
+  - Vfs
+
+pub def build_linux_command
+  command
+  :distro = nil
+  :user = nil
+  :cd = nil
+  :env = {}
+do
+  let argv = ["wsl.exe"]
+  if (distro != nil)
+    argv.push --distribution $distro
+  if (user != nil)
+    argv.push --user $user
+  argv.push --exec ...command ...(_vfs.vfs_args cd env) --stdio
+  argv
+
+pub def build_windows_command command :cd = nil :env = {}
+  let argv = [...command]
+  argv.push ...(_vfs.vfs_args cd env) --stdio
+  argv
+
+pub def with_command argv block
+  let vfs = Vfs do run ...argv
+  try
+    vfs $block
+  finally
+    vfs.stop()

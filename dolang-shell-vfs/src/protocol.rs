@@ -498,6 +498,13 @@ pub(crate) struct UnixVfsRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct WindowsAdminRequest {
+    pub(crate) cwd: WirePath,
+    pub(crate) env: HashMap<String, Option<String>>,
+    pub(crate) elevate: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum OpenVfsHandle {
     Native(OsHandle),
     Opaque(Opaque<crate::VfsMarker>),
@@ -798,6 +805,7 @@ pub(crate) enum RequestKind {
         file: Opaque<crate::FileMarker>,
     },
     UnixVfs(UnixVfsRequest),
+    WindowsAdmin(WindowsAdminRequest),
     ReadDir {
         path: WirePath,
     },
@@ -871,6 +879,7 @@ pub(crate) enum ResponseKind {
     FileRemoveXattr(Result<(), WireError>),
     FileClose(Result<(), WireError>),
     UnixVfs(Result<OpenVfsHandle, WireError>),
+    WindowsAdmin(Result<Opaque<crate::VfsMarker>, WireError>),
     ReadDir(Result<ReadDirResponse, WireError>),
     Remove(Result<(), WireError>),
     Metadata(Result<Metadata, WireError>),

@@ -38,9 +38,12 @@ which remain in the RPC object table.
 On Windows, the RPC client uses the server end of a connected named pipe and
 the RPC server uses the client end. The client retains a trusted handle for the
 server process so `dolang-rpc` can transfer native handles in both directions.
-`shell.Vfs.windows_admin()` creates the pipe and launches the current
-`dolang.exe` through UAC. The child handles the private `--vfs` mode and serves
-the direct backend until shutdown or disconnect.
+`shell.Vfs.windows_admin()` creates the pipe and launches the direct Windows
+backend's current executable through UAC. The request can be forwarded through
+opaque VFS handles, but never includes an executable path. `dolang.exe` receives
+the private `--vfs` selector; `dolang-vfs.exe` already uses the VFS argument
+syntax directly. The child serves the direct backend until shutdown or
+disconnect.
 
 For automated tests, `shell.Vfs.windows_admin(elevate: false)` uses a normal
 same-user process launch instead. Windows release validation must also accept a

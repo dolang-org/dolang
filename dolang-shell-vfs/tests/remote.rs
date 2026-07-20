@@ -29,6 +29,22 @@ async fn connected_split_pair() -> (Client, tokio::task::JoinHandle<io::Result<(
     (Client::new_split(client_reader, client_writer), task)
 }
 
+#[cfg(not(windows))]
+#[tokio::test]
+async fn windows_admin_reports_unsupported_from_non_windows_backend() {
+    let (client, server_task) = connected_pair().await;
+    let cwd = Utf8TypedPath::Windows(Utf8WindowsPath::new(r"C:\"));
+    let error = client
+        .windows_admin(cwd, std::collections::HashMap::new(), true)
+        .await
+        .err()
+        .expect("non-Windows backend unexpectedly opened an administrator VFS");
+    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
 #[cfg(unix)]
 async fn socket_server(path: &std::path::Path) -> tokio::task::JoinHandle<io::Result<()>> {
     let server = Server::bind(path).await.unwrap();

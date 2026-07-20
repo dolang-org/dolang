@@ -807,6 +807,33 @@ impl Vfs for Direct {
         }
     }
 
+    async fn windows_admin(
+        &self,
+        cwd: Utf8TypedPath<'_>,
+        env: HashMap<String, Option<String>>,
+        elevate: bool,
+    ) -> crate::Result<crate::VfsSession> {
+        #[cfg(windows)]
+        {
+            let cwd = native_path(cwd)?;
+            let (session, _) = if elevate {
+                crate::AdminSession::launch(cwd, env).await
+            } else {
+                crate::AdminSession::launch_unelevated(cwd, env).await
+            }?;
+            Ok(crate::VfsSession::from_windows(session))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (cwd, env, elevate);
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Windows administrator VFS is not supported by this direct backend",
+            )
+            .into())
+        }
+    }
+
     async fn pipe(&self) -> crate::Result<(StdioSend, StdioRecv)> {
         crate::pipe::pipe().map_err(Into::into)
     }

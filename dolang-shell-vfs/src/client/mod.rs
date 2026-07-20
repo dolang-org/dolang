@@ -40,8 +40,8 @@ use crate::{
         RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind, ResponseKind,
         SecDescRequest, SetMetadataRequest, SetSecDescRequest, SetTimesRequest, SetXattrRequest,
         SpawnRequest, StdioRecvTarget, StdioSendTarget, StreamsRequest, SymlinkKind,
-        SymlinkRequest, Timestamp, UnixVfsRequest, VfsProtocol, WellKnownPathRequest, WirePath,
-        XattrNamespaceRequest, XattrRequest, XattrsRequest,
+        SymlinkRequest, Timestamp, UnixVfsRequest, VfsProtocol, WellKnownPathRequest,
+        WindowsAdminRequest, WirePath, XattrNamespaceRequest, XattrRequest, XattrsRequest,
     },
 };
 
@@ -759,6 +759,30 @@ impl Client {
                 }
                 .into()),
             },
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    async fn windows_admin_vfs(
+        &self,
+        cwd: Utf8TypedPath<'_>,
+        env: HashMap<String, Option<String>>,
+        elevate: bool,
+    ) -> crate::Result<crate::VfsSession> {
+        let request = WindowsAdminRequest {
+            cwd: cwd.into(),
+            env,
+            elevate,
+        };
+        match self.request(RequestKind::WindowsAdmin(request)).await? {
+            ResponseKind::WindowsAdmin(result) => {
+                let vfs = result.map_err(crate::Error::from)?;
+                Ok(crate::VfsSession::from_client(Self {
+                    rpc: self.rpc.clone(),
+                    mode: self.mode,
+                    vfs: Some(vfs),
+                }))
+            }
             response => Err(unexpected(response).into()),
         }
     }
@@ -1994,6 +2018,15 @@ impl Vfs for Client {
 
     async fn unix_socket(&self, path: Utf8TypedPath<'_>) -> crate::Result<crate::AnyVfs> {
         self.unix_vfs(path).await
+    }
+
+    async fn windows_admin(
+        &self,
+        cwd: Utf8TypedPath<'_>,
+        env: HashMap<String, Option<String>>,
+        elevate: bool,
+    ) -> crate::Result<crate::VfsSession> {
+        self.windows_admin_vfs(cwd, env, elevate).await
     }
 
     async fn pipe(&self) -> crate::Result<(StdioSend, StdioRecv)> {
