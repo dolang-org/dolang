@@ -3666,7 +3666,7 @@ impl<'a> Parser<'a> {
                 Some(token!(TokenInfo::Equal)) => {
                     let delim_span = self.advance();
                     self.expect(scope, &[ExpectKind::ArgSep])?;
-                    let expr = self.parse_expr_primary(scope, ExprMode::Compact)?;
+                    let expr = self.parse_expr(scope, ExprMode::Compact)?;
                     let fold = expr.fold(self.file);
                     Some(ParamDefault {
                         delim_span,
