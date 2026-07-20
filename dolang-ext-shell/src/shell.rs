@@ -18,7 +18,6 @@ use dolang::{
     },
 };
 
-#[cfg(windows)]
 use crate::util;
 use crate::{
     env::Env as EnvObject,
@@ -28,13 +27,9 @@ use crate::{
     local::Env as LocalEnv,
     pipe_channel,
 };
-#[cfg(windows)]
 use dolang::runtime::value::View;
-
-#[cfg(windows)]
-use dolang_shell_vfs::WindowsSession;
 use dolang_shell_vfs::{
-    AnyVfs, Client, Query, SecurityInfo, TargetInfo, Utf8TypedPathBuf, Vfs as _,
+    AnyVfs, Client, Query, SecurityInfo, TargetInfo, Utf8TypedPathBuf, Vfs as _, VfsSession,
 };
 use std::collections::HashMap;
 
@@ -285,8 +280,7 @@ pub(crate) struct VfsAnnex<'v> {
 enum VfsSource {
     Stream,
     Unix(Utf8TypedPathBuf),
-    #[cfg(windows)]
-    Windows(WindowsSession),
+    WindowsAdmin(VfsSession),
 }
 
 impl<'v> Object<'v> for Vfs {
@@ -307,8 +301,7 @@ impl<'v> Object<'v> for Vfs {
             VfsSource::Unix(socket) => {
                 fmt!(strand, w, "<shell.Vfs socket: {socket:?}>")
             }
-            #[cfg(windows)]
-            VfsSource::Windows(_) => {
+            VfsSource::WindowsAdmin(_) => {
                 fmt!(strand, w, "<shell.Vfs windows admin>")
             }
         }
@@ -456,14 +449,12 @@ impl<'v> Object<'v> for Vfs {
             Ok(())
         });
 
-        #[cfg(windows)]
-        let (builder, elevate, remote_sym, cd_sym, env_sym) = {
+        let (builder, elevate_sym, cd_sym, env_sym) = {
             let mut builder = builder;
-            let elevate = builder.sym("elevate");
-            let remote_sym = builder.sym("remote");
+            let elevate_sym = builder.sym("elevate");
             let cd_sym = builder.sym("cd");
             let env_sym = builder.sym("env");
-            (builder, elevate, remote_sym, cd_sym, env_sym)
+            (builder, elevate_sym, cd_sym, env_sym)
         };
         let builder = builder.method("stop", async move |this, strand, _args, _out| {
             let borrow = this.annex();
@@ -472,123 +463,106 @@ impl<'v> Object<'v> for Vfs {
                 VfsSource::Unix(_) => {
                     error::io_result(strand, borrow.handle.client().stop().await)?
                 }
-                #[cfg(windows)]
-                VfsSource::Windows(session) => error::io_result(strand, session.stop().await)?,
+                VfsSource::WindowsAdmin(session) => error::io_result(strand, session.stop().await)?,
             }
             Ok(())
         });
 
-        #[cfg(windows)]
-        let builder =
-            builder.type_method("windows_admin", async move |_this, strand, args, out| {
-                let ([], [elevate, remote, cd, env_value]) = unpack!(
-                    strand,
-                    args,
-                    0,
-                    0,
-                    elevate = None,
-                    remote_sym = None,
-                    cd_sym = None,
-                    env_sym = None
-                )?;
-                let elevate = match elevate {
-                    Some(elevate) => util::bool(strand, elevate, "elevate")?,
-                    None => true,
-                };
-                let remote = remote
-                    .map(|value| util::bool(strand, value, "remote"))
-                    .transpose()?
-                    .unwrap_or(false);
-                let global = strand.vm().state::<Global<'v>>();
-                let current_cwd = global.local.get(strand).cwd().clone();
-                let cwd = if let Some(cd) = cd {
-                    let cd = path_from_value(strand, global, &cd)?;
-                    if cd.is_absolute() {
-                        cd
-                    } else {
-                        current_cwd.join(cd.as_str())
-                    }
+        builder.type_method("windows_admin", async move |_this, strand, args, out| {
+            let ([], [elevate, cd, env_value]) = unpack!(
+                strand,
+                args,
+                0,
+                0,
+                elevate_sym = None,
+                cd_sym = None,
+                env_sym = None
+            )?;
+            let elevate = match elevate {
+                Some(elevate) => util::bool(strand, elevate, "elevate")?,
+                None => true,
+            };
+            let global = strand.vm().state::<Global<'v>>();
+            let current_cwd = global.local.get(strand).cwd().clone();
+            let cwd = if let Some(cd) = cd {
+                let cd = path_from_value(strand, global, &cd)?;
+                if cd.is_absolute() {
+                    cd
                 } else {
-                    current_cwd
-                };
-                let cwd = dolang_shell_vfs::native_path(cwd.to_path()).into_sys(strand)?;
-                let mut env_overrides = HashMap::new();
-                if let Some(env_value) = env_value {
-                    let View::Dict(env_value) = env_value.view(strand) else {
-                        return Err(Error::type_error(strand, "env: expected dict"));
-                    };
-                    let mut pairs = env_value.pairs();
-                    strand.with_slots_sync(|strand, [mut key, mut value]| {
-                        while pairs.next(strand, &mut key, &mut value)? {
-                            let key = match key.view(strand) {
-                                View::Str(key) => key.to_string(),
-                                View::Sym(key) => key.as_str(strand).to_string(),
-                                _ => {
-                                    return Err(Error::type_error(
-                                        strand,
-                                        "env key: expected str or sym",
-                                    ));
-                                }
-                            };
-                            let value = if value.is_nil() {
-                                None
-                            } else if value.as_sym(strand) == Some(global.syms.inherit) {
-                                global
-                                    .local
-                                    .get(strand)
-                                    .env()
-                                    .get(&key)
-                                    .map(|value| value.into_owned())
-                            } else {
-                                Some(value.to_string(strand)?)
-                            };
-                            env_overrides.insert(key, value);
-                        }
-                        Ok(())
-                    })?;
+                    current_cwd.join(cd.as_str())
                 }
-                let result = if elevate && remote {
-                    WindowsSession::launch_remote(cwd, env_overrides).await
-                } else if elevate {
-                    WindowsSession::launch(cwd, env_overrides).await
-                } else if remote {
-                    WindowsSession::launch_unelevated_remote(cwd, env_overrides).await
-                } else {
-                    WindowsSession::launch_unelevated(cwd, env_overrides).await
+            } else {
+                current_cwd
+            };
+            let mut env_overrides = HashMap::new();
+            if let Some(env_value) = env_value {
+                let View::Dict(env_value) = env_value.view(strand) else {
+                    return Err(Error::type_error(strand, "env: expected dict"));
                 };
-                let (
-                    session,
-                    Query {
+                let mut pairs = env_value.pairs();
+                strand.with_slots_sync(|strand, [mut key, mut value]| {
+                    while pairs.next(strand, &mut key, &mut value)? {
+                        let key = match key.view(strand) {
+                            View::Str(key) => key.to_string(),
+                            View::Sym(key) => key.as_str(strand).to_string(),
+                            _ => {
+                                return Err(Error::type_error(
+                                    strand,
+                                    "env key: expected str or sym",
+                                ));
+                            }
+                        };
+                        let value = if value.is_nil() {
+                            None
+                        } else if value.as_sym(strand) == Some(global.syms.inherit) {
+                            global
+                                .local
+                                .get(strand)
+                                .env()
+                                .get(&key)
+                                .map(|value| value.into_owned())
+                        } else {
+                            Some(value.to_string(strand)?)
+                        };
+                        env_overrides.insert(key, value);
+                    }
+                    Ok(())
+                })?;
+            }
+            let vfs = global.local.get(strand).vfs();
+            let session = error::io_result(
+                strand,
+                vfs.windows_admin(cwd.to_path(), env_overrides, elevate)
+                    .await,
+            )?;
+            let client = session.client().clone();
+            let Query {
+                env,
+                cwd,
+                current_exe,
+                target,
+                security,
+            } = error::io_result(strand, client.query().await)?;
+            let env = Rc::new(LocalEnv::new(None, true, env, target.operating_system));
+            global.types.vfs.create_with_annex(
+                strand,
+                Vfs,
+                VfsAnnex {
+                    handle: Context {
+                        client,
                         env,
                         cwd,
                         current_exe,
                         target,
                         security,
                     },
-                ) = error::io_result(strand, result)?;
-                let client = session.client().clone();
-                let env = Rc::new(LocalEnv::new(None, true, env, target.operating_system));
-                global.types.vfs.create_with_annex(
-                    strand,
-                    Vfs,
-                    VfsAnnex {
-                        handle: Context {
-                            client,
-                            env,
-                            cwd,
-                            current_exe,
-                            target,
-                            security,
-                        },
-                        source: VfsSource::Windows(session),
-                        global,
-                    },
-                    out,
-                );
-                Ok(())
-            });
-
-        builder
+                    source: VfsSource::WindowsAdmin(session),
+                    global,
+                },
+                out,
+            );
+            Ok(())
+        })
     }
 }
 

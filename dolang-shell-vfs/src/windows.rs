@@ -1,5 +1,4 @@
 use std::{
-    cell::Cell,
     collections::HashMap,
     ffi::{OsStr, OsString},
     io, mem,
@@ -8,6 +7,7 @@ use std::{
         io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle},
     },
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
@@ -37,28 +37,19 @@ use crate::{Client, Query};
 const EXIT_STARTUP_FAILURE: u32 = 1;
 
 /// An elevated Windows VFS session.
-pub struct WindowsSession {
+pub struct AdminSession {
     client: Client,
     process: OwnedHandle,
-    stopped: Cell<bool>,
+    stopped: AtomicBool,
 }
 
-impl WindowsSession {
+impl AdminSession {
     /// Launches an elevated copy of the current executable and connects to it.
     pub async fn launch(
         cwd: impl Into<PathBuf>,
         env: HashMap<String, Option<String>>,
     ) -> io::Result<(Self, Query)> {
-        launch_with(cwd.into(), env, launch_elevated, false).await
-    }
-
-    /// Launches an elevated session using opaque-only generic framing.
-    #[doc(hidden)]
-    pub async fn launch_remote(
-        cwd: impl Into<PathBuf>,
-        env: HashMap<String, Option<String>>,
-    ) -> io::Result<(Self, Query)> {
-        launch_with(cwd.into(), env, launch_elevated, true).await
+        launch_with(cwd.into(), env, launch_elevated).await
     }
 
     /// Launches a non-elevated copy of the current executable for automated tests.
@@ -67,16 +58,7 @@ impl WindowsSession {
         cwd: impl Into<PathBuf>,
         env: HashMap<String, Option<String>>,
     ) -> io::Result<(Self, Query)> {
-        launch_with(cwd.into(), env, launch_process, false).await
-    }
-
-    /// Launches a non-elevated session using opaque-only generic framing.
-    #[doc(hidden)]
-    pub async fn launch_unelevated_remote(
-        cwd: impl Into<PathBuf>,
-        env: HashMap<String, Option<String>>,
-    ) -> io::Result<(Self, Query)> {
-        launch_with(cwd.into(), env, launch_process, true).await
+        launch_with(cwd.into(), env, launch_process).await
     }
 
     /// Returns the VFS RPC client for this session.
@@ -86,7 +68,7 @@ impl WindowsSession {
 
     /// Stops the VFS server and waits for the elevated process to exit.
     pub async fn stop(&self) -> io::Result<()> {
-        let should_stop = !self.stopped.replace(true);
+        let should_stop = !self.stopped.swap(true, Ordering::AcqRel);
         let mut guard = should_stop.then(|| ProcessGuard::new(&self.process));
         let stop_result = if should_stop {
             self.client
@@ -113,38 +95,43 @@ async fn launch_with(
     cwd: PathBuf,
     env: HashMap<String, Option<String>>,
     launcher: impl FnOnce(&Path, &[OsString], &Path) -> io::Result<OwnedHandle> + Send + 'static,
-    remote: bool,
-) -> io::Result<(WindowsSession, Query)> {
+) -> io::Result<(AdminSession, Query)> {
     let pipe_name = random_pipe_name();
     let pipe = create_pipe(&pipe_name)?;
     let executable = std::env::current_exe()?;
-    let args = launch_args(pipe_name, env);
+    let args = launch_args(&executable, pipe_name, env);
     let process = launch_on_sta_thread(executable, args, cwd, launcher).await?;
     let guard = ProcessGuard::new(&process);
 
     connect_or_exit(&pipe, &process).await?;
-    let client = if remote {
-        Client::new(pipe)
-    } else {
-        let client_process = process.as_handle().try_clone_to_owned()?;
-        unsafe { Client::from_named_pipe_server(pipe, client_process) }
-            .map_err(crate::Error::into_io_error)?
-    };
+    let client_process = process.as_handle().try_clone_to_owned()?;
+    let client = unsafe { Client::from_named_pipe_server(pipe, client_process) }
+        .map_err(crate::Error::into_io_error)?;
     let query = client.query().await.map_err(crate::Error::into_io_error)?;
     guard.disarm();
 
     Ok((
-        WindowsSession {
+        AdminSession {
             client,
             process,
-            stopped: Cell::new(false),
+            stopped: AtomicBool::new(false),
         },
         query,
     ))
 }
 
-fn launch_args(pipe_name: OsString, env: HashMap<String, Option<String>>) -> Vec<OsString> {
-    let mut args = vec![OsString::from("--vfs")];
+fn launch_args(
+    executable: &Path,
+    pipe_name: OsString,
+    env: HashMap<String, Option<String>>,
+) -> Vec<OsString> {
+    let mut args = Vec::new();
+    if executable
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("dolang.exe"))
+    {
+        args.push(OsString::from("--vfs"));
+    }
     for (key, value) in env {
         match value {
             Some(value) => {
@@ -204,9 +191,9 @@ fn with_sta_com<T>(f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
     f()
 }
 
-impl Drop for WindowsSession {
+impl Drop for AdminSession {
     fn drop(&mut self) {
-        if !self.stopped.get() && !has_exited(&self.process) {
+        if !self.stopped.load(Ordering::Acquire) && !has_exited(&self.process) {
             terminate(&self.process);
         }
     }
@@ -430,6 +417,7 @@ mod tests {
     #[test]
     fn launch_arguments_apply_environment_before_connect_mode() {
         let args = launch_args(
+            Path::new("dolang.exe"),
             OsString::from(r"\\.\pipe\test"),
             HashMap::from([
                 ("SET".to_string(), Some("value with spaces".to_string())),
@@ -450,13 +438,31 @@ mod tests {
         assert!(args.windows(2).any(|args| args == ["--unset", "UNSET"]));
     }
 
+    #[test]
+    fn launch_arguments_only_dispatch_through_dolang() {
+        let dolang = launch_args(
+            Path::new("DoLaNg.ExE"),
+            OsString::from(r"\\.\pipe\dolang"),
+            HashMap::new(),
+        );
+        assert_eq!(dolang.first(), Some(&OsString::from("--vfs")));
+
+        for executable in ["dolang-vfs.exe", "embedded.exe"] {
+            let args = launch_args(
+                Path::new(executable),
+                OsString::from(r"\\.\pipe\direct"),
+                HashMap::new(),
+            );
+            assert_ne!(args.first(), Some(&OsString::from("--vfs")));
+        }
+    }
+
     #[tokio::test]
     async fn launcher_errors_are_reported_without_uac() {
         let error = match launch_with(
             std::env::current_dir().unwrap(),
             HashMap::new(),
             |_, _, _| Err(io::Error::other("launch failed")),
-            false,
         )
         .await
         {

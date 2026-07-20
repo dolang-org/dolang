@@ -1,0 +1,87 @@
+import _wsl sys
+import std:
+  - RuntimeError
+
+def require_windows()
+  if (sys.os_info().family != :WINDOWS:)
+    throw RuntimeError "wsl.with_linux requires a Windows VFS target"
+
+def require_linux()
+  if (sys.os_info().os != :LINUX:)
+    throw RuntimeError "wsl.with_windows requires a Linux VFS target"
+
+def find_windows_command()
+  require_linux()
+  let vfs = run["dolang-vfs.exe"].which()
+  if (vfs != nil)
+    return [vfs]
+
+  let dolang = run["dolang.exe"].which()
+  if (dolang != nil)
+    return [dolang, "--vfs"]
+
+  throw RuntimeError "wsl.with_windows: neither dolang-vfs.exe nor dolang.exe was found"
+
+# Runs `block` in a WSL Linux distribution through a stdio VFS.
+#
+# The active VFS target must be Windows. `distro:` and `user:` select the WSL
+# distribution and Linux user; when omitted, WSL uses its configured defaults.
+# `command:` is the Linux VFS launcher prefix.
+#
+# # Parameters
+#
+# | Name      | Type     | Description                         |
+# | --------- | -------- | ----------------------------------- |
+# | `block`   | `func`   | Block to run in Linux               |
+# | `distro`  | `str?`   | WSL distribution                    |
+# | `user`    | `str?`   | Linux user                          |
+# | `command` | `array`  | Linux VFS launcher prefix           |
+# | `cd`      | `Path?`  | Initial Linux working directory     |
+# | `env`     | `dict`   | Initial Linux environment overrides |
+#
+# # Returns
+#
+# The result of `block`.
+pub def with_linux
+  block
+  :distro = nil
+  :user = nil
+  :command = ["dolang-vfs"]
+  :cd = nil
+  :env = {}
+do
+  require_windows()
+  let executable = run["wsl.exe"].which()
+  if (executable == nil)
+    throw RuntimeError "wsl.with_linux: wsl.exe was not found"
+  let argv = _wsl.build_linux_command $command :distro :user :cd :env
+  argv[0] = executable
+  _wsl.with_command $argv $block
+
+# Runs `block` on the Windows host through WSL interoperability and a stdio
+# VFS. The active VFS target must be Linux.
+#
+# When `command:` is omitted, `dolang-vfs.exe` is preferred and
+# `dolang.exe --vfs` is used as a fallback.
+#
+# # Parameters
+#
+# | Name      | Type     | Description                           |
+# | --------- | -------- | ------------------------------------- |
+# | `block`   | `func`   | Block to run on Windows               |
+# | `command` | `array`  | Windows VFS launcher prefix           |
+# | `cd`      | `Path?`  | Initial Windows working directory     |
+# | `env`     | `dict`   | Initial Windows environment overrides |
+#
+# # Returns
+#
+# The result of `block`.
+pub def with_windows
+  block
+  :command = find_windows_command()
+  :cd = nil
+  :env = {}
+do
+  require_linux()
+  let argv = _wsl.build_windows_command $command :cd :env
+  _wsl.with_command $argv $block

@@ -1,0 +1,47 @@
+import _wsl sys wsl
+import test:
+  - assert_eq
+  - assert_throws
+  - test
+import std:
+  - RuntimeError
+
+#[test]
+def linux_command_arguments()
+  env TEST_DOLANG_WSL_INHERIT: inherited do
+    let argv = _wsl.build_linux_command
+      ["agent", "wrapper"]
+      distro: Ubuntu
+      user: alice
+      cd: /srv/project
+      env:
+        SET: value
+        UNSET: nil
+        TEST_DOLANG_WSL_INHERIT: :INHERIT:
+    assert_eq $argv $
+      wsl.exe --distribution Ubuntu --user alice --exec agent wrapper
+      --cd /srv/project --set SET=value --unset UNSET
+      --set TEST_DOLANG_WSL_INHERIT=inherited --stdio
+
+  assert_eq $(_wsl.build_linux_command (["dolang-vfs"])) $
+    wsl.exe --exec dolang-vfs --stdio
+
+#[test]
+def windows_command_arguments()
+  let argv = _wsl.build_windows_command
+    ["dolang.exe", "--vfs"]
+    cd: r"C:\work"
+    env:
+      SET: value
+      UNSET: nil
+  assert_eq $argv $
+    dolang.exe --vfs --cd r"C:\work" --set SET=value --unset UNSET --stdio
+
+#[test]
+def rejects_wrong_source_target()
+  if (sys.os_info().family == :WINDOWS:)
+    assert_throws $RuntimeError do
+      wsl.with_windows command: ["dolang-vfs.exe"] do nil
+  else
+    assert_throws $RuntimeError do
+      wsl.with_linux do nil

@@ -9,14 +9,14 @@ import test: unittest _vfs
 let vfs_bin = _vfs.bin()
 
 def with_vfs remote block
-  if (sys.os_info().family == :WINDOWS:)
-    let vfs = Vfs.windows_admin elevate: false remote: $remote
+  if remote
+    let vfs = Vfs do run $vfs_bin --stdio
     try
       vfs $block
     finally
       vfs.stop()
-  else if remote
-    let vfs = Vfs do run $vfs_bin --stdio
+  else if (sys.os_info().family == :WINDOWS:)
+    let vfs = Vfs.windows_admin elevate: false
     try
       vfs $block
     finally

@@ -57,7 +57,13 @@ let a = Vfs.unix_socket /tmp/agent/socket
 
 ### `windows_admin :cd? :env?`
 
-Launches an elevated copy of the current `dolang.exe` on Windows.
+Launches an elevated copy of the active Windows VFS target's current
+executable. This can cross an existing VFS connection, such as a connection
+from WSL to its Windows host.
+
+The target resolves its own executable; callers cannot select another program.
+When the executable is `dolang.exe`, `--vfs` is inserted to select its VFS
+entrypoint. A standalone `dolang-vfs.exe` is launched directly.
 
 The calling strand's current working directory becomes the context's initial
 working directory unless `cd:` overrides it. `env:` accepts string or symbol

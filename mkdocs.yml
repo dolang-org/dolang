@@ -65,6 +65,7 @@ nav:
       - shell/vfs/index.md
       - shell/vfs/containers.md
       - shell/vfs/ssh.md
+      - shell/vfs/wsl.md
       - shell/vfs/admin.md
   - lsp.md
   - Reference:
@@ -224,6 +225,7 @@ nav:
       - api/strand/sender.md
       - api/strand/receiver.md
     - sudo: api/sudo.md
+    - wsl: api/wsl.md
     - security:
       - api/security/index.md
     - security.unix:

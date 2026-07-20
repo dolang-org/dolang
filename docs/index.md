@@ -131,6 +131,7 @@ build and run containers ([podman](./api/podman/index.md),
 ([`args`](./api/args.md)), elevate privileges ([`admin`](./api/admin.md),
 [`sudo`](./api/sudo.md)), read
 system configuration ([`systemd`](./api/systemd.md), [`xdg`](./api/xdg.md)),
+cross between Windows and WSL ([`wsl`](./api/wsl.md)),
 and show friendly [progress indicators](./api/progress/index.md).
 
 **Data and protocols** — [HTTP](./api/http/index.md), [JSON](./api/json.md),

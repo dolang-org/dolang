@@ -49,10 +49,12 @@ SSH context, the same process runs on the remote Unix host.
 
 ## Windows UAC
 
-On Windows, `admin.with` launches an elevated copy of `dolang.exe` and connects
-to its VFS server through a private named pipe. The current working directory
-when the context is created becomes its initial directory. Cancelling the UAC
-prompt raises a permission error.
+On a Windows VFS target, `admin.with` launches an elevated copy of the target's
+current executable and connects to its VFS server through a private named pipe.
+This also works when the Windows context was entered from WSL. The target
+chooses its own executable; the caller cannot supply one. The current working
+directory when the context is created becomes its initial directory. Cancelling
+the UAC prompt raises a permission error.
 
 [`Vfs.windows_admin()`](../../api/shell/vfs.md#windows_admin-cd-env) exposes the
 lower-level handle when its lifetime must be controlled directly:
