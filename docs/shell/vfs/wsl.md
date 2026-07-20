@@ -36,9 +36,10 @@ resolved through the active Linux environment's command search path. Use
 `command:` to override discovery.
 
 When the interpreter originally started on Windows, use
-[`shell.host`](../../api/shell/index.md#host-func-args) to return temporarily
-from a nested Linux VFS. `with_windows` is intended for an interpreter that
-started within WSL and has no Windows startup context to restore.
+[`shell.with_host`](../../api/shell/index.md#with_host-func-args) to return
+temporarily from a nested Linux VFS. `with_windows` is intended for an
+interpreter that started within WSL and has no Windows startup context to
+restore.
 
 Windows UAC elevation composes with the transition:
 

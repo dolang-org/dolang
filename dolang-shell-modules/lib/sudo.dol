@@ -27,7 +27,7 @@ do
       do
         strand.next()
         let a = shell.Vfs.unix_socket $socket
-        return strand.redirect :input do a $thunk
+        return strand.redirect :input do a.with $thunk
 
 def run_command
   cmd

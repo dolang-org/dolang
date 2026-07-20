@@ -48,7 +48,7 @@ pub def with block :cd = nil :env = {}
           block()
     let vfs = shell.Vfs.windows_admin :cd :env
     try
-      vfs $block
+      vfs.with $block
     finally
       vfs.stop()
   else

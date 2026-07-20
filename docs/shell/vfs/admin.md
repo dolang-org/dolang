@@ -65,7 +65,7 @@ import shell:
 
 let elevated = Vfs.windows_admin()
 try
-  elevated do
+  elevated.with do
     run sc.exe query example
 finally
   elevated.stop()
