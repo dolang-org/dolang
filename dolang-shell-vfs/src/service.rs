@@ -1,4 +1,4 @@
-use std::{ffi::OsStr, io};
+use std::{ffi::OsStr, io, path::PathBuf};
 
 #[cfg(unix)]
 use std::{os::unix::fs::PermissionsExt, path::Path};
@@ -6,53 +6,134 @@ use tokio::runtime::Builder;
 
 use crate::Server;
 
+enum EnvOp {
+    Set(String, String),
+    Unset(String),
+}
+
 pub fn main(args: impl IntoIterator<Item = impl AsRef<OsStr>>) -> io::Result<()> {
+    let mut env_ops = Vec::new();
+    let mut cwd: Option<PathBuf> = None;
+    let mut mode: Option<String> = None;
+    let mut mode_args: Vec<String> = Vec::new();
+
     let mut args = args.into_iter();
-    let Some(mode) = args.next() else {
-        return Err(io::Error::other(
-            "missing --stdio, --listen <path>, or --connect <path>",
-        ));
-    };
-    let mode = mode.as_ref();
-    if mode == "--stdio" {
-        if args.next().is_some() {
-            return Err(io::Error::other("--stdio takes no arguments"));
+
+    while let Some(arg) = args.next() {
+        let arg = arg.as_ref();
+        let s = arg.to_string_lossy().into_owned();
+
+        if mode.is_some() {
+            mode_args.push(s);
+            continue;
         }
-        serve_stdio()?;
-        return Ok(());
-    }
-    #[cfg(unix)]
-    if mode == "--listen" {
-        let Some(path) = args.next() else {
-            return Err(io::Error::other("--listen requires a socket path"));
-        };
-        if args.next().is_some() {
-            return Err(io::Error::other("--listen takes exactly one argument"));
+
+        if s == "--stdio" {
+            mode = Some(s);
+            continue;
         }
-        return foreground(path.as_ref());
-    }
-    #[cfg(windows)]
-    if mode == "--connect" {
-        let Some(path) = args.next() else {
-            return Err(io::Error::other("--connect requires a pipe name"));
-        };
-        if args.next().is_some() {
-            return Err(io::Error::other("--connect takes exactly one argument"));
+        #[cfg(unix)]
+        if s == "--listen" {
+            mode = Some(s);
+            continue;
         }
-        return serve_named_pipe(path.as_ref());
+        #[cfg(windows)]
+        if s == "--connect" {
+            mode = Some(s);
+            continue;
+        }
+        #[cfg(not(unix))]
+        if s == "--listen" {
+            return Err(io::Error::other("--listen is only supported on Unix"));
+        }
+        #[cfg(not(windows))]
+        if s == "--connect" {
+            return Err(io::Error::other("--connect is only supported on Windows"));
+        }
+
+        if s == "--set" {
+            let Some(next) = args.next() else {
+                return Err(io::Error::other("--set requires a name=value argument"));
+            };
+            let val = next.as_ref().to_string_lossy().into_owned();
+            let (name, value) = val
+                .split_once('=')
+                .ok_or_else(|| io::Error::other("--set argument must have name=value form"))?;
+            if name.is_empty() {
+                return Err(io::Error::other("--set variable name must not be empty"));
+            }
+            env_ops.push(EnvOp::Set(name.to_owned(), value.to_owned()));
+            continue;
+        }
+        if s == "--unset" {
+            let Some(next) = args.next() else {
+                return Err(io::Error::other("--unset requires a variable name"));
+            };
+            let name = next.as_ref().to_string_lossy().into_owned();
+            if name.is_empty() {
+                return Err(io::Error::other("--unset variable name must not be empty"));
+            }
+            env_ops.push(EnvOp::Unset(name));
+            continue;
+        }
+        if s == "--cwd" {
+            let Some(next) = args.next() else {
+                return Err(io::Error::other("--cwd requires a path"));
+            };
+            cwd = Some(PathBuf::from(next.as_ref()));
+            continue;
+        }
+
+        return Err(io::Error::other(format!("unknown option: {}", s)));
     }
-    #[cfg(not(unix))]
-    if mode == "--listen" {
-        return Err(io::Error::other("--listen is only supported on Unix"));
+
+    let mode = mode
+        .ok_or_else(|| io::Error::other("missing --stdio, --listen <path>, or --connect <path>"))?;
+
+    // Apply environment and cwd operations before starting tokio.
+    // SAFETY: we are single-threaded here and have not yet spawned threads.
+    for op in &env_ops {
+        match op {
+            EnvOp::Set(name, value) => {
+                // SAFETY: single-threaded, before tokio
+                unsafe { std::env::set_var(name, value) };
+            }
+            EnvOp::Unset(name) => {
+                // SAFETY: single-threaded, before tokio
+                unsafe { std::env::remove_var(name) };
+            }
+        }
     }
-    #[cfg(not(windows))]
-    if mode == "--connect" {
-        return Err(io::Error::other("--connect is only supported on Windows"));
+    if let Some(path) = &cwd {
+        std::env::set_current_dir(path)?;
     }
-    Err(io::Error::other(format!(
-        "unknown option: {}",
-        mode.to_string_lossy()
-    )))
+
+    let mode = mode.as_str();
+    match mode {
+        "--stdio" => {
+            if !mode_args.is_empty() {
+                return Err(io::Error::other("--stdio takes no arguments"));
+            }
+            serve_stdio()?;
+        }
+        #[cfg(unix)]
+        "--listen" => {
+            if mode_args.len() != 1 {
+                return Err(io::Error::other("--listen requires exactly one argument"));
+            }
+            foreground(Path::new(&mode_args[0]))?;
+        }
+        #[cfg(windows)]
+        "--connect" => {
+            if mode_args.len() != 1 {
+                return Err(io::Error::other("--connect requires exactly one argument"));
+            }
+            serve_named_pipe(OsStr::new(&mode_args[0]))?;
+        }
+        _ => unreachable!(),
+    }
+
+    Ok(())
 }
 
 fn serve_stdio() -> io::Result<()> {
@@ -128,8 +209,7 @@ async fn accept_loop(server: Server, print_ready: bool) -> Result<(), io::Error>
 /// Returns `Ok(())` on successful socket bind and server start.
 /// Returns an error if the socket cannot be bound.
 #[cfg(unix)]
-fn foreground(socket_path: &OsStr) -> io::Result<()> {
-    let socket_path = Path::new(socket_path);
+fn foreground(socket_path: &Path) -> io::Result<()> {
     let rt = Builder::new_multi_thread().enable_all().build()?;
 
     rt.block_on(async move {

@@ -398,6 +398,186 @@ async fn sigint_during_spawn() {
 }
 
 #[tokio::test]
+async fn cwd_flag_changes_query_cwd() {
+    let (_dir, socket_path) = find_free_socket_path();
+    let target_dir = tempdir().unwrap();
+    let target_path = std::fs::canonicalize(target_dir.path()).unwrap();
+
+    let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--cwd")
+        .arg(&target_path)
+        .arg("--listen")
+        .arg(&socket_path)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn agent");
+
+    wait_for_ready_from_stdout(&mut child).expect("failed to read READY");
+
+    let client = timeout(
+        Duration::from_secs(5),
+        dolang_shell_vfs::Client::connect(&socket_path),
+    )
+    .await
+    .expect("timeout connecting")
+    .expect("failed to connect");
+
+    let query = client.query().await.expect("query should succeed");
+    let expected = typed_str(target_path.to_str().unwrap());
+    assert_eq!(query.cwd, expected, "cwd should match --cwd argument");
+
+    stop_daemon(&socket_path).await;
+}
+
+#[tokio::test]
+async fn set_flag_adds_env_var() {
+    let (_dir, socket_path) = find_free_socket_path();
+
+    let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--set")
+        .arg("VFS_TEST_SECRET=hello123")
+        .arg("--listen")
+        .arg(&socket_path)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn agent");
+
+    wait_for_ready_from_stdout(&mut child).expect("failed to read READY");
+
+    let client = timeout(
+        Duration::from_secs(5),
+        dolang_shell_vfs::Client::connect(&socket_path),
+    )
+    .await
+    .expect("timeout connecting")
+    .expect("failed to connect");
+
+    let query = client.query().await.expect("query should succeed");
+    assert_eq!(
+        query.env.get("VFS_TEST_SECRET").map(String::as_str),
+        Some("hello123"),
+        "env should contain the value set via --set"
+    );
+
+    stop_daemon(&socket_path).await;
+}
+
+#[tokio::test]
+async fn set_flag_overwrites_existing_env() {
+    let (_dir, socket_path) = find_free_socket_path();
+
+    let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--set")
+        .arg("PATH=/custom/bin:/custom/sbin")
+        .arg("--listen")
+        .arg(&socket_path)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn agent");
+
+    wait_for_ready_from_stdout(&mut child).expect("failed to read READY");
+
+    let client = timeout(
+        Duration::from_secs(5),
+        dolang_shell_vfs::Client::connect(&socket_path),
+    )
+    .await
+    .expect("timeout connecting")
+    .expect("failed to connect");
+
+    let query = client.query().await.expect("query should succeed");
+    assert_eq!(
+        query.env.get("PATH").map(String::as_str),
+        Some("/custom/bin:/custom/sbin"),
+        "PATH should be overwritten by --set"
+    );
+
+    stop_daemon(&socket_path).await;
+}
+
+#[tokio::test]
+async fn unset_flag_removes_env_var() {
+    let (_dir, socket_path) = find_free_socket_path();
+
+    let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--set")
+        .arg("VFS_UNSET_TARGET=should_vanish")
+        .arg("--unset")
+        .arg("VFS_UNSET_TARGET")
+        .arg("--listen")
+        .arg(&socket_path)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn agent");
+
+    wait_for_ready_from_stdout(&mut child).expect("failed to read READY");
+
+    let client = timeout(
+        Duration::from_secs(5),
+        dolang_shell_vfs::Client::connect(&socket_path),
+    )
+    .await
+    .expect("timeout connecting")
+    .expect("failed to connect");
+
+    let query = client.query().await.expect("query should succeed");
+    assert!(
+        !query.env.contains_key("VFS_UNSET_TARGET"),
+        "variable set then unset should not appear in env"
+    );
+
+    stop_daemon(&socket_path).await;
+}
+
+#[tokio::test]
+async fn combined_set_unset_cwd() {
+    let (_dir, socket_path) = find_free_socket_path();
+    let target_dir = tempdir().unwrap();
+    let target_path = std::fs::canonicalize(target_dir.path()).unwrap();
+
+    let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--set")
+        .arg("VFS_COMBO_A=alpha")
+        .arg("--set")
+        .arg("VFS_COMBO_B=beta")
+        .arg("--unset")
+        .arg("VFS_COMBO_B")
+        .arg("--cwd")
+        .arg(&target_path)
+        .arg("--listen")
+        .arg(&socket_path)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn agent");
+
+    wait_for_ready_from_stdout(&mut child).expect("failed to read READY");
+
+    let client = timeout(
+        Duration::from_secs(5),
+        dolang_shell_vfs::Client::connect(&socket_path),
+    )
+    .await
+    .expect("timeout connecting")
+    .expect("failed to connect");
+
+    let query = client.query().await.expect("query should succeed");
+
+    assert_eq!(
+        query.env.get("VFS_COMBO_A").map(String::as_str),
+        Some("alpha"),
+        "VFS_COMBO_A should be set"
+    );
+    assert!(
+        !query.env.contains_key("VFS_COMBO_B"),
+        "VFS_COMBO_B should be unset"
+    );
+    let expected = typed_str(target_path.to_str().unwrap());
+    assert_eq!(query.cwd, expected, "cwd should match --cwd");
+
+    stop_daemon(&socket_path).await;
+}
+
+#[tokio::test]
 async fn sigterm_during_spawn() {
     let (_dir, socket_path) = find_free_socket_path();
 
