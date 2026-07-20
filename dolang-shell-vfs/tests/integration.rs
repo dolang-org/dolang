@@ -67,6 +67,7 @@ async fn foreground_spawn_echo() {
     let (_dir, socket_path) = find_free_socket_path();
 
     let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
         .arg(&socket_path)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -96,6 +97,7 @@ async fn foreground_sigint() {
     let (_dir, socket_path) = find_free_socket_path();
 
     let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
         .arg(&socket_path)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -121,6 +123,7 @@ async fn foreground_sigterm() {
     let (_dir, socket_path) = find_free_socket_path();
 
     let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
         .arg(&socket_path)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -146,6 +149,7 @@ async fn foreground_socket_cleanup() {
     let (_dir, socket_path) = find_free_socket_path();
 
     let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
         .arg(&socket_path)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -167,6 +171,7 @@ async fn multiple_clients() {
     let (_dir, socket_path) = find_free_socket_path();
 
     let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
         .arg(&socket_path)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -212,6 +217,7 @@ async fn client_query() {
     let (_dir, socket_path) = find_free_socket_path();
 
     let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
         .arg(&socket_path)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -246,6 +252,7 @@ async fn client_which() {
     let (_dir, socket_path) = find_free_socket_path();
 
     let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
         .arg(&socket_path)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -277,6 +284,7 @@ async fn client_well_known_path() {
     let (_dir, socket_path) = find_free_socket_path();
 
     let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
         .arg(&socket_path)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -308,6 +316,7 @@ async fn client_stop() {
     let (_dir, socket_path) = find_free_socket_path();
 
     let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
         .arg(&socket_path)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -342,6 +351,7 @@ async fn stale_socket_removed() {
     assert!(socket_path.exists(), "stale socket should exist");
 
     let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
         .arg(&socket_path)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -371,6 +381,7 @@ async fn sigint_during_spawn() {
     let (_dir, socket_path) = find_free_socket_path();
 
     let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
         .arg(&socket_path)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -391,6 +402,7 @@ async fn sigterm_during_spawn() {
     let (_dir, socket_path) = find_free_socket_path();
 
     let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
         .arg(&socket_path)
         .stdout(std::process::Stdio::piped())
         .spawn()

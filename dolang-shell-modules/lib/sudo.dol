@@ -23,7 +23,7 @@ do
       do sudo -E
         if (user != nil)
           -u $user
-        $agent $socket
+        $agent --listen $socket
       do
         strand.next()
         let a = Vfs.unix_socket $socket

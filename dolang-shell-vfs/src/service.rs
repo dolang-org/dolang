@@ -1,41 +1,73 @@
-use std::{
-    error,
-    fmt::{self, Display, Formatter},
-    io::{self},
-    os::unix::fs::PermissionsExt,
-    path::Path,
-};
-use tokio::{
-    runtime::Builder,
-    signal::unix::{SignalKind, signal},
-};
+use std::{ffi::OsStr, io};
+
+#[cfg(unix)]
+use std::{os::unix::fs::PermissionsExt, path::Path};
+use tokio::runtime::Builder;
 
 use crate::Server;
 
-/// Daemonization errors.
-#[derive(Debug)]
-pub enum ServiceError {
-    /// I/O error (pipe operations, file operations).
-    Io(io::Error),
-}
-
-impl Display for ServiceError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            ServiceError::Io(e) => write!(f, "{}", e),
+pub fn main(args: impl IntoIterator<Item = impl AsRef<OsStr>>) -> io::Result<()> {
+    let mut args = args.into_iter();
+    let Some(mode) = args.next() else {
+        return Err(io::Error::other(
+            "missing --stdio, --listen <path>, or --connect <path>",
+        ));
+    };
+    let mode = mode.as_ref();
+    if mode == "--stdio" {
+        if args.next().is_some() {
+            return Err(io::Error::other("--stdio takes no arguments"));
         }
+        serve_stdio()?;
+        return Ok(());
     }
+    #[cfg(unix)]
+    if mode == "--listen" {
+        let Some(path) = args.next() else {
+            return Err(io::Error::other("--listen requires a socket path"));
+        };
+        if args.next().is_some() {
+            return Err(io::Error::other("--listen takes exactly one argument"));
+        }
+        return foreground(path.as_ref());
+    }
+    #[cfg(windows)]
+    if mode == "--connect" {
+        let Some(path) = args.next() else {
+            return Err(io::Error::other("--connect requires a pipe name"));
+        };
+        if args.next().is_some() {
+            return Err(io::Error::other("--connect takes exactly one argument"));
+        }
+        return serve_named_pipe(path.as_ref());
+    }
+    #[cfg(not(unix))]
+    if mode == "--listen" {
+        return Err(io::Error::other("--listen is only supported on Unix"));
+    }
+    #[cfg(not(windows))]
+    if mode == "--connect" {
+        return Err(io::Error::other("--connect is only supported on Windows"));
+    }
+    Err(io::Error::other(format!(
+        "unknown option: {}",
+        mode.to_string_lossy()
+    )))
 }
 
-impl error::Error for ServiceError {}
-
-impl From<io::Error> for ServiceError {
-    fn from(e: io::Error) -> Self {
-        ServiceError::Io(e)
-    }
+fn serve_stdio() -> io::Result<()> {
+    Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            Server::new_split(tokio::io::stdin(), tokio::io::stdout())
+                .serve()
+                .await
+        })
 }
 
-async fn create_server(socket_path: &Path) -> Result<Server, ServiceError> {
+#[cfg(unix)]
+async fn create_server(socket_path: &Path) -> Result<Server, io::Error> {
     let parent = socket_path
         .parent()
         .ok_or_else(|| io::Error::other("socket path has no parent"))?;
@@ -44,8 +76,7 @@ async fn create_server(socket_path: &Path) -> Result<Server, ServiceError> {
     if mode != 0o700 {
         return Err(io::Error::other(format!(
             "refusing to bind socket in directory not restricted to owner: {mode:o}"
-        ))
-        .into());
+        )));
     }
 
     let tmp_path = socket_path.with_added_extension("incomplete");
@@ -64,7 +95,10 @@ async fn create_server(socket_path: &Path) -> Result<Server, ServiceError> {
     Ok(server)
 }
 
+#[cfg(unix)]
 async fn accept_loop(server: Server, print_ready: bool) -> Result<(), io::Error> {
+    use tokio::signal::unix::{SignalKind, signal};
+
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut sigterm = signal(SignalKind::terminate())?;
 
@@ -93,19 +127,28 @@ async fn accept_loop(server: Server, print_ready: bool) -> Result<(), io::Error>
 ///
 /// Returns `Ok(())` on successful socket bind and server start.
 /// Returns an error if the socket cannot be bound.
-pub fn foreground(socket_path: impl AsRef<Path>) -> Result<(), ServiceError> {
-    let rt = Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| ServiceError::Io(io::Error::other(e)))?;
+#[cfg(unix)]
+fn foreground(socket_path: &OsStr) -> io::Result<()> {
+    let socket_path = Path::new(socket_path);
+    let rt = Builder::new_multi_thread().enable_all().build()?;
 
     rt.block_on(async move {
-        let server = create_server(socket_path.as_ref()).await?;
+        let server = create_server(socket_path).await?;
         let res = accept_loop(server, true).await;
-        let socket_path = socket_path.as_ref();
         if socket_path.exists() {
             let _ = std::fs::remove_file(socket_path);
         }
-        res.map_err(ServiceError::Io)
+        res
+    })
+}
+
+#[cfg(windows)]
+fn serve_named_pipe(pipe_name: &OsStr) -> io::Result<()> {
+    use tokio::net::windows::named_pipe::ClientOptions;
+
+    let runtime = Builder::new_current_thread().enable_all().build()?;
+    runtime.block_on(async move {
+        let pipe = ClientOptions::new().open(pipe_name)?;
+        Server::from_named_pipe_client(pipe)?.serve().await
     })
 }

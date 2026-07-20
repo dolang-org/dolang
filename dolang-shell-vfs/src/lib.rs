@@ -24,7 +24,6 @@ mod protocol;
 mod read_dir;
 mod sec_desc;
 mod server;
-#[cfg(unix)]
 mod service;
 mod sid;
 #[cfg(windows)]
@@ -2138,30 +2137,11 @@ pub use client::CommandBuilder;
 /// Agent server for VFS RPC connections.
 pub use server::Server;
 
-/// Runs one VFS server session over standard input and output.
-pub fn serve_stdio() -> io::Result<()> {
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?
-        .block_on(async {
-            Server::new_split(tokio::io::stdin(), tokio::io::stdout())
-                .serve()
-                .await
-        })
-}
+pub use service::main;
 
+/// Access permission flags for the `access` method.
 #[cfg(unix)]
-mod unix {
-    /// Daemonization errors.
-    pub use crate::service::ServiceError;
-    /// Run the agent server in foreground mode (no daemonization).
-    pub use crate::service::foreground;
-    /// Access permission flags for the `access` method.
-    pub use nix::unistd::AccessFlags;
-}
-
-#[cfg(unix)]
-pub use unix::*;
+pub use nix::unistd::AccessFlags;
 
 #[cfg(windows)]
-pub use windows::{WindowsSession, serve_named_pipe};
+pub use windows::WindowsSession;

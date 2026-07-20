@@ -352,7 +352,7 @@ pub class Runtime
           --entrypoint $ctr_agent
           -v $subdir:$ctr_subdir:rw,z$uopt
           -v $agent_bin:$ctr_agent:ro,z$uopt
-          $ctr $ctr_socket
+          $ctr --listen $ctr_socket
         do
           strand.next()
           let agent = Vfs.unix_socket $socket
@@ -654,7 +654,7 @@ pub class Builder
       -v $self.#subdir:$self.#ctr_subdir:rw,z$(self.#runtime.mount_uopt())
       -v $self.#bin:$self.#ctr_agent:ro,z$(self.#runtime.mount_uopt())
       $img 
-      $self.#ctr_agent $self.#ctr_socket
+      $self.#ctr_agent --listen $self.#ctr_socket
     self.#wait_socket()
     self.#ctr_id = ctr_id
     self.#agent = Vfs.unix_socket $self.#socket

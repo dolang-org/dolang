@@ -28,7 +28,7 @@ def with_vfs remote block
       let input = strand.input()
 
       pipeline
-        do run $vfs_bin $socket
+        do run $vfs_bin --listen $socket
         do
           strand.next()
           let vfs = Vfs.unix_socket $socket
