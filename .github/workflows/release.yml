@@ -14,10 +14,7 @@ permissions:
 
 defaults:
   run:
-    shell: >-
-      dolang --strict --no-cache
-      --import dodo --import fs --import sys
-      {0}
+    shell: dolang --strict --no-cache --import dodo --import sys {0}
 
 jobs:
   build-release:
@@ -26,7 +23,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             artifact_name: x86_64-linux-gnu
           - os: windows-latest
@@ -51,44 +48,37 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install LLVM (macOS only)
-        if: matrix.os == 'macos-latest'
+      - name: Prereqs
         run: |
-          run brew install llvm
-          fs.append $env["GITHUB_ENV"] |
-            LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib
+          import systemd http sudo fs
+          let os = sys.os_info().os
+          if (os == :MACOS:)
+            run brew install llvm
+            fs.append $env["GITHUB_ENV"] |
+              LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib
+          else if (os == :LINUX:)
+            run rustup target add x86_64-unknown-linux-musl
+            bind systemd.os_release()
+              "UBUNTU_CODENAME": ubuntu_codename = nil
+              "VERSION_CODENAME": version_codename
+              ...
 
-      - name: Install musl target (Linux only)
-        if: matrix.os == 'ubuntu-latest'
-        run: run rustup target add x86_64-unknown-linux-musl
+            sudo.with do
+              http.get https://download.docker.com/linux/ubuntu/gpg do |resp|
+                fs.write /etc/apt/keyrings/docker.asc $resp.body()
+              fs.set_metadata mode: 0o644 /etc/apt/keyrings/docker.asc
 
-      - name: Install Packages (Linux only)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          import systemd http sudo proc.run:
-            - apt
+              fs.write /etc/apt/sources.list.d/docker.sources |
+                Types: deb
+                URIs: https://download.docker.com/linux/ubuntu
+                Suites: $(ubuntu_codename || version_codename)
+                Components: stable
+                Signed-By: /etc/apt/keyrings/docker.asc
 
-          bind systemd.os_release()
-            "UBUNTU_CODENAME": ubuntu_codename = nil
-            "VERSION_CODENAME": version_codename
-            ...
-
-          sudo.with do
-            http.get https://download.docker.com/linux/ubuntu/gpg do |resp|
-              fs.write /etc/apt/keyrings/docker.asc $resp.body()
-            fs.set_metadata mode: 0o644 /etc/apt/keyrings/docker.asc
-
-            fs.write /etc/apt/sources.list.d/docker.sources |
-              Types: deb
-              URIs: https://download.docker.com/linux/ubuntu
-              Suites: $(ubuntu_codename || version_codename)
-              Components: stable
-              Signed-By: /etc/apt/keyrings/docker.asc
-
-            apt update
-            apt install
-              docker-ce docker-ce-cli containerd.io docker-buildx-plugin
-              docker-compose-plugin llvm libclang-dev
+              run apt update
+              run apt install
+                docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+                docker-compose-plugin llvm libclang-dev
 
       - name: Build and install release binaries
         run: |
