@@ -166,6 +166,7 @@ jobs:
 
       - name: Extract version from tag
         run: |
+          import fs
           fs.append $env["GITHUB_ENV"] |
             VERSION=$(env["GITHUB_REF"].without_prefix "refs/tags/")
 
