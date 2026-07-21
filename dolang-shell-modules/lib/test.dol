@@ -42,7 +42,7 @@ class Harness
   def record_test self path name
     self.#total = (self.#total + 1)
     if !term.have_terminal
-      echo "run: $(module_name path)/$name"
+      print (info_style "run") ": " (name_style "$(module_name path)/$name") "\n"
 
   def record_success self
     self.#success = (self.#success + 1)
