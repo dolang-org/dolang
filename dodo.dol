@@ -331,7 +331,7 @@ return
     do |args|
       let spec = Spec $args profile: release
       mkdocs_build_tools $spec
-      with_mkdocs $spec do dodo.show mkdocs build
+      with_mkdocs $spec do dodo.show mkdocs build --strict
 
   fmt:
     help: format Rust and Markdown
@@ -345,6 +345,10 @@ return
       let spec = Spec $args
       spec.cargo clippy --all-targets
       dodo.show cargo fmt --check
+
+  "lint-docs":
+    help: check for Markdown errors in documentation
+    do |_|
       dodo.show rumdl check
 
   clean:

@@ -16,10 +16,7 @@ permissions:
 
 defaults:
   run:
-    shell: >-
-      dolang --strict --no-cache
-      --import dodo --import fs
-      {0}
+    shell: dolang --strict --no-cache --import dodo {0}
 
 jobs:
   test:
@@ -50,47 +47,44 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Reduce debug info (Windows only)
-        if: matrix.os == 'windows-latest'
+      - name: Prereqs
         run: |
-          fs.append $env["GITHUB_ENV"] |
-            CARGO_PROFILE_DEV_DEBUG=0
-            CARGO_PROFILE_TEST_DEBUG=0
+          import systemd http sudo fs sys
+          let os = sys.os_info().os
+          let env_file = env["GITHUB_ENV"]
 
-      - name: Install LLVM (macOS only)
-        if: matrix.os == 'macos-latest'
-        run: |
-          run brew install llvm
-          fs.append $env["GITHUB_ENV"] |
-            LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib
+          if (os == :WINDOWS:)
+            fs.append $env_file |
+              CARGO_PROFILE_DEV_DEBUG=0
+              CARGO_PROFILE_TEST_DEBUG=0
+          else if (os == :MACOS:)
+            run brew install llvm
+            fs.append $env_file |
+              LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib
+          else if (os == :LINUX:)
+            bind systemd.os_release()
+              "UBUNTU_CODENAME": ubuntu_codename = nil
+              "VERSION_CODENAME": version_codename
+              ...
+            sudo.with do
+              http.get https://download.docker.com/linux/ubuntu/gpg do |resp|
+                fs.write /etc/apt/keyrings/docker.asc $resp.body()
+              fs.set_metadata mode: 0o644 /etc/apt/keyrings/docker.asc
 
-      - name: Install Packages (Linux only)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          import systemd http sudo proc.run:
-            - apt
+              fs.write /etc/apt/sources.list.d/docker.sources |
+                Types: deb
+                URIs: https://download.docker.com/linux/ubuntu
+                Suites: $(ubuntu_codename || version_codename)
+                Components: stable
+                Signed-By: /etc/apt/keyrings/docker.asc
 
-          bind systemd.os_release()
-            "UBUNTU_CODENAME": ubuntu_codename = nil
-            "VERSION_CODENAME": version_codename
-            ...
+              run apt update
+              run apt install
+                docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+                docker-compose-plugin llvm libclang-dev
 
-          sudo.with do
-            http.get https://download.docker.com/linux/ubuntu/gpg do |resp|
-              fs.write /etc/apt/keyrings/docker.asc $resp.body()
-            fs.set_metadata mode: 0o644 /etc/apt/keyrings/docker.asc
-
-            fs.write /etc/apt/sources.list.d/docker.sources |
-              Types: deb
-              URIs: https://download.docker.com/linux/ubuntu
-              Suites: $(ubuntu_codename || version_codename)
-              Components: stable
-              Signed-By: /etc/apt/keyrings/docker.asc
-
-            apt update
-            apt install
-              docker-ce docker-ce-cli containerd.io docker-buildx-plugin
-              docker-compose-plugin llvm libclang-dev
+      - name: Lint
+        run: dodo.run lint
 
       - name: Run tests
         run: dodo.run test
@@ -150,20 +144,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install docs dependencies
-        run: run python -m pip install --requirement docs/requirements.txt
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Prereqs
+        run: |
+          run python -m pip install --requirement docs/requirements.txt
+          run cargo install rumdl
+
+      - name: Lint docs
+        run: dodo.run lint-docs
+
       - name: Build docs site
         run: dodo.run mkdocs --target x86_64-linux
-
-      - name: Upload docs artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: dolang-docs-site
-          path: site
