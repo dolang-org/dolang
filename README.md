@@ -68,7 +68,7 @@ progress.with do podman.build
 
 ### Prerequisites
 
-- Rust 1.92.0 or later
+- Rust 1.93 or later
 
 ### Building from Source
 
@@ -80,7 +80,7 @@ cargo build --release --bin dolang --bin dolang-vfs
 ./target/release/dolang
 
 # Or run a script
-env ./target/release/dolang example/cow.dol
+./target/release/dolang example/cow.dol
 ```
 
 ## Acknowledgements
