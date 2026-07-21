@@ -1,4 +1,4 @@
-import sys admin
+import sys admin dodo
   fs:
     - Path
     - create_dir
@@ -75,12 +75,8 @@ let TARGETS =
 def default_target()
   let target = "$(str(sys.cpu_info().arch).lower())-$(str(sys.os_info().os).lower())"
   if !(TARGETS.contains target)
-    throw "unsupported host target: $target"
+    throw std.RuntimeError "unsupported host target: $target"
   target
-
-def show ...cmd
-  echo "+" ...cmd
-  run ...cmd
 
 class Spec
   pub field target tuple profile channel target_dir
@@ -113,7 +109,7 @@ class Spec
       path
 
   pub def cargo self cmd ...rest
-    show cargo
+    dodo.show cargo
       if self.channel
         +$self.channel
       $cmd --target $self.tuple
@@ -205,7 +201,7 @@ return
       collect: true
     do |args|
       env MIRIFLAGS: -Zmiri-disable-isolation do
-        show cargo +nightly miri test
+        dodo.show cargo +nightly miri test
           for crate = MIRI_CRATES
             -p $crate
           ...args.args
@@ -242,7 +238,7 @@ return
       help: source arguments for tools/gen_system_error_codes.py
       collect: true
     do |args|
-      show python3 tools/gen_system_error_codes.py
+      dodo.show python3 tools/gen_system_error_codes.py
         --output dolang-ext-shell/src/error_code/generated.rs
         ...args.args
 
@@ -271,7 +267,7 @@ return
       collect: true
     do |args|
       run cargo run --bin gen-bytecode-seeds
-      show cargo +nightly fuzz run bytecode_deserialize
+      dodo.show cargo +nightly fuzz run bytecode_deserialize
         target/fuzz-corpus/bytecode_deserialize
         -- ...args.args
 
@@ -310,51 +306,51 @@ return
       let spec = Spec $args
       let ignore = "($("|".join COV_IGNORE))"
       spec.cargo llvm-cov report --html --ignore-filename-regex $ignore
-      show python3 -m http.server 8080 -d target/llvm-cov/html/ -b localhost
+      dodo.show python3 -m http.server 8080 -d target/llvm-cov/html/ -b localhost
 
   rustdoc:
     help: build selected rustdoc packages
     do |_|
-      show cargo doc -p dolang-runtime -p dolang-compile -p dolang-ext-shell --no-deps
+      dodo.show cargo doc -p dolang-runtime -p dolang-compile -p dolang-ext-shell --no-deps
 
   "serve-rustdoc":
     help: build and serve rustdoc locally
     do |_|
-      show cargo doc --package dolang --package dolang-ext-shell --no-deps
-      show python3 -m http.server 8080 -d target/doc -b localhost
+      dodo.show cargo doc --package dolang --package dolang-ext-shell --no-deps
+      dodo.show python3 -m http.server 8080 -d target/doc -b localhost
 
   "serve-mkdocs":
     help: build and serve the MkDocs site
     do |args|
       let spec = Spec $args profile: release
       mkdocs_build_tools $spec
-      with_mkdocs $spec do show mkdocs serve
+      with_mkdocs $spec do dodo.show mkdocs serve
 
   mkdocs:
     help: build the MkDocs site
     do |args|
       let spec = Spec $args profile: release
       mkdocs_build_tools $spec
-      with_mkdocs $spec do show mkdocs build
+      with_mkdocs $spec do dodo.show mkdocs build
 
   fmt:
     help: format Rust and Markdown
     do |_|
-      show cargo fmt
-      show rumdl fmt
+      dodo.show cargo fmt
+      dodo.show rumdl fmt
 
   lint:
     help: check for coding/formatting errors
     do |args|
       let spec = Spec $args
       spec.cargo clippy --all-targets
-      show cargo fmt --check
-      show rumdl check
+      dodo.show cargo fmt --check
+      dodo.show rumdl check
 
   clean:
     help: remove build artifacts and generated docs
     do |_|
-      show cargo clean
+      dodo.show cargo clean
       remove site dot all: true ignore: true
 
   install:
@@ -401,7 +397,7 @@ return
       help: "arguments to `cargo publish`"
       collect: true
     do |args|
-      show cargo publish
+      dodo.show cargo publish
         for crate = PUBLISH_CRATES
           -p $crate
         ...args.args
