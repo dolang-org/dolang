@@ -7,7 +7,8 @@ the remote host for the duration of the block.
 
 ## Running a Remote Block
 
-The remote host must provide `dolang-vfs` in the command search path:
+The remote host must provide a matching `dolang-vfs` in the command search
+path:
 
 ```
 import ssh sys
@@ -37,6 +38,9 @@ must pass through or interpret those trailing `dolang-vfs` arguments.
 `ssh.with` stops the VFS session when the block returns or throws. Prefer it to
 constructing a stream-backed `Vfs` manually.
 
+Authentication is delegated to the user's `ssh` executable, configuration,
+agent, and credential providers. Do does not replace or weaken that setup.
+
 ## Connection Options
 
 `ssh.with` accepts the common options needed for unattended automation:
@@ -56,6 +60,15 @@ constructing a stream-backed `Vfs` manually.
 SSH configuration continues to supply settings not represented by these
 options. Use `:STRICT:` for hosts whose keys have already been provisioned;
 `:ACCEPT_NEW:` trusts a host on first use but still rejects a changed key.
+The default policy is the user's normal SSH host-key policy.
+
+`ssh.with` uses `ssh -T`, so it does not allocate a remote terminal. External
+programs can use captured output, redirection, and pipes, but programs that
+require an interactive TTY are not supported through this helper.
+
+When the block returns, throws, or is canceled, `ssh.with` stops the VFS and
+waits for the SSH stream to finish. Connection failure raises an error and
+invalidates files and other handles opened through that session.
 
 ## Cross-Platform Targets
 
@@ -87,3 +100,7 @@ Unix privilege elevation also composes with SSH: `admin.with` or `sudo.with`
 inside an ssh block invokes `sudo` on the remote Unix host. `sudo` within a
 container within an `ssh` block likewise works as expected. UAC elevation on
 Windows hosts is not supported in this manner.
+
+The SSH server and remote `dolang-vfs` execute with the selected SSH account's
+authority. Treat access to that account and its VFS stream as access to all
+operations available to that identity.

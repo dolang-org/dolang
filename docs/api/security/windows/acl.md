@@ -15,8 +15,6 @@ Constructs an ACL from an iterable of [`Ace`](./ace.md) values.
 | `aces`     | iterable                   | Entries in packet order |
 | `revision` | [`int`](../../std/int.md)? | Native revision 2 or 4  |
 
-**Returns:** `Acl`
-
 Revision 4 is selected when an object ACE is present; otherwise revision 2 is
 selected. Supplying revision 2 with an object ACE raises `ValueError`.
 
@@ -36,7 +34,7 @@ Number of access-control entries.
 
 ### `aces`
 
-Lazy immutable array view of [`Ace`](./ace.md) values.
+Immutable array-like view of [`Ace`](./ace.md) values.
 
 ## Methods
 

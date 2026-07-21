@@ -40,7 +40,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Language Guide:
-    - language/overview.md
+    - language/index.md
     - language/basic-types.md
     - language/data-structures.md
     - language/commands.md
@@ -58,9 +58,12 @@ nav:
     - language/misc.md
     - language/prelude.md
   - Shell Guide:
-    - shell/overview.md
+    - shell/index.md
     - shell/modules.md
     - shell/cli-tools.md
+    - shell/terminal-output.md
+    - shell/system-errors.md
+    - shell/security.md
     - VFS:
       - shell/vfs/index.md
       - shell/vfs/containers.md

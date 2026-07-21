@@ -12,14 +12,17 @@ enabling IDE features in any LSP-compatible editor.
 
 ## Running the LSP
 
-The LSP server communicates over stdin/stdout:
+Build `dolang-lsp` alongside `dolang` and `dolang-vfs` for a complete source
+installation:
 
 ```bash
-dolang-lsp
+cargo build --release --bin dolang --bin dolang-lsp --bin dolang-vfs
 ```
 
 Configure your editor to use `dolang-lsp` as the language server for `.dol`
 files.
+
+The repository's VS Code extension starts `dolang-lsp` automatically.
 
 ## Configuration with `.dolang-lsp.toml`
 

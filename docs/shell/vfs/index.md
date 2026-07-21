@@ -7,6 +7,24 @@ VFS[^vfs] contexts power [containers](./containers.md),
 
 [^vfs]: Versatile Familiar Spirit
 
+## Architecture
+
+The Do interpreter and program state remain in the original process.
+`dolang-vfs` runs on the selected target and performs target-side operations
+on the interpreter's behalf:
+
+| Value or operation                                           | Context behavior                                 |
+| ------------------------------------------------------------ | ------------------------------------------------ |
+| `fs`, `proc.run`, `shell.env`, `shell.cd`, `sys`, `security` | Follow the active target                         |
+| VFS-aware extensions                                         | Follow the target as documented by the extension |
+| HTTP and ordinary network clients                            | Stay in the interpreter process                  |
+| `Path` values                                                | Carry a path style, but no target identity       |
+| Open files and other handles                                 | Remain bound to the target that created them     |
+
+Contexts may be nested. For example, a local interpreter can enter an SSH host
+and then connect to a container VFS on that host. Leaving a context restores
+the complete previous target.
+
 ## Context Scope
 
 Call [`Vfs.with`](../../api/shell/vfs.md#with-func-args) with a block to enter
@@ -37,15 +55,15 @@ of later entries.
 
 The following operations use the active context:
 
-| Operation                                  | Target behavior                                               |
-| ------------------------------------------ | ------------------------------------------------------------- |
-| [`fs`](../../api/fs/index.md)              | Reads and writes the target filesystem                        |
-| [`proc.run`](../../api/proc-run.md)        | Resolves and launches programs on the target                  |
-| `shell.env` and `shell.cd`                 | Use target environment and path conventions                   |
-| [`sys`](../../api/sys/index.md)            | Reports the target OS and CPU                                 |
-| [`security`](../../api/security/index.md)  | Reports and resolves the target identity                      |
-| VFS-aware extensions                       | Use files or services exposed through the active VFS          |
-| Other network clients and native resources | Remain in the interpreter process unless documented otherwise |
+| Operation                                 | Target behavior                                               |
+| ----------------------------------------- | ------------------------------------------------------------- |
+| [`fs`](../../api/fs/index.md)             | Reads and writes the target filesystem                        |
+| [`proc.run`](../../api/proc-run.md)       | Resolves and launches programs on the target                  |
+| `shell.env` and `shell.cd`                | Use target environment and path conventions                   |
+| [`sys`](../../api/sys/index.md)           | Reports the target OS and CPU                                 |
+| [`security`](../../api/security/index.md) | Reports and resolves the target identity                      |
+| VFS-aware extensions                      | Use files or services exposed through the active VFS          |
+| Other APIs                                | Remain in the interpreter process unless documented otherwise |
 
 ## Paths, Scopes and Handles
 
@@ -57,12 +75,11 @@ depends on that context's current working directory.
 
 Constructing `Path` from a string uses the current target's path style.
 `UnixPath` and `WindowsPath` select a style explicitly. Moving a `Path` between
-contexts does not copy the file it names or retain access to its original
-target.
+contexts does not retain access to its original target.
 
-Open files and other resource handles behave differently. A handle is bound to
-the VFS context that created it, so operations on it continue to address that
-context even when another context is current.
+Open files and other handles behave differently. A handle is bound to the VFS
+context that created it, so operations on it continue to address that context
+even when another context is current.
 
 Handles remain valid only while their originating VFS context remains
 connected. Calling `stop()`, losing the connection, or leaving a helper that
@@ -92,30 +109,47 @@ context, including its original working directory and environment.
 
 ## Connections
 
-[`Vfs func`](../../api/shell/vfs.md#vfs-func) connects to a `dolang-vfs --stdio`
-server over any callable-backed byte stream.
+[`Vfs func`](../../api/shell/vfs.md#vfs-func) connects to any strand which
+speaks the VFS protocol on its input and output pipe, typically by immediately
+running `dolang-vfs --stdio`.
 [`Vfs.unix_socket`](../../api/shell/vfs.md#unix_socket-path) connects to a
-daemon on Unix, and
+`dolang-vfs --listen <socket_path>` instance on Unix, and
 [`Vfs.windows_admin`](../../api/shell/vfs.md#windows_admin-cd-env)
-uses a private named pipe for Windows UAC elevation.
+performs Windows UAC elevation.
 
 Unix-socket and Windows administrator connections are resolved through the
 active context. This makes it possible to enter an SSH host and then connect to
-a container VFS reachable from that host, or to elevate a Windows host VFS from
+a container VFS reachable from that host, or to UAC elevate from
 WSL.
 
-Call `stop()` when a manually created handle is no longer needed. Prefer
-helpers such as `ssh.with`, `docker.with`, `podman.with`, `wsl.with_linux`, and
-`admin.with`; they clean up their VFS sessions when the block returns or
-throws.
+Call `stop()` when a manually created handle is no longer needed to shut down
+the VFS process and clean up related local resources. Prefer helpers such as
+`ssh.with`, `docker.with`, `podman.with`, `wsl.with_linux`, and `admin.with`;
+they clean up their VFS sessions when the block returns or throws.
+
+### Errors
+
+Target system errors cross the transport without being converted to the
+interpreter host's error model. A Windows target returns Windows native error
+codes even when the interpreter runs on Linux; see
+[System Errors](../system-errors.md).
+
+### Version Compatibility
+
+The VFS protocol does not currently negotiate versions. Use `dolang` and
+`dolang-vfs` from the same build or release. Other combinations are unsupported
+and may fail with a protocol error. Protocol versioning is planned for a
+stable release.
+
+### Trust Boundary
+
+`dolang-vfs` executes arbitrary operations with its target identity. Always
+restrict access to its client endpoint. Do not run the client endpoint on a
+system you do not trust, as a local administrator could possibly take control
+of it. The protocol is not encrypted, so always tunnel it over a secure
+channel such as SSH if traversing a network.
 
 ## Limitations
 
 Only APIs documented as VFS-aware follow the target. For example, an HTTP
-client still opens network connections from the interpreter process, and its
-Unix-socket option does not translate through a container filesystem.
-
-Interactive terminal handles are also transport-dependent. In particular,
-Windows cannot reliably attach an elevated child to the unelevated caller's
-console. Captured output, redirection, and pipes use ordinary handles and are
-the reliable choice across remote and elevated contexts.
+client still opens network connections from the interpreter process.

@@ -3,6 +3,10 @@
 The `sqlite` module provides functions and types for working with SQLite
 databases.
 
+This API is partially VFS-aware. It can successfully open databases via the
+Unix socket transport on Unix hosts, such as `docker.with` or `sudo.with`.
+Remote transports and Windows UAC elevation are not presently supported.
+
 ## Functions
 
 ### `open path retries? min_wait? max_wait? func?`

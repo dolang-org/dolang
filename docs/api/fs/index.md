@@ -2,6 +2,15 @@
 
 The `fs` module provides functions and types for filesystem operations.
 
+Ordinary metadata such as size, timestamps, ownership, permissions, and file
+attributes are available through [`Metadata`](./metadata.md) and
+[`set_metadata`](#set_metadata-resolve-paths). Extended attributes use
+[`xattrs`](#xattrs-path-namespace-resolve) and related functions. Windows
+security descriptors can also be fetched and manipulated with full fidelity;
+see [`sec_desc`](#sec_desc-path-owner-group-dacl-sacl-resolve) and the
+[Security Guide](../../shell/security.md). Windows alternate data streams are
+listed with [`streams`](#streams-path-resolve).
+
 ## Types
 
 | Type                           | Description                    |

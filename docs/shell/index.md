@@ -21,11 +21,18 @@ dolang --strict script.dol
 
 Other flags:
 
+- `-m`, `--main` -- run a bundled entrypoint by module name
 - `--check` -- check syntax without executing
 - `--compile <OUTPUT>` -- compile to bytecode file
+- `--module-path <PATH>` -- add a module search path
 - `--import <MODULE[=NAME]>` -- add a module to the prelude
 - `--import-item <MODULE.ITEM[=NAME]>` -- add a module item to the prelude
 - `--no-cache` -- disable reading and writing the bytecode cache
+- `-h`, `--help` -- show command-line help
+
+`--module-path` is repeatable. Explicit paths are searched in command-line
+order before the `site/` directory and bundled modules. See
+[Modules and Caching](./modules.md).
 
 Prelude options are repeatable. An alias after `=` changes the name bound in
 the script:
@@ -48,6 +55,30 @@ Arguments after the script path are available as `shell.args`.
 The executed script path is available as `shell.program`; when using `-m`, it is
 the module name instead. In the REPL, `shell.program` is `nil`.
 
+### Bundled Entrypoints
+
+`-m` runs an entrypoint bundled with `dolang`:
+
+```
+dolang -m dodo --list
+dolang -m test -- test
+```
+
+Installed aliases such as `dodo` and `dolang-test` select the corresponding
+entrypoint implicitly when available.
+
+### Companion Programs
+
+A complete source installation builds three executables:
+
+- `dolang` -- script executor, bundled entrypoints, and REPL
+- `dolang-lsp` -- language server
+- `dolang-vfs` -- target-side helper for VFS contexts
+
+Keep `dolang-vfs` from the same build or release as `dolang`. Container helpers
+locate it beside the interpreter, while SSH and WSL transitions require a
+matching helper on the destination command path.
+
 ## REPL
 
 Launch an interactive REPL with no arguments:
@@ -62,7 +93,10 @@ within a session.
 
 ## Shell Prelude
 
-The shell automatically imports a set of functions and objects into scope.
+The shell prelude extends the
+[core-language prelude](../language/prelude.md). Every core prelude value
+remains available, and the shell additionally imports the following functions
+and objects.
 
 ### `shell`
 
