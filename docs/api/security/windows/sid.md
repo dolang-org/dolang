@@ -4,7 +4,7 @@ Windows security identifier.
 
 ## Constructor
 
-### `Sid(value)`
+### `Sid value`
 
 Constructs a SID from its canonical string or native binary representation.
 
@@ -13,8 +13,6 @@ Constructs a SID from its canonical string or native binary representation.
 | Name    | Type                                                 | Description        |
 | ------- | ---------------------------------------------------- | ------------------ |
 | `value` | [`str`](../../std/str.md)\|[`bin`](../../std/bin.md) | SID representation |
-
-**Returns:** `Sid`
 
 ## Fields
 

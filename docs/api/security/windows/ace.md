@@ -22,7 +22,7 @@ Constructs an access-allowed ACE.
 
 **Returns:** `Ace`
 
-Application data is zero-padded to DWORD alignment.
+Application data is zero-padded to DWORD (32-bit) alignment.
 
 ### `deny sid mask ...options`
 

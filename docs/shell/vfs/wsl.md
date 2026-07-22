@@ -3,6 +3,11 @@
 The `wsl` module crosses between Windows and WSL Linux using a block-scoped
 stdio VFS.
 
+| Direction           | Required starting target        | Destination helper                      | Path style |
+| ------------------- | ------------------------------- | --------------------------------------- | ---------- |
+| Windows → Linux     | Windows, with `wsl.exe`         | `dolang-vfs` in the distribution        | Unix       |
+| WSL Linux → Windows | Linux with WSL interoperability | `dolang-vfs.exe`, or `dolang.exe --vfs` | Windows    |
+
 ## Entering Linux from Windows
 
 `with_linux` starts `dolang-vfs` in a WSL distribution. The distribution and
@@ -32,10 +37,10 @@ wsl.with_windows do
 ```
 
 It prefers `dolang-vfs.exe` and falls back to `dolang.exe --vfs`. Both are
-resolved through the active Linux environment's command search path. Use
+resolved through the active Linux environment's `PATH`. Use
 `command:` to override discovery.
 
-When the interpreter originally started on Windows, use
+When the interpreter originally started on Windows, prefer
 [`shell.with_host`](../../api/shell/index.md#with_host-func-args) to return
 temporarily from a nested Linux VFS. `with_windows` is intended for an
 interpreter that started within WSL and has no Windows startup context to
@@ -48,7 +53,7 @@ import wsl admin
 
 wsl.with_windows do
   admin.with do
-    echo elevated
+    do_something()
 ```
 
 ## Directory and Environment Overrides
@@ -56,9 +61,16 @@ wsl.with_windows do
 Both functions accept `cd:` and `env:`. These describe the destination, so use
 an [`UnixPath`](../../api/fs/unix-path.md) when entering Linux and a
 [`WindowsPath`](../../api/fs/windows-path.md) when entering Windows if the path
-must be constructed before entering that context.
+must be constructed before entering that context, or use ordinary strings.
 
 Environment keys may be strings or symbols. A `nil` value unsets the variable;
 `:INHERIT:` copies its current value before crossing the boundary.
+
+| Override value | Destination behavior                                 |
+| -------------- | ---------------------------------------------------- |
+| Key omitted    | Keep the helper's inherited destination value        |
+| `nil`          | Unset the variable                                   |
+| `:INHERIT:`    | Copy the current source value, or unset it if absent |
+| Other value    | Set its string representation explicitly             |
 
 The destination VFS is stopped when the block returns or throws.

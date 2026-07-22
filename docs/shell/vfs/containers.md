@@ -2,7 +2,7 @@
 
 The `docker` and `podman` modules use [VFS contexts](./index.md) to run Do
 functions in the context of containers. Filesystem operations, external program
-launching, and other supported APIs targe the container, while the interpreter
+launching, and other supported APIs target the container, while the interpreter
 remains on the host.
 
 ## Running in a Container
@@ -91,6 +91,14 @@ The Docker and Podman modules also provide a small management API:
 See the [`docker`](../../api/docker/index.md) and
 [`podman`](../../api/podman/index.md) references for the complete interfaces.
 
+`Container` objects inspect and change the lifecycle of existing containers;
+`docker.run` and `podman.run` run a single direct command in a temporary
+container, while `docker.with` and `podman.with` run a Do block with a
+temporary container as a VFS target.
+
+Image builds use a longer-lived temporary container VFS while applying their
+ordered `run`, `add`, `patch`, and `commit` steps.
+
 ## Manual Container VFS
 
 The module helpers mount `dolang-vfs` into a temporary container and connect
@@ -118,3 +126,23 @@ will refuse to create a socket in a directory that is not exclusively
 accessible by its owner (mode `0700`). When connecting, the socket path is
 resolved through the current VFS context, so a container can be reached via an
 [SSH context](./ssh.md).
+
+This gives the following common lifetimes:
+
+| Form                            | Container and VFS lifetime                                |
+| ------------------------------- | --------------------------------------------------------- |
+| `docker.with` / `podman.with`   | Temporary container and session for one block             |
+| `docker.build` / `podman.build` | Temporary container spanning the build steps              |
+| `Container` object              | Management handle                                         |
+| Manual socket connection        | Controlled by the caller and external container lifecycle |
+
+To target Docker on another host, enter that host first and then use the
+ordinary Docker module:
+
+```
+import ssh docker
+
+ssh.with builder.example.com do
+  docker.with ubuntu:24.04 do
+    run uname -a
+```

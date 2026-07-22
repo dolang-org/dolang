@@ -35,6 +35,16 @@ manage it manually through the returned [Strand](../api/strand/strand.md)
 handle using [`join`](../api/strand/strand.md#join) to wait for completion
 and possibly [`cancel`](../api/strand/strand.md#cancel) to terminate it.
 
+Both forms snapshot the spawning strand's working directory, environment, and
+VFS context. Held [`Resource`](../api/strand/resource.md)s are inherited by
+scoped strand but *not* by background strand. Later scoped changes in one
+strand do not impact other strands.
+
+A background strand may outlive the `ssh.with`, `docker.with`, `podman.with`,
+`wsl.with_*`, `sudo.with`, or `admin.with` block that created it. When the
+original block exits, its VFS session is stopped, causing subsequent errors on
+any background strands still using it.
+
 ## Spawning Strands
 
 ### `spawn`
@@ -228,7 +238,7 @@ When a strand exits with an error:
 
 - If you call [`join`](../api/strand/strand.md#join), the error is
   re-raised
-- In `fork` and `pipeline` strands, all sibiling strands are canceled.
+- In `fork` and `pipeline` strands, all sibling strands are canceled.
   After all strands complete, an arbitrary error among all failed strands is
   re-raised. Errors that were not caused by sibling cancellation (e.g.
   `CanceledError`, or `IterStop` and `SinkStop` errors in pipelines) are

@@ -551,6 +551,7 @@ dodo cargo-test            # (cargo test, use `--` to pass arbitrary additional 
 dodo shell-test            # (shell integration tests, use `--` to specify alternate arguments to `dolang -m test`)
 dodo test                  # cargo and shell tests
 dodo mkdocs                # build language docs (MkDocs site in site/)
+dodo lint-docs             # check for Markdown errors with rumdl
 ```
 
 After changes: `dodo fmt` → `dodo lint` (address warnings, consider if they

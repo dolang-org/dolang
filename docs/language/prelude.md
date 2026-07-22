@@ -3,6 +3,10 @@
 The following items are available globally in every Do program without any
 `import` statement.
 
+The `dolang` executable layers its
+[shell prelude](../shell/index.md#shell-prelude) on top of this core prelude.
+Embedded runtimes may provide a different additional prelude.
+
 ## `std`
 
 | Name                                        | Description                           |

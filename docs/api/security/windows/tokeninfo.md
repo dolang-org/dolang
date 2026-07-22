@@ -1,6 +1,6 @@
 # `TokenInfo`
 
-Windows process token information for the active VFS target.
+Windows access token information.
 
 ## Fields
 

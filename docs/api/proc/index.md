@@ -16,18 +16,6 @@ output capture.
 Executes a function with the current strand's external process I/O mode set for
 the duration of the call.
 
-#### Parameters
-
-| Name   | Type | Description                                   |
-| ------ | ---- | --------------------------------------------- |
-| `mode` |      | `:LINE:` or `:CHUNK:`                         |
-| `func` |      | function to execute with that channel mode    |
-| `...`  |      | additional arguments passed to `func`         |
-
-#### Returns
-
-The return value of `func`.
-
 In `:LINE:` mode, external process input is treated as UTF-8, split on line
 boundaries, and yields `str` values with any line endings removed. Output to an
 external process sends the `str` form of each value as UTF-8 with
@@ -44,6 +32,18 @@ behavior. When the iterator or sink of a strand running an
 external process is *not* a pipeline channel, the mode of that strand is used.
 Adjacent external processes in a pipeline always communicate in raw bytes
 regardless of mode.
+
+#### Parameters
+
+| Name   | Type | Description                                   |
+| ------ | ---- | --------------------------------------------- |
+| `mode` |      | `:LINE:` or `:CHUNK:`                         |
+| `func` |      | function to execute with that channel mode    |
+| `...`  |      | additional arguments passed to `func`         |
+
+#### Returns
+
+The return value of `func`.
 
 #### Example
 

@@ -1,38 +1,57 @@
 # Do Language
 
-A scripting language for CI/CD, DevOps, and automation that melds declarative
-elegance with Unix elbow grease:
-
-- Flexibly define structured data and operate on it with lightweight,
-  indentation-oriented syntax.
-- Run external CLI programs directly.
-- Use built-in modules for common tasks such as HTTP, SQLite, and more.
-- Write ordinary code too: data structures, closures, iterators, classes,
-  exceptions, concurrency.
+Do is a scripting language for cross-platform CI/CD, DevOps, and automation. It
+combines shell-like commands and indentation-oriented data declartion with
+ordinary functions, structured concurrency, and remote-capable system APIs.
 
 !!! warning "Experimental Language"
     Do is still in rapid development.
     The language syntax, standard library, and API are subject to change. Not
     recommended for production use.
 
-## Why Do?
+## What Makes Do Different?
 
-**Simple syntax for shell-script tasks.** Bare words are strings, `$` introduces
-variables and expressions.
+The interpreter stays local while a [VFS context](./shell/vfs/index.md) selects
+where system work happens. The same function can operate on the local system, a
+container, an SSH host, across WSL, or with administrator privileges.
+Filesystem access, external programs, environment variables, system
+information, and security queries follow the selected target.
+
+```
+import fs sys
+
+def inspect_target()
+  echo "$(sys.os_info().os): $(fs.Path(".").canonical())"
+  run hostname
+
+inspect_target()
+
+import ssh
+ssh.with build.example.com do inspect_target()
+```
+
+Contexts compose, so a local interpreter can enter an SSH host and then a
+container on that host. APIs that are not VFS-forwaded continue to run in the
+interpreter process.
+
+## Language at a Glance
+
+**Shell-like commands.** Bare words are strings; `$` introduces variables and
+compact expressions.
 
 ```
 run gcc -o main main.c -Wall -Werror -lm
 ```
 
-**Full expressions when you need them.** Parentheses switch to expression
-syntax with operators, calls, and whitespace insignificance:
+**Full expressions.** Parentheses switch to expression syntax with operators,
+calls, and insignificant whitespace.
 
 ```
 let total = (price * tax_rate + shipping)
 ```
 
-**Structured data with YAML-like vertical layout.** Build nested data naturally
-— no separate data format needed:
+**Structured data.** Vertical layout builds nested values without a separate
+data language.
 
 ```
 let config =
@@ -41,17 +60,25 @@ let config =
   features:
     - logging
     - metrics
-  limits:
-    max_connections: 100
-    timeout: 30
+```
+
+**Structured concurrency.** Strands provide cancellation, channels, pipelines,
+streams, and scoped resource limits.
+
+```
+import strand
+
+let results = strand.fork
+  do build linux
+  do build windows
+  do build macos
 ```
 
 ## Declarative Meets Procedural
 
-Mixed structured data and code in the same syntax and runtime:
+Structured data and executable blocks use the same syntax and runtime:
 
 ```
-# Build a container with podman with progress tracking
 import progress podman
 
 let PACKAGES =
@@ -60,12 +87,6 @@ let PACKAGES =
 
 progress.with do podman.build
   from: fedora:42
-  add:
-    target: /etc/sudoers.d/wheel
-    chmod: 0o640
-    content: |
-      %wheel ALL=(ALL) NOPASSWD: ALL
-
   run: do progress.show
     total: $PACKAGES.len
     message: installing packages
@@ -75,76 +96,53 @@ progress.with do podman.build
         i.message = "installing $pkg"
         run dnf install -y $pkg
         i.delta()
-
   tag: my-image
 ```
 
-The `PACKAGES` list, `progress.show` call, and `for` loop are ordinary Do
-code — the `run: do` block is a closure, not a quoted string passed to a shell.
-
-## Unix Tool Integration
-
-External programs become callable functions:
-
-```
-import proc.run:
-  - uname
-  - git
-
-# Capture output
-let kernel = sub do uname -r
-let branch = sub do git rev-parse --abbrev-ref HEAD
-
-echo "Building on $kernel, branch $branch"
-```
-
-## VFS
-
-Do can run ordinary blocks in the context of containers, on SSH hosts, or with
-administrator privileges. Filesystem access, launching external programs,
-environment variables, working directory, and more follow the selected target:
-
-```
-import shlex
-import podman
-import fs:
-  - open
-
-# Read a key from a shell-quoted config file inside a container
-def read_key ctr path key
-  podman.with $ctr do open $path do |file|
-    for line = file
-      let k v = line.split = limit: 1
-      if (k == key)
-        return shlex.split(v).next()
-
-echo $ read_key ubuntu:24.04 /etc/os-release PRETTY_NAME
-```
+The list, progress call, and loop are ordinary Do values and code. The `run:`
+value is a callable executed inside the build container's VFS context.
 
 ## Included Features
 
-**Automation** — run external programs as functions
-([`proc.run`](./api/proc-run.md)), manage files ([`fs`](./api/fs/index.md)),
-build and run containers ([podman](./api/podman/index.md),
-[docker](./api/docker/index.md),
-[toolbx](./api/toolbx.md)), parse CLI arguments
-([`args`](./api/args.md)), elevate privileges ([`admin`](./api/admin.md),
-[`sudo`](./api/sudo.md)), read
-system configuration ([`systemd`](./api/systemd.md), [`xdg`](./api/xdg.md)),
-cross between Windows and WSL ([`wsl`](./api/wsl.md)),
-and show friendly [progress indicators](./api/progress/index.md).
+**Automation and system integration** — external programs
+([`proc.run`](./api/proc-run.md)), filesystems ([`fs`](./api/fs/index.md)),
+containers ([`docker`](./api/docker/index.md),
+[`podman`](./api/podman/index.md), [`toolbx`](./api/toolbx.md)),
+[SSH](./api/ssh.md), [WSL](./api/wsl.md), privilege elevation
+([`admin`](./api/admin.md), [`sudo`](./api/sudo.md)), argument parsing
+([`args`](./api/args.md)), system integration
+([`sys`](./api/sys/index.md), [`systemd`](./api/systemd.md),
+[`xdg`](./api/xdg.md)), identity and Windows access control
+([`security`](./api/security/index.md)), and safe terminal output
+([`term`](./api/term/index.md), [`progress`](./api/progress/index.md)).
 
-**Data and protocols** — [HTTP](./api/http/index.md), [JSON](./api/json.md),
-[TOML](./api/toml.md), [XML](./api/xml/index.md), [YAML](./api/yaml.md),
+**Data and protocols** — [HTTP](./api/http/index.md),
+[URLs](./api/url/index.md), [JSON](./api/json.md), [TOML](./api/toml.md),
+[XML](./api/xml/index.md), [YAML](./api/yaml.md),
 [SQLite](./api/sqlite/index.md), [regex](./api/regex/index.md),
-[base64](./api/base64.md), [hashing](./api/digest/index.md),
-[zip](./api/zip/index.md)
+[base64](./api/base64.md), [digests](./api/digest/index.md),
+[zip](./api/zip/index.md), [time](./api/time/index.md),
+[glob](./api/glob/index.md), [patch](./api/patch/index.md), and
+[shlex](./api/shlex.md).
 
-**Tooling** — [LSP server](./lsp.md), REPL
+**Concurrency** — [`strand`](./api/strand/index.md) provides structured
+concurrency, cancellation, channels, pipelines, streams, background work, and
+scoped resources.
+
+**Tooling** — [LSP server and VS Code extension](./lsp.md), compiler and loading
+APIs, and a REPL.
+
+## Platform Support
+
+Supported platforms are currently Linux, macOS, and Windows. Platform-specific
+features follow the VFS context, not the host platform, so a Linux host can
+remotely modify security descriptors on Windows, etc.
 
 ## Get Started
 
-**New to Do?** Start with the [Language Guide](./language/overview.md).
+**New to Do?** Start with the [Language Guide](./language/index.md).
 
 **Building a script?** Follow the
 [command-line tool worked example](./shell/cli-tools.md).
+
+**Targeting another system?** Read the [VFS Guide](./shell/vfs/index.md).

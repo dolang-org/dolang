@@ -14,8 +14,6 @@ Parses a self-relative security descriptor.
 | ------- | ------------------------- | --------------------------- |
 | `value` | [`bin`](../../std/bin.md) | Native self-relative packet |
 
-**Returns:** `SecDesc`
-
 **Errors:**
 
 - Raises `ValueError` when the packet is malformed or is not self-relative.
@@ -23,8 +21,6 @@ Parses a self-relative security descriptor.
 ### `SecDesc ...options`
 
 Constructs a security descriptor from components and control fields.
-
-**Returns:** `SecDesc`
 
 ## Component options
 
@@ -50,9 +46,9 @@ The constructor and [`with`](#with-options) accept these options:
 | `sacl_protected`             | [`bool`](../../std/bool.md)      | SACL protection               |
 | `rm_control`                 | [`int`](../../std/int.md)\|`nil` | RM control byte, or clear it  |
 
-Setting ACL presence to false creates a loaded absent ACL. Presence true
-requires a supplied or existing present ACL. Control fields require the
-corresponding component to be loaded or supplied.
+Specifying ACL presence as `false` when using [`with`](#with-options) clears
+that field. Specifying `true` for control flags requires the corresponding field
+to be present or supplied.
 
 ## Fields
 
@@ -62,11 +58,12 @@ Security descriptor revision.
 
 ### `mask`
 
-Native `SECURITY_INFORMATION` mask recording which components were loaded.
+Native `SECURITY_INFORMATION` mask recording which fields are present.
 
 Descriptors parsed from a self-relative packet have owner, group, DACL, and
 SACL marked as loaded because the native packet does not carry a separate
-mask.
+mask. Descriptors derived from an object or file on Windows may have partial
+information depending on what was queried.
 
 ### `control`
 

@@ -12,4 +12,4 @@ The `security.windows` module exposes Windows security types.
 | [`Sid`](./sid.md)               | Windows security identifier       |
 | [`SidName`](./sidname.md)       | Resolved Windows account identity |
 | [`TokenGroup`](./tokengroup.md) | Windows token group membership    |
-| [`TokenInfo`](./tokeninfo.md)   | Windows process token information |
+| [`TokenInfo`](./tokeninfo.md)   | Windows access token information  |
