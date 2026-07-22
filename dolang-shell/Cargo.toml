@@ -13,7 +13,7 @@ name = "dolang"
 path = "src/main.rs"
 
 [features]
-default = ["base64", "digest", "json", "regex", "glob", "http", "zip", "sqlite", "xml", "yaml", "progress", "rand", "toml", "patch"]
+default = ["base64", "digest", "json", "regex", "glob", "http", "zip", "tar", "sqlite", "xml", "yaml", "progress", "rand", "toml", "patch"]
 debug = ["dolang-shell-main/debug"]
 base64 = ["dep:dolang-ext-base64"]
 digest = ["dep:dolang-ext-digest"]
@@ -23,6 +23,7 @@ glob = ["dep:dolang-ext-glob"]
 url = ["dep:dolang-ext-url"]
 http = ["dep:dolang-ext-http", "url"]
 zip = ["dep:dolang-ext-zip"]
+tar = ["dep:dolang-ext-tar"]
 sqlite = ["dep:dolang-ext-sqlite"]
 xml = ["dep:dolang-ext-xml"]
 yaml = ["dep:dolang-ext-yaml"]
@@ -97,6 +98,11 @@ optional = true
 
 [dependencies.dolang-ext-zip]
 path = "../dolang-ext-zip"
+version = "0.1.1"
+optional = true
+
+[dependencies.dolang-ext-tar]
+path = "../dolang-ext-tar"
 version = "0.1.1"
 optional = true
 

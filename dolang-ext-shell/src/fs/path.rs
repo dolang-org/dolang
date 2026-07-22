@@ -101,6 +101,21 @@ fn any_path_from_value<'v, 's>(
     }
 }
 
+fn path_object_from_value<'v>(
+    global: State<'v, Global<'v>>,
+    value: &Value<'v>,
+) -> Option<Utf8TypedPathBuf> {
+    if let Some(path) = global.types.unix_path.downcast(value) {
+        Some(path.annex().inner.clone())
+    } else {
+        global
+            .types
+            .windows_path
+            .downcast(value)
+            .map(|path| path.annex().typed_path_buf())
+    }
+}
+
 fn is_path_value<'v>(
     strand: &Strand<'v, '_>,
     global: State<'v, Global<'v>>,
@@ -467,7 +482,7 @@ macro_rules! impl_concrete_path {
                 strand: &'a mut Strand<'v, 's>,
                 w: &mut dyn dolang::runtime::Format<'v>,
             ) -> Result<'v, 's, ()> {
-                fmt!(strand, w, "<Path {:?}>", this.annex().display())
+                fmt!(strand, w, "<{} {:?}>", $name, this.annex().display())
             }
 
             fn display<'a, 's>(
@@ -1148,7 +1163,7 @@ macro_rules! impl_concrete_path {
             ) -> Result<'v, 's, bool> {
                 let borrow = this.annex();
                 let global = borrow.global;
-                if let Ok(other) = any_path_from_value(strand, global, other) {
+                if let Some(other) = path_object_from_value(global, other) {
                     Ok(borrow.typed_path_buf() == other)
                 } else {
                     Err(Error::not_supported(strand))
@@ -1171,7 +1186,7 @@ macro_rules! impl_concrete_path {
             ) -> Result<'v, 's, bool> {
                 let borrow = this.annex();
                 let global = borrow.global;
-                if let Ok(other) = any_path_from_value(strand, global, other) {
+                if let Some(other) = path_object_from_value(global, other) {
                     Ok(borrow.typed_path_buf() < other)
                 } else {
                     Err(Error::not_supported(strand))

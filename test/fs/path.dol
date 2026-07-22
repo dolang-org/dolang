@@ -23,7 +23,10 @@ def path_api()
   # Test path object creation
   let p = Path "foo/bar.txt"
 
-  assert_eq (dbg p) "<Path \"foo/bar.txt\">"
+  if (sys.os_info().family == :WINDOWS:)
+    assert_eq (dbg p) "<WindowsPath \"foo/bar.txt\">"
+  else
+    assert_eq (dbg p) "<UnixPath \"foo/bar.txt\">"
   assert_eq (str p) "foo/bar.txt"
   assert_eq (arg p) "foo/bar.txt"
 
@@ -170,6 +173,11 @@ def typed_paths()
   assert_type $Path $windows
   assert_eq (str unix) r"alpha\beta/gamma"
   assert_eq (str windows) r"alpha\beta/gamma"
+  assert_eq (dbg (UnixPath "foo/bar")) "<UnixPath \"foo/bar\">"
+  assert_eq (dbg (WindowsPath r"foo\bar")) r#"<WindowsPath "foo\\bar">"#
+  assert_ne $unix r"alpha\beta/gamma"
+  assert_ne r"alpha\beta/gamma" $unix
+  assert_ne (UnixPath "foo/bar") (WindowsPath "foo/bar")
 
   let smart = Path foo
   if (sys.os_info().family == :WINDOWS:)

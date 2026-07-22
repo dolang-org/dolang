@@ -1,0 +1,26 @@
+[package]
+name = "dolang-ext-tar"
+version = "0.1.1"
+description = "Streaming TAR archive extension for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+async-compression = { version = "0.4.42", features = ["gzip", "tokio", "zstd"] }
+astral-tokio-tar = { version = "0.6.4", default-features = false }
+tokio = { version = "1.48", features = ["io-util", "rt", "sync"] }
+tokio-stream = "0.1"
+
+[dependencies.dolang]
+path = "../dolang"
+version = "0.1.1"
+
+[dependencies.dolang-ext-shell]
+path = "../dolang-ext-shell"
+version = "0.1.1"

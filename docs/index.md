@@ -121,8 +121,9 @@ containers ([`docker`](./api/docker/index.md),
 [XML](./api/xml/index.md), [YAML](./api/yaml.md),
 [SQLite](./api/sqlite/index.md), [regex](./api/regex/index.md),
 [base64](./api/base64.md), [digests](./api/digest/index.md),
-[zip](./api/zip/index.md), [time](./api/time/index.md),
-[glob](./api/glob/index.md), [patch](./api/patch/index.md), and
+[zip](./api/zip/index.md), [tar](./api/tar/index.md),
+[time](./api/time/index.md), [glob](./api/glob/index.md),
+[patch](./api/patch/index.md), and
 [shlex](./api/shlex.md).
 
 **Concurrency** — [`strand`](./api/strand/index.md) provides structured

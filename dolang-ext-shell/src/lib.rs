@@ -148,6 +148,35 @@ pub fn as_path<'v, 'a>(vm: &Vm<'v>, value: &'a Value<'v>) -> Option<PathBuf> {
     }
 }
 
+/// Downcast a Do value to a Unix path.
+pub fn as_unix_path<'v>(
+    vm: &Vm<'v>,
+    value: &Value<'v>,
+) -> Option<dolang_shell_vfs::Utf8UnixPathBuf> {
+    let global = vm.state::<Global<'v>>();
+    let path = global.types.unix_path.downcast(value)?;
+    let annex = path.annex();
+    match &annex.inner {
+        dolang_shell_vfs::Utf8TypedPathBuf::Unix(path) => Some(path.clone()),
+        dolang_shell_vfs::Utf8TypedPathBuf::Windows(_) => None,
+    }
+}
+
+/// Construct a Do `fs.UnixPath` value.
+pub fn unix_path<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    path: impl AsRef<str>,
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    let global = strand.state::<Global<'v>>();
+    fs::path::create_path(
+        strand,
+        global,
+        dolang_shell_vfs::Utf8TypedPathBuf::from_unix(path.as_ref()),
+        out,
+    )
+}
+
 pub fn path<'v, 's>(
     strand: &mut Strand<'v, 's>,
     path: PathBuf,

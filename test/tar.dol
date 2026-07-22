@@ -1,0 +1,159 @@
+import agent tar
+  fs:
+    - UnixPath
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - assert_type
+  std:
+    - ConcurrencyError
+    - RuntimeError
+    - StateError
+    - ValueError
+
+def write_archive path compression
+  tar.write $path compression: $compression do |archive|
+    assert_type $tar.Writer $archive
+    assert_eq $archive.compression $compression
+    archive.entry (UnixPath "hello.txt") size: 11 mode: 0o640 uid: 12 gid: 34 do |entry|
+      assert_type $tar.EntryWriter $entry
+      entry.write hello-
+      entry.put b"world"
+    archive.entry empty size: 0 do |_|
+      nil
+    archive.entry folder size: 0 type: :DIR: mode: 0o755 do |_|
+      nil
+    archive.entry link size: 0 type: :SYMLINK: link_name: (UnixPath "hello.txt") do |_|
+      nil
+
+def check_archive path compression
+  tar.read $path do |archive|
+    assert_type $tar.Reader $archive
+    assert_eq $archive.compression $compression
+
+    let first = archive.next()
+    assert_type $tar.Entry $first
+    assert_type $UnixPath $first.path
+    assert_eq [...first.path.components] ["hello.txt"]
+    assert_eq $first.type :FILE:
+    assert_eq $first.size 11
+    assert_eq $first.mode 0o640
+    assert_eq $first.uid 12
+    assert_eq $first.gid 34
+    assert_eq (first.read 6) b"hello-"
+    assert_eq ([...first]) [b"world"]
+
+    let empty = archive.next()
+    assert_eq $empty.path (UnixPath "empty")
+    assert_eq ([...empty]) []
+
+    let folder = archive.next()
+    assert_eq $folder.type :DIR:
+    assert_eq $folder.mode 0o755
+
+    let link = archive.next()
+    assert_eq $link.type :SYMLINK:
+    assert_type $UnixPath $link.link_name
+    assert_eq [...link.link_name.components] ["hello.txt"]
+
+#[agent.test]
+def round_trip_compression_formats()
+  let formats =
+    - [:NONE:, "tar"]
+    - [:GZIP:, "tar.gz"]
+    - [:ZSTD:, "tar.zst"]
+  for compression suffix = formats
+    let path = "archive.$suffix"
+    write_archive $path $compression
+    check_archive $path $compression
+
+#[agent.test]
+def compression_is_inferred_from_extension()
+  let formats =
+    - [:NONE:, "tar"]
+    - [:GZIP:, "tar.gz"]
+    - [:GZIP:, "tgz"]
+    - [:GZIP:, "TAR.GZ"]
+    - [:ZSTD:, "tar.zst"]
+    - [:ZSTD:, "tzst"]
+    - [:ZSTD:, "TAR.ZST"]
+  for compression suffix = formats
+    let path = "inferred.$suffix"
+    tar.write $path do |archive|
+      assert_eq $archive.compression $compression
+      archive.entry item size: 2 do |entry| entry.write ok
+    tar.read $path do |archive|
+      assert_eq $archive.compression $compression
+      assert_eq $archive.next().path (UnixPath "item")
+
+  tar.write forced.tar.gz compression: :NONE: do |archive|
+    assert_eq $archive.compression :NONE:
+  tar.read forced.tar.gz do |archive|
+    assert_eq $archive.compression :NONE:
+
+#[agent.test]
+def advancing_invalidates_entry_and_skips_payload()
+  let path = "archive.tar"
+  tar.write $path do |archive|
+    archive.entry first size: 6 do |entry| entry.write abcdef
+    archive.entry second size: 3 do |entry| entry.write xyz
+
+  tar.read $path do |archive|
+    let first = archive.next()
+    assert_eq (first.read 1) b"a"
+    let second = archive.next()
+    assert_eq $second.path (UnixPath "second")
+    assert_eq (second.read 10) b"xyz"
+    assert_throws $StateError do first.read 1
+
+#[agent.test]
+def entry_size_is_enforced()
+  let overflow = assert_throws $ValueError do
+    tar.write too-large.tar do |archive|
+      archive.entry item size: 2 do |entry| entry.write abc
+  assert (((str overflow).contains "declared size") || ((str overflow).contains "exceeds"))
+
+  let underflow = assert_throws $ValueError do
+    tar.write too-small.tar do |archive|
+      archive.entry item size: 3 do |entry| entry.write ab
+  assert ((str underflow).contains "declared 3 bytes")
+
+#[agent.test]
+def nested_entry_is_rejected()
+  tar.write nested.tar do |archive|
+    archive.entry first size: 0 do |_|
+      assert_throws $ConcurrencyError do
+        archive.entry second size: 0 do |_| nil
+
+#[agent.test]
+def scoped_handles_are_invalid_after_return()
+  let escaped_writer = nil
+  tar.write scoped.tar do |archive|
+    archive.entry item size: 0 do |entry|
+      escaped_writer = entry
+  assert_throws $StateError do escaped_writer.write x
+
+  let escaped_entry = nil
+  tar.read scoped.tar do |archive|
+    escaped_entry = archive.next()
+  assert_throws $StateError do escaped_entry.read 1
+
+#[agent.test]
+def errors_still_close_entry_and_archive_scopes()
+  tar.write entry-error.tar do |archive|
+    assert_throws $RuntimeError do
+      archive.entry failed size: 0 do |_|
+        throw RuntimeError "entry failed"
+    archive.entry valid size: 2 do |entry| entry.write ok
+  tar.read entry-error.tar do |archive|
+    assert_eq $archive.next().path (UnixPath "failed")
+    assert_eq $archive.next().path (UnixPath "valid")
+
+  assert_throws $RuntimeError do
+    tar.write archive-error.tar.gz compression: :GZIP: do |archive|
+      archive.entry complete size: 2 do |entry| entry.write ok
+      throw RuntimeError "archive failed"
+  tar.read archive-error.tar.gz do |archive|
+    assert_eq $archive.compression :GZIP:
+    assert_eq $archive.next().path (UnixPath "complete")
