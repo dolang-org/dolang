@@ -838,6 +838,8 @@ for path = glob "**/*" resolve: :TARGET:
 Returns a normalized path with `.` and `..` components resolved without
 accessing the filesystem.
 
+Unresolvable `..` components in relative paths are preserved.
+
 #### Parameters
 
 | Name   | Type                                      | Description       |

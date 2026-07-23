@@ -36,7 +36,7 @@ use crate::{
         file::File,
         fs_metadata::create_fs_metadata,
         metadata::create_metadata,
-        path::{PathAnnex, convert_path_type, create_path_annex, path_from_value, safe_concat},
+        path::{convert_path_type, create_path, normalize_path, path_from_value, safe_concat},
         readdir::{DirEntryIter, DirEntryIterAnnex},
     },
     global::Global,
@@ -740,8 +740,7 @@ pub(crate) fn path_absolute<'v, 's>(
     } else {
         prepend_cwd(strand, global, path)?
     };
-    let annex = PathAnnex::try_new(strand, absolute, global)?;
-    create_path_annex(strand, annex, out);
+    create_path(strand, global, absolute, out)?;
     Ok(())
 }
 
@@ -756,8 +755,7 @@ async fn well_known_path<'v, 's>(
     let vfs = local.vfs();
     let env = local.env().flatten_delta();
     let path = vfs.well_known_path(key, app, &env).await.into_sys(strand)?;
-    let annex = PathAnnex::try_new(strand, path, global)?;
-    create_path_annex(strand, annex, out);
+    create_path(strand, global, path, out)?;
     Ok(())
 }
 
@@ -776,8 +774,7 @@ pub(crate) fn path_relative<'v, 's>(
     let relative = relative
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|_| path.to_path_buf());
-    let annex = PathAnnex::try_new(strand, relative, global)?;
-    create_path_annex(strand, annex, out);
+    create_path(strand, global, relative, out)?;
     Ok(())
 }
 
@@ -795,8 +792,7 @@ pub(crate) async fn path_canonical<'v, 's>(
         .canonicalize(absolute.to_path())
         .await
         .into_sys(strand)?;
-    let annex = PathAnnex::try_new(strand, canonical, global)?;
-    create_path_annex(strand, annex, out);
+    create_path(strand, global, canonical, out)?;
     Ok(())
 }
 
@@ -1338,9 +1334,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .function("normalize", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
             let path = path_from_value(strand, global, &path)?;
-            let normalized = path.normalize();
-            let annex = PathAnnex::try_new(strand, normalized, global)?;
-            create_path_annex(strand, annex, out);
+            let normalized = normalize_path(path.to_path());
+            create_path(strand, global, normalized, out)?;
             Ok(())
         })
         .function("absolute", async move |strand, args, out| {
@@ -1362,8 +1357,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 .strip_prefix(base_path.as_str())
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|_| path.clone());
-            let annex = PathAnnex::try_new(strand, relative, global)?;
-            create_path_annex(strand, annex, out);
+            create_path(strand, global, relative, out)?;
             Ok(())
         })
         .function("canonical", async move |strand, args, out| {
@@ -1378,8 +1372,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let local = global.local.get(strand);
             let vfs = local.vfs();
             let target = vfs.read_link(path.to_path()).await.into_sys(strand)?;
-            let annex = PathAnnex::try_new(strand, target, global)?;
-            create_path_annex(strand, annex, out);
+            create_path(strand, global, target, out)?;
             Ok(())
         })
         .function_with_slots(
@@ -1404,8 +1397,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 let temp_path = create_temp_dir(strand, global, parent.to_path())
                     .await
                     .into_sys(strand)?;
-                let annex = PathAnnex::try_new(strand, temp_path.clone(), global)?;
-                create_path_annex(strand, annex, &mut path);
+                create_path(strand, global, temp_path.clone(), &mut path)?;
                 let result = call!(strand, callable, out, &path).await;
                 let _ = strand
                     .with_interrupt_mask(true, async move |strand| {
