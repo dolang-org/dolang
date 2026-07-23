@@ -28,9 +28,9 @@ use crate::{
         OpenHandlePreference, OpenRequest, OpenVfsHandle, PipeResponse, QueryResponse,
         ReadDirResponse, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request,
         RequestKind, ResponseKind, SecDescRequest, SetMetadataRequest, SetSecDescRequest,
-        SetTimesRequest, SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget,
-        StreamsRequest, SymlinkKind, SymlinkRequest, UnixVfsRequest, VfsProtocol,
-        WellKnownPathRequest, WindowsAdminRequest, WirePath, XattrRequest, XattrsRequest,
+        SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget, StreamsRequest,
+        SymlinkKind, SymlinkRequest, UnixVfsRequest, VfsProtocol, WellKnownPathRequest,
+        WindowsAdminRequest, WirePath, XattrRequest, XattrsRequest,
     },
 };
 
@@ -489,7 +489,6 @@ impl Connection {
             RequestKind::ReadLink(request) => self.handle_read_link(request).await,
             RequestKind::Access(request) => self.handle_access(request).await,
             RequestKind::Glob(request) => self.handle_glob(request).await,
-            RequestKind::SetTimes(request) => self.handle_set_times(request).await,
             RequestKind::Xattrs(request) => self.handle_xattrs(request).await,
             RequestKind::Xattr(request) => self.handle_xattr(request).await,
             RequestKind::SetXattr(request) => self.handle_set_xattr(request).await,
@@ -1564,30 +1563,6 @@ impl Connection {
                 )
                 .await
                 .map(|paths| paths.into_iter().map(Into::into).collect()),
-        ))
-    }
-
-    async fn handle_set_times(&self, req: SetTimesRequest) -> ResponseKind {
-        let accessed = req
-            .accessed
-            .map(|timestamp| (timestamp.secs, timestamp.nanos));
-        let modified = req
-            .modified
-            .map(|timestamp| (timestamp.secs, timestamp.nanos));
-        let created = req
-            .created
-            .map(|timestamp| (timestamp.secs, timestamp.nanos));
-        ResponseKind::SetTimes(Self::wire_result(
-            self.server
-                .vfs
-                .set_times(
-                    request_path(&req.path),
-                    accessed,
-                    modified,
-                    created,
-                    req.follow,
-                )
-                .await,
         ))
     }
 

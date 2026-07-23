@@ -633,21 +633,6 @@ pub(crate) struct WellKnownPathRequest {
     pub(crate) env: HashMap<String, Option<String>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-pub(crate) struct Timestamp {
-    pub(crate) secs: i64,
-    pub(crate) nanos: u32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct SetTimesRequest {
-    pub(crate) path: WirePath,
-    pub(crate) accessed: Option<Timestamp>,
-    pub(crate) modified: Option<Timestamp>,
-    pub(crate) created: Option<Timestamp>,
-    pub(crate) follow: bool,
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct XattrsRequest {
     pub(crate) path: WirePath,
@@ -835,7 +820,6 @@ pub(crate) enum RequestKind {
     ReadLink(ReadLinkRequest),
     Access(AccessRequest),
     Glob(GlobRequest),
-    SetTimes(SetTimesRequest),
     Xattrs(XattrsRequest),
     Xattr(XattrRequest),
     SetXattr(SetXattrRequest),
@@ -909,7 +893,6 @@ pub(crate) enum ResponseKind {
     ReadLink(Result<WirePath, WireError>),
     Access(Result<(), WireError>),
     Glob(Result<Vec<WirePath>, WireError>),
-    SetTimes(Result<(), WireError>),
     Xattrs(Result<Vec<XattrEntry>, WireError>),
     Xattr(Result<Vec<u8>, WireError>),
     SetXattr(Result<(), WireError>),

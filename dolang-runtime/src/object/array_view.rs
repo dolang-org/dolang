@@ -9,9 +9,10 @@ use crate::{
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::{
-        index, iter,
+        array, index, iter,
         native::{Instance, Object},
         protocol::{Protocol, Recv, Spread, SpreadContext},
+        range,
     },
     sig::{Unpack, UnpackKeyKind},
     strand::Strand,
@@ -244,6 +245,27 @@ impl<'v> Protocol<'v> for View<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         let len = borrow.glue.len(&borrow.owner, strand);
+        if let Some(slice) = range::slice(index, strand, len)? {
+            let indices: Box<dyn Iterator<Item = usize>> = match slice {
+                range::Slice::Contiguous { start, end } => {
+                    if start > end {
+                        return Err(Error::index(strand));
+                    }
+                    Box::new(start..end)
+                }
+                range::Slice::Stepped(indices) => Box::new(indices.into_iter()),
+            };
+            let mut array = array::Array::new();
+            for index in indices {
+                let mut value = Value::NIL;
+                borrow
+                    .glue
+                    .get(&borrow.owner, strand, index, Slot::new(&mut value))?;
+                array.inner.push(value);
+            }
+            strand.builtin_types().array.create(strand, array, out);
+            return Ok(());
+        }
         let index = normalize(strand, index, len)?;
         borrow.glue.get(&borrow.owner, strand, index, out)
     }

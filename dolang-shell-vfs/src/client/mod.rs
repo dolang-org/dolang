@@ -38,10 +38,10 @@ use crate::{
         HardLinkRequest, MetadataRequest, MoveRequest, OpenHandle, OpenHandlePreference,
         OpenRequest, OpenVfsHandle, QueryResponse, ReadDirResponse, ReadLinkRequest,
         RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind, ResponseKind,
-        SecDescRequest, SetMetadataRequest, SetSecDescRequest, SetTimesRequest, SetXattrRequest,
-        SpawnRequest, StdioRecvTarget, StdioSendTarget, StreamsRequest, SymlinkKind,
-        SymlinkRequest, Timestamp, UnixVfsRequest, VfsProtocol, WellKnownPathRequest,
-        WindowsAdminRequest, WirePath, XattrNamespaceRequest, XattrRequest, XattrsRequest,
+        SecDescRequest, SetMetadataRequest, SetSecDescRequest, SetXattrRequest, SpawnRequest,
+        StdioRecvTarget, StdioSendTarget, StreamsRequest, SymlinkKind, SymlinkRequest,
+        UnixVfsRequest, VfsProtocol, WellKnownPathRequest, WindowsAdminRequest, WirePath,
+        XattrNamespaceRequest, XattrRequest, XattrsRequest,
     },
 };
 
@@ -2570,27 +2570,6 @@ impl Vfs for Client {
                 .into_iter()
                 .map(Utf8TypedPathBuf::from)
                 .collect()),
-            response => Err(unexpected(response).into()),
-        }
-    }
-
-    async fn set_times(
-        &self,
-        path: Utf8TypedPath<'_>,
-        accessed: Option<(i64, u32)>,
-        modified: Option<(i64, u32)>,
-        created: Option<(i64, u32)>,
-        follow: bool,
-    ) -> crate::Result<()> {
-        let request = SetTimesRequest {
-            path: path.into(),
-            accessed: accessed.map(|(secs, nanos)| Timestamp { secs, nanos }),
-            modified: modified.map(|(secs, nanos)| Timestamp { secs, nanos }),
-            created: created.map(|(secs, nanos)| Timestamp { secs, nanos }),
-            follow,
-        };
-        match self.request(RequestKind::SetTimes(request)).await? {
-            ResponseKind::SetTimes(result) => result.map_err(crate::Error::from),
             response => Err(unexpected(response).into()),
         }
     }

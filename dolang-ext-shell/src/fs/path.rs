@@ -62,8 +62,7 @@ pub(crate) fn path_from_value<'v, 's>(
     } else {
         Err(Error::type_error(strand, "expected Path or str"))
     }?;
-    let target = target_path_type(strand, global);
-    convert_path_type(strand, path, &target)
+    Ok(path)
 }
 
 fn path_path_type(path: Utf8TypedPath<'_>) -> typed_path::PathType {
@@ -71,6 +70,35 @@ fn path_path_type(path: Utf8TypedPath<'_>) -> typed_path::PathType {
         Utf8TypedPath::Unix(_) => typed_path::PathType::Unix,
         Utf8TypedPath::Windows(_) => typed_path::PathType::Windows,
     }
+}
+
+pub(crate) fn normalize_path(path: Utf8TypedPath<'_>) -> Utf8TypedPathBuf {
+    let has_root = path.has_root();
+    let mut components: Vec<typed_path::Utf8TypedComponent<'_>> = Vec::new();
+
+    for component in path.components() {
+        if component.is_current() {
+            continue;
+        }
+        if component.is_parent() {
+            if components.last().is_some_and(|last| last.is_normal()) {
+                components.pop();
+            } else if !has_root {
+                components.push(component);
+            }
+        } else {
+            components.push(component);
+        }
+    }
+
+    let mut normalized = match path {
+        Utf8TypedPath::Unix(_) => Utf8TypedPathBuf::from_unix(""),
+        Utf8TypedPath::Windows(_) => Utf8TypedPathBuf::from_windows(""),
+    };
+    for component in components {
+        normalized.push(component.as_str());
+    }
+    normalized
 }
 
 fn same_path_type(a: &typed_path::PathType, b: &typed_path::PathType) -> bool {
@@ -844,6 +872,9 @@ macro_rules! impl_concrete_path {
                                 mode,
                                 user,
                                 group,
+                                modified,
+                                accessed,
+                                created,
                                 resolve,
                                 readonly,
                                 hidden,
@@ -880,6 +911,9 @@ macro_rules! impl_concrete_path {
                             mode = None,
                             user = None,
                             group = None,
+                            modified = None,
+                            accessed = None,
+                            created = None,
                             resolve = None,
                             readonly = None,
                             hidden = None,
@@ -941,7 +975,12 @@ macro_rules! impl_concrete_path {
                         )?;
                         let global = this.annex().global;
                         let patch = super::metadata_patch(
-                            strand, global, mode, user, group, resolve, attrs,
+                            strand,
+                            global,
+                            [mode, user, group],
+                            [modified, accessed, created],
+                            resolve,
+                            attrs,
                         )?;
                         let annex = this.annex();
                         super::set_metadata(
@@ -949,29 +988,6 @@ macro_rules! impl_concrete_path {
                             annex.global,
                             vec![annex.as_path().to_path_buf()],
                             patch,
-                        )
-                        .await
-                    })
-                    .method("set_timestamps", async move |this, strand, args, _out| {
-                        let ([], [modified, accessed, created, resolve]) = unpack!(
-                            strand,
-                            args,
-                            0,
-                            0,
-                            modified = None,
-                            accessed = None,
-                            created = None,
-                            resolve = None
-                        )?;
-                        let annex = this.annex();
-                        super::set_timestamps(
-                            strand,
-                            annex.global,
-                            annex.as_path(),
-                            modified,
-                            accessed,
-                            created,
-                            resolve,
                         )
                         .await
                     });
@@ -1077,7 +1093,7 @@ macro_rules! impl_concrete_path {
                     .method("normalize", async move |this, strand, args, out| {
                         let ([], []) = unpack!(strand, args, 0, 0)?;
                         let annex = this.annex();
-                        let normalized = annex.as_path().normalize();
+                        let normalized = normalize_path(annex.as_path());
                         create_path(strand, annex.global, normalized, out)?;
                         Ok(())
                     })

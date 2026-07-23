@@ -1285,17 +1285,4 @@ impl Vfs for Direct {
         .unwrap_or_else(|e| Err(io::Error::other(e)))
         .map_err(Into::into)
     }
-
-    async fn set_times(
-        &self,
-        path: Utf8TypedPath<'_>,
-        accessed: Option<(i64, u32)>,
-        modified: Option<(i64, u32)>,
-        created: Option<(i64, u32)>,
-        follow: bool,
-    ) -> crate::Result<()> {
-        self.impl_set_times(&native_path(path)?, accessed, modified, created, follow)
-            .await
-            .map_err(Into::into)
-    }
 }

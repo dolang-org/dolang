@@ -14,6 +14,7 @@ import sys
     - ValueError
   fs:
     - exists
+    - normalize
     - Path
     - UnixPath
     - WindowsPath
@@ -66,6 +67,14 @@ def path_api()
   assert_eq $first "alpha"
   assert_eq [...rest] ["beta", "gamma"]
   assert_eq $unpacked[0] "alpha"
+  let sliced = components[1..]
+  assert_eq $sliced ["beta", "gamma"]
+  assert_eq $components[..-1] ["alpha", "beta"]
+  assert_eq $components[range 0 3 2] ["alpha", "gamma"]
+  assert_eq $components[range nil nil -1] ["gamma", "beta", "alpha"]
+  sliced.push "delta"
+  assert_eq $sliced ["beta", "gamma", "delta"]
+  assert_eq [...components] ["alpha", "beta", "gamma"]
 
   # Test extension rewrite methods
   let without_ext1 = Path "file.txt"
@@ -148,6 +157,12 @@ def path_api()
   # Test normalize rename
   let messy = Path "./foo/../bar/./baz"
   assert_eq $messy.normalize() (Path "bar/baz")
+  assert_eq $(UnixPath "../foo/..").normalize() (UnixPath "..")
+  assert_eq $(UnixPath "foo/../../../bar").normalize() (UnixPath "../../bar")
+  assert_eq $(UnixPath "../../foo/../bar").normalize() (UnixPath "../../bar")
+  assert_eq (normalize $ UnixPath "../foo/..") (UnixPath "..")
+  assert_eq $(WindowsPath r"..\foo\..").normalize() (WindowsPath "..")
+  assert_eq $(WindowsPath r"foo\..\..\bar").normalize() (WindowsPath r"..\bar")
 
   if (sys.os_info().family != :WINDOWS:)
     assert_throws $FieldError do p.disk

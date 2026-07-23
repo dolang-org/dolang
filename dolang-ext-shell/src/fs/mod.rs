@@ -13,7 +13,7 @@ use std::{
     io::{self, ErrorKind},
     mem::MaybeUninit,
     pin::Pin,
-    str, time,
+    str,
 };
 use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 
@@ -36,12 +36,12 @@ use crate::{
         file::File,
         fs_metadata::create_fs_metadata,
         metadata::create_metadata,
-        path::{PathAnnex, convert_path_type, create_path_annex, path_from_value, safe_concat},
+        path::{convert_path_type, create_path, normalize_path, path_from_value, safe_concat},
         readdir::{DirEntryIter, DirEntryIterAnnex},
     },
     global::Global,
     security,
-    time::datetime_to_system_time,
+    time::datetime_to_unix_nanos,
     util,
 };
 
@@ -243,9 +243,8 @@ pub(crate) fn resolve_sym<'v, 's>(
 fn metadata_patch<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    mode: Option<Slot<'v, '_>>,
-    user: Option<Slot<'v, '_>>,
-    group: Option<Slot<'v, '_>>,
+    [mode, user, group]: [Option<Slot<'v, '_>>; 3],
+    [modified, accessed, created]: [Option<Slot<'v, '_>>; 3],
     resolve: Option<Slot<'v, '_>>,
     attrs: AttrsPatch,
 ) -> Result<'v, 's, dolang_shell_vfs::MetadataPatch> {
@@ -256,11 +255,17 @@ fn metadata_patch<'v, 's>(
     let group = group
         .map(|group| parse_ownership_identity(strand, global, &group, "group"))
         .transpose()?;
+    let modified = parse_timestamp_arg(strand, global, modified, "modified")?;
+    let accessed = parse_timestamp_arg(strand, global, accessed, "accessed")?;
+    let created = parse_timestamp_arg(strand, global, created, "created")?;
     let follow = resolve_sym(strand, global, resolve, true)?;
     Ok(dolang_shell_vfs::MetadataPatch {
         mode,
         user,
         group,
+        accessed,
+        modified,
+        created,
         attrs,
         follow,
     })
@@ -633,71 +638,13 @@ fn parse_timestamp_arg<'v, 's>(
     global: State<'v, Global<'v>>,
     value: Option<Slot<'v, '_>>,
     name: &str,
-) -> Result<'v, 's, Option<time::SystemTime>> {
+) -> Result<'v, 's, Option<i128>> {
     let Some(value) = value else {
         return Ok(None);
     };
-    datetime_to_system_time(strand, global.types.date_time, &value)
+    datetime_to_unix_nanos(strand, global.types.date_time, &value)
         .map(Some)
         .map_err(|_| Error::type_error(strand, format!("{name}: expected DateTime")))
-}
-
-fn system_time_to_unix_timestamp<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    time: Option<time::SystemTime>,
-) -> Result<'v, 's, Option<(i64, u32)>> {
-    let Some(time) = time else {
-        return Ok(None);
-    };
-    match time.duration_since(std::time::SystemTime::UNIX_EPOCH) {
-        Ok(duration) => {
-            let secs = i64::try_from(duration.as_secs()).map_err(|_| Error::overflow(strand))?;
-            Ok(Some((secs, duration.subsec_nanos())))
-        }
-        Err(err) => {
-            let duration = err.duration();
-            let secs = i64::try_from(duration.as_secs()).map_err(|_| Error::overflow(strand))?;
-            if duration.subsec_nanos() == 0 {
-                Ok(Some((
-                    0i64.checked_sub(secs)
-                        .ok_or_else(|| Error::overflow(strand))?,
-                    0,
-                )))
-            } else {
-                Ok(Some((
-                    0i64.checked_sub(secs)
-                        .and_then(|v| v.checked_sub(1))
-                        .ok_or_else(|| Error::overflow(strand))?,
-                    1_000_000_000u32 - duration.subsec_nanos(),
-                )))
-            }
-        }
-    }
-}
-
-async fn set_timestamps<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    path: Utf8TypedPath<'_>,
-    modified: Option<Slot<'v, '_>>,
-    accessed: Option<Slot<'v, '_>>,
-    created: Option<Slot<'v, '_>>,
-    resolve: Option<Slot<'v, '_>>,
-) -> Result<'v, 's, ()> {
-    let modified = parse_timestamp_arg(strand, global, modified, "modified")?;
-    let accessed = parse_timestamp_arg(strand, global, accessed, "accessed")?;
-    let created = parse_timestamp_arg(strand, global, created, "created")?;
-    let modified = system_time_to_unix_timestamp(strand, modified)?;
-    let accessed = system_time_to_unix_timestamp(strand, accessed)?;
-    let created = system_time_to_unix_timestamp(strand, created)?;
-    let follow = resolve_sym(strand, global, resolve, true)?;
-    let path = prepend_cwd(strand, global, path)?;
-    let local = global.local.get(strand);
-    let vfs = local.vfs();
-    vfs.set_times(path.to_path(), accessed, modified, created, follow)
-        .await
-        .into_sys(strand)?;
-    Ok(())
 }
 
 fn parse_ownership_identity<'v, 's>(
@@ -740,8 +687,7 @@ pub(crate) fn path_absolute<'v, 's>(
     } else {
         prepend_cwd(strand, global, path)?
     };
-    let annex = PathAnnex::try_new(strand, absolute, global)?;
-    create_path_annex(strand, annex, out);
+    create_path(strand, global, absolute, out)?;
     Ok(())
 }
 
@@ -756,8 +702,7 @@ async fn well_known_path<'v, 's>(
     let vfs = local.vfs();
     let env = local.env().flatten_delta();
     let path = vfs.well_known_path(key, app, &env).await.into_sys(strand)?;
-    let annex = PathAnnex::try_new(strand, path, global)?;
-    create_path_annex(strand, annex, out);
+    create_path(strand, global, path, out)?;
     Ok(())
 }
 
@@ -776,8 +721,7 @@ pub(crate) fn path_relative<'v, 's>(
     let relative = relative
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|_| path.to_path_buf());
-    let annex = PathAnnex::try_new(strand, relative, global)?;
-    create_path_annex(strand, annex, out);
+    create_path(strand, global, relative, out)?;
     Ok(())
 }
 
@@ -795,8 +739,7 @@ pub(crate) async fn path_canonical<'v, 's>(
         .canonicalize(absolute.to_path())
         .await
         .into_sys(strand)?;
-    let annex = PathAnnex::try_new(strand, canonical, global)?;
-    create_path_annex(strand, annex, out);
+    create_path(strand, global, canonical, out)?;
     Ok(())
 }
 
@@ -1080,6 +1023,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     mode,
                     user,
                     group,
+                    modified,
+                    accessed,
+                    created,
                     resolve,
                     readonly,
                     hidden,
@@ -1117,6 +1063,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 mode = None,
                 user = None,
                 group = None,
+                modified = None,
+                accessed = None,
+                created = None,
                 resolve = None,
                 readonly = None,
                 hidden = None,
@@ -1177,7 +1126,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     (AttrFlags::OPAQUE, opaque),
                 ],
             )?;
-            let patch = metadata_patch(strand, global, mode, user, group, resolve, attrs)?;
+            let patch = metadata_patch(
+                strand,
+                global,
+                [mode, user, group],
+                [modified, accessed, created],
+                resolve,
+                attrs,
+            )?;
             let mut requested_paths = Vec::new();
             for path in paths {
                 match path {
@@ -1310,37 +1266,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 }
             }
             Ok(())
-        })
-        .function("set_timestamps", async move |strand, args, _out| {
-            let ([path], [modified, accessed, created, resolve]) = unpack!(
-                strand,
-                args,
-                1,
-                0,
-                modified = None,
-                accessed = None,
-                created = None,
-                resolve = None
-            )?;
-            let path = path_from_value(strand, global, &path)?;
-            set_timestamps(
-                strand,
-                global,
-                path.to_path(),
-                modified,
-                accessed,
-                created,
-                resolve,
-            )
-            .await
         });
     module
         .function("normalize", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
             let path = path_from_value(strand, global, &path)?;
-            let normalized = path.normalize();
-            let annex = PathAnnex::try_new(strand, normalized, global)?;
-            create_path_annex(strand, annex, out);
+            let normalized = normalize_path(path.to_path());
+            create_path(strand, global, normalized, out)?;
             Ok(())
         })
         .function("absolute", async move |strand, args, out| {
@@ -1362,8 +1294,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 .strip_prefix(base_path.as_str())
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|_| path.clone());
-            let annex = PathAnnex::try_new(strand, relative, global)?;
-            create_path_annex(strand, annex, out);
+            create_path(strand, global, relative, out)?;
             Ok(())
         })
         .function("canonical", async move |strand, args, out| {
@@ -1378,8 +1309,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let local = global.local.get(strand);
             let vfs = local.vfs();
             let target = vfs.read_link(path.to_path()).await.into_sys(strand)?;
-            let annex = PathAnnex::try_new(strand, target, global)?;
-            create_path_annex(strand, annex, out);
+            create_path(strand, global, target, out)?;
             Ok(())
         })
         .function_with_slots(
@@ -1404,8 +1334,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 let temp_path = create_temp_dir(strand, global, parent.to_path())
                     .await
                     .into_sys(strand)?;
-                let annex = PathAnnex::try_new(strand, temp_path.clone(), global)?;
-                create_path_annex(strand, annex, &mut path);
+                create_path(strand, global, temp_path.clone(), &mut path)?;
                 let result = call!(strand, callable, out, &path).await;
                 let _ = strand
                     .with_interrupt_mask(true, async move |strand| {
