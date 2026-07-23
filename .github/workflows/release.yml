@@ -89,13 +89,25 @@ jobs:
 
       - name: Package release
         run: |
+          import tar fs sys
           let archive = "dolang-${{ matrix.artifact_name }}.tar.gz"
-          if (sys.os_info().family == :WINDOWS:)
-            cd release/bin do
-              run 7z a -ttar ../../release.tar dolang.exe dolang-lsp.exe dolang-vfs.exe
-            run 7z a -tgzip $archive release.tar
+          let suffix = if (sys.os_info().family == :WINDOWS:)
+            ".exe"
           else
-            run tar -C release/bin -czf "$archive" dolang dolang-lsp dolang-vfs
+            ""
+          tar.write $archive do |output|
+            for name = ["dolang", "dolang-lsp", "dolang-vfs"]
+              let filename = "$name$suffix"
+              let source = (fs.Path "release/bin"  / filename)
+              let metadata = source.metadata()
+              output.entry $filename
+                size: $metadata.size
+                mode: 0o755
+                mtime: $metadata.modified
+                do |entry|
+                  fs.open $source rb do |file|
+                    for chunk = file
+                      entry.put $chunk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
