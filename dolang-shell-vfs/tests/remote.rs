@@ -5,8 +5,9 @@ use std::io::{self, SeekFrom};
 #[cfg(target_os = "linux")]
 use dolang_shell_vfs::XattrNamespace;
 use dolang_shell_vfs::{
-    Child, Client, Command, DirEntry, Direct, FileHandle, FileType, OpenOptions, ReadDir, Server,
-    Utf8TypedPath, Utf8UnixPath, Utf8WindowsPath, Vfs, typed_path,
+    Child, Client, Command, DirEntry, Direct, FileHandle, FileLockBehavior, FileLockMode,
+    FileLockRange, FileLockRequest, FileType, OpenOptions, ReadDir, Server, Utf8TypedPath,
+    Utf8UnixPath, Utf8WindowsPath, Vfs, typed_path,
 };
 #[cfg(windows)]
 use dolang_shell_vfs::{DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION};
@@ -600,6 +601,35 @@ async fn regular_file_round_trip_over_generic_stream() {
     assert_eq!(data, b"abc");
     file.close().await.unwrap();
 
+    client.stop().await.unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn remote_file_locks_round_trip() {
+    let (client, server_task) = connected_pair().await;
+    let temp = tempdir().unwrap();
+    let path = typed_path(temp.path().join("locks")).unwrap();
+    let mut options = client.open_options();
+    options.read(true).write(true).create(true);
+    let first = OpenOptions::open(&options, path.to_path()).await.unwrap();
+    let second = OpenOptions::open(&options, path.to_path()).await.unwrap();
+    let request = FileLockRequest {
+        range: FileLockRange {
+            start: 0,
+            end: None,
+        },
+        mode: FileLockMode::Exclusive,
+        behavior: FileLockBehavior::Try,
+    };
+
+    let mut lock = first.lock(request).await.unwrap().unwrap();
+    assert!(second.lock(request).await.unwrap().is_none());
+    lock.release().await.unwrap();
+    assert!(second.lock(request).await.unwrap().is_some());
+
+    first.close().await.unwrap();
+    second.close().await.unwrap();
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();
 }

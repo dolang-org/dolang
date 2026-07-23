@@ -57,6 +57,68 @@ open data.bin r+ do |file|
   file.set_size 8
 ```
 
+### `lock range :shared? func`
+
+Acquires a byte-range lock while `func` runs.
+
+**Parameters:**
+
+| Name     | Type                       | Description                                    |
+| -------- | -------------------------- | ---------------------------------------------- |
+| `range`  | [`range`](../std/range.md) | Half-open byte range; `..` is total            |
+| `shared` | [`bool`](../std/bool.md)?  | Acquire a shared lock                          |
+| `func`   | [`func`](../std/func.md)   | Block receiving a [`FileLock`](./file-lock.md) |
+
+**Returns:** the block's result
+
+The lock is exclusive unless `shared` is true. It is released before the
+method returns, including when the block raises an error or is canceled.
+Release runs with interruption masked and may wait indefinitely.
+
+Locks are mandatory on Windows, where they prevent conflicting file access.
+On Unix they are advisory and affect only programs that cooperate through file
+locking.
+
+Native blocking acquisition cannot be canceled. Canceling the strand may
+leave a blocking worker waiting for a conflicting lock and delay shutdown.
+Use `try_lock` with async retry for bounded or cancellable waiting.
+
+Overlapping active lock ranges on the same `File` are unsupported, including
+identical shared ranges.
+
+Finite zero-length ranges are invalid on Unix. On Windows they conflict only
+with positive-length ranges that start before and end after their offset. They
+do not conflict with another zero-length range or a range starting at the same
+offset. The zero-length range `0..0` is invalid.
+
+```
+file.lock (0..128) do |lock|
+  update_header()
+```
+
+### `try_lock range :shared? func`
+
+Attempts to acquire a byte-range lock without waiting.
+
+**Parameters:**
+
+| Name     | Type                       | Description                                    |
+| -------- | -------------------------- | ---------------------------------------------- |
+| `range`  | [`range`](../std/range.md) | Half-open byte range; `..` is total            |
+| `shared` | [`bool`](../std/bool.md)?  | Acquire a shared lock                          |
+| `func`   | [`func`](../std/func.md)   | Block receiving a [`FileLock`](./file-lock.md) |
+
+**Returns:** the block's result
+
+The block always runs. `lock.held` is false when another handle holds a
+conflicting lock. Other acquisition failures raise errors.
+
+```
+file.try_lock (..) do |lock|
+  if lock.held
+    update_index()
+```
+
 ### `read :size?`
 
 Reads data from the file.

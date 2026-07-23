@@ -66,7 +66,11 @@ impl OpaqueResource for RetainedVfs {
     type Marker = crate::VfsMarker;
 }
 
-struct RetainedFile(Mutex<AnyFile>);
+struct RetainedFile(
+    Mutex<AnyFile>,
+    std::sync::Mutex<std::collections::HashMap<u64, Arc<tokio::sync::Mutex<crate::FileLock>>>>,
+    std::sync::atomic::AtomicU64,
+);
 
 impl OpaqueResource for RetainedFile {
     type Marker = crate::FileMarker;
@@ -347,7 +351,11 @@ impl Connection {
         result.map_err(wire_error)
     }
 
-    async fn handle(&self, context: &CallContext<VfsProtocol>, kind: RequestKind) -> ResponseKind {
+    async fn handle(
+        &self,
+        context: &mut CallContext<VfsProtocol>,
+        kind: RequestKind,
+    ) -> ResponseKind {
         match kind {
             RequestKind::Query => self.handle_query().await,
             RequestKind::UserName { uid } => {
@@ -392,6 +400,12 @@ impl Connection {
             RequestKind::FileFlush { file } => self.handle_file_flush(context, file).await,
             RequestKind::FileSetSize { file, size } => {
                 self.handle_file_set_size(context, file, size).await
+            }
+            RequestKind::FileLock { file, request } => {
+                self.handle_file_lock(context, file, request).await
+            }
+            RequestKind::FileUnlock { file, lock } => {
+                self.handle_file_unlock(context, file, lock).await
             }
             RequestKind::FileToStdioSend { file } => {
                 self.handle_file_to_stdio_send(context, file).await
@@ -884,7 +898,11 @@ impl Connection {
                 if self.mode == SessionMode::Remote
                     || matches!(req.handle_preference, OpenHandlePreference::Opaque)
                 {
-                    let file = context.register(RetainedFile(Mutex::new(file)));
+                    let file = context.register(RetainedFile(
+                        Mutex::new(file),
+                        std::sync::Mutex::new(std::collections::HashMap::new()),
+                        std::sync::atomic::AtomicU64::new(0),
+                    ));
                     ResponseKind::Open(Ok(OpenHandle::Opaque(file)))
                 } else {
                     let handle: DefaultHandle = file.try_into_std().await.unwrap().into();
@@ -1173,6 +1191,69 @@ impl Connection {
         ResponseKind::FileRemoveXattr(result)
     }
 
+    async fn handle_file_lock(
+        &self,
+        context: &mut CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+        request: crate::FileLockRequest,
+    ) -> ResponseKind {
+        let retained = match self.retained_file(context, file) {
+            Ok(retained) => retained,
+            Err(error) => return ResponseKind::FileLock(Err(error)),
+        };
+        let acquired = context
+            .cancel_guard(async |_context| retained.0.lock().await.lock(request).await)
+            .await;
+        let acquired = match acquired {
+            Ok(result) => match result {
+                Ok(acquired) => acquired,
+                Err(error) => return ResponseKind::FileLock(Err(wire_error(error))),
+            },
+            Err(_) => {
+                return ResponseKind::FileLock(Err(wire_error(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "file lock acquisition was cancelled",
+                ))));
+            }
+        };
+        let lock = acquired.map(|lock| {
+            let id = retained.2.fetch_add(1, Ordering::Relaxed);
+            retained
+                .1
+                .lock()
+                .unwrap()
+                .insert(id, Arc::new(tokio::sync::Mutex::new(lock)));
+            id
+        });
+        ResponseKind::FileLock(Ok(lock))
+    }
+
+    async fn handle_file_unlock(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: dolang_rpc::Opaque<crate::FileMarker>,
+        lock: u64,
+    ) -> ResponseKind {
+        let retained = match self.retained_file(context, file) {
+            Ok(retained) => retained,
+            Err(_) => return ResponseKind::FileUnlock(Ok(())),
+        };
+        let retained_lock = retained.1.lock().unwrap().get(&lock).cloned();
+        let result = match retained_lock {
+            Some(retained_lock) => retained_lock
+                .lock()
+                .await
+                .release()
+                .await
+                .map_err(wire_error),
+            None => Ok(()),
+        };
+        if result.is_ok() {
+            retained.1.lock().unwrap().remove(&lock);
+        }
+        ResponseKind::FileUnlock(result)
+    }
+
     async fn handle_file_close(
         &self,
         context: &CallContext<VfsProtocol>,
@@ -1184,7 +1265,21 @@ impl Connection {
         };
         drop(retained);
         let result = match context.unregister::<RetainedFile>(file) {
-            Ok(Some(file)) => file.0.into_inner().close().await.map_err(wire_error),
+            Ok(Some(file)) => {
+                let locks = file.1.into_inner().unwrap().into_values();
+                let mut lock_error = None;
+                for lock in locks {
+                    if let Err(error) = lock.lock().await.release().await
+                        && lock_error.is_none()
+                    {
+                        lock_error = Some(error);
+                    }
+                }
+                match lock_error {
+                    Some(error) => Err(wire_error(error)),
+                    None => file.0.into_inner().close().await.map_err(wire_error),
+                }
+            }
             Ok(None) => Err(wire_error(io::Error::new(
                 io::ErrorKind::ResourceBusy,
                 "opaque file is in use",

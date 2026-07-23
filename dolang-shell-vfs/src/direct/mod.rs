@@ -6,6 +6,11 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(unix)]
+use std::os::fd::AsFd;
+#[cfg(windows)]
+use std::os::windows::io::AsHandle;
+
 use tokio::{
     fs::{self, File as TokioFile, OpenOptions},
     io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf},
@@ -29,10 +34,13 @@ use std::{
     task::{Context, Poll},
 };
 
+mod lock;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
 mod windows;
+
+pub(crate) use lock::{DirectFileLock, DirectFileLocks};
 
 #[derive(Debug, Clone)]
 pub struct Direct {
@@ -72,6 +80,7 @@ pub struct DirectChild {
 #[derive(Debug)]
 pub struct DirectFile {
     inner: TokioFile,
+    locks: DirectFileLocks,
     #[cfg(windows)]
     access: WindowsFileAccess,
 }
@@ -90,6 +99,7 @@ impl DirectFile {
         let _ = (read, write, append);
         Self {
             inner: TokioFile::from_std(file),
+            locks: DirectFileLocks::new(),
             #[cfg(windows)]
             access: WindowsFileAccess {
                 read,
@@ -293,6 +303,21 @@ impl FileHandle for DirectFile {
         Direct::default()
             .impl_file_remove_xattr(&self.inner, name, namespace)
             .await
+            .map_err(Into::into)
+    }
+
+    async fn lock(
+        &self,
+        request: crate::FileLockRequest,
+    ) -> crate::Result<Option<crate::FileLock>> {
+        #[cfg(unix)]
+        let handle = self.inner.as_fd().try_clone_to_owned()?;
+        #[cfg(windows)]
+        let handle = self.inner.as_handle().try_clone_to_owned()?;
+        self.locks
+            .acquire(handle, request)
+            .await
+            .map(|lock| lock.map(crate::FileLock::direct))
             .map_err(Into::into)
     }
 
@@ -623,6 +648,7 @@ impl crate::OpenOptions for DirectOpenOptions {
         let file = self.as_tokio().open(native_path(path)?).await?;
         Ok(DirectFile {
             inner: file,
+            locks: DirectFileLocks::new(),
             #[cfg(windows)]
             access: WindowsFileAccess {
                 read: self.read,

@@ -66,6 +66,51 @@ struct RemoteFile {
     pending: Option<PendingFileOperation>,
 }
 
+pub(crate) struct RemoteFileLock {
+    client: Client,
+    file: Opaque<crate::FileMarker>,
+    lock: Option<u64>,
+}
+
+impl RemoteFileLock {
+    pub(crate) async fn release(&mut self) -> crate::Result<()> {
+        let Some(lock) = self.lock else {
+            return Ok(());
+        };
+        match self
+            .client
+            .request(RequestKind::FileUnlock {
+                file: self.file.clone(),
+                lock,
+            })
+            .await?
+        {
+            ResponseKind::FileUnlock(result) => {
+                result.map_err(crate::Error::from)?;
+                self.lock = None;
+                Ok(())
+            }
+            response => Err(unexpected(response).into()),
+        }
+    }
+}
+
+impl Drop for RemoteFileLock {
+    fn drop(&mut self) {
+        let Some(lock) = self.lock.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let client = self.client.clone();
+        let file = self.file.clone();
+        runtime.spawn(async move {
+            let _ = client.request(RequestKind::FileUnlock { file, lock }).await;
+        });
+    }
+}
+
 struct PendingFileOperation {
     kind: FileOperationKind,
     call: Call<VfsProtocol>,
@@ -614,6 +659,39 @@ impl FileHandle for ClientFile {
                     .await?
                 {
                     ResponseKind::FileRemoveXattr(result) => result.map_err(Into::into),
+                    response => Err(unexpected(response).into()),
+                }
+            }
+        }
+    }
+
+    async fn lock(
+        &self,
+        request: crate::FileLockRequest,
+    ) -> crate::Result<Option<crate::FileLock>> {
+        match &self.0 {
+            ClientFileInner::Direct(file) => file.lock(request).await,
+            ClientFileInner::Remote(file) => {
+                file.idle()?;
+                match file
+                    .client
+                    .request(RequestKind::FileLock {
+                        file: file.opaque(),
+                        request,
+                    })
+                    .await?
+                {
+                    ResponseKind::FileLock(result) => result
+                        .map(|lock| {
+                            lock.map(|lock| {
+                                crate::FileLock::remote(RemoteFileLock {
+                                    client: file.client.clone(),
+                                    file: file.opaque(),
+                                    lock: Some(lock),
+                                })
+                            })
+                        })
+                        .map_err(Into::into),
                     response => Err(unexpected(response).into()),
                 }
             }

@@ -24,6 +24,7 @@ use crate::{
     error_code::{CodeObject, Errno, ErrorCode, LinuxErrno, MacosErrno, WinError},
     fs::{
         file::File,
+        file_lock::FileLock,
         fs_metadata::FsMetadata,
         metadata::Metadata,
         path::{Path, UnixPath, WindowsPath},
@@ -52,6 +53,7 @@ pub(crate) struct Types<'v> {
     pub(crate) metadata: Type<'v, Metadata>,
     pub(crate) fs_metadata: Type<'v, FsMetadata>,
     pub(crate) file: Type<'v, File<'v>>,
+    pub(crate) file_lock: Type<'v, FileLock>,
     pub(crate) dir_entry: Type<'v, DirEntry>,
     pub(crate) dir_entry_iter: Type<'v, DirEntryIter>,
     pub(crate) glob_iter: Type<'v, crate::fs::glob::GlobIter>,
@@ -218,6 +220,7 @@ impl<'v> Global<'v> {
             },
             types: Types {
                 file: builder.register_type(),
+                file_lock: builder.register_type(),
                 path,
                 unix_path,
                 windows_path,
