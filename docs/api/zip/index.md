@@ -1,6 +1,7 @@
 # zip
 
 The `zip` module provides functions and types for working with ZIP archives.
+The API is VFS-transparent: archive paths use the active VFS context.
 
 ## Functions
 
@@ -22,7 +23,6 @@ Opens a ZIP archive and returns an Archive object.
 | ------ | ----------------------------------------------------- |
 | `"r"`  | Read mode - opens existing archive for reading        |
 | `"w"`  | Write mode - creates new archive (truncates existing) |
-| `"a"`  | Append mode - opens existing archive for appending    |
 
 #### Returns
 
@@ -41,11 +41,6 @@ open "archive.zip" do |archive|
 open "output.zip" "w" do |archive|
   archive.open "file.txt" do |file|
     file.write "Hello, World!"
-
-# Append to existing archive
-open "existing.zip" "a" do |archive|
-  archive.open "new.txt" do |file|
-    file.write "Appended content"
 ```
 
 ## Types

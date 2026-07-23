@@ -12,12 +12,15 @@ test = false
 doctest = false
 
 [dependencies]
+futures-lite = { version = "2.6", default-features = false, features = ["std"] }
 tokio = { version = "1.48", features = ["fs", "io-util", "rt"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 
-[dependencies.zip]
-version = "8"
+[dependencies.async_zip]
+package = "astral_async_zip"
+version = "0.0.20"
 default-features = false
-features = ["deflate", "zstd", "time"]
+features = ["deflate", "jiff", "tokio", "zstd"]
 
 [dependencies.dolang]
 path = "../dolang"
@@ -25,4 +28,8 @@ version = "0.1.1"
 
 [dependencies.dolang-ext-shell]
 path = "../dolang-ext-shell"
+version = "0.1.1"
+
+[dependencies.dolang-shell-vfs]
+path = "../dolang-shell-vfs"
 version = "0.1.1"

@@ -34,14 +34,13 @@ open "archive.zip" do |archive|
     echo text
 ```
 
-**Error:** Raises a runtime error if called on a file opened in write or append
-mode.
+**Error:** Raises a runtime error if called on a file opened in write mode.
 
 ### `write data`
 
 Writes data to the file.
 
-**Availability:** Write/Append mode only
+**Availability:** Write mode only
 
 #### Parameters
 
