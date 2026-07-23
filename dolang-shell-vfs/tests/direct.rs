@@ -9,8 +9,8 @@ use std::path::Path;
 #[cfg(any(windows, target_os = "linux"))]
 use dolang_shell_vfs::{AttrFlags, AttrsPatch, MetadataPatch};
 use dolang_shell_vfs::{
-    Child, Command, Direct, FileHandle, FileType, OpenOptions, Utf8TypedPath, Utf8UnixPath,
-    Utf8WindowsPath, Vfs,
+    Child, Command, Direct, FileHandle, FileLockBehavior, FileLockMode, FileLockRange,
+    FileLockRequest, FileType, OpenOptions, Utf8TypedPath, Utf8UnixPath, Utf8WindowsPath, Vfs,
 };
 #[cfg(windows)]
 use dolang_shell_vfs::{
@@ -40,6 +40,289 @@ fn typed_str(path: &str) -> Utf8TypedPath<'_> {
     } else {
         Utf8TypedPath::Unix(Utf8UnixPath::new(path))
     }
+}
+
+fn lock_request(
+    start: u64,
+    end: Option<u64>,
+    mode: FileLockMode,
+    behavior: FileLockBehavior,
+) -> FileLockRequest {
+    FileLockRequest {
+        range: FileLockRange { start, end },
+        mode,
+        behavior,
+    }
+}
+
+async fn open_lock_file(direct: &Direct, path: &Path) -> dolang_shell_vfs::DirectFile {
+    direct
+        .open_options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(typed(path))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn byte_range_locks_contend_and_release() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("locks");
+    let first = open_lock_file(&direct, &path).await;
+    let second = open_lock_file(&direct, &path).await;
+
+    let mut exclusive = first
+        .lock(lock_request(
+            0,
+            Some(10),
+            FileLockMode::Exclusive,
+            FileLockBehavior::Blocking,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        second
+            .lock(lock_request(
+                0,
+                Some(10),
+                FileLockMode::Exclusive,
+                FileLockBehavior::Try,
+            ))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let mut adjacent = second
+        .lock(lock_request(
+            10,
+            Some(20),
+            FileLockMode::Exclusive,
+            FileLockBehavior::Try,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    adjacent.release().await.unwrap();
+    exclusive.release().await.unwrap();
+    assert!(
+        second
+            .lock(lock_request(
+                0,
+                Some(10),
+                FileLockMode::Exclusive,
+                FileLockBehavior::Try,
+            ))
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn shared_locks_and_same_handle_overlap_rules() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("shared-locks");
+    let first = open_lock_file(&direct, &path).await;
+    let second = open_lock_file(&direct, &path).await;
+    let third = open_lock_file(&direct, &path).await;
+
+    let _first_shared = first
+        .lock(lock_request(
+            0,
+            None,
+            FileLockMode::Shared,
+            FileLockBehavior::Blocking,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let _second_shared = second
+        .lock(lock_request(
+            0,
+            None,
+            FileLockMode::Shared,
+            FileLockBehavior::Try,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        third
+            .lock(lock_request(
+                0,
+                None,
+                FileLockMode::Exclusive,
+                FileLockBehavior::Try,
+            ))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        first
+            .lock(lock_request(
+                0,
+                None,
+                FileLockMode::Shared,
+                FileLockBehavior::Try,
+            ))
+            .await
+            .is_err()
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn finite_empty_range_is_rejected() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("empty-lock");
+    let first = open_lock_file(&direct, &path).await;
+
+    let error = first
+        .lock(lock_request(
+            4,
+            Some(4),
+            FileLockMode::Exclusive,
+            FileLockBehavior::Blocking,
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn finite_empty_range_uses_native_windows_behavior() {
+    let direct = Direct::default();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("empty-lock");
+    let first = open_lock_file(&direct, &path).await;
+    let second = open_lock_file(&direct, &path).await;
+
+    let error = first
+        .lock(lock_request(
+            0,
+            Some(0),
+            FileLockMode::Exclusive,
+            FileLockBehavior::Blocking,
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+
+    let _empty = first
+        .lock(lock_request(
+            4,
+            Some(4),
+            FileLockMode::Exclusive,
+            FileLockBehavior::Blocking,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut same = first
+        .lock(lock_request(
+            4,
+            Some(4),
+            FileLockMode::Exclusive,
+            FileLockBehavior::Try,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    same.release().await.unwrap();
+
+    assert!(
+        second
+            .lock(lock_request(
+                0,
+                None,
+                FileLockMode::Exclusive,
+                FileLockBehavior::Try,
+            ))
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let mut same = second
+        .lock(lock_request(
+            4,
+            Some(4),
+            FileLockMode::Exclusive,
+            FileLockBehavior::Try,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    same.release().await.unwrap();
+
+    let mut ending_at_offset = second
+        .lock(lock_request(
+            0,
+            Some(4),
+            FileLockMode::Exclusive,
+            FileLockBehavior::Try,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    ending_at_offset.release().await.unwrap();
+
+    let mut starting_at_offset = second
+        .lock(lock_request(
+            4,
+            Some(8),
+            FileLockMode::Exclusive,
+            FileLockBehavior::Try,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    starting_at_offset.release().await.unwrap();
+
+    let mut open_ended_at_offset = second
+        .lock(lock_request(
+            4,
+            None,
+            FileLockMode::Exclusive,
+            FileLockBehavior::Try,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    open_ended_at_offset.release().await.unwrap();
+
+    let error = second
+        .lock(lock_request(
+            u64::MAX,
+            None,
+            FileLockMode::Exclusive,
+            FileLockBehavior::Try,
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+
+    assert!(
+        second
+            .lock(lock_request(
+                3,
+                Some(5),
+                FileLockMode::Exclusive,
+                FileLockBehavior::Try,
+            ))
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[cfg(unix)]

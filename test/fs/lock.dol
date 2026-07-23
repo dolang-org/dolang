@@ -1,0 +1,96 @@
+import agent strand sys
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+  fs:
+    - open
+  std:
+    - CanceledError
+    - RuntimeError
+  time:
+    - sleep
+
+#[agent.test]
+def scoped_file_locks()
+  let path = "file_lock.bin"
+  open $path w+ do |first|
+    open $path r+ do |second|
+      let result = first.lock (0..10) do |guard|
+        assert $guard.held
+        second.try_lock (0..10) do |other|
+          assert $!other.held
+        second.try_lock (10..20) do |other|
+          assert $other.held
+        :LOCKED:
+      assert_eq $result :LOCKED:
+
+      second.try_lock (0..10) do |guard|
+        assert $guard.held
+        guard.release()
+        assert $!guard.held
+        guard.release()
+
+#[agent.test]
+def shared_file_locks()
+  let path = "shared_file_lock.bin"
+  open $path w+ do |first|
+    open $path r+ do |second|
+      open $path r+ do |third|
+        first.lock (..) shared: true do |first_guard|
+          assert $first_guard.held
+          second.try_lock (..) shared: true do |second_guard|
+            assert $second_guard.held
+            third.try_lock (..) do |exclusive|
+              assert $!exclusive.held
+
+#[agent.test]
+def finite_empty_range_behavior()
+  let path = "empty_file_lock.bin"
+  open $path w+ do |first|
+    if (sys.os_info().family == :WINDOWS:)
+      open $path r+ do |second|
+        assert_throws $RuntimeError do
+          first.lock (0..0) do |_|
+            nil
+        first.lock (4..4) do |empty|
+          assert $empty.held
+          second.try_lock (..) do |whole|
+            assert $!whole.held
+          second.try_lock (4..4) do |same|
+            assert $same.held
+          second.try_lock (4..8) do |starting_at_offset|
+            assert $starting_at_offset.held
+          second.try_lock (3..5) do |containing|
+            assert $!containing.held
+    else
+      assert_throws $RuntimeError do
+        first.lock (4..4) do |_|
+          nil
+
+#[agent.test]
+def cancellation_awaits_unlock()
+  let path = "canceled_file_lock.bin"
+  open $path w+ do |first|
+    open $path r+ do |second|
+      let acquired_send acquired_recv = strand.channel()
+      let worker = strand.spawn do
+        first.lock (0..10) do |_|
+          acquired_send.put true
+          sleep 10000
+      acquired_recv.next()
+      worker.cancel()
+      assert_throws $CanceledError do worker.join()
+      second.try_lock (0..10) do |guard|
+        assert $guard.held
+
+#[agent.test]
+def closing_file_releases_scoped_locks()
+  let path = "closed_file_lock.bin"
+  open $path w+ do |first|
+    open $path r+ do |second|
+      first.lock (0..10) do |guard|
+        first.close()
+        guard.release()
+      second.try_lock (0..10) do |guard|
+        assert $guard.held

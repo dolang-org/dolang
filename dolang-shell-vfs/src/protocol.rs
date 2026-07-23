@@ -738,6 +738,14 @@ pub(crate) enum RequestKind {
         file: Opaque<crate::FileMarker>,
         size: u64,
     },
+    FileLock {
+        file: Opaque<crate::FileMarker>,
+        request: crate::FileLockRequest,
+    },
+    FileUnlock {
+        file: Opaque<crate::FileMarker>,
+        lock: u64,
+    },
     FileToStdioSend {
         file: Opaque<crate::FileMarker>,
     },
@@ -860,6 +868,8 @@ pub(crate) enum ResponseKind {
     FileSeek(Result<u64, WireError>),
     FileFlush(Result<(), WireError>),
     FileSetSize(Result<(), WireError>),
+    FileLock(Result<Option<u64>, WireError>),
+    FileUnlock(Result<(), WireError>),
     FileToStdioSend(Result<Opaque<crate::StdioSendMarker>, WireError>),
     FileToStdioRecv(Result<Opaque<crate::StdioRecvMarker>, WireError>),
     StdioSendClose(Result<(), WireError>),

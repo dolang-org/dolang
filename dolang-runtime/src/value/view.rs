@@ -15,11 +15,11 @@ use crate::{
         array, dict,
         kv::{self, Entry, EntryValue},
         protocol::{GcObjBorrow, Header},
-        record,
+        range, record,
     },
     strand::{Access, Strand},
     sym::Sym,
-    value::{Input, Output, Value},
+    value::{Input, Output, Slot, Value},
     vm::Alloc,
 };
 
@@ -247,6 +247,19 @@ impl<'v, 'a> From<Bin<'v, 'a>> for Vec<u8> {
 pub struct ObjectView<'v, 'a> {
     ptr: NonNull<Header>,
     phantom: PhantomData<(&'v mut &'v (), &'a Header)>,
+}
+
+/// Read-only view of a `range` value.
+pub struct Range<'v, 'a>(pub(crate) GcObjBorrow<'v, 'a, range::Range<'v>>);
+
+impl<'v, 'a> Range<'v, 'a> {
+    /// Copy the start, end, and step into rooted output slots.
+    pub fn parts<'s>(&self, strand: &mut Strand<'v, 's>, [start, end, step]: [Slot<'v, '_>; 3]) {
+        let (start_value, end_value, step_value) = self.0.get().parts();
+        Output::set(strand, start, start_value);
+        Output::set(strand, end, end_value);
+        Output::set(strand, step, step_value);
+    }
 }
 
 impl<'v, 'a> ObjectView<'v, 'a> {

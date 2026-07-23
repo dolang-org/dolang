@@ -43,6 +43,10 @@ impl<'v> Range<'v> {
         Self { start, end, step }
     }
 
+    pub(crate) fn parts(&self) -> (&Value<'v>, &Value<'v>, &Value<'v>) {
+        (&self.start, &self.end, &self.step)
+    }
+
     fn slice_bounds<'a, 's>(
         &self,
         strand: &'a mut Strand<'v, 's>,

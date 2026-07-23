@@ -10,20 +10,69 @@ use dolang::runtime::{
     unpack,
     value::{BinEmbryo, TypeObject, View},
 };
-use dolang_shell_vfs::{AnyFile, FileHandle, OpenOptions, Utf8TypedPath, Vfs};
+use dolang_shell_vfs::{
+    AnyFile, FileHandle, FileLockBehavior, FileLockMode, FileLockRange, FileLockRequest,
+    OpenOptions, Utf8TypedPath, Vfs,
+};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
     fs::{
-        fs_metadata::create_fs_metadata, metadata::create_metadata, read_all, read_into_spare,
-        stream, xattr,
+        file_lock::FileLock as FileLockObject, fs_metadata::create_fs_metadata,
+        metadata::create_metadata, read_all, read_into_spare, stream, xattr,
     },
     global::Global,
     util,
 };
 
 const CHUNK_SIZE: usize = 8192;
+
+fn lock_endpoint<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Slot<'v, '_>,
+    name: &str,
+) -> Result<'v, 's, Option<u64>> {
+    if value.is_nil() {
+        return Ok(None);
+    }
+    let value = value
+        .as_int(strand)
+        .ok_or_else(|| Error::type_error(strand, format!("{name} must be an integer or nil")))?;
+    u64::try_from(value)
+        .map(Some)
+        .map_err(|_| Error::value(strand, format!("{name} must be non-negative")))
+}
+
+fn lock_range<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Slot<'v, '_>,
+    [mut start, mut end, mut step]: [Slot<'v, '_>; 3],
+) -> Result<'v, 's, FileLockRange> {
+    let range = value
+        .as_range(strand)
+        .ok_or_else(|| Error::type_error(strand, "lock range must be a range"))?;
+    range.parts(
+        strand,
+        [
+            Slot::reborrow(&mut start),
+            Slot::reborrow(&mut end),
+            Slot::reborrow(&mut step),
+        ],
+    );
+    if step.as_int(strand) != Some(1) {
+        return Err(Error::value(strand, "lock range step must be 1"));
+    }
+    let start = lock_endpoint(strand, &start, "lock range start")?.unwrap_or(0);
+    let end = lock_endpoint(strand, &end, "lock range end")?;
+    if end.is_some_and(|end| end < start) {
+        return Err(Error::value(
+            strand,
+            "lock range end must not precede its start",
+        ));
+    }
+    Ok(FileLockRange { start, end })
+}
 
 /// Configure OpenOptions based on mode string (supports 'b' suffix for binary mode).
 fn configure_options(opts: &mut impl OpenOptions, mode: &str) {
@@ -545,6 +594,7 @@ impl<'v> Object<'v> for File<'v> {
         let group = builder.sym("group");
         let dacl = builder.sym("dacl");
         let sacl = builder.sym("sacl");
+        let shared = builder.sym("shared");
         builder
             .supertype(TypeObject::Iter)
             .supertype(TypeObject::Sink)
@@ -554,6 +604,103 @@ impl<'v> Object<'v> for File<'v> {
                     file.close().await.into_sys(strand)?
                 }
                 Ok(())
+            })
+            .method("lock", async move |this, strand, args, out| {
+                let ([range, block], [shared_value]) = unpack!(strand, args, 2, 0, shared = None)?;
+                let shared = shared_value
+                    .map(|value| {
+                        value
+                            .as_bool(strand)
+                            .ok_or_else(|| Error::type_error(strand, "shared must be a boolean"))
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+                strand
+                    .with_slots(async move |strand, [mut guard, start, end, step]| {
+                        let range = lock_range(strand, &range, [start, end, step])?;
+                        let request = FileLockRequest {
+                            range,
+                            mode: if shared {
+                                FileLockMode::Shared
+                            } else {
+                                FileLockMode::Exclusive
+                            },
+                            behavior: FileLockBehavior::Blocking,
+                        };
+                        let lock = {
+                            let borrow = this.borrow(strand)?;
+                            let file = borrow
+                                .file
+                                .as_ref()
+                                .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+                            file.lock(request).await.into_sys(strand)?
+                        };
+                        let lock = lock.expect("blocking file lock did not acquire");
+                        let lock_type = this.annex().global.types.file_lock;
+                        FileLockObject::create(strand, lock_type, Some(lock), &mut guard);
+                        let result = call!(strand, block, out, &guard).await;
+                        let cleanup = strand
+                            .with_interrupt_mask(true, async move |strand| {
+                                let guard = lock_type.downcast(&guard).unwrap();
+                                FileLockObject::release(guard, strand).await
+                            })
+                            .await;
+                        match (result, cleanup) {
+                            (Ok(()), Ok(())) => Ok(()),
+                            (Err(error), Ok(())) => Err(error),
+                            (Ok(()), Err(error)) => Err(error),
+                            (Err(cause), Err(error)) => Err(error.caused_by(strand, cause)),
+                        }
+                    })
+                    .await
+            })
+            .method("try_lock", async move |this, strand, args, out| {
+                let ([range, block], [shared_value]) = unpack!(strand, args, 2, 0, shared = None)?;
+                let shared = shared_value
+                    .map(|value| {
+                        value
+                            .as_bool(strand)
+                            .ok_or_else(|| Error::type_error(strand, "shared must be a boolean"))
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+                strand
+                    .with_slots(async move |strand, [mut guard, start, end, step]| {
+                        let range = lock_range(strand, &range, [start, end, step])?;
+                        let request = FileLockRequest {
+                            range,
+                            mode: if shared {
+                                FileLockMode::Shared
+                            } else {
+                                FileLockMode::Exclusive
+                            },
+                            behavior: FileLockBehavior::Try,
+                        };
+                        let lock = {
+                            let borrow = this.borrow(strand)?;
+                            let file = borrow
+                                .file
+                                .as_ref()
+                                .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+                            file.lock(request).await.into_sys(strand)?
+                        };
+                        let lock_type = this.annex().global.types.file_lock;
+                        FileLockObject::create(strand, lock_type, lock, &mut guard);
+                        let result = call!(strand, block, out, &guard).await;
+                        let cleanup = strand
+                            .with_interrupt_mask(true, async move |strand| {
+                                let guard = lock_type.downcast(&guard).unwrap();
+                                FileLockObject::release(guard, strand).await
+                            })
+                            .await;
+                        match (result, cleanup) {
+                            (Ok(()), Ok(())) => Ok(()),
+                            (Err(error), Ok(())) => Err(error),
+                            (Ok(()), Err(error)) => Err(error),
+                            (Err(cause), Err(error)) => Err(error.caused_by(strand, cause)),
+                        }
+                    })
+                    .await
             })
             .method("read", async move |this, strand, args, out| {
                 let ([], [size]) = unpack!(strand, args, 0, 1)?;

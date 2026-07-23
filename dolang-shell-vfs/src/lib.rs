@@ -56,6 +56,53 @@ pub enum ProcessStatus {
     Signaled(i32),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum FileLockMode {
+    Exclusive,
+    Shared,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum FileLockBehavior {
+    Blocking,
+    Try,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FileLockRange {
+    pub start: u64,
+    pub end: Option<u64>,
+}
+
+impl FileLockRange {
+    pub fn is_empty(self) -> bool {
+        self.end == Some(self.start)
+    }
+
+    fn conflicts(self, other: Self) -> bool {
+        match (self.is_empty(), other.is_empty()) {
+            (true, true) => return false,
+            (true, false) => {
+                return other.start < self.start && self.start < other.end.unwrap_or(u64::MAX);
+            }
+            (false, true) => {
+                return self.start < other.start && other.start < self.end.unwrap_or(u64::MAX);
+            }
+            (false, false) => {}
+        }
+        let self_end = self.end.unwrap_or(u64::MAX);
+        let other_end = other.end.unwrap_or(u64::MAX);
+        self.start < other_end && other.start < self_end
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FileLockRequest {
+    pub range: FileLockRange,
+    pub mode: FileLockMode,
+    pub behavior: FileLockBehavior,
+}
+
 impl ProcessStatus {
     pub const fn success(self) -> bool {
         matches!(self, Self::Exited(0))
@@ -1073,6 +1120,7 @@ pub trait FileHandle: AsyncRead + AsyncWrite + AsyncSeek + Unpin + Sized {
     async fn streams(&mut self) -> Result<Vec<StreamEntry>>;
     async fn set_xattr(&mut self, name: &str, namespace: Option<&str>, value: &[u8]) -> Result<()>;
     async fn remove_xattr(&mut self, name: &str, namespace: Option<&str>) -> Result<()>;
+    async fn lock(&self, request: FileLockRequest) -> Result<Option<FileLock>>;
     async fn try_into_std(self) -> std::result::Result<std::fs::File, Self>;
 }
 
@@ -1257,6 +1305,51 @@ pub enum AnyFile {
     Direct(DirectFile),
 }
 
+pub struct FileLock {
+    inner: Option<FileLockInner>,
+}
+
+enum FileLockInner {
+    Direct(direct::DirectFileLock),
+    Remote(client::RemoteFileLock),
+}
+
+impl FileLock {
+    fn direct(lock: direct::DirectFileLock) -> Self {
+        Self {
+            inner: Some(FileLockInner::Direct(lock)),
+        }
+    }
+
+    fn remote(lock: client::RemoteFileLock) -> Self {
+        Self {
+            inner: Some(FileLockInner::Remote(lock)),
+        }
+    }
+
+    pub async fn release(&mut self) -> Result<()> {
+        let Some(lock) = self.inner.as_mut() else {
+            return Ok(());
+        };
+        let result = match lock {
+            FileLockInner::Direct(lock) => lock.release().await,
+            FileLockInner::Remote(lock) => lock.release().await,
+        };
+        if result.is_ok() {
+            self.inner = None;
+        }
+        result
+    }
+}
+
+impl std::fmt::Debug for FileLock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileLock")
+            .field("released", &self.inner.is_none())
+            .finish()
+    }
+}
+
 macro_rules! dispatch_file_mut {
     ($self:expr, $method:ident($($arg:expr),* $(,)?)) => {{
         match $self {
@@ -1378,6 +1471,13 @@ impl FileHandle for AnyFile {
 
     async fn remove_xattr(&mut self, name: &str, namespace: Option<&str>) -> crate::Result<()> {
         match_file!(self, file => file.remove_xattr(name, namespace).await)
+    }
+
+    async fn lock(&self, request: FileLockRequest) -> crate::Result<Option<FileLock>> {
+        match self {
+            Self::Client(file) => file.lock(request).await,
+            Self::Direct(file) => file.lock(request).await,
+        }
     }
 
     async fn try_into_std(self) -> std::result::Result<std::fs::File, Self> {

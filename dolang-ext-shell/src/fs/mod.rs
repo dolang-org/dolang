@@ -21,6 +21,7 @@ use rand::{RngExt, distr::Alphanumeric};
 
 pub(crate) mod attrs;
 pub(crate) mod file;
+pub(crate) mod file_lock;
 pub(crate) mod fs_metadata;
 pub(crate) mod glob;
 pub(crate) mod metadata;

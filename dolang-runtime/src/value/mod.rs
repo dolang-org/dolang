@@ -36,7 +36,7 @@ use crate::{
 
 use prim::Prim;
 use repr::{Decode, Repr};
-use view::{Array, Bin, Dict, ObjectView, Record, Str, Tuple as TupleView, View};
+use view::{Array, Bin, Dict, ObjectView, Range, Record, Str, Tuple as TupleView, View};
 
 pub(crate) enum Case<'v, 'a> {
     Prim(Prim),
@@ -1525,6 +1525,12 @@ impl<'v> Value<'v> {
     #[inline]
     pub fn as_dict(&self, vm: &Vm<'v>) -> Option<Dict<'v, '_>> {
         Some(Dict(self.downcast_ref(vm.builtin_types().dict)?))
+    }
+
+    /// Downcast value to a read-only `range` view.
+    #[inline]
+    pub fn as_range(&self, vm: &Vm<'v>) -> Option<Range<'v, '_>> {
+        Some(Range(self.downcast_ref(vm.builtin_types().range)?))
     }
 
     /// Downcast value to `strand.Backtrace`.
