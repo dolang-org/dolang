@@ -288,3 +288,9 @@ nav:
       - api/zip/archive.md
       - api/zip/entryiter.md
       - api/zip/file.md
+    - tar:
+      - api/tar/index.md
+      - api/tar/tar-reader.md
+      - api/tar/tar-entry.md
+      - api/tar/tar-writer.md
+      - api/tar/entry-writer.md

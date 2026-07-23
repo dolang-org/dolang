@@ -53,6 +53,7 @@ let PUBLISH_CRATES =
   - dolang-ext-progress
   - dolang-ext-patch
   - dolang-ext-http
+  - dolang-ext-tar
   - dolang-shell-main
   - dolang-private-bundle
   - dolang-shell-modules

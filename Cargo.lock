@@ -128,6 +128,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "astral-tokio-tar"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b18457efd137254e016bbde5e1d88df61c4e1a5ae2223746e56123bac6af2463"
+dependencies = [
+ "futures-core",
+ "libc",
+ "portable-atomic",
+ "rustc-hash",
+ "rustix",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
+name = "async-compression"
+version = "0.4.42"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e79b3f8a79cccc2898f31920fc69f304859b3bd567490f75ebf51ae1c792a9ac"
+dependencies = [
+ "compression-codecs",
+ "compression-core",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "atomic-polyfill"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -380,6 +407,25 @@ name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
+
+[[package]]
+name = "compression-codecs"
+version = "0.4.38"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce2548391e9c1929c21bf6aa2680af86fe4c1b33e6cea9ac1cfeec0bd11218cf"
+dependencies = [
+ "compression-core",
+ "flate2",
+ "memchr",
+ "zstd",
+ "zstd-safe",
+]
+
+[[package]]
+name = "compression-core"
+version = "0.4.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc14f565cf027a105f7a44ccf9e5b424348421a1d8952a8fc9d499d313107789"
 
 [[package]]
 name = "console"
@@ -858,6 +904,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dolang-ext-tar"
+version = "0.1.1"
+dependencies = [
+ "astral-tokio-tar",
+ "async-compression",
+ "dolang",
+ "dolang-ext-shell",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "dolang-ext-toml"
 version = "0.1.1"
 dependencies = [
@@ -1033,6 +1091,7 @@ dependencies = [
  "dolang-ext-rand",
  "dolang-ext-regex",
  "dolang-ext-sqlite",
+ "dolang-ext-tar",
  "dolang-ext-toml",
  "dolang-ext-url",
  "dolang-ext-xml",
@@ -1206,6 +1265,7 @@ version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
+ "crc32fast",
  "miniz_oxide",
  "zlib-rs",
 ]
@@ -3092,6 +3152,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
  "rustls",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-stream"
+version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
  "tokio",
 ]
 
