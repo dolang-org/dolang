@@ -317,11 +317,6 @@ Equivalent to [`create_dir`](index.md#create_dir-path-all).
 
 Equivalent to [`remove_dir`](index.md#remove_dir-path-all-ignore).
 
-### `set_timestamps :modified? :accessed? :created? :resolve?`
-
-Equivalent to
-[`set_timestamps`](index.md#set_timestamps-path-modified-accessed-created-resolve)
-
 ### `normalize()`
 
 Equivalent to [`normalize`](index.md#normalize-path)

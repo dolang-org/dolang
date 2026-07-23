@@ -1242,6 +1242,12 @@ impl Direct {
                 "mode and attributes cannot be set without following symlinks on this platform",
             ));
         }
+        if patch.created.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "created timestamp is not supported on this platform",
+            ));
+        }
         Self::validate_attrs_patch(patch.attrs)?;
 
         if patch.user.is_some() || patch.group.is_some() {
@@ -1304,6 +1310,16 @@ impl Direct {
             if !patch.attrs.is_empty() {
                 self.impl_set_attrs(path, patch.attrs).await?;
             }
+            if patch.accessed.is_some() || patch.modified.is_some() {
+                self.impl_set_file_times(
+                    path,
+                    patch.accessed,
+                    patch.modified,
+                    patch.created,
+                    patch.follow,
+                )
+                .await?;
+            }
         }
         Ok(())
     }
@@ -1322,33 +1338,31 @@ impl Direct {
         fs::set_permissions(path, std::fs::Permissions::from_mode(perm.mode())).await
     }
 
-    pub(super) async fn impl_set_times(
+    async fn impl_set_file_times(
         &self,
         path: &Path,
-        accessed: Option<(i64, u32)>,
-        modified: Option<(i64, u32)>,
-        created: Option<(i64, u32)>,
+        accessed: Option<i128>,
+        modified: Option<i128>,
+        created: Option<i128>,
         follow: bool,
     ) -> Result<(), io::Error> {
         use nix::{
             fcntl::AT_FDCWD,
             sys::{
                 stat::{UtimensatFlags, utimensat},
-                time::{TimeSpec, TimeValLike},
+                time::TimeSpec,
             },
         };
 
-        fn unix_timespec(time: Option<(i64, u32)>) -> io::Result<TimeSpec> {
-            match time {
-                Some((secs, nanos)) => secs
-                    .checked_mul(1_000_000_000)
-                    .and_then(|secs| secs.checked_add(i64::from(nanos)))
-                    .map(TimeSpec::nanoseconds)
-                    .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidInput, "invalid timestamp")
-                    }),
-                None => Ok(TimeSpec::UTIME_OMIT),
-            }
+        fn unix_timespec(time: Option<i128>) -> io::Result<TimeSpec> {
+            let Some(time) = time else {
+                return Ok(TimeSpec::UTIME_OMIT);
+            };
+            let secs = i64::try_from(time.div_euclid(1_000_000_000))
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid timestamp"))?;
+            let nanos = i64::try_from(time.rem_euclid(1_000_000_000))
+                .expect("nanosecond remainder is in i64 range");
+            Ok(TimeSpec::new(secs, nanos))
         }
 
         if created.is_some() {

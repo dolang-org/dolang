@@ -9,12 +9,12 @@ import agent sys
     - metadata
     - open
     - remove
-    - set_timestamps
+    - set_metadata
   time:
     - DateTime
 
 #[agent.test]
-def set_timestamps_updates_timestamps()
+def set_metadata_updates_timestamps()
   let test_path = "test_utime.txt"
   let first_modified = DateTime.from_unix(1234)
   let first_accessed = DateTime.from_unix(2345)
@@ -24,11 +24,11 @@ def set_timestamps_updates_timestamps()
   let second_created = DateTime.from_unix(2222)
 
   open $test_path w do |f|
-    f.write "set_timestamps test"
+    f.write "set_metadata timestamp test"
 
   let is_real_windows = (sys.os_info().family == :WINDOWS: && !sys.os_info().is_wine)
 
-  set_timestamps $test_path modified: $first_modified accessed: $first_accessed
+  set_metadata $test_path modified: $first_modified accessed: $first_accessed
     if is_real_windows
       created: $first_created
   let meta = metadata(test_path)
@@ -40,7 +40,7 @@ def set_timestamps_updates_timestamps()
     assert_eq $meta.created.unix_secs 1111.0
     assert_eq $meta.created.unix_nanos 1111000000000
 
-  Path(test_path).set_timestamps modified: $second_modified accessed: $second_accessed
+  Path(test_path).set_metadata modified: $second_modified accessed: $second_accessed
     if is_real_windows
       created: $second_created
   let meta = Path(test_path).metadata()
@@ -53,6 +53,19 @@ def set_timestamps_updates_timestamps()
     assert_eq $meta.created.unix_nanos 2222000000000
   else if !(sys.os_info().family == :WINDOWS:)
     assert_throws $RuntimeError do
-      set_timestamps $test_path created: $first_created
+      set_metadata $test_path created: $first_created
 
   remove $test_path
+
+#[agent.test]
+def set_metadata_updates_directory_timestamps()
+  let path = Path "test_utime_dir"
+  let modified = DateTime.from_unix 5678
+  path.create_dir()
+
+  path.set_metadata modified: $modified
+
+  let meta = path.metadata()
+  assert_eq $meta.modified.unix_secs 5678.0
+  assert_eq $meta.modified.unix_nanos 5678000000000
+  path.remove_dir()

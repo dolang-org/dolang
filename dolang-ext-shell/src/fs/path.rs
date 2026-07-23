@@ -872,6 +872,9 @@ macro_rules! impl_concrete_path {
                                 mode,
                                 user,
                                 group,
+                                modified,
+                                accessed,
+                                created,
                                 resolve,
                                 readonly,
                                 hidden,
@@ -908,6 +911,9 @@ macro_rules! impl_concrete_path {
                             mode = None,
                             user = None,
                             group = None,
+                            modified = None,
+                            accessed = None,
+                            created = None,
                             resolve = None,
                             readonly = None,
                             hidden = None,
@@ -969,7 +975,12 @@ macro_rules! impl_concrete_path {
                         )?;
                         let global = this.annex().global;
                         let patch = super::metadata_patch(
-                            strand, global, mode, user, group, resolve, attrs,
+                            strand,
+                            global,
+                            [mode, user, group],
+                            [modified, accessed, created],
+                            resolve,
+                            attrs,
                         )?;
                         let annex = this.annex();
                         super::set_metadata(
@@ -977,29 +988,6 @@ macro_rules! impl_concrete_path {
                             annex.global,
                             vec![annex.as_path().to_path_buf()],
                             patch,
-                        )
-                        .await
-                    })
-                    .method("set_timestamps", async move |this, strand, args, _out| {
-                        let ([], [modified, accessed, created, resolve]) = unpack!(
-                            strand,
-                            args,
-                            0,
-                            0,
-                            modified = None,
-                            accessed = None,
-                            created = None,
-                            resolve = None
-                        )?;
-                        let annex = this.annex();
-                        super::set_timestamps(
-                            strand,
-                            annex.global,
-                            annex.as_path(),
-                            modified,
-                            accessed,
-                            created,
-                            resolve,
                         )
                         .await
                     });

@@ -1470,7 +1470,16 @@ impl Direct {
                     Self::set_sec_desc_path(&path, descriptor, patch.follow)?;
                 }
                 if !patch.attrs.is_empty() {
-                    Self::set_attrs_path(path, patch.attrs)?;
+                    Self::set_attrs_path(path.clone(), patch.attrs)?;
+                }
+                if patch.accessed.is_some() || patch.modified.is_some() || patch.created.is_some() {
+                    Self::set_file_times_path(
+                        &path,
+                        patch.accessed,
+                        patch.modified,
+                        patch.created,
+                        patch.follow,
+                    )?;
                 }
             }
             Ok(())
@@ -1486,12 +1495,11 @@ impl Direct {
             .unwrap_or_else(|e| Err(io::Error::other(e)))
     }
 
-    pub(super) async fn impl_set_times(
-        &self,
+    fn set_file_times_path(
         path: &Path,
-        accessed: Option<(i64, u32)>,
-        modified: Option<(i64, u32)>,
-        created: Option<(i64, u32)>,
+        accessed: Option<i128>,
+        modified: Option<i128>,
+        created: Option<i128>,
         follow: bool,
     ) -> Result<(), io::Error> {
         use std::{
@@ -1500,28 +1508,25 @@ impl Direct {
         };
         use windows_sys::Win32::Storage::FileSystem::FILE_WRITE_ATTRIBUTES;
 
-        let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || {
-            let mut opts = StdOpenOptions::new();
-            opts.access_mode(FILE_WRITE_ATTRIBUTES);
-            if !follow {
-                opts.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-            }
-            let file = opts.open(path)?;
-            let mut times = FileTimes::new();
-            if let Some(accessed) = parts_to_system_time(accessed) {
-                times = times.set_accessed(accessed);
-            }
-            if let Some(modified) = parts_to_system_time(modified) {
-                times = times.set_modified(modified);
-            }
-            if let Some(created) = parts_to_system_time(created) {
-                times = times.set_created(created);
-            }
-            file.set_times(times)
-        })
-        .await
-        .unwrap_or_else(|e| Err(io::Error::other(e)))
+        let mut opts = StdOpenOptions::new();
+        opts.access_mode(FILE_WRITE_ATTRIBUTES);
+        let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
+        if !follow {
+            flags |= FILE_FLAG_OPEN_REPARSE_POINT;
+        }
+        opts.custom_flags(flags);
+        let file = opts.open(path)?;
+        let mut times = FileTimes::new();
+        if let Some(accessed) = accessed {
+            times = times.set_accessed(nanos_to_system_time(accessed)?);
+        }
+        if let Some(modified) = modified {
+            times = times.set_modified(nanos_to_system_time(modified)?);
+        }
+        if let Some(created) = created {
+            times = times.set_created(nanos_to_system_time(created)?);
+        }
+        file.set_times(times)
     }
 }
 
@@ -1550,19 +1555,23 @@ impl DirectCommand<'_> {
     }
 }
 
-fn parts_to_system_time(parts: Option<(i64, u32)>) -> Option<SystemTime> {
-    let (secs, nanos) = parts?;
-    if secs >= 0 {
-        SystemTime::UNIX_EPOCH.checked_add(Duration::new(secs as u64, nanos))
+fn nanos_to_system_time(nanos: i128) -> io::Result<SystemTime> {
+    let (negative, nanos) = if nanos < 0 {
+        (true, nanos.unsigned_abs())
     } else {
-        let secs_abs = secs.unsigned_abs();
-        let duration = if nanos == 0 {
-            Duration::new(secs_abs, 0)
-        } else {
-            Duration::new(secs_abs - 1, 1_000_000_000u32 - nanos)
-        };
+        (false, nanos as u128)
+    };
+    let secs = u64::try_from(nanos / 1_000_000_000)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid timestamp"))?;
+    let subsec_nanos =
+        u32::try_from(nanos % 1_000_000_000).expect("nanosecond remainder is in u32 range");
+    let duration = Duration::new(secs, subsec_nanos);
+    let time = if negative {
         SystemTime::UNIX_EPOCH.checked_sub(duration)
-    }
+    } else {
+        SystemTime::UNIX_EPOCH.checked_add(duration)
+    };
+    time.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid timestamp"))
 }
 
 impl super::DirectOpenOptions {

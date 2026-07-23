@@ -841,6 +841,9 @@ pub struct MetadataPatch {
     pub mode: Option<u32>,
     pub user: Option<OwnershipIdentity>,
     pub group: Option<OwnershipIdentity>,
+    pub accessed: Option<i128>,
+    pub modified: Option<i128>,
+    pub created: Option<i128>,
     pub attrs: AttrsPatch,
     pub follow: bool,
 }
@@ -851,6 +854,9 @@ impl Default for MetadataPatch {
             mode: None,
             user: None,
             group: None,
+            accessed: None,
+            modified: None,
+            created: None,
             attrs: AttrsPatch::default(),
             follow: true,
         }
@@ -859,7 +865,13 @@ impl Default for MetadataPatch {
 
 impl MetadataPatch {
     pub fn is_empty(&self) -> bool {
-        self.mode.is_none() && self.user.is_none() && self.group.is_none() && self.attrs.is_empty()
+        self.mode.is_none()
+            && self.user.is_none()
+            && self.group.is_none()
+            && self.accessed.is_none()
+            && self.modified.is_none()
+            && self.created.is_none()
+            && self.attrs.is_empty()
     }
 }
 
@@ -1268,14 +1280,6 @@ pub trait Vfs {
         follow_symlinks: bool,
         max_depth: Option<usize>,
     ) -> Result<Vec<Utf8TypedPathBuf>>;
-    async fn set_times(
-        &self,
-        path: Utf8TypedPath<'_>,
-        accessed: Option<(i64, u32)>,
-        modified: Option<(i64, u32)>,
-        created: Option<(i64, u32)>,
-        follow: bool,
-    ) -> Result<()>;
 }
 
 pub use direct::{Direct, DirectFile, DirectOpenOptions};
@@ -2261,28 +2265,6 @@ impl Vfs for AnyVfs {
         match self {
             Self::Client(client) => client.glob(pattern, root, follow_symlinks, max_depth).await,
             Self::Direct(direct) => direct.glob(pattern, root, follow_symlinks, max_depth).await,
-        }
-    }
-
-    async fn set_times(
-        &self,
-        path: Utf8TypedPath<'_>,
-        accessed: Option<(i64, u32)>,
-        modified: Option<(i64, u32)>,
-        created: Option<(i64, u32)>,
-        follow: bool,
-    ) -> crate::Result<()> {
-        match self {
-            Self::Client(client) => {
-                client
-                    .set_times(path, accessed, modified, created, follow)
-                    .await
-            }
-            Self::Direct(direct) => {
-                direct
-                    .set_times(path, accessed, modified, created, follow)
-                    .await
-            }
         }
     }
 }

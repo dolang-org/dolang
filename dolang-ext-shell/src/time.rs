@@ -231,15 +231,15 @@ fn coerce_sleep_duration<'v, 's>(
     ))
 }
 
-pub(crate) fn datetime_to_system_time<'v, 's>(
+pub(crate) fn datetime_to_unix_nanos<'v, 's>(
     strand: &mut Strand<'v, 's>,
     date_time: dolang::runtime::Type<'v, DateTime>,
     value: &dolang::runtime::Value<'v>,
-) -> Result<'v, 's, SystemTime> {
+) -> Result<'v, 's, i128> {
     let datetime = date_time
         .downcast(value)
         .ok_or_else(|| Error::type_error(strand, "expected DateTime"))?;
-    datetime.annex().to_system_time().into_do(strand)
+    Ok(datetime.annex().total_nanos())
 }
 
 pub(crate) fn create_datetime<'v, 's>(

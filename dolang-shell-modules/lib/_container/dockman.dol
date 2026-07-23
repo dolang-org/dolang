@@ -595,7 +595,7 @@ class Cache
           tmp.remove ignore: true
         let modified = resp.headers.get last-modified
         if modified
-          payload.set_timestamps :modified
+          payload.set_metadata :modified
     payload
 
   pub def path self url

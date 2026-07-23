@@ -7,10 +7,11 @@ use std::io;
 use std::path::Path;
 
 #[cfg(any(windows, target_os = "linux"))]
-use dolang_shell_vfs::{AttrFlags, AttrsPatch, MetadataPatch};
+use dolang_shell_vfs::{AttrFlags, AttrsPatch};
 use dolang_shell_vfs::{
     Child, Command, Direct, FileHandle, FileLockBehavior, FileLockMode, FileLockRange,
-    FileLockRequest, FileType, OpenOptions, Utf8TypedPath, Utf8UnixPath, Utf8WindowsPath, Vfs,
+    FileLockRequest, FileType, MetadataPatch, OpenOptions, Utf8TypedPath, Utf8UnixPath,
+    Utf8WindowsPath, Vfs,
 };
 #[cfg(windows)]
 use dolang_shell_vfs::{
@@ -541,14 +542,20 @@ async fn direct_security_descriptors_are_unsupported() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn direct_set_times_rejects_created_timestamp() {
+async fn direct_set_metadata_rejects_created_timestamp() {
     let direct = Direct::default();
     let dir = tempdir().unwrap();
     let path = dir.path().join("timestamps.txt");
     tokio::fs::write(&path, "hello").await.unwrap();
 
     let err = direct
-        .set_times(typed(&path), None, None, Some((1, 0)), true)
+        .set_metadata(
+            &[typed(&path).to_path_buf()],
+            MetadataPatch {
+                created: Some(1_000_000_000),
+                ..MetadataPatch::default()
+            },
+        )
         .await
         .unwrap_err();
 

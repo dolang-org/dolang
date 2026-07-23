@@ -920,55 +920,19 @@ let unchanged = relative "/etc/passwd" "/home/user"
 echo $unchanged  # /etc/passwd
 ```
 
-### `set_timestamps path :modified? :accessed? :created? :resolve?`
-
-Updates the timestamps of a file or directory.
-
-**Platform Notes:**
-
-- **Unix:** `modified` and `accessed` are available; `created` is not supported
-- **Windows:** `modified`, `accessed`, and `created` are available
-
-Unspecified timestamps are left unchanged.
-
-#### Parameters
-
-| Name       | Type                                      | Description                                      |
-| ---------- | ----------------------------------------- | ------------------------------------------------ |
-| `path`     | [`str`](../std/str.md)\|[`Path`](path.md) | Path to update                                   |
-| `modified` | [`DateTime`](../time/datetime.md)         | Optional new modification time                   |
-| `accessed` | [`DateTime`](../time/datetime.md)         | Optional new access time                         |
-| `created`  | [`DateTime`](../time/datetime.md)         | Optional new creation time (Windows only)        |
-| `resolve`  | `:TARGET:`\|`:LINK:`                      | Resolution mode (see [above](#resolution-modes)) |
-
-#### Errors
-
-| Exception                   | Condition                                    |
-| --------------------------- | -------------------------------------------- |
-| `sys.UnsupportedError`      | `created` is used on an unsupported platform |
-| `sys.NotFoundError`         | The path does not exist                      |
-| `sys.PermissionDeniedError` | Permission denied to update timestamps       |
-| `sys.Error`                 | Other I/O errors                             |
-
-```
-import time:
-  - DateTime
-
-set_timestamps "artifact.tar" modified: $DateTime.from_unix(1700000000)
-set_timestamps "cache.db" accessed: $DateTime.now()
-set_timestamps "cache.db" created: $DateTime.from_unix(1690000000)
-```
-
 ### `set_metadata :resolve? ...paths ...`
 
-Updates permissions, ownership, and filesystem attributes in one operation.
+Updates timestamps, permissions, ownership, and filesystem attributes.
 
 Unspecified metadata is left unchanged. Unix targets support `mode`, numeric or
 named `user` and `group` values, and applicable filesystem attributes. Windows
 targets accept an account name or [`Sid`](../security/windows/sid.md) for `user`
 and `group` and support applicable filesystem attributes.
+Unix supports `modified` and `accessed` timestamps; Windows also supports
+`created`.
 Paths are submitted from left to right and processing stops at the first error.
-Within each path, ownership, mode, and attributes are applied in that order.
+Within each path, ownership, mode, attributes, and timestamps are applied in
+that order.
 Backends may use multiple system operations; atomicity and rollback behavior
 are unspecified.
 
@@ -980,6 +944,9 @@ are unspecified.
 | `mode`                | [`int`](../std/int.md)                                                              | Optional Unix permission mode                    |
 | `user`                | [`int`](../std/int.md)\|[`str`](../std/str.md)\|[`Sid`](../security/windows/sid.md) | Optional owner ID, name, or SID                  |
 | `group`               | [`int`](../std/int.md)\|[`str`](../std/str.md)\|[`Sid`](../security/windows/sid.md) | Optional group ID, name, or SID                  |
+| `modified`            | [`DateTime`](../time/datetime.md)                                                   | Optional new modification time                   |
+| `accessed`            | [`DateTime`](../time/datetime.md)                                                   | Optional new access time                         |
+| `created`             | [`DateTime`](../time/datetime.md)                                                   | Optional new creation time (Windows only)        |
 | `resolve`             | `:TARGET:`\|`:LINK:`                                                                | Resolution mode (see [above](#resolution-modes)) |
 | `readonly`            | [`bool`](../std/bool.md)                                                            | Optional readonly attribute value                |
 | `hidden`              | [`bool`](../std/bool.md)                                                            | Optional hidden attribute/flag                   |
@@ -1020,6 +987,8 @@ set_metadata "one.txt" "two.txt" mode: 0o640
 set_metadata "data.txt" hidden: true
 set_metadata "data.txt" no_dump: true
 set_metadata "link" group: "www-data" resolve: :LINK:
+set_metadata "artifact.tar" modified: $DateTime.from_unix(1700000000)
+set_metadata "cache.db" accessed: $DateTime.now()
 ```
 
 ### `canonical path`
