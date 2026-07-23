@@ -149,9 +149,9 @@ Equivalent to [`fs.write`](index.md#write-path-content).
 
 Equivalent to [`fs.append`](index.md#append-path-content).
 
-### `set_len size`
+### `set_size size`
 
-Equivalent to [`fs.set_len`](index.md#set_len-path-size).
+Equivalent to [`fs.set_size`](index.md#set_size-path-size).
 
 ### `set_metadata :resolve? ...`
 

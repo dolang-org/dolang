@@ -216,7 +216,7 @@ append "messages.txt" "another message\n"
 append "data.bin" b"\x04\x05"
 ```
 
-### `set_len path size`
+### `set_size path size`
 
 Truncates the file at the given path to the specified byte length, creating it
 if needed.
@@ -231,8 +231,8 @@ if needed.
 #### Example
 
 ```
-set_len "output.txt" 0
-set_len (Path "archive.bin") 1024
+set_size "output.txt" 0
+set_size (Path "archive.bin") 1024
 ```
 
 ### `is_absolute path`
@@ -371,7 +371,7 @@ Gets file metadata for the given path.
 
 ```
 let meta = metadata "data.txt"
-echo "Size: $(meta.len)"
+echo "Size: $(meta.size)"
 echo "Type: $(meta.type)"
 
 if (sys.os_info().family != :WINDOWS:)

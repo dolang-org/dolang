@@ -37,7 +37,7 @@ open output.txt w do |file|
   file.write binary
 ```
 
-### `set_len size`
+### `set_size size`
 
 Truncates the file to the given byte length.
 
@@ -54,7 +54,7 @@ after truncation.
 
 ```
 open data.bin r+ do |file|
-  file.set_len 8
+  file.set_size 8
 ```
 
 ### `read :size?`
@@ -134,7 +134,7 @@ Gets file metadata.
 ```
 open data.txt r do |file|
   let meta = file.metadata()
-  echo "Size: $(meta.len)"
+  echo "Size: $(meta.size)"
   echo "Type: $(meta.type)"
   echo "Modified: $(meta.modified)"
   echo "Modified seconds: $(meta.modified.unix_secs)"

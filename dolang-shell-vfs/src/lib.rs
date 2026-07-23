@@ -1063,7 +1063,7 @@ pub trait FileHandle: AsyncRead + AsyncWrite + AsyncSeek + Unpin + Sized {
     async fn to_stdio_send(&self) -> Result<StdioSend>;
     async fn to_stdio_recv(&self) -> Result<StdioRecv>;
     async fn close(self) -> Result<()>;
-    async fn set_len(&mut self, size: u64) -> Result<()>;
+    async fn set_size(&mut self, size: u64) -> Result<()>;
     async fn metadata(&mut self) -> Result<Metadata>;
     async fn fs_metadata(&mut self) -> Result<FsMetadata>;
     async fn sec_desc(&mut self, mask: u32) -> Result<SecDesc>;
@@ -1335,8 +1335,8 @@ impl FileHandle for AnyFile {
         }
     }
 
-    async fn set_len(&mut self, size: u64) -> crate::Result<()> {
-        match_file!(self, file => file.set_len(size).await)
+    async fn set_size(&mut self, size: u64) -> crate::Result<()> {
+        match_file!(self, file => file.set_size(size).await)
     }
 
     async fn metadata(&mut self) -> crate::Result<Metadata> {

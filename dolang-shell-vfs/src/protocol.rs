@@ -734,9 +734,9 @@ pub(crate) enum RequestKind {
     FileFlush {
         file: Opaque<crate::FileMarker>,
     },
-    FileSetLen {
+    FileSetSize {
         file: Opaque<crate::FileMarker>,
-        len: u64,
+        size: u64,
     },
     FileToStdioSend {
         file: Opaque<crate::FileMarker>,
@@ -859,7 +859,7 @@ pub(crate) enum ResponseKind {
     FileWrite(Result<usize, WireError>),
     FileSeek(Result<u64, WireError>),
     FileFlush(Result<(), WireError>),
-    FileSetLen(Result<(), WireError>),
+    FileSetSize(Result<(), WireError>),
     FileToStdioSend(Result<Opaque<crate::StdioSendMarker>, WireError>),
     FileToStdioRecv(Result<Opaque<crate::StdioRecvMarker>, WireError>),
     StdioSendClose(Result<(), WireError>),

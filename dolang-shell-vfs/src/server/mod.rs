@@ -390,8 +390,8 @@ impl Connection {
                 self.handle_file_seek(context, file, position.into()).await
             }
             RequestKind::FileFlush { file } => self.handle_file_flush(context, file).await,
-            RequestKind::FileSetLen { file, len } => {
-                self.handle_file_set_len(context, file, len).await
+            RequestKind::FileSetSize { file, size } => {
+                self.handle_file_set_size(context, file, size).await
             }
             RequestKind::FileToStdioSend { file } => {
                 self.handle_file_to_stdio_send(context, file).await
@@ -967,18 +967,18 @@ impl Connection {
         ResponseKind::FileFlush(result)
     }
 
-    async fn handle_file_set_len(
+    async fn handle_file_set_size(
         &self,
         context: &CallContext<VfsProtocol>,
         file: dolang_rpc::Opaque<crate::FileMarker>,
-        len: u64,
+        size: u64,
     ) -> ResponseKind {
         let result = async {
             let file = self.retained_file(context, file)?;
-            file.0.lock().await.set_len(len).await.map_err(wire_error)
+            file.0.lock().await.set_size(size).await.map_err(wire_error)
         }
         .await;
-        ResponseKind::FileSetLen(result)
+        ResponseKind::FileSetSize(result)
     }
 
     async fn handle_file_to_stdio_send(
