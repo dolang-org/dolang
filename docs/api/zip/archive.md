@@ -19,7 +19,7 @@ Opens a file within the archive.
 **Mode-specific behavior:**
 
 - **Read mode:** Opens an existing file for reading
-- **Write/Append mode:** Creates a new file entry for writing
+- **Write mode:** Creates a new file entry for writing
 
 #### Returns
 
@@ -63,8 +63,7 @@ open "archive.zip" do |archive|
   echo "Total files: $(names.len)"
 ```
 
-**Error:** Raises a runtime error if called on an archive opened in write or
-append mode.
+**Error:** Raises a runtime error if called on an archive opened in write mode.
 
 ### `close()`
 
@@ -73,7 +72,7 @@ Closes the archive and releases resources.
 **Mode-specific behavior:**
 
 - **Read mode:** Simply closes the archive
-- **Write/Append mode:** Finalizes the archive (writes central directory) before
+- **Write mode:** Finalizes the archive (writes central directory) before
   closing
 
 #### Example

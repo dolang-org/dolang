@@ -1,9 +1,12 @@
 import agent zip
   test:
     - assert_eq
+    - assert_throws
+  std:
+    - ConcurrencyError
 
-#[agent.test remote: false]
-def write_read_append()
+#[agent.test]
+def write_read()
   zip.open "test.zip" "w" do |archive|
     archive.open "hello.txt" do |file|
       file.write "Hello, World!"
@@ -25,19 +28,18 @@ def write_read_append()
       let data = file.read 1024
       assert_eq (str data) "Test content"
 
-  zip.open "test.zip" "a" do |archive|
-    archive.open "new_file.txt" do |file|
-      file.write "Appended content"
+#[agent.test]
+def nested_file_is_rejected()
+  zip.open "nested.zip" "w" do |archive|
+    archive.open "first.txt" do |_|
+      assert_throws $ConcurrencyError do
+        archive.open "second.txt" do |_| nil
+      assert_throws $ConcurrencyError do archive.close()
 
-  zip.open "test.zip" do |archive|
-    let entries = [...archive.entries()]
-    assert_eq $entries.len 3
-    assert_eq $entries[2] "new_file.txt"
-
-    archive.open "test.txt" do |file|
-      let data = file.read 1024
-      assert_eq (str data) "Test content"
-
-    archive.open "new_file.txt" do |file|
-      let data = file.read 1024
-      assert_eq (str data) "Appended content"
+    let stale = archive.open "stale.txt"
+    stale.close()
+    let current = archive.open "current.txt"
+    stale.close()
+    assert_throws $ConcurrencyError do
+      archive.open "third.txt" do |_| nil
+    current.close()

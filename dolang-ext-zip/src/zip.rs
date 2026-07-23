@@ -1,9 +1,15 @@
 use std::{
-    cell::UnsafeCell,
-    io::{self, Read, Write},
-    mem::{self, transmute},
+    cell::{Cell, UnsafeCell},
+    mem::transmute,
 };
 
+use async_zip::{
+    Compression, ZipEntryBuilder,
+    base::{
+        read::{WithEntry, ZipEntryReader, seek::ZipFileReader},
+        write::{EntrySeekableWriter, ZipFileWriter},
+    },
+};
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, call,
     error::ResultExt,
@@ -14,43 +20,40 @@ use dolang::runtime::{
     vm::Builder,
 };
 use dolang_ext_shell::FileHandle as _;
-use tokio::task;
-use zip::write::SimpleFileOptions;
+use dolang_shell_vfs::AnyFile;
+use futures_lite::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::BufReader;
+use tokio_util::compat::Compat;
 
 use crate::global::Global;
 
-/// Type aliases for the ZIP archive with our file type.
-type ZipArchive = zip::ZipArchive<std::fs::File>;
-type ZipFile<'a> = zip::read::ZipFile<'a, std::fs::File>;
-type ZipWriter = zip::write::ZipWriter<std::fs::File>;
+type ZipReader = ZipFileReader<Compat<BufReader<AnyFile>>>;
+type ZipReadEntry = ZipEntryReader<'static, Compat<BufReader<AnyFile>>, WithEntry<'static>>;
+type ZipWriter = ZipFileWriter<Compat<AnyFile>>;
+type ZipWriteEntry = EntrySeekableWriter<'static, Compat<AnyFile>>;
 
-/// Inner archive type that can be either read-only or writable.
 enum ArchiveInner {
-    Read(ZipArchive),
-    WriteAppend(Box<ZipWriter>),
+    Read(ZipReader),
+    Write(Box<ZipWriter>),
 }
 
-/// State of the currently open file within the archive.
-enum FileState {
-    /// No file currently open
-    None,
-    /// File open for reading
-    Read(Box<ZipFile<'static>>),
-    /// File open for writing/appending
-    WriteAppend,
+enum FileInner {
+    Read {
+        entry: Box<ZipReadEntry>,
+        validated: bool,
+    },
+    Write(Box<ZipWriteEntry>),
 }
 
-/// ZIP archive object.
-/// Holds the file state while ArchiveAnnex holds the underlying archive data.
-pub(crate) struct Archive {
-    state: FileState,
-}
+pub(crate) struct Archive;
 
-/// Data associated with Archive objects, stored in the annex.
 pub(crate) struct ArchiveAnnex<'v> {
     global: State<'v, Global<'v>>,
-    /// The underlying ZIP archive (read, write, or append mode), wrapped in UnsafeCell for interior
-    /// mutability. None when closed.
+    file_open: Cell<bool>,
+    /// The entry reader/writer in a child `File` may borrow this value.
+    ///
+    /// SAFETY: `inner` is never moved or removed while an entry is open. The corresponding
+    /// `File` roots its `Archive` through a GC slot, so the borrow remains valid.
     inner: UnsafeCell<Option<ArchiveInner>>,
 }
 
@@ -58,16 +61,19 @@ impl<'v> ArchiveAnnex<'v> {
     fn new(inner: ArchiveInner, global: State<'v, Global<'v>>) -> Self {
         Self {
             global,
+            file_open: Cell::new(false),
             inner: UnsafeCell::new(Some(inner)),
         }
     }
 
-    /// Get a reference to the inner archive
+    fn is_file_open(&self) -> bool {
+        self.file_open.get()
+    }
+
     unsafe fn inner(&self) -> &Option<ArchiveInner> {
         unsafe { &*self.inner.get() }
     }
 
-    /// Get a mutable reference to the inner archive
     #[expect(clippy::mut_from_ref)]
     unsafe fn inner_mut(&self) -> &mut Option<ArchiveInner> {
         unsafe { &mut *self.inner.get() }
@@ -76,13 +82,7 @@ impl<'v> ArchiveAnnex<'v> {
 
 impl Archive {
     fn new() -> Self {
-        Self {
-            state: FileState::None,
-        }
-    }
-
-    fn is_file_open(&self) -> bool {
-        !matches!(self.state, FileState::None)
+        Self
     }
 }
 
@@ -103,9 +103,7 @@ impl<'v> Object<'v> for Archive {
                     let global = annex.global;
                     let ([], []) = unpack!(strand, args, 0, 0)?;
 
-                    let borrow = this.borrow(strand)?;
-                    // Check if a file is currently open
-                    if borrow.is_file_open() {
+                    if annex.is_file_open() {
                         return Err(Error::concurrency(strand));
                     }
 
@@ -115,25 +113,21 @@ impl<'v> Object<'v> for Archive {
                             .as_ref()
                             .ok_or_else(|| Error::state_error(strand, "archive closed"))?
                     };
-
                     let len = match inner {
-                        ArchiveInner::Read(archive) => archive.len(),
-                        _ => {
+                        ArchiveInner::Read(archive) => archive.file().entries().len(),
+                        ArchiveInner::Write(_) => {
                             return Err(Error::runtime(
                                 strand,
-                                "cannot list entries in write/append mode",
+                                "cannot list entries in write mode",
                             ));
                         }
                     };
-
-                    // Create the iterator with a reference to the archive in slot 0
                     global.types.entry_iter.create_with_annex(
                         strand,
                         EntryIter::new(len),
                         EntryIterAnnex { global },
                         &mut iter,
                     );
-                    // Store the archive object in slot 0 of the iterator
                     let iter_obj = global.types.entry_iter.downcast(&iter).unwrap();
                     let mut iter_borrow = iter_obj.borrow_mut_unwrap();
                     Output::set(strand, Mut::slot_mut::<0>(&mut iter_borrow), this);
@@ -149,75 +143,88 @@ impl<'v> Object<'v> for Archive {
                     let annex = this.annex();
                     let global = annex.global;
                     let ([name], [block]) = unpack!(strand, args, 1, 1)?;
-                    let name_str = name.to_string(strand)?;
+                    let name = name.to_string(strand)?;
 
-                    let mut borrow = this.borrow_mut(strand)?;
-
-                    // Check if a file is already open
-                    if borrow.is_file_open() {
+                    if annex.is_file_open() {
                         return Err(Error::concurrency(strand));
                     }
 
-                    let inner = unsafe {
-                        annex
-                            .inner_mut()
-                            .as_mut()
-                            .ok_or_else(|| Error::state_error(strand, "archive closed"))?
+                    let inner = {
+                        let inner = unsafe {
+                            annex
+                                .inner_mut()
+                                .as_mut()
+                                .ok_or_else(|| Error::state_error(strand, "archive closed"))?
+                        };
+                        match inner {
+                            ArchiveInner::Read(archive) => {
+                                let mut index = None;
+                                for (i, entry) in archive.file().entries().iter().enumerate() {
+                                    if entry.filename().as_str().into_do(strand)? == name {
+                                        index = Some(i);
+                                        break;
+                                    }
+                                }
+                                let index = index.ok_or_else(|| {
+                                    Error::runtime(strand, "specified file not found in archive")
+                                })?;
+                                let entry =
+                                    archive.reader_with_entry(index).await.into_do(strand)?;
+                                let entry = unsafe {
+                                    // SAFETY: the entry borrows `archive`, which remains in the annex until
+                                    // the entry is closed. The File object roots this Archive in slot 0.
+                                    transmute::<
+                                        ZipEntryReader<
+                                            '_,
+                                            Compat<BufReader<AnyFile>>,
+                                            WithEntry<'_>,
+                                        >,
+                                        ZipReadEntry,
+                                    >(entry)
+                                };
+                                FileInner::Read {
+                                    entry: Box::new(entry),
+                                    validated: false,
+                                }
+                            }
+                            ArchiveInner::Write(writer) => {
+                                let entry = ZipEntryBuilder::new(name.into(), Compression::Deflate);
+                                let entry =
+                                    writer.write_entry_seekable(entry).await.into_do(strand)?;
+                                let entry = unsafe {
+                                    // SAFETY: the entry borrows `writer`, which remains in the annex until
+                                    // the entry is closed. The File object roots this Archive in slot 0.
+                                    transmute::<
+                                        EntrySeekableWriter<'_, Compat<AnyFile>>,
+                                        ZipWriteEntry,
+                                    >(entry)
+                                };
+                                FileInner::Write(Box::new(entry))
+                            }
+                        }
                     };
 
-                    match inner {
-                        ArchiveInner::Read(archive) => {
-                            // Get the file from the archive and immediately transmute to 'static
-                            // This is necessary because ZipFile holds a reference to ZipArchive
-                            let static_file = archive
-                                .by_name(&name_str)
-                                .map(|zip_file| unsafe {
-                                    // Transmute the ZipFile to 'static lifetime
-                                    // Safety: The ZipFile holds a reference to the ZipArchive, but we keep
-                                    // the Archive object alive via a GC reference in the File's slots.
-                                    transmute::<ZipFile<'_>, ZipFile<'static>>(zip_file)
-                                })
-                                .into_do(strand)?;
-
-                            // Set the file state in the Archive
-                            borrow.state = FileState::Read(Box::new(static_file));
-                        }
-                        ArchiveInner::WriteAppend(writer) => {
-                            // Start a new file entry
-                            writer
-                                .start_file(&name_str, SimpleFileOptions::default())
-                                .into_do(strand)?;
-
-                            // Set the file state in the Archive
-                            borrow.state = FileState::WriteAppend;
-                        }
-                    }
-                    drop(borrow);
-
-                    global
-                        .types
-                        .file
-                        .create_with_annex(strand, File, global, &mut file);
-                    // Store the archive object in slot 0 of the file
+                    annex.file_open.set(true);
+                    global.types.file.create_with_annex(
+                        strand,
+                        File::new(inner),
+                        global,
+                        &mut file,
+                    );
                     let file_obj = global.types.file.downcast(&file).unwrap();
                     let mut file_borrow = file_obj.borrow_mut_unwrap();
                     Output::set(strand, Mut::slot_mut::<0>(&mut file_borrow), this);
                     drop(file_borrow);
 
                     if let Some(block) = block {
-                        // Call the block with the file handle as argument
                         let result = call!(strand, block, out, &file).await;
-
-                        // Always close the file, even on error
-                        strand
+                        let close_result = strand
                             .with_interrupt_mask(true, async move |strand| {
-                                let _ = method!(strand, &file, close, &mut tmp).await;
+                                method!(strand, &file, close, &mut tmp).await
                             })
                             .await;
-
-                        result
+                        result.and(close_result)
                     } else {
-                        // Just return the handle
                         Output::set(strand, out, file);
                         Ok(())
                     }
@@ -227,25 +234,29 @@ impl<'v> Object<'v> for Archive {
                 let annex = this.annex();
                 let ([], []) = unpack!(strand, args, 0, 0)?;
 
-                let mut borrow = this.borrow_mut(strand)?;
-                // Reset file state to None (invalidates any outstanding File handles)
-                borrow.state = FileState::None;
-                drop(borrow);
-
-                // For write/append modes, finish the archive before closing
-                if let Some(ArchiveInner::WriteAppend(writer)) = unsafe { annex.inner_mut().take() }
-                {
-                    task::spawn_blocking(move || writer.finish())
-                        .await
-                        .into_do(strand)?
-                        .into_do(strand)?;
+                if annex.is_file_open() {
+                    return Err(Error::concurrency(strand));
+                }
+                let inner = unsafe { annex.inner_mut().take() };
+                match inner {
+                    Some(ArchiveInner::Read(reader)) => {
+                        let file = reader.into_inner().into_inner().into_inner();
+                        file.close().await.into_do(strand)?;
+                    }
+                    Some(ArchiveInner::Write(writer)) => {
+                        let file = ZipFileWriter::close(*writer)
+                            .await
+                            .into_do(strand)?
+                            .into_inner();
+                        file.close().await.into_do(strand)?;
+                    }
+                    None => {}
                 }
                 Ok(())
             })
     }
 }
 
-/// Iterator over ZIP archive entries (file names).
 pub(crate) struct EntryIter {
     index: usize,
     len: usize,
@@ -264,7 +275,7 @@ pub(crate) struct EntryIterAnnex<'v> {
 impl<'v> Object<'v> for EntryIter {
     const NAME: &'v str = "EntryIter";
     const MODULE: &'v str = "zip";
-    const SLOTS: usize = 1; // Slot 0: reference to Archive
+    const SLOTS: usize = 1;
     type Annex = EntryIterAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
@@ -289,85 +300,81 @@ impl<'v> Object<'v> for EntryIter {
     ) -> Result<'v, 's, bool> {
         let annex = this.annex();
         let global = annex.global;
-
-        // First, check bounds and get archive reference using immutable borrow
         let borrow = this.borrow(strand)?;
         let index = borrow.index;
         if index == borrow.len {
             return Ok(false);
         }
 
-        // Get the archive reference from slot 0
         let archive = global
             .types
             .archive
             .downcast(Ref::slot::<0>(&borrow))
             .unwrap();
-        let archive_borrow = archive.borrow(strand)?;
-
-        // Check if a file is currently open
-        if archive_borrow.is_file_open() {
+        if archive.annex().is_file_open() {
             return Err(Error::concurrency(strand));
         }
 
-        drop(archive_borrow);
-
         let archive_annex = archive.annex();
-
-        // Get the inner archive
         let inner = unsafe {
             archive_annex
                 .inner()
                 .as_ref()
                 .ok_or_else(|| Error::state_error(strand, "archive closed"))?
         };
-
         let ArchiveInner::Read(archive) = inner else {
             unreachable!()
         };
-        let name = archive.name_for_index(borrow.index).unwrap();
+        let name = archive.file().entries()[index]
+            .filename()
+            .as_str()
+            .into_do(strand)?;
         Output::set(strand, out, name);
-
         drop(borrow);
 
-        // Now use mutable borrow to increment the index
-        let mut borrow = this.borrow_mut(strand)?;
-        borrow.index = index + 1;
+        this.borrow_mut(strand)?.index = index + 1;
         Ok(true)
     }
 }
 
-/// Marker type for file handles within a ZIP archive.
-/// The actual file state is stored in the parent Archive.
-pub(crate) struct File;
+pub(crate) struct File {
+    inner: Option<FileInner>,
+}
+
+impl File {
+    fn new(inner: FileInner) -> Self {
+        Self { inner: Some(inner) }
+    }
+}
 
 impl<'v> Object<'v> for File {
     const NAME: &'v str = "File";
     const MODULE: &'v str = "zip";
-    const SLOTS: usize = 1; // Slot 0: reference to Archive
+    const SLOTS: usize = 1;
     type Annex = State<'v, Global<'v>>;
     type Type = ();
     type TypeAnnex = ();
 
     fn finalize<'a>(this: Instance<'v, 'a, Self>) {
         let global = this.annex();
-        // Get the archive reference from slot 0 and reset its file state
+        // Drop the entry borrow before allowing another file to borrow the archive.
+        let inner = this.borrow_mut_unwrap().inner.take();
+        if inner.is_none() {
+            return;
+        }
+
         let borrow = this.borrow_unwrap();
         let archive = global
             .types
             .archive
             .downcast(Ref::slot::<0>(&borrow))
             .unwrap();
-
-        let mut archive_borrow = archive.borrow_mut_unwrap();
-        // Reset file state to None
-        archive_borrow.state = FileState::None;
+        archive.annex().file_open.set(false);
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .method("read", async move |this, strand, args, out| {
-                let global = *this.annex();
                 let ([size], []) = unpack!(strand, args, 1, 0)?;
                 let size: usize = size
                     .to_i64(strand)
@@ -375,54 +382,54 @@ impl<'v> Object<'v> for File {
                     .try_into()
                     .map_err(|_| Error::overflow(strand))?;
 
-                // Get the archive reference from slot 0
-                let borrow = this.borrow(strand)?;
-                let archive = global
-                    .types
-                    .archive
-                    .downcast(Ref::slot::<0>(&borrow))
-                    .ok_or_else(|| Error::state_error(strand, "invalid archive reference"))?;
-                let mut archive_borrow = archive.borrow_mut(strand)?;
-
-                // Get the file read handle from the archive's file state
-                let mut inner = match mem::replace(&mut archive_borrow.state, FileState::None) {
-                    FileState::Read(inner) => inner,
-                    FileState::None => return Err(Error::state_error(strand, "file closed")),
-                    _ => unreachable!(),
+                let mut borrow = this.borrow_mut(strand)?;
+                let inner = borrow
+                    .inner
+                    .as_mut()
+                    .ok_or_else(|| Error::state_error(strand, "file closed"))?;
+                let FileInner::Read { entry, validated } = inner else {
+                    return Err(Error::state_error(strand, "cannot read in write mode"));
                 };
 
-                drop(archive_borrow);
+                let mut data = vec![0; size];
+                let read = entry.read(&mut data).await.into_do(strand)?;
+                data.truncate(read);
+                if read == 0 && !*validated {
+                    if entry.compute_hash() != entry.entry().crc32() {
+                        return Err(Error::runtime(strand, "CRC32 checksum mismatch"));
+                    }
+                    *validated = true;
+                }
 
-                // Hand-off dance with blocking task
-                let (inner, res) = task::spawn_blocking(move || {
-                    let mut buffer = vec![0u8; size];
-                    let data = inner.read(&mut buffer).map(move |n| {
-                        buffer.truncate(n);
-                        buffer
-                    });
-                    (inner, data)
-                })
-                .await
-                .into_do(strand)?;
-
-                // Put inner handle back
-                let mut archive_borrow = archive.borrow_mut(strand)?;
-                archive_borrow.state = FileState::Read(inner);
-                drop(archive_borrow);
-                let input = res.into_do(strand)?;
-                Output::set(strand, out, input.as_slice());
+                drop(borrow);
+                Output::set(strand, out, data.as_slice());
                 Ok(())
             })
             .method("write", async move |this, strand, args, _out| {
-                let global = *this.annex();
                 let ([data], []) = unpack!(strand, args, 1, 0)?;
                 let data = match data.view(strand) {
-                    View::Str(s) => s.to_string().into(),
+                    View::Str(s) => s.to_string().into_bytes(),
                     View::Bin(b) => b.to_vec(),
                     _ => return Err(Error::type_error(strand, "expected bytes")),
                 };
 
-                // Get the archive reference from slot 0
+                let mut borrow = this.borrow_mut(strand)?;
+                let inner = borrow
+                    .inner
+                    .as_mut()
+                    .ok_or_else(|| Error::state_error(strand, "file closed"))?;
+                let FileInner::Write(entry) = inner else {
+                    return Err(Error::state_error(strand, "cannot write in read mode"));
+                };
+                entry.write_all(&data).await.into_do(strand)
+            })
+            .method("close", async move |this, strand, args, _out| {
+                let global = *this.annex();
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let Some(inner) = this.borrow_mut(strand)?.inner.take() else {
+                    return Ok(());
+                };
+
                 let borrow = this.borrow(strand)?;
                 let archive = global
                     .types
@@ -430,65 +437,20 @@ impl<'v> Object<'v> for File {
                     .downcast(Ref::slot::<0>(&borrow))
                     .ok_or_else(|| Error::state_error(strand, "invalid archive reference"))?;
 
-                // Check file state and get the inner archive
-                let inner = {
-                    let archive_borrow = archive.borrow(strand)?;
-                    match &archive_borrow.state {
-                        FileState::WriteAppend => (),
-                        FileState::None => return Err(Error::state_error(strand, "file closed")),
-                        _ => unreachable!(),
+                let result = match inner {
+                    FileInner::Write(entry) => {
+                        EntrySeekableWriter::close(*entry).await.into_do(strand)
                     }
-
-                    let annex = archive.annex();
-                    unsafe { (*annex.inner.get()).take().unwrap() }
+                    FileInner::Read { .. } => Ok(()),
                 };
-
-                // Write the data and get back the writer
-                let (inner, result) = match inner {
-                    ArchiveInner::WriteAppend(mut writer) => {
-                        let (writer, res) = task::spawn_blocking(move || {
-                            let res = writer.write_all(&data);
-                            (writer, res)
-                        })
-                        .await
-                        .into_do(strand)?;
-                        (ArchiveInner::WriteAppend(writer), res.into_do(strand))
-                    }
-                    ArchiveInner::Read(archive) => (
-                        ArchiveInner::Read(archive),
-                        Err(Error::state_error(strand, "cannot write in read mode")),
-                    ),
-                };
-
-                // Put the archive handle back
-                let annex = archive.annex();
-                unsafe { (*annex.inner.get()) = Some(inner) }
+                archive.annex().file_open.set(false);
                 result
-            })
-            .method("close", async move |this, strand, args, _out| {
-                let global = *this.annex();
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-
-                // Get the archive reference from slot 0 and reset its file state
-                let borrow = this.borrow(strand)?;
-                let archive = global
-                    .types
-                    .archive
-                    .downcast(Ref::slot::<0>(&borrow))
-                    .unwrap();
-
-                let mut archive_borrow = archive.borrow_mut(strand)?;
-                // Reset file state to None
-                archive_borrow.state = FileState::None;
-                Ok(())
             })
     }
 }
 
-/// Configure the VM with ZIP types and the `open` function.
 pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
     let close = builder.sym("close");
-    // Register the zip.open function
     builder
         .module("zip")
         .function("open", async move |strand, args, out| {
@@ -503,92 +465,41 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 (Some(_), Some(_)) => (opt1, opt2),
                 (None, Some(_)) => unreachable!(),
             };
-
-            // Parse mode parameter (default to "r" for read)
             let mode = mode
                 .as_ref()
-                .map(|m| {
-                    m.as_str(strand)
+                .map(|mode| {
+                    mode.as_str(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected `str` for `mode`"))
-                        .map(|m| m.to_string())
+                        .map(|mode| mode.to_string())
                 })
                 .transpose()?
                 .unwrap_or_else(|| "r".to_owned());
 
-            // Open the archive based on mode
             let inner = match mode.as_str() {
                 "r" => {
-                    // Read mode
                     let file = dolang_ext_shell::open(strand, path.as_ref(), "r")
                         .await
-                        .into_do(strand)?
-                        .try_into_std()
-                        .await
-                        .map_err(|_| {
-                            io::Error::new(
-                                io::ErrorKind::Unsupported,
-                                "VFS file has no native representation",
-                            )
-                        })
                         .into_do(strand)?;
-
-                    let archive = task::spawn_blocking(move || ZipArchive::new(file))
+                    let reader = ZipReader::with_tokio(BufReader::new(file))
                         .await
-                        .into_do(strand)?
                         .into_do(strand)?;
-
-                    ArchiveInner::Read(archive)
+                    ArchiveInner::Read(reader)
                 }
                 "w" => {
-                    // Write mode (create/truncate)
                     let file = dolang_ext_shell::open(strand, path.as_ref(), "w")
                         .await
-                        .into_do(strand)?
-                        .try_into_std()
-                        .await
-                        .map_err(|_| {
-                            io::Error::new(
-                                io::ErrorKind::Unsupported,
-                                "VFS file has no native representation",
-                            )
-                        })
                         .into_do(strand)?;
-
-                    let writer = ZipWriter::new(file);
-                    ArchiveInner::WriteAppend(Box::new(writer))
-                }
-                "a" => {
-                    // Append mode
-                    let file = dolang_ext_shell::open(strand, path.as_ref(), "r+")
-                        .await
-                        .into_do(strand)?
-                        .try_into_std()
-                        .await
-                        .map_err(|_| {
-                            io::Error::new(
-                                io::ErrorKind::Unsupported,
-                                "VFS file has no native representation",
-                            )
-                        })
-                        .into_do(strand)?;
-
-                    let writer = task::spawn_blocking(move || ZipWriter::new_append(file))
-                        .await
-                        .into_do(strand)?
-                        .into_do(strand)?;
-
-                    ArchiveInner::WriteAppend(Box::new(writer))
+                    ArchiveInner::Write(Box::new(ZipWriter::with_tokio(file)))
                 }
                 _ => {
                     return Err(Error::value(
                         strand,
-                        format!("invalid mode '{}': expected 'r', 'w', or 'a'", mode),
+                        format!("invalid mode '{mode}': expected 'r' or 'w'"),
                     ));
                 }
             };
 
             if let Some(block) = block {
-                // Block scope mode: create archive, call block with auto-close
                 strand
                     .with_slots(async |strand, [mut wrapper, mut tmp]| {
                         global.types.archive.create_with_annex(
@@ -597,22 +508,16 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                             ArchiveAnnex::new(inner, global),
                             &mut wrapper,
                         );
-
-                        // Call the block with the archive handle as argument
                         let result = call!(strand, block, out, &wrapper).await;
-
-                        // Always close the archive, even on error
-                        strand
+                        let close_result = strand
                             .with_interrupt_mask(true, async move |strand| {
-                                let _ = method!(strand, &wrapper, close, &mut tmp).await;
+                                method!(strand, &wrapper, close, &mut tmp).await
                             })
                             .await;
-
-                        result
+                        result.and(close_result)
                     })
                     .await
             } else {
-                // No block: just return the archive handle
                 global.types.archive.create_with_annex(
                     strand,
                     Archive::new(),
