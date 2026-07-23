@@ -132,7 +132,7 @@ impl<'v> Object<'v> for Metadata {
         let extent_format = builder.sym("extent_format");
         let opaque = builder.sym("opaque");
         builder
-            .get("len", |this, strand, out| {
+            .get("size", |this, strand, out| {
                 Output::set(strand, out, this.annex().inner.len);
                 Ok(())
             })

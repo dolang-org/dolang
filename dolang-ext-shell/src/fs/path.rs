@@ -720,7 +720,7 @@ macro_rules! impl_concrete_path {
                         let annex = this.annex();
                         super::append(strand, annex.global, annex.as_path(), data, out).await
                     })
-                    .method("set_len", async move |this, strand, args, _out| {
+                    .method("set_size", async move |this, strand, args, _out| {
                         let ([size], []) = unpack!(strand, args, 1, 0)?;
                         let size = size.to_i64(strand).map_err(|_| {
                             Error::type_error(strand, "size must be a non-negative integer")
@@ -729,7 +729,7 @@ macro_rules! impl_concrete_path {
                             Error::type_error(strand, "size must be a non-negative integer")
                         })?;
                         let annex = this.annex();
-                        super::set_len(strand, annex.global, annex.as_path(), size).await
+                        super::set_size(strand, annex.global, annex.as_path(), size).await
                     })
                     .method("copy", async move |this, strand, args, _out| {
                         let ([to], [all]) = unpack!(strand, args, 1, 0, all = None)?;

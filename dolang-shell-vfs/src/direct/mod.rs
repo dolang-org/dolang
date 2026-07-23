@@ -207,7 +207,7 @@ impl FileHandle for DirectFile {
         result.map_err(Into::into)
     }
 
-    async fn set_len(&mut self, size: u64) -> crate::Result<()> {
+    async fn set_size(&mut self, size: u64) -> crate::Result<()> {
         self.inner.set_len(size).await.map_err(Into::into)
     }
 

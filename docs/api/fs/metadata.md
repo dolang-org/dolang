@@ -12,7 +12,7 @@ when the filesystem or file type does not support querying file attributes.
 
 ## Fields
 
-### `len`
+### `size`
 
 File size in bytes.
 

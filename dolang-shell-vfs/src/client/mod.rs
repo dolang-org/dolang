@@ -411,20 +411,20 @@ impl FileHandle for ClientFile {
         }
     }
 
-    async fn set_len(&mut self, size: u64) -> crate::Result<()> {
+    async fn set_size(&mut self, size: u64) -> crate::Result<()> {
         match &mut self.0 {
-            ClientFileInner::Direct(file) => file.set_len(size).await,
+            ClientFileInner::Direct(file) => file.set_size(size).await,
             ClientFileInner::Remote(file) => {
                 file.idle()?;
                 match file
                     .client
-                    .request(RequestKind::FileSetLen {
+                    .request(RequestKind::FileSetSize {
                         file: file.opaque(),
-                        len: size,
+                        size,
                     })
                     .await?
                 {
-                    ResponseKind::FileSetLen(result) => result.map_err(Into::into),
+                    ResponseKind::FileSetSize(result) => result.map_err(Into::into),
                     response => Err(unexpected(response).into()),
                 }
             }

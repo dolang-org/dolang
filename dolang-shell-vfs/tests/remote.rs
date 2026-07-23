@@ -593,7 +593,7 @@ async fn regular_file_round_trip_over_generic_stream() {
     let mut file = file.try_into_std().await.unwrap_err();
     assert_eq!(file.metadata().await.unwrap().len, 6);
 
-    file.set_len(3).await.unwrap();
+    file.set_size(3).await.unwrap();
     assert_eq!(file.seek(SeekFrom::Start(0)).await.unwrap(), 0);
     data.clear();
     file.read_to_end(&mut data).await.unwrap();

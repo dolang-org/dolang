@@ -33,7 +33,7 @@ def basic()
   open $test_path r do |f|
     let meta = f.metadata()
     assert_type $Metadata $meta
-    assert_eq $meta.len 11
+    assert_eq $meta.size 11
     assert_eq $meta.type :FILE:
     assert_type $DateTime $meta.modified
     assert (meta.modified.unix_secs > 0.0)
@@ -239,7 +239,7 @@ def len_type()
   open $test_path r do |f|
     let meta = f.metadata()
     assert_type $Metadata $meta
-    assert_eq $meta.len 4
+    assert_eq $meta.size 4
     assert_eq $meta.type :FILE:
 
   remove $test_path

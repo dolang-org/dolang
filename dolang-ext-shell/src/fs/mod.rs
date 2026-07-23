@@ -439,7 +439,7 @@ async fn write_with_mode<'v, 's>(
     Ok(())
 }
 
-async fn set_len<'v, 's>(
+async fn set_size<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     path: Utf8TypedPath<'_>,
@@ -456,9 +456,9 @@ async fn set_len<'v, 's>(
         .open(path.to_path())
         .await
         .into_sys(strand)?;
-    let set_len_result = file.set_len(size).await;
+    let set_size_result = file.set_size(size).await;
     let close_result = file.close().await;
-    set_len_result.into_sys(strand)?;
+    set_size_result.into_sys(strand)?;
     close_result.into_sys(strand)?;
     Ok(())
 }
@@ -1062,7 +1062,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let path = path_from_value(strand, global, &path)?;
             append(strand, global, path.to_path(), data, out).await
         })
-        .function("set_len", async move |strand, args, _out| {
+        .function("set_size", async move |strand, args, _out| {
             let ([path, size], []) = unpack!(strand, args, 2, 0)?;
             let path = path_from_value(strand, global, &path)?;
             let size = size
@@ -1070,7 +1070,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 .map_err(|_| Error::type_error(strand, "size must be a non-negative integer"))?;
             let size = u64::try_from(size)
                 .map_err(|_| Error::type_error(strand, "size must be a non-negative integer"))?;
-            set_len(strand, global, path.to_path(), size).await
+            set_size(strand, global, path.to_path(), size).await
         })
         .function("set_metadata", async move |strand, args, _out| {
             let (

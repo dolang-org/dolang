@@ -582,7 +582,7 @@ impl<'v> Object<'v> for File<'v> {
                 let ([data], []) = unpack!(strand, args, 1, 0)?;
                 this.borrow_mut(strand)?.write(data, strand, out).await
             })
-            .method("set_len", async move |this, strand, args, _out| {
+            .method("set_size", async move |this, strand, args, _out| {
                 let ([size], []) = unpack!(strand, args, 1, 0)?;
                 let size = size.to_i64(strand).map_err(|_| {
                     Error::type_error(strand, "size must be a non-negative integer")
@@ -598,7 +598,7 @@ impl<'v> Object<'v> for File<'v> {
                         .file
                         .as_mut()
                         .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-                    file.set_len(size).await.into_sys(strand)?;
+                    file.set_size(size).await.into_sys(strand)?;
                 }
                 borrow.seek_to(strand, SeekFrom::Start(pos)).await?;
                 Ok(())
