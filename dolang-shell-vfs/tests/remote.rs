@@ -626,7 +626,8 @@ async fn remote_file_locks_round_trip() {
     let mut lock = first.lock(request).await.unwrap().unwrap();
     assert!(second.lock(request).await.unwrap().is_none());
     lock.release().await.unwrap();
-    assert!(second.lock(request).await.unwrap().is_some());
+    let mut lock = second.lock(request).await.unwrap().expect("lock acquired");
+    lock.release().await.unwrap();
 
     first.close().await.unwrap();
     second.close().await.unwrap();
