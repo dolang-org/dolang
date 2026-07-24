@@ -335,10 +335,12 @@ return
       with_mkdocs $spec do dodo.show mkdocs build --strict
 
   fmt:
-    help: format Rust and Markdown
-    do |_|
-      dodo.show cargo fmt
-      dodo.show rumdl fmt
+    help: format Rust
+    do |_| dodo.show cargo fmt
+
+  "fmt-docs":
+    help: format Markdown
+    do |_| dodo.show rumdl fmt
 
   lint:
     help: check for coding/formatting errors

@@ -22,10 +22,9 @@ def write_archive path compression
       entry.put b"world"
     archive.entry empty size: 0 do |_|
       nil
-    archive.entry folder size: 0 type: :DIR: mode: 0o755 do |_|
-      nil
-    archive.entry link size: 0 type: :SYMLINK: link_name: (UnixPath "hello.txt") do |_|
-      nil
+    archive.create_dir folder mode: 0o755
+    archive.symlink (UnixPath "hello.txt") link
+    archive.hard_link (UnixPath "hello.txt") hardlink
 
 def check_archive path compression
   tar.read $path do |archive|
@@ -56,6 +55,11 @@ def check_archive path compression
     assert_eq $link.type :SYMLINK:
     assert_type $UnixPath $link.link_name
     assert_eq [...link.link_name.components] ["hello.txt"]
+
+    let hardlink = archive.next()
+    assert_eq $hardlink.type :HARDLINK:
+    assert_type $UnixPath $hardlink.link_name
+    assert_eq [...hardlink.link_name.components] ["hello.txt"]
 
 #[agent.test]
 def round_trip_compression_formats()

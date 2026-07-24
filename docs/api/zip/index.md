@@ -34,8 +34,8 @@ result of calling `func`
 ```
 # Read an existing archive
 open "archive.zip" do |archive|
-  for name = archive.entries()
-    echo "Entry: $name"
+  for entry = archive.entries
+    echo "Entry: $entry.name"
 
 # Create a new archive
 open "output.zip" "w" do |archive|
@@ -47,4 +47,5 @@ open "output.zip" "w" do |archive|
 
 - [Archive](./archive.md) - Represents a ZIP archive
 - [File](./file.md) - Represents a file within a ZIP archive
-- [EntryIter](./entryiter.md) - Iterator over archive entries
+- [Entry](./entry.md) - A single archive entry's metadata, and a handle to
+  open it for reading

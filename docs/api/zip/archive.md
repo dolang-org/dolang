@@ -3,18 +3,47 @@
 Archive objects are returned by [`open()`](./index.md#open-path-mode-func)
 and provide methods for working with ZIP archives.
 
+## Fields
+
+### `entries`
+
+Immutable array-like view of [`Entry`](./entry.md) objects for every entry in
+the archive.
+
+**Availability:** Read mode only
+
+#### Example
+
+```
+open "archive.zip" do |archive|
+  for entry = archive.entries
+    echo "Found: $entry.name"
+
+  # Or collect into an array
+  let entries = [...archive.entries]
+  echo "Total files: $(entries.len)"
+```
+
+**Error:** Raises a runtime error if accessed on an archive opened in write
+mode. A view obtained before the archive is closed reports an empty length
+afterward rather than erroring, since `len` cannot itself raise an error.
+
 ## Methods
 
-### `open name func?`
+### `open name :mode? func?`
 
-Opens a file within the archive.
+Opens a file within the archive. Always creates a regular file entry in
+write mode — use [`create_dir`](#create_dir-name-mode) or
+[`symlink`](#symlink-target-name-mode) for directory or symlink entries,
+which carry no content and so have no use for a write handle.
 
 #### Parameters
 
-| Name   | Type                   | Description                                          |
-| ------ | ---------------------- | ---------------------------------------------------- |
-| `name` | [`str`](../std/str.md) | Name/path of the file within the archive             |
-| `func` | func                   | Callable to run with the file; auto-closes when done |
+| Name   | Type                    | Description                                          |
+| ------ | ----------------------- | ---------------------------------------------------- |
+| `name` | [`str`](../std/str.md)  | Name/path of the file within the archive             |
+| `mode` | [`int`](../std/int.md)? | Unix permission bits in write mode (default: `0`)    |
+| `func` | func                    | Callable to run with the file; auto-closes when done |
 
 **Mode-specific behavior:**
 
@@ -37,33 +66,47 @@ open "archive.zip" do |archive|
 
 # Write mode - create new file
 open "output.zip" "w" do |archive|
-  archive.open "data.txt" do |file|
+  archive.open "data.txt" mode: 0o644 do |file|
     file.write "Hello, World!"
 ```
 
-### `entries()`
+### `create_dir name :mode?`
 
-Returns an iterator over the names of all entries in the archive.
+Creates a directory entry. Write mode only.
 
-**Availability:** Read mode only
+#### Parameters
 
-#### Returns
-
-[EntryIter](entryiter.md)
+| Name   | Type                    | Description                                                                        |
+| ------ | ----------------------- | ---------------------------------------------------------------------------------- |
+| `name` | [`str`](../std/str.md)  | Name/path of the directory within the archive (a trailing `/` is added if missing) |
+| `mode` | [`int`](../std/int.md)? | Unix permission bits (default: `0`)                                                |
 
 #### Example
 
 ```
-open "archive.zip" do |archive|
-  for name = archive.entries()
-    echo "Found: $name"
-
-  # Or collect into an array
-  let names = [...archive.entries()]
-  echo "Total files: $(names.len)"
+open "output.zip" "w" do |archive|
+  archive.create_dir "subdir" mode: 0o755
 ```
 
-**Error:** Raises a runtime error if called on an archive opened in write mode.
+### `symlink target name :mode?`
+
+Creates a symbolic link entry pointing to `target`. Write mode only.
+Argument order matches [`fs.symlink_file`](../fs/index.md#symlink_file-src-dst).
+
+#### Parameters
+
+| Name     | Type                    | Description                                 |
+| -------- | ----------------------- | ------------------------------------------- |
+| `target` | [`str`](../std/str.md)  | Path the symlink points to                  |
+| `name`   | [`str`](../std/str.md)  | Name/path of the symlink within the archive |
+| `mode`   | [`int`](../std/int.md)? | Unix permission bits (default: `0`)         |
+
+#### Example
+
+```
+open "output.zip" "w" do |archive|
+  archive.symlink "target.txt" "link.txt" mode: 0o777
+```
 
 ### `close()`
 

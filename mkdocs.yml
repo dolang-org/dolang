@@ -103,6 +103,7 @@ nav:
       - api/fs/index.md
       - api/fs/direntry.md
       - api/fs/file.md
+      - api/fs/file-lock.md
       - api/fs/fs-metadata.md
       - api/fs/metadata.md
       - api/fs/path.md
@@ -286,7 +287,7 @@ nav:
     - zip:
       - api/zip/index.md
       - api/zip/archive.md
-      - api/zip/entryiter.md
+      - api/zip/entry.md
       - api/zip/file.md
     - tar:
       - api/tar/index.md

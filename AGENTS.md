@@ -545,12 +545,13 @@ and routing logic live in [`dodo.dol`](./dodo.dol) at the workspace root.
 
 ```bash
 dodo build                 # debug build
-dodo fmt                   # format Rust and Markdown
+dodo fmt                   # format Rust
 dodo lint                  # check for clippy and formatting warnings
 dodo cargo-test            # (cargo test, use `--` to pass arbitrary additional arguments to cargo)
 dodo shell-test            # (shell integration tests, use `--` to specify alternate arguments to `dolang -m test`)
 dodo test                  # cargo and shell tests
 dodo mkdocs                # build language docs (MkDocs site in site/)
+dodo fmt-docs              # Format Markdown with rumdl
 dodo lint-docs             # check for Markdown errors with rumdl
 ```
 
