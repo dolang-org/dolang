@@ -8,25 +8,46 @@ import agent zip
 #[agent.test]
 def write_read()
   zip.open "test.zip" "w" do |archive|
-    archive.open "hello.txt" do |file|
+    archive.open "hello.txt" mode: 0o640 do |file|
       file.write "Hello, World!"
 
     archive.open "test.txt" do |file|
       file.write "Test content"
 
-  zip.open "test.zip" do |archive|
-    let entries = [...archive.entries()]
-    assert_eq $entries.len 2
-    assert_eq $entries[0] "hello.txt"
-    assert_eq $entries[1] "test.txt"
+    archive.create_dir "subdir" mode: 0o750
+    archive.symlink "hello.txt" "link.txt" mode: 0o777
 
-    archive.open "hello.txt" do |file|
+  zip.open "test.zip" do |archive|
+    let entries = [...archive.entries]
+    assert_eq $entries.len 4
+    assert_eq (str entries[0].name) "hello.txt"
+    assert_eq (str entries[1].name) "test.txt"
+    assert_eq (str entries[2].name) "subdir/"
+    assert_eq (str entries[3].name) "link.txt"
+
+    let hello = entries[0]
+    assert_eq $hello.size 13
+    assert_eq $hello.mode 0o100640
+    assert_eq $hello.type :FILE:
+    hello.open do |file|
       let data = file.read 1024
       assert_eq (str data) "Hello, World!"
 
     archive.open "test.txt" do |file|
       let data = file.read 1024
       assert_eq (str data) "Test content"
+
+    let subdir = entries[2]
+    assert_eq $subdir.mode 0o040750
+    assert_eq $subdir.type :DIR:
+    assert_eq $subdir.size 0
+
+    let link = entries[3]
+    assert_eq $link.mode 0o120777
+    assert_eq $link.type :SYMLINK:
+    link.open do |file|
+      let target = file.read 1024
+      assert_eq (str target) "hello.txt"
 
 #[agent.test]
 def nested_file_is_rejected()
@@ -43,3 +64,11 @@ def nested_file_is_rejected()
     assert_throws $ConcurrencyError do
       archive.open "third.txt" do |_| nil
     current.close()
+
+  zip.open "nested.zip" do |archive|
+    let entries = [...archive.entries]
+    entries[0].open do |_|
+      assert_throws $ConcurrencyError do
+        entries[1].open do |_| nil
+      assert_throws $ConcurrencyError do
+        archive.open (str entries[1].name) do |_| nil

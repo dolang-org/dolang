@@ -3,11 +3,11 @@ use dolang::runtime::{
     vm::{Builder, Stateful},
 };
 
-use crate::zip::{Archive, EntryIter, File};
+use crate::zip::{Archive, Entry, File};
 
 pub(crate) struct Types<'v> {
     pub(crate) archive: Type<'v, Archive>,
-    pub(crate) entry_iter: Type<'v, EntryIter>,
+    pub(crate) entry: Type<'v, Entry>,
     pub(crate) file: Type<'v, File>,
 }
 
@@ -26,7 +26,7 @@ impl<'v> Global<'v> {
         Self {
             types: Types {
                 archive: builder.register_type(),
-                entry_iter: builder.register_type(),
+                entry: builder.register_type(),
                 file: builder.register_type(),
             },
         }
