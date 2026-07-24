@@ -166,8 +166,9 @@ def install_bin spec bin_dir name
   echo "installed: $dst"
 
 def install_bin_symlink spec bin_dir from to
+  bin_dir = bin_dir.absolute()
   let bin = spec.bin(from)
-  let src = (bin_dir / bin.name).absolute()
+  let src = (bin_dir / bin.name)
   let dst = src.with_stem $to
   let tmp = dst.add_ext tmp
   symlink_file (src.relative bin_dir) $tmp
