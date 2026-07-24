@@ -22,5 +22,6 @@ mod tests {
         assert!(get("dodo").is_some());
         assert!(get("test").is_some());
         assert!(get("docker").is_some());
+        assert!(get("transfer").is_some());
     }
 }

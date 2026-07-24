@@ -138,6 +138,7 @@ nav:
       - api/patch/applyerror.md
     - toml: api/toml.md
     - toolbx: api/toolbx.md
+    - transfer: api/transfer.md
     - load:
       - api/load/index.md
       - api/load/importhandler.md

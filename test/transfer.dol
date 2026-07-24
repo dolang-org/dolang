@@ -1,0 +1,98 @@
+import agent tar transfer zip
+  fs:
+    - Path
+    - UnixPath
+    - symlink_file
+  std:
+    - ValueError
+  sys:
+    - os_info
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+
+#[agent.test]
+def local_get_and_put()
+  Path("source.bin").write b"hello"
+  assert_eq (transfer.get "source.bin") (Path "source.bin")
+  transfer.put "source.bin" "output.bin"
+  assert_eq (Path("output.bin").read "b") b"hello"
+
+#[agent.test]
+def policy_is_reserved()
+  assert_throws $ValueError do
+    transfer.get "source.bin" policy: :OFFLINE:
+
+#[agent.test]
+def archive_round_trips()
+  let source = Path "source"
+  (source / "nested").create_dir all: true
+  (source / "empty").create_dir all: true
+  (source / "hello.txt").write hello
+  (source / "nested/data.bin").write b"\x01\x02"
+  (source / ".hidden").write hidden
+  if (os_info().family != :WINDOWS:)
+    symlink_file (Path "../hello.txt") (source / "nested/link")
+
+  let formats =
+    - [:TAR:, "archive.tar"]
+    - [:TAR_GZIP:, "archive.tar.gz"]
+    - [:TAR_ZSTD:, "archive.tar.zst"]
+    - [:ZIP:, "archive.zip"]
+  for format name = formats
+    transfer.pack $source $name format: $format prefix: root
+    let destination = Path "out-$(str format)"
+    transfer.unpack $name $destination strip: :ROOT:
+    assert_eq $(destination / "hello.txt").read() hello
+    assert_eq $(destination / "nested/data.bin").read("b") b"\x01\x02"
+    assert_eq $(destination / ".hidden").read() hidden
+    assert $(destination / "empty").exists()
+    if (os_info().family != :WINDOWS:)
+      assert_eq $(destination / "nested/link").metadata(resolve: :LINK:).type :SYMLINK:
+      assert_eq [...(destination / "nested/link").read_link().components] ["..", "hello.txt"]
+      assert_eq $(destination / "nested/link").read() hello
+
+#[agent.test]
+def extraction_rejects_existing_destination()
+  tar.write archive.tar do |archive|
+    archive.entry file size: 1 do |entry| entry.write x
+  Path("out").create_dir()
+  assert_throws $ValueError do transfer.unpack archive.tar out
+
+#[agent.test]
+def extraction_rejects_unsafe_zip_paths()
+  zip.open unsafe.zip w do |archive|
+    archive.open "../escape" do |file| file.write nope
+  assert_throws $ValueError do transfer.unpack unsafe.zip out
+  assert !(Path("escape").exists())
+
+#[agent.test]
+def extraction_rejects_escaping_symlink_targets()
+  tar.write unsafe-link.tar do |archive|
+    archive.symlink (UnixPath "../../escape") (UnixPath "dir/link")
+  assert_throws $ValueError do transfer.unpack unsafe-link.tar out
+  assert !(Path("escape").exists())
+
+#[agent.test]
+def root_strip_requires_one_root()
+  tar.write roots.tar do |archive|
+    archive.entry (UnixPath "one/a") size: 1 do |entry| entry.write a
+    archive.entry (UnixPath "two/b") size: 1 do |entry| entry.write b
+  assert_throws $ValueError do transfer.unpack roots.tar out strip: :ROOT:
+
+#[agent.test]
+def hard_links_are_created_after_files()
+  tar.write links.tar do |archive|
+    archive.create_dir root
+    archive.hard_link (UnixPath "root/file") (UnixPath "root/link")
+    archive.entry (UnixPath "root/file") size: 5 do |entry| entry.write hello
+  transfer.unpack links.tar out strip: :ROOT:
+  assert_eq (Path("out/link").read()) hello
+
+#[agent.test]
+def extraction_rejects_duplicates()
+  tar.write duplicate.tar do |archive|
+    archive.entry item size: 1 do |entry| entry.write a
+    archive.entry item size: 1 do |entry| entry.write b
+  assert_throws $ValueError do transfer.unpack duplicate.tar out

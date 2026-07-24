@@ -9,6 +9,14 @@ most subsequent methods will return errors.
 
 ## Fields
 
+### `url`
+
+The final response URL after redirects.
+
+#### Type
+
+[`url.Url`](../url/url.md)
+
 ### `status`
 
 The HTTP status code of the response.
