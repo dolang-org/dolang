@@ -98,27 +98,6 @@ fn entry_type_sym<'v>(
     }
 }
 
-fn parse_entry_type<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    value: Option<Slot<'v, '_>>,
-) -> Result<'v, 's, EntryType> {
-    let Some(value) = value else {
-        return Ok(EntryType::Regular);
-    };
-    match value.as_sym(strand) {
-        Some(sym) if sym == global.syms.file => Ok(EntryType::Regular),
-        Some(sym) if sym == global.syms.hardlink => Ok(EntryType::Link),
-        Some(sym) if sym == global.syms.symlink => Ok(EntryType::Symlink),
-        Some(sym) if sym == global.syms.char_device => Ok(EntryType::Char),
-        Some(sym) if sym == global.syms.block_device => Ok(EntryType::Block),
-        Some(sym) if sym == global.syms.dir => Ok(EntryType::Directory),
-        Some(sym) if sym == global.syms.fifo => Ok(EntryType::Fifo),
-        Some(sym) if sym == global.syms.contiguous => Ok(EntryType::Continuous),
-        _ => Err(Error::value(strand, "invalid tar entry type")),
-    }
-}
-
 fn nonnegative_u64<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: Slot<'v, '_>,
@@ -174,14 +153,114 @@ fn unix_path_string<'v, 's>(
     }
 }
 
-fn optional_unix_path_string<'v, 's>(
+/// Metadata common to every tar entry, shared by `entry`, `create_dir`,
+/// `symlink`, and `hard_link`.
+struct CommonEntryOptions {
+    mode: u32,
+    uid: u64,
+    gid: u64,
+    mtime: u64,
+    user_name: Option<String>,
+    group_name: Option<String>,
+}
+
+#[expect(clippy::too_many_arguments)]
+fn parse_common_entry_options<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    value: Option<Slot<'v, '_>>,
-    name: &str,
-) -> Result<'v, 's, Option<String>> {
-    value
-        .map(|value| unix_path_string(strand, value, name))
-        .transpose()
+    default_mode: u64,
+    mode: Option<Slot<'v, '_>>,
+    uid: Option<Slot<'v, '_>>,
+    gid: Option<Slot<'v, '_>>,
+    mtime: Option<Slot<'v, '_>>,
+    user_name: Option<Slot<'v, '_>>,
+    group_name: Option<Slot<'v, '_>>,
+) -> Result<'v, 's, CommonEntryOptions> {
+    let mode = u32::try_from(optional_u64(strand, mode, default_mode, "mode")?)
+        .map_err(|_| Error::overflow(strand))?;
+    let uid = optional_u64(strand, uid, 0, "uid")?;
+    let gid = optional_u64(strand, gid, 0, "gid")?;
+    let mtime = match mtime {
+        Some(value) => dolang_ext_shell::as_datetime(strand, &value)
+            .ok_or_else(|| Error::type_error(strand, "mtime must be a DateTime"))?
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|_| Error::value(strand, "mtime is before the Unix epoch"))?
+            .as_secs(),
+        None => 0,
+    };
+    let user_name = optional_string(strand, user_name, "user_name")?;
+    let group_name = optional_string(strand, group_name, "group_name")?;
+    Ok(CommonEntryOptions {
+        mode,
+        uid,
+        gid,
+        mtime,
+        user_name,
+        group_name,
+    })
+}
+
+fn build_header<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    ty: EntryType,
+    size: u64,
+    opts: &CommonEntryOptions,
+    link_name: Option<&str>,
+) -> Result<'v, 's, Header> {
+    let mut header = Header::new_gnu();
+    header.set_entry_type(ty);
+    header.set_size(size);
+    header.set_mode(opts.mode);
+    header.set_uid(opts.uid);
+    header.set_gid(opts.gid);
+    header.set_mtime(opts.mtime);
+    if let Some(value) = &opts.user_name {
+        header.set_username(value).into_do(strand)?;
+    }
+    if let Some(value) = &opts.group_name {
+        header.set_groupname(value).into_do(strand)?;
+    }
+    if let Some(value) = link_name {
+        header.set_link_name(value).into_do(strand)?;
+    }
+    Ok(header)
+}
+
+/// Appends a zero-content entry (directory or symlink) directly, without
+/// exposing a write handle: neither carries a byte stream, so a block would
+/// have nothing meaningful to write to.
+async fn append_metadata_only_entry<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    this: Instance<'v, '_, TarWriter>,
+    path: &str,
+    mut header: Header,
+) -> Result<'v, 's, ()> {
+    let mut native_builder = {
+        let mut parent = this.borrow_mut(strand)?;
+        if parent.poisoned {
+            return Err(Error::state_error(strand, "tar writer is poisoned"));
+        }
+        if parent.active {
+            return Err(Error::concurrency(strand));
+        }
+        parent.active = true;
+        parent
+            .builder
+            .take()
+            .ok_or_else(|| Error::state_error(strand, "tar writer is closed"))?
+    };
+
+    let append_result = native_builder
+        .append_data(&mut header, Path::new(path), tokio::io::empty())
+        .await;
+
+    let mut parent = this.borrow_mut(strand)?;
+    parent.active = false;
+    parent.builder = Some(native_builder);
+    if append_result.is_err() {
+        parent.poisoned = true;
+    }
+    drop(parent);
+    append_result.into_do(strand)
 }
 
 macro_rules! active_entry {
@@ -591,16 +670,12 @@ impl<'v> Object<'v> for TarWriter {
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let size_sym = builder.sym("size");
-        let type_sym = builder.sym("type");
         let mode_sym = builder.sym("mode");
         let uid_sym = builder.sym("uid");
         let gid_sym = builder.sym("gid");
         let mtime_sym = builder.sym("mtime");
         let user_name_sym = builder.sym("user_name");
         let group_name_sym = builder.sym("group_name");
-        let link_name_sym = builder.sym("link_name");
-        let device_major_sym = builder.sym("device_major");
-        let device_minor_sym = builder.sym("device_minor");
         builder
             .get("compression", |this, strand, out| {
                 let compression = this.borrow(strand)?.compression;
@@ -613,82 +688,26 @@ impl<'v> Object<'v> for TarWriter {
                     let global = *this.annex();
                     let (
                         [path, block],
-                        [
-                            size,
-                            ty,
-                            mode,
-                            uid,
-                            gid,
-                            mtime,
-                            user_name,
-                            group_name,
-                            link_name,
-                            device_major,
-                            device_minor,
-                        ],
+                        [size, mode, uid, gid, mtime, user_name, group_name],
                     ) = unpack!(
                         strand,
                         args,
                         2,
                         0,
                         size_sym = None,
-                        type_sym = None,
                         mode_sym = None,
                         uid_sym = None,
                         gid_sym = None,
                         mtime_sym = None,
                         user_name_sym = None,
-                        group_name_sym = None,
-                        link_name_sym = None,
-                        device_major_sym = None,
-                        device_minor_sym = None
+                        group_name_sym = None
                     )?;
                     let path = unix_path_string(strand, path, "path")?;
                     let size = size.ok_or_else(|| Error::value(strand, "size is required"))?;
                     let size = nonnegative_u64(strand, size, "size")?;
-                    let ty = parse_entry_type(strand, global, ty)?;
-                    let mode = u32::try_from(optional_u64(strand, mode, 0o644, "mode")?)
-                        .map_err(|_| Error::overflow(strand))?;
-                    let uid = optional_u64(strand, uid, 0, "uid")?;
-                    let gid = optional_u64(strand, gid, 0, "gid")?;
-                    let mtime = match mtime {
-                        Some(value) => dolang_ext_shell::as_datetime(strand, &value)
-                            .ok_or_else(|| Error::type_error(strand, "mtime must be a DateTime"))?
-                            .duration_since(SystemTime::UNIX_EPOCH)
-                            .map_err(|_| Error::value(strand, "mtime is before the Unix epoch"))?
-                            .as_secs(),
-                        None => 0,
-                    };
-                    let user_name = optional_string(strand, user_name, "user_name")?;
-                    let group_name = optional_string(strand, group_name, "group_name")?;
-                    let link_name = optional_unix_path_string(strand, link_name, "link_name")?;
-                    let device_major = device_major
-                        .map(|v| {
-                            nonnegative_u64(strand, v, "device_major")
-                                .and_then(|v| u32::try_from(v).map_err(|_| Error::overflow(strand)))
-                        })
-                        .transpose()?;
-                    let device_minor = device_minor
-                        .map(|v| {
-                            nonnegative_u64(strand, v, "device_minor")
-                                .and_then(|v| u32::try_from(v).map_err(|_| Error::overflow(strand)))
-                        })
-                        .transpose()?;
-
-                    if matches!(ty, EntryType::Link | EntryType::Symlink) && link_name.is_none() {
-                        return Err(Error::value(
-                            strand,
-                            "link_name is required for link entries",
-                        ));
-                    }
-                    if matches!(ty, EntryType::Char | EntryType::Block)
-                        && (device_major.is_none() || device_minor.is_none())
-                    {
-                        return Err(Error::value(
-                            strand,
-                            "device_major and device_minor are required for device entries",
-                        ));
-                    }
+                    let opts = parse_common_entry_options(
+                        strand, 0o644, mode, uid, gid, mtime, user_name, group_name,
+                    )?;
 
                     let (mut native_builder, generation) = {
                         let mut parent = this.borrow_mut(strand)?;
@@ -708,28 +727,8 @@ impl<'v> Object<'v> for TarWriter {
                         (native_builder, generation)
                     };
 
-                    let mut header = Header::new_gnu();
-                    header.set_entry_type(ty);
-                    header.set_size(size);
-                    header.set_mode(mode);
-                    header.set_uid(uid);
-                    header.set_gid(gid);
-                    header.set_mtime(mtime);
-                    if let Some(value) = &user_name {
-                        header.set_username(value).into_do(strand)?;
-                    }
-                    if let Some(value) = &group_name {
-                        header.set_groupname(value).into_do(strand)?;
-                    }
-                    if let Some(value) = &link_name {
-                        header.set_link_name(value).into_do(strand)?;
-                    }
-                    if let Some(value) = device_major {
-                        header.set_device_major(value).into_do(strand)?;
-                    }
-                    if let Some(value) = device_minor {
-                        header.set_device_minor(value).into_do(strand)?;
-                    }
+                    let mut header =
+                        build_header(strand, EntryType::Regular, size, &opts, None)?;
 
                     let (entry_stream, archive_stream) = tokio::io::duplex(CHUNK_SIZE * 2);
                     global.types.entry_writer.create_with_annex(
@@ -789,6 +788,68 @@ impl<'v> Object<'v> for TarWriter {
                     Ok(())
                 },
             )
+            .method("create_dir", async move |this, strand, args, _out| {
+                let ([path], [mode, uid, gid, mtime, user_name, group_name]) = unpack!(
+                    strand,
+                    args,
+                    1,
+                    0,
+                    mode_sym = None,
+                    uid_sym = None,
+                    gid_sym = None,
+                    mtime_sym = None,
+                    user_name_sym = None,
+                    group_name_sym = None
+                )?;
+                let path = unix_path_string(strand, path, "path")?;
+                let opts = parse_common_entry_options(
+                    strand, 0o755, mode, uid, gid, mtime, user_name, group_name,
+                )?;
+                let header = build_header(strand, EntryType::Directory, 0, &opts, None)?;
+                append_metadata_only_entry(strand, this, &path, header).await
+            })
+            .method("symlink", async move |this, strand, args, _out| {
+                let ([target, path], [mode, uid, gid, mtime, user_name, group_name]) = unpack!(
+                    strand,
+                    args,
+                    2,
+                    0,
+                    mode_sym = None,
+                    uid_sym = None,
+                    gid_sym = None,
+                    mtime_sym = None,
+                    user_name_sym = None,
+                    group_name_sym = None
+                )?;
+                let target = unix_path_string(strand, target, "target")?;
+                let path = unix_path_string(strand, path, "path")?;
+                let opts = parse_common_entry_options(
+                    strand, 0o777, mode, uid, gid, mtime, user_name, group_name,
+                )?;
+                let header = build_header(strand, EntryType::Symlink, 0, &opts, Some(&target))?;
+                append_metadata_only_entry(strand, this, &path, header).await
+            })
+            .method("hard_link", async move |this, strand, args, _out| {
+                let ([target, path], [mode, uid, gid, mtime, user_name, group_name]) = unpack!(
+                    strand,
+                    args,
+                    2,
+                    0,
+                    mode_sym = None,
+                    uid_sym = None,
+                    gid_sym = None,
+                    mtime_sym = None,
+                    user_name_sym = None,
+                    group_name_sym = None
+                )?;
+                let target = unix_path_string(strand, target, "target")?;
+                let path = unix_path_string(strand, path, "path")?;
+                let opts = parse_common_entry_options(
+                    strand, 0o644, mode, uid, gid, mtime, user_name, group_name,
+                )?;
+                let header = build_header(strand, EntryType::Link, 0, &opts, Some(&target))?;
+                append_metadata_only_entry(strand, this, &path, header).await
+            })
     }
 }
 
