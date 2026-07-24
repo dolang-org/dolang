@@ -5,6 +5,9 @@ http.get $TEST_URL/get do |res|
   let body = res.text()
   assert (body.len > 0)
 
+http.get $TEST_URL/redirect do |res|
+  assert_eq $res.url.path /get
+
 http.post $TEST_URL/post do |res|
   assert_eq $res.status 201
 

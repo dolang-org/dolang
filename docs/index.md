@@ -116,7 +116,8 @@ containers ([`docker`](./api/docker/index.md),
 ([`security`](./api/security/index.md)), and safe terminal output
 ([`term`](./api/term/index.md), [`progress`](./api/progress/index.md)).
 
-**Data and protocols** — [HTTP](./api/http/index.md),
+**Data and protocols** — artifact [transfers](./api/transfer.md),
+[HTTP](./api/http/index.md),
 [URLs](./api/url/index.md), [JSON](./api/json.md), [TOML](./api/toml.md),
 [XML](./api/xml/index.md), [YAML](./api/yaml.md),
 [SQLite](./api/sqlite/index.md), [regex](./api/regex/index.md),

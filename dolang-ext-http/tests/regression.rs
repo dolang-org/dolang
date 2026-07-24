@@ -107,6 +107,10 @@ mod detail {
                     )
                     .mount(server)
                     .await;
+                Mock::given(matchers::path("/redirect"))
+                    .respond_with(ResponseTemplate::new(302).insert_header("location", "/get"))
+                    .mount(server)
+                    .await;
             }
             "date_headers" => {
                 use wiremock::{Request, Respond};

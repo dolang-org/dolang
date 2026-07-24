@@ -1,4 +1,4 @@
-import http digest progress json patch strand proc time _vfs
+import progress json patch strand proc time transfer _vfs
   std:
     - RuntimeError
   strand:
@@ -15,7 +15,6 @@ import http digest progress json patch strand proc time _vfs
   _container.common:
     - runtime_dir
     - cache_dir
-    - cache_root
 
 let COPY_BLOCK_SIZE = 1048576
 let SOCKET_SPINS = 10
@@ -550,9 +549,6 @@ def url_leaf url
     throw "source URL has no filename: $url"
   name
 
-def url_short url
-  (url.name || url)
-
 def parse_source source
   if (type source str)
     if (source.starts_with "http://" || source.starts_with "https://")
@@ -563,46 +559,18 @@ def parse_source source
     source
 
 class Cache
-  field downloads = (cache_root() / "downloads")
-  field client = http.Client()
-
-  def payload_path self url
-    (self.#downloads / digest.blake3(str url).hex())
+  field paths = {}
 
   pub def ensure self url
-    let payload = self.#payload_path $url
-    let cached = payload.exists()
-    let headers =
-      if cached
-        "if-modified-since": $payload.metadata().modified
-
-    progress.show message: (url_short url) units: :BYTES: do |w|
-      self.#client.get $url :headers status: :IGNORE: do |resp|
-        if (cached && resp.status == 304)
-          return payload
-        resp.throw_for_status()
-        let total = resp.headers.get content-length
-        w.total = (total && int total)
-        payload.parent.create_dir all: true
-        let tmp = payload.add_ext tmp
-        try
-          tmp.open wb do |dest|
-            for chunk = resp.chunks()
-              dest.write $chunk
-              w.delta $chunk.len
-          tmp.rename $payload
-        finally
-          tmp.remove ignore: true
-        let modified = resp.headers.get last-modified
-        if modified
-          payload.set_metadata :modified
+    let payload = (transfer.get(url, app: "dolang-container"))
+    self.#paths[str(url)] = payload
     payload
 
   pub def path self url
-    let cache_payload = self.#payload_path $url
-    if !cache_payload.exists()
+    let payload = (self.#paths.get(str(url)))
+    if (payload == nil)
       throw "cache entry missing for URL: $url"
-    cache_payload
+    payload
 
 let cache = Cache()
 

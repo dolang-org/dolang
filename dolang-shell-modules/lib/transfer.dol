@@ -1,0 +1,794 @@
+import digest fs http json progress security shell std sys tar zip
+  fs:
+    - Path
+    - UnixPath
+    - with_temp_dir
+  time:
+    - DateTime
+  url:
+    - Url
+
+let DIGESTS =
+  "blake3": $digest.Blake3
+  "md5": $digest.Md5
+  "sha1": $digest.Sha1
+  "sha256": $digest.Sha256
+  "sha512": $digest.Sha512
+
+def parse_location value
+  if (type value Url || type value Path)
+    value
+  else if (type value str)
+    if (value.starts_with "http://" || value.starts_with "https://")
+      Url $value
+    else
+      Path $value
+  else
+    throw std.TypeError "expected `str`, `Url`, or `Path`"
+
+def require_http url
+  if !(url.scheme == "http" || url.scheme == "https")
+    throw std.ValueError "unsupported URL scheme: $url.scheme"
+  url
+
+def default_app()
+  let program = shell.program
+  if (program == nil)
+    throw std.ValueError "app: required when shell.program is unavailable"
+  let app = if (type program Path)
+    (program.stem || program.name)
+  else
+    str $program
+  if (app == nil || app == "")
+    throw std.ValueError "can't infer cache app from shell.program"
+  app
+
+def normalize_app app
+  app = str (app || default_app())
+  app = app.replace("/", "_").replace("\\", "_")
+  if (app == "" || app == "." || app == "..")
+    throw std.ValueError "cache app name must not be empty"
+  app
+
+def normalized_url value
+  require_http(Url value).with_fragment nil
+
+def safe_leaf name
+  if (name == nil || name == "" || name == "." || name == "..")
+    return "data"
+  name.replace("/", "_").replace("\\", "_")
+
+def digest_spec spec
+  if !(type spec str)
+    throw std.TypeError "digest: expected `algorithm:hex` string"
+  let parts = [...spec.lower().split ":" limit: 1]
+  if (parts.len != 2)
+    throw std.ValueError "digest: expected `algorithm:hex`"
+  let algorithm expected = parts[0]
+  let constructor = DIGESTS.get $algorithm else: do
+    throw std.ValueError "digest: unsupported algorithm: $algorithm"
+  let expected_len = (constructor().digest().len * 2)
+  if (expected.len != expected_len ||
+      !expected.iter().all(do |c| "0123456789abcdef".contains c))
+    throw std.ValueError "digest: invalid $algorithm hex value"
+  record :algorithm :expected :constructor
+
+def file_digest path constructor
+  let state = constructor()
+  path.open rb do |file|
+    for chunk = file
+      state.update $chunk
+  state.digest().hex()
+
+def read_metadata path identity
+  if !path.exists()
+    return nil
+  try
+    let metadata = json.from_str(path.read())
+    if (metadata.get("version") != 1 || metadata.get("url") != identity)
+      nil
+    else
+      metadata
+  catch _
+    nil
+
+def write_metadata path metadata
+  let tmp = path.add_ext tmp
+  try
+    tmp.write $ json.to_str(metadata)
+    tmp.rename $path
+  finally
+    tmp.remove ignore: true
+
+def metadata_payload entry metadata fallback
+  let name = (metadata && metadata.get("payload"))
+  (entry / (name || fallback))
+
+def intact_payload payload metadata
+  if (metadata == nil || !payload.exists())
+    return false
+  try
+    (payload.metadata().type == :FILE: &&
+      payload.metadata().size == metadata.get("size"))
+  catch _
+    false
+
+def conditional_headers metadata
+  let headers = {}
+  let etag = metadata.get "etag"
+  let modified = metadata.get "last_modified"
+  if etag
+    headers["if-none-match"] = etag
+  if modified
+    headers["if-modified-since"] = DateTime.parse_rfc3339 $modified
+  headers
+
+def response_metadata identity response payload digest_info old
+  let headers = response.headers
+  let verified = (old && old.get "verified" || {})
+  if digest_info
+    verified[digest_info.algorithm] = digest_info.expected
+  let now = DateTime.now().rfc3339()
+  let modified = (headers.get "last-modified")
+  return
+    version: 1
+    url: $identity
+    final_url: (str response.url)
+    payload: $payload.name
+    etag: (headers.get "etag")
+    last_modified: (modified && modified.rfc3339())
+    size: $payload.metadata().size
+    fetched_at: $now
+    checked_at: $now
+    verified: $verified
+
+class Cache
+  field root = nil
+  field client = http.Client()
+
+  def (init) self app
+    self.#root = (fs.cache_dir app: (normalize_app app) / "transfer")
+
+  def entry self url
+    let identity = str(normalized_url url)
+    let key = digest.blake3(identity).hex()
+    let entry = (self.#root / key)
+    entry.create_dir all: true
+    [identity, entry]
+
+  def download self identity entry payload metadata digest_info
+    let headers = if (metadata && digest_info == nil)
+      conditional_headers $metadata
+    else
+      {}
+
+    progress.show message: (payload.name || identity) units: :BYTES: do |indicator|
+      self.#client.get $identity headers: $headers status: :IGNORE: do |response|
+        if (response.status == 304 && intact_payload(payload, metadata))
+          metadata["checked_at"] = DateTime.now().rfc3339()
+          write_metadata (entry / "metadata.json") $metadata
+          return payload
+
+        response.throw_for_status()
+        let total = (response.headers.get "content-length")
+        indicator.total = (total && int total)
+        let tmp = payload.add_ext tmp
+        let state = (digest_info && digest_info.constructor())
+        try
+          tmp.open wb do |file|
+            for chunk = response.chunks()
+              file.write $chunk
+              if state
+                state.update $chunk
+              indicator.delta $chunk.len
+          if (state && state.digest().hex() != digest_info.expected)
+            throw std.ValueError "digest mismatch for $identity"
+          tmp.rename $payload
+        finally
+          tmp.remove ignore: true
+
+        let updated =
+          (response_metadata(identity, response, payload, digest_info, metadata))
+        write_metadata (entry / "metadata.json") $updated
+        payload
+
+  pub def get self url digest
+    url = (normalized_url url)
+    let identity entry = (self.#entry url)
+    let payload_name = (safe_leaf url.name)
+    let metadata_path = (entry / "metadata.json")
+    let lock_path = (entry / "lock")
+    let digest_info = (digest && digest_spec digest)
+
+    lock_path.open a+ do |lock| lock.lock (..) do |_|
+      let metadata = (read_metadata metadata_path identity)
+      let payload = (metadata_payload entry metadata payload_name)
+      if (intact_payload payload metadata)
+        if digest_info
+          let verified = (metadata.get "verified" || {})
+          if (verified.get(digest_info.algorithm) == digest_info.expected)
+            return payload
+          let actual = (file_digest payload digest_info.constructor)
+          if (actual == digest_info.expected)
+            verified[digest_info.algorithm] = digest_info.expected
+            metadata["verified"] = verified
+            write_metadata $metadata_path $metadata
+            return payload
+        self.#download $identity $entry $payload $metadata $digest_info
+      else
+        self.#download $identity $entry (entry / payload_name) $metadata $digest_info
+
+# Resolves a local path or downloads an HTTP(S) URL into the application cache.
+#
+# `digest` uses `algorithm:hex` syntax. Supported algorithms are BLAKE3, MD5,
+# SHA-1, SHA-256, and SHA-512. A previously verified digest-pinned entry is
+# returned without contacting the server.
+#
+# `policy` is reserved and must be `nil`.
+pub def get source :app = nil :digest = nil :policy = nil
+  if (policy != nil)
+    throw std.ValueError "policy: reserved; expected nil"
+  source = parse_location $source
+  if (type source Path)
+    return source
+
+  (Cache app).get(source, digest)
+
+def put_path source destination
+  destination.parent.create_dir all: true
+  let tmp = destination.add_ext tmp
+  try
+    source.copy $tmp
+    tmp.rename $destination
+  finally
+    tmp.remove ignore: true
+
+def put_url source destination headers
+  let total = source.metadata().size
+  let message = (destination.name || str destination)
+  progress.show :message :total units: :BYTES: do |indicator|
+    source.open rb do |file|
+      let track = do |chunk|
+        indicator.delta $chunk.len
+        chunk
+      let chunks = (file.iter().map track)
+      let response = http.put(destination, headers: (headers || {}), body: chunks)
+      try
+        response.throw_for_status()
+      finally
+        response.close()
+  nil
+
+# Copies or uploads `source` to `destination`.
+#
+# URL sources are resolved through [`get`](#get-source-app-digest-policy).
+# `headers` applies only to HTTP(S) destinations.
+pub def put source destination :headers = nil
+  source = (parse_location source)
+  if (type source Url)
+    source = get $source
+  destination = (parse_location destination)
+  if (type destination Url)
+    put_url $source (require_http destination) $headers
+  else
+    if (headers != nil)
+      throw std.ValueError "headers: only valid for an HTTP destination"
+    put_path $source $destination
+  nil
+
+let ALLOWED_FORMATS = set $
+  :TAR: :TAR_GZIP: :TAR_ZSTD: :ZIP:
+
+def parse_format format
+  if (format == nil)
+    return nil
+  if !(ALLOWED_FORMATS.contains format)
+    throw std.ValueError "format: expected :TAR:, :TAR_GZIP:, :TAR_ZSTD:, or :ZIP:"
+  format
+
+def format_from_name name
+  if (name == nil)
+    return nil
+  name = name.lower()
+  if name.ends_with ".zip"
+    :ZIP:
+  else if (name.ends_with ".tar.gz" || name.ends_with ".tgz")
+    :TAR_GZIP:
+  else if (name.ends_with ".tar.zst" || name.ends_with ".tzst")
+    :TAR_ZSTD:
+  else if name.ends_with ".tar"
+    :TAR:
+  else
+    nil
+
+def sniff_format path
+  let head = path.open rb do |file| file.read 512
+  if (head.starts_with b"PK\x03\x04" || head.starts_with b"PK\x05\x06" ||
+      head.starts_with b"PK\x07\x08")
+    :ZIP:
+  else if head.starts_with b"\x1f\x8b"
+    :TAR_GZIP:
+  else if head.starts_with b"\x28\xb5\x2f\xfd"
+    :TAR_ZSTD:
+  else
+    :TAR:
+
+def input_format path format
+  (parse_format format || format_from_name path.name || sniff_format path)
+
+def output_format destination format
+  let selected = (parse_format format || format_from_name destination.name)
+  if (selected == nil)
+    throw std.ValueError "can't infer archive format from destination"
+  selected
+
+def compression_for format
+  if (format == :TAR_GZIP:)
+    :GZIP:
+  else if (format == :TAR_ZSTD:)
+    :ZSTD:
+  else
+    :NONE:
+
+def safe_components path label
+  path = UnixPath $path
+  if path.is_absolute
+    throw std.ValueError "$label must be relative: $path"
+  let parts = path.components
+  if (parts.len == 0 ||
+      parts.iter().any(do |p| p == "" || p == "." || p == ".."))
+    throw std.ValueError "unsafe $label: $path"
+  parts
+
+def prefix_components prefix
+  if (prefix == nil)
+    []
+  else
+    safe_components $prefix "prefix"
+
+def archive_name path source prefix
+  UnixPath.join ...prefix 
+    if (path == source)
+      $path.name
+    else
+      $path.relative(source)
+
+def filesystem_metadata path kind options
+  let metadata = path.metadata resolve: :LINK:
+  let unix = (sys.os_info().family != :WINDOWS:)
+  let default_mode = if (kind == :DIR:)
+    0o755
+  else if (kind == :SYMLINK:)
+    0o777
+  else
+    0o644
+  let mode_key = if (kind == :DIR:)
+    :dir_mode:
+  else if (kind == :SYMLINK:)
+    :link_mode:
+  else
+    :mode:
+  let user_name = options.get :user_name: else: do
+    try
+      if unix
+        security.user_name $metadata.uid
+      else
+        metadata.user.lookup().qualified_name
+    catch sys.NotFoundError: _
+      nil
+  let group_name = options.get :group_name: else: do
+    try
+      if unix
+        security.group_name $metadata.gid
+      else
+        metadata.user.lookup().qualified_name
+    catch sys.NotFoundError: _
+      nil
+  return
+    mode: (options.get(mode_key) || (unix && (metadata.mode & 0o7777)) || default_mode)
+    uid: (options.get(:uid:) || (unix && metadata.uid) || 0)
+    gid: (options.get(:gid:) || (unix && metadata.gid) || 0)
+    mtime: (options.get(:mtime:) || metadata.modified || DateTime.from_unix(0))
+    if user_name
+      :user_name
+    if group_name
+      :group_name
+
+let ALLOWED_METADATA = set $
+  :mode: :dir_mode: :link_mode: :uid: :gid:
+  :user_name: :group_name: :mtime:
+
+def validate_metadata arguments
+  let positional keyed = arguments.pos_keys()
+  let positional = [...positional]
+  if (positional.len != 0)
+    throw std.ValueError "pack metadata accepts keyed options only"
+  let metadata = (dict keyed)
+  for key = metadata.keys()
+    if !(ALLOWED_METADATA.contains key)
+      throw std.ValueError "unexpected pack metadata option: $key"
+  metadata
+
+def source_entries source
+  let metadata = (source.metadata resolve: :LINK:)
+  if (metadata.type == :DIR:)
+    [...source.glob "**" resolve: :LINK:]
+  else
+    [source]
+
+def pack_tar source destination format prefix metadata indicator
+  tar.write $destination compression: (compression_for format) do |archive|
+    for path = source_entries(source)
+      let file_metadata = (path.metadata resolve: :LINK:)
+      let name = (archive_name path source prefix)
+      if (file_metadata.type == :DIR:)
+        let values = (filesystem_metadata path :DIR: metadata)
+        archive.create_dir $name ...values
+      else if (file_metadata.type == :SYMLINK:)
+        let target = path.read_link()
+        let target = (packed_link name target prefix path)
+        let values = (filesystem_metadata path :SYMLINK: metadata)
+        archive.symlink $target $name ...values
+      else if (file_metadata.type == :FILE:)
+        let values = (filesystem_metadata path :FILE: metadata)
+        archive.entry $name size: $file_metadata.size ...values do |entry|
+          path.open rb do |file|
+            for chunk = file
+              entry.write $chunk
+              indicator.delta $chunk.len
+      else
+        throw std.ValueError "unsupported file type while packing: $path"
+
+def pack_zip source destination prefix metadata indicator
+  zip.open $destination w do |archive|
+    for path = source_entries(source)
+      let file_metadata = path.metadata resolve: :LINK:
+      let name = (archive_name path source prefix)
+      if (file_metadata.type == :DIR:)
+        let values = (filesystem_metadata path :DIR: metadata)
+        archive.create_dir (str name) mode: $values[:mode:]
+      else if (file_metadata.type == :SYMLINK:)
+        let target = path.read_link()
+        let target = (packed_link name target prefix path)
+        let values = (filesystem_metadata path :SYMLINK: metadata)
+        archive.symlink (str target) (str name) mode: $values[:mode:]
+      else if (file_metadata.type == :FILE:)
+        let values = (filesystem_metadata path :FILE: metadata)
+        archive.open (str name) mode: $values[:mode:] do |entry|
+          path.open rb do |file|
+            for chunk = file
+              entry.write $chunk
+              indicator.delta $chunk.len
+      else
+        throw std.ValueError "unsupported file type while packing: $path"
+
+def pack_local source archive destination format prefix metadata
+  let total = 0
+  for path = source_entries(source)
+    let item_metadata = path.metadata resolve: :LINK:
+    if (item_metadata.type == :FILE:)
+      total = (total + item_metadata.size)
+  let message = (destination.name || str destination)
+  progress.show :message :total units: :BYTES: do |indicator|
+    if (format == :ZIP:)
+      pack_zip $source $archive $prefix $metadata $indicator
+    else
+      pack_tar $source $archive $format $prefix $metadata $indicator
+
+# Packs a file or directory into TAR, compressed TAR, or ZIP.
+#
+# Directory contents are relative to the source root. `prefix` prepends a safe
+# relative path to every archive entry.
+pub def pack source destination :format = nil :prefix = nil ...metadata
+  metadata = (validate_metadata metadata)
+  source = (parse_location source)
+  if (type source Url)
+    source = get $source
+  destination = (parse_location destination)
+  let prefix = (prefix_components prefix)
+  if (type destination Url)
+    let selected = (output_format destination format)
+    with_temp_dir do |dir|
+      let temporary = (dir / (destination.name || "archive"))
+      pack_local $source $temporary $destination $selected $prefix $metadata
+      put $temporary $destination
+  else
+    let selected = (output_format destination format)
+    destination.parent.create_dir all: true
+    let tmp = destination.add_ext tmp
+    try
+      pack_local $source $tmp $destination $selected $prefix $metadata
+      tmp.rename $destination
+    finally
+      tmp.remove ignore: true
+  nil
+
+def link_path path label
+  path = (UnixPath path)
+  if path.is_absolute
+    throw std.ValueError "$label must be relative: $path"
+  if (path.components.len == 0)
+    throw std.ValueError "unsafe $label: $path"
+  path
+
+def packed_link name target prefix source
+  let target = (link_path target "symlink target")
+  let name_parts = name.components[prefix.len..]
+  let resolved = (resolve_link name_parts target)
+  let resolved_parts = resolved.components
+  if (resolved_parts.len > 0 && resolved_parts[0] == "..")
+    throw std.ValueError "symlink escapes archive root: $source"
+  target
+
+def strip_count records strip
+  if (strip == :ROOT:)
+    if (records.len == 0)
+      throw std.ValueError "strip: :ROOT: requires a non-empty archive"
+    let root ...rest = [...records.iter().map do |p| p.parts[0]]
+    if rest.iter().any do |x| (x != root)
+      throw std.ValueError "strip: :ROOT: requires one shared root component"
+    1
+  else if (type strip int && strip >= 0)
+    strip
+  else
+    throw std.ValueError "strip: expected a non-negative int or :ROOT:"
+
+def record_path parts
+  let path = UnixPath.join ...parts
+  str $path
+
+def resolve_link output_parts target
+  let output = UnixPath.join ...output_parts
+  UnixPath.join(output.parent, target).normalize()
+
+def normalize_manifest records strip
+  let count = (strip_count records strip)
+  let outputs = {}
+  let normalized = []
+
+  for item = records
+    let parts = item.parts
+    if (parts.len < count)
+      throw std.ValueError "archive path has fewer than $count components: $item.raw"
+    let output_parts = parts[count..]
+    if (output_parts.len == 0)
+      if (item.kind == :DIR:)
+        nil
+      else
+        throw std.ValueError "stripping removes archive entry path: $item.raw"
+    else
+      let output = (record_path output_parts)
+      if (outputs.contains output)
+        throw std.ValueError "duplicate archive output: $output"
+      let ancestor = []
+      for component = output_parts[..-1]
+        ancestor.push $component
+        let ancestor_key = (record_path ancestor)
+        let ancestor_record = (outputs.get ancestor_key)
+        if (ancestor_record && ancestor_record.kind != :DIR:)
+          throw std.ValueError "archive path conflicts with non-directory: $ancestor_key"
+      if (item.kind != :DIR:)
+        let prefix = "$output/"
+        if outputs.keys().any(do |key| key.starts_with prefix)
+          throw std.ValueError "archive path conflicts with directory: $output"
+      item.output_parts = output_parts
+      item.output = output
+      outputs[output] = item
+      normalized.push $item
+
+  for item = normalized
+    if (item.kind == :SYMLINK:)
+      let target = (link_path item.link  "symlink target")
+      let resolved = (resolve_link item.output_parts target)
+      let resolved_parts = resolved.components
+      if (resolved_parts.len > 0 && resolved_parts[0] == "..")
+        throw std.ValueError "link target escapes extraction root"
+      item.resolved_link = (record_path resolved_parts)
+    else if (item.kind == :HARDLINK:)
+      let target_parts = (safe_components item.link "hard-link target")
+      if (target_parts.len < count)
+        throw std.ValueError "hard-link target removed by strip: $item.link"
+      let target = (record_path target_parts[count..])
+      let target_record = (outputs.get target)
+      if (target_record == nil || target_record.kind != :FILE:)
+        throw std.ValueError "hard-link target is not a regular archive file: $item.link"
+      item.resolved_link = target
+
+  [normalized, outputs]
+
+def archive_record :raw :parts :kind :size :mode :mtime
+  record :raw :parts :kind :size :mode :mtime
+    link: nil
+    output_parts: nil
+    output: nil
+    resolved_link: nil
+
+def output_path root item
+  (root / item.output)
+
+def create_directories root records
+  for item = records
+    let destination = (output_path root item)
+    if (item.kind == :DIR:)
+      destination.create_dir all: true
+    else
+      destination.parent.create_dir all: true
+
+def apply_metadata path item
+  if !path.exists()
+    throw std.ValueError "archive entry was not extracted: $item.output"
+  let modified = item.mtime
+  let mode = item.mode
+  if (sys.os_info().family != :WINDOWS: && mode != nil)
+    path.set_metadata mode: (mode & 0o7777)
+  if modified
+    path.set_metadata modified: $modified
+
+def finish_links root records outputs
+  for item = records
+    if (item.kind == :HARDLINK:)
+      let source = (root / item.resolved_link)
+      source.hard_link (output_path root item)
+
+  for item = records
+    if (item.kind == :SYMLINK:)
+      let destination = (output_path root item)
+      let target_record = (outputs.get item.resolved_link)
+      if (target_record && target_record.kind == :DIR:)
+        fs.symlink_dir $item.link $destination
+      else
+        fs.symlink_file $item.link $destination
+
+def finish_metadata root records
+  for item = records
+    if (item.kind == :FILE:)
+      apply_metadata (output_path root item) $item
+  for item = records
+    if (item.kind == :DIR:)
+      apply_metadata (output_path root item) $item
+
+def prepare_extraction root records
+  create_directories $root $records
+  let total = 0
+  for item = records
+    if (item.kind == :FILE:)
+      total = (total + item.size)
+  total
+
+class TarUnpack
+  field source = nil
+  field by_raw = nil
+
+  def (init) self source
+    self.#source = source
+
+  pub def parse self
+    let records = []
+    self.#by_raw = {}
+    tar.read $self.#source do |archive|
+      for entry = archive
+        let kind = entry.type
+        if !(kind == :FILE: || kind == :DIR: || kind == :SYMLINK: ||
+             kind == :HARDLINK:)
+          throw std.ValueError "unsupported TAR entry type: $kind"
+        let raw = (str entry.path)
+        if (self.#by_raw.contains raw)
+          throw std.ValueError "duplicate archive entry: $raw"
+        let item = archive_record :raw :kind
+          parts: $safe_components(entry.path, "archive path")
+          size: $entry.size
+          mode: $entry.mode
+          mtime: $entry.mtime
+        if (kind == :SYMLINK: || kind == :HARDLINK:)
+          if (entry.link_name == nil)
+            throw std.ValueError "archive link is missing its target: $raw"
+          item.link = (str entry.link_name)
+        self.#by_raw[raw] = item
+        records.push $item
+    records
+
+  pub def extract self root records outputs
+    let total = prepare_extraction(root, records)
+    let message = (self.#source.name || str self.#source)
+    progress.show message: $message total: $total units: :BYTES: do |indicator|
+      tar.read $self.#source do |archive|
+        for entry = archive
+          let raw = (str entry.path)
+          let item = (self.#by_raw.get raw)
+          if (item == nil)
+            throw std.ValueError "manifest entry missing during TAR extraction: $raw"
+          if (item.kind == :FILE:)
+            let destination = (output_path root item)
+            destination.open wb do |file|
+              for chunk = entry
+                file.write $chunk
+                indicator.delta $chunk.len
+    finish_links $root $records $outputs
+    finish_metadata $root $records
+
+class ZipUnpack
+  field source = nil
+
+  def (init) self source
+    self.#source = source
+
+  pub def parse self
+    let records = []
+    zip.open $self.#source do |archive|
+      let entries = [...archive.entries]
+      let seen = set()
+
+      for entry = entries
+        let raw = (str entry.name)
+        if (seen.contains raw)
+          throw std.ValueError "duplicate ZIP entry: $raw"
+        seen.add $raw
+        let mode = entry.mode
+        let kind = entry.type
+        if !(kind == :FILE: || kind == :DIR: || kind == :SYMLINK:)
+          throw std.ValueError "unsupported ZIP entry type: $raw"
+        let item = archive_record :kind :mode
+          raw: $raw
+          parts: $safe_components(raw, "archive path")
+          size: $entry.size
+          mtime: nil
+        if (kind == :SYMLINK:)
+          entry.open do |file|
+            let target = (file.read(entry.size + 1))
+            file.read 1
+            item.link = (str target)
+        records.push $item
+    records
+
+  pub def extract self root records outputs
+    let total = prepare_extraction $root $records
+    let message = (self.#source.name || str self.#source)
+    progress.show message: $message total: $total units: :BYTES: do |indicator|
+      zip.open $self.#source do |archive|
+        for item = records
+          if (item.kind == :FILE:)
+            archive.open $item.raw do |entry|
+              let destination = (output_path root item)
+              destination.open wb do |file|
+                let remaining = item.size
+                while (remaining > 0)
+                  let amount = if (remaining < 65536)
+                    remaining
+                  else
+                    65536
+                  let chunk = (entry.read amount)
+                  if (chunk.len == 0)
+                    throw std.ValueError "truncated ZIP entry: $item.raw"
+                  file.write $chunk
+                  indicator.delta $chunk.len
+                  remaining = (remaining - chunk.len)
+                entry.read 1
+    finish_links $root $records $outputs
+    finish_metadata $root $records
+
+# Safely extracts TAR, compressed TAR, or ZIP into a new destination.
+#
+# `strip` accepts a non-negative component count or `:ROOT:`.
+pub def unpack source destination :format = nil :strip = 0 :app = nil
+  source = parse_location $source
+  if (type source Url)
+    source = get $source app: $app
+  destination = parse_location $destination
+  if (type destination Url)
+    throw std.ValueError "unpack destination must be a path"
+  if destination.exists()
+    throw std.ValueError "unpack destination already exists: $destination"
+
+  let selected = input_format $source $format
+  let unpacker = if (selected == :ZIP:)
+    ZipUnpack $source
+  else
+    TarUnpack $source
+  let records outputs = normalize_manifest $unpacker.parse() $strip
+  let parent = (destination.parent || Path ".")
+  parent.create_dir all: true
+  with_temp_dir parent: $parent do |staging|
+    unpacker.extract $staging $records $outputs
+    if destination.exists()
+      throw std.ValueError "unpack destination appeared during extraction: $destination"
+    staging.rename $destination

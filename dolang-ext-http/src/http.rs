@@ -1118,6 +1118,15 @@ impl<'v> Object<'v> for Response {
             });
 
         builder
+            .get("url", |this, strand, out| {
+                let borrow = this.borrow(strand)?;
+                let inner = borrow
+                    .inner
+                    .as_ref()
+                    .ok_or_else(|| Error::state_error(strand, "closed"))?;
+                create_url(strand, inner.url().clone(), out);
+                Ok(())
+            })
             .get("status", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
                 if borrow.inner.is_none() {
