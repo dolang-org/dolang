@@ -103,6 +103,7 @@ nav:
       - api/fs/index.md
       - api/fs/direntry.md
       - api/fs/file.md
+      - api/fs/file-lock.md
       - api/fs/fs-metadata.md
       - api/fs/metadata.md
       - api/fs/path.md
