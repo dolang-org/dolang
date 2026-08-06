@@ -39,9 +39,13 @@ path = "../dolang-ext-compile"
 version = "0.1.1"
 features = ["diagnostic-rendering"]
 
-[dependencies.dolang-shell-vfs]
-path = "../dolang-shell-vfs"
+[dependencies.dolang-vfs]
+path = "../dolang-vfs"
 version = "0.1.1"
+
+[dependencies.dolang-winterop]
+path = "../dolang-winterop"
+version = "0.1.0"
 
 [target.'cfg(unix)'.dependencies.nix]
 version = "0.31"

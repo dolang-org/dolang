@@ -309,6 +309,10 @@ nav:
     - url:
       - api/url/index.md
       - api/url/url.md
+    - winreg:
+      - api/winreg/index.md
+      - api/winreg/key.md
+      - api/winreg/value.md
     - wsl: api/wsl.md
     - xdg: api/xdg.md
     - xml:

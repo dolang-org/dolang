@@ -2,6 +2,7 @@
 #![allow(async_fn_in_trait)]
 
 pub use dolang_rpc::DefaultHandle;
+use dolang_winterop::{SecDesc, Sid};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -22,28 +23,19 @@ pub use typed_path::{
 mod client;
 mod direct;
 mod error;
-mod guid;
+pub mod extension;
 mod pipe;
 mod posix_acl;
 mod probe;
 mod protocol;
 mod read_dir;
-mod sec_desc;
 mod server;
 mod service;
-mod sid;
 #[cfg(windows)]
 mod windows;
 
 pub use error::{Error, ErrorKind, OperatingSystem, Result, SystemCode};
-pub use guid::{Guid, GuidError};
 pub use posix_acl::{PosixAce, PosixAcl, PosixAclError, PosixAclPermissions, PosixAclQualifier};
-pub use sec_desc::{
-    ALL_SECURITY_INFORMATION, Ace, AceBuf, AceBuildError, AceBuildOptions, AceError, AceType, Aces,
-    Acl, AclBuf, AclBuildError, AclError, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
-    OWNER_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION, SecDesc, SecDescError, SecDescUpdate,
-};
-pub use sid::{Sid, SidError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionMode {
@@ -1429,6 +1421,10 @@ pub trait Vfs {
 }
 
 pub use direct::{Direct, DirectFile, DirectOpenOptions};
+pub use extension::{
+    DirectContext, ExtContext, ExtGuard, ExtOpaque, ExtOsHandle, ExtResource, InvalidHandle,
+    VfsExtension,
+};
 pub use pipe::{StdioRecv, StdioSend};
 
 /// Marker for a regular file retained by a VFS RPC session.
@@ -2230,6 +2226,18 @@ impl AnyVfs {
         match self {
             Self::Client(client) => Some(client),
             Self::Direct(_) => None,
+        }
+    }
+
+    /// Calls a registered VFS extension, dispatching directly in-process or
+    /// over RPC depending on which backend this `AnyVfs` wraps.
+    pub async fn call_extension<T: VfsExtension>(
+        &self,
+        request: T::Request,
+    ) -> Result<T::Response> {
+        match self {
+            Self::Client(client) => client.call_extension::<T>(request).await,
+            Self::Direct(direct) => direct.call_extension::<T>(request).await,
         }
     }
 }

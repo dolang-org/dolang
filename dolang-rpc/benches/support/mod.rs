@@ -27,7 +27,7 @@ pub(crate) fn native_pipe() -> (Recv, Send) {
 #[cfg(target_os = "linux")]
 fn set_pipe_buffer_size(send: &Send) {
     use std::os::fd::AsRawFd;
-    // Best-effort, as in dolang-shell-vfs's src/pipe.rs: failure just leaves
+    // Best-effort, as in dolang-vfs's src/pipe.rs: failure just leaves
     // the default buffer size.
     unsafe {
         libc::fcntl(
@@ -42,7 +42,7 @@ fn set_pipe_buffer_size(send: &Send) {
 fn set_pipe_buffer_size(_send: &Send) {}
 
 // Windows has no anonymous pipe API that takes a buffer-size hint, so this
-// mirrors dolang-shell-vfs's src/pipe.rs: call `CreatePipe` directly with an
+// mirrors dolang-vfs's src/pipe.rs: call `CreatePipe` directly with an
 // explicit size, then wrap the resulting blocking handles in
 // `spawn_blocking`-backed `AsyncRead`/`AsyncWrite` adapters (std's
 // `PipeReader`/`PipeWriter` have no async story of their own).

@@ -1,4 +1,7 @@
-use std::hash::{Hash, Hasher};
+use std::{
+    hash::{Hash, Hasher},
+    ops::{BitAnd, BitOr, BitXor, Not},
+};
 
 use dolang::runtime::object::fmt;
 
@@ -6,19 +9,22 @@ use dolang::{
     compile::Compiler,
     runtime::{
         Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
-        object::{ArrayLike, ArrayView, Mut, Ref, TypeBuilder},
+        object::{ArrayLike, ArrayView, FlagLike, Mut, Ref, TypeBuilder},
         unpack,
         value::{AsTuple, Nil},
         vm::Builder,
     },
 };
-use dolang_shell_vfs::{
+use dolang_vfs::{
+    OperatingSystemFamily, PosixAce as VfsPosixAce, PosixAcl as VfsPosixAcl,
+    PosixAclPermissions as VfsPosixAclPermissions, PosixAclQualifier as VfsPosixAclQualifier,
+    SecurityInfo, SidName as VfsSidName, SidNameUse, TokenGroup as VfsTokenGroup, UnixSecurityInfo,
+    Vfs as _, WindowsTokenInfo,
+};
+use dolang_winterop::{
     Ace as VfsAce, AceBuf as VfsAceBuf, AceBuildOptions, AceType as VfsAceType, Acl as VfsAcl,
-    AclBuf as VfsAclBuf, Guid as VfsGuid, OperatingSystemFamily, PosixAce as VfsPosixAce,
-    PosixAcl as VfsPosixAcl, PosixAclPermissions as VfsPosixAclPermissions,
-    PosixAclQualifier as VfsPosixAclQualifier, SecDesc as VfsSecDesc,
-    SecDescUpdate as VfsSecDescUpdate, SecurityInfo, Sid as VfsSid, SidName as VfsSidName,
-    SidNameUse, TokenGroup as VfsTokenGroup, UnixSecurityInfo, Vfs as _, WindowsTokenInfo,
+    AclBuf as VfsAclBuf, Guid as VfsGuid, SecDesc as VfsSecDesc, SecDescUpdate as VfsSecDescUpdate,
+    Sid as VfsSid,
 };
 
 use crate::{error, global::Global, util};
@@ -34,6 +40,86 @@ const SE_GROUP_RESOURCE: u32 = 0x2000_0000;
 const SE_GROUP_LOGON_ID: u32 = 0xC000_0000;
 
 pub(crate) fn configure_compiler<'a>(_compiler: &mut Compiler<'a>) {}
+
+/// Generic Windows `ACCESS_MASK` bits (`security.windows.AccessMask`), a
+/// local newtype over [`dolang_winterop::AccessMask`]'s bit values so
+/// [`FlagLike`] can be implemented here (both the trait and
+/// `dolang_winterop::AccessMask` are foreign to this crate).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AccessMask(pub u32);
+
+impl AccessMask {
+    pub const DELETE: AccessMask = AccessMask(dolang_winterop::AccessMask::DELETE.0);
+    pub const READ_CONTROL: AccessMask = AccessMask(dolang_winterop::AccessMask::READ_CONTROL.0);
+    pub const WRITE_DAC: AccessMask = AccessMask(dolang_winterop::AccessMask::WRITE_DAC.0);
+    pub const WRITE_OWNER: AccessMask = AccessMask(dolang_winterop::AccessMask::WRITE_OWNER.0);
+    pub const SYNCHRONIZE: AccessMask = AccessMask(dolang_winterop::AccessMask::SYNCHRONIZE.0);
+    pub const STANDARD_RIGHTS_REQUIRED: AccessMask =
+        AccessMask(dolang_winterop::AccessMask::STANDARD_RIGHTS_REQUIRED.0);
+    pub const STANDARD_RIGHTS_ALL: AccessMask =
+        AccessMask(dolang_winterop::AccessMask::STANDARD_RIGHTS_ALL.0);
+    pub const ACCESS_SYSTEM_SECURITY: AccessMask =
+        AccessMask(dolang_winterop::AccessMask::ACCESS_SYSTEM_SECURITY.0);
+    pub const MAXIMUM_ALLOWED: AccessMask =
+        AccessMask(dolang_winterop::AccessMask::MAXIMUM_ALLOWED.0);
+    pub const GENERIC_ALL: AccessMask = AccessMask(dolang_winterop::AccessMask::GENERIC_ALL.0);
+    pub const GENERIC_EXECUTE: AccessMask =
+        AccessMask(dolang_winterop::AccessMask::GENERIC_EXECUTE.0);
+    pub const GENERIC_WRITE: AccessMask = AccessMask(dolang_winterop::AccessMask::GENERIC_WRITE.0);
+    pub const GENERIC_READ: AccessMask = AccessMask(dolang_winterop::AccessMask::GENERIC_READ.0);
+}
+
+impl BitOr for AccessMask {
+    type Output = AccessMask;
+    fn bitor(self, rhs: AccessMask) -> AccessMask {
+        AccessMask(self.0 | rhs.0)
+    }
+}
+
+impl BitAnd for AccessMask {
+    type Output = AccessMask;
+    fn bitand(self, rhs: AccessMask) -> AccessMask {
+        AccessMask(self.0 & rhs.0)
+    }
+}
+
+impl BitXor for AccessMask {
+    type Output = AccessMask;
+    fn bitxor(self, rhs: AccessMask) -> AccessMask {
+        AccessMask(self.0 ^ rhs.0)
+    }
+}
+
+impl Not for AccessMask {
+    type Output = AccessMask;
+    fn not(self) -> AccessMask {
+        AccessMask(!self.0)
+    }
+}
+
+impl FlagLike for AccessMask {
+    const ZERO: AccessMask = AccessMask(0);
+    const MODULE: &'static str = "security.windows";
+    const NAME: &'static str = "AccessMask";
+    const BITS: &'static [(&'static str, AccessMask)] = &[
+        ("DELETE", AccessMask::DELETE),
+        ("READ_CONTROL", AccessMask::READ_CONTROL),
+        ("WRITE_DAC", AccessMask::WRITE_DAC),
+        ("WRITE_OWNER", AccessMask::WRITE_OWNER),
+        ("SYNCHRONIZE", AccessMask::SYNCHRONIZE),
+        (
+            "STANDARD_RIGHTS_REQUIRED",
+            AccessMask::STANDARD_RIGHTS_REQUIRED,
+        ),
+        ("STANDARD_RIGHTS_ALL", AccessMask::STANDARD_RIGHTS_ALL),
+        ("ACCESS_SYSTEM_SECURITY", AccessMask::ACCESS_SYSTEM_SECURITY),
+        ("MAXIMUM_ALLOWED", AccessMask::MAXIMUM_ALLOWED),
+        ("GENERIC_READ", AccessMask::GENERIC_READ),
+        ("GENERIC_WRITE", AccessMask::GENERIC_WRITE),
+        ("GENERIC_EXECUTE", AccessMask::GENERIC_EXECUTE),
+        ("GENERIC_ALL", AccessMask::GENERIC_ALL),
+    ];
+}
 
 pub(crate) struct Identity;
 
@@ -2252,6 +2338,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
 
     builder
         .module("security.windows")
+        .value("AccessMask", global.types.access_mask)
         .value("Acl", global.types.acl)
         .value("Ace", global.types.ace)
         .value("SecDesc", global.types.sec_desc)

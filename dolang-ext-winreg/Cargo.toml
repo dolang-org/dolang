@@ -1,0 +1,32 @@
+[package]
+name = "dolang-ext-winreg"
+version = "0.1.0"
+description = "Windows registry extension for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[dependencies.dolang]
+path = "../dolang"
+version = "0.1.1"
+
+[dependencies.dolang-ext-shell]
+path = "../dolang-ext-shell"
+version = "0.1.1"
+
+[dependencies.dolang-vfs]
+path = "../dolang-vfs"
+version = "0.1.1"
+
+[dependencies.dolang-vfs-winreg]
+path = "../dolang-vfs-winreg"
+version = "0.1.0"
+
+[dependencies.dolang-winterop]
+path = "../dolang-winterop"
+version = "0.1.0"

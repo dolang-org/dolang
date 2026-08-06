@@ -8,10 +8,10 @@ use std::{
 };
 
 use dolang::runtime::{Strand, strand};
-use dolang_shell_vfs::{
+use dolang_vfs::{
     AnyVfs, OperatingSystem, OperatingSystemFamily, SecurityInfo, Signal, TargetInfo,
 };
-use dolang_shell_vfs::{Utf8TypedPathBuf, typed_path};
+use dolang_vfs::{Utf8TypedPathBuf, typed_path};
 
 use crate::{io_mode::IoMode, shell_args::ArgsData};
 
@@ -397,7 +397,7 @@ impl Local {
 #[cfg(test)]
 mod tests {
     use super::Env;
-    use dolang_shell_vfs::OperatingSystem;
+    use dolang_vfs::OperatingSystem;
     use std::{collections::HashMap, rc::Rc};
 
     #[test]

@@ -3,14 +3,14 @@ use dolang::runtime::{Instance, Object, Output, Result, Strand, object::TypeBuil
 use crate::error::ResultExt as _;
 
 pub(crate) struct FileLock {
-    lock: Option<dolang_shell_vfs::FileLock>,
+    lock: Option<dolang_vfs::FileLock>,
 }
 
 impl FileLock {
     pub(crate) fn create<'v>(
         strand: &mut Strand<'v, '_>,
         ty: dolang::runtime::Type<'v, Self>,
-        lock: Option<dolang_shell_vfs::FileLock>,
+        lock: Option<dolang_vfs::FileLock>,
         out: impl dolang::runtime::Output<'v>,
     ) {
         ty.create(strand, Self { lock }, out);

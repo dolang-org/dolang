@@ -1,9 +1,12 @@
 use super::{Direct, DirectChild, DirectCommand, DirectOpenOptions};
 use crate::{
-    ALL_SECURITY_INFORMATION, AttrFlags, AttrsPatch, DACL_SECURITY_INFORMATION, FsMetadata,
-    GROUP_SECURITY_INFORMATION, Metadata, MetadataPatch, OWNER_SECURITY_INFORMATION,
-    OpenOptions as _, OwnershipIdentity, SACL_SECURITY_INFORMATION, SecDesc, Sid, SidName,
-    SidNameUse, StreamEntry, Utf8TypedPath, Utf8WindowsPath, XattrEntry, XattrNamespace,
+    AttrFlags, AttrsPatch, FsMetadata, Metadata, MetadataPatch, OpenOptions as _,
+    OwnershipIdentity, SidName, SidNameUse, StreamEntry, Utf8TypedPath, Utf8WindowsPath,
+    XattrEntry, XattrNamespace,
+};
+use dolang_winterop::{
+    ALL_SECURITY_INFORMATION, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
+    OWNER_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION, SecDesc, Sid,
 };
 use std::{
     collections::HashMap,
@@ -31,25 +34,21 @@ use windows_sys::{
         Foundation::{
             ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER,
             ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_MORE_DATA, ERROR_NONE_MAPPED,
-            ERROR_NOT_ALL_ASSIGNED, ERROR_NOT_SUPPORTED, GENERIC_READ, GENERIC_WRITE, GetLastError,
-            INVALID_HANDLE_VALUE, LocalFree, RtlNtStatusToDosError, S_OK, STATUS_BUFFER_OVERFLOW,
-            STATUS_BUFFER_TOO_SMALL, STATUS_NO_EAS_ON_FILE, STATUS_NO_MORE_EAS, STATUS_SUCCESS,
-            SetLastError,
+            ERROR_NOT_SUPPORTED, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree,
+            RtlNtStatusToDosError, S_OK, STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL,
+            STATUS_NO_EAS_ON_FILE, STATUS_NO_MORE_EAS, STATUS_SUCCESS,
         },
         Security::{
-            ACL, AdjustTokenPrivileges,
+            ACL,
             Authorization::{GetSecurityInfo, SE_FILE_OBJECT, SetSecurityInfo},
-            DuplicateTokenEx, GetSecurityDescriptorLength, LUID_AND_ATTRIBUTES, LookupAccountNameW,
-            LookupAccountSidW, LookupPrivilegeValueW, PROTECTED_DACL_SECURITY_INFORMATION,
-            PROTECTED_SACL_SECURITY_INFORMATION, RevertToSelf, SE_PRIVILEGE_ENABLED,
-            SE_SECURITY_NAME, SecurityImpersonation, SidTypeAlias as SID_TYPE_ALIAS,
-            SidTypeComputer as SID_TYPE_COMPUTER,
+            GetSecurityDescriptorLength, LookupAccountNameW, LookupAccountSidW,
+            PROTECTED_DACL_SECURITY_INFORMATION, PROTECTED_SACL_SECURITY_INFORMATION,
+            SidTypeAlias as SID_TYPE_ALIAS, SidTypeComputer as SID_TYPE_COMPUTER,
             SidTypeDeletedAccount as SID_TYPE_DELETED_ACCOUNT, SidTypeDomain as SID_TYPE_DOMAIN,
             SidTypeGroup as SID_TYPE_GROUP, SidTypeInvalid as SID_TYPE_INVALID,
             SidTypeLabel as SID_TYPE_LABEL, SidTypeLogonSession as SID_TYPE_LOGON_SESSION,
             SidTypeUnknown as SID_TYPE_UNKNOWN, SidTypeUser as SID_TYPE_USER,
-            SidTypeWellKnownGroup as SID_TYPE_WELL_KNOWN_GROUP, TOKEN_ADJUST_PRIVILEGES,
-            TOKEN_DUPLICATE, TOKEN_IMPERSONATE, TOKEN_PRIVILEGES, TOKEN_QUERY, TokenImpersonation,
+            SidTypeWellKnownGroup as SID_TYPE_WELL_KNOWN_GROUP,
             UNPROTECTED_DACL_SECURITY_INFORMATION, UNPROTECTED_SACL_SECURITY_INFORMATION,
         },
         Storage::FileSystem::{
@@ -79,8 +78,8 @@ use windows_sys::{
             },
             SystemServices::ACCESS_SYSTEM_SECURITY,
             Threading::{
-                CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED, GetCurrentProcess, OpenProcessToken,
-                OpenThread, ResumeThread, SetThreadToken, THREAD_SUSPEND_RESUME,
+                CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED, OpenThread, ResumeThread,
+                THREAD_SUSPEND_RESUME,
             },
         },
         UI::Shell::{
@@ -246,108 +245,34 @@ impl Direct {
         ))
     }
 
-    fn with_security_privilege<T>(mask: u32, f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
-        if mask & SACL_SECURITY_INFORMATION == 0 {
-            return f();
-        }
-
-        struct RevertGuard;
-        impl Drop for RevertGuard {
-            fn drop(&mut self) {
-                unsafe {
-                    RevertToSelf();
-                }
-            }
-        }
-
-        let mut process_token = ptr::null_mut();
-        if unsafe {
-            OpenProcessToken(
-                GetCurrentProcess(),
-                TOKEN_DUPLICATE | TOKEN_QUERY,
-                &mut process_token,
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        let process_token = unsafe { OwnedHandle::from_raw_handle(process_token) };
-
-        let mut token = ptr::null_mut();
-        if unsafe {
-            DuplicateTokenEx(
-                process_token.as_raw_handle(),
-                TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY | TOKEN_IMPERSONATE,
-                ptr::null(),
-                SecurityImpersonation,
-                TokenImpersonation,
-                &mut token,
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        let token = unsafe { OwnedHandle::from_raw_handle(token) };
-
-        let mut luid = Default::default();
-        if unsafe { LookupPrivilegeValueW(ptr::null(), SE_SECURITY_NAME, &mut luid) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let privileges = TOKEN_PRIVILEGES {
-            PrivilegeCount: 1,
-            Privileges: [LUID_AND_ATTRIBUTES {
-                Luid: luid,
-                Attributes: SE_PRIVILEGE_ENABLED,
-            }],
-        };
-        unsafe { SetLastError(0) };
-        if unsafe {
-            AdjustTokenPrivileges(
-                token.as_raw_handle(),
-                0,
-                &privileges,
-                0,
-                ptr::null_mut(),
-                ptr::null_mut(),
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        if unsafe { GetLastError() } == ERROR_NOT_ALL_ASSIGNED {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "SeSecurityPrivilege is not available",
-            ));
-        }
-        if unsafe { SetThreadToken(ptr::null(), token.as_raw_handle()) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let _guard = RevertGuard;
-        f()
-    }
-
     fn security_handle(path: &Path, access: u32, follow: bool) -> io::Result<OwnedHandle> {
         let path = Self::path_wide(path);
         let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
         if !follow {
             flags |= FILE_FLAG_OPEN_REPARSE_POINT;
         }
-        let handle = unsafe {
-            CreateFileW(
-                path.as_ptr(),
-                access,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                ptr::null(),
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL | flags,
-                ptr::null_mut(),
-            )
+        let open = || {
+            let handle = unsafe {
+                CreateFileW(
+                    path.as_ptr(),
+                    access,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    ptr::null(),
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL | flags,
+                    ptr::null_mut(),
+                )
+            };
+            if handle == INVALID_HANDLE_VALUE {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
         };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(io::Error::last_os_error());
+        if access & ACCESS_SYSTEM_SECURITY != 0 {
+            dolang_winterop::with_security_privilege(open)
+        } else {
+            open()
         }
-        Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
     }
 
     fn sec_desc_from_handle(handle: BorrowedHandle<'_>, mask: u32) -> io::Result<SecDesc> {
@@ -427,39 +352,44 @@ impl Direct {
                 UNPROTECTED_SACL_SECURITY_INFORMATION
             };
         }
-        let error = unsafe {
-            SetSecurityInfo(
-                handle.as_raw_handle(),
-                SE_FILE_OBJECT,
-                update_mask,
-                owner,
-                group,
-                dacl,
-                sacl,
-            )
+        let set = || {
+            let error = unsafe {
+                SetSecurityInfo(
+                    handle.as_raw_handle(),
+                    SE_FILE_OBJECT,
+                    update_mask,
+                    owner,
+                    group,
+                    dacl,
+                    sacl,
+                )
+            };
+            if error == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::from_raw_os_error(error as i32))
+            }
         };
-        if error == 0 {
-            Ok(())
+        if mask & SACL_SECURITY_INFORMATION != 0 {
+            dolang_winterop::with_security_privilege(set)
         } else {
-            Err(io::Error::from_raw_os_error(error as i32))
+            set()
         }
     }
 
     pub(super) fn sec_desc_from_path(path: &Path, mask: u32, follow: bool) -> io::Result<SecDesc> {
         let mask = mask & ALL_SECURITY_INFORMATION;
-        Self::with_security_privilege(mask, || {
-            let access = if mask == 0 || mask & !SACL_SECURITY_INFORMATION != 0 {
-                READ_CONTROL
-            } else {
-                0
-            } | if mask & SACL_SECURITY_INFORMATION != 0 {
-                ACCESS_SYSTEM_SECURITY
-            } else {
-                0
-            };
-            let handle = Self::security_handle(path, access, follow)?;
-            Self::sec_desc_from_handle(handle.as_handle(), mask)
-        })
+        let access = if mask == 0 || mask & !SACL_SECURITY_INFORMATION != 0 {
+            READ_CONTROL
+        } else {
+            0
+        } | if mask & SACL_SECURITY_INFORMATION != 0 {
+            ACCESS_SYSTEM_SECURITY
+        } else {
+            0
+        };
+        let handle = Self::security_handle(path, access, follow)?;
+        Self::sec_desc_from_handle(handle.as_handle(), mask)
     }
 
     pub(super) fn set_sec_desc_path(
@@ -468,31 +398,27 @@ impl Direct {
         follow: bool,
     ) -> io::Result<()> {
         let mask = descriptor.mask();
-        Self::with_security_privilege(mask, || {
-            let mut access = 0;
-            if mask & (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION) != 0 {
-                access |= WRITE_OWNER;
-            }
-            if mask & DACL_SECURITY_INFORMATION != 0 {
-                access |= WRITE_DAC;
-            }
-            if mask & SACL_SECURITY_INFORMATION != 0 {
-                access |= ACCESS_SYSTEM_SECURITY;
-            }
-            let handle = Self::security_handle(path, access, follow)?;
-            Self::set_sec_desc_on_handle(handle.as_handle(), descriptor)
-        })
+        let mut access = 0;
+        if mask & (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION) != 0 {
+            access |= WRITE_OWNER;
+        }
+        if mask & DACL_SECURITY_INFORMATION != 0 {
+            access |= WRITE_DAC;
+        }
+        if mask & SACL_SECURITY_INFORMATION != 0 {
+            access |= ACCESS_SYSTEM_SECURITY;
+        }
+        let handle = Self::security_handle(path, access, follow)?;
+        Self::set_sec_desc_on_handle(handle.as_handle(), descriptor)
     }
 
     pub(super) fn sec_desc_from_file(file: &File, mask: u32) -> io::Result<SecDesc> {
         let mask = mask & ALL_SECURITY_INFORMATION;
-        Self::with_security_privilege(mask, || Self::sec_desc_from_handle(file.as_handle(), mask))
+        Self::sec_desc_from_handle(file.as_handle(), mask)
     }
 
     pub(super) fn set_sec_desc_file(file: &File, descriptor: &SecDesc) -> io::Result<()> {
-        Self::with_security_privilege(descriptor.mask(), || {
-            Self::set_sec_desc_on_handle(file.as_handle(), descriptor)
-        })
+        Self::set_sec_desc_on_handle(file.as_handle(), descriptor)
     }
 
     fn sid_name_use(value: i32) -> io::Result<SidNameUse> {

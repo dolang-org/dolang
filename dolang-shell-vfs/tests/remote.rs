@@ -3,14 +3,14 @@
 use std::io::{self, SeekFrom};
 
 #[cfg(target_os = "linux")]
-use dolang_shell_vfs::XattrNamespace;
-use dolang_shell_vfs::{
+use dolang_vfs::XattrNamespace;
+use dolang_vfs::{
     AnyCommand, AnyVfs, Child, Client, Command, DirEntry, Direct, FileHandle, FileLockBehavior,
     FileLockMode, FileLockRange, FileLockRequest, FileType, OpenOptions, ReadDir, Server,
     Utf8TypedPath, Utf8UnixPath, Utf8WindowsPath, Vfs, typed_path,
 };
 #[cfg(windows)]
-use dolang_shell_vfs::{DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION};
+use dolang_winterop::{DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION};
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
@@ -155,7 +155,7 @@ fn stdout_reader_command() -> (&'static str, [&'static str; 2]) {
 fn command_with_args<'a>(
     client: &'a Client,
     command: (&str, [&str; 2]),
-) -> dolang_shell_vfs::CommandBuilder<'a> {
+) -> dolang_vfs::CommandBuilder<'a> {
     let (program, args) = command;
     let mut command = client.command(typed_str(program));
     command.arg(args[0]).arg(args[1]);
@@ -181,7 +181,7 @@ async fn opaque_session_chains_to_unix_vfs() {
     let inner = outer.unix_socket(socket.to_path()).await.unwrap();
     assert_eq!(
         inner.query().await.unwrap().target,
-        dolang_shell_vfs::TargetInfo::current()
+        dolang_vfs::TargetInfo::current()
     );
 
     let dir = typed_path(temp.path().join("through-chain")).unwrap();
@@ -210,7 +210,7 @@ async fn opaque_session_chains_to_unix_vfs() {
     inner_task.await.unwrap().unwrap();
     assert_eq!(
         outer.query().await.unwrap().target,
-        dolang_shell_vfs::TargetInfo::current()
+        dolang_vfs::TargetInfo::current()
     );
     outer.stop().await.unwrap();
     outer_task.await.unwrap().unwrap();
@@ -232,7 +232,7 @@ async fn opaque_session_supports_multiple_vfs_hops() {
     let inner = middle.unix_socket(inner_path.to_path()).await.unwrap();
     assert_eq!(
         inner.query().await.unwrap().target,
-        dolang_shell_vfs::TargetInfo::current()
+        dolang_vfs::TargetInfo::current()
     );
 
     inner.as_client().unwrap().stop().await.unwrap();
@@ -267,7 +267,7 @@ async fn outer_teardown_does_not_stop_retained_vfs_daemon() {
 async fn path_operations_work_over_generic_stream() {
     let (client, server_task) = connected_pair().await;
     let query = client.query().await.unwrap();
-    assert_eq!(query.target, dolang_shell_vfs::TargetInfo::current());
+    assert_eq!(query.target, dolang_vfs::TargetInfo::current());
 
     let temp = tempdir().unwrap();
     let first = typed_path(temp.path().join("first")).unwrap();
@@ -328,7 +328,7 @@ async fn rename_replace_flag_works_over_generic_stream() {
 async fn query_and_stop_work_over_split_streams() {
     let (client, server_task) = connected_split_pair().await;
     let query = client.query().await.unwrap();
-    assert_eq!(query.target, dolang_shell_vfs::TargetInfo::current());
+    assert_eq!(query.target, dolang_vfs::TargetInfo::current());
     client.stop().await.unwrap();
     server_task.await.unwrap().unwrap();
 }

@@ -5,7 +5,7 @@ use dolang::runtime::{
     object::{TypeBuilder, Unpack, UnpackItem},
     value::TypeObject,
 };
-use dolang_shell_vfs::Utf8TypedPathBuf;
+use dolang_vfs::Utf8TypedPathBuf;
 
 use crate::{
     fs::path::{PathAnnex, create_path_annex},

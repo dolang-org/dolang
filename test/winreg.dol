@@ -1,0 +1,133 @@
+import winreg rand sys
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - assert_type
+    - skip
+    - test
+  sys:
+    - NotFoundError
+    - UnsupportedError
+  security.windows:
+    - SecDesc
+
+#[test]
+def unsupported_without_windows_backend()
+  if (sys.os_info().family == :WINDOWS:)
+    skip "only exercises the non-Windows stub backend"
+  assert_throws $UnsupportedError do
+    winreg.open :CURRENT_USER:
+
+#[test]
+def registry_crud_round_trips()
+  if (sys.os_info().family != :WINDOWS:)
+    skip "requires a real Windows registry"
+
+  # Everything below operates under a per-run scratch subkey of
+  # HKEY_CURRENT_USER\Software\dolang-vfs-winreg-tests, so the test never
+  # touches real machine state.
+  let root = winreg.open :CURRENT_USER: access: :READ_WRITE:
+  let parent = root.create r"Software\dolang-vfs-winreg-tests" access: :READ_WRITE:
+  let name = "run-$(rand.string 8)"
+  let scratch = parent.create $name access: [:READ_WRITE:, :READ_CONTROL:, :WRITE_DAC:, :WRITE_OWNER:]
+
+  # Enumerate on an empty key.
+  assert_eq $scratch.subkeys().len 0
+  assert_eq [...scratch.subkeys()] []
+  assert_eq $scratch.values().len 0
+  assert_eq [...scratch.values()] []
+  let absent = scratch.get_value missing
+  assert_eq $absent nil
+
+  # Subkeys: create, open, enumerate, delete.
+  let child = scratch.create "child" access: :READ_WRITE:
+  child.close()
+  assert_eq [...scratch.subkeys()] ["child"]
+  let reopened = scratch.open "child"
+  reopened.close()
+  scratch.delete "child"
+  assert_eq $scratch.subkeys().len 0
+
+  # Recursive deletion removes values and nested subkeys. Missing keys are
+  # ignored only when requested.
+  let tree = scratch.create "tree" access: :READ_WRITE:
+  tree.set value root
+  let leaf = tree.create r"branch\leaf" access: :READ_WRITE:
+  leaf.set value 1
+  leaf.close()
+  tree.close()
+  scratch.delete tree all: true
+  assert_throws $NotFoundError do
+    scratch.open tree
+  scratch.delete missing all: true ignore: true
+  assert_throws $NotFoundError do
+    scratch.delete missing
+
+  # Values: every kind round-trips through set/get.
+  scratch.set sz hello kind: :SZ:
+  assert_eq $scratch.get("sz") hello
+
+  scratch.set expand_sz "%TEMP%" kind: :EXPAND_SZ:
+  assert_eq $scratch.get("expand_sz") "%TEMP%"
+
+  scratch.set multi_sz ["a", "b"] kind: :MULTI_SZ:
+  assert_eq $scratch.get("multi_sz") $ tuple a b
+
+  # MULTI_SZ accepts any iterable of strings, including immutable tuples.
+  scratch.set multi_sz_tuple (tuple "c" "d") kind: :MULTI_SZ:
+  assert_eq $scratch.get("multi_sz_tuple") $ tuple c d
+
+  scratch.set dword 42 kind: :DWORD:
+  assert_eq $scratch.get("dword") 42
+
+  scratch.set qword 4294967296 kind: :QWORD:
+  assert_eq $scratch.get("qword") 4294967296
+
+  scratch.set binary b"\x01\x02\x03" kind: :BINARY:
+  assert_eq $scratch.get("binary") b"\x01\x02\x03"
+
+  # Default (unnamed) value, addressed by an empty name.
+  scratch.set "" default kind: :SZ:
+  assert_eq $scratch.get("") default
+
+  # get_value returns a Value with name/kind/value fields.
+  let entry = scratch.get_value dword
+  assert_eq $entry.name dword
+  assert_eq $entry.kind :DWORD:
+  assert_eq $entry.value 42
+
+  # Snapshot fetch reaches every name we set.
+  assert_eq $scratch.values().len 8
+  let all_values = [...scratch.values()]
+  let names = [...all_values.map(do |v| v.name)]
+  for expected = ["sz", "expand_sz", "multi_sz", "multi_sz_tuple", "dword", "qword", "binary", ""]
+    assert (names.any(do |n| (n == expected))) "missing $expected in values()"
+
+  # Delete a value.
+  scratch.delete_value binary
+  assert_throws $NotFoundError do
+    scratch.get binary
+
+  # Not-found path for a subkey open.
+  assert_throws $NotFoundError do
+    scratch.open "does-not-exist"
+
+  # Security descriptor: fetch (default mask: owner/group/dacl), and
+  # round-trip it back unmodified. The scratch key was opened with the
+  # extra access rights (READ_CONTROL/WRITE_DAC/WRITE_OWNER) this requires
+  # — a registry key is opened once and reused, so unlike path-based
+  # sec_desc/set_sec_desc there's no fresh handle opened per call.
+  let descriptor = scratch.sec_desc()
+  assert_type $SecDesc $descriptor
+  assert (descriptor.dacl != nil) "expected a dacl"
+  scratch.set_sec_desc $descriptor
+
+  # A narrower mask fetches fewer components.
+  let owner_only = scratch.sec_desc group: false dacl: false
+  assert_eq $owner_only.mask 1
+
+  scratch.close()
+  parent.delete $name
+  parent.close()
+  root.close()

@@ -15,7 +15,7 @@ use dolang::runtime::{
 };
 
 #[cfg(unix)]
-use dolang_shell_vfs::Client;
+use dolang_vfs::Client;
 use libsqlite3_sys::{
     SQLITE_OK, sqlite3, sqlite3_exec, sqlite3_prepare_v2, sqlite3_randomness, sqlite3_stmt,
 };

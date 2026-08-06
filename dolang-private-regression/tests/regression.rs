@@ -6,14 +6,16 @@ mod detail {
     use dolang::{
         compile::{self, Compiler, Mode},
         runtime::{
-            self, Args, Bytecode, Error, Instance, Object, Output, Slot, Sym, call, unpack,
+            self, Args, Bytecode, Error, Instance, Object, Output, Slot, Sym, call,
+            object::{FlagLike, FlagsTypeExt},
+            unpack,
             vm::Builder,
         },
     };
     use dolang_runtime::strand::Strand;
     use std::{
         io,
-        ops::ControlFlow,
+        ops::{BitAnd, BitOr, BitXor, ControlFlow, Not},
         path::{Path, PathBuf},
         pin::Pin,
         task::{Context as TaskContext, Poll},
@@ -59,7 +61,16 @@ mod detail {
         compiler
             .prelude()
             .import_items("regression2")
-            .items(["async", "callme", "makefoo", "noop", "MIRI", "DEBUG"])
+            .items([
+                "async",
+                "callme",
+                "makefoo",
+                "noop",
+                "MIRI",
+                "DEBUG",
+                "TestFlags",
+                "coerce_flags",
+            ])
             .commit();
         if let Some(name) = module {
             compiler.mode(Mode::Module { name });
@@ -120,6 +131,49 @@ mod detail {
         ) -> runtime::Result<'v, 's, ()> {
             fmt!(strand, w, "foo")
         }
+    }
+
+    /// Test bitset for exercising `dolang_runtime::object::flags`.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    struct TestFlags(u8);
+
+    impl BitOr for TestFlags {
+        type Output = Self;
+        fn bitor(self, rhs: Self) -> Self {
+            TestFlags(self.0 | rhs.0)
+        }
+    }
+
+    impl BitAnd for TestFlags {
+        type Output = Self;
+        fn bitand(self, rhs: Self) -> Self {
+            TestFlags(self.0 & rhs.0)
+        }
+    }
+
+    impl BitXor for TestFlags {
+        type Output = Self;
+        fn bitxor(self, rhs: Self) -> Self {
+            TestFlags(self.0 ^ rhs.0)
+        }
+    }
+
+    impl Not for TestFlags {
+        type Output = Self;
+        fn not(self) -> Self {
+            TestFlags(!self.0)
+        }
+    }
+
+    impl FlagLike for TestFlags {
+        const ZERO: Self = TestFlags(0);
+        const MODULE: &'static str = "regression2";
+        const NAME: &'static str = "TestFlags";
+        const BITS: &'static [(&'static str, Self)] = &[
+            ("READ", TestFlags(1)),
+            ("WRITE", TestFlags(2)),
+            ("EXEC", TestFlags(4)),
+        ];
     }
 
     async fn vm_main<'v>(
@@ -196,6 +250,7 @@ mod detail {
                 futures::executor::block_on(Builder::build(async |vm| {
                     let msg = vm.sym("msg");
                     let footy = vm.register_type::<Foo>();
+                    let test_flags_ty = TestFlags::register_type(vm);
 
                     // Configure standard regression functions from dolang-private-test
                     let test_state = dolang_private_test::configure_vm(vm);
@@ -216,6 +271,7 @@ mod detail {
                     .module("regression2")
                     .value("MIRI", cfg!(miri))
                     .value("DEBUG", cfg!(debug_assertions))
+                    .value("TestFlags", test_flags_ty)
                     .function("async", async |strand, args, mut out| {
                         let ([mut value], _) = unpack!(strand, args, 1, 0)?;
                         DummyAsync::new(()).await;
@@ -232,6 +288,12 @@ mod detail {
                         Ok(())
                     })
                     .function("noop", async move |_strand, _args, _out| Ok(()))
+                    .function("coerce_flags", async move |strand, args, out| {
+                        let ([value], []) = unpack!(strand, args, 1, 0)?;
+                        let bits = test_flags_ty.coerce(strand, &value).await?;
+                        test_flags_ty.create_flags(strand, bits, out);
+                        Ok(())
+                    })
                     .commit();
 
                     vm.enter_with_slots(async move |strand, slots| {

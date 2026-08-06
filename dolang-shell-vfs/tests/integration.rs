@@ -1,8 +1,6 @@
 #![deny(warnings)]
 #![cfg(unix)]
-use dolang_shell_vfs::{
-    Child, Command, SecurityInfo, TargetInfo, Utf8TypedPath, Utf8UnixPath, Vfs,
-};
+use dolang_vfs::{Child, Command, SecurityInfo, TargetInfo, Utf8TypedPath, Utf8UnixPath, Vfs};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
@@ -36,7 +34,7 @@ fn send_signal(pid: u32, signal: libc::c_int) {
 async fn stop_daemon(socket_path: &Path) {
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(socket_path),
+        dolang_vfs::Client::connect(socket_path),
     )
     .await
     .expect("timeout connecting to daemon")
@@ -77,7 +75,7 @@ async fn foreground_spawn_echo() {
 
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(&socket_path),
+        dolang_vfs::Client::connect(&socket_path),
     )
     .await
     .expect("timeout connecting to agent")
@@ -90,6 +88,47 @@ async fn foreground_spawn_echo() {
     let _ = child.wait().expect("failed to wait on agent");
 
     assert!(!socket_path.exists(), "socket should be cleaned up");
+}
+
+#[cfg(all(feature = "winreg", feature = "winscm"))]
+#[tokio::test]
+async fn stock_binary_registers_vfs_extensions() {
+    use dolang_vfs::{AnyVfs, ErrorKind};
+    use dolang_vfs_winreg::{Access, Key, PredefinedRoot, View};
+    use dolang_vfs_winscm::{ScManager, ServiceAccess};
+
+    let (_dir, socket_path) = find_free_socket_path();
+    let mut child = std::process::Command::new(AGENT_BIN)
+        .arg("--listen")
+        .arg(&socket_path)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn agent");
+    wait_for_ready_from_stdout(&mut child).expect("failed to read READY");
+
+    let client = dolang_vfs::Client::connect(&socket_path).await.unwrap();
+    let vfs = AnyVfs::Client(client.clone());
+    let winreg_error = match Key::open_root(
+        &vfs,
+        PredefinedRoot::CurrentUser,
+        View::Native,
+        Access::READ,
+    )
+    .await
+    {
+        Ok(_) => panic!("registry extension unexpectedly succeeded on Unix"),
+        Err(error) => error,
+    };
+    assert_eq!(winreg_error.kind(), ErrorKind::Unsupported);
+
+    let winscm_error = match ScManager::open(&vfs, ServiceAccess::SC_MANAGER_CONNECT).await {
+        Ok(_) => panic!("SCM extension unexpectedly succeeded on Unix"),
+        Err(error) => error,
+    };
+    assert_eq!(winscm_error.kind(), ErrorKind::Unsupported);
+
+    client.stop().await.unwrap();
+    assert!(child.wait().unwrap().success());
 }
 
 #[tokio::test]
@@ -187,7 +226,7 @@ async fn multiple_clients() {
         futures.push(async move {
             let client = timeout(
                 Duration::from_secs(5),
-                dolang_shell_vfs::Client::connect(&socket_path),
+                dolang_vfs::Client::connect(&socket_path),
             )
             .await
             .expect("timeout connecting")
@@ -227,7 +266,7 @@ async fn client_query() {
 
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(&socket_path),
+        dolang_vfs::Client::connect(&socket_path),
     )
     .await
     .expect("timeout connecting")
@@ -262,7 +301,7 @@ async fn client_which() {
 
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(&socket_path),
+        dolang_vfs::Client::connect(&socket_path),
     )
     .await
     .expect("timeout connecting")
@@ -294,7 +333,7 @@ async fn client_well_known_path() {
 
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(&socket_path),
+        dolang_vfs::Client::connect(&socket_path),
     )
     .await
     .expect("timeout connecting")
@@ -302,7 +341,7 @@ async fn client_well_known_path() {
 
     let env = HashMap::from([(String::from("HOME"), Some(String::from("/tmp/test-home")))]);
     let path = client
-        .well_known_path(dolang_shell_vfs::WellKnownPath::HomeDir, None, &env)
+        .well_known_path(dolang_vfs::WellKnownPath::HomeDir, None, &env)
         .await
         .expect("well-known path should succeed");
 
@@ -326,7 +365,7 @@ async fn client_stop() {
 
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(&socket_path),
+        dolang_vfs::Client::connect(&socket_path),
     )
     .await
     .expect("timeout connecting")
@@ -361,7 +400,7 @@ async fn stale_socket_removed() {
 
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(&socket_path),
+        dolang_vfs::Client::connect(&socket_path),
     )
     .await
     .expect("timeout connecting")
@@ -416,7 +455,7 @@ async fn cd_flag_changes_query_cwd() {
 
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(&socket_path),
+        dolang_vfs::Client::connect(&socket_path),
     )
     .await
     .expect("timeout connecting")
@@ -446,7 +485,7 @@ async fn set_flag_adds_env_var() {
 
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(&socket_path),
+        dolang_vfs::Client::connect(&socket_path),
     )
     .await
     .expect("timeout connecting")
@@ -479,7 +518,7 @@ async fn set_flag_overwrites_existing_env() {
 
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(&socket_path),
+        dolang_vfs::Client::connect(&socket_path),
     )
     .await
     .expect("timeout connecting")
@@ -514,7 +553,7 @@ async fn unset_flag_removes_env_var() {
 
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(&socket_path),
+        dolang_vfs::Client::connect(&socket_path),
     )
     .await
     .expect("timeout connecting")
@@ -554,7 +593,7 @@ async fn combined_set_unset_cwd() {
 
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(&socket_path),
+        dolang_vfs::Client::connect(&socket_path),
     )
     .await
     .expect("timeout connecting")
@@ -646,7 +685,7 @@ fn failing_login_shell(dir: &Path) -> std::path::PathBuf {
     path
 }
 
-async fn listen_and_query(args: &[std::ffi::OsString]) -> dolang_shell_vfs::Query {
+async fn listen_and_query(args: &[std::ffi::OsString]) -> dolang_vfs::Query {
     let (_dir, socket_path) = find_free_socket_path();
 
     let mut child = std::process::Command::new(AGENT_BIN)
@@ -661,7 +700,7 @@ async fn listen_and_query(args: &[std::ffi::OsString]) -> dolang_shell_vfs::Quer
 
     let client = timeout(
         Duration::from_secs(5),
-        dolang_shell_vfs::Client::connect(&socket_path),
+        dolang_vfs::Client::connect(&socket_path),
     )
     .await
     .expect("timeout connecting")
@@ -848,9 +887,7 @@ async fn login_env_profile_output_stays_out_of_stdio_stream() {
 
     let stdout = child.stdout.take().expect("stdout not captured");
     let stdin = child.stdin.take().expect("stdin not captured");
-    let client = dolang_shell_vfs::Client::new_split(stdout, stdin)
-        .await
-        .unwrap();
+    let client = dolang_vfs::Client::new_split(stdout, stdin).await.unwrap();
 
     // A single stray byte of profile output would desynchronize the frame
     // stream and this would fail.

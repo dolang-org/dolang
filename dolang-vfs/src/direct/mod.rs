@@ -25,9 +25,10 @@ use wax::{
 
 use crate::{
     Child, Command, FileHandle, FsMetadata, Metadata, MetadataPatch, PosixAcl, ProcessStatus,
-    Query, ReadDir, SecDesc, Sid, SidName, StdioRecv, StdioSend, StreamEntry, Utf8TypedPath,
-    Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry, XattrNamespace, native_path, typed_path,
+    Query, ReadDir, SidName, StdioRecv, StdioSend, StreamEntry, Utf8TypedPath, Utf8TypedPathBuf,
+    Vfs, WellKnownPath, XattrEntry, XattrNamespace, native_path, typed_path,
 };
+use dolang_winterop::{SecDesc, Sid};
 
 use std::{
     pin::Pin,
@@ -718,6 +719,26 @@ impl crate::OpenOptions for DirectOpenOptions {
 }
 
 impl Direct {
+    /// Calls a registered VFS extension in-process, with no RPC session or
+    /// serialization involved.
+    pub async fn call_extension<T: crate::VfsExtension>(
+        &self,
+        request: T::Request,
+    ) -> crate::Result<T::Response> {
+        let ext = crate::extension::lookup(T::NAME, T::VERSION).ok_or_else(|| {
+            crate::Error::new(
+                crate::ErrorKind::Unsupported,
+                format!("VFS extension {} v{} is not available", T::NAME, T::VERSION),
+            )
+        })?;
+        let mut state = crate::DirectContext::default();
+        let mut ctx = crate::ExtContext::direct(&mut state);
+        let response = ext.dispatch(&mut ctx, Box::new(request)).await;
+        Ok(*response
+            .downcast::<T::Response>()
+            .expect("response type matches the extension that produced it"))
+    }
+
     async fn copy_symlink(src: &Path, dst: &Path) -> io::Result<()> {
         let target = fs::read_link(src).await?;
         // FIXME: this won't work on Windows

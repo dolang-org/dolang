@@ -603,6 +603,28 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
     pub fn annex(&self) -> Annex<'v, 'a, T> {
         Annex(&self.receiver.annex().inner)
     }
+
+    /// Reconstructs the [`Type`] handle for this instance's own type.
+    ///
+    /// Lets a fixed [`Object`] trait method (one not registered as a
+    /// `build()` closure, so it has no other way to capture a `Type` handle
+    /// — e.g. [`Object::eq`], [`Object::band`]) obtain its own type in order
+    /// to [`Type::cast`] another value into the same type, or construct a
+    /// new instance of it.
+    pub fn ty(&self, vm: &'v Vm<'v>) -> Type<'v, T> {
+        // SAFETY: `self.receiver` is a live `ObjectWrap<'v,T>` receiver.
+        let vtbl = unsafe {
+            self.receiver
+                .as_header()
+                .as_ref()
+                .vtbl_downcast_unchecked::<ObjectVtbl<'v>>()
+        };
+        let Case::Object(singleton) = vm.type_singletons[vtbl.singleton_idx].case() else {
+            unreachable!("type singleton is always an object");
+        };
+        // SAFETY: `type_singletons[idx]` is always a `TypeObjectWrap<'v,T>` for this `T`.
+        unsafe { Type::<T>::from_type_header(singleton.into_raw().cast(), vm) }
+    }
 }
 
 /// Native object.

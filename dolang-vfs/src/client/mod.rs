@@ -17,6 +17,7 @@ use std::os::unix::{
 use std::os::windows::io::{AsHandle, OwnedHandle};
 
 use dolang_rpc::{Call, DefaultHandle, Opaque, OsHandle, TrailerRecv, TrailerSend};
+use dolang_winterop::{SecDesc, Sid};
 #[cfg(unix)]
 use tokio::net::UnixStream;
 #[cfg(windows)]
@@ -30,19 +31,19 @@ use tokio::{
 use crate::protocol::AccessRequest;
 use crate::{
     Child, Command, FileHandle, FsMetadata, Metadata, MetadataPatch, PosixAcl, ProcessStatus,
-    Query, ReadDir, SecDesc, SessionMode, Sid, SidName, StdioRecv, StdioSend, StreamEntry,
-    Utf8TypedPath, Utf8TypedPathBuf, Vfs, WellKnownPath, XattrEntry,
+    Query, ReadDir, SessionMode, SidName, StdioRecv, StdioSend, StreamEntry, Utf8TypedPath,
+    Utf8TypedPathBuf, Vfs, VfsExtension, WellKnownPath, XattrEntry,
     direct::DirectFile,
     protocol::{
-        AclRequest, CanonicalizeRequest, CopyRequest, CreateDirRequest, FsMetadataRequest,
-        GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenHandle,
-        OpenHandlePreference, OpenRequest, OpenVfsHandle, QueryResponse, ReadDirResponse,
-        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
-        ResponseKind, SecDescRequest, SetAclRequest, SetMetadataRequest, SetSecDescRequest,
-        SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget, StreamsRequest,
-        SymlinkKind, SymlinkRequest, UnixVfsRequest, VfsProtocol, WellKnownPathRequest,
-        WindowsAdminRequest, WirePath, XattrNamespaceRequest, XattrRequest, XattrsRequest,
-        rpc_builder,
+        AclRequest, CanonicalizeRequest, CopyRequest, CreateDirRequest, ExtensionRequest,
+        ExtensionResponse, FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest,
+        MoveRequest, OpenHandle, OpenHandlePreference, OpenRequest, OpenVfsHandle, QueryResponse,
+        ReadDirResponse, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request,
+        RequestKind, ResponseKind, SecDescRequest, SetAclRequest, SetMetadataRequest,
+        SetSecDescRequest, SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget,
+        StreamsRequest, SymlinkKind, SymlinkRequest, UnixVfsRequest, VfsProtocol,
+        WellKnownPathRequest, WindowsAdminRequest, WirePath, XattrNamespaceRequest, XattrRequest,
+        XattrsRequest, rpc_builder,
     },
 };
 
@@ -1112,6 +1113,30 @@ impl Client {
         };
         match self.request(RequestKind::Access(request)).await? {
             ResponseKind::Access(result) => result.map_err(crate::Error::from),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    /// Calls a registered VFS extension.
+    ///
+    /// The extension must be linked into both this process and the peer
+    /// serving the connection (whether that peer is a remote `dolang-vfs`
+    /// process or, when `mode == SessionMode::Native`, this same process's
+    /// direct backend).
+    pub async fn call_extension<T: VfsExtension>(
+        &self,
+        request: T::Request,
+    ) -> crate::Result<T::Response> {
+        let wire = RequestKind::Extension(ExtensionRequest {
+            name: T::NAME.to_string(),
+            version: T::VERSION,
+            payload: Box::new(request),
+        });
+        match self.request(wire).await? {
+            ResponseKind::Extension(Ok(ExtensionResponse { payload, .. })) => Ok(*payload
+                .downcast::<T::Response>()
+                .expect("response type matches the extension that produced it")),
+            ResponseKind::Extension(Err(error)) => Err(error.into()),
             response => Err(unexpected(response).into()),
         }
     }

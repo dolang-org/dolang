@@ -13,7 +13,7 @@ name = "dolang"
 path = "src/main.rs"
 
 [features]
-default = ["base64", "digest", "json", "regex", "glob", "http", "http_mock", "zip", "tar", "sqlite", "xml", "yaml", "progress", "rand", "toml", "patch"]
+default = ["base64", "digest", "json", "regex", "glob", "http", "http_mock", "zip", "tar", "sqlite", "xml", "yaml", "progress", "rand", "toml", "patch", "winreg", "winscm"]
 debug = ["dolang-shell-main/debug"]
 base64 = ["dep:dolang-ext-base64"]
 digest = ["dep:dolang-ext-digest"]
@@ -32,6 +32,8 @@ progress = ["dep:dolang-ext-progress"]
 rand = ["dep:dolang-ext-rand"]
 toml = ["dep:dolang-ext-toml"]
 patch = ["dep:dolang-ext-patch"]
+winreg = ["dep:dolang-ext-winreg"]
+winscm = ["dep:dolang-ext-winscm"]
 
 [dependencies]
 [dependencies.dolang-shell-main]
@@ -46,8 +48,8 @@ version = "0.1.1"
 path = "../dolang"
 version = "0.1.1"
 
-[target.'cfg(windows)'.dependencies.dolang-shell-vfs]
-path = "../dolang-shell-vfs"
+[target.'cfg(windows)'.dependencies.dolang-vfs]
+path = "../dolang-vfs"
 version = "0.1.1"
 
 [target.'cfg(windows)'.dev-dependencies]
@@ -146,6 +148,16 @@ optional = true
 [dependencies.dolang-ext-patch]
 path = "../dolang-ext-patch"
 version = "0.1.1"
+optional = true
+
+[dependencies.dolang-ext-winreg]
+path = "../dolang-ext-winreg"
+version = "0.1.0"
+optional = true
+
+[dependencies.dolang-ext-winscm]
+path = "../dolang-ext-winscm"
+version = "0.1.0"
 optional = true
 
 [build-dependencies]

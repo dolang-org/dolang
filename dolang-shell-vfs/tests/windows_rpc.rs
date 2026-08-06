@@ -9,7 +9,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use dolang_shell_vfs::{
+use dolang_vfs::{
     AnyVfs, Child, Client, Command, FileHandle, MetadataPatch, OpenOptions, OwnershipIdentity,
     SecurityInfo, Server, TargetInfo, Utf8TypedPath, Utf8WindowsPath, Vfs,
 };
@@ -373,11 +373,62 @@ async fn disconnect_ends_the_connected_session_cleanly() {
     server_task.await.unwrap().unwrap();
 }
 
+#[cfg(all(feature = "winreg", feature = "winscm"))]
+#[tokio::test]
+async fn stock_binary_registers_vfs_extensions_over_stdio() {
+    use dolang_vfs::AnyVfs;
+    use dolang_vfs_winreg::{Access, Key, PredefinedRoot, View};
+    use dolang_vfs_winscm::{ScManager, ServiceAccess};
+
+    const AGENT_BIN: &str = env!("CARGO_BIN_EXE_dolang-vfs");
+    let mut child = tokio::process::Command::new(AGENT_BIN)
+        .arg("--stdio")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("failed to spawn agent");
+    let stdout = child.stdout.take().expect("stdout not captured");
+    let stdin = child.stdin.take().expect("stdin not captured");
+    let client = Client::new_split(stdout, stdin).await.unwrap();
+    let vfs = AnyVfs::Client(client.clone());
+
+    Key::open_root(
+        &vfs,
+        PredefinedRoot::CurrentUser,
+        View::Native,
+        Access::READ,
+    )
+    .await
+    .expect("stock binary did not register the WinReg VFS extension")
+    .close()
+    .await
+    .unwrap();
+    ScManager::open(&vfs, ServiceAccess::SC_MANAGER_CONNECT)
+        .await
+        .expect("stock binary did not register the WinSCM VFS extension")
+        .close()
+        .await
+        .unwrap();
+
+    client.stop().await.unwrap();
+    // `AnyVfs::Client` owns another client clone, including the child's
+    // piped stdin/stdout handles. Drop it before waiting so Windows can
+    // observe every parent-side pipe handle closing when the server exits.
+    drop(vfs);
+    drop(client);
+    let status = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
+        .await
+        .expect("VFS helper did not exit after stop")
+        .unwrap();
+    assert!(status.success());
+}
+
 /// Runs the VFS helper in stdio mode with the given extra arguments and
-/// returns its [`dolang_shell_vfs::Query`]. Variables in `without` are removed
+/// returns its [`dolang_vfs::Query`]. Variables in `without` are removed
 /// from the child's environment, so anything that comes back must have been
 /// recovered by the helper itself.
-async fn query_stdio_helper(args: &[&str], without: &[&str]) -> dolang_shell_vfs::Query {
+async fn query_stdio_helper(args: &[&str], without: &[&str]) -> dolang_vfs::Query {
     const AGENT_BIN: &str = env!("CARGO_BIN_EXE_dolang-vfs");
 
     let mut command = tokio::process::Command::new(AGENT_BIN);

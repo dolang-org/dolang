@@ -20,7 +20,7 @@ use dolang::runtime::{
     vm::Builder,
 };
 use dolang_ext_shell::FileHandle as _;
-use dolang_shell_vfs::AnyFile;
+use dolang_vfs::AnyFile;
 use futures_lite::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::io::BufReader;
 use tokio_util::compat::Compat;

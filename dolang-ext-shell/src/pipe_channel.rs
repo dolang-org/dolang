@@ -15,7 +15,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, TypeObject},
 };
-use dolang_shell_vfs::{AnyVfs, Vfs};
+use dolang_vfs::{AnyVfs, Vfs};
 
 use crate::{
     error::{ErrorExt as _, ResultExt as _},

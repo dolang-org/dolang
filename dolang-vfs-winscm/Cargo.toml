@@ -1,0 +1,28 @@
+[package]
+name = "dolang-vfs-winscm"
+version = "0.1.0"
+description = "Windows Service Control Manager VFS extension for dolang-vfs."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+test = true
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+dolang-vfs = { path = "../dolang-vfs", version = "0.1.1" }
+dolang-winterop = { path = "../dolang-winterop", version = "0.1.0" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Services",
+] }
+futures = "0.3.31"
+
+[dev-dependencies]
+tokio = { version = "1.48.0", features = ["rt-multi-thread", "macros", "io-util"] }
+tempfile = "3"

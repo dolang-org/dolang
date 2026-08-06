@@ -2,7 +2,7 @@
 
 use std::process::Stdio;
 
-use dolang_shell_vfs::{Direct, Vfs};
+use dolang_vfs::{Direct, Vfs};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::Command,

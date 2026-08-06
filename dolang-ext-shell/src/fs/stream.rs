@@ -4,7 +4,7 @@ use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder,
     value::TypeObject,
 };
-use dolang_shell_vfs::{StreamEntry as VfsStreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs};
+use dolang_vfs::{StreamEntry as VfsStreamEntry, Utf8TypedPath, Utf8TypedPathBuf, Vfs};
 
 use crate::{error::ResultExt as _, global::Global};
 

@@ -34,11 +34,10 @@ use std::{
 #[cfg(unix)]
 use std::{io::stderr, os::fd::AsFd};
 
+pub use crate::error::{ErrorExt, ResultExt};
 pub use crate::global::ProgramSource;
 use dolang::runtime::{Error, Output, Result, Strand, Value};
-#[cfg(unix)]
-use dolang_shell_vfs::Client;
-pub use dolang_shell_vfs::FileHandle;
+pub use dolang_vfs::{AnyVfs, FileHandle};
 #[cfg(unix)]
 use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
 pub use shell::Exit;
@@ -144,7 +143,7 @@ pub fn datetime<'v>(
 /// Get current working directory of strand
 pub fn cwd<'v>(strand: &Strand<'v, '_>) -> PathBuf {
     let global = strand.state::<Global<'v>>();
-    dolang_shell_vfs::native_path(global.local.get(strand).cwd().to_path())
+    dolang_vfs::native_path(global.local.get(strand).cwd().to_path())
         .expect("local working directory has the host path style")
 }
 
@@ -176,11 +175,11 @@ pub fn as_path<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Option
     let global = strand.state::<Global<'v>>();
     if let Some(path) = global.types.unix_path.cast(value) {
         path.enter_sync(strand, |_strand, inst| {
-            dolang_shell_vfs::native_path(inst.annex().inner.to_path()).ok()
+            dolang_vfs::native_path(inst.annex().inner.to_path()).ok()
         })
     } else if let Some(path) = global.types.windows_path.cast(value) {
         path.enter_sync(strand, |_strand, inst| {
-            dolang_shell_vfs::native_path(inst.annex().typed_path_buf().to_path()).ok()
+            dolang_vfs::native_path(inst.annex().typed_path_buf().to_path()).ok()
         })
     } else {
         value.as_str(strand).map(|s| PathBuf::from(s.to_string()))
@@ -191,14 +190,14 @@ pub fn as_path<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Option
 pub fn as_unix_path<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
-) -> Option<dolang_shell_vfs::Utf8UnixPathBuf> {
+) -> Option<dolang_vfs::Utf8UnixPathBuf> {
     let global = strand.state::<Global<'v>>();
     let path = global.types.unix_path.cast(value)?;
     path.enter_sync(strand, |_strand, inst| {
         let annex = inst.annex();
         match &annex.inner {
-            dolang_shell_vfs::Utf8TypedPathBuf::Unix(path) => Some(path.clone()),
-            dolang_shell_vfs::Utf8TypedPathBuf::Windows(_) => None,
+            dolang_vfs::Utf8TypedPathBuf::Unix(path) => Some(path.clone()),
+            dolang_vfs::Utf8TypedPathBuf::Windows(_) => None,
         }
     })
 }
@@ -213,7 +212,7 @@ pub fn unix_path<'v, 's>(
     fs::path::create_path(
         strand,
         global,
-        dolang_shell_vfs::Utf8TypedPathBuf::from_unix(path.as_ref()),
+        dolang_vfs::Utf8TypedPathBuf::from_unix(path.as_ref()),
         out,
     )
 }
@@ -224,7 +223,7 @@ pub fn path<'v, 's>(
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let global = strand.state::<Global<'v>>();
-    let path = dolang_shell_vfs::typed_path(path).map_err(|e| Error::runtime(strand, e))?;
+    let path = dolang_vfs::typed_path(path).map_err(|e| Error::runtime(strand, e))?;
     fs::path::create_path(strand, global, path, out)
 }
 
@@ -233,7 +232,7 @@ pub async fn open<'v, 's>(
     strand: &mut Strand<'v, 's>,
     path: &path::Path,
     mode: &str,
-) -> io::Result<dolang_shell_vfs::AnyFile> {
+) -> io::Result<dolang_vfs::AnyFile> {
     match mode {
         "r" | "w" | "a" | "r+" | "w+" | "a+" => {}
         _ => return Err(io::Error::other(format!("invalid mode: {}", mode))),
@@ -242,17 +241,47 @@ pub async fn open<'v, 's>(
     fs::file::open_native(
         strand,
         global,
-        dolang_shell_vfs::typed_path(path.to_owned())?.to_path(),
+        dolang_vfs::typed_path(path.to_owned())?.to_path(),
         mode,
     )
     .await
 }
 
-#[cfg(unix)]
-pub fn vfs<'v, 's, 'a>(strand: &'a Strand<'v, 's>) -> Option<Client> {
+/// Construct a Do `security.windows.SecDesc` value from a raw
+/// [`dolang_winterop::SecDesc`].
+///
+/// Exposed so sibling extensions (e.g. `dolang-ext-winreg`) can produce the
+/// same `SecDesc` Do type `fs.Path.sec_desc()` does, without needing
+/// `security`'s internals to be `pub`.
+pub fn create_sec_desc<'v>(
+    strand: &mut Strand<'v, '_>,
+    sec_desc: dolang_winterop::SecDesc,
+    out: impl Output<'v>,
+) {
+    let global = strand.state::<Global<'v>>();
+    global
+        .types
+        .sec_desc
+        .create_with_annex(strand, security::SecDesc, sec_desc, out);
+}
+
+/// Extract the raw [`dolang_winterop::SecDesc`] from a Do
+/// `security.windows.SecDesc` value.
+pub fn sec_desc_from_value<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+) -> Result<'v, 's, dolang_winterop::SecDesc> {
+    let global = strand.state::<Global<'v>>();
+    security::sec_desc_from_value(strand, global, value)
+}
+
+/// Returns the [`AnyVfs`] in scope for the strand (the ambient
+/// filesystem/registry/etc. backend — direct or remote — for the current
+/// shell/session/container context).
+pub fn vfs<'v, 's, 'a>(strand: &'a Strand<'v, 's>) -> AnyVfs {
     let global = strand.state::<Global<'v>>();
     let local = global.local.get(strand);
-    local.vfs().into_client()
+    local.vfs()
 }
 
 /// Returns whether stderr is a terminal — the same override-aware answer

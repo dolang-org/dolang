@@ -4,7 +4,7 @@ use dolang::runtime::{
     BYTE_STREAM_CHUNK_SIZE, Error, Output, Result, Slot, Strand, Value,
     value::{BinEmbryo, View},
 };
-use dolang_shell_vfs::OperatingSystem;
+use dolang_vfs::OperatingSystem;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWriteExt};
 
 use crate::{

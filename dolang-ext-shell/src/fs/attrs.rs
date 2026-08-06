@@ -1,4 +1,4 @@
-use dolang_shell_vfs::{Metadata, MetadataFamily, UnixMetadataPlatform};
+use dolang_vfs::{Metadata, MetadataFamily, UnixMetadataPlatform};
 
 pub(crate) mod windows {
     pub(crate) const READONLY: u32 = 0x0000_0001;

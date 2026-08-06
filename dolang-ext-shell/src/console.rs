@@ -7,7 +7,7 @@ use dolang::runtime::{
     unpack,
     value::{TypeObject, View},
 };
-use dolang_shell_vfs::OperatingSystem;
+use dolang_vfs::OperatingSystem;
 use tokio::io::AsyncWriteExt;
 
 use crate::{

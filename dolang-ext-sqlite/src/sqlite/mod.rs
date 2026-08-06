@@ -147,7 +147,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             #[cfg(unix)]
             {
                 // Check if we're in a container context
-                let vfs = dolang_ext_shell::vfs(strand);
+                let vfs = dolang_ext_shell::vfs(strand).as_client().cloned();
                 let path = path.clone();
 
                 // Open the connection with appropriate VFS
@@ -220,7 +220,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                                 pending_close: Cell::new(false),
                                 epoch: Cell::new(0),
                                 #[cfg(unix)]
-                                agent: dolang_ext_shell::vfs(strand),
+                                agent: dolang_ext_shell::vfs(strand).as_client().cloned(),
                                 busy_retries,
                                 busy_min_wait,
                                 busy_max_wait,

@@ -36,6 +36,10 @@ extern crate dolang_ext_sqlite;
 extern crate dolang_ext_tar;
 #[cfg(feature = "toml")]
 extern crate dolang_ext_toml;
+#[cfg(feature = "winreg")]
+extern crate dolang_ext_winreg;
+#[cfg(feature = "winscm")]
+extern crate dolang_ext_winscm;
 #[cfg(feature = "xml")]
 extern crate dolang_ext_xml;
 #[cfg(feature = "yaml")]
@@ -56,7 +60,7 @@ fn main() {
 fn run_vfs_mode(args: impl IntoIterator<Item = OsString>) -> Option<i32> {
     let args: Vec<OsString> = args.into_iter().collect();
     let vfs_pos = args.iter().position(|a| a == "--vfs")?;
-    let code = match dolang_shell_vfs::main(args[vfs_pos + 1..].iter()) {
+    let code = match dolang_vfs::main(args[vfs_pos + 1..].iter()) {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("error: {error}");

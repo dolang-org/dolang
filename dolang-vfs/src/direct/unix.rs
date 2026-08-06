@@ -2,11 +2,12 @@ use super::{Direct, DirectChild, DirectCommand};
 #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "macos"))]
 use crate::{AttrFlags, Metadata};
 use crate::{
-    AttrsPatch, FsMetadata, FsMetadataFamily, MetadataPatch, OwnershipIdentity, SecDesc,
-    StreamEntry, UnixFsMetadata, UnixFsMetadataPlatform, XattrEntry, XattrNamespace,
+    AttrsPatch, FsMetadata, FsMetadataFamily, MetadataPatch, OwnershipIdentity, StreamEntry,
+    UnixFsMetadata, UnixFsMetadataPlatform, XattrEntry, XattrNamespace,
 };
 #[cfg(target_os = "linux")]
 use crate::{MetadataFamily, UnixMetadata, UnixMetadataPlatform};
+use dolang_winterop::SecDesc;
 #[cfg(target_os = "linux")]
 use std::os::fd::RawFd;
 use std::{

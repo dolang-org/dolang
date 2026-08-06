@@ -30,7 +30,7 @@ use crate::{
     shell_args::Args as ShellArgs,
 };
 use dolang::runtime::value::View;
-use dolang_shell_vfs::{
+use dolang_vfs::{
     AnyVfs, Client, OperatingSystem, Query, SecurityInfo, StdioRecv, StdioSend, TargetInfo,
     Utf8TypedPathBuf, Vfs as _, VfsSession,
 };
@@ -770,7 +770,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 Some(ProgramOverride::Module(name)) => Output::set(strand, out, name.as_ref()),
                 None => match global.program.borrow().as_ref() {
                     Some(ProgramSource::Path(path)) => {
-                        let path = dolang_shell_vfs::typed_path(path.clone()).into_sys(strand)?;
+                        let path = dolang_vfs::typed_path(path.clone()).into_sys(strand)?;
                         let annex = PathAnnex::try_new(strand, path, global)?;
                         create_path_annex(strand, annex, out);
                     }
@@ -837,10 +837,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .object("env", env_ty, EnvObject { global })
         .get("exe", move |strand, out| {
             let annex = PathAnnex::new(
-                dolang_shell_vfs::typed_path(
-                    std::env::current_exe().expect("could not get current exe"),
-                )
-                .expect("current executable path is UTF-8"),
+                dolang_vfs::typed_path(std::env::current_exe().expect("could not get current exe"))
+                    .expect("current executable path is UTF-8"),
                 global,
             );
             create_path_annex(strand, annex, out);
@@ -869,7 +867,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let orig_vfs = local.replace_vfs(Default::default());
             let orig_vfs_exe = local.replace_vfs_exe(None);
             let orig_cwd = local.replace_cwd(
-                dolang_shell_vfs::typed_path(std::env::current_dir().unwrap())
+                dolang_vfs::typed_path(std::env::current_dir().unwrap())
                     .expect("current directory is UTF-8"),
             );
             let orig_env = local.replace_env(Rc::new(LocalEnv::root()));

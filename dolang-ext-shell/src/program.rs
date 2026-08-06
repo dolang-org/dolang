@@ -10,7 +10,7 @@ use dolang::runtime::{
     value::{Nil, Singleton},
     vm::Builder,
 };
-use dolang_shell_vfs::{
+use dolang_vfs::{
     AnyVfs, Child as _, Command, OperatingSystem, ProcessControl, Utf8TypedPath, Vfs,
 };
 
@@ -502,7 +502,7 @@ struct PumpTargets<'v, 'a> {
 /// Runs input/output pumps and waits for process completion with unified error handling.
 async fn run_monitor<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    process: &mut impl dolang_shell_vfs::Child,
+    process: &mut impl dolang_vfs::Child,
     name: &str,
     target: PumpTargets<'v, '_>,
     pipes: Pipes,
@@ -632,11 +632,9 @@ async fn run<'v, 's>(
     };
     let operating_system = target.operating_system;
     let program = match operating_system.path_type() {
-        dolang_shell_vfs::PathType::Unix => {
-            Utf8TypedPath::Unix(dolang_shell_vfs::Utf8UnixPath::new(name))
-        }
-        dolang_shell_vfs::PathType::Windows => {
-            Utf8TypedPath::Windows(dolang_shell_vfs::Utf8WindowsPath::new(name))
+        dolang_vfs::PathType::Unix => Utf8TypedPath::Unix(dolang_vfs::Utf8UnixPath::new(name)),
+        dolang_vfs::PathType::Windows => {
+            Utf8TypedPath::Windows(dolang_vfs::Utf8WindowsPath::new(name))
         }
     };
     let mut command = vfs.command(program);
@@ -895,10 +893,10 @@ impl<'v> Object<'v> for Program {
                 .which(
                     match cwd.to_path() {
                         Utf8TypedPath::Unix(_) => {
-                            Utf8TypedPath::Unix(dolang_shell_vfs::Utf8UnixPath::new(name))
+                            Utf8TypedPath::Unix(dolang_vfs::Utf8UnixPath::new(name))
                         }
                         Utf8TypedPath::Windows(_) => {
-                            Utf8TypedPath::Windows(dolang_shell_vfs::Utf8WindowsPath::new(name))
+                            Utf8TypedPath::Windows(dolang_vfs::Utf8WindowsPath::new(name))
                         }
                     },
                     paths.as_deref(),

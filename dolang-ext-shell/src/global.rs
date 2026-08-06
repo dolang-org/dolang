@@ -8,6 +8,7 @@ use std::{
 
 use dolang::runtime::{
     Sym, Type,
+    object::{FlagLike, Flags},
     strand::{LocalKey, LocalRootKey},
     value::TypeObject,
     vm::{Builder, Stateful},
@@ -40,8 +41,8 @@ use crate::{
     proc::Capture,
     program::Program,
     security::{
-        Ace, Acl, Guid, Identity, PosixAceObject, PosixAclObject, SecDesc, Sid, SidName,
-        TokenGroup, TokenInfo,
+        AccessMask, Ace, Acl, Guid, Identity, PosixAceObject, PosixAclObject, SecDesc, Sid,
+        SidName, TokenGroup, TokenInfo,
     },
     shell::{Stderr, Stdin, Stdout, Vfs},
     shell_args::ArgsData,
@@ -110,6 +111,7 @@ pub(crate) struct Types<'v> {
     pub(crate) vfs: Type<'v, Vfs>,
     pub(crate) text: Type<'v, Text>,
     pub(crate) style: Type<'v, StyleObject>,
+    pub(crate) access_mask: Type<'v, Flags<AccessMask>>,
 }
 
 pub(crate) struct Syms<'v> {
@@ -466,6 +468,7 @@ impl<'v> Global<'v> {
                 vfs: builder.register_type(),
                 text: builder.register_type(),
                 style: builder.register_type(),
+                access_mask: AccessMask::register_type(builder),
             },
             syms: Syms {
                 any: builder.sym("ANY"),

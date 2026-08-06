@@ -6,39 +6,35 @@ edition = "2024"
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-
-[lib]
-test = true
+autobins = false
 
 [[bin]]
 name = "dolang-vfs"
 path = "src/main.rs"
 test = false
 
-[dependencies]
-base64 = "0.22.1"
-bytes = "1"
-tokio = { version = "1.48.0", features = ["io-std", "io-util", "sync", "rt-multi-thread", "rt", "macros", "fs", "net", "process", "time"] }
-wax = { version = "0.7", features = ["walk"] }
-serde = { version = "1.0", features = ["derive"] }
-which = "8.0"
-dolang-rpc = { path = "../dolang-rpc", version = "0.1.1" }
-typed-path.workspace = true
+[features]
+default = ["winreg", "winscm"]
+winreg = ["dep:dolang-vfs-winreg"]
+winscm = ["dep:dolang-vfs-winscm"]
 
-[target.'cfg(windows)'.dependencies]
-dunce = "1.0"
-rand = "0.10"
-tokio = { version = "1.48.0", features = ["signal"] }
-windows-sys = { version = "0.61", features = ["Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Environment", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+[dependencies]
+dolang-vfs = { path = "../dolang-vfs", version = "0.1.1" }
+dolang-vfs-winreg = { path = "../dolang-vfs-winreg", version = "0.1.0", optional = true }
+dolang-vfs-winscm = { path = "../dolang-vfs-winscm", version = "0.1.0", optional = true }
 
 [dev-dependencies]
+base64 = "0.22.1"
+serde = { version = "1.0", features = ["derive"] }
 tempfile = "3"
 postcard = { version = "1.1.3", features = ["use-std"] }
-
-[target.'cfg(unix)'.dependencies]
-tokio = { version = "1.48.0", features = ["process", "time", "signal"] }
-libc = "0.2"
-nix = { version = "0.31", features = ["dir", "fs", "ioctl", "user", "socket"] }
+tokio = { version = "1.48.0", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+dolang-winterop = { path = "../dolang-winterop", version = "0.1.0" }
 
 [target.'cfg(unix)'.dev-dependencies]
 futures = "0.3"
+libc = "0.2"
+nix = { version = "0.31", features = ["user"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_LibraryLoader", "Win32_System_Threading"] }

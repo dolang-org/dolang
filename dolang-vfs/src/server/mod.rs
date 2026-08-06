@@ -10,6 +10,7 @@ use std::{
 use std::path::{Path, PathBuf};
 
 use dolang_rpc::{CallContext, DefaultHandle, Opaque, OpaqueResource, OsHandle};
+use dolang_winterop::SecDesc;
 #[cfg(unix)]
 use std::os::unix::io::OwnedFd;
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
@@ -22,19 +23,19 @@ use tokio::sync::{Mutex, watch};
 use tokio::task::{JoinError, JoinSet};
 
 use crate::{
-    AnyFile, AnyVfs, Child as _, Command as _, Direct, Error, FileHandle as _, FileLockRequest,
-    FileMarker, OpenOptions as _, PosixAcl, SecDesc, SessionMode, StdioRecv, StdioRecvMarker,
-    StdioSend, StdioSendMarker, Utf8TypedPath, Vfs,
+    AnyFile, AnyVfs, Child as _, Command as _, Direct, Error, ExtContext, FileHandle as _,
+    FileLockRequest, FileMarker, OpenOptions as _, PosixAcl, SessionMode, StdioRecv,
+    StdioRecvMarker, StdioSend, StdioSendMarker, Utf8TypedPath, Vfs,
     protocol::{
         AccessRequest, AclRequest, CanonicalizeRequest, CopyRequest, CreateDirRequest,
-        FsMetadataRequest, GlobRequest, HardLinkRequest, MetadataRequest, MoveRequest, OpenHandle,
-        OpenHandlePreference, OpenRequest, OpenVfsHandle, PipeResponse, QueryResponse,
-        ReadDirResponse, ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request,
-        RequestKind, ResponseKind, SecDescRequest, SetAclRequest, SetMetadataRequest,
-        SetSecDescRequest, SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget,
-        StreamsRequest, SymlinkKind, SymlinkRequest, UnixVfsRequest, VfsProtocol,
-        WellKnownPathRequest, WindowsAdminRequest, WireError, WirePath, XattrNamespaceRequest,
-        XattrRequest, XattrsRequest, rpc_builder,
+        ExtensionRequest, ExtensionResponse, FsMetadataRequest, GlobRequest, HardLinkRequest,
+        MetadataRequest, MoveRequest, OpenHandle, OpenHandlePreference, OpenRequest, OpenVfsHandle,
+        PipeResponse, QueryResponse, ReadDirResponse, ReadLinkRequest, RemoveDirRequest,
+        RemoveRequest, RenameRequest, Request, RequestKind, ResponseKind, SecDescRequest,
+        SetAclRequest, SetMetadataRequest, SetSecDescRequest, SetXattrRequest, SpawnRequest,
+        StdioRecvTarget, StdioSendTarget, StreamsRequest, SymlinkKind, SymlinkRequest,
+        UnixVfsRequest, VfsProtocol, WellKnownPathRequest, WindowsAdminRequest, WireError,
+        WirePath, XattrNamespaceRequest, XattrRequest, XattrsRequest, rpc_builder,
     },
 };
 
@@ -634,7 +635,32 @@ impl Connection {
             RequestKind::SetXattr(request) => self.handle_set_xattr(request).await,
             RequestKind::RemoveXattr(request) => self.handle_remove_xattr(request).await,
             RequestKind::Streams(request) => self.handle_streams(request).await,
+            RequestKind::Extension(request) => self.handle_extension(context, request).await,
         }
+    }
+
+    async fn handle_extension(
+        &self,
+        context: &mut CallContext<VfsProtocol>,
+        request: ExtensionRequest,
+    ) -> ResponseKind {
+        let ExtensionRequest {
+            name,
+            version,
+            payload,
+        } = request;
+        let Some(ext) = crate::extension::lookup(&name, version) else {
+            return ResponseKind::Extension(Err(Self::unsupported(&format!(
+                "VFS extension {name} v{version}"
+            ))));
+        };
+        let mut ctx = ExtContext::remote(context, self.mode == SessionMode::Native);
+        let payload = ext.dispatch(&mut ctx, payload).await;
+        ResponseKind::Extension(Ok(ExtensionResponse {
+            name,
+            version,
+            payload,
+        }))
     }
 
     async fn handle_which(

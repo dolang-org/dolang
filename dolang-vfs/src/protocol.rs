@@ -1,13 +1,20 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::{io, path::PathBuf};
 
 use dolang_rpc::{Opaque, OsHandle, Protocol};
-use serde::{Deserialize, Serialize};
-
-pub(crate) use crate::{
-    DirEntry, FsMetadata, Metadata, MetadataPatch, PosixAcl, SecDesc, SecurityInfo, Sid, SidName,
-    StreamEntry, TargetInfo, WellKnownPath, XattrEntry, XattrNamespace,
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{Error as _, SeqAccess, Visitor},
+    ser::SerializeTuple,
 };
+
+use crate::extension::ErasedVfsExtension;
+pub(crate) use crate::{
+    DirEntry, FsMetadata, Metadata, MetadataPatch, PosixAcl, SecurityInfo, SidName, StreamEntry,
+    TargetInfo, WellKnownPath, XattrEntry, XattrNamespace,
+};
+pub(crate) use dolang_winterop::{SecDesc, Sid};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(transparent)]
@@ -521,6 +528,166 @@ pub(crate) struct SetXattrRequest {
     pub(crate) follow: bool,
 }
 
+/// Wire envelope for a VFS extension request.
+///
+/// `name`/`version` route to the extension via `crate::extension::lookup`;
+/// `payload` is the extension's own request type, boxed and type-erased.
+/// The `Serialize`/`Deserialize` impls below are manual (not derived)
+/// because the concrete payload type is only known once `name`/`version`
+/// have been read and looked up, so deserialization uses a
+/// `DeserializeSeed` to defer to the extension's own `Request` type mid-way
+/// through decoding the same tuple — see `dolang-vfs/ARCHITECTURE.md`
+/// for the full rationale.
+pub(crate) struct ExtensionRequest {
+    pub(crate) name: String,
+    pub(crate) version: u16,
+    pub(crate) payload: Box<dyn Any + Send + Sync>,
+}
+
+impl std::fmt::Debug for ExtensionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExtensionRequest")
+            .field("name", &self.name)
+            .field("version", &self.version)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Serialize for ExtensionRequest {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let ext = crate::extension::lookup(&self.name, self.version)
+            .ok_or_else(|| serde::ser::Error::custom("unknown VFS extension"))?;
+        let mut tup = serializer.serialize_tuple(3)?;
+        tup.serialize_element(&self.name)?;
+        tup.serialize_element(&self.version)?;
+        tup.serialize_element(ext.erase_request(&*self.payload))?;
+        tup.end()
+    }
+}
+
+struct ExtensionRequestSeed(&'static dyn ErasedVfsExtension);
+
+impl<'de> serde::de::DeserializeSeed<'de> for ExtensionRequestSeed {
+    type Value = Box<dyn Any + Send + Sync>;
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        let mut erased = <dyn erased_serde::Deserializer>::erase(deserializer);
+        self.0
+            .deserialize_request(&mut erased)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl<'de> Deserialize<'de> for ExtensionRequest {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = ExtensionRequest;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a VFS extension request")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let name: String = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::invalid_length(0, &self))?;
+                let version: u16 = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                let ext = crate::extension::lookup(&name, version)
+                    .ok_or_else(|| A::Error::custom("unknown VFS extension"))?;
+                let payload = seq
+                    .next_element_seed(ExtensionRequestSeed(ext))?
+                    .ok_or_else(|| A::Error::invalid_length(2, &self))?;
+                Ok(ExtensionRequest {
+                    name,
+                    version,
+                    payload,
+                })
+            }
+        }
+        deserializer.deserialize_tuple(3, V)
+    }
+}
+
+/// Wire envelope for a VFS extension response. See [`ExtensionRequest`] for
+/// why `Serialize`/`Deserialize` are implemented manually. `name`/`version`
+/// are echoed back from the request so the client, which decodes
+/// `ResponseKind` generically inside `dolang_rpc` before it ever reaches the
+/// extension-typed call site, can still find the matching extension to
+/// decode `payload` as that extension's `Response` type.
+pub(crate) struct ExtensionResponse {
+    pub(crate) name: String,
+    pub(crate) version: u16,
+    pub(crate) payload: Box<dyn Any + Send + Sync>,
+}
+
+impl std::fmt::Debug for ExtensionResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExtensionResponse")
+            .field("name", &self.name)
+            .field("version", &self.version)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Serialize for ExtensionResponse {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let ext = crate::extension::lookup(&self.name, self.version)
+            .ok_or_else(|| serde::ser::Error::custom("unknown VFS extension"))?;
+        let mut tup = serializer.serialize_tuple(3)?;
+        tup.serialize_element(&self.name)?;
+        tup.serialize_element(&self.version)?;
+        tup.serialize_element(ext.erase_response(&*self.payload))?;
+        tup.end()
+    }
+}
+
+struct ExtensionResponseSeed(&'static dyn ErasedVfsExtension);
+
+impl<'de> serde::de::DeserializeSeed<'de> for ExtensionResponseSeed {
+    type Value = Box<dyn Any + Send + Sync>;
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        let mut erased = <dyn erased_serde::Deserializer>::erase(deserializer);
+        self.0
+            .deserialize_response(&mut erased)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl<'de> Deserialize<'de> for ExtensionResponse {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = ExtensionResponse;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a VFS extension response")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let name: String = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::invalid_length(0, &self))?;
+                let version: u16 = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                let ext = crate::extension::lookup(&name, version)
+                    .ok_or_else(|| A::Error::custom("unknown VFS extension"))?;
+                let payload = seq
+                    .next_element_seed(ExtensionResponseSeed(ext))?
+                    .ok_or_else(|| A::Error::invalid_length(2, &self))?;
+                Ok(ExtensionResponse {
+                    name,
+                    version,
+                    payload,
+                })
+            }
+        }
+        deserializer.deserialize_tuple(3, V)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum RequestKind {
     Spawn(SpawnRequest),
@@ -692,6 +859,7 @@ pub(crate) enum RequestKind {
     SetXattr(SetXattrRequest),
     RemoveXattr(XattrRequest),
     Streams(StreamsRequest),
+    Extension(ExtensionRequest),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -769,4 +937,5 @@ pub(crate) enum ResponseKind {
     SetXattr(Result<(), WireError>),
     RemoveXattr(Result<(), WireError>),
     Streams(Result<Vec<StreamEntry>, WireError>),
+    Extension(Result<ExtensionResponse, WireError>),
 }

@@ -5,7 +5,7 @@ use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value, object::TypeBuilder,
     unpack,
 };
-use dolang_shell_vfs::OperatingSystem;
+use dolang_vfs::OperatingSystem;
 
 use crate::global::Global;
 
@@ -80,7 +80,7 @@ pub(crate) fn system_code_name(
         OperatingSystem::FreeBsd => generated::FREEBSD_ERRNO_BY_CODE.get(&raw).copied(),
         OperatingSystem::Linux => generated::LINUX_ERRNO_BY_CODE.get(&raw).copied(),
         OperatingSystem::Macos => generated::MACOS_ERRNO_BY_CODE.get(&raw).copied(),
-        OperatingSystem::Windows => generated::WIN_ERROR_BY_CODE.get(&(raw as u32)).copied(),
+        OperatingSystem::Windows => dolang_winterop::win_error_name(raw as u32),
     }
 }
 
@@ -244,14 +244,11 @@ impl<'v> CodeType<'v> for WinError {
     fn name(value: i64) -> Option<&'static str> {
         u32::try_from(value)
             .ok()
-            .and_then(|value| generated::WIN_ERROR_BY_CODE.get(&value).copied())
+            .and_then(dolang_winterop::win_error_name)
     }
 
     fn code(name: &str) -> Option<i32> {
-        generated::WIN_ERROR_BY_NAME
-            .get(name)
-            .copied()
-            .map(|value| value as i32)
+        dolang_winterop::win_error_code(name).map(|value| value as i32)
     }
 
     fn raw(value: i128) -> Option<i32> {

@@ -28,6 +28,10 @@ let PUBLISH_CRATES = $
   - dolang-rpc
   - dolang-private-build
   - dolang-private-util
+  - dolang-winterop
+  - dolang-vfs
+  - dolang-vfs-winreg
+  - dolang-vfs-winscm
   - dolang-shell-vfs
   - dolang-bytecode
   - dolang-runtime
@@ -48,6 +52,8 @@ let PUBLISH_CRATES = $
   - dolang-ext-compile
   - dolang-ext-xml
   - dolang-ext-shell
+  - dolang-ext-winreg
+  - dolang-ext-winscm
   - dolang-ext-zip
   - dolang-ext-sqlite
   - dolang-ext-progress
@@ -257,6 +263,7 @@ return $
     do |args|
       dodo.show python3 tools/gen_system_error_codes.py
         --output dolang-ext-shell/src/error_code/generated.rs
+        --windows-output dolang-winterop/src/win_error/generated.rs
         ...args.args
 
   "shell-test":

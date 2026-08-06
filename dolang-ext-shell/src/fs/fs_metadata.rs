@@ -1,5 +1,5 @@
 use dolang::runtime::{Object, Output, Result, State, Strand, Sym, object::TypeBuilder};
-use dolang_shell_vfs::FsMetadata as VfsFsMetadata;
+use dolang_vfs::FsMetadata as VfsFsMetadata;
 
 use crate::{global::Global, util};
 
@@ -142,25 +142,25 @@ impl<'v> Object<'v> for FsMetadata {
             })
             .get("linux_attrs", move |this, strand, out| {
                 let value = this.annex().inner.unix().and_then(|v| match v.platform {
-                    dolang_shell_vfs::UnixFsMetadataPlatform::Linux { flags } => Some(flags),
-                    dolang_shell_vfs::UnixFsMetadataPlatform::FreeBsd { .. }
-                    | dolang_shell_vfs::UnixFsMetadataPlatform::Macos { .. } => None,
+                    dolang_vfs::UnixFsMetadataPlatform::Linux { flags } => Some(flags),
+                    dolang_vfs::UnixFsMetadataPlatform::FreeBsd { .. }
+                    | dolang_vfs::UnixFsMetadataPlatform::Macos { .. } => None,
                 });
                 option_field(strand, value, linux_attrs, out)
             })
             .get("freebsd_attrs", move |this, strand, out| {
                 let value = this.annex().inner.unix().and_then(|v| match v.platform {
-                    dolang_shell_vfs::UnixFsMetadataPlatform::FreeBsd { flags } => Some(flags),
-                    dolang_shell_vfs::UnixFsMetadataPlatform::Linux { .. }
-                    | dolang_shell_vfs::UnixFsMetadataPlatform::Macos { .. } => None,
+                    dolang_vfs::UnixFsMetadataPlatform::FreeBsd { flags } => Some(flags),
+                    dolang_vfs::UnixFsMetadataPlatform::Linux { .. }
+                    | dolang_vfs::UnixFsMetadataPlatform::Macos { .. } => None,
                 });
                 option_field(strand, value, freebsd_attrs, out)
             })
             .get("macos_attrs", move |this, strand, out| {
                 let value = this.annex().inner.unix().and_then(|v| match v.platform {
-                    dolang_shell_vfs::UnixFsMetadataPlatform::FreeBsd { .. }
-                    | dolang_shell_vfs::UnixFsMetadataPlatform::Linux { .. } => None,
-                    dolang_shell_vfs::UnixFsMetadataPlatform::Macos { flags } => Some(flags),
+                    dolang_vfs::UnixFsMetadataPlatform::FreeBsd { .. }
+                    | dolang_vfs::UnixFsMetadataPlatform::Linux { .. } => None,
+                    dolang_vfs::UnixFsMetadataPlatform::Macos { flags } => Some(flags),
                 });
                 option_field(strand, value, macos_attrs, out)
             })

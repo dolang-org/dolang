@@ -1,6 +1,6 @@
-# dolang-shell-vfs Architecture
+# dolang-vfs Architecture
 
-`dolang-shell-vfs` is a virtual filesystem and process-spawning layer for the
+`dolang-vfs` is a virtual filesystem and process-spawning layer for the
 shell runtime.
 
 It has two backends:

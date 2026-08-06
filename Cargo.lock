@@ -1021,7 +1021,8 @@ dependencies = [
  "console",
  "dolang",
  "dolang-ext-compile",
- "dolang-shell-vfs",
+ "dolang-vfs",
+ "dolang-winterop",
  "dunce",
  "futures",
  "libc",
@@ -1042,7 +1043,7 @@ dependencies = [
  "bindgen",
  "dolang",
  "dolang-ext-shell",
- "dolang-shell-vfs",
+ "dolang-vfs",
  "libc",
  "libsqlite3-sys",
  "nix",
@@ -1081,6 +1082,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "dolang-ext-winreg"
+version = "0.1.0"
+dependencies = [
+ "dolang",
+ "dolang-ext-shell",
+ "dolang-vfs",
+ "dolang-vfs-winreg",
+ "dolang-winterop",
+]
+
+[[package]]
+name = "dolang-ext-winscm"
+version = "0.1.0"
+dependencies = [
+ "dolang",
+ "dolang-ext-shell",
+ "dolang-vfs",
+ "dolang-vfs-winscm",
+ "dolang-winterop",
+]
+
+[[package]]
 name = "dolang-ext-xml"
 version = "0.1.1"
 dependencies = [
@@ -1108,7 +1131,7 @@ dependencies = [
  "astral_async_zip",
  "dolang",
  "dolang-ext-shell",
- "dolang-shell-vfs",
+ "dolang-vfs",
  "futures-lite",
  "jiff",
  "tokio",
@@ -1256,13 +1279,15 @@ dependencies = [
  "dolang-ext-tar",
  "dolang-ext-toml",
  "dolang-ext-url",
+ "dolang-ext-winreg",
+ "dolang-ext-winscm",
  "dolang-ext-xml",
  "dolang-ext-yaml",
  "dolang-ext-zip",
  "dolang-private-bundle",
  "dolang-shell-main",
  "dolang-shell-modules",
- "dolang-shell-vfs",
+ "dolang-vfs",
  "tokio",
 ]
 
@@ -1298,20 +1323,79 @@ name = "dolang-shell-vfs"
 version = "0.1.1"
 dependencies = [
  "base64",
- "bytes",
- "dolang-rpc",
- "dunce",
+ "dolang-vfs",
+ "dolang-vfs-winreg",
+ "dolang-vfs-winscm",
+ "dolang-winterop",
  "futures",
  "libc",
+ "nix",
+ "postcard",
+ "serde",
+ "tempfile",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "dolang-vfs"
+version = "0.1.1"
+dependencies = [
+ "base64",
+ "bytes",
+ "dolang-rpc",
+ "dolang-winterop",
+ "dunce",
+ "erased-serde",
+ "futures",
+ "libc",
+ "linkme",
  "nix",
  "postcard",
  "rand",
  "serde",
  "tempfile",
+ "thiserror",
  "tokio",
  "typed-path",
  "wax",
  "which",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "dolang-vfs-winreg"
+version = "0.1.0"
+dependencies = [
+ "dolang-vfs",
+ "dolang-winterop",
+ "serde",
+ "tempfile",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "dolang-vfs-winscm"
+version = "0.1.0"
+dependencies = [
+ "dolang-vfs",
+ "dolang-winterop",
+ "futures",
+ "serde",
+ "tempfile",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "dolang-winterop"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "phf",
+ "postcard",
+ "serde",
  "windows-sys 0.61.2",
 ]
 
@@ -1394,6 +1478,17 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "erased-serde"
+version = "0.4.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2add8a07dd6a8d93ff627029c51de145e12686fbc36ecb298ac22e74cf02dec"
+dependencies = [
+ "serde",
+ "serde_core",
+ "typeid",
+]
 
 [[package]]
 name = "errno"
@@ -3649,6 +3744,12 @@ name = "typed-path"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
+
+[[package]]
+name = "typeid"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c"
 
 [[package]]
 name = "typenum"

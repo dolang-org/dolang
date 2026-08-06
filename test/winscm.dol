@@ -1,0 +1,91 @@
+import winscm rand sys shell
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - assert_type
+    - skip
+    - test
+  sys:
+    - NotFoundError
+    - PermissionDeniedError
+    - UnsupportedError
+  security.windows:
+    - SecDesc
+
+#[test]
+def unsupported_without_windows_backend()
+  if (sys.os_info().family == :WINDOWS:)
+    skip "only exercises the non-Windows stub backend"
+  assert_throws $UnsupportedError do
+    winscm.open access: :SC_MANAGER_CONNECT:
+
+#[test]
+def scm_crud_round_trips()
+  if (sys.os_info().family != :WINDOWS:)
+    skip "requires a real Windows SCM"
+
+  # Every service created below is unique to this run and cleaned up at the
+  # end, so this never touches persistent machine state beyond the scratch
+  # service's own lifetime.
+  let name = "dolang-vfs-winscm-ext-test-$(rand.string 8)"
+  let display_name = "dolang-vfs-winscm ext test $name"
+  let binary_path = "$(shell.env["SystemRoot"])\\System32\\cmd.exe /c exit 0"
+
+  # Block form: the manager handle auto-closes when this block returns,
+  # covering the trailing-block idiom's auto-close branch.
+  winscm.open access: [:SC_MANAGER_CREATE_SERVICE:, :SC_MANAGER_ENUMERATE_SERVICE:] do |manager|
+    let service = try
+      manager.create_service $name $display_name $binary_path
+        access: :SERVICE_ALL_ACCESS:
+        service_start_name: "LocalSystem"
+    catch PermissionDeniedError: _
+      skip "requires administrator privileges to create a service"
+
+    let status = service.query_status()
+    assert_type $winscm.Status $status
+    assert_eq $status.current_state :STOPPED:
+
+    # config() returns an immutable point-in-time snapshot; set_config only
+    # changes explicitly supplied keyword fields.
+    let config = service.config()
+    assert_type $winscm.ServiceConfig $config
+    assert_eq $config.display_name $display_name
+    assert_eq $config.start_type :DEMAND_START:
+    assert_eq $config.dependencies.len 0
+    let updated_display_name = "$display_name updated"
+    service.set_config
+      display_name: $updated_display_name
+      dependencies: []
+    let updated_config = service.config()
+    assert_eq $updated_config.display_name $updated_display_name
+    assert_eq $updated_config.binary_path $config.binary_path
+    assert_eq $config.display_name $display_name
+
+    # `control`/`wait_for_status_change` need the service to actually be
+    # running (a stopped service rejects every control code with
+    # ERROR_SERVICE_NOT_ACTIVE), and this dummy binary transitions too
+    # unreliably under test conditions to assert on — the reactor/wait
+    # machinery itself is already covered end-to-end by
+    # dolang-vfs-winscm's own Rust-level tests, so this only needs to
+    # prove `query_status`'s Status decoding, which it just did.
+
+    # Security descriptor round trip: fetch owner + DACL, then set the
+    # exact same descriptor back unmodified. `create_service` above
+    # requested SERVICE_ALL_ACCESS, which includes the READ_CONTROL/
+    # WRITE_DAC rights both calls need.
+    let descriptor = service.sec_desc()
+    assert_type $SecDesc $descriptor
+    service.set_sec_desc $descriptor
+
+    # The scratch service shows up in an enumeration.
+    let services = manager.enumerate_services()
+    let found = [...services].any(do |entry| (entry.name == name))
+    assert $found "scratch service $name missing from enumerate_services()"
+
+    service.delete()
+    service.close()
+
+  assert_throws $NotFoundError do
+    winscm.open access: :SC_MANAGER_CONNECT: do |manager|
+      manager.open_service $name

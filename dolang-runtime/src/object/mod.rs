@@ -9,6 +9,7 @@ pub(crate) mod class;
 pub(crate) mod dict;
 pub mod dict_view;
 pub(crate) mod error;
+pub mod flags;
 pub(crate) mod float;
 pub(crate) mod function;
 pub(crate) mod index;

@@ -22,7 +22,7 @@ On Unix, process spawning has two paths selected at runtime by
 - **Local path** (`run`): No container context. Creates a
   `tokio::process::Command` directly and spawns it on the host.
 - **Vfs path** (`run_container`): A container context is present in
-  strand-local state. Creates a `dolang_shell_vfs::CommandBuilder` via the
+  strand-local state. Creates a `dolang_vfs::CommandBuilder` via the
   VFS client and spawns the process inside the container.
 
 Both paths implement the same abstract `CommandBuilder` trait (program name,

@@ -2,7 +2,7 @@
 use std::os::fd::{BorrowedFd, IntoRawFd};
 #[cfg(windows)]
 use std::os::windows::io::{BorrowedHandle, IntoRawHandle};
-use std::{cell::RefCell, fmt, io, marker::PhantomData, ptr};
+use std::{cell::RefCell, fmt, marker::PhantomData, ptr};
 
 use ::serde::{
     Deserialize, Serialize,
@@ -23,8 +23,6 @@ use crate::{
 pub(crate) enum Error {
     #[error("postcard error: {0}")]
     Postcard(#[from] postcard::Error),
-    #[error("handle transport error: {0}")]
-    Io(#[from] io::Error),
     #[error("{0}")]
     Message(String),
 }
@@ -38,6 +36,19 @@ impl de::Error for Error {
     fn custom<T: fmt::Display>(msg: T) -> Self {
         Self::Message(msg.to_string())
     }
+}
+
+// postcard's `custom` error constructors discard the message and return a
+// fixed generic variant (`SerdeSerCustom`/`SerdeDeCustom`), so anything
+// converted through them is otherwise unrecoverable. Log it to stderr first
+// so it's not lost entirely.
+fn ser_custom<E: ser::Error>(err: impl fmt::Display) -> E {
+    eprintln!("dolang-rpc: serialization error: {err}");
+    E::custom(err)
+}
+fn de_custom<E: de::Error>(err: impl fmt::Display) -> E {
+    eprintln!("dolang-rpc: deserialization error: {err}");
+    E::custom(err)
 }
 
 pub(crate) fn to_extend<'frame, T, F>(
@@ -183,25 +194,17 @@ where
         if ptr::eq(name, OS_HANDLE_TYPE) {
             #[cfg(unix)]
             {
-                let raw = value
-                    .serialize(RawHandleSerializer)
-                    .map_err(ser::Error::custom)?;
+                let raw = value.serialize(RawHandleSerializer).map_err(ser_custom)?;
                 // SAFETY: the writer owns `value` until the frame's consuming
                 // `finish` future completes. The frame lifetime is therefore a
                 // valid extension of serde's erased raw descriptor borrow.
                 let fd = unsafe { BorrowedFd::borrow_raw(raw as i32) };
-                let index = self
-                    .frame
-                    .borrow_mut()
-                    .attach_fd(fd)
-                    .map_err(ser::Error::custom)?;
+                let index = self.frame.borrow_mut().attach_fd(fd).map_err(ser_custom)?;
                 return self.inner.serialize_u32(index);
             }
             #[cfg(windows)]
             {
-                let raw = value
-                    .serialize(RawHandleSerializer)
-                    .map_err(ser::Error::custom)?;
+                let raw = value.serialize(RawHandleSerializer).map_err(ser_custom)?;
                 // The serializer's value remains borrowed for this call. The
                 // Windows backend either copies the handle immediately or
                 // records only its process-local value.
@@ -210,7 +213,7 @@ where
                     .frame
                     .borrow_mut()
                     .attach_handle(handle)
-                    .map_err(ser::Error::custom)?;
+                    .map_err(ser_custom)?;
                 #[cfg(target_pointer_width = "32")]
                 return self.inner.serialize_u32(value as u32);
                 #[cfg(target_pointer_width = "64")]
@@ -605,7 +608,7 @@ struct VariantWrap<'a, A, H> {
 macro_rules! forward_de {
     ($($method:ident),* $(,)?) => {$(
         fn $method<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-            self.inner.$method(VisitorWrap { inner: visitor, handles: self.handles }).map_err(|e| Error::Message(e.to_string()))
+            self.inner.$method(VisitorWrap { inner: visitor, handles: self.handles })
         }
     )*};
 }
@@ -613,10 +616,9 @@ macro_rules! forward_de {
 impl<'de, D, H> de::Deserializer<'de> for Deserializer<'_, D, H>
 where
     D: de::Deserializer<'de>,
-    D::Error: fmt::Display,
     H: RecvFrame,
 {
-    type Error = Error;
+    type Error = D::Error;
     forward_de!(
         deserialize_any,
         deserialize_bool,
@@ -648,28 +650,25 @@ where
         self,
         name: &'static str,
         visitor: V,
-    ) -> Result<V::Value, Error> {
-        self.inner
-            .deserialize_unit_struct(
-                name,
-                VisitorWrap {
-                    inner: visitor,
-                    handles: self.handles,
-                },
-            )
-            .map_err(|e| Error::Message(e.to_string()))
+    ) -> Result<V::Value, D::Error> {
+        self.inner.deserialize_unit_struct(
+            name,
+            VisitorWrap {
+                inner: visitor,
+                handles: self.handles,
+            },
+        )
     }
     fn deserialize_newtype_struct<V: Visitor<'de>>(
         self,
         name: &'static str,
         visitor: V,
-    ) -> Result<V::Value, Error> {
+    ) -> Result<V::Value, D::Error> {
         if ptr::eq(name, OS_HANDLE_TYPE) {
             #[cfg(unix)]
             {
-                let index =
-                    u32::deserialize(self.inner).map_err(|e| Error::Message(e.to_string()))?;
-                let fd = self.handles.take_fd(index)?;
+                let index = u32::deserialize(self.inner)?;
+                let fd = self.handles.take_fd(index).map_err(de_custom)?;
                 // The private OsHandle visitor immediately adopts this raw fd.
                 // No other visitor can request the reserved newtype identity.
                 let raw = fd.into_raw_fd();
@@ -678,14 +677,10 @@ where
             #[cfg(windows)]
             {
                 #[cfg(target_pointer_width = "32")]
-                let value = u32::deserialize(self.inner)
-                    .map_err(|e| Error::Message(e.to_string()))?
-                    as usize;
+                let value = u32::deserialize(self.inner)? as usize;
                 #[cfg(target_pointer_width = "64")]
-                let value = u64::deserialize(self.inner)
-                    .map_err(|e| Error::Message(e.to_string()))?
-                    as usize;
-                let handle = self.handles.take_handle(value)?;
+                let value = u64::deserialize(self.inner)? as usize;
+                let handle = self.handles.take_handle(value).map_err(de_custom)?;
                 let raw = handle.into_raw_handle() as usize;
                 #[cfg(target_pointer_width = "32")]
                 return visitor.visit_newtype_struct((raw as u32).into_deserializer());
@@ -693,77 +688,71 @@ where
                 return visitor.visit_newtype_struct((raw as u64).into_deserializer());
             }
         }
-        self.inner
-            .deserialize_newtype_struct(
-                name,
-                VisitorWrap {
-                    inner: visitor,
-                    handles: self.handles,
-                },
-            )
-            .map_err(|e| Error::Message(e.to_string()))
+        self.inner.deserialize_newtype_struct(
+            name,
+            VisitorWrap {
+                inner: visitor,
+                handles: self.handles,
+            },
+        )
     }
-    fn deserialize_tuple<V: Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value, Error> {
-        self.inner
-            .deserialize_tuple(
-                len,
-                VisitorWrap {
-                    inner: visitor,
-                    handles: self.handles,
-                },
-            )
-            .map_err(|e| Error::Message(e.to_string()))
+    fn deserialize_tuple<V: Visitor<'de>>(
+        self,
+        len: usize,
+        visitor: V,
+    ) -> Result<V::Value, D::Error> {
+        self.inner.deserialize_tuple(
+            len,
+            VisitorWrap {
+                inner: visitor,
+                handles: self.handles,
+            },
+        )
     }
     fn deserialize_tuple_struct<V: Visitor<'de>>(
         self,
         name: &'static str,
         len: usize,
         visitor: V,
-    ) -> Result<V::Value, Error> {
-        self.inner
-            .deserialize_tuple_struct(
-                name,
-                len,
-                VisitorWrap {
-                    inner: visitor,
-                    handles: self.handles,
-                },
-            )
-            .map_err(|e| Error::Message(e.to_string()))
+    ) -> Result<V::Value, D::Error> {
+        self.inner.deserialize_tuple_struct(
+            name,
+            len,
+            VisitorWrap {
+                inner: visitor,
+                handles: self.handles,
+            },
+        )
     }
     fn deserialize_struct<V: Visitor<'de>>(
         self,
         name: &'static str,
         fields: &'static [&'static str],
         visitor: V,
-    ) -> Result<V::Value, Error> {
-        self.inner
-            .deserialize_struct(
-                name,
-                fields,
-                VisitorWrap {
-                    inner: visitor,
-                    handles: self.handles,
-                },
-            )
-            .map_err(|e| Error::Message(e.to_string()))
+    ) -> Result<V::Value, D::Error> {
+        self.inner.deserialize_struct(
+            name,
+            fields,
+            VisitorWrap {
+                inner: visitor,
+                handles: self.handles,
+            },
+        )
     }
     fn deserialize_enum<V: Visitor<'de>>(
         self,
         name: &'static str,
         variants: &'static [&'static str],
         visitor: V,
-    ) -> Result<V::Value, Error> {
-        self.inner
-            .deserialize_enum(
-                name,
-                variants,
-                VisitorWrap {
-                    inner: visitor,
-                    handles: self.handles,
-                },
-            )
-            .map_err(|e| Error::Message(e.to_string()))
+    ) -> Result<V::Value, D::Error> {
+        self.inner.deserialize_enum(
+            name,
+            variants,
+            VisitorWrap {
+                inner: visitor,
+                handles: self.handles,
+            },
+        )
     }
     fn is_human_readable(&self) -> bool {
         false
@@ -777,12 +766,10 @@ where
 {
     type Value = S::Value;
     fn deserialize<D: de::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
-        self.inner
-            .deserialize(Deserializer {
-                inner: d,
-                handles: self.handles,
-            })
-            .map_err(de::Error::custom)
+        self.inner.deserialize(Deserializer {
+            inner: d,
+            handles: self.handles,
+        })
     }
 }
 
@@ -832,47 +819,37 @@ impl<'de, V: Visitor<'de>, H: RecvFrame> Visitor<'de> for VisitorWrap<'_, V, H> 
         self.inner.visit_none()
     }
     fn visit_some<D: de::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
-        self.inner
-            .visit_some(Deserializer {
-                inner: d,
-                handles: self.handles,
-            })
-            .map_err(de::Error::custom)
+        self.inner.visit_some(Deserializer {
+            inner: d,
+            handles: self.handles,
+        })
     }
     fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
         self.inner.visit_unit()
     }
     fn visit_newtype_struct<D: de::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
-        self.inner
-            .visit_newtype_struct(Deserializer {
-                inner: d,
-                handles: self.handles,
-            })
-            .map_err(de::Error::custom)
+        self.inner.visit_newtype_struct(Deserializer {
+            inner: d,
+            handles: self.handles,
+        })
     }
     fn visit_seq<A: SeqAccess<'de>>(self, a: A) -> Result<Self::Value, A::Error> {
-        self.inner
-            .visit_seq(SeqWrap {
-                inner: a,
-                handles: self.handles,
-            })
-            .map_err(de::Error::custom)
+        self.inner.visit_seq(SeqWrap {
+            inner: a,
+            handles: self.handles,
+        })
     }
     fn visit_map<A: MapAccess<'de>>(self, a: A) -> Result<Self::Value, A::Error> {
-        self.inner
-            .visit_map(MapWrap {
-                inner: a,
-                handles: self.handles,
-            })
-            .map_err(de::Error::custom)
+        self.inner.visit_map(MapWrap {
+            inner: a,
+            handles: self.handles,
+        })
     }
     fn visit_enum<A: EnumAccess<'de>>(self, a: A) -> Result<Self::Value, A::Error> {
-        self.inner
-            .visit_enum(EnumWrap {
-                inner: a,
-                handles: self.handles,
-            })
-            .map_err(de::Error::custom)
+        self.inner.visit_enum(EnumWrap {
+            inner: a,
+            handles: self.handles,
+        })
     }
 }
 impl<'de, A: SeqAccess<'de>, H: RecvFrame> SeqAccess<'de> for SeqWrap<'_, A, H> {
@@ -973,6 +950,7 @@ mod tests {
     use ::serde::{Deserialize, Serialize};
     use bytes::BufMut;
     use nix::unistd::pipe;
+    use std::io;
     use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
     struct Frame<'a>(Vec<BorrowedFd<'a>>);
@@ -1086,6 +1064,7 @@ mod tests {
 
 #[cfg(all(test, windows))]
 mod windows_tests {
+    use std::io;
     use std::os::windows::io::{FromRawHandle, IntoRawHandle, OwnedHandle};
 
     use ::serde::{Deserialize, Serialize};
