@@ -108,10 +108,14 @@ nav:
       - api/fs/fs-metadata.md
       - api/fs/metadata.md
       - api/fs/path.md
-      - api/fs/stream-entry.md
-      - api/fs/unix-path.md
-      - api/fs/windows-path.md
       - api/fs/xattr-entry.md
+    - fs.unix:
+      - api/fs/unix/index.md
+      - api/fs/unix/path.md
+    - fs.windows:
+      - api/fs/windows/index.md
+      - api/fs/windows/path.md
+      - api/fs/windows/stream-entry.md
     - glob:
       - api/glob/index.md
       - api/glob/glob.md

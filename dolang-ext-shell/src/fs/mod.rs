@@ -1434,10 +1434,18 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .value("Metadata", global.types.metadata)
         .value("FsMetadata", global.types.fs_metadata)
         .value("XattrEntry", global.types.xattr_entry)
-        .value("StreamEntry", global.types.stream_entry)
         .value("DirEntry", global.types.dir_entry)
         .value("Path", global.types.path)
-        .value("UnixPath", global.types.unix_path)
-        .value("WindowsPath", global.types.windows_path)
+        .commit();
+
+    builder
+        .module("fs.unix")
+        .value("Path", global.types.unix_path)
+        .commit();
+
+    builder
+        .module("fs.windows")
+        .value("Path", global.types.windows_path)
+        .value("StreamEntry", global.types.stream_entry)
         .commit();
 }

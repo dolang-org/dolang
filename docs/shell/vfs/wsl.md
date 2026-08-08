@@ -59,9 +59,9 @@ wsl.with_windows do
 ## Directory and Environment Overrides
 
 Both functions accept `cd:` and `env:`. These describe the destination, so use
-an [`UnixPath`](../../api/fs/unix-path.md) when entering Linux and a
-[`WindowsPath`](../../api/fs/windows-path.md) when entering Windows if the path
-must be constructed before entering that context, or use ordinary strings.
+an [`fs.unix.Path`](../../api/fs/unix/path.md) when entering Linux and a
+[`fs.windows.Path`](../../api/fs/windows/path.md) when entering Windows if the
+path must be constructed before entering that context, or use ordinary strings.
 
 Environment keys may be strings or symbols. A `nil` value unsets the variable;
 `:INHERIT:` copies its current value before crossing the boundary.

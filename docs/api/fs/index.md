@@ -15,15 +15,19 @@ listed with [`streams`](#streams-path-resolve).
 
 ## Types
 
-| Type                           | Description                    |
-| ------------------------------ | ------------------------------ |
-| [Path](path.md)                | Supertype for filesystem paths |
-| [UnixPath](unix-path.md)       | Unix path object               |
-| [WindowsPath](windows-path.md) | Windows path object            |
-| [Metadata](metadata.md)        | Immutable filesystem metadata  |
-| [DirEntry](direntry.md)        | Directory entry object         |
-| [XattrEntry](xattr-entry.md)   | Extended attribute entry       |
-| [StreamEntry](stream-entry.md) | Alternate data stream entry    |
+| Type                         | Description                    |
+| ---------------------------- | ------------------------------ |
+| [Path](path.md)              | Supertype for filesystem paths |
+| [Metadata](metadata.md)      | Immutable filesystem metadata  |
+| [DirEntry](direntry.md)      | Directory entry object         |
+| [XattrEntry](xattr-entry.md) | Extended attribute entry       |
+
+## Modules
+
+| Module                             | Description              |
+| ---------------------------------- | ------------------------ |
+| [`fs.unix`](unix/index.md)         | Unix filesystem types    |
+| [`fs.windows`](windows/index.md)   | Windows filesystem types |
 
 ## Resolution modes
 
@@ -520,7 +524,7 @@ This is only supported on Windows.
 
 #### Returns
 
-`Iter` of [`StreamEntry`](stream-entry.md)
+`Iter` of [`fs.windows.StreamEntry`](windows/stream-entry.md)
 
 ```
 let path = Path data.txt

@@ -485,10 +485,10 @@ impl<'v> Object<'v> for Path {
 }
 
 macro_rules! impl_concrete_path {
-    ($path:ident, $name:literal, $style:expr) => {
+    ($path:ident, $module:literal, $style:expr) => {
         impl<'v> Object<'v> for $path {
-            const NAME: &'v str = $name;
-            const MODULE: &'v str = "fs";
+            const NAME: &'v str = "Path";
+            const MODULE: &'v str = $module;
             type Annex = PathAnnex<'v>;
             type Type = ();
             type TypeAnnex = ();
@@ -512,7 +512,7 @@ macro_rules! impl_concrete_path {
                 strand: &'a mut Strand<'v, 's>,
                 w: &mut dyn dolang::runtime::Format<'v>,
             ) -> Result<'v, 's, ()> {
-                fmt!(strand, w, "<{} {:?}>", $name, this.annex().display())
+                fmt!(strand, w, "<{}.Path {:?}>", $module, this.annex().display())
             }
 
             fn display<'a, 's>(
@@ -1307,5 +1307,5 @@ macro_rules! impl_concrete_path {
     };
 }
 
-impl_concrete_path!(UnixPath, "UnixPath", typed_path::PathType::Unix);
-impl_concrete_path!(WindowsPath, "WindowsPath", typed_path::PathType::Windows);
+impl_concrete_path!(UnixPath, "fs.unix", typed_path::PathType::Unix);
+impl_concrete_path!(WindowsPath, "fs.windows", typed_path::PathType::Windows);

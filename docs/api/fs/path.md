@@ -1,7 +1,7 @@
 # Path
 
-Abstract supertype of [`UnixPath`](unix-path.md) and
-[`WindowsPath`](windows-path.md).
+Abstract supertype of [`fs.unix.Path`](unix/path.md) and
+[`fs.windows.Path`](windows/path.md).
 
 ## Constructor
 
@@ -13,7 +13,8 @@ Abstract supertype of [`UnixPath`](unix-path.md) and
 | ------ | ----------------------------------------- | ----------- |
 | `path` | [`Str`](../std/str.md)\|[`Path`](path.md) | Path value  |
 
-**Returns:** [`UnixPath`](unix-path.md) or [`WindowsPath`](windows-path.md).
+**Returns:** [`fs.unix.Path`](unix/path.md) or
+[`fs.windows.Path`](windows/path.md).
 
 The returned path type is chosen according to the current VFS context.
 

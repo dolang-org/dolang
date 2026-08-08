@@ -313,7 +313,7 @@ This is only supported on Windows.
 
 #### Returns
 
-iterator of [`StreamEntry`](stream-entry.md)
+iterator of [`fs.windows.StreamEntry`](windows/stream-entry.md)
 
 ```
 let path = Path data.txt

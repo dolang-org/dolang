@@ -202,7 +202,7 @@ pub fn as_unix_path<'v, 's>(
     })
 }
 
-/// Construct a Do `fs.UnixPath` value.
+/// Construct a Do `fs.unix.Path` value.
 pub fn unix_path<'v, 's>(
     strand: &mut Strand<'v, 's>,
     path: impl AsRef<str>,

@@ -1,7 +1,7 @@
 # StreamEntry
 
 Alternate data stream entry returned by
-[`streams`](index.md).
+[`fs.streams`](../index.md#streams-path-resolve).
 
 This is only supported on Windows.
 
@@ -42,4 +42,4 @@ for stream = streams "data.txt"
 
 ### `/`
 
-`path / stream` returns the stream-qualified [`Path`](path.md) for that entry.
+`path / stream` returns the stream-qualified [`Path`](./path.md) for that entry.

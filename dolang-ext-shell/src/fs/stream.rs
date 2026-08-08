@@ -106,7 +106,7 @@ pub(crate) async fn path_list<'v, 's>(
 
 impl<'v> Object<'v> for StreamEntry {
     const NAME: &'v str = "StreamEntry";
-    const MODULE: &'v str = "fs";
+    const MODULE: &'v str = "fs.windows";
     type Annex = StreamEntryAnnex;
     type Type = ();
     type TypeAnnex = ();

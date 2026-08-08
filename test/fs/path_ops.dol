@@ -3,6 +3,7 @@ import sys agent
     - assert
     - assert_eq
     - assert_throws
+    - assert_type
     - skip
   std:
     - RuntimeError
@@ -13,6 +14,8 @@ import sys agent
     - remove
     - symlink
     - streams
+
+import fs.windows: windows_fs
 
 #[agent.test]
 def parent_field()
@@ -112,6 +115,7 @@ def alternate_data_stream_enumeration()
   let file_entry = nil
 
   for entry = streams $base
+    assert_type $windows_fs.StreamEntry $entry
     if (entry.name == "")
       assert_eq $entry.type "DATA"
       let path = (base / entry)

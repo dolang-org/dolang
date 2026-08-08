@@ -9,7 +9,7 @@ advances or leaves scope.
 
 ### `path`
 
-Entry path as a [`UnixPath`](../fs/unix-path.md).
+Entry path as an [`fs.unix.Path`](../fs/unix/path.md).
 
 ### `type`
 
@@ -46,7 +46,7 @@ Group name, or `nil` when absent.
 
 ### `link_name`
 
-Link target as a [`UnixPath`](../fs/unix-path.md), or `nil` when absent.
+Link target as an [`fs.unix.Path`](../fs/unix/path.md), or `nil` when absent.
 
 ### `device_major`
 

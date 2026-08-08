@@ -9,7 +9,7 @@ Entries are only available for archives opened in read mode, via
 
 ### `name`
 
-Entry name as a [`UnixPath`](../fs/unix-path.md).
+Entry name as an [`fs.unix.Path`](../fs/unix/path.md).
 
 ### `type`
 

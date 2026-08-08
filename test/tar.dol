@@ -1,6 +1,4 @@
 import agent tar
-  fs:
-    - UnixPath
   test:
     - assert
     - assert_eq
@@ -12,19 +10,21 @@ import agent tar
     - StateError
     - ValueError
 
+import fs.unix: unix_fs
+
 def write_archive path compression
   tar.write $path compression: $compression do |archive|
     assert_type $tar.Writer $archive
     assert_eq $archive.compression $compression
-    archive.entry (UnixPath "hello.txt") size: 11 mode: 0o640 uid: 12 gid: 34 do |entry|
+    archive.entry (unix_fs.Path "hello.txt") size: 11 mode: 0o640 uid: 12 gid: 34 do |entry|
       assert_type $tar.EntryWriter $entry
       entry.write hello-
       entry.put b"world"
     archive.entry empty size: 0 do |_|
       nil
     archive.create_dir folder mode: 0o755
-    archive.symlink (UnixPath "hello.txt") link
-    archive.hard_link (UnixPath "hello.txt") hardlink
+    archive.symlink (unix_fs.Path "hello.txt") link
+    archive.hard_link (unix_fs.Path "hello.txt") hardlink
 
 def check_archive path compression
   tar.read $path do |archive|
@@ -33,7 +33,7 @@ def check_archive path compression
 
     let first = archive.next()
     assert_type $tar.Entry $first
-    assert_type $UnixPath $first.path
+    assert_type $unix_fs.Path $first.path
     assert_eq [...first.path.components] ["hello.txt"]
     assert_eq $first.type :FILE:
     assert_eq $first.size 11
@@ -44,7 +44,7 @@ def check_archive path compression
     assert_eq ([...first]) [b"world"]
 
     let empty = archive.next()
-    assert_eq $empty.path (UnixPath "empty")
+    assert_eq $empty.path (unix_fs.Path "empty")
     assert_eq ([...empty]) []
 
     let folder = archive.next()
@@ -53,12 +53,12 @@ def check_archive path compression
 
     let link = archive.next()
     assert_eq $link.type :SYMLINK:
-    assert_type $UnixPath $link.link_name
+    assert_type $unix_fs.Path $link.link_name
     assert_eq [...link.link_name.components] ["hello.txt"]
 
     let hardlink = archive.next()
     assert_eq $hardlink.type :HARDLINK:
-    assert_type $UnixPath $hardlink.link_name
+    assert_type $unix_fs.Path $hardlink.link_name
     assert_eq [...hardlink.link_name.components] ["hello.txt"]
 
 #[agent.test]
@@ -89,7 +89,7 @@ def compression_is_inferred_from_extension()
       archive.entry item size: 2 do |entry| entry.write ok
     tar.read $path do |archive|
       assert_eq $archive.compression $compression
-      assert_eq $archive.next().path (UnixPath "item")
+      assert_eq $archive.next().path (unix_fs.Path "item")
 
   tar.write forced.tar.gz compression: :NONE: do |archive|
     assert_eq $archive.compression :NONE:
@@ -107,7 +107,7 @@ def advancing_invalidates_entry_and_skips_payload()
     let first = archive.next()
     assert_eq (first.read 1) b"a"
     let second = archive.next()
-    assert_eq $second.path (UnixPath "second")
+    assert_eq $second.path (unix_fs.Path "second")
     assert_eq (second.read 10) b"xyz"
     assert_throws $StateError do first.read 1
 
@@ -151,8 +151,8 @@ def errors_still_close_entry_and_archive_scopes()
         throw RuntimeError "entry failed"
     archive.entry valid size: 2 do |entry| entry.write ok
   tar.read entry-error.tar do |archive|
-    assert_eq $archive.next().path (UnixPath "failed")
-    assert_eq $archive.next().path (UnixPath "valid")
+    assert_eq $archive.next().path (unix_fs.Path "failed")
+    assert_eq $archive.next().path (unix_fs.Path "valid")
 
   assert_throws $RuntimeError do
     tar.write archive-error.tar.gz compression: :GZIP: do |archive|
@@ -160,4 +160,4 @@ def errors_still_close_entry_and_archive_scopes()
       throw RuntimeError "archive failed"
   tar.read archive-error.tar.gz do |archive|
     assert_eq $archive.compression :GZIP:
-    assert_eq $archive.next().path (UnixPath "complete")
+    assert_eq $archive.next().path (unix_fs.Path "complete")

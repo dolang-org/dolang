@@ -2,12 +2,13 @@ import proc sys sqlite systemd
   fs:
     - with_temp_dir
     - Path
-    - UnixPath
   test:
     - skip
     - assert
     - assert_eq
     - test
+
+import fs.unix: unix_fs
 
 if (sys.os_info().os != :LINUX:)
   skip "not supported on this system"
@@ -53,7 +54,7 @@ def read_ubuntu_release()
     TEST_DOLANG_CONTAINER_SET: "value"
     TEST_DOLANG_CONTAINER_UNSET: nil
   let release = runtime.with ubuntu:24.04 cd: /tmp env: $overrides do
-    assert_eq $cd() (UnixPath "/tmp")
+    assert_eq $cd() (unix_fs.Path "/tmp")
     assert_eq $env["TEST_DOLANG_CONTAINER_SET"] value
     assert_eq $env.get("TEST_DOLANG_CONTAINER_UNSET", default: nil) nil
     systemd.os_release()
@@ -94,7 +95,7 @@ def image_build_inspect_remove()
   let image_tag = "dolang-test-image-inspect-remove:latest"
   let overrides = {TEST_DOLANG_CONTAINER_BUILD: "value"}
   let build_step = do
-    assert_eq $cd() (UnixPath "/tmp")
+    assert_eq $cd() (unix_fs.Path "/tmp")
     assert_eq $env["TEST_DOLANG_CONTAINER_BUILD"] value
     run touch /test-marker
   # Build a minimal image
@@ -259,7 +260,7 @@ def container_inspect_lifecycle()
       TEST_DOLANG_CONTAINER_WITH_SET: value
       TEST_DOLANG_CONTAINER_WITH_UNSET: nil
     let result = ctr.with cd: /tmp env: $overrides do
-      assert_eq $cd() (UnixPath "/tmp")
+      assert_eq $cd() (unix_fs.Path "/tmp")
       assert_eq $env["TEST_DOLANG_CONTAINER_WITH_SET"] value
       assert_eq $env.get("TEST_DOLANG_CONTAINER_WITH_UNSET", default: nil) nil
       assert $Path("/etc/os-release").exists()

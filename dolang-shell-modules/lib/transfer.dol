@@ -1,7 +1,6 @@
 import digest fs http json proc progress security shell std sys tar zip
   fs:
     - Path
-    - UnixPath
     - with_temp_dir
   regex:
     - Regex
@@ -9,6 +8,8 @@ import digest fs http json proc progress security shell std sys tar zip
     - DateTime
   url:
     - Url
+
+import fs.unix: unix_fs
 
 let DIGESTS = $
   "blake3": $digest.Blake3
@@ -371,7 +372,7 @@ def compression_for format
     :NONE:
 
 def safe_components path label
-  path = UnixPath $path
+  path = unix_fs.Path $path
   if path.is_absolute
     throw std.ValueError "$label must be relative: $path"
   let parts = path.components
@@ -387,7 +388,7 @@ def prefix_components prefix
     safe_components $prefix "prefix"
 
 def archive_name path source prefix
-  UnixPath.join ...prefix 
+  unix_fs.Path.join ...prefix
     if (path == source)
       $path.name
     else
@@ -546,7 +547,7 @@ pub def pack source destination :format = nil :prefix = nil ...metadata
   nil
 
 def link_path path label
-  path = (UnixPath path)
+  path = (unix_fs.Path path)
   if path.is_absolute
     throw std.ValueError "$label must be relative: $path"
   if (path.components.len == 0)
@@ -576,12 +577,12 @@ def strip_count records strip
     throw std.ValueError "strip: expected a non-negative Int or :ROOT:"
 
 def record_path parts
-  let path = UnixPath.join ...parts
+  let path = unix_fs.Path.join ...parts
   str $path
 
 def resolve_link output_parts target
-  let output = UnixPath.join ...output_parts
-  UnixPath.join(output.parent, target).normalize()
+  let output = unix_fs.Path.join ...output_parts
+  unix_fs.Path.join(output.parent, target).normalize()
 
 def normalize_manifest records strip
   let count = (strip_count records strip)

@@ -161,7 +161,7 @@ fn unix_path_string<'v, 's>(
     } else {
         Err(Error::type_error(
             strand,
-            format!("{name} must be a Str or UnixPath"),
+            format!("{name} must be a Str or fs.unix.Path"),
         ))
     }
 }

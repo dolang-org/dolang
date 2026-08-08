@@ -74,8 +74,9 @@ therefore name a file on any compatible target, while a relative path also
 depends on that context's current working directory.
 
 Constructing `Path` from a string uses the current target's path style.
-`UnixPath` and `WindowsPath` select a style explicitly. Moving a `Path` between
-contexts does not retain access to its original target.
+[`fs.unix.Path`](../../api/fs/unix/path.md) and
+[`fs.windows.Path`](../../api/fs/windows/path.md) select a style explicitly.
+Moving a `Path` between contexts does not retain access to its original target.
 
 Open files and other handles behave differently. A handle is bound to the VFS
 context that created it, so operations on it continue to address that context
