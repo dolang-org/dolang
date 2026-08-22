@@ -1,3 +1,10 @@
+//! The calling side of a bound RPC session.
+//!
+//! [`Client::call`] sends a request and returns a [`Call`] future that
+//! resolves to the peer's response. Multiple calls may be outstanding
+//! concurrently on one [`Client`]; each is dispatched and matched to its
+//! response independently.
+
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     future::Future,
@@ -440,10 +447,7 @@ impl<P: Protocol> Inner<P> {
     }
 }
 
-/// A cloneable endpoint for sending requests on one RPC session.
-///
-/// Clones share request IDs, pending calls, and session lifetime. Calling
-/// [`close`](Self::close) on any clone closes the shared session.
+/// RPC client handle.
 pub struct Client<P: Protocol> {
     inner: Arc<Inner<P>>,
 }
@@ -523,11 +527,11 @@ impl<P: Protocol> Client<P> {
         Self { inner }
     }
 
-    /// Closes the shared session and waits for its background tasks to exit.
+    /// Closes the session.
     ///
     /// This prevents new calls from being sent and completes all pending calls
     /// with [`Error::ConnectionClosed`]. It affects every clone of this
-    /// client.
+    /// client handle.
     pub async fn close(self) {
         let tasks = self.inner.tasks.lock().unwrap().take();
         // Close the writer's channel first — see the comment on `outgoing`.
@@ -538,10 +542,7 @@ impl<P: Protocol> Client<P> {
         }
     }
 
-    /// Begins one request and returns a future for its response.
-    ///
-    /// Dropping the returned [`Call`] before it completes requests best-effort
-    /// cancellation from the peer.
+    /// Issue a call request.
     pub fn call(&self, request: P::Request) -> Call<P> {
         let ((id, rx, cancel_sent), ()) = self.begin(|id| {
             (
@@ -561,11 +562,11 @@ impl<P: Protocol> Client<P> {
         }
     }
 
-    /// Begins one request with a streaming raw-byte trailer.
+    /// Issue a call request with a byte trailer.
     ///
     /// Write the trailer through the returned [`TrailerSend`], then call
-    /// [`TrailerSend::finish`] (or asynchronously shut it down) to obtain the
-    /// [`Call`]. Dropping the sender without finishing aborts the trailer and
+    /// [`TrailerSend::finish`] to obtain the
+    /// [`Call`]. Dropping it sender without finishing aborts the trailer and
     /// cancels the partially sent request.
     pub fn call_with_trailer(&self, request: P::Request) -> TrailerSend<Call<P>> {
         let ((id, rx, cancel_sent), shared) = self.begin(|id| {
@@ -647,7 +648,7 @@ pub(crate) fn validate_peer_process(
     Ok(())
 }
 
-/// A completed call's response and its optional raw-byte trailer.
+/// A completed call's response and possible trailer.
 ///
 /// Use [`into_response`](Self::into_response) when the trailer is not needed,
 /// or [`into_response_trailer`](Self::into_response_trailer) to retain it —
@@ -662,20 +663,13 @@ pub struct CallResult<R> {
     charge: Option<PayloadCharge>,
 }
 
-/// A held share of the session payload quota, returned to the peer when
-/// dropped.
+/// A held share of the session payload quota.
 ///
 /// Obtained from [`CallResult::take_payload_credit`] by a caller that wants
 /// the quota released later than the `CallResult` it came from — typically
-/// because the deserialized response is being kept around after the
-/// `CallResult` has been decomposed. Holding one throttles the peer exactly
-/// as an unreleased call does, so drop it as soon as the response's memory
-/// is actually gone.
-///
-/// Holding it forever is not a hang; it is a permanent subtraction from the
-/// pool, which degrades throughput on the whole connection with no error
-/// anywhere. There is no way for either end to reclaim it short of closing
-/// the session.
+/// because the deserialized response is potentially large.  Holding it
+/// prevents it being returned to the server's pool, limited by
+/// [`Builder::max_outstanding_payload()`](crate::Builder::max_outstanding_payload())
 pub struct PayloadCredit(Option<PayloadCharge>);
 
 impl PayloadCredit {
@@ -687,16 +681,9 @@ impl PayloadCredit {
 }
 
 impl<R> CallResult<R> {
-    /// Takes charge of returning this call's payload quota.
+    /// Takes charge of releasing this call response's payload quota.
     ///
-    /// By default the quota goes back when this `CallResult` is decomposed or
-    /// dropped, which is right when the response is consumed there and then.
-    /// Take it out instead when the response's memory outlives that — the
-    /// returned token releases on *its* drop, so the peer's view of what this
-    /// end is holding matches reality.
-    ///
-    /// Calling this more than once yields a token that releases nothing; the
-    /// quota is released exactly once however the pieces are dropped.
+    /// Calling this more than once yields a token that releases nothing.
     pub fn take_payload_credit(&mut self) -> PayloadCredit {
         PayloadCredit(self.charge.take())
     }
@@ -713,16 +700,10 @@ impl<R> CallResult<R> {
 
     /// Decomposes into the response and its trailer in manual-credit mode.
     ///
-    /// The consumer then owes the peer an explicit
+    /// The consumer then owes the server an explicit
     /// [`TrailerRecv::release`](crate::trailer::TrailerRecv::release) for
-    /// every chunk it finishes with, instead of credit being returned on
-    /// read — worth it when the bytes are handed somewhere slower than this
-    /// process, so the peer's send rate follows the real drain rate. Read
-    /// [`release`](crate::trailer::TrailerRecv::release) first: manual mode
-    /// moves a deadlock rule into calling code.
-    ///
-    /// The mode is fixed here rather than switchable afterwards, so a
-    /// trailer cannot be half auto-credited and half not.
+    /// every chunk it finishes using, instead of credit being returned on
+    /// read.
     pub fn into_response_trailer_manual_credit(self) -> (R, Option<TrailerRecv>) {
         let mut trailer = self.trailer;
         if let Some(trailer) = trailer.as_mut() {
@@ -732,7 +713,7 @@ impl<R> CallResult<R> {
     }
 }
 
-/// An in-progress RPC request.
+/// An in-progress RPC call.
 ///
 /// Await this future to receive the response and its optional trailer, or an
 /// [`Error`]. Dropping it before completion sends best-effort cancellation to
@@ -747,7 +728,7 @@ pub struct Call<P: Protocol> {
 impl<P: Protocol> Call<P> {
     /// Requests best-effort cancellation and leaves the call awaitable.
     ///
-    /// This is idempotent. A response that races with cancellation may still
+    /// Idempotent. A call that races with cancellation may still
     /// complete successfully.
     pub fn cancel(&mut self) {
         if !self.cancel_sent {

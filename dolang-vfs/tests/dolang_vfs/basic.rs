@@ -1,5 +1,5 @@
 #![cfg(unix)]
-use dolang_rpc::AuthKey;
+use dolang_rpc::auth::AuthKey;
 use dolang_vfs::{
     Vfs,
     file::AccessFlags,

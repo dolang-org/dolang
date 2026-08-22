@@ -1,3 +1,8 @@
+//! Native operating-system handles attached directly to RPC messages.
+//!
+//! [`OsHandle`] transfers a file descriptor (Unix) or handle (Windows) as a message attachment. It
+//! requires a supported transport.
+
 use std::{cell::Cell, fmt, io};
 
 #[cfg(unix)]
@@ -62,14 +67,11 @@ pub(crate) trait TakeHandle {
     ) -> io::Result<crate::session::Inner>;
 }
 
-/// A native operating-system resource transferred as a frame attachment.
+/// A native operating system handle attachment.
 ///
-/// Serialize this type only over an attachment-capable session transport: the
-/// [`Builder`](crate::Builder) Unix-socket constructors on Unix or named-pipe
-/// constructors on Windows. Serializing it over a generic byte stream fails
-/// the call with an error; use session-scoped
-/// [`Gift`](crate::session::Gift) and [`Cite`](crate::session::Cite) handles
-/// for resources that must work over every transport.
+/// Only compatible with the [`Builder`](crate::Builder) Unix-socket constructors on Unix or
+/// named-pipe constructors on Windows. Serializing it over a generic byte stream fails the call
+/// with an error.
 pub struct OsHandle<T = DefaultHandle>(Cell<Option<T>>);
 
 impl<T> fmt::Debug for OsHandle<T> {
@@ -79,7 +81,7 @@ impl<T> fmt::Debug for OsHandle<T> {
 }
 
 impl<T> OsHandle<T> {
-    /// Wraps a native handle-like value for direct attachment serialization.
+    /// Wraps a native handle-like value for message attachment.
     pub fn new(value: T) -> Self {
         Self(Cell::new(Some(value)))
     }

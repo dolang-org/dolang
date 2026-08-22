@@ -895,8 +895,8 @@ async fn server_discarding_a_request_trailer_errors_the_writer_but_response_stil
                 // Simulate hitting an error partway through consuming the
                 // request trailer (e.g. a failed file write): stop wanting
                 // more of it, but still answer normally through the ordinary
-                // response.
-                trailer.discard();
+                // response. Dropping the handle notifies the peer at once.
+                drop(trailer);
                 context.respond(Response(value));
             })
             .await
@@ -944,8 +944,8 @@ async fn client_discarding_a_response_trailer_errors_the_servers_writer() {
     let mut trailer = trailer.unwrap();
     let mut prefix = [0u8; 4];
     trailer.read_exact(&mut prefix).await.unwrap();
-    // Stop wanting the rest of a still-streaming response trailer.
-    trailer.discard();
+    // Stop wanting the rest of a still-streaming response trailer. Dropping
+    // the handle notifies the peer at once.
     drop(trailer);
     // Give the server's writer time to observe the discard and fail.
     tokio::time::sleep(Duration::from_millis(50)).await;

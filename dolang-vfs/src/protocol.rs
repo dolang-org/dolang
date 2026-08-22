@@ -1,7 +1,8 @@
 use std::{any::Any, collections::HashMap, fmt, path::PathBuf};
 
 use dolang_rpc::{
-    AuthKey, Protocol,
+    Protocol,
+    auth::AuthKey,
     handle::OsHandle,
     session::{Cite, Gift},
 };

@@ -3612,7 +3612,7 @@ mod tests {
         let ((mut a_sender, mut a_receiver), (mut b_sender, mut b_receiver)) =
             duplex_endpoint_pair(4096);
         let limits = Limits::default();
-        let key = crate::AuthKey::new(TEST_KEY).unwrap();
+        let key = crate::auth::AuthKey::new(TEST_KEY).unwrap();
         let (a_result, b_result) = tokio::join!(
             negotiate(
                 &mut a_sender,
@@ -3638,8 +3638,8 @@ mod tests {
         let ((mut a_sender, mut a_receiver), (mut b_sender, mut b_receiver)) =
             duplex_endpoint_pair(4096);
         let limits = Limits::default();
-        let a_key = crate::AuthKey::new(TEST_KEY).unwrap();
-        let b_key = crate::AuthKey::new(b"an-entirely-different-key").unwrap();
+        let a_key = crate::auth::AuthKey::new(TEST_KEY).unwrap();
+        let b_key = crate::auth::AuthKey::new(b"an-entirely-different-key").unwrap();
         let (a_result, b_result) = tokio::join!(
             negotiate(
                 &mut a_sender,
@@ -3677,7 +3677,7 @@ mod tests {
         let ((mut a_sender, mut a_receiver), (mut b_sender, mut b_receiver)) =
             duplex_endpoint_pair(4096);
         let limits = Limits::default();
-        let key = crate::AuthKey::new(TEST_KEY).unwrap();
+        let key = crate::auth::AuthKey::new(TEST_KEY).unwrap();
         let (a_result, b_result) = tokio::join!(
             negotiate(
                 &mut a_sender,
@@ -3700,7 +3700,7 @@ mod tests {
 
     #[tokio::test]
     async fn negotiate_aborts_when_only_one_end_is_keyed() {
-        let key = crate::AuthKey::new(TEST_KEY).unwrap();
+        let key = crate::auth::AuthKey::new(TEST_KEY).unwrap();
 
         // Keyed client, unkeyed server: each side rejects independently, so a
         // configuration mistake cannot silently drop authentication.

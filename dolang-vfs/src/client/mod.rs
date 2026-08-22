@@ -21,7 +21,7 @@ struct OwnedHandle;
 
 use bytes::{Bytes, BytesMut};
 #[cfg(unix)]
-use dolang_rpc::AuthKey;
+use dolang_rpc::auth::AuthKey;
 use dolang_rpc::{
     client::Call,
     handle::{DefaultHandle, OsHandle},

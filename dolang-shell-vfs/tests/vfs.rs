@@ -917,7 +917,7 @@ mod login_env {
 mod accept_mode {
     use std::{os::unix::fs::PermissionsExt, path::Path, process::Stdio, time::Duration};
 
-    use dolang_rpc::AuthKey;
+    use dolang_rpc::auth::AuthKey;
     use dolang_vfs::Vfs;
     use tempfile::tempdir;
     use tokio::time::timeout;

@@ -8,7 +8,7 @@ use std::{path::Path, time::Duration};
 
 use bytes::{Buf, BytesMut};
 #[cfg(unix)]
-use dolang_rpc::AuthKey;
+use dolang_rpc::auth::AuthKey;
 use dolang_rpc::{
     handle::{DefaultHandle, OsHandle},
     server::CallContext,

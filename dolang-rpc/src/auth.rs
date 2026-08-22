@@ -1,25 +1,26 @@
-//! Optional pre-shared-key authentication for session negotiation.
+//! Optional shared secret authentication.
 //!
-//! A caller that supplies an [`AuthKey`] to [`Builder::key`](crate::Builder::key)
-//! makes negotiation prove, in both directions, that each peer knows the same
-//! secret. This exists for transports whose access control cannot identify the
-//! peer -- notably a Unix-domain socket that must be world-connectable because
-//! the connecting process's uid is not knowable in advance.
+//! Supplying [`AuthKey`] to [`Builder::key`](crate::Builder::key) performs mutual authentication
+//! during session negotiation.
 //!
-//! Each side advertises a digest derived from the key with a role-specific
-//! BLAKE3 key-derivation context, and checks the digest derived from the *other*
-//! role. Because the digests are one-way, an impostor that connects first and
-//! harvests the server's advertisement cannot derive the client's, and an
-//! impostor that binds the socket first cannot produce the server's. Both
-//! digests ride the existing symmetric negotiation exchange, so authentication
-//! costs no additional round trips.
+//! This is provided mainly for use with one-off Unix socket or Windows named pipe connections where
+//! controlling access to the endpoint or consistently discerning peer identity may be difficult,
+//! e.g. when crossing container boundaries with unknown or misconfigured identity mappings.
 //!
-//! What this does *not* provide: the exchange is a bearer proof with no nonce,
-//! so it is not replay-resistant, and the session that follows has neither
-//! integrity nor privacy protection. It is intended for one-off keys minted per
-//! launch and carried over a channel the peer cannot observe. The key is padded
-//! to a fixed width rather than salted or challenged, so it must carry
-//! sufficient entropy on its own.
+//! **This does not provide message integrity or privacy**; the protocol remains unencrypted and
+//! unsigned, so it must be used over a private channel such as a Unix socket, or tunneled over a
+//! protocol that provides privacy and integrity, like SSH or TLS.
+//!
+//! Authentication is a simple derived key exchange with no nonce, so **it is not
+//! replay-resistant**. It is intended for single-use keys minted per session and exchanged
+//! beforehand over a secure side channel. It must carry sufficient entropy on its own.
+//!
+//! Each side advertises a digest derived from the key with a role-specific BLAKE3 key-derivation
+//! context, and checks the digest derived from the *other* role. Because the digests are one-way,
+//! an impostor that connects first and harvests the server's advertisement cannot derive the
+//! client's, and an impostor that binds the socket first cannot produce the server's. Both digests
+//! ride the existing symmetric negotiation exchange, so authentication costs no additional round
+//! trips.
 
 use std::fmt;
 

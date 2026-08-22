@@ -4,7 +4,7 @@
 //!
 //! Define a [`Protocol`], negotiate a transport with [`Builder`], then bind
 //! the negotiated endpoint to that protocol. The client may issue concurrent
-//! calls; [`server::Server::serve`] dispatches concurrent request handlers.
+//! calls; [`Server::serve`](server::Server::serve) dispatches concurrent request handlers.
 //!
 //! ```no_run
 //! use dolang_rpc::{Builder, Protocol, server::CallContext};
@@ -65,7 +65,6 @@ mod window;
 use std::io;
 
 use ::serde::{Serialize, de::DeserializeOwned};
-pub use auth::AuthKey;
 pub use unbound::Builder;
 
 /// Configurable size and concurrency limits for a session. Not public — set
@@ -235,7 +234,7 @@ pub enum Error {
     /// A pre-shared key was rejected, missing, or unexpected.
     ///
     /// Covers both a locally supplied key that cannot be used (see
-    /// [`AuthKey::new`]) and a peer that failed the check during negotiation.
+    /// [`AuthKey::new`](crate::auth::AuthKey::new)) and a peer that failed the check during negotiation.
     /// The message never includes key material.
     #[error("authentication error: {0}")]
     Auth(String),

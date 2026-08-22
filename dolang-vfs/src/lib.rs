@@ -147,7 +147,7 @@ impl Vfs {
     #[cfg(unix)]
     pub async fn connect_with_key(
         path: impl AsRef<std::path::Path>,
-        key: Option<dolang_rpc::AuthKey>,
+        key: Option<dolang_rpc::auth::AuthKey>,
     ) -> error::Result<Self> {
         client::Client::connect_with_key(path, key)
             .await
@@ -180,7 +180,7 @@ impl Vfs {
     #[cfg(unix)]
     pub async fn from_owned_fd_with_key(
         value: std::os::fd::OwnedFd,
-        key: Option<dolang_rpc::AuthKey>,
+        key: Option<dolang_rpc::auth::AuthKey>,
     ) -> error::Result<Self> {
         client::Client::from_owned_fd_with_key(value, key)
             .await

@@ -1,42 +1,9 @@
-//! Session-scoped opaque resources.
+//! Session-scoped opaque handles.
 //!
-//! [`Gift`] and [`Cite`] are references to a resource retained by one endpoint
-//! of a session. Either can be redeemed only through that endpoint, and only
-//! while the resource remains registered. They are the same handle in different
-//! wire positions — see "Direction matters", which is the
-//! distinction the two types exist to make static.
-//!
-//! # Reference counting
-//!
-//! Opaques are counted at two independent levels, and conflating them is a
-//! bug:
-//!
-//! * The **protocol count** is per session table entry: how many references
-//!   the owner has handed the peer. The owner increments it when it serializes
-//!   a gift; the peer mirrors it when it deserializes one. Only a release
-//!   frame moves it down.
-//! * The **local handle count** is the `Arc` inside the handle itself: how
-//!   many live values in this process name the resource. Cloning a handle
-//!   grants the peer nothing, so it must not touch the protocol count — a
-//!   shared counter would inflate the eventual release by every local clone
-//!   and make the owner decrement more than it ever granted.
-//!
-//! Because the counts are plain totals rather than a handshake, a gift racing
-//! a release needs no generation number or echo. The owner goes 1 -> 2 -> 1
-//! while the peer goes 1 -> 0 -> 1, and both arrive at the same total whatever
-//! the interleaving.
-//!
-//! # Direction matters
-//!
-//! Serializing an opaque means one of two entirely different things depending
-//! on which side owns the resource:
-//!
-//! * A **gift** travels away from its owner (a response handing back a freshly
-//!   opened file). It grants the peer a reference, so it takes one.
-//! * A **citation** travels back toward its owner (`FileRead { file }`), which
-//!   is the hot path. It must have no protocol effect whatsoever. Citations
-//!   are safe unconditionally: the caller necessarily holds a reference for
-//!   the duration of the call it is citing the opaque in.
+//! [`Gift`] is an opaque resource given to a peer by handle, and [`Cite`]
+//! if a reference to such a resource.  This can be used to represent any
+//! sort of resource that does not pass between client and server directly,
+//! such as open files.  They are only valid for a particular RPC session.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[cfg(unix)]
@@ -225,41 +192,17 @@ impl Drop for RemoteRef {
 const CITE_OWNED: &str = "cannot cite a resource this endpoint owns; \
                           gift it again to name it to the peer";
 
-/// An opaque handle in a wire position that *grants* a reference: the sender
-/// owns the resource, and the receiver comes away holding one reference more
-/// than it did.
-///
-/// This is both what `Session::register` produces and what the receiving
-/// endpoint decodes a gift into, and those are not the same thing: the owner's
-/// `Gift` names a resource it owns, while the peer's names a mirror of one it
-/// does not. The type marks the wire position, not the holder's relationship
-/// to the resource — which is why naming one back to its owner has to go
-/// through [`Gift::cite`].
-///
-/// This is a reference, not the resource itself. It becomes invalid when its
-/// owner unregisters the resource or the session ends. Dropping the last
-/// `Gift` naming a resource the peer owns releases the endpoint's references
-/// to it automatically — no explicit protocol close is required to avoid
-/// leaking it.
-///
-/// Gifting one resource repeatedly is well-defined and is how an owner names
-/// an already-granted resource back to the peer — for a completion report, say.
-/// The peer's `receive` merges the arrival into the handle
-/// it already holds, so the reference it gets back compares equal to the one it
-/// has, and the accumulated total collapses into a single counted release.
+/// An opaque handle that is granted to the client.  The server
+/// owns the resource, and the client obtains a handle to it for
+/// subsequent use with [`Gift::cite`].
 pub struct Gift<M> {
     pub(crate) inner: Inner,
     marker: PhantomData<fn() -> M>,
 }
 
-/// An opaque handle in a wire position that *names* a reference the receiver
-/// has already granted: the receiver owns the resource and no reference
-/// changes hands.
+/// An reference to a previously-granted opaque handle.
 ///
-/// Produced only by [`Gift::cite`], and redeemed with `Session::acquire` by
-/// the endpoint that owns the resource. A citation cannot legitimately race the
-/// release of the reference it names — see `Session::cite` — so one the table
-/// cannot account for fails the decode rather than failing the call.
+/// Produced by [`Gift::cite`].
 pub struct Cite<M> {
     pub(crate) inner: Inner,
     marker: PhantomData<fn() -> M>,
@@ -282,13 +225,11 @@ impl<M> Gift<M> {
         }
     }
 
-    /// Names this resource back to the endpoint that owns it.
+    /// Creates a citation handle for sending back to the server.
     ///
     /// # Panics
     ///
-    /// If this endpoint is itself the owner. A citation says "the reference you
-    /// granted me", which is meaningless pointed at one's own table; gift the
-    /// resource again instead.
+    /// If used by the server on a handle it registered itself.
     pub fn cite(&self) -> Cite<M> {
         assert!(matches!(self.inner, Inner::Remote(_)), "{CITE_OWNED}");
         Cite {
@@ -367,10 +308,10 @@ impl<'de, M: 'static> Deserialize<'de> for Cite<M> {
     }
 }
 
-/// A retained, typed guard for a registered opaque resource.
+/// Smart pointer to a registered opaque resource.
 ///
-/// The resource remains alive until every guard is dropped, even if its owner
-/// unregisters it in the meantime.
+/// The resource remains valid until every guard is dropped, even if
+/// unregistered concurrently.
 pub struct OpaqueGuard<T>(Arc<T>);
 impl<T> std::ops::Deref for OpaqueGuard<T> {
     type Target = T;
@@ -379,7 +320,7 @@ impl<T> std::ops::Deref for OpaqueGuard<T> {
     }
 }
 
-/// A handle that is stale, belongs to another session, or has the wrong type.
+/// A stale opaque handle.
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 #[error("invalid opaque object")]
 pub struct InvalidOpaque;

@@ -1,3 +1,9 @@
+//! The handling side of a bound RPC session.
+//!
+//! [`Server::serve`] dispatches each incoming request to a handler
+//! concurrently with the others, passing it a [`CallContext`] used to send
+//! the response.
+
 #[cfg(windows)]
 use std::{any::TypeId, io, os::windows::io::OwnedHandle};
 use std::{
@@ -924,10 +930,8 @@ impl<P: Protocol> CallContext<P> {
     /// Takes this request's raw-byte trailer, if present.
     ///
     /// The returned value implements [`AsyncRead`](tokio::io::AsyncRead).
-    /// Dropping it or calling
-    /// [`TrailerRecv::discard`](crate::trailer::TrailerRecv::discard) stops
-    /// local consumption and immediately tells the peer to stop sending, as
-    /// does responding while the context still holds it.
+    /// Dropping it stops local consumption and immediately tells the peer to
+    /// stop sending, as does responding while the context still holds it.
     ///
     /// Taken rather than borrowed, so a handler may keep reading after it
     /// has responded. Paired with
@@ -1101,44 +1105,29 @@ impl<P: Protocol> CallContext<P> {
         }
     }
 
-    /// Registers a session-scoped resource and returns its serializable handle.
+    /// Register an opqaue handle.
     ///
-    /// The registration lives as long as some handle naming it does — in this
-    /// process or in the peer's mirror of it. Dropping the last one releases
-    /// the resource, so a handle that is registered and then never sent
-    /// (because the call failed, or was cancelled before responding) cleans
-    /// itself up rather than stranding the entry.
-    ///
-    /// Registering yields a [`Gift`], which is what a wire position that grants
-    /// the peer a reference holds. To name an already-granted resource back to
-    /// the peer without granting another reference, send the same `Gift` again:
-    /// the peer merges the arrival into the handle it holds, and the extra
-    /// references collapse into one counted release.
+    /// The underlying resource will be automatically dropped when both of
+    /// the following hold:
+    /// - It is no longer referenced by the client, or the server has unregistered it
+    /// - All oustanding [`OpaqueGuard`]s have been dropped
     ///
     /// # Panics
     ///
     /// If a different concrete type has already been registered under
-    /// `T::Marker` on this session. A marker is the only type information the
-    /// wire carries, so it must name exactly one resource type.
+    /// `T::Marker` on this session.
     pub fn register<T: OpaqueResource>(&self, value: T) -> Gift<T::Marker> {
         self.shared.session.register(value)
     }
 
-    /// Acquires a typed shared guard for a registered opaque resource.
-    ///
-    /// Takes a [`Cite`], because only a citation names a resource this endpoint
-    /// owns; a peer that puts a gift in a citation position is rejected during
-    /// decode instead of arriving here.
+    /// Acquires a guard an opaque handle citation.
     ///
     /// Returns [`InvalidOpaque`] if the resource was unregistered while the peer
-    /// still held a reference to it, which an ordinary race with
-    /// [`unregister`](Self::unregister) produces.
+    /// still held a reference to it.
     ///
     /// # Panics
     ///
-    /// If the handle was minted by a different session. Opaque ids are
-    /// session-scoped, so redeeming one elsewhere is a local logic error that
-    /// would otherwise resolve against an unrelated resource.
+    /// If the handle was minted by a different session.
     pub fn acquire<T: OpaqueResource>(
         &self,
         value: Cite<T::Marker>,
@@ -1146,22 +1135,17 @@ impl<P: Protocol> CallContext<P> {
         self.shared.session.acquire(value)
     }
 
-    /// Empties a typed opaque resource, returning it when no acquired guards
-    /// still share its ownership.
+    /// Unregisters an opaque handle
     ///
-    /// The registration itself outlives this call until the peer has released
-    /// its references, so a citation still in flight resolves to a revoked
-    /// handle rather than an unknown one.
+    /// If no outstanding [`OpaqueGuard`]s existed, the resource is returned
+    /// directly; otherwise, `None` is returned and the resource will be
+    /// dropped with the last `OpaqueGuard`.  In either case, subsequent
+    /// uses of [`Self::acquire`] will fail.  If the handle has already
+    /// been unregistered, returns [`InvalidOpaque`].
     ///
     /// # Panics
     ///
-    /// If the handle was minted by a different session, as with
-    /// [`acquire`](Self::acquire).
-    /// Takes a [`Cite`], as [`acquire`](Self::acquire) does: a resource is
-    /// closed because the peer named it and asked, so what arrives here is the
-    /// citation that named it. An owner closing a resource of its own accord
-    /// has no need of this — dropping its last handle retires the registration
-    /// once the peer has released its references.
+    /// If the handle was minted by a different session.
     pub fn unregister<T: OpaqueResource>(
         &self,
         value: Cite<T::Marker>,
@@ -1169,13 +1153,11 @@ impl<P: Protocol> CallContext<P> {
         self.shared.session.unregister::<T>(value)
     }
 
-    /// Empties a typed opaque resource unless acquired guards
-    /// still share its ownership.
+    /// Unregisters an opaque handle if not busy
     ///
-    /// The recoverable counterpart of [`unregister`](Self::unregister): on the
-    /// busy path the resource stays registered and the peer's handle keeps
-    /// working, so a handler can report the operation busy and let the peer
-    /// retry.
+    /// The recoverable counterpart of [`unregister`](Self::unregister): if
+    /// outstanding [`OpaqueGuard`]s exist, the handle is not unregistered,
+    /// which is signaled by a `None` return value.
     ///
     /// # Panics
     ///

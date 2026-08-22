@@ -1,4 +1,4 @@
-//! Streaming RPC trailer bodies and their lifetime-erased transport leases.
+//! Streaming request or response byte trailers.
 
 use std::{
     io::{self, IoSlice},
@@ -506,13 +506,11 @@ impl Drop for SendLease<'_> {
     }
 }
 
-/// A streaming request or response trailer.
+/// Trailer send handle.
 ///
-/// This type implements [`AsyncWrite`]. Call
-/// [`finish`](Self::finish), or asynchronously shut down the writer, to
-/// commit the trailer; dropping it first aborts the trailer. `finish` returns
-/// the value wrapped by the operation that created it, such as a
-/// [`Call`](crate::client::Call).
+/// Call [`finish`](Self::finish) when done sending data;
+/// dropping it first aborts the trailer. `finish` returns
+/// an associated operation handle, such as a [`Call`](crate::client::Call).
 pub struct TrailerSend<T> {
     shared: Arc<Mutex<SendShared>>,
     completion: Option<T>,
@@ -526,7 +524,7 @@ impl<T> TrailerSend<T> {
         }
     }
 
-    /// Commits the trailer and returns the operation completed by it.
+    /// Commits the trailer and returns the associated handle.
     ///
     /// This does not wait for buffered trailer bytes to reach the peer. Use
     /// [`AsyncWriteExt::shutdown`](tokio::io::AsyncWriteExt::shutdown) first
@@ -1240,34 +1238,7 @@ impl Drop for RecvLease<'_> {
     }
 }
 
-/// A streaming request or response trailer.
-///
-/// This type implements [`AsyncRead`]. End of file
-/// means the peer finished the trailer.
-///
-/// Dropping or [`discard`](TrailerRecv::discard)ing a `TrailerRecv` before
-/// reading it to completion tells the peer to stop immediately, so a sender
-/// blocked waiting for credit fails promptly instead of waiting on a
-/// consumer that will never return any.
-///
-/// # Flow control
-///
-/// Trailers share one session-wide credit pool: across every trailer on the
-/// connection, the peer may have at most `trailer_session_window` bytes
-/// outstanding that this end has not yet *retired*. By default every byte
-/// read is retired automatically, which is what every ordinary consumer —
-/// [`read_to_end`], [`io::copy`], and friends — wants, and needs no
-/// participation at all.
-///
-/// A consumer that hands the bytes somewhere slow (a file, another socket)
-/// can do better by obtaining the trailer in manual-credit mode and calling
-/// [`release`](Self::release) once each chunk has actually landed. Credit
-/// then bounds this end's real memory rather than just its receive buffer,
-/// and the peer's send rate becomes governed by the destination's drain rate
-/// instead of by this end's willingness to buffer.
-///
-/// [`read_to_end`]: tokio::io::AsyncReadExt::read_to_end
-/// [`io::copy`]: tokio::io::copy
+/// Trailer receive handle.
 pub struct TrailerRecv {
     pub(crate) shared: Arc<Mutex<RecvShared>>,
 }
@@ -1275,13 +1246,6 @@ pub struct TrailerRecv {
 impl TrailerRecv {
     pub(crate) fn new(shared: Arc<Mutex<RecvShared>>) -> Self {
         Self { shared }
-    }
-
-    /// Stops waiting for any more of this trailer's bytes. Idempotent, and
-    /// safe to call even if the trailer has already finished or failed:
-    /// either outcome stands, and a subsequent read still observes it.
-    pub fn discard(&mut self) {
-        RecvShared::discard(&self.shared);
     }
 
     /// Switches this trailer to manual credit release, before it is handed
@@ -1300,33 +1264,17 @@ impl TrailerRecv {
         inner.auto_release = false;
     }
 
-    /// Returns `n` bytes of credit to the peer, after this end is done with
-    /// them.
+    /// Returns `n` bytes of credit to the peer.
     ///
     /// Only meaningful on a trailer obtained in manual-credit mode — via
     /// [`CallContext::trailer_manual_credit`] or
-    /// [`CallResult::into_response_trailer_manual_credit`]. Credit is
-    /// coalesced, so this is cheap to call per chunk; it does not put a
-    /// fragment on the wire every time.
+    /// [`CallResult::into_response_trailer_manual_credit`].
     ///
     /// # Deadlocks
     ///
-    /// Manual release moves one standard credit-scheme hazard into calling
-    /// code: **never wait to accumulate more credit than the pool holds
-    /// before releasing.** A consumer that tries to read
-    /// `trailer_session_window + 1` bytes before releasing any deadlocks
-    /// against itself, because the peer is parked with no credit left to
-    /// send the byte the consumer is waiting for. Release each chunk as it
-    /// is retired, rather than batching.
-    ///
-    /// Because the pool is session-wide and the protocol imposes no
-    /// per-trailer subdivision, a consumer that stalls indefinitely holds
-    /// whatever share of it the peer chose to spend here — up to all of it —
-    /// and can stall the peer's other trailers as well as this one. That is
-    /// a deliberate trade: dividing the pool per trailer is left to the
-    /// sending end as a local scheduling choice, and any division it picks
-    /// is safe, because credit is flushed whenever this end's consumer is
-    /// found waiting rather than only at the coalescing threshold.
+    /// Never attempt to receive multiple chunks or a fixed amount of data
+    /// (e.g. via [`AsyncReadExt::read_exact`](::tokio::io::AsyncReadExt::read_exact))
+    /// between credit releases, or a deadlock may result.
     ///
     /// # Panics
     ///
@@ -2350,7 +2298,7 @@ mod tests {
         lock(&shared).stage.extend_from_slice(b"abcdefgh");
 
         let mut trailer = TrailerRecv::new(shared.clone());
-        trailer.discard();
+        RecvShared::discard(&shared);
         assert_eq!(session.available(), 64, "the debt is returned in full");
 
         // The staged tail is still readable, and must cost the pool nothing.
@@ -2368,8 +2316,8 @@ mod tests {
     #[test]
     fn dropping_a_trailer_discards_eagerly_exactly_once() {
         let (shared, sink) = recv_shared(unbounded_limits());
-        let mut trailer = TrailerRecv::new(shared.clone());
-        trailer.discard();
+        let trailer = TrailerRecv::new(shared.clone());
+        RecvShared::discard(&shared);
         assert_eq!(&*lock(&sink.discards), &[7]);
         drop(trailer);
         assert_eq!(&*lock(&sink.discards), &[7], "idempotent");

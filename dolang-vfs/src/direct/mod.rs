@@ -1567,7 +1567,7 @@ impl Direct {
         #[cfg(unix)]
         {
             let key = key
-                .map(dolang_rpc::AuthKey::new)
+                .map(dolang_rpc::auth::AuthKey::new)
                 .transpose()
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
             Ok(Vfs::from_client(

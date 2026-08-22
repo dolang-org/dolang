@@ -32,7 +32,11 @@ struct NamedPipeClient;
 struct NamedPipeServer;
 
 use crate::{
-    AuthKey, Error, Limits, Protocol, auth::Auth, client::Client, fragment, server::Server,
+    Error, Limits, Protocol,
+    auth::{Auth, AuthKey},
+    client::Client,
+    fragment,
+    server::Server,
     transport,
 };
 
@@ -560,7 +564,6 @@ async fn negotiate_server(
     })
 }
 
-/// Implementation of [`crate::client::Unbound`].
 pub struct UnboundClient {
     sender: transport::AnySender,
     receiver: transport::AnyReceiver,
@@ -571,15 +574,12 @@ pub struct UnboundClient {
 }
 
 impl UnboundClient {
-    /// The negotiated application-protocol name.
+    /// The negotiated application protocol name.
     pub fn name(&self) -> &str {
         &self.app_protocol.0
     }
 
-    /// The negotiated application-protocol version. This is the
-    /// application protocol's own version, not the underlying RPC framing
-    /// version — the latter is an implementation detail of `dolang-rpc`
-    /// uninteresting to callers choosing a `P` to bind to.
+    /// The negotiated application protocol version.
     pub fn version(&self) -> u16 {
         self.app_protocol.1
     }
@@ -587,7 +587,7 @@ impl UnboundClient {
     /// Consumes this endpoint and binds it to a concrete protocol type.
     ///
     /// The caller is responsible for choosing a `P` compatible with the
-    /// negotiated application-protocol name and version.
+    /// negotiated application protocol name and version.
     pub fn bind<P: Protocol>(self) -> Client<P> {
         Client::from_transport(
             self.sender,
@@ -599,7 +599,6 @@ impl UnboundClient {
     }
 }
 
-/// Implementation of [`crate::server::Unbound`].
 pub struct UnboundServer {
     sender: transport::AnySender,
     receiver: transport::AnyReceiver,
@@ -608,15 +607,12 @@ pub struct UnboundServer {
 }
 
 impl UnboundServer {
-    /// The negotiated application-protocol name.
+    /// The negotiated application protocol name.
     pub fn name(&self) -> &str {
         &self.app_protocol.0
     }
 
-    /// The negotiated application-protocol version. This is the
-    /// application protocol's own version, not the underlying RPC framing
-    /// version — the latter is an implementation detail of `dolang-rpc`
-    /// uninteresting to callers choosing a `P` to bind to.
+    /// The negotiated application protocol version.
     pub fn version(&self) -> u16 {
         self.app_protocol.1
     }

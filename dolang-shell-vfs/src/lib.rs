@@ -473,7 +473,7 @@ async fn unix_interrupt_signal() -> io::Result<()> {
 /// goes on to spawn. What is read here is consumed, and afterwards there is
 /// nothing left to recover.
 #[cfg(unix)]
-fn read_key_from_stdin() -> io::Result<dolang_rpc::AuthKey> {
+fn read_key_from_stdin() -> io::Result<dolang_rpc::auth::AuthKey> {
     use std::io::Read;
 
     let mut stdin = io::stdin().lock();
@@ -485,7 +485,7 @@ fn read_key_from_stdin() -> io::Result<dolang_rpc::AuthKey> {
     stdin
         .read_exact(&mut key)
         .map_err(|error| io::Error::other(format!("--key-stdin: reading key: {error}")))?;
-    dolang_rpc::AuthKey::new(&key)
+    dolang_rpc::auth::AuthKey::new(&key)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
 }
 
@@ -499,7 +499,7 @@ fn read_key_from_stdin() -> io::Result<dolang_rpc::AuthKey> {
 async fn bind_socket(
     path: &Path,
     parent: &Path,
-    key: Option<dolang_rpc::AuthKey>,
+    key: Option<dolang_rpc::auth::AuthKey>,
 ) -> Result<Server, io::Error> {
     let mode = tokio::fs::metadata(&parent).await?.permissions().mode() & 0o777;
 
@@ -528,7 +528,7 @@ fn socket_parent(socket_path: &Path) -> Result<&Path, io::Error> {
 #[cfg(unix)]
 async fn create_server(
     socket_path: &Path,
-    key: Option<dolang_rpc::AuthKey>,
+    key: Option<dolang_rpc::auth::AuthKey>,
 ) -> Result<Server, io::Error> {
     let parent = socket_parent(socket_path)?;
     let tmp_path = socket_path.with_added_extension("incomplete");
@@ -579,7 +579,7 @@ async fn accept_loop(server: Server, print_ready: bool) -> Result<(), io::Error>
 /// Returns `Ok(())` on successful socket bind and server start.
 /// Returns an error if the socket cannot be bound.
 #[cfg(unix)]
-fn foreground(socket_path: &Path, key: Option<dolang_rpc::AuthKey>) -> io::Result<()> {
+fn foreground(socket_path: &Path, key: Option<dolang_rpc::auth::AuthKey>) -> io::Result<()> {
     // Single-threaded: every used configuration serves a single client, and
     // a multi-thread runtime measurably hurts single-stream pipe throughput
     // (see dolang-rpc's benches/pipe_trailer.rs and benches/pipe_raw.rs).
@@ -609,7 +609,7 @@ fn foreground(socket_path: &Path, key: Option<dolang_rpc::AuthKey>) -> io::Resul
 /// `READY` line -- printed after the mode is widened -- is a better signal
 /// than the path's existence ever was.
 #[cfg(unix)]
-fn accept_one(socket_path: &Path, key: Option<dolang_rpc::AuthKey>) -> io::Result<()> {
+fn accept_one(socket_path: &Path, key: Option<dolang_rpc::auth::AuthKey>) -> io::Result<()> {
     let rt = Builder::new_current_thread().enable_all().build()?;
 
     Ok(rt.block_on(async move {
