@@ -1,17 +1,14 @@
-import proc sys
+import proc sys uuid
   testlib.vfs:
     - vfs
+  testlib.polyfill:
+    - grep
   test:
     - assert
     - assert_eq
     - assert_type
     - assert_throws
     - test
-  fs:
-    - copy
-    - with_temp_dir
-  shell:
-    - exe
   strand:
     - spawn
     - pipeline
@@ -31,93 +28,55 @@ let is_windows = (sys.os_info().family == :WINDOWS:)
 # something that isn't there fails rather than succeeding against nothing.
 let absent_pid = 2147483640
 
-# Normalizes an image path for comparison.
-#
-# Windows paths are compared case-insensitively because the case a process
-# reports is the case it was launched with, not the case on disk.
-def image_key path
-  let key = str(path)
-  if is_windows
-    key.lower()
-  else
-    key
-
-# Returns the PIDs of every process running the image at `path`.
-def pids_running path
-  let wanted = image_key $path
+# Returns the PIDs of every process whose command line carries `nonce`.
+def pids_carrying nonce
   let pids = []
   for info = proc.enumerate()
-    let image = info.exe
-    if (image != nil && image_key(image) == wanted)
+    let cmdline = info.cmdline
+    if (cmdline != nil && cmdline.contains(nonce))
       pids.push $info.pid
   pids
 
-# The polyfill's file name, which carries an extension on Windows.
-def polyfill_name()
-  if is_windows
-    "dolang-private-polyfill.exe"
-  else
-    "dolang-private-polyfill"
-
-# Starts a long-lived process on the target and returns the strand running it
-# together with its PID.
+# Starts a long-lived process on the target and returns the strand running it,
+# its PID, and the nonce that identifies it.
 #
-# The marker is a private copy of the test polyfill under a name nothing else
-# uses, so it can be found by image path alone. That indirection is what makes
-# this portable: a process cannot be asked for its own PID from Do, and the
-# shell tricks that work around that (`echo $$`) have no cmd.exe equivalent
-# that behaves the same under Wine.
+# The process is the test polyfill's `grep` blocked on a pipe nothing ever
+# writes to, marked by a nonce passed as its pattern. Identifying it by an
+# argument rather than by its image is what makes this portable: the polyfill
+# is whatever the platform actually provides, so neither its path nor its name
+# is something a test can predict.
 #
 # Finding it through `enumerate` is not incidental — it is the only way to
-# learn the PID here, so every later test starts from a record this API
-# produced.
-def start_marked_process dir
-  let marker = (dir / "marked")
-  if is_windows
-    marker = marker.add_ext "exe"
-  copy (exe.parent / polyfill_name()) $marker
-  # Every platform reports a *resolved* image path, so the path being compared
-  # against has to be resolved too. On macOS the temporary directory lives
-  # under `/var/folders`, and `/var` is a symlink to `private/var`, so an
-  # unresolved marker path matches nothing.
-  marker = marker.canonical()
+# learn the PID here, since a process cannot be asked for its own PID from Do,
+# and the shell tricks that work around that (`echo $$`) have no cmd.exe
+# equivalent that behaves the same under Wine. Every later test starts from a
+# record this API produced.
+def start_marked_process()
+  let nonce = "dolang-proc-marker-$(uuid.Uuid.generate().hex)"
 
+  # The first stage writes nothing and does not return, so the pipe stays open
+  # and `grep` sits in a read that only termination ends.
   let worker = spawn do pipeline
-    do run $marker sleep 60
+    do sleep 60
+    do grep $nonce
     do collect()
 
   let pid = nil
   let attempts = 0
   while (pid == nil && attempts < 500)
-    let running = pids_running $marker
+    let running = pids_carrying $nonce
     if (running.len > 0)
       pid = running[0]
     else if worker.done
-      # It exited instead of sleeping. Joining re-raises whatever went wrong,
+      # It exited instead of blocking. Joining re-raises whatever went wrong,
       # which beats reporting it as a process that never showed up.
       worker.join()
       break
     else
       sleep 0.02
       attempts = (attempts + 1)
-  assert (pid != nil) "marked process never appeared: $(marker_diagnosis marker)"
-  [worker, pid]
-
-# Explains a marker that could not be found, for an assertion message.
-#
-# A process whose image has the right name but the wrong path means the two
-# sides disagree about path normalization rather than that the process is
-# missing — the difference is worth naming, since it is invisible otherwise.
-def marker_diagnosis marker
-  let near = []
-  for info = proc.enumerate()
-    let image = info.exe
-    if (image != nil && image.name == marker.name)
-      near.push (str image)
-  if (near.len > 0)
-    "looked for $marker, but the table has $near"
-  else
-    "looked for $marker, and no process runs an image by that name"
+  assert (pid != nil) "marked process never appeared: no process carries $nonce"
+  [worker, pid, nonce]
 
 # Stops the strand running a marked process, whatever state it ended in.
 def stop_marked_process worker
@@ -145,105 +104,102 @@ def enumerate_yields_process_records()
 #[test]
 #[vfs]
 def open_a_process_by_pid_and_terminate_it()
-  with_temp_dir do |dir|
-    let worker pid = start_marked_process $dir
-    try
-      let p = proc.open $pid
-      assert_type $proc.Proc $p
-      assert_eq $p.pid $pid
+  let worker pid nonce = start_marked_process()
+  try
+    let p = proc.open $pid
+    assert_type $proc.Proc $p
+    assert_eq $p.pid $pid
 
-      let info = p.info()
-      assert_eq $info.pid $pid
+    let info = p.info()
+    assert_eq $info.pid $pid
 
-      # A handle opened by PID has no snapshot to inherit a parent from, so
-      # every target has to read one from the process itself.
-      assert (info.parent_pid != nil)
+    # A handle opened by PID has no snapshot to inherit a parent from, so
+    # every target has to read one from the process itself.
+    assert (info.parent_pid != nil)
 
-      # The split command line is portable, including on Windows, where it is
-      # reconstructed from the one string the kernel keeps.
-      assert (info.cmdline != nil)
-      assert_eq $info.cmdline[1] sleep
-      assert_eq $info.cmdline[2] "60"
+    # The split command line is portable, including on Windows, where it is
+    # reconstructed from the one string the kernel keeps.
+    assert (info.cmdline != nil)
+    assert (info.cmdline.contains(nonce))
 
-      assert (info.cwd != nil)
+    assert (info.cwd != nil)
 
-      # The platform-specific fields exist only on the platform they describe:
-      # reading the wrong one is a FieldError, not nil.
-      if is_windows
-        assert_throws $FieldError do info.unix_id
-        assert (info.token_info != nil)
-        assert (info.token_info.user_sid != nil)
-        assert (info.cmdline_win.contains "sleep 60")
-      else
-        assert_throws $FieldError do info.token_info
-        assert_throws $FieldError do info.cmdline_win
-        assert (info.unix_id != nil)
-        assert (info.unix_id.uid >= 0)
+    # The platform-specific fields exist only on the platform they describe:
+    # reading the wrong one is a FieldError, not nil.
+    if is_windows
+      assert_throws $FieldError do info.unix_id
+      assert (info.token_info != nil)
+      assert (info.token_info.user_sid != nil)
+      assert (info.cmdline_win.contains(nonce))
+    else
+      assert_throws $FieldError do info.token_info
+      assert_throws $FieldError do info.cmdline_win
+      assert (info.unix_id != nil)
+      assert (info.unix_id.uid >= 0)
 
-      # Still running, so there is no status yet.
-      assert_eq $info.status nil
+    # Still running, so there is no status yet.
+    assert_eq $info.status nil
 
-      p.terminate()
-      let status = p.wait()
-      assert_type $proc.Status $status
-      if is_windows
-        # `TerminateProcess` sets the exit code it was given.
-        assert_eq $status.code 1
-      else
-        # A non-parent cannot reap on Unix, so only the fact of exit is known.
-        assert_eq $status.code nil
+    p.terminate()
+    let status = p.wait()
+    assert_type $proc.Status $status
+    if is_windows
+      # `TerminateProcess` sets the exit code it was given.
+      assert_eq $status.code 1
+    else
+      # A non-parent cannot reap on Unix, so only the fact of exit is known.
+      assert_eq $status.code nil
 
-      if is_windows
-        # The handle keeps an exited process addressable, so it can still be
-        # described — as gone, with everything read out of its address space
-        # now absent.
-        let after = p.info()
-        assert_eq $after.status.code 1
-        # A zombie is not reliably still there on Unix, since the strand
-        # running the process reaps it, so there is no peer assertion.
+    if is_windows
+      # The handle keeps an exited process addressable, so it can still be
+      # described — as gone, with everything read out of its address space
+      # now absent.
+      let after = p.info()
+      assert_eq $after.status.code 1
+      # A zombie is not reliably still there on Unix, since the strand
+      # running the process reaps it, so there is no peer assertion.
 
-      p.close()
-      # Closing twice is a no-op; using a closed handle is not.
-      p.close()
-      assert_throws $StateError do p.info()
-    finally
-      stop_marked_process $worker
+    p.close()
+    # Closing twice is a no-op; using a closed handle is not.
+    p.close()
+    assert_throws $StateError do p.info()
+  finally
+    stop_marked_process $worker
 
 #[test]
 #[vfs]
 def describe_a_process_by_pid_without_opening_it()
-  with_temp_dir do |dir|
-    let worker pid = start_marked_process $dir
-    try
-      let info = proc.info $pid
-      assert_type $proc.Info $info
-      assert_eq $info.pid $pid
-      assert (info.parent_pid != nil)
-      assert_eq $info.cmdline[1] sleep
-      assert_eq $info.status nil
+  let worker pid nonce = start_marked_process()
+  try
+    let info = proc.info $pid
+    assert_type $proc.Info $info
+    assert_eq $info.pid $pid
+    assert (info.parent_pid != nil)
+    assert (info.cmdline.contains(nonce))
+    assert_eq $info.status nil
 
-      # The record is the one enumeration would have produced for the same
-      # process, reached without walking the table to get to it.
-      let listed = nil
-      for entry = proc.enumerate()
-        if (entry.pid == pid)
-          listed = entry
-          break
-      assert (listed != nil)
-      assert_eq $info.name $listed.name
-      assert_eq (str info.exe) (str listed.exe)
-      assert_eq $info.cmdline $listed.cmdline
+    # The record is the one enumeration would have produced for the same
+    # process, reached without walking the table to get to it.
+    let listed = nil
+    for entry = proc.enumerate()
+      if (entry.pid == pid)
+        listed = entry
+        break
+    assert (listed != nil)
+    assert_eq $info.name $listed.name
+    assert_eq (str info.exe) (str listed.exe)
+    assert_eq $info.cmdline $listed.cmdline
 
-      # Same record, whichever route produced it — an enumerated record is not
-      # a reduced one. The credentials are the field that would show it up,
-      # being the one a listing might have been tempted to leave out.
-      if is_windows
-        assert (listed.token_info != nil)
-        assert_eq $listed.token_info.user_sid $info.token_info.user_sid
-      else
-        assert_eq $listed.unix_id.uid $info.unix_id.uid
-    finally
-      stop_marked_process $worker
+    # Same record, whichever route produced it — an enumerated record is not
+    # a reduced one. The credentials are the field that would show it up,
+    # being the one a listing might have been tempted to leave out.
+    if is_windows
+      assert (listed.token_info != nil)
+      assert_eq $listed.token_info.user_sid $info.token_info.user_sid
+    else
+      assert_eq $listed.unix_id.uid $info.unix_id.uid
+  finally
+    stop_marked_process $worker
 
 #[test]
 #[vfs]
@@ -255,67 +211,64 @@ def info_rejects_absent_and_malformed_targets()
 #[test]
 #[vfs]
 def open_with_a_block_scopes_the_handle()
-  with_temp_dir do |dir|
-    let worker pid = start_marked_process $dir
-    try
-      # The handle escapes the block only so the test can prove it was closed;
-      # ordinary code has no reason to keep it.
-      let escaped = nil
-      let result = proc.open $pid do |p|
-        escaped = p
-        assert_type $proc.Proc $p
-        assert_eq $p.pid $pid
-        "block result"
-      assert_eq $result "block result"
-      assert_throws $StateError do escaped.info()
+  let worker pid _nonce = start_marked_process()
+  try
+    # The handle escapes the block only so the test can prove it was closed;
+    # ordinary code has no reason to keep it.
+    let escaped = nil
+    let result = proc.open $pid do |p|
+      escaped = p
+      assert_type $proc.Proc $p
+      assert_eq $p.pid $pid
+      "block result"
+    assert_eq $result "block result"
+    assert_throws $StateError do escaped.info()
 
-      # An unwinding block closes the handle too, and the error is what
-      # propagates — not anything the close ran into.
-      escaped = nil
-      assert_throws $ValueError do
-        proc.open $pid do |p|
-          escaped = p
-          throw ValueError "from the block"
-      assert_throws $StateError do escaped.info()
-    finally
-      stop_marked_process $worker
+    # An unwinding block closes the handle too, and the error is what
+    # propagates — not anything the close ran into.
+    escaped = nil
+    assert_throws $ValueError do
+      proc.open $pid do |p|
+        escaped = p
+        throw ValueError "from the block"
+    assert_throws $StateError do escaped.info()
+  finally
+    stop_marked_process $worker
 
 #[test]
 #[vfs]
 def kill_a_process()
-  with_temp_dir do |dir|
-    let worker pid = start_marked_process $dir
-    try
-      proc.open $pid do |p|
-        p.kill()
-        let status = p.wait()
-        if is_windows
-          # `kill` is `terminate` there, exit code and all.
-          assert_eq $status.code 1
-        else
-          assert_eq $status.code nil
-    finally
-      stop_marked_process $worker
+  let worker pid _nonce = start_marked_process()
+  try
+    proc.open $pid do |p|
+      p.kill()
+      let status = p.wait()
+      if is_windows
+        # `kill` is `terminate` there, exit code and all.
+        assert_eq $status.code 1
+      else
+        assert_eq $status.code nil
+  finally
+    stop_marked_process $worker
 
 #[test]
 #[vfs]
 def open_an_enumerated_record()
-  with_temp_dir do |dir|
-    let worker pid = start_marked_process $dir
-    try
-      let found = nil
-      for info = proc.enumerate()
-        if (info.pid == pid)
-          found = info
-          break
-      assert (found != nil) "marked process was not listed by enumerate"
-      assert_eq $found.pid $pid
+  let worker pid _nonce = start_marked_process()
+  try
+    let found = nil
+    for info = proc.enumerate()
+      if (info.pid == pid)
+        found = info
+        break
+    assert (found != nil) "marked process was not listed by enumerate"
+    assert_eq $found.pid $pid
 
-      let p = proc.open $found
-      assert_eq $p.pid $pid
-      p.close()
-    finally
-      stop_marked_process $worker
+    let p = proc.open $found
+    assert_eq $p.pid $pid
+    p.close()
+  finally
+    stop_marked_process $worker
 
 #[test]
 #[vfs]
