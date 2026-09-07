@@ -30,7 +30,7 @@ impl Inst {
             let var = scope
                 .vars
                 .iter()
-                .filter(|v| v.is_emitted(&compiler.doctab) && !v.captured)
+                .filter(|v| v.is_emitted() && !v.captured)
                 .nth(idx - scope.local_offset)
                 .unwrap();
             if var.sym.index() == usize::MAX {
@@ -324,7 +324,7 @@ impl super::Func {
                 .vars
                 .iter()
                 .enumerate()
-                .filter(|(_, v)| v.is_emitted(&compiler.doctab))
+                .filter(|(_, v)| v.is_emitted())
                 .collect();
 
             // Add all variables

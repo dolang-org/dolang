@@ -194,7 +194,10 @@ fn main() -> io::Result<()> {
 
 /// Describe every documented declaration in one source file.
 fn document(path: &Path, content: &[u8], module: Option<String>, all: bool) -> Value {
-    let unit = Config::new().recover(true).unit(path, content);
+    let unit = Config::new()
+        .document(true)
+        .recover(true)
+        .unit(path, content);
     let decorators = Decorators::collect(&unit);
     let children = index_children(&unit);
 

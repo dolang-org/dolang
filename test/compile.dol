@@ -70,7 +70,7 @@ def error()
 
 #[test]
 def nodes()
-  let unit = compile.compile "nodes.dol" |-
+  let unit = compile.compile "nodes.dol" document: true |-
     pub def greet name :punctuation = "!" ...rest
       return name
   let seen = 0
@@ -94,3 +94,16 @@ def nodes()
   catch e
     e
   assert_type $std.StateError $err
+
+#[test]
+def document_option()
+  let source = "let answer = 42\nanswer\n"
+  let default = compile.compile "option.dol" $source
+  let disabled = compile.compile "option.dol" $source document: false
+  let enabled = compile.compile "option.dol" $source document: true
+  assert_eq $default.nodes().count() 0
+  assert_eq $disabled.nodes().count() 0
+  assert (enabled.nodes().count() > 0)
+  let bytecode = enabled.emit()
+  assert_eq $default.emit() $bytecode
+  assert_eq $disabled.emit() $bytecode

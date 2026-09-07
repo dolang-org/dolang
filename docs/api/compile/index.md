@@ -12,19 +12,20 @@ let result = compile "example.dol" source
 
 ## Functions
 
-### `compile path source :module? :prelude? :recover?`
+### `compile path source :module? :prelude? :recover? :document?`
 
 Parses and elaborates Do source code into a staged compilation unit.
 
 #### Parameters
 
-| Name      | Type        | Description                                          |
-| --------- | ----------- | ---------------------------------------------------- |
-| `path`    | `Str`       | Source path (for debug information)                  |
-| `source`  | `Str`/`Bin` | Source code to compile                               |
-| `module`  | `Str`       | Optional. Compile in module mode with the given name |
-| `prelude` | various     | Optional. Additional prelude imports to include      |
-| `recover` | `bool`      | Continue parsing after syntax errors                 |
+| Name       | Type        | Description                                          |
+| ---------- | ----------- | ---------------------------------------------------- |
+| `path`     | `Str`       | Source path (for debug information)                  |
+| `source`   | `Str`/`Bin` | Source code to compile                               |
+| `module`   | `Str`       | Optional. Compile in module mode with the given name |
+| `prelude`  | various     | Optional. Additional prelude imports to include      |
+| `recover`  | `bool`      | Continue parsing after syntax errors                 |
+| `document` | `bool?`     | Build document nodes. Defaults to `false`            |
 
 ##### Compilation Modes
 
@@ -41,8 +42,8 @@ It accepts the same logical import shapes used by the LSP prelude settings.
 
 #### Returns
 
-[`Unit`](./unit.md), which exposes diagnostics and document nodes before
-emission.
+[`Unit`](./unit.md), which exposes diagnostics and, with `document: true`,
+document nodes before emission.
 
 #### Errors
 

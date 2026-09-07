@@ -154,6 +154,7 @@ mod tests {
         let source = "let answer = 42";
         let mut tokens = Vec::new();
         let unit = Config::new()
+            .document(true)
             .recover(true)
             .unit(Path::new("example.dol"), source.as_bytes());
         unit.tokens(&mut |token, span, node: Option<NodeId>, context| {
