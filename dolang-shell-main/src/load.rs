@@ -124,7 +124,7 @@ pub(crate) fn unit<'a>(
     prelude: &[PreludeImport],
 ) -> compile::Unit<'a> {
     let mut config = compile_setup(dynamic, prelude, Mode::Repl);
-    config.recover(true);
+    config.recover(true).document(true);
     config.unit(path, source.as_bytes())
 }
 

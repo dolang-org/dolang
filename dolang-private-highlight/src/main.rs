@@ -111,7 +111,10 @@ fn main() -> io::Result<()> {
         io::stdin().read_to_end(&mut content)?;
         (Path::new("<stdin>"), content)
     };
-    let unit = Config::new().recover(true).unit(path, &content);
+    let unit = Config::new()
+        .document(true)
+        .recover(true)
+        .unit(path, &content);
     let mut tokens = vec![];
     unit.tokens(&mut |token, span, node: Option<NodeId>, context| {
         let mut obj = json!({

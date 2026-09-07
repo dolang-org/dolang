@@ -1,29 +1,20 @@
-//! Document nodes recorded during elaboration.
-//!
-//! Elaboration builds a flat table of the declarations and constructs a document
-//! extractor, language server, or highlighter would want to know about: what was
-//! declared, where, and inside what.  Each node carries its parent, so structure
-//! is available without walking the AST, and tokens carry a [`Id`] where they
-//! would otherwise carry no structural information at all.
-//!
-//! The table is a plain arena.  Nodes are never looked up by content or by span:
-//! a node is allocated once, at the point elaboration first learns of the
-//! declaration, and every later reference reaches it through the resolution that
-//! already exists ([`crate::ast::Var`], [`crate::ast::Res`],
-//! [`crate::ast::Method`], [`crate::ast::FieldName`]).
+//! Document structure built by the optional post-elaboration annotation pass.
 
 use std::{
     num::NonZero,
     ops::{Index, IndexMut},
 };
 
-use dolang_util::{alias, arena::ArenaVec};
+use dolang_util::alias;
 
 use crate::source::Span;
 
+mod index;
+pub(crate) use index::index;
+
 /// Identity of a document node: an index into a [`Table`].
 ///
-/// Index 0 is reserved and never handed out, so an `Id` is never zero and
+/// An identity stores its zero-based table index plus one, so it is never zero and
 /// `Option<Id>` is no wider than an `Id` — which parent links, jump targets and
 /// decorator targets all are.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -39,11 +30,11 @@ impl Id {
     }
 
     pub(crate) fn index(self) -> usize {
-        self.0.get() as usize
+        self.0.get() as usize - 1
     }
 
     pub(crate) fn from_index(index: usize) -> Self {
-        Id(NonZero::new(index as u32).expect("index 0 is reserved"))
+        Id(NonZero::new(u32::try_from(index + 1).expect("too many document nodes")).unwrap())
     }
 }
 
@@ -157,40 +148,6 @@ pub(crate) enum Kind {
     Return {
         target: Option<Id>,
     },
-
-    /// A binding elaboration invented; never surfaced publicly
-    Synthetic,
-    /// The REPL's `_` binding; never surfaced publicly
-    Repl,
-}
-
-impl Kind {
-    /// Whether this kind is internal bookkeeping rather than something a
-    /// consumer should see.
-    pub(crate) fn is_internal(&self) -> bool {
-        matches!(self, Kind::Synthetic | Kind::Repl)
-    }
-
-    /// The name the user wrote, for a kind declared by name in the source.
-    ///
-    /// A prelude import is named by configuration rather than by source text,
-    /// so it has no span here.
-    pub(crate) fn name(&self) -> Option<Span> {
-        match self {
-            Kind::Class { name, .. }
-            | Kind::Function { name, .. }
-            | Kind::Method { name, .. }
-            | Kind::SpecialMethod { name }
-            | Kind::Field { name, .. }
-            | Kind::Bind { name, .. }
-            | Kind::SelfParam { name }
-            | Kind::ImportModule { name, .. }
-            | Kind::ImportItem { name, .. } => Some(*name),
-            Kind::PositionalParam { name, .. } | Kind::KeyParam { name, .. } => Some(*name),
-            Kind::RestParam { name } => *name,
-            _ => None,
-        }
-    }
 }
 
 /// A single document node.
@@ -201,49 +158,22 @@ pub(crate) struct Node {
     pub(crate) kind: Kind,
     /// The whole construct
     pub(crate) span: Span,
-    /// Superseded, and not to be surfaced: an unused prelude import, or a
-    /// binding whose origin was re-labelled by a later import of the same name
-    pub(crate) dead: bool,
 }
 
 impl Node {
     pub(crate) fn new(parent: Option<Id>, kind: Kind, span: Span) -> Self {
-        Self {
-            parent,
-            kind,
-            span,
-            dead: false,
-        }
+        Self { parent, kind, span }
     }
 }
 
 /// The table of document nodes for a compilation unit.
 pub(crate) struct Table {
-    nodes: ArenaVec<Node>,
+    nodes: Vec<Node>,
 }
 
 impl Table {
-    /// Shared node for bindings elaboration invented
-    pub(crate) const SYNTHETIC: Id = Id(NonZero::new(1).unwrap());
-    /// Shared node for the REPL's `_` binding
-    pub(crate) const REPL: Id = Id(NonZero::new(2).unwrap());
-
     pub(crate) fn new() -> Self {
-        let table = Table {
-            nodes: ArenaVec::new(),
-        };
-        // Slot 0 exists only to keep index 0 out of circulation, so that an
-        // [`Id`] can be non-zero; nothing refers to it and `iter` skips it.
-        table
-            .nodes
-            .push(Node::new(None, Kind::Synthetic, Span::INVALID));
-        // Preallocate the two shared internal nodes so that classifying a
-        // binding is an id comparison rather than a table lookup.
-        table
-            .nodes
-            .push(Node::new(None, Kind::Synthetic, Span::INVALID));
-        table.nodes.push(Node::new(None, Kind::Repl, Span::INVALID));
-        table
+        Self { nodes: Vec::new() }
     }
 
     /// Append a node, returning its identity.

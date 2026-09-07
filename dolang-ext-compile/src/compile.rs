@@ -1654,6 +1654,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
     let module = builder.sym("module");
     let prelude = builder.sym("prelude");
     let recover = builder.sym("recover");
+    let document = builder.sym("document");
 
     builder
         .module("compile")
@@ -1704,14 +1705,15 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
         .value("Note", global.types.note)
         .value("Patch", global.types.patch)
         .function("compile", async move |strand, args, mut out| {
-            let ([path, source], [module, prelude, recover]) = unpack!(
+            let ([path, source], [module, prelude, recover, document]) = unpack!(
                 strand,
                 args,
                 2,
                 0,
                 module = None,
                 prelude = None,
-                recover = None
+                recover = None,
+                document = None
             )?;
 
             let module = module
@@ -1745,6 +1747,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
                 Mode::Script
             });
             config.recover(recover.map(|value| value.to_bool(strand)).unwrap_or(false));
+            config.document(document.map(|value| value.to_bool(strand)).unwrap_or(false));
 
             if let Some(prelude) = prelude {
                 apply_prelude_value(strand, &mut config, &prelude)?;

@@ -15,6 +15,8 @@ Returns a fresh iterator of `[NodeId, Node]` pairs. Nodes expose `parent` and
 [`span`](./span.md); concrete node types add projections such as `name`,
 `is_pub`, `default`, `target`, and `supers`.
 
+Empty unless the unit was compiled with `document: true`.
+
 ### `node id`
 
 Looks up a node by `NodeId`, returning `nil` when the ID belongs to another
@@ -30,7 +32,7 @@ unit, its node iterators, or its nodes throws `std.StateError`.
 ## Example
 
 ```
-let unit = compile "example.dol" "pub let answer = 42\n"
+let unit = compile "example.dol" "pub let answer = 42\n" document: true
 for id node = unit.nodes()
   echo $id $node.span
 let bytecode = unit.emit()

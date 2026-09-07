@@ -5,18 +5,17 @@ use std::{
     result,
 };
 
-use dolang_util::{alias, arena::ArenaVec, intern::BinTable};
+use dolang_util::{arena::ArenaVec, intern::BinTable};
 
 use crate::{
     Compiler, Mode, PreludeImport,
     ast::{
         self, Arg, ArrayElem, Assign, Bind, Block, Class, Def, DictElem, Expand, Expr, ExprBody,
         For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key, LValue, Let,
-        Method, NlGuard, NlInfo, Pair, Param, Pattern, PatternBind, PrimStmt, Res, Return, Root,
-        SideEffect, Single, Stmt, Try, Var, While, visit::Node,
+        Method, NlGuard, NlInfo, Origin, Pair, Param, Pattern, PatternBind, PrimStmt, Res, Return,
+        Root, SideEffect, Single, Stmt, Try, Var, While, visit::Node,
     },
     diag::{AnnotationKind, Severity},
-    doc::{self, Kind},
     source::{Annotate, Diagnose, Diags, File, Patch, Span},
     sym,
 };
@@ -561,7 +560,6 @@ pub(crate) struct Elaborater<'a> {
     diags: &'a Diags,
     bintab: &'a mut BinTable,
     symtab: &'a mut sym::Table,
-    doctab: &'a mut doc::Table,
     fail: bool,
     epoch: Epoch,
 }
@@ -593,9 +591,6 @@ enum Scope<'s> {
     Base,
     Nested {
         kind: ScopeKind,
-        /// Document node this frame introduces, if it corresponds to a
-        /// construct.  Frames without one are transparent to parentage.
-        doc: Option<doc::Id>,
         can_break: CanBranch,
         can_continue: CanBranch,
         can_return: CanBranch,
@@ -607,7 +602,6 @@ enum Scope<'s> {
         index: HashMap<sym::Id, usize>,
     },
     Class {
-        doc: doc::Id,
         parent: &'s Scope<'s>,
         class_private: HashMap<String, sym::Id>,
     },
@@ -625,7 +619,7 @@ impl<'s> Scope<'s> {
         // Prelude and elaborator-invented bindings are not written by the user,
         // so leaving one unused is not something to warn about; neither has a
         // name in the source, so having one is the test.
-        let span = resolver.doctab[var.node].kind.name()?;
+        let span = var.origin.name()?;
         if resolver.file.str(span).starts_with('_') {
             return None;
         }
@@ -673,68 +667,9 @@ impl<'s> Scope<'s> {
         matches!(self, Scope::Class { .. })
     }
 
-    /// The document node enclosing anything declared in this scope.
-    ///
-    /// Frames that correspond to no construct — plain blocks, the base frame —
-    /// are transparent, so a declaration inside one parents to whatever
-    /// construct actually encloses it.
-    fn doc_parent(&self) -> Option<doc::Id> {
-        let mut scope = self;
-        loop {
-            match scope {
-                Scope::Base => return None,
-                Scope::Class { doc, .. } => return Some(*doc),
-                Scope::Nested { doc, parent, .. } => match doc {
-                    Some(doc) => return Some(*doc),
-                    None => scope = parent,
-                },
-            }
-        }
-    }
-
-    /// The document node of the nearest enclosing loop, for `break`/`continue`.
-    fn doc_loop(&self) -> Option<doc::Id> {
-        let mut scope = self;
-        loop {
-            match scope {
-                Scope::Base => return None,
-                Scope::Class { parent, .. } => scope = parent,
-                Scope::Nested {
-                    kind, doc, parent, ..
-                } => match kind {
-                    ScopeKind::Loop => return *doc,
-                    // A jump cannot escape the function it is written in
-                    ScopeKind::Function => return None,
-                    _ => scope = parent,
-                },
-            }
-        }
-    }
-
-    /// The document node of the nearest enclosing function, for `return`.
-    ///
-    /// A `return` inside a lambda returns from the enclosing *function*, so
-    /// lambda frames are traversed rather than treated as the target.
-    fn doc_function(&self) -> Option<doc::Id> {
-        let mut scope = self;
-        loop {
-            match scope {
-                Scope::Base => return None,
-                Scope::Class { parent, .. } => scope = parent,
-                Scope::Nested {
-                    kind, doc, parent, ..
-                } => match kind {
-                    ScopeKind::Function => return *doc,
-                    _ => scope = parent,
-                },
-            }
-        }
-    }
-
-    fn nested(&'s self, doc: Option<doc::Id>) -> Self {
+    fn nested(&'s self) -> Self {
         Self::Nested {
             kind: ScopeKind::Normal,
-            doc,
             can_break: self.can_break(),
             can_continue: self.can_continue(),
             can_return: self.can_return(),
@@ -747,10 +682,9 @@ impl<'s> Scope<'s> {
         }
     }
 
-    fn nested_loop(&'s self, doc: Option<doc::Id>) -> Self {
+    fn nested_loop(&'s self) -> Self {
         Self::Nested {
             kind: ScopeKind::Loop,
-            doc,
             can_break: CanBranch::Yes,
             can_continue: CanBranch::Yes,
             can_return: self.can_return(),
@@ -763,10 +697,9 @@ impl<'s> Scope<'s> {
         }
     }
 
-    fn function(&'s self, doc: Option<doc::Id>, can_return: bool) -> Self {
+    fn function(&'s self, can_return: bool) -> Self {
         Self::Nested {
             kind: ScopeKind::Function,
-            doc,
             can_break: CanBranch::No,
             can_continue: CanBranch::No,
             can_return: if can_return {
@@ -783,9 +716,8 @@ impl<'s> Scope<'s> {
         }
     }
 
-    fn class(&'s self, doc: doc::Id) -> Self {
+    fn class(&'s self) -> Self {
         Self::Class {
-            doc,
             parent: self,
             class_private: HashMap::new(),
         }
@@ -915,14 +847,14 @@ impl<'s> Scope<'s> {
         }
     }
 
-    fn mark_nl_return(&self, mut depth: usize, node: doc::Id, epoch: Epoch) -> usize {
+    fn mark_nl_return(&self, mut depth: usize, epoch: Epoch) -> usize {
         let mut scope = self;
         loop {
             scope = match scope {
                 Scope::Base => unreachable!(),
                 Scope::Class { parent, .. } => {
                     if depth == 0 {
-                        return parent.insert_synthetic(node, epoch);
+                        return parent.insert_synthetic(epoch);
                     }
                     parent
                 }
@@ -933,7 +865,7 @@ impl<'s> Scope<'s> {
                         if let Some(index) = nl_return.get() {
                             return index;
                         } else {
-                            let index = scope.insert_synthetic(node, epoch);
+                            let index = scope.insert_synthetic(epoch);
                             nl_return.set(Some(index));
                             return index;
                         }
@@ -987,10 +919,9 @@ impl<'s> Scope<'s> {
         }
     }
 
-    fn lambda(&'s self, doc: Option<doc::Id>, bad_nl: Option<Span>) -> Self {
+    fn lambda(&'s self, bad_nl: Option<Span>) -> Self {
         Self::Nested {
             kind: ScopeKind::Lambda,
-            doc,
             can_break: self.can_break().bad_nl(bad_nl),
             can_continue: self.can_continue().bad_nl(bad_nl),
             can_return: self.can_return().bad_nl(bad_nl),
@@ -1031,15 +962,15 @@ impl<'s> Scope<'s> {
         self.lookup_private_field(name).is_some()
     }
 
-    fn insert(&mut self, sym: sym::Id, node: doc::Id, epoch: Epoch, exported: bool) -> usize {
-        self.insert_with_lookup(sym, sym, node, epoch, exported)
+    fn insert(&mut self, sym: sym::Id, origin: Origin, epoch: Epoch, exported: bool) -> usize {
+        self.insert_with_lookup(sym, sym, origin, epoch, exported)
     }
 
     fn insert_with_lookup(
         &mut self,
         lookup_sym: sym::Id,
         sym: sym::Id,
-        node: doc::Id,
+        origin: Origin,
         epoch: Epoch,
         exported: bool,
     ) -> usize {
@@ -1054,7 +985,8 @@ impl<'s> Scope<'s> {
                         captured: false,
                         exported,
                         used: false,
-                        node,
+                        origin,
+                        node: None,
                     },
                     epoch,
                 )));
@@ -1064,7 +996,7 @@ impl<'s> Scope<'s> {
         }
     }
 
-    fn insert_synthetic(&self, node: doc::Id, epoch: Epoch) -> usize {
+    fn insert_synthetic(&self, epoch: Epoch) -> usize {
         match self {
             Self::Base => panic!("Can't insert into base scope"),
             Self::Class { .. } => unreachable!("class scope is not lexical"),
@@ -1076,7 +1008,8 @@ impl<'s> Scope<'s> {
                         captured: false,
                         exported: false,
                         used: true,
-                        node,
+                        origin: Origin::Synthetic,
+                        node: None,
                     },
                     epoch,
                 )));
@@ -1102,7 +1035,7 @@ impl<'s> Scope<'s> {
         &self,
         id: sym::Id,
         capture: bool,
-        promote: Option<doc::Id>,
+        promote: Option<Origin>,
         epoch: Epoch,
     ) -> result::Result<Res, ResolveError> {
         match self {
@@ -1122,19 +1055,18 @@ impl<'s> Scope<'s> {
                             var.captured = true;
                         }
                         var.used = true;
-                        if let Some(node) = promote {
-                            var.node = node;
+                        if let Some(origin) = promote {
+                            var.origin = origin;
                         }
                         (var, epoch)
                     });
-                    let (Var { node, .. }, _) = vars[index].get();
                     return Ok(Res {
                         index,
                         depth: 0,
-                        node,
+                        node: None,
                     });
                 }
-                let Res { index, depth, node } = parent.resolve_inner(
+                let Res { index, depth, .. } = parent.resolve_inner(
                     id,
                     capture || matches!(kind, ScopeKind::Function | ScopeKind::Lambda),
                     promote,
@@ -1143,8 +1075,25 @@ impl<'s> Scope<'s> {
                 Ok(Res {
                     index,
                     depth: depth + 1,
-                    node,
+                    node: None,
                 })
+            }
+        }
+    }
+
+    fn origin(&self, res: Res) -> Origin {
+        match self {
+            Self::Base => unreachable!(),
+            Self::Class { parent, .. } => parent.origin(res),
+            Self::Nested { vars, parent, .. } => {
+                if res.depth == 0 {
+                    vars[res.index].get().0.origin
+                } else {
+                    parent.origin(Res {
+                        depth: res.depth - 1,
+                        ..res
+                    })
+                }
             }
         }
     }
@@ -1170,10 +1119,10 @@ impl<'s> Scope<'s> {
     fn promote(
         &self,
         id: sym::Id,
-        node: doc::Id,
+        origin: Origin,
         epoch: Epoch,
     ) -> result::Result<Res, ResolveError> {
-        self.resolve_inner(id, false, Some(node), epoch)
+        self.resolve_inner(id, false, Some(origin), epoch)
     }
 
     fn finish(self, resolver: &Elaborater, out: &mut Vec<Var>) {
@@ -1204,37 +1153,6 @@ enum ResolveError {
 }
 
 impl<'a> Elaborater<'a> {
-    /// Record a document node parented to whatever construct `scope` is in.
-    ///
-    /// This is always called *before* pushing the scope the construct itself
-    /// introduces, so a construct never parents to itself.
-    fn doc(&mut self, scope: &Scope<'_>, kind: Kind, span: Span) -> doc::Id {
-        let parent = scope.doc_parent();
-        self.doctab.push(doc::Node::new(parent, kind, span))
-    }
-
-    /// Record decorator nodes parented to the declaration they decorate.
-    ///
-    /// A decorator is an ordinary node like any other.  When its expression is
-    /// simply an identifier it also names the node that identifier resolves to,
-    /// which is how a consumer recognizes a particular decorator — `#[getter]`,
-    /// say — without matching source text.  Decorators must already have been
-    /// resolved.
-    fn doc_decorators(&mut self, parent: doc::Id, decorators: &[ast::Decorator]) {
-        for decorator in decorators {
-            let target = match &decorator.expr {
-                Expr::Ident(ident) => ident.res.as_ref().map(|res| res.node),
-                _ => None,
-            };
-            let span = decorator.open_span | decorator.close_span;
-            self.doctab.push(doc::Node::new(
-                Some(parent),
-                Kind::Decorator { target },
-                span,
-            ));
-        }
-    }
-
     // Bump epoch, returning *prior* value
     fn bump_epoch(&mut self) -> Epoch {
         let epoch = self.epoch;
@@ -1290,26 +1208,20 @@ impl<'a> Elaborater<'a> {
                 expr,
                 body,
                 iter,
-                for_span,
                 ..
             }) => {
                 if let Some(expr) = expr {
                     self.visit_expr(scope, expr, false)?;
                 }
                 // Generate synthetic, unnameable variable to hold iterator
-                let node = doc::Table::SYNTHETIC;
-                let index = scope.insert_synthetic(node, self.epoch);
+                let index = scope.insert_synthetic(self.epoch);
                 *iter = Some(Res {
                     index,
                     depth: 0,
-                    node,
+                    node: None,
                 });
                 {
-                    // A comprehension `for` binds, so it needs a node of its
-                    // own: without one, two sibling comprehensions in the same
-                    // function would both parent to it and bind the same name.
-                    let loop_node = self.doc(scope, Kind::ForElem, *for_span);
-                    let mut scope = scope.nested_loop(Some(loop_node));
+                    let mut scope = scope.nested_loop();
                     // Inject loop binds into inner scope
                     match bind {
                         Pattern::Ident(ident) => self.bind_ident(&mut scope, ident, false)?,
@@ -1361,26 +1273,20 @@ impl<'a> Elaborater<'a> {
                 expr,
                 body,
                 iter,
-                for_span,
                 ..
             }) => {
                 if let Some(expr) = expr {
                     self.visit_expr(scope, expr, false)?;
                 }
                 // Generate synthetic, unnameable variable to hold iterator
-                let node = doc::Table::SYNTHETIC;
-                let index = scope.insert_synthetic(node, self.epoch);
+                let index = scope.insert_synthetic(self.epoch);
                 *iter = Some(Res {
                     index,
                     depth: 0,
-                    node,
+                    node: None,
                 });
                 {
-                    // A comprehension `for` binds, so it needs a node of its
-                    // own: without one, two sibling comprehensions in the same
-                    // function would both parent to it and bind the same name.
-                    let loop_node = self.doc(scope, Kind::ForElem, *for_span);
-                    let mut scope = scope.nested_loop(Some(loop_node));
+                    let mut scope = scope.nested_loop();
                     // Inject loop binds into inner scope
                     match bind {
                         Pattern::Ident(ident) => self.bind_ident(&mut scope, ident, false)?,
@@ -1456,13 +1362,7 @@ impl<'a> Elaborater<'a> {
             }
             Expr::Lambda { func, do_span, .. } => {
                 let span = do_span.unwrap_or_else(|| func.span());
-                self.visit_lambda(
-                    scope,
-                    func,
-                    Kind::Lambda,
-                    span,
-                    if is_arg { None } else { Some(span) },
-                )
+                self.visit_lambda(scope, func, if is_arg { None } else { Some(span) })
             }
             Expr::Call { arg0, args, .. } => {
                 self.visit_expr(scope, arg0, is_arg)?;
@@ -1529,7 +1429,7 @@ impl<'a> Elaborater<'a> {
                         if scope.is_private_field(name)
                             && let Expr::Ident(ident) = object.as_ref()
                             && let Some(res) = ident.res
-                            && matches!(self.doctab[res.node].kind, Kind::SelfParam { .. })
+                            && matches!(scope.origin(res), Origin::SelfParam(_))
                         {
                             self.diags.push(PrivateFieldWithoutHash { span: *span });
                         }
@@ -1597,7 +1497,7 @@ impl<'a> Elaborater<'a> {
                 if scope.is_private_field(name)
                     && let Expr::Ident(ident) = object.as_ref()
                     && let Some(res) = ident.res
-                    && matches!(self.doctab[res.node].kind, Kind::SelfParam { .. })
+                    && matches!(scope.origin(res), Origin::SelfParam(_))
                 {
                     self.diags.push(PrivateFieldWithoutHash { span: *field });
                 }
@@ -1643,26 +1543,20 @@ impl<'a> Elaborater<'a> {
                 expr,
                 body,
                 iter,
-                for_span,
                 ..
             }) => {
                 if let Some(expr) = expr {
                     self.visit_expr(scope, expr, false)?;
                 }
                 // Generate synthetic, unnameable variable to hold iterator
-                let node = doc::Table::SYNTHETIC;
-                let index = scope.insert_synthetic(node, self.epoch);
+                let index = scope.insert_synthetic(self.epoch);
                 *iter = Some(Res {
                     index,
                     depth: 0,
-                    node,
+                    node: None,
                 });
                 {
-                    // A comprehension `for` binds, so it needs a node of its
-                    // own: without one, two sibling comprehensions in the same
-                    // function would both parent to it and bind the same name.
-                    let loop_node = self.doc(scope, Kind::ForElem, *for_span);
-                    let mut scope = scope.nested_loop(Some(loop_node));
+                    let mut scope = scope.nested_loop();
                     // Inject loop binds into inner scope
                     match bind {
                         Pattern::Ident(ident) => self.bind_ident(&mut scope, ident, false)?,
@@ -1698,19 +1592,12 @@ impl<'a> Elaborater<'a> {
         let id = self
             .symtab
             .id(&self.bintab.id_str(self.file.str(ident.span)));
-        let node = self.doc(
-            scope,
-            Kind::Bind {
-                name: ident.span,
-                is_pub: export,
-            },
-            ident.span,
-        );
+        let node = Origin::Source(ident.span);
         let index = scope.insert(id, node, self.epoch, export);
         ident.res = Some(Res {
             index,
             depth: 0,
-            node,
+            node: None,
         });
         Ok(())
     }
@@ -1746,20 +1633,13 @@ impl<'a> Elaborater<'a> {
             } else {
                 self.symtab.id(&self.bintab.id_str(name))
             };
-            let doc_node = self.doc(
-                scope,
-                Kind::Bind {
-                    name: ident.span,
-                    is_pub: node.pub_span.is_some(),
-                },
-                ident.span,
-            );
+            let origin = Origin::Source(ident.span);
             let lookup_sym = self.symtab.id(&self.bintab.id_str(name));
-            let index = scope.insert_with_lookup(lookup_sym, sym, doc_node, self.epoch, true);
+            let index = scope.insert_with_lookup(lookup_sym, sym, origin, self.epoch, true);
             ident.res = Some(Res {
                 index,
                 depth: 0,
-                node: doc_node,
+                node: None,
             });
             return Ok(());
         }
@@ -1869,15 +1749,12 @@ impl<'a> Elaborater<'a> {
         scope: &mut Scope<'_>,
         bind: Option<&mut PatternBind>,
         body: &mut Block,
-        kind: Kind,
-        span: Span,
         is_loop: bool,
     ) -> Result<()> {
-        let branch_node = self.doc(scope, kind, span);
         let mut inner = if is_loop {
-            scope.nested_loop(Some(branch_node))
+            scope.nested_loop()
         } else {
-            scope.nested(Some(branch_node))
+            scope.nested()
         };
         if let Some(bind) = bind {
             self.bind_pattern(&mut inner, &mut bind.pattern)?;
@@ -1901,10 +1778,9 @@ impl<'a> Elaborater<'a> {
         visit_elem: fn(&mut Self, &mut Scope<'_>, &mut T, bool) -> Result<()>,
     ) -> Result<()> {
         self.visit_expr(scope, &mut node.tbranch.expr, false)?;
-        let branch_node = self.doc(scope, Kind::IfElem, node.tbranch.span);
+
         self.visit_elem_branch_body(
             scope,
-            branch_node,
             node.tbranch.bind.as_mut(),
             &mut node.tbranch.body,
             is_arg,
@@ -1913,10 +1789,9 @@ impl<'a> Elaborater<'a> {
 
         for (elif_branch, _) in &mut node.elif_branches {
             self.visit_expr(scope, &mut elif_branch.expr, false)?;
-            let branch_node = self.doc(scope, Kind::IfElem, elif_branch.span);
+
             self.visit_elem_branch_body(
                 scope,
-                branch_node,
                 elif_branch.bind.as_mut(),
                 &mut elif_branch.body,
                 is_arg,
@@ -1924,10 +1799,8 @@ impl<'a> Elaborater<'a> {
             )?;
         }
 
-        if let Some((else_body, else_span)) = &mut node.else_branch {
-            let else_span = *else_span;
-            let branch_node = self.doc(scope, Kind::Else, else_span);
-            self.visit_elem_branch_body(scope, branch_node, None, else_body, is_arg, visit_elem)?;
+        if let Some((else_body, _)) = &mut node.else_branch {
+            self.visit_elem_branch_body(scope, None, else_body, is_arg, visit_elem)?;
         }
 
         Ok(())
@@ -1937,13 +1810,12 @@ impl<'a> Elaborater<'a> {
     fn visit_elem_branch_body<T>(
         &mut self,
         scope: &mut Scope<'_>,
-        branch_node: doc::Id,
         bind: Option<&mut PatternBind>,
         body: &mut ExprBody<T>,
         is_arg: bool,
         visit_elem: fn(&mut Self, &mut Scope<'_>, &mut T, bool) -> Result<()>,
     ) -> Result<()> {
-        let mut inner = scope.nested(Some(branch_node));
+        let mut inner = scope.nested();
         if let Some(bind) = bind {
             self.bind_pattern(&mut inner, &mut bind.pattern)?;
         }
@@ -1956,78 +1828,54 @@ impl<'a> Elaborater<'a> {
 
     fn visit_while(&mut self, scope: &mut Scope<'_>, node: &mut While) -> Result<()> {
         self.visit_expr(scope, &mut node.expr, false)?;
-        let span = node.while_span;
-        self.visit_branch_body(
-            scope,
-            node.bind.as_mut(),
-            &mut node.body,
-            Kind::While,
-            span,
-            true,
-        )
+        self.visit_branch_body(scope, node.bind.as_mut(), &mut node.body, true)
     }
 
     fn visit_if(&mut self, scope: &mut Scope<'_>, node: &mut If<Block>) -> Result<()> {
         // Visit first if branch
         self.visit_expr(scope, &mut node.tbranch.expr, false)?;
-        let span = node.tbranch.span;
         self.visit_branch_body(
             scope,
             node.tbranch.bind.as_mut(),
             &mut node.tbranch.body,
-            Kind::If,
-            span,
             false,
         )?;
 
         // Visit elif branches
         for (elif_branch, _) in &mut node.elif_branches {
             self.visit_expr(scope, &mut elif_branch.expr, false)?;
-            let span = elif_branch.span;
             self.visit_branch_body(
                 scope,
                 elif_branch.bind.as_mut(),
                 &mut elif_branch.body,
-                Kind::If,
-                span,
                 false,
             )?;
         }
 
         // Visit final else branch if present
-        if let Some((else_block, else_span)) = &mut node.else_branch {
-            let else_span = *else_span;
-            self.visit_block(scope, else_block, Kind::Else, else_span)?;
+        if let Some((else_block, _)) = &mut node.else_branch {
+            self.visit_block(scope, else_block)?;
         }
 
         Ok(())
     }
 
-    /// Elaborate `try`.
-    ///
-    /// The body and each handler are elaborated as 0-parameter closures, but
-    /// they are not lambdas in the source: each is its own construct, and each
-    /// binds, so each gets a node.  Without one, two sibling handlers binding
-    /// the same name would be indistinguishable to anything keyed on the pair
-    /// of enclosing node and name.
+    /// Elaborate try, catch, and finally bodies as closures.
     fn visit_try(&mut self, scope: &mut Scope<'_>, node: &mut Try) -> Result<()> {
         // Visit body as a function scope (0-param closure)
-        let try_span = node.try_span;
-        self.visit_lambda(scope, &mut node.body, Kind::Try, try_span, None)?;
+        self.visit_lambda(scope, &mut node.body, None)?;
 
         // For each handler: visit class_expr in outer scope, then handler func as function scope
         for handler in &mut node.handlers {
             if let Some(class_expr) = &mut handler.class_expr {
                 self.visit_expr(scope, class_expr, false)?;
             }
-            let span = handler.catch_span;
-            self.visit_lambda(scope, &mut handler.func, Kind::Catch, span, None)?;
+            self.visit_lambda(scope, &mut handler.func, None)?;
         }
 
         // Visit finally as function scope if present
-        if let Some((finally_func, finally_span)) = &mut node.finally {
-            let finally_span = *finally_span;
-            self.visit_lambda(scope, finally_func, Kind::Finally, finally_span, None)?;
+        if let Some((finally_func, _)) = &mut node.finally {
+            self.visit_lambda(scope, finally_func, None)?;
         }
 
         Ok(())
@@ -2045,21 +1893,11 @@ impl<'a> Elaborater<'a> {
                         .symtab
                         .id(&self.bintab.id_str(self.file.str(bind.span)));
                     let name = self.module_span_first(*module);
-                    let node = self.doc(
-                        scope,
-                        Kind::ImportModule {
-                            module: *module,
-                            name,
-                        },
-                        *module,
-                    );
+                    let node = Origin::Source(name);
                     if let Ok(res) = scope.promote(id, node, self.epoch)
                         && res.depth == 0
                     {
-                        // The name was already bound, so this import re-labels
-                        // it rather than binding afresh.  The node the name
-                        // previously resolved to stays in the table: it is a
-                        // real declaration, just no longer the one in effect.
+                        // Reuse the binding and update its source provenance.
                         *insert = true;
                         bind.res = Some(res);
                     } else {
@@ -2067,53 +1905,39 @@ impl<'a> Elaborater<'a> {
                         bind.res = Some(Res {
                             index,
                             depth: 0,
-                            node,
+                            node: None,
                         });
                     }
                 }
-                ImportElement::ModuleRenamed { module, bind, .. } => {
+                ImportElement::ModuleRenamed { bind, .. } => {
                     let id = self
                         .symtab
                         .id(&self.bintab.id_str(self.file.str(bind.span)));
-                    let node = self.doc(
-                        scope,
-                        Kind::ImportModule {
-                            module: *module,
-                            name: bind.span,
-                        },
-                        *module,
-                    );
+                    let node = Origin::Source(bind.span);
                     let index = scope.insert(id, node, self.epoch, false);
                     bind.res = Some(Res {
                         index,
                         depth: 0,
-                        node,
+                        node: None,
                     });
                 }
-                ImportElement::Items { module, items } => {
+                ImportElement::Items { items, .. } => {
                     assert!(!items.is_empty());
                     for item in items.iter_mut() {
-                        let (item_span, bind) = match item {
-                            ImportItem::AsIs { bind, .. } => (None, bind),
-                            ImportItem::Renamed { item, bind, .. } => (Some(*item), bind),
+                        let bind = match item {
+                            ImportItem::AsIs { bind, .. } | ImportItem::Renamed { bind, .. } => {
+                                bind
+                            }
                         };
                         let id = self
                             .symtab
                             .id(&self.bintab.id_str(self.file.str(bind.span)));
-                        let node = self.doc(
-                            scope,
-                            Kind::ImportItem {
-                                module: *module,
-                                item: item_span.unwrap_or(bind.span),
-                                name: bind.span,
-                            },
-                            item_span.unwrap_or(bind.span),
-                        );
+                        let node = Origin::Source(bind.span);
                         let index = scope.insert(id, node, self.epoch, false);
                         bind.res = Some(Res {
                             index,
                             depth: 0,
-                            node,
+                            node: None,
                         });
                     }
                 }
@@ -2132,16 +1956,14 @@ impl<'a> Elaborater<'a> {
             self.visit_expr(scope, expr, false)?;
         }
         // Generate synthetic, unnameable variable to hold iterator
-        let iter_node = doc::Table::SYNTHETIC;
-        let index = scope.insert_synthetic(iter_node, self.epoch);
+        let index = scope.insert_synthetic(self.epoch);
         node.iter = Some(Res {
             index,
             depth: 0,
-            node: iter_node,
+            node: None,
         });
         {
-            let loop_node = self.doc(scope, Kind::For, node.for_span);
-            let mut scope = scope.nested_loop(Some(loop_node));
+            let mut scope = scope.nested_loop();
             // Inject loop binds into inner scope
             self.bind_pattern(&mut scope, &mut node.bind)?;
             self.visit_block_inner(&mut scope, &mut node.body)?;
@@ -2218,11 +2040,6 @@ impl<'a> Elaborater<'a> {
         span: Span,
         nl: &mut Option<NlInfo>,
     ) -> Result<()> {
-        // Record the jump unconditionally: `NlInfo` below is only populated when
-        // the jump crosses a function boundary, but a jump is navigable whether
-        // or not it is non-local.
-        let target = scope.doc_loop();
-        self.doc(scope, Kind::Break { target }, span);
         match scope.can_break() {
             CanBranch::No => {
                 self.fail = true;
@@ -2256,8 +2073,6 @@ impl<'a> Elaborater<'a> {
         span: Span,
         nl: &mut Option<NlInfo>,
     ) -> Result<()> {
-        let target = scope.doc_loop();
-        self.doc(scope, Kind::Continue { target }, span);
         match scope.can_continue() {
             CanBranch::No => {
                 self.fail = true;
@@ -2290,8 +2105,6 @@ impl<'a> Elaborater<'a> {
         scope: &mut Scope<'_>,
         Return { expr, span, nl }: &mut Return,
     ) -> Result<()> {
-        let target = scope.doc_function();
-        self.doc(scope, Kind::Return { target }, *span);
         match scope.can_return() {
             CanBranch::No => {
                 self.fail = true;
@@ -2307,12 +2120,15 @@ impl<'a> Elaborater<'a> {
             CanBranch::Yes => {
                 let depth = scope.nl_return_scope_depth();
                 if depth > 0 {
-                    let node = doc::Table::SYNTHETIC;
-                    let index = scope.mark_nl_return(depth, node, self.epoch);
+                    let index = scope.mark_nl_return(depth, self.epoch);
                     *nl = Some(NlInfo {
                         scope_depth: depth,
                         indicator: 3,
-                        ret_upvar: Some(Res { index, depth, node }),
+                        ret_upvar: Some(Res {
+                            index,
+                            depth,
+                            node: None,
+                        }),
                     });
                 }
             }
@@ -2324,18 +2140,6 @@ impl<'a> Elaborater<'a> {
     }
 
     fn insert_class_method(&mut self, scope: &mut Scope<'_>, node: &mut Method) {
-        // The class this belongs to is the parent link, so it need not be
-        // recorded alongside.
-        let kind = match &node.special {
-            Some(_) => Kind::SpecialMethod {
-                name: node.name_span,
-            },
-            None => Kind::Method {
-                name: node.name_span,
-                is_pub: node.pub_span.is_some(),
-            },
-        };
-        node.node = Some(self.doc(scope, kind, node.def_span | node.name_span));
         node.private_sym = if node.pub_span.is_none() && node.special.is_none() {
             Some(
                 scope
@@ -2351,63 +2155,13 @@ impl<'a> Elaborater<'a> {
         let sym = self
             .symtab
             .id(&self.bintab.id_str(self.file.str(node.ident.span)));
-        let doc_node = self.doc_class(scope, node);
-        let index = scope.insert(sym, doc_node, self.epoch, true);
+        let origin = Origin::Source(node.ident.span);
+        let index = scope.insert(sym, origin, self.epoch, true);
         node.ident.res = Some(Res {
             index,
             depth: 0,
-            node: doc_node,
+            node: None,
         });
-    }
-
-    /// Record the document node for a class declaration.
-    ///
-    /// This runs from a pre-pass, before the superclass references have been
-    /// resolved, so `supers` starts empty and [`Self::doc_class_supers`] fills
-    /// it in once they resolve.
-    fn doc_class(&mut self, scope: &Scope<'_>, class: &Class) -> doc::Id {
-        self.doc(
-            scope,
-            Kind::Class {
-                name: class.ident.span,
-                is_pub: class.pub_span.is_some(),
-                supers: alias::Box::default(),
-            },
-            class.class_span | class.ident.span,
-        )
-    }
-
-    /// Record the resolved superclass references on a class node.
-    ///
-    /// A superclass reference is a use site rather than a child, so it cannot be
-    /// expressed by parentage; naming the node it resolves to is what gives a
-    /// consumer the import provenance.
-    fn doc_class_supers(&mut self, class: &Class) {
-        let Some(res) = class.ident.res else {
-            return;
-        };
-        let supers = class
-            .super_refs
-            .iter()
-            .map(|super_ref| doc::Super {
-                // The span covers the whole reference, dotted path and all, so
-                // a consumer can render it without stitching pieces together.
-                span: super_ref
-                    .fields
-                    .last()
-                    .map_or(super_ref.ident.span, |field| super_ref.ident.span | *field),
-                // Only a bare identifier names a declaration; a path is an
-                // expression, and the span is all a consumer gets.
-                target: super_ref
-                    .fields
-                    .is_empty()
-                    .then(|| super_ref.ident.res.as_ref().map(|res| res.node))
-                    .flatten(),
-            })
-            .collect();
-        if let Kind::Class { supers: slot, .. } = &mut self.doctab[res.node].kind {
-            *slot = supers;
-        }
     }
 
     fn visit_def(&mut self, scope: &mut Scope<'_>, def: &mut Def) -> Result<()> {
@@ -2430,21 +2184,14 @@ impl<'a> Elaborater<'a> {
                 .expect("decorated def should have an assigned binding");
             scope.mark_local_used(res.index, self.epoch);
         }
-        let doc_node = def.ident.res.as_ref().map(|res| res.node);
-        if let Some(doc_node) = doc_node {
-            self.doc_decorators(doc_node, &def.decorators);
-        }
-        self.visit_function(scope, &mut def.func, doc_node, None)
+        self.visit_function(scope, &mut def.func, None)
     }
 
     fn visit_method(&mut self, scope: &mut Scope<'_>, def: &mut Method) -> Result<()> {
         for decorator in &mut def.decorators {
             self.visit_expr(scope, &mut decorator.expr, false)?;
         }
-        if let Some(doc_node) = def.node {
-            self.doc_decorators(doc_node, &def.decorators);
-        }
-        self.visit_function(scope, &mut def.func, def.node, None)
+        self.visit_function(scope, &mut def.func, None)
     }
 
     /// Resolve a field decorator to a member-scope annotation.
@@ -2453,18 +2200,22 @@ impl<'a> Elaborater<'a> {
     /// consumed here instead. Requiring the canonical prelude binding — rather
     /// than any expression that happens to be spelled `class` — keeps the door
     /// open for giving field decorators real semantics later.
-    fn field_member_scope(&mut self, decorator: &ast::Decorator) -> Option<ast::MemberScope> {
+    fn field_member_scope(
+        &mut self,
+        scope: &Scope<'_>,
+        decorator: &ast::Decorator,
+    ) -> Option<ast::MemberScope> {
         let ast::Expr::Ident(ident) = &decorator.expr else {
             return None;
         };
         let res = ident.res?;
-        let Kind::PreludeItem { module, item, .. } = &self.doctab[res.node].kind else {
+        let Origin::PreludeItem { module, item } = scope.origin(res) else {
             return None;
         };
-        if &**module != "std" {
+        if &self.bintab[module] != "std" {
             return None;
         }
-        match &**item {
+        match &self.bintab[item] {
             "class" => Some(ast::MemberScope::Class),
             "static" => Some(ast::MemberScope::Static),
             _ => None,
@@ -2485,7 +2236,7 @@ impl<'a> Elaborater<'a> {
             // between a decorator and the declaration it applies to, and the field
             // is what the diagnostic is really about.
             let span = node.field_span;
-            match self.field_member_scope(decorator) {
+            match self.field_member_scope(scope, decorator) {
                 Some(scope) if node.scope == ast::MemberScope::Instance => node.scope = scope,
                 Some(_) => self.diags.push(DuplicateMemberScope(span)),
                 None => self.diags.push(UnsupportedFieldDecorator(span)),
@@ -2514,24 +2265,10 @@ impl<'a> Elaborater<'a> {
             ast::FieldInit::Const(expr, _) | ast::FieldInit::Expr(expr) => {
                 self.visit_expr(scope, expr, false)?
             }
-            ast::FieldInit::Thunk(func) => self.visit_function(scope, func, None, None)?,
+            ast::FieldInit::Thunk(func) => self.visit_function(scope, func, None)?,
         }
         assert!(scope.is_class(), "class field outside class scope");
-        let mut field_nodes = Vec::new();
         for field in &mut node.fields {
-            // The class this belongs to is the parent link.  A declaration may
-            // name several fields, which share the declaration's visibility and
-            // decorators but each get their own node.
-            let field_node = self.doc(
-                scope,
-                Kind::Field {
-                    name: field.ident.span,
-                    is_pub: node.pub_span.is_some(),
-                },
-                field.ident.span,
-            );
-            field.node = Some(field_node);
-            field_nodes.push(field_node);
             let name = self.file.str(field.ident.span);
             field.private_sym = if node.pub_span.is_none() {
                 Some(
@@ -2542,12 +2279,6 @@ impl<'a> Elaborater<'a> {
             } else {
                 None
             };
-        }
-        // A field decorator is consumed by the elaborator, but a consumer still
-        // needs to see it — that is how field scope is recognized without
-        // matching source text — so it is recorded like any other decorator.
-        for field_node in field_nodes {
-            self.doc_decorators(field_node, &node.decorators);
         }
         Ok(())
     }
@@ -2561,19 +2292,12 @@ impl<'a> Elaborater<'a> {
                         .symtab
                         .id(&self.bintab.id_str(self.file.str(ident_span)));
                     let exported = node.pub_span.is_some();
-                    let doc_node = self.doc(
-                        scope,
-                        Kind::Function {
-                            name: ident_span,
-                            is_pub: exported,
-                        },
-                        node.def_span | ident_span,
-                    );
-                    let index = scope.insert(sym, doc_node, self.epoch, exported);
+                    let origin = Origin::Source(ident_span);
+                    let index = scope.insert(sym, origin, self.epoch, exported);
                     node.ident.res = Some(Res {
                         index,
                         depth: 0,
-                        node: doc_node,
+                        node: None,
                     });
                 }
                 Stmt::Class(node) => {
@@ -2581,12 +2305,12 @@ impl<'a> Elaborater<'a> {
                         .symtab
                         .id(&self.bintab.id_str(self.file.str(node.ident.span)));
                     let exported = node.pub_span.is_some();
-                    let doc_node = self.doc_class(scope, node);
-                    let index = scope.insert(sym, doc_node, self.epoch, exported);
+                    let origin = Origin::Source(node.ident.span);
+                    let index = scope.insert(sym, origin, self.epoch, exported);
                     node.ident.res = Some(Res {
                         index,
                         depth: 0,
-                        node: doc_node,
+                        node: None,
                     });
                 }
                 Stmt::Import(import) => self.visit_import_pre(scope, import)?,
@@ -2672,15 +2396,9 @@ impl<'a> Elaborater<'a> {
             scope.mark_local_used(res.index, self.epoch);
         }
 
-        // The superclass references have resolved by now, so they can name the
-        // nodes they refer to.
-        self.doc_class_supers(class);
-        let doc_node = class.ident.res.as_ref().unwrap().node;
-        self.doc_decorators(doc_node, &class.decorators);
-
         // Visit the class body in a new class scope
         {
-            let mut class_scope = scope.class(doc_node);
+            let mut class_scope = scope.class();
 
             self.visit_class_body(&mut class_scope, &mut class.body)?;
         }
@@ -2702,7 +2420,6 @@ impl<'a> Elaborater<'a> {
                 scope.mark_captures_since(epoch);
                 let span = stmt.span();
                 let inner = std::mem::replace(stmt, Stmt::Break(span, None));
-                let node = doc::Table::SYNTHETIC;
                 *stmt = Stmt::NlGuard(NlGuard {
                     body: Box::new(inner),
                     span,
@@ -2711,7 +2428,7 @@ impl<'a> Elaborater<'a> {
                     has_return: has_return.map(|index| Res {
                         index,
                         depth: 0,
-                        node,
+                        node: None,
                     }),
                 });
             }
@@ -2731,131 +2448,52 @@ impl<'a> Elaborater<'a> {
 
     /// Elaborate a block that is a construct in its own right, such as an
     /// `else` body.
-    fn visit_block(
-        &mut self,
-        scope: &mut Scope<'_>,
-        node: &mut Block,
-        kind: Kind,
-        span: Span,
-    ) -> Result<()> {
-        let block_node = self.doc(scope, kind, span);
-        let mut scope = scope.nested(Some(block_node));
+    fn visit_block(&mut self, scope: &mut Scope<'_>, node: &mut Block) -> Result<()> {
+        let mut scope = scope.nested();
         self.visit_block_inner(&mut scope, node)?;
         scope.finish(self, &mut node.vars);
         Ok(())
-    }
-
-    /// Describe a parameter for its document node: form, default span, extent.
-    ///
-    /// The parser splits key parameters into `:foo` and `foo: local` forms.
-    /// Both are a key parameter to anything reading a signature, so they
-    /// share a form and the parser stays free to re-split them.
-    fn doc_param(param: &Param) -> (Kind, Span) {
-        let (kind, key_span, ident, default) = match param {
-            Param::Pos { ident, default } => (
-                Kind::PositionalParam {
-                    name: ident.span,
-                    default: default.as_ref().map(|default| default.expr.span()),
-                },
-                None,
-                Some(ident.span),
-                default,
-            ),
-            Param::Key {
-                key_span,
-                ident,
-                default,
-            } => (
-                Kind::KeyParam {
-                    key: *key_span,
-                    name: ident.span,
-                    default: default.as_ref().map(|default| default.expr.span()),
-                },
-                Some(*key_span),
-                Some(ident.span),
-                default,
-            ),
-            Param::ConstKey {
-                key_expr,
-                ident,
-                default,
-                ..
-            } => {
-                let key = key_expr.span();
-                (
-                    Kind::KeyParam {
-                        key,
-                        name: ident.span,
-                        default: default.as_ref().map(|default| default.expr.span()),
-                    },
-                    Some(key),
-                    Some(ident.span),
-                    default,
-                )
-            }
-            Param::Rest {
-                ellipsis_span,
-                ident,
-            } => (
-                Kind::RestParam {
-                    name: ident.as_ref().map(|ident| ident.span),
-                },
-                Some(*ellipsis_span),
-                ident.as_ref().map(|ident| ident.span),
-                &None,
-            ),
-        };
-        let default_span = default.as_ref().map(|default| default.expr.span());
-        let span = [key_span, ident, default_span]
-            .into_iter()
-            .flatten()
-            .reduce(|acc, span| acc | span)
-            .unwrap_or(Span::INVALID);
-        (kind, span)
     }
 
     fn visit_function(
         &mut self,
         scope: &mut Scope<'_>,
         node: &mut Function,
-        doc_node: Option<doc::Id>,
         mut prelude: Option<&mut [PreludeImport]>,
     ) -> Result<()> {
         let is_class_method = scope.is_class();
-        let mut scope = scope.function(doc_node, self.mode != Mode::Repl || prelude.is_none());
+        let mut scope = scope.function(self.mode != Mode::Repl || prelude.is_none());
         // Register all parameters as variables in this scope.
         // Visit non-constant default expressions before inserting each param,
         // so defaults can reference prior params but not the current or later ones.
         for (param_idx, param) in node.params.iter_mut().enumerate() {
             self.visit_param_non_const_default(&mut scope, param)?;
-            let (param_kind, param_span) = Self::doc_param(param);
-            // An anonymous `...` binds nothing, but it is still part of the
-            // signature, so it gets a node with no name.
             let ident = match param {
                 Param::Pos { ident, .. }
                 | Param::Key { ident, .. }
                 | Param::ConstKey { ident, .. } => Some(ident),
                 Param::Rest { ident, .. } => ident.as_mut(),
             };
-            let kind = if is_class_method && param_idx == 0 {
-                Kind::SelfParam {
-                    name: ident.as_ref().expect("`self` is always named").span,
-                }
-            } else {
-                param_kind
-            };
-            let param_node = self.doc(&scope, kind, param_span);
             let Some(ident) = ident else {
                 continue;
             };
             let sym = self
                 .symtab
                 .id(&self.bintab.id_str(self.file.str(ident.span)));
-            let index = scope.insert(sym, param_node, self.epoch, false);
+            let index = scope.insert(
+                sym,
+                if is_class_method && param_idx == 0 {
+                    Origin::SelfParam(ident.span)
+                } else {
+                    Origin::Source(ident.span)
+                },
+                self.epoch,
+                false,
+            );
             ident.res = Some(Res {
                 index,
                 depth: 0,
-                node: param_node,
+                node: None,
             });
         }
 
@@ -2865,25 +2503,20 @@ impl<'a> Elaborater<'a> {
                     PreludeImport::Items { module, items, .. } => {
                         for field in items.iter_mut() {
                             let id = self.symtab.id(&self.bintab.id_str(&field.bind));
-                            let prelude_node = self.doc(
-                                &scope,
-                                Kind::PreludeItem {
-                                    module: module.as_str().into(),
-                                    item: field.item.as_str().into(),
-                                    name: field.bind.as_str().into(),
-                                },
-                                Span::INVALID,
-                            );
-                            let index = scope.insert(id, prelude_node, self.epoch, false);
+                            let origin = Origin::PreludeItem {
+                                module: self.bintab.id_str(module),
+                                item: self.bintab.id_str(&field.item),
+                            };
+                            let index = scope.insert(id, origin, self.epoch, false);
                             field.res = Some(Res {
                                 index,
                                 depth: 0,
-                                node: prelude_node,
+                                node: None,
                             });
                         }
                     }
                     PreludeImport::ModuleAsIs {
-                        module,
+                        module: _,
                         bind,
                         res,
                         insert,
@@ -2895,39 +2528,23 @@ impl<'a> Elaborater<'a> {
                             *insert = true;
                             *res = Some(existing);
                         } else {
-                            let prelude_node = self.doc(
-                                &scope,
-                                Kind::PreludeModule {
-                                    module: module.as_str().into(),
-                                    name: Self::module_name_first(module).into(),
-                                },
-                                Span::INVALID,
-                            );
-                            let index = scope.insert(id, prelude_node, self.epoch, false);
+                            let origin = Origin::PreludeModule;
+                            let index = scope.insert(id, origin, self.epoch, false);
                             *res = Some(Res {
                                 index,
                                 depth: 0,
-                                node: prelude_node,
+                                node: None,
                             });
                         }
                     }
-                    PreludeImport::ModuleRenamed {
-                        module, bind, res, ..
-                    } => {
+                    PreludeImport::ModuleRenamed { bind, res, .. } => {
                         let id = self.symtab.id(&self.bintab.id_str(bind));
-                        let prelude_node = self.doc(
-                            &scope,
-                            Kind::PreludeModule {
-                                module: module.as_str().into(),
-                                name: bind.as_str().into(),
-                            },
-                            Span::INVALID,
-                        );
-                        let index = scope.insert(id, prelude_node, self.epoch, false);
+                        let origin = Origin::PreludeModule;
+                        let index = scope.insert(id, origin, self.epoch, false);
                         *res = Some(Res {
                             index,
                             depth: 0,
-                            node: prelude_node,
+                            node: None,
                         });
                     }
                 }
@@ -2944,9 +2561,6 @@ impl<'a> Elaborater<'a> {
                         for item in items.iter_mut() {
                             let res = item.res.as_ref().unwrap();
                             if !scope.is_read(res.index, res.depth) {
-                                // The import contributes nothing to this unit,
-                                // so its node should not be surfaced either.
-                                self.doctab[res.node].dead = true;
                                 item.res = None
                             }
                         }
@@ -2955,7 +2569,6 @@ impl<'a> Elaborater<'a> {
                     | PreludeImport::ModuleRenamed { res, .. } => {
                         let r = res.as_ref().unwrap();
                         if !scope.is_read(r.index, r.depth) {
-                            self.doctab[r.node].dead = true;
                             *res = None
                         }
                     }
@@ -2966,12 +2579,12 @@ impl<'a> Elaborater<'a> {
         if prelude.is_some() && matches!(self.mode, Mode::Repl) {
             // Insert a binding for REPL variable (`_`)
             let id = self.symtab.id(&self.bintab.id_str("_"));
-            let repl_node = doc::Table::REPL;
-            let index = scope.insert(id, repl_node, self.epoch, false);
+            let origin = Origin::Repl;
+            let index = scope.insert(id, origin, self.epoch, false);
             node.body.repl = Some(Res {
                 index,
                 depth: 0,
-                node: repl_node,
+                node: None,
             });
         }
 
@@ -2980,44 +2593,32 @@ impl<'a> Elaborater<'a> {
     }
 
     /// Elaborate a lambda body.
-    ///
-    /// `kind` is what the construct is in the source: a `do` block is a
-    /// [`Kind::Lambda`], but `try`/`catch`/`finally` bodies are elaborated as
-    /// closures too and are their own constructs.  Either way the frame carries
-    /// a node, so two sibling bodies that bind the same name stay distinct.
     fn visit_lambda(
         &mut self,
         scope: &mut Scope<'_>,
         node: &mut Function,
-        kind: Kind,
-        span: Span,
         badnl: Option<Span>,
     ) -> Result<()> {
-        let doc_node = self.doc(scope, kind, span);
-        let mut scope = scope.lambda(Some(doc_node), badnl);
+        let mut scope = scope.lambda(badnl);
         for param in node.params.iter_mut() {
             self.visit_param_non_const_default(&mut scope, param)?;
-            let (param_kind, param_span) = Self::doc_param(param);
-            // An anonymous `...` binds nothing, but it is still part of the
-            // signature, so it gets a node with no name.
             let ident = match param {
                 Param::Pos { ident, .. }
                 | Param::Key { ident, .. }
                 | Param::ConstKey { ident, .. } => Some(ident),
                 Param::Rest { ident, .. } => ident.as_mut(),
             };
-            let param_node = self.doc(&scope, param_kind, param_span);
             let Some(ident) = ident else {
                 continue;
             };
             let sym = self
                 .symtab
                 .id(&self.bintab.id_str(self.file.str(ident.span)));
-            let index = scope.insert(sym, param_node, self.epoch, false);
+            let index = scope.insert(sym, Origin::Source(ident.span), self.epoch, false);
             ident.res = Some(Res {
                 index,
                 depth: 0,
-                node: param_node,
+                node: None,
             });
         }
         self.visit_block_inner(&mut scope, &mut node.body)?;
@@ -3030,7 +2631,6 @@ impl<'a> Elaborater<'a> {
         file: &'a File<'a>,
         bintab: &'a mut BinTable,
         symtab: &'a mut sym::Table,
-        doctab: &'a mut doc::Table,
         diags: &'a Diags,
     ) -> Self {
         Elaborater {
@@ -3038,7 +2638,6 @@ impl<'a> Elaborater<'a> {
             file,
             bintab,
             symtab,
-            doctab,
             diags,
             fail: false,
             epoch: 0,
@@ -3050,7 +2649,7 @@ impl<'a> Elaborater<'a> {
     /// Errors are recorded rather than returned; consult [`Elaborater::failed`].
     pub(crate) fn elaborate(&mut self, root: &mut Root, prelude: &mut [PreludeImport]) {
         if self
-            .visit_function(&mut Scope::new(), &mut root.0, None, Some(prelude))
+            .visit_function(&mut Scope::new(), &mut root.0, Some(prelude))
             .is_err()
         {
             self.fail = true;
@@ -3059,7 +2658,7 @@ impl<'a> Elaborater<'a> {
             // Mark all exports as captured if not already
             for var in root.0.body.vars.iter_mut() {
                 // In REPL mode, export *all* top-level bindings that aren't prelude imports
-                if self.mode == Mode::Repl && !var.is_prelude(self.doctab) && !var.is_synthetic() {
+                if self.mode == Mode::Repl && !var.is_prelude() && !var.is_synthetic() {
                     var.exported = true;
                 }
 

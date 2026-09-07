@@ -34,7 +34,10 @@ impl SourceFile {
     fn open(path: &Path) -> Option<Self> {
         let source = fs::read_to_string(path).ok()?;
         let mut tokens = Vec::new();
-        let unit = Config::new().recover(true).unit(path, source.as_bytes());
+        let unit = Config::new()
+            .document(true)
+            .recover(true)
+            .unit(path, source.as_bytes());
         unit.tokens(&mut |token, span, node: Option<NodeId>, context| {
             let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
             tokens.push((token, span, classify_node(kind.as_ref()), context));

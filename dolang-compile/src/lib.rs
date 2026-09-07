@@ -151,7 +151,6 @@ where
 
 struct VisitAdapter<'a, 'e> {
     file: &'a File<'a>,
-    doctab: &'a doc::Table,
     emit: &'e mut dyn EmitToken,
 }
 
@@ -249,7 +248,7 @@ fn internal_node_id(id: NodeId) -> doc::Id {
     doc::Id::new(id.0)
 }
 
-/// A document node: a declaration or construct elaboration recorded.
+/// A document node: a declaration or construct recorded by document indexing.
 ///
 /// This is a view onto the unit that produced it rather than a copy, so it is
 /// cheap to pass around and its spans are resolved only when asked for.
@@ -356,9 +355,6 @@ impl<'a> Node<'a> {
             doc::Kind::Return { target } => Kind::Return {
                 target: target.map(public_node_id),
             },
-            doc::Kind::Synthetic | doc::Kind::Repl => {
-                unreachable!("internal nodes are never surfaced")
-            }
         }
     }
 }
@@ -554,11 +550,7 @@ impl VisitAdapter<'_, '_> {
         context: Context,
     ) -> ControlFlow<Infallible> {
         let diag_span = convert_span(self.file, span);
-        // Nodes the elaborator invented for its own bookkeeping are not part of
-        // the document, so a token referring to one refers to nothing.
-        let node = node
-            .filter(|id| !self.doctab[*id].kind.is_internal())
-            .map(public_node_id);
+        let node = node.map(public_node_id);
         self.emit.emit(token, diag_span, node, context);
         ControlFlow::Continue(())
     }
@@ -768,6 +760,7 @@ pub struct Config<'a> {
     mode: Mode<'a>,
     prelude: Vec<PreludeImport>,
     recover: bool,
+    document: bool,
 }
 
 impl Default for Config<'_> {
@@ -783,6 +776,7 @@ impl<'a> Config<'a> {
             mode: Mode::Script,
             prelude: Default::default(),
             recover: false,
+            document: false,
         };
         this.prelude()
             .import_module("std")
@@ -816,6 +810,14 @@ impl<'a> Config<'a> {
         self
     }
 
+    /// Build document structure and annotate semantic tokens with node identities.
+    ///
+    /// Default: false. When disabled, node queries are empty and tokens carry no identities.
+    pub fn document(&mut self, document: bool) -> &mut Self {
+        self.document = document;
+        self
+    }
+
     /// Configure a prelude, a collection of standard imports which are injected into the code.
     ///
     /// Note that prelude imports which are not referenced by the code are omitted from compilation, even
@@ -838,7 +840,6 @@ impl<'a> Config<'a> {
     {
         let mut compiler = Compiler {
             file: File::new(path, content),
-            doctab: Default::default(),
             symtab: sym::Table::new(),
             bintab: BinTable::new(),
             consttab: constant::Table::new(),
@@ -874,7 +875,11 @@ impl<'a> Config<'a> {
         }
 
         compiler.prelude = prelude;
+        let document = self
+            .document
+            .then(|| doc::index(&mut ast, &mut compiler.prelude, &compiler.file));
         Unit {
+            document,
             compiler,
             ast,
             comments,
@@ -889,6 +894,7 @@ impl<'a> Config<'a> {
 /// A unit retains the compiler state which produced it, so diagnostics are resolved
 /// lazily as they are iterated.
 pub struct Unit<'a> {
+    document: Option<doc::Table>,
     compiler: Compiler<'a>,
     ast: ast::Root,
     comments: Vec<source::Span>,
@@ -906,7 +912,7 @@ impl Unit<'_> {
 
     /// Iterate the document nodes of the unit: its declarations and constructs.
     ///
-    /// This reads a table the elaborator built and walks no syntax tree, so
+    /// Requires [`Config::document`]. This reads the index and walks no syntax tree, so
     /// structure can be had without emitting tokens at all.  Each node names its
     /// parent, so the order nodes are yielded carries no meaning; order siblings
     /// by [`Node::span`].
@@ -922,24 +928,22 @@ impl Unit<'_> {
     /// Return the next surfaced node identity after `id`, or the first when absent.
     #[doc(hidden)]
     pub fn next_id(&self, id: Option<NodeId>) -> Option<NodeId> {
-        let start = id.map_or(1, |id| internal_node_id(id).index() + 1);
-        (start..self.compiler.doctab.len()).find_map(|index| {
-            let id = doc::Id::from_index(index);
-            let node = &self.compiler.doctab[id];
-            (!node.dead && !node.kind.is_internal()).then(|| public_node_id(id))
-        })
+        let table = self.document.as_ref()?;
+        let next = id.map_or(0, |id| internal_node_id(id).index() + 1);
+        (next < table.len()).then(|| public_node_id(doc::Id::from_index(next)))
     }
 
     /// Look up a single document node, as named by a token or by another node.
     ///
     /// Returns `None` for an identity this unit did not produce.
     pub fn node(&self, id: NodeId) -> Option<Node<'_>> {
+        let table = self.document.as_ref()?;
         let id = internal_node_id(id);
-        if id.index() >= self.compiler.doctab.len() {
+        if id.index() >= table.len() {
             return None;
         }
-        let node = &self.compiler.doctab[id];
-        (!node.dead && !node.kind.is_internal()).then_some(Node {
+        let node = &table[id];
+        Some(Node {
             file: &self.compiler.file,
             node,
         })
@@ -955,7 +959,6 @@ impl Unit<'_> {
     pub fn tokens(&self, tokens: &mut impl EmitToken) {
         let ControlFlow::Continue(()) = self.ast.accept(&mut VisitAdapter {
             file: &self.compiler.file,
-            doctab: &self.compiler.doctab,
             emit: tokens,
         });
         for comment in self.comments.iter() {
@@ -1008,7 +1011,6 @@ impl Unit<'_> {
 /// Compiler state backing a [`Unit`].
 pub(crate) struct Compiler<'a> {
     file: File<'a>,
-    doctab: doc::Table,
     symtab: sym::Table,
     bintab: BinTable,
     consttab: constant::Table,
@@ -1033,7 +1035,6 @@ impl Compiler<'_> {
             &self.file,
             &mut self.bintab,
             &mut self.symtab,
-            &mut self.doctab,
             diags,
         )
     }
@@ -1047,7 +1048,6 @@ impl Compiler<'_> {
             consttab: &mut self.consttab,
             packtab: &mut self.packtab,
             unpacktab: &mut self.unpacktab,
-            doctab: &self.doctab,
             prelude: &self.prelude,
             sentinel_const: None,
         }
@@ -1151,8 +1151,208 @@ impl Compiler<'_> {
 mod tests {
     use super::*;
 
+    fn diagnostic_snapshot(unit: &Unit<'_>) -> Vec<String> {
+        unit.diagnostics()
+            .map(|diag| {
+                let mut text =
+                    format!("{:?} {:?} {}", diag.severity(), diag.span(), diag.message());
+                for annotation in diag.annotations() {
+                    text.push_str(&format!(
+                        "|{} {:?} {}",
+                        match annotation.kind() {
+                            diag::AnnotationKind::Primary => "primary",
+                            diag::AnnotationKind::Context => "context",
+                        },
+                        annotation.span(),
+                        annotation.message()
+                    ));
+                }
+                for note in diag.notes() {
+                    text.push_str(&format!(
+                        "|{} {}",
+                        match note.kind() {
+                            diag::NoteKind::Info => "info",
+                            diag::NoteKind::Help => "help",
+                        },
+                        note.message()
+                    ));
+                }
+                for patch in diag.patches() {
+                    text.push_str(&format!(
+                        "|{:?} {} {}",
+                        patch.span(),
+                        patch.message(),
+                        patch.sub()
+                    ));
+                }
+                text
+            })
+            .collect()
+    }
+
+    fn token_snapshot(unit: &Unit<'_>) -> Vec<String> {
+        let mut tokens = Vec::new();
+        unit.tokens(&mut |token, span, node, context| {
+            if let Some(id) = node {
+                assert!(unit.node(id).is_some());
+            }
+            tokens.push(format!("{token:?} {span:?} {context:?}"));
+        });
+        tokens
+    }
+
+    #[test]
+    fn document_indexing_preserves_compilation_and_diagnostics() {
+        let sources: &[&[u8]] = &[
+            include_bytes!("../../dodo.dol"),
+            include_bytes!("../../dolang-shell-modules/lib/transfer.dol"),
+            include_bytes!("../../dolang-shell-modules/lib/test.dol"),
+            b"def f unused\n  let x = 1\n  do x\nf 2\n",
+            b"class C\n  field private = 1\n  pub def get self\n    self.private\n  pub def set self\n    self.private = 2\n",
+            b"class C\n  #[static]\n  pub field x = str(1)\n  #[class]\n  pub field y = str(2)\nC\n",
+            b"let static = 1\nclass C\n  #[static]\n  pub field x = str(1)\nC\n",
+            b"import std\nimport std: s\nlet x = 1\ns.str(x)\n",
+            b"def f()\n  while true\n    (do break)\n  return 1\nf()\n",
+            b"let a = [1, 2]\nlet b = [for x = a do x]\nb\n",
+            b"def f x\n  return x\nlet =\n",
+        ];
+        for mode in [Mode::Script, Mode::Module { name: "parity" }, Mode::Repl] {
+            for source in sources {
+                let mut config = Config::new();
+                config.mode(mode.clone()).recover(true);
+                let plain = config.unit(Path::new("parity.dol"), source);
+                let indexed = config.document(true).unit(Path::new("parity.dol"), source);
+                assert!(plain.document.is_none());
+                assert!(plain.nodes().next().is_none());
+                assert!(plain.next_id(None).is_none());
+                plain.tokens(&mut |_, _, id: Option<NodeId>, _| assert!(id.is_none()));
+                if let Some((id, _)) = indexed.nodes().next() {
+                    assert!(plain.node(id).is_none());
+                }
+                assert_eq!(diagnostic_snapshot(&plain), diagnostic_snapshot(&indexed));
+                assert_eq!(token_snapshot(&plain), token_snapshot(&indexed));
+                assert_eq!(plain.failed, indexed.failed);
+                let (mut left, mut right) = (Vec::new(), Vec::new());
+                assert_eq!(
+                    plain.emit(&mut left).is_ok(),
+                    indexed.emit(&mut right).is_ok()
+                );
+                assert_eq!(left, right);
+            }
+        }
+    }
+
+    #[test]
+    fn references_follow_lexical_scopes_and_forward_declarations() {
+        let source = b"def first x\n  second $x\ndef second x\n  let saved = x\n  let closure = do |x| saved\n  closure $x\nfirst 1\n";
+        let unit = config().unit(Path::new("refs.dol"), source);
+        assert!(!unit.failed);
+        let mut refs = Vec::new();
+        unit.tokens(&mut |_, span: diag::Span, id, _| {
+            if let Some(id) = id {
+                let node = unit.node(id).unwrap();
+                refs.push((span.start().byte_offset(), declared_name(&unit, &node), id));
+            }
+        });
+        let named: Vec<_> = refs
+            .iter()
+            .filter(|(_, name, _)| name == "second")
+            .collect();
+        assert_eq!(named.len(), 2);
+        assert_eq!(named[0].2, named[1].2);
+        let saved: Vec<_> = refs.iter().filter(|(_, name, _)| name == "saved").collect();
+        assert_eq!(saved.len(), 2);
+        assert_eq!(saved[0].2, saved[1].2);
+        let xs: std::collections::HashSet<_> = refs
+            .iter()
+            .filter(|(_, name, _)| name == "x")
+            .map(|(_, _, id)| id)
+            .collect();
+        assert_eq!(xs.len(), 3);
+    }
+
+    #[test]
+    fn shared_import_bindings_keep_distinct_declarations() {
+        let unit = config().unit(Path::new("imports.dol"), b"import std\nimport std\nstd\n");
+        assert!(!unit.failed);
+        let imports: Vec<_> = unit
+            .nodes()
+            .filter(|(_, node)| matches!(node.kind(), Kind::ImportModule { .. }))
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(imports.len(), 2);
+        assert_ne!(imports[0], imports[1]);
+        let mut ids = Vec::new();
+        unit.tokens(&mut |_, _, id, _| {
+            if let Some(id) = id {
+                ids.push(id);
+            }
+        });
+        assert_eq!(ids, vec![imports[0], imports[1], imports[1]]);
+    }
+
+    #[test]
+    fn anonymous_parameters_and_nonlocal_jumps_are_indexed() {
+        let source = b"def invoke block\n  block()\ndef f ...\n  while true\n    invoke do continue\n    invoke do break\n  invoke do return 1\n";
+        let unit = config().unit(Path::new("jumps.dol"), source);
+        assert!(!unit.failed, "{:?}", diagnostic_snapshot(&unit));
+        assert!(
+            unit.nodes()
+                .any(|(_, node)| matches!(node.kind(), Kind::RestParam { name: None }))
+        );
+        let mut jumps = Vec::new();
+        for (_, node) in unit.nodes() {
+            let (kind, target) = match node.kind() {
+                Kind::Break { target } => ("break", target),
+                Kind::Continue { target } => ("continue", target),
+                Kind::Return { target } => ("return", target),
+                _ => continue,
+            };
+            assert!(matches!(
+                unit.node(node.parent().unwrap()).unwrap().kind(),
+                Kind::Lambda
+            ));
+            let target = unit.node(target.unwrap()).unwrap();
+            jumps.push((kind, kind_name(&target.kind()).to_owned()));
+        }
+        assert_eq!(
+            jumps,
+            vec![
+                ("continue", "while".into()),
+                ("break", "while".into()),
+                ("return", "function".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn static_initializers_resolve_in_the_enclosing_scope() {
+        let mut config = Config::new();
+        config.document(true);
+        let unit = config.unit(
+            Path::new("static.dol"),
+            b"let x = 1\nclass C\n  #[static]\n  pub field y = str(x)\nC\n",
+        );
+        assert!(!unit.failed);
+        assert!(!unit.nodes().any(|(_, node)| matches!(
+            node.kind(),
+            Kind::Function { .. } | Kind::Lambda | Kind::SelfParam { .. }
+        )));
+        let mut xs = Vec::new();
+        unit.tokens(&mut |_, _, id, _| {
+            if let Some(id) = id
+                && declared_name(&unit, &unit.node(id).unwrap()) == "x"
+            {
+                xs.push(id);
+            }
+        });
+        assert_eq!(xs.len(), 2);
+        assert_eq!(xs[0], xs[1]);
+    }
+
     fn config<'a>() -> Config<'a> {
         let mut config = Config::new();
+        config.document(true);
         // The default prelude imports modules which are not available here
         config.prelude().clear();
         config
@@ -1294,11 +1494,7 @@ mod tests {
         }
     }
 
-    /// The reserved zero index keeps optional node identities pointer-free.
-    ///
-    /// Parent links, jump targets and decorator targets are all optional, so an
-    /// `Option<NodeId>` that costs nothing over a `NodeId` is worth the one
-    /// wasted slot at the head of the table.
+    /// Nonzero identities keep optional node links pointer-free.
     #[test]
     fn an_optional_node_identity_is_no_wider_than_a_node_identity() {
         assert_eq!(
@@ -1469,6 +1665,7 @@ mod tests {
     #[test]
     fn decorators_are_nodes_naming_what_they_resolve_to() {
         let mut config = Config::new();
+        config.document(true);
         config
             .prelude()
             .clear()
@@ -1507,6 +1704,7 @@ mod tests {
     #[test]
     fn unused_prelude_imports_are_not_surfaced() {
         let mut config = Config::new();
+        config.document(true);
         config
             .prelude()
             .clear()
@@ -1565,6 +1763,7 @@ mod tests {
     #[test]
     fn field_decorators_resolve_to_the_prelude_item_that_names_the_scope() {
         let mut config = Config::new();
+        config.document(true);
         config
             .prelude()
             .clear()

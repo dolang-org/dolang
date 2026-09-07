@@ -667,7 +667,7 @@ impl Backend {
             let content = guard.content.as_str();
             let index = DocumentIndex::new(content, self.position_encoding());
             let mut config = CompileConfig::new();
-            config.recover(true);
+            config.recover(true).document(true);
             if let Some(settings) = settings {
                 let mut prelude = config.prelude();
                 for import in settings.prelude.iter() {

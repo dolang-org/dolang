@@ -35,22 +35,47 @@ pub(crate) struct Var {
     pub(crate) exported: bool,
     // Used?
     pub(crate) used: bool,
-    // Document node for the declaration that bound this
-    pub(crate) node: doc::Id,
+    // Compile-time provenance of the binding.
+    pub(crate) origin: Origin,
+    // Filled only by document indexing; references use (index, depth) to find it.
+    pub(crate) node: Option<doc::Id>,
+}
+
+/// Metadata needed by elaboration and lowering, independent of document indexing.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Origin {
+    Source(Span),
+    SelfParam(Span),
+    PreludeModule,
+    PreludeItem {
+        module: dolang_util::intern::StrId,
+        item: dolang_util::intern::StrId,
+    },
+    Synthetic,
+    Repl,
+}
+
+impl Origin {
+    pub(crate) fn name(self) -> Option<Span> {
+        match self {
+            Self::Source(span) | Self::SelfParam(span) => Some(span),
+            _ => None,
+        }
+    }
 }
 
 impl Var {
-    pub(crate) fn is_emitted(&self, doctab: &doc::Table) -> bool {
-        !self.is_prelude(doctab) || self.used || self.exported
+    pub(crate) fn is_emitted(&self) -> bool {
+        !self.is_prelude() || self.used || self.exported
     }
-    pub(crate) fn is_prelude(&self, doctab: &doc::Table) -> bool {
+    pub(crate) fn is_prelude(&self) -> bool {
         matches!(
-            doctab[self.node].kind,
-            doc::Kind::PreludeModule { .. } | doc::Kind::PreludeItem { .. }
+            self.origin,
+            Origin::PreludeModule | Origin::PreludeItem { .. }
         )
     }
     pub(crate) fn is_synthetic(&self) -> bool {
-        self.node == doc::Table::SYNTHETIC
+        matches!(self.origin, Origin::Synthetic)
     }
 }
 
@@ -58,7 +83,7 @@ impl Var {
 pub(crate) struct Res {
     pub(crate) index: usize,
     pub(crate) depth: usize,
-    pub(crate) node: doc::Id,
+    pub(crate) node: Option<doc::Id>,
 }
 
 /// Information for a non-local jump (break/continue/return across closure boundary)
@@ -88,7 +113,7 @@ impl Node for Ident {
         visit.token(
             Token::Variable,
             self.span,
-            self.res.as_ref().map(|r| r.node),
+            self.res.as_ref().and_then(|r| r.node),
         )
     }
 
@@ -1437,7 +1462,7 @@ impl Node for Param {
                 visit.token(
                     Token::Variable,
                     ident.span,
-                    ident.res.as_ref().map(|r| r.node),
+                    ident.res.as_ref().and_then(|r| r.node),
                 )?;
                 if let Some(default) = default {
                     visit.token(Token::Delim, default.delim_span, None)?;
@@ -1455,7 +1480,7 @@ impl Node for Param {
                 visit.token(
                     Token::Variable,
                     ident.span,
-                    ident.res.as_ref().map(|r| r.node),
+                    ident.res.as_ref().and_then(|r| r.node),
                 )?;
                 if let Some(default) = default {
                     visit.token(Token::Delim, default.delim_span, None)?;
@@ -1475,7 +1500,7 @@ impl Node for Param {
                 visit.token(
                     Token::Variable,
                     ident.span,
-                    ident.res.as_ref().map(|r| r.node),
+                    ident.res.as_ref().and_then(|r| r.node),
                 )?;
                 if let Some(default) = default {
                     visit.token(Token::Delim, default.delim_span, None)?;
@@ -1492,7 +1517,7 @@ impl Node for Param {
                     visit.token(
                         Token::Variable,
                         ident.span,
-                        ident.res.as_ref().map(|r| r.node),
+                        ident.res.as_ref().and_then(|r| r.node),
                     )?;
                 }
                 ControlFlow::Continue(())
@@ -1892,7 +1917,7 @@ impl Node for Def {
         visit.token(
             Token::Variable,
             self.ident.span,
-            self.ident.res.as_ref().map(|r| r.node),
+            self.ident.res.as_ref().and_then(|r| r.node),
         )?;
         visit.node(&self.func)
     }
@@ -2036,7 +2061,7 @@ impl Node for Class {
         visit.token(
             Token::Variable,
             self.ident.span,
-            self.ident.res.as_ref().map(|r| r.node),
+            self.ident.res.as_ref().and_then(|r| r.node),
         )?;
         if let Some(colon_span) = self.colon_span {
             visit.token(Token::Delim, colon_span, None)?;
