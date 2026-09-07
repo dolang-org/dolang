@@ -27,12 +27,6 @@ def local_get_and_put()
 
 #[test]
 #[vfs]
-def policy_is_reserved()
-  assert_throws $ValueError do
-    transfer.get "source.bin" policy: :OFFLINE:
-
-#[test]
-#[vfs]
 def http_get_downloads_and_caches()
   http.mock.Server do |server|
     server.mock

@@ -109,12 +109,13 @@ value is a function executed inside the build container's VFS context.
 [`podman`](./api/podman/index.md), [`toolbx`](./api/toolbx.md)),
 [SSH](./api/ssh.md), [WSL](./api/wsl.md), privilege elevation
 ([`admin`](./api/admin.md), [`sudo`](./api/sudo.md)), argument parsing
-([`Args`](./api/args.md)), system integration ([`sys`](./api/sys/index.md),
-[`systemd`](./api/systemd.md), [`xdg`](./api/xdg.md)), identity and Windows
-access control ([`security`](./api/security/index.md)), and safe terminal output
+([`Args`](./api/args/index.md)), system integration
+([`sys`](./api/sys/index.md), [`systemd`](./api/systemd/index.md),
+[`xdg`](./api/xdg.md)), identity and Windows access control
+([`security`](./api/security/index.md)), and safe terminal output
 ([`term`](./api/term/index.md), [`progress`](./api/progress/index.md)).
 
-**Data and protocols** — artifact [transfers](./api/transfer.md),
+**Data and protocols** — artifact [transfers](./api/transfer/index.md),
 [HTTP](./api/http/index.md),
 [URLs](./api/url/index.md), [JSON](./api/json.md), [TOML](./api/toml.md),
 [XML](./api/xml/index.md), [YAML](./api/yaml.md),

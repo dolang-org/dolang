@@ -383,22 +383,32 @@ class Cache
 
 # Resolves a local path or downloads an HTTP(S) URL into the application cache.
 #
-# `digest` uses `algorithm:hex` syntax. Supported algorithms are BLAKE3, MD5,
-# SHA-1, SHA-256, and SHA-512. A previously verified digest-pinned entry is
-# returned without contacting the server.
-#
-# An interrupted download is kept and resumed with a range request on the next
-# call, falling back to a full download when the server ignores the range or
-# the representation has changed.
-#
-# `cache` overrides the cache location with an explicit directory, bypassing
-# `app`/`fs.cache_dir` entirely. Mainly useful for tests that want an
-# isolated, disposable cache root.
-#
-# `policy` is reserved and must be `nil`.
-pub def get source :app = nil :digest = nil :policy = nil :cache = nil
-  if (policy != nil)
-    throw std.ValueError "policy: reserved; expected nil"
+# A cached response is revalidated with whatever validators the server supplied
+# for it. An interrupted download is kept and resumed with a range request on
+# the next call, falling back to a full download when the server ignores the
+# range or the representation has changed.
+pub def get
+  # ([`Str`](../std/str.md)\|[`Url`](../url/url.md)\|[`fs.Path`](../fs/path.md))
+  # Local path or HTTP(S) URL to resolve.
+  source
+  # ([`Str`](../std/str.md)) Application name selecting the cache directory.
+  #
+  # Defaults to the name of the running program. Not valid together with
+  # `cache`.
+  :app = nil
+  # ([`Str`](../std/str.md)) Expected digest, as `algorithm:hex`.
+  #
+  # Supported algorithms are BLAKE3, MD5, SHA-1, SHA-256, and SHA-512. An entry
+  # already verified against the digest is returned without contacting the
+  # server.
+  :digest = nil
+  # ([`Str`](../std/str.md)\|[`fs.Path`](../fs/path.md)) Explicit cache directory.
+  #
+  # Bypasses `app` and `fs.cache_dir` entirely, and is not valid together with
+  # `app`. Mainly useful for tests that want an isolated, disposable cache
+  # root.
+  :cache = nil
+do
   if (app != nil && cache != nil)
     throw std.ValueError "app: not valid together with cache"
   source = parse_location $source
@@ -435,10 +445,20 @@ def put_url source destination headers
   nil
 
 # Copies or uploads `source` to `destination`.
-#
-# URL sources are resolved through [`get`](#get-source-app-digest-policy).
-# `headers` applies only to HTTP(S) destinations.
-pub def put source destination :headers = nil
+pub def put
+  # ([`Str`](../std/str.md)\|[`Url`](../url/url.md)\|[`fs.Path`](../fs/path.md))
+  # Local path or HTTP(S) URL to copy from.
+  #
+  # A URL is resolved through [`get`](#transfer--get) first.
+  source
+  # ([`Str`](../std/str.md)\|[`Url`](../url/url.md)\|[`fs.Path`](../fs/path.md))
+  # Local path or HTTP(S) URL to write to.
+  destination
+  # ([`Dict`](../std/dict.md)) Request headers for an HTTP(S) destination.
+  #
+  # Only valid for an HTTP(S) destination.
+  :headers = nil
+do
   source = (parse_location source)
   if (type source Url)
     source = get $source
@@ -682,9 +702,51 @@ def pack_local source archive destination format prefix metadata
 
 # Packs a file or directory into TAR, compressed TAR, or ZIP.
 #
-# Directory contents are relative to the source root. `prefix` prepends a safe
-# relative path to every archive entry.
-pub def pack source destination :format = nil :prefix = nil ...metadata
+# Directory contents are relative to the source root.
+pub def pack
+  # ([`Str`](../std/str.md)\|[`Url`](../url/url.md)\|[`fs.Path`](../fs/path.md))
+  # File or directory to pack.
+  source
+  # ([`Str`](../std/str.md)\|[`Url`](../url/url.md)\|[`fs.Path`](../fs/path.md))
+  # Archive to write.
+  destination
+  # ([`Sym`](../std/sym.md)) Archive format.
+  #
+  # Inferred from the destination name when omitted, which fails if the name
+  # carries no recognized extension.
+  #
+  # | Value        | Meaning                    |
+  # | ------------ | -------------------------- |
+  # | `:TAR:`      | Uncompressed TAR           |
+  # | `:TAR_GZIP:` | gzip-compressed TAR        |
+  # | `:TAR_ZSTD:` | Zstandard-compressed TAR   |
+  # | `:ZIP:`      | ZIP                        |
+  :format = nil
+  # ([`Str`](../std/str.md)\|[`fs.Path`](../fs/path.md)) Relative path prepended
+  # to every archive entry.
+  :prefix = nil
+  # ([`Value`](../std/value.md)) Metadata applied to every archive entry, as
+  # keyword arguments.
+  #
+  # Each key overrides what would otherwise be taken from the source file.
+  # Positional arguments are rejected, as is any key not listed here.
+  #
+  # | Name           | Type                                                                       | Meaning                                    |
+  # | -------------- | -------------------------------------------------------------------------- | ------------------------------------------ |
+  # | `mode`         | [`Int`](../std/int.md)\|[`fs.unix.Mode`](../fs/unix/mode.md)                  | Permissions for regular files              |
+  # | `dir_mode`     | [`Int`](../std/int.md)\|[`fs.unix.Mode`](../fs/unix/mode.md)                  | Permissions for directories                |
+  # | `link_mode`    | [`Int`](../std/int.md)\|[`fs.unix.Mode`](../fs/unix/mode.md)                  | Permissions for symlinks                   |
+  # | `uid`          | [`Int`](../std/int.md)                                                      | Owner ID                                   |
+  # | `gid`          | [`Int`](../std/int.md)                                                      | Group ID                                   |
+  # | `owner_name`   | [`Str`](../std/str.md)                                                      | Owner name                                 |
+  # | `group_name`   | [`Str`](../std/str.md)                                                      | Group name                                 |
+  # | `mtime`        | [`DateTime`](../time/datetime.md)                                           | Modification time                          |
+  #
+  # Where the source carries no value of its own, `mode` falls back to `0o644`,
+  # `dir_mode` to `0o755`, `link_mode` to `0o777`, `uid` and `gid` to `0`, and
+  # `mtime` to the Unix epoch. A name that cannot be looked up is omitted.
+  ...metadata
+do
   metadata = (validate_metadata metadata)
   source = (parse_location source)
   if (type source Url)
@@ -1018,9 +1080,43 @@ def decompress_raw source destination format
 # Safely extracts an archive or decompresses a single file into a new
 # destination.
 #
-# For archives, `strip` accepts a non-negative component count or `:ROOT:`.
-# Raw gzip, Zstandard, and XZ streams require `strip: 0` and produce a file.
-pub def unpack source destination :format = nil :strip = 0 :app = nil
+# Extraction validates the whole manifest before writing anything, rejecting
+# unsafe or conflicting paths. Raw decompression runs the corresponding `gzip`,
+# `zstd`, or `xz` program.
+pub def unpack
+  # ([`Str`](../std/str.md)\|[`Url`](../url/url.md)\|[`fs.Path`](../fs/path.md))
+  # Archive or compressed file to extract.
+  source
+  # ([`Str`](../std/str.md)\|[`fs.Path`](../fs/path.md)) Path to create.
+  #
+  # Must not already exist, and may not be a URL.
+  destination
+  # ([`Sym`](../std/sym.md)) Input format.
+  #
+  # Inferred from the source name when omitted. A compressed TAR archive is
+  # distinguished from a raw stream by filename: `.tar.gz` selects
+  # `:TAR_GZIP:` while `.gz` selects `:GZIP:`.
+  #
+  # | Value        | Meaning                    |
+  # | ------------ | -------------------------- |
+  # | `:TAR:`      | Uncompressed TAR           |
+  # | `:TAR_GZIP:` | gzip-compressed TAR        |
+  # | `:TAR_ZSTD:` | Zstandard-compressed TAR   |
+  # | `:ZIP:`      | ZIP                        |
+  # | `:GZIP:`     | Raw gzip stream            |
+  # | `:ZSTD:`     | Raw Zstandard stream       |
+  # | `:XZ:`       | Raw XZ stream              |
+  :format = nil
+  # ([`Int`](../std/int.md)\|[`Sym`](../std/sym.md)) Leading path components to
+  # strip from each entry.
+  #
+  # `:ROOT:` strips one component, and requires a non-empty archive whose
+  # entries share a single root component. Raw streams require `0`.
+  :strip = 0
+  # ([`Str`](../std/str.md)) Application name selecting the cache directory,
+  # for a URL source.
+  :app = nil
+do
   source = parse_location $source
   if (type source Url)
     source = get $source app: $app

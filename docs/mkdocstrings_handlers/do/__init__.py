@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+
+# How many parameters a signature keeps once a parameter table repeats them.
+MAX_SIGNATURE_PARAMS = 2
 
 from mkdocstrings._internal.handlers.base import BaseHandler, CollectionError
 
@@ -165,6 +169,8 @@ class DoHandler(BaseHandler):
         if not show_undocumented:
             _strip_undocumented(entities)
 
+        _annotate_params(entities)
+
         if not entity_parts:
             # Module-level: return all public entities as a synthetic module object.
             _annotate_entities(entities, module_name)
@@ -210,6 +216,102 @@ def _annotate_entities(entities: list[dict], module_name: str) -> None:
         for member in entity.get("members", []):
             member["_identifier"] = f"{module_name}.{name}.{member['name']}"
             member["_module"] = module_name
+
+
+def _split_doc(doc: str) -> tuple[str, str]:
+    """Split a doc comment into its first paragraph and whatever follows it.
+
+    The first paragraph is what a parameter table can hold; anything past it
+    needs room of its own.
+    """
+    text = (doc or "").strip()
+    if not text:
+        return "", ""
+    head, _, rest = text.partition("\n\n")
+    return head.strip(), rest.strip()
+
+
+def _split_type(text: str) -> tuple[str, str]:
+    """Split a leading parenthesised type off a parameter description.
+
+    Until the language carries type annotations of its own, a description may
+    open with its type in parentheses. A type is written as markdown and so
+    holds parentheses of its own -- ``([`Str`](../std/str.md))`` -- so the
+    group is matched by depth rather than to the first ``)``.
+    """
+    if not text.startswith("("):
+        return "", text
+    depth = 0
+    for index, char in enumerate(text):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return text[1:index].strip(), text[index + 1 :].lstrip()
+    # Unbalanced, so there is no group to take and the text is all description.
+    return "", text
+
+
+def _slug(name: str) -> str:
+    """An anchor-safe form of a parameter name.
+
+    Parameters are written with punctuation that does not belong in a fragment
+    identifier -- ``:host``, ``...args``.
+    """
+    return re.sub(r"[^0-9A-Za-z_]+", "-", name).strip("-")
+
+
+def _signature(entity: dict) -> str:
+    """The form of a declaration used as its heading.
+
+    A parameter table repeats the whole list, so a declaration that renders one
+    keeps only its required positional prefix in the heading; spelling out a
+    keyword-heavy declaration produces a heading too long to scan or to use as
+    a table-of-contents entry.
+    """
+    name = entity.get("name", "")
+    params = entity.get("params") or []
+    if not params:
+        return f"{name}()"
+    written = [p.get("name", "") + ("?" if p.get("optional") else "") for p in params]
+    if not any(p.get("documented") for p in params):
+        return " ".join([name, *written])
+    kept: list[str] = []
+    for param, text in zip(params, written):
+        # Stop at the first optional parameter rather than skipping past it:
+        # what identifies a call is the prefix that must be written out.
+        if param.get("optional") or len(kept) == MAX_SIGNATURE_PARAMS:
+            break
+        kept.append(text)
+    if len(kept) == len(written):
+        return " ".join([name, *kept])
+    return " ".join([name, *kept, "…"])
+
+
+def _annotate_params(entities: list[dict]) -> None:
+    """Recursively prepare parameters and signatures for rendering."""
+    for entity in entities:
+        # Punctuation is what distinguishes `:args` from `...args`, and it is
+        # exactly what a slug drops, so collisions are broken by position.
+        seen: set[str] = set()
+        for index, param in enumerate(entity.get("params") or []):
+            short, rest = _split_doc(param.get("doc", ""))
+            type_, short = _split_type(short)
+            param["type"] = type_
+            param["doc_short"] = short
+            param["doc_rest"] = rest
+            # A type alone documents a parameter, so it is enough to earn the
+            # table -- and the abbreviated signature that comes with it.
+            param["documented"] = bool(type_ or short or rest)
+            slug = _slug(param.get("name", "")) or f"param{index}"
+            if slug in seen:
+                slug = f"{slug}-{index}"
+            seen.add(slug)
+            param["slug"] = slug
+        if entity.get("kind") in ("function", "method"):
+            entity["signature"] = _signature(entity)
+        _annotate_params(entity.get("members", []))
 
 
 def _strip_undocumented(entities: list[dict]) -> None:

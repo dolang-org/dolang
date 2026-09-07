@@ -1,0 +1,3 @@
+# ArchiveError
+
+::: transfer.ArchiveError
