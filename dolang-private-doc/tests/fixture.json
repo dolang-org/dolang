@@ -6,14 +6,17 @@
       "name": "greet",
       "params": [
         {
+          "doc": "",
           "name": "name",
           "optional": false
         },
         {
+          "doc": "",
           "name": ":greeting",
           "optional": true
         },
         {
+          "doc": "",
           "name": "...rest",
           "optional": false
         }
@@ -82,15 +85,16 @@
           "name": "(init)",
           "params": [
             {
+              "doc": "",
               "name": "x",
               "optional": false
             }
           ],
           "pub": true,
           "span": {
-            "col": 11,
+            "col": 10,
             "line": 35,
-            "offset": 591
+            "offset": 590
           },
           "special": true
         },
@@ -101,9 +105,9 @@
           "params": [],
           "pub": true,
           "span": {
-            "col": 11,
+            "col": 10,
             "line": 39,
-            "offset": 646
+            "offset": 645
           },
           "special": true
         },
@@ -124,10 +128,12 @@
           "name": "shift",
           "params": [
             {
+              "doc": "",
               "name": "by",
               "optional": false
             },
             {
+              "doc": "",
               "name": ":clamp",
               "optional": true
             }
@@ -179,6 +185,34 @@
       "supers": [
         "std.Record"
       ]
+    },
+    {
+      "doc": "Build something.\n\nThe parameters are laid out vertically, so each can be documented on its own.",
+      "kind": "function",
+      "name": "build",
+      "params": [
+        {
+          "doc": "Where the parts come from.",
+          "name": ":from",
+          "optional": false
+        },
+        {
+          "doc": "Whether to fetch them first.",
+          "name": ":pull",
+          "optional": true
+        },
+        {
+          "doc": "Everything else, passed along.",
+          "name": "...args",
+          "optional": false
+        }
+      ],
+      "pub": true,
+      "span": {
+        "col": 8,
+        "line": 62,
+        "offset": 1109
+      }
     }
   ],
   "module": "fixture",

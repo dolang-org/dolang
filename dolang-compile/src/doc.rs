@@ -9,6 +9,7 @@ use dolang_util::alias;
 
 use crate::source::Span;
 
+mod comment;
 mod index;
 pub(crate) use index::index;
 
@@ -150,19 +151,68 @@ pub(crate) enum Kind {
     },
 }
 
+impl Kind {
+    /// The name this node declares, where it declares one in source text.
+    ///
+    /// This is what go-to-definition jumps to and what an outline selects.  A
+    /// node that declares nothing has none, and neither does a prelude binding,
+    /// which is declared by configuration rather than by any text.  Whether a
+    /// node has one is also what decides whether a doc comment may attach to
+    /// it: documentation describes declarations.
+    pub(crate) fn definition(&self) -> Option<Span> {
+        match self {
+            Kind::Class { name, .. }
+            | Kind::Function { name, .. }
+            | Kind::Method { name, .. }
+            | Kind::SpecialMethod { name }
+            | Kind::Field { name, .. }
+            | Kind::Bind { name, .. }
+            | Kind::PositionalParam { name, .. }
+            | Kind::KeyParam { name, .. }
+            | Kind::SelfParam { name }
+            | Kind::ImportModule { name, .. }
+            | Kind::ImportItem { name, .. } => Some(*name),
+            Kind::RestParam { name } => *name,
+            Kind::PreludeModule { .. }
+            | Kind::PreludeItem { .. }
+            | Kind::Lambda
+            | Kind::If
+            | Kind::Else
+            | Kind::While
+            | Kind::For
+            | Kind::Try
+            | Kind::Catch
+            | Kind::Finally
+            | Kind::ForElem
+            | Kind::IfElem
+            | Kind::Decorator { .. }
+            | Kind::Break { .. }
+            | Kind::Continue { .. }
+            | Kind::Return { .. } => None,
+        }
+    }
+}
+
 /// A single document node.
 #[derive(Debug)]
 pub(crate) struct Node {
     /// The node this one is lexically inside, if any
     pub(crate) parent: Option<Id>,
     pub(crate) kind: Kind,
-    /// The whole construct
+    /// The whole construct, from its first decorator to the end of its body
     pub(crate) span: Span,
+    /// The doc comment block attached to this node, if any
+    pub(crate) doc: Option<Span>,
 }
 
 impl Node {
-    pub(crate) fn new(parent: Option<Id>, kind: Kind, span: Span) -> Self {
-        Self { parent, kind, span }
+    pub(crate) fn new(parent: Option<Id>, kind: Kind, span: Span, doc: Option<Span>) -> Self {
+        Self {
+            parent,
+            kind,
+            span,
+            doc,
+        }
     }
 }
 

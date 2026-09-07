@@ -1057,6 +1057,18 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
             create_span(strand.state(), strand, span, out);
             Ok(())
         });
+        // Every node answers, rather than only the kinds that can be
+        // documented: which of them those are is the compiler's determination,
+        // and a consumer that has to know it in advance gains nothing.
+        builder = builder.get("doc", |this, strand, out| {
+            let doc = with_node(this, strand, |n, _| n.doc().map(span_data))?;
+            if let Some(doc) = doc {
+                create_span(strand.state(), strand, doc, out)
+            } else {
+                Output::set(strand, out, Nil)
+            };
+            Ok(())
+        });
         if matches!(
             T::NAME,
             "Class"

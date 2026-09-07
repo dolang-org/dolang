@@ -4056,6 +4056,7 @@ impl<'a> Parser<'a> {
                     let default = self.parse_param_default(scope, mode)?;
                     params.push(Param::Key {
                         key_span: key,
+                        colon_span: key.after_right_char(),
                         ident: Ident::new(ident_span),
                         default,
                     });
@@ -4070,6 +4071,7 @@ impl<'a> Parser<'a> {
                     let default = self.parse_param_default(scope, mode)?;
                     params.push(Param::Key {
                         key_span: key,
+                        colon_span: key.before_left_char(),
                         ident: Ident::new(key),
                         default,
                     })

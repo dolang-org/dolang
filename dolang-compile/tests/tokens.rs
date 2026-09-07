@@ -60,6 +60,11 @@ fn compact_expr() {
 }
 
 #[test]
+fn params() {
+    check("tests/tokens/params.dol");
+}
+
+#[test]
 fn strings() {
     check("tests/tokens/strings.dol");
 }

@@ -37,36 +37,25 @@ fn span_text(content: &[u8], span: &Span) -> String {
     .to_owned()
 }
 
-/// Scans backward for the preceding block of doc comments, skipping decorators.
+/// The documentation attached to a node, as prose.
 ///
-/// Doc comments are the one thing the compiler does not model: they are just
-/// comments, attached by adjacency rather than by syntax, so they are recovered
-/// from the source text.
-fn extract_doc(content: &[u8], offset: usize) -> String {
-    let prefix = std::str::from_utf8(&content[..offset]).unwrap_or("");
-    let prefix = prefix.rsplit_once('\n').map_or("", |(lines, _)| lines);
-    let mut comment_lines: Vec<String> = Vec::new();
-    let mut lines = prefix.lines().rev().peekable();
-
-    while lines
-        .peek()
-        .is_some_and(|line| line.trim_start().starts_with("#["))
-    {
-        lines.next();
-    }
-    for line in lines {
-        let line = line.trim_start();
-        if !line.starts_with('#') || line.starts_with("#[") {
-            break;
-        }
-        let stripped = line
-            .strip_prefix("# ")
-            .or_else(|| line.strip_prefix('#'))
-            .unwrap_or(line);
-        comment_lines.push(stripped.to_owned());
-    }
-    comment_lines.reverse();
-    comment_lines.join("\n")
+/// Which comments document a declaration is the compiler's determination; the
+/// span it reports covers the block as written, so all that is left here is to
+/// undo the markers and indentation it was written with.
+fn extract_doc(content: &[u8], span: Option<Span>) -> String {
+    let Some(span) = span else {
+        return String::new();
+    };
+    span_text(content, &span)
+        .lines()
+        .map(|line| {
+            let line = line.trim_start();
+            line.strip_prefix("# ")
+                .or_else(|| line.strip_prefix('#'))
+                .unwrap_or(line)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The prelude bindings whose presence as a decorator means something here.
@@ -119,25 +108,33 @@ impl Entity<'_> {
     /// The parameters of a function or method, in the order declared.
     ///
     /// `self` is excluded: it is an artifact of how methods are called, not part
-    /// of the documented signature.
+    /// of the documented signature.  A parameter written on its own line can
+    /// carry a comment block of its own, which documents it and not the
+    /// function it belongs to.
     fn params(&self, content: &[u8]) -> Value {
         Value::Array(
             self.children
                 .iter()
-                .filter_map(|(_, child)| match child.kind() {
-                    Kind::PositionalParam { name, default } => {
-                        let name = span_text(content, &name);
-                        Some(json!({"name": name, "optional": default.is_some()}))
-                    }
-                    Kind::KeyParam { key, default, .. } => {
-                        let name = format!(":{}", span_text(content, &key));
-                        Some(json!({"name": name, "optional": default.is_some()}))
-                    }
-                    Kind::RestParam { name } => {
-                        let bound = name.map_or(String::new(), |name| span_text(content, &name));
-                        Some(json!({"name": format!("...{bound}"), "optional": false}))
-                    }
-                    _ => None,
+                .filter_map(|(_, child)| {
+                    let (name, optional) = match child.kind() {
+                        Kind::PositionalParam { name, default } => {
+                            (span_text(content, &name), default.is_some())
+                        }
+                        Kind::KeyParam { key, default, .. } => {
+                            (format!(":{}", span_text(content, &key)), default.is_some())
+                        }
+                        Kind::RestParam { name } => {
+                            let bound =
+                                name.map_or(String::new(), |name| span_text(content, &name));
+                            (format!("...{bound}"), false)
+                        }
+                        _ => return None,
+                    };
+                    Some(json!({
+                        "name": name,
+                        "optional": optional,
+                        "doc": extract_doc(content, child.doc()),
+                    }))
                 })
                 .collect(),
         )
@@ -226,14 +223,7 @@ fn document(path: &Path, content: &[u8], module: Option<String>, all: bool) -> V
                 ("function", span_text(content, &name), name, is_pub)
             }
             Kind::Method { name, is_pub } => ("method", span_text(content, &name), name, is_pub),
-            // A special method's name is written in parentheses; the span
-            // covers the protocol name alone, so restore them for display.
-            Kind::SpecialMethod { name } => (
-                "method",
-                format!("({})", span_text(content, &name)),
-                name,
-                true,
-            ),
+            Kind::SpecialMethod { name } => ("method", span_text(content, &name), name, true),
             Kind::Field { name, is_pub } => ("field", span_text(content, &name), name, is_pub),
             Kind::Bind { name, is_pub } => ("value", span_text(content, &name), name, is_pub),
             _ => continue,
@@ -244,7 +234,7 @@ fn document(path: &Path, content: &[u8], module: Option<String>, all: bool) -> V
         }
 
         let offset = name_span.start().byte_offset();
-        let doc = extract_doc(content, node.span().start().byte_offset());
+        let doc = extract_doc(content, node.doc());
         let span = entity.span_json(&name_span);
 
         match kind {

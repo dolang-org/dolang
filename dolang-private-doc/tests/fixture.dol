@@ -56,3 +56,16 @@ pub class Point: Record
 # Inherits through a module path rather than an imported item.
 pub class Tagged: std.Record
   pub field tag = nil
+
+# Build something.
+#
+# The parameters are laid out vertically, so each can be documented on its own.
+pub def build
+  # Where the parts come from.
+  :from
+  # Whether to fetch them first.
+  :pull = true
+  # Everything else, passed along.
+  ...args
+do
+  echo $from $pull ...args
