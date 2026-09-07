@@ -1,0 +1,60 @@
+# The delimiters, escapes and interpolated expressions are each their own
+# token, distinct from the literal text between them.
+
+#~~: keyword
+let name = 42
+#   ^~~~: variable, node=bind
+
+#~~: variable, context=call, node=prelude_item
+dbg "hello"
+#   ^: string_delim
+#    ^~~~~: literal
+#         ^: string_delim
+
+#~~: variable, context=call, node=prelude_item
+dbg "n is $name"
+#   ^: string_delim
+#    ^~~~~: literal
+#         ^: sigil
+#          ^~~~: variable, node=bind
+#              ^: string_delim
+
+#~~: variable, context=call, node=prelude_item
+dbg "a\nb"
+#   ^: string_delim
+#    ^: literal
+#     ^~: escape
+#       ^: literal
+#        ^: string_delim
+
+# `$(...)` is a full expression, so its contents tokenize as one.
+#~~: variable, context=call, node=prelude_item
+dbg "sum $(name + 1)"
+#   ^: string_delim
+#    ^~~~: literal
+#        ^: sigil
+#         ^: delim
+#          ^~~~: variable, node=bind
+#               ^: operator
+#                 ^: number
+#                  ^: delim
+#                   ^: string_delim
+
+# A formatted interpolation: the value is a compact expression and the
+# specification after the `:` is not part of it.
+#~~: variable, context=call, node=prelude_item
+dbg "n=${name:05d}"
+#   ^: string_delim
+#    ^~: literal
+#      ^: sigil
+#       ^: delim
+#        ^~~~: variable, node=bind
+#                ^: delim
+#                 ^: string_delim
+
+# A raw string interpolates nothing, so `$b` is literal text.
+#~~: variable, context=call, node=prelude_item
+dbg r"a$b"
+#   ^~: string_delim
+#     ^~~: literal
+#        ^: string_delim

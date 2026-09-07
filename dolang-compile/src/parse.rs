@@ -1240,14 +1240,13 @@ impl<'a> Parser<'a> {
                             this.parse_fmt_param_short(scope, dollar_span, hash_span, kind)?
                         } else {
                             let expr = this.parse_expr_primary(scope, ExprMode::Compact)?;
-                            // A sequence keeps every interpolation as its own
-                            // segment, and the sigil is part of how it was
-                            // written, so keep it in the segment's span.
-                            if kind == StrKind::Fmt {
-                                Self::dollar_group(expr, dollar_span)
-                            } else {
-                                expr
-                            }
+                            // The sigil is part of how the interpolation was
+                            // written, so it belongs to the interpolation's
+                            // span: a sequence needs it to delimit the segment,
+                            // and every string needs it for the sigil to be a
+                            // token rather than a gap between the literal text
+                            // and the name.
+                            Self::dollar_group(expr, dollar_span)
                         }
                     }
                     Some(token!(DQuote)) => break this.advance(),
@@ -1839,21 +1838,12 @@ impl<'a> Parser<'a> {
                                 Some(token!(Key)) => {
                                     let span = this.advance();
                                     let expr = Expr::Ident(Ident::new(span));
-                                    let expr = if kind == StrKind::Fmt {
-                                        Self::dollar_group(expr, dollar_span)
-                                    } else {
-                                        expr
-                                    };
-                                    exprs.push(expr);
+                                    exprs.push(Self::dollar_group(expr, dollar_span));
                                     Expr::Literal(span.after_right_char())
                                 }
                                 _ => {
                                     let expr = this.parse_expr_primary(scope, ExprMode::Compact)?;
-                                    if kind == StrKind::Fmt {
-                                        Self::dollar_group(expr, dollar_span)
-                                    } else {
-                                        expr
-                                    }
+                                    Self::dollar_group(expr, dollar_span)
                                 }
                             };
                             exprs.push(expr);

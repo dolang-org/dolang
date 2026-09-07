@@ -1,0 +1,38 @@
+# Statement level is shell-like: a bare token is a literal string, and `$`
+# introduces a variable.  The same identifier is one or the other depending
+# only on where it sits, which is what these annotations pin down.
+
+#~~: keyword
+let name = 42
+#   ^~~~: variable, node=bind
+#        ^: operator
+#          ^~: number
+
+# Argument 0 is a call however it is written, so it is never a literal.
+#~~: variable, context=call, node=prelude_item
+dbg name
+#   ^~~~: literal
+
+#~~: variable, context=call, node=prelude_item
+dbg $name
+#   ^: sigil
+#    ^~~~: variable, node=bind
+
+# Punctuation is literal text at statement level, not an operator.
+#~~: variable, context=call, node=prelude_item
+dbg name=name
+#   ^~~~~~~~~: literal
+
+#~~: variable, context=call, node=prelude_item
+dbg 1+1
+#   ^~~: literal
+
+# A parenthesized argument switches to expression level, where the same
+# characters are operators and numbers.
+#~~: variable, context=call, node=prelude_item
+dbg (1 + 1)
+#   ^: delim
+#    ^: number
+#      ^: operator
+#        ^: number
+#         ^: delim
