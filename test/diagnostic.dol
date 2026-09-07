@@ -10,7 +10,7 @@ import
 #[test]
 def compile_diagnostic()
   let result = compile.compile "bad.dol" "let =\n"
-  let diag = result.diagnostics[0]
+  let diag = result.diagnostics().next()
 
   let rendered = diag.render()
   assert_eq (type rendered) $term.Text
@@ -29,7 +29,7 @@ def compile_diagnostic_line_number()
     # three
     let =
   let result = compile.compile "bad.dol" $source
-  let diag = result.diagnostics[0]
+  let diag = result.diagnostics().next()
   # Zero-based, so the fourth line.
   assert_eq $diag.span.start.line 3
 

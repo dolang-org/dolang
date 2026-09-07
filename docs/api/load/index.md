@@ -111,6 +111,6 @@ The result of executing the bytecode.
 import compile
 import load
 
-let result = load.run $ (compile.compile "example.dol" "(1 + 1)").bytecode
+let result = load.run $ (compile.compile "example.dol" "(1 + 1)").emit()
 assert_eq $result 2
 ```

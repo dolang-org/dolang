@@ -1,16 +1,19 @@
 use std::{
+    cell::Cell,
     hash::{Hash, Hasher},
+    marker::PhantomData,
+    mem,
     path::Path,
 };
 
 use dolang::{
-    compile::{self, Config, Diag, ErrorKind, Mode},
+    compile::{self, Config, Diag, Mode},
     extension::CompilerExt,
     runtime::{
-        Error, Input, Instance, Object, Output, Result, Slot, State, Strand, Sym, Type, Value,
+        Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Type, Value,
         object::{Mut, Ref, TypeBuilder},
         unpack,
-        value::{Array, Dict, Empty, Nil, View},
+        value::{Array, Dict, Empty, Nil, PinBin, PinStr, TypeObject, View},
         vm::{Builder, Stateful},
     },
 };
@@ -19,7 +22,18 @@ use dolang::{
 use dolang::runtime::{error::ErrorKind as RuntimeErrorKind, method};
 
 pub(crate) struct Types<'v> {
-    result: Type<'v, ResultObject>,
+    unit: Type<'v, UnitObject<'v>>,
+    diagnostic_iter: Type<'v, DiagnosticIter>,
+    node_iter: Type<'v, NodeIter>,
+    node_id: Type<'v, NodeIdObject>,
+    super_ref: Type<'v, SuperObject>,
+    node: Type<'v, NodeObject<NodeTag>>,
+    declaration: Type<'v, NodeObject<DeclarationTag>>,
+    import: Type<'v, NodeObject<ImportTag>>,
+    param: Type<'v, NodeObject<ParamTag>>,
+    block: Type<'v, NodeObject<BlockTag>>,
+    reference: Type<'v, NodeObject<ReferenceTag>>,
+    concrete_nodes: ConcreteNodeTypes<'v>,
     diagnostic: Type<'v, Diagnostic>,
     span: Type<'v, Span>,
     pos: Type<'v, Pos>,
@@ -40,6 +54,38 @@ pub(crate) struct Syms<'v> {
 pub(crate) struct Global<'v> {
     types: Types<'v>,
     syms: Syms<'v>,
+    next_unit_id: Cell<u64>,
+}
+
+pub(crate) struct ConcreteNodeTypes<'v> {
+    class: Type<'v, NodeObject<ClassTag>>,
+    function: Type<'v, NodeObject<FunctionTag>>,
+    method: Type<'v, NodeObject<MethodTag>>,
+    special_method: Type<'v, NodeObject<SpecialMethodTag>>,
+    field: Type<'v, NodeObject<FieldTag>>,
+    bind: Type<'v, NodeObject<BindTag>>,
+    self_param: Type<'v, NodeObject<SelfParamTag>>,
+    import_module: Type<'v, NodeObject<ImportModuleTag>>,
+    import_item: Type<'v, NodeObject<ImportItemTag>>,
+    prelude_module: Type<'v, NodeObject<PreludeModuleTag>>,
+    prelude_item: Type<'v, NodeObject<PreludeItemTag>>,
+    positional_param: Type<'v, NodeObject<PositionalParamTag>>,
+    key_param: Type<'v, NodeObject<KeyParamTag>>,
+    rest_param: Type<'v, NodeObject<RestParamTag>>,
+    lambda: Type<'v, NodeObject<LambdaTag>>,
+    if_node: Type<'v, NodeObject<IfTag>>,
+    else_node: Type<'v, NodeObject<ElseTag>>,
+    while_node: Type<'v, NodeObject<WhileTag>>,
+    for_node: Type<'v, NodeObject<ForTag>>,
+    try_node: Type<'v, NodeObject<TryTag>>,
+    catch: Type<'v, NodeObject<CatchTag>>,
+    finally: Type<'v, NodeObject<FinallyTag>>,
+    for_elem: Type<'v, NodeObject<ForElemTag>>,
+    if_elem: Type<'v, NodeObject<IfElemTag>>,
+    decorator: Type<'v, NodeObject<DecoratorTag>>,
+    break_node: Type<'v, NodeObject<BreakTag>>,
+    continue_node: Type<'v, NodeObject<ContinueTag>>,
+    return_node: Type<'v, NodeObject<ReturnTag>>,
 }
 
 pub struct Tag;
@@ -50,9 +96,78 @@ impl<'v> Stateful<'v> for Global<'v> {
 
 impl<'v> Global<'v> {
     pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+        let node = builder.register_type();
+        let declaration = builder
+            .build_type::<NodeObject<DeclarationTag>>((), ())
+            .nominal_supertype(node)
+            .build();
+        let import = builder
+            .build_type::<NodeObject<ImportTag>>((), ())
+            .nominal_supertype(declaration)
+            .build();
+        let param = builder
+            .build_type::<NodeObject<ParamTag>>((), ())
+            .nominal_supertype(node)
+            .build();
+        let block = builder
+            .build_type::<NodeObject<BlockTag>>((), ())
+            .nominal_supertype(node)
+            .build();
+        let reference = builder
+            .build_type::<NodeObject<ReferenceTag>>((), ())
+            .nominal_supertype(node)
+            .build();
+        macro_rules! subtype {
+            ($tag:ty, $base:expr) => {
+                builder
+                    .build_type::<NodeObject<$tag>>((), ())
+                    .nominal_supertype($base)
+                    .build()
+            };
+        }
         Self {
             types: Types {
-                result: builder.register_type(),
+                unit: builder.register_type(),
+                diagnostic_iter: builder.register_type(),
+                node_iter: builder.register_type(),
+                node_id: builder.register_type(),
+                super_ref: builder.register_type(),
+                node,
+                declaration,
+                import,
+                param,
+                block,
+                reference,
+                concrete_nodes: ConcreteNodeTypes {
+                    class: subtype!(ClassTag, declaration),
+                    function: subtype!(FunctionTag, declaration),
+                    method: subtype!(MethodTag, declaration),
+                    special_method: subtype!(SpecialMethodTag, declaration),
+                    field: subtype!(FieldTag, declaration),
+                    bind: subtype!(BindTag, declaration),
+                    self_param: subtype!(SelfParamTag, declaration),
+                    import_module: subtype!(ImportModuleTag, import),
+                    import_item: subtype!(ImportItemTag, import),
+                    prelude_module: subtype!(PreludeModuleTag, import),
+                    prelude_item: subtype!(PreludeItemTag, import),
+                    positional_param: subtype!(PositionalParamTag, param),
+                    key_param: subtype!(KeyParamTag, param),
+                    rest_param: subtype!(RestParamTag, param),
+                    lambda: subtype!(LambdaTag, block),
+                    if_node: subtype!(IfTag, block),
+                    else_node: subtype!(ElseTag, block),
+                    while_node: subtype!(WhileTag, block),
+                    for_node: subtype!(ForTag, block),
+                    try_node: subtype!(TryTag, block),
+                    catch: subtype!(CatchTag, block),
+                    finally: subtype!(FinallyTag, block),
+                    for_elem: subtype!(ForElemTag, block),
+                    if_elem: subtype!(IfElemTag, block),
+                    decorator: subtype!(DecoratorTag, reference),
+                    break_node: subtype!(BreakTag, reference),
+                    continue_node: subtype!(ContinueTag, reference),
+                    return_node: subtype!(ReturnTag, reference),
+                },
                 diagnostic: builder.register_type(),
                 span: builder.register_type(),
                 pos: builder.register_type(),
@@ -68,6 +183,7 @@ impl<'v> Global<'v> {
                 info: builder.sym("INFO"),
                 help: builder.sym("HELP"),
             },
+            next_unit_id: Cell::new(1),
         }
     }
 }
@@ -85,8 +201,31 @@ struct SpanData {
     end: PosData,
 }
 
-pub(crate) struct ResultAnnex {
-    bytecode: Option<Vec<u8>>,
+enum Backing<'v> {
+    Str(PinStr<'v, 'static>),
+    Bin(PinBin<'v, 'static>),
+}
+
+impl Backing<'_> {
+    fn bytes(&self) -> &'static [u8] {
+        // SAFETY: the pin is retained for the lifetime of the compiler unit and
+        // its owning Do value is rooted in the unit's GC slot.
+        unsafe {
+            mem::transmute(match self {
+                Self::Str(v) => v.as_bytes(),
+                Self::Bin(v) => &**v,
+            })
+        }
+    }
+}
+
+pub(crate) struct UnitObject<'v> {
+    // Fields are dropped in declaration order: the borrowing unit before its pin.
+    unit: Option<compile::Unit<'static>>,
+    _backing: Backing<'v>,
+    path: Box<Path>,
+    _module: Option<String>,
+    identity: u64,
 }
 
 pub(crate) struct DiagnosticAnnex<'v> {
@@ -127,7 +266,49 @@ pub(crate) struct PatchAnnex<'v> {
     sub: String,
 }
 
-pub(crate) struct ResultObject;
+pub(crate) struct DiagnosticIter {
+    index: usize,
+}
+pub(crate) struct NodeIter {
+    cursor: Option<compile::NodeId>,
+}
+pub(crate) struct NodeIdObject;
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+pub(crate) struct NodeIdAnnex {
+    unit: u64,
+    id: compile::NodeId,
+}
+pub(crate) struct SuperObject {
+    span: SpanData,
+    target: Option<compile::NodeId>,
+}
+
+pub(crate) trait NodeMarker {
+    const NAME: &'static str;
+}
+pub(crate) struct NodeObject<T: NodeMarker> {
+    id: compile::NodeId,
+    marker: PhantomData<T>,
+}
+
+macro_rules! node_tags {
+    ($($tag:ident => $name:literal),* $(,)?) => {$ (
+        pub(crate) struct $tag;
+        impl NodeMarker for $tag { const NAME: &'static str = $name; }
+    )* };
+}
+node_tags! {
+    NodeTag=>"Node", DeclarationTag=>"Declaration", ImportTag=>"Import", ParamTag=>"Param",
+    BlockTag=>"Block", ReferenceTag=>"Reference", ClassTag=>"Class", FunctionTag=>"Function",
+    MethodTag=>"Method", SpecialMethodTag=>"SpecialMethod", FieldTag=>"Field", BindTag=>"Bind",
+    SelfParamTag=>"SelfParam", ImportModuleTag=>"ImportModule", ImportItemTag=>"ImportItem",
+    PreludeModuleTag=>"PreludeModule", PreludeItemTag=>"PreludeItem", PositionalParamTag=>"PositionalParam",
+    KeyParamTag=>"KeyParam", RestParamTag=>"RestParam", LambdaTag=>"Lambda", IfTag=>"If", ElseTag=>"Else",
+    WhileTag=>"While", ForTag=>"For", TryTag=>"Try", CatchTag=>"Catch", FinallyTag=>"Finally",
+    ForElemTag=>"ForElem", IfElemTag=>"IfElem", DecoratorTag=>"Decorator", BreakTag=>"Break",
+    ContinueTag=>"Continue", ReturnTag=>"Return"
+}
 pub(crate) struct Diagnostic;
 pub(crate) struct Span;
 pub(crate) struct Pos;
@@ -135,8 +316,8 @@ pub(crate) struct Annotation;
 pub(crate) struct Note;
 pub(crate) struct Patch;
 
-const RESULT_DIAGNOSTICS: usize = 0;
-const RESULT_SOURCE: usize = 1;
+const OWNER: usize = 0;
+const UNIT_SOURCE: usize = 0;
 
 const DIAG_ANNOTATIONS: usize = 0;
 const DIAG_NOTES: usize = 1;
@@ -320,52 +501,18 @@ fn create_diagnostic<'v, 's>(
         })
 }
 
-fn create_result<'v, 's>(
-    global: State<'v, Global<'v>>,
+fn with_unit<'v, 's, R>(
     strand: &mut Strand<'v, 's>,
-    path: &str,
-    source: impl Input<'v>,
-    bytecode: Option<Vec<u8>>,
-    diagnostics: Vec<Diag>,
-    out: &mut Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    global.types.result.create_with_annex(
-        strand,
-        ResultObject,
-        ResultAnnex { bytecode },
-        &mut *out,
-    );
-
-    global
+    value: &Value<'v>,
+    f: impl for<'a> FnOnce(&mut Strand<'v, 's>, Instance<'v, 'a, UnitObject<'v>>) -> Result<'v, 's, R>,
+) -> Result<'v, 's, R> {
+    let cast = strand
+        .state::<Global<'v>>()
         .types
-        .result
-        .cast(&*out)
-        .unwrap()
-        .enter_sync(strand, |strand, inst| {
-            {
-                let mut borrow = inst.borrow_mut_unwrap();
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<RESULT_DIAGNOSTICS>(&mut borrow),
-                    Empty::Array,
-                );
-                Output::set(strand, Mut::slot_mut::<RESULT_SOURCE>(&mut borrow), source);
-            }
-
-            let borrow = inst.borrow(strand)?;
-            let diagnostics_out = Ref::slot::<RESULT_DIAGNOSTICS>(&borrow)
-                .as_array(strand)
-                .unwrap();
-            let source = Ref::slot::<RESULT_SOURCE>(&borrow);
-
-            strand.with_slots_sync(|strand, [mut item]| {
-                for diag in diagnostics {
-                    create_diagnostic(global, strand, path, source, diag, &mut item)?;
-                    diagnostics_out.push(strand, &mut item)?;
-                }
-                Ok(())
-            })
-        })
+        .unit
+        .cast(value)
+        .ok_or_else(|| Error::state_error(strand, "invalid unit reference"))?;
+    cast.enter_sync(strand, f)
 }
 
 fn apply_prelude_module_items<'v, 's>(
@@ -541,31 +688,645 @@ fn apply_prelude_value<'v, 's>(
     })
 }
 
-impl<'v> Object<'v> for ResultObject {
-    const NAME: &'v str = "Result";
+impl<'v> Object<'v> for UnitObject<'v> {
+    const NAME: &'v str = "Unit";
     const MODULE: &'v str = "compile";
-    const SLOTS: usize = 2;
-    type Annex = ResultAnnex;
+    const SLOTS: usize = 1;
+    type Annex = ();
     type Type = ();
     type TypeAnnex = ();
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
-            .get("bytecode", |this, strand, out| {
-                if let Some(bytecode) = &this.annex().bytecode {
-                    Output::set(strand, out, bytecode.as_slice());
-                } else {
-                    Output::set(strand, out, Nil);
+            .method("diagnostics", async move |this, strand, args, mut out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                if this.borrow(strand)?.unit.is_none() {
+                    return Err(Error::state_error(strand, "unit was emitted"));
                 }
+                let ty = strand.state::<Global<'v>>().types.diagnostic_iter;
+                ty.create(strand, DiagnosticIter { index: 0 }, &mut out);
+                ty.cast(&out).unwrap().enter_sync(strand, |strand, iter| {
+                    Output::set(
+                        strand,
+                        Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()),
+                        this,
+                    );
+                });
                 Ok(())
             })
-            .get("diagnostics", |this, strand, out| {
+            .method("nodes", async move |this, strand, args, mut out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                if this.borrow(strand)?.unit.is_none() {
+                    return Err(Error::state_error(strand, "unit was emitted"));
+                }
+                let ty = strand.state::<Global<'v>>().types.node_iter;
+                ty.create(strand, NodeIter { cursor: None }, &mut out);
+                ty.cast(&out).unwrap().enter_sync(strand, |strand, iter| {
+                    Output::set(
+                        strand,
+                        Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()),
+                        this,
+                    );
+                });
+                Ok(())
+            })
+            .method("node", async move |this, strand, args, mut out| {
+                let ([id], []) = unpack!(strand, args, 1, 0)?;
+                let Some(id_obj) = strand.state::<Global<'v>>().types.node_id.cast(&id) else {
+                    return Err(Error::type_error(strand, "expected `compile.NodeId`"));
+                };
+                let id_data = id_obj.enter_sync(strand, |_strand, id| *id.annex());
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<RESULT_DIAGNOSTICS>(&borrow));
+                let Some(unit) = borrow.unit.as_ref() else {
+                    return Err(Error::state_error(strand, "unit was emitted"));
+                };
+                if id_data.unit != borrow.identity || unit.node(id_data.id).is_none() {
+                    Output::set(strand, out, Nil);
+                    return Ok(());
+                }
+                create_node(strand, this, id_data.id, &mut out)
+            })
+            .method("emit", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let unit = this
+                    .borrow_mut(strand)?
+                    .unit
+                    .take()
+                    .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?;
+                let mut bytecode = Vec::new();
+                unit.emit(&mut bytecode)
+                    .map_err(|err| Error::compile(strand, err))?;
+                Output::set(strand, out, bytecode.as_slice());
                 Ok(())
             })
-            .get("ok", |this, strand, out| {
-                Output::set(strand, out, this.annex().bytecode.is_some());
+    }
+}
+
+impl<'v> Object<'v> for DiagnosticIter {
+    const NAME: &'v str = "DiagnosticIter";
+    const MODULE: &'v str = "compile";
+    const SLOTS: usize = 1;
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.supertype(TypeObject::Iter)
+    }
+    async fn iter<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, this);
+        Ok(())
+    }
+    async fn next<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        let mut iter = this.borrow_mut(strand)?;
+        let index = iter.index;
+        iter.index += 1;
+        let owner_value = Mut::slot::<OWNER>(&iter);
+        with_unit(strand, owner_value, |strand, owner| {
+            let unit_borrow = owner.borrow(strand)?;
+            let Some(unit) = unit_borrow.unit.as_ref() else {
+                return Err(Error::state_error(strand, "unit was emitted"));
+            };
+            let Some(diag) = unit.diagnostics().nth(index) else {
+                return Ok(false);
+            };
+            let source = Ref::slot::<UNIT_SOURCE>(&unit_borrow);
+            let path = unit_borrow.path.to_string_lossy();
+            create_diagnostic(strand.state(), strand, &path, source, diag, &mut out)?;
+            Ok(true)
+        })
+    }
+}
+
+impl<'v> Object<'v> for NodeIter {
+    const NAME: &'v str = "NodeIter";
+    const MODULE: &'v str = "compile";
+    const SLOTS: usize = 1;
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.supertype(TypeObject::Iter)
+    }
+    async fn iter<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, this);
+        Ok(())
+    }
+    async fn next<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        let mut iter = this.borrow_mut(strand)?;
+        let cursor = iter.cursor;
+        let result = with_unit(strand, Mut::slot::<OWNER>(&iter), |strand, owner| {
+            let owner_borrow = owner.borrow(strand)?;
+            let Some(unit) = owner_borrow.unit.as_ref() else {
+                return Err(Error::state_error(strand, "unit was emitted"));
+            };
+            let Some(id) = unit.next_id(cursor) else {
+                return Ok(None);
+            };
+            strand.with_slots_sync(|strand, [mut id_out, mut node_out]| {
+                create_node_id(strand, owner_borrow.identity, id, &mut id_out);
+                create_node(strand, owner, id, &mut node_out)?;
+                Output::set(strand, &mut out, Empty::Array);
+                let arr = out.as_array(strand).unwrap();
+                arr.push(strand, &mut id_out)?;
+                arr.push(strand, &mut node_out)?;
+                Ok(())
+            })?;
+            Ok(Some(id))
+        })?;
+        let Some(id) = result else { return Ok(false) };
+        iter.cursor = Some(id);
+        Ok(true)
+    }
+}
+
+impl<'v> Object<'v> for NodeIdObject {
+    const NAME: &'v str = "NodeId";
+    const MODULE: &'v str = "compile";
+    type Annex = NodeIdAnnex;
+    type Type = ();
+    type TypeAnnex = ();
+    fn eq<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        let Some(other) = strand.state::<Global<'v>>().types.node_id.cast(other) else {
+            return Ok(false);
+        };
+        Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
+    }
+    fn hash<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        _strand: &'a mut Strand<'v, 's>,
+        h: &mut impl Hasher,
+    ) -> Result<'v, 's, ()> {
+        this.annex().hash(h);
+        Ok(())
+    }
+}
+
+fn create_node_id<'v>(
+    strand: &mut Strand<'v, '_>,
+    unit: u64,
+    id: compile::NodeId,
+    out: &mut Slot<'v, '_>,
+) {
+    strand
+        .state::<Global<'v>>()
+        .types
+        .node_id
+        .create_with_annex(strand, NodeIdObject, NodeIdAnnex { unit, id }, out)
+}
+
+fn create_typed_node<'v, T: NodeMarker + 'static>(
+    strand: &mut Strand<'v, '_>,
+    ty: Type<'v, NodeObject<T>>,
+    owner: Instance<'v, '_, UnitObject<'v>>,
+    id: compile::NodeId,
+    out: &mut Slot<'v, '_>,
+) {
+    ty.create(
+        strand,
+        NodeObject {
+            id,
+            marker: PhantomData,
+        },
+        &mut *out,
+    );
+    ty.cast(out).unwrap().enter_sync(strand, |strand, node| {
+        Output::set(
+            strand,
+            Mut::slot_mut::<OWNER>(&mut node.borrow_mut_unwrap()),
+            owner,
+        )
+    });
+}
+
+fn create_node<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    owner: Instance<'v, '_, UnitObject<'v>>,
+    id: compile::NodeId,
+    out: &mut Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    enum Which {
+        Class,
+        Function,
+        Method,
+        SpecialMethod,
+        Field,
+        Bind,
+        SelfParam,
+        ImportModule,
+        ImportItem,
+        PreludeModule,
+        PreludeItem,
+        PositionalParam,
+        KeyParam,
+        RestParam,
+        Lambda,
+        If,
+        Else,
+        While,
+        For,
+        Try,
+        Catch,
+        Finally,
+        ForElem,
+        IfElem,
+        Decorator,
+        Break,
+        Continue,
+        Return,
+    }
+    let kind = {
+        let b = owner.borrow(strand)?;
+        match b
+            .unit
+            .as_ref()
+            .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?
+            .node(id)
+            .unwrap()
+            .kind()
+        {
+            compile::Kind::Class { .. } => Which::Class,
+            compile::Kind::Function { .. } => Which::Function,
+            compile::Kind::Method { .. } => Which::Method,
+            compile::Kind::SpecialMethod { .. } => Which::SpecialMethod,
+            compile::Kind::Field { .. } => Which::Field,
+            compile::Kind::Bind { .. } => Which::Bind,
+            compile::Kind::SelfParam { .. } => Which::SelfParam,
+            compile::Kind::ImportModule { .. } => Which::ImportModule,
+            compile::Kind::ImportItem { .. } => Which::ImportItem,
+            compile::Kind::PreludeModule { .. } => Which::PreludeModule,
+            compile::Kind::PreludeItem { .. } => Which::PreludeItem,
+            compile::Kind::PositionalParam { .. } => Which::PositionalParam,
+            compile::Kind::KeyParam { .. } => Which::KeyParam,
+            compile::Kind::RestParam { .. } => Which::RestParam,
+            compile::Kind::Lambda => Which::Lambda,
+            compile::Kind::If => Which::If,
+            compile::Kind::Else => Which::Else,
+            compile::Kind::While => Which::While,
+            compile::Kind::For => Which::For,
+            compile::Kind::Try => Which::Try,
+            compile::Kind::Catch => Which::Catch,
+            compile::Kind::Finally => Which::Finally,
+            compile::Kind::ForElem => Which::ForElem,
+            compile::Kind::IfElem => Which::IfElem,
+            compile::Kind::Decorator { .. } => Which::Decorator,
+            compile::Kind::Break { .. } => Which::Break,
+            compile::Kind::Continue { .. } => Which::Continue,
+            compile::Kind::Return { .. } => Which::Return,
+            _ => unreachable!(),
+        }
+    };
+    let t = &strand.state::<Global<'v>>().types.concrete_nodes;
+    macro_rules! make {
+        ($ty:expr,$tag:ty) => {{
+            let ty = $ty;
+            create_typed_node::<$tag>(strand, ty, owner, id, out)
+        }};
+    }
+    match kind {
+        Which::Class => make!(t.class, ClassTag),
+        Which::Function => make!(t.function, FunctionTag),
+        Which::Method => make!(t.method, MethodTag),
+        Which::SpecialMethod => make!(t.special_method, SpecialMethodTag),
+        Which::Field => make!(t.field, FieldTag),
+        Which::Bind => make!(t.bind, BindTag),
+        Which::SelfParam => make!(t.self_param, SelfParamTag),
+        Which::ImportModule => make!(t.import_module, ImportModuleTag),
+        Which::ImportItem => make!(t.import_item, ImportItemTag),
+        Which::PreludeModule => make!(t.prelude_module, PreludeModuleTag),
+        Which::PreludeItem => make!(t.prelude_item, PreludeItemTag),
+        Which::PositionalParam => make!(t.positional_param, PositionalParamTag),
+        Which::KeyParam => make!(t.key_param, KeyParamTag),
+        Which::RestParam => make!(t.rest_param, RestParamTag),
+        Which::Lambda => make!(t.lambda, LambdaTag),
+        Which::If => make!(t.if_node, IfTag),
+        Which::Else => make!(t.else_node, ElseTag),
+        Which::While => make!(t.while_node, WhileTag),
+        Which::For => make!(t.for_node, ForTag),
+        Which::Try => make!(t.try_node, TryTag),
+        Which::Catch => make!(t.catch, CatchTag),
+        Which::Finally => make!(t.finally, FinallyTag),
+        Which::ForElem => make!(t.for_elem, ForElemTag),
+        Which::IfElem => make!(t.if_elem, IfElemTag),
+        Which::Decorator => make!(t.decorator, DecoratorTag),
+        Which::Break => make!(t.break_node, BreakTag),
+        Which::Continue => make!(t.continue_node, ContinueTag),
+        Which::Return => make!(t.return_node, ReturnTag),
+    }
+    Ok(())
+}
+
+impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
+    const NAME: &'v str = T::NAME;
+    const MODULE: &'v str = "compile";
+    const SLOTS: usize = 1;
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder = builder.get("parent", |this, strand, mut out| {
+            let (id, unit) = with_node(this, strand, |n, u| (n.parent(), u))?;
+            if let Some(id) = id {
+                create_node_id(strand, unit, id, &mut out)
+            } else {
+                Output::set(strand, out, Nil)
+            };
+            Ok(())
+        });
+        builder = builder.get("span", |this, strand, out| {
+            let span = with_node(this, strand, |n, _| span_data(n.span()))?;
+            create_span(strand.state(), strand, span, out);
+            Ok(())
+        });
+        if matches!(
+            T::NAME,
+            "Class"
+                | "Function"
+                | "Method"
+                | "SpecialMethod"
+                | "Field"
+                | "Bind"
+                | "SelfParam"
+                | "ImportModule"
+                | "ImportItem"
+                | "PreludeModule"
+                | "PreludeItem"
+                | "PositionalParam"
+                | "KeyParam"
+                | "RestParam"
+        ) {
+            builder = builder.get("name", |this, strand, out| project_name(this, strand, out));
+        }
+        if matches!(T::NAME, "Class" | "Function" | "Method" | "Field" | "Bind") {
+            builder = builder.get("is_pub", |this, strand, out| project_pub(this, strand, out));
+        }
+        if matches!(T::NAME, "PositionalParam" | "KeyParam") {
+            builder = builder.get("default", |this, strand, out| {
+                project_default(this, strand, out)
+            });
+        }
+        if T::NAME == "KeyParam" {
+            builder = builder.get("key", |this, strand, out| {
+                project_span_field(this, strand, "key", out)
+            });
+        }
+        if matches!(
+            T::NAME,
+            "ImportModule" | "ImportItem" | "PreludeModule" | "PreludeItem"
+        ) {
+            builder = builder.get("module", |this, strand, out| {
+                project_import(this, strand, false, out)
+            });
+        }
+        if matches!(T::NAME, "ImportItem" | "PreludeItem") {
+            builder = builder.get("item", |this, strand, out| {
+                project_import(this, strand, true, out)
+            });
+        }
+        if matches!(T::NAME, "Decorator" | "Break" | "Continue" | "Return") {
+            builder = builder.get("target", |this, strand, out| {
+                project_target(this, strand, out)
+            });
+        }
+        if T::NAME == "Class" {
+            builder = builder.get("supers", |this, strand, out| {
+                project_supers(this, strand, out)
+            });
+        }
+        builder
+    }
+}
+
+fn with_node<'v, 's, T: NodeMarker + 'static, R>(
+    this: Instance<'v, '_, NodeObject<T>>,
+    strand: &mut Strand<'v, 's>,
+    f: impl FnOnce(compile::Node<'_>, u64) -> R,
+) -> Result<'v, 's, R> {
+    let b = this.borrow(strand)?;
+    let id = b.id;
+    with_unit(strand, Ref::slot::<OWNER>(&b), |strand, owner| {
+        let ub = owner.borrow(strand)?;
+        let unit = ub
+            .unit
+            .as_ref()
+            .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?;
+        let node = unit
+            .node(id)
+            .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?;
+        Ok(f(node, ub.identity))
+    })
+}
+
+fn project_name<'v, 's, T: NodeMarker + 'static>(
+    this: Instance<'v, '_, NodeObject<T>>,
+    strand: &mut Strand<'v, 's>,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    enum Name {
+        Span(SpanData),
+        Text(String),
+        None,
+    }
+    let name = with_node(this, strand, |n, _| match n.kind() {
+        compile::Kind::Class { name, .. }
+        | compile::Kind::Function { name, .. }
+        | compile::Kind::Method { name, .. }
+        | compile::Kind::SpecialMethod { name }
+        | compile::Kind::Field { name, .. }
+        | compile::Kind::Bind { name, .. }
+        | compile::Kind::SelfParam { name }
+        | compile::Kind::ImportModule { name, .. }
+        | compile::Kind::ImportItem { name, .. }
+        | compile::Kind::PositionalParam { name, .. }
+        | compile::Kind::KeyParam { name, .. } => Name::Span(span_data(name)),
+        compile::Kind::RestParam { name } => name.map_or(Name::None, |v| Name::Span(span_data(v))),
+        compile::Kind::PreludeModule { name, .. } | compile::Kind::PreludeItem { name, .. } => {
+            Name::Text(name.to_owned())
+        }
+        _ => unreachable!(),
+    })?;
+    match name {
+        Name::Span(s) => create_span(strand.state(), strand, s, out),
+        Name::Text(s) => Output::set(strand, out, s.as_str()),
+        Name::None => Output::set(strand, out, Nil),
+    };
+    Ok(())
+}
+fn project_pub<'v, 's, T: NodeMarker + 'static>(
+    this: Instance<'v, '_, NodeObject<T>>,
+    strand: &mut Strand<'v, 's>,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let v = with_node(this, strand, |n, _| match n.kind() {
+        compile::Kind::Class { is_pub, .. }
+        | compile::Kind::Function { is_pub, .. }
+        | compile::Kind::Method { is_pub, .. }
+        | compile::Kind::Field { is_pub, .. }
+        | compile::Kind::Bind { is_pub, .. } => is_pub,
+        _ => unreachable!(),
+    })?;
+    Output::set(strand, out, v);
+    Ok(())
+}
+fn project_default<'v, 's, T: NodeMarker + 'static>(
+    this: Instance<'v, '_, NodeObject<T>>,
+    strand: &mut Strand<'v, 's>,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let v = with_node(this, strand, |n, _| match n.kind() {
+        compile::Kind::PositionalParam { default, .. }
+        | compile::Kind::KeyParam { default, .. } => default.map(span_data),
+        _ => unreachable!(),
+    })?;
+    if let Some(v) = v {
+        create_span(strand.state(), strand, v, out)
+    } else {
+        Output::set(strand, out, Nil)
+    };
+    Ok(())
+}
+fn project_span_field<'v, 's, T: NodeMarker + 'static>(
+    this: Instance<'v, '_, NodeObject<T>>,
+    strand: &mut Strand<'v, 's>,
+    _field: &str,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let v = with_node(this, strand, |n, _| match n.kind() {
+        compile::Kind::KeyParam { key, .. } => span_data(key),
+        _ => unreachable!(),
+    })?;
+    create_span(strand.state(), strand, v, out);
+    Ok(())
+}
+fn project_import<'v, 's, T: NodeMarker + 'static>(
+    this: Instance<'v, '_, NodeObject<T>>,
+    strand: &mut Strand<'v, 's>,
+    item: bool,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    enum V {
+        S(SpanData),
+        T(String),
+    }
+    let v = with_node(this, strand, |n, _| match (n.kind(), item) {
+        (compile::Kind::ImportModule { module, .. }, false)
+        | (compile::Kind::ImportItem { module, .. }, false) => V::S(span_data(module)),
+        (compile::Kind::ImportItem { item, .. }, true) => V::S(span_data(item)),
+        (compile::Kind::PreludeModule { module, .. }, false)
+        | (compile::Kind::PreludeItem { module, .. }, false) => V::T(module.to_owned()),
+        (compile::Kind::PreludeItem { item, .. }, true) => V::T(item.to_owned()),
+        _ => unreachable!(),
+    })?;
+    match v {
+        V::S(v) => create_span(strand.state(), strand, v, out),
+        V::T(v) => Output::set(strand, out, v.as_str()),
+    };
+    Ok(())
+}
+fn project_target<'v, 's, T: NodeMarker + 'static>(
+    this: Instance<'v, '_, NodeObject<T>>,
+    strand: &mut Strand<'v, 's>,
+    mut out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let (v, u) = with_node(this, strand, |n, u| {
+        (
+            match n.kind() {
+                compile::Kind::Decorator { target }
+                | compile::Kind::Break { target }
+                | compile::Kind::Continue { target }
+                | compile::Kind::Return { target } => target,
+                _ => unreachable!(),
+            },
+            u,
+        )
+    })?;
+    if let Some(v) = v {
+        create_node_id(strand, u, v, &mut out)
+    } else {
+        Output::set(strand, out, Nil)
+    };
+    Ok(())
+}
+fn project_supers<'v, 's, T: NodeMarker + 'static>(
+    this: Instance<'v, '_, NodeObject<T>>,
+    strand: &mut Strand<'v, 's>,
+    mut out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let (values, u) = with_node(this, strand, |n, u| {
+        (
+            match n.kind() {
+                compile::Kind::Class { supers, .. } => supers
+                    .map(|s| (span_data(s.span), s.target))
+                    .collect::<Vec<_>>(),
+                _ => unreachable!(),
+            },
+            u,
+        )
+    })?;
+    Output::set(strand, &mut out, Empty::Array);
+    let arr = out.as_array(strand).unwrap();
+    strand.with_slots_sync(|strand, [mut value]| {
+        for (span, target) in values {
+            let ty = strand.state::<Global<'v>>().types.super_ref;
+            ty.create(strand, SuperObject { span, target }, &mut value);
+            ty.cast(&value).unwrap().enter_sync(strand, |strand, s| {
+                Output::set(
+                    strand,
+                    Mut::slot_mut::<OWNER>(&mut s.borrow_mut_unwrap()),
+                    Ref::slot::<OWNER>(&this.borrow_unwrap()),
+                )
+            });
+            arr.push(strand, &mut value)?;
+        }
+        Ok(())
+    })?;
+    let _ = u;
+    Ok(())
+}
+
+impl<'v> Object<'v> for SuperObject {
+    const NAME: &'v str = "Super";
+    const MODULE: &'v str = "compile";
+    const SLOTS: usize = 1;
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder
+            .get("span", |this, strand, out| {
+                let span = this.borrow(strand)?.span.clone();
+                create_span(strand.state(), strand, span, out);
+                Ok(())
+            })
+            .get("target", |this, strand, mut out| {
+                let b = this.borrow(strand)?;
+                if let Some(id) = b.target {
+                    let u = with_unit(strand, Ref::slot::<OWNER>(&b), |strand, owner| {
+                        Ok(owner.borrow(strand)?.identity)
+                    })?;
+                    create_node_id(strand, u, id, &mut out)
+                } else {
+                    Output::set(strand, out, Nil)
+                };
                 Ok(())
             })
     }
@@ -892,10 +1653,50 @@ impl<'v> Object<'v> for Patch {
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
     let module = builder.sym("module");
     let prelude = builder.sym("prelude");
+    let recover = builder.sym("recover");
 
     builder
         .module("compile")
-        .value("Result", global.types.result)
+        .value("Unit", global.types.unit)
+        .value("NodeId", global.types.node_id)
+        .value("Super", global.types.super_ref)
+        .value("Node", global.types.node)
+        .value("Declaration", global.types.declaration)
+        .value("Import", global.types.import)
+        .value("Param", global.types.param)
+        .value("Block", global.types.block)
+        .value("Reference", global.types.reference)
+        .value("Class", global.types.concrete_nodes.class)
+        .value("Function", global.types.concrete_nodes.function)
+        .value("Method", global.types.concrete_nodes.method)
+        .value("SpecialMethod", global.types.concrete_nodes.special_method)
+        .value("Field", global.types.concrete_nodes.field)
+        .value("Bind", global.types.concrete_nodes.bind)
+        .value("SelfParam", global.types.concrete_nodes.self_param)
+        .value("ImportModule", global.types.concrete_nodes.import_module)
+        .value("ImportItem", global.types.concrete_nodes.import_item)
+        .value("PreludeModule", global.types.concrete_nodes.prelude_module)
+        .value("PreludeItem", global.types.concrete_nodes.prelude_item)
+        .value(
+            "PositionalParam",
+            global.types.concrete_nodes.positional_param,
+        )
+        .value("KeyParam", global.types.concrete_nodes.key_param)
+        .value("RestParam", global.types.concrete_nodes.rest_param)
+        .value("Lambda", global.types.concrete_nodes.lambda)
+        .value("If", global.types.concrete_nodes.if_node)
+        .value("Else", global.types.concrete_nodes.else_node)
+        .value("While", global.types.concrete_nodes.while_node)
+        .value("For", global.types.concrete_nodes.for_node)
+        .value("Try", global.types.concrete_nodes.try_node)
+        .value("Catch", global.types.concrete_nodes.catch)
+        .value("Finally", global.types.concrete_nodes.finally)
+        .value("ForElem", global.types.concrete_nodes.for_elem)
+        .value("IfElem", global.types.concrete_nodes.if_elem)
+        .value("Decorator", global.types.concrete_nodes.decorator)
+        .value("Break", global.types.concrete_nodes.break_node)
+        .value("Continue", global.types.concrete_nodes.continue_node)
+        .value("Return", global.types.concrete_nodes.return_node)
         .value("Diagnostic", global.types.diagnostic)
         .value("Span", global.types.span)
         .value("Pos", global.types.pos)
@@ -903,8 +1704,15 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
         .value("Note", global.types.note)
         .value("Patch", global.types.patch)
         .function("compile", async move |strand, args, mut out| {
-            let ([path, source], [module, prelude]) =
-                unpack!(strand, args, 2, 0, module = None, prelude = None)?;
+            let ([path, source], [module, prelude, recover]) = unpack!(
+                strand,
+                args,
+                2,
+                0,
+                module = None,
+                prelude = None,
+                recover = None
+            )?;
 
             let module = module
                 .as_ref()
@@ -915,19 +1723,28 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
                 })
                 .transpose()?;
 
-            let source_vec = match source.view(strand) {
-                View::Str(s) => s.to_string().into(),
-                View::Bin(b) => b.to_vec(),
+            // SAFETY: the source value is installed in UNIT_SOURCE below. The
+            // GC root supplies liveness and this retained pin supplies address stability.
+            let backing = match source.view(strand) {
+                View::Str(s) => Backing::Str(unsafe { s.pin().into_static_unchecked() }),
+                View::Bin(b) => Backing::Bin(unsafe { b.pin().into_static_unchecked() }),
                 _ => return Err(Error::type_error(strand, "source: expected `Str` or `Bin`")),
             };
 
-            let path = path.to_string(strand)?;
+            let path: Box<Path> = Path::new(&path.to_string(strand)?).into();
+            // SAFETY: `path` and `module` are heap-backed fields retained after
+            // the borrowing compiler unit and dropped after it.
+            let static_path: &'static Path = unsafe { mem::transmute(path.as_ref()) };
+            let static_module: Option<&'static str> = module
+                .as_deref()
+                .map(|name| unsafe { mem::transmute(name) });
             let mut config = Config::new();
-            config.mode(if let Some(module) = &module {
+            config.mode(if let Some(module) = static_module {
                 Mode::Module { name: module }
             } else {
                 Mode::Script
             });
+            config.recover(recover.map(|value| value.to_bool(strand)).unwrap_or(false));
 
             if let Some(prelude) = prelude {
                 apply_prelude_value(strand, &mut config, &prelude)?;
@@ -937,26 +1754,32 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
                 ext.apply(&mut config).unwrap();
             }
 
-            let mut bytecode = Vec::new();
-            let unit = config.unit(Path::new(&path), &source_vec);
-            let diagnostics: Vec<_> = unit.diagnostics().collect();
-            let compile_result = unit.emit(&mut bytecode);
-
-            let bytecode = match compile_result {
-                Ok(()) => Some(bytecode),
-                Err(err) if matches!(err.kind(), ErrorKind::Fail) => None,
-                Err(err) => return Err(Error::compile(strand, err)),
-            };
-
-            create_result(
-                global,
+            let unit = config.unit(static_path, backing.bytes());
+            let identity = global.next_unit_id.get();
+            global.next_unit_id.set(identity.strict_add(1));
+            global.types.unit.create(
                 strand,
-                &path,
-                source,
-                bytecode,
-                diagnostics,
+                UnitObject {
+                    unit: Some(unit),
+                    _backing: backing,
+                    path,
+                    _module: module,
+                    identity,
+                },
                 &mut out,
-            )?;
+            );
+            global
+                .types
+                .unit
+                .cast(&out)
+                .unwrap()
+                .enter_sync(strand, |strand, unit| {
+                    Output::set(
+                        strand,
+                        Mut::slot_mut::<UNIT_SOURCE>(&mut unit.borrow_mut_unwrap()),
+                        source,
+                    )
+                });
             Ok(())
         })
         .commit();

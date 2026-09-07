@@ -90,7 +90,7 @@ nav:
       - api/compile/note.md
       - api/compile/patch.md
       - api/compile/pos.md
-      - api/compile/result.md
+      - api/compile/unit.md
       - api/compile/span.md
     - digest:
       - api/digest/index.md

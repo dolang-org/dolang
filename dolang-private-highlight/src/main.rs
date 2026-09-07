@@ -75,7 +75,7 @@ fn node_kind(kind: &Kind<'_>) -> &'static str {
         Kind::Method { .. } => "method",
         Kind::SpecialMethod { .. } => "special_method",
         Kind::Field { .. } => "field",
-        Kind::Param { .. } => "param",
+        Kind::PositionalParam { .. } | Kind::KeyParam { .. } | Kind::RestParam { .. } => "param",
         Kind::SelfParam { .. } => "self_param",
         Kind::Lambda => "lambda",
         Kind::If => "if",

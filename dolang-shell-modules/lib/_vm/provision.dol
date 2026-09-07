@@ -283,9 +283,10 @@ pub let PROVISION_SOURCE = r|
 # catch. The bytecode is discarded; only the source ships.
 def check_provision_source()
   let result = compile.compile "provision.dol" $PROVISION_SOURCE
-  if (result.diagnostics.len == 0)
+  let diagnostics = [...result.diagnostics()]
+  if (diagnostics.len == 0)
     return
-  for diagnostic = result.diagnostics
+  for diagnostic = diagnostics
     echo $diagnostic.render()
   throw std.RuntimeError "libvirt: the embedded provision.dol does not compile cleanly"
 

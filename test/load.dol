@@ -85,7 +85,7 @@ def unregister()
 
 #[test]
 def execute()
-  assert_eq 2 $ load.run $ (compile.compile "test.dol" "(1 + 1)").bytecode
+  assert_eq 2 $ load.run $ (compile.compile "test.dol" "(1 + 1)").emit()
 
 #[test]
 def program_importer()
@@ -97,7 +97,7 @@ def program_importer()
     import std: first
     import std: second
     [first.answer, second.answer]
-  let bytecode = (compile.compile "test.dol" source).bytecode
+  let bytecode = (compile.compile "test.dol" source).emit()
 
   let result = load.run $bytecode importer: $importer
   assert_eq $result [1, 2]
@@ -113,7 +113,7 @@ def retained_function_uses_program_importer()
     pub def later()
       import retained_dependency: dependency
       dependency.answer
-  let bytecode = (compile.compile "retained.dol" source module: "retained").bytecode
+  let bytecode = (compile.compile "retained.dol" source module: "retained").emit()
   let module = load.run $bytecode importer: $importer
 
   assert_eq $module.later() 42
@@ -125,6 +125,6 @@ def program_importer_explicit_fallback()
   let source = |
     import std
     (type(std) == std.Module)
-  let bytecode = (compile.compile "fallback.dol" source).bytecode
+  let bytecode = (compile.compile "fallback.dol" source).emit()
 
   assert_eq true $ load.run $bytecode importer: $importer

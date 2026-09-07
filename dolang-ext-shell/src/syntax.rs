@@ -26,7 +26,12 @@ pub enum NodeClass {
 /// Pass the [`Kind`] of the node the token names, if it names one.
 pub fn classify_node(kind: Option<&Kind<'_>>) -> NodeClass {
     match kind {
-        Some(Kind::Param { .. } | Kind::SelfParam { .. }) => NodeClass::Param,
+        Some(
+            Kind::PositionalParam { .. }
+            | Kind::KeyParam { .. }
+            | Kind::RestParam { .. }
+            | Kind::SelfParam { .. },
+        ) => NodeClass::Param,
         Some(
             Kind::Class { .. }
             | Kind::Function { .. }
