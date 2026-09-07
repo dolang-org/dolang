@@ -201,12 +201,14 @@ class Harness
     try
       let source = path.read b
       let compiled = compile.compile $path $source
-      let warnings = compiled.diagnostics.any do |d| (d.severity == :WARNING:)
-      if (!compiled.ok || warnings)
+      let diagnostics = [...compiled.diagnostics()]
+      let warnings = diagnostics.any do |d| (d.severity == :WARNING:)
+      let errors = diagnostics.any do |d| (d.severity == :ERROR:)
+      if (errors || warnings)
         throw ModuleCompileError $path $compiled
 
       collect_key.value = TestCollection $path
-      self.#with_capture $output do self.#with_timeout do load.run $compiled.bytecode
+      self.#with_capture $output do self.#with_timeout do load.run $compiled.emit()
       let cases = collect_key.value.take()
       collect_key.value = nil
       cases = [...cases.filter(do |case| self.#matches_filter case)]
@@ -238,7 +240,7 @@ class Harness
         rc = 1
         print (err_style "failed") ": " (name_style "$module")
           " (" (note_style "compilation failed") ")\n"
-        for diag = e.output.diagnostics
+        for diag = e.output.diagnostics()
           echo $diag.render().indent(2)
       else
         rc = 1

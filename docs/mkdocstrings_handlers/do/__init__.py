@@ -129,15 +129,19 @@ class DoHandler(BaseHandler):
             )
 
         # Find dolang-doc binary: prefer DOLANG_DOC env var, then PATH.
-        dolang_doc = os.environ.get("DOLANG_DOC") or shutil.which("dolang-doc")
-        if dolang_doc is None:
+        dolang_doc = os.environ.get("DOLANG_DOC")
+        dolang_doc_cmd = dolang_doc.split() if dolang_doc else None
+        if dolang_doc_cmd is None:
+            found = shutil.which("dolang-doc")
+            dolang_doc_cmd = [found] if found else None
+        if dolang_doc_cmd is None:
             raise CollectionError(
                 "'dolang-doc' binary not found. Set DOLANG_DOC env var or add it to PATH."
             )
 
         try:
             result = subprocess.run(
-                [dolang_doc, "--module", module_name, source_path],
+                [*dolang_doc_cmd, "--module", module_name, source_path],
                 capture_output=True,
                 text=True,
                 check=True,

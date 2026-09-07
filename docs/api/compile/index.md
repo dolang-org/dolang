@@ -12,9 +12,9 @@ let result = compile "example.dol" source
 
 ## Functions
 
-### `compile path source :module? :prelude?`
+### `compile path source :module? :prelude? :recover?`
 
-Compiles Do source code and returns a structured result.
+Parses and elaborates Do source code into a staged compilation unit.
 
 #### Parameters
 
@@ -24,6 +24,7 @@ Compiles Do source code and returns a structured result.
 | `source`  | `Str`/`Bin` | Source code to compile                               |
 | `module`  | `Str`       | Optional. Compile in module mode with the given name |
 | `prelude` | various     | Optional. Additional prelude imports to include      |
+| `recover` | `bool`      | Continue parsing after syntax errors                 |
 
 ##### Compilation Modes
 
@@ -40,8 +41,8 @@ It accepts the same logical import shapes used by the LSP prelude settings.
 
 #### Returns
 
-[`Result`](./result.md), containing the compile output and any
-diagnostics emitted during compilation.
+[`Unit`](./unit.md), which exposes diagnostics and document nodes before
+emission.
 
 #### Errors
 
@@ -51,9 +52,7 @@ diagnostics emitted during compilation.
 | `TypeError`  | `module` is present but not `Str` |
 | `ValueError` | `prelude` is malformed            |
 
-Ordinary compiler diagnostics from the compiled source are returned on the
-result object instead. Unexpected compiler failures that are not ordinary source
-diagnostics are also raised as errors.
+Ordinary compiler diagnostics are available from `Unit.diagnostics()`.
 
 #### Example
 

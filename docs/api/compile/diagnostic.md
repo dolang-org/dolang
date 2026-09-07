@@ -47,6 +47,6 @@ include a final newline.
 
 ```
 let result = compile "bad.dol" "let =\n"
-for diag = result.diagnostics
+for diag = unit.diagnostics()
   echo $diag.render()
 ```

@@ -47,17 +47,6 @@ impl Id {
     }
 }
 
-/// How a parameter is passed, at language granularity.
-///
-/// The parser splits key parameters into `:foo` and `foo: local` forms; both
-/// are a key parameter to a consumer, so they share a variant.
-#[derive(Copy, Clone, Debug)]
-pub(crate) enum ParamForm {
-    Positional,
-    Key { key: Span },
-    Rest,
-}
-
 /// A superclass reference.
 ///
 /// A reference is a use site rather than a child, so it cannot be expressed by
@@ -104,10 +93,17 @@ pub(crate) enum Kind {
         name: Span,
         is_pub: bool,
     },
-    Param {
-        name: Option<Span>,
-        form: ParamForm,
+    PositionalParam {
+        name: Span,
         default: Option<Span>,
+    },
+    KeyParam {
+        key: Span,
+        name: Span,
+        default: Option<Span>,
+    },
+    RestParam {
+        name: Option<Span>,
     },
     SelfParam {
         name: Span,
@@ -190,7 +186,8 @@ impl Kind {
             | Kind::SelfParam { name }
             | Kind::ImportModule { name, .. }
             | Kind::ImportItem { name, .. } => Some(*name),
-            Kind::Param { name, .. } => *name,
+            Kind::PositionalParam { name, .. } | Kind::KeyParam { name, .. } => Some(*name),
+            Kind::RestParam { name } => *name,
             _ => None,
         }
     }
@@ -258,14 +255,6 @@ impl Table {
 
     pub(crate) fn len(&self) -> usize {
         self.nodes.len()
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (Id, &Node)> {
-        self.nodes
-            .iter()
-            .enumerate()
-            .skip(1)
-            .map(|(index, node)| (Id::from_index(index), node))
     }
 }
 

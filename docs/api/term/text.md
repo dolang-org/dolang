@@ -145,7 +145,7 @@ terminal newline does not gain a trailing indentation prefix.
 #### Example
 
 ```
-let diagnostic = result.diagnostics[0].render()
+let diagnostic = [...unit.diagnostics()][0].render()
 echo $diagnostic.indent(4)
 ```
 

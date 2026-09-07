@@ -29,10 +29,9 @@ def success()
       1
     foo()
 
-  assert_type $compile.Result $result
-  assert $result.ok
-  assert_type $Bin $result.bytecode
-  assert_eq $result.diagnostics.len 0
+  assert_type $compile.Unit $result
+  assert_eq 0 $ result.diagnostics().count()
+  assert_type $Bin $result.emit()
 
 #[test]
 def warning()
@@ -41,10 +40,10 @@ def warning()
       nil
     foo 1
 
-  assert $result.ok
-  assert_eq $result.diagnostics.len 1
+  let diagnostics = [...result.diagnostics()]
+  assert_eq $diagnostics.len 1
 
-  let diag = result.diagnostics[0]
+  let diag = diagnostics[0]
   assert_type $compile.Diagnostic $diag
   assert_eq $diag.severity :WARNING:
   let span = diag.span
@@ -56,11 +55,10 @@ def warning()
 #[test]
 def error()
   let result = compile.compile "bad.dol" "let =\n"
-  assert (!result.ok)
-  assert_eq $result.bytecode nil
-  assert (result.diagnostics.len > 0)
+  let diagnostics = [...result.diagnostics()]
+  assert (diagnostics.len > 0)
 
-  let diag = result.diagnostics[0]
+  let diag = diagnostics[0]
   assert_type $compile.Diagnostic $diag
   assert_eq $diag.severity :ERROR:
   let span = diag.span
@@ -69,3 +67,30 @@ def error()
   assert_type $Array $diag.annotations
   assert_type $Array $diag.notes
   assert_type $Array $diag.patches
+
+#[test]
+def nodes()
+  let unit = compile.compile "nodes.dol" |-
+    pub def greet name :punctuation = "!" ...rest
+      return name
+  let seen = 0
+  let first_id = nil
+  let first_node = nil
+  for id node = unit.nodes()
+    assert_type $compile.NodeId $id
+    assert_type $compile.Node $node
+    assert_type $compile.Span $node.span
+    if (seen == 0)
+      first_id = id
+      first_node = node
+    seen = (seen + 1)
+  assert (seen > 0)
+  assert_type (type first_node) $unit.node(first_id)
+
+  let bytecode = unit.emit()
+  assert_type $Bin $bytecode
+  let err = try
+    first_node.span
+  catch e
+    e
+  assert_type $std.StateError $err

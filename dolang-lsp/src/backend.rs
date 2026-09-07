@@ -70,7 +70,8 @@ fn definition_span(kind: Kind<'_>) -> Option<diag::Span> {
         | Kind::SelfParam { name }
         | Kind::ImportModule { name, .. }
         | Kind::ImportItem { name, .. } => Some(name),
-        Kind::Param { name, .. } => name,
+        Kind::PositionalParam { name, .. } | Kind::KeyParam { name, .. } => Some(name),
+        Kind::RestParam { name } => name,
         _ => None,
     }
 }
@@ -99,7 +100,15 @@ fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> (u
             (Context::Call, Some(Kind::PreludeItem { .. })) => (TT_FUNCTION, MOD_PRELUDE),
             (Context::Call, Some(Kind::PreludeModule { .. })) => (TT_FUNCTION, MOD_PRELUDE),
             (Context::Call, _) => (TT_FUNCTION, 0),
-            (Context::None, Some(Kind::Param { .. } | Kind::SelfParam { .. })) => (TT_PARAMETER, 0),
+            (
+                Context::None,
+                Some(
+                    Kind::PositionalParam { .. }
+                    | Kind::KeyParam { .. }
+                    | Kind::RestParam { .. }
+                    | Kind::SelfParam { .. },
+                ),
+            ) => (TT_PARAMETER, 0),
             (
                 Context::None,
                 Some(Kind::Function { .. } | Kind::Method { .. } | Kind::SpecialMethod { .. }),

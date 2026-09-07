@@ -308,18 +308,17 @@ impl<'a> Node<'a> {
                 name: span(name),
                 is_pub: *is_pub,
             },
-            doc::Kind::Param {
-                name,
-                form,
-                default,
-            } => Kind::Param {
-                name: name.as_ref().map(span),
-                form: match form {
-                    doc::ParamForm::Positional => ParamForm::Positional,
-                    doc::ParamForm::Key { key } => ParamForm::Key { key: span(key) },
-                    doc::ParamForm::Rest => ParamForm::Rest,
-                },
+            doc::Kind::PositionalParam { name, default } => Kind::PositionalParam {
+                name: span(name),
                 default: default.as_ref().map(span),
+            },
+            doc::Kind::KeyParam { key, name, default } => Kind::KeyParam {
+                key: span(key),
+                name: span(name),
+                default: default.as_ref().map(span),
+            },
+            doc::Kind::RestParam { name } => Kind::RestParam {
+                name: name.as_ref().map(span),
             },
             doc::Kind::SelfParam { name } => Kind::SelfParam { name: span(name) },
             doc::Kind::ImportModule { module, name } => Kind::ImportModule {
@@ -367,7 +366,7 @@ impl<'a> Node<'a> {
 /// What a [`Node`] is, together with everything that varies by that.
 ///
 /// This is deliberately at the granularity of the language rather than the
-/// parser: `:foo` and `foo: local` parameters are both [`ParamForm::Key`],
+/// parser: `:foo` and `foo: local` parameters are both [`Kind::KeyParam`],
 /// for instance, leaving the parser free to re-split them.
 #[non_exhaustive]
 pub enum Kind<'a> {
@@ -418,14 +417,26 @@ pub enum Kind<'a> {
         /// Declared `pub`
         is_pub: bool,
     },
-    /// A parameter.  Its function is its parent.
-    Param {
-        /// The bound name; absent for an anonymous rest parameter
-        name: Option<diag::Span>,
-        /// How the parameter is passed
-        form: ParamForm,
+    /// A positional parameter. Its function is its parent.
+    PositionalParam {
+        /// The bound name
+        name: diag::Span,
         /// The default value expression, if any.  Slice the source for its text.
         default: Option<diag::Span>,
+    },
+    /// A keyword parameter. Its function is its parent.
+    KeyParam {
+        /// The key as written, without the `:` sigil
+        key: diag::Span,
+        /// The bound name
+        name: diag::Span,
+        /// The default value expression, if any
+        default: Option<diag::Span>,
+    },
+    /// A rest parameter. Its function is its parent.
+    RestParam {
+        /// The bound name; absent for an anonymous rest parameter
+        name: Option<diag::Span>,
     },
     /// The `self` parameter of a method
     SelfParam {
@@ -504,21 +515,6 @@ pub enum Kind<'a> {
         /// The function returned from
         target: Option<NodeId>,
     },
-}
-
-/// How a parameter is passed
-#[non_exhaustive]
-#[derive(Clone, Debug)]
-pub enum ParamForm {
-    /// Passed by position
-    Positional,
-    /// Passed by name
-    Key {
-        /// The key as written, without the `:` sigil
-        key: diag::Span,
-    },
-    /// Collects the remaining arguments
-    Rest,
 }
 
 /// A superclass reference
@@ -915,19 +911,23 @@ impl Unit<'_> {
     /// parent, so the order nodes are yielded carries no meaning; order siblings
     /// by [`Node::span`].
     pub fn nodes(&self) -> impl Iterator<Item = (NodeId, Node<'_>)> {
-        self.compiler
-            .doctab
-            .iter()
-            .filter(|(_, node)| !node.dead && !node.kind.is_internal())
-            .map(|(id, node)| {
-                (
-                    public_node_id(id),
-                    Node {
-                        file: &self.compiler.file,
-                        node,
-                    },
-                )
-            })
+        std::iter::successors(self.next_id(None), |id| self.next_id(Some(*id))).map(|id| {
+            (
+                id,
+                self.node(id).expect("next_id only returns surfaced nodes"),
+            )
+        })
+    }
+
+    /// Return the next surfaced node identity after `id`, or the first when absent.
+    #[doc(hidden)]
+    pub fn next_id(&self, id: Option<NodeId>) -> Option<NodeId> {
+        let start = id.map_or(1, |id| internal_node_id(id).index() + 1);
+        (start..self.compiler.doctab.len()).find_map(|index| {
+            let id = doc::Id::from_index(index);
+            let node = &self.compiler.doctab[id];
+            (!node.dead && !node.kind.is_internal()).then(|| public_node_id(id))
+        })
     }
 
     /// Look up a single document node, as named by a token or by another node.
@@ -1239,7 +1239,9 @@ mod tests {
             Kind::SpecialMethod { .. } => "special_method",
             Kind::Field { .. } => "field",
             Kind::Bind { .. } => "bind",
-            Kind::Param { .. } => "param",
+            Kind::PositionalParam { .. } => "positional_param",
+            Kind::KeyParam { .. } => "key_param",
+            Kind::RestParam { .. } => "rest_param",
             Kind::SelfParam { .. } => "self",
             Kind::ImportModule { .. } => "import_module",
             Kind::ImportItem { .. } => "import_item",
@@ -1283,7 +1285,10 @@ mod tests {
             // The span names the identifier; the kind is what says it is a
             // protocol name and so is written in parentheses.
             Kind::SpecialMethod { name } => format!("({})", text(name)),
-            Kind::Param { name, .. } => name.as_ref().map_or("...", text).to_owned(),
+            Kind::PositionalParam { name, .. } | Kind::KeyParam { name, .. } => {
+                text(name).to_owned()
+            }
+            Kind::RestParam { name } => name.as_ref().map_or("...", text).to_owned(),
             Kind::PreludeModule { name, .. } | Kind::PreludeItem { name, .. } => (*name).to_owned(),
             other => kind_name(other).to_owned(),
         }
@@ -1328,7 +1333,7 @@ mod tests {
         assert!(tree.contains(&("special_method", "(init)".into(), Some("Point".into()))));
         assert!(tree.contains(&("method", "hidden".into(), Some("Point".into()))));
         assert!(tree.contains(&("self", "self".into(), Some("(init)".into()))));
-        assert!(tree.contains(&("param", "x".into(), Some("(init)".into()))));
+        assert!(tree.contains(&("positional_param", "x".into(), Some("(init)".into()))));
         assert!(tree.contains(&("bind", "local".into(), Some("hidden".into()))));
     }
 
@@ -1371,23 +1376,24 @@ mod tests {
         );
         let mut params = Vec::new();
         for (_, node) in unit.nodes() {
-            if let Kind::Param {
-                name,
-                form,
-                default,
-            } = node.kind()
-            {
-                let name = name.as_ref().map(|name| {
-                    unit.compiler
-                        .file
-                        .str(source::Span {
-                            start: name.start().byte_offset() as source::Offset,
-                            end: name.end().byte_offset() as source::Offset,
-                        })
-                        .to_owned()
-                });
-                params.push((name, kind_of_form(&form), default.is_some()));
-            }
+            let (name, form, has_default) = match node.kind() {
+                Kind::PositionalParam { name, default } => {
+                    (Some(name), "positional", default.is_some())
+                }
+                Kind::KeyParam { name, default, .. } => (Some(name), "key", default.is_some()),
+                Kind::RestParam { name } => (name, "rest", false),
+                _ => continue,
+            };
+            let name = name.as_ref().map(|name| {
+                unit.compiler
+                    .file
+                    .str(source::Span {
+                        start: name.start().byte_offset() as source::Offset,
+                        end: name.end().byte_offset() as source::Offset,
+                    })
+                    .to_owned()
+            });
+            params.push((name, form, has_default));
         }
         // An anonymous `...` binds nothing, so it has no name — but it is part
         // of the signature and so must still be a node.
@@ -1401,14 +1407,6 @@ mod tests {
                 (None, "rest", false),
             ]
         );
-    }
-
-    fn kind_of_form(form: &ParamForm) -> &'static str {
-        match form {
-            ParamForm::Positional => "positional",
-            ParamForm::Key { .. } => "key",
-            ParamForm::Rest => "rest",
-        }
     }
 
     #[test]
@@ -1457,7 +1455,9 @@ mod tests {
         let binds: Vec<_> = unit
             .nodes()
             .filter_map(|(_, node)| match node.kind() {
-                Kind::Param { .. } => node.parent(),
+                Kind::PositionalParam { .. } | Kind::KeyParam { .. } | Kind::RestParam { .. } => {
+                    node.parent()
+                }
                 _ => None,
             })
             .filter(|parent| catches.contains(parent))

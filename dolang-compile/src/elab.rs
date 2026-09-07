@@ -16,7 +16,7 @@ use crate::{
         SideEffect, Single, Stmt, Try, Var, While, visit::Node,
     },
     diag::{AnnotationKind, Severity},
-    doc::{self, Kind, ParamForm},
+    doc::{self, Kind},
     source::{Annotate, Diagnose, Diags, File, Patch, Span},
     sym,
 };
@@ -2750,17 +2750,27 @@ impl<'a> Elaborater<'a> {
     /// The parser splits key parameters into `:foo` and `foo: local` forms.
     /// Both are a key parameter to anything reading a signature, so they
     /// share a form and the parser stays free to re-split them.
-    fn doc_param(param: &Param) -> (ParamForm, Option<Span>, Span) {
-        let (form, key_span, ident, default) = match param {
-            Param::Pos { ident, default } => {
-                (ParamForm::Positional, None, Some(ident.span), default)
-            }
+    fn doc_param(param: &Param) -> (Kind, Span) {
+        let (kind, key_span, ident, default) = match param {
+            Param::Pos { ident, default } => (
+                Kind::PositionalParam {
+                    name: ident.span,
+                    default: default.as_ref().map(|default| default.expr.span()),
+                },
+                None,
+                Some(ident.span),
+                default,
+            ),
             Param::Key {
                 key_span,
                 ident,
                 default,
             } => (
-                ParamForm::Key { key: *key_span },
+                Kind::KeyParam {
+                    key: *key_span,
+                    name: ident.span,
+                    default: default.as_ref().map(|default| default.expr.span()),
+                },
                 Some(*key_span),
                 Some(ident.span),
                 default,
@@ -2772,13 +2782,24 @@ impl<'a> Elaborater<'a> {
                 ..
             } => {
                 let key = key_expr.span();
-                (ParamForm::Key { key }, Some(key), Some(ident.span), default)
+                (
+                    Kind::KeyParam {
+                        key,
+                        name: ident.span,
+                        default: default.as_ref().map(|default| default.expr.span()),
+                    },
+                    Some(key),
+                    Some(ident.span),
+                    default,
+                )
             }
             Param::Rest {
                 ellipsis_span,
                 ident,
             } => (
-                ParamForm::Rest,
+                Kind::RestParam {
+                    name: ident.as_ref().map(|ident| ident.span),
+                },
                 Some(*ellipsis_span),
                 ident.as_ref().map(|ident| ident.span),
                 &None,
@@ -2790,7 +2811,7 @@ impl<'a> Elaborater<'a> {
             .flatten()
             .reduce(|acc, span| acc | span)
             .unwrap_or(Span::INVALID);
-        (form, default_span, span)
+        (kind, span)
     }
 
     fn visit_function(
@@ -2807,7 +2828,7 @@ impl<'a> Elaborater<'a> {
         // so defaults can reference prior params but not the current or later ones.
         for (param_idx, param) in node.params.iter_mut().enumerate() {
             self.visit_param_non_const_default(&mut scope, param)?;
-            let (form, default, param_span) = Self::doc_param(param);
+            let (param_kind, param_span) = Self::doc_param(param);
             // An anonymous `...` binds nothing, but it is still part of the
             // signature, so it gets a node with no name.
             let ident = match param {
@@ -2821,11 +2842,7 @@ impl<'a> Elaborater<'a> {
                     name: ident.as_ref().expect("`self` is always named").span,
                 }
             } else {
-                Kind::Param {
-                    name: ident.as_ref().map(|ident| ident.span),
-                    form,
-                    default,
-                }
+                param_kind
             };
             let param_node = self.doc(&scope, kind, param_span);
             let Some(ident) = ident else {
@@ -2980,7 +2997,7 @@ impl<'a> Elaborater<'a> {
         let mut scope = scope.lambda(Some(doc_node), badnl);
         for param in node.params.iter_mut() {
             self.visit_param_non_const_default(&mut scope, param)?;
-            let (form, default, param_span) = Self::doc_param(param);
+            let (param_kind, param_span) = Self::doc_param(param);
             // An anonymous `...` binds nothing, but it is still part of the
             // signature, so it gets a node with no name.
             let ident = match param {
@@ -2989,15 +3006,7 @@ impl<'a> Elaborater<'a> {
                 | Param::ConstKey { ident, .. } => Some(ident),
                 Param::Rest { ident, .. } => ident.as_mut(),
             };
-            let param_node = self.doc(
-                &scope,
-                Kind::Param {
-                    name: ident.as_ref().map(|ident| ident.span),
-                    form,
-                    default,
-                },
-                param_span,
-            );
+            let param_node = self.doc(&scope, param_kind, param_span);
             let Some(ident) = ident else {
                 continue;
             };

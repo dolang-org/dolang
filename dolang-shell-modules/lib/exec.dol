@@ -120,12 +120,14 @@ class Operation
 
   def compile_cached self
     let compiled = self.#compile()
-    for diag = compiled.diagnostics
+    let diagnostics = [...compiled.diagnostics()]
+    for diag = diagnostics
       echo $diag.render()
-    if !compiled.ok
+    if diagnostics.any do |diag| (diag.severity == :ERROR:)
       throw std.CompileError "failed to compile $(self.#path.relative())"
-    self.#cache.write $compiled.bytecode
-    self.#run_loaded $compiled.bytecode
+    let bytecode = compiled.emit()
+    self.#cache.write $bytecode
+    self.#run_loaded $bytecode
 
   pub def run self
     if cache_usable $self.#cache $self.#path

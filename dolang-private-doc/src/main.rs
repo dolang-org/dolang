@@ -8,7 +8,7 @@ use std::{
 };
 
 use clap::Parser;
-use dolang::compile::{Config, Kind, Node, NodeId, ParamForm, Span, Unit};
+use dolang::compile::{Config, Kind, Node, NodeId, Span, Unit};
 use serde_json::{Value, json};
 
 #[derive(Parser)]
@@ -125,18 +125,17 @@ impl Entity<'_> {
             self.children
                 .iter()
                 .filter_map(|(_, child)| match child.kind() {
-                    Kind::Param {
-                        name,
-                        form,
-                        default,
-                    } => {
-                        let bound = name.map_or(String::new(), |name| span_text(content, &name));
-                        let name = match form {
-                            ParamForm::Key { key } => format!(":{}", span_text(content, &key)),
-                            ParamForm::Rest => format!("...{bound}"),
-                            _ => bound,
-                        };
+                    Kind::PositionalParam { name, default } => {
+                        let name = span_text(content, &name);
                         Some(json!({"name": name, "optional": default.is_some()}))
+                    }
+                    Kind::KeyParam { key, default, .. } => {
+                        let name = format!(":{}", span_text(content, &key));
+                        Some(json!({"name": name, "optional": default.is_some()}))
+                    }
+                    Kind::RestParam { name } => {
+                        let bound = name.map_or(String::new(), |name| span_text(content, &name));
+                        Some(json!({"name": format!("...{bound}"), "optional": false}))
                     }
                     _ => None,
                 })
