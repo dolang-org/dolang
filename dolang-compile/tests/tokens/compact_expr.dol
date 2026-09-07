@@ -1,0 +1,92 @@
+# A `$` at statement level starts a compact expression: a variable, then field
+# access, indexing and calls chained onto it.  Several positions are compact
+# expressions already and take no `$`, and inside `()` the same names are
+# ordinary expression operands.
+
+#~~: keyword
+let list = [10, 20]
+#   ^~~~: variable, node=bind
+#          ^: delim
+#           ^~: number
+#             ^: delim
+#               ^~: number
+#                 ^: delim
+
+#~~: variable, context=call, node=prelude_item
+dbg $list[0]
+#   ^: sigil
+#    ^~~~: variable, node=bind
+#        ^: delim
+#         ^: number
+#          ^: delim
+
+# The right-hand side of `let` is a compact expression already, so the name is
+# a variable with no `$` in front of it.
+#~~: keyword
+let first = list[0]
+#   ^~~~~: variable, node=bind
+#           ^~~~: variable, node=bind
+#               ^: delim
+#                ^: number
+#                 ^: delim
+
+# Annotations for a block header sit at the body's indent: a comment at column
+# 0 here would close the block before its body.
+#~~: keyword
+def double n
+  # ^~~~~~: variable, node=function
+  #        ^: variable, node=positional_param
+  #: variable, node=positional_param
+  n
+
+# Argument 0 of a call is a compact expression, and the name it resolves to is
+# what tells a highlighter it is a function rather than a value.
+#~~~~~: variable, context=call, node=function
+double 21
+
+# Inside parentheses the level is C-like: no `$`, and the operators are real.
+#~~: variable, context=call, node=prelude_item
+dbg (first + 1)
+#   ^: delim
+#    ^~~~~: variable, node=bind
+#          ^: operator
+#            ^: number
+#             ^: delim
+
+# A class gives something to chain onto.  Each header's annotations sit at the
+# indent of the block it opens, one level deeper each time.
+#~~~~: keyword
+class Box
+  #   ^~~: variable, node=class
+  #~~: keyword
+  pub field item = 0
+  #   ^~~~~: keyword
+  #         ^~~~: field, node=field
+
+  #~~: keyword
+  pub def get self
+    # ^~~: keyword
+    #     ^~~: method, node=method
+    #         ^~~~: variable, node=self_param
+    #~~~: variable, node=self_param
+    self.item
+
+#~~: keyword
+let box = Box()
+#   ^~~: variable, node=bind
+#         ^~~: variable, node=class, context=call
+#            ^: delim
+#             ^: delim
+
+# A field read and a method call differ only by the context the token carries.
+#~~: variable, context=call, node=prelude_item
+dbg $box.item
+#   ^: sigil
+#    ^~~: variable, node=bind
+#        ^~~~: field, context=none
+
+#~~: variable, context=call, node=prelude_item
+dbg $box.get()
+#   ^: sigil
+#    ^~~: variable, node=bind
+#        ^~~: field, context=call
