@@ -9,6 +9,7 @@ import
     - test
   std:
     - RuntimeError
+    - TypeError
 
 #[test]
 def parse_primitives()
@@ -79,3 +80,15 @@ def numbers()
   let err = assert_throws $RuntimeError do
     encode 170141183460469231731687303715884105727
   assert ((str err).contains "outside i64 range")
+
+#[test]
+def indented_encoding()
+  assert_eq (encode [1, 2] indent: 2) "[\n  1,\n  2\n]"
+  assert_eq (encode {"a": {"b": 1}} indent: 4) "{\n    \"a\": {\n        \"b\": 1\n    }\n}"
+  # Nothing to lay out is nothing to indent, and an omitted indent is one line.
+  assert_eq (encode [] indent: 2) "[]"
+  assert_eq (encode [1, 2]) "[1,2]"
+
+  let err = assert_throws $TypeError do
+    encode [1] indent: -1
+  assert ((str err).contains "indent")
