@@ -17,7 +17,6 @@ let MIRI_CRATES = $
 
 let COV_IGNORE = $
   - dolang-private-util/src/hashbrown
-  - dolang-private-doc
   - dolang-private-highlight
   - dolang-private-build
   - dolang-private-test
@@ -25,7 +24,7 @@ let COV_IGNORE = $
 
 let MKDOCS_BINS = $
   - dolang-highlight
-  - dolang-doc
+  - dolang
 
 let DOC_CRATES = $
   - dolang
@@ -174,9 +173,12 @@ def rustdoc_build()
         -p $crate
 
 def with_mkdocs spec func
+  # The documentation extractor is an entrypoint of the interpreter itself, so
+  # the handler is given a command line rather than a program to run.
+  let dolang = spec.bin "dolang"
   env
     DOLANG_HIGHLIGHT: $spec.bin("dolang-highlight")
-    DOLANG_DOC: $spec.bin("dolang-doc")
+    DOLANG_DOC: "$dolang -m doc"
     NO_MKDOCS_2_WARNING: 1
     $func
 

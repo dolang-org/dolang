@@ -11,9 +11,10 @@ Returns a fresh iterator of [`Diagnostic`](./diagnostic.md) objects.
 
 ### `nodes()`
 
-Returns a fresh iterator of `[NodeId, Node]` pairs. Nodes expose `parent` and
-[`span`](./span.md); concrete node types add projections such as `name`,
-`is_pub`, `default`, `target`, and `supers`.
+Returns a fresh iterator of `[NodeId, Node]` pairs. Nodes expose `parent`,
+[`span`](./span.md), and `doc` -- the span of the comment block documenting the
+node, or `nil` where none attaches. Concrete node types add projections such as
+`name`, `is_pub`, `default`, `target`, and `supers`.
 
 Empty unless the unit was compiled with `document: true`.
 

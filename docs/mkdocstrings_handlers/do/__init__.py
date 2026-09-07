@@ -128,15 +128,16 @@ class DoHandler(BaseHandler):
                 f"Check the 'paths' option in the handler configuration."
             )
 
-        # Find dolang-doc binary: prefer DOLANG_DOC env var, then PATH.
+        # Find the extractor: prefer the DOLANG_DOC env var, then the `doc`
+        # entrypoint of a `dolang` on PATH.
         dolang_doc = os.environ.get("DOLANG_DOC")
         dolang_doc_cmd = dolang_doc.split() if dolang_doc else None
         if dolang_doc_cmd is None:
-            found = shutil.which("dolang-doc")
-            dolang_doc_cmd = [found] if found else None
+            found = shutil.which("dolang")
+            dolang_doc_cmd = [found, "-m", "doc"] if found else None
         if dolang_doc_cmd is None:
             raise CollectionError(
-                "'dolang-doc' binary not found. Set DOLANG_DOC env var or add it to PATH."
+                "'dolang' not found. Set DOLANG_DOC env var or add it to PATH."
             )
 
         try:
@@ -148,14 +149,14 @@ class DoHandler(BaseHandler):
             )
         except subprocess.CalledProcessError as e:
             raise CollectionError(
-                f"dolang-doc failed for '{source_path}': {e.stderr}"
+                f"documentation extraction failed for '{source_path}': {e.stderr}"
             ) from e
 
         try:
             doc_data = json.loads(result.stdout)
         except json.JSONDecodeError as e:
             raise CollectionError(
-                f"dolang-doc produced invalid JSON: {e}"
+                f"documentation extraction produced invalid JSON: {e}"
             ) from e
 
         entities = doc_data.get("entities", [])

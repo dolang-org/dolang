@@ -1,0 +1,289 @@
+# Describe the documented declarations of a Do source file as JSON.
+#
+# The mkdocstrings handler in `docs/mkdocstrings_handlers/do` runs this once for
+# every documented module and renders what it prints.
+
+import args compile json shell
+  fs:
+    - Path
+
+let PRELUDE_ITEMS = Set $
+  - getter
+  - class
+  - static
+
+# One comment line, with its terminator, indentation and marker removed.
+def doc_line line
+  line.trim()[1..].without_prefix " "
+
+# Where a name is written, as the handler's templates expect it.
+def span_json span
+  let :line :column :byte_offset = span.start
+  $
+    :line
+    col: $column
+    offset: $byte_offset
+
+# Whether one of a declaration's own nodes is a decorator resolving to `target`.
+def decorated own target
+  if (target == nil)
+    return false
+  own.any do |child|
+    (type(child, compile.Decorator) && child.target == target)
+
+# The prelude bindings whose presence as a decorator means something here.
+#
+# Field scope and `#[getter]` are both decided by which prelude item a decorator
+# resolves to -- the same test the elaborator applies -- so resolving these once
+# lets every later check be an identity comparison rather than a match on source
+# text.
+def prelude_items unit
+  $
+    for id node = unit.nodes()
+      if (type node compile.PreludeItem && node.module == "std" && PRELUDE_ITEMS.contains node.item)
+        $node.item: $id
+
+# Group nodes by parent so each declaration can be described by its children.
+def index_children unit
+  let children = {}
+  for _id node = unit.nodes()
+    let parent = node.parent
+    if (parent == nil)
+      continue
+    if !(children.contains parent)
+      children[parent] = []
+    children[parent].push $node
+  # Nothing depends on the order nodes are yielded, so impose source order.
+  for group = children.values()
+    group.sort key: (do |node| node.span.start.byte_offset)
+  children
+
+# The documented declarations of one source file.
+#
+# Each documentable node type has a method that describes it, and the dispatch
+# table in `walk` is what says which; a type the table does not name is not part
+# of the documented surface.
+class Document
+  field path src module all
+  field getter class_target static_target
+  field children members entities
+
+  def (init) self path src module all
+    self.#path = path
+    self.#src = src
+    self.#module = module
+    self.#all = all
+
+    let unit = compile.compile $path $src recover: true document: true
+    let decorators = prelude_items $unit
+    self.#getter = decorators.get "getter" default: nil
+    self.#class_target = decorators.get "class" default: nil
+    self.#static_target = decorators.get "static" default: nil
+    self.#children = index_children $unit
+    # A class holds its members in an array put in place when the class itself
+    # is described, so a member reached later lands in it without a second pass.
+    self.#members = {}
+    self.#entities = []
+    self.#walk $unit
+
+  # The whole document, in the shape the handler consumes.
+  pub def result self
+    let result = $
+      source: $self.#path
+      module: $self.#module
+      entities: $self.#entities
+    result
+
+  # Describe every node whose type the dispatch table names, in source order.
+  def walk self unit
+    let dispatch = $
+      $compile.Class: $self.#class_entry
+      $compile.Function: $self.#function_entry
+      $compile.Bind: $self.#value_entry
+      $compile.Field: $self.#field_member
+      $compile.Method: $self.#method_member
+      $compile.SpecialMethod: $self.#special_member
+    let nodes = [...unit.nodes()]
+    nodes.sort key: do |pair| pair[1].span.start.byte_offset
+    for id node = nodes
+      if let handler = dispatch.get (type node) default: nil
+        handler(id, node)
+
+  # The source text a span covers.
+  def text self span
+    self.#src[span.start.byte_offset..span.end.byte_offset]
+
+  # The documentation attached to a node, as prose.
+  #
+  # Which comments document a declaration is the compiler's determination; the
+  # span it reports covers the block as written, so all that is left here is to
+  # undo the markers and indentation it was written with.
+  def doc self node
+    if (node.doc == nil)
+      return ""
+    "\n".join $ self.#text(node.doc).split("\n").map(doc_line)
+
+  # The nodes belonging to one declaration.
+  def own self id
+    self.#children.get $id default: []
+
+  # Whether a declaration is part of what is being documented.
+  def included self is_pub
+    (is_pub || self.#all)
+
+  # Which namespace a field belongs to.
+  #
+  # The elaborator derives this from `#[class]` and `#[static]` decorators that
+  # have no runtime meaning; the decorators resolve to prelude items, so the
+  # same determination here is an identity comparison rather than a text match.
+  def scope self id
+    let own = self.#own(id)
+    if decorated(own, self.#class_target)
+      "class"
+    else if decorated(own, self.#static_target)
+      "static"
+    else
+      "instance"
+
+  # The name a parameter is written under, and whether it may be left out.
+  def param_info self child
+    if (type(child, compile.PositionalParam))
+      [self.#text(child.name), child.default != nil]
+    else if (type(child, compile.KeyParam))
+      [":$(self.#text(child.key))", child.default != nil]
+    else if (type(child, compile.RestParam))
+      let bound = if (child.name == nil)
+        ""
+      else
+        self.#text(child.name)
+      ["...$bound", false]
+    else
+      nil
+
+  # The parameters of a function or method, in the order declared.
+  #
+  # `self` is excluded: it is an artifact of how methods are called, not part of
+  # the documented signature. A parameter written on its own line can carry a
+  # comment block of its own, which documents it and not the function it belongs
+  # to.
+  def params self id
+    let result = []
+    for child = self.#own(id)
+      let info = self.#param_info $child
+      if (info == nil)
+        continue
+      let name optional = info
+      let param = $
+        name: $name
+        optional: $optional
+        doc: (self.#doc(child))
+      result.push $param
+    result
+
+  # The supertypes a class names, as written.
+  def supers self node
+    [...node.supers.map do |s| self.#text(s.span)]
+
+  # A member joins the array its class put in place; one whose class was left
+  # out has nowhere to go, and goes nowhere.
+  def add_member self node member
+    let list = self.#members.get $node.parent else: do return
+    list.push $member
+
+  def class_entry self id node
+    if !self.#included(node.is_pub)
+      return
+    let list = []
+    self.#members[id] = list
+    self.#entities.push $
+      kind: "class"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      span: (span_json(node.name))
+      doc: (self.#doc(node))
+      supers: (self.#supers(node))
+      members: $list
+
+  def function_entry self id node
+    if !self.#included(node.is_pub)
+      return
+    self.#entities.push $
+      kind: "function"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      span: (span_json(node.name))
+      doc: (self.#doc(node))
+      params: (self.#params(id))
+
+  def value_entry self _id node
+    # Only a top-level binding is a module value; one nested inside a function
+    # is a local, and the parent link is what tells them apart.
+    if (node.parent != nil || !self.#included(node.is_pub))
+      return
+    self.#entities.push $
+      kind: "value"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      span: (span_json(node.name))
+      doc: (self.#doc(node))
+
+  def field_member self id node
+    if !self.#included(node.is_pub)
+      return nil
+    self.#add_member $node $
+      kind: "field"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      span: (span_json(node.name))
+      doc: (self.#doc(node))
+      scope: (self.#scope(id))
+
+  def method_member self id node
+    if self.#included(node.is_pub)
+      self.#method_entry $id $node $node.is_pub false
+
+  # A special method names itself after the protocol it implements rather than
+  # after any source text, and it belongs to the type's interface however it was
+  # declared -- so it counts as public.
+  def special_member self id node
+    self.#method_entry $id $node true true
+
+  def method_entry self id node is_pub special
+    self.#add_member $node $
+      if decorated(self.#own(id), self.#getter)
+        # A `#[getter]` method presents as a field: it is read like one, and
+        # documenting it as a method would be a lie about its use.
+        kind: "field"
+        name: (self.#text(node.name))
+        pub: $is_pub
+        span: (span_json(node.name))
+        doc: (self.#doc(node))
+      else
+        kind: "method"
+        name: (self.#text(node.name))
+        pub: $is_pub
+        special: $special
+        span: (span_json(node.name))
+        doc: (self.#doc(node))
+        params: (self.#params(id))
+
+args.with
+  help: Describe the documented declarations of a Do source file as JSON.
+  - opt: module
+    default: nil
+    help: Module name recorded in the output
+  - flag: all
+    help: Include declarations that are not `pub`
+  - arg: path
+    default: nil
+    help: Source file; standard input is read when omitted
+  do |p|
+    let :module :all :path ... = p
+    let source = if (path == nil)
+      Str $ shell.stdin.read()
+    else
+      Path(path).read()
+    let document = Document (path || "<stdin>") $source $module $all
+    # The document goes to the output stream, where a caller reading the tool's
+    # stdout will find it; `echo` addresses the console, which is stderr.
+    put "$(json.encode(document.result(), indent: 2))\n"

@@ -1,0 +1,220 @@
+{
+  "source": "fixture.dol",
+  "module": "fixture",
+  "entities": [
+    {
+      "kind": "function",
+      "name": "greet",
+      "pub": true,
+      "span": {
+        "line": 8,
+        "col": 8,
+        "offset": 83
+      },
+      "doc": "A greeting.\n\nSpans several lines.",
+      "params": [
+        {
+          "name": "name",
+          "optional": false,
+          "doc": ""
+        },
+        {
+          "name": ":greeting",
+          "optional": true,
+          "doc": ""
+        },
+        {
+          "name": "...rest",
+          "optional": false,
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "kind": "value",
+      "name": "default_name",
+      "pub": true,
+      "span": {
+        "line": 16,
+        "col": 8,
+        "offset": 275
+      },
+      "doc": "The module's default name."
+    },
+    {
+      "kind": "class",
+      "name": "Point",
+      "pub": true,
+      "span": {
+        "line": 22,
+        "col": 10,
+        "offset": 377
+      },
+      "doc": "A named point.",
+      "supers": [
+        "Record"
+      ],
+      "members": [
+        {
+          "kind": "field",
+          "name": "x",
+          "pub": true,
+          "span": {
+            "line": 24,
+            "col": 12,
+            "offset": 434
+          },
+          "doc": "The horizontal coordinate.",
+          "scope": "instance"
+        },
+        {
+          "kind": "field",
+          "name": "count",
+          "pub": true,
+          "span": {
+            "line": 28,
+            "col": 12,
+            "offset": 491
+          },
+          "doc": "How many points exist.",
+          "scope": "class"
+        },
+        {
+          "kind": "field",
+          "name": "origin",
+          "pub": true,
+          "span": {
+            "line": 32,
+            "col": 12,
+            "offset": 547
+          },
+          "doc": "A shared origin.",
+          "scope": "static"
+        },
+        {
+          "kind": "method",
+          "name": "(init)",
+          "pub": true,
+          "special": true,
+          "span": {
+            "line": 35,
+            "col": 10,
+            "offset": 590
+          },
+          "doc": "Build a point.",
+          "params": [
+            {
+              "name": "x",
+              "optional": false,
+              "doc": ""
+            }
+          ]
+        },
+        {
+          "kind": "method",
+          "name": "(str)",
+          "pub": true,
+          "special": true,
+          "span": {
+            "line": 39,
+            "col": 10,
+            "offset": 645
+          },
+          "doc": "Render it.",
+          "params": []
+        },
+        {
+          "kind": "field",
+          "name": "horizontal",
+          "pub": true,
+          "span": {
+            "line": 44,
+            "col": 10,
+            "offset": 732
+          },
+          "doc": "The coordinate, read as a field."
+        },
+        {
+          "kind": "method",
+          "name": "shift",
+          "pub": true,
+          "special": false,
+          "span": {
+            "line": 48,
+            "col": 10,
+            "offset": 783
+          },
+          "doc": "Move it.",
+          "params": [
+            {
+              "name": "by",
+              "optional": false,
+              "doc": ""
+            },
+            {
+              "name": ":clamp",
+              "optional": true,
+              "doc": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "class",
+      "name": "Tagged",
+      "pub": true,
+      "span": {
+        "line": 56,
+        "col": 10,
+        "offset": 958
+      },
+      "doc": "Inherits through a module path rather than an imported item.",
+      "supers": [
+        "std.Record"
+      ],
+      "members": [
+        {
+          "kind": "field",
+          "name": "tag",
+          "pub": true,
+          "span": {
+            "line": 57,
+            "col": 12,
+            "offset": 989
+          },
+          "doc": "",
+          "scope": "instance"
+        }
+      ]
+    },
+    {
+      "kind": "function",
+      "name": "build",
+      "pub": true,
+      "span": {
+        "line": 62,
+        "col": 8,
+        "offset": 1109
+      },
+      "doc": "Build something.\n\nThe parameters are laid out vertically, so each can be documented on its own.",
+      "params": [
+        {
+          "name": ":from",
+          "optional": false,
+          "doc": "Where the parts come from."
+        },
+        {
+          "name": ":pull",
+          "optional": true,
+          "doc": "Whether to fetch them first."
+        },
+        {
+          "name": "...args",
+          "optional": false,
+          "doc": "Everything else, passed along."
+        }
+      ]
+    }
+  ]
+}
