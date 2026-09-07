@@ -48,10 +48,10 @@ args.with
 
 ### Argument Parsing
 
-[`args.with`](../api/args.md) describes the command line and invokes its block
-with a record of converted values. `parse:` specifies how to parse the argument
-from a string, e.g. `parse: $url.Url` ensures that `download` receives URL
-objects. `collect: true` gathers the remaining positional arguments into an
+[`args.with`](../api/args/index.md) describes the command line and invokes its
+block with a record of converted values. `parse:` specifies how to parse the
+argument from a string, e.g. `parse: $url.Url` ensures that `download` receives
+URL objects. `collect: true` gathers the remaining positional arguments into an
 array.
 
 ### Progress Indicators

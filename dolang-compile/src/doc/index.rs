@@ -2,16 +2,22 @@
 
 use std::cell::Cell;
 
-use super::{Id, Kind, Node, Super, Table};
+use super::{Id, Kind, Node, Super, Table, comment::Blocks};
 use crate::{
     PreludeImport,
-    ast::{visit::Node as _, *},
+    ast::{visit::Node as AstNode, *},
     source::{File, Span},
 };
 
-pub(crate) fn index(root: &mut Root, prelude: &mut [PreludeImport], file: &File<'_>) -> Table {
+pub(crate) fn index(
+    root: &mut Root,
+    prelude: &mut [PreludeImport],
+    file: &File<'_>,
+    comments: &[Span],
+) -> Table {
     let mut index = Index {
         file,
+        blocks: Blocks::new(file, comments),
         table: Table::new(),
     };
     let scope = Scope {
@@ -57,6 +63,7 @@ pub(crate) fn index(root: &mut Root, prelude: &mut [PreludeImport], file: &File<
 
 struct Index<'a> {
     file: &'a File<'a>,
+    blocks: Blocks,
     table: Table,
 }
 
@@ -121,6 +128,7 @@ impl Index<'_> {
             ),
             Param::Key {
                 key_span,
+                colon_span,
                 ident,
                 default,
             } => (
@@ -129,7 +137,9 @@ impl Index<'_> {
                     name: ident.span,
                     default: default.as_ref().map(|default| default.expr.span()),
                 },
-                Some(*key_span),
+                // The `:` is part of how the parameter is written, and in the
+                // `:name` form it is where the parameter starts.
+                Some(*key_span | *colon_span),
                 Some(ident.span),
                 default,
             ),
@@ -173,7 +183,13 @@ impl Index<'_> {
     }
 
     fn push(&mut self, scope: &Scope<'_>, kind: Kind, span: Span) -> Id {
-        self.table.push(Node::new(scope.parent, kind, span))
+        // Only a declaration can be documented, and the block sits above the
+        // construct as a whole — decorators included, since they are written
+        // between the comment and the keyword.
+        let doc = kind
+            .definition()
+            .and_then(|_| self.blocks.attached(self.file, span.start));
+        self.table.push(Node::new(scope.parent, kind, span, doc))
     }
 
     fn reference(&mut self, scope: &Scope<'_>, ident: &mut Ident) {
@@ -225,6 +241,7 @@ impl Index<'_> {
             Stmt::NlGuard(guard) => self.predeclare(scope, &mut guard.body),
             Stmt::Def(def) => {
                 let name = def.ident.span;
+                let span = def.span();
                 self.declaration(
                     scope,
                     &mut def.ident,
@@ -232,11 +249,12 @@ impl Index<'_> {
                         name,
                         is_pub: def.pub_span.is_some(),
                     },
-                    def.def_span | name,
+                    span,
                 );
             }
             Stmt::Class(class) => {
                 let name = class.ident.span;
+                let span = class.span();
                 self.declaration(
                     scope,
                     &mut class.ident,
@@ -245,7 +263,7 @@ impl Index<'_> {
                         is_pub: class.pub_span.is_some(),
                         supers: Default::default(),
                     },
-                    class.class_span | name,
+                    span,
                 );
             }
             Stmt::Import(import) => self.import(scope, import),
@@ -255,6 +273,7 @@ impl Index<'_> {
 
     fn import(&mut self, scope: &Scope<'_>, import: &mut Import) {
         for element in &mut import.0 {
+            let element_span = element.span();
             match element {
                 ImportElement::ModuleAsIs { module, bind, .. } => {
                     let name = self.file.str(*module).split('.').next().unwrap();
@@ -269,7 +288,7 @@ impl Index<'_> {
                             module: *module,
                             name,
                         },
-                        *module,
+                        element_span,
                     );
                 }
                 ImportElement::ModuleRenamed { module, bind, .. } => {
@@ -280,11 +299,12 @@ impl Index<'_> {
                             module: *module,
                             name: bind.span,
                         },
-                        *module,
+                        element_span,
                     );
                 }
                 ImportElement::Items { module, items } => {
                     for item in items {
+                        let item_span = item.span();
                         let (span, bind) = match item {
                             ImportItem::AsIs { bind, .. } => (bind.span, bind),
                             ImportItem::Renamed { item, bind, .. } => (*item, bind),
@@ -297,7 +317,7 @@ impl Index<'_> {
                                 item: span,
                                 name: bind.span,
                             },
-                            span,
+                            item_span,
                         );
                     }
                 }
@@ -315,6 +335,7 @@ impl Index<'_> {
                 Some(parent),
                 Kind::Decorator { target },
                 decorator.open_span | decorator.close_span,
+                None,
             ));
         }
     }
@@ -333,11 +354,17 @@ impl Index<'_> {
             inner.return_target = parent;
         }
         for (i, param) in func.params.iter_mut().enumerate() {
-            self.param(&inner, param, true, false, method && i == 0);
+            self.param(&inner, param, true, false, method && i == 0, None);
         }
         self.block(&inner, &mut func.body.stmts);
     }
 
+    /// Index a parameter, or a name bound by a pattern written like one.
+    ///
+    /// `extent` is the declaring statement, for a pattern that is one: a name
+    /// bound by `let` extends over the whole `let`, however many names share
+    /// it, whereas a loop or handler variable extends over itself alone —
+    /// there the enclosing construct is a node of its own.
     fn param(
         &mut self,
         scope: &Scope<'_>,
@@ -345,6 +372,7 @@ impl Index<'_> {
         signature: bool,
         is_pub: bool,
         is_self: bool,
+        extent: Option<Span>,
     ) {
         let (kind, span) = Self::param_kind(param);
         let ident = match param {
@@ -379,14 +407,24 @@ impl Index<'_> {
                     is_pub,
                 }
             };
-            let span = if signature { span } else { ident.span };
+            let span = if signature {
+                span
+            } else {
+                extent.unwrap_or(ident.span)
+            };
             self.declaration(scope, ident, kind, span);
         } else if signature {
             self.push(scope, kind, span);
         }
     }
 
-    fn pattern(&mut self, scope: &Scope<'_>, pattern: &mut Pattern, is_pub: bool) {
+    fn pattern(
+        &mut self,
+        scope: &Scope<'_>,
+        pattern: &mut Pattern,
+        is_pub: bool,
+        extent: Option<Span>,
+    ) {
         match pattern {
             Pattern::Ident(ident) => {
                 self.declaration(
@@ -396,12 +434,12 @@ impl Index<'_> {
                         name: ident.span,
                         is_pub,
                     },
-                    ident.span,
+                    extent.unwrap_or(ident.span),
                 );
             }
             Pattern::Unpack(params) => {
                 for param in params {
-                    self.param(scope, param, false, is_pub, false);
+                    self.param(scope, param, false, is_pub, false, extent);
                 }
             }
         }
@@ -412,12 +450,14 @@ impl Index<'_> {
             Stmt::NlGuard(guard) => self.stmt(scope, &mut guard.body),
             Stmt::Prim(prim) => self.prim(scope, prim),
             Stmt::Let(node) => {
+                let span = node.span();
                 self.prim(scope, &mut node.rhs);
-                self.pattern(scope, &mut node.bind, node.pub_span.is_some());
+                self.pattern(scope, &mut node.bind, node.pub_span.is_some(), Some(span));
             }
             Stmt::Bind(node) => {
+                let span = node.span();
                 self.expr(scope, &mut node.expr);
-                self.pattern(scope, &mut node.bind, false);
+                self.pattern(scope, &mut node.bind, false, Some(span));
             }
             Stmt::Assign(node) => {
                 self.lvalue(scope, &mut node.lhs);
@@ -436,12 +476,13 @@ impl Index<'_> {
             }
             Stmt::Class(class) => self.class(scope, class),
             Stmt::Return(ret) => {
+                let span = ret.span();
                 self.push(
                     scope,
                     Kind::Return {
                         target: scope.return_target,
                     },
-                    ret.span,
+                    span,
                 );
                 if let Some(expr) = &mut ret.expr {
                     self.expr(scope, expr);
@@ -467,17 +508,19 @@ impl Index<'_> {
             }
             Stmt::Throw(node) => self.expr(scope, &mut node.expr),
             Stmt::While(node) => {
+                let span = node.span();
                 self.expr(scope, &mut node.expr);
                 self.branch(
                     scope,
                     &mut node.body,
                     node.bind.as_mut().map(|bind| &mut bind.pattern),
                     Kind::While,
-                    node.while_span,
+                    span,
                     Self::block,
                 );
             }
             Stmt::For(node) => {
+                let span = node.span();
                 if let Some(expr) = &mut node.expr {
                     self.expr(scope, expr);
                 }
@@ -486,7 +529,7 @@ impl Index<'_> {
                     &mut node.body,
                     Some(&mut node.bind),
                     Kind::For,
-                    node.for_span,
+                    span,
                     Self::block,
                 );
             }
@@ -535,9 +578,15 @@ impl Index<'_> {
         for member in &mut class.body.members {
             match member {
                 ClassMember::Method(method) => {
+                    let span = method.span();
                     let kind = if method.special.is_some() {
+                        // The parentheses are how a protocol name is written,
+                        // so they are part of the name: the source says
+                        // `(init)` and never `init`.  They sit directly
+                        // around it, so the name reaches them by adjacency.
                         Kind::SpecialMethod {
-                            name: method.name_span,
+                            name: method.name_span.before_left_char()
+                                | method.name_span.after_right_char(),
                         }
                     } else {
                         Kind::Method {
@@ -545,7 +594,7 @@ impl Index<'_> {
                             is_pub: method.pub_span.is_some(),
                         }
                     };
-                    let id = self.push(scope, kind, method.def_span | method.name_span);
+                    let id = self.push(scope, kind, span);
                     method.node = Some(id);
                     for decorator in &mut method.decorators {
                         self.expr(scope, &mut decorator.expr);
@@ -554,6 +603,9 @@ impl Index<'_> {
                     self.function(scope, &mut method.func, Some(id), true, true);
                 }
                 ClassMember::Field(field) => {
+                    // Every name in a `field x y` shares the declaration, so
+                    // they share its extent and its documentation too.
+                    let span = field.span();
                     for decorator in &mut field.decorators {
                         self.expr(scope, &mut decorator.expr);
                     }
@@ -569,7 +621,7 @@ impl Index<'_> {
                                 name: name.ident.span,
                                 is_pub: field.pub_span.is_some(),
                             },
-                            name.ident.span,
+                            span,
                         );
                         name.node = Some(id);
                         self.decorators(id, &mut field.decorators);
@@ -584,17 +636,22 @@ impl Index<'_> {
             PrimStmt::Expr(expr) => self.expr(scope, expr),
             PrimStmt::If(node) => self.if_body(scope, node, false, Self::block),
             PrimStmt::Try(node) => {
-                let id = self.push(scope, Kind::Try, node.try_span);
+                // A handler is a node of its own, so the `try` covers its own
+                // body alone: sibling constructs stay disjoint.
+                let span = node.try_span | node.body.span();
+                let id = self.push(scope, Kind::Try, span);
                 self.function(scope, &mut node.body, Some(id), false, false);
                 for handler in &mut node.handlers {
+                    let span = handler.span();
                     if let Some(expr) = &mut handler.class_expr {
                         self.expr(scope, expr);
                     }
-                    let id = self.push(scope, Kind::Catch, handler.catch_span);
+                    let id = self.push(scope, Kind::Catch, span);
                     self.function(scope, &mut handler.func, Some(id), false, false);
                 }
                 if let Some((func, span)) = &mut node.finally {
-                    let id = self.push(scope, Kind::Finally, *span);
+                    let span = *span | func.span();
+                    let id = self.push(scope, Kind::Finally, span);
                     self.function(scope, func, Some(id), false, false);
                 }
             }
@@ -618,7 +675,7 @@ impl Index<'_> {
             inner.loop_target = Some(id);
         }
         if let Some(pattern) = pattern {
-            self.pattern(&inner, pattern, false);
+            self.pattern(&inner, pattern, false, None);
         }
         visit(self, &inner, elems);
     }
@@ -633,22 +690,25 @@ impl Index<'_> {
         for branch in
             std::iter::once(&mut node.tbranch).chain(node.elif_branches.iter_mut().map(|(b, _)| b))
         {
+            let span = branch.span();
             self.expr(scope, &mut branch.expr);
             self.branch(
                 scope,
                 &mut branch.body,
                 branch.bind.as_mut().map(|b| &mut b.pattern),
                 if elem { Kind::IfElem } else { Kind::If },
-                branch.span,
+                span,
                 visit,
             );
         }
         if let Some((body, span)) = &mut node.else_branch {
-            self.branch(scope, body, None, Kind::Else, *span, visit);
+            let span = *span | body.span();
+            self.branch(scope, body, None, Kind::Else, span, visit);
         }
     }
 
     fn for_elem<T: Element>(&mut self, scope: &Scope<'_>, node: &mut For<ExprBody<T>>) {
+        let span = node.span();
         if let Some(expr) = &mut node.expr {
             self.expr(scope, expr);
         }
@@ -657,7 +717,7 @@ impl Index<'_> {
             &mut node.body,
             Some(&mut node.bind),
             Kind::ForElem,
-            node.for_span,
+            span,
             Self::elements,
         );
     }
@@ -697,7 +757,9 @@ impl Index<'_> {
                 }
             }
             Expr::Lambda { func, do_span, .. } => {
-                let id = self.push(scope, Kind::Lambda, do_span.unwrap_or_else(|| func.span()));
+                let span = func.span();
+                let span = do_span.map_or(span, |do_span| do_span | span);
+                let id = self.push(scope, Kind::Lambda, span);
                 self.function(scope, func, Some(id), false, false);
             }
             Expr::Call { arg0, args, .. } => {
@@ -750,7 +812,11 @@ impl Index<'_> {
     }
 }
 
-trait Body {
+/// The body of a construct, whether statements or the elements of a literal.
+///
+/// The [`AstNode`] bound is what lets a construct's extent be taken from
+/// the tree rather than guessed at from the keyword that introduces it.
+trait Body: AstNode {
     type Element;
     fn parts(&mut self) -> (&mut [Var], &mut [Self::Element]);
 }
@@ -760,14 +826,14 @@ impl Body for Block {
         (&mut self.vars, &mut self.stmts)
     }
 }
-impl<T> Body for ExprBody<T> {
+impl<T: AstNode> Body for ExprBody<T> {
     type Element = T;
     fn parts(&mut self) -> (&mut [Var], &mut [T]) {
         (&mut self.vars, &mut self.elems)
     }
 }
 
-trait Element {
+trait Element: AstNode {
     fn index(&mut self, index: &mut Index<'_>, scope: &Scope<'_>);
 }
 impl Element for Arg {

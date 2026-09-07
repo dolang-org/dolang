@@ -268,17 +268,44 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
 }
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
+    let indent_sym = builder.sym("indent");
+
     builder
         .module("json")
         .function("encode", async move |strand, args, out| {
-            let ([arg], []) = unpack!(strand, args, 1, 0)?;
+            let ([arg], [indent]) = unpack!(strand, args, 1, 0, indent_sym = None)?;
+            let indent = match indent {
+                Some(indent) if !indent.is_nil() => Some(
+                    indent
+                        .as_int(strand)
+                        .and_then(|indent| usize::try_from(indent).ok())
+                        .ok_or_else(|| {
+                            Error::type_error(strand, "indent: expected a non-negative Int")
+                        })?,
+                ),
+                _ => None,
+            };
             let mut seen = HashSet::new();
             let value = SerializeValue {
                 strand: RefCell::new(strand),
                 seen: RefCell::new(&mut seen),
                 value: &arg,
             };
-            let res = serde_json::to_string(&value).into_do(strand)?;
+            let res = match indent {
+                None => serde_json::to_string(&value),
+                Some(indent) => {
+                    let mut buf = Vec::new();
+                    let spaces = vec![b' '; indent];
+                    let formatter = serde_json::ser::PrettyFormatter::with_indent(&spaces);
+                    let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
+                    value
+                        .serialize(&mut ser)
+                        // The formatter writes only what `to_string` would, so
+                        // the bytes are valid UTF-8 by construction.
+                        .map(|()| String::from_utf8(buf).unwrap())
+                }
+            }
+            .into_do(strand)?;
             Output::set(strand, out, res.as_str());
             Ok(())
         })

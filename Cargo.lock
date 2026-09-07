@@ -1207,15 +1207,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dolang-private-doc"
-version = "0.1.0"
-dependencies = [
- "clap",
- "dolang",
- "serde_json",
-]
-
-[[package]]
 name = "dolang-private-highlight"
 version = "0.1.0"
 dependencies = [

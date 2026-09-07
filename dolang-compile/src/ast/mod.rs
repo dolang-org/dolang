@@ -1439,6 +1439,8 @@ pub(crate) enum Param {
     },
     Key {
         key_span: Span,
+        /// The `:`, which precedes the key in `:name` and follows it in `name:`
+        colon_span: Span,
         ident: Ident,
         default: Option<ParamDefault>,
     },
@@ -1472,11 +1474,12 @@ impl Node for Param {
             }
             Param::Key {
                 key_span,
+                colon_span,
                 ident,
                 default,
             } => {
                 visit.token(Token::Key, *key_span, None)?;
-                visit.token(Token::Delim, key_span.after_right_char(), None)?;
+                visit.token(Token::Delim, *colon_span, None)?;
                 visit.token(
                     Token::Variable,
                     ident.span,

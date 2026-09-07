@@ -107,3 +107,28 @@ def document_option()
   let bytecode = enabled.emit()
   assert_eq $default.emit() $bytecode
   assert_eq $disabled.emit() $bytecode
+
+#[test]
+def node_doc_comments()
+  let source = |-
+    # A greeting.
+    #
+    # Spans several lines.
+    pub def greet name
+      name
+  let unit = compile.compile "doc.dol" $source document: true
+  let seen = 0
+  for _id node = unit.nodes()
+    if (type(node, compile.Function))
+      let doc = node.doc
+      assert_type $compile.Span $doc
+      assert_eq $source[doc.start.byte_offset..doc.end.byte_offset] |-
+        # A greeting.
+        #
+        # Spans several lines.
+      seen = (seen + 1)
+    else if (type(node, compile.PositionalParam))
+      # The block above the function documents it, not the parameters that
+      # happen to be written on the same line.
+      assert_eq $node.doc nil
+  assert_eq $seen 1

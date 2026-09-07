@@ -269,9 +269,35 @@ impl<'a> Node<'a> {
 
     /// The extent of the whole construct.
     ///
+    /// This runs from the first decorator, or `pub`, or the keyword — whichever
+    /// comes first — through the end of the body, so a construct contains
+    /// everything written inside it.
+    ///
     /// Order siblings by this; nothing depends on the order nodes are yielded.
     pub fn span(&self) -> diag::Span {
         convert_span(self.file, self.node.span)
+    }
+
+    /// The name this node declares, where it declares one.
+    ///
+    /// This is what go-to-definition jumps to and what an outline selects.  A
+    /// node that declares nothing has none, and neither does a prelude
+    /// binding, which is declared by configuration rather than by source text.
+    pub fn definition(&self) -> Option<diag::Span> {
+        self.node
+            .kind
+            .definition()
+            .map(|span| convert_span(self.file, span))
+    }
+
+    /// The doc comment block attached to this node, if any.
+    ///
+    /// A comment block documents the declaration written directly below it,
+    /// decorators notwithstanding, and the span covers the block as written —
+    /// `#` markers, indentation and all — for the consumer to render as it
+    /// sees fit.  Only a declaration carries one; see [`Node::definition`].
+    pub fn doc(&self) -> Option<diag::Span> {
+        self.node.doc.map(|span| convert_span(self.file, span))
     }
 
     /// What this node is, with whatever else varies by that.
@@ -394,7 +420,7 @@ pub enum Kind<'a> {
     /// A special method is part of the type's interface however it was
     /// declared, so there is no visibility to report.
     SpecialMethod {
-        /// The protocol name, excluding the parentheses it is written in
+        /// The protocol name, including the parentheses it is written in
         name: diag::Span,
     },
     /// A field declaration in a class body.  Its class is its parent.
@@ -877,7 +903,7 @@ impl<'a> Config<'a> {
         compiler.prelude = prelude;
         let document = self
             .document
-            .then(|| doc::index(&mut ast, &mut compiler.prelude, &compiler.file));
+            .then(|| doc::index(&mut ast, &mut compiler.prelude, &compiler.file, &comments));
         Unit {
             document,
             compiler,
@@ -1481,10 +1507,8 @@ mod tests {
             | Kind::Bind { name, .. }
             | Kind::SelfParam { name }
             | Kind::ImportModule { name, .. }
-            | Kind::ImportItem { name, .. } => text(name).to_owned(),
-            // The span names the identifier; the kind is what says it is a
-            // protocol name and so is written in parentheses.
-            Kind::SpecialMethod { name } => format!("({})", text(name)),
+            | Kind::ImportItem { name, .. }
+            | Kind::SpecialMethod { name } => text(name).to_owned(),
             Kind::PositionalParam { name, .. } | Kind::KeyParam { name, .. } => {
                 text(name).to_owned()
             }
@@ -1531,6 +1555,126 @@ mod tests {
         assert!(tree.contains(&("self", "self".into(), Some("(init)".into()))));
         assert!(tree.contains(&("positional_param", "x".into(), Some("(init)".into()))));
         assert!(tree.contains(&("bind", "local".into(), Some("hidden".into()))));
+    }
+
+    /// The source text a span covers.
+    fn span_text<'a>(unit: &Unit<'a>, span: diag::Span) -> &'a str {
+        unit.compiler.file.str(source::Span {
+            start: span.start().byte_offset() as source::Offset,
+            end: span.end().byte_offset() as source::Offset,
+        })
+    }
+
+    /// The one node declaring `name`, whatever kind it is.
+    fn declared<'a>(unit: &'a Unit<'_>, name: &str) -> Node<'a> {
+        let mut found = unit
+            .nodes()
+            .map(|(_, node)| node)
+            .filter(|node| node.definition().is_some() && declared_name(unit, node) == name);
+        let node = found
+            .next()
+            .unwrap_or_else(|| panic!("no node declares {name}"));
+        assert!(found.next().is_none(), "{name} is declared more than once");
+        node
+    }
+
+    /// The text a node's doc comment covers, marker characters and all.
+    fn doc_text<'a>(unit: &'a Unit<'_>, name: &str) -> Option<&'a str> {
+        declared(unit, name).doc().map(|span| span_text(unit, span))
+    }
+
+    /// A comment block documents whatever declaration is written below it.
+    ///
+    /// Attachment is by adjacency: the block claims the construct starting on
+    /// the next line, decorators included, and nothing else — so commentary
+    /// that trails code or is fenced off by a blank line documents nothing.
+    #[test]
+    fn doc_comments_attach_to_the_declaration_below_them() {
+        let unit = config().unit(
+            Path::new("<test>"),
+            b"#!/usr/bin/env dolang\n\
+              # The greeting to use.\n\
+              pub let greeting = \"hi\"\n\
+              \n\
+              let counted = 1 # how many, so far\n\
+              \n\
+              # Fenced off by a blank line.\n\
+              \n\
+              def bare\n  1\n\
+              \n\
+              def deco f\n  f\n\
+              \n\
+              # Makes a widget.\n\
+              #[deco]\n\
+              pub def widget\n\
+              \x20 # Where the parts come from.\n\
+              \x20 :from\n\
+              \x20 ...rest\n\
+              do\n  1\n",
+        );
+        assert!(!unit.failed, "{:?}", diagnostic_snapshot(&unit));
+
+        // The interpreter line addresses the shell, not the reader.
+        assert_eq!(doc_text(&unit, "greeting"), Some("# The greeting to use."));
+        assert_eq!(doc_text(&unit, "counted"), None);
+        assert_eq!(doc_text(&unit, "bare"), None);
+        // A decorator sits between the block and the keyword without breaking
+        // the association, and the first parameter does not steal it.
+        assert_eq!(doc_text(&unit, "widget"), Some("# Makes a widget."));
+        assert_eq!(
+            doc_text(&unit, "from"),
+            Some("# Where the parts come from.")
+        );
+        assert_eq!(doc_text(&unit, "rest"), None);
+    }
+
+    /// Several lines of comment document one declaration together.
+    #[test]
+    fn a_comment_block_runs_until_the_line_it_documents() {
+        let unit = config().unit(
+            Path::new("<test>"),
+            b"# Unrelated commentary.\n\nclass Thing\n  # What it is called.\n  #\n  # Blank comment lines continue the block.\n  pub field name = nil\n",
+        );
+        assert!(!unit.failed, "{:?}", diagnostic_snapshot(&unit));
+        assert_eq!(doc_text(&unit, "Thing"), None);
+        assert_eq!(
+            doc_text(&unit, "name"),
+            Some("# What it is called.\n  #\n  # Blank comment lines continue the block.")
+        );
+    }
+
+    /// A node covers everything written as part of it.
+    ///
+    /// Consumers order and nest nodes by this span and anchor documentation to
+    /// where it starts, so a construct that stopped at its own name would
+    /// exclude both its decorators and its body.
+    #[test]
+    fn node_spans_cover_the_whole_construct() {
+        let unit = config().unit(
+            Path::new("<test>"),
+            b"def deco f\n  f\n\n#[deco]\npub def widget x\n  let y = x\n  y\n\npub class Thing\n  pub field tag = nil\n",
+        );
+        assert!(!unit.failed, "{:?}", diagnostic_snapshot(&unit));
+        assert_eq!(
+            span_text(&unit, declared(&unit, "widget").span()),
+            "#[deco]\npub def widget x\n  let y = x\n  y"
+        );
+        // A binding extends over the statement that declares it, not just the
+        // name it binds.
+        assert_eq!(span_text(&unit, declared(&unit, "y").span()), "let y = x");
+        assert_eq!(
+            span_text(&unit, declared(&unit, "Thing").span()),
+            "pub class Thing\n  pub field tag = nil"
+        );
+        assert_eq!(
+            span_text(&unit, declared(&unit, "tag").span()),
+            "pub field tag = nil"
+        );
+        // The definition is the name alone, and it lies within the construct.
+        assert_eq!(
+            span_text(&unit, declared(&unit, "widget").definition().unwrap()),
+            "widget"
+        );
     }
 
     /// A method reports its visibility; a special method has none to report.

@@ -24,7 +24,7 @@ Core crates:
 Tooling: **dolang-shell** (CLI/REPL), **dolang-lsp** (LSP server)
 
 Internal support crates: **dolang-private-build**, **dolang-private-test**,
-**dolang-private-doc**, **dolang-private-highlight**
+**dolang-private-highlight**
 
 Extensions (`dolang-ext-*`): registered via the `extension!` macro, linked in
 via `linkme`. Each crate name describes its domain (shell, http, json, sqlite,
@@ -736,12 +736,48 @@ specific contract.
 
 ### Parameter Tables
 
-- **Optional parameters**: use `?` suffix in the Type column (e.g. `int?`,
-  `str?`, `?`). Don't write `**(optional)**`.
-- **Variadic/rest parameters**: use `*` in the Type column.
+A `?` means different things in the two columns, and the difference is not
+cosmetic:
+
+- **Optional parameters**: `?` suffix on the **name** — the parameter has a
+  default and may be left out (e.g. `:port?`). This matches how the signature
+  heading writes it. Don't write `**(optional)**`.
+- **Nil-accepting types**: `?` suffix on the **type** — `nil` is an accepted
+  value (e.g. `int?`). This is independent of optionality: a required
+  parameter may accept `nil`, and an optional one may reject it.
+
+The rest:
+
+- **Variadic/rest parameters**: write the name as declared (`...args`). The
+  Type column holds what an individual value may be — a concrete type, a
+  union, or `Value` for the universal supertype. Don't write
+  `*`; it is not a type.
 - **Omit type when it's unconstrained**: leave the Type cell empty.
 - **Union types**: use `\|` (e.g. ``
   [`str`](./std/str.md)\|[`bin`](./std/bin.md) ``).
+
+### Generated Parameter Tables
+
+Pages built from `.dol` sources by mkdocstrings (`::: module`) take their
+parameter tables from the doc comments on the parameters themselves. The first
+paragraph of a parameter's comment becomes its row; anything past the first
+paragraph becomes a subsection of `Parameters` named for the parameter. A
+declaration that renders a table has its signature heading abbreviated to the
+required positional prefix, since the table already carries the full list.
+
+The language has no type annotations yet, so as a stopgap a parameter's
+description may open with its type in parentheses, which is parsed out into the
+Type column:
+
+```
+# ([`Str`](../std/str.md)) Image name or ID.
+image
+```
+
+Write the type as markdown, links included; it is matched by paren depth, so a
+link's own parentheses are safe. A description that must begin with a literal
+parenthetical needs rewording, since the leading group is always taken as a
+type.
 
 ### Code Examples
 

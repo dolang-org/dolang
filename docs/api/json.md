@@ -48,15 +48,16 @@ assert_eq $obj["name"] "Alice"
 assert_eq $obj["age"] 30
 ```
 
-### `encode value`
+### `encode value :indent?`
 
 Serializes a Do value to a JSON string.
 
 #### Parameters
 
-| Name    | Type | Description            |
-| ------- | ---- | ---------------------- |
-| `value` |      | the value to serialize |
+| Name     | Type                   | Description                             |
+| -------- | ---------------------- | --------------------------------------- |
+| `value`  |                        | the value to serialize                  |
+| `indent` | [`Int`](./std/int.md)? | spaces per level; one line when omitted |
 
 #### Returns
 
@@ -81,4 +82,7 @@ Type mapping:
 assert_eq (encode 42) "42"
 assert_eq (encode "hello") "\"hello\""
 assert_eq (encode nil) "null"
+assert_eq (encode [1, 2] indent: 2) "[\n  1,\n  2\n]"
 ```
+
+Object keys are written in the order the dict holds them.

@@ -1,0 +1,37 @@
+{#
+  The parameter section of a function or method.
+
+  Rendered only where at least one parameter carries a doc comment, since a
+  table of empty cells says less than the signature already did. Every
+  parameter appears once it renders: the signature is abbreviated in that case,
+  so the table is the only place the full list is written.
+
+  The Type column is filled from a parenthesised type opening the description,
+  which is a stopgap until the language carries type annotations of its own.
+#}
+{% macro parameters(entity, heading_level, base_id) %}
+{% if entity.params | selectattr("documented") | list %}
+{{ "Parameters" | heading(heading_level, skip_inventory=true, id=base_id ~ "--parameters") }}
+<table>
+<thead><tr><th>Name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+{% for p in entity.params %}
+<tr>
+  <td><code>{{ p.name }}{{ "?" if p.optional }}</code></td>
+  <td>{% if p.type %}{{ p.type | convert_markdown(heading_level, base_id ~ "--" ~ p.slug, strip_paragraph=true) }}{% endif %}</td>
+  <td>{{ p.doc_short | convert_markdown(heading_level, base_id ~ "--" ~ p.slug, strip_paragraph=true) }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{#
+  A parameter documented past its first paragraph gets a subsection of its own,
+  so the table keeps one line per parameter however much there is to say.
+#}
+{% for p in entity.params if p.doc_rest %}
+{% set param_id = base_id ~ "--" ~ p.slug %}
+{{ ("<code>" ~ p.name ~ "</code>") | heading(heading_level + 1, skip_inventory=true, id=param_id, toc_label=p.name) }}
+{{ p.doc_rest | convert_markdown(heading_level + 2, param_id) }}
+{% endfor %}
+{% endif %}
+{% endmacro %}

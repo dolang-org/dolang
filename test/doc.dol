@@ -1,0 +1,50 @@
+import json shell
+  fs:
+    - Path
+  test:
+    - assert
+    - assert_eq
+    - test
+
+# The fixture and its golden, relative to the workspace root the suite runs in.
+let FIXTURE = (Path "dolang-shell/tests/doc")
+
+# Describe the fixture, from the directory holding it.
+#
+# The source is named bare so the output records `fixture.dol` rather than where
+# the checkout happens to live.
+def describe ...flags
+  let buf = BinBuf()
+  cd $FIXTURE do
+    run $shell.exe -m doc --module fixture ...flags fixture.dol stdout: $buf mode: :CHUNK:
+  Str $buf.freeze()
+
+# The whole documented shape of a source file, held against a golden.
+#
+# The JSON is consumed by the mkdocstrings handler and its templates, so a
+# change here is a change to the rendered site; set `DOLANG_TEST_UPDATE=1` to
+# rewrite the golden once the new shape is what was intended.
+#[test]
+def documents_a_source_file()
+  let golden = (FIXTURE / "fixture.json")
+  let actual = describe()
+  if (env.get("DOLANG_TEST_UPDATE") != nil)
+    golden.write $actual
+    return
+  assert_eq $actual $golden.read()
+
+# The names of the entities the fixture exports, in the order reported.
+def names ...flags
+  let out = describe ...flags
+  let entities = json.decode(out)["entities"]
+  let names = []
+  for entity = entities
+    names.push $entity["name"]
+  names
+
+# Private declarations are documented only when asked for.
+#[test]
+def private_declarations_appear_only_with_all()
+  assert !(names().contains("internal"))
+  assert (names("--all").contains("internal"))
+  assert (names("--all").contains("secret"))

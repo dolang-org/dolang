@@ -55,27 +55,6 @@ const MOD_DECLARATION: u32 = 1 << 1;
 const MOD_DEFINITION: u32 = 1 << 2;
 const MOD_STATIC: u32 = 1 << 3;
 
-/// Where a name a token refers to was declared, for go-to-definition.
-///
-/// Prelude bindings are declared by configuration rather than by source text,
-/// so they have no definition to jump to.
-fn definition_span(kind: Kind<'_>) -> Option<diag::Span> {
-    match kind {
-        Kind::Class { name, .. }
-        | Kind::Function { name, .. }
-        | Kind::Method { name, .. }
-        | Kind::SpecialMethod { name }
-        | Kind::Field { name, .. }
-        | Kind::Bind { name, .. }
-        | Kind::SelfParam { name }
-        | Kind::ImportModule { name, .. }
-        | Kind::ImportItem { name, .. } => Some(name),
-        Kind::PositionalParam { name, .. } | Kind::KeyParam { name, .. } => Some(name),
-        Kind::RestParam { name } => name,
-        _ => None,
-    }
-}
-
 fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> (u32, u32) {
     match token {
         Token::Comment => (TT_COMMENT, 0),
@@ -189,7 +168,7 @@ fn symbol_kind(kind: &Kind<'_>, content: &str) -> Option<SymbolKind> {
         Kind::Function { .. } => SymbolKind::FUNCTION,
         Kind::Method { .. } => SymbolKind::METHOD,
         Kind::SpecialMethod { name } => {
-            if span_text(content, name) == "init" {
+            if span_text(content, name) == "(init)" {
                 SymbolKind::CONSTRUCTOR
             } else {
                 SymbolKind::METHOD
@@ -222,12 +201,7 @@ fn build_symbols(unit: &Unit<'_>, index: &DocumentIndex<'_>) -> Vec<DocumentSymb
         let Some(symbol_kind) = symbol_kind(&kind, content) else {
             continue;
         };
-        // The span of a special method names the identifier alone; the
-        // parentheses are what say it implements a protocol rather than being
-        // a method someone calls by that name, so the outline spells it the
-        // way the source does.
-        let special = matches!(kind, Kind::SpecialMethod { .. });
-        let Some(name) = definition_span(kind) else {
+        let Some(name) = node.definition() else {
             continue;
         };
         let selection_range = index.range_from_span(&name);
@@ -239,14 +213,7 @@ fn build_symbols(unit: &Unit<'_>, index: &DocumentIndex<'_>) -> Vec<DocumentSymb
         of_node.insert(id, ids.len());
         ids.push(id);
         symbols.push(Some(DocumentSymbol {
-            name: {
-                let text = span_text(content, &name);
-                if special {
-                    format!("({text})")
-                } else {
-                    text.to_owned()
-                }
-            },
+            name: span_text(content, &name).to_owned(),
             detail: None,
             kind: symbol_kind,
             tags: None,
@@ -746,14 +713,14 @@ impl Backend {
                     if span.start().byte_offset() != span.end().byte_offset()
                         && !matches!(leaf, Token::Delim)
                     {
-                        let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
+                        let doc_node = node.and_then(|id| unit.node(id));
+                        let kind = doc_node.map(|node| node.kind());
                         let (token_type, mut modifiers) =
                             classify_token(leaf, kind.as_ref(), context);
                         // Prelude bindings have no source text, so there is
                         // nowhere in this file to jump to and nothing to index.
                         if let Some(id) = node
-                            && let Some(kind) = kind
-                            && let Some(def) = definition_span(kind)
+                            && let Some(def) = doc_node.and_then(|node| node.definition())
                         {
                             modifiers |= declaration_modifiers(&span, &def, id, &statics);
                             let range = index.range_from_span(&span);

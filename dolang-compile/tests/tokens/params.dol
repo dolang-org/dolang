@@ -1,0 +1,17 @@
+# A keyword parameter names a key and the variable that receives its value.
+# The two are written on either side of the `:`, which is a delimiter whichever
+# side of the key it falls on.
+
+#~~: keyword
+def connect
+  #~~~: key
+  port: p
+  #   ^: delim
+  #     ^: variable, node=key_param
+  #: delim
+  :flag = true
+  #     ^: delim
+  #       ^~~~: constant
+do
+  dbg $p
+  dbg $flag

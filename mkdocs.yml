@@ -81,7 +81,10 @@ nav:
   - lsp.md
   - Reference:
     - admin: api/admin.md
-    - args: api/args.md
+    - args:
+      - api/args/index.md
+      - api/args/error.md
+      - api/args/help.md
     - base64: api/base64.md
     - compile:
       - api/compile/index.md
@@ -359,7 +362,9 @@ nav:
     - sys.windows:
       - api/sys/windows/index.md
       - api/sys/windows/win-error.md
-    - systemd: api/systemd.md
+    - systemd:
+      - api/systemd/index.md
+      - api/systemd/os-release.md
     - tar:
       - api/tar/index.md
       - api/tar/entry.md
@@ -386,7 +391,9 @@ nav:
       - api/time/weekday.md
     - toml: api/toml.md
     - toolbx: api/toolbx.md
-    - transfer: api/transfer.md
+    - transfer:
+      - api/transfer/index.md
+      - api/transfer/archive-error.md
     - url:
       - api/url/index.md
       - api/url/url.md

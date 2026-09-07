@@ -1,6 +1,14 @@
+{% import "_params.html.jinja2" as params %}
 {% set heading_level = options.get("heading_level", 2) %}
 {% set show_private = options.get("show_private", false) %}
 {% set base_id = entity._identifier | replace(".", "--") %}
+
+{#
+  A type is rendered on a page of its own, which carries its own title, so this
+  heading only exists to register an anchor: without one, a link to the type
+  from its module's Types table has nothing to resolve against.
+#}
+{{ ("<code>" ~ entity.name ~ "</code>") | heading(heading_level, role="class", id=base_id, toc_label=entity.name, hidden=true) }}
 
 {% if entity.doc %}
 {{ entity.doc | convert_markdown(heading_level, base_id) }}
@@ -44,19 +52,11 @@
 {{ "Methods" | heading(heading_level + 1, skip_inventory=true, id=base_id ~ "--methods") }}
 {% for method in methods %}
 {% set method_id = base_id ~ "--" ~ method.name %}
-{% if method.params %}
-{% set sig_parts = [method.name] %}
-{% for p in method.params %}
-  {% if p.optional %}{% set _ = sig_parts.append(p.name ~ "?") %}
-  {% else %}{% set _ = sig_parts.append(p.name) %}{% endif %}
-{% endfor %}
-{% set sig = sig_parts | join(" ") %}
-{% else %}
-{% set sig = method.name ~ "()" %}
-{% endif %}
+{% set sig = method.signature %}
 {{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 2, role="method", id=method_id, toc_label=sig) }}
 {% if method.doc %}
 {{ method.doc | convert_markdown(heading_level + 3, method_id) }}
 {% endif %}
+{{ params.parameters(method, heading_level + 3, method_id) }}
 {% endfor %}
 {% endif %}

@@ -45,7 +45,6 @@ members = [
   "dolang-ext-rand",
   "dolang-ext-patch",
   "dolang-ext-uuid",
-  "dolang-private-doc",
   "dolang-rpc",
   "fuzz",
 ]
@@ -92,7 +91,6 @@ default-members = [
   "dolang-ext-rand",
   "dolang-ext-patch",
   "dolang-ext-uuid",
-  "dolang-private-doc",
   "dolang-rpc",
 ]
 resolver = "3"
