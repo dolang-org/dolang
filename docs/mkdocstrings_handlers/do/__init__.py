@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -63,6 +64,13 @@ class DoHandler(BaseHandler):
         super().__init__(**kwargs)
         self._global_config = handler_config.get("options", {})
         self._aliases: dict[str, str] = {}
+        # Keyed by source_path: raw (unannotated) doc_data as extracted by
+        # `dolang -m doc`. Every entity/member under a module is documented
+        # via its own `::: module.Foo.bar` directive, each triggering a
+        # separate `collect()` call -- without this cache, every one of them
+        # would re-run the extractor subprocess and re-parse its JSON for the
+        # same source file.
+        self._doc_cache: dict[str, dict] = {}
 
     def get_aliases(self, identifier: str) -> tuple[str, ...]:
         """Expose qualified Do names without requiring them in HTML anchors."""
@@ -138,36 +146,43 @@ class DoHandler(BaseHandler):
                 f"Check the 'paths' option in the handler configuration."
             )
 
-        # Find the extractor: prefer the DOLANG_DOC env var, then the `doc`
-        # entrypoint of a `dolang` on PATH.
-        dolang_doc = os.environ.get("DOLANG_DOC")
-        dolang_doc_cmd = dolang_doc.split() if dolang_doc else None
-        if dolang_doc_cmd is None:
-            found = shutil.which("dolang")
-            dolang_doc_cmd = [found, "-m", "doc"] if found else None
-        if dolang_doc_cmd is None:
-            raise CollectionError(
-                "'dolang' not found. Set DOLANG_DOC env var or add it to PATH."
-            )
+        cache_key = f"{module_name}\0{source_path}"
+        cached = self._doc_cache.get(cache_key)
+        if cached is not None:
+            doc_data = copy.deepcopy(cached)
+        else:
+            # Find the extractor: prefer the DOLANG_DOC env var, then the
+            # `doc` entrypoint of a `dolang` on PATH.
+            dolang_doc = os.environ.get("DOLANG_DOC")
+            dolang_doc_cmd = dolang_doc.split() if dolang_doc else None
+            if dolang_doc_cmd is None:
+                found = shutil.which("dolang")
+                dolang_doc_cmd = [found, "-m", "doc"] if found else None
+            if dolang_doc_cmd is None:
+                raise CollectionError(
+                    "'dolang' not found. Set DOLANG_DOC env var or add it to PATH."
+                )
 
-        try:
-            result = subprocess.run(
-                [*dolang_doc_cmd, "--module", module_name, source_path],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        except subprocess.CalledProcessError as e:
-            raise CollectionError(
-                f"documentation extraction failed for '{source_path}': {e.stderr}"
-            ) from e
+            try:
+                result = subprocess.run(
+                    [*dolang_doc_cmd, "--module", module_name, source_path],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as e:
+                raise CollectionError(
+                    f"documentation extraction failed for '{source_path}': {e.stderr}"
+                ) from e
 
-        try:
-            doc_data = json.loads(result.stdout)
-        except json.JSONDecodeError as e:
-            raise CollectionError(
-                f"documentation extraction produced invalid JSON: {e}"
-            ) from e
+            try:
+                doc_data = json.loads(result.stdout)
+            except json.JSONDecodeError as e:
+                raise CollectionError(
+                    f"documentation extraction produced invalid JSON: {e}"
+                ) from e
+
+            self._doc_cache[cache_key] = copy.deepcopy(doc_data)
 
         entities = doc_data.get("entities", [])
 
