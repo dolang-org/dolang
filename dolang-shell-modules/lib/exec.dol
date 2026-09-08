@@ -1,10 +1,10 @@
-import compile digest fs load std shell
-
 # Convenience helpers for the common “compile if needed, cache, then execute”
 # workflow.
 #
 # Cached bytecode is stored under `fs.cache_dir()`, scoped by application name.
 # If `app:` is omitted, the scope is derived from `shell.program`.
+
+import compile digest fs load std shell
 
 # Derive a default cache application name from `shell.program`.
 #

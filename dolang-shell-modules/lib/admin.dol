@@ -1,3 +1,5 @@
+# Query administrator privileges and elevate to them in a cross-platform manner.
+
 import sudo sys shell
   security.unix: security_unix
   security.windows: security_windows
