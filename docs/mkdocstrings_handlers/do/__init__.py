@@ -232,6 +232,24 @@ def _split_doc(doc: str) -> tuple[str, str]:
     return head.strip(), rest.strip()
 
 
+def _split_intro(doc: str) -> tuple[str, str]:
+    """Split prose before the first Markdown section from those sections."""
+    text = (doc or "").strip()
+    fence = None
+    for match in re.finditer(r"(?m)^.*(?:\n|$)", text):
+        line = match.group().rstrip("\r\n")
+        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if marker:
+            run = marker.group(1)
+            if fence is None:
+                fence = run[0]
+            elif run[0] == fence:
+                fence = None
+        elif fence is None and re.match(r"^#{1,6}(?:\s+|$)", line):
+            return text[: match.start()].rstrip(), text[match.start() :].strip()
+    return text, ""
+
+
 def _split_type(text: str) -> tuple[str, str]:
     """Split a leading parenthesised type off a parameter description.
 
@@ -312,6 +330,9 @@ def _annotate_params(entities: list[dict]) -> None:
             param["slug"] = slug
         if entity.get("kind") in ("function", "method"):
             entity["signature"] = _signature(entity)
+            entity["doc_intro"], entity["doc_sections"] = _split_intro(
+                entity.get("doc", "")
+            )
         _annotate_params(entity.get("members", []))
 
 

@@ -54,9 +54,12 @@
 {% set method_id = base_id ~ "--" ~ method.name %}
 {% set sig = method.signature %}
 {{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 2, role="method", id=method_id, toc_label=sig) }}
-{% if method.doc %}
-{{ method.doc | convert_markdown(heading_level + 3, method_id) }}
+{% if method.doc_intro %}
+{{ method.doc_intro | convert_markdown(heading_level + 1, method_id) }}
 {% endif %}
 {{ params.parameters(method, heading_level + 3, method_id) }}
+{% if method.doc_sections %}
+{{ method.doc_sections | convert_markdown(heading_level + 1, method_id) }}
+{% endif %}
 {% endfor %}
 {% endif %}

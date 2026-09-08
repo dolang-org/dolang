@@ -5,8 +5,12 @@
 
 {{ ("<code>" ~ sig ~ "</code>") | heading(heading_level, role="function", id=base_id, toc_label=sig) }}
 
-{% if entity.doc %}
-{{ entity.doc | convert_markdown(heading_level + 1, base_id) }}
+{% if entity.doc_intro %}
+{{ entity.doc_intro | convert_markdown(heading_level - 1, base_id) }}
 {% endif %}
 
 {{ params.parameters(entity, heading_level + 1, base_id) }}
+
+{% if entity.doc_sections %}
+{{ entity.doc_sections | convert_markdown(heading_level - 1, base_id) }}
+{% endif %}
