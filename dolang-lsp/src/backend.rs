@@ -186,6 +186,188 @@ fn span_text<'a>(content: &'a str, span: &diag::Span) -> &'a str {
     &content[span.start().byte_offset()..span.end().byte_offset()]
 }
 
+/// Remove the source-level comment markers while preserving Markdown layout.
+fn normalize_doc(content: &str, span: &diag::Span) -> String {
+    normalize_doc_text(span_text(content, span))
+}
+
+fn normalize_doc_text(doc: &str) -> String {
+    doc.split('\n')
+        .map(|line| {
+            line.trim()
+                .strip_prefix('#')
+                .expect("a doc span contains only comments")
+                .strip_prefix(' ')
+                .unwrap_or_else(|| {
+                    line.trim()
+                        .strip_prefix('#')
+                        .expect("a doc span contains only comments")
+                })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Split the provisional leading `(type)` convention from documentation.
+///
+/// Types may contain Markdown links, whose destinations contain parentheses,
+/// so the outer group is matched by depth rather than at the first `)`.
+fn split_doc_type(doc: &str) -> (Option<&str>, &str) {
+    if !doc.starts_with('(') {
+        return (None, doc);
+    }
+    let mut depth = 0;
+    for (index, ch) in doc.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return (Some(doc[1..index].trim()), doc[index + 1..].trim_start());
+                }
+            }
+            _ => {}
+        }
+    }
+    (None, doc)
+}
+
+fn one_line_source(content: &str, span: &diag::Span) -> String {
+    span_text(content, span)
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn parameter_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<String> {
+    let node = unit.node(id)?;
+    matches!(
+        node.kind(),
+        Kind::PositionalParam { .. }
+            | Kind::KeyParam { .. }
+            | Kind::RestParam { .. }
+            | Kind::SelfParam { .. }
+    )
+    .then(|| one_line_source(content, &node.span()))
+}
+
+fn declaration_label(
+    content: &str,
+    unit: &Unit<'_>,
+    id: NodeId,
+    children: &HashMap<NodeId, Vec<NodeId>>,
+) -> Option<(String, bool)> {
+    let node = unit.node(id)?;
+    let kind = node.kind();
+    let name = node.definition().map(|span| span_text(content, &span))?;
+    let params = || {
+        children
+            .get(&id)
+            .into_iter()
+            .flatten()
+            .filter_map(|child| parameter_label(content, unit, *child))
+            .collect::<Vec<_>>()
+    };
+    let callable = matches!(
+        &kind,
+        Kind::Function { .. } | Kind::Method { .. } | Kind::SpecialMethod { .. }
+    );
+    let label = match kind {
+        Kind::Class { is_pub, supers, .. } => {
+            let supers = supers
+                .map(|super_ref| span_text(content, &super_ref.span))
+                .collect::<Vec<_>>();
+            format!(
+                "{}class {name}{}",
+                if is_pub { "pub " } else { "" },
+                if supers.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", supers.join(" "))
+                }
+            )
+        }
+        Kind::Function { is_pub, .. } | Kind::Method { is_pub, .. } => {
+            let params = params();
+            format!(
+                "{}def {name}{}",
+                if is_pub { "pub " } else { "" },
+                if params.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", params.join(" "))
+                }
+            )
+        }
+        Kind::SpecialMethod { .. } => {
+            let params = params();
+            format!(
+                "def {name}{}",
+                if params.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", params.join(" "))
+                }
+            )
+        }
+        Kind::Field { is_pub, .. } => {
+            format!("{}field {name}", if is_pub { "pub " } else { "" })
+        }
+        Kind::Bind { is_pub, .. } => {
+            format!("{}let {name}", if is_pub { "pub " } else { "" })
+        }
+        Kind::PositionalParam { .. }
+        | Kind::KeyParam { .. }
+        | Kind::RestParam { .. }
+        | Kind::SelfParam { .. } => parameter_label(content, unit, id)?,
+        _ => return None,
+    };
+    Some((label, callable))
+}
+
+/// Pre-render local hover text while the compiler unit and its spans live.
+fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, String> {
+    let mut children: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for (id, node) in unit.nodes() {
+        if let Some(parent) = node.parent() {
+            children.entry(parent).or_default().push(id);
+        }
+    }
+    for ids in children.values_mut() {
+        ids.sort_by_key(|id| {
+            unit.node(*id)
+                .expect("child node remains in its unit")
+                .span()
+                .start()
+                .byte_offset()
+        });
+    }
+
+    unit.nodes()
+        .filter_map(|(id, node)| {
+            let (label, callable) = declaration_label(content, unit, id, &children)?;
+            let doc = node.doc().map(|span| normalize_doc(content, &span));
+            let (type_, prose) = doc.as_deref().map(split_doc_type).unwrap_or((None, ""));
+            let fence = if label.contains("```") { "````" } else { "```" };
+            let mut markdown = format!("{fence}dolang\n{label}\n{fence}");
+            if let Some(type_) = type_ {
+                markdown.push_str(if callable {
+                    "\n\n**Returns:** "
+                } else {
+                    "\n\n**Type:** "
+                });
+                markdown.push_str(type_);
+            }
+            if !prose.is_empty() {
+                markdown.push_str("\n\n");
+                markdown.push_str(prose);
+            }
+            Some((id, markdown))
+        })
+        .collect()
+}
+
 /// Assemble the document outline from the node table.
 ///
 /// Parentage comes from the table, so this walks no syntax: an entry finds its
@@ -282,6 +464,7 @@ struct Patch {
 struct Decl {
     name_range: Range,
     uses: Vec<Range>,
+    hover: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -296,14 +479,21 @@ struct Document {
 }
 
 impl Document {
+    fn reference_at(&self, pos: &Position) -> Option<(Range, &Decl)> {
+        let end = self.refs.partition_point(|(range, _)| &range.start <= pos);
+        let (range, id) = self.refs.get(end.checked_sub(1)?)?;
+        if &range.end <= pos {
+            return None;
+        }
+        Some((*range, self.decls.get(id)?))
+    }
+
     /// The declaration named by the token under `pos`, if any.
     ///
     /// `refs` is sorted by where each token starts, so the only candidate is
     /// the last one starting at or before the position.
     fn decl_at(&self, pos: &Position) -> Option<&Decl> {
-        let end = self.refs.partition_point(|(range, _)| &range.start <= pos);
-        let (range, id) = self.refs.get(end.checked_sub(1)?)?;
-        (&range.end > pos).then(|| self.decls.get(id))?
+        self.reference_at(pos).map(|(_, decl)| decl)
     }
 }
 
@@ -657,6 +847,7 @@ impl Backend {
                 }
             }
             let unit = config.unit(&path, content.as_bytes());
+            let hovers = build_hovers(&unit, content);
             for diag in unit.diagnostics() {
                 let mut out = Diagnostic::new_simple(
                     index.range_from_span(&diag.span()),
@@ -730,6 +921,7 @@ impl Backend {
                                 .or_insert_with(|| Decl {
                                     name_range: index.range_from_span(&def),
                                     uses: Vec::new(),
+                                    hover: hovers.get(&id).cloned(),
                                 })
                                 .uses
                                 .push(range);
@@ -861,6 +1053,7 @@ impl LanguageServer for Backend {
                 ),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
                 document_highlight_provider: Some(OneOf::Left(true)),
@@ -1013,6 +1206,33 @@ impl LanguageServer for Backend {
                 .clone(),
             range: decl.name_range,
         })))
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let document = match self
+            .documents
+            .lock()
+            .await
+            .get(&params.text_document_position_params.text_document.uri)
+        {
+            Some(doc) => doc.clone(),
+            None => return Ok(None),
+        };
+        let guard = document.lock().await;
+        let pos = &params.text_document_position_params.position;
+        let Some((range, decl)) = guard.reference_at(pos) else {
+            return Ok(None);
+        };
+        let Some(markdown) = decl.hover.as_ref() else {
+            return Ok(None);
+        };
+        Ok(Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: markdown.clone(),
+            }),
+            range: Some(range),
+        }))
     }
 
     async fn document_symbol(
@@ -1280,6 +1500,18 @@ mod tests {
         }
     }
 
+    async fn hover_at(harness: &mut Harness, uri: Uri, line: u32, character: u32) -> Option<Hover> {
+        harness
+            .send_request::<request::HoverRequest>(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri },
+                    position: Position::new(line, character),
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .await
+    }
+
     /// A symbol reduced to what a test cares about: name, kind, and children.
     type Outline = Vec<(String, SymbolKind, Vec<(String, SymbolKind)>)>;
 
@@ -1337,6 +1569,26 @@ mod tests {
         assert_eq!(
             index.range_from_offsets(start, end),
             Range::new(Position::new(0, 5), Position::new(0, 8))
+        );
+    }
+
+    #[test]
+    fn doc_comments_preserve_markdown_after_removing_markers() {
+        assert_eq!(
+            normalize_doc_text("  # Summary.  \n  #\n  #   indented"),
+            "Summary.\n\n  indented"
+        );
+    }
+
+    #[test]
+    fn doc_type_allows_markdown_links_and_rejects_unbalanced_groups() {
+        assert_eq!(
+            split_doc_type("([`Str`](../std/str.md)|nil) Description."),
+            (Some("[`Str`](../std/str.md)|nil"), "Description.")
+        );
+        assert_eq!(
+            split_doc_type("(unfinished Description."),
+            (None, "(unfinished Description.")
         );
     }
 
@@ -1442,6 +1694,147 @@ mod tests {
         assert_eq!(
             result.capabilities.position_encoding,
             Some(PositionEncodingKind::UTF16)
+        );
+        assert_eq!(
+            result.capabilities.hover_provider,
+            Some(HoverProviderCapability::Simple(true))
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hover_shows_local_declarations_types_and_docs() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///hover-test.dol".parse().unwrap();
+        let source = concat!(
+            "# (Type) A widget.\n",
+            "class Widget\n",
+            "  # ([`Int`](../std/int.md)) The count.\n",
+            "  pub field count = 0\n",
+            "\n",
+            "  # ([`Int`](../std/int.md)) Gets the count.\n",
+            "  pub def get self\n",
+            "    self.count\n",
+            "\n",
+            "# ([`Widget`](./widget.md)) Builds one.\n",
+            "pub def build\n",
+            "  # ([`Int`](../std/int.md))\n",
+            "  # Number of widgets.\n",
+            "  value\n",
+            "  :mode = fast\n",
+            "  ...rest\n",
+            "do\n",
+            "  let local = value\n",
+            "  local\n",
+            "\n",
+            "let widget = Widget\n",
+            "echo $widget.get()\n",
+            "echo $ build 1\n",
+        );
+        harness.open(uri.clone(), source, 1).await;
+
+        let class_hover = hover_at(&mut harness, uri.clone(), 20, 14).await.unwrap();
+        assert_eq!(
+            class_hover.contents,
+            HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: "```dolang\nclass Widget\n```\n\n**Type:** Type\n\nA widget.".to_owned(),
+            })
+        );
+
+        let field_hover = hover_at(&mut harness, uri.clone(), 3, 13).await.unwrap();
+        assert_eq!(
+            field_hover.contents,
+            HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: concat!(
+                    "```dolang\npub field count\n```\n\n",
+                    "**Type:** [`Int`](../std/int.md)\n\n",
+                    "The count."
+                )
+                .to_owned(),
+            })
+        );
+
+        let method_hover = hover_at(&mut harness, uri.clone(), 6, 11).await.unwrap();
+        assert_eq!(
+            method_hover.contents,
+            HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: concat!(
+                    "```dolang\npub def get self\n```\n\n",
+                    "**Returns:** [`Int`](../std/int.md)\n\n",
+                    "Gets the count."
+                )
+                .to_owned(),
+            })
+        );
+
+        let function_hover = hover_at(&mut harness, uri.clone(), 22, 8).await.unwrap();
+        assert_eq!(
+            function_hover.contents,
+            HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: concat!(
+                    "```dolang\n",
+                    "pub def build value :mode = fast ...rest\n",
+                    "```\n\n",
+                    "**Returns:** [`Widget`](./widget.md)\n\n",
+                    "Builds one."
+                )
+                .to_owned(),
+            })
+        );
+
+        let parameter_hover = hover_at(&mut harness, uri.clone(), 17, 16).await.unwrap();
+        assert_eq!(
+            parameter_hover.contents,
+            HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: concat!(
+                    "```dolang\nvalue\n```\n\n",
+                    "**Type:** [`Int`](../std/int.md)\n\n",
+                    "Number of widgets."
+                )
+                .to_owned(),
+            })
+        );
+
+        let local_hover = hover_at(&mut harness, uri.clone(), 18, 3).await.unwrap();
+        assert_eq!(
+            local_hover.contents,
+            HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: "```dolang\nlet local\n```".to_owned(),
+            })
+        );
+
+        assert!(hover_at(&mut harness, uri, 0, 3).await.is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hover_returns_the_utf16_range_of_the_reference() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///hover-range-test.dol".parse().unwrap();
+        let source = "let value = 1\necho 😀$value\n";
+        harness.open(uri.clone(), source, 1).await;
+
+        let hover = hover_at(&mut harness, uri, 1, 9).await.unwrap();
+        assert_eq!(
+            hover.range,
+            Some(Range::new(Position::new(1, 8), Position::new(1, 13)))
+        );
+
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF8]).await;
+        let uri: Uri = "file:///hover-range-utf8-test.dol".parse().unwrap();
+        harness.open(uri.clone(), source, 1).await;
+
+        let hover = hover_at(&mut harness, uri, 1, 11).await.unwrap();
+        assert_eq!(
+            hover.range,
+            Some(Range::new(Position::new(1, 10), Position::new(1, 15)))
         );
     }
 
