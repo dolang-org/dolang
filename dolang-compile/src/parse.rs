@@ -4295,7 +4295,9 @@ impl<'a> Parser<'a> {
     ) -> Result<(Span, Span, Option<SpecialMethod>, Function)> {
         let def_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Def)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
-        let (name_span, special) = match self.next()? {
+        // A declaration names what it defines; nothing after `def` is read as
+        // the keyword it spells, so a function may take the name of one.
+        let (name_span, special) = match decay_ident!(self.next()?) {
             Some(token!(TokenInfo::LeftParen)) => {
                 let span = self.expect(scope, &[ExpectKind::Ident])?;
                 self.expect(scope, &[ExpectKind::RightParen])?;
