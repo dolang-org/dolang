@@ -16,7 +16,10 @@ Returns a fresh iterator of `[NodeId, Node]` pairs. Nodes expose `parent`,
 node, or `nil` where none attaches. Concrete node types add projections such as
 `name`, `is_pub`, `default`, `target`, and `supers`.
 
-Empty unless the unit was compiled with `document: true`.
+Empty unless the unit was compiled with `document: true`. An enabled unit always
+contains one `Root`, even for empty source. It spans the complete source, has no
+parent, and parents every other top-level node. Its `doc` is the initial comment
+block on the first line, or immediately after an initial `#!` line.
 
 ### `node id`
 

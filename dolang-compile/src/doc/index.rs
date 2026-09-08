@@ -15,15 +15,25 @@ pub(crate) fn index(
     file: &File<'_>,
     comments: &[Span],
 ) -> Table {
+    let blocks = Blocks::new(file, comments);
     let mut index = Index {
         file,
-        blocks: Blocks::new(file, comments),
+        blocks,
         table: Table::new(),
     };
+    let root_id = index.table.push(Node::new(
+        None,
+        Kind::Root,
+        Span {
+            start: 0,
+            end: u32::try_from(file.content().len()).expect("source file is too large"),
+        },
+        index.blocks.root(),
+    ));
     let scope = Scope {
         outer: None,
         vars: Some(Cell::from_mut(root.0.body.vars.as_mut_slice()).as_slice_of_cells()),
-        parent: None,
+        parent: Some(root_id),
         loop_target: None,
         return_target: None,
     };
@@ -183,9 +193,9 @@ impl Index<'_> {
     }
 
     fn push(&mut self, scope: &Scope<'_>, kind: Kind, span: Span) -> Id {
-        // Only a declaration can be documented, and the block sits above the
-        // construct as a whole — decorators included, since they are written
-        // between the comment and the keyword.
+        // Apart from the root, only a declaration can be documented, and the
+        // block sits above the construct as a whole — decorators included,
+        // since they are written between the comment and the keyword.
         let doc = kind
             .definition()
             .and_then(|_| self.blocks.attached(self.file, span.start));

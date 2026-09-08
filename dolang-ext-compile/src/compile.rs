@@ -58,6 +58,7 @@ pub(crate) struct Global<'v> {
 }
 
 pub(crate) struct ConcreteNodeTypes<'v> {
+    root: Type<'v, NodeObject<RootTag>>,
     class: Type<'v, NodeObject<ClassTag>>,
     function: Type<'v, NodeObject<FunctionTag>>,
     method: Type<'v, NodeObject<MethodTag>>,
@@ -139,6 +140,7 @@ impl<'v> Global<'v> {
                 block,
                 reference,
                 concrete_nodes: ConcreteNodeTypes {
+                    root: subtype!(RootTag, node),
                     class: subtype!(ClassTag, declaration),
                     function: subtype!(FunctionTag, declaration),
                     method: subtype!(MethodTag, declaration),
@@ -300,7 +302,7 @@ macro_rules! node_tags {
 }
 node_tags! {
     NodeTag=>"Node", DeclarationTag=>"Declaration", ImportTag=>"Import", ParamTag=>"Param",
-    BlockTag=>"Block", ReferenceTag=>"Reference", ClassTag=>"Class", FunctionTag=>"Function",
+    BlockTag=>"Block", ReferenceTag=>"Reference", RootTag=>"Root", ClassTag=>"Class", FunctionTag=>"Function",
     MethodTag=>"Method", SpecialMethodTag=>"SpecialMethod", FieldTag=>"Field", BindTag=>"Bind",
     SelfParamTag=>"SelfParam", ImportModuleTag=>"ImportModule", ImportItemTag=>"ImportItem",
     PreludeModuleTag=>"PreludeModule", PreludeItemTag=>"PreludeItem", PositionalParamTag=>"PositionalParam",
@@ -925,6 +927,7 @@ fn create_node<'v, 's>(
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     enum Which {
+        Root,
         Class,
         Function,
         Method,
@@ -964,6 +967,7 @@ fn create_node<'v, 's>(
             .unwrap()
             .kind()
         {
+            compile::Kind::Root => Which::Root,
             compile::Kind::Class { .. } => Which::Class,
             compile::Kind::Function { .. } => Which::Function,
             compile::Kind::Method { .. } => Which::Method,
@@ -1003,6 +1007,7 @@ fn create_node<'v, 's>(
         }};
     }
     match kind {
+        Which::Root => make!(t.root, RootTag),
         Which::Class => make!(t.class, ClassTag),
         Which::Function => make!(t.function, FunctionTag),
         Which::Method => make!(t.method, MethodTag),
@@ -1679,6 +1684,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
         .value("Param", global.types.param)
         .value("Block", global.types.block)
         .value("Reference", global.types.reference)
+        .value("Root", global.types.concrete_nodes.root)
         .value("Class", global.types.concrete_nodes.class)
         .value("Function", global.types.concrete_nodes.function)
         .value("Method", global.types.concrete_nodes.method)

@@ -1707,6 +1707,7 @@ mod tests {
         harness.initialize(vec![PositionEncodingKind::UTF16]).await;
         let uri: Uri = "file:///hover-test.dol".parse().unwrap();
         let source = concat!(
+            "\n",
             "# (Type) A widget.\n",
             "class Widget\n",
             "  # ([`Int`](../std/int.md)) The count.\n",
@@ -1733,7 +1734,7 @@ mod tests {
         );
         harness.open(uri.clone(), source, 1).await;
 
-        let class_hover = hover_at(&mut harness, uri.clone(), 20, 14).await.unwrap();
+        let class_hover = hover_at(&mut harness, uri.clone(), 21, 14).await.unwrap();
         assert_eq!(
             class_hover.contents,
             HoverContents::Markup(MarkupContent {
@@ -1742,7 +1743,7 @@ mod tests {
             })
         );
 
-        let field_hover = hover_at(&mut harness, uri.clone(), 3, 13).await.unwrap();
+        let field_hover = hover_at(&mut harness, uri.clone(), 4, 13).await.unwrap();
         assert_eq!(
             field_hover.contents,
             HoverContents::Markup(MarkupContent {
@@ -1756,7 +1757,7 @@ mod tests {
             })
         );
 
-        let method_hover = hover_at(&mut harness, uri.clone(), 6, 11).await.unwrap();
+        let method_hover = hover_at(&mut harness, uri.clone(), 7, 11).await.unwrap();
         assert_eq!(
             method_hover.contents,
             HoverContents::Markup(MarkupContent {
@@ -1770,7 +1771,7 @@ mod tests {
             })
         );
 
-        let function_hover = hover_at(&mut harness, uri.clone(), 22, 8).await.unwrap();
+        let function_hover = hover_at(&mut harness, uri.clone(), 23, 8).await.unwrap();
         assert_eq!(
             function_hover.contents,
             HoverContents::Markup(MarkupContent {
@@ -1786,7 +1787,7 @@ mod tests {
             })
         );
 
-        let parameter_hover = hover_at(&mut harness, uri.clone(), 17, 16).await.unwrap();
+        let parameter_hover = hover_at(&mut harness, uri.clone(), 18, 16).await.unwrap();
         assert_eq!(
             parameter_hover.contents,
             HoverContents::Markup(MarkupContent {
@@ -1800,7 +1801,7 @@ mod tests {
             })
         );
 
-        let local_hover = hover_at(&mut harness, uri.clone(), 18, 3).await.unwrap();
+        let local_hover = hover_at(&mut harness, uri.clone(), 19, 3).await.unwrap();
         assert_eq!(
             local_hover.contents,
             HoverContents::Markup(MarkupContent {

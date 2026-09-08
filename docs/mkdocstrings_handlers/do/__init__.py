@@ -177,6 +177,7 @@ class DoHandler(BaseHandler):
             return {
                 "kind": "module",
                 "module": module_name,
+                "doc": doc_data.get("doc", ""),
                 "entities": entities,
                 "_identifier": identifier,
                 "_module": module_name,

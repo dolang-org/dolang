@@ -1,3 +1,9 @@
+# Fixture module documentation.
+#
+# ## Overview
+#
+# See [`Point`](#fixture--Point).
+
 import std:
   - Record
 

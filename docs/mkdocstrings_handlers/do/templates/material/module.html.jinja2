@@ -17,6 +17,10 @@
 
 {% set module_id = entity._module | replace(".", "--") %}
 
+{% if entity.doc %}
+{{ entity.doc | convert_markdown(heading_level, module_id) }}
+{% endif %}
+
 {% if classes %}
 {{ "Types" | heading(heading_level, skip_inventory=true, id=module_id ~ "--types") }}
 <table>

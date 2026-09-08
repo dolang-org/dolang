@@ -130,6 +130,7 @@ const ALL_CONTEXTS: [Context; 2] = [Context::None, Context::Call];
 /// lists what a fixture may ask for.
 fn node_name(kind: &Kind<'_>) -> &'static str {
     match kind {
+        Kind::Root => "root",
         Kind::ImportItem { .. } => "import_item",
         Kind::ImportModule { .. } => "import_module",
         Kind::PreludeModule { .. } => "prelude_module",
