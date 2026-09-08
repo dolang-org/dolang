@@ -8,7 +8,10 @@
 use crate::source::{File, Offset, Span};
 
 /// The doc comment blocks of a file, in source order.
-pub(crate) struct Blocks(Vec<Span>);
+pub(crate) struct Blocks {
+    root: Option<Span>,
+    declarations: Vec<Span>,
+}
 
 impl Blocks {
     /// Coalesce collected comments into the blocks that can document something.
@@ -20,6 +23,9 @@ impl Blocks {
     ///
     /// `comments` must be in source order, as the lexer reports them.
     pub(crate) fn new(file: &File<'_>, comments: &[Span]) -> Self {
+        let has_shebang = comments
+            .first()
+            .is_some_and(|comment| comment.start == 0 && file.slice(*comment).starts_with(b"#!"));
         let mut blocks: Vec<Span> = Vec::new();
         for comment in comments {
             // The lexer's span runs to the line terminator, so it can carry a
@@ -37,7 +43,23 @@ impl Blocks {
                 _ => blocks.push(span),
             }
         }
-        Self(blocks)
+        let initial_line = u32::from(has_shebang);
+        let root = blocks
+            .first()
+            .filter(|block| file.coord(block.start).line == initial_line)
+            .copied();
+        if root.is_some() {
+            blocks.remove(0);
+        }
+        Self {
+            root,
+            declarations: blocks,
+        }
+    }
+
+    /// The initial block documenting the whole source file, if present.
+    pub(crate) fn root(&self) -> Option<Span> {
+        self.root
     }
 
     /// The block documenting a construct that starts at `anchor`, if any.
@@ -50,8 +72,10 @@ impl Blocks {
         if anchor as usize > file.content().len() {
             return None;
         }
-        let index = self.0.partition_point(|block| block.end <= anchor);
-        let block = *self.0.get(index.checked_sub(1)?)?;
+        let index = self
+            .declarations
+            .partition_point(|block| block.end <= anchor);
+        let block = *self.declarations.get(index.checked_sub(1)?)?;
         adjacent(file, block.end, anchor).then_some(block)
     }
 }

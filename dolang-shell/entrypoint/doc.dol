@@ -65,6 +65,7 @@ def index_children unit
 # of the documented surface.
 class Document
   field path src module all
+  field root module_doc
   field getter class_target static_target
   field children members entities
 
@@ -75,6 +76,9 @@ class Document
     self.#all = all
 
     let unit = compile.compile $path $src recover: true document: true
+    let id root = unit.nodes().find do |pair| type $pair[1] $compile.Root
+    self.#root = id
+    self.#module_doc = self.#doc(root)
     let decorators = prelude_items $unit
     self.#getter = decorators.get "getter" default: nil
     self.#class_target = decorators.get "class" default: nil
@@ -91,6 +95,7 @@ class Document
     let result = $
       source: $self.#path
       module: $self.#module
+      doc: $self.#module_doc
       entities: $self.#entities
     result
 
@@ -218,7 +223,7 @@ class Document
   def value_entry self _id node
     # Only a top-level binding is a module value; one nested inside a function
     # is a local, and the parent link is what tells them apart.
-    if (node.parent != nil || !self.#included(node.is_pub))
+    if (node.parent != self.#root || !self.#included(node.is_pub))
       return
     self.#entities.push $
       kind: "value"

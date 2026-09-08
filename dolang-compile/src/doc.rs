@@ -56,6 +56,9 @@ pub(crate) struct Super {
 /// every node, so a construct that declares nothing carries nothing.
 #[derive(Debug)]
 pub(crate) enum Kind {
+    /// The complete source document.
+    Root,
+
     // Declarations
     Class {
         name: Span,
@@ -157,8 +160,8 @@ impl Kind {
     /// This is what go-to-definition jumps to and what an outline selects.  A
     /// node that declares nothing has none, and neither does a prelude binding,
     /// which is declared by configuration rather than by any text.  Whether a
-    /// node has one is also what decides whether a doc comment may attach to
-    /// it: documentation describes declarations.
+    /// node has one also decides whether a declaration doc comment may attach
+    /// to it. The root documentation block is assigned separately.
     pub(crate) fn definition(&self) -> Option<Span> {
         match self {
             Kind::Class { name, .. }
@@ -173,7 +176,8 @@ impl Kind {
             | Kind::ImportModule { name, .. }
             | Kind::ImportItem { name, .. } => Some(*name),
             Kind::RestParam { name } => *name,
-            Kind::PreludeModule { .. }
+            Kind::Root
+            | Kind::PreludeModule { .. }
             | Kind::PreludeItem { .. }
             | Kind::Lambda
             | Kind::If

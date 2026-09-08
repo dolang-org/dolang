@@ -70,9 +70,10 @@ def error()
 
 #[test]
 def nodes()
-  let unit = compile.compile "nodes.dol" document: true |-
+  let source = |-
     pub def greet name :punctuation = "!" ...rest
       return name
+  let unit = compile.compile "nodes.dol" $source document: true
   let seen = 0
   let first_id = nil
   let first_node = nil
@@ -85,6 +86,10 @@ def nodes()
       first_node = node
     seen = (seen + 1)
   assert (seen > 0)
+  assert_type $compile.Root $first_node
+  assert_eq $first_node.parent nil
+  assert_eq $first_node.doc nil
+  assert_eq $source[first_node.span.start.byte_offset..first_node.span.end.byte_offset] $source
   assert_type (type first_node) $unit.node(first_id)
 
   let bytecode = unit.emit()
@@ -111,6 +116,8 @@ def document_option()
 #[test]
 def node_doc_comments()
   let source = |-
+    let sentinel = nil
+
     # A greeting.
     #
     # Spans several lines.
@@ -132,3 +139,21 @@ def node_doc_comments()
       # happen to be written on the same line.
       assert_eq $node.doc nil
   assert_eq $seen 1
+
+#[test]
+def root_doc_comments()
+  let source = |-
+    # Module summary.
+    #
+    # ## Details
+
+    pub let answer = 42
+  let unit = compile.compile "module-doc.dol" $source document: true
+  let root = unit.nodes().find(do |pair| type(pair[1], compile.Root))[1]
+  assert_eq $root.parent nil
+  assert_eq $source[root.span.start.byte_offset..root.span.end.byte_offset] $source
+  let doc = root.doc
+  assert_eq $source[doc.start.byte_offset..doc.end.byte_offset] |-
+    # Module summary.
+    #
+    # ## Details

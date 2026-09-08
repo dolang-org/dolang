@@ -248,7 +248,7 @@ fn internal_node_id(id: NodeId) -> doc::Id {
     doc::Id::new(id.0)
 }
 
-/// A document node: a declaration or construct recorded by document indexing.
+/// A document node: the root, a declaration or a construct recorded by document indexing.
 ///
 /// This is a view onto the unit that produced it rather than a copy, so it is
 /// cheap to pass around and its spans are resolved only when asked for.
@@ -261,8 +261,8 @@ pub struct Node<'a> {
 impl<'a> Node<'a> {
     /// The node this one is lexically inside, if any.
     ///
-    /// Parentage is a containment relation: a method's parent is its class, a
-    /// parameter's is its function, a `let`'s is whatever construct encloses it.
+    /// Parentage is a containment relation: top-level nodes belong to the root,
+    /// a method's parent is its class, and a parameter's is its function.
     pub fn parent(&self) -> Option<NodeId> {
         self.node.parent.map(public_node_id)
     }
@@ -293,9 +293,10 @@ impl<'a> Node<'a> {
     /// The doc comment block attached to this node, if any.
     ///
     /// A comment block documents the declaration written directly below it,
-    /// decorators notwithstanding, and the span covers the block as written —
-    /// `#` markers, indentation and all — for the consumer to render as it
-    /// sees fit.  Only a declaration carries one; see [`Node::definition`].
+    /// decorators notwithstanding. The root instead carries an initial block
+    /// beginning on the first line, or immediately after a `#!` line. The span
+    /// covers the block as written — `#` markers, indentation and all — for the
+    /// consumer to render as it sees fit.
     pub fn doc(&self) -> Option<diag::Span> {
         self.node.doc.map(|span| convert_span(self.file, span))
     }
@@ -304,6 +305,7 @@ impl<'a> Node<'a> {
     pub fn kind(&self) -> Kind<'a> {
         let span = |span: &source::Span| convert_span(self.file, *span);
         match &self.node.kind {
+            doc::Kind::Root => Kind::Root,
             doc::Kind::Class {
                 name,
                 is_pub,
@@ -392,6 +394,9 @@ impl<'a> Node<'a> {
 /// for instance, leaving the parser free to re-split them.
 #[non_exhaustive]
 pub enum Kind<'a> {
+    /// The complete source document. All other top-level nodes are its children.
+    Root,
+
     /// A class declaration
     Class {
         /// The class name
@@ -941,7 +946,8 @@ impl Unit<'_> {
     /// Requires [`Config::document`]. This reads the index and walks no syntax tree, so
     /// structure can be had without emitting tokens at all.  Each node names its
     /// parent, so the order nodes are yielded carries no meaning; order siblings
-    /// by [`Node::span`].
+    /// by [`Node::span`]. A document-enabled unit always contains a [`Kind::Root`],
+    /// including when its source is empty.
     pub fn nodes(&self) -> impl Iterator<Item = (NodeId, Node<'_>)> {
         std::iter::successors(self.next_id(None), |id| self.next_id(Some(*id))).map(|id| {
             (
@@ -1459,6 +1465,7 @@ mod tests {
 
     fn kind_name(kind: &Kind<'_>) -> &'static str {
         match kind {
+            Kind::Root => "root",
             Kind::Class { .. } => "class",
             Kind::Function { .. } => "function",
             Kind::Method { .. } => "method",
@@ -1548,7 +1555,8 @@ mod tests {
 
         // The class is the parent of its members; the members are the parents of
         // their own parameters and bindings.
-        assert!(tree.contains(&("class", "Point".into(), None)));
+        assert!(tree.contains(&("root", "root".into(), None)));
+        assert!(tree.contains(&("class", "Point".into(), Some("root".into()))));
         assert!(tree.contains(&("field", "x".into(), Some("Point".into()))));
         assert!(tree.contains(&("special_method", "(init)".into(), Some("Point".into()))));
         assert!(tree.contains(&("method", "hidden".into(), Some("Point".into()))));
@@ -1593,6 +1601,7 @@ mod tests {
         let unit = config().unit(
             Path::new("<test>"),
             b"#!/usr/bin/env dolang\n\
+              \n\
               # The greeting to use.\n\
               pub let greeting = \"hi\"\n\
               \n\
@@ -1626,6 +1635,51 @@ mod tests {
             Some("# Where the parts come from.")
         );
         assert_eq!(doc_text(&unit, "rest"), None);
+    }
+
+    #[test]
+    fn every_document_has_a_root_with_initial_documentation() {
+        let empty = config().unit(Path::new("<test>"), b"");
+        let roots: Vec<_> = empty
+            .nodes()
+            .filter(|(_, node)| matches!(node.kind(), Kind::Root))
+            .collect();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].1.parent(), None);
+        assert!(roots[0].1.definition().is_none());
+        assert!(roots[0].1.doc().is_none());
+        assert_eq!(span_text(&empty, roots[0].1.span()), "");
+
+        let source = b"#!/usr/bin/env dolang\r\n# Module summary.\r\n#\r\n# ## Details\r\n\r\nlet answer = 42\r\n";
+        let unit = config().unit(Path::new("<test>"), source);
+        let (root_id, root) = unit
+            .nodes()
+            .find(|(_, node)| matches!(node.kind(), Kind::Root))
+            .unwrap();
+        assert_eq!(span_text(&unit, root.span()).as_bytes(), source);
+        assert_eq!(
+            span_text(&unit, root.doc().unwrap()),
+            "# Module summary.\r\n#\r\n# ## Details"
+        );
+        let answer = unit
+            .nodes()
+            .find(|(_, node)| declared_name(&unit, node) == "answer")
+            .unwrap()
+            .1;
+        assert_eq!(answer.parent(), Some(root_id));
+        assert!(answer.doc().is_none());
+    }
+
+    #[test]
+    fn a_later_comment_block_documents_a_declaration_not_the_root() {
+        let unit = config().unit(Path::new("<test>"), b"\n# The answer.\nlet answer = 42\n");
+        let root = unit
+            .nodes()
+            .find(|(_, node)| matches!(node.kind(), Kind::Root))
+            .unwrap()
+            .1;
+        assert!(root.doc().is_none());
+        assert_eq!(doc_text(&unit, "answer"), Some("# The answer."));
     }
 
     /// Several lines of comment document one declaration together.
