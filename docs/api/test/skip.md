@@ -1,3 +1,0 @@
-# Skip
-
-::: test.Skip

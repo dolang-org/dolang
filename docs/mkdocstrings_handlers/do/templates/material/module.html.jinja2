@@ -15,6 +15,12 @@
   {% endif %}
 {% endfor %}
 
+{# Registers the module's own dotted name as its heading id (rather than just the
+   last component, as classes do) so links like [strand](strand) resolve to this
+   page. Module names are unique workspace-wide, so this can't collide with
+   another page's primary anchor the way a bare local name could. #}
+{{ "" | heading(heading_level, id=entity.module, hidden=true) }}
+
 {% if entity.doc %}
 {{ entity.doc | convert_markdown(0, "") }}
 {% endif %}
@@ -44,7 +50,7 @@
 {% if functions %}
 {{ "Functions" | heading(heading_level, skip_inventory=true, id="functions") }}
 {% for entity in functions %}
-{% set base_id = entity.name %}
+{% set base_id = entity._identifier %}
 {% set sig = entity.signature %}
 {{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 1, role="function", id=base_id, toc_label=sig) }}
 {% if entity.doc_intro %}
@@ -60,7 +66,7 @@
 {% if values %}
 {{ "Values" | heading(heading_level, skip_inventory=true, id="values") }}
 {% for entity in values %}
-{% set base_id = entity.name %}
+{% set base_id = entity._identifier %}
 {{ ("<code>" ~ entity.name ~ "</code>") | heading(heading_level + 1, role="data", id=base_id, toc_label=entity.name) }}
 {% if entity.doc %}
 {{ entity.doc | convert_markdown(heading_level, base_id) }}

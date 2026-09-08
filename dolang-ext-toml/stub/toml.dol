@@ -1,0 +1,85 @@
+# TOML serialization and deserialization.
+
+# Parses a TOML string into a Do value.
+#
+# ## Returns
+#
+# The parsed Do value.
+#
+# ## Errors
+#
+# `ValueError` if the input is invalid TOML or uses TOML datetime, date, or
+# time values, which are not mapped by this module yet.
+#
+# | TOML Value | Do Type |
+# | ---------- | ------- |
+# | boolean    | `Bool`  |
+# | integer    | `Int`   |
+# | float      | `Float` |
+# | string     | `Str`   |
+# | array      | `array` |
+# | table      | `dict`  |
+#
+# Full documents and bare TOML values such as numbers, arrays, and inline
+# tables are accepted.
+#
+# ## Example
+#
+# ```
+# assert_eq (decode "42") 42
+# assert_eq (decode "[1, 2, 3]") [1, 2, 3]
+#
+# let doc = decode |
+#   title = "Example"
+#   [server]
+#   port = 8080
+#
+# assert_eq $doc["title"] "Example"
+# assert_eq $doc["server"]["port"] 8080
+# ```
+pub def decode
+  # ([`Str`](std.Str)) TOML input to parse.
+  toml
+do
+  throw nil
+
+# Serializes a Do value to a TOML string.
+#
+# ## Returns
+#
+# [`Str`](std.Str) containing TOML.
+#
+# ## Errors
+#
+# `TypeError` if a value is not TOML-representable, including `nil`, binary
+# data, custom objects, or tables with non-string and non-symbol keys.
+#
+# | Do Type  | TOML Value |
+# | -------- | ---------- |
+# | `Bool`   | boolean    |
+# | `Int`    | integer    |
+# | `Float`  | float      |
+# | `Str`    | string     |
+# | `Sym`    | string     |
+# | `array`  | array      |
+# | `tuple`  | array      |
+# | `dict`   | table      |
+# | `record` | table      |
+#
+# Top-level dicts and records serialize as documents, while other values
+# serialize as values.
+#
+# ## Example
+#
+# ```
+# assert_eq (encode 42) "42"
+# assert_eq (decode $ encode [1, 2, 3]) [1, 2, 3]
+#
+# let doc = encode {"name": "alice", "enabled": true}
+# assert_eq (decode $doc) {"name": "alice", "enabled": true}
+# ```
+pub def encode
+  # The value to serialize.
+  value
+do
+  throw nil

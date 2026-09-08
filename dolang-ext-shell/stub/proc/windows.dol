@@ -1,0 +1,75 @@
+# Encodes and decodes arguments for Windows native process launches.
+#
+# These functions follow the MSVC-compatible convention used by Rust process
+# launching; they do not parse `cmd.exe` or PowerShell syntax.
+
+# Encodes an iterable of arguments as one Windows process command line.
+#
+# ## Returns
+#
+# [`Str`](std.Str)
+#
+# ## Errors
+#
+# | Exception                            | Condition                            |
+# | ------------------------------------ | ------------------------------------ |
+# | [`ValueError`](std.ValueError) | A value contains a NUL character     |
+#
+# ## Example
+#
+# ```
+# assert_eq (join ["program", "two words"]) r#"program "two words""#
+# ```
+pub def join
+  # Iterable of values, each converted to a string as
+  # [`std.verbatim`](std.verbatim) would.
+  iterable
+do
+  throw nil
+
+# Encodes one argument for a Windows process command line.
+#
+# ## Returns
+#
+# [`Str`](std.Str)
+#
+# ## Errors
+#
+# | Exception                             | Condition                          |
+# | ------------------------------------- | ---------------------------------- |
+# | [`ValueError`](std.ValueError) | The argument contains a NUL character |
+#
+# ## Example
+#
+# ```
+# assert_eq (quote "two words") r#""two words""#
+# ```
+pub def quote
+  # Value to quote, converted to a string as
+  # [`std.verbatim`](std.verbatim) would.
+  arg
+do
+  throw nil
+
+# Decodes a Windows process command line into its arguments.
+#
+# ## Returns
+#
+# An `Iter` yielding each argument as a [`Str`](std.Str).
+#
+# ## Errors
+#
+# | Exception                           | Condition                                 |
+# | ----------------------------------- | ----------------------------------------- |
+# | [`TypeError`](std.TypeError) | `command_line` is not a `Str`             |
+#
+# ## Example
+#
+# ```
+# assert_eq [...(split r#"program "two words""#)] ["program", "two words"]
+# ```
+pub def split
+  # ([`Str`](std.Str)) Command line to decode.
+  command_line
+do
+  throw nil

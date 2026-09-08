@@ -57,12 +57,12 @@ from exactly one of `content:` or `source:` — the latter an [artifact
 spec](#artifact-specs), so it may be a path, a URL, or a `Dict` pinning a
 digest.
 
-| Key        | Type                                                     | Description                             |
-| ---------- | -------------------------------------------------------- | --------------------------------------- |
-| `target`   | [`Str`](../api/std/str.md)                               | Guest path to write                     |
-| `source`?  | Artifact                                                 | Host file to copy; excludes `content:`  |
-| `content`? | [`Str`](../api/std/str.md)\|[`Bin`](../api/std/bin.md)   | Literal content; excludes `source:`     |
-| `chmod`?   | [`Int`](../api/std/int.md)                               | File mode, e.g. `0o644`                 |
+| Key        | Type                               | Description                            |
+| ---------- | ---------------------------------- | -------------------------------------- |
+| `target`   | [`Str`](std.Str)                   | Guest path to write                    |
+| `source`?  | Artifact                           | Host file to copy; excludes `content:` |
+| `content`? | [`Str`](std.Str)\|[`Bin`](std.Bin) | Literal content; excludes `source:`    |
+| `chmod`?   | [`Int`](std.Int)                   | File mode, e.g. `0o644`                |
 
 ```
 libvirt.create
@@ -130,10 +130,10 @@ libvirt.create
   os: :LINUX:
 ```
 
-| Key       | Type                                                                                  | Description                              |
-| --------- | ------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `source`  | [`Str`](../api/std/str.md)\|[`Path`](../api/fs/path.md)\|[`Url`](../api/url/index.md) | The source to fetch                      |
-| `digest`? | [`Str`](../api/std/str.md)                                                            | `algorithm:hex` digest to verify against |
+| Key       | Type                                                  | Description                              |
+| --------- | ----------------------------------------------------- | ---------------------------------------- |
+| `source`  | [`Str`](std.Str)\|[`Path`](fs.Path)\|[`Url`](url.Url) | The source to fetch                      |
+| `digest`? | [`Str`](std.Str)                                      | `algorithm:hex` digest to verify against |
 
 `installer:` takes two more metadata keys, `edition:` and `index:` — see
 [Windows Guests](./windows.md).
@@ -151,13 +151,13 @@ Do is installed into every guest before it is considered ready, as `dolang-vfs`
 is the mechanism by which guests are controlled after early provisioning.
 `dolang:` selects which build to install. If omitted, it installs the release
 matching the running interpreter's version
-([`shell.VERSION`](../api/shell/index.md)) for `os:`/`arch:`.
+([`shell.VERSION`](shell.VERSION)) for `os:`/`arch:`.
 
 | Value                          | Behavior                                                                 |
 | ------------------------------ | ------------------------------------------------------------------------ |
 | a version tag, e.g. `"v0.1.1"` | Fetch that release's artifact for `os:`/`arch:`.                         |
-| a [`Path`](../api/fs/path.md)  | Use a local archive directly.                                            |
-| a [`Url`](../api/url/index.md) | Fetch an achive, bypassing release resolution.                           |
+| a [`Path`](fs.Path)            | Use a local archive directly.                                            |
+| a [`Url`](url.Url)             | Fetch an achive, bypassing release resolution.                           |
 | an artifact spec               | An archive with a pinned digest — see [Artifact Specs](#artifact-specs). |
 | `{version: tag}`               | Explicit form of the version tag.                                        |
 

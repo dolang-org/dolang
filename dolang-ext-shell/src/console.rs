@@ -1,7 +1,4 @@
-use std::{
-    hash::{Hash, Hasher},
-    mem,
-};
+use std::mem;
 
 use dolang::runtime::object::fmt;
 use dolang::runtime::value::fmt::Format;

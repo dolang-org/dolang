@@ -1,0 +1,55 @@
+# Site navigation, consumed by the awesome-nav plugin. mkdocs.yml's own
+# `nav:` key is ignored once this plugin is enabled -- it replaces the whole
+# site nav with what it builds from files/.nav.yml, so this is the only place
+# that controls it now.
+
+# Without this, a directory's nav title falls back to a title-cased version of
+# its own name (e.g. "Fs.unix") instead of reading its index.md's frontmatter
+# title, which write_doc_page in dodo.dol sets to the actual (lowercase)
+# module name.
+use_index_title: true
+
+nav:
+  - Home: index.md
+  - Language Guide:
+    - language/index.md
+    - language/basic-types.md
+    - language/data-structures.md
+    - language/commands.md
+    - language/expressions.md
+    - language/strings.md
+    - language/variables.md
+    - language/flow-control.md
+    - language/vertical-layout.md
+    - language/functions.md
+    - language/destructuring.md
+    - language/modules.md
+    - language/classes.md
+    - language/error-handling.md
+    - language/concurrency.md
+    - language/decorators.md
+    - language/misc.md
+    - language/prelude.md
+  - Shell Guide:
+    - shell/index.md
+    - shell/external-programs.md
+    - shell/modules.md
+    - shell/cli-tools.md
+    - shell/terminal-output.md
+    - shell/system-errors.md
+    - shell/security.md
+    - shell/vfs.md
+    - shell/containers.md
+    - shell/ssh.md
+    - shell/wsl.md
+    - shell/admin.md
+  - VM Guide:
+    - vm/index.md
+    - vm/provisioning.md
+    - vm/cloud-init.md
+    - vm/windows.md
+    - vm/gold-images.md
+    - vm/caching.md
+  - lsp.md
+  - Reference: api
+  - Rust API: rust-api.md

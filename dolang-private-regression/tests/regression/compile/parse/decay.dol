@@ -19,14 +19,20 @@ def import name
 assert_eq (import "x") "imported x"
 
 class Keywords
+  field tag
+
+  def (init) self
+    self.#tag = "kw"
+
   pub def import self name
-    "method $name"
+    "$(self.#tag) import $name"
+
   pub def while self
-    "while"
+    "$(self.#tag) while"
 
 let kw = Keywords()
-assert_eq $kw.import("y") "method y"
-assert_eq $kw.while() "while"
+assert_eq $kw.import("y") "kw import y"
+assert_eq $kw.while() "kw while"
 # output: END
 # if else while for let field = + - / %
 # END

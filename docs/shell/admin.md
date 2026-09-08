@@ -16,13 +16,13 @@ admin.with do
 ```
 
 On Unix, `admin.with` uses `sudo`. On Windows, it requests elevation through
-UAC. If [`admin.query()`](../api/admin.md) reports that the current context
+UAC. If [`admin.query()`](admin) reports that the current context
 is already elevated, the block runs directly without creating another context.
 
 ## Unix `sudo`
 
 The `sudo` module provides more granular use of `sudo` on Unix targets.
-[`sudo.run`](../api/sudo.md) elevates one verbatim command:
+[`sudo.run`](sudo) elevates one verbatim command:
 
 ```
 import sudo
@@ -30,7 +30,7 @@ import sudo
 sudo.run install -m 0644 example.conf /etc/example.conf
 ```
 
-[`sudo.with`](../api/sudo.md) runs a complete block through a scoped VFS
+[`sudo.with`](sudo) runs a complete block through a scoped VFS
 context:
 
 ```
@@ -58,7 +58,7 @@ current executable and communicates with it via a private named pipe. It also
 also works when the Windows context was entered from WSL. Cancelling the UAC
 prompt raises a permission error.
 
-[`Vfs.windows_admin()`](../api/shell/vfs.md#windows_admin-cd-env) exposes the
+[`Vfs.windows_admin()`](shell.Vfs.windows_admin) exposes the
 lower-level context when its lifetime must be controlled directly:
 
 ```

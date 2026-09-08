@@ -55,7 +55,7 @@ let data = b"\x01\x02\x03"
 
 See [Strings](strings.md) for every literal form of both types, along with
 escaping and interpolation. `Str` and `Bin` also support a wide variety of
-methods ([`Str`](../api/std/str.md), [`Bin`](../api/std/bin.md)).
+methods ([`Str`](std.Str), [`Bin`](std.Bin)).
 
 ## Booleans (`Bool`)
 

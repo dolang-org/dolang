@@ -1,0 +1,554 @@
+# Compiles Do source to bytecode and describes what it declares.
+#
+# ## Usage
+#
+# ```
+# let source = "let x = 1 + 2"
+# let unit = compile "example.dol" $source
+# let bytecode = unit.emit()
+# ```
+#
+# ## Document nodes
+#
+# A unit compiled with `document: true` also describes what the source
+# declares, as a tree of [`Node`](compile.Node) objects reached through
+# [`Unit.nodes`](compile.Unit.nodes). Most of a node's interesting text is
+# reported as a [`Span`](compile.Span) rather than a string: the source is
+# already in hand, so a span says where a name was written without copying it.
+#
+# ```
+# let unit = compile "example.dol" $source document: true
+# for id node = unit.nodes()
+#   echo $id $node.span
+# ```
+
+# A staged compilation unit.
+#
+# Provides diagnostics and document nodes for one source file before emitting
+# bytecode. A unit borrows and pins the source passed to
+# [`compile`](compile.compile).
+#
+# ## Example
+#
+# ```
+# let unit = compile "example.dol" "pub let answer = 42\n" document: true
+# for id node = unit.nodes()
+#   echo $id $node.span
+# let bytecode = unit.emit()
+# ```
+pub class Unit
+  # Returns a fresh iterator of [`Diagnostic`](compile.Diagnostic) objects.
+  pub def diagnostics self
+    throw nil
+
+  # Returns a fresh iterator of `[NodeId, Node]` pairs.
+  #
+  # Empty unless the unit was compiled with `document: true`. An enabled unit
+  # always contains one [`Root`](compile.Root), even for empty source.
+  #
+  # ## Example
+  #
+  # ```
+  # for id node = unit.nodes()
+  #   echo $id $node.span
+  # ```
+  pub def nodes self
+    throw nil
+
+  # Looks up a node by [`NodeId`](compile.NodeId).
+  #
+  # ## Returns
+  #
+  # The [`Node`](compile.Node), or `nil` when the ID belongs to another unit.
+  pub def node
+    self
+    # ([`NodeId`](compile.NodeId)) The ID to look up.
+    id
+  do
+    throw nil
+
+  # Consumes the unit and returns bytecode as [`Bin`](std.Bin).
+  #
+  # ## Errors
+  #
+  # | Exception          | Condition                                          |
+  # | ------------------ | -------------------------------------------------- |
+  # | `std.CompileError` | Compilation failed                                 |
+  # | `std.StateError`   | The unit, its node iterators, or its nodes are used after emission |
+  pub def emit self
+    throw nil
+
+# An opaque handle identifying one node within a [`Unit`](compile.Unit).
+#
+# IDs compare equal and hash by identity, so they work as dict keys and as a
+# way to recognize a node reached by more than one route. An ID from one unit
+# never matches a node in another: [`Unit.node`](compile.Unit.node) returns `nil`
+# rather than a foreign node.
+#
+# ## Example
+#
+# ```
+# let seen = {}
+# for id node = unit.nodes()
+#   seen[id] = node.span
+# ```
+pub class NodeId
+
+# A superclass reference written in a class declaration.
+#
+# Reported by [`Class.supers`](compile.Class.supers) in the order the references
+# were written.
+pub class Super
+  # The [`Span`](compile.Span) of the reference as written.
+  #[getter]
+  pub def span self
+    throw nil
+
+  # The [`NodeId`](compile.NodeId) of the node the reference names, or `nil` when
+  # it is not a plain identifier the compiler could resolve.
+  #[getter]
+  pub def target self
+    throw nil
+
+# Supertype of every document node.
+#
+# Nodes form a tree rooted at [`Root`](compile.Root), reached through
+# [`Unit.nodes`](compile.Unit.nodes). The four intermediate supertypes --
+# [`Declaration`](compile.Declaration), [`Param`](compile.Param),
+# [`Block`](compile.Block), and [`Reference`](compile.Reference) -- group the
+# concrete kinds by what they carry, so a consumer can match on the level it
+# cares about.
+pub class Node
+  # The [`Span`](compile.Span) of the comment block documenting the node, or
+  # `nil` where none attaches.
+  #
+  # Every node answers, rather than only the kinds that can be documented:
+  # which of them those are is the compiler's determination, and a consumer
+  # that has to know it in advance gains nothing.
+  #[getter]
+  pub def doc self
+    throw nil
+
+  # The [`NodeId`](compile.NodeId) of the enclosing node, or `nil` for
+  # [`Root`](compile.Root).
+  #[getter]
+  pub def parent self
+    throw nil
+
+  # The [`Span`](compile.Span) the node covers in the source.
+  #[getter]
+  pub def span self
+    throw nil
+
+# The complete source document.
+#
+# A unit compiled with `document: true` always has exactly one, even for empty
+# source. It spans the whole source, has no parent, and parents every other
+# top-level node. Its `doc` is the initial comment block on the first line, or
+# immediately after an initial `#!` line.
+pub class Root: Node
+
+# Supertype of the nodes that bind a name.
+#
+# Every subtype reports a `name`. Most report it as a [`Span`](compile.Span) into
+# the source; [`PreludeModule`](compile.PreludeModule) and
+# [`PreludeItem`](compile.PreludeItem) report a [`Str`](std.Str) instead,
+# since a prelude binding has no source text to point at.
+pub class Declaration: Node
+  # The bound name, as a [`Span`](compile.Span) or a [`Str`](std.Str).
+  #[getter]
+  pub def name self
+    throw nil
+
+# A class declaration.
+pub class Class: Declaration
+  # Whether the class was declared `pub`.
+  #[getter]
+  pub def is_pub self
+    throw nil
+
+  # An array of [`Super`](compile.Super) references, in the order written.
+  #[getter]
+  pub def supers self
+    throw nil
+
+# A `def` at statement level.
+pub class Function: Declaration
+  # Whether the function was declared `pub`.
+  #[getter]
+  pub def is_pub self
+    throw nil
+
+# A `def` in a class body. Its class is its parent.
+pub class Method: Declaration
+  # Whether the method was declared `pub`.
+  #[getter]
+  pub def is_pub self
+    throw nil
+
+# A method implementing a protocol, such as `(init)` or `(next)`. Its class is
+# its parent.
+#
+# The `name` span includes the parentheses the protocol name is written in. A
+# special method is part of the type's interface however it was declared, so
+# there is no visibility to report.
+pub class SpecialMethod: Declaration
+
+# A field declaration in a class body. Its class is its parent.
+#
+# A declaration naming several fields yields one node per name.
+pub class Field: Declaration
+  # Whether the field was declared `pub`.
+  #[getter]
+  pub def is_pub self
+    throw nil
+
+# A `let` or other binding.
+pub class Bind: Declaration
+  # Whether the binding was declared `pub`.
+  #[getter]
+  pub def is_pub self
+    throw nil
+
+# The `self` parameter of a method.
+pub class SelfParam: Declaration
+
+# Supertype of the nodes that bind a name to something imported.
+pub class Import: Declaration
+  # The module path, as a [`Span`](compile.Span) as written or, for a prelude
+  # binding, a [`Str`](std.Str).
+  #[getter]
+  pub def module self
+    throw nil
+
+# A module bound by `import foo` or `import foo: bar`.
+pub class ImportModule: Import
+
+# An item bound from a module, as in `import foo: - bar`.
+pub class ImportItem: Import
+  # The [`Span`](compile.Span) of the item name within the module.
+  #[getter]
+  pub def item self
+    throw nil
+
+# A module bound by the prelude.
+#
+# A prelude binding comes from the compiler's configuration rather than the
+# source, so its `name` and `module` are [`Str`](std.Str) values and its
+# `span` covers no source text.
+#
+# A prelude node is recorded where its binding resolves, so a configured
+# prelude the source never mentions produces no node at all.
+pub class PreludeModule: Import
+
+# An item bound by the prelude.
+#
+# Like [`PreludeModule`](compile.PreludeModule), its names are
+# [`Str`](std.Str) values rather than spans, and it appears only where
+# the binding it introduces is referenced.
+pub class PreludeItem: Import
+  # The item name within the module, as a [`Str`](std.Str).
+  #[getter]
+  pub def item self
+    throw nil
+
+# Supertype of a function's parameters. The function is the parent.
+pub class Param: Node
+  # The bound name as a [`Span`](compile.Span).
+  #
+  # `nil` for an anonymous [`RestParam`](compile.RestParam); every other
+  # parameter has one.
+  #[getter]
+  pub def name self
+    throw nil
+
+# A positional parameter.
+pub class PositionalParam: Param
+  # The [`Span`](compile.Span) of the default value expression, or `nil` when the
+  # parameter has no default. Slice the source for its text.
+  #[getter]
+  pub def default self
+    throw nil
+
+# A keyword parameter.
+#
+# The kind is at the granularity of the language rather than the parser: `:foo`
+# and `foo: local` both arrive here, differing only in whether `key` and `name`
+# cover the same text.
+pub class KeyParam: Param
+  # The [`Span`](compile.Span) of the default value expression, or `nil` when the
+  # parameter has no default. Slice the source for its text.
+  #[getter]
+  pub def default self
+    throw nil
+
+  # The [`Span`](compile.Span) of the key as written, without the `:` sigil.
+  #[getter]
+  pub def key self
+    throw nil
+
+# A rest parameter. Its `name` is `nil` when it is anonymous.
+pub class RestParam: Param
+
+# Supertype of the nodes that introduce a nested body.
+#
+# A block node carries nothing beyond what every [`Node`](compile.Node) does; its
+# type is what says which construct opened the body.
+pub class Block: Node
+
+# A `do` block.
+pub class Lambda: Block
+
+# An `if` or `else if` body.
+pub class If: Block
+
+# An `else` body.
+pub class Else: Block
+
+# A `while` body.
+pub class While: Block
+
+# A `for` body.
+pub class For: Block
+
+# A `try` body.
+pub class Try: Block
+
+# A `catch` handler.
+pub class Catch: Block
+
+# A `finally` body.
+pub class Finally: Block
+
+# A comprehension `for`.
+pub class ForElem: Block
+
+# A comprehension `if`.
+pub class IfElem: Block
+
+# Supertype of the nodes that name another node.
+pub class Reference: Node
+  # The [`NodeId`](compile.NodeId) of the node named, or `nil` when the compiler
+  # could not resolve one.
+  #[getter]
+  pub def target self
+    throw nil
+
+# A decorator.
+#
+# What it decorates is its parent, and its `target` is the node the decorator
+# expression names when that expression is an identifier.
+pub class Decorator: Reference
+
+# A `break`. Its `target` is the loop broken out of.
+pub class Break: Reference
+
+# A `continue`. Its `target` is the loop continued.
+pub class Continue: Reference
+
+# A `return`. Its `target` is the function returned from.
+pub class Return: Reference
+
+# A compiler diagnostic.
+#
+# ## Example
+#
+# ```
+# let unit = compile "bad.dol" "let =\n"
+# for diag = unit.diagnostics()
+#   echo $diag.render()
+# ```
+pub class Diagnostic
+  # An array of [`Annotation`](compile.Annotation) objects describing additional
+  # highlighted source regions.
+  #[getter]
+  pub def annotations self
+    throw nil
+
+  # The primary diagnostic message as [`Str`](std.Str).
+  #[getter]
+  pub def message self
+    throw nil
+
+  # An array of [`Note`](compile.Note) objects with extra context or help.
+  #[getter]
+  pub def notes self
+    throw nil
+
+  # An array of [`Patch`](compile.Patch) objects describing suggested edits.
+  #[getter]
+  pub def patches self
+    throw nil
+
+  # The severity as `:ERROR:` or `:WARNING:`.
+  #[getter]
+  pub def severity self
+    throw nil
+
+  # The primary source [`Span`](compile.Span).
+  #[getter]
+  pub def span self
+    throw nil
+
+  # Renders the diagnostic for terminal presentation.
+  #
+  # ## Returns
+  #
+  # [`term.Text`](term.Text), without a final newline.
+  pub def render self
+    throw nil
+
+# An additional highlighted region attached to a
+# [`Diagnostic`](compile.Diagnostic).
+pub class Annotation
+  # The annotation kind as `:PRIMARY:` or `:CONTEXT:`.
+  #[getter]
+  pub def kind self
+    throw nil
+
+  # The annotation label as [`Str`](std.Str).
+  #[getter]
+  pub def message self
+    throw nil
+
+  # The annotated [`Span`](compile.Span).
+  #[getter]
+  pub def span self
+    throw nil
+
+# An auxiliary note attached to a [`Diagnostic`](compile.Diagnostic).
+pub class Note
+  # The note kind as `:INFO:` or `:HELP:`.
+  #[getter]
+  pub def kind self
+    throw nil
+
+  # The note text as [`Str`](std.Str).
+  #[getter]
+  pub def message self
+    throw nil
+
+# A suggested source edit attached to a [`Diagnostic`](compile.Diagnostic).
+pub class Patch
+  # Human-readable text describing the suggested change.
+  #[getter]
+  pub def message self
+    throw nil
+
+  # The [`Span`](compile.Span) to replace.
+  #[getter]
+  pub def span self
+    throw nil
+
+  # The replacement text as [`Str`](std.Str).
+  #[getter]
+  pub def sub self
+    throw nil
+
+# A region of source text.
+#
+# Spans compare and order by position, so they can be sorted or used as dict
+# keys.
+pub class Span
+  # The exclusive end position as [`Pos`](compile.Pos).
+  #[getter]
+  pub def end self
+    throw nil
+
+  # The inclusive start position as [`Pos`](compile.Pos).
+  #[getter]
+  pub def start self
+    throw nil
+
+# A position within source text. All coordinates are zero-based.
+pub class Pos
+  # Byte offset from the start of the source.
+  #[getter]
+  pub def byte_offset self
+    throw nil
+
+  # Column offset within the line.
+  #[getter]
+  pub def column self
+    throw nil
+
+  # Line offset from the start of the source.
+  #[getter]
+  pub def line self
+    throw nil
+
+# Parses and elaborates Do source into a staged compilation unit.
+#
+# ## Returns
+#
+# A [`Unit`](compile.Unit), which exposes diagnostics and, with `document: true`,
+# document nodes before emission. Ordinary compiler diagnostics are reported
+# through [`Unit.diagnostics`](compile.Unit.diagnostics) rather than thrown.
+#
+# ## Errors
+#
+# | Exception    | Condition                          |
+# | ------------ | ---------------------------------- |
+# | `TypeError`  | `source` is not `Str` or `Bin`     |
+# | `TypeError`  | `module` is present but not `Str`  |
+# | `ValueError` | `prelude` is malformed             |
+#
+# ## Example
+#
+# ```
+# # Additional prelude modules
+# compile "test.dol" $source
+#   prelude:
+#     - sys
+#     - fs
+#
+# # Module with alias
+# compile "test.dol" $source
+#   prelude:
+#     sys: shell
+#
+# # Import specific items
+# compile "test.dol" $source
+#   prelude:
+#     sys:
+#       - echo
+#       - exit
+#
+# # Items with aliases
+# compile "test.dol" $source
+#   prelude:
+#     sys:
+#       echo: echo_alias
+# ```
+pub def compile
+  # ([`Str`](std.Str)) Source path, used in debug information and
+  # diagnostics.
+  path
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Source code to compile.
+  source
+  # ([`Str`](std.Str)?) Compile in module mode under this name.
+  #
+  # Without it the source is compiled as a script, and running the bytecode
+  # yields the value of the final expression or of an early return. In module
+  # mode, running it yields a module object holding the exported bindings, or
+  # the value of an early return.
+  :module = nil
+  # (dict?) Additional imports to bind before the source.
+  #
+  # Accepts the same logical import shapes used by the LSP prelude settings:
+  # an array of module names, a dict mapping a module to an alias, or a dict
+  # mapping a module to the items to take from it, themselves optionally
+  # aliased.
+  :prelude = nil
+  # ([`Bool`](std.Bool)?) Continue parsing after syntax errors. Defaults
+  # to `false`.
+  #
+  # Recovery is what lets a file be described while it is still being written,
+  # at the cost of a document that is missing whatever the compiler could not
+  # read. Check [`Unit.diagnostics`](compile.Unit.diagnostics) before trusting
+  # one.
+  :recover = nil
+  # ([`Bool`](std.Bool)?) Build document nodes. Defaults to `false`.
+  :document = nil
+do
+  throw nil

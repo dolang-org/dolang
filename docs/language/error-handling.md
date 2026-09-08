@@ -91,7 +91,7 @@ class NoDomainError: RuntimeError
 The chained call is what gives the instance its string form, so the subclass
 needs no `(str)` of its own. Subtype matching then works the whole way up the
 chain — a handler for the specific type, for the `std` type it inherits from, or
-for [`Error`](../api/std/error.md) will all catch it:
+for [`Error`](std.Error) will all catch it:
 
 ```
 try
@@ -102,8 +102,8 @@ catch NoDomainError: err
 
 Inherit from the type that describes the failure — `ValueError` for a malformed
 value, `RuntimeError` when nothing more specific fits. Every `std` error type is
-subclassable except [`AbortError`](../api/std/abort-error.md) and
-[`BytecodeError`](../api/std/bytecode-error.md), which are sealed.
+subclassable except [`AbortError`](std.AbortError) and
+[`BytecodeError`](std.BytecodeError), which are sealed.
 
 ### Finally
 

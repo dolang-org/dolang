@@ -1,0 +1,679 @@
+import std:
+  - RuntimeError
+
+# HTTP client.
+#
+# The module-level request functions -- [`get`](#get), [`post`](#post) and the
+# rest -- each make one request through a fresh stateless client. Anything that
+# has to persist across requests (cookies, a proxy, TLS material) belongs on a
+# [`Client`](http.Client), whose methods take the same arguments.
+#
+# Every URL argument accepts either a plain [`Str`](std.Str) or a
+# [`url.Url`](url.Url).
+#
+# ```
+# let data = http.get https://api.example.com/users
+#   query: {page: 1}
+#   headers: {authorization: "Bearer $token"}
+# ```
+
+# A transport or protocol failure.
+#
+# A response that arrives but carries a non-2xx status is reported as
+# [`Status`](http.Status) instead, which extends this type -- so `catch Error`
+# catches both.
+#
+# ## Example
+#
+# ```
+# try
+#   get "http://127.0.0.1:1"
+# catch Error: err
+#   echo $Str(err)
+# ```
+pub class Error: RuntimeError
+  # ([`url.Url`](url.Url)?) The URL the failure is attributed to, or
+  # `nil` when the underlying error carries none.
+  #
+  # ## Example
+  #
+  # ```
+  # try
+  #   get "http://example.invalid"
+  # catch Error: err
+  #   if (err.url != nil)
+  #     echo $err.url.host
+  # ```
+  #[getter]
+  pub def url self
+    throw nil
+
+# A response whose status is outside `200..=299`.
+#
+# Raised by a request that completes normally but reports a failure status,
+# unless `status: :IGNORE:` was passed. The response metadata and the first
+# 64 KiB of the body are kept on the error, so a failed request can be
+# diagnosed without a second round trip.
+#
+# ## Example
+#
+# ```
+# try
+#   get "https://example.com/missing"
+# catch Status: err
+#   echo $err.status
+#   echo $err.text()
+# ```
+pub class Status: Error
+  # ([`Int`](std.Int)) The HTTP status code.
+  #[getter]
+  pub def status self
+    throw nil
+
+  # ([`url.Url`](url.Url)?) The response URL, or `nil` when none was
+  # attached.
+  #[getter]
+  pub def url self
+    throw nil
+
+  # ([`Dict`](std.Dict)-like) The response headers, as
+  # [`Response.headers`](http.Response.headers) presents them.
+  #[getter]
+  pub def headers self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the saved body excerpt was cut off,
+  # either by the 64 KiB limit or by a read error while buffering it.
+  #[getter]
+  pub def truncated self
+    throw nil
+
+  # The saved body excerpt.
+  #
+  # ## Returns
+  #
+  # [`Bin`](std.Bin).
+  pub def body self
+    throw nil
+
+  # The saved body excerpt as text.
+  #
+  # ## Returns
+  #
+  # [`Str`](std.Str).
+  #
+  # ## Errors
+  #
+  # | Exception                             | Condition                    |
+  # | ------------------------------------- | ---------------------------- |
+  # | [`ValueError`](std.ValueError) | The excerpt is not valid UTF-8 |
+  pub def text self
+    throw nil
+
+  # The saved body excerpt, parsed as JSON.
+  #
+  # Available when the extension is built with its `json` feature.
+  #
+  # ## Returns
+  #
+  # The parsed value.
+  pub def json self
+    throw nil
+
+# One item of a Server-Sent Events stream.
+#
+# Yielded by [`Response.events`](http.Response.events).
+pub class Event
+  # ([`Str`](std.Str)) The event type. Defaults to `"message"` when the
+  # stream omits `event:` or sends an empty one.
+  #[getter]
+  pub def type self
+    throw nil
+
+  # ([`Str`](std.Str)) The payload text. Multiple `data:` lines are
+  # joined with `\n`.
+  #[getter]
+  pub def data self
+    throw nil
+
+  # ([`Str`](std.Str)?) The event identifier, when the stream sends one.
+  #[getter]
+  pub def id self
+    throw nil
+
+  # ([`Int`](std.Int)?) The reconnection delay the stream suggests, when
+  # it sends one.
+  #[getter]
+  pub def retry self
+    throw nil
+
+# An HTTP response.
+#
+# A response may hold an open connection while its body is still pending, so it
+# owns a resource until it is closed. Every method that reads the body whole --
+# [`body`](#body), [`text`](#text), [`json`](#json) -- consumes the response and
+# closes it; the streaming methods hand ownership of the body to the iterator
+# they return. Once closed, most methods raise.
+#
+# The reliable way to bound that lifetime is the trailing block a request
+# accepts, which closes the response however the block exits:
+#
+# ```
+# get https://api.example.com/users do |response|
+#   echo $response.status
+# ```
+#
+# A response is itself callable with a block, for the same effect on one the
+# caller already holds:
+#
+# ```
+# let response = get https://api.example.com/users
+# response do
+#   echo $response.status
+# ```
+pub class Response
+  # ([`Int`](std.Int)) The HTTP status code.
+  #[getter]
+  pub def status self
+    throw nil
+
+  # ([`url.Url`](url.Url)) The final URL, after any redirects.
+  #[getter]
+  pub def url self
+    throw nil
+
+  # ([`Dict`](std.Dict)-like) The response headers.
+  #
+  # A value that parses as an HTTP-date is returned as a
+  # [`time.DateTime`](time.DateTime); every other value is a
+  # [`Str`](std.Str).
+  #
+  # ## Example
+  #
+  # ```
+  # let response = get https://api.example.com/users
+  # echo $response.headers["content-type"]
+  # ```
+  #[getter]
+  pub def headers self
+    throw nil
+
+  # Reads the whole body as bytes, consuming and closing the response.
+  #
+  # ## Returns
+  #
+  # [`Bin`](std.Bin).
+  pub def body self
+    throw nil
+
+  # Reads the whole body as text, consuming and closing the response.
+  #
+  # ## Returns
+  #
+  # [`Str`](std.Str).
+  #
+  # ## Errors
+  #
+  # | Exception                         | Condition                             |
+  # | --------------------------------- | ------------------------------------- |
+  # | `RuntimeError`                    | The response is already closed        |
+  # | [`Error`](http.Error)             | A transport or protocol failure       |
+  # | [`ValueError`](std.ValueError) | The body is not valid UTF-8       |
+  pub def text self
+    throw nil
+
+  # Reads the whole body and parses it as JSON, consuming and closing the
+  # response.
+  #
+  # Available when the extension is built with its `json` feature.
+  #
+  # ## Returns
+  #
+  # The parsed value, as a tree of [`Int`](std.Int),
+  # [`Float`](std.Float), [`Str`](std.Str),
+  # [`Array`](std.Array) and [`Dict`](std.Dict).
+  #
+  # ## Errors
+  #
+  # | Exception                             | Condition                       |
+  # | ------------------------------------- | ------------------------------- |
+  # | `RuntimeError`                        | The response is already closed  |
+  # | [`Error`](http.Error)                 | A transport or protocol failure |
+  # | [`ValueError`](std.ValueError) | The body is not valid JSON      |
+  #
+  # ## Example
+  #
+  # ```
+  # let response = get https://api.example.com/users
+  # let data = response.json()
+  # echo $data["users"][0]["name"]
+  # ```
+  pub def json self
+    throw nil
+
+  # Streams the body as raw byte chunks, so a large response need not be held
+  # in memory whole.
+  #
+  # ## Returns
+  #
+  # An [`Iter`](std.Iter) yielding [`Bin`](std.Bin)s.
+  #
+  # ## Example
+  #
+  # ```
+  # get https://api.example.com/large-file do |response|
+  #   let total = 0
+  #   for chunk = response.chunks()
+  #     total = (total + chunk.len)
+  #   echo "Downloaded $total bytes"
+  # ```
+  pub def chunks self
+    throw nil
+
+  # Streams the body as lines, split on `\n` or `\r\n` with the line ending
+  # stripped.
+  #
+  # ## Returns
+  #
+  # An [`Iter`](std.Iter) yielding [`Str`](std.Str)s.
+  #
+  # ## Example
+  #
+  # ```
+  # get https://api.example.com/logs do |response|
+  #   for line = response.lines()
+  #     if (line.contains "ERROR")
+  #       echo $line
+  # ```
+  pub def lines self
+    throw nil
+
+  # Streams the body as a Server-Sent Events stream -- the shape LLM responses,
+  # log tails and other `text/event-stream` feeds arrive in.
+  #
+  # ## Returns
+  #
+  # An [`Iter`](std.Iter) yielding [`Event`](http.Event)s.
+  #
+  # ## Errors
+  #
+  # | Exception                             | Condition                            |
+  # | ------------------------------------- | ------------------------------------ |
+  # | `RuntimeError`                        | The response is already closed       |
+  # | [`Error`](http.Error)                 | The underlying body read fails       |
+  # | [`ValueError`](std.ValueError) | The stream contains invalid UTF-8    |
+  #
+  # ## Example
+  #
+  # ```
+  # http.get https://api.example.com/stream do |response|
+  #   for :type :data ... = response.events()
+  #     echo "[$type] $data"
+  # ```
+  pub def events self
+    throw nil
+
+  # Raises [`Status`](http.Status) when the status is outside `200..=299`, and
+  # does nothing otherwise.
+  #
+  # This is what a request does for you unless `status: :IGNORE:` was passed,
+  # so it is only needed on a response fetched with the check suppressed.
+  pub def throw_for_status self
+    throw nil
+
+  # Closes the response, releasing the connection.
+  #
+  # Closing an already-closed response does nothing.
+  pub def close self
+    throw nil
+
+# An HTTP client.
+#
+# A client holds the configuration and any session state its requests share.
+#
+# A client's methods are named for HTTP verbs -- `get`, `head`, `post`, `put`,
+# `patch`, `delete`, `options`, `trace`, `connect` -- and take the arguments
+# documented on [`get`](#get) and [`post`](#post).
+#
+# ## Request options {: #http.Client.request-options }
+#
+# ### `body` {: #http.Client.body }
+#
+# Sends the request body as given. Mutually exclusive with `json`, `lines` and
+# `multipart`.
+#
+# A [`Str`](std.Str) or [`Bin`](std.Bin) is sent as-is. An iterable
+# is streamed, its values written back to back with nothing between them.
+#
+# ```
+# client.post https://api.example.com/data
+#   body: "raw text data"
+#   headers: {"content-type": "text/plain"}
+#
+# client.post https://api.example.com/stream
+#   body: ["chunk1", "chunk2", "chunk3"]
+#   headers: {"content-type": "application/octet-stream"}
+# ```
+#
+# ### `json` {: #http.Client.json }
+#
+# Serializes a Do value as the JSON request body. Mutually exclusive with
+# `body`, `lines` and `multipart`.
+#
+# ```
+# client.post https://api.example.com/users
+#   json: {name: "Alice", email: "alice@example.com"}
+# ```
+#
+# ### `lines` {: #http.Client.lines }
+#
+# Streams the body from an iterable, writing a newline after each element.
+# Mutually exclusive with `body`, `json` and `multipart`. Unlike `body`, this
+# requires an iterable.
+#
+# ```
+# client.post https://api.example.com/data
+#   lines:
+#     - first line
+#     - second line
+# # Sends: "first line\nsecond line\n"
+# ```
+#
+# ### `multipart` {: #http.Client.multipart }
+#
+# Builds a `multipart/form-data` body from an iterable of part specs. Mutually
+# exclusive with `body`, `json` and `lines`.
+#
+# Each part needs `name` and either `body` or -- when the extension is built
+# with its `json` feature -- `json`. `filename` and `content_type` are
+# optional; a `json` part's `content_type` defaults to `application/json`.
+#
+# A part `body` accepts a [`Str`](std.Str), a [`Bin`](std.Bin), or
+# an iterable to stream, such as a file opened in binary mode. Binary mode
+# matters: text-mode file iteration is line-oriented, while binary mode yields
+# the raw chunks an upload wants.
+#
+# The `content-type` header, boundary included, is set automatically. Do not
+# set it yourself on a multipart request.
+#
+# ```
+# open report.bin rb do |file|
+#   client.post https://api.example.com/upload
+#     multipart:
+#       - name: file
+#         filename: report.bin
+#         content_type: application/octet-stream
+#         body: $file
+#       - name: metadata
+#         json:
+#           kind: report
+# ```
+#
+# ### `headers` {: #http.Client.headers }
+#
+# Request headers, as a dict. Repeating a key sends the header more than once.
+#
+# Values are stringified, except a [`time.DateTime`](time.DateTime),
+# which is formatted as an HTTP-date (`IMF-fixdate`) -- what a header such as
+# `if-modified-since` expects.
+#
+# ```
+# client.get https://api.example.com/users
+#   headers:
+#     authorization: Bearer token123
+#     "user-agent": MyApp/1.0
+#     accept: application/json
+#     accept: application/json+verbose
+# ```
+#
+# ### `query` {: #http.Client.query }
+#
+# URL query parameters, as a dict. Repeating a key sends the parameter more
+# than once.
+#
+# ```
+# client.get https://api.example.com/users
+#   query:
+#     page: 1
+#     sort: name
+#     sort: age
+# ```
+pub class Client
+  # Builds a client.
+  #
+  # ## Returns
+  #
+  # `Client` when no `func` is given, otherwise the result of calling `func`.
+  #
+  # ## Example
+  #
+  # ```
+  # let client = Client()
+  #
+  # Client cookies: true do |session|
+  #   session.post https://example.com/login
+  #   session.get https://example.com/dashboard do |resp|
+  #     echo $resp.status
+  # ```
+  pub def (init)
+    self
+    # ([`Str`](std.Str)?) Path to a Unix domain socket to connect
+    # through. Unix only.
+    #
+    # This is **not** container-transparent: it connects to a socket on the
+    # host running the Do process, not through the shell agent's container
+    # filesystem and network translation.
+    :unix_socket = nil
+    # ([`Str`](std.Str)|[`url.Url`](url.Url)?) Proxy for every
+    # request made by this client.
+    #
+    # By default the client honors the system proxy environment
+    # (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`). Passing `nil` explicitly
+    # disables proxy detection entirely rather than selecting the default.
+    :proxy = nil
+    # ([`Bool`](std.Bool)?) Give the client a cookie jar, so cookies it
+    # receives are replayed on later requests.
+    #
+    # Cookie state belongs to the one client and is shared with nothing else,
+    # the module-level request functions included.
+    :cookies = nil
+    # ([`Str`](std.Str)|[`Bin`](std.Bin)?) PEM-encoded CA
+    # certificate to add to the trust store.
+    :ca_cert = nil
+    # ([`Str`](std.Str)|[`Bin`](std.Bin)?) PKCS#12/PFX client
+    # certificate, for mutual TLS.
+    :identity = nil
+    # ([`Str`](std.Str)?) Password for `identity`. Defaults to empty.
+    # Passing it without `identity` raises
+    # [`ValueError`](std.ValueError).
+    :password = nil
+    # ([`Sym`](std.Sym)?) Pass `:DANGER_ACCEPT:` to disable TLS
+    # certificate validation. It is the only accepted value, and it is
+    # dangerous -- it defeats the point of TLS, so reserve it for testing.
+    :invalid_certs = nil
+    # (callable?) Called with the `Client`, which is closed when it returns.
+    # Omit to receive the client instead.
+    func = nil
+  do
+    throw nil
+
+  # Makes a request without a body.
+  #
+  # `head`, `delete`, `options`, `trace` and `connect` take the same arguments.
+  #
+  # ## Returns
+  #
+  # [`Response`](http.Response) when no `block` is given, otherwise the result
+  # of calling `block`.
+  #
+  # ## Errors
+  #
+  # | Exception               | Condition                                              |
+  # | ----------------------- | ------------------------------------------------------ |
+  # | [`Status`](http.Status) | The response is non-2xx and `status:` was not passed   |
+  # | [`Error`](http.Error)   | A transport or protocol failure                        |
+  #
+  # ## Example
+  #
+  # ```
+  # let response = client.get https://api.example.com/users
+  #   query: {page: 1, limit: 10}
+  #   headers: {authorization: "Bearer token123"}
+  # echo $response.status
+  # ```
+  pub def get
+    self
+    # ([`Str`](std.Str)|[`url.Url`](url.Url)) URL to request.
+    url
+    # ([`Dict`](std.Dict)?) Request headers -- see
+    # [`headers`](http.Client.headers).
+    :headers = nil
+    # ([`Dict`](std.Dict)?) Query parameters -- see
+    # [`query`](http.Client.query).
+    :query = nil
+    # ([`Sym`](std.Sym)?) Pass `:IGNORE:` to return the response even
+    # when its status is outside `200..=299`, instead of raising
+    # [`Status`](http.Status).
+    :status = nil
+    # (callable?) Called with the [`Response`](http.Response), which is closed
+    # when it returns. Omit to receive the response instead.
+    block = nil
+  do
+    throw nil
+
+  # Makes a request with a body.
+  #
+  # `put` and `patch` take the same arguments. At most one of `body`, `json`,
+  # `lines` and `multipart` may be given.
+  #
+  # ## Returns
+  #
+  # [`Response`](http.Response) when no `block` is given, otherwise the result
+  # of calling `block`.
+  #
+  # ## Errors
+  #
+  # | Exception               | Condition                                            |
+  # | ----------------------- | ---------------------------------------------------- |
+  # | [`Status`](http.Status) | The response is non-2xx and `status:` was not passed |
+  # | [`Error`](http.Error)   | A transport or protocol failure                      |
+  #
+  # ## Example
+  #
+  # ```
+  # client.post https://api.example.com/users
+  #   json:
+  #     name: Alice
+  #     age: 30
+  # ```
+  pub def post
+    self
+    # ([`Str`](std.Str)|[`url.Url`](url.Url)) URL to request.
+    url
+    # ([`Str`](std.Str)|[`Bin`](std.Bin)?) Request body -- see
+    # [`body`](http.Client.body).
+    :body = nil
+    # Request body, JSON-serialized -- see [`json`](http.Client.json).
+    :json = nil
+    # (iterable?) Request body streamed with a newline after each element --
+    # see [`lines`](http.Client.lines).
+    :lines = nil
+    # (iterable?) Multipart form parts -- see
+    # [`multipart`](http.Client.multipart).
+    :multipart = nil
+    # ([`Dict`](std.Dict)?) Request headers -- see
+    # [`headers`](http.Client.headers).
+    :headers = nil
+    # ([`Dict`](std.Dict)?) Query parameters -- see
+    # [`query`](http.Client.query).
+    :query = nil
+    # ([`Sym`](std.Sym)?) Pass `:IGNORE:` to return the response even
+    # when its status is outside `200..=299`, instead of raising
+    # [`Status`](http.Status).
+    :status = nil
+    # (callable?) Called with the [`Response`](http.Response), which is closed
+    # when it returns. Omit to receive the response instead.
+    block = nil
+  do
+    throw nil
+
+  # Closes the client, releasing its connection pool.
+  #
+  # Closing an already-closed client does nothing.
+  pub def close self
+    throw nil
+
+# Makes a `GET` request through a fresh stateless client.
+#
+# `head`, `delete`, `options`, `trace` and `connect` do the same for their own
+# verbs, and take the same arguments. See
+# [`Client.get`](http.Client.get) for the arguments and
+# [`Client`](http.Client.request-options) for what each option means.
+#
+# ## Returns
+#
+# [`Response`](http.Response) when no `block` is given, otherwise the result of
+# calling `block`.
+#
+# ## Example
+#
+# ```
+# get https://api.example.com/users do |response|
+#   echo $response.status
+# ```
+pub def get
+  # ([`Str`](std.Str)|[`url.Url`](url.Url)) URL to request.
+  url
+  # ([`Dict`](std.Dict)?) Request headers.
+  :headers = nil
+  # ([`Dict`](std.Dict)?) Query parameters.
+  :query = nil
+  # ([`Sym`](std.Sym)?) Pass `:IGNORE:` to return the response even when
+  # its status is outside `200..=299`.
+  :status = nil
+  # (callable?) Called with the [`Response`](http.Response), which is closed
+  # when it returns.
+  block = nil
+do
+  throw nil
+
+# Makes a `POST` request through a fresh stateless client.
+#
+# `put` and `patch` do the same for their own verbs, and take the same
+# arguments. See [`Client.post`](http.Client.post) for the arguments and
+# [`Client`](http.Client.request-options) for what each option means.
+#
+# ## Returns
+#
+# [`Response`](http.Response) when no `block` is given, otherwise the result of
+# calling `block`.
+#
+# ## Example
+#
+# ```
+# post https://api.example.com/users
+#   json: {name: "Alice"}
+# ```
+pub def post
+  # ([`Str`](std.Str)|[`url.Url`](url.Url)) URL to request.
+  url
+  # ([`Str`](std.Str)|[`Bin`](std.Bin)?) Request body.
+  :body = nil
+  # Request body, JSON-serialized.
+  :json = nil
+  # (iterable?) Request body streamed with a newline after each element.
+  :lines = nil
+  # (iterable?) Multipart form parts.
+  :multipart = nil
+  # ([`Dict`](std.Dict)?) Request headers.
+  :headers = nil
+  # ([`Dict`](std.Dict)?) Query parameters.
+  :query = nil
+  # ([`Sym`](std.Sym)?) Pass `:IGNORE:` to return the response even when
+  # its status is outside `200..=299`.
+  :status = nil
+  # (callable?) Called with the [`Response`](http.Response), which is closed
+  # when it returns.
+  block = nil
+do
+  throw nil

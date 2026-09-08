@@ -1,6 +1,6 @@
 {% import "_params.html.jinja2" as params %}
 {% set heading_level = options.get("heading_level", 2) %}
-{% set base_id = entity.name %}
+{% set base_id = entity._identifier %}
 {% set sig = entity.signature %}
 
 {{ ("<code>" ~ sig ~ "</code>") | heading(heading_level, role="function", id=base_id, toc_label=sig) }}

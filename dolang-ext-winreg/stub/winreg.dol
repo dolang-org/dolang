@@ -1,0 +1,656 @@
+# Reads and writes the Windows registry.
+#
+# This API is VFS-aware: it operates through the VFS in scope for the current
+# strand, so it works transparently under remote or elevated contexts such as
+# `admin.with`. It is supported only on Windows targets; elsewhere every
+# operation throws
+# [`sys.UnsupportedError`](sys.UnsupportedError).
+#
+# ## Registry roots {: #winreg.registry-roots }
+#
+# | Symbol             | Meaning                              |
+# | ------------------ | ------------------------------------ |
+# | `:CLASSES_ROOT:`   | File associations and class settings |
+# | `:CURRENT_USER:`   | Current user's profile               |
+# | `:LOCAL_MACHINE:`  | Computer-wide configuration          |
+# | `:USERS:`          | All user profiles                    |
+# | `:CURRENT_CONFIG:` | Current hardware profile             |
+#
+# ## Registry views {: #winreg.registry-views }
+#
+# | Symbol     | Meaning                                   |
+# | ---------- | ----------------------------------------- |
+# | `:NATIVE:` | The target process's native registry view |
+# | `:WOW32:`  | The 32-bit registry view                  |
+# | `:WOW64:`  | The 64-bit registry view                  |
+#
+# ## Value kinds {: #winreg.value-kinds }
+#
+# | Symbol               | Stored value type            |
+# | -------------------- | ---------------------------- |
+# | `:SZ:`               | UTF-16 string                |
+# | `:EXPAND_SZ:`        | Expandable UTF-16 string     |
+# | `:MULTI_SZ:`         | Sequence of UTF-16 strings   |
+# | `:DWORD:`            | Little-endian 32-bit integer |
+# | `:DWORD_BIG_ENDIAN:` | Big-endian 32-bit integer    |
+# | `:QWORD:`            | Little-endian 64-bit integer |
+# | `:BINARY:`           | Raw bytes                    |
+# | `:NONE:`             | No data                      |
+#
+# ## Link resolution {: #winreg.link-resolution }
+#
+# | Symbol     | Meaning                              |
+# | ---------- | ------------------------------------ |
+# | `:TARGET:` | Follow a registry link (the default) |
+# | `:LINK:`   | Open the link key itself             |
+
+# Access rights for a registry key.
+#
+# A mask is built from symbols, and most APIs taking one also accept a bare
+# symbol or an iterable of symbols in its place, so an explicit `AccessMask`
+# is only needed to combine or inspect rights.
+#
+# `winreg.AccessMask` is a
+# [`security.windows.AccessMask`](security.windows.AccessMask), so it
+# can be used wherever a Windows access mask is expected.
+#
+# ## Accepted symbols {: #winreg.AccessMask.accepted-symbols }
+#
+# Registry-specific rights:
+#
+# | Symbol                 | Meaning                       |
+# | ---------------------- | ----------------------------- |
+# | `:QUERY_VALUE:`        | Queries key values            |
+# | `:SET_VALUE:`          | Sets key values               |
+# | `:CREATE_SUB_KEY:`     | Creates subkeys               |
+# | `:ENUMERATE_SUB_KEYS:` | Enumerates subkeys            |
+# | `:NOTIFY:`             | Receives change notifications |
+# | `:CREATE_LINK:`        | Creates symbolic-link keys    |
+# | `:WOW64_64KEY:`        | Uses the 64-bit registry view |
+# | `:WOW64_32KEY:`        | Uses the 32-bit registry view |
+#
+# Registry composites, the ones worth reaching for by default:
+#
+# | Symbol         | Equivalent to                                                                                |
+# | -------------- | -------------------------------------------------------------------------------------------- |
+# | `:READ:`       | Query values, enumerate subkeys, receive change notifications, and read security information |
+# | `:WRITE:`      | Set values, create subkeys, and read security information                                    |
+# | `:READ_WRITE:` | `:READ:` and `:WRITE:` together                                                              |
+#
+# Generic Windows object rights, shared with every other Windows securable
+# object:
+#
+# | Symbol                      | Meaning                                          |
+# | --------------------------- | ------------------------------------------------ |
+# | `:DELETE:`                  | Deletes the key                                  |
+# | `:READ_CONTROL:`            | Reads the owner, group, and DACL                 |
+# | `:WRITE_DAC:`               | Writes the DACL                                  |
+# | `:WRITE_OWNER:`             | Takes ownership                                  |
+# | `:SYNCHRONIZE:`             | Waits on the handle                              |
+# | `:STANDARD_RIGHTS_REQUIRED:` | `:DELETE:`, `:READ_CONTROL:`, `:WRITE_DAC:`, and `:WRITE_OWNER:` |
+# | `:STANDARD_RIGHTS_ALL:`     | The standard rights plus `:SYNCHRONIZE:`         |
+# | `:ACCESS_SYSTEM_SECURITY:`  | Accesses the SACL                                |
+# | `:MAXIMUM_ALLOWED:`         | Requests every right the caller is granted       |
+# | `:GENERIC_READ:`            | Generic read, mapped by the registry             |
+# | `:GENERIC_WRITE:`           | Generic write, mapped by the registry            |
+# | `:GENERIC_EXECUTE:`         | Generic execute, mapped by the registry          |
+# | `:GENERIC_ALL:`             | Generic all, mapped by the registry              |
+#
+# ## Operators
+#
+# `|`, `&`, and `^` combine two masks. `~` complements a mask within the
+# accepted bits. Iterating a mask yields the symbols it represents.
+#
+# ## Example
+#
+# ```
+# let access = AccessMask :READ: :WRITE_DAC:
+# let full = (access | AccessMask(:SET_VALUE:))
+# for right = full
+#   echo $right
+# ```
+pub class AccessMask
+  # Builds a mask from rights.
+  #
+  # ## Example
+  #
+  # ```
+  # let a = AccessMask :QUERY_VALUE: :SET_VALUE:
+  # let b = AccessMask [:QUERY_VALUE:, :SET_VALUE:]
+  # ```
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) Rights, given as symbols or as a single
+    # iterable of symbols. See [Accepted symbols](winreg.AccessMask.accepted-symbols).
+    ...rights
+  do
+    throw nil
+
+  # Builds a mask from a native integer, preserving every bit including ones
+  # this type does not name.
+  #
+  # ## Returns
+  #
+  # `AccessMask`.
+  #
+  # ## Example
+  #
+  # ```
+  # let mask = AccessMask.from_int 0x20019
+  # ```
+  #[class]
+  pub def from_int
+    self
+    # ([`Int`](std.Int)) Native Windows access mask.
+    value
+  do
+    throw nil
+
+  # The complete native mask as an [`Int`](std.Int), including bits this
+  # type does not name.
+  #[getter]
+  pub def int self
+    throw nil
+
+  # Tests whether every bit a symbol stands for is set.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool).
+  #
+  # ## Example
+  #
+  # ```
+  # let access = AccessMask :READ:
+  # assert $access.contains(:QUERY_VALUE:)
+  # ```
+  pub def contains
+    self
+    # ([`Sym`](std.Sym)) Right to test. See [Accepted
+    # symbols](winreg.AccessMask.accepted-symbols).
+    right
+  do
+    throw nil
+
+# An open registry key.
+#
+# Returned by [`open`](winreg.open) and by `Key`'s own
+# [`open`](#open) and [`create`](#create).
+pub class Key
+  # Closes the key.
+  #
+  # Closing an already-closed key does nothing. A key that is never closed
+  # explicitly is closed when it is collected.
+  pub def close self
+    throw nil
+
+  # Creates a subkey, or opens it when it already exists.
+  #
+  # ## Returns
+  #
+  # `Key` when no `func` is given, otherwise the result of calling `func`.
+  #
+  # ## Example
+  #
+  # ```
+  # winreg.open :CURRENT_USER: access: :READ_WRITE: do |root|
+  #   root.create "Software/MyApp" do |app|
+  #     app.set "installed" true
+  # ```
+  pub def create
+    self
+    # ([`Str`](std.Str)) Path to the subkey, relative to this key.
+    subpath
+    # ([`Sym`](std.Sym)?) [Registry view](winreg.registry-views).
+    # Defaults to `:NATIVE:`.
+    :view = nil
+    # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)?) Access
+    # rights, as a mask, a symbol, or an iterable of symbols. Defaults to
+    # `:READ:`.
+    :access = nil
+    # (callable?) Called with the new `Key`, which is closed when it returns.
+    # Omit to receive the handle instead.
+    func = nil
+  do
+    throw nil
+
+  # Deletes a subkey.
+  #
+  # Recursive deletion removes a registry link itself rather than traversing
+  # or modifying its target.
+  #
+  # ## Errors
+  #
+  # | Exception                                        | Condition                                              |
+  # | ------------------------------------------------ | ------------------------------------------------------ |
+  # | [`sys.NotFoundError`](sys.NotFoundError) | The subkey does not exist                              |
+  # | `sys.DirectoryNotEmptyError`                     | The subkey has children and `all: true` was not passed |
+  #
+  # ## Example
+  #
+  # ```
+  # winreg.open :CURRENT_USER: access: :READ_WRITE: do |root|
+  #   root.delete "Software/MyApp"
+  #   root.delete "Software/MyAppTree" all: true
+  #   root.delete "Software/Missing" ignore: true
+  # ```
+  pub def delete
+    self
+    # ([`Str`](std.Str)) Path to the subkey, relative to this key.
+    subpath
+    # ([`Sym`](std.Sym)?) [Registry view](winreg.registry-views).
+    # Defaults to `:NATIVE:`.
+    :view = nil
+    # ([`Bool`](std.Bool)?) Delete the subkey's values and descendants
+    # too. Without it a subkey that has children is refused.
+    :all = nil
+    # ([`Bool`](std.Bool)?) Treat a missing subkey as success.
+    :ignore = nil
+  do
+    throw nil
+
+  # Deletes a value.
+  #
+  # ## Errors
+  #
+  # [`sys.NotFoundError`](sys.NotFoundError) when no value of that
+  # name exists.
+  #
+  # ## Example
+  #
+  # ```
+  # key.delete_value "installed"
+  # ```
+  pub def delete_value
+    self
+    # ([`Str`](std.Str)) Value name; `""` is the key's default value.
+    name
+  do
+    throw nil
+
+  # Reads a value's data.
+  #
+  # ## Returns
+  #
+  # The value's natural Do representation -- see
+  # [`Value.value`](winreg.Value.value) for the mapping.
+  #
+  # ## Errors
+  #
+  # [`sys.NotFoundError`](sys.NotFoundError) when no value of that
+  # name exists. Use [`get_value`](winreg.Key.get_value) to test for one instead.
+  #
+  # ## Example
+  #
+  # ```
+  # let temp = env.get "TEMP"
+  # ```
+  pub def get
+    self
+    # ([`Str`](std.Str)) Value name; `""` is the key's default value.
+    name
+  do
+    throw nil
+
+  # Reads a value as a [`Value`](winreg.Value), or `nil` when it does not exist.
+  #
+  # Unlike [`get`](winreg.Key.get) this never raises for a missing value, and it keeps
+  # the value's kind rather than only its coerced data -- use it to test for
+  # existence or to inspect a raw `REG_*` kind.
+  #
+  # ## Returns
+  #
+  # [`Value`](winreg.Value), or `nil`.
+  #
+  # ## Example
+  #
+  # ```
+  # let entry = env.get_value "TEMP"
+  # if entry
+  #   echo "TEMP is a $entry.kind value: $entry.value"
+  # else
+  #   echo "TEMP is not set"
+  # ```
+  pub def get_value
+    self
+    # ([`Str`](std.Str)) Value name; `""` is the key's default value.
+    name
+  do
+    throw nil
+
+  # Creates a registry link.
+  #
+  # The target need not exist. Arguments follow `ln -s` ordering: target
+  # first, link last.
+  #
+  # ## Errors
+  #
+  # | Exception                | Condition                                           |
+  # | ------------------------ | --------------------------------------------------- |
+  # | `sys.AlreadyExistsError` | The destination already exists and was not modified |
+  # | `sys.InvalidInputError`  | A path contains NUL                                 |
+  #
+  # ## Example
+  #
+  # ```
+  # root.link :CURRENT_USER: r"Software\MyApp" "MyAppLink"
+  # ```
+  pub def link
+    self
+    # ([`Sym`](std.Sym)) [Registry root](winreg.registry-roots) the
+    # target lives under.
+    target_root
+    # ([`Str`](std.Str)) Target path relative to `target_root`.
+    target_subpath
+    # ([`Str`](std.Str)) New link path relative to this key.
+    link_subpath
+    # ([`Sym`](std.Sym)?) [Registry view](winreg.registry-views)
+    # used for both the target mapping and the destination. Defaults to
+    # `:NATIVE:`.
+    :view = nil
+  do
+    throw nil
+
+  # Opens a subkey.
+  #
+  # ## Returns
+  #
+  # `Key` when no `func` is given, otherwise the result of calling `func`.
+  #
+  # ## Errors
+  #
+  # | Exception                                                        | Condition                 |
+  # | ---------------------------------------------------------------- | ------------------------- |
+  # | [`sys.NotFoundError`](sys.NotFoundError)                 | The subkey does not exist |
+  # | [`sys.PermissionDeniedError`](sys.PermissionDeniedError) | Access was denied         |
+  #
+  # ## Example
+  #
+  # ```
+  # winreg.open :CURRENT_USER: do |root|
+  #   root.open "Environment" do |env|
+  #     echo (env.get "TEMP")
+  # ```
+  pub def open
+    self
+    # ([`Str`](std.Str)) Path to the subkey, relative to this key.
+    subpath
+    # ([`Sym`](std.Sym)?) [Registry view](winreg.registry-views).
+    # Defaults to `:NATIVE:`.
+    :view = nil
+    # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)?) Access
+    # rights, as a mask, a symbol, or an iterable of symbols. Defaults to
+    # `:READ:`.
+    :access = nil
+    # ([`Sym`](std.Sym)?) [Link
+    # resolution](winreg.link-resolution): `:TARGET:` follows a link,
+    # `:LINK:` opens the link key itself. Defaults to `:TARGET:`.
+    :resolve = nil
+    # (callable?) Called with the `Key`, which is closed when it returns.
+    # Omit to receive the handle instead.
+    func = nil
+  do
+    throw nil
+
+  # Reads a registry link without following it.
+  #
+  # An alias root such as `:CLASSES_ROOT:` or `:CURRENT_CONFIG:` may report
+  # the physical `:LOCAL_MACHINE:` or `:USERS:` path backing it.
+  #
+  # ## Returns
+  #
+  # [`LinkTarget`](winreg.LinkTarget).
+  #
+  # ## Errors
+  #
+  # | Exception               | Condition                   |
+  # | ----------------------- | --------------------------- |
+  # | `sys.InvalidInputError` | The key is not a link       |
+  # | `sys.InvalidDataError`  | The link value is malformed |
+  #
+  # ## Example
+  #
+  # ```
+  # let target = root.read_link "MyAppLink"
+  # echo $target.native
+  # ```
+  pub def read_link
+    self
+    # ([`Str`](std.Str)) Link path relative to this key.
+    subpath
+    # ([`Sym`](std.Sym)?) [Registry view](winreg.registry-views).
+    # Defaults to `:NATIVE:`.
+    :view = nil
+  do
+    throw nil
+
+  # Reads parts of the key's Windows security descriptor through its open
+  # handle.
+  #
+  # The key must already hold the rights the requested components need.
+  #
+  # ## Returns
+  #
+  # [`security.windows.SecDesc`](security.windows.SecDesc).
+  #
+  # ## Example
+  #
+  # ```
+  # let desc = key.sec_desc dacl: true owner: false group: false
+  # ```
+  pub def sec_desc
+    self
+    # ([`Bool`](std.Bool)?) Load the owner SID. Defaults to `true`.
+    :owner = nil
+    # ([`Bool`](std.Bool)?) Load the primary group SID. Defaults to
+    # `true`.
+    :group = nil
+    # ([`Bool`](std.Bool)?) Load the discretionary ACL. Defaults to
+    # `true`.
+    :dacl = nil
+    # ([`Bool`](std.Bool)?) Load the system ACL. Defaults to `false`.
+    :sacl = nil
+  do
+    throw nil
+
+  # Writes a value.
+  #
+  # ## Example
+  #
+  # ```
+  # key.set "installed" true
+  # key.set "path" r"C:\Program Files\MyApp"
+  # key.set "tags" ["a", "b"]
+  # key.set "raw" b"\x01\x02" kind: :BINARY:
+  # ```
+  pub def set
+    self
+    # ([`Str`](std.Str)) Value name; `""` is the key's default value.
+    name
+    # The Do value to write.
+    value
+    # ([`Sym`](std.Sym)?) [Value kind](winreg.value-kinds) to store
+    # under. Omit to let the kind be decided from what is already there, or
+    # from `value` itself.
+    #
+    # Without `kind`, `value` is coerced into whatever kind is already stored
+    # under `name`. An unrecognized raw `REG_*` kind -- see
+    # [`Value.kind`](winreg.Value.kind) -- round-trips by writing `value` back
+    # under the same raw kind, so it must be a [`Bin`](std.Bin).
+    #
+    # When no value exists yet, the kind comes from `value`'s own Do type:
+    #
+    # | Do type                          | Kind                                     |
+    # | -------------------------------- | ---------------------------------------- |
+    # | [`Str`](std.Str)           | `:SZ:`                                   |
+    # | Iterable of [`Str`](std.Str) | `:MULTI_SZ:`                           |
+    # | [`Bool`](std.Bool)         | `:DWORD:`, with data `0` or `1`          |
+    # | [`Int`](std.Int)           | `:DWORD:` if it fits in 32 bits, else `:QWORD:` |
+    # | [`Bin`](std.Bin)           | `:BINARY:`                               |
+    # | `nil`                            | `:NONE:`                                 |
+    #
+    # Coercing a `Bool` into a DWORD or QWORD kind, whether existing or given
+    # here, keeps that kind; reading it back returns an
+    # [`Int`](std.Int).
+    :kind = nil
+  do
+    throw nil
+
+  # Lists the names of this key's immediate subkeys.
+  #
+  # The enumeration is live: entries are fetched as iteration advances.
+  #
+  # ## Returns
+  #
+  # An [`Iter`](std.Iter) yielding [`Str`](std.Str). Its `len` is
+  # the count captured when the enumeration was opened.
+  #
+  # ## Example
+  #
+  # ```
+  # for name = key.subkeys()
+  #   echo $name
+  # ```
+  pub def subkeys self
+    throw nil
+
+  # Applies the components a Windows security descriptor's `mask` selects,
+  # through the key's open handle.
+  #
+  # The key must already hold the rights the selected components need.
+  #
+  # ## Example
+  #
+  # ```
+  # key.update_sec_desc $desc
+  # key.update_sec_desc dacl: $acl
+  # ```
+  pub def update_sec_desc
+    self
+    # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict)?)
+    # Descriptor, packet, or spec.
+    desc = nil
+    # The descriptor's [component
+    # options](security.windows.SecDesc.(init)--component-options), accepted
+    # here exactly as
+    # [`sec_desc`](security.windows.sec_desc) takes
+    # them. They may replace `desc` or accompany it.
+    ...options
+  do
+    throw nil
+
+  # Lists this key's values.
+  #
+  # The enumeration is live: entries are fetched as iteration advances.
+  #
+  # ## Returns
+  #
+  # An [`Iter`](std.Iter) yielding [`Value`](winreg.Value)s. Its `len` is
+  # the count captured when the enumeration was opened.
+  #
+  # ## Example
+  #
+  # ```
+  # for entry = key.values()
+  #   echo "$(entry.name) ($(entry.kind)): $(entry.value)"
+  # ```
+  pub def values self
+    throw nil
+
+# A registry link's target, kept in both its native and canonical forms.
+#
+# Returned by [`Key.read_link`](winreg.Key.read_link).
+pub class LinkTarget
+  # The lossless `\Registry\...` target as a [`Str`](std.Str).
+  #[getter]
+  pub def native self
+    throw nil
+
+  # The canonical [registry root](winreg.registry-roots) the target lives
+  # under, or `nil` when the native path is not one this module recognizes.
+  #
+  # A canonical projection uses `:CURRENT_USER:`, `:USERS:`, or
+  # `:LOCAL_MACHINE:`.
+  #[getter]
+  pub def root self
+    throw nil
+
+  # The target path relative to [`root`](winreg.LinkTarget.root), or `nil` when the native
+  # path is not recognized.
+  #[getter]
+  pub def subpath self
+    throw nil
+
+# One named value read from a key.
+#
+# Yielded by [`Key.values`](winreg.Key.values) and returned by
+# [`Key.get_value`](winreg.Key.get_value).
+pub class Value
+  # The value's `REG_*` kind, as a [`Sym`](std.Sym) or an
+  # [`Int`](std.Int).
+  #
+  # A recognized kind is one of the [value kinds](winreg.value-kinds). An
+  # unrecognized one is reported as its raw kind number instead, and
+  # [`value`](winreg.Value.value) is then the raw [`Bin`](std.Bin) payload.
+  #[getter]
+  pub def kind self
+    throw nil
+
+  # The value's name as a [`Str`](std.Str). A key's default value has
+  # the name `""`.
+  #[getter]
+  pub def name self
+    throw nil
+
+  # The value's data in its natural Do representation.
+  #
+  # | [`kind`](winreg.Value.kind)                            | Type                                     |
+  # | ------------------------------------------ | ---------------------------------------- |
+  # | `:SZ:`, `:EXPAND_SZ:`                      | [`Str`](std.Str)                   |
+  # | `:MULTI_SZ:`                               | [`Array`](std.Array) of `Str`      |
+  # | `:DWORD:`, `:DWORD_BIG_ENDIAN:`, `:QWORD:` | [`Int`](std.Int)                   |
+  # | `:BINARY:`                                 | [`Bin`](std.Bin)                   |
+  # | `:NONE:`                                   | `nil`                                    |
+  # | unrecognized (integer `kind`)              | [`Bin`](std.Bin), the raw payload  |
+  #
+  # ## Example
+  #
+  # ```
+  # for entry = key.values()
+  #   echo "$(entry.name) ($(entry.kind)): $(entry.value)"
+  # ```
+  #[getter]
+  pub def value self
+    throw nil
+
+# Opens a predefined registry root.
+#
+# ## Returns
+#
+# [`Key`](winreg.Key) when no `func` is given, otherwise the result of calling
+# `func`.
+#
+# ## Example
+#
+# ```
+# open :CURRENT_USER: do |root|
+#   echo (root.open("Environment").get "TEMP")
+#
+# let root = open :LOCAL_MACHINE: access: :READ_WRITE:
+# root.close()
+# ```
+pub def open
+  # ([`Sym`](std.Sym)) [Registry root](winreg.registry-roots) to
+  # open.
+  root
+  # ([`Sym`](std.Sym)?) [Registry view](winreg.registry-views).
+  # Defaults to `:NATIVE:`.
+  :view = nil
+  # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)?) Access rights,
+  # as a mask, a symbol, or an iterable of symbols. Defaults to `:READ:`.
+  :access = nil
+  # (callable?) Called with the [`Key`](winreg.Key), which is closed when it
+  # returns. Omit to receive the handle instead.
+  func = nil
+do
+  throw nil

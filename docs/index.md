@@ -104,29 +104,29 @@ value is a function executed inside the build container's VFS context.
 ## Included Features
 
 **Automation and system integration** — external programs
-([`proc.run`](./api/proc/index.md#run)), filesystems
-([`fs`](./api/fs/index.md)), containers ([`docker`](./api/docker/index.md),
-[`podman`](./api/podman/index.md), [`toolbx`](./api/toolbx.md)),
-[SSH](./api/ssh.md), [WSL](./api/wsl.md), privilege elevation
-([`admin`](./api/admin.md), [`sudo`](./api/sudo.md)), argument parsing
-([`Args`](./api/args/index.md)), system integration
-([`sys`](./api/sys/index.md), [`systemd`](./api/systemd/index.md),
-[`xdg`](./api/xdg.md)), identity and Windows access control
-([`security`](./api/security/index.md)), and safe terminal output
-([`term`](./api/term/index.md), [`progress`](./api/progress/index.md)).
+([`proc.run`](proc.run)), filesystems
+([`fs`](fs)), containers ([`docker`](docker),
+[`podman`](podman), [`toolbx`](toolbx)),
+[SSH](ssh), [WSL](wsl), privilege elevation
+([`admin`](admin), [`sudo`](sudo)), argument parsing
+([`Args`](args)), system integration
+([`sys`](sys), [`systemd`](systemd),
+[`xdg`](xdg)), identity and Windows access control
+([`security`](security)), and safe terminal output
+([`term`](term), [`progress`](progress)).
 
-**Data and protocols** — artifact [transfers](./api/transfer/index.md),
-[HTTP](./api/http/index.md),
-[URLs](./api/url/index.md), [JSON](./api/json.md), [TOML](./api/toml.md),
-[XML](./api/xml/index.md), [YAML](./api/yaml.md),
-[SQLite](./api/sqlite/index.md), [regex](./api/regex/index.md),
-[base64](./api/base64.md), [digests](./api/digest/index.md),
-[zip](./api/zip/index.md), [tar](./api/tar/index.md),
-[time](./api/time/index.md), [glob](./api/glob/index.md),
-[patch](./api/patch/index.md), and
-[shlex](./api/shlex.md).
+**Data and protocols** — artifact [transfers](transfer),
+[HTTP](http),
+[URLs](url), [JSON](json), [TOML](toml),
+[XML](xml), [YAML](yaml),
+[SQLite](sqlite), [regex](regex),
+[base64](base64), [digests](digest),
+[zip](zip), [tar](tar),
+[time](time), [glob](glob),
+[patch](patch), and
+[shlex](shlex).
 
-**Concurrency** — [`strand`](./api/strand/index.md) provides structured
+**Concurrency** — [`strand`](strand) provides structured
 concurrency, cancellation, channels, pipelines, streams, background work, and
 scoped resources.
 

@@ -95,23 +95,23 @@ and objects.
 
 ### `shell`
 
-| Name                                       | Description                                      |
-| ------------------------------------------ | ------------------------------------------------ |
-| [`exit`](../api/shell/index.md#exit-code)  | Exit with a status code (default: 0)             |
-| [`cd`](../api/shell/index.md#cd-path-func) | Change directory; optionally run func in new dir |
-| [`env`](../api/shell/index.md#env)         | Access environment variables                     |
-| Module as [`shell`](../api/shell/index.md) | Shell context and control                        |
+| Name                       | Description                                      |
+| -------------------------- | ------------------------------------------------ |
+| [`exit`](shell.exit)       | Exit with a status code (default: 0)             |
+| [`cd`](shell.cd)           | Change directory; optionally run func in new dir |
+| [`env`](shell.env)         | Access environment variables                     |
+| Module as [`shell`](shell) | Shell context and control                        |
 
 ### `term`
 
-| Name                                               | Description                                   |
-| -------------------------------------------------- | --------------------------------------------- |
-| [`echo`](../api/term/index.md#echo-args)           | Print sanitized arguments separated by spaces |
-| [`print`](../api/term/index.md#print-options-args) | Print concatenated terminal output            |
+| Name                  | Description                                   |
+| --------------------- | --------------------------------------------- |
+| [`echo`](term.echo)   | Print sanitized arguments separated by spaces |
+| [`print`](term.print) | Print concatenated terminal output            |
 
 ### `proc`
 
-| Name                                         | Description                       |
-| -------------------------------------------- | --------------------------------- |
-| [`sub`](../api/proc/index.md#sub-func-chomp) | Capture func's output as a string |
-| [`run`](../api/proc/index.md#run)            | Run external programs             |
+| Name              | Description                       |
+| ----------------- | --------------------------------- |
+| [`sub`](proc.sub) | Capture func's output as a string |
+| [`run`](proc.run) | Run external programs             |

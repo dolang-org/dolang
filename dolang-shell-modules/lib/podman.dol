@@ -1,25 +1,25 @@
 # Runs and manages Podman containers and images.
 #
-# ## Create and Run Parameters
+# ## Create and Run Parameters {: #podman.create-and-run-parameters }
 #
 # `create` and `run` share these parameters. `cmd` is required by `run` and
 # optional for `create`.
 #
 # | Name         | Type                             | Description                                 |
 # | ------------ | -------------------------------- | ------------------------------------------- |
-# | `image`      | [`Str`](../std/str.md)           | Image name or ID                            |
-# | `cmd`        | [`Str`](../std/str.md)           | Command to run instead of the image command |
-# | `cd`         | [`Str`](../std/str.md)           | Optional container working directory        |
-# | `env`        | [`Dict`](../std/dict.md)         | Container environment                       |
-# | `pull`       | [`Sym`](../std/sym.md)           | Image pull policy; default `:MISSING:`      |
-# | `name`       | [`Str`](../std/str.md)           | Optional container name                     |
-# | `mounts`     | [`Iterable`](../std/iterable.md) | Mount specifications                        |
-# | `labels`     | [`Dict`](../std/dict.md)         | Container labels                            |
-# | `ports`      | [`Iterable`](../std/iterable.md) | Published-port specifications               |
-# | `networks`   | [`Iterable`](../std/iterable.md) | Network names or IDs                        |
-# | `user`       | [`Str`](../std/str.md)           | Optional user or `user:group`               |
-# | `entrypoint` | [`Str`](../std/str.md)           | Optional entrypoint override                |
-# | `args`       | [`Value`](../std/value.md)       | Arguments passed to `cmd`                   |
+# | `image`      | [`Str`](std.Str)           | Image name or ID                            |
+# | `cmd`        | [`Str`](std.Str)           | Command to run instead of the image command |
+# | `cd`         | [`Str`](std.Str)           | Optional container working directory        |
+# | `env`        | [`Dict`](std.Dict)         | Container environment                       |
+# | `pull`       | [`Sym`](std.Sym)           | Image pull policy; default `:MISSING:`      |
+# | `name`       | [`Str`](std.Str)           | Optional container name                     |
+# | `mounts`     | [`Iterable`](std.Iterable) | Mount specifications                        |
+# | `labels`     | [`Dict`](std.Dict)         | Container labels                            |
+# | `ports`      | [`Iterable`](std.Iterable) | Published-port specifications               |
+# | `networks`   | [`Iterable`](std.Iterable) | Network names or IDs                        |
+# | `user`       | [`Str`](std.Str)           | Optional user or `user:group`               |
+# | `entrypoint` | [`Str`](std.Str)           | Optional entrypoint override                |
+# | `args`       | [`Value`](std.Value)       | Arguments passed to `cmd`                   |
 #
 # ### `pull`
 #
@@ -37,25 +37,25 @@
 #
 # ### `mounts`
 #
-# Each element is a [`Dict`](../std/dict.md) with these keys:
+# Each element is a [`Dict`](std.Dict) with these keys:
 #
 # | Name       | Type                        | Meaning                                      |
 # | ---------- | --------------------------- | -------------------------------------------- |
-# | `type`     | [`Sym`](../std/sym.md)      | `:BIND:`, `:VOLUME:`, or `:TMPFS:`           |
-# | `target`   | [`Value`](../std/value.md)  | Mount path in the container                  |
-# | `source`   | [`Value`](../std/value.md)  | Host path or volume name; required for binds |
-# | `readonly` | [`Bool`](../std/bool.md)    | Mount read-only when `true`; default `false` |
+# | `type`     | [`Sym`](std.Sym)      | `:BIND:`, `:VOLUME:`, or `:TMPFS:`           |
+# | `target`   | [`Value`](std.Value)  | Mount path in the container                  |
+# | `source`   | [`Value`](std.Value)  | Host path or volume name; required for binds |
+# | `readonly` | [`Bool`](std.Bool)    | Mount read-only when `true`; default `false` |
 #
 # ### `ports`
 #
-# Each element is a [`Dict`](../std/dict.md) with these keys:
+# Each element is a [`Dict`](std.Dict) with these keys:
 #
 # | Name             | Type                        | Meaning                                      |
 # | ---------------- | --------------------------- | -------------------------------------------- |
-# | `container_port` | [`Value`](../std/value.md)  | Container port                               |
-# | `host_port`      | [`Value`](../std/value.md)  | Host port; assigned automatically if omitted |
-# | `host_ip`        | [`Str`](../std/str.md)      | Optional host address to bind                |
-# | `protocol`       | [`Sym`](../std/sym.md)      | `:TCP:` (default), `:UDP:`, or `:SCTP:`      |
+# | `container_port` | [`Value`](std.Value)  | Container port                               |
+# | `host_port`      | [`Value`](std.Value)  | Host port; assigned automatically if omitted |
+# | `host_ip`        | [`Str`](std.Str)      | Optional host address to bind                |
+# | `protocol`       | [`Sym`](std.Sym)      | `:TCP:` (default), `:UDP:`, or `:SCTP:`      |
 
 import
   proc
@@ -84,7 +84,7 @@ let podman = PodmanRuntime()
 
 # Runs a command in a temporary Podman container.
 #
-# See [Create and run parameters](#create-and-run-parameters).
+# See [Create and run parameters](podman.create-and-run-parameters).
 #
 # ## Returns
 #
@@ -108,13 +108,13 @@ do
 
 # Creates a stopped Podman container.
 #
-# See [Create and run parameters](#create-and-run-parameters).
+# See [Create and run parameters](podman.create-and-run-parameters).
 #
 # ## Parameters
 #
 # | Name      | Type                          | Description              |
 # | --------- | ----------------------------- | ------------------------ |
-# | `restart` | [`Dict`](../std/dict.md) | Container restart policy |
+# | `restart` | [`Dict`](std.Dict) | Container restart policy |
 #
 # ### `restart`
 #
@@ -122,8 +122,8 @@ do
 #
 # | Name          | Type                   | Meaning                             |
 # | ------------- | ---------------------- | ----------------------------------- |
-# | `policy`      | [`Sym`](../std/sym.md) | Restart policy                      |
-# | `max_retries` | [`Int`](../std/int.md) | Optional retry limit for `:ON_FAILURE:` only |
+# | `policy`      | [`Sym`](std.Sym) | Restart policy                      |
+# | `max_retries` | [`Int`](std.Int) | Optional retry limit for `:ON_FAILURE:` only |
 #
 # `policy` accepts:
 #
@@ -136,7 +136,7 @@ do
 #
 # ## Returns
 #
-# [`Container`](./container.md) in the `:CREATED:` state
+# [`Container`](_container.dockman.Container) in the `:CREATED:` state
 pub def create
   image cmd = nil
   :name = nil
@@ -164,11 +164,11 @@ do
 #
 # | Name    | Type                     | Description                           |
 # | ------- | ------------------------ | ------------------------------------- |
-# | `image` | [`Str`](../std/str.md)   | Image name or ID                      |
-# | `func`  | [`Func`](../std/func.md) | Function to run                       |
-# | `cd`    | [`Str`](../std/str.md)   | Optional container working directory  |
-# | `env`   | [`Dict`](../std/dict.md) | Container environment                 |
-# | `pull`  | [`Sym`](../std/sym.md)   | `:MISSING:`, `:ALWAYS:`, or `:NEVER:` |
+# | `image` | [`Str`](std.Str)   | Image name or ID                      |
+# | `func`  | [`Func`](std.Func) | Function to run                       |
+# | `cd`    | [`Str`](std.Str)   | Optional container working directory  |
+# | `env`   | [`Dict`](std.Dict) | Container environment                 |
+# | `pull`  | [`Sym`](std.Sym)   | `:MISSING:`, `:ALWAYS:`, or `:NEVER:` |
 #
 # ## Returns
 #
@@ -182,12 +182,12 @@ pub def with image func :cd = nil :env = {} :pull = :MISSING:
 #
 # | Name     | Type                     | Description                            |
 # | -------- | ------------------------ | -------------------------------------- |
-# | `pull`   | [`Sym`](../std/sym.md)   | Image pull policy; default `:MISSING:` |
-# | `mounts` | [`Iterable`](../std/iterable.md) | Mounts available to every build step   |
-# | `cd`     | [`Str`](../std/str.md)   | Optional working directory for `run` steps |
-# | `env`    | [`Dict`](../std/dict.md)  | Environment for `run` steps            |
-# | `from`   | [`Str`](../std/str.md)   | Base image                             |
-# | `args`   | [`Value`](../std/value.md) | Ordered build items                    |
+# | `pull`   | [`Sym`](std.Sym)   | Image pull policy; default `:MISSING:` |
+# | `mounts` | [`Iterable`](std.Iterable) | Mounts available to every build step   |
+# | `cd`     | [`Str`](std.Str)   | Optional working directory for `run` steps |
+# | `env`    | [`Dict`](std.Dict)  | Environment for `run` steps            |
+# | `from`   | [`Str`](std.Str)   | Base image                             |
+# | `args`   | [`Value`](std.Value) | Ordered build items                    |
 #
 # ### `pull`
 #
@@ -199,14 +199,14 @@ pub def with image func :cd = nil :env = {} :pull = :MISSING:
 #
 # ### `mounts`
 #
-# Each element is a [`Dict`](../std/dict.md) with these keys:
+# Each element is a [`Dict`](std.Dict) with these keys:
 #
 # | Name     | Type                   | Meaning                                      |
 # | -------- | ---------------------- | -------------------------------------------- |
-# | `type`   | [`Sym`](../std/sym.md) | `:CACHE:`, `:BIND:`, `:VOLUME:`, or `:TMPFS:` |
-# | `target` | [`Value`](../std/value.md) | Mount path in the container                  |
-# | `source` | [`Value`](../std/value.md) | Mount source; required for `:BIND:`           |
-# | `id`     | [`Value`](../std/value.md) | Optional cache ID; defaults to `target`       |
+# | `type`   | [`Sym`](std.Sym) | `:CACHE:`, `:BIND:`, `:VOLUME:`, or `:TMPFS:` |
+# | `target` | [`Value`](std.Value) | Mount path in the container                  |
+# | `source` | [`Value`](std.Value) | Mount source; required for `:BIND:`           |
+# | `id`     | [`Value`](std.Value) | Optional cache ID; defaults to `target`       |
 #
 # ### `args`
 #
@@ -214,11 +214,11 @@ pub def with image func :cd = nil :env = {} :pull = :MISSING:
 #
 # | Pattern       | Value                       | Meaning                            |
 # | ------------- | --------------------------- | ---------------------------------- |
-# | `tag: name`   | [`Str`](../std/str.md)       | Apply an output image tag          |
-# | `run: func`   | [`Func`](../std/func.md)    | Run a function inside the container |
-# | `add: spec`   | [`Dict`](../std/dict.md)     | Add a file to the image            |
-# | `patch: spec` | [`Dict`](../std/dict.md)     | Apply a patch inside the image     |
-# | `commit: msg` | [`Str`](../std/str.md)       | Commit a layer with a message      |
+# | `tag: name`   | [`Str`](std.Str)       | Apply an output image tag          |
+# | `run: func`   | [`Func`](std.Func)    | Run a function inside the container |
+# | `add: spec`   | [`Dict`](std.Dict)     | Add a file to the image            |
+# | `patch: spec` | [`Dict`](std.Dict)     | Apply a patch inside the image     |
+# | `commit: msg` | [`Str`](std.Str)       | Commit a layer with a message      |
 #
 # #### `add: spec`
 #
@@ -226,10 +226,10 @@ pub def with image func :cd = nil :env = {} :pull = :MISSING:
 #
 # | Name      | Type                                                                  | Meaning                         |
 # | --------- | --------------------------------------------------------------------- | ------------------------------- |
-# | `source`  | [`Str`](../std/str.md)\|[`fs.Path`](../fs/path.md)\|[`url.Url`](../url/url.md) | Source path or URL              |
-# | `content` | [`Str`](../std/str.md)\|[`Bin`](../std/bin.md)                        | Content to write                |
-# | `target`  | [`Str`](../std/str.md)\|[`fs.Path`](../fs/path.md)                    | Destination path                |
-# | `chmod`   | [`Int`](../std/int.md)\|[`fs.unix.Mode`](../fs/unix/mode.md)         | Optional destination permissions |
+# | `source`  | [`Str`](std.Str)\|[`fs.Path`](fs.Path)\|[`url.Url`](url.Url) | Source path or URL              |
+# | `content` | [`Str`](std.Str)\|[`Bin`](std.Bin)                        | Content to write                |
+# | `target`  | [`Str`](std.Str)\|[`fs.Path`](fs.Path)                    | Destination path                |
+# | `chmod`   | [`Int`](std.Int)\|[`fs.unix.Mode`](fs.unix.Mode)         | Optional destination permissions |
 #
 # If `target` is a directory, a source path or URL retains its filename.
 # Direct content is always written to `target` itself.
@@ -240,12 +240,12 @@ pub def with image func :cd = nil :env = {} :pull = :MISSING:
 #
 # | Name      | Type                                            | Meaning                    |
 # | --------- | ----------------------------------------------- | -------------------------- |
-# | `source`  | [`Str`](../std/str.md)\|[`fs.Path`](../fs/path.md) | Unified patch file         |
-# | `content` | [`Str`](../std/str.md)\|[`Bin`](../std/bin.md) | Unified patch data         |
+# | `source`  | [`Str`](std.Str)\|[`fs.Path`](fs.Path) | Unified patch file         |
+# | `content` | [`Str`](std.Str)\|[`Bin`](std.Bin) | Unified patch data         |
 #
 # ## Returns
 #
-# [`Image`](./image.md)
+# [`Image`](_container.dockman.Image)
 #
 # ## Example
 #

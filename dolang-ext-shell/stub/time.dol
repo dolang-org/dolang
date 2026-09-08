@@ -1,0 +1,499 @@
+# UTC instants, calendar dates, durations, sleeping, and scoped timeouts.
+#
+# Everything here is UTC. There is no local-time or time-zone support, and no
+# way to attach an offset to a [`DateTime`](time.DateTime).
+#
+# ## Duration arguments {: #time.duration-arguments }
+#
+# Wherever a duration is accepted, it may be given either as a
+# [`Duration`](time.Duration) or as a plain number of seconds --
+# [`Int`](std.Int) or [`Float`](std.Float). Numeric durations must
+# be non-negative, and floating-point ones finite.
+
+# A UTC instant, held as Unix nanoseconds.
+#
+# There is no constructor; use [`now`](time.DateTime.now),
+# [`from_unix`](time.DateTime.from_unix) or
+# [`parse_rfc`](time.DateTime.parse_rfc).
+pub class DateTime
+  # Returns the current UTC instant.
+  #
+  # ## Example
+  #
+  # ```
+  # echo $DateTime.now()
+  # ```
+  #[class]
+  pub def now self
+    throw nil
+
+  # Builds an instant from a Unix timestamp.
+  #
+  # At least one of `seconds` and `nanos` must be given. When both are, `nanos`
+  # is added to `seconds`, which is how a whole-seconds timestamp and a
+  # sub-second remainder are combined without going through a float.
+  #
+  # ## Errors
+  #
+  # | Exception        | Condition                                           |
+  # | ---------------- | --------------------------------------------------- |
+  # | `TypeError`      | Neither argument was given, or one has a wrong type |
+  # | `OverflowError`  | The combined timestamp does not fit                 |
+  #
+  # ## Example
+  #
+  # ```
+  # echo $ DateTime.from_unix 1700000000
+  # echo $ DateTime.from_unix 1.25
+  # echo $ DateTime.from_unix nanos: 1700000000123000000
+  # echo $ DateTime.from_unix 1700000000 nanos: 123000000
+  # ```
+  #[class]
+  pub def from_unix
+    self
+    # ([`Int`](std.Int)|[`Float`](std.Float)?) Seconds since the
+    # Unix epoch.
+    seconds = nil
+    # ([`Int`](std.Int)?) Nanoseconds since the Unix epoch, or, when
+    # `seconds` is also given, nanoseconds to add to it.
+    :nanos = nil
+  do
+    throw nil
+
+  # Parses an RFC 3339 date-time.
+  #
+  # An offset is required, and is applied to give the UTC instant; the offset
+  # itself is not retained.
+  #
+  # ## Returns
+  #
+  # [`DateTime`](time.DateTime)
+  #
+  # ## Errors
+  #
+  # | Exception      | Condition                                |
+  # | -------------- | ---------------------------------------- |
+  # | `TypeError`    | `text` is not a [`Str`](std.Str)   |
+  # | `RuntimeError` | The input is not a valid RFC 3339 string |
+  #
+  # ## Example
+  #
+  # ```
+  # let dt = DateTime.parse_rfc("2024-01-02T03:04:05Z")
+  # assert_eq $dt.rfc() "2024-01-02T03:04:05Z"
+  # ```
+  #[class]
+  pub def parse_rfc
+    self
+    # ([`Str`](std.Str)) Date-time text.
+    text
+  do
+    throw nil
+
+  # ([`Float`](std.Float)) Unix seconds. Approximate: far-from-epoch
+  # instants lose sub-second precision.
+  #[getter]
+  pub def unix_secs self
+    throw nil
+
+  # ([`Int`](std.Int)) Unix nanoseconds. Exact.
+  #[getter]
+  pub def unix_nanos self
+    throw nil
+
+  # Returns the UTC calendar date.
+  #
+  # ## Returns
+  #
+  # [`Date`](time.Date)
+  pub def date self
+    throw nil
+
+  # Returns the RFC 3339 representation, in UTC.
+  #
+  # ## Returns
+  #
+  # [`Str`](std.Str)
+  #
+  # ## Example
+  #
+  # ```
+  # let dt = DateTime.from_unix(1700000000)
+  # echo $dt.rfc()
+  # ```
+  pub def rfc self
+    throw nil
+
+  # Compares two instants.
+  pub def (eq) self other
+    throw nil
+
+  # Orders two instants.
+  pub def (lt) self other
+    throw nil
+
+  # Hashes the value.
+  pub def (hash) self
+    throw nil
+
+  # Returns the [`Duration`](time.Duration) from `other` to this instant.
+  #
+  # ## Example
+  #
+  # ```
+  # let elapsed = (finish - start)
+  # echo $elapsed.secs
+  # ```
+  pub def (sub)
+    self
+    # ([`DateTime`](time.DateTime)) Instant to subtract.
+    other
+  do
+    throw nil
+
+  # Returns the RFC 3339 representation, as [`rfc`](time.DateTime.rfc) does.
+  pub def (str) self
+    throw nil
+
+# A calendar date, with no time of day and no time zone.
+#
+# To shift a date, use [`add_days`](time.Date.add_days) and
+# [`sub_days`](time.Date.sub_days) -- a [`Duration`](time.Duration) cannot be
+# added to a `Date`.
+pub class Date
+  # Returns the current UTC date.
+  #[class]
+  pub def today self
+    throw nil
+
+  # Builds a date from calendar components.
+  #
+  # ## Errors
+  #
+  # | Exception    | Condition                                                        |
+  # | ------------ | ---------------------------------------------------------------- |
+  # | `TypeError`  | An argument has the wrong type                                   |
+  # | `ValueError` | The month is out of range, or the components are not a real date |
+  #
+  # ## Example
+  #
+  # ```
+  # let d = Date.from_ymd 2024 1 2
+  # let d = Date.from_ymd 2024 $Month.JANUARY 2
+  # ```
+  #[class]
+  pub def from_ymd
+    self
+    # ([`Int`](std.Int)) Calendar year.
+    year
+    # ([`Month`](time.Month)|[`Int`](std.Int)) Month, or its number from
+    # 1 through 12.
+    month
+    # ([`Int`](std.Int)) Day of month.
+    day
+  do
+    throw nil
+
+  # Parses an RFC full-date, `YYYY-MM-DD`.
+  #
+  # ## Returns
+  #
+  # [`Date`](time.Date)
+  #
+  # ## Errors
+  #
+  # | Exception    | Condition                                        |
+  # | ------------ | ------------------------------------------------ |
+  # | `TypeError`  | `text` is not a [`Str`](std.Str)           |
+  # | `ValueError` | The input is not a valid `YYYY-MM-DD` date       |
+  #[class]
+  pub def parse_rfc
+    self
+    # ([`Str`](std.Str)) Date text.
+    text
+  do
+    throw nil
+
+  # ([`Int`](std.Int)) Calendar year.
+  #[getter]
+  pub def year self
+    throw nil
+
+  # ([`Month`](time.Month)) Calendar month.
+  #[getter]
+  pub def month self
+    throw nil
+
+  # ([`Int`](std.Int)) Day of month.
+  #[getter]
+  pub def day self
+    throw nil
+
+  # ([`Weekday`](time.Weekday)) Day of week.
+  #[getter]
+  pub def weekday self
+    throw nil
+
+  # Returns the RFC full-date representation, `YYYY-MM-DD`.
+  #
+  # ## Returns
+  #
+  # [`Str`](std.Str)
+  pub def rfc self
+    throw nil
+
+  # Returns midnight UTC on this date.
+  #
+  # ## Returns
+  #
+  # [`DateTime`](time.DateTime)
+  pub def datetime self
+    throw nil
+
+  # Returns the date a signed number of days later.
+  #
+  # ## Returns
+  #
+  # [`Date`](time.Date)
+  #
+  # ## Errors
+  #
+  # | Exception       | Condition                                  |
+  # | --------------- | ------------------------------------------ |
+  # | `TypeError`     | `days` is not an [`Int`](std.Int)    |
+  # | `OverflowError` | The result is outside the supported range  |
+  #
+  # ## Example
+  #
+  # ```
+  # let tomorrow = Date.today().add_days(1)
+  # ```
+  pub def add_days
+    self
+    # ([`Int`](std.Int)) Days to add. May be negative.
+    days
+  do
+    throw nil
+
+  # Returns the date a signed number of days earlier.
+  #
+  # ## Returns
+  #
+  # [`Date`](time.Date)
+  #
+  # ## Errors
+  #
+  # | Exception       | Condition                                  |
+  # | --------------- | ------------------------------------------ |
+  # | `TypeError`     | `days` is not an [`Int`](std.Int)    |
+  # | `OverflowError` | The result is outside the supported range  |
+  pub def sub_days
+    self
+    # ([`Int`](std.Int)) Days to subtract. May be negative.
+    days
+  do
+    throw nil
+
+  # Compares two dates.
+  pub def (eq) self other
+    throw nil
+
+  # Orders two dates.
+  pub def (lt) self other
+    throw nil
+
+  # Hashes the value.
+  pub def (hash) self
+    throw nil
+
+  # Returns the [`Duration`](time.Duration) between the two dates' midnights.
+  #
+  # The result is always a whole number of days.
+  pub def (sub)
+    self
+    # ([`Date`](time.Date)) Date to subtract.
+    other
+  do
+    throw nil
+
+  # Returns the `YYYY-MM-DD` form, as [`rfc`](time.Date.rfc) does.
+  pub def (str) self
+    throw nil
+
+# A calendar month.
+#
+# The twelve months are class fields, `Month.JANUARY` through `Month.DECEMBER`,
+# and are also indexable by number: `Month[1]` through `Month[12]`. There is no
+# constructor; the twelve values are the only instances.
+#
+# ## Example
+#
+# ```
+# assert_eq $Month[1] $Month.JANUARY
+# assert (Month.JANUARY < Month.FEBRUARY)
+# ```
+pub class Month
+  # Returns the following month, wrapping from December to January.
+  pub def next self
+    throw nil
+
+  # Returns the preceding month, wrapping from January to December.
+  pub def previous self
+    throw nil
+
+  # Returns the month with the given number.
+  #
+  # ## Errors
+  #
+  # | Exception                             | Condition                     |
+  # | ------------------------------------- | ----------------------------- |
+  # | [`ValueError`](std.ValueError) | The number is not 1 through 12 |
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq $Month[1] $Month.JANUARY
+  # ```
+  #[class]
+  pub def (index)
+    self
+    # ([`Int`](std.Int)) Month number, 1 through 12.
+    number
+  do
+    throw nil
+
+  # Compares two months.
+  pub def (eq) self other
+    throw nil
+
+  # Orders two months, in calendar order.
+  pub def (lt) self other
+    throw nil
+
+  # Hashes the value.
+  pub def (hash) self
+    throw nil
+
+  # Returns the uppercase English name, such as `JANUARY`.
+  pub def (str) self
+    throw nil
+
+# A day of the week.
+#
+# The seven days are class fields, `Weekday.MONDAY` through `Weekday.SUNDAY`.
+# There is no constructor, and the type is not indexable the way
+# [`Month`](time.Month) is. Weekdays are not ordered, so `<` and friends raise.
+pub class Weekday
+  # Returns the following weekday, wrapping from Sunday to Monday.
+  pub def next self
+    throw nil
+
+  # Returns the preceding weekday, wrapping from Monday to Sunday.
+  pub def previous self
+    throw nil
+
+  # Compares two weekdays.
+  pub def (eq) self other
+    throw nil
+
+  # Hashes the value.
+  pub def (hash) self
+    throw nil
+
+  # Returns the uppercase English name, such as `MONDAY`.
+  pub def (str) self
+    throw nil
+
+# A signed time span, with nanosecond precision.
+#
+# There is no constructor. Durations come from subtracting two
+# [`DateTime`](time.DateTime)s or two [`Date`](time.Date)s, and from APIs
+# elsewhere that report elapsed time.
+#
+# Durations do not support arithmetic: they cannot be added, subtracted, scaled
+# or negated.
+pub class Duration
+  # ([`Float`](std.Float)) Seconds. Approximate: long spans lose
+  # sub-second precision.
+  #[getter]
+  pub def secs self
+    throw nil
+
+  # ([`Int`](std.Int)) Total nanoseconds. Exact.
+  #[getter]
+  pub def nanos self
+    throw nil
+
+  # Compares two durations.
+  pub def (eq) self other
+    throw nil
+
+  # Orders two durations.
+  pub def (lt) self other
+    throw nil
+
+  # Hashes the value.
+  pub def (hash) self
+    throw nil
+
+  # Returns a compact seconds form, such as `0s`, `2.5s` or `-2.5s`.
+  pub def (str) self
+    throw nil
+
+# Suspends the current strand.
+#
+# ## Errors
+#
+# | Exception       | Condition                                     |
+# | --------------- | --------------------------------------------- |
+# | `TypeError`     | `duration` is not a duration or number        |
+# | `RuntimeError`  | The duration is negative, or a non-finite float |
+#
+# ## Example
+#
+# ```
+# sleep 0.25
+# sleep (finish - start)
+# ```
+pub def sleep
+  # ([`Duration`](time.Duration)|[`Int`](std.Int)|[`Float`](std.Float))
+  # How long to sleep. See [Duration
+  # arguments](time.duration-arguments).
+  duration
+do
+  throw nil
+
+# Runs a block under a scoped timeout.
+#
+# When the duration elapses, the block's strand is interrupted. The interrupt is
+# delivered at the next suspend or interrupt-check point, so a block that never
+# reaches one runs to completion regardless. The timeout is scoped: it is torn
+# down when the block returns, however it exits.
+#
+# ## Returns
+#
+# The block's result.
+#
+# ## Errors
+#
+# | Exception                                    | Condition                                          |
+# | -------------------------------------------- | -------------------------------------------------- |
+# | `TypeError`                                  | `duration` is not a duration or number             |
+# | `RuntimeError`                               | The duration is negative, or a non-finite float    |
+# | [`TimedOutError`](std.TimedOutError) | The timeout elapsed before the block completed     |
+#
+# ## Example
+#
+# ```
+# timeout 1 do
+#   sleep 10
+# ```
+pub def timeout
+  # ([`Duration`](time.Duration)|[`Int`](std.Int)|[`Float`](std.Float))
+  # How long the block may run. See [Duration
+  # arguments](time.duration-arguments).
+  duration
+  # (callable) Block to run.
+  block
+do
+  throw nil

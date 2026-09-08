@@ -23,7 +23,7 @@ let all = [1, 2, 3, ...extras]
 assert_eq $all [1, 2, 3, 4, 5, 6]
 ```
 
-See the [Array API](../api/std/array.md) for methods.
+See the [Array API](std.Array) for methods.
 
 ## Dictionaries (`Dict`)
 
@@ -92,7 +92,7 @@ specific cases:
 - **Plain assignment** (`d[key] = value`) replaces all values for a key.
 - Methods like `insert`, `get`, and `pop` respect the multi-map nature of `dict`
 
-See the [Dict API](../api/std/dict.md) for details.
+See the [Dict API](std.Dict) for details.
 
 ### Spreading
 
@@ -129,7 +129,7 @@ Records support the same ordering and multi-map semantics as dicts where
 applicable. They are iterable, unpackable, and support index/assignment for
 their key types.
 
-See the [Record API](../api/std/record.md) for details.
+See the [Record API](std.Record) for details.
 
 ## Sets (`Set`)
 
@@ -147,7 +147,7 @@ assert_eq [...s] [3, 1, 2]
 Iteration preserves insertion order. Adding an existing value is a no-op and
 does not move it to the end.
 
-See the [Set API](../api/std/set.md) for methods such as `add`, `contains`,
+See the [Set API](std.Set) for methods such as `add`, `contains`,
 `union`, and `diff`.
 
 ## Tuples (`Tuple`)
@@ -173,4 +173,4 @@ for pair = {name: "Alice"}
 Note that mutable collections may be used as `dict` keys, so `tuple` usage is
 not mandatory as in Python.
 
-See the [Tuple API](../api/std/tuple.md) for details.
+See the [Tuple API](std.Tuple) for details.

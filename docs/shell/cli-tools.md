@@ -48,7 +48,7 @@ args.with
 
 ### Argument Parsing
 
-[`args.with`](../api/args/index.md) describes the command line and invokes its
+[`args.with`](args) describes the command line and invokes its
 block with a record of converted values. `parse:` specifies how to parse the
 argument from a string, e.g. `parse: $url.Url` ensures that `download` receives
 URL objects. `collect: true` gathers the remaining positional arguments into an
@@ -56,14 +56,14 @@ array.
 
 ### Progress Indicators
 
-[`progress.with`](../api/progress/index.md#with-func) activates progress
+[`progress.with`](progress.with) activates progress
 rendering for the passed block scope.
-[`progress.show`](../api/progress/index.md#show-func) creates a child
+[`progress.show`](progress.show) creates a child
 indicator.
 
 ### Structured Concurrency
 
-[`strand.pool`](../api/strand/index.md#pool-count-input-func) feeds URLs
+[`strand.pool`](strand.pool) feeds URLs
 lazily to a worker pool of `args.limit` strands. The call is scoped, waiting for
 all work to finish (or an uncaught error to propagate, in which case remaining
 workers are canceled) and cleaning up the pool on exit.

@@ -1,0 +1,4576 @@
+#
+# The `std` module provides core language facilities.
+
+# The singleton [`Null`](std.Null) value.
+#
+# As an iterator it ends immediately; as a sink it discards every value.
+pub let null = nil
+
+#
+# Creates an array from positional arguments.
+#
+pub def array ...values
+  throw nil
+
+#
+# Converts a value to [`Bool`](std.Bool) according to its truthiness.
+#
+# Only `false` and `nil` are falsy in boolean contexts. This conversion also
+# treats zero numbers and empty strings as false.
+#
+# ## Example
+#
+# ```
+# assert_eq (bool 0) false
+# assert_eq (bool 1) true
+# assert_eq (bool nil) false
+# assert_eq (bool "") false
+# assert_eq (bool "hello") true
+# ```
+#
+pub def bool value
+  throw nil
+
+#
+# ([`Str`](std.Str)) Converts a value to its debug representation. Shows internal structure (e.g.
+# quotes strings, shows type tags).
+#
+#
+pub def dbg
+  self
+  # the value to convert
+  value
+do
+  throw nil
+
+#
+# Creates a dictionary from positional and key arguments.
+#
+# Positional arguments receive incrementing integer keys starting at `0`.
+# Key arguments become symbol keys. The function-call syntax cannot specify
+# other key types; use a [horizontal dictionary
+# literal](../../language/data-structures.md#literals) or [vertical
+# data](../../language/vertical-layout.md#vertical-data) instead.
+#
+pub def dict ...pairs
+  throw nil
+
+#
+# Coerces or parses a value as a [`Float`](std.Float).
+#
+pub def float value
+  throw nil
+
+#
+# ([`Getter`](std.Getter)) Builds a getter object from a function.
+#
+#
+# ## Example
+#
+# ```
+# class Config
+#   field port = 8080
+#
+#   #[getter]
+#   pub def port obj
+#     obj.#port
+# ```
+#
+pub def getter
+  self
+  # (Func) function used for field reads
+  func
+do
+  throw nil
+
+#
+# (`Int`) Returns a hash code computed over all supplied values in sequence. Passing
+# multiple values is useful for combining fields in a `(hash)` implementation:
+#
+# ```
+# def (hash) self
+#   hash $self.x $self.y $self.z
+# ```
+#
+#
+pub def hash
+  self
+  # one or more values to hash
+  ...values
+do
+  throw nil
+
+#
+# Coerces or parses a value as an [`Int`](std.Int).
+#
+pub def int value
+  throw nil
+
+#
+# ([`Record`](std.Record)) Creates a record from positional and key arguments.
+#
+# Positional arguments receive incrementing integer keys starting at `0`.
+# Key arguments become symbol fields.
+#
+#
+# ## Example
+#
+# ```
+# let r = record name: Alice age: 30
+# echo $r.name  # Alice
+# ```
+#
+pub def record
+  self
+  ...pairs
+do
+  throw nil
+
+#
+# ([`Setter`](std.Setter)) Builds a setter object from a function.
+#
+#
+# ## Example
+#
+# ```
+# class Config
+#   #[setter]
+#   pub def port obj value
+#     obj.#_port = value
+# ```
+#
+pub def setter
+  self
+  # (Func) function used for field writes
+  func
+do
+  throw nil
+
+#
+# Returns the general-purpose [`Str`](std.Str) representation of a value.
+#
+pub def str value
+  throw nil
+
+#
+# Interns a string as a [`Sym`](std.Sym).
+#
+pub def sym value
+  throw nil
+
+#
+# Creates a tuple from positional arguments.
+#
+pub def tuple ...values
+  throw nil
+
+#
+# Returns the value's type, or tests whether it is an instance of `type`.
+#
+# When `:type` is omitted, returns the value's type object. When provided,
+# returns whether the value is an instance of that type, including through
+# inheritance.
+#
+#
+# ## Example
+#
+# ```
+# assert_eq (type 42) $Int
+# assert (type 42 Int)
+# ```
+pub def type
+  # the value to query or test
+  value
+  # the type to check
+  :type = nil
+do
+  throw nil
+
+#
+# ([`Str`](std.Str)) Converts a value to its verbatim representation. Preserves the literal textual
+# form of values where possible, which is useful for passing values as
+# command-line arguments to external programs.
+#
+pub def verbatim value
+  throw nil
+
+# Raised when execution is aborted by the host trap mechanism.
+#
+# Cannot be caught.
+pub class AbortError: Error
+
+#
+# Argument pack.
+#
+# `Args` values are returned by variadic captures such as `...rest` and by
+# calling the `Args` type object. Iterating an `Args` value yields `[key, value]`
+# pairs. Positional items use their positional index as the key.
+#
+pub class Args
+  #
+  #
+  # Creates an argument pack from positional and keyed arguments.
+  #
+  # ```
+  # let pack = Args 1 name: Alice 2
+  # assert_eq [...pack] [[0, 1], [:name:, "Alice"], [1, 2]]
+  # ```
+  #
+  pub def (init) self
+    throw nil
+
+  #
+  # Number of items in the argument pack.
+  #
+  # ```
+  # let pack = Args 1 2 name: Alice
+  # assert_eq $pack.len 3
+  # ```
+  #
+  #[getter]
+  pub def len self
+    throw nil
+
+  #
+  # Returns a tuple of positional values and keyed entries.
+  #
+  # The first item is an iterator over positional values. The second item is an
+  # iterator over keyed `[key, value]` pairs.
+  #
+  # ```
+  # let pack = args 1 left: 2 3 right: 4
+  # let pos keyed = pack.pos_keys()
+  # assert_eq [...pos] [1, 3]
+  # assert_eq [...keyed] [[:left:, 2], [:right:, 4]]
+  # assert_eq [...pack] [[0, 1], [:left:, 2], [1, 3], [:right:, 4]]
+  # ```
+  #
+  pub def pos_keys self
+    throw nil
+
+  #
+  # Returns an iterator over positional values.
+  #
+  # Raises [`UnexpectedKeyError`](std.UnexpectedKeyError) if the pack contains
+  # any keyed items.
+  #
+  # ```
+  # let pack = args 1 2 3
+  # let pos = pack.pos_only()
+  # assert_eq [...pos] [1, 2, 3]
+  # assert_eq [...pack] [[0, 1], [1, 2], [2, 3]]
+  # ```
+  #
+  pub def pos_only self
+    throw nil
+
+  #
+  # Appends positional and keyed arguments to the pack.
+  #
+  # ```
+  # let pack = args 1
+  # pack.push 2 name: Alice
+  # let items = [...pack]
+  # assert_eq $items[1][1] 2
+  # assert_eq $items[2][0] :name:
+  # ```
+  pub def push self
+    throw nil
+
+
+#
+# Arrays are ordered, mutable sequences of values.
+#
+pub class Array
+  #
+  #
+  # Builds an array from one iterable. The lowercase `array` factory instead
+  # collects its positional arguments verbatim.
+  #
+  pub def (init) self iterable
+    throw nil
+
+  #
+  # ([`Int`](std)) Returns the number of elements.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq $[1, 2, 3].len 3
+  # ```
+  #
+  #[getter]
+  pub def len self
+    throw nil
+
+  #
+  # Removes all elements from the array.
+  #
+  # ```
+  # let arr = [1, 2, 3]
+  # arr.clear()
+  # assert_eq $arr.len 0
+  # ```
+  #
+  pub def clear self
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the array contains the given element (by equality).
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let arr = [1, 2, 3, "hello"]
+  # assert (arr.contains 2)
+  # assert (arr.contains "hello")
+  # assert (!arr.contains 4)
+  # assert (![].contains 1)
+  # ```
+  #
+  pub def contains
+    self
+    # the value to check
+    element
+  do
+    throw nil
+
+  #
+  # ([`Array`](std.Array)) Returns a shallow copy of the array. Contents are *not* copied recursively.
+  #
+  #
+  # When inherited by a Do subclass, `copy()` calls the subclass constructor with
+  # the source array as a single positional argument.
+  #
+  pub def copy self
+    throw nil
+
+  #
+  # ([`Bool`](std)) Indicates whether an element was removed. Deletes the element at `index` if it exists.
+  # Negative indexes count from the end.
+  #
+  # Out-of-bounds indexes are ignored.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let arr = [10, 20, 30]
+  # assert (arr.delete 1)
+  # assert (arr.delete -1)
+  # assert (!(arr.delete 99))
+  # assert_eq $arr [10]
+  # ```
+  #
+  pub def delete self index
+    throw nil
+
+  #
+  # Retrieves the value at the given index. Returns `nil` if out of bounds and no
+  # alternative is provided. Negative indexes count from the end.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let arr = [10, 20, 30]
+  # assert_eq (arr.get 0) 10
+  # assert_eq (arr.get -1) 30
+  # assert_eq (arr.get 5 default: "missing") "missing"
+  # assert_eq (arr.get 5 else: do "computed") "computed"
+  # ```
+  #
+  pub def get
+    self
+    # ([`Int`](std)) the index to access
+    index
+    :default = nil
+    :else = nil
+  do
+    throw nil
+
+  #
+  # Inserts one or more values at the specified index, shifting existing elements.
+  # Negative indexes count from the end; `-1` inserts before the last element.
+  #
+  # ## Example
+  #
+  # ```
+  # let arr = [1, 2, 3]
+  # arr.insert 1 42
+  # assert_eq $arr [1, 42, 2, 3]
+  # arr.insert -1 99
+  # assert_eq $arr [1, 42, 2, 99, 3]
+  # ```
+  #
+  pub def insert
+    self
+    # ([`Int`](std)) the position to insert at
+    index
+    # values to insert
+    ...values
+  do
+    throw nil
+
+  #
+  # ([`Iter`](std.Iter)) Returns an iterator yielding `[index, value]` pairs.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # for i v = [10, 20, 30].pairs()
+  #   echo "$i: $v"
+  # # 0: 10
+  # # 1: 20
+  # # 2: 30
+  # ```
+  #
+  pub def pairs self
+    throw nil
+
+  #
+  # Removes and returns the last element, or the element at `index` if provided.
+  # Raises an error if the selected element does not exist and no alternative is
+  # provided. Negative indexes count from the end.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let arr = [1, 2, 3]
+  # assert_eq $arr.pop() 3
+  # assert_eq $arr [1, 2]
+  # assert_eq $arr.pop(0) 1
+  #
+  # let empty = []
+  # assert_eq (empty.pop default: "none") "none"
+  # ```
+  #
+  pub def pop
+    self
+    # ([`Int`](std)) optional index to remove; defaults to the last element
+    index = nil
+    :default = nil
+    :else = nil
+  do
+    throw nil
+
+  #
+  # Appends one or more values to the end of the array.
+  #
+  # ## Example
+  #
+  # ```
+  # let arr = [1, 2]
+  # arr.push 3
+  # assert_eq $arr [1, 2, 3]
+  # ```
+  #
+  pub def push
+    self
+    # values to append
+    ...values
+  do
+    throw nil
+
+  #
+  # Sorts the array in place.
+  #
+  # ## Example
+  #
+  # ```
+  # let arr = ["bbb", "a", "cc"]
+  # arr.sort key: (do |x| x.len)
+  # assert_eq $arr ["a", "cc", "bbb"]
+  #
+  # arr.sort reverse: true
+  # assert_eq $arr ["cc", "bbb", "a"]
+  # ```
+  #
+  pub def sort
+    self
+    :key = nil
+    :reverse = nil
+  do
+    throw nil
+
+  #
+  # ```
+  # let arr = [10, 20, 30]
+  # assert_eq $arr[0] 10
+  # assert_eq $arr[-1] 30
+  # arr[0] = 99
+  # arr[-1] = 77
+  # assert_eq $arr[0] 99
+  # assert_eq $arr[-1] 77
+  # ```
+  #
+  # Out-of-bounds access raises an error; use `get` if you wish to avoid this.
+  #
+  # Arrays also accept [`Range`](std.Range) values for slicing:
+  #
+  # ```
+  # let arr = [0, 1, 2, 3]
+  # assert_eq $arr[1..3] [1, 2]
+  # assert_eq $arr[..2] [0, 1]
+  # assert_eq $arr[2..] [2, 3]
+  # assert_eq $arr[..] [0, 1, 2, 3]
+  # assert_eq $arr[Range 0 4 2] [0, 2]
+  # assert_eq $arr[Range nil nil -1] [3, 2, 1, 0]
+  # ```
+  #
+  # Slice indexing returns a new array.
+  # Omitted `start` means `0`, omitted `end` means the array length, and negative
+  # `start` and `end` values count from the end. Negative steps reverse the slice.
+  #
+  pub def (index) self index
+    throw nil
+
+  #
+  # ```
+  # let arr = [0, 1, 2, 3]
+  # arr[1..3] = [9, 9]
+  # assert_eq $arr [0, 9, 9, 3]
+  #
+  # arr[1..1] = (tuple 4 5)
+  # assert_eq $arr [0, 4, 5, 9, 9, 3]
+  # ```
+  #
+  # The replacement must be an [`Array`](std.Array) or a
+  # [`Tuple`](std.Tuple) — a sequence whose length is already settled. Anything
+  # else, including a [`Range`](std.Range), an iterator, or a lone value, is a
+  # type error rather than being drained or wrapped. Stepped slices are read-only;
+  # assignment with a non-unity step is rejected.
+  #
+  pub def (assign) self index value
+    throw nil
+
+  # ```
+  # for value = [1, 2, 3]
+  #   echo $value
+  # ```
+  #
+  pub def (iter) self
+    throw nil
+
+  # ```
+  # let a b ...rest = [1, 2, 3, 4]
+  # assert_eq $a 1
+  # assert_eq $b 2
+  # ```
+  # Indexes the value.
+  pub def (index) self index
+    throw nil
+
+  # Assigns through an index.
+  pub def (assign) self index value
+    throw nil
+
+  # Returns an iterator.
+  pub def (iter) self
+    throw nil
+
+  # Unpacks the value.
+  pub def (unpack) self
+    throw nil
+
+
+#
+# Binary data; an immutable sequence of bytes.
+pub class Bin
+  # Accepts binary data or copies the UTF-8 bytes of a string.
+  #
+  # ## Example
+  #
+  # ```
+  # let data = Bin "hello"
+  # assert_eq $data b"hello"
+  # ```
+  pub def (init)
+    self
+    # ([`Bin`](std.Bin)\|[`Str`](std.Str)) source bytes
+    value
+  do
+    throw nil
+
+  #
+  # ([`Int`](std)) Returns the byte length of the binary data.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (b"hello".len) 5
+  # assert_eq (b"".len) 0
+  # ```
+  #
+  #[getter]
+  pub def len self
+    throw nil
+
+  #
+  #
+  # ([`Bin`](std.Bin)) Removes one trailing line terminator.
+  #
+  # One complete terminator — `\r\n` or `\n`, never a lone `\r` — and nothing else.
+  # Data without one is returned unchanged.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (b"line\n".chomp()) b"line"
+  # assert_eq (b"line\r\n".chomp()) b"line"
+  # ```
+  #
+  # [`Iter.chomp`](std.Iter.chomp) lifts this over an iterator — it is exactly
+  # `.map do |x| x.chomp()`, with the mapping done inline. Distinct from
+  # [`trim_end`](#trim_end-chars), which strips whitespace generally.
+  #
+  pub def chomp self
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the binary data contains the given bytes.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert (b"hello".contains b"ell")
+  # assert (b"hello".contains b"lo")
+  # assert (!(b"hello".contains b"world"))
+  # assert (b"hello".contains b"")
+  # ```
+  #
+  pub def contains
+    self
+    # ([`Bin`](std.Bin)) the bytes to find
+    needle
+  do
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the binary data ends with the given suffix.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert (b"hello".ends_with b"lo")
+  # ```
+  #
+  pub def ends_with
+    self
+    # ([`Bin`](std.Bin)) the suffix bytes
+    suffix
+  do
+    throw nil
+
+  #
+  # ([`Bin`](std.Bin)) Joins values from an input source using this binary data as a separator.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (b",".join [b"a", b"b", b"c"]) b"a,b,c"
+  # ```
+  #
+  pub def join
+    self
+    # iterable to join; uses the default input when omitted
+    iter = nil
+  do
+    throw nil
+
+  #
+  # ([`Iter`](std.Iter)) Like `split`, but yields segments in **right-to-left** order. Mirrors
+  # [`str.rsplit`](std.Str.rsplit).
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq [...b"a,b,c".rsplit b","] [b"c", b"b", b"a"]
+  # assert_eq [...b"a,b,c".rsplit b"," limit: 1] [b"c", b"a,b"]
+  # ```
+  #
+  pub def rsplit
+    self
+    # ([`Bin`](std.Bin)) the delimiter bytes
+    delimiter
+    # ([`Int`](std)) max splits; negative means split from left
+    limit = nil
+  do
+    throw nil
+
+  #
+  # ([`Iter`](std.Iter)) Splits the binary data by the delimiter, returning an iterator that yields
+  # segments in **left-to-right** order.
+  #
+  # The optional `limit` works identically to
+  # [`str.split`](std.Str.split): positive splits from the
+  # left, negative splits from the right (but still yields left-to-right).
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq [...b"a,b,c".split b","] [b"a", b"b", b"c"]
+  # assert_eq [...b"a,b,c".split b"," limit: 1] [b"a", b"b,c"]
+  # let base ext = b"archive.tar.gz".split b"." limit: -1
+  # assert_eq $base b"archive.tar"
+  # assert_eq $ext b"gz"
+  # ```
+  #
+  pub def split
+    self
+    # ([`Bin`](std.Bin)) the delimiter bytes
+    delimiter
+    # ([`Int`](std)) max splits; negative means split from right
+    limit = nil
+  do
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the binary data starts with the given prefix.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert (b"hello".starts_with b"he")
+  # assert (!(b"hello".starts_with b"lo"))
+  # ```
+  #
+  pub def starts_with
+    self
+    # ([`Bin`](std.Bin)) the prefix bytes
+    prefix
+  do
+    throw nil
+
+  #
+  # ([`Bin`](std.Bin)) Removes bytes (or specified characters) from both ends.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (b"  hello  ".trim()) b"hello"
+  # assert_eq (b"xxhelloxx".trim b"x") b"hello"
+  # assert_eq (b"xyhelloyx".trim [b"x", b"y"]) b"hello"
+  # assert_eq (b"\x00\xffdata\xff\x00".trim b"\x00\xff") b"data"
+  # ```
+  #
+  pub def trim
+    self
+    # ([`Bin`](std.Bin) \| [`Iterable`](std.Iterable))
+    chars = nil
+  do
+    throw nil
+
+  #
+  # ([`Bin`](std.Bin)) Removes bytes (or specified characters) from the end.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (b"  hello  ".trim_end()) b"  hello"
+  # assert_eq (b"xxhelloxx".trim_end b"x") b"xxhello"
+  # ```
+  #
+  pub def trim_end
+    self
+    # ([`Bin`](std.Bin) \| [`Iterable`](std.Iterable))
+    chars = nil
+  do
+    throw nil
+
+  #
+  # ([`Bin`](std.Bin)) Removes bytes (or specified characters) from the start.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (b"  hello  ".trim_start()) b"hello  "
+  # assert_eq (b"xxhelloxx".trim_start b"x") b"helloxx"
+  # ```
+  #
+  pub def trim_start
+    self
+    # ([`Bin`](std.Bin) \| [`Iterable`](std.Iterable))
+    chars = nil
+  do
+    throw nil
+
+  #
+  # ([`Array`](std.Array)) Unpacks binary data into an array of byte values (integers from 0-255).
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let bytes = b"hello"
+  # assert_eq $bytes.unpack() [104, 101, 108, 108, 111]
+  # ```
+  #
+  pub def unpack self
+    throw nil
+
+  #
+  # ([`Bin`](std.Bin)) Returns the binary data with the prefix removed if it matches, otherwise
+  # returns the original data.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (b"hello".without_prefix b"he") b"llo"
+  # assert_eq (b"hello".without_prefix b"xx") b"hello"
+  # ```
+  #
+  pub def without_prefix
+    self
+    # ([`Bin`](std.Bin)) the prefix to remove
+    prefix
+  do
+    throw nil
+
+  #
+  # ([`Bin`](std.Bin)) Returns the binary data with the suffix removed if it matches, otherwise returns
+  # the original data.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (b"hello".without_suffix b"lo") b"hel"
+  # ```
+  #
+  pub def without_suffix
+    self
+    # ([`Bin`](std.Bin)) the suffix to remove
+    suffix
+  do
+    throw nil
+
+  #
+  # Binary data accepts [`Range`](std.Range) values for slicing by byte position:
+  #
+  # ```
+  # assert_eq (b"abcd"[1..3]) b"bc"
+  # assert_eq (b"abcd"[..2]) b"ab"
+  # assert_eq (b"abcd"[2..]) b"cd"
+  # assert_eq (b"abcd"[..]) b"abcd"
+  # assert_eq (b"foobar"[-3..]) b"bar"
+  # assert_eq (b"abcd"[Range 0 4 2]) b"ac"
+  # assert_eq (b"abcd"[Range nil nil -1]) b"dcba"
+  # ```
+  #
+  # This returns a new binary value. Slice boundaries must be in bounds. Omitted
+  # `start` means `0`, omitted `end` means the binary length, and negative
+  # endpoints count from the end. Negative steps reverse the slice.
+  #
+  # Indexes the value.
+  pub def (index) self index
+    throw nil
+
+  #
+  # ([`Bin`](std.Bin)) Packs an array of integers (0-255) into binary data.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let bytes = bin.pack [104, 101, 108, 108, 111]
+  # assert_eq $bytes b"hello"
+  # ```
+  #
+  #[class]
+  pub def pack
+    self
+    # ([`Array`](std.Array)) array of integers (0-255)
+    array
+  do
+    throw nil
+
+  #
+  # ([`Array`](std.Array)) Unpacks any value that can be converted to binary into an array of byte values.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (bin.unpack b"hello") [104, 101, 108, 108, 111]
+  # ```
+  #[class]
+  pub def unpack self value
+    throw nil
+
+
+#
+# Mutable byte buffer; the mutable counterpart to [`Bin`](std.Bin).
+#
+pub class BinBuf
+  #
+  #
+  # Builds a buffer, optionally seeded with the contents of existing binary data.
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = BinBuf(b"hello")
+  # assert_eq $buf.len 5
+  # ```
+  #
+  pub def (init)
+    self
+    # ([`Bin`](std.Bin)) initial contents
+    initial = nil
+  do
+    throw nil
+
+  #
+  # ([`Int`](std.Int)) Returns the byte length of the buffer's current contents.
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (BinBuf(b"hello").len) 5
+  # ```
+  #
+  #[getter]
+  pub def len self
+    throw nil
+
+  #
+  # Appends `value` to the buffer. `Str`/`Bin` input is copied byte-for-byte
+  # (round-tripping non-UTF-8 bytes exactly); anything else is converted the
+  # same way [`str`](std.str) would convert it, written directly
+  # into the buffer.
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = BinBuf()
+  # buf.append b"foo"
+  # buf.append "bar"
+  # buf.append 42
+  # assert_eq $buf.freeze() b"foobar42"
+  # ```
+  #
+  pub def append
+    self
+    # value to append
+    value
+  do
+    throw nil
+
+  #
+  # Empties the buffer, retaining its allocated capacity.
+  #
+  # ```
+  # let buf = BinBuf(b"foobar")
+  # buf.clear()
+  # assert_eq $buf.len 0
+  # buf.append b"x"
+  # assert_eq $buf.freeze() b"x"
+  # ```
+  #
+  pub def clear self
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the buffer's contents contain the given bytes.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert (BinBuf(b"foobar").contains b"oob")
+  # ```
+  #
+  pub def contains
+    self
+    # ([`Bin`](std.Bin)) the bytes to find
+    needle
+  do
+    throw nil
+
+  #
+  # ([`Iter`](std.Iter)) Returns an iterator that removes and yields up to `size` bytes at a time
+  # from the front of the buffer as it's consumed.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = BinBuf(b"hello world")
+  # assert_eq [...buf.drain(4)] [b"hell", b"o wo", b"rld"]
+  # assert_eq $buf.len 0
+  # ```
+  #
+  # Draining never shifts the buffer's remaining contents proportionally to
+  # their length: consumed bytes are dropped by advancing an internal cursor,
+  # not by copying the tail down on every chunk. Other mutating methods (and
+  # `freeze`) settle this cursor transparently before they run, so indices
+  # passed to them are always relative to the buffer's current (undrained)
+  # content. Multiple `drain` iterators created from the same buffer share this
+  # cursor, so they interleave draining the same content rather than each
+  # redraining it independently.
+  #
+  pub def drain
+    self
+    # ([`Int`](std)) maximum bytes per chunk (defaults to 512 KiB)
+    size = nil
+  do
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the buffer's contents end with the given suffix.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert (BinBuf(b"foobar").ends_with b"bar")
+  # ```
+  #
+  pub def ends_with
+    self
+    # ([`Bin`](std.Bin)) the suffix bytes
+    suffix
+  do
+    throw nil
+
+  #
+  # Appends the raw bytes of `value`, which must be a [`Str`](std.Str) or
+  # [`Bin`](std.Bin).
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = BinBuf(b"foo")
+  # buf.extend b"bar"
+  # assert_eq $buf.freeze() b"foobar"
+  # ```
+  #
+  pub def extend
+    self
+    # ([`Bin`](std.Bin) \| [`Str`](std.Str))
+    value
+  do
+    throw nil
+
+  #
+  # ([`Bin`](std.Bin)) Converts the buffer's current contents into an immutable [`Bin`](std.Bin)
+  # in place, without copying, and empties the buffer. The buffer stays usable
+  # afterward, and the returned value is unaffected by later mutation.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = BinBuf(b"abc")
+  # let frozen = buf.freeze()
+  # assert_eq $frozen b"abc"
+  # assert_eq $buf.len 0
+  # buf.append b"def"
+  # assert_eq $frozen b"abc"
+  # ```
+  #
+  pub def freeze self
+    throw nil
+
+  #
+  # Inserts `value` at the given byte index, shifting the rest of the buffer
+  # right in place. `value` may be a single byte value, or a `Str`/`Bin` slice.
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = BinBuf(b"foobar")
+  # buf.insert 3 b"XYZ"
+  # buf.insert 0 65
+  # assert_eq $buf.freeze() b"AfooXYZbar"
+  # ```
+  #
+  pub def insert
+    self
+    # ([`Int`](std)) insertion point
+    index
+    # ([`Int`](std) (0-255)\) [`Bin`](std.Bin)\
+    value
+  do
+    throw nil
+
+  #
+  # Appends one or more raw byte values to the buffer.
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = BinBuf()
+  # buf.push 104 105
+  # assert_eq $buf.freeze() b"hi"
+  # ```
+  #
+  pub def push
+    self
+    # ([`Int`](std) (0-255)) byte values to append
+    ...bytes
+  do
+    throw nil
+
+  #
+  # ([`Int`](std)\|[`Bin`](std.Bin)) Removes and returns a byte or a range of bytes, shifting the rest of the
+  # buffer left in place. An [`Int`](std) index removes and returns a
+  # single byte; a [`Range`](std.Range) removes and returns a [`Bin`](std.Bin)
+  # of the removed bytes.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = BinBuf(b"foobar")
+  # assert_eq (buf.remove 0) 102
+  # assert_eq $buf.freeze() b"oobar"
+  #
+  # let buf2 = BinBuf(b"foobar")
+  # assert_eq (buf2.remove (1..3)) b"oo"
+  # assert_eq $buf2.freeze() b"fbar"
+  # ```
+  #
+  pub def remove
+    self
+    # ([`Int`](std) \| [`Range`](std.Range))
+    index_or_range
+  do
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the buffer's contents start with the given prefix.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert (BinBuf(b"foobar").starts_with b"foo")
+  # ```
+  #
+  pub def starts_with
+    self
+    # ([`Bin`](std.Bin)) the prefix bytes
+    prefix
+  do
+    throw nil
+
+  #
+  # Shrinks the buffer to `len` bytes, discarding anything past that point.
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = BinBuf(b"foobar")
+  # buf.truncate 3
+  # assert_eq $buf.freeze() b"foo"
+  # ```
+  #
+  pub def truncate
+    self
+    # ([`Int`](std)) new length
+    len
+  do
+    throw nil
+
+  #
+  # Unlike `StrBuf`, `BinBuf` supports both scalar and range indexing and
+  # indexing:
+  #
+  # ```
+  # let buf = BinBuf(b"foobar")
+  # assert_eq $buf[0] 102
+  # assert_eq $buf[2..4] b"ob"
+  # ```
+  pub def (index) self index
+    throw nil
+
+  # Assigns a byte or byte range. Range assignment may grow or shrink the buffer.
+  #
+  # ```
+  # let buf = BinBuf(b"foobar")
+  # buf[0] = 70
+  # buf[1..3] = b"XYZ"
+  # assert_eq $buf.freeze() b"FXYZbar"
+  # ```
+  pub def (assign) self index value
+    throw nil
+
+  # Returns this buffer as a [sink](std.Sink). Values are appended verbatim,
+  # making it suitable for pipeline and process-output capture.
+  #
+  # Use [`precrimp`](std.Sink.precrimp) to add a terminator per value.
+  pub def (sink) self
+    throw nil
+
+
+#
+# Boolean values: `true` and `false`.
+#
+pub class Bool
+  # Accepts an existing boolean.
+  pub def (init) self
+    throw nil
+
+  #
+  # Converts to a boolean.
+  pub def (bool) self
+    throw nil
+
+
+#
+# Raised on bytecode verification errors.
+#
+# `BytecodeError` is sealed: it is raised only by bytecode verification, and can
+# be neither constructed nor subclassed.
+#
+pub class BytecodeError: RuntimeError
+
+#
+# Raised when a strand is canceled. During `finally` blocks, cancellation is
+# masked so cleanup can complete. See
+# [Concurrency](../../language/concurrency.md) for details.
+#
+pub class CanceledError: Error
+  #
+  #
+  # Builds an error reporting that a strand was canceled.
+  #
+  pub def (init) self
+    throw nil
+
+
+#
+# Decorator placing a class member in the type-object namespace, where subclasses
+# inherit it.
+#
+# Applies to a `def` or a `field` inside a class body. A class method receives the
+# class it was reached through as its first parameter. Each class in a hierarchy
+# gets its own storage for a class field, seeded from the declared initializer.
+#
+# ```
+# class Counter
+#   #[class]
+#   pub field count = 0
+#
+#   #[class]
+#   pub def bump cls
+#     cls.count = (cls.count + 1)
+#     cls.count
+#
+# assert_eq $Counter.bump() 1
+# ```
+#
+# See [`static`](std.static) for the uninherited counterpart, and
+# [Class and Static Members](../../language/classes.md#class-and-static-members)
+# for the full semantics.
+pub let class = nil
+
+#
+# Raised on compilation errors.
+#
+pub class CompileError: RuntimeError
+  #
+  #
+  # Builds an error reporting a compilation failure.
+  #
+  pub def (init)
+    self
+    # ([`Str`](std.Str)) description of the compilation failure
+    message
+  do
+    throw nil
+
+
+#
+# Raised when a concurrent access violation is detected.
+#
+pub class ConcurrencyError: RuntimeError
+  #
+  #
+  # Builds an error reporting a conflicting concurrent operation.
+  #
+  pub def (init)
+    self
+    # ([`Str`](std.Str)?) detail appended to the generic message
+    message = nil
+  do
+    throw nil
+
+
+#
+# Raised when a cyclic module dependency is detected.
+#
+pub class CyclicImportError: RuntimeError
+  #
+  #
+  # Builds an error naming the module at which an import cycle was detected.
+  #
+  pub def (init)
+    self
+    # ([`Str`](std.Str)) the module at which the cycle was detected
+    name
+  do
+    throw nil
+
+
+#
+# Dictionaries are **ordered**, mutable key-value mappings. They preserve
+# insertion order and are **multi-maps**: a single key can have multiple values.
+#
+# Keys can be any hashable type.
+#
+#
+# ## Ordering
+#
+# Dictionaries preserve insertion order. Iteration yields entries in the order
+# they were inserted.
+#
+# ## Multi-Map Semantics
+#
+# A dict can store multiple values per key. This is primarily relevant when
+# constructing dicts from spreading or using methods with the `instance`
+# parameter:
+#
+# - **Construction** with duplicate keys preserves all values
+# - **Plain indexing** (`d[key]`) returns the last value for a key, so a
+#   duplicate key overrides the values before it: last wins
+# - **Plain assignment** (`d[key] = value`) replaces all values for a key
+# - **`insert`** adds a new value without removing existing ones for that key
+# - **`get`** and **`pop`** accept an `instance` parameter to access specific
+#   values by their position (0-indexed) among values for that key; negative
+#   instance indexes count from the end
+#
+pub class Dict
+  #
+  #
+  # Builds a dictionary from one spreadable source of key-value pairs. The
+  # lowercase `dict` factory instead assigns integer keys to positional arguments
+  # and symbol keys to key arguments.
+  #
+  pub def (init) self source
+    throw nil
+
+  #
+  # ([`Int`](std)) Returns the number of key-value pairs (counting each value in a multi-map
+  # separately).
+  #
+  #
+  #[getter]
+  pub def len self
+    throw nil
+
+  #
+  # Removes all key-value pairs.
+  #
+  # ```
+  # let d = {a: 1, b: 2}
+  # d.clear()
+  # assert_eq $d.len 0
+  # ```
+  #
+  pub def clear self
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the dictionary contains the given key. If a value is provided,
+  # tests whether any value associated with that key matches the given value
+  # (multi-map aware).
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let d = {a: 1, b: 2}
+  # d.insert "multi" "first"
+  # d.insert "multi" "second"
+  #
+  # # Key-only check. A bareword key is a `Sym`, so `"a"` would not match it.
+  # assert (d.contains :a:)
+  # assert (!d.contains :z:)
+  #
+  # # Key + value check (multi-map aware)
+  # assert (d.contains "multi" "first")
+  # assert (d.contains "multi" "second")
+  # assert (!d.contains "multi" "third")
+  # ```
+  #
+  pub def contains
+    self
+    # the key to check
+    key
+    # optional value to check for (multi-map)
+    value = nil
+  do
+    throw nil
+
+  #
+  # ([`Dict`](std.Dict)) Returns a shallow copy of the dictionary.
+  #
+  # Insertion order and multiple per-key values are preserved. Keys and
+  # values are *not* copied recursively.
+  #
+  #
+  # When inherited by a Do subclass, `copy()` calls the subclass constructor with
+  # the source dict as a single positional argument.
+  #
+  pub def copy self
+    throw nil
+
+  #
+  # ([`Int`](std)) Returns a count derived from the dictionary's multi-map structure.
+  #
+  # With no `key`, it returns the number of distinct keys. With a `key`, it returns
+  # the number of values associated with that key.
+  #
+  # Missing keys return `0`.
+  #
+  #
+  pub def count self key = nil
+    throw nil
+
+  #
+  # ([`Bool`](std)) Indicates whether any values were removed. Removes all values for the key.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let d = {a: 1, b: 2}
+  # assert (d.delete :a:)
+  # assert (!(d.delete :missing:))
+  # assert_eq $d.len 1
+  # ```
+  #
+  pub def delete
+    self
+    # the key to remove
+    key
+  do
+    throw nil
+
+  #
+  # Retrieves the value for a key. Returns `nil` if the key is missing and no
+  # alternative is provided. Negative `instance` indexes count from the end.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let d = {name: "Alice"}
+  # assert_eq (d.get :name:) "Alice"
+  # assert_eq ({name: "Alice", name: "Bob"}.get :name: -1) "Bob"
+  # assert_eq (d.get :missing: default: "unknown") "unknown"
+  # ```
+  #
+  pub def get
+    self
+    # the key to look up
+    key
+    # ([`Int`](std)) which value to retrieve when a key has multiple values (0-indexed; negative counts from end; default: last)
+    instance = nil
+    :default = nil
+    :else = nil
+  do
+    throw nil
+
+  #
+  # Adds a key-value pair. Does **not** remove existing values for the same key
+  # (multi-map insert).
+  #
+  pub def insert
+    self
+    # the key
+    key
+    # the value
+    value
+  do
+    throw nil
+
+  #
+  # ([`Iter`](std.Iter)) Returns an iterator of keys. Each distinct key is yielded exactly once, in the
+  # order its first pair was inserted.
+  #
+  # If duplicate-key iteration is needed, use [`pairs`](#pairs) instead.
+  #
+  #
+  pub def keys self
+    throw nil
+
+  #
+  # ([`Iter`](std.Iter)) Returns an iterator yielding `[key, value]` pairs, the same as ordinary
+  # iteration. This method is present to allow uniform key/value iteration
+  # over both [`Dict`](std.Dict) and [`Array`](std.Array).
+  #
+  #
+  pub def pairs self
+    throw nil
+
+  #
+  # Removes and returns a value for a key. Raises an error if the key is missing
+  # and no alternative is provided. Supports `instance` for multi-map access to
+  # remove a specific value by its position among values for that key. Negative
+  # `instance` indexes count from the end.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let d = {a: 1, b: 2}
+  # d.insert "multi" "first"
+  # d.insert "multi" "second"
+  #
+  # # Pop first instance (default)
+  # assert_eq (d.pop "multi") "first"
+  #
+  # # Pop specific instance
+  # assert_eq (d.pop "multi" 0) "second"
+  # ```
+  #
+  pub def pop
+    self
+    # the key to remove
+    key
+    # (Int) which value to remove when a key has multiple values (0-indexed; negative counts from end; default: first)
+    instance = nil
+    :default = nil
+    :else = nil
+  do
+    throw nil
+
+  #
+  # ([`Iter`](std.Iter)) Returns an iterator of values. With no argument, it yields all stored values in
+  # pair insertion order. With a `key`, it yields only the values associated with
+  # that key, in that key's insertion order.
+  #
+  # Missing keys return an empty iterator.
+  #
+  #
+  pub def values self key = nil
+    throw nil
+
+  #
+  # ```
+  # let d = {name: "Alice"}
+  # assert_eq $d[:name:] "Alice"
+  # d[:age:] = 30
+  # ```
+  #
+  # Missing keys raise an error on access. Assignment replaces all values for the
+  # key.
+  #
+  # [`Range`](std.Range) values are treated as ordinary keys, not as slices.
+  #
+  pub def (index) self index
+    throw nil
+
+  # Iterating over a dictionary yields `[key, value]` pairs:
+  #
+  # ```
+  # for pair = {a: 1, b: 2}
+  #   echo $pair
+  # ```
+  #
+  pub def (iter) self
+    throw nil
+
+  # ```
+  # let name age: years = {name: "Alice", age: 30}
+  # ```
+  # Indexes the value.
+  pub def (index) self index
+    throw nil
+
+  # Returns an iterator.
+  pub def (iter) self
+    throw nil
+
+  # Unpacks the value.
+  pub def (unpack) self
+    throw nil
+
+
+#
+# The abstract base type for all errors. All error types in `std` inherit
+# from `Error`, so it can be used as a catch-all in typed `catch` handlers.
+#
+# `Error` is abstract: it has no representation of its own, so it can be neither
+# constructed nor inherited from directly. Subclass one of its concrete subtypes
+# instead — usually [`RuntimeError`](std.RuntimeError).
+pub class Error
+
+#
+# Raised when accessing a nonexistent field on an object.
+#
+pub class FieldError: RuntimeError
+  #
+  #
+  # Builds an error naming a field that does not exist.
+  #
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) the field that does not exist
+    name
+  do
+    throw nil
+
+
+#
+# 64-bit floating point numbers.
+#
+pub class Float
+  #
+  # `Float` accepts a float or an integer that can be represented exactly.
+  #
+  # ```
+  # assert_eq (Float 42) 42.0
+  # ```
+  #
+  # The lowercase `float` function performs numeric coercion and parsing:
+  #
+  # ```
+  # assert_eq (float "3.14") 3.14
+  # assert_eq (float true) 1.0
+  # ```
+  #
+  pub def (init) self
+    throw nil
+
+  # Adds two floating-point values.
+  pub def (add) self other
+    throw nil
+
+  # Subtracts a floating-point value.
+  pub def (sub) self other
+    throw nil
+
+  # Multiplies two floating-point values.
+  pub def (mul) self other
+    throw nil
+
+  # Divides two floating-point values.
+  pub def (div) self other
+    throw nil
+
+  # Performs Euclidean division and returns an [`Int`](std.Int).
+  pub def (ediv) self other
+    throw nil
+
+  # Computes the Euclidean remainder.
+  pub def (mod) self other
+    throw nil
+
+  # Negates the value.
+  pub def (neg) self
+    throw nil
+
+  # Tests equality. Mixed Int/Float comparisons are supported.
+  pub def (eq) self other
+    throw nil
+
+  # Orders values. Mixed Int/Float comparisons are supported.
+  pub def (lt) self other
+    throw nil
+
+#
+# An unbound interpolation in a [`Fmt`](std.Fmt).
+#
+# A [`FmtValue`](std.FmtValue) already carries a value. A `FmtParam` carries
+# only a name and the options that will apply once something is bound to it, so
+# a template can be written once and filled in later: a prepared statement, a
+# reusable message.
+#
+# `FmtParam` exposes the same formatting fields and `pad` method as
+# [`FmtSpec`](std.FmtSpec). Calling it with new keyword options returns a new
+# `FmtParam` naming the same parameter.
+pub class FmtParam
+  #
+  #
+  # ## Errors
+  #
+  # | Exception                      | Condition                              |
+  # | ------------------------------ | -------------------------------------- |
+  # | [`TypeError`](std.TypeError) | `name` is neither an `Int` nor a `Sym` |
+  #
+  # ## Example
+  #
+  # ```
+  # let hole = FmtParam :user: width: 8
+  # assert_eq $hole.name :user:
+  # assert_eq $hole.width 8
+  # ```
+  #
+  pub def (init)
+    self
+    # ([`Int`](std.Int)\) [`sym`](std.Sym)
+    name
+    :fill = nil
+    :align = nil
+    :sign = nil
+    :width = nil
+    :precision = nil
+    :alt = nil
+    :kind = nil
+    # ([`Str`](std.Str)?) Interpolation as written in source
+    :source = nil
+  do
+    throw nil
+
+  #
+  # The parameter named by this position, as an `Int` or a `Sym`.
+  #
+  #[getter]
+  pub def name self
+    throw nil
+
+  #
+  # The text the parameter was written as, or nil. A `${#...}` in a
+  # [`t"..."`](../../language/strings.md#formatted-sequences) records the
+  # whole interpolation, sigil and delimiters included.
+  #
+  # ```
+  # let seq = t"a=${#0:>3}"
+  # assert_eq $seq[1].source r"${#0:>3}"
+  # ```
+  #
+  #[getter]
+  pub def source self
+    throw nil
+
+  #
+  # Returns a new `FmtParam` naming the same parameter with the supplied options
+  # merged. Positional arguments are not accepted. The result is synthetic rather
+  # than source-derived, so its [`source`](#source) is nil.
+  #
+  pub def (call)
+    self
+    # (Str?) Fill character, `:ZERO:`, or nil
+    :fill = nil
+    # (Sym?) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    :align = nil
+    # (Sym?) `:PLUS:` or `:SPACE:`
+    :sign = nil
+    # (Int?) Minimum width in grapheme clusters
+    :width = nil
+    # (Int?) Numeric precision or maximum graphemes
+    :precision = nil
+    # (Bool?) Enables alternate formatting
+    :alt = nil
+    # (Sym?) Representation kind
+    :kind = nil
+  do
+    throw nil
+
+  # Two parameters are equal when they name the same parameter under the same
+  # specification and record the same [`source`](#source).
+  pub def (eq) self other
+    throw nil
+
+
+#
+# Stores reusable formatting options.
+#
+# `FmtSpec` values are immutable. Calling one returns a new specification with
+# the supplied options overridden, or a bound [`FmtValue`](std.FmtValue) when
+# given a positional value.
+#
+pub class FmtSpec
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let money = FmtSpec precision: 2 kind: :FIXED:
+  # assert_eq "$(money 1.5)/$(money 2.25)" "1.50/2.25"
+  # ```
+  #
+  pub def (init)
+    self
+    # (Str?) Fill character, `:ZERO:`, or nil
+    :fill = nil
+    # (Sym?) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    :align = nil
+    # (Sym?) `:PLUS:` or `:SPACE:`
+    :sign = nil
+    # (Int?) Minimum width in grapheme clusters
+    :width = nil
+    # (Int?) Numeric precision or maximum graphemes
+    :precision = nil
+    # (Bool?) Enables alternate formatting
+    :alt = nil
+    # (Sym?) Representation kind
+    :kind = nil
+  do
+    throw nil
+
+  #
+  # The fill character, `:ZERO:` for numeric zero padding, or nil for spaces.
+  #
+  #[getter]
+  pub def fill self
+    throw nil
+
+  #
+  # `:LEFT:`, `:RIGHT:`, `:CENTER:`, or nil for the formatted value's default.
+  #
+  #[getter]
+  pub def align self
+    throw nil
+
+  #
+  # `:PLUS:`, `:SPACE:`, or nil to show only negative signs.
+  #
+  #[getter]
+  pub def sign self
+    throw nil
+
+  #
+  # The minimum width in extended grapheme clusters, or nil when unset. A value
+  # may measure itself differently: [`term.Text`](term.Text) measures
+  # terminal cells.
+  #
+  #[getter]
+  pub def width self
+    throw nil
+
+  #
+  # The numeric precision or maximum number of extended grapheme clusters,
+  # depending on the formatted value, or nil when unset.
+  #
+  #[getter]
+  pub def precision self
+    throw nil
+
+  #
+  # Whether alternate formatting is enabled.
+  #
+  #[getter]
+  pub def alt self
+    throw nil
+
+  #
+  # The requested representation, or nil to inherit the surrounding conversion.
+  #
+  # | Kind         | Representation     | Conversion |
+  # | ------------ | ------------------ | ---------- |
+  # | `:STR:`      | string             | `s`        |
+  # | `:DBG:`      | debug              | `?`        |
+  # | `:VERBATIM:` | verbatim           | `!`        |
+  # | `:HEX:`      | integer (hex)      | `x`        |
+  # | `:OCT:`      | integer (octal)    | `o`        |
+  # | `:BIN:`      | integer (binary)   | `b`        |
+  # | `:DEC:`      | integer (decimal)  | `d`        |
+  # | `:EXP:`      | float (scientific) | `e`        |
+  # | `:FIXED:`    | float (fixed)      | `f`        |
+  #
+  # The Conversion column gives the equivalent character in a [formatted
+  # interpolation](../../language/strings.md#formatted-interpolation).
+  #
+  #[getter]
+  pub def kind self
+    throw nil
+
+  #
+  # Returns a new specification, or a bound [`FmtValue`](std.FmtValue) when
+  # `value` is provided. Omitted options retain their current values; nil resets
+  # an option.
+  #
+  # Binding a [`FmtValue`](std.FmtValue) nests it: the inner specification
+  # renders the value and this one lays that rendering out. See
+  # [Sequencing](std.FmtValue.sequencing).
+  #
+  pub def (call)
+    self
+    # value to bind
+    value = nil
+    # (Str?) Fill character, `:ZERO:`, or nil
+    :fill = nil
+    # (Sym?) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    :align = nil
+    # (Sym?) `:PLUS:` or `:SPACE:`
+    :sign = nil
+    # (Int?) Minimum width in grapheme clusters
+    :width = nil
+    # (Int?) Numeric precision or maximum graphemes
+    :precision = nil
+    # (Bool?) Enables alternate formatting
+    :alt = nil
+    # (Sym?) Representation kind
+    :kind = nil
+  do
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Applies fill, alignment, width, and truncation to a string.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let column = FmtSpec fill: . align: :CENTER: width: 8
+  # echo $column.pad("name")
+  # ```
+  pub def pad
+    self
+    # ([`Str`](std.Str)) String to lay out
+    value
+  do
+    throw nil
+
+
+#
+# Binds a value to reusable formatting options.
+#
+# A [formatted
+# interpolation](../../language/strings.md#formatted-interpolation) produces
+# one for each `${...}` it contains; the constructor is for binding a value
+# where no interpolation is being written.
+#
+# `FmtValue` exposes the same formatting fields and `pad` method as
+# [`FmtSpec`](std.FmtSpec), but is a distinct type rather than a subtype of
+# it. Calling it with new keyword options returns a new `FmtValue` retaining
+# the original value.
+#
+#
+# ## Sequencing {: #std.FmtValue.sequencing }
+#
+# Binding a `FmtValue` sequences the two specifications rather than merging
+# them: the inner one renders the value, and the outer one lays that rendering
+# out as text. So a width under a width pads what the inner layout produced,
+# and a precision clips it.
+#
+# An outer option the inner rendering cannot honor — a numeric `kind`, say — is
+# a `TypeError`, because a rendering is text. Each level is honored or rejected;
+# none is skipped.
+#
+# Nesting is bounded by the ordinary call depth.
+#
+# ```
+# let money = FmtSpec precision: 2 kind: :FIXED:
+# let bound = money 1.5
+# assert_eq "${bound:8}" "1.50    "
+#
+# # `value` descends exactly one level.
+# let outer = (FmtValue bound width: 8)
+# assert_eq (str outer.value) "1.50"
+# ```
+#
+# ## Example
+#
+# ```
+# let amount = 12.5
+# let money = FmtSpec precision: 2 kind: :FIXED:
+# echo "total: $(money $amount)"
+#
+# # A bound value carries its options into an interpolation that adds more.
+# assert_eq "${money(amount):>10}" "     12.50"
+# ```
+#
+# When `kind` is nil, interpolation in an ordinary quoted string or here string
+# uses display formatting. `str` and `dbg` supply display and debug formatting,
+# respectively. An explicit `kind` overrides the surrounding operation.
+pub class FmtValue
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let money = FmtValue 1.5 precision: 2 kind: :FIXED:
+  # assert_eq (str money) "1.50"
+  # ```
+  #
+  pub def (init)
+    self
+    # (Value) Value to bind
+    value
+    # (Str?) Fill character, `:ZERO:`, or nil
+    :fill = nil
+    # (Sym?) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    :align = nil
+    # (Sym?) `:PLUS:` or `:SPACE:`
+    :sign = nil
+    # (Int?) Minimum width in grapheme clusters
+    :width = nil
+    # (Int?) Numeric precision or maximum graphemes
+    :precision = nil
+    # (Bool?) Enables alternate formatting
+    :alt = nil
+    # (Sym?) Representation kind
+    :kind = nil
+    # (Str?) Interpolation as written in source
+    :source = nil
+  do
+    throw nil
+
+  #
+  # The bound value, one level down. It is itself a `FmtValue` when this one
+  # binds another.
+  #
+  #[getter]
+  pub def value self
+    throw nil
+
+  #
+  # The text the value was written as, or nil. Formatted interpolation records
+  # the whole interpolation including its sigil and delimiters, so a consumer can
+  # reproduce the form it was written in.
+  #
+  # ```
+  # let sourced = FmtValue 42 width: 4 source: r"${x:>4}"
+  # assert_eq $sourced.source r"${x:>4}"
+  # ```
+  #
+  #[getter]
+  pub def source self
+    throw nil
+
+  #
+  # Returns a new `FmtValue` with the supplied options merged. Positional
+  # arguments are not accepted. The result is synthetic rather than
+  # source-derived, so its [`source`](#source) is nil.
+  #
+  pub def (call)
+    self
+    # (Str?) Fill character, `:ZERO:`, or nil
+    :fill = nil
+    # (Sym?) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    :align = nil
+    # (Sym?) `:PLUS:` or `:SPACE:`
+    :sign = nil
+    # (Int?) Minimum width in grapheme clusters
+    :width = nil
+    # (Int?) Numeric precision or maximum graphemes
+    :precision = nil
+    # (Bool?) Enables alternate formatting
+    :alt = nil
+    # (Sym?) Representation kind
+    :kind = nil
+  do
+    throw nil
+
+  # Two bindings are equal when they bind equal values to the same specification
+  # and record the same [`source`](#source). `source` is readable and `dbg`
+  # renders through it, so bindings that differ in it are distinguishable.
+  pub def (eq) self other
+    throw nil
+
+
+#
+# An immutable sequence of literal text, bound interpolations, and unbound
+# parameters, produced by a
+# [`t"..."` string](../../language/strings.md#formatted-sequences).
+#
+# Every segment is a [`Str`](std.Str) of literal text, a
+# [`FmtValue`](std.FmtValue) interpolation, or a [`FmtParam`](std.FmtParam)
+# still waiting to be filled. This type behaves like an immutable array:
+# indexable, iterable, spreadable, and destructurable.
+#
+#
+# ## Trust {: #std.Fmt.trust }
+#
+# A sequence written as `t"..."` carries a guarantee: its `Str` segments are
+# program text, and everything interpolated into it is a `FmtValue` or
+# `FmtParam`. That is what lets a consumer treat the literal segments as the
+# trusted skeleton of a command and each interpolation as data to be bound or
+# quoted. [`sqlite`](sqlite) is a prime example, as it relies on
+# this guarantee to exclude SQL injection vulnerabilities.
+#
+# Toward that end, **no conversion implicitly expands a sequence.** `str` and
+# plain interpolation (`"$seq"`, `"${seq}"`, `"${seq:s}"`) raise a
+# [`TypeError`](std.TypeError); `verbatim` and `dbg` give the source form
+# This avoids accidental expansion before the sequences reaches its consumer
+# for safe structural quoting or binding of interpolations.
+# [`format()`](std.Fmt.format) must be used to explicitly expand a sequence.
+#
+# **Building a sequence yourself must uphold this guarantee.** The
+# [constructor](#fmt-segments) accepts whatever segments it is given, so a
+# `Str` built from untrusted input would subsequently be treated as trusted.
+# Programmatic construction of `Fmt` must be done with care.
+#
+# ```
+# # Fine: the query text is literal, the value is bound.
+# let query = t"select * from users where name = $name"
+#
+# # Fine: assembled at runtime, but the untrusted value is still bound.
+# let assembled = Fmt ["select * from users where name = ", (FmtValue name)]
+#
+# # Danger: untrusted input is treated as a trusted string literal
+# let injected = Fmt ["select * from users where name = ", name]
+# ```
+#
+#
+# `dbg` gives the source form, reconstructed from the literal text and each
+# interpolation's [`source`](std.FmtValue.source). An interpolation built at
+# runtime has no source, so its bound value's debug form stands in.
+#
+# `verbatim` — and with it the `!` conversion and command-argument position —
+# gives the same source form, since that is what the sequence was written as.
+# `str` and the display conversion raise a [`TypeError`](std.TypeError).
+# [`format()`](std.Fmt.format) is the only expansion. See [Trust](std.Fmt.trust).
+#
+# ```
+# let count = 3
+# assert_eq (dbg t"n=${count:03d}") r#"t"n=${count:03d}""#
+# assert_eq (verbatim t"n=${count:03d}") (dbg t"n=${count:03d}")
+# ```
+#
+# ## Example
+#
+# ```
+# let user = "root"
+# let seq = t"user: ${user:>8}"
+#
+# # Expanding gives what the equivalent `"..."` would have.
+# assert_eq $seq.format() "user:     root"
+#
+# # The interpolated value is still there to be inspected.
+# assert_eq $seq[1].value $user
+# assert_eq $seq[1].width 8
+# ```
+pub class Fmt
+  #
+  #
+  # Builds a sequence from an iterable of segments.
+  #
+  # Writing a `t"..."` is the usual way to get one; the constructor is for
+  # assembling a sequence at runtime.
+  #
+  # ## Errors
+  #
+  # | Exception                      | Condition                                           |
+  # | ------------------------------ | --------------------------------------------------- |
+  # | [`TypeError`](std.TypeError) | A segment is not a `Str`, `FmtValue`, or `FmtParam` |
+  #
+  # ## Example
+  #
+  # ```
+  # let built = Fmt ["a=", (FmtValue 42), ";"]
+  # assert_eq $built.len 3
+  # assert_eq $built.format() "a=42;"
+  # ```
+  #
+  pub def (init) self segments
+    throw nil
+
+  #
+  # The number of segments.
+  #
+  # ```
+  # let greeting = t"hello $name!"
+  # assert_eq $greeting.len 3
+  # ```
+  #
+  #[getter]
+  pub def len self
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Expands the sequence and returns the result: literal text as it stands, and
+  # each interpolation through its own specification. This is the only way to get
+  # the expansion — see [Trust](std.Fmt.trust).
+  #
+  # Given arguments, it fills the [parameters](std.FmtParam) first, on the same
+  # exhaustive terms as [`(call)`](#call-bindings). Use `(call)` when the filled
+  # sequence is what a consumer wants.
+  #
+  #
+  # ## Errors
+  #
+  # | Exception                                         | Condition                     |
+  # | ------------------------------------------------- | ----------------------------- |
+  # | [`MissingPosError`](std.MissingPosError)       | A numbered parameter unfilled |
+  # | [`MissingKeyError`](std.MissingKeyError)       | A named parameter unfilled    |
+  # | [`UnexpectedPosError`](std.UnexpectedPosError) | A positional argument unused  |
+  # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A keyword argument unused     |
+  #
+  # ## Example
+  #
+  # ```
+  # let count = 3
+  # assert_eq $(t"n=${count:03d}").format() "n=003"
+  #
+  # let stmt = t"select * from t where a = ${#0} and c = ${#name}"
+  # assert_eq $stmt.format(1, name: "n") "select * from t where a = 1 and c = n"
+  # ```
+  #
+  pub def format self ...bindings
+    throw nil
+
+  #
+  # ([`Set`](std.Set)) The unbound [parameter](std.FmtParam) names, in depth-first, parent-first
+  # order.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let stmt = t"select * from t where a = ${#0} and c = ${#name}"
+  # assert_eq $stmt.params() (Set([0, :name:]))
+  # assert_eq $(t"no holes").params() (Set([]))
+  # ```
+  #
+  pub def params self
+    throw nil
+
+  #
+  # (`Fmt`) Fills the [parameters](std.FmtParam) `bindings` names and returns the
+  # result. A parameter it does not name stays a parameter, so a template can be
+  # filled in stages.
+  #
+  # Binding is keyed lookup: a parameter written `${#0}` is filled by key `0`, and
+  # `${#name}` by key `name`. A dict is what `bind` takes because only a dict can
+  # name a sparse set of positions.
+  #
+  # A binding descends into a sequence bound inside the sequence, so a template
+  # pasted into another is filled along with it.
+  #
+  #
+  # ## Errors
+  #
+  # | Exception                                         | Condition                        |
+  # | ------------------------------------------------- | -------------------------------- |
+  # | [`TypeError`](std.TypeError)                    | `bindings` is not a dict         |
+  # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A named key no parameter uses    |
+  # | [`UnexpectedPosError`](std.UnexpectedPosError) | An integer key no parameter uses |
+  #
+  # ## Example
+  #
+  # ```
+  # let stmt = t"select * from t where a = ${#0} and c = ${#name}"
+  # let partial = stmt.bind {name: "n"}
+  # assert_eq $(partial.bind {0: 1}).format() "select * from t where a = 1 and c = n"
+  # ```
+  #
+  pub def bind self bindings
+    throw nil
+
+  #
+  # (`Fmt`) Fills every parameter at once and insists the two sides match exactly: each
+  # parameter is filled, and each argument is used.
+  #
+  # Positional arguments are sugar for integer keys — argument *i* fills parameter
+  # `i` — so `(call)` and [`bind`](std.Fmt.bind) substitute identically and differ
+  # only in their checks.
+  #
+  #
+  # ## Errors
+  #
+  # | Exception                                         | Condition                     |
+  # | ------------------------------------------------- | ----------------------------- |
+  # | [`MissingPosError`](std.MissingPosError)       | A numbered parameter unfilled |
+  # | [`MissingKeyError`](std.MissingKeyError)       | A named parameter unfilled    |
+  # | [`UnexpectedPosError`](std.UnexpectedPosError) | A positional argument unused  |
+  # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A keyword argument unused     |
+  #
+  # ## Example
+  #
+  # ```
+  # let stmt = t"select * from t where a = ${#0} and c = ${#name}"
+  # assert_eq $(stmt 1 name: "n").format() "select * from t where a = 1 and c = n"
+  # ```
+  #
+  pub def (call) self ...bindings
+    throw nil
+
+  #
+  # `seq[i]` returns segment `i`: a [`Str`](std.Str) of literal text, a
+  # [`FmtValue`](std.FmtValue), or a [`FmtParam`](std.FmtParam).
+  #
+  # ```
+  # let greeting = t"hello $name!"
+  # assert_eq $greeting[0] "hello "
+  # assert_eq $greeting[1].source r"$name"
+  # ```
+  #
+  # Assigning to a segment raises an [`ImmutableError`](std.ImmutableError).
+  #
+  pub def (index) self index
+    throw nil
+
+  #
+  # Iterating yields the segments in order, so a consumer can decide what to do
+  # with each.
+  #
+  # ```
+  # for segment = greeting
+  #   echo $ type $segment
+  # ```
+  #
+  # The console is the worked example of such a consumer:
+  # [`term`](term.Text.sequences) walks a sequence segment by segment rather
+  # than converting it, which is what lets styling interpolated into one survive
+  # to the terminal.
+  #
+  pub def (iter) self
+    throw nil
+
+  #
+  # Two sequences are equal when their segments are. How a sequence was assembled
+  # does not show. The text each interpolation records does: a segment carries its
+  # [`source`](std.FmtValue.source), so `t"$name"` and `t"${name}"` are not
+  # equal.
+  #
+  pub def (eq) self other
+    throw nil
+
+  #
+  # `dbg` gives the source form, reconstructed from the literal text and each
+  # interpolation's [`source`](std.FmtValue.source). An interpolation built at
+  # runtime has no source, so its bound value's debug form stands in.
+  #
+  # `verbatim` — and with it the `!` conversion and command-argument position —
+  # gives the same source form, since that is what the sequence was written as.
+  # `str` and the display conversion raise a [`TypeError`](std.TypeError).
+  # [`format()`](std.Fmt.format) is the only expansion. See [Trust](std.Fmt.trust).
+  #
+  # ```
+  # let count = 3
+  # assert_eq (dbg t"n=${count:03d}") r#"t"n=${count:03d}""#
+  # assert_eq (verbatim t"n=${count:03d}") (dbg t"n=${count:03d}")
+  # ```
+  #
+  pub def (fmt) self
+    throw nil
+
+
+
+#
+# `Func` is the abstract supertype of function values.
+pub class Func
+
+#
+# Abstract type for class-field getter objects.
+#
+# For a computed field `obj.name`:
+#
+# - reading `obj.name` calls `getter.get(obj)`
+# - calling `obj.name(...)` first calls `getter.get(obj)`, then calls the result
+#
+pub class Getter
+  #
+  #
+  # Returns the field value for `obj`.
+  #
+  pub def get
+    self
+    # instance being accessed
+    obj
+  do
+    throw nil
+
+
+#
+# Raised when attempting to mutate an immutable value.
+#
+pub class ImmutableError: RuntimeError
+  #
+  #
+  # Builds an error reporting an attempt to mutate an immutable object.
+  #
+  pub def (init) self
+    throw nil
+
+
+#
+# Raised when a module import fails (e.g. module not found).
+#
+pub class ImportError: RuntimeError
+  #
+  #
+  # Builds an error naming a module that could not be found.
+  #
+  pub def (init)
+    self
+    # ([`Str`](std.Str)) the module that could not be found
+    name
+  do
+    throw nil
+
+
+#
+# Raised when accessing an array or other indexed collection with an out-of-bounds
+# index.
+#
+pub class IndexError: RuntimeError
+  #
+  #
+  # Builds an error reporting an out-of-range or otherwise invalid index.
+  #
+  pub def (init) self
+    throw nil
+
+
+#
+# 128-bit signed integers.
+#
+pub class Int
+  #
+  # `Int` accepts an integer, a boolean, or an integral float. It rejects
+  # fractional floats and interpretive conversions such as parsing strings.
+  #
+  # ```
+  # assert_eq (Int true) 1
+  # assert_eq (Int 3.0) 3
+  # ```
+  #
+  # The lowercase `int` function performs coercion and parsing:
+  #
+  # ```
+  # assert_eq (int "42") 42
+  # assert_eq (int 3.14) 3
+  # ```
+  #
+  pub def (init) self
+    throw nil
+
+  # Adds two integers.
+  pub def (add) self other
+    throw nil
+
+  # Subtracts an integer.
+  pub def (sub) self other
+    throw nil
+
+  # Multiplies two integers.
+  pub def (mul) self other
+    throw nil
+
+  # Divides two integers and returns a [`Float`](std.Float).
+  pub def (div) self other
+    throw nil
+
+  # Performs Euclidean integer division. Together with `(mod)`, satisfies `x == (x // y) * y + (x % y)`.
+  pub def (ediv) self other
+    throw nil
+
+  # Computes the Euclidean remainder. Together with `(ediv)`, satisfies `x == (x // y) * y + (x % y)`.
+  pub def (mod) self other
+    throw nil
+
+  # Negates the integer.
+  pub def (neg) self
+    throw nil
+
+  # Computes bitwise AND.
+  pub def (band) self other
+    throw nil
+
+  # Computes bitwise OR.
+  pub def (bor) self other
+    throw nil
+
+  # Computes bitwise XOR.
+  pub def (bxor) self other
+    throw nil
+
+  # Computes bitwise NOT.
+  pub def (bnot) self
+    throw nil
+
+  # Shifts left.
+  pub def (shl) self other
+    throw nil
+
+  # Shifts right arithmetically, sign-extending negative values.
+  pub def (shr) self other
+    throw nil
+
+  # Tests equality. Mixed Int/Float comparisons are supported.
+  pub def (eq) self other
+    throw nil
+
+  # Orders values. Mixed Int/Float comparisons are supported.
+  pub def (lt) self other
+    throw nil
+
+# Error raised to signal that an iterator is exhausted. This is used
+# internally by the iteration protocol and can be caught in `try`/`catch`
+# statements.
+pub class IterStop: Error
+  #
+  #
+  # Builds the signal that an iterator is exhausted.
+  pub def (init) self
+    throw nil
+
+
+#
+# Abstract type for iterators. Values that implement the iteration protocol
+# are instances of `Iter`, which can be used for type testing.
+#
+# `Iter` is not constructible directly. See
+# [Classes](../../language/classes.md) for defining custom iterators.
+#
+# ```
+# assert_eq (type $ [1, 2, 3].iter()) $Iter
+# ```
+#
+pub class Iter: Iterable
+  #
+  #
+  # Returns `true` if every yielded value is truthy.
+  #
+  # When `pred` is provided, it tests `pred(value)` instead.
+  #
+  # Empty iterators return `true`.
+  #
+  pub def all self pred = nil
+    throw nil
+
+  #
+  # Returns `true` if any yielded value is truthy.
+  #
+  # When `pred` is provided, it tests `pred(value)` instead.
+  #
+  # Empty iterators return `false`.
+  #
+  pub def any self pred = nil
+    throw nil
+
+  #
+  # Returns an iterator that yields this iterator followed by each additional
+  # iterable in sequence.
+  #
+  pub def chain self ...values
+    throw nil
+
+  #
+  # Creates a wrapper `Iter` which removes one trailing line terminator (`\r\n` or
+  # `\n`) from each item, if present.
+  #
+  # ## Errors
+  #
+  # Getting an item raises [`TypeError`](std.TypeError) if the underlying
+  # `Iter` yields neither a `Str` nor a `Bin`.
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq [...["a\n", "b\r\n", "c"].chomp()] ["a", "b", "c"]
+  #
+  # for line = shell.stdin.chomp()
+  #   echo "got $line"
+  # ```
+  #
+  # Distinct from [`Str.trim_end`](std.Str), which is about whitespace generally
+  # and takes an optional character set. `chomp` is about a line terminator
+  # specifically and takes nothing.
+  #
+  pub def chomp self
+    throw nil
+
+  #
+  # Consumes the iterator and returns the number of yielded values.
+  #
+  pub def count self
+    throw nil
+
+  #
+  # Creates a wrapper `Iter` which appends a line terminator to each item.
+  #
+  # The inverse of [`chomp`](#chomp), and the usual way to terminate values on
+  # their way into a byte stream.
+  #
+  # The terminator is appended **unconditionally**: an item that already ends in
+  # one gets a second.
+  #
+  # ## Errors
+  #
+  # Raises [`TypeError`](std.TypeError) for an item, or a terminator, that is
+  # neither a `Str` nor a `Bin`, or if a `Bin` terminator would leave a `Str` item
+  # invalid UTF-8.
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq [...["a", "b"].crimp()] ["a\n", "b\n"]
+  # assert_eq [...["a"].crimp("\r\n")] ["a\r\n"]
+  #
+  # run cmd stdin: (["one", "two"].crimp())
+  # ```
+  #
+  pub def crimp self terminator = nil
+    throw nil
+
+  #
+  # Returns an iterator that yields `[index, value]` tuples.
+  #
+  # The first index is `0`.
+  #
+  pub def enumerate self
+    throw nil
+
+  #
+  # Creates a wrapper `Iter` which yields each `value` from the wrapper iterator
+  # only if `pred(value)` is truthy.
+  #
+  pub def filter self pred
+    throw nil
+
+  #
+  # Consumes the iterator and returns the first value where `pred(value)` is truthy.
+  #
+  # ## Errors
+  #
+  # Raises [`RuntimeError`](std.RuntimeError) if no value matches and
+  # no fallback is provided.
+  #
+  pub def find self pred :default = nil :else = nil
+    throw nil
+
+  #
+  # Consumes the iterator left-to-right, repeatedly applying `func(acc, value)`.
+  #
+  # Returns `init` unchanged if the iterator is empty.
+  #
+  pub def fold self init func
+    throw nil
+
+  #
+  # Returns an iterator wrapper that preserves normal iteration, but opts into
+  # key/value spreading.
+  #
+  # When spread in a keyed context such as a dict literal or argument spread, each
+  # yielded item must unpack into exactly two values.
+  #
+  # ```
+  # let entries = ["x=1", "y=2"].iter().map do |e| e.split "="
+  #
+  # assert_eq {...entries.kv()} {"x": "1", "y": "2"}
+  # ```
+  #
+  pub def kv self
+    throw nil
+
+  #
+  # Creates a wrapper `Iter` which yields `func(value)` for each `value` yielded by
+  # the wrapper iterator.
+  #
+  pub def map self func
+    throw nil
+
+  #
+  # Consumes the iterator and returns the maximum yielded value.
+  #
+  # ## Errors
+  #
+  # Raises [`IterStop`](std.IterStop) if the iterator is empty and no
+  # `default:` is provided.
+  #
+  pub def max self :default = nil
+    throw nil
+
+  #
+  # Consumes the iterator and returns the minimum yielded value.
+  #
+  # ## Errors
+  #
+  # Raises [`IterStop`](std.IterStop) if the iterator is empty and no
+  # `default:` is provided.
+  #
+  pub def min self :default = nil
+    throw nil
+
+  #
+  # Returns the next value from the iterator.
+  #
+  # ## Errors
+  #
+  # Raises [`IterStop`](std.IterStop) when exhausted and no fallback
+  # is provided.
+  #
+  pub def next self :default = nil :else = nil
+    throw nil
+
+  #
+  # Returns an iterator that discards the first `n` values, then yields the rest.
+  #
+  # ## Errors
+  #
+  # | Exception                        | Condition           |
+  # | -------------------------------- | ------------------- |
+  # | [`TypeError`](std.TypeError)   | `n` is not an `Int` |
+  # | [`ValueError`](std.ValueError) | `n` is negative     |
+  #
+  pub def skip self n
+    throw nil
+
+  #
+  # Returns an iterator that yields at most `n` values.
+  #
+  # ## Errors
+  #
+  # | Exception                        | Condition           |
+  # | -------------------------------- | ------------------- |
+  # | [`TypeError`](std.TypeError)   | `n` is not an `Int` |
+  # | [`ValueError`](std.ValueError) | `n` is negative     |
+  #
+  pub def take self n
+    throw nil
+
+  #
+  # Returns an iterator that yields one tuple for each step across this iterator
+  # and the additional iterables.
+  # The zipped iterator stops as soon as any input is exhausted.
+  pub def zip self ...values
+    throw nil
+
+
+#
+# Abstract type for iterable values. Values that implement the `(iter)` protocol
+# are instances of `Iterable`, which can be used for type testing.
+#
+pub class Iterable
+  # ([`Iter`](std.Iter)) Returns an iterator over the value.
+  pub def iter self
+    throw nil
+
+  # Tests whether every item is truthy, or satisfies `pred`.
+  pub def all self pred = nil
+    throw nil
+
+  # Tests whether any item is truthy, or satisfies `pred`.
+  pub def any self pred = nil
+    throw nil
+
+  # Returns an iterator followed by the additional iterables.
+  pub def chain self ...values
+    throw nil
+
+  # Returns an iterator with one trailing line terminator removed from each item.
+  pub def chomp self
+    throw nil
+
+  # Returns an iterator with a line terminator appended to each item.
+  pub def crimp self terminator = nil
+    throw nil
+
+  # Returns an iterator of `[index, value]` tuples.
+  pub def enumerate self
+    throw nil
+
+  # Returns an iterator of values for which `pred` is truthy.
+  pub def filter self pred
+    throw nil
+
+  # Returns the first value for which `pred` is truthy.
+  pub def find self pred :default = nil :else = nil
+    throw nil
+
+  # Accumulates a value left-to-right with `func`.
+  pub def fold self init func
+    throw nil
+
+  # Returns an iterator that maps each item through `func`.
+  pub def map self func
+    throw nil
+
+  # Returns the largest item.
+  pub def max self :default = nil
+    throw nil
+
+  # Returns the smallest item.
+  pub def min self :default = nil
+    throw nil
+
+  # Returns an iterator that discards the first `n` items.
+  pub def skip self n
+    throw nil
+
+  # Returns an iterator yielding at most `n` items.
+  pub def take self n
+    throw nil
+
+  # Returns an iterator of tuples across this and additional iterables.
+  pub def zip self ...values
+    throw nil
+
+
+#
+# Raised when a required key argument is not provided.
+#
+pub class MissingKeyError: RuntimeError
+  #
+  #
+  # Builds an error naming a missing key item.
+  #
+  pub def (init)
+    self
+    # the missing key
+    key
+  do
+    throw nil
+
+
+#
+# Raised when a required positional argument is not provided.
+#
+pub class MissingPosError: RuntimeError
+  #
+  #
+  # Builds an error naming a missing positional item.
+  #
+  pub def (init)
+    self
+    # ([`Int`](std.Int)) zero-based position of the missing item
+    index
+  do
+    throw nil
+
+
+#
+# The type object for the `nil` value.
+#
+# `Nil` is not constructible directly.
+#
+# `Nil` is also returned by `type`:
+#
+# ```
+# assert_eq (type nil) $Nil
+# assert (type nil Nil)
+# ```
+pub class Nil
+
+#
+# Acts as an empty iterator and a sink that discards every value.
+#
+# The [`std.null`](std.null) singleton is the only `Null` value. Use it to
+# provide an empty input or discard output:
+#
+# ```
+# run tool stdin: $null stdout: $null
+# ```
+#
+pub class Null
+  # Ends immediately without yielding a value.
+  pub def (iter) self
+    throw nil
+
+  # Returns a sink.
+  pub def (sink) self
+    throw nil
+
+
+#
+# Raised on integer overflow.
+#
+pub class OverflowError: RuntimeError
+  #
+  #
+  # Builds an error reporting numeric overflow.
+  #
+  pub def (init) self
+    throw nil
+
+
+#
+# Describes a numeric interval for iteration and slicing.
+pub class Range
+  #
+  # ```
+  # let bounded = (1..5)
+  # let from_start = (..5)
+  # let to_end = (1..)
+  # let all = (..)
+  # ```
+  #
+  # `a..b` is half-open: it includes `a` and excludes `b`.
+  #
+  # Open-ended forms keep the missing endpoint as `nil` internally.
+  #
+  pub def (init) self start = nil end = nil step = nil
+    throw nil
+
+  #
+  # The ending value (exclusive), or `nil` for open-end ranges.
+  #
+  #[getter]
+  pub def end self
+    throw nil
+
+  #
+  # The starting value, or `nil` for open-start ranges.
+  #
+  #[getter]
+  pub def start self
+    throw nil
+
+  #
+  # The step size.
+  #
+  #[getter]
+  pub def step self
+    throw nil
+
+  #
+  # (`Bool`) Tests whether the given value is within the Range interval. For increasing
+  # ranges (start < end), checks if value is in \[start, end). For decreasing
+  # ranges (start > end), checks if value is in (end, start].
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # # Increasing Range [0, 5)
+  # let r1 = Range 0 5
+  # assert (r1.contains 0)
+  # assert (r1.contains 4)
+  # assert (!r1.contains 5)
+  #
+  # # Decreasing Range (0, 5]
+  # let r2 = Range 5 0 -1
+  # assert (r2.contains 5)
+  # assert (r2.contains 1)
+  # assert (!r2.contains 0)
+  # ```
+  pub def contains
+    self
+    # the value to check
+    value
+  do
+    throw nil
+
+  # Iterates the interval. Open-ended ranges require a concrete start.
+  pub def (iter) self
+    throw nil
+
+  # Supplies slice bounds when used as an index by sequence types.
+  pub def (index) self collection
+    throw nil
+
+
+#
+# Stores ordered symbol and integer keys, including multiple values per key.
+pub class Record
+  #
+  #
+  # Builds a record from one spreadable source of key-value pairs.
+  #
+  # ```
+  # let r = Record {name: Alice, age: 30}
+  # ```
+  #
+  # The lowercase `record` factory constructs a record verbatim from all
+  # arguments, with positional arguments receiving incrementing integer keys and
+  # key arguments becoming fields. Order and key multiplicity are preserved.
+  #
+  # ```
+  # let r = record first second name: Alice
+  # ```
+  #
+  # ```
+  # let r = record name: Alice age: 30
+  # echo $r.name  # Alice
+  # echo $r.age   # 30
+  # ```
+  #
+  pub def (init) self source
+    throw nil
+
+  #
+  # Records support direct dot-syntax for symbol keys:
+  #
+  # ```
+  # let r = record name: Alice age: 30
+  # echo $r.name
+  # r.age = 31
+  # ```
+  #
+  # And indexing for both symbol and integer keys:
+  #
+  # ```
+  # echo $r[:name:]
+  # r[0] = "first"
+  # ```
+  #
+  # Reads a field.
+  pub def (get) self name
+    throw nil
+
+  #
+  # Clears all fields.
+  #
+  #[class]
+  pub def clear self rec
+    throw nil
+
+  #
+  # (`Bool`) Tests whether the record contains the given key. If a value is provided,
+  # tests whether any value associated with that key matches.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let r = record 1 2 3 a: "first"
+  # r.insert :a: "second"
+  #
+  # # Key-only check
+  # assert (record.contains $r 0)
+  # assert (record.contains $r :a:)
+  # assert (!record.contains $r 10)
+  #
+  # # Key + value check
+  # assert (record.contains $r :a: "first")
+  # assert (record.contains $r :a: "second")
+  # ```
+  #
+  #[class]
+  pub def contains
+    self
+    # (record) the record to check
+    rec
+    # ([`Int`](std.Int)\|[`Sym`](std.Sym)) the key to check
+    key
+    # optional value to check for (multi-map)
+    value = nil
+  do
+    throw nil
+
+  #
+  # Returns a count derived from the record's multi-map structure.
+  #
+  # With no `key`, it returns the number of distinct keys. With a `key`, it returns
+  # the number of values associated with that key.
+  #
+  # Missing keys return `0`.
+  #
+  #[class]
+  pub def count self rec key = nil
+    throw nil
+
+  #
+  # Removes all values for a field.
+  #
+  # Returns [`Bool`](std) indicating whether any values were removed.
+  #
+  #[class]
+  pub def delete self rec key
+    throw nil
+
+  #
+  # Gets a field value with optional default. Supports `instance:` for multi-map
+  # access. Negative `instance:` indexes count from the end.
+  #
+  #[class]
+  pub def get self rec key :instance = nil :default = nil :else = nil
+    throw nil
+
+  #
+  # Sets a field. Key must be a symbol or integer.
+  #
+  #[class]
+  pub def insert self rec key value
+    throw nil
+
+  #
+  # Returns an iterator of keys. Each distinct key is yielded exactly once, in the
+  # order its first pair was inserted.
+  #
+  # If duplicate-key iteration is needed, use ordinary record iteration.
+  #
+  #[class]
+  pub def keys self rec
+    throw nil
+
+  #
+  # (`Int`) Returns the number of fields.
+  #
+  #
+  #[class]
+  pub def len self rec
+    throw nil
+
+  #
+  # Removes and returns a value for a field. Supports `instance:` for multi-map
+  # access to remove a specific value by its position among values for that field.
+  # Negative `instance:` indexes count from the end.
+  #
+  #[class]
+  pub def pop self rec key :instance = nil :default = nil :else = nil
+    throw nil
+
+  #
+  # Returns an iterator of values. With no `key`, it yields all stored values in
+  # pair insertion order. With a `key`, it yields only the values associated with
+  # that key, in that key's insertion order.
+  #
+  # Missing keys return an empty iterator.
+  #[class]
+  pub def values self rec key = nil
+    throw nil
+
+  # Iterates record entries as `[key, value]` pairs in insertion order.
+  pub def (iter) self
+    throw nil
+
+  # Unpacks record fields by their symbol or integer keys.
+  pub def (unpack) self
+    throw nil
+
+
+#
+# Supertype of ordinary catchable runtime failures, and a generic runtime error
+# in its own right when no more specific type applies.
+#
+#
+# ## Subclassing
+#
+# A class may inherit from `RuntimeError` or any of its subtypes. The subclass
+# must chain to the supertype's constructor, which is what gives the instance
+# its string form:
+#
+# ```
+# class NoDomainError: RuntimeError
+#   pub field name = nil
+#
+#   def (init) self name
+#     RuntimeError.(init) $self "domain does not exist: $name"
+#     self.name = name
+#
+# try
+#   throw NoDomainError "guest0"
+# catch RuntimeError: e
+#   assert_eq (str e) "domain does not exist: guest0"
+# ```
+#
+# See [Error handling](../../language/error-handling.md#subclassing-error-types).
+pub class RuntimeError: Error
+  #
+  #
+  # Builds a runtime error carrying `message` verbatim — unlike the more specific
+  # types, it adds no prefix of its own.
+  #
+  pub def (init)
+    self
+    # ([`Str`](std.Str)) the error's complete string form
+    message
+  do
+    throw nil
+
+
+#
+# Sets are ordered, mutable collections with unique membership semantics.
+#
+# Iteration preserves insertion order. Reinserting an existing value is a no-op
+# and does not move it to the end.
+#
+pub class Set
+  #
+  #
+  # Builds a set from one iterable.
+  #
+  pub def (init) self iterable
+    throw nil
+
+  #
+  # ([`Int`](std)) Returns the number of members.
+  #
+  #
+  #[getter]
+  pub def len self
+    throw nil
+
+  #
+  # Adds `value` if it is not already present.
+  #
+  # ## Example
+  #
+  # ```
+  # let s = Set [1, 2]
+  # s.add 3
+  # s.add 2
+  # assert_eq [...s] [1, 2, 3]
+  # ```
+  #
+  pub def add
+    self
+    # the value to insert
+    value
+  do
+    throw nil
+
+  #
+  # Removes all members.
+  #
+  # ```
+  # let s = Set [1, 2]
+  # s.clear()
+  # assert_eq $s.len 0
+  # ```
+  #
+  pub def clear self
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the Set contains `value`.
+  #
+  #
+  pub def contains
+    self
+    # the value to test
+    value
+  do
+    throw nil
+
+  #
+  # ([`Set`](std.Set)) Returns a shallow copy of the Set.
+  #
+  # Insertion order is preserved. Contained values are *not* recursively copied.
+  #
+  #
+  pub def copy self
+    throw nil
+
+  #
+  # ([`Bool`](std)) Indicates whether a value was removed. Removes `value` if present.
+  #
+  #
+  pub def delete
+    self
+    # the value to remove
+    value
+  do
+    throw nil
+
+  #
+  # ([`Set`](std.Set)) Returns a new Set containing members from the receiver that are not present in
+  # `other`.
+  #
+  #
+  pub def diff
+    self
+    # ([`Set`](std.Set)) other Set
+    other
+  do
+    throw nil
+
+  #
+  # ([`Set`](std.Set)) Returns a new Set containing members that are present in both sets, in
+  # the receiver's insertion order.
+  #
+  #
+  pub def intersect
+    self
+    # ([`Set`](std.Set)) other Set
+    other
+  do
+    throw nil
+
+  #
+  # ([`Bool`](std)) Returns `true` when every member of the receiver is present in `other`.
+  #
+  #
+  pub def is_subset
+    self
+    # ([`Set`](std.Set)) other Set
+    other
+  do
+    throw nil
+
+  #
+  # ([`Bool`](std)) Returns `true` when every member of `other` is present in the receiver.
+  #
+  #
+  pub def is_superset
+    self
+    # ([`Set`](std.Set)) other Set
+    other
+  do
+    throw nil
+
+  #
+  # ([`Set`](std.Set)) Returns a new Set containing members present in exactly one of the two
+  # sets.
+  #
+  #
+  pub def sym_diff
+    self
+    # ([`Set`](std.Set)) other Set
+    other
+  do
+    throw nil
+
+  #
+  # ([`Set`](std.Set)) Returns a new Set containing all members from `self`, then first-seen members
+  # from `other`.
+  #
+  #
+  pub def union
+    self
+    # ([`Set`](std.Set)) other Set
+    other
+  do
+    throw nil
+
+  #
+  # Iterates values in insertion order:
+  #
+  # ```
+  # let s = Set [3, 1, 2, 1]
+  # assert_eq [...s] [3, 1, 2]
+  # ```
+  # Returns an iterator.
+  pub def (iter) self
+    throw nil
+
+
+#
+# Abstract type for class-field setter objects.
+#
+# For a computed field assignment `obj.name = value`:
+#
+# - writing `obj.name = value` calls `setter.set(obj, value)`
+#
+pub class Setter
+  #
+  #
+  # Updates the field value for `obj`.
+  #
+  pub def set
+    self
+    # instance being assigned
+    obj
+    # new field value
+    value
+  do
+    throw nil
+
+
+#
+# Error raised to signal that a sink has been closed.
+#
+pub class SinkStop: Error
+  #
+  #
+  # Builds the signal that a sink has been closed.
+  #
+  # ## Example
+  #
+  # ```
+  # throw SinkStop()
+  # ```
+  pub def (init) self
+    throw nil
+
+
+#
+# Abstract type for sinks. Values that implement the sink protocol
+# are instances of `Sink`, which can be used for type testing.
+#
+# `Sink` is not constructible directly.
+#
+# ```
+# assert_eq (type $ [].sink()) $Sink
+# ```
+#
+pub class Sink: Sinkable
+  #
+  #
+  # Creates a wrapper `Sink` which removes a trailing line terminator (`\n` or
+  # `\r\n`) from each item, if present, before it is written.
+  #
+  # ## Errors
+  #
+  # Putting an item raises [`TypeError`](std.TypeError) if it is neither
+  # neither a `Str` nor a `Bin`.
+  #
+  # ## Example
+  #
+  # ```
+  # let acc = []
+  # let out = acc.prechomp()
+  # out.put "line\n"
+  # assert_eq $acc ["line"]
+  # ```
+  #
+  pub def prechomp self
+    throw nil
+
+  #
+  # Creates a wrapper `Sink` that appends a terminator to each value before it is
+  # written. The append is unconditional, so an item that already ends in one gets
+  # a second.
+  #
+  # ## Errors
+  #
+  # Raises [`TypeError`](std.TypeError) for a value, or a terminator, that is
+  # neither a `Str` nor a `Bin`, or if a `Bin` terminator would leave a `Str` value
+  # invalid UTF-8.
+  #
+  # ## Example
+  #
+  # ```
+  # let out = shell.stdout.precrimp()
+  # out.put "hello"
+  # # writes "hello\n"
+  #
+  # open $path w do |file|
+  #   file.precrimp(shell.line_ending()).put "native"
+  # ```
+  #
+  pub def precrimp self terminator = nil
+    throw nil
+
+  #
+  # Wraps the sink so only values for which `pred` is truthy are written.
+  #
+  # Because each wrapper transforms values on the way in, the outermost wrapper
+  # sees a value first — the reverse of an iterator chain.
+  #
+  # ## Example
+  #
+  # ```
+  # let acc = []
+  # let out = acc.prefilter (do |x| x % 2 == 0)
+  # out.put 1
+  # out.put 2
+  # assert_eq $acc [2]
+  # ```
+  #
+  pub def prefilter self pred
+    throw nil
+
+  #
+  # Wraps the sink so each value is transformed before it is written.
+  #
+  # The `pre` prefix marks the direction: unlike [`Iter.map`](std.Iter.map),
+  # which transforms values on their way *out*, `premap` transforms values on their
+  # way *into* the sink. A value that is both [`Iterable`](std.Iterable) and
+  # [`Sinkable`](std.Sinkable) — an [`Array`](std.Array), say — therefore offers
+  # `map` and `premap` as separate methods running in opposite directions.
+  #
+  # ## Example
+  #
+  # ```
+  # let acc = []
+  # let out = acc.premap (do |x| x * 2)
+  # out.put 3
+  # assert_eq $acc [6]
+  # ```
+  #
+  pub def premap self func
+    throw nil
+
+  #
+  # Writes a value to the sink.
+  #
+  pub def put self value
+    throw nil
+
+
+#
+# Abstract type for values that implement the `(sink)` protocol.
+#
+pub class Sinkable
+  # ([`Sink`](std.Sink)) Returns a sink over the value.
+  pub def sink self
+    throw nil
+
+  # Writes a value to the sink.
+  pub def put self value
+    throw nil
+
+  # Returns a sink that removes one trailing line terminator from each value.
+  pub def prechomp self
+    throw nil
+
+  # Returns a sink that appends a line terminator to each value.
+  pub def precrimp self terminator = nil
+    throw nil
+
+  # Returns a sink that writes only values for which `pred` is truthy.
+  pub def prefilter self pred
+    throw nil
+
+  # Returns a sink that transforms each value with `func` before writing it.
+  pub def premap self func
+    throw nil
+
+
+#
+# Raised when an operation is invalid for the current object or runtime state,
+# such as using a closed handle or stale reference.
+#
+pub class StateError: RuntimeError
+  #
+  #
+  # Builds an error reporting an operation attempted in the wrong state.
+  #
+  pub def (init)
+    self
+    # ([`Str`](std.Str)) description of the invalid state
+    message
+  do
+    throw nil
+
+
+#
+# Decorator placing a class member in the type-object namespace without making it
+# inheritable.
+#
+# Applies to a `def` or a `field` inside a class body. Because a static is not
+# inherited, it shadows an inherited class member of the same name without
+# propagating that shadowing to subclasses — which is what makes a static
+# `(call)` usable as a factory that cannot recurse into itself:
+#
+# ```
+# class Shape
+#   pub field kind = ""
+#
+#   def (init) self kind
+#     self.kind = kind
+#
+#   #[static]
+#   pub def (call) cls kind
+#     Type.(call) $cls $kind
+#
+# class Circle: Shape
+#
+# let c = Circle "arc"   # default instantiation: the factory is not inherited
+# ```
+#
+# See [`class`](std.class) for the inherited counterpart, and
+# [Class and Static Members](../../language/classes.md#class-and-static-members)
+# for the full semantics.
+pub let static = nil
+
+#
+# Strings are immutable sequences of UTF-8 bytes.
+#
+pub class Str
+  #
+  #
+  # Accepts a string or decodes UTF-8 binary data. The lowercase `str` function
+  # instead returns the general-purpose textual representation of any value.
+  #
+  # ```
+  # assert_eq (Str b"hello") "hello"
+  # assert_eq (str 42) "42"
+  # ```
+  #
+  pub def (init) self value
+    throw nil
+
+  #
+  # ([`Int`](std)) Returns the byte length of the string.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq $"hello".len 5
+  # assert_eq $"".len 0
+  # ```
+  #
+  #[getter]
+  pub def len self
+    throw nil
+
+  #
+  # ([`Iterable`](std.Iterable)) Returns an immutable view of the string's Unicode scalar values.
+  #
+  # The view supports `len`, positive and negative indexing, contiguous range
+  # slicing, iteration, spreading, and positional destructuring. Elements and
+  # slices are strings. Its operations do not change the byte-oriented behavior of
+  # [`Str.len`](#len) or string indexing.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let scalars = "Aé".scalars()
+  # assert_eq $scalars.len 3
+  # assert_eq [...scalars] ["A", "e", "́"]
+  # assert_eq $scalars[-1] "́"
+  # ```
+  #
+  pub def scalars self
+    throw nil
+
+  #
+  # ([`Int`](std)) Returns the Unicode scalar value encoded by a single-scalar string.
+  #
+  #
+  # ## Errors
+  #
+  # Raises [`ValueError`](std.ValueError) if the string contains zero or multiple
+  # Unicode scalar values.
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ("A".scalar()) 65
+  # assert_eq ("😀".scalar()) 128512
+  # ```
+  #
+  pub def scalar self
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Removes one trailing line terminator.
+  #
+  # One complete terminator — `\r\n` or `\n`, never a lone `\r` — and nothing else.
+  # A string without one is returned unchanged.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ("line\n".chomp()) "line"
+  # assert_eq ("line\r\n".chomp()) "line"
+  # assert_eq ("line".chomp()) "line"
+  # ```
+  #
+  # Distinct from [`trim_end`](#trim_end-chars), which is about whitespace
+  # generally and takes an optional character set:
+  #
+  # ```
+  # assert_eq ("z  \n".chomp()) "z  "
+  # assert_eq ("z  \n".trim_end()) "z"
+  # ```
+  #
+  # [`Iter.chomp`](std.Iter.chomp) lifts this over an iterator — it is exactly
+  # `.map do |x| x.chomp()`, with the mapping done inline.
+  #
+  pub def chomp self
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the string contains the given substring.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert ("foobar".contains "foo")
+  # assert ("foobar".contains "bar")
+  # assert (!"foobar".contains "baz")
+  # assert ("foobar".contains "")  # empty string is always contained
+  # ```
+  #
+  pub def contains
+    self
+    # ([`Str`](std.Str)) the substring to find
+    needle
+  do
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the string ends with the given suffix.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert ("foobar".ends_with "bar")
+  # ```
+  #
+  pub def ends_with
+    self
+    # ([`Str`](std.Str)) the suffix string
+    suffix
+  do
+    throw nil
+
+  #
+  # ([`Iterable`](std.Iterable)) Returns an immutable view of the string's extended grapheme clusters.
+  #
+  # The view has the same indexing, slicing, iteration, spreading, and destructuring
+  # operations as [`scalars`](#scalars). It keeps combining sequences and emoji
+  # sequences together.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let graphemes = "é👩‍💻".graphemes()
+  # assert_eq $graphemes.len 2
+  # assert_eq [...graphemes] ["é", "👩‍💻"]
+  # ```
+  #
+  pub def graphemes self
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Joins values from an input source using this string as a separator.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (",".join ["a", "b", "c"]) "a,b,c"
+  # ```
+  #
+  pub def join
+    self
+    # iterable to join; uses the default input when omitted
+    iter = nil
+  do
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Returns the string converted to lowercase.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ("HELLO".lower()) "hello"
+  # assert_eq ("Hello World".lower()) "hello world"
+  # ```
+  #
+  pub def lower self
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Returns the string repeated `count` times.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ("ab".repeat 3) "ababab"
+  # assert_eq ("ab".repeat 0) ""
+  # ```
+  #
+  pub def repeat
+    self
+    # ([`Int`](std)) non-negative repetition count
+    count
+  do
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Returns a new string with all non-overlapping occurrences of `from` replaced
+  # with `to`.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ("foo bar foo".replace "foo" "baz") "baz bar baz"
+  # assert_eq ("banana".replace "na" "") "ba"
+  # assert_eq ("abc".replace "" "-") "-a-b-c-"
+  # ```
+  #
+  pub def replace
+    self
+    # ([`Str`](std.Str)) substring to replace
+    from
+    # ([`Str`](std.Str)) replacement string
+    to
+  do
+    throw nil
+
+  #
+  # ([`Iter`](std.Iter)) Like `split`, but yields segments in **right-to-left** order (rightmost segment
+  # first).
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq [..."a,b,c".rsplit ","] ["c", "b", "a"]
+  # assert_eq [..."a,b,c".rsplit "," limit: 1] ["c", "a,b"]
+  #
+  # # Negative limit: split from the left, yield right-to-left
+  # assert_eq [..."a,b,c".rsplit "," limit: -1] ["b,c", "a"]
+  # ```
+  #
+  pub def rsplit
+    self
+    # ([`Str`](std.Str)) the delimiter string
+    delimiter
+    # ([`Int`](std)) Maximum splits; negative values split from the left.
+    #
+    # - `limit: N` splits at most N times from the **right**; the last element
+    #   yielded is the unsplit left remainder.
+    # - `limit: -N` splits at most N times from the **left**, but still yields
+    #   segments right-to-left.
+    # - Omitted splits fully with no limit.
+    limit = nil
+  do
+    throw nil
+
+  #
+  # ([`Iter`](std.Iter)) Splits the string by the delimiter, returning an iterator that yields segments
+  # in **left-to-right** order.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq [..."a,b,c".split ","] ["a", "b", "c"]
+  # assert_eq [..."a,b,c".split "," limit: 1] ["a", "b,c"]
+  #
+  # # Negative limit: split from the right, yield left-to-right
+  # let base ext = "archive.tar.gz".split "." limit: -1
+  # assert_eq $base "archive.tar"
+  # assert_eq $ext "gz"
+  # ```
+  #
+  pub def split
+    self
+    # ([`Str`](std.Str)) the delimiter string
+    delimiter
+    # ([`Int`](std)) Maximum splits; negative values split from the right.
+    #
+    # - `limit: N` (positive) splits at most N times from the **left**; the last
+    #   element is the unsplit remainder.
+    # - `limit: -N` (negative) splits at most N times from the **right**, but still
+    #   yields segments left-to-right. This is useful for splitting off a known-length
+    #   suffix such as a file extension.
+    # - Omitted splits fully with no limit.
+    limit = nil
+  do
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the string starts with the given prefix.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert ("foobar".starts_with "foo")
+  # assert (!("foobar".starts_with "bar"))
+  # ```
+  #
+  pub def starts_with
+    self
+    # ([`Str`](std.Str)) the prefix string
+    prefix
+  do
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Removes whitespace (or specified characters) from both ends.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ("  hello  ".trim()) "hello"
+  # assert_eq ("xxhelloxx".trim "x") "hello"
+  # assert_eq ("xyhelloyx".trim ["x", "y"]) "hello"
+  # ```
+  #
+  pub def trim
+    self
+    # ([`Str`](std.Str)\) [`Iterable`](std.Iterable)
+    chars = nil
+  do
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Removes whitespace (or specified characters) from the end.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ("  hello  ".trim_end()) "  hello"
+  # assert_eq ("xxhelloxx".trim_end "x") "xxhello"
+  # ```
+  #
+  pub def trim_end
+    self
+    # ([`Str`](std.Str)\) [`Iterable`](std.Iterable)
+    chars = nil
+  do
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Removes whitespace (or specified characters) from the start.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ("  hello  ".trim_start()) "hello  "
+  # assert_eq ("xxhelloxx".trim_start "x") "helloxx"
+  # ```
+  #
+  pub def trim_start
+    self
+    # ([`Str`](std.Str)\) [`Iterable`](std.Iterable)
+    chars = nil
+  do
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Returns the string converted to uppercase.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ("hello".upper()) "HELLO"
+  # assert_eq ("Hello World".upper()) "HELLO WORLD"
+  # ```
+  #
+  pub def upper self
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Returns the string with the prefix removed if it matches, otherwise returns
+  # the original string.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ("foobar".without_prefix "foo") "bar"
+  # assert_eq ("foobar".without_prefix "baz") "foobar"
+  # ```
+  #
+  pub def without_prefix
+    self
+    # ([`Str`](std.Str)) the prefix to remove
+    prefix
+  do
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Returns the string with the suffix removed if it matches, otherwise returns
+  # the original string.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ("foobar".without_suffix "bar") "foo"
+  # ```
+  #
+  pub def without_suffix
+    self
+    # ([`Str`](std.Str)) the suffix to remove
+    suffix
+  do
+    throw nil
+
+  #
+  # Strings accept [`Range`](std.Range) values for slicing by byte position:
+  #
+  # ```
+  # assert_eq $"abcd"[1..3] "bc"
+  # assert_eq $"abcd"[..2] "ab"
+  # assert_eq $"abcd"[2..] "cd"
+  # assert_eq $"abcd"[..] "abcd"
+  # assert_eq $"foobar"[-3..] "bar"
+  # ```
+  #
+  # This returns a new string. Slice boundaries must still fall on valid UTF-8
+  # boundaries. Omitted `start` means `0`, omitted `end` means the string length,
+  # and negative endpoints count from the end.
+  # Indexes the value.
+  pub def (index) self index
+    throw nil
+
+  # Returns an iterator.
+  pub def (iter) self
+    throw nil
+
+
+#
+# Mutable UTF-8 string buffer; the mutable counterpart to [`Str`](std.Str).
+#
+pub class StrBuf
+  #
+  #
+  # Builds a buffer, optionally seeded with the contents of an existing string.
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = StrBuf("hello")
+  # assert_eq $buf.len 5
+  # ```
+  #
+  pub def (init)
+    self
+    # ([`Str`](std.Str)?) initial contents
+    initial = nil
+  do
+    throw nil
+
+  #
+  # ([`Int`](std)) Returns the byte length of the buffer's current contents.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (StrBuf("hello").len) 5
+  # ```
+  #
+  #[getter]
+  pub def len self
+    throw nil
+
+  #
+  # Appends `value` to the buffer. `Str` input is copied byte-for-byte; anything
+  # else is converted the same way [`str`](std.str) would convert
+  # it, written directly into the buffer.
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = StrBuf()
+  # buf.append "foo"
+  # buf.append 42
+  # assert_eq $buf.freeze() "foo42"
+  # ```
+  #
+  pub def append
+    self
+    # value to append
+    value
+  do
+    throw nil
+
+  #
+  # Empties the buffer, retaining its allocated capacity.
+  #
+  # ```
+  # let buf = StrBuf("foobar")
+  # buf.clear()
+  # assert_eq $buf.len 0
+  # buf.append "x"
+  # assert_eq $buf.freeze() "x"
+  # ```
+  #
+  pub def clear self
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the buffer's contents contain the given substring.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert (StrBuf("foobar").contains "oob")
+  # ```
+  #
+  pub def contains
+    self
+    # ([`Str`](std.Str)) the substring to find
+    needle
+  do
+    throw nil
+
+  #
+  # ([`Iter`](std.Iter)) Returns an iterator that removes and yields up to `size` bytes at a time
+  # from the front of the buffer as it's consumed.
+  #
+  # Each chunk boundary is rounded down to the nearest UTF-8 code point
+  # boundary, unless that would produce an empty chunk (`size` smaller than the
+  # first remaining code point), in which case it rounds up instead so every
+  # chunk yielded is non-empty.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = StrBuf("hello world")
+  # assert_eq [...buf.drain(4)] ["hell", "o wo", "rld"]
+  # assert_eq $buf.len 0
+  # ```
+  #
+  # Draining never shifts the buffer's remaining contents proportionally to
+  # their length: consumed bytes are dropped by advancing an internal cursor,
+  # not by copying the tail down on every chunk. Other mutating methods (and
+  # `freeze`) settle this cursor transparently before they run, so indices
+  # passed to them are always relative to the buffer's current (undrained)
+  # content. Multiple `drain` iterators created from the same buffer share this
+  # cursor, so they interleave draining the same content rather than each
+  # redraining it independently.
+  #
+  pub def drain
+    self
+    # ([`Int`](std)?) maximum bytes per chunk (defaults to 512 KiB)
+    size = nil
+  do
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the buffer's contents end with the given suffix.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert (StrBuf("foobar").ends_with "bar")
+  # ```
+  #
+  pub def ends_with
+    self
+    # ([`Str`](std.Str)) the suffix string
+    suffix
+  do
+    throw nil
+
+  #
+  # Appends the raw bytes of `value`, which must be a [`Str`](std.Str).
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = StrBuf("foo")
+  # buf.extend "bar"
+  # assert_eq $buf.freeze() "foobar"
+  # ```
+  #
+  pub def extend
+    self
+    # ([`Str`](std.Str)) string to append
+    value
+  do
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Converts the buffer's current contents into an immutable [`Str`](std.Str)
+  # in place, without copying, and empties the buffer. The buffer stays usable
+  # afterward, and the returned string is unaffected by later mutation.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = StrBuf("abc")
+  # let frozen = buf.freeze()
+  # assert_eq $frozen "abc"
+  # assert_eq $buf.len 0
+  # buf.append "def"
+  # assert_eq $frozen "abc"
+  # ```
+  #
+  pub def freeze self
+    throw nil
+
+  #
+  # Inserts `value` at the given byte index, shifting the rest of the buffer
+  # right in place.
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = StrBuf("foobar")
+  # buf.insert 3 "XYZ"
+  # assert_eq $buf.freeze() "fooXYZbar"
+  # ```
+  #
+  pub def insert
+    self
+    # ([`Int`](std)) insertion point; must fall on a UTF-8 boundary
+    index
+    # ([`Str`](std.Str)) string to insert
+    value
+  do
+    throw nil
+
+  #
+  # ([`Str`](std.Str)) Removes and returns the substring covered by `range`, shifting the rest of
+  # the buffer left in place.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = StrBuf("foobar")
+  # assert_eq (buf.remove (1..3)) "oo"
+  # assert_eq $buf.freeze() "fbar"
+  # ```
+  #
+  # Unlike `insert`, `remove` only accepts a range — a scalar index would remove
+  # a single UTF-8 code unit, which is rarely a useful result.
+  #
+  pub def remove
+    self
+    # ([`Range`](std.Range)) byte range to remove; must fall on UTF-8 boundaries
+    range
+  do
+    throw nil
+
+  #
+  # ([`Bool`](std)) Tests whether the buffer's contents start with the given prefix.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # assert (StrBuf("foobar").starts_with "foo")
+  # ```
+  #
+  pub def starts_with
+    self
+    # ([`Str`](std.Str)) the prefix string
+    prefix
+  do
+    throw nil
+
+  #
+  # Shrinks the buffer to `len` bytes, discarding anything past that point.
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = StrBuf("foobar")
+  # buf.truncate 3
+  # assert_eq $buf.freeze() "foo"
+  # ```
+  #
+  pub def truncate
+    self
+    # ([`Int`](std)) new length; must fall on a UTF-8 boundary
+    len
+  do
+    throw nil
+
+  #
+  # `StrBuf` supports only range indexing and assignment, matching `Str` — a
+  # single UTF-8 code unit is rarely a useful result on its own:
+  #
+  # ```
+  # let buf = StrBuf("foobar")
+  # assert_eq $buf[2..4] "ob"
+  # buf[1..3] = "XYZ"
+  # assert_eq $buf.freeze() "fXYZbar"
+  # ```
+  #
+  # Range assignment may grow or shrink the buffer: the replacement doesn't need
+  # to be the same length as the range it replaces. Both the range and the
+  # assigned value's boundaries must land on UTF-8 code point boundaries.
+  #
+  pub def (index) self index
+    throw nil
+
+  # Assigns through an index.
+  pub def (assign) self index value
+    throw nil
+
+  #
+  # `StrBuf` is a [sink](std.Sink), so it can be the target of a pipeline, of
+  # [`strand.put`](strand), or of a
+  # [`run`](../../shell/external-programs.md#redirecting-io) redirect. `put` is
+  # [`append`](#append-value): the value's string form goes in verbatim, with no
+  # line terminator added.
+  #
+  # ```
+  # let buf = StrBuf()
+  # run uname -r stdout: $buf
+  # ```
+  #
+  # Line termination is the caller's to choose, so a `StrBuf` can stand in for any
+  # other sink without changing what gets written:
+  #
+  # ```
+  # let buf = StrBuf()
+  # let out = buf.precrimp()
+  # out.put "first"
+  # out.put "second"
+  # assert_eq $buf.freeze() "first\nsecond\n"
+  # ```
+  pub def (sink) self
+    throw nil
+
+
+#
+# Symbols are interned identifiers used for dictionary keys and enum-like
+# values.
+#
+#
+# ## Creating Symbols
+#
+# Literal syntax with surrounding colons:
+#
+# ```
+# let s = :my_symbol:
+# ```
+#
+# From a string with the lowercase `sym` coercion:
+#
+# ```
+# let s = sym "my_symbol"
+# assert_eq $s :my_symbol:
+# ```
+#
+# Enum-like values:
+#
+# ```
+# let status = :ok:
+# let mode = :verbose:
+# ```
+#
+# Dictionary keys:
+#
+# ```
+# let d = {}
+# d[:status:] = "active"
+# ```
+pub class Sym
+  # Symbols are compared by identity.
+  #
+  # ```
+  # assert_eq :foo: :foo:
+  # assert (:foo: != :bar:)
+  # ```
+  pub def (eq) self other
+    throw nil
+
+  # Symbols compare lexicographically by name.
+  #
+  # ```
+  # assert (:alpha: < :beta:)
+  # ```
+  pub def (lt) self other
+    throw nil
+
+
+#
+# Raised when a strand times out. Timeout is cooperative and is observed at
+# suspend or interrupt-check points.
+#
+pub class TimedOutError: RuntimeError
+  #
+  #
+  # Builds an error reporting that a strand timed out.
+  #
+  pub def (init) self
+    throw nil
+
+
+#
+# Tuples are immutable, ordered sequences of values. They are produced by
+# certain operations such as iterating over key-value pairs. The `Tuple` type
+# object is in the prelude, so `Tuple(iterable)` is available without an
+# explicit import.
+#
+pub class Tuple
+  #
+  #
+  # Builds a tuple from an iterable.
+  #
+  # The lowercase `tuple` factory instead collects its positional arguments
+  # verbatim.
+  #
+  # ## Example
+  #
+  # ```
+  # let tup = Tuple([1, 2, 3])
+  # assert_eq $tup[1] 2
+  #
+  # for k v = {name: "Alice", age: 30}
+  #   # each pair is a tuple
+  #   echo "$k: $v"
+  # ```
+  #
+  pub def (init)
+    self
+    # values to collect
+    iterable
+  do
+    throw nil
+
+  #
+  # (`Int`) Returns the number of elements.
+  #
+  #
+  #[getter]
+  pub def len self
+    throw nil
+
+  #
+  # (`Bool`) Tests whether the tuple contains the given element (by equality).
+  #
+  #
+  pub def contains
+    self
+    # the value to check
+    element
+  do
+    throw nil
+
+  #
+  # ([`Tuple`](std.Tuple)) Returns a shallow copy of the tuple. Because tuples are immutable, the
+  # returned copy may be the same object.
+  #
+  #
+  pub def copy self
+    throw nil
+
+  #
+  # Retrieves the value at the given index. Returns `nil` if out of bounds and no
+  # alternative is provided. Negative indexes count from the end.
+  #
+  #
+  pub def get
+    self
+    # (Int) the index to access
+    index
+    :default = nil
+    :else = nil
+  do
+    throw nil
+
+  #
+  # ([`Iter`](std.Iter)) Returns an iterator yielding `[index, value]` pairs.
+  #
+  #
+  pub def pairs self
+    throw nil
+
+  #
+  # ```
+  # let pair = {name: "Alice"}.pairs().next()
+  # assert_eq $pair[0] :name:
+  # assert_eq $pair[1] "Alice"
+  # assert_eq $pair[-1] "Alice"
+  # ```
+  #
+  # Tuples are immutable; indexed assignment is not supported.
+  #
+  # Tuples also accept [`Range`](std.Range) values for slicing:
+  #
+  # ```
+  # let tup = tuple([0, 1, 2, 3])
+  # assert_eq $tup[1..3] (tuple [1, 2])
+  # assert_eq $tup[..2] (tuple [0, 1])
+  # assert_eq $tup[2..] (tuple [2, 3])
+  # assert_eq $tup[..] (tuple [0, 1, 2, 3])
+  # assert_eq $tup[Range 0 4 2] (tuple [0, 2])
+  # assert_eq $tup[Range nil nil -1] (tuple [3, 2, 1, 0])
+  # ```
+  #
+  # Slice indexing returns a new tuple. Omitted `start` means `0`, omitted `end`
+  # means the tuple length, and negative endpoints count from the end. Negative
+  # steps reverse the slice.
+  pub def (index) self index
+    throw nil
+
+  # Unpacks tuple elements.
+  #
+  # ```
+  # for k v = {name: "Alice", age: 30}
+  #   echo "$k = $v"
+  # ```
+  pub def (unpack) self
+    throw nil
+
+
+#
+# Raised when an operation receives a value of the wrong type.
+#
+pub class TypeError: RuntimeError
+  #
+  #
+  # Builds an error reporting a value of the wrong type.
+  #
+  pub def (init)
+    self
+    # ([`Str`](std.Str)) description of the mismatch
+    message
+  do
+    throw nil
+
+
+#
+# `Type` is the type of all types and cannot be constructed directly.
+pub class Type
+
+#
+# Raised when an unexpected key argument is passed.
+#
+pub class UnexpectedKeyError: RuntimeError
+  #
+  #
+  # Builds an error naming an unexpected key item.
+  #
+  pub def (init)
+    self
+    # the unexpected key
+    key
+  do
+    throw nil
+
+
+#
+# Raised when an unexpected positional argument is passed.
+#
+pub class UnexpectedPosError: RuntimeError
+  #
+  #
+  # Builds an error naming an unexpected positional item.
+  #
+  pub def (init)
+    self
+    # ([`Int`](std.Int)) zero-based position of the unexpected item
+    index
+  do
+    throw nil
+
+
+#
+# Raised when an unsupported operation is attempted.
+#
+pub class UnsupportedError: RuntimeError
+  #
+  #
+  # Builds an error reporting that an operation is not supported.
+  #
+  pub def (init) self
+    throw nil
+
+
+#
+# Raised when a value has an acceptable type but invalid contents, range, or
+# meaning for the operation.
+#
+pub class ValueError: RuntimeError
+  #
+  #
+  # Builds an error reporting a value of the right type but unusable contents.
+  #
+  pub def (init)
+    self
+    # ([`Str`](std.Str)) description of the problem with the value
+    message
+  do
+    throw nil
+
+
+#
+# `Value` is the abstract supertype of all values.
+#
+# `Value` is not constructible directly.
+pub class Value
+
+#
+# Raised on integer division or modulo by zero.
+#
+pub class ZeroDivError: RuntimeError
+  #
+  #
+  # Builds an error reporting division by an integer zero.
+  #
+  pub def (init) self
+    throw nil

@@ -1,0 +1,285 @@
+# Mock HTTP server, for testing code that makes requests through the
+# [`http`](http) module.
+#
+# A [`Server`](http.mock.Server) binds a random local port; registering a mock on it
+# makes one matcher/response pair live, and the request under test goes over a
+# real socket to it.
+#
+# ```
+# http.mock.Server do |server|
+#   server.mock
+#     - method: GET
+#       path: /users/42
+#       respond:
+#         status: 200
+#         json: {id: 42, name: "Alice"}
+#     do |handle|
+#       let resp = http.get (server.url / "/users/42")
+#       assert_eq $resp.json()["name"] "Alice"
+# ```
+#
+# Matchers and responses can also be computed from the request itself:
+#
+# ```
+# server.mock
+#   - path: /echo
+#     respond: do |req| $
+#       status: 200
+#       body: $req.body
+# ```
+
+# A request the mock server received.
+#
+# Returned by [`Mock.received`](http.mock.Mock.received) and
+# [`Server.received_requests`](http.mock.Server.received_requests), and passed to a
+# `match:` or `respond:` callback.
+pub class Request
+  # ([`Str`](std.Str)) The request method, such as `"GET"`.
+  #[getter]
+  pub def method self
+    throw nil
+
+  # ([`Str`](std.Str)) The full request URL.
+  #[getter]
+  pub def url self
+    throw nil
+
+  # ([`Bin`](std.Bin)) The raw request body.
+  #[getter]
+  pub def body self
+    throw nil
+
+  # ([`Dict`](std.Dict)-like) The request headers.
+  #
+  # Projected lazily from the underlying request, so reading one header does
+  # not materialize the rest. Header names may repeat; `.get()` takes an
+  # `instance` position to choose among them (`-1`, the default, selects the
+  # last), the same way
+  # [`dict.get`](std.Dict.get) does.
+  #
+  # ## Example
+  #
+  # ```
+  # server.mock
+  #   - match: do |req|
+  #       req.headers["x-trace"] == "abc"
+  #     respond:
+  #       status: 200
+  # ```
+  #[getter]
+  pub def headers self
+    throw nil
+
+# A handle to the mocks one [`Server.mock`](http.mock.Server.mock) call registered.
+#
+# One call may register several items; this handle covers all of them, and its
+# methods act on the whole set.
+pub class Mock
+  # Every request any of this handle's mocks matched, in the order received.
+  #
+  # ## Returns
+  #
+  # An [`Array`](std.Array) of [`Request`](http.mock.Request).
+  #
+  # ## Example
+  #
+  # ```
+  # server.mock
+  #   - method: POST
+  #     path: /users
+  #     respond:
+  #       status: 201
+  #   do |handle|
+  #     http.post (server.url / "/users") body: hello
+  #     let reqs = handle.received()
+  #     assert_eq $reqs.len 1
+  #     assert_eq $reqs[0].method "POST"
+  # ```
+  pub def received self
+    throw nil
+
+  # Re-checks every `expect:` this handle's items carry against the requests
+  # received so far.
+  #
+  # This is the check a scoped `mock` block runs on exit, available early.
+  #
+  # ## Errors
+  #
+  # Raises when any item's `expect:` is unsatisfied. The message lists every
+  # unsatisfied item, one per line.
+  pub def verify self
+    throw nil
+
+  # Unmounts every mock this handle registered, so they match nothing further.
+  #
+  # Unmounting already-unmounted mocks does nothing.
+  pub def unmount self
+    throw nil
+
+# A running mock HTTP server, bound to a random local port.
+pub class Server
+  # Starts a server.
+  #
+  # ## Returns
+  #
+  # `Server` when no `func` is given, otherwise the result of calling `func`.
+  #
+  # ## Example
+  #
+  # ```
+  # http.mock.Server do |server|
+  #   echo $server.url
+  # ```
+  pub def (init)
+    self
+    # (callable?) Called with the `Server`, which is shut down when it returns.
+    # Omit to receive the server instead.
+    func = nil
+  do
+    throw nil
+
+  # ([`url.Url`](url.Url)) The server's base URL. Use `/` to build
+  # request paths.
+  #
+  # ## Example
+  #
+  # ```
+  # http.mock.Server do |server|
+  #   http.get (server.url / "/users/42")
+  # ```
+  #[getter]
+  pub def url self
+    throw nil
+
+  # ([`Str`](std.Str)) The bound socket address, such as
+  # `127.0.0.1:41823`.
+  #[getter]
+  pub def address self
+    throw nil
+
+  # Registers one or more mocks.
+  #
+  # Each item is a dict pairing a request matcher with the response to return
+  # when it matches.
+  #
+  # ## Matching
+  #
+  # | Key          | Type                             | Matches                                                      |
+  # | ------------ | -------------------------------- | ------------------------------------------------------------ |
+  # | `method`     | [`Str`](std.Str)           | The HTTP method, case-insensitively                          |
+  # | `path`       | [`Str`](std.Str)           | The request path exactly                                     |
+  # | `path_regex` | [`Str`](std.Str)           | The request path against a regex                             |
+  # | `headers`    | [`Dict`](std.Dict)         | Header name/value pairs that must all be present and equal   |
+  # | `query`      | [`Dict`](std.Dict)         | Query parameter name/value pairs that must all be equal      |
+  # | `body_json`  |                                  | A JSON value the body must deserialize to and equal          |
+  # | `match`      | callable                         | A `do |req| ...` callback returning a truthy value           |
+  #
+  # An item with none of these matches every request. Every matcher on one item
+  # must match for that item to match, and each item registers a separate mock,
+  # first-registered winning on overlap -- which is how a specific matcher and
+  # a fallback for the same path are expressed together.
+  #
+  # ## Responding
+  #
+  # `respond:` is required. It takes either a dict or a `do |req| ...` callback
+  # returning one, built from the request that matched.
+  #
+  # | Key       | Type                                           | Meaning                        |
+  # | --------- | ---------------------------------------------- | ------------------------------ |
+  # | `status`  | [`Int`](std.Int)                         | Status code, defaulting to 200 |
+  # | `headers` | [`Dict`](std.Dict)                       | Response headers               |
+  # | `body`    | [`Str`](std.Str)\|[`Bin`](std.Bin) | Raw response body              |
+  # | `json`    |                                                | Response body, JSON-serialized |
+  #
+  # ## Expectations
+  #
+  # `expect:` states how many matching requests the item should receive, as an
+  # [`Int`](std.Int) or a range, and `name:` labels the item in the
+  # resulting failure message. The count is checked when the item is unmounted
+  # -- at the end of a scoped block, or on
+  # [`Mock.unmount`](http.mock.Mock.unmount) -- and on demand via
+  # [`Mock.verify`](http.mock.Mock.verify).
+  #
+  # ## Returns
+  #
+  # A [`Mock`](http.mock.Mock) covering every item this call registered: passed to
+  # `func` if one is given, and returned otherwise.
+  #
+  # ## Errors
+  #
+  # | Exception                                       | Condition                                     |
+  # | ----------------------------------------------- | --------------------------------------------- |
+  # | `RuntimeError`                                  | No items were given                           |
+  # | [`MissingKeyError`](std.MissingKeyError) | An item has no `respond:`                    |
+  # | [`ValueError`](std.ValueError)           | An item's `path_regex` is invalid             |
+  # | `RuntimeError`                                  | An item's `expect:` is unsatisfied on unmount |
+  #
+  # ## Example
+  #
+  # ```
+  # server.mock
+  #   - method: POST
+  #     path: /echo
+  #     respond: do |req| $
+  #       status: 200
+  #       body: $req.body
+  # ```
+  #
+  # Two items in one call, the specific one first:
+  #
+  # ```
+  # server.mock
+  #   - method: GET
+  #     path: /users/42
+  #     headers:
+  #       authorization: "Bearer valid"
+  #     respond:
+  #       status: 200
+  #   - method: GET
+  #     path: /users/42
+  #     respond:
+  #       status: 401
+  # ```
+  #
+  # Without a block, the script owns the handle:
+  #
+  # ```
+  # let handle = server.mock
+  #   - method: GET
+  #     path: /users/42
+  #     respond:
+  #       status: 200
+  #
+  # http.get (server.url / "/users/42")
+  # handle.unmount()
+  # ```
+  pub def mock
+    self
+    # (callable?) Called with the [`Mock`](http.mock.Mock) handle. The mocks are
+    # unmounted when it returns, however it exits. Omit to receive the handle
+    # instead and unmount it yourself. Written last at the call site, as a
+    # trailing `do` block.
+    func = nil
+    # ([`Dict`](std.Dict)) Mock items, as described above.
+    ...items
+  do
+    throw nil
+
+  # Every request the server received, whichever mock matched it -- or none.
+  #
+  # Use [`Mock.received`](http.mock.Mock.received) to scope this to one `mock` call.
+  #
+  # ## Returns
+  #
+  # An [`Array`](std.Array) of [`Request`](http.mock.Request).
+  pub def received_requests self
+    throw nil
+
+  # Removes every mock registered on the server and forgets every request it
+  # received.
+  pub def reset self
+    throw nil
+
+  # Shuts the server down. Requests to its address then fail.
+  pub def close self
+    throw nil

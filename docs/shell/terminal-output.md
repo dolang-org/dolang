@@ -5,8 +5,8 @@ styling.
 
 ## Ordinary Output
 
-The shell prelude provides [`echo`](../api/term/index.md#echo-args) and
-[`print`](../api/term/index.md#print-options-args).
+The shell prelude provides [`echo`](term.echo) and
+[`print`](term.print).
 
 ```
 echo "result: $value"
@@ -16,7 +16,7 @@ print "working...\n"
 These functions always output to `term.output()`. `echo` behaves similarly to
 the Unix program or shell builtin, separating its arguments with spaces and
 ending with a newline. Its arguments are converted to strings using the
-[`std.verbatim`](../api/std/index.md#verbatim-value) coercion, which preserves
+[`std.verbatim`](std.verbatim) coercion, which preserves
 the syntactic form of arguments as best as possible. `print` concatenates all
 its arguments without spaces, does not append a newline, and uses ordinary `str`
 coercion.
@@ -26,9 +26,9 @@ sequences are sanitized before being output.
 
 ## Capturing the Console
 
-[`term.capture`](../api/term/index.md#capture-console-func-args-mode)
-and [`term.sub`](../api/term/index.md#sub-func-chomp-can_style-args) override
-[`term.output()`](../api/term/index.md#output) for their duration.
+[`term.capture`](term.capture)
+and [`term.sub`](term.sub) override
+[`term.output()`](term.output) for their duration.
 
 ```
 let greeting = term.sub do echo "Hello, Alice!"
@@ -38,18 +38,18 @@ assert_eq $greeting "Hello, Alice!"
 ## Child Process Output
 
 The main strand's implicit output is set once at startup: to
-[`term.default`](../api/term/index.md#default) if stdout is a terminal, or to
-[`shell.stdout`](../api/shell/stdout.md) otherwise. A child process launched
+[`term.default`](term.default) if stdout is a terminal, or to
+[`shell.stdout`](shell.Stdout) otherwise. A child process launched
 with no `stdout:` override inherits whichever one is current, so it follows
 console/terminal interception — `progress` indicators,
-[`term.capture`](../api/term/index.md#capture-console-func-args-mode) — only
+[`term.capture`](term.capture) — only
 when stdout was a terminal to begin with. An omitted `stderr:` always defaults
 to `term.default`.
 
 ## Styled Text
 
-[`term.text`](../api/term/index.md#text-options-args) returns
-[`term.Text`](../api/term/text.md), which can contain terminal styling:
+[`term.text`](term.text) returns
+[`term.Text`](term.Text), which can contain terminal styling:
 
 ```
 import term
@@ -70,11 +70,11 @@ echo $message
 ```
 
 Coercing `Text` with `str` returns its content with the styling dropped;
-[`encode`](../api/term/text.md#encode) returns the ANSI representation.
+[`encode`](term.Text.encode) returns the ANSI representation.
 Passing it directly to `echo` or `print` displays it with its styling.
 
 A reusable style with no text of its own is a
-[`term.Style`](../api/term/style.md):
+[`term.Style`](term.Style):
 
 ```
 let warning = term.Style fg: :YELLOW: bold: true
@@ -83,7 +83,7 @@ echo $warning("disk space is low")
 
 ## Existing ANSI Output
 
-Use [`term.preformat`](../api/term/index.md#preformat-text) for strings that
+Use [`term.preformat`](term.preformat) for strings that
 already contain ANSI SGR styling:
 
 ```
@@ -98,7 +98,7 @@ including hyperlinks, are removed.
 
 `echo` and `print` style their output when the console they are writing to says
 it can. That answer is the console's
-[`can_style`](../api/term/console.md#can_style) — a property of the destination,
+[`can_style`](term.Console.can_style) — a property of the destination,
 not a global.
 
 For the host console, it is the process-wide policy:
@@ -111,7 +111,7 @@ For the host console, it is the process-wide policy:
 3. Otherwise, a non-empty `NO_COLOR` disables styling.
 4. Otherwise, styling follows stderr terminal detection.
 
-For a [`capture`](../api/term/index.md#capture-console-func-args-mode) it is
+For a [`capture`](term.capture) it is
 `false` unless asked for, which is what keeps a test asserting on `echo`ed text
 behaving the same piped and on a developer's terminal:
 
@@ -129,10 +129,10 @@ capture — naming it pins to the host, the same as for writes.
 
 ## Terminal Detection and Dimensions
 
-[`term.console.is_tty`](../api/term/console.md#is_tty) is the determinative
+[`term.console.is_tty`](term.Console.is_tty) is the determinative
 test for whether stderr is a real terminal.
 
-[`term.console.geometry()`](../api/term/console.md#geometry) returns the
+[`term.console.geometry()`](term.Console.geometry) returns the
 terminal's `rows` and `cols`, but is only advisory. It never answers `nil`
 itself for the host console; instead `rows` and `cols` are each
 independently `nil` when that dimension cannot be determined — a real
@@ -152,12 +152,12 @@ The `DOLANG_CONSOLE` environment variable gives tests and CI deterministic,
 explicit control over what the host console reports, independent of the real
 stderr. It is a comma-separated list of `key=value` pairs, all optional:
 
-| Key     | Value          | Overrides                                              |
-| ------- | -------------- | ------------------------------------------------------ |
-| `tty`   | `true`/`false` | [`is_tty`](../api/term/console.md#is_tty)              |
-| `rows`  | integer        | [`geometry()`](../api/term/console.md#geometry)'s rows |
-| `cols`  | integer        | [`geometry()`](../api/term/console.md#geometry)'s cols |
-| `style` | `true`/`false` | [`can_style`](../api/term/console.md#can_style)        |
+| Key     | Value          | Overrides                                    |
+| ------- | -------------- | -------------------------------------------- |
+| `tty`   | `true`/`false` | [`is_tty`](term.Console.is_tty)              |
+| `rows`  | integer        | [`geometry()`](term.Console.geometry)'s rows |
+| `cols`  | integer        | [`geometry()`](term.Console.geometry)'s cols |
+| `style` | `true`/`false` | [`can_style`](term.Console.can_style)        |
 
 `tty` also governs whether an extension can take over the terminal (progress
 bars and similar) — `tty=false` disables that even on a real terminal;

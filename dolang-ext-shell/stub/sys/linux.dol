@@ -1,0 +1,26 @@
+# The `sys.linux` module exposes Linux-specific system types.
+#
+import sys.unix
+#
+# ## Types
+#
+# | Type                  | Description        |
+# | --------------------- | ------------------ |
+# | [`Errno`](sys.linux.Errno) | Linux error number |
+
+# [`sys.unix.Errno`](sys.unix.Errno) originating from Linux.
+pub class Errno: sys.unix.Errno
+  # Creates a Linux error number.
+  #
+  # Known codes are available as class fields such as `Errno.ENOENT`.
+  pub def (init)
+    self
+    # ([`int`](std.Int)) Raw error number.
+    value
+  do
+    throw nil
+
+  # The originating operating system, `:LINUX:`.
+  #[getter]
+  pub def os self
+    throw nil

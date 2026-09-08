@@ -92,7 +92,7 @@ assert_eq $cfg.port 9000
 ```
 
 See [Decorators](./decorators.md) for decorator syntax and evaluation order, and
-[`getter`](../api/std/getter.md) / [`setter`](../api/std/setter.md) for the
+[`getter`](std.Getter) / [`setter`](std.Setter) for the
 descriptor helpers.
 
 ## Class and Static Members
@@ -186,7 +186,7 @@ assert_eq (type(Counter).bump(Derived)) 2
 
 Two type objects are equal when they stand for the same class, and they hash to
 match, so they work as dict keys. A type object is a subtype of
-[`Type`](../api/std/type.md), so `type Counter Type` holds.
+[`Type`](std.Type), so `type Counter Type` holds.
 
 ## Visibility
 
@@ -397,8 +397,8 @@ class Cat: Animal
 ### Inheriting from a Built-in Type
 
 A class may also inherit from a built-in type such as
-[`Str`](../api/std/str.md), [`RuntimeError`](../api/std/runtime-error.md), or
-[`term.Geometry`](../api/term/geometry.md). Such a supertype brings a
+[`Str`](std.Str), [`RuntimeError`](std.RuntimeError), or
+[`term.Geometry`](term.Geometry). Such a supertype brings a
 representation of its own, which `(init)` must initialize by chaining:
 
 ```
@@ -418,7 +418,7 @@ The chained call gives the instance its inherited behavior: `Tagged` above gets
 `str`, `len`, comparison, and the rest from the `Str` it was initialized with.
 Skipping the call leaves that representation empty, and the constructor fails
 with `native supertypes not initialized` rather than producing a half-built
-object. A few types — [`AbortError`](../api/std/abort-error.md) among them —
+object. A few types — [`AbortError`](std.AbortError) among them —
 are sealed and have no constructor to chain to.
 
 Overriding a special method takes precedence over the inherited one, so a
@@ -825,11 +825,11 @@ class Path
 
 Called when an instance is formatted with a specification, as written by a
 [formatted interpolation](./strings.md#formatted-interpolation) or built
-with [`FmtSpec`](../api/std/fmt-spec.md). Receives a
-[`FmtSpec`](../api/std/fmt-spec.md) and must return a `Str`.
+with [`FmtSpec`](std.FmtSpec). Receives a
+[`FmtSpec`](std.FmtSpec) and must return a `Str`.
 
 The `kind` field of the specification says which conversion the surrounding
-operation asked for, and [`FmtSpec.pad`](../api/std/fmt-spec.md#pad-value)
+operation asked for, and [`FmtSpec.pad`](std.FmtSpec.pad)
 applies the fill, alignment, width, and precision to a string, so a class that
 only wants the standard layout applied to its own text is one line:
 

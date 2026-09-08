@@ -1,0 +1,622 @@
+# The `sys` module exposes basic information and types associated with systems
+# and platforms supported by Do.
+#
+# ## Types
+#
+# | Type                                                                  | Description                                          |
+# | --------------------------------------------------------------------- | ---------------------------------------------------- |
+# | [`AddrInUseError`](sys.AddrInUseError)                            | Network address already in use                       |
+# | [`AddrNotAvailableError`](sys.AddrNotAvailableError)              | Requested network address is unavailable             |
+# | [`AlreadyExistsError`](sys.AlreadyExistsError)                     | Creating or renaming conflicts with an existing path |
+# | [`ArgumentListTooLongError`](sys.ArgumentListTooLongError)       | System argument list is too long                     |
+# | [`BrokenPipeError`](sys.BrokenPipeError)                           | Pipe closed by its reader                            |
+# | [`ConnectionAbortedError`](sys.ConnectionAbortedError)             | Connection was aborted                               |
+# | [`ConnectionRefusedError`](sys.ConnectionRefusedError)             | Connection attempt refused                           |
+# | [`ConnectionResetError`](sys.ConnectionResetError)                 | Connection was reset                                 |
+# | [`CpuInfo`](sys.CpuInfo)                                             | CPU target information                               |
+# | [`CrossesDevicesError`](sys.CrossesDevicesError)                   | Operation crosses device boundaries                  |
+# | [`DeadlockError`](sys.DeadlockError)                                | Operation would cause a deadlock                     |
+# | [`DirectoryNotEmptyError`](sys.DirectoryNotEmptyError)            | Directory is not empty                               |
+# | [`Error`](sys.Error)                                                 | Error raised for system and I/O failures             |
+# | [`ErrorCode`](sys.ErrorCode)                                        | Native system error code                             |
+# | [`ExecutableFileBusyError`](sys.ExecutableFileBusyError)          | Executable file is busy                              |
+# | [`FileTooLargeError`](sys.FileTooLargeError)                      | File exceeds size limit                              |
+# | [`HostUnreachableError`](sys.HostUnreachableError)                 | Network host is unreachable                          |
+# | [`InterruptedError`](sys.InterruptedError)                          | System operation was interrupted                     |
+# | [`InvalidDataError`](sys.InvalidDataError)                         | Malformed input data                                 |
+# | [`InvalidFilenameError`](sys.InvalidFilenameError)                 | Filename is invalid                                  |
+# | [`InvalidInputError`](sys.InvalidInputError)                       | Invalid input to a system operation                  |
+# | [`IsADirectoryError`](sys.IsADirectoryError)                      | File operation targeted a directory                  |
+# | [`NetworkDownError`](sys.NetworkDownError)                         | Network is down                                      |
+# | [`NetworkUnreachableError`](sys.NetworkUnreachableError)           | Network is unreachable                               |
+# | [`NotADirectoryError`](sys.NotADirectoryError)                    | Path component is not a directory                    |
+# | [`NotConnectedError`](sys.NotConnectedError)                       | Operation requires a connected endpoint              |
+# | [`NotFoundError`](sys.NotFoundError)                               | Missing file, path, or program                       |
+# | [`NotSeekableError`](sys.NotSeekableError)                         | Stream does not support seeking                      |
+# | [`OsInfo`](sys.OsInfo)                                               | Operating system target information                  |
+# | [`OutOfMemoryError`](sys.OutOfMemoryError)                        | Could not allocate memory                            |
+# | [`PermissionDeniedError`](sys.PermissionDeniedError)               | Operation not permitted by access rules              |
+# | [`QuotaExceededError`](sys.QuotaExceededError)                     | Storage quota exceeded                               |
+# | [`ReadOnlyFilesystemError`](sys.ReadOnlyFilesystemError)          | Modifying a read-only filesystem                     |
+# | [`ResourceBusyError`](sys.ResourceBusyError)                       | System resource is busy                              |
+# | [`StaleNetworkFileHandleError`](sys.StaleNetworkFileHandleError) | Stale network filesystem handle                      |
+# | [`StorageFullError`](sys.StorageFullError)                         | Storage device is full                               |
+# | [`TimedOutError`](sys.TimedOutError)                               | System operation timed out                           |
+# | [`TooManyLinksError`](sys.TooManyLinksError)                      | Filesystem object has too many links                 |
+# | [`UnexpectedEofError`](sys.UnexpectedEofError)                     | Input ended unexpectedly                             |
+# | [`UnsupportedError`](sys.UnsupportedError)                          | Unsupported system operation                         |
+# | [`WouldBlockError`](sys.WouldBlockError)                           | Operation would block                                |
+# | [`WriteZeroError`](sys.WriteZeroError)                             | Write wrote zero bytes                               |
+
+# `Error` is raised for system and I/O failures.
+#
+# It can be subclassed for library-specific operational failures.
+pub class Error: std.RuntimeError
+  # Creates a system error.
+  #
+  # ## Example
+  #
+  # ```
+  # let error = Error "operation failed" code: $sys.linux.Errno.EIO
+  # ```
+  #
+  # ```
+  # try
+  #   fs.read "/definitely/missing"
+  # catch Error: err
+  #   echo $Str(err)
+  # ```
+  #
+  # `str(err)` returns the underlying system error message and appends the native
+  # symbolic code in parentheses when it is known.
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+  # The underlying native system error code, or `nil` when one does not exist.
+  #
+  # The value is [`sys.linux.Errno`](sys.linux.Errno),
+  # [`sys.freebsd.Errno`](sys.freebsd.Errno),
+  # [`sys.macos.Errno`](sys.macos.Errno), or
+  # [`sys.windows.WinError`](sys.windows.WinError), according to the system
+  # where the error originated.
+  #[getter]
+  pub def code self
+    throw nil
+
+# Native system error code.
+#
+# This base type is not directly constructible. Use a platform-specific code
+# type.
+#
+# `str(code)` returns the native symbolic name when known and the decimal value
+# otherwise.
+pub class ErrorCode
+  # The raw integer value.
+  #[getter]
+  pub def value self
+    throw nil
+
+# CPU information for the active VFS target returned by [`cpu_info`](#cpu_info).
+pub class CpuInfo
+  # Target architecture. Supported values are `:X86_64:` and `:AARCH64:`.
+  #[getter]
+  pub def arch self
+    throw nil
+
+  # Logical CPU count captured when the VFS context is established.
+  #[getter]
+  pub def logical_count self
+    throw nil
+
+# Operating system information for the active VFS target returned by
+# [`os_info`](#os_info).
+pub class OsInfo
+  # Operating system family derived from the target OS. Supported values are
+  # `:UNIX:` and `:WINDOWS:`.
+  #[getter]
+  pub def family self
+    throw nil
+
+  # Whether the process is running under Wine.
+  #
+  # This field is only available for Windows targets.
+  #[getter]
+  pub def is_wine self
+    throw nil
+
+  # Specific operating system. Supported values are `:LINUX:`, `:MACOS:`,
+  # `:FREEBSD:`, and `:WINDOWS:`.
+  #[getter]
+  pub def os self
+    throw nil
+
+# Returns CPU information for the current VFS target.
+#
+# ## Example
+#
+# ```
+# let info = sys.cpu_info()
+# echo "running on $info.arch with $info.logical_count logical CPUs"
+# ```
+pub def cpu_info()
+  throw nil
+
+# Returns operating system information for the current VFS target.
+#
+# ## Example
+#
+# ```
+# if (sys.os_info().family == :WINDOWS:)
+#   echo "running on Windows"
+# ```
+pub def os_info()
+  throw nil
+
+# A network address is already in use.
+pub class AddrInUseError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A requested network address is unavailable.
+pub class AddrNotAvailableError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# Raised when creating or renaming something would conflict with an existing
+# filesystem path or other system resource.
+pub class AlreadyExistsError: Error
+  # Creates a resource-conflict error. Parameters match
+  # [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A system argument list is too long.
+pub class ArgumentListTooLongError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A pipe or connection was closed by its reader.
+pub class BrokenPipeError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A connection was aborted.
+pub class ConnectionAbortedError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A connection attempt was refused.
+pub class ConnectionRefusedError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A connection was reset.
+pub class ConnectionResetError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# An operation cannot cross device boundaries.
+pub class CrossesDevicesError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# An operation would cause a deadlock.
+pub class DeadlockError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A directory or key is not empty.
+pub class DirectoryNotEmptyError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# An executable file is busy.
+pub class ExecutableFileBusyError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A file exceeds a supported size limit.
+pub class FileTooLargeError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A network host is unreachable.
+pub class HostUnreachableError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A system operation was interrupted.
+pub class InterruptedError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# Input data is malformed or violates a protocol.
+pub class InvalidDataError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A filename is invalid.
+pub class InvalidFilenameError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# Raised when a system operation receives invalid input.
+pub class InvalidInputError: Error std.ValueError
+  # Creates an invalid-input error. Parameters match
+  # [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A file operation targeted a directory.
+pub class IsADirectoryError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# The network is down.
+pub class NetworkDownError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A network is unreachable.
+pub class NetworkUnreachableError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A path component is not a directory.
+pub class NotADirectoryError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# An operation requires a connected endpoint.
+pub class NotConnectedError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# Raised when a filesystem path, program, or other system resource cannot be
+# found.
+pub class NotFoundError: Error
+  # Creates a missing-resource error. Parameters match
+  # [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A stream does not support seeking.
+pub class NotSeekableError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A system operation could not allocate memory.
+pub class OutOfMemoryError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# Raised when a system operation is not permitted by filesystem, process, or
+# platform access rules.
+pub class PermissionDeniedError: Error
+  # Creates a permission error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A storage quota was exceeded.
+pub class QuotaExceededError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# An operation attempted to modify a read-only filesystem.
+pub class ReadOnlyFilesystemError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A system resource is busy.
+pub class ResourceBusyError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A network filesystem handle is stale.
+pub class StaleNetworkFileHandleError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A storage device is full.
+pub class StorageFullError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# Raised when a system operation times out.
+pub class TimedOutError: Error std.TimedOutError
+  # Creates a timeout error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A filesystem object has too many links.
+pub class TooManyLinksError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# Input ended unexpectedly.
+pub class UnexpectedEofError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# Raised when a system operation is unsupported.
+pub class UnsupportedError: Error std.UnsupportedError
+  # Creates an unsupported-operation error. Parameters match
+  # [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# An operation would block.
+pub class WouldBlockError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil
+
+# A write operation wrote zero bytes.
+pub class WriteZeroError: Error
+  # Creates the error. Parameters match [`Error`](sys.Error.(init)).
+  pub def (init)
+    self
+    # ([`str`](std.Str)) Error message.
+    message
+    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    :code = nil
+  do
+    throw nil

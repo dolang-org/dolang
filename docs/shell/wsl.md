@@ -41,7 +41,7 @@ resolved through the active Linux environment's `PATH`. Use
 `command:` to override discovery.
 
 When the interpreter originally started on Windows, prefer
-[`shell.with_host`](../api/shell/index.md#with_host-func-args) to return
+[`shell.with_host`](shell.with_host) to return
 temporarily from a nested Linux VFS. `with_windows` is intended for an
 interpreter that started within WSL and has no Windows startup context to
 restore.
@@ -59,8 +59,8 @@ wsl.with_windows do
 ## Directory and Environment Overrides
 
 Both functions accept `cd:` and `env:`. These describe the destination, so use
-an [`fs.unix.Path`](../api/fs/unix/path.md) when entering Linux and a
-[`fs.windows.Path`](../api/fs/windows/path.md) when entering Windows if the
+an [`fs.unix.Path`](fs.unix.Path) when entering Linux and a
+[`fs.windows.Path`](fs.windows.Path) when entering Windows if the
 path must be constructed before entering that context, or use ordinary strings.
 
 Environment keys may be strings or symbols. A `nil` value unsets the variable;

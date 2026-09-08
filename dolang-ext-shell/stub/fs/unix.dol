@@ -1,0 +1,165 @@
+# Unix filesystem types.
+
+# Unix `st_mode` bits: permissions, the set-user-ID/set-group-ID/sticky bits,
+# and the file type.
+#
+# ## Example
+#
+# Reading a file's mode and applying it elsewhere:
+#
+# ```
+# let mode = metadata("template.sh").mode
+# update_metadata "script.sh" mode: $mode
+# ```
+pub class Mode
+  # Constructs a mode from symbols or one iterable of symbols.
+  #
+  # ## Permission symbols
+  #
+  # | Symbol            | Meaning                 |
+  # | ----------------- | ----------------------- |
+  # | `:OWNER_READ:`    | Owner may read          |
+  # | `:OWNER_WRITE:`   | Owner may write         |
+  # | `:OWNER_EXECUTE:` | Owner may execute       |
+  # | `:GROUP_READ:`    | Group may read          |
+  # | `:GROUP_WRITE:`   | Group may write         |
+  # | `:GROUP_EXECUTE:` | Group may execute       |
+  # | `:OTHER_READ:`    | Everyone may read       |
+  # | `:OTHER_WRITE:`   | Everyone may write      |
+  # | `:OTHER_EXECUTE:` | Everyone may execute    |
+  # | `:SET_UID:`       | Set user ID on execute  |
+  # | `:SET_GID:`       | Set group ID on execute |
+  # | `:STICKY:`        | Sticky bit              |
+  #
+  # ## File type symbols
+  #
+  # | Symbol     | File type        |
+  # | ---------- | ---------------- |
+  # | `:IFREG:`  | Regular file     |
+  # | `:IFDIR:`  | Directory        |
+  # | `:IFLNK:`  | Symbolic link    |
+  # | `:IFIFO:`  | FIFO             |
+  # | `:IFCHR:`  | Character device |
+  # | `:IFBLK:`  | Block device     |
+  # | `:IFSOCK:` | Socket           |
+  #
+  # ## Example
+  #
+  # ```
+  # let rw = Mode(:OWNER_READ:, :OWNER_WRITE:)
+  # ```
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) Mode bits, or one iterable of them.
+    ...bits
+  do
+    throw nil
+
+  # Constructs a mode from a raw `st_mode` value, preserving unknown bits.
+  #
+  # ## Example
+  #
+  # ```
+  # let mode = Mode.from_int 0o644
+  # ```
+  #[class]
+  pub def from_int
+    self
+    # ([`Int`](std.Int)) Raw mode bits.
+    value
+  do
+    throw nil
+
+  # ([`security.unix.Permission`](security.unix.Permission)) Owner
+  # permissions.
+  #[getter]
+  pub def owner self
+    throw nil
+
+  # ([`security.unix.Permission`](security.unix.Permission)) Group
+  # permissions.
+  #[getter]
+  pub def group self
+    throw nil
+
+  # ([`security.unix.Permission`](security.unix.Permission))
+  # Permissions for everyone else.
+  #[getter]
+  pub def other self
+    throw nil
+
+  # ([`Int`](std.Int)) The raw `st_mode` value, including the file type
+  # bits.
+  #
+  # Mask with `0o7777` for the permission bits alone.
+  #
+  # ```
+  # let mode = metadata("script.sh").mode
+  # assert_eq (mode.int & 0o7777) 0o755
+  # ```
+  #[getter]
+  pub def int self
+    throw nil
+
+  # Tests whether all bits represented by a symbol are set.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool)
+  pub def contains
+    self
+    # ([`Sym`](std.Sym)) Bits to test for.
+    bit
+  do
+    throw nil
+
+  # Union of two modes.
+  pub def (bor)
+    self
+    other
+  do
+    throw nil
+
+  # Intersection of two modes.
+  pub def (band)
+    self
+    other
+  do
+    throw nil
+
+  # Symmetric difference of two modes.
+  pub def (bxor)
+    self
+    other
+  do
+    throw nil
+
+  # Complement within the supported bit set.
+  pub def (bnot) self
+    throw nil
+
+  # Compares two modes.
+  pub def (eq)
+    self
+    other
+  do
+    throw nil
+
+  # Yields the symbols represented by the mode.
+  pub def (iter) self
+    throw nil
+
+# [`fs.Path`](fs.Path) using Unix path syntax.
+#
+# See [`fs.Path`](fs.Path) for fields, methods, and operators.
+pub class Path
+  # Converts a string or another path to a Unix path.
+  #
+  # Converting a Windows path is allowed only when it is relative and has no
+  # root, prefix, or alternate data stream.
+  pub def (init)
+    self
+    # ([`Str`](std.Str)\|[`fs.Path`](fs.Path)) Path value.
+    path
+  do
+    throw nil

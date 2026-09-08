@@ -307,12 +307,15 @@ args.with
     else
       Path(path).read()
     let document = Document (path || "<stdin>") $source $module $all
-    for diag = document.diagnostics()
-      echo $diag.render()
     # A description built from a file that did not compile is missing whatever
     # the compiler could not read, and nothing downstream can tell that from a
-    # file that simply declares less -- so it is not written at all.
+    # file that simply declares less -- so it is not written at all. Warnings
+    # alone are reported only alongside such a failure: a stub declares
+    # signatures whose bodies never use them, so on its own every stub is a
+    # page of unused-parameter warnings that would bury anything worth reading.
     if document.failed()
+      for diag = document.diagnostics()
+        echo $diag.render()
       shell.exit 1
     # The document goes to the output stream, where a caller reading the tool's
     # stdout will find it; `echo` addresses the console, which is stderr.

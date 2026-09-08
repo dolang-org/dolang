@@ -1,0 +1,9 @@
+# The `sys.unix` module exposes Unix-specific system types.
+import sys
+
+# [`sys.ErrorCode`](sys.ErrorCode) originating from a Unix system.
+pub class Errno: sys.ErrorCode
+  # The originating operating system, as `:LINUX:`, `:MACOS:`, or `:FREEBSD:`.
+  #[getter]
+  pub def os self
+    throw nil

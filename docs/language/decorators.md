@@ -113,8 +113,8 @@ Method decorators receive the method function and return the value to install in
 the class under that name.
 
 A decorator can convert a method into a computed field setter or getter by
-replacing the method with a subtype of [`Getter`](../api/std/getter.md) or
-[`Setter`](../api/std/setter.md). The builtin `getter` and `setter` decorators
+replacing the method with a subtype of [`Getter`](std.Getter) or
+[`Setter`](std.Setter). The builtin `getter` and `setter` decorators
 in the prelude do this in a straightforward manner.
 
 ```

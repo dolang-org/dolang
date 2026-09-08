@@ -1,7 +1,7 @@
 # Concurrency
 
 Do supports concurrent execution through **strands** - lightweight asynchronous
-tasks. See the [`strand`](../api/strand/index.md) module for full API
+tasks. See the [`strand`](strand) module for full API
 details.
 
 ## Strand Concepts
@@ -21,21 +21,21 @@ Key features of strands:
 Do distinguishes between two kinds of strands:
 
 **Scoped strands** (used by
-[`strand.fork`](../api/strand/index.md#fork-blocks) and
-[`strand.pipeline`](../api/strand/index.md#pipeline-stage-stages-input-output))
+[`strand.fork`](strand.fork) and
+[`strand.pipeline`](strand.pipeline))
 are always joined before the function that creates them returns. You don't need
 to manage them manually, and cancellation propagates automatically from parent
 to child strands.
 
 **Background strands** (created by
-[`strand.spawn`](../api/strand/index.md#spawn-func) and
-[`strand.stream`](../api/strand/index.md#stream-func)) are not tied to a scope.
+[`strand.spawn`](strand.spawn) and
+[`strand.stream`](strand.stream)) are not tied to a scope.
 The strand runs independently and may outlive the spawning context. You must
-manage it manually through the returned [Strand](../api/strand/strand.md)
-handle using [`join`](../api/strand/strand.md#join) to wait for completion
-and possibly [`cancel`](../api/strand/strand.md#cancel) to terminate it.
+manage it manually through the returned [Strand](strand.Strand)
+handle using [`join`](strand.Strand.join) to wait for completion
+and possibly [`cancel`](strand.Strand.cancel) to terminate it.
 
-Held [`Resource`](../api/strand/resource.md)s are inherited by
+Held [`Resource`](strand.Resource)s are inherited by
 scoped strand but *not* by background strand. Later scoped state changes in one
 strand do not impact other strands.
 
@@ -43,7 +43,7 @@ strand do not impact other strands.
 
 ### `spawn`
 
-The [`strand.spawn`](../api/strand/index.md#spawn-func) function creates a new
+The [`strand.spawn`](strand.spawn) function creates a new
 background strand:
 
 ```
@@ -57,17 +57,17 @@ let result = worker.join()
 echo "Got result: $result"
 ```
 
-The returned [Strand](../api/strand/strand.md) handle allows you to:
+The returned [Strand](strand.Strand) handle allows you to:
 
-- Wait for completion with [`join`](../api/strand/strand.md#join)
-- Check if done with the [`done`](../api/strand/strand.md#done) field
-- Request cancellation with [`cancel`](../api/strand/strand.md#cancel)
+- Wait for completion with [`join`](strand.Strand.join)
+- Check if done with the [`done`](strand.Strand.done) field
+- Request cancellation with [`cancel`](strand.Strand.cancel)
 
 ## Concurrent Execution
 
 ### `fork`
 
-The [`strand.fork`](../api/strand/index.md#fork-blocks) function executes
+The [`strand.fork`](strand.fork) function executes
 multiple blocks concurrently and returns their results as an array:
 
 ```
@@ -94,7 +94,7 @@ let results = fork
 
 ### `map`
 
-[`strand.map`](../api/strand/index.md#map-count-func-input-output) applies one
+[`strand.map`](strand.map) applies one
 function concurrently to values pulled lazily from an iterator:
 
 ```
@@ -106,7 +106,7 @@ strand.map 8 input: $jobs output: $results do |job|
 Results are emitted in completion order. To restore input order, enumerate the
 input, preserve each index in the result, and sort after collecting.
 
-[`strand.pool`](../api/strand/index.md#pool-count-input-func) is the scoped
+[`strand.pool`](strand.pool) is the scoped
 worker form for a known input when block results are not needed:
 
 ```
@@ -116,7 +116,7 @@ strand.pool 8 $jobs do |job|
 
 ### Resources
 
-[`strand.Resource`](../api/strand/resource.md) provides explicit admission
+[`strand.Resource`](strand.Resource) provides explicit admission
 limits independent of strand structure:
 
 ```
@@ -137,7 +137,7 @@ Resources do not guard program state and must not be used as mutexes.
 ### `pipeline`
 
 The
-[`strand.pipeline`](../api/strand/index.md#pipeline-stage-stages-input-output)
+[`strand.pipeline`](strand.pipeline)
 function connects multiple stages into a data processing pipeline:
 
 ```
@@ -159,7 +159,7 @@ input.
 
 ### `channel`
 
-The [`strand.channel`](../api/strand/index.md#channel-buffer) function creates a
+The [`strand.channel`](strand.channel) function creates a
 sender/receiver pair for communicating between strands:
 
 ```
@@ -185,9 +185,9 @@ Channels have a fixed capacity (default 1).
 
 ### `stream`
 
-The [`strand.stream`](../api/strand/index.md#stream-func) function creates a
+The [`strand.stream`](strand.stream) function creates a
 background strand with channels pre-wired to its input and output, returning a
-[Stream](../api/strand/stream.md) handle. A Stream implements `Iterable` for
+[Stream](strand.Stream) handle. A Stream implements `Iterable` for
 its output side and `Sinkable` for its input side, making it easy to bridge
 background processing with the rest of your program without manually creating
 and threading channels.
@@ -212,23 +212,23 @@ functions like `each` and `where` work unchanged.
 
 Several functions are designed to work as pipeline stages:
 
-- [`strand.from`](../api/strand/index.md#from-value) - emits values from an
+- [`strand.from`](strand.from) - emits values from an
   iterable
-- [`strand.where`](../api/strand/index.md#where-predicate) - filters values by a
+- [`strand.where`](strand.where) - filters values by a
   predicate
-- [`strand.each`](../api/strand/index.md#each-func) - transforms values
-- [`strand.map`](../api/strand/index.md#map-count-func-input-output) -
+- [`strand.each`](strand.each) - transforms values
+- [`strand.map`](strand.map) -
   transforms values concurrently
-- [`strand.pool`](../api/strand/index.md#pool-count-input-func) - runs scoped
+- [`strand.pool`](strand.pool) - runs scoped
   workers and discards their results
-- [`strand.collect`](../api/strand/index.md#collect-target) - gathers values
+- [`strand.collect`](strand.collect) - gathers values
   into a collection
 
 ## Error Handling
 
 When a strand exits with an error:
 
-- If you call [`join`](../api/strand/strand.md#join), the error is
+- If you call [`join`](strand.Strand.join), the error is
   re-raised
 - In `fork` and `pipeline` strands, all sibling strands are canceled.
   After all strands complete, an arbitrary error among all failed strands is

@@ -1,0 +1,147 @@
+# UUID and Windows GUID generation, parsing, and field access.
+
+# Parsed or generated UUID value.
+pub class Uuid
+  # The max `Uuid`, `ffffffff-ffff-ffff-ffff-ffffffffffff`.
+  #[class]
+  pub field MAX = nil
+
+  # The nil `Uuid`, `00000000-0000-0000-0000-000000000000`.
+  #[class]
+  pub field NIL = nil
+
+  # Parses UUID text or binary, or copies an existing `Uuid`.
+  #
+  # Text may be hyphenated, simple, braced, or URN form. Binary values must be
+  # exactly 16 bytes.
+  #
+  # ## Errors
+  #
+  # `ValueError` if the text is invalid or bytes are not exactly 16 long.
+  #
+  # ## Example
+  #
+  # ```
+  # let id = Uuid "67e55044-10b1-426f-9247-bb680e5fe0c8"
+  # let copy = Uuid $id
+  # ```
+  pub def (init)
+    self
+    # ([`Str`](std.Str)\|[`Bin`](std.Bin)\|[`Uuid`](uuid.Uuid)) UUID to parse or copy.
+    value
+  do
+    throw nil
+
+  # Generates a random version 4 UUID.
+  #
+  # ## Returns
+  #
+  # `Uuid`
+  #
+  # ## Example
+  #
+  # ```
+  # let id = Uuid.generate()
+  # assert_eq $id.version 4
+  # assert_eq $id.variant :RFC4122:
+  # ```
+  #[class]
+  pub def generate self
+    throw nil
+
+  # The raw 16-byte binary form.
+  #[getter]
+  pub def bytes self
+    throw nil
+
+  # The simple lowercase hexadecimal form without hyphens.
+  #[getter]
+  pub def hex self
+    throw nil
+
+  # The UUID variant: `:NCS:`, `:RFC4122:`, `:MICROSOFT:`, or `:FUTURE:`.
+  #[getter]
+  pub def variant self
+    throw nil
+
+  # The UUID version number, such as `4` for a randomly generated UUID.
+  #[getter]
+  pub def version self
+    throw nil
+
+  # Compares two UUID values.
+  pub def (eq) self other
+    throw nil
+
+  # Returns the canonical hyphenated UUID text.
+  pub def (str) self
+    throw nil
+
+# Windows globally unique identifier mirroring the native `GUID` fields.
+pub class Guid
+  # The nil `Guid`, `00000000-0000-0000-0000-000000000000`.
+  #[class]
+  pub field NIL = nil
+
+  # Parses canonical GUID text or binary, or copies an existing `Guid`.
+  #
+  # Binary values use the 16-byte native Windows in-memory layout.
+  #
+  # ## Errors
+  #
+  # `ValueError` if the text is invalid or bytes are not exactly 16 long.
+  #
+  # ## Example
+  #
+  # ```
+  # let id = Guid "00112233-4455-6677-8899-aabbccddeeff"
+  # let copy = Guid $id
+  # ```
+  pub def (init)
+    self
+    # ([`Str`](std.Str)\|[`Bin`](std.Bin)\|[`Guid`](uuid.Guid)) GUID text, native packet, or `Guid`.
+    value
+  do
+    throw nil
+
+  # Generates a random `Guid`.
+  #
+  # ## Returns
+  #
+  # `Guid`
+  #[class]
+  pub def generate self
+    throw nil
+
+  # The raw 16-byte native Windows in-memory GUID packet.
+  #[getter]
+  pub def bytes self
+    throw nil
+
+  # The `Data1` field.
+  #[getter]
+  pub def data1 self
+    throw nil
+
+  # The `Data2` field.
+  #[getter]
+  pub def data2 self
+    throw nil
+
+  # The `Data3` field.
+  #[getter]
+  pub def data3 self
+    throw nil
+
+  # The 8-byte `Data4` field.
+  #[getter]
+  pub def data4 self
+    throw nil
+
+  # Compares two GUID values.
+  pub def (eq) self other
+    throw nil
+
+  # Returns the canonical hyphenated GUID text.
+  pub def (str) self
+    throw nil

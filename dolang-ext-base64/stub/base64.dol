@@ -1,0 +1,89 @@
+# Base64 encoding and decoding (RFC 4648).
+#
+# ## Alphabets
+#
+# | Symbol       | Description                                               |
+# | ------------ | --------------------------------------------------------- |
+# | `:STANDARD:` | Standard alphabet, using `+` and `/` (RFC 4648 section 4) |
+# | `:URL:`      | URL-safe alphabet, using `-` and `_` (section 5)          |
+# | `:AUTO:`     | Decoding only; detect the alphabet from the input         |
+
+# Decodes base64 text and returns the raw bytes.
+#
+# By default both alphabets and any amount of padding are accepted. Specifying
+# `alphabet:` or `pad:` makes decoding strict in that respect.
+#
+# ## Returns
+#
+# [`Bin`](std.Bin) - Decoded bytes
+#
+# ## Errors
+#
+# | Exception    | Condition                                                               |
+# | ------------ | ----------------------------------------------------------------------- |
+# | `TypeError`  | `text` is not a string or binary, or an option has the wrong type       |
+# | `ValueError` | The input is not valid base64, or `alphabet` is not a recognized symbol |
+#
+# ## Example
+#
+# ```
+# assert_eq (decode "aGVsbG8=") b"hello"
+# assert_eq (decode "aGVsbG8") b"hello"
+# assert_eq (decode $ encode "hello") b"hello"
+# assert_eq (decode "-_8" alphabet: :URL: pad: false) b"\xfb\xff"
+# ```
+pub def decode
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Base64 text to decode.
+  text
+  # ([`Sym`](std.Sym)?) Alphabet; default `:AUTO:`.
+  #
+  # `:AUTO:` selects the URL-safe alphabet if the input contains `-` or `_`, and
+  # the standard alphabet otherwise. Input containing characters from both
+  # alphabets is rejected. Input containing neither decodes identically under
+  # both.
+  :alphabet = nil
+  # ([`Bool`](std.Bool)?) Required padding; default none.
+  #
+  # When `pad:` is omitted, canonical padding and any lesser amount — including
+  # none — are accepted. `pad: true` requires canonical padding; `pad: false`
+  # requires that padding be absent.
+  :pad = nil
+do
+  throw nil
+
+# Encodes a string or binary value as base64 text.
+#
+# ## Returns
+#
+# [`Str`](std.Str) - Base64 text
+#
+# ## Errors
+#
+# | Exception    | Condition                                                         |
+# | ------------ | ----------------------------------------------------------------- |
+# | `TypeError`  | `data` is not a string or binary, or an option has the wrong type |
+# | `ValueError` | `alphabet` is not a recognized symbol                             |
+#
+# ## Example
+#
+# ```
+# assert_eq (encode "") ""
+# assert_eq (encode "hello") "aGVsbG8="
+# assert_eq (encode b"hello") "aGVsbG8="
+# assert_eq (encode b"\xfb\xff") "+/8="
+# assert_eq (encode b"\xfb\xff" alphabet: :URL:) "-_8"
+# assert_eq (encode "hello" pad: false) "aGVsbG8"
+# ```
+pub def encode
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Data to encode.
+  data
+  # ([`Sym`](std.Sym)?) Alphabet; default `:STANDARD:`.
+  :alphabet = nil
+  # ([`Bool`](std.Bool)?) Whether to emit padding; default depends on `alphabet:`.
+  #
+  # `pad:` defaults to `true` for `:STANDARD:` and `false` for `:URL:`, since
+  # URL-safe base64 is conventionally unpadded (for example in JSON Web
+  # Signatures, RFC 7515). Pass `pad:` explicitly to override.
+  :pad = nil
+do
+  throw nil

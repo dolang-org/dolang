@@ -1,7 +1,7 @@
 {% import "_params.html.jinja2" as params %}
 {% set heading_level = options.get("heading_level", 2) %}
 {% set show_private = options.get("show_private", false) %}
-{% set base_id = entity.name %}
+{% set base_id = entity._identifier %}
 
 {#
   A type is rendered on a page of its own, which carries its own title, so this
@@ -41,16 +41,20 @@
 {{ title | heading(heading_level + 1, skip_inventory=true, id=anchor) }}
 <dl>
 {% for field in items %}
-  {# The anchor is what a cross-page link to a getter, as in `./value.md#kind`,
-     resolves against. It has to come from the `heading` filter rather than a
-     bare `id=` attribute on the `<dt>`: mkdocstrings renders this macro's
-     output as a raw HTML block, and raw HTML is stashed out of the Markdown
-     tree and never scanned for anchors, so an `id` placed there directly
-     wouldn't register and strict builds would flag every link to it. #}
-  {{ "" | heading(heading_level + 2, id=field.name, hidden=true) }}
+  {# The anchor is what a cross-page link to a getter, as in
+     `[x][module.Class.x]`, resolves against. It has to come from the
+     `heading` filter rather than a bare `id=` attribute on the `<dt>`:
+     mkdocstrings renders this macro's output as a raw HTML block, and raw
+     HTML is stashed out of the Markdown tree and never scanned for anchors,
+     so an `id` placed there directly wouldn't register and strict builds
+     would flag every link to it. The id is the field's fully-qualified
+     identifier, not its bare name: a bare name would collide primary-registers
+     with any other field/method/module across the whole site that happens to
+     share it (autorefs registers heading ids workspace-wide, not per-page). #}
+  {{ "" | heading(heading_level + 2, id=field._identifier, hidden=true) }}
   <dt><code>{{ field.name }}</code></dt>
   {% if field.doc %}
-  <dd>{{ field.doc | convert_markdown(heading_level + 2, field.name) }}</dd>
+  <dd>{{ field.doc | convert_markdown(heading_level + 2, field._identifier) }}</dd>
   {% else %}
   <dd></dd>
   {% endif %}
@@ -61,7 +65,7 @@
 {% macro render_methods(items, title, anchor) %}
 {{ title | heading(heading_level + 1, skip_inventory=true, id=anchor) }}
 {% for method in items %}
-{% set method_id = method.name %}
+{% set method_id = method._identifier %}
 {% set sig = method.signature %}
 {{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 2, role="method", id=method_id, toc_label=sig) }}
 {% if method.doc_intro %}
@@ -77,7 +81,7 @@
 {% if constructors %}
 {{ "Constructor" | heading(heading_level + 1, skip_inventory=true, id="constructor") }}
 {% for method in constructors %}
-{% set method_id = "init" %}
+{% set method_id = base_id ~ ".(init)" %}
 {% set sig = method.signature | replace("(init)", entity.name, 1) %}
 {{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 2, role="method", id=method_id, toc_label=sig) }}
 {% if method.doc_intro %}

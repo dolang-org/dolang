@@ -1,0 +1,590 @@
+# Shell context: standard streams, environment, working directory, invocation
+# identity, and the VFS the whole lot is routed through.
+#
+# For how byte streams are divided into values when communicating with external
+# programs, see [Output mode](../../shell/external-programs.md#output-mode).
+
+# The process's standard input.
+#
+# Obtained as [`shell.stdin`](shell.stdin).
+#
+# Every handle reads through one shared buffered reader, so mixing iteration
+# with [`read`](shell.Stdin.read) picks up exactly where the other left off.
+# What differs between handles is only how they frame that stream.
+pub class Stdin
+  # Returns a handle that yields lines.
+  #
+  # This is the default framing, so it is only needed to undo a previous
+  # [`chunks`](shell.Stdin.chunks).
+  #
+  # ## Returns
+  #
+  # [`Stdin`](shell.Stdin)
+  pub def lines self
+    throw nil
+
+  # Returns a handle that yields arbitrary-sized [`Bin`](std.Bin) chunks.
+  #
+  # ## Returns
+  #
+  # [`Stdin`](shell.Stdin)
+  #
+  # ## Example
+  #
+  # ```
+  # for chunk = shell.stdin.chunks()
+  #   hasher.update $chunk
+  # ```
+  pub def chunks self
+    throw nil
+
+  # Reads raw bytes.
+  #
+  # With a `size` this is a single read, which may return fewer bytes than
+  # asked for, as [`fs.File.read`](fs.File) does. Without one it reads to
+  # end of stream.
+  #
+  # ## Returns
+  #
+  # [`Bin`](std.Bin). Empty means end of stream.
+  #
+  # ## Example
+  #
+  # ```
+  # let rest = shell.stdin.read()
+  # let head = shell.stdin.read 64
+  # ```
+  pub def read
+    self
+    # ([`Int`](std.Int)?) Maximum bytes to read. Unbounded when omitted.
+    size = nil
+  do
+    throw nil
+
+  # Iterates the stream, yielding lines by default.
+  #
+  # A line **includes its terminator**, so [`chomp`](std.Iter.chomp) is
+  # how you ask for one without:
+  #
+  # ```
+  # for line = shell.stdin.chomp()
+  #   if (line == "--")
+  #     break
+  # let body = shell.stdin.read()
+  # ```
+  pub def (iter) self
+    throw nil
+
+  # Yields the next line or chunk.
+  pub def (next) self
+    throw nil
+
+  # Compares two handles, which are equal when they frame the stream the same
+  # way.
+  pub def (eq) self other
+    throw nil
+
+# The process's standard output.
+#
+# Obtained as [`shell.stdout`](shell.stdout).
+#
+# Always writes to the real stream. Naming this handle is how you opt out of
+# terminal takeover; use [`term.console`](term.Console) to follow it
+# instead.
+pub class Stdout
+  # Writes bytes verbatim.
+  #
+  # ## Returns
+  #
+  # [`Int`](std.Int) - Bytes written. For a [`Str`](std.Str) this
+  # is the UTF-8 byte count, not the character count.
+  #
+  # ## Errors
+  #
+  # | Exception                           | Condition                       |
+  # | ----------------------------------- | ------------------------------- |
+  # | [`TypeError`](std.TypeError) | `data` is not a `Str` or `Bin`  |
+  #
+  # ## Example
+  #
+  # ```
+  # shell.stdout.write "no newline"
+  # shell.stdout.write b"\x00\x01\xff"
+  # assert_eq (shell.stdout.write "héllo") 6
+  # ```
+  pub def write
+    self
+    # ([`Str`](std.Str)|[`Bin`](std.Bin)) Bytes to write.
+    data
+  do
+    throw nil
+
+  # Flushes buffered output to the stream.
+  #
+  # Worth calling when interleaving with unbuffered console output, whose
+  # ordering relative to buffered stdout is otherwise not guaranteed. The
+  # interpreter flushes on exit.
+  pub def flush self
+    throw nil
+
+  # Accepts values as a [sink](std.Sink), so this handle can be the
+  # target of a pipeline or of [`strand.put`](strand).
+  #
+  # A value contributes exactly its own bytes and nothing else: no line ending
+  # is appended and none is translated. `put` differs from
+  # [`write`](shell.Stdout.write) only in stringifying values that are neither a
+  # [`Str`](std.Str) nor a [`Bin`](std.Bin) rather than rejecting
+  # them, so `put 42` writes `42` the way `echo` would.
+  #
+  # To terminate values, say so with
+  # [`precrimp`](std.Sink.precrimp):
+  #
+  # ```
+  # shell.stdout.put "hello"          # writes "hello"
+  #
+  # let lines = shell.stdout.precrimp()
+  # lines.put "hello"                 # writes "hello\n"
+  # ```
+  pub def (sink) self
+    throw nil
+
+  # Compares two handles. All instances are interchangeable, so any two are
+  # equal.
+  pub def (eq) self other
+    throw nil
+
+# The process's standard error.
+#
+# Obtained as [`shell.stderr`](shell.stderr).
+#
+# Stateless and interchangeable, as [`Stdout`](shell.Stdout) is. Unlike
+# [`term.console`](term.Console), this bypasses extensions that have
+# taken over the terminal shell-wide: it is the error stream itself.
+pub class Stderr
+  # Writes bytes verbatim. Identical in behavior to
+  # [`Stdout.write`](shell.Stdout.write).
+  #
+  # ## Returns
+  #
+  # [`Int`](std.Int) - Bytes written.
+  #
+  # ## Example
+  #
+  # ```
+  # shell.stderr.write "fatal: no such target\n"
+  # ```
+  pub def write
+    self
+    # ([`Str`](std.Str)|[`Bin`](std.Bin)) Bytes to write.
+    data
+  do
+    throw nil
+
+  # Flushes buffered output to the stream.
+  pub def flush self
+    throw nil
+
+  # Accepts values as a [sink](std.Sink), writing them verbatim, as
+  # [`Stdout`](shell.Stdout.(sink)) does.
+  pub def (sink) self
+    throw nil
+
+  # Compares two handles. All instances are interchangeable, so any two are
+  # equal.
+  pub def (eq) self other
+    throw nil
+
+# An execution context: another machine, container, or privilege level.
+#
+# Filesystem access, external programs, environment, working directory, target
+# system information, and security identity all follow the selected context.
+pub class Vfs
+  # Runs `func` on a background stream and connects to a VFS server over its
+  # input and output.
+  #
+  # `func` must launch a program that speaks the VFS protocol. The `--stdio`
+  # mode reads the protocol from standard input and writes it to standard
+  # output, so the launched program must not write anything else there;
+  # diagnostics may use standard error. If the launcher exits before the
+  # handshake completes, its error is reported instead of the resulting VFS
+  # disconnect.
+  #
+  # The `Vfs` retains the background stream for its lifetime.
+  #
+  # ## Example
+  #
+  # ```
+  # let remote = Vfs do run ssh host dolang-vfs --stdio
+  # ```
+  pub def (init)
+    self
+    # (callable) VFS server launcher.
+    func
+  do
+    throw nil
+
+  # Connects to a running `dolang-vfs` daemon on Unix.
+  #
+  # The socket path is resolved in the active VFS context, so this can reach a
+  # daemon visible only from another remote or container VFS. A direct
+  # non-Unix context reports that Unix VFS connections are unsupported.
+  #
+  # The working directory in which the `dolang-vfs` process started becomes the
+  # context's initial working directory.
+  #
+  # ## Returns
+  #
+  # [`Vfs`](shell.Vfs)
+  #
+  # ## Errors
+  #
+  # | Exception                    | Condition                                                           |
+  # | ---------------------------- | ------------------------------------------------------------------- |
+  # | `sys.NotFoundError`          | The socket path does not exist                                      |
+  # | `sys.ConnectionRefusedError` | The endpoint is unavailable                                         |
+  # | `sys.PermissionDeniedError`  | Authentication fails or only one endpoint was configured with a key |
+  # | `sys.InvalidInputError`      | The key is shorter than 16 bytes                                    |
+  #
+  # ## Example
+  #
+  # ```
+  # let a = Vfs.unix_socket /tmp/agent/socket
+  # ```
+  #
+  # Authenticated, with a freshly generated key:
+  #
+  # ```
+  # let key = rand.string 32
+  # let a = Vfs.unix_socket /tmp/agent/socket :key
+  # ```
+  #[class]
+  pub def unix_socket
+    self
+    # ([`Path`](fs.Path)) Unix socket path.
+    path
+    # ([`Str`](std.Str)|[`Bin`](std.Bin)?) Pre-shared key that both
+    # ends prove knowledge of during the handshake.
+    #
+    # Supply it when the socket's permissions cannot identify the peer. An
+    # agent inside a container binds its socket `0666`, because the uid that
+    # will connect is not knowable in advance, leaving it reachable by anything
+    # that can traverse the containing directory.
+    #
+    # The agent must have been started with `--key-stdin` and given the same
+    # key, and the requirement is mutual: a key here fails against an agent
+    # without one, and an agent expecting one refuses a connection without it.
+    # Keys must be at least 16 bytes and must carry sufficient entropy on their
+    # own, so generate one with
+    # [`rand.string`](rand.string) rather than choosing it.
+    #
+    # This authenticates the connection; it does not encrypt or
+    # integrity-protect the session that follows.
+    :key = nil
+  do
+    throw nil
+
+  # Launches an elevated copy of the active Windows VFS target's current
+  # executable.
+  #
+  # This can cross an existing VFS connection, such as a connection from WSL to
+  # its Windows host. The target resolves its own executable; callers cannot
+  # select another program. When the executable is `dolang.exe`, `--vfs` is
+  # inserted to select its VFS entrypoint; a standalone `dolang-vfs.exe` is
+  # launched directly.
+  #
+  # Windows displays a User Account Control prompt, and cancelling it raises a
+  # system error.
+  #
+  # Windows does not reliably allow the elevated process to use console handles
+  # from the non-elevated caller, so console programs using inherited terminal
+  # I/O may hang, fail, or produce no output. Redirected and captured output
+  # uses ordinary handles and works across the elevated VFS boundary.
+  #
+  # ## Returns
+  #
+  # [`Vfs`](shell.Vfs)
+  #
+  # ## Example
+  #
+  # ```
+  # let admin = Vfs.windows_admin()
+  # ```
+  #[class]
+  pub def windows_admin
+    self
+    # ([`Path`](fs.Path)?) Initial working directory. Defaults to the
+    # calling strand's.
+    :cd = nil
+    # ([`Dict`](std.Dict)?) Environment overrides. Keys may be strings or
+    # symbols; `nil` unsets a variable and `:INHERIT:` captures the calling
+    # strand's current value.
+    :env = nil
+  do
+    throw nil
+
+  # Runs a function in this context.
+  #
+  # Each entry starts from the context's initial working directory. That value
+  # is fixed when the `Vfs` is created, so moving the handle out of its
+  # original working-directory scope does not change it, and a `cd` inside the
+  # block affects that entry but not the starting directory of later ones.
+  #
+  # Entering the context reroutes the VFS-aware operations:
+  #
+  # - External programs run through the VFS daemon
+  # - [`env`](shell.env) reads and writes that context's environment
+  # - [`cd`](shell.cd) changes that context's working directory
+  # - [`fs`](fs) operations use that context's filesystem view
+  # - [`sys`](sys) reports that context's operating system and CPU
+  # - [`security`](security) reports that context's identity
+  #
+  # Everything else stays in the interpreter process unless its documentation
+  # says otherwise -- network clients and native resources especially.
+  #
+  # ## Returns
+  #
+  # The function's result.
+  #
+  # ## Example
+  #
+  # ```
+  # a.with do
+  #   run ls /
+  #   run cat /etc/os-release
+  # ```
+  pub def with
+    self
+    # (callable) Function to run.
+    func
+    # Additional arguments passed to `func`.
+    ...args
+  do
+    throw nil
+
+  # Sends a stop request to the connected VFS server.
+  #
+  # A function-backed `Vfs` then closes and joins its launcher stream. On
+  # Windows, it also waits for the elevated process to exit.
+  pub def stop self
+    throw nil
+
+# Returns the current strand's working directory, or changes it.
+#
+# With no arguments, reports the directory. With a path, changes it. With a
+# function as well, the change lasts only for that call, and is undone however
+# the call exits.
+#
+# ## Returns
+#
+# The working directory as an [`fs.Path`](fs.Path) when called with no
+# arguments, otherwise the function's result.
+#
+# ## Example
+#
+# ```
+# echo $ cd()
+# cd /tmp
+# cd /var/log do
+#   run ls
+# ```
+pub def cd
+  # ([`Str`](std.Str)|[`Path`](fs.Path)?) Directory to change to,
+  # resolved against the current one.
+  path = nil
+  # (callable?) Function to run in the new directory.
+  func = nil
+do
+  throw nil
+
+# Replaces the interpreter with an external program, after shell cleanup.
+#
+# The program is resolved using the scoped working directory and `PATH` before
+# execution unwinds, and inherits standard input, output, and error. Arguments
+# use verbatim string conversion.
+#
+# Available only in the host VFS; use [`with_host`](shell.with_host) to
+# select it explicitly.
+#
+# ## Returns
+#
+# Never returns.
+pub def exec
+  # ([`Str`](std.Str)|[`Path`](fs.Path)) Program to execute.
+  program
+  # Program arguments.
+  ...args
+do
+  throw nil
+
+# Exits the shell.
+#
+# ## Returns
+#
+# Never returns; raises an interrupt error that unwinds the interpreter.
+pub def exit
+  # ([`Int`](std.Int)?) Exit status. Defaults to `0`.
+  code = nil
+do
+  throw nil
+
+# Returns the line ending native to the current [`Vfs`](shell.Vfs) target:
+# `"\r\n"` on Windows, `"\n"` elsewhere.
+#
+# This is a function rather than a value because the answer follows the VFS
+# target, so it is a question about the current context rather than a constant
+# of the module. Values are never terminated implicitly, so a script that wants
+# native endings asks for them by name.
+#
+# ## Returns
+#
+# [`Str`](std.Str)
+#
+# ## Example
+#
+# ```
+# run cmd stdout: (lines.precrimp(shell.line_ending()))
+# ```
+pub def line_ending()
+  throw nil
+
+# Returns the current executable reported by the active VFS context, or `nil`
+# when running on the host.
+#
+# ## Returns
+#
+# [`fs.Path`](fs.Path) or `nil`.
+pub def vfs_exe()
+  throw nil
+
+# Runs a function in the interpreter's original host context, whatever VFS
+# contexts are currently entered.
+#
+# ## Returns
+#
+# The function's result.
+pub def with_host
+  # (callable) Function to run.
+  func
+  # Additional arguments passed to `func`.
+  ...args
+do
+  throw nil
+
+# Runs a function with a scoped command-line arguments or program identity.
+#
+# The two are independent, and an omitted one keeps its current value, so
+# nested calls can override just one part of the invocation identity. Strands
+# created within the call inherit the overrides. Previous values are restored
+# when `func` returns, however it exits.
+#
+# ## Returns
+#
+# The function's result.
+#
+# ## Errors
+#
+# | Exception                           | Condition                         |
+# | ----------------------------------- | --------------------------------- |
+# | [`TypeError`](std.TypeError) | `args` is not iterable            |
+# | [`TypeError`](std.TypeError) | `program` is not a string or path |
+pub def with_override
+  # (callable) Function to run.
+  func
+  # ([`Iterable`](std.Iterable)?) Arguments seen as
+  # [`shell.args`](shell.args), converted with
+  # [`verbatim`](std.verbatim).
+  :args = nil
+  # ([`Str`](std.Str)|[`Path`](fs.Path)?) Identity seen as
+  # [`shell.program`](shell.program).
+  :program = nil
+do
+  throw nil
+
+# The command-line arguments of the current invocation.
+#
+# An immutable array-like sequence: it has `len`, indexes by
+# [`Int`](std.Int) or [`Range`](std.Range), iterates, spreads, and
+# destructures positionally. Assigning to an index raises
+# [`ImmutableError`](std.ImmutableError).
+#
+# ## Example
+#
+# ```
+# if shell.args
+#   echo "first: $(shell.args[0])"
+#
+# let first ...rest = shell.args
+# run tool ...rest
+# ```
+pub let args = nil
+
+# The environment of the current context.
+#
+# Reads with `env[name]`, writes with `env[name] = value`, and iterates,
+# spreads, and destructures like a [`Dict`](std.Dict). Assigning `nil`
+# unsets a variable. Reading a name that is not set raises; use
+# [`get`](shell.env) for a default instead.
+#
+# ## Scoped overrides
+#
+# Calling `env` runs a function with overrides in place, restored when it
+# returns. Overrides may be keyword arguments or a dict, whose keys may be
+# strings or symbols. `nil` unsets a variable, and `:INHERIT:` captures the
+# variable's current value in the calling strand.
+#
+# ```
+# env PATH: "/opt/bin:$(env["PATH"])" do
+#   run tool
+#
+# env {LANG: "C", TZ: nil} do
+#   run tool
+# ```
+#
+# ## Reading with a default
+#
+# `env.get name` returns `nil` rather than raising when the variable is unset.
+# `default:` supplies a value instead, and `else:` a block to call.
+#
+# ```
+# let home = env.get HOME default: /root
+# let tmp = env.get TMPDIR else: do
+#   fs.temp_dir()
+# ```
+#
+# ## Example
+#
+# ```
+# echo $env["HOME"]
+# env["MY_VAR"] = hello
+# for name value = env
+#   echo "$name=$value"
+# ```
+pub let env = nil
+
+# The path the host reports for the running `dolang` executable, as an
+# [`fs.Path`](fs.Path).
+#
+# Not canonicalized.
+pub let exe = nil
+
+# What `dolang` is executing.
+#
+# - For `dolang script.dol`, an [`fs.Path`](fs.Path) for `script.dol`
+# - For `dolang -m foo.bar`, the string `"foo.bar"`
+# - In the REPL, `nil`
+pub let program = nil
+
+# A [`Stdin`](shell.Stdin) handle for the process's standard input, and the
+# initial input of the main strand.
+pub let stdin = nil
+
+# A [`Stdout`](shell.Stdout) handle for the process's standard output, and the
+# initial output of the main strand.
+pub let stdout = nil
+
+# A [`Stderr`](shell.Stderr) handle for the process's standard error.
+pub let stderr = nil
+
+# A `(major, minor, patch)` [`Tuple`](std.Tuple) with the version of the
+# running `dolang` build.
+pub let VERSION = nil

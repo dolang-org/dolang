@@ -1319,6 +1319,7 @@ pub class Image
   pub def save self target :format = :DOCKER_ARCHIVE: :platform = nil
     self.#runtime.save $target :format :platform $self.id
 
+# A running or stopped container.
 pub class Container
   pub field id = nil
   pub field image = nil

@@ -1,0 +1,324 @@
+# Compiled regular expression matching using
+# [RE2-compatible syntax](https://docs.rs/regex/latest/regex/#syntax).
+#
+# ## Usage
+#
+# ```
+# let pattern = Regex r"\d+"
+# let caps = pattern.match "abc 42 def"
+# echo $caps  # => 42
+# ```
+#
+# ## Syntax
+#
+# Patterns use RE2 syntax, the same as the Rust
+# [`regex`](https://docs.rs/regex/latest/regex/#syntax) crate. This supports
+# most common regular expression features including:
+#
+# - Character classes: `\d`, `\w`, `\s`, `[a-z]`, `[^abc]`
+# - Repetition: `*`, `+`, `?`, `{n}`, `{n,m}`
+# - Anchors: `^`, `$`, `\b`
+# - Groups: `(abc)`, `(?:abc)` (non-capturing), `(?<name>abc)` (named)
+# - Alternation: `a|b`
+#
+# Backreferences and lookahead/lookbehind assertions are not supported.
+
+import std:
+  - Iter
+
+# A compiled regular expression.
+pub class Regex
+  # Compiles a regular expression pattern.
+  #
+  # ## Errors
+  #
+  # `ValueError` if the pattern is invalid.
+  #
+  # ## Example
+  #
+  # ```
+  # let digits = Regex r"\d+"
+  # let date = Regex r"(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})"
+  # ```
+  pub def (init)
+    self
+    # ([`Str`](std.Str)) RE2-compatible pattern.
+    pattern
+  do
+    throw nil
+
+  # Returns an iterator over all non-overlapping matches in `haystack`.
+  #
+  # ## Returns
+  #
+  # A [`Find`](regex.Find) that yields a [`Captures`](regex.Captures) for each
+  # match.
+  #
+  # ## Example
+  #
+  # ```
+  # let pattern = Regex r"\d+"
+  # for caps = pattern.find "one 1 two 2 three 3"
+  #   echo $caps  # => 1, then 2, then 3
+  #
+  # # Collect all matches into an array
+  # let matches = [...pattern.find "1 22 333"]
+  # echo $matches.len  # => 3
+  # ```
+  pub def find
+    self
+    # ([`Str`](std.Str)) String to search in.
+    haystack
+  do
+    throw nil
+
+  # Searches for the first match anywhere in `haystack`.
+  #
+  # ## Returns
+  #
+  # A [`Captures`](regex.Captures) if the pattern matches, or `nil` if there is
+  # no match.
+  #
+  # ## Example
+  #
+  # ```
+  # let pattern = Regex r"\d+"
+  # let caps = pattern.match "abc 42 def"
+  # echo $caps  # => 42
+  #
+  # let no_match = pattern.match "no digits"
+  # echo $no_match  # => nil
+  # ```
+  pub def match
+    self
+    # ([`Str`](std.Str)) String to search in.
+    haystack
+  do
+    throw nil
+
+  # Replaces matches of this pattern in `haystack`.
+  #
+  # ## Returns
+  #
+  # A new [`Str`](std.Str) with the replacements applied.
+  #
+  # ## Example
+  #
+  # ```
+  # let re = Regex r"(\w+)@(\w+)"
+  # echo $ re.replace "a@b c@d" r"$2=$1"  # => b=a d=c
+  #
+  # # Named groups
+  # let date_re = Regex r"(?<m>\d{2})/(?<d>\d{2})/(?<y>\d{4})"
+  # echo $ date_re.replace "03/22/2026" r"${y}-${m}-${d}"  # => 2026-03-22
+  #
+  # # With limit
+  # let comma = Regex r","
+  # echo $ comma.replace "a,b,c,d" ";" limit: 2  # => a;b;c,d
+  #
+  # # Callback replacement
+  # let upper = Regex r"[a-z]+"
+  # echo $ upper.replace "hello world" do |caps|
+  #   caps[0].upper()
+  # # => HELLO WORLD
+  # ```
+  pub def replace
+    self
+    # ([`Str`](std.Str)) String to search in.
+    haystack
+    # ([`Str`](std.Str)\|callable) Template string or callback.
+    #
+    # A template string supports backreferences:
+    #
+    # - `$1`, `$2`, … — numbered capture groups
+    # - `${name}` — named capture groups
+    # - `$$` — literal `$`
+    #
+    # A callback receives a [`Captures`](regex.Captures) for each match and must
+    # return a [`Str`](std.Str).
+    replacement
+    # ([`Int`](std.Int)?) How many matches to replace. Replaces all
+    # matches when omitted.
+    #
+    # - `limit: N` (positive) — replace at most N matches.
+    # - `limit: 0` — replace nothing, returning `haystack` unchanged.
+    #
+    # Negative limits are not supported.
+    :limit = nil
+  do
+    throw nil
+
+  # Splits `haystack` around matches, yielding segments right to left.
+  #
+  # Like `split`, but the rightmost segment comes first. `rsplit` always
+  # buffers all matches internally, since the regex engine only scans forward.
+  #
+  # ## Returns
+  #
+  # An iterator over the segments in reverse order.
+  #
+  # ## Example
+  #
+  # ```
+  # let comma = Regex r","
+  # assert_eq [...comma.rsplit "a,b,c"] ["c", "b", "a"]
+  #
+  # # Positive limit: 1 split from the right
+  # assert_eq [...comma.rsplit "a,b,c" limit: 1] ["c", "a,b"]
+  #
+  # # Negative limit: 1 split from the left
+  # assert_eq [...comma.rsplit "a,b,c" limit: -1] ["b,c", "a"]
+  # ```
+  pub def rsplit
+    self
+    # ([`Str`](std.Str)) String to split.
+    haystack
+    # ([`Int`](std.Int)?) How many splits to perform, and from which end.
+    # Splits fully when omitted.
+    #
+    # - `limit: N` (positive) — split at most N times from the **right**; the
+    #   last element yielded is the unsplit left remainder.
+    # - `limit: -N` (negative) — split at most N times from the **left**, but
+    #   still yield segments right to left.
+    :limit = nil
+  do
+    throw nil
+
+  # Splits `haystack` around matches of this pattern.
+  #
+  # Returns an iterator that yields the [`Str`](std.Str) substrings
+  # between matches. Iteration is lazy where possible; a negative limit
+  # requires buffering all matches up front.
+  #
+  # ## Returns
+  #
+  # An iterator over the segments.
+  #
+  # ## Example
+  #
+  # ```
+  # let ws = Regex r"\s+"
+  # assert_eq [...ws.split "hello  world  foo"] ["hello", "world", "foo"]
+  #
+  # # Positive limit: 1 split from the left
+  # assert_eq [...ws.split "a b c" limit: 1] ["a", "b c"]
+  #
+  # # Negative limit: 1 split from the right
+  # let head tail = ws.split "a b c" limit: -1
+  # assert_eq $head "a b"
+  # assert_eq $tail "c"
+  #
+  # # Destructuring
+  # let first ...rest = ws.split "a b c d"
+  # assert_eq $first "a"
+  # assert_eq [...rest] ["b", "c", "d"]
+  # ```
+  pub def split
+    self
+    # ([`Str`](std.Str)) String to split.
+    haystack
+    # ([`Int`](std.Int)?) How many splits to perform, and from which end.
+    # Splits fully when omitted.
+    #
+    # - `limit: N` (positive) — split at most N times from the **left**; the
+    #   last element is the unsplit remainder.
+    # - `limit: -N` (negative) — split at most N times from the **right**, but
+    #   still yield segments left to right. Useful for splitting off a
+    #   known-length suffix.
+    :limit = nil
+  do
+    throw nil
+
+# A successful match along with any capture groups.
+#
+# `Captures` values are returned by [`Regex.match`](regex.Regex.match) and
+# yielded by [`Find`](regex.Find). Coercing one with `str` produces the text of
+# the overall match.
+pub class Captures
+  # The byte offset of the end of the overall match within the haystack.
+  #[getter]
+  pub def end self
+    throw nil
+
+  # The byte offset of the start of the overall match within the haystack.
+  #[getter]
+  pub def start self
+    throw nil
+
+  # Reads a capture group by integer index or by name.
+  #
+  # Index `0` is the overall match, `1` the first capture group, and so on.
+  # Named groups, written `(?<name>...)`, are read by their name.
+  #
+  # ## Returns
+  #
+  # [`Match`](regex.Match)
+  #
+  # ## Errors
+  #
+  # [`IndexError`](std.IndexError) if no such group exists or the group
+  # did not participate in the match.
+  #
+  # ## Example
+  #
+  # ```
+  # let date = Regex r"(\d{4})-(\d{2})-(\d{2})"
+  # let caps = date.match "2024-03-15"
+  #
+  # echo $caps       # => 2024-03-15  (overall match)
+  # echo $caps[0]    # => 2024-03-15  (overall match)
+  # echo $caps[1]    # => 2024
+  # echo $caps[2]    # => 03
+  # echo $caps[3]    # => 15
+  #
+  # let named = Regex r"(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})"
+  # let caps = named.match "2024-03-15"
+  #
+  # echo $caps["year"]   # => 2024
+  # echo $caps["month"]  # => 03
+  # echo $caps["day"]    # => 15
+  # ```
+  pub def (index)
+    self
+    # ([`Int`](std.Int)\|[`Str`](std.Str)) Group index or name.
+    key
+  do
+    throw nil
+
+# A single matched span within a string.
+#
+# `Match` values are returned by indexing a [`Captures`](regex.Captures).
+# Coercing one with `str` produces the matched text.
+pub class Match
+  # The byte offset of the end of the match within the haystack.
+  #
+  # ## Example
+  #
+  # ```
+  # let date = Regex r"(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})"
+  # let caps = date.match "prefix 2024-03-15 suffix"
+  #
+  # let year = caps["year"]
+  # echo $year         # => 2024
+  # echo $year.start   # => 7
+  # echo $year.end     # => 11
+  # ```
+  #[getter]
+  pub def end self
+    throw nil
+
+  # The byte offset of the start of the match within the haystack.
+  #[getter]
+  pub def start self
+    throw nil
+
+# An iterator over all non-overlapping matches of a pattern in a string.
+#
+# `Find` values are returned by [`Regex.find`](regex.Regex.find) and implement
+# [`Iter`](std.Iter), so they can be used directly in `for` loops. Each
+# iteration yields a [`Captures`](regex.Captures) for one match.
+pub class Find: Iter
+  # Yields a [`Captures`](regex.Captures) for the next match, ending iteration
+  # once the haystack holds no more.
+  pub def (next) self
+    throw nil

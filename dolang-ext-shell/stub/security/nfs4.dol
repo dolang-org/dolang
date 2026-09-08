@@ -1,0 +1,349 @@
+# NFSv4 access-control-list types.
+
+# NFSv4 ACE permission bits.
+pub class Mask
+  # Constructs a mask from symbols or one iterable of symbols.
+  #
+  # ## Supported symbols
+  #
+  # | Symbol                | Meaning                                                |
+  # | --------------------- | ------------------------------------------------------ |
+  # | `:READ_DATA:`         | Read the file's data, or list a directory              |
+  # | `:WRITE_DATA:`        | Write the file's data, or create a file in a directory |
+  # | `:APPEND_DATA:`       | Append to the file's data, or create a subdirectory    |
+  # | `:READ_NAMED_ATTRS:`  | Read named attributes                                  |
+  # | `:WRITE_NAMED_ATTRS:` | Write named attributes                                 |
+  # | `:EXECUTE:`           | Execute the file, or traverse a directory              |
+  # | `:DELETE_CHILD:`      | Delete a file or directory within a directory          |
+  # | `:READ_ATTRIBUTES:`   | Read basic attributes                                  |
+  # | `:WRITE_ATTRIBUTES:`  | Write basic attributes                                 |
+  # | `:DELETE:`            | Delete the file or directory                           |
+  # | `:READ_ACL:`          | Read the ACL                                           |
+  # | `:WRITE_ACL:`         | Write the ACL                                          |
+  # | `:WRITE_OWNER:`       | Change owner and owning group                          |
+  # | `:SYNCHRONIZE:`       | Use synchronous I/O                                    |
+  #
+  # ## Example
+  #
+  # ```
+  # let rw = Mask(:READ_DATA:, :WRITE_DATA:)
+  # ```
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) Mask bits, or one iterable of them.
+    ...bits
+  do
+    throw nil
+
+  # Tests whether all bits represented by a symbol are set.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool)
+  pub def contains
+    self
+    # ([`Sym`](std.Sym)) Bits to test for.
+    bit
+  do
+    throw nil
+
+  # Union of two masks.
+  pub def (bor)
+    self
+    other
+  do
+    throw nil
+
+  # Intersection of two masks.
+  pub def (band)
+    self
+    other
+  do
+    throw nil
+
+  # Symmetric difference of two masks.
+  pub def (bxor)
+    self
+    other
+  do
+    throw nil
+
+  # Complement within the supported bit set.
+  pub def (bnot) self
+    throw nil
+
+  # Compares two masks.
+  pub def (eq)
+    self
+    other
+  do
+    throw nil
+
+  # Yields the symbols represented by the mask.
+  pub def (iter) self
+    throw nil
+
+# NFSv4 ACE inheritance and audit flags.
+pub class Flags
+  # Constructs a flag set from symbols or one iterable of symbols.
+  #
+  # ## Supported symbols
+  #
+  # | Symbol                   | Meaning                                                                          |
+  # | ------------------------ | -------------------------------------------------------------------------------- |
+  # | `:FILE_INHERIT:`         | Files created within a directory inherit this entry                              |
+  # | `:DIRECTORY_INHERIT:`    | Subdirectories created within a directory inherit this entry                     |
+  # | `:NO_PROPAGATE_INHERIT:` | Stop propagating this entry after one level of inheritance                       |
+  # | `:INHERIT_ONLY:`         | This entry is inherited but does not apply to the directory itself               |
+  # | `:SUCCESSFUL_ACCESS:`    | Generate an audit/alarm event on successful access (`:AUDIT:`/`:ALARM:` entries) |
+  # | `:FAILED_ACCESS:`        | Generate an audit/alarm event on failed access (`:AUDIT:`/`:ALARM:` entries)     |
+  # | `:INHERITED:`            | This entry was inherited from a parent directory                                 |
+  #
+  # ## Example
+  #
+  # ```
+  # let inherit = Flags(:FILE_INHERIT:, :DIRECTORY_INHERIT:)
+  # ```
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) Flag bits, or one iterable of them.
+    ...bits
+  do
+    throw nil
+
+  # Tests whether all bits represented by a symbol are set.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool)
+  pub def contains
+    self
+    # ([`Sym`](std.Sym)) Bits to test for.
+    bit
+  do
+    throw nil
+
+  # Union of two flag sets.
+  pub def (bor)
+    self
+    other
+  do
+    throw nil
+
+  # Intersection of two flag sets.
+  pub def (band)
+    self
+    other
+  do
+    throw nil
+
+  # Symmetric difference of two flag sets.
+  pub def (bxor)
+    self
+    other
+  do
+    throw nil
+
+  # Complement within the supported bit set.
+  pub def (bnot) self
+    throw nil
+
+  # Compares two flag sets.
+  pub def (eq)
+    self
+    other
+  do
+    throw nil
+
+  # Yields the symbols represented by the flag set.
+  pub def (iter) self
+    throw nil
+
+# Immutable NFSv4 access-control entry.
+#
+# The class methods below require built [`Mask`](security.nfs4.Mask) and
+# [`Flags`](security.nfs4.Flags) values; use [`ace`](security.nfs4.ace) for symbolic mask
+# and flag coercion.
+#
+# ## Example
+#
+# ```
+# let read = Mask(:READ_DATA:, :READ_ATTRIBUTES:)
+# Ace.user 1000 type: :ALLOW: mask: $read flags: (Flags(:FILE_INHERIT:))
+# ```
+pub class Ace
+  # Constructs the `OWNER@` entry.
+  #[class]
+  pub def owner
+    self
+    # ([`Sym`](std.Sym)) Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
+    # or `:ALARM:`.
+    :type
+    # ([`Mask`](security.nfs4.Mask)) Permission mask.
+    :mask
+    # ([`Flags`](security.nfs4.Flags)?) Inheritance/audit flags. Defaults to empty.
+    :flags = nil
+  do
+    throw nil
+
+  # Constructs the `GROUP@` entry.
+  #[class]
+  pub def owning_group
+    self
+    # ([`Sym`](std.Sym)) Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
+    # or `:ALARM:`.
+    :type
+    # ([`Mask`](security.nfs4.Mask)) Permission mask.
+    :mask
+    # ([`Flags`](security.nfs4.Flags)?) Inheritance/audit flags. Defaults to empty.
+    :flags = nil
+  do
+    throw nil
+
+  # Constructs the `EVERYONE@` entry.
+  #[class]
+  pub def everyone
+    self
+    # ([`Sym`](std.Sym)) Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
+    # or `:ALARM:`.
+    :type
+    # ([`Mask`](security.nfs4.Mask)) Permission mask.
+    :mask
+    # ([`Flags`](security.nfs4.Flags)?) Inheritance/audit flags. Defaults to empty.
+    :flags = nil
+  do
+    throw nil
+
+  # Constructs a named-user entry.
+  #[class]
+  pub def user
+    self
+    # ([`Int`](std.Int)) User ID.
+    id
+    # ([`Sym`](std.Sym)) Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
+    # or `:ALARM:`.
+    :type
+    # ([`Mask`](security.nfs4.Mask)) Permission mask.
+    :mask
+    # ([`Flags`](security.nfs4.Flags)?) Inheritance/audit flags. Defaults to empty.
+    :flags = nil
+  do
+    throw nil
+
+  # Constructs a named-group entry.
+  #[class]
+  pub def group
+    self
+    # ([`Int`](std.Int)) Group ID.
+    id
+    # ([`Sym`](std.Sym)) Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
+    # or `:ALARM:`.
+    :type
+    # ([`Mask`](security.nfs4.Mask)) Permission mask.
+    :mask
+    # ([`Flags`](security.nfs4.Flags)?) Inheritance/audit flags. Defaults to empty.
+    :flags = nil
+  do
+    throw nil
+
+  # ([`Sym`](std.Sym)) Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`, or
+  # `:ALARM:`.
+  #[getter]
+  pub def type self
+    throw nil
+
+  # ([`Sym`](std.Sym)) Entry qualifier: `:OWNER:`, `:OWNING_GROUP:`,
+  # `:EVERYONE:`, `:USER:`, or `:GROUP:`.
+  #[getter]
+  pub def principal self
+    throw nil
+
+  # ([`Int`](std.Int)) Numeric user or group ID.
+  #
+  # Raises [`FieldError`](std.FieldError) unless
+  # [`principal`](security.nfs4.Ace.principal) is `:USER:` or `:GROUP:`.
+  #[getter]
+  pub def id self
+    throw nil
+
+  # ([`Mask`](security.nfs4.Mask)) The entry's permission mask.
+  #[getter]
+  pub def mask self
+    throw nil
+
+  # ([`Flags`](security.nfs4.Flags)) The entry's inheritance/audit flags.
+  #[getter]
+  pub def flags self
+    throw nil
+
+# Immutable NFSv4 access-control list.
+#
+# Unlike a POSIX.1e ACL, an NFSv4 ACL has no required entries or completeness
+# invariant: an empty ACL and any combination of entries construct without
+# error.
+#
+# The constructor accepts only built [`Ace`](security.nfs4.Ace) values; use
+# [`acl`](security.nfs4.acl) to mix built entries with declarative dictionaries or
+# to pass entries variadically.
+pub class Acl
+  # Constructs an ACL from an iterable of [`Ace`](security.nfs4.Ace) values, in
+  # evaluation order.
+  pub def (init)
+    self
+    # Iterable of [`Ace`](security.nfs4.Ace) values.
+    aces
+  do
+    throw nil
+
+  # ([`Array`](std.Array)-like) Immutable view of [`Ace`](security.nfs4.Ace)
+  # values, in evaluation order. Use `.len` for the entry count.
+  #[getter]
+  pub def aces self
+    throw nil
+
+# Constructs an NFSv4 entry from declarative arguments.
+#
+# Pass exactly one type key. Masks and flags accept their built type, one
+# symbol, or an iterable of symbols.
+#
+# ## Returns
+#
+# [`Ace`](security.nfs4.Ace)
+#
+# ## Example
+#
+# ```
+# ace allow: :OWNER: mask: [:READ_DATA:, :READ_ACL:]
+# ace deny: {user: 1000} mask: :WRITE_DATA:
+# ```
+pub def ace
+  # Principal for an `:ALLOW:` entry: `:OWNER:`, `:OWNING_GROUP:`,
+  # `:EVERYONE:`, `{user: id}`, or `{group: id}`.
+  :allow = nil
+  # Principal for a `:DENY:` entry, in the same forms as `allow:`.
+  :deny = nil
+  # Principal for an `:AUDIT:` entry, in the same forms as `allow:`.
+  :audit = nil
+  # Principal for an `:ALARM:` entry, in the same forms as `allow:`.
+  :alarm = nil
+  # ([`Mask`](security.nfs4.Mask)\|[`Sym`](std.Sym)) Permission mask.
+  :mask
+  # ([`Flags`](security.nfs4.Flags)\|[`Sym`](std.Sym)?) Inheritance/audit
+  # flags. Defaults to empty.
+  :flags = nil
+do
+  throw nil
+
+# Constructs an NFSv4 ACL from entries and declarative entry dictionaries.
+#
+# An empty ACL is valid.
+#
+# ## Returns
+#
+# [`Acl`](security.nfs4.Acl)
+pub def acl
+  # ([`Ace`](security.nfs4.Ace)\|[`Dict`](std.Dict)) Entries, spread with `...`
+  # to pass a collection.
+  ...aces
+do
+  throw nil

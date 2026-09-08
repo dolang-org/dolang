@@ -1,0 +1,26 @@
+# The `sys.freebsd` module exposes FreeBSD-specific system types.
+#
+import sys.unix
+#
+# ## Types
+#
+# | Type                  | Description          |
+# | --------------------- | -------------------- |
+# | [`Errno`](sys.freebsd.Errno) | FreeBSD error number |
+
+# [`sys.unix.Errno`](sys.unix.Errno) originating from FreeBSD.
+pub class Errno: sys.unix.Errno
+  # Creates a FreeBSD error number.
+  #
+  # Known codes are available as class fields such as `Errno.ENOENT`.
+  pub def (init)
+    self
+    # ([`int`](std.Int)) Raw error number.
+    value
+  do
+    throw nil
+
+  # The originating operating system, `:FREEBSD:`.
+  #[getter]
+  pub def os self
+    throw nil

@@ -1,5 +1,5 @@
 {% set heading_level = options.get("heading_level", 2) %}
-{% set base_id = entity.name %}
+{% set base_id = entity._identifier %}
 
 {{ ("<code>" ~ entity.name ~ "</code>") | heading(heading_level, role="data", id=base_id, toc_label=entity.name) }}
 

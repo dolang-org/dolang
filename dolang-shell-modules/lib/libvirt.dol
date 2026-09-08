@@ -1824,7 +1824,7 @@ pub class Domain
   # Flattens the shut-off domain's file-backed disk into a standalone qcow2.
   #
   # `compress:` selects the qcow2 compression — see
-  # [`compress:`](#libvirt--Domain--export--compress).
+  # [`compress:`](libvirt.Domain.export--compress).
   pub def export_disk self destination :compress = false
     self.#impl.export_disk $destination :compress
 
@@ -3101,7 +3101,7 @@ class BundleSource: Source
 #
 # ## `bundle:`
 #
-# A bundle produced by [`Domain.export`](./domain.md#libvirt--Domain--export):
+# A bundle produced by [`Domain.export`](libvirt.Domain.export):
 # a ZIP holding the domain's flattened disk and a manifest of the configuration
 # that goes with it. Restoring one skips provisioning entirely — no seed, no
 # cloud-init, no payload install — so the domain is ready as soon as it accepts
@@ -3339,7 +3339,7 @@ pub def with block ...options
 # | Name          | type            | Description |
 # | ------------- | --------------- | ------------------------------------------------ |
 # | `destination` | `Str`\|`Path`   | Bundle to write, conventionally named `.dolvm` |
-# | `compress`?   | `Bool`\|`Sym`   | qcow2 compression, as on [`Domain.export`](./domain.md#libvirt--Domain--export) |
+# | `compress`?   | `Bool`\|`Sym`   | qcow2 compression, as on [`Domain.export`](libvirt.Domain.export) |
 #
 # ## Returns
 #

@@ -1,0 +1,75 @@
+# JSON serialization and deserialization.
+
+# Deserializes a JSON string to a Do value.
+#
+# ## Returns
+#
+# The parsed Do value.
+#
+# ## Errors
+#
+# `ValueError` if the JSON is invalid.
+#
+# JSON values map to Do values as follows:
+#
+# | JSON Type | Do Type |
+# | --------- | ------- |
+# | `null`    | `nil`   |
+# | boolean   | `Bool`  |
+# | integer   | `Int`   |
+# | float     | `Float` |
+# | string    | `Str`   |
+# | array     | `array` |
+# | object    | `dict`  |
+#
+# ## Example
+#
+# ```
+# assert_eq (decode "null") nil
+# assert_eq (decode "42") 42
+# assert_eq (decode "[1, 2, 3]") [1, 2, 3]
+#
+# let obj = decode "{\"name\": \"Alice\", \"age\": 30}"
+# assert_eq $obj["name"] "Alice"
+# assert_eq $obj["age"] 30
+# ```
+pub def decode
+  # (`Str`) JSON string to parse.
+  json
+do
+  throw nil
+
+# Serializes a Do value to a JSON string.
+#
+# ## Returns
+#
+# [`Str`](std.Str) containing JSON.
+#
+# | Do Type | JSON Type            |
+# | ------- | -------------------- |
+# | `nil`   | `null`               |
+# | `Bool`  | boolean              |
+# | `Int`   | number               |
+# | `Float` | number               |
+# | `Str`   | string               |
+# | `Sym`   | string (symbol name) |
+# | `array` | array                |
+# | `dict`  | object               |
+#
+# Object keys are written in the order the dict holds them.
+#
+# ## Example
+#
+# ```
+# assert_eq (encode 42) "42"
+# assert_eq (encode "hello") "\"hello\""
+# assert_eq (encode nil) "null"
+# assert_eq (encode [1, 2] indent: 2) "[\n  1,\n  2\n]"
+# ```
+pub def encode
+  # The value to serialize.
+  value
+  # ([`Int`](std.Int)) Spaces per level; one line when omitted.
+  :indent = nil
+do
+  throw nil

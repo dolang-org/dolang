@@ -1,11 +1,11 @@
 # System Errors
 
-System and I/O failures raise [`sys.Error`](../api/sys/error.md) or one of its
+System and I/O failures raise [`sys.Error`](sys.Error) or one of its
 categorized subclasses.
 
 Every stable portable I/O category has a corresponding subclass. This makes
 common network, filesystem, resource, data, and control-flow failures catchable
-without inspecting platform-specific codes. [`sys.Error`](../api/sys/error.md)
+without inspecting platform-specific codes. [`sys.Error`](sys.Error)
 remains their catch-all superclass and represents failures without a portable
 classification.
 
@@ -24,15 +24,15 @@ catch sys.PermissionDeniedError: error
 
 ## Native Error Codes
 
-[`sys.Error.code`](../api/sys/error.md#code) is `nil` when no native code is
+[`sys.Error.code`](sys.Error.code) is `nil` when no native code is
 available. Otherwise it is one of:
 
-- [`sys.linux.Errno`](../api/sys/linux/errno.md)
-- [`sys.freebsd.Errno`](../api/sys/freebsd/errno.md)
-- [`sys.macos.Errno`](../api/sys/macos/errno.md)
-- [`sys.windows.WinError`](../api/sys/windows/win-error.md)
+- [`sys.linux.Errno`](sys.linux.Errno)
+- [`sys.freebsd.Errno`](sys.freebsd.Errno)
+- [`sys.macos.Errno`](sys.macos.Errno)
+- [`sys.windows.WinError`](sys.windows.WinError)
 
-All three extend [`sys.ErrorCode`](../api/sys/error-code.md). The `.value`
+All three extend [`sys.ErrorCode`](sys.ErrorCode). The `.value`
 field is the raw integer value; string conversion returns the native symbolic
 name when known:
 

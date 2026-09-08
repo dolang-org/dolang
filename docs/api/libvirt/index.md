@@ -1,3 +1,0 @@
-# libvirt
-
-::: libvirt
