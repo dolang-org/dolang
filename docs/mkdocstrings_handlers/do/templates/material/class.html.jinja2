@@ -41,9 +41,14 @@
 {{ title | heading(heading_level + 1, skip_inventory=true, id=anchor) }}
 <dl>
 {% for field in items %}
-  {# The id is what a cross-page link to a getter, as in `./value.md#kind`,
-     resolves against; without one such a link lands on the page top. #}
-  <dt id="{{ field.name }}"><code>{{ field.name }}</code></dt>
+  {# The anchor is what a cross-page link to a getter, as in `./value.md#kind`,
+     resolves against. It has to come from the `heading` filter rather than a
+     bare `id=` attribute on the `<dt>`: mkdocstrings renders this macro's
+     output as a raw HTML block, and raw HTML is stashed out of the Markdown
+     tree and never scanned for anchors, so an `id` placed there directly
+     wouldn't register and strict builds would flag every link to it. #}
+  {{ "" | heading(heading_level + 2, id=field.name, hidden=true) }}
+  <dt><code>{{ field.name }}</code></dt>
   {% if field.doc %}
   <dd>{{ field.doc | convert_markdown(heading_level + 2, field.name) }}</dd>
   {% else %}
