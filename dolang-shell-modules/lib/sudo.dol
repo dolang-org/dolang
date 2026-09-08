@@ -53,7 +53,7 @@ do
 
 # Runs a verbatim command through `sudo`.
 #
-# # Parameters
+# ## Parameters
 #
 # | Name   | type   | Description                        |
 # | ------ | ------ | ---------------------------------- |
@@ -63,11 +63,11 @@ do
 # | `env`  | `Dict`  | Environment requested via sudo policy |
 # | `args` | `*`     | Arguments passed verbatim to `cmd`    |
 #
-# # Returns
+# ## Returns
 #
 # `nil`
 #
-# # Example
+# ## Example
 #
 # ```
 # sudo.run install -m 0644 example.conf /etc/example.conf
@@ -86,7 +86,7 @@ do
 # Filesystem access and spawned programs use a temporary elevated VFS for the
 # duration of the block. Pass `user` to run as an account other than root.
 #
-# # Parameters
+# ## Parameters
 #
 # | Name   | type     | Description                    |
 # | ------ | -------- | ------------------------------ |
@@ -95,11 +95,11 @@ do
 # | `cd`   | `Path?`  | Initial elevated directory     |
 # | `env`  | `Dict`   | Initial environment overrides  |
 #
-# # Returns
+# ## Returns
 #
 # The result of `func`.
 #
-# # Example
+# ## Example
 #
 # ```
 # sudo.with do run cat /etc/shadow

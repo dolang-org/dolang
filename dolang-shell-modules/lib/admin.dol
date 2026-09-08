@@ -7,7 +7,7 @@ import sudo sys shell
 # On Windows, this checks whether the access token is elevated. On Unix, it
 # checks whether the effective user ID is zero.
 #
-# # Returns
+# ## Returns
 #
 # `Bool`
 pub def query()
@@ -24,17 +24,17 @@ pub def query()
 # Filesystem access and spawned programs use the elevated VFS for the duration
 # of the block.
 #
-# # Parameters
+# ## Parameters
 #
 # | Name    | type     | Description  |
 # | ------- | -------- | ------------ |
 # | `block` | callable | Block to run |
 #
-# # Returns
+# ## Returns
 #
 # The result of `block`.
 #
-# # Example
+# ## Example
 #
 # ```
 # admin.with do

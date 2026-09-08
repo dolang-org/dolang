@@ -528,7 +528,7 @@ def prog_default()
 # See the spec declaration reference at the top of this page for the full
 # list of accepted keyword arguments.
 #
-# # Example
+# ## Example
 #
 # ```
 # import args
@@ -565,7 +565,7 @@ do
 # handled by printing to the terminal and exiting with an appropriate status code.
 # When false, `args.Error` or `args.Help` are thrown in these situations instead.
 #
-# # Example
+# ## Example
 #
 # ```
 # import args

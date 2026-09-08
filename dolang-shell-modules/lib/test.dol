@@ -83,7 +83,7 @@ def normalize_param_value v
 # Attaches tags to a single `parametrize` value, honored only in cases that
 # select it.
 #
-# # Example
+# ## Example
 #
 # ```
 # #[parametrize backend: [sqlite_conn, tagged(postgres_conn, "slow")]]
@@ -287,11 +287,11 @@ class Fixture
 # may also pass its own additional keyword parameters to `block` to inject
 # values into the test.
 #
-# # Returns
+# ## Returns
 #
 # A function suitable for use as a decorator on a test function.
 #
-# # Example
+# ## Example
 #
 # ```
 # #[fixture]
@@ -315,17 +315,17 @@ pub def fixture wrap
 
 # Registers a zero-argument test callable.
 #
-# # Parameters
+# ## Parameters
 #
 # `name` is the reporting name and defaults to `str(func)`. `tags` is an
 # iterable of strings; order and duplicates are preserved. `func` is supplied
 # implicitly when this function is used as a decorator.
 #
-# # Returns
+# ## Returns
 #
 # Returns `func`, or a decorator awaiting it when `func` is omitted.
 #
-# # Example
+# ## Example
 #
 # ```
 # #[test name: "connects" tags: ["integration", "linux"]]
@@ -387,12 +387,12 @@ do
 # written); this only affects generated case names
 # (`$base_name[$axis1=$v,$axis2=$v,...]`), not correctness.
 #
-# # Parameters
+# ## Parameters
 #
 # Each keyword argument's value is an iterable of raw values and/or
 # `tagged(value, ...tags)` wrappers for that axis.
 #
-# # Example
+# ## Example
 #
 # ```
 # #[test]
@@ -417,11 +417,11 @@ pub def parametrize func = nil ...axes
 # Repeated calls accumulate tags. Module tags precede tags supplied directly
 # to `test`; order and duplicates are preserved.
 #
-# # Parameters
+# ## Parameters
 #
 # `values` are the string tags to add.
 #
-# # Example
+# ## Example
 #
 # ```
 # tags "integration" "linux"
@@ -523,7 +523,7 @@ pub def assert_type expected value msg = nil
 
 # Discovers and runs tests under the trailing file and directory paths.
 #
-# # Parameters
+# ## Parameters
 #
 # `jobs` and `module_jobs` limit concurrent tests and modules. `filter` is a
 # predicate receiving a `TestInfo` and defaults to accepting every test.
@@ -540,7 +540,7 @@ pub def assert_type expected value msg = nil
 # `--tags !windows,!macos` means “not Windows OR not macOS.” Use
 # `--tags !windows --tags !macos` to exclude both.
 #
-# # Returns
+# ## Returns
 #
 # Returns zero when all selected tests pass, or one when any module or test
 # fails.
