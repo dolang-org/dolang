@@ -49,6 +49,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
 
     builder
         .module("load")
+        .value("ImportHandler", global.types.import_handler)
         .function("run", async move |strand, args, out| {
             let ([bytecode], [importer]) = unpack!(strand, args, 1, 0, importer_sym = None)?;
 

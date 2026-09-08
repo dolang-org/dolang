@@ -1,6 +1,7 @@
 import progress
   test:
     - assert_eq
+    - assert_type
     - assert_throws
     - test
   std:
@@ -68,6 +69,7 @@ def nested_indicator()
 #[test]
 def indicator_update_units()
   progress.show total: 10 do |indicator|
+    assert_type $progress.Indicator $indicator
     indicator.update position: 4 units: :BYTES:
     assert_eq $indicator.position 4
     indicator.update units: :COUNT:
