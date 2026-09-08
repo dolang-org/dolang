@@ -30,7 +30,9 @@
   {# A type is usually documented on a page of its own, so the link is resolved
      by identifier rather than assumed to be an anchor on this page. #}
   <td><autoref identifier="{{ cls._identifier }}"><code>{{ cls.name }}</code></autoref></td>
-  <td>{{ first_line }}</td>
+  {# The line is prose written in a doc comment like any other, so it carries
+     the markup one is written with -- links to other types especially. #}
+  <td>{{ first_line | convert_markdown(heading_level, cls.name, strip_paragraph=true) }}</td>
 </tr>
 {% endfor %}
 </tbody>
