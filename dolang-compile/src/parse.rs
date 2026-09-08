@@ -1175,6 +1175,17 @@ impl<'a> Parser<'a> {
             .span
     }
 
+    fn resync_eol(&mut self) -> Result<()> {
+        use TokenInfo::*;
+        // Destined to fail
+        self.lex.set_error();
+        // Try to resynchronize with token stream at EOL
+        while !matches!(self.peek()?, None | Some(token!(StmtSep | Dedent))) {
+            self.advance();
+        }
+        Ok(())
+    }
+
     fn syntax_error(
         &mut self,
         _scope: &mut Scope,
@@ -2880,18 +2891,39 @@ impl<'a> Parser<'a> {
     /// The opening `Indent` has already been consumed by the caller.
     fn parse_cmd_vert_body(&mut self, scope: &mut Scope, bin_pack: bool) -> Result<ExprBody<Arg>> {
         use TokenInfo::*;
+        let mut dedents = 1;
 
         let mut elems = Vec::new();
         loop {
-            match self.peek()? {
-                None | Some(token!(Dedent)) => break,
-                Some(token!(StmtSep)) => {
-                    self.advance();
+            let res = (|| -> Result<bool> {
+                match self.peek()? {
+                    None | Some(token!(Dedent)) => return Ok(true),
+                    token @ Some(token!(Indent)) => {
+                        dedents += 1;
+                        return Err(self.syntax_error(
+                            scope,
+                            token,
+                            "unexpected indent in vertical data",
+                        ));
+                    }
+                    Some(token!(StmtSep)) => {
+                        self.advance();
+                    }
+                    _ => self.parse_cmd_vert_arg(scope, &mut elems, bin_pack)?,
                 }
-                _ => self.parse_cmd_vert_arg(scope, &mut elems, bin_pack)?,
+                Ok(false)
+            })();
+            match res {
+                Ok(true) => break,
+                Ok(false) => continue,
+                Err(_) => {
+                    self.resync_eol()?;
+                }
             }
         }
-        self.expect(scope, &[ExpectKind::Dedent])?;
+        for _ in 0..dedents {
+            self.expect(scope, &[ExpectKind::Dedent])?;
+        }
         Ok(ExprBody {
             elems,
             vars: Vec::new(),
@@ -3239,24 +3271,20 @@ impl<'a> Parser<'a> {
         args: &mut Vec<Arg>,
         bin_pack: bool,
     ) -> Result<()> {
-        use self::Keyword;
-        use Keyword::*;
         use TokenInfo::*;
+        let mut dedents = 1;
 
         loop {
             let res = (|| -> Result<bool> {
                 match self.peek()? {
                     None | Some(token!(Dedent)) => return Ok(true),
                     token @ Some(token!(Indent)) => {
-                        if bin_pack {
-                            return Ok(true);
-                        } else {
-                            return Err(self.syntax_error(
-                                scope,
-                                token,
-                                "unexpected indent in vertical data",
-                            ));
-                        }
+                        dedents += 1;
+                        return Err(self.syntax_error(
+                            scope,
+                            token,
+                            "unexpected indent in vertical data",
+                        ));
                     }
                     Some(token!(StmtSep)) => {
                         self.advance();
@@ -3269,20 +3297,14 @@ impl<'a> Parser<'a> {
                 Ok(true) => break,
                 Ok(false) => continue,
                 Err(_) => {
-                    // Destined to fail
-                    self.lex.set_error();
-                    // Try to resynchronize with token stream
-                    while !matches!(
-                        self.peek()?,
-                        None | Some(token!(StmtSep | Keyword(Do) | Dedent))
-                    ) {
-                        self.advance();
-                    }
+                    self.resync_eol()?;
                 }
             }
         }
 
-        self.expect(scope, &[ExpectKind::Dedent, ExpectKind::End])?;
+        for _ in 0..dedents {
+            self.expect(scope, &[ExpectKind::Dedent, ExpectKind::End])?;
+        }
 
         Ok(())
     }
@@ -4982,8 +5004,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_block(&mut self, scope: &mut Scope) -> Result<Block> {
-        use self::Keyword;
-        use Keyword::*;
         use TokenInfo::*;
 
         let mut stmts = Vec::new();
@@ -5006,15 +5026,7 @@ impl<'a> Parser<'a> {
                 Ok(true) => break,
                 Ok(false) => continue,
                 Err(_) => {
-                    // Destined to fail
-                    self.lex.set_error();
-                    // Try to resynchronize with token stream
-                    while !matches!(
-                        self.peek()?,
-                        None | Some(token!(StmtSep | Keyword(Do) | Dedent))
-                    ) {
-                        self.advance();
-                    }
+                    self.resync_eol()?;
                 }
             }
         }
