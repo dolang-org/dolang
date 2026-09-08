@@ -15,24 +15,21 @@
   {% endif %}
 {% endfor %}
 
-{% set module_id = entity._module | replace(".", "--") %}
-
 {% if entity.doc %}
-{{ entity.doc | convert_markdown(0, module_id) }}
+{{ entity.doc | convert_markdown(0, "") }}
 {% endif %}
 
 {% if classes %}
-{{ "Types" | heading(heading_level, skip_inventory=true, id=module_id ~ "--types") }}
+{{ "Types" | heading(heading_level, skip_inventory=true, id="types") }}
 <table>
 <thead><tr><th>Type</th><th>Description</th></tr></thead>
 <tbody>
 {% for cls in classes %}
-{% set cls_id = cls._identifier | replace(".", "--") %}
 {% set first_line = cls.doc.split("\n")[0] if cls.doc else "" %}
 <tr>
   {# A type is usually documented on a page of its own, so the link is resolved
      by identifier rather than assumed to be an anchor on this page. #}
-  <td><autoref identifier="{{ cls_id }}"><code>{{ cls.name }}</code></autoref></td>
+  <td><autoref identifier="{{ cls._identifier }}"><code>{{ cls.name }}</code></autoref></td>
   <td>{{ first_line }}</td>
 </tr>
 {% endfor %}
@@ -41,9 +38,9 @@
 {% endif %}
 
 {% if functions %}
-{{ "Functions" | heading(heading_level, skip_inventory=true, id=module_id ~ "--functions") }}
+{{ "Functions" | heading(heading_level, skip_inventory=true, id="functions") }}
 {% for entity in functions %}
-{% set base_id = entity._identifier | replace(".", "--") %}
+{% set base_id = entity.name %}
 {% set sig = entity.signature %}
 {{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 1, role="function", id=base_id, toc_label=sig) }}
 {% if entity.doc_intro %}
@@ -57,9 +54,9 @@
 {% endif %}
 
 {% if values %}
-{{ "Values" | heading(heading_level, skip_inventory=true, id=module_id ~ "--values") }}
+{{ "Values" | heading(heading_level, skip_inventory=true, id="values") }}
 {% for entity in values %}
-{% set base_id = entity._identifier | replace(".", "--") %}
+{% set base_id = entity.name %}
 {{ ("<code>" ~ entity.name ~ "</code>") | heading(heading_level + 1, role="data", id=base_id, toc_label=entity.name) }}
 {% if entity.doc %}
 {{ entity.doc | convert_markdown(heading_level, base_id) }}

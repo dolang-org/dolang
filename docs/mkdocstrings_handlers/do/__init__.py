@@ -62,6 +62,12 @@ class DoHandler(BaseHandler):
     def __init__(self, *, handler_config: dict, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._global_config = handler_config.get("options", {})
+        self._aliases: dict[str, str] = {}
+
+    def get_aliases(self, identifier: str) -> tuple[str, ...]:
+        """Expose qualified Do names without requiring them in HTML anchors."""
+        alias = self._aliases.get(identifier)
+        return (alias,) if alias is not None else ()
 
     def get_templates_dir(self, handler: str | None = None) -> Path:
         return Path(__file__).parent / "templates"
@@ -198,6 +204,14 @@ class DoHandler(BaseHandler):
 
     def render(self, data: dict, options: dict, *, locale: str | None = None) -> str:
         kind = data.get("kind", "function")
+        self._aliases = {}
+        if kind == "module":
+            for entity in data.get("entities", []):
+                self._aliases[entity.get("name", "")] = entity.get("_identifier", "")
+        else:
+            self._aliases[data.get("name", "")] = data.get("_identifier", "")
+            for member in data.get("members", []):
+                self._aliases[member.get("name", "")] = member.get("_identifier", "")
         template = self.env.get_template(f"{kind}.html.jinja2")
         if kind == "module":
             return template.render(

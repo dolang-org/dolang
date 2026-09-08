@@ -1,7 +1,7 @@
 {% import "_params.html.jinja2" as params %}
 {% set heading_level = options.get("heading_level", 2) %}
 {% set show_private = options.get("show_private", false) %}
-{% set base_id = entity._identifier | replace(".", "--") %}
+{% set base_id = entity.name %}
 
 {#
   A type is rendered on a page of its own, which carries its own title, so this
@@ -11,7 +11,7 @@
 {{ ("<code>" ~ entity.name ~ "</code>") | heading(heading_level, role="class", id=base_id, toc_label=entity.name, hidden=true) }}
 
 {% if entity.doc %}
-{{ entity.doc | convert_markdown(heading_level, base_id) }}
+{{ entity.doc | convert_markdown(heading_level, "") }}
 {% endif %}
 
 {% if entity.supers %}
@@ -35,12 +35,12 @@
 {% set methods = all_members | selectattr("kind", "equalto", "method") | list %}
 
 {% if fields %}
-{{ "Fields" | heading(heading_level + 1, skip_inventory=true, id=base_id ~ "--fields") }}
+{{ "Fields" | heading(heading_level + 1, skip_inventory=true, id="fields") }}
 <dl>
 {% for field in fields %}
   <dt><code>{{ field.name }}</code></dt>
   {% if field.doc %}
-  <dd>{{ field.doc | convert_markdown(heading_level + 2, base_id ~ "--" ~ field.name) }}</dd>
+  <dd>{{ field.doc | convert_markdown(heading_level + 2, field.name) }}</dd>
   {% else %}
   <dd></dd>
   {% endif %}
@@ -49,9 +49,9 @@
 {% endif %}
 
 {% if methods %}
-{{ "Methods" | heading(heading_level + 1, skip_inventory=true, id=base_id ~ "--methods") }}
+{{ "Methods" | heading(heading_level + 1, skip_inventory=true, id="methods") }}
 {% for method in methods %}
-{% set method_id = base_id ~ "--" ~ method.name %}
+{% set method_id = method.name %}
 {% set sig = method.signature %}
 {{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 2, role="method", id=method_id, toc_label=sig) }}
 {% if method.doc_intro %}
