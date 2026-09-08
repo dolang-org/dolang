@@ -12,18 +12,18 @@ import std
 # A greeting.
 #
 # Spans several lines.
-pub def greet name :greeting = hello ...rest
+pub def greet name :greeting = "hello" ...rest
   echo $greeting $name ...rest
 
 # Not exported, so it is omitted unless everything is asked for.
 def internal x
-  $x
+  x
 
 # The module's default name.
-pub let default_name = world
+pub let default_name = "world"
 
 # A private module-level binding.
-let secret = shhh
+let secret = "shhh"
 
 # A named point.
 pub class Point: Record
