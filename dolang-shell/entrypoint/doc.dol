@@ -279,6 +279,7 @@ class Document
         pub: $is_pub
         span: (span_json(node.name))
         doc: (self.#doc(node))
+        scope: (self.#scope(id))
       else
         kind: "method"
         name: (self.#text(node.name))
@@ -286,6 +287,7 @@ class Document
         special: $special
         span: (span_json(node.name))
         doc: (self.#doc(node))
+        scope: (self.#scope(id))
         params: (self.#params(id))
 
 args.with

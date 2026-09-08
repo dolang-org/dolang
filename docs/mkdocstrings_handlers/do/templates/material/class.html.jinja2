@@ -31,13 +31,16 @@
 {% set special_members = entity.members | selectattr("special") | list %}
 {% set all_members = entity.members if show_private else (pub_members + special_members) | unique(attribute="name") | list %}
 
-{% set fields = all_members | selectattr("kind", "equalto", "field") | list %}
-{% set methods = all_members | selectattr("kind", "equalto", "method") | list %}
+{% set class_fields = all_members | selectattr("kind", "equalto", "field") | rejectattr("scope", "equalto", "instance") | list %}
+{% set fields = all_members | selectattr("kind", "equalto", "field") | selectattr("scope", "equalto", "instance") | list %}
+{% set class_methods = all_members | selectattr("kind", "equalto", "method") | rejectattr("scope", "equalto", "instance") | list %}
+{% set constructors = all_members | selectattr("kind", "equalto", "method") | selectattr("name", "equalto", "(init)") | list %}
+{% set methods = all_members | selectattr("kind", "equalto", "method") | selectattr("scope", "equalto", "instance") | rejectattr("name", "equalto", "(init)") | list %}
 
-{% if fields %}
-{{ "Fields" | heading(heading_level + 1, skip_inventory=true, id="fields") }}
+{% macro render_fields(items, title, anchor) %}
+{{ title | heading(heading_level + 1, skip_inventory=true, id=anchor) }}
 <dl>
-{% for field in fields %}
+{% for field in items %}
   <dt><code>{{ field.name }}</code></dt>
   {% if field.doc %}
   <dd>{{ field.doc | convert_markdown(heading_level + 2, field.name) }}</dd>
@@ -46,11 +49,11 @@
   {% endif %}
 {% endfor %}
 </dl>
-{% endif %}
+{% endmacro %}
 
-{% if methods %}
-{{ "Methods" | heading(heading_level + 1, skip_inventory=true, id="methods") }}
-{% for method in methods %}
+{% macro render_methods(items, title, anchor) %}
+{{ title | heading(heading_level + 1, skip_inventory=true, id=anchor) }}
+{% for method in items %}
 {% set method_id = method.name %}
 {% set sig = method.signature %}
 {{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 2, role="method", id=method_id, toc_label=sig) }}
@@ -62,4 +65,36 @@
 {{ method.doc_sections | convert_markdown(heading_level + 1, method_id) }}
 {% endif %}
 {% endfor %}
+{% endmacro %}
+
+{% if constructors %}
+{{ "Constructor" | heading(heading_level + 1, skip_inventory=true, id="constructor") }}
+{% for method in constructors %}
+{% set method_id = "init" %}
+{% set sig = method.signature | replace("(init)", entity.name, 1) %}
+{{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 2, role="method", id=method_id, toc_label=sig) }}
+{% if method.doc_intro %}
+{{ method.doc_intro | convert_markdown(heading_level + 1, method_id) }}
+{% endif %}
+{{ params.parameters(method, heading_level + 3, method_id) }}
+{% if method.doc_sections %}
+{{ method.doc_sections | convert_markdown(heading_level + 1, method_id) }}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if class_fields %}
+{{ render_fields(class_fields, "Class Fields", "class-fields") }}
+{% endif %}
+
+{% if class_methods %}
+{{ render_methods(class_methods, "Class Methods", "class-methods") }}
+{% endif %}
+
+{% if fields %}
+{{ render_fields(fields, "Fields", "fields") }}
+{% endif %}
+
+{% if methods %}
+{{ render_methods(methods, "Methods", "methods") }}
 {% endif %}

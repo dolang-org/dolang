@@ -103,6 +103,7 @@
             "offset": 680
           },
           "doc": "Build a point.",
+          "scope": "instance",
           "params": [
             {
               "name": "x",
@@ -122,6 +123,7 @@
             "offset": 735
           },
           "doc": "Render it.",
+          "scope": "instance",
           "params": []
         },
         {
@@ -133,7 +135,8 @@
             "col": 10,
             "offset": 822
           },
-          "doc": "The coordinate, read as a field."
+          "doc": "The coordinate, read as a field.",
+          "scope": "instance"
         },
         {
           "kind": "method",
@@ -146,6 +149,7 @@
             "offset": 873
           },
           "doc": "Move it.",
+          "scope": "instance",
           "params": [
             {
               "name": "by",
