@@ -28,7 +28,7 @@ def find_windows_command()
 # distribution and Linux user; when omitted, WSL uses its configured defaults.
 # `command:` is the Linux VFS launcher prefix.
 #
-# # Parameters
+# ## Parameters
 #
 # | Name      | type     | Description                         |
 # | --------- | -------- | ----------------------------------- |
@@ -39,7 +39,7 @@ def find_windows_command()
 # | `cd`      | `Path?`  | Initial Linux working directory     |
 # | `env`     | `Dict`   | Initial Linux environment overrides |
 #
-# # Returns
+# ## Returns
 #
 # The result of `block`.
 pub def with_linux
@@ -64,7 +64,7 @@ do
 # When `command:` is omitted, `dolang-vfs.exe` is preferred and
 # `dolang.exe --vfs` is used as a fallback.
 #
-# # Parameters
+# ## Parameters
 #
 # | Name      | type     | Description                           |
 # | --------- | -------- | ------------------------------------- |
@@ -73,7 +73,7 @@ do
 # | `cd`      | `Path?`  | Initial Windows working directory     |
 # | `env`     | `Dict`   | Initial Windows environment overrides |
 #
-# # Returns
+# ## Returns
 #
 # The result of `block`.
 pub def with_windows

@@ -1255,7 +1255,7 @@ class DomainImpl
   # Writes a screenshot of the domain's graphical console to `destination`,
   # which is created along with any missing parent directories.
   #
-  # # Returns
+  # ## Returns
   #
   # The `Path` written.
   pub def screenshot self destination
@@ -1268,7 +1268,7 @@ class DomainImpl
 
   # Sends a keystroke to the domain's console, as `virsh send-key` does.
   #
-  # # Parameters
+  # ## Parameters
   #
   # | Name        | type           | Description |
   # | ----------- | -------------- | ----------------------------------------- |
@@ -1292,7 +1292,7 @@ class DomainImpl
 
   # Waits until the domain's guest answers, under a deadline.
   #
-  # # Parameters
+  # ## Parameters
   #
   # | Name          | type            | Description |
   # | ------------- | --------------- | --------------------------------------- |
@@ -1316,7 +1316,7 @@ class DomainImpl
   # effort: a guest with no graphics has no console to dump, and failing to
   # capture one must not replace the timeout that is the real error.
   #
-  # # Errors
+  # ## Errors
   #
   # | Error           | Condition |
   # | --------------- | ---------------------------------------------- |
@@ -1833,7 +1833,7 @@ pub class Domain
   # configuration needed to define an equivalent domain again — none of which
   # the disk image alone carries.
   #
-  # # Parameters
+  # ## Parameters
   #
   # | Name        | type            | Description |
   # | ----------- | --------------- | ----------------------------------------------------- |
@@ -1841,7 +1841,7 @@ pub class Domain
   # | `compress`? | `Bool`\|`Sym`   | qcow2 compression — see [`compress:`](#compress) |
   # | `force`?    | `Bool`          | Export even though the domain did not shut down cleanly |
   #
-  # # `compress:`
+  # ## `compress:`
   #
   # | Value              | Behavior |
   # | ------------------ | -------- |
@@ -1854,18 +1854,18 @@ pub class Domain
   # it: a compressed qcow2 stays compressed in the image store it is extracted
   # into, where it is a backing file for however many domains are laid over it.
   #
-  # # Returns
+  # ## Returns
   #
   # The `Path` written.
   #
-  # # Errors
+  # ## Errors
   #
   # | Error        | Condition |
   # | ------------ | -------------------------------------------------------- |
   # | `StateError` | The domain is not shut off, or did not shut down cleanly and `force:` was not given |
   # | `ValueError` | The domain has no `dolang:vm` metadata, does not have exactly one file-backed disk, or the destination is unusable |
   #
-  # # Example
+  # ## Example
   #
   # ```
   # domain.shutdown()
@@ -1890,7 +1890,7 @@ pub class Domain
 
   # Runs `block` in the domain's VFS context.
   #
-  # # Parameters
+  # ## Parameters
   #
   # | Name    | type       | Description                          |
   # | ------- | ---------- | ------------------------------------ |
@@ -1898,17 +1898,17 @@ pub class Domain
   # | `cd`?   | `Str`\|`Path` | Initial working directory in the guest |
   # | `env`?  | `Dict`     | Environment overrides for the block  |
   #
-  # # Returns
+  # ## Returns
   #
   # The result of `block`.
   #
-  # # Errors
+  # ## Errors
   #
   # | Error        | Condition                     |
   # | ------------ | ----------------------------- |
   # | `ValueError` | The domain is not running     |
   #
-  # # Example
+  # ## Example
   #
   # ```
   # domain.with cd: /usr/src env: {MAKEOBJDIRPREFIX: "/tmp/obj"} do
@@ -3016,7 +3016,7 @@ class BundleSource: Source
 # `image:`, installing it from `installer:` media, or restoring it from an
 # already-provisioned `bundle:`.
 #
-# # Parameters
+# ## Parameters
 #
 # Exactly one of `image:`, `bundle:`, and `installer:` is required. A bundle
 # already answers `os:`, `arch:`, `user:`, `dolang:`, and `init:`,
@@ -3050,7 +3050,7 @@ class BundleSource: Source
 # | `run`*           | `func`               | Runs a block in VFS context |
 # | `reboot`*        | positional           | Reboots the guest and waits — see [Steps](#steps) |
 #
-# # Steps
+# ## Steps
 #
 # `add:`, `run:` and `reboot` are steps, and they run in the order they are
 # written — repeats included, and interleaved with each other:
@@ -3076,7 +3076,7 @@ class BundleSource: Source
 # connection is not an error; a guest that vanishes during a `run:` block
 # propagates.
 #
-# # Artifact Specs
+# ## Artifact Specs
 #
 # Every artifact this module fetches is spelled one of two ways: a bare
 # `Str`, `Path`, or `Url`, or a dict naming the source under `source:`
@@ -3099,7 +3099,7 @@ class BundleSource: Source
 # cached, and a previously verified digest-pinned entry is returned without
 # contacting the server.
 #
-# # `bundle:`
+# ## `bundle:`
 #
 # A bundle produced by [`Domain.export`](./domain.md#libvirt--Domain--export):
 # a ZIP holding the domain's flattened disk and a manifest of the configuration
@@ -3111,7 +3111,7 @@ class BundleSource: Source
 # exported under, so `app:` must match; a mismatch is an error rather than a
 # guest that never accepts a connection.
 #
-# # `installer:`
+# ## `installer:`
 #
 # Install media for a guest that has no cloud image to lay an overlay over. The
 # disk starts blank and Setup writes it, driven by an unattended answer file
@@ -3153,7 +3153,7 @@ class BundleSource: Source
 # `swtpm`, `swtpm_setup`, and one of `xorrisofs` or `mkisofs`, all checked
 # before anything is defined.
 #
-# # `dolang:`
+# ## `dolang:`
 #
 # Do is installed into every guest: `dolang-vfs` is the transport `with`,
 # `upload` and `download` run over, and an unattended install has no guest at
@@ -3168,7 +3168,7 @@ class BundleSource: Source
 # | an artifact spec                 | Release archive with a pinned digest — see [Artifact Specs](#artifact-specs) |
 # | `{version: tag}`                 | Explicit form of the version tag |
 #
-# # `cache:`
+# ## `cache:`
 #
 # Host cache mode for the domain disk. Defaults to the hypervisor's own
 # default, which honors guest flushes.
@@ -3188,7 +3188,7 @@ class BundleSource: Source
 # files written and deleted within one run need never reach storage at all —
 # but it is not a safe default for a domain whose disk matters.
 #
-# # `io:`
+# ## `io:`
 #
 # Disk I/O submission mode, defaulting to `:IO_URING:`.
 #
@@ -3205,7 +3205,7 @@ class BundleSource: Source
 # that uses the host page cache it quietly degrades to blocking submission.
 # `:IO_URING:` has no such pairing constraint.
 #
-# # `init:`
+# ## `init:`
 #
 # Boot-time provisioning, interpreted by cloud-init on the guest's first boot,
 # before the post-SSH `add:`/`run:` steps.
@@ -3216,7 +3216,7 @@ class BundleSource: Source
 # | `run`*      | `Str`\|`Array`  | Split with `shlex` if a `Str`. Run during early boot |
 # | `packages`* | `Str`\|`Array`  | Guest packages to install                            |
 #
-# # `add:`
+# ## `add:`
 #
 # | Key        | type                 | Description                            |
 # | ---------- | -------------------- | ------------------------------------- |
@@ -3228,11 +3228,11 @@ class BundleSource: Source
 # `chmod:` is a Unix file mode and is rejected on a guest provisioned by
 # unattended install.
 #
-# # Returns
+# ## Returns
 #
 # `Domain`
 #
-# # Errors
+# ## Errors
 #
 # | Error          | Condition                                                            |
 # | -------------- | ----------------------------------------------------------------------- |
@@ -3241,7 +3241,7 @@ class BundleSource: Source
 # | `TimedOutError` | The guest was not reachable within `wait_timeout` |
 # | `TypeError`    | Invalid argument type |
 #
-# # Example
+# ## Example
 #
 # ```
 # let domain = libvirt.create
@@ -3287,7 +3287,7 @@ do
 # Creates a domain from an `image:` or a `bundle:`, runs `block` through its
 # VFS, and tears it down — even if `block` throws.
 #
-# # Parameters
+# ## Parameters
 #
 # Takes the same keyword arguments as `create`, plus:
 #
@@ -3295,11 +3295,11 @@ do
 # | ------- | -------- | ------------------------ |
 # | `block` | `func`  | Block to run in the VFS |
 #
-# # Returns
+# ## Returns
 #
 # The result of `block`.
 #
-# # Example
+# ## Example
 #
 # ```
 # libvirt.with
@@ -3332,7 +3332,7 @@ pub def with block ...options
 # anything the guest must do for itself belongs, such as reclaiming free space
 # before the disk is flattened.
 #
-# # Parameters
+# ## Parameters
 #
 # Takes the same keyword arguments as `create`, plus:
 #
@@ -3341,11 +3341,11 @@ pub def with block ...options
 # | `destination` | `Str`\|`Path`   | Bundle to write, conventionally named `.dolvm` |
 # | `compress`?   | `Bool`\|`Sym`   | qcow2 compression, as on [`Domain.export`](./domain.md#libvirt--Domain--export) |
 #
-# # Returns
+# ## Returns
 #
 # The `Path` written.
 #
-# # Example
+# ## Example
 #
 # ```
 # libvirt.build (CACHE_DIR / "freebsd-gold.dolvm")

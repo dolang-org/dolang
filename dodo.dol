@@ -402,14 +402,14 @@ return $
   "serve-mkdocs":
     help: build and serve the MkDocs site
     do |args|
-      let spec = Spec $args profile: release
+      let spec = Spec $args
       mkdocs_build_tools $spec
       with_mkdocs $spec do dodo.show mkdocs serve
 
   mkdocs:
     help: build the MkDocs site
     do |args|
-      let spec = Spec $args profile: release
+      let spec = Spec $args
       mkdocs_build_tools $spec
       with_mkdocs $spec do dodo.show mkdocs build --strict
 

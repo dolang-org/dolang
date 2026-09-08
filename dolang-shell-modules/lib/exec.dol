@@ -150,7 +150,7 @@ class Operation
 # `import` supplies modules by name during execution. Dictionary values are
 # exposed as records.
 #
-# # Example
+# ## Example
 #
 # ```
 # import exec
@@ -185,7 +185,7 @@ do
 # `import` supplies modules by name during execution. Dictionary values are
 # exposed as records.
 #
-# # Example
+# ## Example
 #
 # ```
 # import exec

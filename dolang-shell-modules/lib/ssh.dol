@@ -23,7 +23,7 @@ import _ssh
 # instead of the one in the passwd database; a path is ignored by Windows
 # hosts, which have no login shell. `env` overrides win over imported values.
 #
-# # Parameters
+# ## Parameters
 #
 # | Name                 | type     | Description                                      |
 # | -------------------- | -------- | ------------------------------------------------ |
@@ -46,11 +46,11 @@ import _ssh
 # | `env`                | `Dict`   | Initial remote environment overrides              |
 # | `login_env`          | `Bool?`  | Import the remote login environment; may name a Unix shell |
 #
-# # Returns
+# ## Returns
 #
 # The result of `block`.
 #
-# # Errors
+# ## Errors
 #
 # | Error                | Condition                                      |
 # | -------------------- | ---------------------------------------------- |
@@ -60,7 +60,7 @@ import _ssh
 # | `UnexpectedKeyError` | An unrecognized keyword option is passed       |
 # | `UnexpectedPosError` | An unexpected positional argument is passed    |
 #
-# # Example
+# ## Example
 #
 # ```
 # import proc:

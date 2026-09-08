@@ -26,7 +26,7 @@ let docker = DockerRuntime()
 #
 # See [Create and run parameters](#create-and-run-parameters).
 #
-# # Returns
+# ## Returns
 #
 # `nil`
 pub def run
@@ -50,13 +50,13 @@ do
 #
 # See [Create and run parameters](#create-and-run-parameters).
 #
-# # Parameters
+# ## Parameters
 #
 # | Name      | Type                          | Description              |
 # | --------- | ----------------------------- | ------------------------ |
 # | `restart` | [`Dict`](../std/dict.md) | Container restart policy |
 #
-# ## `restart`
+# ### `restart`
 #
 # The dictionary accepts these keys:
 #
@@ -74,7 +74,7 @@ do
 # | `:ALWAYS:`         | Always restart the container         |
 # | `:UNLESS_STOPPED:` | Restart unless explicitly stopped    |
 #
-# # Returns
+# ## Returns
 #
 # [`Container`](./container.md) in the `:CREATED:` state
 pub def create
@@ -100,7 +100,7 @@ do
 # Program execution and filesystem access will be redirected for the
 # duration of the function.
 #
-# # Parameters
+# ## Parameters
 #
 # | Name    | Type                     | Description                         |
 # | ------- | ------------------------ | ----------------------------------- |
@@ -110,7 +110,7 @@ do
 # | `env`   | [`Dict`](../std/dict.md) | Container environment               |
 # | `pull`  | [`Sym`](../std/sym.md)   | `:MISSING:`, `:ALWAYS:`, or `:NEVER:` |
 #
-# # Returns
+# ## Returns
 #
 # Result of `func`
 pub def with image func :cd = nil :env = {} :pull = :MISSING:
@@ -118,7 +118,7 @@ pub def with image func :cd = nil :env = {} :pull = :MISSING:
 
 # Build a Docker image.
 #
-# # Parameters
+# ## Parameters
 #
 # | Name     | Type                     | Description                            |
 # | -------- | ------------------------ | -------------------------------------- |
@@ -129,7 +129,7 @@ pub def with image func :cd = nil :env = {} :pull = :MISSING:
 # | `from`   | [`Str`](../std/str.md)   | Base image                             |
 # | `args`   | [`Value`](../std/value.md) | Ordered build items                    |
 #
-# ## `pull`
+# ### `pull`
 #
 # | Value       | Meaning                                  |
 # | ----------- | ---------------------------------------- |
@@ -137,7 +137,7 @@ pub def with image func :cd = nil :env = {} :pull = :MISSING:
 # | `:ALWAYS:`  | Always pull the image                    |
 # | `:NEVER:`   | Never pull the image                     |
 #
-# ## `mounts`
+# ### `mounts`
 #
 # Each element is a [`Dict`](../std/dict.md) with these keys:
 #
@@ -148,7 +148,7 @@ pub def with image func :cd = nil :env = {} :pull = :MISSING:
 # | `source` | [`Value`](../std/value.md) | Mount source; required for `:BIND:`           |
 # | `id`     | [`Value`](../std/value.md) | Optional cache ID; defaults to `target`       |
 #
-# ## `args`
+# ### `args`
 #
 # Vertical keyword items define tags and build steps. Items may be repeated.
 #
@@ -160,7 +160,7 @@ pub def with image func :cd = nil :env = {} :pull = :MISSING:
 # | `patch: spec` | [`Dict`](../std/dict.md)     | Apply a patch inside the image     |
 # | `commit: msg` | [`Str`](../std/str.md)       | Commit a layer with a message      |
 #
-# ### `add: spec`
+# #### `add: spec`
 #
 # `spec` accepts exactly one of `source` and `content`.
 #
@@ -174,7 +174,7 @@ pub def with image func :cd = nil :env = {} :pull = :MISSING:
 # If `target` is a directory, a source path or URL retains its filename.
 # Direct content is always written to `target` itself.
 #
-# ### `patch: spec`
+# #### `patch: spec`
 #
 # `spec` accepts exactly one of `source` and `content`.
 #
@@ -183,11 +183,11 @@ pub def with image func :cd = nil :env = {} :pull = :MISSING:
 # | `source`  | [`Str`](../std/str.md)\|[`fs.Path`](../fs/path.md) | Unified patch file         |
 # | `content` | [`Str`](../std/str.md)\|[`Bin`](../std/bin.md) | Unified patch data         |
 #
-# # Returns
+# ## Returns
 #
 # [`Image`](./image.md)
 #
-# # Example
+# ## Example
 #
 # ```
 # let img = docker.build
@@ -207,12 +207,12 @@ do
 
 # List images, returning an iterator of `Image` objects
 #
-# # Parameters
+# ## Parameters
 #
 # - `all`: list all images
 # - `filter`: optional filter expression (e.g. `"reference=myapp*"`)
 #
-# # Returns
+# ## Returns
 #
 # An iterator of `Image` objects, one per repository:tag pair
 pub def images :all = false :filter = nil
@@ -220,11 +220,11 @@ pub def images :all = false :filter = nil
 
 # Get a single image by reference
 #
-# # Parameters
+# ## Parameters
 #
 # - `ref`: image reference (e.g. `"myapp:latest"`, `"sha256:abc..."`)
 #
-# # Returns
+# ## Returns
 #
 # An `Image` object
 pub def image ref
