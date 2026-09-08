@@ -342,6 +342,9 @@ def _annotate_params(entities: list[dict]) -> None:
                 slug = f"{slug}-{index}"
             seen.add(slug)
             param["slug"] = slug
+        # What a one-line table cell can hold, wherever an entity is listed
+        # rather than rendered: the same first paragraph a parameter table takes.
+        entity["doc_summary"], _ = _split_doc(entity.get("doc", ""))
         if entity.get("kind") in ("function", "method"):
             entity["signature"] = _signature(entity)
             entity["doc_intro"], entity["doc_sections"] = _split_intro(
