@@ -26,12 +26,6 @@ pub def query()
 # Filesystem access and spawned programs use the elevated VFS for the duration
 # of the block.
 #
-# ## Parameters
-#
-# | Name    | type     | Description  |
-# | ------- | -------- | ------------ |
-# | `block` | callable | Block to run |
-#
 # ## Returns
 #
 # The result of `block`.
@@ -42,7 +36,14 @@ pub def query()
 # admin.with do
 #   echo "administrator: $(admin.query())"
 # ```
-pub def with block :cd = nil :env = {}
+pub def with
+  # ([`Func`](std.Func)) Block to run.
+  block
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Initial working directory.
+  :cd = nil
+  # ([`Dict`](std.Dict)) Initial environment overrides.
+  :env = {}
+do
   if (sys.os_info().family == :WINDOWS:)
     if security_windows.token_info().is_elevated
       return shell.env $env do

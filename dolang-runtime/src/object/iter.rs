@@ -2823,6 +2823,57 @@ pub(crate) async fn create_zip_from_args<'v, 'a, 's>(
     Ok(())
 }
 
+/// The `std.Null` type object. `std.null` is its sole instance -- the same
+/// relationship as `std.Nil`/`nil`, not a value fused with its own type.
+pub(crate) struct NullType;
+
+unsafe impl Collect for NullType {
+    const CYCLIC: bool = false;
+    const IMMUTABLE: bool = true;
+    type Annex = ();
+
+    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> Protocol<'v> for NullType {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, &strand.singletons().type_obj)
+    }
+
+    fn op_subtype<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        supertype: &crate::value::Value<'v>,
+    ) -> bool {
+        // `null` acts as a complete iterator and sink by itself, not merely
+        // something an `iter()`/`sink()` call can produce one from -- so it
+        // claims `Iter`/`Sink` themselves, not just `Iterable`/`Sinkable`.
+        let sings = strand.singletons();
+        supertype.eq(strand, &this)
+            || supertype.eq(strand, TypeObject::Value)
+            || sings.input_iter.eq(strand, supertype)
+            || sings.output_iter.eq(strand, supertype)
+            || sings.iterable.eq(strand, supertype)
+            || sings.sinkable.eq(strand, supertype)
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<type std.Null>")
+    }
+}
+
 /// Singleton iterator/sink that yields no items and discards all items.
 pub(crate) struct Null;
 
@@ -2844,7 +2895,7 @@ impl<'v> Protocol<'v> for Null {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        Output::set(strand, out, &strand.singletons().null_type)
     }
 
     fn op_debug<'a, 's>(

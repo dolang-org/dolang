@@ -458,7 +458,7 @@ pub def open
   # ([`Info`](proc.Info)|[`Int`](std.Int)) Information record, or a raw
   # PID.
   target
-  # (callable?) Block to run with the handle, which is closed when it returns.
+  # ([`Func`](std.Func)) Block to run with the handle, which is closed when it returns.
   block = nil
 do
   throw nil
@@ -482,7 +482,7 @@ do
 # assert_eq $output "hello"
 # ```
 pub def sub
-  # (callable) Block whose output to capture.
+  # ([`Func`](std.Func)) Block whose output to capture.
   block
   # ([`Bool`](std.Bool)?) Remove one trailing LF or CRLF. True by
   # default. This is a whole-capture strip, not a per-value one: it removes at
@@ -510,7 +510,7 @@ do
 #   run worker
 # ```
 pub def with_policy
-  # (callable) Block to run.
+  # ([`Func`](std.Func)) Block to run.
   block
   # ([`Sym`](std.Sym)?) Unix signal name. `:TERM:` by default.
   :signal = nil

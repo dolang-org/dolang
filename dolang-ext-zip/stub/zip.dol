@@ -117,7 +117,7 @@ pub class Archive
     # ([`Sym`](std.Sym)?) `:STORED:`, `:DEFLATE:` (the default), or
     # `:ZSTD:`.
     :compression = nil
-    # (callable?) Called with the [`File`](zip.File), which is closed when it
+    # ([`Func`](std.Func)) Called with the [`File`](zip.File), which is closed when it
     # returns. Omit to receive the handle instead.
     func = nil
   do
@@ -218,7 +218,7 @@ pub class Entry
   # ```
   pub def open
     self
-    # (callable?) Called with the [`File`](zip.File), which is closed when it
+    # ([`Func`](std.Func)) Called with the [`File`](zip.File), which is closed when it
     # returns. Omit to receive the handle instead.
     block = nil
   do
@@ -321,7 +321,7 @@ pub def open
   # | `"r"` | Read mode -- opens an existing archive for reading    |
   # | `"w"` | Write mode -- creates a new archive, truncating any existing one |
   mode = nil
-  # (callable?) Called with the [`Archive`](zip.Archive), which is closed
+  # ([`Func`](std.Func)) Called with the [`Archive`](zip.Archive), which is closed
   # when it returns. Omit to receive the handle instead.
   func = nil
 do

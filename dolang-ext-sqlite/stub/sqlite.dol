@@ -151,8 +151,8 @@ pub class Connection
     # ([`Fmt`](std.Fmt)) SQL template. See [Parameter
     # Binding](sqlite.Statement.parameter-binding).
     sql
-    # (callable?) Called with the [`Statement`](sqlite.Statement), which is
-    # closed when it returns. Omit to receive the handle instead.
+    # ([`Func`](std.Func)) Called with the [`Statement`](sqlite.Statement),
+    # which is closed when it returns. Omit to receive the handle instead.
     func = nil
   do
     throw nil
@@ -187,7 +187,7 @@ pub class Connection
   # ```
   pub def transaction
     self
-    # (callable) Called with the [`Transaction`](sqlite.Transaction).
+    # ([`Func`](std.Func)) Called with the [`Transaction`](sqlite.Transaction).
     func
   do
     throw nil
@@ -473,18 +473,18 @@ pub def open
   # file, or `":memory:"` for a private in-memory database. A relative path
   # resolves against the current directory of the active VFS context.
   path
-  # ([`Int`](std.Int)?) Attempts to retry an operation that fails
+  # ([`Int`](std.Int)) Attempts to retry an operation that fails
   # because the database is busy. Defaults to `10`; `0` disables retrying. See
   # [Busy retry](sqlite.Connection.busy-retry).
   :retries = nil
-  # ([`Int`](std.Int)?) Milliseconds to wait before the first retry.
+  # ([`Int`](std.Int)) Milliseconds to wait before the first retry.
   # Defaults to `1`.
   :min_wait = nil
-  # ([`Int`](std.Int)?) Ceiling in milliseconds for the doubling retry
+  # ([`Int`](std.Int)) Ceiling in milliseconds for the doubling retry
   # wait. Defaults to `1000`.
   :max_wait = nil
-  # (callable?) Called with the [`Connection`](sqlite.Connection), which is
-  # closed when it returns. Omit to receive the handle instead.
+  # ([`Func`](std.Func)) Called with the [`Connection`](sqlite.Connection),
+  # which is closed when it returns. Omit to receive the handle instead.
   func = nil
 do
   throw nil

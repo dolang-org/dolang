@@ -56,16 +56,6 @@ do
 
 # Runs a verbatim command through `sudo`.
 #
-# ## Parameters
-#
-# | Name   | type   | Description                        |
-# | ------ | ------ | ---------------------------------- |
-# | `cmd`  |         | Program to run                        |
-# | `user` | `Str?`  | Account to use instead of root        |
-# | `cd`   | `Path?` | Working directory requested via sudo  |
-# | `env`  | `Dict`  | Environment requested via sudo policy |
-# | `args` | `*`     | Arguments passed verbatim to `cmd`    |
-#
 # ## Returns
 #
 # `nil`
@@ -76,10 +66,16 @@ do
 # sudo.run install -m 0644 example.conf /etc/example.conf
 # ```
 pub def run
+  # Program to run.
   cmd
+  # ([`Str`](std.Str)) Account to use instead of root.
   :user = nil
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Working directory requested via
+  # sudo.
   :cd = nil
+  # ([`Dict`](std.Dict)) Environment requested via sudo policy.
   :env = {}
+  # Arguments passed verbatim to `cmd`.
   ...args
 do
   run_command $cmd :user :cd :env ...args.pos_only()
@@ -88,15 +84,6 @@ do
 #
 # Filesystem access and spawned programs use a temporary elevated VFS for the
 # duration of the block. Pass `user` to run as an account other than root.
-#
-# ## Parameters
-#
-# | Name   | type     | Description                    |
-# | ------ | -------- | ------------------------------ |
-# | `func` | callable | Block to run                   |
-# | `user` | `Str?`   | Account to use instead of root |
-# | `cd`   | `Path?`  | Initial elevated directory     |
-# | `env`  | `Dict`   | Initial environment overrides  |
 #
 # ## Returns
 #
@@ -108,9 +95,13 @@ do
 # sudo.with do run cat /etc/shadow
 # ```
 pub def with
+  # ([`Func`](std.Func)) Block to run.
   func
+  # ([`Str`](std.Str)) Account to use instead of root.
   :user = nil
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Initial elevated directory.
   :cd = nil
+  # ([`Dict`](std.Dict)) Initial environment overrides.
   :env = {}
 do
   run_agent $func :user :cd :env

@@ -51,8 +51,8 @@
      identifier, not its bare name: a bare name would collide primary-registers
      with any other field/method/module across the whole site that happens to
      share it (autorefs registers heading ids workspace-wide, not per-page). #}
-  {{ "" | heading(heading_level + 2, id=field._identifier, hidden=true) }}
-  <dt><code>{{ field.name }}</code></dt>
+  {{ "" | heading(heading_level + 2, id=field._identifier, hidden=true, toc_label=field.name) }}
+  <dt><code>{{ field.name }}</code>{% if field.type %} ({{ field.type | convert_markdown(heading_level + 2, field._identifier ~ "--type", strip_paragraph=true) }}){% endif %}</dt>
   {% if field.doc %}
   <dd>{{ field.doc | convert_markdown(heading_level + 2, field._identifier) }}</dd>
   {% else %}

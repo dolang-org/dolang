@@ -493,7 +493,7 @@ pub def timeout
   # How long the block may run. See [Duration
   # arguments](time.duration-arguments).
   duration
-  # (callable) Block to run.
+  # ([`Func`](std.Func)) Block to run.
   block
 do
   throw nil

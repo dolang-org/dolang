@@ -3,6 +3,21 @@
 #
 # Cached bytecode is stored under `fs.cache_dir()`, scoped by application name.
 # If `app:` is omitted, the scope is derived from `shell.program`.
+#
+# ## Common Parameters {: #exec.common-parameters }
+#
+# `run` and `module` share these options:
+#
+# | Name      | Type                   | Description                              |
+# | --------- | ---------------------- | ----------------------------------------- |
+# | `app`     | [`Str`](std.Str)  | Cache scope; defaults from `shell.program` |
+# | `prelude` | [`Dict`](std.Dict) | Passed through to `compile.compile`       |
+# | `inject`  | [`Dict`](std.Dict) | Global symbol/value bindings for compilation and execution |
+# | `import`  | [`Dict`](std.Dict) | Modules supplied by name during execution |
+#
+# ### `import`
+#
+# Dictionary values are exposed as records.
 
 import compile digest fs load std shell
 
@@ -139,16 +154,7 @@ class Operation
 
 # Compile `path` in script mode if needed, cache the bytecode, and execute it.
 #
-# `app` scopes the cache directory under `fs.cache_dir()`. When omitted, the
-# scope defaults from `shell.program`.
-#
-# `prelude` is passed through to `compile.compile`.
-#
-# `inject` supplies globally scoped symbol/value bindings during compilation
-# and execution.
-#
-# `import` supplies modules by name during execution. Dictionary values are
-# exposed as records.
+# See [common parameters](exec.common-parameters).
 #
 # ## Example
 #
@@ -161,10 +167,15 @@ class Operation
 # exec.run "./tool.dol" import: {config: {answer: 42}}
 # ```
 pub def run
+  # ([`Str`](std.Str)) Script path.
   path
+  # ([`Str`](std.Str)) See [common parameters](exec.common-parameters).
   :app = nil
+  # ([`Dict`](std.Dict)) See [common parameters](exec.common-parameters).
   :prelude = {}
+  # ([`Dict`](std.Dict)) See [common parameters](exec.common-parameters).
   :inject = {}
+  # ([`Dict`](std.Dict)) See [common parameters](exec.common-parameters).
   :import = {}
 do
   (Operation path mode: "script" name: nil :app :prelude :inject :import).run()
@@ -172,18 +183,7 @@ do
 # Compile `path` in module mode if needed, cache the bytecode, and return the
 # loaded module object.
 #
-# `name` defaults to the source file stem when omitted.
-#
-# `app` scopes the cache directory under `fs.cache_dir()`. When omitted, the
-# scope defaults from `shell.program`.
-#
-# `prelude` is passed through to `compile.compile`.
-#
-# `inject` supplies globally scoped symbol/value bindings during compilation
-# and execution.
-#
-# `import` supplies modules by name during execution. Dictionary values are
-# exposed as records.
+# See [common parameters](exec.common-parameters).
 #
 # ## Example
 #
@@ -197,11 +197,17 @@ do
 # let injected = exec.module "./plugin.dol" inject: {answer: 42}
 # ```
 pub def module
+  # ([`Str`](std.Str)) Module source path.
   path
+  # ([`Str`](std.Str)) Module name. Defaults to the source file stem.
   :name = nil
+  # ([`Str`](std.Str)) See [common parameters](exec.common-parameters).
   :app = nil
+  # ([`Dict`](std.Dict)) See [common parameters](exec.common-parameters).
   :prelude = {}
+  # ([`Dict`](std.Dict)) See [common parameters](exec.common-parameters).
   :inject = {}
+  # ([`Dict`](std.Dict)) See [common parameters](exec.common-parameters).
   :import = {}
 do
   let name = module_name (fs.Path path) $name

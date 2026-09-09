@@ -1022,7 +1022,7 @@ pub def connect
   # so a connection provisioned for a service account must be made under that
   # account to be restored for it.
   :save_credentials = nil
-  # (callable?) Called with the [`Connection`](winnet.Connection), which is
+  # ([`Func`](std.Func)) Called with the [`Connection`](winnet.Connection), which is
   # disconnected when it returns. Omit to receive the handle instead.
   func = nil
 do

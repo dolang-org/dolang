@@ -517,7 +517,7 @@ pub class ScManager
     # Rights the returned handle requests, as a mask, a symbol, or an iterable
     # of symbols. Defaults to `:SERVICE_QUERY_STATUS:`.
     :access = nil
-    # (callable?) Called with the [`Service`](winscm.Service), which is closed
+    # ([`Func`](std.Func)) Called with the [`Service`](winscm.Service), which is closed
     # when it returns. Omit to receive the handle instead.
     func = nil
   do
@@ -576,7 +576,7 @@ pub class ScManager
     :service_start_name = nil
     # ([`Str`](std.Str)?) Password for `service_start_name`.
     :password = nil
-    # (callable?) Called with the [`Service`](winscm.Service), which is closed
+    # ([`Func`](std.Func)) Called with the [`Service`](winscm.Service), which is closed
     # when it returns. Omit to receive the handle instead.
     func = nil
   do
@@ -908,7 +908,7 @@ pub def open
   # Rights the returned handle requests, as a mask, a symbol, or an iterable of
   # symbols. Defaults to `:SC_MANAGER_CONNECT:`.
   :access = nil
-  # (callable?) Called with the [`ScManager`](winscm.ScManager), which is closed
+  # ([`Func`](std.Func)) Called with the [`ScManager`](winscm.ScManager), which is closed
   # when it returns. Omit to receive the handle instead.
   func = nil
 do

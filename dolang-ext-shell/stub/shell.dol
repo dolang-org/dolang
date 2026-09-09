@@ -218,7 +218,7 @@ pub class Vfs
   # ```
   pub def (init)
     self
-    # (callable) VFS server launcher.
+    # ([`Func`](std.Func)) VFS server launcher.
     func
   do
     throw nil
@@ -354,7 +354,7 @@ pub class Vfs
   # ```
   pub def with
     self
-    # (callable) Function to run.
+    # ([`Func`](std.Func)) Function to run.
     func
     # Additional arguments passed to `func`.
     ...args
@@ -391,7 +391,7 @@ pub def cd
   # ([`Str`](std.Str)|[`Path`](fs.Path)?) Directory to change to,
   # resolved against the current one.
   path = nil
-  # (callable?) Function to run in the new directory.
+  # ([`Func`](std.Func)) Function to run in the new directory.
   func = nil
 do
   throw nil
@@ -463,7 +463,7 @@ pub def vfs_exe()
 #
 # The function's result.
 pub def with_host
-  # (callable) Function to run.
+  # ([`Func`](std.Func)) Function to run.
   func
   # Additional arguments passed to `func`.
   ...args
@@ -488,7 +488,7 @@ do
 # | [`TypeError`](std.TypeError) | `args` is not iterable            |
 # | [`TypeError`](std.TypeError) | `program` is not a string or path |
 pub def with_override
-  # (callable) Function to run.
+  # ([`Func`](std.Func)) Function to run.
   func
   # ([`Iterable`](std.Iterable)?) Arguments seen as
   # [`shell.args`](shell.args), converted with

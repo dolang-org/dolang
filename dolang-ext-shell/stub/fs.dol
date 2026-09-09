@@ -10,13 +10,6 @@
 # [Security Guide](../../shell/security.md). Windows alternate data streams
 # are listed with [`streams`](fs.streams).
 #
-# ## Modules
-#
-# | Module                             | Description              |
-# | ---------------------------------- | ------------------------ |
-# | [`fs.unix`](fs.unix)       | Unix filesystem types    |
-# | [`fs.windows`](fs.windows) | Windows filesystem types |
-#
 # ## Resolution modes {: #fs.resolution-modes }
 #
 # Many functions accept a `resolve:` parameter that controls how symbolic links
