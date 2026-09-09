@@ -15,7 +15,7 @@ mod doc_markdown;
 struct ModuleJson {
     module: String,
     #[serde(default)]
-    doc: String,
+    doc: Option<String>,
     #[serde(default)]
     entities: Vec<Entity>,
 }
@@ -27,7 +27,7 @@ struct Entity {
     #[serde(default, rename = "pub")]
     is_pub: bool,
     #[serde(default)]
-    doc: String,
+    doc: Option<String>,
     #[serde(default)]
     params: Vec<ParamJson>,
     #[serde(default)]
@@ -100,7 +100,7 @@ fn add_module(rows: &mut Vec<Row>, modules: &HashMap<String, ModuleJson>, module
         module: module.module.clone(),
         item: String::new(),
         kind: "module",
-        doc: doc_markdown::remove_manual_anchors(&module.doc),
+        doc: doc_markdown::remove_manual_anchors(module.doc.as_deref().unwrap_or_default()),
         params: Vec::new(),
     });
     for entity in &module.entities {
@@ -193,7 +193,7 @@ fn add_entity(rows: &mut Vec<Row>, module: &str, prefix: &str, entity: &Entity) 
             "field" => "field",
             _ => "value",
         },
-        doc: doc_markdown::remove_manual_anchors(&entity.doc),
+        doc: doc_markdown::remove_manual_anchors(entity.doc.as_deref().unwrap_or_default()),
         params: entity.params.clone(),
     });
     for member in &entity.members {
