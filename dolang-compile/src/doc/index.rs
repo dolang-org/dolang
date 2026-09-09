@@ -282,7 +282,8 @@ impl Index<'_> {
     }
 
     fn import(&mut self, scope: &Scope<'_>, import: &mut Import) {
-        for element in &mut import.0 {
+        let is_pub = import.pub_span.is_some();
+        for element in &mut import.elements {
             let element_span = element.span();
             match element {
                 ImportElement::ModuleAsIs { module, bind, .. } => {
@@ -297,6 +298,7 @@ impl Index<'_> {
                         Kind::ImportModule {
                             module: *module,
                             name,
+                            is_pub,
                         },
                         element_span,
                     );
@@ -308,6 +310,7 @@ impl Index<'_> {
                         Kind::ImportModule {
                             module: *module,
                             name: bind.span,
+                            is_pub,
                         },
                         element_span,
                     );
@@ -326,6 +329,7 @@ impl Index<'_> {
                                 module: *module,
                                 item: span,
                                 name: bind.span,
+                                is_pub,
                             },
                             item_span,
                         );

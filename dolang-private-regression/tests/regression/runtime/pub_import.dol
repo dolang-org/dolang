@@ -1,0 +1,6 @@
+import pub_reexport
+
+let thing = pub_reexport.RenamedThing()
+assert_eq $thing.value 42
+assert_eq $pub_reexport.answer 42
+assert_eq (pub_reexport.math.add 2 3) 5

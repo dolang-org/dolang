@@ -119,6 +119,25 @@ def internal_detail
 
 Only `pub` items are visible when a module is imported.
 
+Imports can re-export their bindings:
+
+```
+pub import math
+
+pub import build.tools: tools
+
+pub import errors:
+  - BuildError
+  ParseError: SyntaxError
+```
+
+A public dotted module import must be renamed. An unrenamed `pub import
+build.tools` creates a namespace object and is rejected. Rename it instead:
+
+```
+pub import build.tools: tools
+```
+
 ## Module Resolution
 
 Modules are resolved according to the host application. See the [Shell

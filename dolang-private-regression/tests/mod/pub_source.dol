@@ -1,0 +1,4 @@
+pub class Thing
+  pub field value = 42
+
+pub let answer = 42

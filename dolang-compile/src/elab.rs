@@ -1031,6 +1031,19 @@ impl<'s> Scope<'s> {
         }
     }
 
+    fn mark_local_exported(&self, index: usize, epoch: Epoch) {
+        match self {
+            Self::Base => panic!("Can't mark vars in base scope"),
+            Self::Class { .. } => unreachable!("class scope is not lexical"),
+            Self::Nested { vars, .. } => {
+                vars[index].update(|(mut var, _)| {
+                    var.exported = true;
+                    (var, epoch)
+                });
+            }
+        }
+    }
+
     fn resolve_inner(
         &self,
         id: sym::Id,
@@ -1882,7 +1895,14 @@ impl<'a> Elaborater<'a> {
     }
 
     fn visit_import_pre(&mut self, scope: &mut Scope<'_>, import: &mut Import) -> Result<()> {
-        for element in import.0.iter_mut() {
+        let exported = import.pub_span.is_some();
+        if let Some(span) = import.pub_span
+            && !scope.is_top_level()
+        {
+            self.diags.push(InappropriatePub(span));
+            self.fail = true;
+        }
+        for element in &mut import.elements {
             match element {
                 ImportElement::ModuleAsIs {
                     module,
@@ -1900,8 +1920,11 @@ impl<'a> Elaborater<'a> {
                         // Reuse the binding and update its source provenance.
                         *insert = true;
                         bind.res = Some(res);
+                        if exported {
+                            scope.mark_local_exported(res.index, self.epoch);
+                        }
                     } else {
-                        let index = scope.insert(id, node, self.epoch, false);
+                        let index = scope.insert(id, node, self.epoch, exported);
                         bind.res = Some(Res {
                             index,
                             depth: 0,
@@ -1914,7 +1937,7 @@ impl<'a> Elaborater<'a> {
                         .symtab
                         .id(&self.bintab.id_str(self.file.str(bind.span)));
                     let node = Origin::Source(bind.span);
-                    let index = scope.insert(id, node, self.epoch, false);
+                    let index = scope.insert(id, node, self.epoch, exported);
                     bind.res = Some(Res {
                         index,
                         depth: 0,
@@ -1933,7 +1956,7 @@ impl<'a> Elaborater<'a> {
                             .symtab
                             .id(&self.bintab.id_str(self.file.str(bind.span)));
                         let node = Origin::Source(bind.span);
-                        let index = scope.insert(id, node, self.epoch, false);
+                        let index = scope.insert(id, node, self.epoch, exported);
                         bind.res = Some(Res {
                             index,
                             depth: 0,
