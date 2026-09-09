@@ -73,7 +73,7 @@ pub class Error: std.RuntimeError
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -165,7 +165,7 @@ pub class AddrInUseError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -177,7 +177,7 @@ pub class AddrNotAvailableError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -191,7 +191,7 @@ pub class AlreadyExistsError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -203,7 +203,7 @@ pub class ArgumentListTooLongError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -215,7 +215,7 @@ pub class BrokenPipeError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -227,7 +227,7 @@ pub class ConnectionAbortedError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -239,7 +239,7 @@ pub class ConnectionRefusedError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -251,7 +251,7 @@ pub class ConnectionResetError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -263,7 +263,7 @@ pub class CrossesDevicesError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -275,7 +275,7 @@ pub class DeadlockError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -287,7 +287,7 @@ pub class DirectoryNotEmptyError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -299,7 +299,7 @@ pub class ExecutableFileBusyError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -311,7 +311,7 @@ pub class FileTooLargeError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -323,7 +323,7 @@ pub class HostUnreachableError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -335,7 +335,7 @@ pub class InterruptedError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -347,7 +347,7 @@ pub class InvalidDataError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -359,7 +359,7 @@ pub class InvalidFilenameError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -372,7 +372,7 @@ pub class InvalidInputError: Error std.ValueError
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -384,7 +384,7 @@ pub class IsADirectoryError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -396,7 +396,7 @@ pub class NetworkDownError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -408,7 +408,7 @@ pub class NetworkUnreachableError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -420,7 +420,7 @@ pub class NotADirectoryError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -432,7 +432,7 @@ pub class NotConnectedError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -446,7 +446,7 @@ pub class NotFoundError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -458,7 +458,7 @@ pub class NotSeekableError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -470,7 +470,7 @@ pub class OutOfMemoryError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -483,7 +483,7 @@ pub class PermissionDeniedError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -495,7 +495,7 @@ pub class QuotaExceededError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -507,7 +507,7 @@ pub class ReadOnlyFilesystemError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -519,7 +519,7 @@ pub class ResourceBusyError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -531,7 +531,7 @@ pub class StaleNetworkFileHandleError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -543,7 +543,7 @@ pub class StorageFullError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -555,7 +555,7 @@ pub class TimedOutError: Error std.TimedOutError
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -567,7 +567,7 @@ pub class TooManyLinksError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -579,7 +579,7 @@ pub class UnexpectedEofError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -592,7 +592,7 @@ pub class UnsupportedError: Error std.UnsupportedError
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -604,7 +604,7 @@ pub class WouldBlockError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil
@@ -616,7 +616,7 @@ pub class WriteZeroError: Error
     self
     # ([`str`](std.Str)) Error message.
     message
-    # ([`ErrorCode`](sys.ErrorCode)?) Underlying platform code.
+    # ([`ErrorCode`](sys.ErrorCode)) Underlying platform code.
     :code = nil
   do
     throw nil

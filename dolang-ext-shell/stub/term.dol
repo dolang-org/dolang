@@ -282,9 +282,9 @@ pub class SinkConsole
     self
     # ([`Sink`](std.Sink)) Where output values are written.
     sink
-    # ([`Bool`](std.Bool)?) Emit ANSI styling. Off by default.
+    # ([`Bool`](std.Bool)) Emit ANSI styling. Off by default.
     :can_style = false
-    # ([`Sym`](std.Sym)?) `:LINE:` (the default) or `:CHUNK:`. See
+    # ([`Sym`](std.Sym)) `:LINE:` (the default) or `:CHUNK:`. See
     # [Output mode](term.SinkConsole.output-mode).
     :mode = nil
   do
@@ -443,7 +443,7 @@ pub class Text
     self
     # ([`Int`](std.Int)) Non-negative terminal-cell budget.
     width
-    # ([`Str`](std.Str)|[`Text`](term.Text)?) Suffix appended only when
+    # ([`Str`](std.Str)|[`Text`](term.Text)) Suffix appended only when
     # truncating.
     :suffix = nil
   do
@@ -593,7 +593,7 @@ pub def capture
   console
   # ([`Func`](std.Func)) Block to run.
   block
-  # ([`Sym`](std.Sym)?) `:LINE:` (the default) or `:CHUNK:`, when
+  # ([`Sym`](std.Sym)) `:LINE:` (the default) or `:CHUNK:`, when
   # `console` is a plain sink. See
   # [Output mode](term.SinkConsole.output-mode).
   :mode = nil
@@ -726,7 +726,7 @@ do
 pub def render_error
   # Error value or message.
   error
-  # ([`strand.Backtrace`](strand)?) Explicit backtrace. Defaults to
+  # ([`strand.Backtrace`](strand)) Explicit backtrace. Defaults to
   # the active one.
   :backtrace = nil
 do
@@ -751,10 +751,10 @@ do
 pub def sub
   # ([`Func`](std.Func)) Block to run.
   block
-  # ([`Bool`](std.Bool)?) Strip one trailing line ending, LF or CRLF.
+  # ([`Bool`](std.Bool)) Strip one trailing line ending, LF or CRLF.
   # True by default.
   :chomp = true
-  # ([`Bool`](std.Bool)?) Keep ANSI styling. False by default.
+  # ([`Bool`](std.Bool)) Keep ANSI styling. False by default.
   :can_style = false
   # Additional arguments passed to the block.
   ...args

@@ -185,7 +185,7 @@ pub class Ace
     principal
     # ([`Mask`](security.macos.Mask)) Permission mask.
     :mask
-    # ([`Flags`](security.macos.Flags)?) Inheritance flags. Defaults to empty.
+    # ([`Flags`](security.macos.Flags)) Inheritance flags. Defaults to empty.
     :flags = nil
   do
     throw nil
@@ -198,7 +198,7 @@ pub class Ace
     principal
     # ([`Mask`](security.macos.Mask)) Permission mask.
     :mask
-    # ([`Flags`](security.macos.Flags)?) Inheritance flags. Defaults to empty.
+    # ([`Flags`](security.macos.Flags)) Inheritance flags. Defaults to empty.
     :flags = nil
   do
     throw nil
@@ -263,15 +263,15 @@ pub class Acl
 # ace allow: "00112233-4455-6677-8899-aabbccddeeff" mask: [:READ_DATA:]
 # ```
 pub def ace
-  # ([`uuid.Uuid`](uuid.Uuid)\|[`Str`](std.Str)\|[`Bin`](std.Bin)?)
+  # ([`uuid.Uuid`](uuid.Uuid)\|[`Str`](std.Str)\|[`Bin`](std.Bin))
   # Principal for an `:ALLOW:` entry.
   :allow = nil
-  # ([`uuid.Uuid`](uuid.Uuid)\|[`Str`](std.Str)\|[`Bin`](std.Bin)?)
+  # ([`uuid.Uuid`](uuid.Uuid)\|[`Str`](std.Str)\|[`Bin`](std.Bin))
   # Principal for a `:DENY:` entry.
   :deny = nil
   # ([`Mask`](security.macos.Mask)\|[`Sym`](std.Sym)) Permission mask.
   :mask
-  # ([`Flags`](security.macos.Flags)\|[`Sym`](std.Sym)?) Inheritance flags.
+  # ([`Flags`](security.macos.Flags)\|[`Sym`](std.Sym)) Inheritance flags.
   # Defaults to empty.
   :flags = nil
 do

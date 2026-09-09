@@ -143,17 +143,17 @@ pub class Path
   # SACL access requires `SeSecurityPrivilege`.
   pub def sec_desc
     self
-    # ([`Bool`](std.Bool)?) Load the owner SID. Defaults to `true`.
+    # ([`Bool`](std.Bool)) Load the owner SID. Defaults to `true`.
     :owner = nil
-    # ([`Bool`](std.Bool)?) Load the primary group SID. Defaults to
+    # ([`Bool`](std.Bool)) Load the primary group SID. Defaults to
     # `true`.
     :group = nil
-    # ([`Bool`](std.Bool)?) Load the discretionary ACL. Defaults to
+    # ([`Bool`](std.Bool)) Load the discretionary ACL. Defaults to
     # `true`.
     :dacl = nil
-    # ([`Bool`](std.Bool)?) Load the system ACL. Defaults to `false`.
+    # ([`Bool`](std.Bool)) Load the system ACL. Defaults to `false`.
     :sacl = nil
-    # (`:TARGET:`\|`:LINK:`?) Resolution mode; see
+    # (`:TARGET:`\|`:LINK:`) Resolution mode; see
     # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
     :resolve = nil
   do
@@ -185,10 +185,10 @@ pub class Path
   # ```
   pub def update_sec_desc
     self
-    # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict)?)
+    # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict))
     # Descriptor, packet, or spec.
     desc = nil
-    # (`:TARGET:`\|`:LINK:`?) Resolution mode; see
+    # (`:TARGET:`\|`:LINK:`) Resolution mode; see
     # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
     :resolve = nil
   do
@@ -210,7 +210,7 @@ pub class Path
   # ```
   pub def streams
     self
-    # (`:TARGET:`\|`:LINK:`?) Resolution mode; see
+    # (`:TARGET:`\|`:LINK:`) Resolution mode; see
     # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
     :resolve = nil
   do
@@ -270,17 +270,17 @@ pub class StreamEntry
 pub def sec_desc
   # ([`Str`](std.Str)\|[`Path`](fs.windows.Path)) Path to query.
   path
-  # ([`Bool`](std.Bool)?) Load the owner SID. Defaults to `true`.
+  # ([`Bool`](std.Bool)) Load the owner SID. Defaults to `true`.
   :owner = nil
-  # ([`Bool`](std.Bool)?) Load the primary group SID. Defaults to
+  # ([`Bool`](std.Bool)) Load the primary group SID. Defaults to
   # `true`.
   :group = nil
-  # ([`Bool`](std.Bool)?) Load the discretionary ACL. Defaults to
+  # ([`Bool`](std.Bool)) Load the discretionary ACL. Defaults to
   # `true`.
   :dacl = nil
-  # ([`Bool`](std.Bool)?) Load the system ACL. Defaults to `false`.
+  # ([`Bool`](std.Bool)) Load the system ACL. Defaults to `false`.
   :sacl = nil
-  # (`:TARGET:`\|`:LINK:`?) Resolution mode; see
+  # (`:TARGET:`\|`:LINK:`) Resolution mode; see
   # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
   :resolve = nil
 do
@@ -296,10 +296,10 @@ do
 pub def update_sec_desc
   # ([`Str`](std.Str)\|[`Path`](fs.windows.Path)) Path to update.
   path
-  # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict)?)
+  # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict))
   # Descriptor, packet, or spec.
   desc = nil
-  # (`:TARGET:`\|`:LINK:`?) Resolution mode; see
+  # (`:TARGET:`\|`:LINK:`) Resolution mode; see
   # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
   :resolve = nil
 do

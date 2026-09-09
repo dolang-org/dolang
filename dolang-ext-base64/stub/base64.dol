@@ -35,14 +35,14 @@
 pub def decode
   # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Base64 text to decode.
   text
-  # ([`Sym`](std.Sym)?) Alphabet; default `:AUTO:`.
+  # ([`Sym`](std.Sym)) Alphabet; default `:AUTO:`.
   #
   # `:AUTO:` selects the URL-safe alphabet if the input contains `-` or `_`, and
   # the standard alphabet otherwise. Input containing characters from both
   # alphabets is rejected. Input containing neither decodes identically under
   # both.
   :alphabet = nil
-  # ([`Bool`](std.Bool)?) Required padding; default none.
+  # ([`Bool`](std.Bool)) Required padding; default none.
   #
   # When `pad:` is omitted, canonical padding and any lesser amount — including
   # none — are accepted. `pad: true` requires canonical padding; `pad: false`
@@ -77,9 +77,9 @@ do
 pub def encode
   # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Data to encode.
   data
-  # ([`Sym`](std.Sym)?) Alphabet; default `:STANDARD:`.
+  # ([`Sym`](std.Sym)) Alphabet; default `:STANDARD:`.
   :alphabet = nil
-  # ([`Bool`](std.Bool)?) Whether to emit padding; default depends on `alphabet:`.
+  # ([`Bool`](std.Bool)) Whether to emit padding; default depends on `alphabet:`.
   #
   # `pad:` defaults to `true` for `:STANDARD:` and `false` for `:URL:`, since
   # URL-safe base64 is conventionally unpadded (for example in JSON Web

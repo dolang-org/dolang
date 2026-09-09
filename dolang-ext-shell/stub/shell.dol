@@ -56,7 +56,7 @@ pub class Stdin
   # ```
   pub def read
     self
-    # ([`Int`](std.Int)?) Maximum bytes to read. Unbounded when omitted.
+    # ([`Int`](std.Int)) Maximum bytes to read. Unbounded when omitted.
     size = nil
   do
     throw nil
@@ -262,7 +262,7 @@ pub class Vfs
     self
     # ([`Path`](fs.Path)) Unix socket path.
     path
-    # ([`Str`](std.Str)|[`Bin`](std.Bin)?) Pre-shared key that both
+    # ([`Str`](std.Str)|[`Bin`](std.Bin)) Pre-shared key that both
     # ends prove knowledge of during the handshake.
     #
     # Supply it when the socket's permissions cannot identify the peer. An
@@ -312,10 +312,10 @@ pub class Vfs
   #[class]
   pub def windows_admin
     self
-    # ([`Path`](fs.Path)?) Initial working directory. Defaults to the
+    # ([`Path`](fs.Path)) Initial working directory. Defaults to the
     # calling strand's.
     :cd = nil
-    # ([`Dict`](std.Dict)?) Environment overrides. Keys may be strings or
+    # ([`Dict`](std.Dict)) Environment overrides. Keys may be strings or
     # symbols; `nil` unsets a variable and `:INHERIT:` captures the calling
     # strand's current value.
     :env = nil
@@ -388,7 +388,7 @@ pub class Vfs
 #   run ls
 # ```
 pub def cd
-  # ([`Str`](std.Str)|[`Path`](fs.Path)?) Directory to change to,
+  # ([`Str`](std.Str)|[`Path`](fs.Path)) Directory to change to,
   # resolved against the current one.
   path = nil
   # ([`Func`](std.Func)) Function to run in the new directory.
@@ -422,7 +422,7 @@ do
 #
 # Never returns; raises an interrupt error that unwinds the interpreter.
 pub def exit
-  # ([`Int`](std.Int)?) Exit status. Defaults to `0`.
+  # ([`Int`](std.Int)) Exit status. Defaults to `0`.
   code = nil
 do
   throw nil
@@ -490,11 +490,11 @@ do
 pub def with_override
   # ([`Func`](std.Func)) Function to run.
   func
-  # ([`Iterable`](std.Iterable)?) Arguments seen as
+  # ([`Iterable`](std.Iterable)) Arguments seen as
   # [`shell.args`](shell.args), converted with
   # [`verbatim`](std.verbatim).
   :args = nil
-  # ([`Str`](std.Str)|[`Path`](fs.Path)?) Identity seen as
+  # ([`Str`](std.Str)|[`Path`](fs.Path)) Identity seen as
   # [`shell.program`](shell.program).
   :program = nil
 do

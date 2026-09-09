@@ -201,7 +201,7 @@ pub class PipeSender: std.Sink
     self
     # Error value to propagate to the receiver.
     error = nil
-    # ([`strand.Backtrace`](strand)?) Backtrace for `error`.
+    # ([`strand.Backtrace`](strand)) Backtrace for `error`.
     :backtrace = nil
   do
     throw nil
@@ -324,21 +324,21 @@ pub class Program
   # ```
   pub def (call)
     self
-    # ([`fs.Path`](fs.Path)|[`Iter`](std.Iter)?) Source for
+    # ([`fs.Path`](fs.Path)|[`Iter`](std.Iter)) Source for
     # standard input.
     :stdin = nil
-    # ([`fs.Path`](fs.Path)|[`Sink`](std.Sink)?) Destination for
+    # ([`fs.Path`](fs.Path)|[`Sink`](std.Sink)) Destination for
     # standard output.
     :stdout = nil
-    # ([`fs.Path`](fs.Path)|[`Sink`](std.Sink)|[`Sym`](std.Sym)?)
+    # ([`fs.Path`](fs.Path)|[`Sink`](std.Sink)|[`Sym`](std.Sym))
     # Destination for standard error, or `:STDOUT:` to merge it with standard
     # output.
     :stderr = nil
-    # ([`Dict`](std.Dict)?) Per-launch termination overrides: `signal`,
+    # ([`Dict`](std.Dict)) Per-launch termination overrides: `signal`,
     # `grace` and `force`, as
     # [`with_policy`](proc.with_policy) takes them.
     :policy = nil
-    # ([`Sym`](std.Sym)?) `:LINE:` (the default) or `:CHUNK:` output
+    # ([`Sym`](std.Sym)) `:LINE:` (the default) or `:CHUNK:` output
     # framing.
     :mode = nil
     # Command-line arguments.
@@ -417,7 +417,7 @@ pub def enumerate()
 # echo $mine.pid
 # ```
 pub def info
-  # ([`Int`](std.Int)?) Process ID. Defaults to the target process: the
+  # ([`Int`](std.Int)) Process ID. Defaults to the target process: the
   # one serving the current VFS, which is the process running this interpreter
   # when none is connected, and otherwise the agent at the far end of the
   # connection. Pair it with
@@ -484,7 +484,7 @@ do
 pub def sub
   # ([`Func`](std.Func)) Block whose output to capture.
   block
-  # ([`Bool`](std.Bool)?) Remove one trailing LF or CRLF. True by
+  # ([`Bool`](std.Bool)) Remove one trailing LF or CRLF. True by
   # default. This is a whole-capture strip, not a per-value one: it removes at
   # most one line ending, from the end of the finished string.
   :chomp = true
@@ -512,12 +512,12 @@ do
 pub def with_policy
   # ([`Func`](std.Func)) Block to run.
   block
-  # ([`Sym`](std.Sym)?) Unix signal name. `:TERM:` by default.
+  # ([`Sym`](std.Sym)) Unix signal name. `:TERM:` by default.
   :signal = nil
-  # ([`time.Duration`](time.Duration)|[`Int`](std.Int)|[`Float`](std.Float)?)
+  # ([`time.Duration`](time.Duration)|[`Int`](std.Int)|[`Float`](std.Float))
   # Time before forced termination. Five seconds by default.
   :grace = nil
-  # ([`Bool`](std.Bool)?) Force termination after the grace period.
+  # ([`Bool`](std.Bool)) Force termination after the grace period.
   :force = nil
   # Additional arguments passed to the block.
   ...args

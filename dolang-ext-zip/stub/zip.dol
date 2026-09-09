@@ -58,7 +58,7 @@ pub class Archive
     # ([`Str`](std.Str)) Name of the directory within the archive. A
     # trailing `/` is added if missing.
     name
-    # ([`Int`](std.Int)?) Unix permission bits. Defaults to `0`.
+    # ([`Int`](std.Int)) Unix permission bits. Defaults to `0`.
     :mode = nil
   do
     throw nil
@@ -102,10 +102,10 @@ pub class Archive
     self
     # ([`Str`](std.Str)) Name of the file within the archive.
     name
-    # ([`Int`](std.Int)?) Unix permission bits in write mode. Defaults
+    # ([`Int`](std.Int)) Unix permission bits in write mode. Defaults
     # to `0`.
     :mode = nil
-    # ([`Int`](std.Int)?) Expected uncompressed size.
+    # ([`Int`](std.Int)) Expected uncompressed size.
     #
     # The writer reserves space for an entry's ZIP64 size fields in its local
     # file header before any data is written, and patches the real sizes in
@@ -114,7 +114,7 @@ pub class Archive
     # `size` announced it up front. Pass the uncompressed size whenever it is
     # known; it is a hint, and the actual sizes are what end up recorded.
     :size = nil
-    # ([`Sym`](std.Sym)?) `:STORED:`, `:DEFLATE:` (the default), or
+    # ([`Sym`](std.Sym)) `:STORED:`, `:DEFLATE:` (the default), or
     # `:ZSTD:`.
     :compression = nil
     # ([`Func`](std.Func)) Called with the [`File`](zip.File), which is closed when it
@@ -140,7 +140,7 @@ pub class Archive
     target
     # ([`Str`](std.Str)) Name of the symlink within the archive.
     name
-    # ([`Int`](std.Int)?) Unix permission bits. Defaults to `0`.
+    # ([`Int`](std.Int)) Unix permission bits. Defaults to `0`.
     :mode = nil
   do
     throw nil
@@ -314,7 +314,7 @@ pub def open
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the ZIP archive
   # file.
   path
-  # ([`Str`](std.Str)?) Access mode. Defaults to `"r"`.
+  # ([`Str`](std.Str)) Access mode. Defaults to `"r"`.
   #
   # | Mode  | Description                                           |
   # | ----- | ----------------------------------------------------- |

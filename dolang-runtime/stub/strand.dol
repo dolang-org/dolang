@@ -120,7 +120,7 @@ pub class Sender: std.Sink
     self
     # Optional error value to propagate
     error = nil
-    # ([`strand.Backtrace`](strand)?) Optional backtrace for that error
+    # ([`strand.Backtrace`](strand)) Optional backtrace for that error
     :backtrace = nil
   do
     throw nil
@@ -239,9 +239,9 @@ pub def map
   count
   # (Func) function applied to each input value
   func
-  # (input?) source; defaults to the strand-local iterator
+  # (input) source; defaults to the strand-local iterator
   :input = nil
-  # (output?) destination; defaults to the strand-local sink
+  # (output) destination; defaults to the strand-local sink
   :output = nil
 do
   throw nil
