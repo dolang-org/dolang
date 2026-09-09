@@ -14,6 +14,8 @@ use tower_lsp_server::{
 
 use dolang_compile::{Config as CompileConfig, Context, Kind, NodeId, Token, Unit, diag};
 
+use crate::doc_index;
+
 const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
     SemanticTokenModifier::DEFAULT_LIBRARY,
     SemanticTokenModifier::DECLARATION,
@@ -326,6 +328,43 @@ fn declaration_label(
     Some((label, callable))
 }
 
+/// Hover text for a name that resolves outside this document -- an import or
+/// a prelude binding -- built from the static doc index rather than a local
+/// doc comment, since there is no declaration in this file to read one from.
+fn external_hover(kind: Kind<'_>, content: &str) -> Option<String> {
+    let (module, item) = match kind {
+        Kind::ImportModule { module, .. } => (span_text(content, &module), ""),
+        Kind::ImportItem { module, item, .. } => {
+            (span_text(content, &module), span_text(content, &item))
+        }
+        Kind::PreludeModule { module, .. } => (module, ""),
+        Kind::PreludeItem { module, item, .. } => (module, item),
+        _ => return None,
+    };
+    Some(render_external_hover(doc_index::lookup(module, item)?))
+}
+
+fn render_external_hover(entry: &doc_index::DocEntry) -> String {
+    let label = doc_index::signature(entry);
+    let fence = if label.contains("```") { "````" } else { "```" };
+    let mut markdown = format!("{fence}dolang\n{label}\n{fence}");
+    let (type_, prose) = split_doc_type(entry.doc);
+    let callable = matches!(entry.kind, "function" | "method");
+    if let Some(type_) = type_ {
+        markdown.push_str(if callable {
+            "\n\n**Returns:** "
+        } else {
+            "\n\n**Type:** "
+        });
+        markdown.push_str(type_);
+    }
+    if !prose.is_empty() {
+        markdown.push_str("\n\n");
+        markdown.push_str(prose);
+    }
+    markdown
+}
+
 /// Pre-render local hover text while the compiler unit and its spans live.
 fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, String> {
     let mut children: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
@@ -346,6 +385,9 @@ fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, String> {
 
     unit.nodes()
         .filter_map(|(id, node)| {
+            if let Some(markdown) = external_hover(node.kind(), content) {
+                return Some((id, markdown));
+            }
             let (label, callable) = declaration_label(content, unit, id, &children)?;
             let doc = node.doc().map(|span| normalize_doc(content, &span));
             let (type_, prose) = doc.as_deref().map(split_doc_type).unwrap_or((None, ""));
@@ -908,23 +950,45 @@ impl Backend {
                         let kind = doc_node.map(|node| node.kind());
                         let (token_type, mut modifiers) =
                             classify_token(leaf, kind.as_ref(), context);
-                        // Prelude bindings have no source text, so there is
-                        // nowhere in this file to jump to and nothing to index.
-                        if let Some(id) = node
-                            && let Some(def) = doc_node.and_then(|node| node.definition())
-                        {
-                            modifiers |= declaration_modifiers(&span, &def, id, &statics);
+                        if let Some(id) = node {
                             let range = index.range_from_span(&span);
-                            refs.push((range, id));
-                            decls
-                                .entry(id)
-                                .or_insert_with(|| Decl {
-                                    name_range: index.range_from_span(&def),
-                                    uses: Vec::new(),
-                                    hover: hovers.get(&id).cloned(),
-                                })
-                                .uses
-                                .push(range);
+                            match doc_node.and_then(|node| node.definition()) {
+                                Some(def) => {
+                                    modifiers |= declaration_modifiers(&span, &def, id, &statics);
+                                    refs.push((range, id));
+                                    decls
+                                        .entry(id)
+                                        .or_insert_with(|| Decl {
+                                            name_range: index.range_from_span(&def),
+                                            uses: Vec::new(),
+                                            hover: hovers.get(&id).cloned(),
+                                        })
+                                        .uses
+                                        .push(range);
+                                }
+                                // A prelude binding has no source text, so
+                                // there is nowhere in this file to jump to --
+                                // but it may still have hover text pulled
+                                // from the static doc index (see
+                                // external_hover), which has nothing to do
+                                // with a definition span. Index it too, using
+                                // its own span as a stand-in "declaration"
+                                // location since there is no real one; this
+                                // also gets it references/highlight for free.
+                                None if hovers.contains_key(&id) => {
+                                    refs.push((range, id));
+                                    decls
+                                        .entry(id)
+                                        .or_insert_with(|| Decl {
+                                            name_range: range,
+                                            uses: Vec::new(),
+                                            hover: hovers.get(&id).cloned(),
+                                        })
+                                        .uses
+                                        .push(range);
+                                }
+                                None => {}
+                            }
                         }
                         tokens.push((token_type, modifiers, span));
                     }
@@ -1811,6 +1875,33 @@ mod tests {
         );
 
         assert!(hover_at(&mut harness, uri, 0, 3).await.is_none());
+    }
+
+    /// Regression test: a prelude/import binding has no `definition()` span
+    /// (see `Kind::definition`), so the token-indexing loop used to skip it
+    /// entirely -- meaning `external_hover`'s doc-index lookup ran and built
+    /// a markdown string that nothing in `refs`/`decls` ever pointed at, and
+    /// hover silently returned `None` for every prelude/import identifier.
+    #[tokio::test(flavor = "current_thread")]
+    async fn hover_resolves_prelude_items_from_the_static_doc_index() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///prelude-hover.dol".parse().unwrap();
+        harness.open(uri.clone(), "echo hello\n", 1).await;
+
+        let hover = hover_at(&mut harness, uri, 0, 2).await.unwrap();
+        assert_eq!(
+            hover.contents,
+            HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: concat!(
+                    "```dolang\ndef echo ...args\n```\n\n",
+                    "**Returns:** nil\n\n",
+                    "Writes to standard output."
+                )
+                .to_owned(),
+            })
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -225,7 +225,7 @@ def module_classes entities
   names
 
 def write_doc_page path title identifier
-  create_dir $path.parent all: true
+  path.parent.create_dir all: true
   # The frontmatter `title` is for awesome-nav: with `use_index_title` on, it
   # reads this instead of falling back to a title-cased directory name (e.g.
   # `fs.unix` -> "Fs.unix"), which is wrong for names that are meant to stay
@@ -236,7 +236,14 @@ def write_doc_page path title identifier
   # unrelated heading that happens to slugify the same way (a module named
   # `args`, in this case). A matching id here just dedupes against that
   # registration instead of adding a second, colliding one.
-  path.write "---\ntitle: $title\n---\n\n# $title {: #$identifier }\n\n::: $identifier\n"
+  path.write |
+    ---
+    title: $title
+    ---
+
+    # $title {: #$identifier }
+
+    ::: $identifier
 
 # Writes docs/api pages for one module: an index page plus one page per public
 # class. Each module gets its own single directory named after its full
@@ -259,6 +266,21 @@ def generate_doc_pages dolang paths_by_name name entities
       let alias_json = sub do run $dolang -m doc --module $alias $(paths_by_name[alias])
       for class_name = module_classes(json.decode(alias_json)["entities"])
         write_doc_page (dir / "$class_name.md") $class_name "$alias.$class_name"
+
+# Runs `dolang -m doc` once per module, in parallel, writing each result as
+# `<out_dir>/<module name>.json`. This is the JSON-only half of extract_docs
+# (see there for the full doc comment on why extraction is parallelized) --
+# used by `install` to feed dolang-lsp's build-time static doc index (see
+# dolang-lsp/build.rs) without also touching the docs/api page tree.
+def extract_doc_json spec out_dir
+  remove $out_dir all: true ignore: true
+  create_dir $out_dir all: true
+  let dolang = spec.bin "dolang"
+  let workers = sys.cpu_info().logical_count
+  strand.pool $workers $collect_doc_jobs() do |job|
+    let :name :path = job
+    let text = sub do run $dolang -m doc --module $name $path
+    (out_dir / "$name.json").write $text
 
 # Runs `dolang -m doc` once per module, in parallel, and writes each result as
 # `<out_dir>/<module name>.json` for the mkdocstrings handler to read; also
@@ -593,8 +615,16 @@ return $
         if is_windows
           RUSTFLAGS: "-C target-feature=+crt-static"
         do
-          spec.cargo build --bin dolang --bin dolang-lsp
+          spec.cargo build --bin dolang
           vfs_spec.cargo build --bin dolang-vfs
+          # dolang-lsp's build.rs bakes a static hover doc index out of the
+          # same per-module JSON dump `dodo mkdocs` uses (see
+          # extract_doc_json) -- generate it with the dolang binary just
+          # built, then point the build at it via env var.
+          let doc_json = (spec.target_dir / "lsp-doc-json").absolute()
+          extract_doc_json $spec $doc_json
+          env DOLANG_LSP_DOC_JSON_DIR: $doc_json do
+            spec.cargo build --bin dolang-lsp
 
       if is_windows
         verify_windows_crt $spec dolang

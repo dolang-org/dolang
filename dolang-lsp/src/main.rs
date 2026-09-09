@@ -6,6 +6,7 @@ use backtrace::Backtrace;
 use tower_lsp_server::Server;
 
 mod backend;
+mod doc_index;
 
 fn log_path() -> PathBuf {
     dirs::state_dir()
