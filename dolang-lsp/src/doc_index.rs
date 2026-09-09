@@ -5,6 +5,10 @@
 //! item -- which has no declaration in this document to read a doc comment
 //! from.
 
+#[cfg(test)]
+#[path = "../doc_markdown.rs"]
+mod doc_markdown;
+
 /// One parameter of a documented function or method.
 pub(crate) struct Param {
     pub(crate) name: &'static str,

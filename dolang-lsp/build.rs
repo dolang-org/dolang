@@ -9,6 +9,8 @@
 
 use std::{collections::HashMap, env, fmt::Write as _, fs, path::PathBuf};
 
+mod doc_markdown;
+
 #[derive(serde::Deserialize)]
 struct ModuleJson {
     module: String,
@@ -98,7 +100,7 @@ fn add_module(rows: &mut Vec<Row>, modules: &HashMap<String, ModuleJson>, module
         module: module.module.clone(),
         item: String::new(),
         kind: "module",
-        doc: module.doc.clone(),
+        doc: doc_markdown::remove_manual_anchors(&module.doc),
         params: Vec::new(),
     });
     for entity in &module.entities {
@@ -191,7 +193,7 @@ fn add_entity(rows: &mut Vec<Row>, module: &str, prefix: &str, entity: &Entity) 
             "field" => "field",
             _ => "value",
         },
-        doc: entity.doc.clone(),
+        doc: doc_markdown::remove_manual_anchors(&entity.doc),
         params: entity.params.clone(),
     });
     for member in &entity.members {
