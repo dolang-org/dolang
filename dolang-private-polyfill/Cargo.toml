@@ -8,10 +8,12 @@ repository.workspace = true
 rust-version.workspace = true
 publish = false
 
+
 [[bin]]
 name = "dolang-private-polyfill"
 path = "src/main.rs"
 test = false
 
-[dependencies]
-regex = "1.11"
+
+[dependencies.regex]
+workspace = true

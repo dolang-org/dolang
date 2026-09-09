@@ -7,28 +7,63 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
 
-[dependencies]
-blake3 = "1.8.2"
-bytes = "1"
-dolang-util = { package = "dolang-private-util", path = "../dolang-private-util", version = "0.1.1" }
-futures = "0.3.31"
-postcard = { version = "1.1.3", features = ["use-std"] }
-serde = { version = "1.0", features = ["derive"] }
-thiserror = "2"
-tokio = { version = "1.48", features = ["io-util", "macros", "net", "rt", "sync"] }
 
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-nix = { version = "0.31", features = ["fs", "socket", "uio"] }
+[dependencies.blake3]
+workspace = true
 
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Pipes", "Win32_System_Threading"] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-ctor = { version = "0.2", optional = true }
+[dependencies.bytes]
+workspace = true
+
+
+[dependencies.dolang-util]
+workspace = true
+
+
+[dependencies.futures]
+workspace = true
+
+
+[dependencies.postcard]
+workspace = true
+features = ["use-std"]
+
+
+[dependencies.serde]
+workspace = true
+features = ["derive"]
+
+
+[dependencies.thiserror]
+workspace = true
+
+
+[dependencies.tokio]
+workspace = true
+features = ["io-util", "macros", "net", "rt", "sync"]
+
+
+[target.'cfg(unix)'.dependencies.libc]
+workspace = true
+
+
+[target.'cfg(unix)'.dependencies.nix]
+workspace = true
+features = ["fs", "socket", "uio"]
+
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+workspace = true
+features = ["Win32_Foundation", "Win32_System_Pipes", "Win32_System_Threading"]
+
+
+[target.'cfg(target_os = "macos")'.dependencies.ctor]
+version = "0.2"
+optional = true
 
 [features]
 default = ["macos-spawn-interpose"]
@@ -41,16 +76,25 @@ default = ["macos-spawn-interpose"]
 macos-spawn-interpose = ["dep:ctor"]
 debug = ["dolang-util/debug"]
 
-[dev-dependencies]
-tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "time"] }
-criterion = { version = "0.5", features = ["async_tokio"] }
 
-[target.'cfg(windows)'.dev-dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Security"] }
+[dev-dependencies.tokio]
+workspace = true
+features = ["macros", "rt-multi-thread", "time"]
+
+
+[dev-dependencies.criterion]
+workspace = true
+features = ["async_tokio"]
+
+
+[target.'cfg(windows)'.dev-dependencies.windows-sys]
+workspace = true
+features = ["Win32_Security"]
 
 [[bench]]
 name = "pipe_trailer"
 harness = false
+
 
 [[bench]]
 name = "pipe_raw"

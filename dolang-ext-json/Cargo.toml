@@ -7,14 +7,18 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lib]
 test = false
 doctest = false
 
-[dependencies]
-serde = "1.0.228"
-serde_json = "1"
+
+[dependencies.serde]
+workspace = true
+
+
+[dependencies.serde_json]
+workspace = true
 
 [dependencies.dolang]
-path = "../dolang"
-version = "0.1.1"
+workspace = true

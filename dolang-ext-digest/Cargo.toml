@@ -7,17 +7,30 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lib]
 test = false
 doctest = false
 
-[dependencies]
-blake3 = "1.8.2"
-digest = "0.11.2"
-md-5 = "0.11.0"
-sha1 = "0.11.0"
-sha2 = "0.11.0"
+
+[dependencies.blake3]
+workspace = true
+
+
+[dependencies.digest]
+version = "0.11.2"
+
+
+[dependencies.md-5]
+version = "0.11.0"
+
+
+[dependencies.sha1]
+version = "0.11.0"
+
+
+[dependencies.sha2]
+version = "0.11.0"
 
 [dependencies.dolang]
-path = "../dolang"
-version = "0.1.1"
+workspace = true

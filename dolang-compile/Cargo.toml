@@ -7,21 +7,23 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[dependencies]
-phf = { version = "0.14.0", features = ["macros"] }
+
+[dependencies.phf]
+workspace = true
+features = ["macros"]
 
 [dependencies.dolang-util]
-package = "dolang-private-util"
-path = "../dolang-private-util"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang-bytecode]
-path = "../dolang-bytecode"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dot-writer]
 version = "0.1.4"
 optional = true
+
 
 [features]
 default = []

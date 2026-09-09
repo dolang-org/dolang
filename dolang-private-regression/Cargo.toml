@@ -8,15 +8,27 @@ repository.workspace = true
 rust-version.workspace = true
 publish = false
 
+
 [lib]
 test = false
 doctest = false
 
-[dependencies]
-dolang = { path = "../dolang", version = "0.1.1" }
-dolang-runtime = { path = "../dolang-runtime", version = "0.1.1" }
-dolang-private-test = { path = "../dolang-private-test", version = "0.1.1" }
-futures = "0.3.31"
 
-[build-dependencies]
-dolang-private-build = { path = "../dolang-private-build", version = "0.1.1" }
+[dependencies.dolang]
+workspace = true
+
+
+[dependencies.dolang-runtime]
+workspace = true
+
+
+[dependencies.dolang-private-test]
+workspace = true
+
+
+[dependencies.futures]
+workspace = true
+
+
+[build-dependencies.dolang-private-build]
+workspace = true

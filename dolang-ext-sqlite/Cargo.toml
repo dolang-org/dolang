@@ -7,31 +7,47 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lib]
 test = false
 doctest = false
 
-[dependencies]
-bitvec = "1.0.1"
-libc = "0.2"
-nix = { version = "0.31", features = ["fs"] }
-libsqlite3-sys = { version = "0.38", features = ["bundled-windows"] }
-tokio = { version = "1.48", features = ["rt", "time"] }
+
+[dependencies.bitvec]
+workspace = true
+
+
+[dependencies.libc]
+workspace = true
+
+
+[dependencies.nix]
+workspace = true
+features = ["fs"]
+
+
+[dependencies.libsqlite3-sys]
+version = "0.38"
+features = ["bundled-windows"]
+
+
+[dependencies.tokio]
+workspace = true
+features = ["rt", "time"]
 
 [dependencies.dolang]
-path = "../dolang"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang-ext-shell]
-path = "../dolang-ext-shell"
-version = "0.1.1"
+workspace = true
 
-[target.'cfg(unix)'.dependencies]
-sqlite-plugin= "0.11"
+
+[target.'cfg(unix)'.dependencies.sqlite-plugin]
+version = "0.11"
 
 [target.'cfg(unix)'.dependencies.dolang-vfs]
-path = "../dolang-vfs"
-version = "0.1.1"
+workspace = true
 
 # Not used directly: this exists only to turn `runtime` back on for the bindgen
 # that `sqlite-plugin` builds with, which declares it `default-features = false`.
@@ -44,5 +60,9 @@ version = "0.1.1"
 # libclang.dylib`, so the build script builds and then dies in dyld. With
 # `runtime`, clang-sys dlopens libclang by full path instead, and its search
 # includes the `xcode-select` toolchain — no Homebrew LLVM needed.
-[target.'cfg(unix)'.build-dependencies]
-bindgen = { version = "0.72", default-features = false, features = ["runtime"] }
+
+
+[target.'cfg(unix)'.build-dependencies.bindgen]
+version = "0.72"
+default-features = false
+features = ["runtime"]

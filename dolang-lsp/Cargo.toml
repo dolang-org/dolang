@@ -7,30 +7,68 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[dependencies]
-backtrace = "0.3"
-dirs = "6.0.0"
-env_logger = "0.11.8"
-log = "0.4.28"
-toml = { version = "1", features = ["parse"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(asan)"] }
+
+
+[dependencies.backtrace]
+version = "0.3"
+
+
+[dependencies.dirs]
+version = "6.0.0"
+
+
+[dependencies.env_logger]
+version = "0.11.8"
+
+
+[dependencies.log]
+version = "0.4.28"
+
+
+[dependencies.toml]
+workspace = true
+features = ["parse"]
+
+[dependencies.mimalloc]
+workspace = true
+
 
 [dependencies.tokio]
-version = "1.48.0"
+workspace = true
 features = ["macros", "rt", "rt-multi-thread", "io-std", "time"]
+
 
 [dependencies.tower-lsp-server]
 version = "0.23.0"
 
+
 [dependencies.dolang-compile]
-path = "../dolang-compile"
-version = "0.1.1"
+workspace = true
 
-[build-dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 
-[dev-dependencies]
-futures = "0.3"
-serde = "1.0"
-serde_json = "1.0"
-tower = "0.5"
+[build-dependencies.serde]
+workspace = true
+features = ["derive"]
+
+
+[build-dependencies.serde_json]
+workspace = true
+
+
+[dev-dependencies.futures]
+workspace = true
+
+
+[dev-dependencies.serde]
+workspace = true
+
+
+[dev-dependencies.serde_json]
+workspace = true
+
+
+[dev-dependencies.tower]
+version = "0.5"

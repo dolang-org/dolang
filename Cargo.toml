@@ -95,15 +95,358 @@ default-members = [
 ]
 resolver = "3"
 
+
 [workspace.package]
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/dolang-org/dolang"
 rust-version = "1.93"
 
-[workspace.dependencies]
-typed-path = "0.12.3"
-unicode-segmentation = "1.13"
-unicode-width = "0.2"
+
+[workspace.dependencies.dolang]
+path = "dolang"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-bytecode]
+path = "dolang-bytecode"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-compile]
+path = "dolang-compile"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-base64]
+path = "dolang-ext-base64"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-compile]
+path = "dolang-ext-compile"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-digest]
+path = "dolang-ext-digest"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-glob]
+path = "dolang-ext-glob"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-http]
+path = "dolang-ext-http"
+version = "0.1.1"
+default-features = false
+
+
+[workspace.dependencies.dolang-ext-http-mock]
+path = "dolang-ext-http-mock"
+version = "0.1.1"
+default-features = false
+
+
+[workspace.dependencies.dolang-ext-json]
+path = "dolang-ext-json"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-load]
+path = "dolang-ext-load"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-patch]
+path = "dolang-ext-patch"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-progress]
+path = "dolang-ext-progress"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-rand]
+path = "dolang-ext-rand"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-regex]
+path = "dolang-ext-regex"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-shell]
+path = "dolang-ext-shell"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-sqlite]
+path = "dolang-ext-sqlite"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-tar]
+path = "dolang-ext-tar"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-toml]
+path = "dolang-ext-toml"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-url]
+path = "dolang-ext-url"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-uuid]
+path = "dolang-ext-uuid"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-winnet]
+path = "dolang-ext-winnet"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-winreg]
+path = "dolang-ext-winreg"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-winscm]
+path = "dolang-ext-winscm"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-xml]
+path = "dolang-ext-xml"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-yaml]
+path = "dolang-ext-yaml"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-zip]
+path = "dolang-ext-zip"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-private-build]
+path = "dolang-private-build"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-private-bundle]
+path = "dolang-private-bundle"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-private-test]
+path = "dolang-private-test"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-rpc]
+path = "dolang-rpc"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-runtime]
+path = "dolang-runtime"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-shell-main]
+path = "dolang-shell-main"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-shell-modules]
+path = "dolang-shell-modules"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-shell-vfs]
+path = "dolang-shell-vfs"
+version = "0.1.1"
+default-features = false
+
+
+[workspace.dependencies.dolang-util]
+package = "dolang-private-util"
+path = "dolang-private-util"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-vfs]
+path = "dolang-vfs"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-vfs-winnet]
+path = "dolang-vfs-winnet"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-vfs-winreg]
+path = "dolang-vfs-winreg"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-vfs-winscm]
+path = "dolang-vfs-winscm"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-winterop]
+path = "dolang-winterop"
+version = "0.1.1"
+
+
+[workspace.dependencies.annotate-snippets]
+version = "0.12.10"
+
+
+[workspace.dependencies.anstyle]
+version = "1.0.14"
+
+
+[workspace.dependencies.base64]
+version = "0.22.1"
+
+
+[workspace.dependencies.bitflags]
+version = "2.9.4"
+
+
+[workspace.dependencies.bitvec]
+version = "1.0.1"
+
+
+[workspace.dependencies.blake3]
+version = "1.8.2"
+
+
+[workspace.dependencies.bstr]
+version = "1.12.1"
+
+
+[workspace.dependencies.bytes]
+version = "1.5"
+
+
+[workspace.dependencies.console]
+version = "0.16.2"
+
+
+[workspace.dependencies.criterion]
+version = "0.5"
+
+
+[workspace.dependencies.dunce]
+version = "1"
+
+
+[workspace.dependencies.futures]
+version = "0.3.31"
+
+
+[workspace.dependencies.httpdate]
+version = "1.0"
+
+
+[workspace.dependencies.libc]
+version = "0.2"
+
+
+[workspace.dependencies.linkme]
+version = "0.3.35"
+
+
+[workspace.dependencies.mimalloc]
+version = "0.1"
+
+
+[workspace.dependencies.nix]
+version = "0.31"
+
+
+[workspace.dependencies.phf]
+version = "0.14.0"
+
+
+[workspace.dependencies.postcard]
+version = "1.1.3"
+default-features = false
+
+
+[workspace.dependencies.rand]
+version = "0.10"
+
+
+[workspace.dependencies.regex]
+version = "1.11"
+
+
+[workspace.dependencies.serde]
+version = "1.0.228"
+
+
+[workspace.dependencies.serde_json]
+version = "1.0.149"
+
+
+[workspace.dependencies.tempfile]
+version = "3"
+
+
+[workspace.dependencies.thiserror]
+version = "2"
+
+
+[workspace.dependencies.tokio]
+version = "1.48.0"
+
+
+[workspace.dependencies.toml]
+version = "1"
+
+
+[workspace.dependencies.typed-path]
+version = "0.12.3"
+
+
+[workspace.dependencies.unicode-segmentation]
+version = "1.13"
+
+
+[workspace.dependencies.unicode-width]
+version = "0.2"
+
+
+[workspace.dependencies.url]
+version = "2"
+
+
+[workspace.dependencies.uuid]
+version = "1"
+
+
+[workspace.dependencies.wax]
+version = "0.7"
+
+
+[workspace.dependencies.windows-sys]
+version = "0.61"
+
 
 [profile.dist]
 inherits = "release"
@@ -112,6 +455,7 @@ strip = true
 lto = "thin"
 incremental = false
 panic = "abort"
+
 
 [profile.asan]
 inherits = "dev"

@@ -7,39 +7,58 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lib]
 doctest = false
+
 
 [features]
 default = ["json"]
 json = ["dep:dolang-ext-json"]
 
-[dependencies]
-bstr = "1.12.1"
-bytes = "1.5"
-futures = "0.3.31"
-httpdate = "1.0"
-tokio = { version = "1.48", features = ["sync"] }
-url = "2"
+
+[dependencies.bstr]
+workspace = true
+
+
+[dependencies.bytes]
+workspace = true
+
+
+[dependencies.futures]
+workspace = true
+
+
+[dependencies.httpdate]
+workspace = true
+
+
+[dependencies.tokio]
+workspace = true
+features = ["sync"]
+
+
+[dependencies.url]
+workspace = true
 
 [dependencies.dolang-ext-json]
-path = "../dolang-ext-json"
-version = "0.1.1"
+workspace = true
 optional = true
 
+
 [dependencies.dolang-ext-url]
-path = "../dolang-ext-url"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.reqwest]
 version = "0.13.1"
 default-features = false
 features = ["query", "stream", "native-tls", "http2", "cookies", "multipart"]
 
+
 [dependencies.dolang]
-path = "../dolang"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang-ext-shell]
-path = "../dolang-ext-shell"
-version = "0.1.1"
+workspace = true
