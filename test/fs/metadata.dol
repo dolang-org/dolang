@@ -6,7 +6,7 @@ import sys
     - assert_eq
     - assert_type
     - assert_throws
-    - skip
+    - ignore
     - test
   std:
     - RuntimeError
@@ -84,7 +84,7 @@ def closed_fails()
 #[vfs]
 def unix_fields()
   if (sys.os_info().family == :WINDOWS:)
-    skip "requires non-Windows"
+    ignore "requires non-Windows"
   let test_path = "test_metadata_unix.txt"
 
   open $test_path w do |f|
@@ -113,7 +113,7 @@ def unix_fields()
 #[vfs]
 def windows_attrs()
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows"
+    ignore "requires Windows"
   let test_path = "test_metadata_windows.txt"
 
   open $test_path w do |f|
@@ -168,7 +168,7 @@ def windows_attrs()
 #[vfs]
 def windows_batch_attrs()
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows"
+    ignore "requires Windows"
   let first = "test_metadata_windows_batch_1.txt"
   let second = "test_metadata_windows_batch_2.txt"
   open $first w do |f|
@@ -188,7 +188,7 @@ def windows_batch_attrs()
 #[vfs]
 def linux_attrs()
   if (sys.os_info().os != :LINUX:)
-    skip "requires Linux"
+    ignore "requires Linux"
   let test_path = "test_metadata_linux_attrs.txt"
   open $test_path w do |f|
     f.write "linux attrs test"
@@ -227,7 +227,7 @@ def linux_attrs()
 #[vfs]
 def macos_attrs()
   if (sys.os_info().os != :MACOS:)
-    skip "requires macOS"
+    ignore "requires macOS"
   let test_path = "test_metadata_macos_attrs.txt"
   open $test_path w do |f|
     f.write "macos attrs test"
@@ -300,7 +300,7 @@ def fs_basic()
 #[vfs]
 def freebsd_attrs()
   if (sys.os_info().os != :FREEBSD:)
-    skip "requires FreeBSD"
+    ignore "requires FreeBSD"
   let test_path = "test_metadata_freebsd_attrs.txt"
   open $test_path w do |f|
     f.write "freebsd attrs test"
@@ -333,7 +333,7 @@ def freebsd_attrs()
 #[vfs]
 def unix_raw()
   if (sys.os_info().family == :WINDOWS:)
-    skip "requires non-Windows"
+    ignore "requires non-Windows"
   let test_path = "test_fs_metadata_unix.txt"
   open $test_path w do |f|
     f.write "test"

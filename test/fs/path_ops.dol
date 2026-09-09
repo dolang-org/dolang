@@ -6,7 +6,7 @@ import sys
     - assert_eq
     - assert_throws
     - assert_type
-    - skip
+    - ignore
     - test
   std:
     - RuntimeError
@@ -88,7 +88,7 @@ def components_absolute_path()
 #[vfs]
 def alternate_data_stream_io()
   if !(sys.os_info().family == :WINDOWS: && !sys.os_info().is_wine)
-    skip "requires Windows outside Wine"
+    ignore "requires Windows outside Wine"
   let base = Path "ads.txt"
   let stream = Path "ads.txt:zone"
 
@@ -111,7 +111,7 @@ def alternate_data_stream_io()
 #[vfs]
 def alternate_data_stream_enumeration()
   if !(sys.os_info().family == :WINDOWS: && !sys.os_info().is_wine)
-    skip "requires Windows outside Wine"
+    ignore "requires Windows outside Wine"
   let base = Path "ads.txt"
   let stream = Path "ads.txt:zone"
 
@@ -172,7 +172,7 @@ def alternate_data_stream_enumeration()
 #[vfs]
 def directory_alternate_data_stream_enumeration()
   if !(sys.os_info().family == :WINDOWS: && !sys.os_info().is_wine)
-    skip "requires Windows outside Wine"
+    ignore "requires Windows outside Wine"
   let base = Path "adsdir"
   let stream = Path "adsdir:zone"
   base.create_dir()

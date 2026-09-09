@@ -4,6 +4,7 @@ import sys sqlite systemd strand progress docker podman
     - Path
   fs.unix: unix
   test:
+    - ignore
     - skip
     - assert
     - assert_eq
@@ -13,7 +14,7 @@ import sys sqlite systemd strand progress docker podman
     - tags
 
 if (sys.os_info().os != :LINUX:)
-  skip "not supported on this system"
+  ignore "not supported on this system"
 
 tags
   - slow

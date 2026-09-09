@@ -222,11 +222,15 @@ class Harness
 
   def report self
     let rc = 0
+    let ignored = 0
     let skipped = 0
     for failure = self.#errors
       let e = failure.error
       let module = module_name $failure.path
-      if (type e Skip)
+      if (type e Ignore)
+        if failure.test
+          ignored = (ignored + 1)
+      else if (type e Skip)
         if failure.test
           print (info_style "skipped") ": " (name_style "$module/$(failure.test)")
           if e.message
@@ -253,7 +257,7 @@ class Harness
         echo $ term.render_error $e backtrace: $failure.backtrace
         if failure.output
           print "  ──\n" $term.preformat(failure.output).indent(2)
-    print (pass_style "passed") ": $(self.#success)/$(self.#total - skipped)"
+    print (pass_style "passed") ": $(self.#success)/$(self.#total - skipped - ignored)"
     if skipped
       print " ($skipped " (info_style "skipped") ")"
     echo()
@@ -369,7 +373,7 @@ do
 
   for combo = combos
     let kwargs extra_tags name_parts = combo
-    let case_name = "$base_name[$(",".join(name_parts))]"
+    let case_name = "$base_name/$("/".join(name_parts))"
     let case_tags = [...tag_values, ...extra_tags]
     let case_func = do test_def.func(...kwargs)
     collect_key.value.add $case_name $case_tags $case_func
@@ -386,7 +390,7 @@ do
 # Because decorators apply bottom-to-top, axes accumulate in
 # closest-to-`def`-first order (axes from one decorator are ordered as
 # written); this only affects generated case names
-# (`$base_name[$axis1=$v,$axis2=$v,...]`), not correctness.
+# (`$base_name/$axis1=$v/$axis2=$v/...`), not correctness.
 #
 # ## Example
 #
@@ -470,6 +474,23 @@ pub class Skip: std.RuntimeError
 # Skip the current test with an optional message.
 pub def skip msg = nil
   throw Skip $msg
+
+# Exception thrown to omit a test case from the report.
+pub class Ignore: std.RuntimeError
+  # Ignore message, or `nil` if none specified.
+  pub field message = nil
+
+  def (init) self message = nil
+    std.RuntimeError.(init) $self
+      if (message != nil)
+        "test ignored: $message"
+      else
+        "test ignored"
+    self.message = message
+
+# Omit the current test from the report, with an optional message.
+pub def ignore msg = nil
+  throw Ignore $msg
 
 # Assert that `cond` is truthy, throwing an error with optional `msg` on failure.
 pub def assert cond msg = nil

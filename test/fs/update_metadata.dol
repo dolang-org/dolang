@@ -1,12 +1,12 @@
 import sys
   test:
-    - skip
+    - ignore
     - assert_eq
     - assert_throws
     - test
 
 if (sys.os_info().family == :WINDOWS:)
-  skip "requires Unix"
+  ignore "requires Unix"
 
 import
   testlib.vfs:

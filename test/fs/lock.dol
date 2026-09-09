@@ -5,7 +5,7 @@ import strand sys
     - assert
     - assert_eq
     - assert_throws
-    - skip
+    - ignore
     - test
   fs:
     - open
@@ -19,7 +19,7 @@ import strand sys
 #[vfs]
 def scoped_file_locks()
   if (sys.os_info().os == :FREEBSD:)
-    skip "requires byte-range locks"
+    ignore "requires byte-range locks"
   let path = "file_lock.bin"
   open $path w+ do |first|
     open $path r+ do |second|

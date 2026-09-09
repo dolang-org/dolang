@@ -4,6 +4,7 @@ import winscm rand sys shell
     - assert_eq
     - assert_throws
     - assert_type
+    - ignore
     - skip
     - test
   sys:
@@ -30,14 +31,14 @@ def flags_raw_integer_round_trip()
 #[test]
 def unsupported_without_windows_backend()
   if (sys.os_info().family == :WINDOWS:)
-    skip "only exercises the non-Windows stub backend"
+    ignore "only exercises the non-Windows stub backend"
   assert_throws $UnsupportedError do
     winscm.open access: :SC_MANAGER_CONNECT:
 
 #[test]
 def scm_crud_round_trips()
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires a real Windows SCM"
+    ignore "requires a real Windows SCM"
 
   # Every service created below is unique to this run and cleaned up at the
   # end, so this never touches persistent machine state beyond the scratch

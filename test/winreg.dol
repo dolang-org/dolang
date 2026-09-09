@@ -4,7 +4,7 @@ import winreg rand sys
     - assert_eq
     - assert_throws
     - assert_type
-    - skip
+    - ignore
     - test
   sys:
     - NotFoundError
@@ -28,14 +28,14 @@ def access_masks_are_precise_and_lossless()
 #[test]
 def unsupported_without_windows_backend()
   if (sys.os_info().family == :WINDOWS:)
-    skip "only exercises the non-Windows stub backend"
+    ignore "only exercises the non-Windows stub backend"
   assert_throws $UnsupportedError do
     winreg.open :CURRENT_USER:
 
 #[test]
 def registry_crud_round_trips()
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires a real Windows registry"
+    ignore "requires a real Windows registry"
 
   # Everything below operates under a per-run scratch subkey of
   # HKEY_CURRENT_USER\Software\dolang-vfs-winreg-tests, so the test never

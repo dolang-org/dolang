@@ -2,7 +2,7 @@ import _ssh base64 proc sys
   test:
     - assert_eq
     - assert_throws
-    - skip
+    - ignore
     - test
   fs:
     - with_temp_dir
@@ -102,7 +102,7 @@ def command_encodes_remote_args()
 #[test]
 def with_uses_stdio_vfs()
   if (sys.os_info().family == :WINDOWS:)
-    skip "requires the Unix SSH test shim"
+    ignore "requires the Unix SSH test shim"
 
   with_temp_dir do |dir|
     let shim = (dir / "ssh")

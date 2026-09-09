@@ -26,7 +26,7 @@ import sys admin
     - assert_throws
     - assert_type
     - fixture
-    - skip
+    - ignore
     - test
 
 def extended_posix_acl id
@@ -91,7 +91,7 @@ def acl_kind_supported kind
 # collides across them.
 def scratch_ufs_wrap kind block ...rest
   if !(acl_kind_supported kind)
-    skip "$kind ACLs are not supported on this platform"
+    ignore "$kind ACLs are not supported on this platform"
   if (sys.os_info().os != :FREEBSD:)
     return block(...rest)
 
@@ -125,7 +125,7 @@ def scratch_ufs_wrap kind block ...rest
 # where `kind` ACLs actually are supported.
 def unsupported_wrap kind block ...rest
   if (acl_kind_supported kind)
-    skip "$kind ACLs are supported on this platform"
+    ignore "$kind ACLs are supported on this platform"
   block(...rest)
 
 #[fixture]
