@@ -534,10 +534,9 @@ return $
 
   pages:
     help: build the complete GitHub Pages site
-    do |args|
-      let spec = Spec $args profile: release
-      mkdocs_build_tools $spec
-      with_mkdocs $spec do dodo.show mkdocs build --strict
+    do |_|
+      mkdocs_build_tools()
+      with_mkdocs do dodo.show mkdocs build --strict
       rustdoc_build()
       copy target/doc site/rustdoc all: true
       copy .github/rustdoc-index.html site/rustdoc/index.html
