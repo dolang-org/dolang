@@ -157,22 +157,24 @@ def fancy_value value
 
 # Parsed operating-system identification data with standard-aware projections.
 #
-# Indexing, iteration, and destructuring expose the parsed `os-release`
-# assignments. Named fields apply the defaults and conversions prescribed by
-# the os-release specification.
+# Named fields apply the defaults and conversions prescribed by the
+# os-release specification.
 pub class OsRelease
   field values = nil
 
   def (init) self values
     self.#values = values
 
-  def (index) self key
+  # Reads a parsed `os-release` assignment by key.
+  pub def (index) self key
     self.#values[key]
 
-  def (iter) self
+  # Iterates the parsed `os-release` assignments.
+  pub def (iter) self
     self.#values.iter()
 
-  def (unpack) self
+  # Destructures the parsed `os-release` assignments.
+  pub def (unpack) self
     self.#values
 
   # The operating system name, defaulting to `Linux`.
@@ -367,10 +369,12 @@ pub class OsRelease
     self.#values.get "CONFEXT_LEVEL" default: nil
 
 # Returns parsed OS-identification data from an `os-release` file.
-#
-# When `path:` is omitted, reads `/etc/os-release`, falling back to
-# `/usr/lib/os-release` as required by the os-release specification.
-pub def os_release :path = nil
+pub def os_release
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) File to read. Defaults to
+  # `/etc/os-release`, falling back to `/usr/lib/os-release` as required by
+  # the os-release specification.
+  :path = nil
+do
   if (path == nil)
     let etc = Path /etc/os-release
     path = if etc.exists()

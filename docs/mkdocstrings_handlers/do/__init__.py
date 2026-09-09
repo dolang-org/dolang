@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 # How many parameters a signature keeps once a parameter table repeats them.
-MAX_SIGNATURE_PARAMS = 2
+MAX_SIGNATURE_PARAMS = 3
 
 from mkdocstrings._internal.handlers.base import BaseHandler, CollectionError
 
@@ -179,6 +179,7 @@ class DoHandler(BaseHandler):
 
         doc_data = copy.deepcopy(cached)
         entities = self._resolve_entities(Path(cache_dir), module_name, doc_data.get("entities", []))
+        _sort_entities(entities)
 
         show_undocumented = options.get("show_undocumented", False)
         if not show_undocumented:
@@ -232,6 +233,22 @@ def _annotate_entities(entities: list[dict], module_name: str) -> None:
         for member in entity.get("members", []):
             member["_identifier"] = f"{module_name}.{name}.{member['name']}"
             member["_module"] = module_name
+
+
+def _sort_entities(entities: list[dict]) -> None:
+    """Alphabetize entities and their members in place.
+
+    Declaration order in the source has no documentation value and produces
+    pages whose ordering varies file to file; every list a template iterates
+    -- a module's types/functions/values, a class's fields/methods -- is
+    built by filtering this list while preserving relative order, so sorting
+    it once here alphabetizes each of those downstream lists too.
+    """
+    entities.sort(key=lambda e: (e.get("name") or "").lower())
+    for entity in entities:
+        members = entity.get("members")
+        if members:
+            _sort_entities(members)
 
 
 def _rewrite_doc_refs(entity: dict, aliases: dict[str, str]) -> None:
@@ -371,6 +388,13 @@ def _annotate_params(entities: list[dict]) -> None:
             return_type, doc = _split_type((entity.get("doc", "") or "").strip())
             entity["return_type"] = return_type
             entity["doc_intro"], entity["doc_sections"] = _split_intro(doc)
+        elif entity.get("kind") == "field":
+            # Same leading-parenthesised-type convention as a parameter's
+            # description (see `_split_type`), peeled off before the rest is
+            # rendered as the field's doc.
+            type_, doc = _split_type((entity.get("doc", "") or "").strip())
+            entity["type"] = type_
+            entity["doc"] = doc
         _annotate_params(entity.get("members", []))
 
 

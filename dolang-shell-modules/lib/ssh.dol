@@ -6,10 +6,9 @@ import _ssh
 # spawned programs, environment, working directory, system information, and
 # security queries use the remote target for the duration of the block.
 #
-# `identity:` and `jump:` may be repeated. TTY allocation and SSH escape
-# processing are disabled. Agent forwarding is disabled unless
-# `forward_agent` is true. Advanced settings not represented here continue to
-# come from SSH configuration.
+# TTY allocation and SSH escape processing are disabled. Agent forwarding is
+# disabled unless `forward_agent` is true. Advanced settings not represented
+# here continue to come from SSH configuration.
 #
 # The remote host must provide `dolang-vfs` in its command search path unless
 # `command` supplies another location. The SSH session is terminated when
@@ -21,46 +20,19 @@ import _ssh
 # Windows hosts it reads the user environment from the registry, which the
 # OpenSSH server there populates only for `PATH`.
 #
-# Pass `login_env: false` to skip this, or a path to use that login shell
-# instead of the one in the passwd database; a path is ignored by Windows
-# hosts, which have no login shell. `env` overrides win over imported values.
-#
-# ## Parameters
-#
-# | Name                 | type     | Description                                      |
-# | -------------------- | -------- | ------------------------------------------------ |
-# | `host`               | `Str`    | SSH destination                                  |
-# | `block`              | callable | Block to run                                     |
-# | `user`               | `Str?`   | Remote user                                      |
-# | `port`               | `Int?`   | SSH server port                                  |
-# | `identity`           | `*`      | Identity file; may be repeated                   |
-# | `identities_only`    | `Bool?`  | Restrict authentication to configured identities |
-# | `forward_agent`      | `Bool?`  | Forward the authentication agent                 |
-# | `jump`               | `Str*`   | Jump host; may be repeated                       |
-# | `connect_timeout`    | `Int?`   | Connection timeout in seconds                    |
-# | `keepalive_interval` | `Int?`   | Protocol keepalive interval in seconds           |
-# | `keepalive_count`    | `Int?`   | Unanswered keepalives allowed                    |
-# | `batch`              | `Bool?`  | Disable interactive prompts                      |
-# | `host_key`           | `sym?`   | `:DEFAULT:`, `:STRICT:`, or `:ACCEPT_NEW:`       |
-# | `known_hosts`        | `Path?`  | Override the known-hosts file                    |
-# | `command`            | `array?` | Remote VFS launcher prefix                        |
-# | `cd`                 | `Path?`  | Initial remote working directory                  |
-# | `env`                | `Dict`   | Initial remote environment overrides              |
-# | `login_env`          | `Bool?`  | Import the remote login environment; may name a Unix shell |
-#
 # ## Returns
 #
 # The result of `block`.
 #
 # ## Errors
 #
-# | Error                | Condition                                      |
-# | -------------------- | ---------------------------------------------- |
-# | `proc.Error`         | SSH exits unsuccessfully                       |
-# | `sys.Error`          | SSH or the remote VFS cannot be contacted      |
-# | `ValueError`         | `host_key` is not a supported policy           |
-# | `UnexpectedKeyError` | An unrecognized keyword option is passed       |
-# | `UnexpectedPosError` | An unexpected positional argument is passed    |
+# | Error                                          | Condition                                    |
+# | ----------------------------------------------- | --------------------------------------------- |
+# | [`proc.Error`](proc.Error)                 | SSH exits unsuccessfully                     |
+# | [`sys.Error`](sys.Error)                   | SSH or the remote VFS cannot be contacted    |
+# | [`ValueError`](std.ValueError)             | `host_key` is not a supported policy         |
+# | [`UnexpectedKeyError`](std.UnexpectedKeyError) | An unrecognized keyword option is passed |
+# | [`UnexpectedPosError`](std.UnexpectedPosError) | An unexpected positional argument is passed |
 #
 # ## Example
 #
@@ -85,22 +57,54 @@ import _ssh
 #       cargo build --release
 # ```
 pub def with
+  # ([`Str`](std.Str)) SSH destination.
   host
+  # ([`Func`](std.Func)) Block to run under the remote VFS.
   block
+  # ([`Str`](std.Str)) Remote user.
   :user = nil
+  # ([`Int`](std.Int)) SSH server port.
   :port = nil
+  # ([`Bool`](std.Bool)) Restrict authentication to configured identities.
   :identities_only = false
+  # ([`Bool`](std.Bool)) Forward the authentication agent.
   :forward_agent = false
+  # ([`Int`](std.Int)) Connection timeout in seconds.
   :connect_timeout = nil
+  # ([`Int`](std.Int)) Protocol keepalive interval in seconds.
   :keepalive_interval = nil
+  # ([`Int`](std.Int)) Unanswered keepalives allowed before disconnecting.
   :keepalive_count = nil
+  # ([`Bool`](std.Bool)) Disable interactive prompts.
   :batch = false
+  # ([`Sym`](std.Sym)) Host-key verification policy.
+  #
+  # | Value          | Meaning                                                  |
+  # | -------------- | --------------------------------------------------------- |
+  # | `:DEFAULT:`    | Use SSH's own configured checking policy                 |
+  # | `:STRICT:`     | Reject any host key not already in the known-hosts file  |
+  # | `:ACCEPT_NEW:` | Accept and record an unknown host key; reject a changed one |
   :host_key = :DEFAULT:
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Override the known-hosts file.
   :known_hosts = nil
+  # ([`Iterable`](std.Iterable)) Remote VFS launcher command and arguments.
   :command = ["dolang-vfs"]
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Initial remote working directory.
   :cd = nil
+  # ([`Dict`](std.Dict)) Initial remote environment overrides.
   :env = {}
+  # ([`Bool`](std.Bool)\|[`Str`](std.Str)) Import the remote login
+  # environment. `false` skips it entirely; a path names the login shell to
+  # use instead of the one in the passwd database, and is ignored on Windows
+  # hosts, which have no login shell. `env` overrides win over imported
+  # values.
   :login_env = true
+  # Additional options
+  #
+  # | Name       | Type                                | Description                |
+  # | ---------- | ------------------------------------| -------------------------- |
+  # | `identity` | [`Str`](std.Str)\|[`Path`](fs.Path) | Identity file. Repeatable  |
+  # | `jump`     | [`Str`](std.Str)                    | Jump host. Repeatable      |
   ...options
 do
   _ssh.with_program ssh

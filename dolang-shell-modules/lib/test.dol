@@ -317,12 +317,6 @@ pub def fixture wrap
 
 # Registers a zero-argument test callable.
 #
-# ## Parameters
-#
-# `name` is the reporting name and defaults to `str(func)`. `tags` is an
-# iterable of strings; order and duplicates are preserved. `func` is supplied
-# implicitly when this function is used as a decorator.
-#
 # ## Returns
 #
 # Returns `func`, or a decorator awaiting it when `func` is omitted.
@@ -335,8 +329,13 @@ pub def fixture wrap
 #   connect()
 # ```
 pub def test
+  # ([`Str`](std.Str)) Reporting name. Defaults to `str(func)`.
   :name = nil
+  # ([`Iterable`](std.Iterable)) Tags to attach. Order and duplicates are
+  # preserved.
   :tags = []
+  # ([`Func`](std.Func)) Test function. Supplied implicitly when this
+  # function is used as a decorator.
   func = nil
 do
   if (func == nil)
@@ -389,11 +388,6 @@ do
 # written); this only affects generated case names
 # (`$base_name[$axis1=$v,$axis2=$v,...]`), not correctness.
 #
-# ## Parameters
-#
-# Each keyword argument's value is an iterable of raw values and/or
-# `tagged(value, ...tags)` wrappers for that axis.
-#
 # ## Example
 #
 # ```
@@ -402,7 +396,14 @@ do
 # def connects :backend
 #   backend.ping()
 # ```
-pub def parametrize func = nil ...axes
+pub def parametrize
+  # ([`Func`](std.Func)) Test function. Supplied implicitly when this
+  # function is used as a decorator.
+  func = nil
+  # ([`Iterable`](std.Iterable)) An axis name paired with an iterable of raw
+  # values and/or `tagged(value, ...tags)` wrappers for that axis.
+  ...axes
+do
   if (func == nil)
     return do |func| parametrize $func ...axes
   let test_def = to_test_def $func
@@ -419,10 +420,6 @@ pub def parametrize func = nil ...axes
 # Repeated calls accumulate tags. Module tags precede tags supplied directly
 # to `test`; order and duplicates are preserved.
 #
-# ## Parameters
-#
-# `values` are the string tags to add.
-#
 # ## Example
 #
 # ```
@@ -432,7 +429,10 @@ pub def parametrize func = nil ...axes
 # def connects()
 #   connect()
 # ```
-pub def tags ...values
+pub def tags
+  # ([`Str`](std.Str)) Tag to add.
+  ...values
+do
   let tag_values = []
   for tag = values.pos_only()
     if !(type tag Str)
@@ -525,14 +525,6 @@ pub def assert_type expected value msg = nil
 
 # Discovers and runs tests under the trailing file and directory paths.
 #
-# ## Parameters
-#
-# `jobs` and `module_jobs` limit concurrent tests and modules. `filter` is a
-# predicate receiving a `TestInfo` and defaults to accepting every test.
-# `timeout` is the per-test and module-load timeout in seconds. `capture`
-# captures output and shows it for failures. `paths` contains test files or
-# directories.
-#
 # The bundled `dolang -m test` command retains `--filter` glob matching against
 # `module/name`. Its repeatable `--tags` option splits each occurrence on
 # commas: alternatives in one occurrence are ORed, while occurrences are
@@ -547,11 +539,18 @@ pub def assert_type expected value msg = nil
 # Returns zero when all selected tests pass, or one when any module or test
 # fails.
 pub def run
+  # ([`Int`](std.Int)) Maximum concurrent tests.
   :jobs = 8
+  # ([`Int`](std.Int)) Maximum concurrent modules.
   :module_jobs = 4
+  # ([`Func`](std.Func)) Predicate receiving a
+  # [`TestInfo`](test.TestInfo). Defaults to accepting every test.
   :filter = (do |_| true)
+  # ([`Int`](std.Int)) Per-test and module-load timeout in seconds.
   :timeout = 600
+  # ([`Bool`](std.Bool)) Capture output and show it for failures.
   :capture = true
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Test file or directory.
   ...paths
 do
   let paths = [...paths.pos_only()]

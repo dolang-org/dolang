@@ -1,29 +1,8 @@
-# Security identity of the active VFS target.
-#
-# Platform-specific types and functions are exposed by the submodules below.
-#
-# ## Modules
-#
-# | Module                                   | Description                       |
-# | ---------------------------------------- | --------------------------------- |
-# | [`security.unix`](security.unix)       | POSIX.1e ACLs and uid/gid lookups |
-# | [`security.nfs4`](security.nfs4)       | NFSv4 ACLs                        |
-# | [`security.macos`](security.macos)     | macOS extended ACLs and UUIDs     |
-# | [`security.windows`](security.windows) | Windows security descriptors      |
+# Platform-neutral security APIs.
 
-# Returns the current target user's name.
+# ([`Str`](std.Str)) Get the current user's name.
 #
 # This is the real user ID's name on Unix, or the access token's user SID's
 # name on Windows.
-#
-# ## Returns
-#
-# [`Str`](std.Str)
-#
-# ## Example
-#
-# ```
-# echo "running as $(user_name())"
-# ```
 pub def user_name()
   throw nil

@@ -355,8 +355,8 @@ def normalize_save_format runtime format
 def normalize_platform platform
   if (platform == nil)
     return nil
-  if (type platform Str || type platform Sym)
-    return str platform
+  if (type platform Str)
+    return platform
   let os = platform.get :os: default: nil
   let arch = platform.get :arch: default: nil
   let variant = platform.get :variant: default: nil

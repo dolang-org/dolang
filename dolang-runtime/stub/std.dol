@@ -15,9 +15,6 @@ pub def array ...values
 #
 # Converts a value to [`Bool`](std.Bool) according to its truthiness.
 #
-# Only `false` and `nil` are falsy in boolean contexts. This conversion also
-# treats zero numbers and empty strings as false.
-#
 # ## Example
 #
 # ```
@@ -193,6 +190,263 @@ do
 #
 pub def verbatim value
   throw nil
+
+# The following types are declared out of alphabetical order because many
+# other types in this module reference them as supertypes.
+
+#
+# The abstract base type for all errors. All error types in `std` inherit
+# from `Error`, so it can be used as a catch-all in typed `catch` handlers.
+#
+# `Error` is abstract: it has no representation of its own, so it can be neither
+# constructed nor inherited from directly. Subclass one of its concrete subtypes
+# instead — usually [`RuntimeError`](std.RuntimeError).
+pub class Error
+
+
+#
+# Supertype of ordinary catchable runtime failures, and a generic runtime error
+# in its own right when no more specific type applies.
+#
+#
+# ## Subclassing
+#
+# A class may inherit from `RuntimeError` or any of its subtypes. The subclass
+# must chain to the supertype's constructor, which is what gives the instance
+# its string form:
+#
+# ```
+# class NoDomainError: RuntimeError
+#   pub field name = nil
+#
+#   def (init) self name
+#     RuntimeError.(init) $self "domain does not exist: $name"
+#     self.name = name
+#
+# try
+#   throw NoDomainError "guest0"
+# catch RuntimeError: e
+#   assert_eq (str e) "domain does not exist: guest0"
+# ```
+#
+# See [Error handling](../../language/error-handling.md#subclassing-error-types).
+pub class RuntimeError: Error
+  #
+  #
+  # Builds a runtime error carrying `message` verbatim — unlike the more specific
+  # types, it adds no prefix of its own.
+  #
+  pub def (init)
+    self
+    # ([`Str`](std.Str)) the error's complete string form
+    message
+  do
+    throw nil
+
+
+#
+# Abstract type for iterable values. Values that implement the `(iter)` protocol
+# are instances of `Iterable`, which can be used for type testing.
+#
+pub class Iterable
+  # ([`Iter`](std.Iter)) Returns an iterator over the value.
+  pub def iter self
+    throw nil
+
+  # Tests whether every item is truthy, or satisfies `pred`.
+  pub def all self pred = nil
+    throw nil
+
+  # Tests whether any item is truthy, or satisfies `pred`.
+  pub def any self pred = nil
+    throw nil
+
+  # Returns an iterator followed by the additional iterables.
+  pub def chain self ...values
+    throw nil
+
+  # Returns an iterator with one trailing line terminator removed from each item.
+  pub def chomp self
+    throw nil
+
+  # Returns an iterator with a line terminator appended to each item.
+  pub def crimp self terminator = nil
+    throw nil
+
+  # Returns an iterator of `[index, value]` tuples.
+  pub def enumerate self
+    throw nil
+
+  # Returns an iterator of values for which `pred` is truthy.
+  pub def filter self pred
+    throw nil
+
+  # Returns the first value for which `pred` is truthy.
+  pub def find self pred :default = nil :else = nil
+    throw nil
+
+  # Accumulates a value left-to-right with `func`.
+  pub def fold self init func
+    throw nil
+
+  # Returns an iterator that maps each item through `func`.
+  pub def map self func
+    throw nil
+
+  # Returns the largest item.
+  pub def max self :default = nil
+    throw nil
+
+  # Returns the smallest item.
+  pub def min self :default = nil
+    throw nil
+
+  # Returns an iterator that discards the first `n` items.
+  pub def skip self n
+    throw nil
+
+  # Returns an iterator yielding at most `n` items.
+  pub def take self n
+    throw nil
+
+  # Returns an iterator of tuples across this and additional iterables.
+  pub def zip self ...values
+    throw nil
+
+
+#
+# Abstract type for values that implement the `(sink)` protocol.
+#
+pub class Sinkable
+  # ([`Sink`](std.Sink)) Returns a sink over the value.
+  pub def sink self
+    throw nil
+
+  # Writes a value to the sink.
+  pub def put self value
+    throw nil
+
+  # Returns a sink that removes one trailing line terminator from each value.
+  pub def prechomp self
+    throw nil
+
+  # Returns a sink that appends a line terminator to each value.
+  pub def precrimp self terminator = nil
+    throw nil
+
+  # Returns a sink that writes only values for which `pred` is truthy.
+  pub def prefilter self pred
+    throw nil
+
+  # Returns a sink that transforms each value with `func` before writing it.
+  pub def premap self func
+    throw nil
+
+
+#
+# Abstract type for sinks. Values that implement the sink protocol
+# are instances of `Sink`, which can be used for type testing.
+#
+# `Sink` is not constructible directly.
+#
+# ```
+# assert_eq (type $ [].sink()) $Sink
+# ```
+#
+pub class Sink: Sinkable
+  #
+  #
+  # Creates a wrapper `Sink` which removes a trailing line terminator (`\n` or
+  # `\r\n`) from each item, if present, before it is written.
+  #
+  # ## Errors
+  #
+  # Putting an item raises [`TypeError`](std.TypeError) if it is neither
+  # neither a `Str` nor a `Bin`.
+  #
+  # ## Example
+  #
+  # ```
+  # let acc = []
+  # let out = acc.prechomp()
+  # out.put "line\n"
+  # assert_eq $acc ["line"]
+  # ```
+  #
+  pub def prechomp self
+    throw nil
+
+  #
+  # Creates a wrapper `Sink` that appends a terminator to each value before it is
+  # written. The append is unconditional, so an item that already ends in one gets
+  # a second.
+  #
+  # ## Errors
+  #
+  # Raises [`TypeError`](std.TypeError) for a value, or a terminator, that is
+  # neither a `Str` nor a `Bin`, or if a `Bin` terminator would leave a `Str` value
+  # invalid UTF-8.
+  #
+  # ## Example
+  #
+  # ```
+  # let out = shell.stdout.precrimp()
+  # out.put "hello"
+  # # writes "hello\n"
+  #
+  # open $path w do |file|
+  #   file.precrimp(shell.line_ending()).put "native"
+  # ```
+  #
+  pub def precrimp self terminator = nil
+    throw nil
+
+  #
+  # Wraps the sink so only values for which `pred` is truthy are written.
+  #
+  # Because each wrapper transforms values on the way in, the outermost wrapper
+  # sees a value first — the reverse of an iterator chain.
+  #
+  # ## Example
+  #
+  # ```
+  # let acc = []
+  # let out = acc.prefilter (do |x| x % 2 == 0)
+  # out.put 1
+  # out.put 2
+  # assert_eq $acc [2]
+  # ```
+  #
+  pub def prefilter self pred
+    throw nil
+
+  #
+  # Wraps the sink so each value is transformed before it is written.
+  #
+  # The `pre` prefix marks the direction: unlike [`Iter.map`](std.Iter.map),
+  # which transforms values on their way *out*, `premap` transforms values on their
+  # way *into* the sink. A value that is both [`Iterable`](std.Iterable) and
+  # [`Sinkable`](std.Sinkable) — an [`Array`](std.Array), say — therefore offers
+  # `map` and `premap` as separate methods running in opposite directions.
+  #
+  # ## Example
+  #
+  # ```
+  # let acc = []
+  # let out = acc.premap (do |x| x * 2)
+  # out.put 3
+  # assert_eq $acc [6]
+  # ```
+  #
+  pub def premap self func
+    throw nil
+
+  #
+  # Writes a value to the sink.
+  #
+  pub def put self value
+    throw nil
+
 
 # Raised when execution is aborted by the host trap mechanism.
 #
@@ -1608,15 +1862,6 @@ pub class Dict
 
 
 #
-# The abstract base type for all errors. All error types in `std` inherit
-# from `Error`, so it can be used as a catch-all in typed `catch` handlers.
-#
-# `Error` is abstract: it has no representation of its own, so it can be neither
-# constructed nor inherited from directly. Subclass one of its concrete subtypes
-# instead — usually [`RuntimeError`](std.RuntimeError).
-pub class Error
-
-#
 # Raised when accessing a nonexistent field on an object.
 #
 pub class FieldError: RuntimeError
@@ -2733,75 +2978,6 @@ pub class Iter: Iterable
     throw nil
 
 
-#
-# Abstract type for iterable values. Values that implement the `(iter)` protocol
-# are instances of `Iterable`, which can be used for type testing.
-#
-pub class Iterable
-  # ([`Iter`](std.Iter)) Returns an iterator over the value.
-  pub def iter self
-    throw nil
-
-  # Tests whether every item is truthy, or satisfies `pred`.
-  pub def all self pred = nil
-    throw nil
-
-  # Tests whether any item is truthy, or satisfies `pred`.
-  pub def any self pred = nil
-    throw nil
-
-  # Returns an iterator followed by the additional iterables.
-  pub def chain self ...values
-    throw nil
-
-  # Returns an iterator with one trailing line terminator removed from each item.
-  pub def chomp self
-    throw nil
-
-  # Returns an iterator with a line terminator appended to each item.
-  pub def crimp self terminator = nil
-    throw nil
-
-  # Returns an iterator of `[index, value]` tuples.
-  pub def enumerate self
-    throw nil
-
-  # Returns an iterator of values for which `pred` is truthy.
-  pub def filter self pred
-    throw nil
-
-  # Returns the first value for which `pred` is truthy.
-  pub def find self pred :default = nil :else = nil
-    throw nil
-
-  # Accumulates a value left-to-right with `func`.
-  pub def fold self init func
-    throw nil
-
-  # Returns an iterator that maps each item through `func`.
-  pub def map self func
-    throw nil
-
-  # Returns the largest item.
-  pub def max self :default = nil
-    throw nil
-
-  # Returns the smallest item.
-  pub def min self :default = nil
-    throw nil
-
-  # Returns an iterator that discards the first `n` items.
-  pub def skip self n
-    throw nil
-
-  # Returns an iterator yielding at most `n` items.
-  pub def take self n
-    throw nil
-
-  # Returns an iterator of tuples across this and additional iterables.
-  pub def zip self ...values
-    throw nil
-
 
 #
 # Raised when a required key argument is not provided.
@@ -2840,12 +3016,6 @@ pub class MissingPosError: RuntimeError
 #
 # `Nil` is not constructible directly.
 #
-# `Nil` is also returned by `type`:
-#
-# ```
-# assert_eq (type nil) $Nil
-# assert (type nil Nil)
-# ```
 pub class Nil
 
 #
@@ -2858,13 +3028,13 @@ pub class Nil
 # run tool stdin: $null stdout: $null
 # ```
 #
-pub class Null
-  # Ends immediately without yielding a value.
-  pub def (iter) self
+pub class Null: Iter Sink
+  # Ends the iteration immediately without yielding a value.
+  pub def (next) self
     throw nil
 
-  # Returns a sink.
-  pub def (sink) self
+  # Discards the value.
+  pub def (put) self value
     throw nil
 
 
@@ -3126,45 +3296,6 @@ pub class Record
     throw nil
 
 
-#
-# Supertype of ordinary catchable runtime failures, and a generic runtime error
-# in its own right when no more specific type applies.
-#
-#
-# ## Subclassing
-#
-# A class may inherit from `RuntimeError` or any of its subtypes. The subclass
-# must chain to the supertype's constructor, which is what gives the instance
-# its string form:
-#
-# ```
-# class NoDomainError: RuntimeError
-#   pub field name = nil
-#
-#   def (init) self name
-#     RuntimeError.(init) $self "domain does not exist: $name"
-#     self.name = name
-#
-# try
-#   throw NoDomainError "guest0"
-# catch RuntimeError: e
-#   assert_eq (str e) "domain does not exist: guest0"
-# ```
-#
-# See [Error handling](../../language/error-handling.md#subclassing-error-types).
-pub class RuntimeError: Error
-  #
-  #
-  # Builds a runtime error carrying `message` verbatim — unlike the more specific
-  # types, it adds no prefix of its own.
-  #
-  pub def (init)
-    self
-    # ([`Str`](std.Str)) the error's complete string form
-    message
-  do
-    throw nil
-
 
 #
 # Sets are ordered, mutable collections with unique membership semantics.
@@ -3371,138 +3502,6 @@ pub class SinkStop: Error
     throw nil
 
 
-#
-# Abstract type for sinks. Values that implement the sink protocol
-# are instances of `Sink`, which can be used for type testing.
-#
-# `Sink` is not constructible directly.
-#
-# ```
-# assert_eq (type $ [].sink()) $Sink
-# ```
-#
-pub class Sink: Sinkable
-  #
-  #
-  # Creates a wrapper `Sink` which removes a trailing line terminator (`\n` or
-  # `\r\n`) from each item, if present, before it is written.
-  #
-  # ## Errors
-  #
-  # Putting an item raises [`TypeError`](std.TypeError) if it is neither
-  # neither a `Str` nor a `Bin`.
-  #
-  # ## Example
-  #
-  # ```
-  # let acc = []
-  # let out = acc.prechomp()
-  # out.put "line\n"
-  # assert_eq $acc ["line"]
-  # ```
-  #
-  pub def prechomp self
-    throw nil
-
-  #
-  # Creates a wrapper `Sink` that appends a terminator to each value before it is
-  # written. The append is unconditional, so an item that already ends in one gets
-  # a second.
-  #
-  # ## Errors
-  #
-  # Raises [`TypeError`](std.TypeError) for a value, or a terminator, that is
-  # neither a `Str` nor a `Bin`, or if a `Bin` terminator would leave a `Str` value
-  # invalid UTF-8.
-  #
-  # ## Example
-  #
-  # ```
-  # let out = shell.stdout.precrimp()
-  # out.put "hello"
-  # # writes "hello\n"
-  #
-  # open $path w do |file|
-  #   file.precrimp(shell.line_ending()).put "native"
-  # ```
-  #
-  pub def precrimp self terminator = nil
-    throw nil
-
-  #
-  # Wraps the sink so only values for which `pred` is truthy are written.
-  #
-  # Because each wrapper transforms values on the way in, the outermost wrapper
-  # sees a value first — the reverse of an iterator chain.
-  #
-  # ## Example
-  #
-  # ```
-  # let acc = []
-  # let out = acc.prefilter (do |x| x % 2 == 0)
-  # out.put 1
-  # out.put 2
-  # assert_eq $acc [2]
-  # ```
-  #
-  pub def prefilter self pred
-    throw nil
-
-  #
-  # Wraps the sink so each value is transformed before it is written.
-  #
-  # The `pre` prefix marks the direction: unlike [`Iter.map`](std.Iter.map),
-  # which transforms values on their way *out*, `premap` transforms values on their
-  # way *into* the sink. A value that is both [`Iterable`](std.Iterable) and
-  # [`Sinkable`](std.Sinkable) — an [`Array`](std.Array), say — therefore offers
-  # `map` and `premap` as separate methods running in opposite directions.
-  #
-  # ## Example
-  #
-  # ```
-  # let acc = []
-  # let out = acc.premap (do |x| x * 2)
-  # out.put 3
-  # assert_eq $acc [6]
-  # ```
-  #
-  pub def premap self func
-    throw nil
-
-  #
-  # Writes a value to the sink.
-  #
-  pub def put self value
-    throw nil
-
-
-#
-# Abstract type for values that implement the `(sink)` protocol.
-#
-pub class Sinkable
-  # ([`Sink`](std.Sink)) Returns a sink over the value.
-  pub def sink self
-    throw nil
-
-  # Writes a value to the sink.
-  pub def put self value
-    throw nil
-
-  # Returns a sink that removes one trailing line terminator from each value.
-  pub def prechomp self
-    throw nil
-
-  # Returns a sink that appends a line terminator to each value.
-  pub def precrimp self terminator = nil
-    throw nil
-
-  # Returns a sink that writes only values for which `pred` is truthy.
-  pub def prefilter self pred
-    throw nil
-
-  # Returns a sink that transforms each value with `func` before writing it.
-  pub def premap self func
-    throw nil
 
 
 #

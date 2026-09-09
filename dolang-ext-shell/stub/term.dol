@@ -591,7 +591,7 @@ pub def capture
   # install. A plain sink is wrapped in a
   # [`SinkConsole`](term.SinkConsole) using the requested `mode:`.
   console
-  # (callable) Block to run.
+  # ([`Func`](std.Func)) Block to run.
   block
   # ([`Sym`](std.Sym)?) `:LINE:` (the default) or `:CHUNK:`, when
   # `console` is a plain sink. See
@@ -635,7 +635,7 @@ do
 # mute do run printf "this will not be printed"
 # ```
 pub def mute
-  # (callable) Block to run.
+  # ([`Func`](std.Func)) Block to run.
   block
   # Additional arguments passed to the block.
   ...args
@@ -749,7 +749,7 @@ do
 # assert_eq $greeting "Hello, Alice!"
 # ```
 pub def sub
-  # (callable) Block to run.
+  # ([`Func`](std.Func)) Block to run.
   block
   # ([`Bool`](std.Bool)?) Strip one trailing line ending, LF or CRLF.
   # True by default.

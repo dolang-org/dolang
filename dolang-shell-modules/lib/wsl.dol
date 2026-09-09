@@ -27,30 +27,24 @@ def find_windows_command()
 
 # Runs `block` in a WSL Linux distribution through a stdio VFS.
 #
-# The active VFS target must be Windows. `distro:` and `user:` select the WSL
-# distribution and Linux user; when omitted, WSL uses its configured defaults.
-# `command:` is the Linux VFS launcher prefix.
-#
-# ## Parameters
-#
-# | Name      | type     | Description                         |
-# | --------- | -------- | ----------------------------------- |
-# | `block`   | `func`   | Block to run in Linux               |
-# | `distro`  | `Str?`   | WSL distribution                    |
-# | `user`    | `Str?`   | Linux user                          |
-# | `command` | `Array`  | Linux VFS launcher prefix           |
-# | `cd`      | `Path?`  | Initial Linux working directory     |
-# | `env`     | `Dict`   | Initial Linux environment overrides |
+# The active VFS target must be Windows.
 #
 # ## Returns
 #
 # The result of `block`.
 pub def with_linux
+  # ([`Func`](std.Func)) Block to run in Linux.
   block
+  # ([`Str`](std.Str)) WSL distribution. Defaults to WSL's configured
+  # default.
   :distro = nil
+  # ([`Str`](std.Str)) Linux user. Defaults to WSL's configured default.
   :user = nil
+  # ([`Iterable`](std.Iterable)) Linux VFS launcher command and arguments.
   :command = ["dolang-vfs"]
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Initial Linux working directory.
   :cd = nil
+  # ([`Dict`](std.Dict)) Initial Linux environment overrides.
   :env = {}
 do
   require_windows()
@@ -64,25 +58,19 @@ do
 # Runs `block` on the Windows host through WSL interoperability and a stdio
 # VFS. The active VFS target must be Linux.
 #
-# When `command:` is omitted, `dolang-vfs.exe` is preferred and
-# `dolang.exe --vfs` is used as a fallback.
-#
-# ## Parameters
-#
-# | Name      | type     | Description                           |
-# | --------- | -------- | ------------------------------------- |
-# | `block`   | `func`   | Block to run on Windows               |
-# | `command` | `Array`  | Windows VFS launcher prefix           |
-# | `cd`      | `Path?`  | Initial Windows working directory     |
-# | `env`     | `Dict`   | Initial Windows environment overrides |
-#
 # ## Returns
 #
 # The result of `block`.
 pub def with_windows
+  # ([`Func`](std.Func)) Block to run on Windows.
   block
+  # ([`Iterable`](std.Iterable)) Windows VFS launcher command and arguments.
+  # Defaults to `dolang-vfs.exe`, preferring `dolang.exe --vfs` as a
+  # fallback.
   :command = find_windows_command()
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Initial Windows working directory.
   :cd = nil
+  # ([`Dict`](std.Dict)) Initial Windows environment overrides.
   :env = {}
 do
   require_linux()

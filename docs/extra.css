@@ -9,3 +9,20 @@
 .md-typeset table:not([class]) th {
     min-width: 0
 }
+/* Material's `code { word-break: break-word }` is the legacy alias for
+ * `overflow-wrap: anywhere`, which (unlike `overflow-wrap: break-word`)
+ * counts as a break opportunity when computing an element's minimum
+ * content width. Combined with the `min-width: 0` above, that lets a wide
+ * prose column (e.g. a parameter's description) squeeze a `code`-only
+ * column (e.g. its name) down far enough that short identifiers wrap
+ * mid-word instead of the table just sizing the column to fit them. */
+.md-typeset table:not([class]) code {
+    word-break: normal;
+    overflow-wrap: break-word;
+}
+/* Material's footer.html renders the <footer> wrapper unconditionally; only
+ * its contents (generator line, copyright, social links, prev/next nav) are
+ * conditional. With none of those configured, it's a permanently empty bar. */
+.md-footer {
+    display: none;
+}

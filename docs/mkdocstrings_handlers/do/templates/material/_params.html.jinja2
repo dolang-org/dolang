@@ -10,11 +10,12 @@
   which is a stopgap until the language carries type annotations of its own.
 #}
 {#
-  A function/method's `<code>signature</code>` heading, with ` -> ReturnType`
-  appended when its doc comment opened with a parenthesised type (see
-  _split_type in __init__.py) -- the arrow form anticipates the language's
-  own eventual return-type syntax rather than inventing new notation for
-  what is, for now, still just a stopgap parsed out of prose.
+  A function/method's `<code>signature -> ReturnType</code>` heading, with
+  the arrow and type appended inside the same `<code>` element when its doc
+  comment opened with a parenthesised type (see _split_type in __init__.py)
+  -- the arrow form anticipates the language's own eventual return-type
+  syntax, so it belongs inside `<code>` as prospective real syntax rather
+  than as descriptive text tacked on after it.
 
   The return type is run through `convert_markdown` (real links, same as a
   parameter's Type column) rather than left as plain text inside `sig`,
@@ -28,7 +29,7 @@
   the expression, corrupting the literal `<code>` tags too.
 #}
 {% macro signature_heading(sig, return_type, heading_level, id, role, toc_label) %}
-{% set content %}<code>{{ sig }}</code>{% if return_type %} -&gt; {{ return_type | convert_markdown(heading_level, id ~ "--returns", strip_paragraph=true) }}{% endif %}{% endset %}
+{% set content %}<code>{{ sig }}{% if return_type %} -&gt; {{ return_type | convert_markdown(heading_level, id ~ "--returns", strip_paragraph=true) }}{% endif %}</code>{% endset %}
 {{ content | trim | heading(heading_level, role=role, id=id, toc_label=toc_label) }}
 {% endmacro %}
 

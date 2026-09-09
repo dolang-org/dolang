@@ -248,11 +248,11 @@ do
 
 # Connects pipeline stages and runs them concurrently.
 pub def pipeline
-  stage
-  # (input) Optional input source for the first stage
+  # ([`Iterable`](std.Iterable)) override strand-local input for the first stage
   :input = nil
-  # (output) Optional output destination for the last stage
+  # ([`Sinkable`](std.Sinkable)) override strand-local output for the last stage
   :output = nil
+  # ([`Func`](std.Func)) pipeline stages
   ...stages
 do
   throw nil
@@ -261,9 +261,19 @@ do
 pub def pool
   # ([`Int`](std.Int)) number of worker strands
   count
-  input_or_func
-  # (Func) function applied to each input value
-  func = nil
+  # ([`Iterable`](std.Iterable)) iterable of items
+  input
+  # ([`Func`](std.Func)) function applied to each input value
+  func
+do
+  throw nil
+
+# Runs a function over the strand-local input with a fixed number of scoped workers.
+pub def pool
+  # ([`Int`](std.Int)) number of worker strands
+  count
+  # ([`Func`](std.Func)) function applied to each input value
+  func
 do
   throw nil
 

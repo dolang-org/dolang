@@ -4,11 +4,13 @@ import std
     - ImportError
     - IndexError
     - Iter
+    - Iterable
     - IterStop
     - MissingPosError
     - Nil
     - Null
     - Sink
+    - Sinkable
     - SinkStop
     - TypeError
     - Value
@@ -53,8 +55,14 @@ assert_eq (type $ [].sink()) $Sink
 
 assert_eq (type {}) $Dict
 
-assert_eq $null $Null
-assert_eq (type null) $Type
+assert_eq (type null) $Null
+assert (type null Null)
+assert (!(type false Null))
+assert_throws $TypeError do Null()
+assert (type null Iter)
+assert (type null Sink)
+assert (type null Iterable)
+assert (type null Sinkable)
 
 # Errors
 assert_throws $TypeError do (5 + "hello")

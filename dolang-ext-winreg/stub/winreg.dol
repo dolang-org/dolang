@@ -208,7 +208,7 @@ pub class Key
     # rights, as a mask, a symbol, or an iterable of symbols. Defaults to
     # `:READ:`.
     :access = nil
-    # (callable?) Called with the new `Key`, which is closed when it returns.
+    # ([`Func`](std.Func)) Called with the new `Key`, which is closed when it returns.
     # Omit to receive the handle instead.
     func = nil
   do
@@ -386,7 +386,7 @@ pub class Key
     # resolution](winreg.link-resolution): `:TARGET:` follows a link,
     # `:LINK:` opens the link key itself. Defaults to `:TARGET:`.
     :resolve = nil
-    # (callable?) Called with the `Key`, which is closed when it returns.
+    # ([`Func`](std.Func)) Called with the `Key`, which is closed when it returns.
     # Omit to receive the handle instead.
     func = nil
   do
@@ -649,7 +649,7 @@ pub def open
   # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)?) Access rights,
   # as a mask, a symbol, or an iterable of symbols. Defaults to `:READ:`.
   :access = nil
-  # (callable?) Called with the [`Key`](winreg.Key), which is closed when it
+  # ([`Func`](std.Func)) Called with the [`Key`](winreg.Key), which is closed when it
   # returns. Omit to receive the handle instead.
   func = nil
 do

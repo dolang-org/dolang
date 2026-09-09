@@ -164,7 +164,7 @@ pub def show
   :units = nil
   # ([`Float`](std.Float)?) Tick interval in seconds. Defaults to `0.08`.
   :tick = nil
-  # (callable) Callback receiving an [`Indicator`](progress.Indicator).
+  # ([`Func`](std.Func)) Callback receiving an [`Indicator`](progress.Indicator).
   func
 do
   throw nil
@@ -199,7 +199,7 @@ pub def steps
   :message = nil
   # ([`Str`](std.Str)?) Default icon. Defaults to `"●"`.
   :icon = nil
-  # (callable\|`dict`) A step, written either as a callable or as a `dict`
+  # ([`Func`](std.Func)\|[`Dict`](std.Dict)) A step, written either as a callable or as a `dict`
   # holding one positional callable and optional `name` and `icon` keys. A
   # step's `icon` overrides the default icon for that step.
   ...steps
@@ -295,7 +295,7 @@ pub def with
   # (`float`?) Plain-mode rate limit in seconds. Defaults to `5`. Has no effect
   # when connected to a real terminal.
   :interval = nil
-  # (callable) Callback taking no arguments.
+  # ([`Func`](std.Func)) Callback taking no arguments.
   func
 do
   throw nil

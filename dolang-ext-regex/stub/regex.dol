@@ -126,7 +126,7 @@ pub class Regex
     self
     # ([`Str`](std.Str)) String to search in.
     haystack
-    # ([`Str`](std.Str)\|callable) Template string or callback.
+    # ([`Str`](std.Str)\|[`Func`](std.Func)) Template string or callback.
     #
     # A template string supports backreferences:
     #

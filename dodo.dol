@@ -242,7 +242,7 @@ def write_doc_page path title identifier
   # registration instead of adding a second, colliding one.
   path.write |
     ---
-    title: $title
+    title: $(dbg title)
     ---
 
     # $title {: #$identifier }

@@ -491,7 +491,7 @@ pub class Client
     # certificate validation. It is the only accepted value, and it is
     # dangerous -- it defeats the point of TLS, so reserve it for testing.
     :invalid_certs = nil
-    # (callable?) Called with the `Client`, which is closed when it returns.
+    # ([`Func`](std.Func)) Called with the `Client`, which is closed when it returns.
     # Omit to receive the client instead.
     func = nil
   do
@@ -535,7 +535,7 @@ pub class Client
     # when its status is outside `200..=299`, instead of raising
     # [`Status`](http.Status).
     :status = nil
-    # (callable?) Called with the [`Response`](http.Response), which is closed
+    # ([`Func`](std.Func)) Called with the [`Response`](http.Response), which is closed
     # when it returns. Omit to receive the response instead.
     block = nil
   do
@@ -591,7 +591,7 @@ pub class Client
     # when its status is outside `200..=299`, instead of raising
     # [`Status`](http.Status).
     :status = nil
-    # (callable?) Called with the [`Response`](http.Response), which is closed
+    # ([`Func`](std.Func)) Called with the [`Response`](http.Response), which is closed
     # when it returns. Omit to receive the response instead.
     block = nil
   do
@@ -631,7 +631,7 @@ pub def get
   # ([`Sym`](std.Sym)?) Pass `:IGNORE:` to return the response even when
   # its status is outside `200..=299`.
   :status = nil
-  # (callable?) Called with the [`Response`](http.Response), which is closed
+  # ([`Func`](std.Func)) Called with the [`Response`](http.Response), which is closed
   # when it returns.
   block = nil
 do
@@ -672,7 +672,7 @@ pub def post
   # ([`Sym`](std.Sym)?) Pass `:IGNORE:` to return the response even when
   # its status is outside `200..=299`.
   :status = nil
-  # (callable?) Called with the [`Response`](http.Response), which is closed
+  # ([`Func`](std.Func)) Called with the [`Response`](http.Response), which is closed
   # when it returns.
   block = nil
 do

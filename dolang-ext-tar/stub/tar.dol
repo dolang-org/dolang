@@ -233,7 +233,7 @@ pub class Writer
     :owner_name = nil
     # ([`Str`](std.Str)?) Group name.
     :group_name = nil
-    # (callable) Entry writer scope, called with an
+    # ([`Func`](std.Func)) Entry writer scope, called with an
     # [`EntryWriter`](tar.EntryWriter).
     func
   do
@@ -324,7 +324,7 @@ pub class Writer
 pub def read
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Archive path.
   path
-  # (callable) Reader scope, called with a [`Reader`](tar.Reader).
+  # ([`Func`](std.Func)) Reader scope, called with a [`Reader`](tar.Reader).
   func
 do
   throw nil
@@ -351,7 +351,7 @@ pub def write
   # zstd, and other extensions select no compression. Extension matching is
   # case-insensitive. An explicit `compression` overrides the path.
   :compression = nil
-  # (callable) Writer scope, called with a [`Writer`](tar.Writer).
+  # ([`Func`](std.Func)) Writer scope, called with a [`Writer`](tar.Writer).
   func
 do
   throw nil
