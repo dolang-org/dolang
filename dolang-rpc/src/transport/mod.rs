@@ -119,23 +119,11 @@ pub(crate) trait SendFrame<'frame>: Send {
     /// `poll_write_vectored_once` via `Buf::chunks_vectored`. Provided — no
     /// transport implements this directly. Does not flush; see
     /// [`Sender::flush`].
-    ///
-    /// Returns whether the whole buffer was drained by a single successful
-    /// `poll_write_vectored_once` call (`true`), as opposed to needing more
-    /// than one write to fully drain (`false`) — a "short write" signal
-    /// callers use to adapt future fragment sizing to the transport's
-    /// actual atomic write capacity.
-    async fn finish<B: Buf>(mut self, buffer: &mut B) -> io::Result<bool>
+    async fn finish<B: Buf>(mut self, buffer: &mut B) -> io::Result<()>
     where
         Self: Sized,
     {
-        let mut atomic = true;
-        let mut first = true;
         while buffer.has_remaining() {
-            if !first {
-                atomic = false;
-            }
-            first = false;
             let mut slices = [IoSlice::new(&[]); MAX_VECTORED_SLICES];
             let filled = buffer.chunks_vectored(&mut slices);
             let sent = poll_fn(|cx| self.poll_write_vectored_once(cx, &slices[..filled])).await?;
@@ -147,7 +135,7 @@ pub(crate) trait SendFrame<'frame>: Send {
             }
             buffer.advance(sent);
         }
-        Ok(atomic)
+        Ok(())
     }
 }
 

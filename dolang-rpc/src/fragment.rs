@@ -1429,18 +1429,7 @@ pub(crate) struct Scheduler {
     max_fragment_size: usize,
     #[cfg(unix)]
     max_handles_per_fragment: usize,
-    /// `log2` of the current backoff factor applied to `max_fragment_size`
-    /// for actual fragment writes: `effective_fragment_size() ==
-    /// max_fragment_size >> fragment_shift`. Storing the shift rather than
-    /// the resulting size avoids drift when `max_fragment_size` isn't a
-    /// power of two — halving/doubling a stored size repeatedly wouldn't
-    /// necessarily recover the exact original value.
-    fragment_shift: u32,
 }
-
-/// Upper bound on `fragment_shift`, chosen to fit a 3-bit "divide by 2^n"
-/// wire hint if peer-signaled throttling is added later.
-const MAX_FRAGMENT_SHIFT: u32 = 7;
 
 impl Scheduler {
     pub(crate) fn new(limits: &Limits, payload_budget: Arc<PayloadBudget>) -> Self {
@@ -1457,29 +1446,6 @@ impl Scheduler {
                 .max(1),
             #[cfg(unix)]
             max_handles_per_fragment: limits.max_handles_per_fragment,
-            fragment_shift: 0,
-        }
-    }
-
-    /// The fragment size to actually target for the next write, after
-    /// backoff from recent short writes.
-    fn effective_fragment_size(&self) -> usize {
-        (self.max_fragment_size >> self.fragment_shift)
-            .max(256.min(self.max_fragment_size))
-            .max(1)
-    }
-
-    /// Adapts `fragment_shift` based on whether the most recent fragment
-    /// write completed atomically (in a single underlying write call) or
-    /// needed more than one. Backs off by one step on a short write, and
-    /// decays back towards `max_fragment_size` by one step per atomic
-    /// write — gradual in both directions, so a connection that's
-    /// borderline doesn't flap between extremes.
-    fn record_write_atomicity(&mut self, atomic: bool) {
-        if atomic {
-            self.fragment_shift = self.fragment_shift.saturating_sub(1);
-        } else {
-            self.fragment_shift = (self.fragment_shift + 1).min(MAX_FRAGMENT_SHIFT);
         }
     }
 
@@ -1864,7 +1830,7 @@ impl Scheduler {
         let handles_pending = false;
         if send.offset < send.payload.len() || handles_pending || must_open_with_postcard {
             let start = send.offset;
-            let end = (start + self.effective_fragment_size()).min(send.payload.len());
+            let end = (start + self.max_fragment_size).min(send.payload.len());
             let postcard_done = end == send.payload.len();
             #[allow(unused_mut)]
             let mut frame = transport.send();
@@ -1914,8 +1880,7 @@ impl Scheduler {
                 payload_len: end - start,
             };
             let mut buffer = header.encode().chain(send.payload.slice(start..end));
-            let atomic = frame.finish(&mut buffer).await?;
-            self.record_write_atomicity(atomic);
+            frame.finish(&mut buffer).await?;
             if postcard_done && handles_done {
                 // The payload is irrevocably on the wire, so the peer will
                 // decode it and mirror every gift it carries even if it has
@@ -1972,14 +1937,12 @@ impl Scheduler {
                     let token = transport.send();
                     // SAFETY: the lease retains `token`'s mutable borrow and
                     // clears its erased representation before it ends.
-                    let lease =
-                        unsafe { SendShared::grant(shared, token, self.effective_fragment_size()) };
-                    let (action, atomic) = SendShared::wait_fragment(shared).await?;
+                    let lease = unsafe { SendShared::grant(shared, token, self.max_fragment_size) };
+                    let action = SendShared::wait_fragment(shared).await?;
                     lease.complete();
                     send.started = true;
                     match action {
                         SendAction::Fragment => {
-                            self.record_write_atomicity(atomic);
                             self.active.push_back(send);
                             return Ok(AdvanceOutcome::None);
                         }
@@ -2974,44 +2937,6 @@ mod tests {
             r.read_exact(&mut payload).await.unwrap();
         }
         (flags, kind, id, payload)
-    }
-
-    #[test]
-    fn fragment_shift_backs_off_on_short_write_and_decays_on_atomic_write() {
-        let limits = Limits {
-            max_fragment_size: 1024 + RawFragmentHeader::LEN,
-            ..Limits::default()
-        };
-        let mut scheduler = new_scheduler(&limits);
-        assert_eq!(scheduler.effective_fragment_size(), 1024);
-
-        scheduler.record_write_atomicity(false);
-        assert_eq!(scheduler.effective_fragment_size(), 512);
-        scheduler.record_write_atomicity(false);
-        assert_eq!(scheduler.effective_fragment_size(), 256);
-
-        scheduler.record_write_atomicity(true);
-        assert_eq!(scheduler.effective_fragment_size(), 512);
-        scheduler.record_write_atomicity(true);
-        assert_eq!(scheduler.effective_fragment_size(), 1024);
-
-        // Never decays past the negotiated maximum.
-        scheduler.record_write_atomicity(true);
-        assert_eq!(scheduler.effective_fragment_size(), 1024);
-    }
-
-    #[test]
-    fn fragment_shift_is_capped_and_size_never_reaches_zero() {
-        let limits = Limits {
-            max_fragment_size: 1024 + RawFragmentHeader::LEN,
-            ..Limits::default()
-        };
-        let mut scheduler = new_scheduler(&limits);
-        for _ in 0..20 {
-            scheduler.record_write_atomicity(false);
-        }
-        assert_eq!(scheduler.fragment_shift, MAX_FRAGMENT_SHIFT);
-        assert!(scheduler.effective_fragment_size() >= 1);
     }
 
     #[tokio::test]
