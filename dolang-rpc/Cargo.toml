@@ -20,10 +20,6 @@ workspace = true
 workspace = true
 
 
-[dependencies.dolang-util]
-workspace = true
-
-
 [dependencies.futures]
 workspace = true
 
@@ -74,7 +70,6 @@ default = ["macos-spawn-interpose"]
 # same DYLD_INTERPOSE section can conflict. Disabling this reopens the exact
 # race it closes.
 macos-spawn-interpose = ["dep:ctor"]
-debug = ["dolang-util/debug"]
 
 
 [dev-dependencies.tokio]
