@@ -1,0 +1,361 @@
+# macOS extended access-control-list types and principal identity resolution
+# between Unix uid/gid values and macOS `guid_t` UUIDs.
+
+# macOS extended ACE permission bits.
+pub class Mask
+  # Constructs a mask from symbols or one iterable of symbols.
+  #
+  # ## Supported symbols
+  #
+  # | Symbol                  | Meaning                                                |
+  # | ----------------------- | ------------------------------------------------------ |
+  # | `:READ_DATA:`           | Read the file's data, or list a directory              |
+  # | `:WRITE_DATA:`          | Write the file's data, or create a file in a directory |
+  # | `:EXECUTE:`             | Execute the file, or traverse a directory              |
+  # | `:DELETE:`              | Delete the file or directory                           |
+  # | `:APPEND_DATA:`         | Append to the file's data, or create a subdirectory    |
+  # | `:DELETE_CHILD:`        | Delete a file or directory within a directory          |
+  # | `:READ_ATTRIBUTES:`     | Read basic attributes                                  |
+  # | `:WRITE_ATTRIBUTES:`    | Write basic attributes                                 |
+  # | `:READ_EXTATTRIBUTES:`  | Read extended attributes                               |
+  # | `:WRITE_EXTATTRIBUTES:` | Write extended attributes                              |
+  # | `:READ_SECURITY:`       | Read the ACL                                           |
+  # | `:WRITE_SECURITY:`      | Write the ACL                                          |
+  # | `:CHANGE_OWNER:`        | Change owner and owning group                          |
+  # | `:SYNCHRONIZE:`         | Use synchronous I/O                                    |
+  #
+  # ## Example
+  #
+  # ```
+  # let rw = Mask(:READ_DATA:, :WRITE_DATA:)
+  # ```
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) Mask bits, or one iterable of them.
+    ...bits
+  do
+    throw nil
+
+  # Tests whether all bits represented by a symbol are set.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool)
+  pub def contains
+    self
+    # ([`Sym`](std.Sym)) Bits to test for.
+    bit
+  do
+    throw nil
+
+  # Union of two masks.
+  pub def (bor)
+    self
+    other
+  do
+    throw nil
+
+  # Intersection of two masks.
+  pub def (band)
+    self
+    other
+  do
+    throw nil
+
+  # Symmetric difference of two masks.
+  pub def (bxor)
+    self
+    other
+  do
+    throw nil
+
+  # Complement within the supported bit set.
+  pub def (bnot) self
+    throw nil
+
+  # Compares two masks.
+  pub def (eq)
+    self
+    other
+  do
+    throw nil
+
+  # Yields the symbols represented by the mask.
+  pub def (iter) self
+    throw nil
+
+# macOS extended ACE inheritance flags.
+pub class Flags
+  # Constructs a flag set from symbols or one iterable of symbols.
+  #
+  # ## Supported symbols
+  #
+  # | Symbol                | Meaning                                                            |
+  # | --------------------- | ------------------------------------------------------------------ |
+  # | `:FILE_INHERIT:`      | Files created within a directory inherit this entry                |
+  # | `:DIRECTORY_INHERIT:` | Subdirectories created within a directory inherit this entry       |
+  # | `:LIMIT_INHERIT:`     | Stop propagating this entry after one level of inheritance         |
+  # | `:ONLY_INHERIT:`      | This entry is inherited but does not apply to the directory itself |
+  # | `:INHERITED:`         | This entry was inherited from a parent directory                   |
+  #
+  # ## Example
+  #
+  # ```
+  # let inherit = Flags(:FILE_INHERIT:, :DIRECTORY_INHERIT:)
+  # ```
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) Flag bits, or one iterable of them.
+    ...bits
+  do
+    throw nil
+
+  # Tests whether all bits represented by a symbol are set.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool)
+  pub def contains
+    self
+    # ([`Sym`](std.Sym)) Bits to test for.
+    bit
+  do
+    throw nil
+
+  # Union of two flag sets.
+  pub def (bor)
+    self
+    other
+  do
+    throw nil
+
+  # Intersection of two flag sets.
+  pub def (band)
+    self
+    other
+  do
+    throw nil
+
+  # Symmetric difference of two flag sets.
+  pub def (bxor)
+    self
+    other
+  do
+    throw nil
+
+  # Complement within the supported bit set.
+  pub def (bnot) self
+    throw nil
+
+  # Compares two flag sets.
+  pub def (eq)
+    self
+    other
+  do
+    throw nil
+
+  # Yields the symbols represented by the flag set.
+  pub def (iter) self
+    throw nil
+
+# Immutable macOS extended access-control entry.
+#
+# Unlike NFSv4 or POSIX.1e ACL entries, macOS resolves every principal (owning
+# user, owning group, well-known accounts, or an arbitrary user/group) to a
+# UUID before it reaches the file's ACL, so there is no separate qualifier
+# enum: [`principal`](security.macos.Ace.principal) is always a
+# [`uuid.Uuid`](uuid.Uuid).
+#
+# The class methods below require a built `uuid.Uuid`, [`Mask`](security.macos.Mask), and
+# [`Flags`](security.macos.Flags); use [`ace`](security.macos.ace) for UUID string or binary
+# values and symbolic mask or flag coercion.
+#
+# ## Example
+#
+# ```
+# let read = Mask(:READ_DATA:, :READ_ATTRIBUTES:)
+# Ace.allow $owner mask: $read flags: (Flags(:FILE_INHERIT:))
+# ```
+pub class Ace
+  # Constructs an entry that grants the permissions in `mask`.
+  #[class]
+  pub def allow
+    self
+    # ([`uuid.Uuid`](uuid.Uuid)) The entry's principal.
+    principal
+    # ([`Mask`](security.macos.Mask)) Permission mask.
+    :mask
+    # ([`Flags`](security.macos.Flags)?) Inheritance flags. Defaults to empty.
+    :flags = nil
+  do
+    throw nil
+
+  # Constructs an entry that denies the permissions in `mask`.
+  #[class]
+  pub def deny
+    self
+    # ([`uuid.Uuid`](uuid.Uuid)) The entry's principal.
+    principal
+    # ([`Mask`](security.macos.Mask)) Permission mask.
+    :mask
+    # ([`Flags`](security.macos.Flags)?) Inheritance flags. Defaults to empty.
+    :flags = nil
+  do
+    throw nil
+
+  # ([`Sym`](std.Sym)) Entry type: `:ALLOW:` or `:DENY:`.
+  #[getter]
+  pub def type self
+    throw nil
+
+  # ([`uuid.Uuid`](uuid.Uuid)) The entry's principal.
+  #[getter]
+  pub def principal self
+    throw nil
+
+  # ([`Mask`](security.macos.Mask)) The entry's permission mask.
+  #[getter]
+  pub def mask self
+    throw nil
+
+  # ([`Flags`](security.macos.Flags)) The entry's inheritance flags.
+  #[getter]
+  pub def flags self
+    throw nil
+
+# Immutable macOS extended access-control list.
+#
+# Like an NFSv4 ACL, a macOS extended ACL has no required entries or
+# completeness invariant: an empty ACL and any combination of entries construct
+# without error.
+#
+# The constructor accepts only built [`Ace`](security.macos.Ace) values; use
+# [`acl`](security.macos.acl) to mix built entries with declarative dictionaries or
+# to pass entries variadically.
+pub class Acl
+  # Constructs an ACL from an iterable of [`Ace`](security.macos.Ace) values, in
+  # evaluation order.
+  pub def (init)
+    self
+    # Iterable of [`Ace`](security.macos.Ace) values.
+    aces
+  do
+    throw nil
+
+  # ([`Array`](std.Array)-like) Immutable view of [`Ace`](security.macos.Ace)
+  # values, in evaluation order. Use `.len` for the entry count.
+  #[getter]
+  pub def aces self
+    throw nil
+
+# Constructs a macOS entry from declarative arguments.
+#
+# Pass exactly one of `allow:` or `deny:`. Masks and flags accept their built
+# type, one symbol, or an iterable of symbols.
+#
+# ## Returns
+#
+# [`Ace`](security.macos.Ace)
+#
+# ## Example
+#
+# ```
+# ace allow: "00112233-4455-6677-8899-aabbccddeeff" mask: [:READ_DATA:]
+# ```
+pub def ace
+  # ([`uuid.Uuid`](uuid.Uuid)\|[`Str`](std.Str)\|[`Bin`](std.Bin)?)
+  # Principal for an `:ALLOW:` entry.
+  :allow = nil
+  # ([`uuid.Uuid`](uuid.Uuid)\|[`Str`](std.Str)\|[`Bin`](std.Bin)?)
+  # Principal for a `:DENY:` entry.
+  :deny = nil
+  # ([`Mask`](security.macos.Mask)\|[`Sym`](std.Sym)) Permission mask.
+  :mask
+  # ([`Flags`](security.macos.Flags)\|[`Sym`](std.Sym)?) Inheritance flags.
+  # Defaults to empty.
+  :flags = nil
+do
+  throw nil
+
+# Constructs a macOS ACL from entries and declarative entry dictionaries.
+#
+# An empty ACL is valid.
+#
+# ## Returns
+#
+# [`Acl`](security.macos.Acl)
+pub def acl
+  # ([`Ace`](security.macos.Ace)\|[`Dict`](std.Dict)) Entries, spread with `...`
+  # to pass a collection.
+  ...aces
+do
+  throw nil
+
+# Resolves a Unix user ID to its macOS principal UUID.
+#
+# ## Returns
+#
+# [`uuid.Uuid`](uuid.Uuid)
+#
+# ## Errors
+#
+# Raises [`UnsupportedError`](std.UnsupportedError) when the active
+# VFS target is not macOS.
+#
+# ## Example
+#
+# ```
+# let owner = uuid_for_uid 501
+# ```
+pub def uuid_for_uid
+  # ([`Int`](std.Int)) Unix user ID.
+  uid
+do
+  throw nil
+
+# Resolves a Unix group ID to its macOS principal UUID.
+#
+# ## Returns
+#
+# [`uuid.Uuid`](uuid.Uuid)
+#
+# ## Errors
+#
+# Raises [`UnsupportedError`](std.UnsupportedError) when the active
+# VFS target is not macOS.
+pub def uuid_for_gid
+  # ([`Int`](std.Int)) Unix group ID.
+  gid
+do
+  throw nil
+
+# Resolves a macOS principal UUID back to the Unix uid or gid it identifies.
+#
+# The Membership framework reports which kind the UUID resolved to, so the
+# result carries both the ID and whether it names a user or a group.
+#
+# ## Returns
+#
+# A two-element [`Tuple`](std.Tuple) of `(kind, id)`, where `kind` is
+# `:UID:` or `:GID:` and `id` is an [`Int`](std.Int).
+#
+# ## Errors
+#
+# Raises [`UnsupportedError`](std.UnsupportedError) when the active
+# VFS target is not macOS.
+#
+# ## Example
+#
+# ```
+# let kind id = id_for_uuid $owner
+# if (kind == :UID:)
+#   echo "uid: $id"
+# else
+#   echo "gid: $id"
+# ```
+pub def id_for_uuid
+  # ([`uuid.Uuid`](uuid.Uuid)\|[`Str`](std.Str)\|[`Bin`](std.Bin))
+  # macOS principal UUID.
+  uuid
+do
+  throw nil

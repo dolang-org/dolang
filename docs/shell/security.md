@@ -6,7 +6,7 @@ manipulation.
 
 ## Portable Identity Queries
 
-[`security.user_name`](../api/security/index.md#user_name) returns the
+[`security.user_name`](security.user_name) returns the
 current target user on both platform families:
 
 ```
@@ -15,17 +15,17 @@ import security
 echo "running as $(security.user_name())"
 ```
 
-[`security.unix.user_name`](../api/security/unix/index.md#user_name-uid),
-[`security.unix.user_id`](../api/security/unix/index.md#user_id-name),
-[`security.unix.group_name`](../api/security/unix/index.md#group_name-gid),
-and [`security.unix.group_id`](../api/security/unix/index.md#group_id-name)
+[`security.unix.user_name`](security.unix.user_name),
+[`security.unix.user_id`](security.unix.user_id),
+[`security.unix.group_name`](security.unix.group_name),
+and [`security.unix.group_id`](security.unix.group_id)
 resolve accounts in the target's user and group databases. Calling these
 functions when the current VFS context does not target a Unix system raises
-[`sys.UnsupportedError`](../api/sys/unsupported-error.md).
+[`sys.UnsupportedError`](sys.UnsupportedError).
 
 ## Unix Identity
 
-[`security.unix.id()`](../api/security/unix/index.md#id) returns information
+[`security.unix.id()`](security.unix.id) returns information
 about the identity under which the shell or VFS process is running:
 
 ```
@@ -42,8 +42,8 @@ for gid = identity.groups
 
 ## POSIX ACLs
 
-[`security.unix.Acl`](../api/security/unix/acl.md) is an immutable collection
-of [`security.unix.Ace`](../api/security/unix/ace.md) entries. The object model
+[`security.unix.Acl`](security.unix.Acl) is an immutable collection
+of [`security.unix.Ace`](security.unix.Ace) entries. The object model
 is available on every platform. Filesystem get and set operations are supported
 on Linux and FreeBSD.
 
@@ -67,10 +67,10 @@ let access = Acl $
 fs.set_acl config.ini $access
 ```
 
-Use [`fs.acl`](../api/fs/index.md#acl-path-kind-posix-default-resolve) to read
+Use [`fs.acl`](fs.acl) to read
 stored ACL metadata. It returns `nil` when no ACL is stored; it does not
 construct an ACL from file mode bits. Pass `nil` to
-[`fs.set_acl`](../api/fs/index.md#set_acl-path-acl-kind-default-resolve) to
+[`fs.set_acl`](fs.set_acl) to
 remove the ACL. Set `default: true` to operate on a directory's inheritable
 default ACL.
 
@@ -80,8 +80,8 @@ recalculating it.
 
 ## NFSv4 ACLs
 
-[`security.nfs4.Acl`](../api/security/nfs4/acl.md) is an immutable collection
-of [`security.nfs4.Ace`](../api/security/nfs4/ace.md) entries. The object
+[`security.nfs4.Acl`](security.nfs4.Acl) is an immutable collection
+of [`security.nfs4.Ace`](security.nfs4.Ace) entries. The object
 model is available on every platform. Filesystem get and set operations are
 supported on FreeBSD only.
 
@@ -107,21 +107,21 @@ Pass `kind: :NFS4:` to `fs.acl` to read an NFSv4 ACL instead of the default
 POSIX one; a built ACL supplies its format to `fs.set_acl`. Declarative ACE
 sequences require `kind: :NFS4:`. `default:
 true` is not valid with an NFSv4 ACL — inheritance is expressed through
-[`Ace`](../api/security/nfs4/ace.md) flags instead of a separate default-ACL
+[`Ace`](security.nfs4.Ace) flags instead of a separate default-ACL
 object. Unlike a POSIX ACL, an NFSv4 ACL is a file's native security
 descriptor: it can be replaced with `fs.set_acl`, but FreeBSD provides no
 operation to remove it back to "none".
 
 ## macOS ACLs
 
-[`security.macos.Acl`](../api/security/macos/acl.md) is an immutable
-collection of [`security.macos.Ace`](../api/security/macos/ace.md) entries.
+[`security.macos.Acl`](security.macos.Acl) is an immutable
+collection of [`security.macos.Ace`](security.macos.Ace) entries.
 The object model is available on every platform. Filesystem get and set
 operations are supported on macOS only.
 
 Unlike NFSv4 or POSIX.1e ACL entries, macOS resolves every principal to a
 UUID before it reaches the file's ACL, so an `Ace`'s principal is a
-[`uuid.Uuid`](../api/uuid/uuid.md) rather than a special-cased qualifier:
+[`uuid.Uuid`](uuid.Uuid) rather than a special-cased qualifier:
 
 ```
 import fs
@@ -147,11 +147,11 @@ config.ini nil kind: :MACOS:`.
 
 Since ACL principals are UUIDs, building or inspecting a macOS ACE usually
 means converting between a Unix uid/gid and its UUID.
-[`security.macos.uuid_for_uid`](../api/security/macos/index.md#uuid_for_uid-uid)
+[`security.macos.uuid_for_uid`](security.macos.uuid_for_uid)
 and
-[`uuid_for_gid`](../api/security/macos/index.md#uuid_for_gid-gid) go from
+[`uuid_for_gid`](security.macos.uuid_for_gid) go from
 id to UUID;
-[`id_for_uuid`](../api/security/macos/index.md#id_for_uuid-uuid) goes the
+[`id_for_uuid`](security.macos.id_for_uuid) goes the
 other way, returning which kind (`:UID:` or `:GID:`) the UUID resolved to
 alongside the id itself, since a bare UUID doesn't say which it is:
 
@@ -168,15 +168,15 @@ let kind id = security.macos.id_for_uuid owner
 echo "$kind $id"  # UID 501
 ```
 
-[`security.unix.user_name`](../api/security/unix/index.md#user_name-uid) and
-[`group_name`](../api/security/unix/index.md#group_name-gid) also accept a
+[`security.unix.user_name`](security.unix.user_name) and
+[`group_name`](security.unix.group_name) also accept a
 UUID directly on macOS, resolving it internally, so an ACE principal can be
 turned into a name without a separate `id_for_uuid` call.
 
 ## Windows Access Tokens
 
-[`security.windows.token_info()`](../api/security/windows/index.md#token_info)
-returns a [`TokenInfo`](../api/security/windows/tokeninfo.md) captured for the
+[`security.windows.token_info()`](security.windows.token_info)
+returns a [`TokenInfo`](security.windows.TokenInfo) captured for the
 active Windows target:
 
 ```
@@ -198,9 +198,9 @@ Windows token has administrator rights.
 
 ## Resolving SIDs and Account Names
 
-Use [`Sid.lookup()`](../api/security/windows/sid.md#lookup) for SID-to-name
+Use [`Sid.lookup()`](security.windows.Sid.lookup) for SID-to-name
 resolution and
-[`SidName.lookup`](../api/security/windows/sidname.md#lookup-value) for either
+[`SidName.lookup`](security.windows.SidName.lookup) for either
 direction:
 
 ```
@@ -218,9 +218,9 @@ obtained, but resolution is only possible on an active Windows VFS target.
 ## Filesystem Security Descriptors
 
 Windows file ownership and access control are represented by
-[`SecDesc`](../api/security/windows/secdesc.md),
-[`Acl`](../api/security/windows/acl.md), and
-[`Ace`](../api/security/windows/ace.md):
+[`SecDesc`](security.windows.SecDesc),
+[`Acl`](security.windows.Acl), and
+[`Ace`](security.windows.Ace):
 
 - `SecDesc` carries selected owner, group, DACL, and SACL components plus
   native control flags.
@@ -229,7 +229,7 @@ Windows file ownership and access control are represented by
   ACE type.
 
 Read selected components with
-[`fs.windows.sec_desc`](../api/fs/windows/index.md#sec_desc-path-owner-group-dacl-sacl-resolve):
+[`fs.windows.sec_desc`](fs.windows.sec_desc):
 
 ```
 import fs.windows:
@@ -249,7 +249,7 @@ the caller has the required Windows access rights and privileges.
 
 `SecDesc.with` creates a modified descriptor while preserving other components.
 Apply a modified descriptor with
-[`fs.windows.update_sec_desc`](../api/fs/windows/index.md#update_sec_desc-path-desc-resolve-options):
+[`fs.windows.update_sec_desc`](fs.windows.update_sec_desc):
 
 ```
 import fs.windows:

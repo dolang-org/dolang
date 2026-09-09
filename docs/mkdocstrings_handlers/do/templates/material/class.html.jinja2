@@ -1,7 +1,7 @@
 {% import "_params.html.jinja2" as params %}
 {% set heading_level = options.get("heading_level", 2) %}
 {% set show_private = options.get("show_private", false) %}
-{% set base_id = entity._identifier | replace(".", "--") %}
+{% set base_id = entity._identifier %}
 
 {#
   A type is rendered on a page of its own, which carries its own title, so this
@@ -11,7 +11,7 @@
 {{ ("<code>" ~ entity.name ~ "</code>") | heading(heading_level, role="class", id=base_id, toc_label=entity.name, hidden=true) }}
 
 {% if entity.doc %}
-{{ entity.doc | convert_markdown(heading_level, base_id) }}
+{{ entity.doc | convert_markdown(heading_level, "") }}
 {% endif %}
 
 {% if entity.supers %}
@@ -31,32 +31,81 @@
 {% set special_members = entity.members | selectattr("special") | list %}
 {% set all_members = entity.members if show_private else (pub_members + special_members) | unique(attribute="name") | list %}
 
-{% set fields = all_members | selectattr("kind", "equalto", "field") | list %}
-{% set methods = all_members | selectattr("kind", "equalto", "method") | list %}
+{% set class_fields = all_members | selectattr("kind", "equalto", "field") | rejectattr("scope", "equalto", "instance") | list %}
+{% set fields = all_members | selectattr("kind", "equalto", "field") | selectattr("scope", "equalto", "instance") | list %}
+{% set class_methods = all_members | selectattr("kind", "equalto", "method") | rejectattr("scope", "equalto", "instance") | list %}
+{% set constructors = all_members | selectattr("kind", "equalto", "method") | selectattr("name", "equalto", "(init)") | list %}
+{% set methods = all_members | selectattr("kind", "equalto", "method") | selectattr("scope", "equalto", "instance") | rejectattr("name", "equalto", "(init)") | list %}
 
-{% if fields %}
-{{ "Fields" | heading(heading_level + 1, skip_inventory=true, id=base_id ~ "--fields") }}
+{% macro render_fields(items, title, anchor) %}
+{{ title | heading(heading_level + 1, skip_inventory=true, id=anchor) }}
 <dl>
-{% for field in fields %}
+{% for field in items %}
+  {# The anchor is what a cross-page link to a getter, as in
+     `[x][module.Class.x]`, resolves against. It has to come from the
+     `heading` filter rather than a bare `id=` attribute on the `<dt>`:
+     mkdocstrings renders this macro's output as a raw HTML block, and raw
+     HTML is stashed out of the Markdown tree and never scanned for anchors,
+     so an `id` placed there directly wouldn't register and strict builds
+     would flag every link to it. The id is the field's fully-qualified
+     identifier, not its bare name: a bare name would collide primary-registers
+     with any other field/method/module across the whole site that happens to
+     share it (autorefs registers heading ids workspace-wide, not per-page). #}
+  {{ "" | heading(heading_level + 2, id=field._identifier, hidden=true) }}
   <dt><code>{{ field.name }}</code></dt>
   {% if field.doc %}
-  <dd>{{ field.doc | convert_markdown(heading_level + 2, base_id ~ "--" ~ field.name) }}</dd>
+  <dd>{{ field.doc | convert_markdown(heading_level + 2, field._identifier) }}</dd>
   {% else %}
   <dd></dd>
   {% endif %}
 {% endfor %}
 </dl>
+{% endmacro %}
+
+{% macro render_methods(items, title, anchor) %}
+{{ title | heading(heading_level + 1, skip_inventory=true, id=anchor) }}
+{% for method in items %}
+{% set method_id = method._identifier %}
+{% set sig = method.signature %}
+{{ params.signature_heading(sig, method.return_type, heading_level + 2, method_id, "method", sig) }}
+{% if method.doc_intro %}
+{{ method.doc_intro | convert_markdown(heading_level + 1, method_id) }}
+{% endif %}
+{{ params.parameters(method, heading_level + 3, method_id) }}
+{% if method.doc_sections %}
+{{ method.doc_sections | convert_markdown(heading_level + 1, method_id) }}
+{% endif %}
+{% endfor %}
+{% endmacro %}
+
+{% if constructors %}
+{{ "Constructor" | heading(heading_level + 1, skip_inventory=true, id="constructor") }}
+{% for method in constructors %}
+{% set method_id = base_id ~ ".(init)" %}
+{% set sig = method.signature | replace("(init)", entity.name, 1) %}
+{{ params.signature_heading(sig, method.return_type, heading_level + 2, method_id, "method", sig) }}
+{% if method.doc_intro %}
+{{ method.doc_intro | convert_markdown(heading_level + 1, method_id) }}
+{% endif %}
+{{ params.parameters(method, heading_level + 3, method_id) }}
+{% if method.doc_sections %}
+{{ method.doc_sections | convert_markdown(heading_level + 1, method_id) }}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if class_fields %}
+{{ render_fields(class_fields, "Class Fields", "class-fields") }}
+{% endif %}
+
+{% if class_methods %}
+{{ render_methods(class_methods, "Class Methods", "class-methods") }}
+{% endif %}
+
+{% if fields %}
+{{ render_fields(fields, "Fields", "fields") }}
 {% endif %}
 
 {% if methods %}
-{{ "Methods" | heading(heading_level + 1, skip_inventory=true, id=base_id ~ "--methods") }}
-{% for method in methods %}
-{% set method_id = base_id ~ "--" ~ method.name %}
-{% set sig = method.signature %}
-{{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 2, role="method", id=method_id, toc_label=sig) }}
-{% if method.doc %}
-{{ method.doc | convert_markdown(heading_level + 3, method_id) }}
-{% endif %}
-{{ params.parameters(method, heading_level + 3, method_id) }}
-{% endfor %}
+{{ render_methods(methods, "Methods", "methods") }}
 {% endif %}

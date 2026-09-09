@@ -1,0 +1,103 @@
+# Random integer sampling, string generation, selection, and shuffling.
+
+# Samples a uniformly distributed integer from `[0, end)` or `[start, end)`.
+#
+# ## Returns
+#
+# `Int` sampled from the requested range.
+#
+# ## Errors
+#
+# | Exception    | Condition                               |
+# | ------------ | --------------------------------------- |
+# | `TypeError`  | Either argument is not an integer       |
+# | `ValueError` | `end <= 0`, or `end <= start` if given  |
+#
+# ## Example
+#
+# ```
+# assert_eq (int 1) 0
+# let n = int 20 10
+# assert ((n >= 10) && (n < 20))
+# ```
+pub def int
+  # (`Int`) Exclusive upper bound.
+  end
+  # (`Int`) Lower bound; zero when omitted.
+  start = 0
+do
+  throw nil
+
+# Selects one random element from an array.
+#
+# ## Returns
+#
+# One element from `collection`.
+#
+# ## Errors
+#
+# `TypeError` if `collection` is not an array. `ValueError` if it is empty.
+#
+# ## Example
+#
+# ```
+# let item = pick [1, 2, 3]
+# assert ([1, 2, 3].contains $item)
+# ```
+pub def pick
+  # (`array`) Source array.
+  collection
+do
+  throw nil
+
+# Shuffles an array in place using a uniform Fisher-Yates pass.
+#
+# ## Errors
+#
+# `TypeError` if `array` is not an array.
+#
+# ## Example
+#
+# ```
+# let items = [1, 2, 3, 4]
+# shuffle $items
+# let sorted = [...items]
+# sorted.sort()
+# assert_eq $sorted [1, 2, 3, 4]
+# ```
+pub def shuffle
+  # (`array`) Array to mutate.
+  array
+do
+  throw nil
+
+# Generates a random string by sampling characters from `alphabet`.
+#
+# ## Returns
+#
+# [`Str`](std.Str) containing the generated text.
+#
+# ## Errors
+#
+# `TypeError` if `len` is not an integer or `alphabet` is not a string.
+# `ValueError` if `len` is negative or `alphabet` is empty.
+#
+# ## Example
+#
+# ```
+# let token = string 12
+# assert_eq $token.len 12
+#
+# let text = string 4 alphabet: "åß"
+# assert_eq $text.len 8
+# ```
+pub def string
+  # (`Int`) Number of characters to emit.
+  len
+  # (`str?`) Characters to sample from.
+  #
+  # The alphabet is interpreted as characters, not raw UTF-8 bytes. When
+  # omitted, it is `_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ`.
+  :alphabet = nil
+do
+  throw nil

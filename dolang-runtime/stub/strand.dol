@@ -1,0 +1,296 @@
+#
+# Concurrency primitives.
+#
+
+# Stores a strand-local value.
+pub class Key
+  #
+  # Creates a new strand-local key.
+  #
+  # ```
+  # let key = strand.Key()
+  # ```
+  #
+  pub def (init) self 
+    throw nil
+
+  #
+  # Gets or sets the value associated with this key in the current strand.
+  #
+  # Defaults to `nil` when the key has not been set in the current
+  # strand.
+  #
+  # ```
+  # let key = strand.Key()
+  # assert_eq $key.value nil
+  #
+  # key.value = "parent"
+  # assert_eq $key.value "parent"
+  #
+  # let results = strand.fork
+  #   do
+  #     assert_eq $key.value "parent"
+  #     key.value = "child"
+  #     key.value
+  #
+  # assert_eq $results ["child"]
+  # assert_eq $key.value "parent"
+  # ```
+  #[getter]
+  pub def value self
+    throw nil
+
+
+#
+# Receives values from a channel. As an [`Iter`](std.Iter), it can be used
+# with `for` or `next()`.
+#
+# Receivers are returned by [`channel`](strand). Once the channel is closed
+# and drained, `next()` raises `IterStop`; a sender error is re-raised after any
+# buffered values are drained.
+pub class Receiver: std.Iter
+  #
+  # Closes the receiver. This prevents any more values from being sent and
+  # wakes up any waiting senders.
+  pub def close self 
+    throw nil
+
+
+# Limits concurrent entry into application-defined scopes.
+pub class Resource
+  #
+  # Creates a resource with `count` concurrent reservations.
+  #
+  # Raises [`ValueError`](std.ValueError) if `count` is zero.
+  pub def (init)
+    self
+    # ([`Int`](std.Int)) maximum concurrent admissions
+    count
+  do
+    throw nil
+
+  #
+  # Runs `block` while holding one reservation.
+  #
+  # Entering the same resource again in the same strand is reentrant. Scoped child
+  # strands inherit the reservation and share it with their parent. Background
+  # strands created with `spawn` or `stream` do not inherit reservations.
+  #
+  # Acquiring multiple resources in inconsistent orders can deadlock. Programs
+  # must use a consistent acquisition order.
+  #
+  # Resources limit admission only and must not be used to protect critical-section
+  # invariants.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # network.with do
+  #   fetch_data()
+  # ```
+  pub def with
+    self
+    # (Func) scoped work to execute
+    block
+  do
+    throw nil
+
+
+# Sends values into a channel. As a [`Sink`](std.Sink), it accepts `put`.
+#
+# Senders are returned by [`channel`](strand).
+pub class Sender: std.Sink
+  #
+  # Closes the sender, signaling EOF to receivers. After closing:
+  #
+  # - Sends will fail
+  # - Receivers will eventually see no more values
+  # - If `error` is provided, the receiver re-raises it from `.next()` once any
+  #   buffered values have been drained
+  #
+  # ## Example
+  #
+  # ```
+  # send.close()
+  # send.close "boom"
+  # ```
+  #
+  pub def close
+    self
+    # Optional error value to propagate
+    error = nil
+    # ([`strand.Backtrace`](strand)?) Optional backtrace for that error
+    :backtrace = nil
+  do
+    throw nil
+
+
+# Handles a background strand created by [`spawn`](strand).
+pub class Strand
+  #
+  # ([`Bool`](std.Bool)) Whether the strand has completed execution.
+  #
+  #[getter]
+  pub def done self
+    throw nil
+
+  #
+  # Requests cancellation of the strand, causing a `Canceled` error to be raised
+  # if the strand is suspended and on all subsequent suspension attempts.
+  #
+  pub def cancel self 
+    throw nil
+
+  #
+  # Waits until the strand completes and returns its result. If the strand
+  # terminates normally, returns the value returned by the function. If the strand
+  # exited with an error, this method re-raises it.
+  #
+  pub def join self 
+    throw nil
+
+  #
+  # Waits until the strand completes. Unlike [`join()`](#join), this method does
+  # not return the strand's return value or re-raise any error. Use this when you
+  # only care that the strand finished, not what it returned.
+  pub def wait self 
+    throw nil
+
+
+# A [`Strand`](strand.Strand) with channel-backed input and output, created by
+# [`stream`](strand).
+#
+# Its iterator re-raises a strand error after draining output; its sink reports
+# ordinary shutdown after input closes.
+pub class Stream
+  #
+  # ([`Bool`](std.Bool)) Whether the strand has completed execution.
+  #
+  #[getter]
+  pub def done self
+    throw nil
+
+  #
+  # Requests cancellation of the strand, causing a `Canceled` error to be raised
+  # at the strand's next suspension point.
+  #
+  pub def cancel self 
+    throw nil
+
+  #
+  # Closes both channels, then waits for the strand to complete. If the strand
+  # exited normally, returns its result. If the strand exited with an error,
+  # re-raises it.
+  #
+  # Closing the channels before waiting prevents deadlock when the strand is
+  # blocked waiting for input or waiting for a consumer to read its output.
+  #
+  pub def join self 
+    throw nil
+
+  #
+  # Waits for the strand to complete. Unlike [`join()`](#join), this method does
+  # not close the channels, does not return the strand's result, and does not
+  # re-raise any error.
+  #
+  pub def wait self 
+    throw nil
+
+
+# Creates a channel for communication between strands.
+pub def channel
+  # (Int) Buffer capacity (default: 1, unbuffered)
+  :buffer = nil
+do
+  throw nil
+
+# Creates a pipeline stage that collects input values.
+pub def collect
+  # (output) collection to add to (defaults to a new `array`)
+  :target = nil
+do
+  throw nil
+
+# Creates a pipeline stage that transforms each input value.
+pub def each
+  # (Func) a function that transforms a single value
+  func
+do
+  throw nil
+
+# Runs blocks concurrently and returns their results in block order.
+pub def fork
+  # (Func) functions to execute concurrently
+  ...blocks
+do
+  throw nil
+
+# Creates a pipeline stage that emits values from an iterable.
+pub def from
+  # (input) an iterable to emit values from
+  value
+do
+  throw nil
+
+# Applies a function concurrently to values pulled from an iterator.
+pub def map
+  # ([`Int`](std.Int)) number of worker strands
+  count
+  # (Func) function applied to each input value
+  func
+  # (input?) source; defaults to the strand-local iterator
+  :input = nil
+  # (output?) destination; defaults to the strand-local sink
+  :output = nil
+do
+  throw nil
+
+# Connects pipeline stages and runs them concurrently.
+pub def pipeline
+  stage
+  # (input) Optional input source for the first stage
+  :input = nil
+  # (output) Optional output destination for the last stage
+  :output = nil
+  ...stages
+do
+  throw nil
+
+# Runs a function over an iterator with a fixed number of scoped workers.
+pub def pool
+  # ([`Int`](std.Int)) number of worker strands
+  count
+  input_or_func
+  # (Func) function applied to each input value
+  func = nil
+do
+  throw nil
+
+# Writes a value to the strand-local output.
+pub def put
+  # (input) value to write
+  value
+do
+  throw nil
+
+# Runs a function in a background strand.
+pub def spawn
+  # (Func) the function to execute
+  func
+do
+  throw nil
+
+# Runs a function in a background strand with channel-backed endpoints.
+pub def stream
+  # (Func) the function to execute
+  func
+do
+  throw nil
+
+# Creates a pipeline stage that filters input values.
+pub def where
+  # (Func) a function returning a truthy/falsy value
+  predicate
+do
+  throw nil

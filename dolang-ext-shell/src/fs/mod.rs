@@ -1558,6 +1558,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             create_path(strand, global, temp_path, out)?;
             Ok(())
         })
+        .value("File", global.types.file)
+        .value("FileLock", global.types.file_lock)
         .value("Metadata", global.types.metadata)
         .value("FsMetadata", global.types.fs_metadata)
         .value("XattrEntry", global.types.xattr_entry)

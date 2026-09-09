@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
-import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -34,26 +33,6 @@ def get_handler(
     )
 
 
-def _resolve_module(module_name: str, search_dirs: list[str]) -> str | None:
-    """Find the .dol source file for a module name using the same resolution logic as dolang.
-
-    For a module name like ``foo.bar``, tries in each search directory:
-      1. ``<dir>/foo/bar.dol``
-      2. ``<dir>/foo/bar/mod.dol``
-
-    Returns the path as a string, or None if not found.
-    """
-    parts = module_name.split(".")
-    rel_file = Path(*parts).with_suffix(".dol")
-    rel_mod = Path(*parts, "mod.dol")
-    for base in search_dirs:
-        base_path = Path(base)
-        for candidate in (base_path / rel_file, base_path / rel_mod):
-            if candidate.is_file():
-                return str(candidate)
-    return None
-
-
 class DoHandler(BaseHandler):
     name = "do"
     domain = "do"
@@ -62,6 +41,12 @@ class DoHandler(BaseHandler):
     def __init__(self, *, handler_config: dict, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._global_config = handler_config.get("options", {})
+        # Keyed by module name: raw (unannotated) doc_data read from the
+        # pre-extracted JSON cache. Every entity/member under a module is
+        # documented via its own `::: module.Foo.bar` directive, each
+        # triggering a separate `collect()` call -- without this cache, every
+        # one of them would re-read and re-parse the same cache file.
+        self._doc_cache: dict[str, dict] = {}
 
     def get_templates_dir(self, handler: str | None = None) -> Path:
         return Path(__file__).parent / "templates"
@@ -74,9 +59,6 @@ class DoHandler(BaseHandler):
     def collect(self, identifier: str, options: dict) -> dict:
         """Collect documentation for an identifier.
 
-        ``paths`` may be a list of search directories (resolved like dolang)
-        or a dict mapping module names to explicit file paths — or both together.
-
         Identifier formats:
           - ``module``                      → entire module (all public entities)
           - ``module.sub``                  → sub-module or entity named ``sub``
@@ -86,83 +68,52 @@ class DoHandler(BaseHandler):
 
         Resolution tries the longest module prefix first so that dotted module
         names (e.g. ``_container.dockman``) are preferred over treating the
-        last component as an entity name.
+        last component as an entity name. A prefix is a module if a file for
+        it exists in the pre-extracted JSON cache (``DOLANG_DOC_CACHE``) --
+        one file per module, named ``<module name>.json``, produced ahead of
+        the mkdocs build by the ``dodo mkdocs`` extraction step (see
+        ``extract_docs`` in ``dodo.dol``). This handler never runs the
+        ``dolang`` extractor itself.
         """
-        paths_opt = options.get("paths", [])
-
-        # Normalise: paths can be a list of search dirs, a dict of explicit
-        # mappings, or a mixed list containing both strings and dicts.
-        search_dirs: list[str] = []
-        explicit: dict[str, str] = {}
-        if isinstance(paths_opt, dict):
-            explicit = paths_opt
-        elif isinstance(paths_opt, list):
-            for item in paths_opt:
-                if isinstance(item, str):
-                    search_dirs.append(item)
-                elif isinstance(item, dict):
-                    explicit.update(item)
-        elif isinstance(paths_opt, str):
-            search_dirs.append(paths_opt)
+        cache_dir = os.environ.get("DOLANG_DOC_CACHE")
+        if not cache_dir:
+            raise CollectionError(
+                "DOLANG_DOC_CACHE is not set. It must point at the "
+                "pre-extracted doc JSON directory produced by the "
+                "`dodo mkdocs` build (see extract_docs/with_mkdocs in dodo.dol)."
+            )
 
         # Find the longest dotted prefix of the identifier that names a module.
         parts = identifier.split(".")
-        source_path = None
         module_name = None
         entity_parts: list[str] = []
+        cached = None
 
         for split in range(len(parts), 0, -1):
             candidate = ".".join(parts[:split])
-            # Check explicit mapping first, then search dirs.
-            if candidate in explicit:
-                source_path = explicit[candidate]
+            cached = self._doc_cache.get(candidate)
+            if cached is None:
+                cache_file = Path(cache_dir) / f"{candidate}.json"
+                if cache_file.is_file():
+                    try:
+                        cached = json.loads(cache_file.read_text())
+                    except json.JSONDecodeError as e:
+                        raise CollectionError(
+                            f"doc cache file '{cache_file}' is invalid JSON: {e}"
+                        ) from e
+                    self._doc_cache[candidate] = cached
+            if cached is not None:
                 module_name = candidate
                 entity_parts = parts[split:]
                 break
-            found = _resolve_module(candidate, search_dirs)
-            if found is not None:
-                source_path = found
-                module_name = candidate
-                entity_parts = parts[split:]
-                break
 
-        if source_path is None:
+        if cached is None:
             raise CollectionError(
-                f"Could not resolve module for identifier '{identifier}'. "
-                f"Check the 'paths' option in the handler configuration."
+                f"Could not resolve module for identifier '{identifier}' in "
+                f"doc cache '{cache_dir}'."
             )
 
-        # Find the extractor: prefer the DOLANG_DOC env var, then the `doc`
-        # entrypoint of a `dolang` on PATH.
-        dolang_doc = os.environ.get("DOLANG_DOC")
-        dolang_doc_cmd = dolang_doc.split() if dolang_doc else None
-        if dolang_doc_cmd is None:
-            found = shutil.which("dolang")
-            dolang_doc_cmd = [found, "-m", "doc"] if found else None
-        if dolang_doc_cmd is None:
-            raise CollectionError(
-                "'dolang' not found. Set DOLANG_DOC env var or add it to PATH."
-            )
-
-        try:
-            result = subprocess.run(
-                [*dolang_doc_cmd, "--module", module_name, source_path],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        except subprocess.CalledProcessError as e:
-            raise CollectionError(
-                f"documentation extraction failed for '{source_path}': {e.stderr}"
-            ) from e
-
-        try:
-            doc_data = json.loads(result.stdout)
-        except json.JSONDecodeError as e:
-            raise CollectionError(
-                f"documentation extraction produced invalid JSON: {e}"
-            ) from e
-
+        doc_data = copy.deepcopy(cached)
         entities = doc_data.get("entities", [])
 
         show_undocumented = options.get("show_undocumented", False)
@@ -186,7 +137,7 @@ class DoHandler(BaseHandler):
         entity = _find_entity(entities, entity_parts)
         if entity is None:
             raise CollectionError(
-                f"Entity '{'.'.join(entity_parts)}' not found in '{source_path}'"
+                f"Entity '{'.'.join(entity_parts)}' not found in module '{module_name}'"
             )
 
         entity["_identifier"] = identifier
@@ -230,6 +181,24 @@ def _split_doc(doc: str) -> tuple[str, str]:
         return "", ""
     head, _, rest = text.partition("\n\n")
     return head.strip(), rest.strip()
+
+
+def _split_intro(doc: str) -> tuple[str, str]:
+    """Split prose before the first Markdown section from those sections."""
+    text = (doc or "").strip()
+    fence = None
+    for match in re.finditer(r"(?m)^.*(?:\n|$)", text):
+        line = match.group().rstrip("\r\n")
+        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if marker:
+            run = marker.group(1)
+            if fence is None:
+                fence = run[0]
+            elif run[0] == fence:
+                fence = None
+        elif fence is None and re.match(r"^#{1,6}(?:\s+|$)", line):
+            return text[: match.start()].rstrip(), text[match.start() :].strip()
+    return text, ""
 
 
 def _split_type(text: str) -> tuple[str, str]:
@@ -310,8 +279,19 @@ def _annotate_params(entities: list[dict]) -> None:
                 slug = f"{slug}-{index}"
             seen.add(slug)
             param["slug"] = slug
+        # What a one-line table cell can hold, wherever an entity is listed
+        # rather than rendered: the same first paragraph a parameter table takes.
+        entity["doc_summary"], _ = _split_doc(entity.get("doc", ""))
         if entity.get("kind") in ("function", "method"):
             entity["signature"] = _signature(entity)
+            # The same leading-parenthesised-type convention parameter
+            # descriptions use is also written on a function/method's own
+            # doc comment, informally, to give its return type. Peel it off
+            # before splitting the rest into intro/sections, the same way a
+            # parameter's description is split in the loop above.
+            return_type, doc = _split_type((entity.get("doc", "") or "").strip())
+            entity["return_type"] = return_type
+            entity["doc_intro"], entity["doc_sections"] = _split_intro(doc)
         _annotate_params(entity.get("members", []))
 
 

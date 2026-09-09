@@ -914,6 +914,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
     let close = builder.sym("close");
     builder
         .module("zip")
+        .value("Archive", global.types.archive)
+        .value("Entry", global.types.entry)
+        .value("File", global.types.file)
         .function("open", async move |strand, args, out| {
             let ([path], [opt1, opt2]) = unpack!(strand, args, 1, 2)?;
             let path = dolang_ext_shell::as_path(strand, &path)

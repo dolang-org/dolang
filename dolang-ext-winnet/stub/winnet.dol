@@ -1,0 +1,1274 @@
+# Windows NetAPI and related bindings: local accounts, groups, SMB shares and
+# connections, and domain membership.
+#
+# This API is VFS-aware: every operation goes through the VFS in scope for the
+# current strand, so it works transparently under remote and elevated Windows
+# contexts.
+#
+# ## Domain join {: #winnet.domain-join }
+#
+# [`join_domain`](#join_domain), [`unjoin_domain`](#unjoin_domain),
+# [`rename_machine`](#rename_machine) and
+# [`apply_offline_join`](#apply_offline_join) change how the machine is
+# identified on the network. **Every one of them takes effect only after the
+# machine is restarted**, so a provisioning script must sequence a reboot
+# before the change is usable. None of them return a status; use
+# [`join_status`](#join_status) to read the recorded membership.
+#
+# [`provision_computer`](#provision_computer) and
+# [`apply_offline_join`](#apply_offline_join) split a join in two: the first
+# runs where a domain controller is reachable and mints a blob, the second
+# applies that blob to a Windows installation that has never talked to the
+# domain. This is the path for image-based and first-boot provisioning, where
+# the online join would need network, a reachable domain controller and
+# credentials at exactly the wrong moment.
+
+# A Windows local user, identified by immutable SID.
+#
+# The SID is what makes this a durable handle: the account may be renamed, by
+# this API or another, and the handle keeps working.
+#
+# Obtained from [`user`](winnet.user) or
+# [`create_user`](winnet.create_user).
+pub class User
+  # ([`security.windows.Sid`](security.windows.Sid)) The account's SID.
+  #[getter]
+  pub def sid self
+    throw nil
+
+  # Reads a fresh snapshot of the account.
+  #
+  # ## Returns
+  #
+  # [`UserInfo`](winnet.UserInfo).
+  pub def info self
+    throw nil
+
+  # Updates account state.
+  #
+  # Omitted options leave the current value unchanged; `nil` clears a nullable
+  # field and removes the account expiration. A password cannot be cleared with
+  # `nil`.
+  #
+  # Every other attribute is applied before `name`, so a failed rename leaves
+  # the earlier changes applied and a failure before the rename means no rename
+  # happens. A successful rename keeps this handle usable.
+  #
+  # ## Returns
+  #
+  # A fresh [`UserInfo`](winnet.UserInfo).
+  #
+  # ## Example
+  #
+  # ```
+  # user.update
+  #   full_name: "Build User"
+  #   disabled: false
+  #   password_never_expires: true
+  # ```
+  pub def update
+    self
+    # ([`Str`](std.Str)?) New account name. Applied after every other
+    # option.
+    :name = nil
+    # ([`Str`](std.Str)?) Password to set.
+    :password = nil
+    # ([`Str`](std.Str)?) Display name.
+    :full_name = nil
+    # ([`Str`](std.Str)?) Administrative account comment.
+    :comment = nil
+    # ([`Str`](std.Str)?) User-facing account comment.
+    :user_comment = nil
+    # ([`fs.windows.Path`](fs.windows.Path)?) Home directory.
+    :home_dir = nil
+    # ([`Str`](std.Str)?) Drive designator assigned to the home directory
+    # at logon, such as `"Z:"`.
+    :home_dir_drive = nil
+    # ([`fs.windows.Path`](fs.windows.Path)?) Profile path.
+    :profile = nil
+    # ([`fs.windows.Path`](fs.windows.Path)?) Logon script path.
+    :script_path = nil
+    # ([`time.DateTime`](time.DateTime)?) Expiration instant. `nil` means
+    # the account never expires.
+    :account_expires = nil
+    # ([`Bool`](std.Bool)?) Whether the account is disabled.
+    :disabled = nil
+    # ([`Bool`](std.Bool)?) Whether the password is exempt from expiry.
+    :password_never_expires = nil
+    # ([`Bool`](std.Bool)?) Whether the user may change the password.
+    :password_cannot_change = nil
+  do
+    throw nil
+
+  # Lists the account rights assigned through the local security policy.
+  #
+  # ## Returns
+  #
+  # An [`Array`](std.Array) of [`Str`](std.Str), such as
+  # `["SeServiceLogonRight"]`.
+  pub def rights self
+    throw nil
+
+  # Grants an account right.
+  pub def grant_right
+    self
+    # ([`Str`](std.Str)) Right name, such as `"SeServiceLogonRight"`.
+    name
+  do
+    throw nil
+
+  # Revokes an account right.
+  #
+  # Revoking a right the account does not hold does nothing.
+  pub def revoke_right
+    self
+    # ([`Str`](std.Str)) Right name.
+    name
+  do
+    throw nil
+
+  # Deletes the account.
+  pub def delete self
+    throw nil
+
+# A snapshot of a Windows user account's mutable state.
+#
+# Returned by [`User.info`](winnet.User.info), [`User.update`](winnet.User.update)
+# and [`users`](winnet.users). Passwords are write-only and never appear in
+# a snapshot.
+pub class UserInfo
+  # ([`security.windows.Sid`](security.windows.Sid)) The account's SID.
+  #[getter]
+  pub def sid self
+    throw nil
+
+  # ([`Str`](std.Str)) Account name.
+  #[getter]
+  pub def name self
+    throw nil
+
+  # ([`Str`](std.Str)?) Display name.
+  #[getter]
+  pub def full_name self
+    throw nil
+
+  # ([`Str`](std.Str)?) Administrative account comment.
+  #[getter]
+  pub def comment self
+    throw nil
+
+  # ([`Str`](std.Str)?) User-facing account comment.
+  #[getter]
+  pub def user_comment self
+    throw nil
+
+  # ([`fs.windows.Path`](fs.windows.Path)?) Home directory.
+  #[getter]
+  pub def home_dir self
+    throw nil
+
+  # ([`Str`](std.Str)?) Drive designator assigned to the home directory
+  # at logon, such as `"Z:"`.
+  #[getter]
+  pub def home_dir_drive self
+    throw nil
+
+  # ([`fs.windows.Path`](fs.windows.Path)?) Profile path.
+  #[getter]
+  pub def profile self
+    throw nil
+
+  # ([`fs.windows.Path`](fs.windows.Path)?) Logon script path.
+  #[getter]
+  pub def script_path self
+    throw nil
+
+  # ([`UserFlags`](winnet.UserFlags)) Complete native account flags.
+  #[getter]
+  pub def flags self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the account is disabled.
+  #[getter]
+  pub def disabled self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the password is exempt from expiry.
+  #[getter]
+  pub def password_never_expires self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the user may change the password.
+  #[getter]
+  pub def password_cannot_change self
+    throw nil
+
+  # ([`time.Duration`](time.Duration)) Time since the password was last
+  # changed.
+  #[getter]
+  pub def password_age self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the password has expired.
+  #[getter]
+  pub def password_expired self
+    throw nil
+
+  # ([`time.DateTime`](time.DateTime)?) Last recorded logon.
+  #[getter]
+  pub def last_logon self
+    throw nil
+
+  # ([`time.DateTime`](time.DateTime)?) Account expiration, or `nil` when
+  # the account never expires.
+  #[getter]
+  pub def account_expires self
+    throw nil
+
+  # ([`Int`](std.Int)) Recorded failed password attempts.
+  #[getter]
+  pub def bad_password_count self
+    throw nil
+
+  # ([`Int`](std.Int)) Recorded successful logons.
+  #[getter]
+  pub def logon_count self
+    throw nil
+
+# Native Windows user-account flags.
+#
+# Reported by [`UserInfo.flags`](winnet.UserInfo.flags). The flags worth testing
+# individually are available as boolean fields on
+# [`UserInfo`](winnet.UserInfo); this type carries the raw mask, unrecognized
+# bits included.
+pub class UserFlags
+  # ([`Int`](std.Int)) The complete native mask, including bits this
+  # module does not name.
+  #[getter]
+  pub def int self
+    throw nil
+
+# A Windows local group, identified by immutable SID.
+#
+# As with [`User`](winnet.User), the SID is what makes the handle durable across
+# a rename.
+#
+# Obtained from [`group`](winnet.group) or
+# [`create_group`](winnet.create_group).
+pub class Group
+  # ([`security.windows.Sid`](security.windows.Sid)) The group's SID.
+  #[getter]
+  pub def sid self
+    throw nil
+
+  # Reads a fresh snapshot of the group.
+  #
+  # ## Returns
+  #
+  # [`GroupInfo`](winnet.GroupInfo).
+  pub def info self
+    throw nil
+
+  # Updates the group.
+  #
+  # The comment is applied before the rename, so a failed rename leaves the
+  # comment change applied.
+  #
+  # ## Returns
+  #
+  # A fresh [`GroupInfo`](winnet.GroupInfo).
+  pub def update
+    self
+    # ([`Str`](std.Str)?) New group name.
+    :name = nil
+    # ([`Str`](std.Str)?) Administrative comment. `nil` clears it.
+    :comment = nil
+  do
+    throw nil
+
+  # Lists the group's members.
+  #
+  # ## Returns
+  #
+  # An [`Iter`](std.Iter) yielding
+  # [`security.windows.SidName`](security.windows.SidName)s.
+  pub def members self
+    throw nil
+
+  # Adds a member to the group.
+  #
+  # ## Errors
+  #
+  # | Exception                                                  | Condition                        |
+  # | ---------------------------------------------------------- | -------------------------------- |
+  # | [`sys.AlreadyExistsError`](sys.AlreadyExistsError) | The principal is already a member |
+  pub def add_member
+    self
+    # ([`Str`](std.Str)|[`security.windows.Sid`](security.windows.Sid))
+    # Account name or SID.
+    principal
+  do
+    throw nil
+
+  # Removes a member from the group.
+  #
+  # ## Errors
+  #
+  # | Exception                                        | Condition                     |
+  # | ------------------------------------------------ | ----------------------------- |
+  # | [`sys.NotFoundError`](sys.NotFoundError) | The principal is not a member |
+  pub def remove_member
+    self
+    # ([`Str`](std.Str)|[`security.windows.Sid`](security.windows.Sid))
+    # Account name or SID.
+    principal
+  do
+    throw nil
+
+  # Lists the account rights assigned through the local security policy.
+  #
+  # ## Returns
+  #
+  # An [`Array`](std.Array) of [`Str`](std.Str).
+  pub def rights self
+    throw nil
+
+  # Grants an account right.
+  pub def grant_right
+    self
+    # ([`Str`](std.Str)) Right name, such as `"SeServiceLogonRight"`.
+    name
+  do
+    throw nil
+
+  # Revokes an account right.
+  #
+  # Revoking a right the group does not hold does nothing.
+  pub def revoke_right
+    self
+    # ([`Str`](std.Str)) Right name.
+    name
+  do
+    throw nil
+
+  # Deletes the group.
+  pub def delete self
+    throw nil
+
+# A snapshot of a Windows local group.
+#
+# Returned by [`Group.info`](winnet.Group.info),
+# [`Group.update`](winnet.Group.update) and [`groups`](winnet.groups).
+pub class GroupInfo
+  # ([`security.windows.Sid`](security.windows.Sid)) The group's SID.
+  #[getter]
+  pub def sid self
+    throw nil
+
+  # ([`Str`](std.Str)) Group name.
+  #[getter]
+  pub def name self
+    throw nil
+
+  # ([`Str`](std.Str)?) Administrative comment.
+  #[getter]
+  pub def comment self
+    throw nil
+
+# The local password and account-lockout policy.
+#
+# Returned by [`account_policy`](winnet.account_policy) and
+# [`update_account_policy`](winnet.update_account_policy).
+pub class AccountPolicy
+  # ([`Int`](std.Int)) Minimum number of characters a password must have.
+  #[getter]
+  pub def min_password_length self
+    throw nil
+
+  # ([`time.Duration`](time.Duration)?) Maximum password age, or `nil`
+  # when passwords do not expire.
+  #[getter]
+  pub def max_password_age self
+    throw nil
+
+  # ([`time.Duration`](time.Duration)) Minimum time before a password may
+  # be changed again.
+  #[getter]
+  pub def min_password_age self
+    throw nil
+
+  # ([`time.Duration`](time.Duration)?) Delay before users are forcibly
+  # logged off once their valid logon hours expire, or `nil` when forced logoff
+  # is disabled.
+  #[getter]
+  pub def force_logoff self
+    throw nil
+
+  # ([`Int`](std.Int)) Number of previous passwords retained.
+  #[getter]
+  pub def password_history_length self
+    throw nil
+
+  # ([`time.Duration`](time.Duration)) Time a locked account stays
+  # locked.
+  #[getter]
+  pub def lockout_duration self
+    throw nil
+
+  # ([`time.Duration`](time.Duration)) Time after which the failed-logon
+  # counter resets.
+  #[getter]
+  pub def lockout_observation_window self
+    throw nil
+
+  # ([`Int`](std.Int)) Failed logons allowed before lockout. Zero
+  # disables lockout.
+  #[getter]
+  pub def lockout_threshold self
+    throw nil
+
+# A local SMB share, identified by its immutable name.
+#
+# Obtained from [`share`](winnet.share) or
+# [`create_share`](winnet.create_share).
+pub class Share
+  # ([`Str`](std.Str)) The share name.
+  #[getter]
+  pub def name self
+    throw nil
+
+  # Reads a fresh snapshot of the share.
+  #
+  # ## Returns
+  #
+  # [`ShareInfo`](winnet.ShareInfo).
+  pub def info self
+    throw nil
+
+  # Updates the supplied fields.
+  #
+  # They are applied in comment, maximum-use, descriptor order, so a later
+  # failure leaves the earlier changes applied.
+  #
+  # ## Returns
+  #
+  # A fresh [`ShareInfo`](winnet.ShareInfo).
+  pub def update
+    self
+    # ([`Str`](std.Str)?) Comment. `nil` clears it.
+    :comment = nil
+    # ([`Int`](std.Int)?) Connection limit. `nil` is unlimited.
+    :max_uses = nil
+    # ([`security.windows.SecDesc`](security.windows.SecDesc)|[`Bin`](std.Bin)|[`Dict`](std.Dict)?)
+    # Security descriptor, self-relative packet, or declarative descriptor.
+    :sec_desc = nil
+  do
+    throw nil
+
+  # Deletes the share, invalidating this handle.
+  pub def delete self
+    throw nil
+
+# A snapshot of a local SMB share.
+#
+# Returned by [`Share.info`](winnet.Share.info),
+# [`Share.update`](winnet.Share.update) and [`shares`](winnet.shares).
+pub class ShareInfo
+  # ([`Str`](std.Str)) Share name.
+  #[getter]
+  pub def name self
+    throw nil
+
+  # ([`Sym`](std.Sym)) Resource kind: `:DISKTREE:`, `:PRINTQ:`,
+  # `:DEVICE:`, or `:IPC:`.
+  #[getter]
+  pub def kind self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the native special-share flag is set.
+  #[getter]
+  pub def special self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the native temporary-share flag is set.
+  #[getter]
+  pub def temporary self
+    throw nil
+
+  # ([`Str`](std.Str)?) Comment.
+  #[getter]
+  pub def comment self
+    throw nil
+
+  # ([`Int`](std.Int)?) Maximum simultaneous connections, or `nil` when
+  # use is unlimited.
+  #[getter]
+  pub def max_uses self
+    throw nil
+
+  # ([`Int`](std.Int)) Current connection count.
+  #[getter]
+  pub def current_uses self
+    throw nil
+
+  # ([`fs.windows.Path`](fs.windows.Path)) Shared local path.
+  #[getter]
+  pub def path self
+    throw nil
+
+  # ([`security.windows.SecDesc`](security.windows.SecDesc)?) Share
+  # security descriptor, or `nil` when the share is left to the server
+  # service's default security.
+  #[getter]
+  pub def sec_desc self
+    throw nil
+
+# A connection to a remote SMB resource.
+#
+# Obtained from [`connect`](winnet.connect) or
+# [`connection`](winnet.connection).
+pub class Connection
+  # ([`Str`](std.Str)) The local device the connection redirects, or its
+  # remote name when it redirects none.
+  #[getter]
+  pub def name self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether this handle is still connected. Becomes
+  # `false` after [`disconnect`](winnet.Connection.disconnect).
+  #[getter]
+  pub def connected self
+    throw nil
+
+  # Reads a fresh snapshot of the connection.
+  #
+  # ## Returns
+  #
+  # [`ConnectionInfo`](winnet.ConnectionInfo).
+  pub def info self
+    throw nil
+
+  # The connection's root: the drive root when the connection redirects a local
+  # device, and the remote name otherwise.
+  #
+  # ## Returns
+  #
+  # [`fs.windows.Path`](fs.windows.Path).
+  #
+  # ## Example
+  #
+  # ```
+  # connect \\build\artifacts local: Z: do |conn|
+  #   fs.copy $release $conn.path()
+  # ```
+  pub def path self
+    throw nil
+
+  # Disconnects, invalidating this handle.
+  #
+  # Disconnecting an already disconnected connection does nothing, so a
+  # connection may be disconnected explicitly inside a scoped
+  # [`connect`](winnet.connect) block.
+  #
+  # A persistent connection's profile entry is removed, so it is not restored
+  # at the next logon.
+  #
+  # ## Errors
+  #
+  # | Exception                                                | Condition                                                              |
+  # | -------------------------------------------------------- | ---------------------------------------------------------------------- |
+  # | [`sys.ResourceBusyError`](sys.ResourceBusyError) | Files or directories are open on the connection and `force` is not set |
+  pub def disconnect
+    self
+    # ([`Bool`](std.Bool)?) Disconnect even with open files or
+    # directories on the connection. Defaults to `false`.
+    :force = nil
+    # ([`Bool`](std.Bool)?) Remove credentials saved for the server.
+    # Defaults to removing them for a persistent connection.
+    :forget_credentials = nil
+  do
+    throw nil
+
+# A snapshot of an SMB client connection.
+#
+# Returned by [`Connection.info`](winnet.Connection.info) and
+# [`connections`](winnet.connections).
+pub class ConnectionInfo
+  # ([`Str`](std.Str)?) Redirected local device such as `"Z:"`, or `nil`
+  # for a deviceless connection.
+  #[getter]
+  pub def local self
+    throw nil
+
+  # ([`Str`](std.Str)) Remote resource in UNC form.
+  #[getter]
+  pub def remote self
+    throw nil
+
+  # ([`Str`](std.Str)?) Network provider name, or `nil` when the provider
+  # reports none.
+  #[getter]
+  pub def provider self
+    throw nil
+
+  # ([`Str`](std.Str)?) Account the connection authenticated as. A
+  # connection saved in the profile but not currently established has no
+  # account to report.
+  #[getter]
+  pub def user self
+    throw nil
+
+  # ([`Sym`](std.Sym)) Resource kind: `:DISK:`, `:PRINT:`, or `:ANY:`. A
+  # provider resource type this binding does not model reports as `:ANY:`.
+  #[getter]
+  pub def kind self
+    throw nil
+
+  # ([`Sym`](std.Sym)) `:CONNECTED:` when the connection is established,
+  # `:REMEMBERED:` when it is saved in the profile but not currently connected
+  # -- what `net use` shows as `Unavailable`.
+  #[getter]
+  pub def state self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the connection is recorded in the
+  # profile and restored at logon. Independent of
+  # [`state`](winnet.ConnectionInfo.state): a restored mapping whose server is
+  # reachable is both `:CONNECTED:` and persistent.
+  #[getter]
+  pub def persistent self
+    throw nil
+
+# The machine's workgroup or domain membership.
+#
+# Returned by [`join_status`](winnet.join_status).
+#
+# ## Example
+#
+# ```
+# let status = winnet.join_status()
+# if (status.kind == :DOMAIN:)
+#   echo "joined to $(status.name)"
+# else
+#   echo "not domain-joined"
+# ```
+pub class JoinStatus
+  # ([`Sym`](std.Sym)) How the machine is named on the network:
+  # `:DOMAIN:`, `:WORKGROUP:`, `:UNJOINED:`, or `:UNKNOWN:` when the state
+  # could not be determined.
+  #[getter]
+  pub def kind self
+    throw nil
+
+  # ([`Str`](std.Str)?) Domain or workgroup name, or `nil` when
+  # [`kind`](winnet.JoinStatus.kind) is `:UNJOINED:` or `:UNKNOWN:`.
+  #[getter]
+  pub def name self
+    throw nil
+
+# Machine identity and server role.
+#
+# Returned by [`machine_info`](winnet.machine_info). Identity comes from
+# the workstation service and the role fields from the server service. When the
+# server service is not running,
+# [`server_started`](winnet.MachineInfo.server_started) is `false`,
+# [`comment`](winnet.MachineInfo.comment) is `nil` and every role field is
+# `false`; the identity fields are still populated.
+#
+# ## Example
+#
+# ```
+# let machine = winnet.machine_info()
+# echo "$(machine.name) is running $(machine.version_major).$(machine.version_minor)"
+# if machine.domain_controller
+#   echo "skipping: cannot unjoin a domain controller"
+# ```
+pub class MachineInfo
+  # ([`Str`](std.Str)) NetBIOS computer name.
+  #[getter]
+  pub def name self
+    throw nil
+
+  # ([`Str`](std.Str)) Domain or workgroup the machine belongs to. Use
+  # [`join_status`](winnet.join_status) to tell which of the two it is.
+  #[getter]
+  pub def domain self
+    throw nil
+
+  # ([`Int`](std.Int)) Major OS version.
+  #[getter]
+  pub def version_major self
+    throw nil
+
+  # ([`Int`](std.Int)) Minor OS version.
+  #[getter]
+  pub def version_minor self
+    throw nil
+
+  # ([`Str`](std.Str)?) Server comment.
+  #[getter]
+  pub def comment self
+    throw nil
+
+  # ([`ServerType`](winnet.ServerType)) Advertised server role mask.
+  #[getter]
+  pub def server_type self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the server service supplied
+  # [`server_type`](winnet.MachineInfo.server_type) and
+  # [`comment`](winnet.MachineInfo.comment).
+  #[getter]
+  pub def server_started self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the machine advertises the workstation
+  # role.
+  #[getter]
+  pub def workstation self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the machine advertises the server role.
+  #[getter]
+  pub def server self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the machine advertises as a domain
+  # controller.
+  #[getter]
+  pub def domain_controller self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the machine advertises as a backup
+  # domain controller.
+  #[getter]
+  pub def backup_domain_controller self
+    throw nil
+
+# Native Windows server-role flags.
+#
+# Reported by [`MachineInfo.server_type`](winnet.MachineInfo.server_type). The
+# roles worth testing individually are available as boolean fields on
+# [`MachineInfo`](winnet.MachineInfo); this type carries the raw mask,
+# unrecognized bits included.
+pub class ServerType
+  # ([`Int`](std.Int)) The complete native mask, including bits this
+  # module does not name.
+  #[getter]
+  pub def int self
+    throw nil
+
+# Reads the local password and lockout policy.
+#
+# ## Returns
+#
+# [`AccountPolicy`](winnet.AccountPolicy).
+pub def account_policy()
+  throw nil
+
+# Updates the supplied local password and lockout settings.
+#
+# Omitted settings are left unchanged.
+#
+# ## Returns
+#
+# The resulting [`AccountPolicy`](winnet.AccountPolicy).
+pub def update_account_policy
+  # ([`Int`](std.Int)?) Minimum password length.
+  :min_password_length = nil
+  # ([`time.Duration`](time.Duration)?) Maximum password age. `nil`
+  # selects no limit, so passwords never expire.
+  :max_password_age = nil
+  # ([`time.Duration`](time.Duration)?) Minimum password age.
+  :min_password_age = nil
+  # ([`time.Duration`](time.Duration)?) Forced-logoff delay. `nil`
+  # disables forced logoff.
+  :force_logoff = nil
+  # ([`Int`](std.Int)?) Number of prior passwords retained.
+  :password_history_length = nil
+  # ([`time.Duration`](time.Duration)?) Account lockout duration.
+  :lockout_duration = nil
+  # ([`time.Duration`](time.Duration)?) Failed-logon counter observation
+  # window.
+  :lockout_observation_window = nil
+  # ([`Int`](std.Int)?) Failed logons allowed before lockout. Zero
+  # disables lockout.
+  :lockout_threshold = nil
+do
+  throw nil
+
+# Obtains a handle to an existing local user.
+#
+# ## Returns
+#
+# [`User`](winnet.User).
+pub def user
+  # ([`Str`](std.Str)|[`security.windows.Sid`](security.windows.Sid)|[`UserInfo`](winnet.UserInfo))
+  # Account name, SID, or a prior snapshot.
+  principal
+do
+  throw nil
+
+# Lists local user accounts.
+#
+# ## Returns
+#
+# An [`Iter`](std.Iter) yielding [`UserInfo`](winnet.UserInfo)s.
+pub def users()
+  throw nil
+
+# Creates a normal enabled local user.
+#
+# ## Returns
+#
+# [`User`](winnet.User).
+#
+# ## Example
+#
+# ```
+# let user = create_user build-user password: $password
+#   full_name: "Build User"
+#   comment: "Automation account"
+#   disabled: true
+#   password_never_expires: true
+# ```
+pub def create_user
+  # ([`Str`](std.Str)) Account name.
+  name
+  # ([`Str`](std.Str)) Initial password.
+  :password
+  # ([`Str`](std.Str)?) Display name.
+  :full_name = nil
+  # ([`Str`](std.Str)?) Administrative account comment.
+  :comment = nil
+  # ([`Str`](std.Str)?) User-facing account comment.
+  :user_comment = nil
+  # ([`fs.windows.Path`](fs.windows.Path)?) Home directory.
+  :home_dir = nil
+  # ([`Str`](std.Str)?) Drive designator assigned to the home directory
+  # at logon, such as `"Z:"`.
+  :home_dir_drive = nil
+  # ([`fs.windows.Path`](fs.windows.Path)?) Profile path.
+  :profile = nil
+  # ([`fs.windows.Path`](fs.windows.Path)?) Logon script path.
+  :script_path = nil
+  # ([`time.DateTime`](time.DateTime)?) Expiration instant. `nil` means
+  # the account never expires.
+  :account_expires = nil
+  # ([`Bool`](std.Bool)?) Whether the account is disabled.
+  :disabled = nil
+  # ([`Bool`](std.Bool)?) Whether the password is exempt from expiry.
+  :password_never_expires = nil
+  # ([`Bool`](std.Bool)?) Whether the user may change the password.
+  :password_cannot_change = nil
+do
+  throw nil
+
+# Obtains a handle to an existing local group.
+#
+# ## Returns
+#
+# [`Group`](winnet.Group).
+pub def group
+  # ([`Str`](std.Str)|[`security.windows.Sid`](security.windows.Sid)|[`GroupInfo`](winnet.GroupInfo))
+  # Group name, SID, or a prior snapshot.
+  principal
+do
+  throw nil
+
+# Lists local groups.
+#
+# ## Returns
+#
+# An [`Iter`](std.Iter) yielding [`GroupInfo`](winnet.GroupInfo)s.
+pub def groups()
+  throw nil
+
+# Creates a local group.
+#
+# ## Returns
+#
+# [`Group`](winnet.Group).
+pub def create_group
+  # ([`Str`](std.Str)) Group name.
+  name
+  # ([`Str`](std.Str)?) Administrative comment.
+  :comment = nil
+do
+  throw nil
+
+# Obtains a handle to an existing local SMB share.
+#
+# ## Returns
+#
+# [`Share`](winnet.Share).
+pub def share
+  # ([`Str`](std.Str)|[`ShareInfo`](winnet.ShareInfo)) Share name or a
+  # prior snapshot.
+  name_or_info
+do
+  throw nil
+
+# Lists every local SMB share, administrative and non-disk shares included.
+#
+# ## Returns
+#
+# An [`Iter`](std.Iter) yielding [`ShareInfo`](winnet.ShareInfo)s.
+pub def shares()
+  throw nil
+
+# Creates a local SMB share.
+#
+# ## Returns
+#
+# [`Share`](winnet.Share).
+pub def create_share
+  # ([`Str`](std.Str)) Share name.
+  name
+  # ([`fs.windows.Path`](fs.windows.Path)) Local path to share.
+  :path
+  # ([`Sym`](std.Sym)?) Resource kind: `:DISKTREE:` (the default),
+  # `:PRINTQ:`, `:DEVICE:`, or `:IPC:`.
+  :kind = nil
+  # ([`Str`](std.Str)?) Comment.
+  :comment = nil
+  # ([`Int`](std.Int)?) Connection limit. Defaults to unlimited.
+  :max_uses = nil
+  # ([`Bool`](std.Bool)?) Mark the share special.
+  :special = nil
+  # ([`Bool`](std.Bool)?) Mark the share temporary.
+  :temporary = nil
+  # ([`security.windows.SecDesc`](security.windows.SecDesc)|[`Bin`](std.Bin)|[`Dict`](std.Dict)?)
+  # Security descriptor, self-relative packet, or declarative descriptor.
+  # Defaults to the one Windows supplies.
+  :sec_desc = nil
+do
+  throw nil
+
+# Connects to a remote SMB resource, optionally redirecting a local device.
+#
+# With a trailing `func` the connection is scoped: it is disconnected when
+# `func` returns, including when `func` throws, so a failure partway through
+# does not leave a mapping behind. Without one the connection is returned and
+# the caller decides when -- or whether -- to disconnect it.
+#
+# Connections belong to a logon session. One made under a given account is not
+# visible to a process running as another.
+#
+# ## Returns
+#
+# [`Connection`](winnet.Connection) when no `func` is given, otherwise the result
+# of calling `func`.
+#
+# ## Errors
+#
+# | Exception                                                        | Condition                              |
+# | ---------------------------------------------------------------- | -------------------------------------- |
+# | [`ValueError`](std.ValueError)                            | `persistent` requested without `local` |
+# | [`sys.AlreadyExistsError`](sys.AlreadyExistsError)       | The local device is already redirected |
+# | [`sys.PermissionDeniedError`](sys.PermissionDeniedError) | Credentials were rejected              |
+# | [`sys.NotFoundError`](sys.NotFoundError)                 | The remote resource does not exist     |
+#
+# ## Example
+#
+# ```
+# # Scoped: disconnected however the block exits
+# connect \\build\artifacts local: Z: do |conn|
+#   fs.copy $release $conn.path()
+#
+# # Unbound: the caller owns teardown
+# let conn = connect r"\\build\artifacts"
+# try
+#   publish $conn.remote
+# finally
+#   conn.disconnect()
+#
+# # Persistent, surviving a reboot
+# connect \\build\artifacts
+#   local: Z:
+#   user: r"CORP\ci"
+#   password: $secret
+#   persistent: true
+# ```
+pub def connect
+  # ([`Str`](std.Str)) Remote resource in UNC form, such as
+  # `r"\\server\share"`.
+  remote
+  # ([`Str`](std.Str)?) Local device to redirect, such as `"Z:"`.
+  :local = nil
+  # ([`Str`](std.Str)?) Account to authenticate as.
+  :user = nil
+  # ([`Str`](std.Str)?) Password for `user`.
+  :password = nil
+  # ([`Sym`](std.Sym)?) Resource kind: `:DISK:`, `:PRINT:`, or `:ANY:`.
+  :kind = nil
+  # ([`Bool`](std.Bool)?) Record the connection so it is restored at
+  # logon.
+  #
+  # A persistent connection must redirect a local device: Windows only
+  # remembers connections that redirect one. Asking for `persistent` without
+  # `local` raises [`ValueError`](std.ValueError) rather than silently
+  # producing a mapping that disappears at the next logon.
+  :persistent = nil
+  # ([`Bool`](std.Bool)?) Override whether credentials are saved for the
+  # server.
+  #
+  # Supplied credentials are saved for the target server by default when the
+  # connection is persistent, because a restored connection has nothing to
+  # authenticate with otherwise. `false` suppresses that; `true` saves them for
+  # a non-persistent connection. Saving requires `user`.
+  #
+  # Saved credentials are per-account, the same way the connection itself is,
+  # so a connection provisioned for a service account must be made under that
+  # account to be restored for it.
+  :save_credentials = nil
+  # (callable?) Called with the [`Connection`](winnet.Connection), which is
+  # disconnected when it returns. Omit to receive the handle instead.
+  func = nil
+do
+  throw nil
+
+# Obtains a handle to an existing connection.
+#
+# ## Returns
+#
+# [`Connection`](winnet.Connection).
+pub def connection
+  # ([`Str`](std.Str)|[`ConnectionInfo`](winnet.ConnectionInfo)) Local
+  # device, remote name, or a prior snapshot.
+  name_or_info
+do
+  throw nil
+
+# Lists every connection, including ones saved in the profile that are not
+# currently connected.
+#
+# ## Returns
+#
+# An [`Iter`](std.Iter) yielding
+# [`ConnectionInfo`](winnet.ConnectionInfo)s.
+#
+# ## Example
+#
+# ```
+# for entry = connections()
+#   echo $entry.local $entry.remote $entry.state
+# ```
+pub def connections()
+  throw nil
+
+# Resolves a path on a redirected device to its UNC form.
+#
+# ## Returns
+#
+# [`Str`](std.Str).
+#
+# ## Example
+#
+# ```
+# assert_eq (universal_name (Path r"Z:\release")) r"\\build\artifacts\release"
+# ```
+pub def universal_name
+  # ([`fs.windows.Path`](fs.windows.Path)) Path on a redirected device.
+  path
+do
+  throw nil
+
+# Reads the machine's current workgroup or domain membership.
+#
+# ## Returns
+#
+# [`JoinStatus`](winnet.JoinStatus).
+pub def join_status()
+  throw nil
+
+# Reads the computer name, domain membership, OS level and server role.
+#
+# ## Returns
+#
+# [`MachineInfo`](winnet.MachineInfo).
+pub def machine_info()
+  throw nil
+
+# Joins the machine to a domain.
+#
+# **Takes effect only after a restart** -- see [Domain
+# join](winnet.domain-join).
+#
+# Supply either `account` and `password` or `machine_password`; the two are
+# mutually exclusive, because joining with a pre-created computer account
+# password leaves no room for a user account.
+#
+# ## Errors
+#
+# | Exception                                                        | Condition                                                  |
+# | ---------------------------------------------------------------- | ---------------------------------------------------------- |
+# | [`sys.AlreadyExistsError`](sys.AlreadyExistsError)       | Already joined and `join_if_joined` was not set            |
+# | [`sys.InvalidInputError`](sys.InvalidInputError)         | Credentials are incomplete, or both credential forms given |
+# | [`sys.PermissionDeniedError`](sys.PermissionDeniedError) | Caller may not join the machine to the domain              |
+#
+# ## Example
+#
+# ```
+# winnet.join_domain corp.example.com
+#   ou: "OU=Servers,DC=corp,DC=example,DC=com"
+#   account: r"CORP\joiner"
+#   password: $password
+#   create_account: true
+# echo "restart to complete the join"
+# ```
+pub def join_domain
+  # ([`Str`](std.Str)) Domain to join.
+  domain
+  # ([`Str`](std.Str)?) Organizational unit for the computer account.
+  :ou = nil
+  # ([`Str`](std.Str)?) Domain account authorized to join, such as
+  # `"CORP\\joiner"`. Must be given together with `password`; omit both to use
+  # the caller's own credentials.
+  :account = nil
+  # ([`Str`](std.Str)?) Password for `account`.
+  :password = nil
+  # ([`Str`](std.Str)?) Password of a pre-created computer account, used
+  # instead of `account` and `password`.
+  :machine_password = nil
+  # ([`Bool`](std.Bool)?) Create the computer account as part of the
+  # join.
+  :create_account = nil
+  # ([`Bool`](std.Bool)?) Proceed even if already joined to a domain.
+  :join_if_joined = nil
+  # ([`Bool`](std.Bool)?) Perform an unsecured join.
+  :unsecure = nil
+  # ([`Bool`](std.Bool)?) Defer setting the service principal name until
+  # a later rename.
+  :defer_spn = nil
+  # ([`Bool`](std.Bool)?) Force the service principal name to be set.
+  :force_spn = nil
+  # ([`Bool`](std.Bool)?) Join using a domain controller account.
+  :dc_account = nil
+  # ([`Bool`](std.Bool)?) Join under a rename that has not taken effect
+  # yet.
+  :with_new_name = nil
+  # ([`Bool`](std.Bool)?) Join against a read-only domain controller.
+  :readonly = nil
+  # ([`Bool`](std.Bool)?) Allow an ambiguous domain controller name.
+  :ambiguous_dc = nil
+  # ([`Bool`](std.Bool)?) Do not write the netlogon cache.
+  :no_netlogon_cache = nil
+  # ([`Bool`](std.Bool)?) Fail rather than reuse an existing computer
+  # account.
+  :no_account_reuse = nil
+do
+  throw nil
+
+# Removes the machine from its domain.
+#
+# **Takes effect only after a restart** -- see [Domain
+# join](winnet.domain-join).
+#
+# ## Errors
+#
+# | Exception                                                        | Condition                             |
+# | ---------------------------------------------------------------- | ------------------------------------- |
+# | [`sys.NotFoundError`](sys.NotFoundError)                 | The machine is not joined to a domain |
+# | [`sys.InvalidInputError`](sys.InvalidInputError)         | The machine is a domain controller    |
+# | [`sys.PermissionDeniedError`](sys.PermissionDeniedError) | Caller may not unjoin the machine     |
+pub def unjoin_domain
+  # ([`Str`](std.Str)?) Domain account authorized to unjoin. Must be
+  # given together with `password`; omit both to use the caller's own
+  # credentials.
+  :account = nil
+  # ([`Str`](std.Str)?) Password for `account`.
+  :password = nil
+  # ([`Bool`](std.Bool)?) Disable the computer account in the domain.
+  :delete_account = nil
+do
+  throw nil
+
+# Renames the machine within its domain.
+#
+# **Takes effect only after a restart** -- see [Domain
+# join](winnet.domain-join).
+pub def rename_machine
+  # ([`Str`](std.Str)) New computer name.
+  name
+  # ([`Str`](std.Str)?) Domain account authorized to rename. Must be
+  # given together with `password`; omit both to use the caller's own
+  # credentials.
+  :account = nil
+  # ([`Str`](std.Str)?) Password for `account`.
+  :password = nil
+  # ([`Bool`](std.Bool)?) Create the renamed computer account if it is
+  # missing.
+  :create_account = nil
+do
+  throw nil
+
+# Creates a computer account in the domain and returns the blob that joins a
+# machine to it.
+#
+# Run this where a domain controller is reachable, then apply the blob with
+# [`apply_offline_join`](winnet.apply_offline_join).
+#
+# The blob contains the computer account password. Treat it as a secret:
+# anyone holding it can join a machine as that account.
+#
+# ## Returns
+#
+# [`Bin`](std.Bin).
+#
+# ## Example
+#
+# ```
+# let blob = winnet.provision_computer corp.example.com
+#   machine: WS01
+#   ou: "OU=Workstations,DC=corp,DC=example,DC=com"
+# fs.Path("ws01.blob").write $blob
+# ```
+pub def provision_computer
+  # ([`Str`](std.Str)) Domain to create the computer account in.
+  domain
+  # ([`Str`](std.Str)) Computer name to provision.
+  :machine
+  # ([`Str`](std.Str)?) Organizational unit for the computer account.
+  :ou = nil
+  # ([`Str`](std.Str)?) Domain controller to provision against.
+  :dc = nil
+  # ([`Bool`](std.Bool)?) Reuse an existing computer account.
+  :reuse = nil
+  # ([`Bool`](std.Bool)?) Use the default computer account password.
+  :default_password = nil
+  # ([`Bool`](std.Bool)?) Skip searching for an existing account.
+  :skip_account_search = nil
+  # ([`Bool`](std.Bool)?) Include root CA certificates in the blob.
+  :root_ca_certs = nil
+  # ([`Bool`](std.Bool)?) Support provisioning by a down-level privileged
+  # user.
+  :downlevel_priv_support = nil
+do
+  throw nil
+
+# Applies a provisioning blob to a Windows installation, joining it to the
+# domain without contacting a domain controller.
+#
+# **Takes effect only after the target installation is started or restarted**
+# -- see [Domain join](winnet.domain-join).
+#
+# ## Example
+#
+# ```
+# let blob = fs.Path("ws01.blob").read "b"
+# winnet.apply_offline_join $blob
+#   windows_path: (fs.windows.Path r"D:\Windows")
+# ```
+pub def apply_offline_join
+  # ([`Bin`](std.Bin)) Blob from
+  # [`provision_computer`](winnet.provision_computer).
+  blob
+  # ([`fs.windows.Path`](fs.windows.Path)) Windows directory of the
+  # installation to modify -- the mounted image's `Windows` directory for an
+  # offline image, or the running system's own when `online` is set.
+  :windows_path
+  # ([`Bool`](std.Bool)?) The target installation is the running system.
+  :online = nil
+do
+  throw nil

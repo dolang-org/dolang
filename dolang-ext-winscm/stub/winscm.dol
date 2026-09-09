@@ -1,0 +1,915 @@
+# Manages Windows services.
+#
+# This API is VFS-aware: it operates through the VFS in scope for the current
+# strand, so it works transparently under remote or elevated contexts. It is
+# supported only on Windows targets; elsewhere every operation throws
+# [`sys.UnsupportedError`](sys.UnsupportedError).
+#
+# ## Control requests {: #winscm.control-requests }
+#
+# Accepted by [`Service.control`](winscm.Service.control).
+#
+# | Symbol          | Requests that the service         |
+# | --------------- | --------------------------------- |
+# | `:STOP:`        | Stop                              |
+# | `:PAUSE:`       | Pause                             |
+# | `:CONTINUE:`    | Resume from the paused state      |
+# | `:INTERROGATE:` | Report its current status         |
+#
+# ## Service states {: #winscm.service-states }
+#
+# Reported by [`Status.current_state`](winscm.Status.current_state).
+#
+# | Symbol               | Meaning                        |
+# | -------------------- | ------------------------------ |
+# | `:STOPPED:`          | Not running                    |
+# | `:START_PENDING:`    | Starting                       |
+# | `:STOP_PENDING:`     | Stopping                       |
+# | `:RUNNING:`          | Running                        |
+# | `:CONTINUE_PENDING:` | Resuming from the paused state |
+# | `:PAUSE_PENDING:`    | Pausing                        |
+# | `:PAUSED:`           | Paused                         |
+#
+# ## Start types {: #winscm.start-types }
+#
+# | Symbol           | Meaning                                       |
+# | ---------------- | --------------------------------------------- |
+# | `:BOOT_START:`   | Starts during boot before the driver is ready |
+# | `:SYSTEM_START:` | Starts during kernel initialization           |
+# | `:AUTO_START:`   | Starts automatically during system startup    |
+# | `:DEMAND_START:` | Starts when requested                         |
+# | `:DISABLED:`     | Cannot be started                             |
+#
+# ## Error control levels {: #winscm.error-control-levels }
+#
+# What Windows does when the service fails to start.
+#
+# | Symbol       | Meaning                                                     |
+# | ------------ | ----------------------------------------------------------- |
+# | `:IGNORE:`   | Logs the error and continues startup                        |
+# | `:NORMAL:`   | Logs the error, displays a message, and continues startup   |
+# | `:SEVERE:`   | Restarts with the last known-good configuration if possible |
+# | `:CRITICAL:` | Restarts with it; fails startup if that restart fails       |
+#
+# ## State filters {: #winscm.state-filters }
+#
+# Accepted by
+# [`ScManager.enumerate_services`](winscm.ScManager.enumerate_services).
+#
+# | Symbol       | Includes                        |
+# | ------------ | ------------------------------- |
+# | `:ACTIVE:`   | Services that are not stopped   |
+# | `:INACTIVE:` | Services that are stopped       |
+# | `:ALL:`      | Both (the default)              |
+
+# Access rights for a [`ScManager`](winscm.ScManager) handle.
+#
+# A mask is built from symbols, and every API taking one also accepts a bare
+# symbol or an iterable of symbols in its place, so an explicit
+# `ManagerAccessMask` is only needed to combine or inspect rights.
+#
+# `winscm.ManagerAccessMask` is a
+# [`security.windows.AccessMask`](security.windows.AccessMask), so it
+# can be used wherever a Windows access mask is expected.
+#
+# ## Accepted symbols {: #winscm.ManagerAccessMask.accepted-symbols }
+#
+# Manager-specific rights:
+#
+# | Symbol                            | Meaning                                     |
+# | --------------------------------- | ------------------------------------------- |
+# | `:SC_MANAGER_CONNECT:`            | Connects to the Service Control Manager     |
+# | `:SC_MANAGER_CREATE_SERVICE:`     | Creates services                            |
+# | `:SC_MANAGER_ENUMERATE_SERVICE:`  | Enumerates services                         |
+# | `:SC_MANAGER_LOCK:`               | Locks the service database                  |
+# | `:SC_MANAGER_QUERY_LOCK_STATUS:`  | Queries the service database lock status    |
+# | `:SC_MANAGER_MODIFY_BOOT_CONFIG:` | Modifies boot configuration information     |
+# | `:SC_MANAGER_ALL_ACCESS:`         | All Service Control Manager-specific rights |
+#
+# Generic Windows object rights, shared with every other Windows securable
+# object:
+#
+# | Symbol                       | Meaning                                                          |
+# | ---------------------------- | ---------------------------------------------------------------- |
+# | `:DELETE:`                   | Deletes the object                                               |
+# | `:READ_CONTROL:`             | Reads the owner, group, and DACL                                 |
+# | `:WRITE_DAC:`                | Writes the DACL                                                  |
+# | `:WRITE_OWNER:`              | Takes ownership                                                  |
+# | `:SYNCHRONIZE:`              | Waits on the handle                                              |
+# | `:STANDARD_RIGHTS_REQUIRED:` | `:DELETE:`, `:READ_CONTROL:`, `:WRITE_DAC:`, and `:WRITE_OWNER:` |
+# | `:STANDARD_RIGHTS_ALL:`      | The standard rights plus `:SYNCHRONIZE:`                         |
+# | `:ACCESS_SYSTEM_SECURITY:`   | Accesses the SACL                                                |
+# | `:MAXIMUM_ALLOWED:`          | Requests every right the caller is granted                       |
+# | `:GENERIC_READ:`             | Generic read, mapped by the manager                              |
+# | `:GENERIC_WRITE:`            | Generic write, mapped by the manager                             |
+# | `:GENERIC_EXECUTE:`          | Generic execute, mapped by the manager                           |
+# | `:GENERIC_ALL:`              | Generic all, mapped by the manager                               |
+#
+# ## Operators
+#
+# `|`, `&`, and `^` combine two masks. `~` complements a mask within the
+# accepted bits. Iterating a mask yields the symbols it represents.
+pub class ManagerAccessMask
+  # Builds a mask from rights.
+  #
+  # ## Example
+  #
+  # ```
+  # let a = ManagerAccessMask :SC_MANAGER_CONNECT: :SC_MANAGER_LOCK:
+  # let b = ManagerAccessMask [:SC_MANAGER_CONNECT:, :SC_MANAGER_LOCK:]
+  # ```
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) Rights, given as symbols or as a single
+    # iterable of symbols. See [Accepted symbols](winscm.ManagerAccessMask.accepted-symbols).
+    ...rights
+  do
+    throw nil
+
+  # Builds a mask from a native integer, preserving every bit including ones
+  # this type does not name.
+  #
+  # ## Returns
+  #
+  # `ManagerAccessMask`.
+  #[class]
+  pub def from_int
+    self
+    # ([`Int`](std.Int)) Native Windows access mask.
+    value
+  do
+    throw nil
+
+  # The complete native mask as an [`Int`](std.Int), including bits this
+  # type does not name.
+  #[getter]
+  pub def int self
+    throw nil
+
+  # Tests whether every bit a symbol stands for is set.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool).
+  pub def contains
+    self
+    # ([`Sym`](std.Sym)) Right to test. See [Accepted
+    # symbols](winscm.ManagerAccessMask.accepted-symbols).
+    right
+  do
+    throw nil
+
+# Access rights for a [`Service`](winscm.Service) handle.
+#
+# A mask is built from symbols, and every API taking one also accepts a bare
+# symbol or an iterable of symbols in its place, so an explicit
+# `ServiceAccessMask` is only needed to combine or inspect rights.
+#
+# `winscm.ServiceAccessMask` is a
+# [`security.windows.AccessMask`](security.windows.AccessMask), so it
+# can be used wherever a Windows access mask is expected.
+#
+# ## Accepted symbols {: #winscm.ServiceAccessMask.accepted-symbols }
+#
+# Service-specific rights:
+#
+# | Symbol                           | Meaning                                        |
+# | -------------------------------- | ---------------------------------------------- |
+# | `:SERVICE_QUERY_CONFIG:`         | Queries the service configuration              |
+# | `:SERVICE_CHANGE_CONFIG:`        | Changes the service configuration              |
+# | `:SERVICE_QUERY_STATUS:`         | Queries the current service status             |
+# | `:SERVICE_ENUMERATE_DEPENDENTS:` | Enumerates dependent services                  |
+# | `:SERVICE_START:`                | Starts the service                             |
+# | `:SERVICE_STOP:`                 | Stops the service                              |
+# | `:SERVICE_PAUSE_CONTINUE:`       | Pauses or resumes the service                  |
+# | `:SERVICE_INTERROGATE:`          | Requests that the service report its status    |
+# | `:SERVICE_USER_DEFINED_CONTROL:` | Sends user-defined control codes to the service |
+# | `:SERVICE_ALL_ACCESS:`           | All service-specific rights                    |
+#
+# Generic Windows object rights, shared with every other Windows securable
+# object:
+#
+# | Symbol                       | Meaning                                                          |
+# | ---------------------------- | ---------------------------------------------------------------- |
+# | `:DELETE:`                   | Deletes the service                                              |
+# | `:READ_CONTROL:`             | Reads the owner, group, and DACL                                 |
+# | `:WRITE_DAC:`                | Writes the DACL                                                  |
+# | `:WRITE_OWNER:`              | Takes ownership                                                  |
+# | `:SYNCHRONIZE:`              | Waits on the handle                                              |
+# | `:STANDARD_RIGHTS_REQUIRED:` | `:DELETE:`, `:READ_CONTROL:`, `:WRITE_DAC:`, and `:WRITE_OWNER:` |
+# | `:STANDARD_RIGHTS_ALL:`      | The standard rights plus `:SYNCHRONIZE:`                         |
+# | `:ACCESS_SYSTEM_SECURITY:`   | Accesses the SACL                                                |
+# | `:MAXIMUM_ALLOWED:`          | Requests every right the caller is granted                       |
+# | `:GENERIC_READ:`             | Generic read, mapped by the service                              |
+# | `:GENERIC_WRITE:`            | Generic write, mapped by the service                             |
+# | `:GENERIC_EXECUTE:`          | Generic execute, mapped by the service                           |
+# | `:GENERIC_ALL:`              | Generic all, mapped by the service                               |
+#
+# ## Operators
+#
+# `|`, `&`, and `^` combine two masks. `~` complements a mask within the
+# accepted bits. Iterating a mask yields the symbols it represents.
+pub class ServiceAccessMask
+  # Builds a mask from rights.
+  #
+  # ## Example
+  #
+  # ```
+  # let a = ServiceAccessMask :SERVICE_START: :SERVICE_STOP:
+  # let b = ServiceAccessMask [:SERVICE_START:, :SERVICE_STOP:]
+  # ```
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) Rights, given as symbols or as a single
+    # iterable of symbols. See [Accepted symbols](winscm.ServiceAccessMask.accepted-symbols).
+    ...rights
+  do
+    throw nil
+
+  # Builds a mask from a native integer, preserving every bit including ones
+  # this type does not name.
+  #
+  # ## Returns
+  #
+  # `ServiceAccessMask`.
+  #[class]
+  pub def from_int
+    self
+    # ([`Int`](std.Int)) Native Windows access mask.
+    value
+  do
+    throw nil
+
+  # The complete native mask as an [`Int`](std.Int), including bits this
+  # type does not name.
+  #[getter]
+  pub def int self
+    throw nil
+
+  # Tests whether every bit a symbol stands for is set.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool).
+  pub def contains
+    self
+    # ([`Sym`](std.Sym)) Right to test. See [Accepted
+    # symbols](winscm.ServiceAccessMask.accepted-symbols).
+    right
+  do
+    throw nil
+
+# Windows service type flags.
+#
+# A value is built from symbols, and every API taking one also accepts a bare
+# symbol or an iterable of symbols in its place.
+#
+# ## Accepted symbols {: #winscm.ServiceType.accepted-symbols }
+#
+# | Symbol                  | Meaning                                             |
+# | ----------------------- | --------------------------------------------------- |
+# | `:KERNEL_DRIVER:`       | Kernel-mode device driver                           |
+# | `:FILE_SYSTEM_DRIVER:`  | File-system driver                                  |
+# | `:WIN32_OWN_PROCESS:`   | Win32 service running in its own process            |
+# | `:WIN32_SHARE_PROCESS:` | Win32 service sharing a process with other services |
+# | `:INTERACTIVE_PROCESS:` | Service that can interact with the desktop          |
+# | `:DRIVER:`              | Either kind of driver                               |
+# | `:WIN32:`               | Either kind of Win32 service                        |
+#
+# ## Operators
+#
+# `|`, `&`, and `^` combine two values. `~` complements a value within the
+# accepted bits. Iterating a value yields the symbols it represents.
+pub class ServiceType
+  # Builds a value from service types.
+  #
+  # ## Example
+  #
+  # ```
+  # let types = ServiceType :WIN32_OWN_PROCESS: :INTERACTIVE_PROCESS:
+  # ```
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) Service types, given as symbols or as a single
+    # iterable of symbols. See [Accepted symbols](winscm.ServiceType.accepted-symbols).
+    ...types
+  do
+    throw nil
+
+  # Builds a value from a native integer, preserving every bit including ones
+  # this type does not name.
+  #
+  # ## Returns
+  #
+  # `ServiceType`.
+  #[class]
+  pub def from_int
+    self
+    # ([`Int`](std.Int)) Native service type mask.
+    value
+  do
+    throw nil
+
+  # The complete native value as an [`Int`](std.Int), including bits this
+  # type does not name.
+  #[getter]
+  pub def int self
+    throw nil
+
+  # Tests whether every bit a symbol stands for is set.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool).
+  pub def contains
+    self
+    # ([`Sym`](std.Sym)) Service type to test. See [Accepted
+    # symbols](winscm.ServiceType.accepted-symbols).
+    service_type
+  do
+    throw nil
+
+# Service status changes to observe.
+#
+# Passed to
+# [`Service.wait_for_status_change`](winscm.Service.wait_for_status_change),
+# which also accepts a bare symbol or an iterable of symbols in its place.
+#
+# ## Accepted symbols {: #winscm.NotifyMask.accepted-symbols }
+#
+# | Symbol               | Observes a change to                   |
+# | -------------------- | -------------------------------------- |
+# | `:STOPPED:`          | The stopped state                      |
+# | `:START_PENDING:`    | The start-pending state                |
+# | `:STOP_PENDING:`     | The stop-pending state                 |
+# | `:RUNNING:`          | The running state                      |
+# | `:CONTINUE_PENDING:` | The continue-pending state             |
+# | `:PAUSE_PENDING:`    | The pause-pending state                |
+# | `:PAUSED:`           | The paused state                       |
+# | `:CREATED:`          | Service creation                       |
+# | `:DELETED:`          | Service deletion                       |
+# | `:DELETE_PENDING:`   | A service becoming marked for deletion |
+#
+# ## Operators
+#
+# `|`, `&`, and `^` combine two masks. `~` complements a mask within the
+# accepted bits. Iterating a mask yields the symbols it represents.
+pub class NotifyMask
+  # Builds a mask from status changes.
+  #
+  # ## Example
+  #
+  # ```
+  # let mask = NotifyMask :RUNNING: :STOPPED:
+  # ```
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) Status changes, given as symbols or as a single
+    # iterable of symbols. See [Accepted symbols](winscm.NotifyMask.accepted-symbols).
+    ...changes
+  do
+    throw nil
+
+  # Builds a mask from a native integer, preserving every bit including ones
+  # this type does not name.
+  #
+  # ## Returns
+  #
+  # `NotifyMask`.
+  #[class]
+  pub def from_int
+    self
+    # ([`Int`](std.Int)) Native notification mask.
+    value
+  do
+    throw nil
+
+  # The complete native mask as an [`Int`](std.Int), including bits this
+  # type does not name.
+  #[getter]
+  pub def int self
+    throw nil
+
+  # Tests whether every bit a symbol stands for is set.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool).
+  pub def contains
+    self
+    # ([`Sym`](std.Sym)) Status change to test. See [Accepted
+    # symbols](winscm.NotifyMask.accepted-symbols).
+    change
+  do
+    throw nil
+
+# Controls a running service accepts.
+#
+# Reported by
+# [`Status.controls_accepted`](winscm.Status.controls_accepted); a service that
+# does not accept a control ignores it.
+#
+# ## Accepted symbols {: #winscm.ServiceControlsAccepted.accepted-symbols }
+#
+# | Symbol                    | Accepts control requests to                       |
+# | ------------------------- | ------------------------------------------------- |
+# | `:STOP:`                  | Stop the service                                  |
+# | `:PAUSE_CONTINUE:`        | Pause or continue the service                     |
+# | `:SHUTDOWN:`              | Prepare for system shutdown                       |
+# | `:PARAMCHANGE:`           | Reload configuration parameters                   |
+# | `:NETBINDCHANGE:`         | Handle a network binding change                   |
+# | `:HARDWAREPROFILECHANGE:` | Handle a hardware-profile change                  |
+# | `:POWEREVENT:`            | Handle a power event                              |
+# | `:SESSIONCHANGE:`         | Handle a terminal-services session change         |
+# | `:PRESHUTDOWN:`           | Prepare for system shutdown before other services |
+# | `:TIMECHANGE:`            | Handle a system-time change                       |
+# | `:TRIGGEREVENT:`          | Handle a service-trigger event                    |
+#
+# ## Operators
+#
+# `|`, `&`, and `^` combine two values. `~` complements a value within the
+# accepted bits. Iterating a value yields the symbols it represents.
+#
+# ## Example
+#
+# ```
+# let status = service.query_status()
+# if status.controls_accepted.contains(:STOP:)
+#   service.control :STOP:
+# ```
+pub class ServiceControlsAccepted
+  # Builds a value from controls.
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) Controls, given as symbols or as a single
+    # iterable of symbols. See [Accepted symbols](winscm.ServiceControlsAccepted.accepted-symbols).
+    ...controls
+  do
+    throw nil
+
+  # Builds a value from a native integer, preserving every bit including ones
+  # this type does not name.
+  #
+  # ## Returns
+  #
+  # `ServiceControlsAccepted`.
+  #[class]
+  pub def from_int
+    self
+    # ([`Int`](std.Int)) Native controls-accepted mask.
+    value
+  do
+    throw nil
+
+  # The complete native value as an [`Int`](std.Int), including bits this
+  # type does not name.
+  #[getter]
+  pub def int self
+    throw nil
+
+  # Tests whether every bit a symbol stands for is set.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool).
+  pub def contains
+    self
+    # ([`Sym`](std.Sym)) Control to test. See [Accepted
+    # symbols](winscm.ServiceControlsAccepted.accepted-symbols).
+    control
+  do
+    throw nil
+
+# An open handle to the Windows Service Control Manager.
+#
+# Returned by [`open`](winscm.open).
+pub class ScManager
+  # Closes the manager.
+  #
+  # Closing an already-closed manager does nothing.
+  pub def close self
+    throw nil
+
+  # Opens an existing service.
+  #
+  # ## Returns
+  #
+  # [`Service`](winscm.Service) when no `func` is given, otherwise the result of
+  # calling `func`.
+  #
+  # ## Errors
+  #
+  # | Exception                                        | Condition                    |
+  # | ------------------------------------------------ | ---------------------------- |
+  # | [`sys.NotFoundError`](sys.NotFoundError) | The service does not exist   |
+  #
+  # ## Example
+  #
+  # ```
+  # manager.open_service Spooler access: :SERVICE_QUERY_STATUS: do |service|
+  #   echo $service.query_status().current_state
+  # ```
+  pub def open_service
+    self
+    # ([`Str`](std.Str)) Service name.
+    name
+    # ([`ServiceAccessMask`](winscm.ServiceAccessMask)|[`Sym`](std.Sym)?)
+    # Rights the returned handle requests, as a mask, a symbol, or an iterable
+    # of symbols. Defaults to `:SERVICE_QUERY_STATUS:`.
+    :access = nil
+    # (callable?) Called with the [`Service`](winscm.Service), which is closed
+    # when it returns. Omit to receive the handle instead.
+    func = nil
+  do
+    throw nil
+
+  # Creates a service.
+  #
+  # ## Returns
+  #
+  # [`Service`](winscm.Service) when no `func` is given, otherwise the result of
+  # calling `func`.
+  #
+  # ## Example
+  #
+  # ```
+  # let service = manager.create_service my-service
+  #   display_name: My Service
+  #   binary_path: [r"C:\Program Files\My Service\service.exe"]
+  #   access: :SERVICE_ALL_ACCESS:
+  # ```
+  pub def create_service
+    self
+    # ([`Str`](std.Str)) Service name.
+    name
+    # ([`Str`](std.Str)?) Display name. Omit to pass `NULL` to Windows.
+    :display_name = nil
+    # ([`Str`](std.Str)|[`fs.windows.Path`](fs.windows.Path)?)
+    # Service executable path or command line. Omit to pass `NULL` to Windows.
+    #
+    # A [`Str`](std.Str) is passed to Windows verbatim. An absolute
+    # [`fs.windows.Path`](fs.windows.Path) is used as the executable path
+    # and quoted when needed. An iterable supplies command arguments as
+    # [`Str`](std.Str) values or absolute
+    # [`fs.windows.Path`](fs.windows.Path) values; each element is quoted
+    # with the Windows command-line rules.
+    :binary_path = nil
+    # ([`ServiceType`](winscm.ServiceType)|[`Sym`](std.Sym)?) Service
+    # type, as a value, a symbol, or an iterable of symbols. Defaults to
+    # `:WIN32_OWN_PROCESS:`.
+    :service_type = nil
+    # ([`Sym`](std.Sym)?) [Start type](winscm.start-types). Defaults
+    # to `:DEMAND_START:`.
+    :start_type = nil
+    # ([`Sym`](std.Sym)?) [Error control
+    # level](winscm.error-control-levels). Defaults to `:NORMAL:`.
+    :error_control = nil
+    # ([`ServiceAccessMask`](winscm.ServiceAccessMask)|[`Sym`](std.Sym)?)
+    # Rights the returned handle requests, as a mask, a symbol, or an iterable
+    # of symbols. Defaults to `:SERVICE_QUERY_STATUS:`.
+    :access = nil
+    # ([`Str`](std.Str)?) Load-order group.
+    :load_order_group = nil
+    # (iterable?) Service or load-order-group names this service depends on.
+    :dependencies = nil
+    # ([`Str`](std.Str)?) Account the service runs as.
+    :service_start_name = nil
+    # ([`Str`](std.Str)?) Password for `service_start_name`.
+    :password = nil
+    # (callable?) Called with the [`Service`](winscm.Service), which is closed
+    # when it returns. Omit to receive the handle instead.
+    func = nil
+  do
+    throw nil
+
+  # Opens a live forward enumeration of matching services. Entries are fetched
+  # from Windows as iteration advances.
+  #
+  # ## Returns
+  #
+  # An [`Iter`](std.Iter) yielding
+  # [`ServiceInfo`](winscm.ServiceInfo)s.
+  #
+  # ## Example
+  #
+  # ```
+  # for info = manager.enumerate_services state_filter: :ACTIVE:
+  #   echo $info.name
+  # ```
+  pub def enumerate_services
+    self
+    # ([`ServiceType`](winscm.ServiceType)|[`Sym`](std.Sym)?) Types to
+    # include, as a value, a symbol, or an iterable of symbols. Defaults to
+    # `:WIN32:`.
+    :service_type = nil
+    # ([`Sym`](std.Sym)?) [State filter](winscm.state-filters).
+    # Defaults to `:ALL:`.
+    :state_filter = nil
+  do
+    throw nil
+
+# An open Windows service handle.
+#
+# Returned by [`ScManager.open_service`](winscm.ScManager.open_service) and
+# [`ScManager.create_service`](winscm.ScManager.create_service).
+pub class Service
+  # Closes the service handle.
+  #
+  # Closing an already-closed handle does nothing. This releases the handle; it
+  # does not stop or delete the service.
+  pub def close self
+    throw nil
+
+  # Starts the service.
+  pub def start
+    self
+    # ([`Str`](std.Str)) Arguments passed to the service's `main`.
+    ...args
+  do
+    throw nil
+
+  # Sends a control request.
+  #
+  # ## Returns
+  #
+  # The resulting [`Status`](winscm.Status).
+  #
+  # ## Example
+  #
+  # ```
+  # let status = service.control :STOP:
+  # ```
+  pub def control
+    self
+    # ([`Sym`](std.Sym)) [Control request](winscm.control-requests).
+    control
+  do
+    throw nil
+
+  # Marks the service for deletion.
+  #
+  # Windows removes the service once no handle to it remains open and it is not
+  # running.
+  pub def delete self
+    throw nil
+
+  # Fetches the current service status.
+  #
+  # ## Returns
+  #
+  # [`Status`](winscm.Status).
+  pub def query_status self
+    throw nil
+
+  # Waits until one of the requested status changes occurs.
+  #
+  # ## Returns
+  #
+  # The [`Status`](winscm.Status) observed after the change.
+  pub def wait_for_status_change
+    self
+    # ([`NotifyMask`](winscm.NotifyMask)|[`Sym`](std.Sym)) Changes to
+    # observe, as a mask, a symbol, or an iterable of symbols.
+    mask
+  do
+    throw nil
+
+  # Fetches the current service configuration.
+  #
+  # ## Returns
+  #
+  # An immutable [`ServiceConfig`](winscm.ServiceConfig) snapshot.
+  pub def config self
+    throw nil
+
+  # Updates the supplied configuration fields. Omitted fields are left
+  # unchanged.
+  #
+  # ## Example
+  #
+  # ```
+  # service.update_config
+  #   start_type: :AUTO_START:
+  #   dependencies: (tuple "RpcSs" "EventLog")
+  # ```
+  pub def update_config
+    self
+    # ([`ServiceType`](winscm.ServiceType)|[`Sym`](std.Sym)?) Service type
+    # flags.
+    :service_type = nil
+    # ([`Sym`](std.Sym)?) [Start type](winscm.start-types).
+    :start_type = nil
+    # ([`Sym`](std.Sym)?) [Error control
+    # level](winscm.error-control-levels).
+    :error_control = nil
+    # ([`Str`](std.Str)|[`fs.windows.Path`](fs.windows.Path)?)
+    # Service command line, taking the forms
+    # [`create_service`](winscm.ScManager.create_service) accepts.
+    :binary_path = nil
+    # ([`Str`](std.Str)?) Load-order group.
+    :load_order_group = nil
+    # (iterable?) Service or load-order-group names this service depends on.
+    :dependencies = nil
+    # ([`Str`](std.Str)?) Account the service runs as.
+    :service_start_name = nil
+    # ([`Str`](std.Str)?) Password for `service_start_name`.
+    :password = nil
+    # ([`Str`](std.Str)?) Display name.
+    :display_name = nil
+  do
+    throw nil
+
+  # Gets selected parts of the service's Windows security descriptor.
+  #
+  # ## Returns
+  #
+  # [`security.windows.SecDesc`](security.windows.SecDesc).
+  pub def sec_desc
+    self
+    # ([`Bool`](std.Bool)?) Load the owner SID. Defaults to `true`.
+    :owner = nil
+    # ([`Bool`](std.Bool)?) Load the primary group SID. Defaults to
+    # `true`.
+    :group = nil
+    # ([`Bool`](std.Bool)?) Load the discretionary ACL. Defaults to
+    # `true`.
+    :dacl = nil
+    # ([`Bool`](std.Bool)?) Load the system ACL. Defaults to `false`.
+    :sacl = nil
+  do
+    throw nil
+
+  # Applies the components a Windows security descriptor's `mask` selects.
+  #
+  # The descriptor's [component
+  # options](security.windows.SecDesc.(init)--component-options) may be passed as
+  # keyword arguments instead of, or alongside, `desc`, exactly as
+  # [`security.windows.sec_desc`](security.windows.sec_desc)
+  # accepts them.
+  pub def update_sec_desc
+    self
+    # ([`security.windows.SecDesc`](security.windows.SecDesc)|[`Bin`](std.Bin)|[`Dict`](std.Dict)?)
+    # Descriptor, self-relative packet, or specification dict.
+    desc = nil
+    # Component options, as above.
+    ...options
+  do
+    throw nil
+
+# Immutable snapshot of a service's configuration.
+#
+# Returned by [`Service.config`](winscm.Service.config).
+pub class ServiceConfig
+  # ([`ServiceType`](winscm.ServiceType)) Service type flags.
+  #[getter]
+  pub def service_type self
+    throw nil
+
+  # ([`Sym`](std.Sym)|[`Int`](std.Int)) [Start
+  # type](winscm.start-types). A native value this module does not name is
+  # returned as an [`Int`](std.Int).
+  #[getter]
+  pub def start_type self
+    throw nil
+
+  # ([`Sym`](std.Sym)|[`Int`](std.Int)) [Error control
+  # level](winscm.error-control-levels). A native value this module does
+  # not name is returned as an [`Int`](std.Int).
+  #[getter]
+  pub def error_control self
+    throw nil
+
+  # ([`Str`](std.Str)) Service command line.
+  #[getter]
+  pub def binary_path self
+    throw nil
+
+  # ([`Str`](std.Str)?) Load-order group.
+  #[getter]
+  pub def load_order_group self
+    throw nil
+
+  # ([`Int`](std.Int)) Load-order tag within `load_order_group`.
+  #[getter]
+  pub def tag_id self
+    throw nil
+
+  # ([`Tuple`](std.Tuple)) Service and load-order-group names this
+  # service depends on.
+  #[getter]
+  pub def dependencies self
+    throw nil
+
+  # ([`Str`](std.Str)) Account the service runs as.
+  #[getter]
+  pub def service_start_name self
+    throw nil
+
+  # ([`Str`](std.Str)) Display name.
+  #[getter]
+  pub def display_name self
+    throw nil
+
+# Snapshot of a service's current status.
+#
+# Returned by [`Service.query_status`](winscm.Service.query_status) and
+# [`Service.control`](winscm.Service.control).
+pub class Status
+  # ([`ServiceType`](winscm.ServiceType)) Service type flags.
+  #[getter]
+  pub def service_type self
+    throw nil
+
+  # ([`Sym`](std.Sym)|[`Int`](std.Int)) [Service
+  # state](winscm.service-states). A native value this module does not name
+  # is returned as an [`Int`](std.Int).
+  #[getter]
+  pub def current_state self
+    throw nil
+
+  # ([`ServiceControlsAccepted`](winscm.ServiceControlsAccepted)) Controls the
+  # service accepts in its current state.
+  #[getter]
+  pub def controls_accepted self
+    throw nil
+
+  # ([`Int`](std.Int)) Windows error code from the service's last start
+  # or stop.
+  #[getter]
+  pub def win32_exit_code self
+    throw nil
+
+  # ([`Int`](std.Int)) Service-defined exit code.
+  #[getter]
+  pub def service_specific_exit_code self
+    throw nil
+
+  # ([`Int`](std.Int)) Progress checkpoint the service increments during
+  # a pending operation.
+  #[getter]
+  pub def check_point self
+    throw nil
+
+  # ([`Int`](std.Int)) Milliseconds the service expects a pending
+  # operation to take.
+  #[getter]
+  pub def wait_hint self
+    throw nil
+
+  # ([`Int`](std.Int)) Identifier of the service's process.
+  #[getter]
+  pub def process_id self
+    throw nil
+
+# One entry in a service enumeration.
+#
+# Yielded by
+# [`ScManager.enumerate_services`](winscm.ScManager.enumerate_services).
+#
+# ## Example
+#
+# ```
+# for info = manager.enumerate_services()
+#   let :name :status = info
+#   echo "$name: $(status.current_state)"
+# ```
+pub class ServiceInfo
+  # ([`Str`](std.Str)) Service name.
+  #[getter]
+  pub def name self
+    throw nil
+
+  # ([`Str`](std.Str)?) Display name.
+  #[getter]
+  pub def display_name self
+    throw nil
+
+  # ([`Status`](winscm.Status)) Status captured during enumeration.
+  #[getter]
+  pub def status self
+    throw nil
+
+# Opens the local Service Control Manager.
+#
+# ## Returns
+#
+# [`ScManager`](winscm.ScManager) when no `func` is given, otherwise the result
+# of calling `func`.
+#
+# ## Example
+#
+# ```
+# winscm.open access: :SC_MANAGER_ENUMERATE_SERVICE: do |manager|
+#   for info = manager.enumerate_services()
+#     echo $info.name
+# ```
+pub def open
+  # ([`ManagerAccessMask`](winscm.ManagerAccessMask)|[`Sym`](std.Sym)?)
+  # Rights the returned handle requests, as a mask, a symbol, or an iterable of
+  # symbols. Defaults to `:SC_MANAGER_CONNECT:`.
+  :access = nil
+  # (callable?) Called with the [`ScManager`](winscm.ScManager), which is closed
+  # when it returns. Omit to receive the handle instead.
+  func = nil
+do
+  throw nil

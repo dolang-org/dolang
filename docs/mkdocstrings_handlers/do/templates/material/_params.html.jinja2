@@ -9,6 +9,29 @@
   The Type column is filled from a parenthesised type opening the description,
   which is a stopgap until the language carries type annotations of its own.
 #}
+{#
+  A function/method's `<code>signature</code>` heading, with ` -> ReturnType`
+  appended when its doc comment opened with a parenthesised type (see
+  _split_type in __init__.py) -- the arrow form anticipates the language's
+  own eventual return-type syntax rather than inventing new notation for
+  what is, for now, still just a stopgap parsed out of prose.
+
+  The return type is run through `convert_markdown` (real links, same as a
+  parameter's Type column) rather than left as plain text inside `sig`,
+  since `heading()`'s content is inserted as literal HTML, not reprocessed
+  as Markdown itself. Building `content` has to go through a `{% set %}
+  ... {% endset %}` capture block, which uses Jinja's own output-escaping
+  pipeline to combine the literal text and `convert_markdown`'s `Markup`
+  result -- joining them with a plain `~` expression instead reaches
+  Python's own operator dispatch, where `Markup.__radd__`/`__add__` treat
+  themselves as the one safe operand and auto-escape everything *else* in
+  the expression, corrupting the literal `<code>` tags too.
+#}
+{% macro signature_heading(sig, return_type, heading_level, id, role, toc_label) %}
+{% set content %}<code>{{ sig }}</code>{% if return_type %} -&gt; {{ return_type | convert_markdown(heading_level, id ~ "--returns", strip_paragraph=true) }}{% endif %}{% endset %}
+{{ content | trim | heading(heading_level, role=role, id=id, toc_label=toc_label) }}
+{% endmacro %}
+
 {% macro parameters(entity, heading_level, base_id) %}
 {% if entity.params | selectattr("documented") | list %}
 {{ "Parameters" | heading(heading_level, skip_inventory=true, id=base_id ~ "--parameters") }}

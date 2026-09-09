@@ -1,6 +1,6 @@
 # External Programs
 
-External programs are available through [`proc.run`](../api/proc/index.md#run).
+External programs are available through [`proc.run`](proc.run).
 Programs inherit the current strand's shell context, including its
 working directory, environment, and standard streams.
 
@@ -14,7 +14,7 @@ sort stdin: $["c", "a", "b"].crimp()
 ## Program Lookup
 
 Call `run` directly, index it with a name or path, or destructure it to bind
-identifier-safe program names. The resulting [`Program`](../api/proc/program.md)
+identifier-safe program names. The resulting [`Program`](proc.Program)
 proxy is a function:
 
 ```
@@ -33,7 +33,7 @@ run gcc -o main -O2 main.c
 ```
 
 Calling a program resolves its executable using the current VFS and `PATH`. Use
-[`.which()`](../api/proc/program.md#which) to resolve it without running it. It
+[`.which()`](proc.Program.which) to resolve it without running it. It
 returns the executable's path, or `nil` if the program is not found:
 
 ```
@@ -47,8 +47,8 @@ else
 ## Working Directory and Environment
 
 Programs inherit the current strand's working directory and environment. Use
-[`cd`](../api/shell/index.md#cd-path-func) and
-[`env`](../api/shell/index.md#env) to override them for a scoped block:
+[`cd`](shell.cd) and
+[`env`](shell.env) to override them for a scoped block:
 
 ```
 cd build do
@@ -60,11 +60,11 @@ cd build do
 
 Without explicit redirects, a program's stdin/stdout is connected to the
 current strand's input `Iter` and output `Sink`, while stderr is connected to
-the current [console](../api/term/console.md). Use `stdin:`, `stdout:`, and
+the current [console](term.Console). Use `stdin:`, `stdout:`, and
 `stderr:` to replace those connections for one invocation.
 
 Each redirect accepts a path or an `Iter`/`Sink`.
-[`std.null`](../api/std/null.md) provides empty input and discards output:
+[`std.null`](std.Null) provides empty input and discards output:
 
 ```
 import std
@@ -82,14 +82,14 @@ run tool stdout: $std.null
 run tool stdout: combined.log stderr: :STDOUT:
 ```
 
-An [`fs.File`](../api/fs/file.md) can be used directly as an input or output.
+An [`fs.File`](fs.File) can be used directly as an input or output.
 
 See [Terminal Output](./terminal-output.md) for the distinction between
 the output stream and the console.
 
 ## Capturing Output
 
-Use [`sub`](../api/proc/index.md#sub-func-chomp) when the result should be one
+Use [`sub`](proc.sub) when the result should be one
 string. By default, it removes one trailing line ending from the completed
 capture:
 
@@ -121,7 +121,7 @@ In the first example, `lines` receives one `Str` per line. In the second,
 `bytes` receives `Bin` chunks and retains the exact compressed output. The
 [`mode:`](#output-mode) argument chooses between these forms.
 
-Use [`term.sub`](../api/term/index.md#sub-func-chomp-can_style-args) when the
+Use [`term.sub`](term.sub) when the
 goal is to capture any console-bound output, including a program's unredirected
 stderr:
 
@@ -132,7 +132,7 @@ let diagnostics = term.sub do run tool
 ## Pipelines
 
 External programs integrate with
-[`strand.pipeline`](../api/strand/index.md#pipeline-stage-stages-input-output)
+[`strand.pipeline`](strand.pipeline)
 
 ```
 import 
@@ -151,10 +151,10 @@ stdio streams directly. Bytes pass from the first program's stdout to the
 second program's stdin without becoming Do values.
 
 Connections between stages use a
-[`proc.PipeReceiver`](../api/proc/pipe-receiver.md) and
-[`proc.PipeSender`](../api/proc/pipe-sender.md). The same pipe endpoints are the
+[`proc.PipeReceiver`](proc.PipeReceiver) and
+[`proc.PipeSender`](proc.PipeSender). The same pipe endpoints are the
 implicit input and output of a
-[`strand.stream`](../api/strand/index.md#stream-func) strand; its `Stream`
+[`strand.stream`](strand.stream) strand; its `Stream`
 handle exposes wrappers around them through `iter()` and `sink()`. Use
 `PipeReceiver.lines()` or `PipeReceiver.chunks()` to choose how a Do stage
 receives bytes from an external program.
@@ -183,13 +183,13 @@ custom stages, cancellation, and error handling.
 
 ## Termination
 
-A nonzero exit status raises [`proc.Error`](../api/proc/error.md). Canceling a
+A nonzero exit status raises [`proc.Error`](proc.Error). Canceling a
 strand running a program terminates that program. Background programs launched
 under `strand.spawn` or `strand.stream` are terminated as a process group on
 Unix.
 
 Use
-[`proc.with_policy`](../api/proc/index.md#with_policy-func-signal-grace-force)
+[`proc.with_policy`](proc.with_policy)
 to change termination defaults for a block, or `policy:` for one invocation:
 
 ```
@@ -202,8 +202,8 @@ targets.
 ## External I/O and Do values
 
 An external program reads and writes byte streams, while a Do pipeline stage
-reads from an [`Iter`](../api/std/iter.md) and writes to a
-[`Sink`](../api/std/sink.md). At a boundary between the two, `run` translates
+reads from an [`Iter`](std.Iter) and writes to a
+[`Sink`](std.Sink). At a boundary between the two, `run` translates
 in each direction:
 
 - For stdin, `run` takes values from the input `Iter` and writes each value's
@@ -223,20 +223,20 @@ singletons.
 The `mode:` argument controls how stdout or stderr bytes are divided into
 values:
 
-| Mode      | Yields                                                        |
-| --------- | ------------------------------------------------------------- |
-| `:LINE:`  | one [`Str`](../api/std/str.md) per line, line ending included |
-| `:CHUNK:` | arbitrary-sized [`Bin`](../api/std/bin.md) values             |
+| Mode      | Yields                                              |
+| --------- | --------------------------------------------------- |
+| `:LINE:`  | one [`Str`](std.Str) per line, line ending included |
+| `:CHUNK:` | arbitrary-sized [`Bin`](std.Bin) values             |
 
 `:LINE:` is the default. A stream whose last line has no terminator simply
 yields a final value without one. Concatenating the values from either mode
 reproduces the program's output byte for byte.
 
 Adding or removing a line ending is a separate, explicit step. Use
-[`chomp`](../api/std/iter.md#chomp) and
-[`crimp`](../api/std/iter.md#crimp-terminator) on an iterator, or
-[`prechomp`](../api/std/sink.md#prechomp) and
-[`precrimp`](../api/std/sink.md#precrimp-terminator) on a sink:
+[`chomp`](std.Iter.chomp) and
+[`crimp`](std.Iter.crimp) on an iterator, or
+[`prechomp`](std.Sink.prechomp) and
+[`precrimp`](std.Sink.precrimp) on a sink:
 
 ```
 let sorted = []

@@ -1,0 +1,115 @@
+# Executes Do bytecode and registers runtime import handlers.
+
+# A registered runtime import handler.
+pub class ImportHandler
+  # Removes this handler from the runtime import handler registry.
+  #
+  # Calling this more than once has no effect.
+  #
+  # ## Example
+  #
+  # ```
+  # let handle = import_handler do |name|
+  #   throw std.ImportError(name)
+  # handle.unregister()
+  # handle.unregister()
+  # ```
+  pub def unregister self
+    throw nil
+
+# Imports a module through the VM's ordinary global import resolution.
+#
+# Use this from a program-specific importer to fall back explicitly to native
+# modules, cached modules, and registered import handlers.
+#
+# ## Returns
+#
+# The imported module value.
+#
+# ## Errors
+#
+# | Exception     | Condition                       |
+# | ------------- | ------------------------------- |
+# | `TypeError`   | `name` is not `Str`             |
+# | `ImportError` | No global importer accepts name |
+#
+# ## Example
+#
+# ```
+# import load:
+#   import: global_import
+#
+# let importer = do |name|
+#   if (name == "virtual")
+#     record answer: 42
+#   else
+#     global_import $name
+#
+# load.run $bytecode importer: $importer
+# ```
+pub def import
+  # ([`Str`](std.Str)) Module name to import.
+  name
+do
+  throw nil
+
+# Registers a module import handler.
+#
+# Handlers run after native modules and cached Do modules. The first successful
+# handler supplies the imported value. Raise [`ImportError`](std.ImportError)
+# to decline a name; any other error aborts the import.
+#
+# ## Returns
+#
+# [`ImportHandler`](load.ImportHandler)
+#
+# ## Example
+#
+# ```
+# let handle = import_handler do |name|
+#   if (name == "demo")
+#     record answer: 42
+#   else
+#     throw std.ImportError(name)
+#
+# import demo
+# assert_eq $demo.answer 42
+# handle.unregister()
+# ```
+pub def import_handler
+  # ([`Func`](std.Func)) Called with the requested module name.
+  callback
+do
+  throw nil
+
+# Executes compiled Do bytecode.
+#
+# The optional importer belongs to the loaded program and remains active for
+# retained functions and modules. Imports call it directly, bypassing native
+# modules, caching, and registered handlers. Results are not cached, and an
+# `ImportError` does not trigger automatic fallback.
+#
+# ## Returns
+#
+# The result of executing the bytecode.
+#
+# ## Errors
+#
+# | Exception   | Condition                                |
+# | ----------- | ---------------------------------------- |
+# | `TypeError` | `bytecode` is not `Bin`                  |
+# | Various     | Bytecode verification or execution fails |
+#
+# ## Example
+#
+# ```
+# let result = run $ (compile.compile "example.dol" "(1 + 1)").emit()
+# assert_eq $result 2
+# ```
+pub def run
+  # ([`Bin`](std.Bin)) Compiled Do bytecode.
+  bytecode
+  # ([`Func`](std.Func)?) Program-specific module importer.
+  :importer = nil
+do
+  throw nil

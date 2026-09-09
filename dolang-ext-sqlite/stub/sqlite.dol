@@ -1,0 +1,490 @@
+# Reads and writes SQLite databases.
+#
+# ## SQL is a template, never a string
+#
+# Every SQL argument in this module is a [formatted
+# sequence](std.Fmt) -- a `t"..."` -- and passing a plain
+# [`Str`](std.Str) raises. Only a template's literal text becomes SQL;
+# an interpolated value is bound as a parameter, and `${#name}` leaves a hole
+# for a prepared statement to fill at each call. See [Parameter
+# Binding](sqlite.Statement.parameter-binding).
+#
+# ## VFS support
+#
+# This API is partially VFS-aware. It opens databases over the Unix socket
+# transport on Unix hosts, so `docker.with` and `sudo.with` work. Remote
+# transports and Windows UAC elevation are not supported.
+
+import std:
+  - RuntimeError
+
+# Raised when a SQLite operation fails for any reason other than the database
+# being locked.
+#
+# Catching `Error` also catches [`Busy`](sqlite.Busy), which extends it.
+#
+# ## Example
+#
+# ```
+# open "mydb.sqlite" do |conn|
+#   try
+#     conn.execute t"INSERT INTO users (name) VALUES (${#name})" name: "Alice"
+#   catch Busy: _
+#     echo "database is busy"
+#   catch Error: e
+#     echo "sqlite error: $e"
+# ```
+pub class Error: RuntimeError
+
+# Raised when an operation fails because the database is locked by another
+# connection or process.
+#
+# Busy errors outside a transaction are retried automatically -- see [Busy
+# retry](sqlite.Connection.busy-retry). Inside a transaction the whole block is
+# retried instead; see [`Connection.transaction`](sqlite.Connection.transaction).
+pub class Busy: Error
+
+# An open database connection.
+#
+# Returned by [`open`](sqlite.open). A connection may only be used by one
+# strand at a time; concurrent access from another strand raises a concurrency
+# error.
+#
+# ## Busy retry {: #sqlite.Connection.busy-retry }
+#
+# An operation that hits a busy error outside a transaction is retried with
+# exponential backoff, using the `retries`, `min_wait`, and `max_wait` settings
+# given to [`open`](sqlite.open). The wait doubles after each attempt, plus
+# a small random jitter, until it reaches `max_wait`. Passing `retries: 0`
+# disables retrying, so [`Busy`](sqlite.Busy) surfaces to the caller instead.
+#
+# Statements inside a transaction are not retried individually -- the
+# transaction is retried as a whole.
+#
+# ## Example
+#
+# ```
+# # High contention: retry up to 20 times, waiting up to 5s
+# open "mydb.sqlite" retries: 20 max_wait: 5000 do |conn|
+#   conn.execute t"UPDATE counters SET value = value + 1"
+#
+# # No retry: handle the busy error directly
+# open "mydb.sqlite" retries: 0 do |conn|
+#   try
+#     conn.execute t"UPDATE counters SET value = value + 1"
+#   catch Busy: _
+#     echo "database is busy"
+# ```
+pub class Connection
+  # Closes the connection and releases its resources.
+  #
+  # A connection that is never closed explicitly is closed when it is
+  # collected.
+  #
+  # ## Example
+  #
+  # ```
+  # let conn = open "mydb.sqlite"
+  # conn.close()
+  # ```
+  pub def close self
+    throw nil
+
+  # Prepares a statement, runs it once, and returns the number of rows it
+  # affected.
+  #
+  # Shorthand for [`prepare`](sqlite.Connection.prepare) plus
+  # [`Statement.execute`](sqlite.Statement.execute) when the statement is not
+  # reused.
+  #
+  # ## Returns
+  #
+  # [`Int`](std.Int) -- rows affected.
+  #
+  # ## Example
+  #
+  # ```
+  # open "mydb.sqlite" do |conn|
+  #   conn.execute t"CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"
+  #
+  #   let name = "Alice"
+  #   conn.execute t"INSERT INTO users (name) VALUES ($name)"
+  # ```
+  pub def execute
+    self
+    # ([`Fmt`](std.Fmt)) SQL template. A [`Str`](std.Str) raises,
+    # because a `Str` cannot say which of its text is data. Only the literal
+    # text becomes SQL; an interpolated value is bound as a parameter, so it
+    # is data whatever it looks like. See [Parameter
+    # Binding](sqlite.Statement.parameter-binding).
+    sql
+    # Values filling the template's `${#...}` parameters.
+    ...args
+  do
+    throw nil
+
+  # Prepares a statement for repeated execution.
+  #
+  # An interpolated value is bound once, here. A parameter written `${#name}`
+  # or `${#0}` stays unfilled and is supplied at each
+  # [`query`](sqlite.Statement.query) or [`execute`](sqlite.Statement.execute).
+  #
+  # ## Returns
+  #
+  # [`Statement`](sqlite.Statement) when no `func` is given, otherwise the result
+  # of calling `func`.
+  #
+  # ## Example
+  #
+  # ```
+  # open "mydb.sqlite" do |conn|
+  #   conn.prepare t"SELECT * FROM users WHERE id = ${#id}" do |stmt|
+  #     for row = stmt.query id: 1
+  #       echo "User: $(row["name"])"
+  #
+  #   let stmt = conn.prepare t"INSERT INTO users (name) VALUES (${#name})"
+  #   stmt.execute name: "Charlie"
+  #   stmt.close()
+  # ```
+  pub def prepare
+    self
+    # ([`Fmt`](std.Fmt)) SQL template. See [Parameter
+    # Binding](sqlite.Statement.parameter-binding).
+    sql
+    # (callable?) Called with the [`Statement`](sqlite.Statement), which is
+    # closed when it returns. Omit to receive the handle instead.
+    func = nil
+  do
+    throw nil
+
+  # Runs `func` inside a database transaction.
+  #
+  # The transaction is committed when `func` returns and rolled back if it
+  # raises. Call [`Transaction.commit`](sqlite.Transaction.commit) or
+  # [`Transaction.rollback`](sqlite.Transaction.rollback) to finish it early.
+  #
+  # A busy error inside the transaction raises immediately rather than
+  # retrying the failing statement: a rolled-back transaction has to start
+  # over anyway. The block is rolled back and re-invoked until it succeeds, is
+  # explicitly rolled back, or the connection's retry limit is exhausted.
+  #
+  # ## Returns
+  #
+  # The result of calling `func`.
+  #
+  # ## Example
+  #
+  # ```
+  # open "mydb.sqlite" do |conn|
+  #   conn.transaction do |_|
+  #     conn.execute t"UPDATE accounts SET balance = balance - 100 WHERE id = 1"
+  #     conn.execute t"UPDATE accounts SET balance = balance + 100 WHERE id = 2"
+  #
+  #   conn.transaction do |tx|
+  #     conn.execute t"INSERT INTO audit (action) VALUES ('attempt')"
+  #     if should_cancel
+  #       tx.rollback()
+  # ```
+  pub def transaction
+    self
+    # (callable) Called with the [`Transaction`](sqlite.Transaction).
+    func
+  do
+    throw nil
+
+# A compiled SQL statement that can be run repeatedly with different
+# parameters.
+#
+# Returned by [`Connection.prepare`](sqlite.Connection.prepare).
+#
+# ## Parameter binding {: #sqlite.Statement.parameter-binding }
+#
+# A statement is prepared from a [template](std.Fmt), and a template
+# says two different things about the values in it.
+#
+# An **interpolation** -- `$name` or `${...}` -- carries a value the program
+# already has. It is bound when the statement is prepared and stays bound for
+# the life of the statement.
+#
+# A **parameter** -- `${#name}` or `${#0}` -- is a hole left for each call to
+# fill. A named parameter is filled by a keyword argument and a numbered one
+# by the positional argument in that place; a hole used twice is one
+# parameter, filled once.
+#
+# ```
+# let cutoff = "2023-01-01"
+# conn.prepare t"UPDATE users SET status = ${#status} WHERE created < $cutoff"
+#   do |stmt|
+#     stmt.execute status: "archived"
+# ```
+#
+# Filling is exhaustive: every parameter must be supplied on every call, and
+# an argument naming no parameter raises. Use
+# [`Fmt.bind`](std.Fmt.bind) to fill some holes before
+# preparing, and [`Fmt.params()`](std.Fmt.params) to ask what a template
+# still wants.
+#
+# Neither form ever becomes SQL text -- only the template's literal text does
+# -- so an interpolated value cannot alter the statement it appears in,
+# whatever it contains.
+#
+# ### Rejected at prepare
+#
+# | Condition                                   | Why                                                 |
+# | ------------------------------------------- | --------------------------------------------------- |
+# | The SQL is a [`Str`](std.Str)         | A `Str` cannot say which of its text is data        |
+# | A `:name` or `?` in the template's own text | The binder cannot see it, so it would step as NULL  |
+# | A quoted interpolation, as in `'$name'`     | Quoting buries the value in a literal, binding none |
+# | A specification, as in `${#0:>10}`          | A bound value is never rendered, so it takes none   |
+#
+# The quoting case is worth naming, because it is the habit a plain string
+# teaches: `t"... WHERE name = '$name'"` needs no quotes, since `$name` is
+# bound rather than pasted. Written with them, it raises rather than doing the
+# wrong thing quietly.
+#
+# ### Accepted value types
+#
+# | Do type                    | SQLite type | Example                              |
+# | -------------------------- | ----------- | ------------------------------------ |
+# | `nil`                      | NULL        | `stmt.execute value: nil`            |
+# | [`Bool`](std.Bool)   | INTEGER     | `stmt.execute active: true`          |
+# | [`Int`](std.Int)     | INTEGER     | `stmt.execute id: 42`                |
+# | [`Float`](std.Float) | REAL        | `stmt.execute price: 19.99`          |
+# | [`Str`](std.Str)     | TEXT        | `stmt.execute name: "Alice"`         |
+# | [`Bin`](std.Bin)     | BLOB        | `stmt.execute data: b"\x01\x02\x03"` |
+#
+# A `Bool` is stored as `0` or `1`. The same types are accepted for an
+# interpolated value.
+#
+# ## Concurrent use
+#
+# Only one query can be active on a statement at a time. Starting another
+# query, or executing the statement, invalidates the iterator the previous
+# [`query`](#query) returned, which then raises a concurrency error on use.
+#
+# ```
+# open "mydb.sqlite" do |conn|
+#   conn.prepare t"SELECT * FROM users" do |stmt|
+#     let rows = stmt.query()
+#     let rows2 = stmt.query()
+#     # rows has been invalidated at this point
+# ```
+pub class Statement
+  # Closes the statement and releases its resources.
+  pub def close self
+    throw nil
+
+  # Runs the statement and returns the number of rows it affected.
+  #
+  # Outside a transaction, busy errors are retried according to the
+  # connection's [retry settings](sqlite.Connection.busy-retry).
+  #
+  # ## Returns
+  #
+  # [`Int`](std.Int) -- rows affected.
+  #
+  # ## Errors
+  #
+  # | Exception                                              | Condition                     |
+  # | ------------------------------------------------------ | ----------------------------- |
+  # | [`MissingPosError`](std.MissingPosError)       | A numbered parameter unfilled |
+  # | [`MissingKeyError`](std.MissingKeyError)       | A named parameter unfilled    |
+  # | [`UnexpectedPosError`](std.UnexpectedPosError) | A positional argument unused  |
+  # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A keyword argument unused     |
+  #
+  # ## Example
+  #
+  # ```
+  # conn.prepare t"UPDATE users SET status = ${#status} WHERE created < ${#date}"
+  #   do |stmt|
+  #     let affected = stmt.execute status: "archived" date: "2023-01-01"
+  #     echo "Archived $affected users"
+  # ```
+  pub def execute
+    self
+    # Values filling the statement's parameters. See [Parameter
+    # binding](sqlite.Statement.parameter-binding).
+    ...args
+  do
+    throw nil
+
+  # Runs the statement and iterates its result rows.
+  #
+  # Outside a transaction, a busy error while fetching the next row is retried
+  # according to the connection's [retry
+  # settings](sqlite.Connection.busy-retry).
+  #
+  # ## Returns
+  #
+  # An [`Iter`](std.Iter) yielding [`Row`](sqlite.Row)s. Only the most
+  # recently yielded row stays valid -- see [Row
+  # validity](sqlite.Row.row-validity).
+  #
+  # ## Errors
+  #
+  # The same as [`execute`](sqlite.Statement.execute).
+  #
+  # ## Example
+  #
+  # ```
+  # conn.prepare t"SELECT * FROM users WHERE age > ${#min_age}" do |stmt|
+  #   for row = stmt.query min_age: 18
+  #     echo "$(row["name"]) is $(row["age"]) years old"
+  # ```
+  pub def query
+    self
+    # Values filling the statement's parameters. See [Parameter
+    # binding](sqlite.Statement.parameter-binding).
+    ...args
+  do
+    throw nil
+
+# A single result row.
+#
+# Yielded by iterating the result of
+# [`Statement.query`](sqlite.Statement.query).
+#
+# ## Row validity {: #sqlite.Row.row-validity }
+#
+# A row is a window onto the statement's current step, not a copy of it, so
+# only the most recently yielded row is valid; using an earlier one after the
+# iterator advances raises a concurrency error. Reusing or closing the
+# statement, or closing the connection, invalidates every row it yielded.
+#
+# Spreading is the exception: `[...stmt.query()]` yields rows that own copies
+# of their column values, so they survive the iterator advancing. Invalidating
+# the statement still invalidates them.
+#
+# ```
+# # Valid only within the body of each step
+# for row = stmt.query()
+#   echo $ str row["name"]
+#
+# # Copies that outlive iteration
+# let all = [...stmt.query()]
+# ```
+#
+# ## Column types
+#
+# A column value is converted from its SQLite type:
+#
+# | SQLite type                | Do type                    | Notes                                                        |
+# | -------------------------- | -------------------------- | ------------------------------------------------------------ |
+# | NULL                       | `nil`                      |                                                              |
+# | INTEGER (declared BOOLEAN) | [`Bool`](std.Bool)   | Declared type must be `BOOLEAN` or `BOOL` (case-insensitive) |
+# | INTEGER                    | [`Int`](std.Int)     |                                                              |
+# | REAL                       | [`Float`](std.Float) |                                                              |
+# | TEXT                       | [`Str`](std.Str)     |                                                              |
+# | BLOB                       | [`Bin`](std.Bin)     |                                                              |
+#
+# ## Unpacking
+#
+# A row unpacks by position, or by symbol naming the column. A `...rest` term
+# yields an iterator over the columns nothing else consumed, as values rather
+# than as rows.
+#
+# ```
+# let id :name :age ...rest = row
+# for value = rest
+#   echo $ str value
+# ```
+pub class Row
+  # Reads a column by position or by name.
+  #
+  # ## Errors
+  #
+  # Raises an index error when no column matches, and a type error when the
+  # key is neither an [`Int`](std.Int) nor a [`Str`](std.Str).
+  #
+  # ## Example
+  #
+  # ```
+  # echo $ str row[0]
+  # echo $ str row["name"]
+  # ```
+  pub def (index)
+    self
+    # ([`Int`](std.Int)\|[`Str`](std.Str)) Column position or
+    # name.
+    key
+  do
+    throw nil
+
+# A database transaction in progress.
+#
+# Passed to the block given to
+# [`Connection.transaction`](sqlite.Connection.transaction). A block that
+# returns without committing or rolling back is committed on success and
+# rolled back on error, so calling either method is only needed to finish
+# early.
+pub class Transaction
+  # Commits the transaction, making its changes permanent.
+  #
+  # ## Example
+  #
+  # ```
+  # conn.transaction do |tx|
+  #   conn.execute t"UPDATE accounts SET balance = balance - 100 WHERE id = 1"
+  #   conn.execute t"UPDATE accounts SET balance = balance + 100 WHERE id = 2"
+  #   tx.commit()
+  # ```
+  pub def commit self
+    throw nil
+
+  # Rolls the transaction back, discarding its changes.
+  #
+  # ## Example
+  #
+  # ```
+  # conn.transaction do |tx|
+  #   conn.execute t"INSERT INTO audit (action) VALUES ('attempt')"
+  #   if should_cancel
+  #     tx.rollback()
+  # ```
+  pub def rollback self
+    throw nil
+
+# Opens a database connection, creating the database if it does not exist.
+#
+# ## Returns
+#
+# [`Connection`](sqlite.Connection) when no `func` is given, otherwise the
+# result of calling `func`.
+#
+# ## Example
+#
+# ```
+# # Explicit handle
+# let conn = open mydb.sqlite
+# conn.close()
+#
+# # Block form, closed on return
+# open mydb.sqlite do |conn|
+#   conn.execute
+#     t"CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)"
+#   conn.execute t"INSERT INTO users (name) VALUES (${#name})" name: "Alice"
+#
+# # An in-memory database, discarded when it closes
+# open ":memory:" do |conn|
+#   conn.execute t"CREATE TABLE scratch (n INTEGER)"
+# ```
+pub def open
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the database
+  # file, or `":memory:"` for a private in-memory database. A relative path
+  # resolves against the current directory of the active VFS context.
+  path
+  # ([`Int`](std.Int)?) Attempts to retry an operation that fails
+  # because the database is busy. Defaults to `10`; `0` disables retrying. See
+  # [Busy retry](sqlite.Connection.busy-retry).
+  :retries = nil
+  # ([`Int`](std.Int)?) Milliseconds to wait before the first retry.
+  # Defaults to `1`.
+  :min_wait = nil
+  # ([`Int`](std.Int)?) Ceiling in milliseconds for the doubling retry
+  # wait. Defaults to `1000`.
+  :max_wait = nil
+  # (callable?) Called with the [`Connection`](sqlite.Connection), which is
+  # closed when it returns. Omit to receive the handle instead.
+  func = nil
+do
+  throw nil

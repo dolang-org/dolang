@@ -92,8 +92,8 @@ The Docker and Podman modules also provide a small management API:
 - `Container`s expose metadata and can be started, stopped, killed, restarted,
   or removed.
 
-Use [`docker.create`](../api/docker/index.md) or
-[`podman.create`](../api/podman/index.md) when configuration and execution need
+Use [`docker.create`](docker) or
+[`podman.create`](podman) when configuration and execution need
 separate phases:
 
 ```
@@ -130,8 +130,8 @@ finally
   ctr.remove force: true
 ```
 
-See the [`docker`](../api/docker/index.md) and
-[`podman`](../api/podman/index.md) references for the complete interfaces.
+See the [`docker`](docker) and
+[`podman`](podman) references for the complete interfaces.
 
 `Container` objects inspect and change the lifecycle of existing containers.
 Their `with` method copies `dolang-vfs` to a session-specific path under

@@ -1,3 +1,0 @@
-# TestInfo
-
-::: test.TestInfo

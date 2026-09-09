@@ -396,21 +396,21 @@ class Cache
 # the next call, falling back to a full download when the server ignores the
 # range or the representation has changed.
 pub def get
-  # ([`Str`](../std/str.md)\|[`Url`](../url/url.md)\|[`fs.Path`](../fs/path.md))
+  # ([`Str`](std.Str)\|[`Url`](url.Url)\|[`fs.Path`](fs.Path))
   # Local path or HTTP(S) URL to resolve.
   source
-  # ([`Str`](../std/str.md)) Application name selecting the cache directory.
+  # ([`Str`](std.Str)) Application name selecting the cache directory.
   #
   # Defaults to the name of the running program. Not valid together with
   # `cache`.
   :app = nil
-  # ([`Str`](../std/str.md)) Expected digest, as `algorithm:hex`.
+  # ([`Str`](std.Str)) Expected digest, as `algorithm:hex`.
   #
   # Supported algorithms are BLAKE3, MD5, SHA-1, SHA-256, and SHA-512. An entry
   # already verified against the digest is returned without contacting the
   # server.
   :digest = nil
-  # ([`Str`](../std/str.md)\|[`fs.Path`](../fs/path.md)) Explicit cache directory.
+  # ([`Str`](std.Str)\|[`fs.Path`](fs.Path)) Explicit cache directory.
   #
   # Bypasses `app` and `fs.cache_dir` entirely, and is not valid together with
   # `app`. Mainly useful for tests that want an isolated, disposable cache
@@ -454,15 +454,15 @@ def put_url source destination headers
 
 # Copies or uploads `source` to `destination`.
 pub def put
-  # ([`Str`](../std/str.md)\|[`Url`](../url/url.md)\|[`fs.Path`](../fs/path.md))
+  # ([`Str`](std.Str)\|[`Url`](url.Url)\|[`fs.Path`](fs.Path))
   # Local path or HTTP(S) URL to copy from.
   #
-  # A URL is resolved through [`get`](#transfer--get) first.
+  # A URL is resolved through [`get`](transfer.get) first.
   source
-  # ([`Str`](../std/str.md)\|[`Url`](../url/url.md)\|[`fs.Path`](../fs/path.md))
+  # ([`Str`](std.Str)\|[`Url`](url.Url)\|[`fs.Path`](fs.Path))
   # Local path or HTTP(S) URL to write to.
   destination
-  # ([`Dict`](../std/dict.md)) Request headers for an HTTP(S) destination.
+  # ([`Dict`](std.Dict)) Request headers for an HTTP(S) destination.
   #
   # Only valid for an HTTP(S) destination.
   :headers = nil
@@ -712,13 +712,13 @@ def pack_local source archive destination format prefix metadata
 #
 # Directory contents are relative to the source root.
 pub def pack
-  # ([`Str`](../std/str.md)\|[`Url`](../url/url.md)\|[`fs.Path`](../fs/path.md))
+  # ([`Str`](std.Str)\|[`Url`](url.Url)\|[`fs.Path`](fs.Path))
   # File or directory to pack.
   source
-  # ([`Str`](../std/str.md)\|[`Url`](../url/url.md)\|[`fs.Path`](../fs/path.md))
+  # ([`Str`](std.Str)\|[`Url`](url.Url)\|[`fs.Path`](fs.Path))
   # Archive to write.
   destination
-  # ([`Sym`](../std/sym.md)) Archive format.
+  # ([`Sym`](std.Sym)) Archive format.
   #
   # Inferred from the destination name when omitted, which fails if the name
   # carries no recognized extension.
@@ -730,10 +730,10 @@ pub def pack
   # | `:TAR_ZSTD:` | Zstandard-compressed TAR   |
   # | `:ZIP:`      | ZIP                        |
   :format = nil
-  # ([`Str`](../std/str.md)\|[`fs.Path`](../fs/path.md)) Relative path prepended
+  # ([`Str`](std.Str)\|[`fs.Path`](fs.Path)) Relative path prepended
   # to every archive entry.
   :prefix = nil
-  # ([`Value`](../std/value.md)) Metadata applied to every archive entry, as
+  # ([`Value`](std.Value)) Metadata applied to every archive entry, as
   # keyword arguments.
   #
   # Each key overrides what would otherwise be taken from the source file.
@@ -741,14 +741,14 @@ pub def pack
   #
   # | Name           | Type                                                                       | Meaning                                    |
   # | -------------- | -------------------------------------------------------------------------- | ------------------------------------------ |
-  # | `mode`         | [`Int`](../std/int.md)\|[`fs.unix.Mode`](../fs/unix/mode.md)                  | Permissions for regular files              |
-  # | `dir_mode`     | [`Int`](../std/int.md)\|[`fs.unix.Mode`](../fs/unix/mode.md)                  | Permissions for directories                |
-  # | `link_mode`    | [`Int`](../std/int.md)\|[`fs.unix.Mode`](../fs/unix/mode.md)                  | Permissions for symlinks                   |
-  # | `uid`          | [`Int`](../std/int.md)                                                      | Owner ID                                   |
-  # | `gid`          | [`Int`](../std/int.md)                                                      | Group ID                                   |
-  # | `owner_name`   | [`Str`](../std/str.md)                                                      | Owner name                                 |
-  # | `group_name`   | [`Str`](../std/str.md)                                                      | Group name                                 |
-  # | `mtime`        | [`DateTime`](../time/datetime.md)                                           | Modification time                          |
+  # | `mode`         | [`Int`](std.Int)\|[`fs.unix.Mode`](fs.unix.Mode)                  | Permissions for regular files              |
+  # | `dir_mode`     | [`Int`](std.Int)\|[`fs.unix.Mode`](fs.unix.Mode)                  | Permissions for directories                |
+  # | `link_mode`    | [`Int`](std.Int)\|[`fs.unix.Mode`](fs.unix.Mode)                  | Permissions for symlinks                   |
+  # | `uid`          | [`Int`](std.Int)                                                      | Owner ID                                   |
+  # | `gid`          | [`Int`](std.Int)                                                      | Group ID                                   |
+  # | `owner_name`   | [`Str`](std.Str)                                                      | Owner name                                 |
+  # | `group_name`   | [`Str`](std.Str)                                                      | Group name                                 |
+  # | `mtime`        | [`DateTime`](time.DateTime)                                           | Modification time                          |
   #
   # Where the source carries no value of its own, `mode` falls back to `0o644`,
   # `dir_mode` to `0o755`, `link_mode` to `0o777`, `uid` and `gid` to `0`, and
@@ -1042,6 +1042,7 @@ class ZipUnpack
     finish_metadata $root $records
 
 # Raised when unpacking a raw compressed stream (gzip, Zstandard, XZ) fails.
+#
 # `detail` is the failing tool's stderr, when it printed exactly one line.
 pub class ArchiveError: std.RuntimeError
   pub field source = nil
@@ -1092,14 +1093,14 @@ def decompress_raw source destination format
 # unsafe or conflicting paths. Raw decompression runs the corresponding `gzip`,
 # `zstd`, or `xz` program.
 pub def unpack
-  # ([`Str`](../std/str.md)\|[`Url`](../url/url.md)\|[`fs.Path`](../fs/path.md))
+  # ([`Str`](std.Str)\|[`Url`](url.Url)\|[`fs.Path`](fs.Path))
   # Archive or compressed file to extract.
   source
-  # ([`Str`](../std/str.md)\|[`fs.Path`](../fs/path.md)) Path to create.
+  # ([`Str`](std.Str)\|[`fs.Path`](fs.Path)) Path to create.
   #
   # Must not already exist, and may not be a URL.
   destination
-  # ([`Sym`](../std/sym.md)) Input format.
+  # ([`Sym`](std.Sym)) Input format.
   #
   # Inferred from the source name when omitted. A compressed TAR archive is
   # distinguished from a raw stream by filename: `.tar.gz` selects
@@ -1115,13 +1116,13 @@ pub def unpack
   # | `:ZSTD:`     | Raw Zstandard stream       |
   # | `:XZ:`       | Raw XZ stream              |
   :format = nil
-  # ([`Int`](../std/int.md)\|[`Sym`](../std/sym.md)) Leading path components to
+  # ([`Int`](std.Int)\|[`Sym`](std.Sym)) Leading path components to
   # strip from each entry.
   #
   # `:ROOT:` strips one component, and requires a non-empty archive whose
   # entries share a single root component. Raw streams require `0`.
   :strip = 0
-  # ([`Str`](../std/str.md)) Application name selecting the cache directory,
+  # ([`Str`](std.Str)) Application name selecting the cache directory,
   # for a URL source.
   :app = nil
 do

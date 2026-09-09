@@ -1,4 +1,6 @@
 mkdocs
 mkdocs-material
 mkdocstrings
+mkdocs-autorefs
+mkdocs-awesome-nav
 pymdown-extensions

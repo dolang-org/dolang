@@ -27,7 +27,7 @@ additional space.
 
 `os:` is required, and `arch:` defaults to the host architecture. Both use the
 same symbol vocabulary as
-[`sys.os_info().os`](../api/sys/index.md)/[`sys.cpu_info().arch`](../api/sys/index.md).
+[`sys.os_info().os`](sys)/[`sys.cpu_info().arch`](sys).
 
 The domain is defined for KVM with a `host-passthrough` CPU, so `arch:` must be
 the host architecture; a foreign one is rejected rather than emulated.

@@ -1,0 +1,69 @@
+# Side-effect-free matching with compiled glob patterns.
+#
+# This module does not walk the filesystem and does not overlap with the
+# traversal APIs in `fs`.
+
+# A compiled glob pattern.
+pub class Glob
+  # Compiles a glob pattern.
+  #
+  # ## Errors
+  #
+  # `ValueError` if the pattern is invalid.
+  #
+  # ## Example
+  #
+  # ```
+  # let png = Glob "**/*.png"
+  # let tree = Glob "src/**/mod.rs"
+  # ```
+  pub def (init)
+    self
+    # ([`Str`](std.Str)) Glob pattern.
+    pattern
+  do
+    throw nil
+
+  # Tests whether `value` matches this glob.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool) indicating whether the value matches.
+  #
+  # ## Example
+  #
+  # ```
+  # let png = Glob "**/*.png"
+  # assert (png.matches "assets/logo.png")
+  # assert (!(png.matches "assets/logo.jpg"))
+  # ```
+  pub def matches
+    self
+    # ([`Str`](std.Str)) Candidate string to test.
+    value
+  do
+    throw nil
+
+# Tests whether `value` matches a glob pattern.
+#
+# Passing pattern text compiles it for this call only.
+#
+# ## Returns
+#
+# [`Bool`](std.Bool) indicating whether the value matches.
+#
+# ## Example
+#
+# ```
+# let png = Glob "**/*.png"
+# assert (matches png "assets/logo.png")
+# assert (matches "**/*.png" "assets/logo.png")
+# assert (!(matches "**/*.png" "assets/logo.jpg"))
+# ```
+pub def matches
+  # ([`Glob`](glob.Glob)\|[`Str`](std.Str)) Glob object or pattern text.
+  pattern
+  # ([`Str`](std.Str)) Candidate string to test.
+  value
+do
+  throw nil

@@ -728,6 +728,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
 
     builder
         .module("progress")
+        .value("Indicator", global.types.indicator)
         .function("with", async move |strand, args, mut out| {
             let ([func], [style_val, interval_val]) =
                 unpack!(strand, args, 1, 0, style_kw = None, interval_kw = None)?;

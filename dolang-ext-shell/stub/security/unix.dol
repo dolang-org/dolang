@@ -1,0 +1,372 @@
+# Unix security types and uid/gid identity lookups.
+
+# Unix process identity information for the active VFS target.
+#
+# Returned by [`id`](security.unix.id).
+pub class Identity
+  # ([`Int`](std.Int)) Real user ID.
+  #[getter]
+  pub def uid self
+    throw nil
+
+  # ([`Int`](std.Int)) Real group ID.
+  #[getter]
+  pub def gid self
+    throw nil
+
+  # ([`Int`](std.Int)) Effective user ID.
+  #[getter]
+  pub def euid self
+    throw nil
+
+  # ([`Int`](std.Int)) Effective group ID.
+  #[getter]
+  pub def egid self
+    throw nil
+
+  # ([`Tuple`](std.Tuple)) Supplementary group IDs.
+  #[getter]
+  pub def groups self
+    throw nil
+
+# POSIX read/write/execute permission bits.
+pub class Permission
+  # Constructs a permission set from symbols or one iterable of symbols.
+  #
+  # ## Supported symbols
+  #
+  # | Symbol      | Meaning            |
+  # | ----------- | ------------------ |
+  # | `:READ:`    | Read permission    |
+  # | `:WRITE:`   | Write permission   |
+  # | `:EXECUTE:` | Execute permission |
+  #
+  # ## Example
+  #
+  # ```
+  # let rw = Permission(:READ:, :WRITE:)
+  # ```
+  pub def (init)
+    self
+    # ([`Sym`](std.Sym)) Permission bits, or one iterable of them.
+    ...bits
+  do
+    throw nil
+
+  # Tests whether all bits represented by a symbol are set.
+  #
+  # ## Returns
+  #
+  # [`Bool`](std.Bool)
+  pub def contains
+    self
+    # ([`Sym`](std.Sym)) Bits to test for.
+    bit
+  do
+    throw nil
+
+  # Union of two permission sets.
+  pub def (bor)
+    self
+    other
+  do
+    throw nil
+
+  # Intersection of two permission sets.
+  pub def (band)
+    self
+    other
+  do
+    throw nil
+
+  # Symmetric difference of two permission sets.
+  pub def (bxor)
+    self
+    other
+  do
+    throw nil
+
+  # Complement within the supported bit set.
+  pub def (bnot) self
+    throw nil
+
+  # Compares two permission sets.
+  pub def (eq)
+    self
+    other
+  do
+    throw nil
+
+  # Yields the symbols represented by the permission set.
+  pub def (iter) self
+    throw nil
+
+# Immutable POSIX.1e access-control entry.
+#
+# The class methods below accept only a built [`Permission`](security.unix.Permission);
+# use [`ace`](security.unix.ace) for symbolic permission coercion.
+pub class Ace
+  # Constructs the file-owner entry.
+  #[class]
+  pub def user_obj
+    self
+    # ([`Permission`](security.unix.Permission)?) Entry permissions. Defaults to empty.
+    permissions = nil
+  do
+    throw nil
+
+  # Constructs a named-user entry.
+  #[class]
+  pub def user
+    self
+    # ([`Int`](std.Int)) User ID.
+    id
+    # ([`Permission`](security.unix.Permission)?) Entry permissions. Defaults to empty.
+    permissions = nil
+  do
+    throw nil
+
+  # Constructs the file-group entry.
+  #[class]
+  pub def group_obj
+    self
+    # ([`Permission`](security.unix.Permission)?) Entry permissions. Defaults to empty.
+    permissions = nil
+  do
+    throw nil
+
+  # Constructs a named-group entry.
+  #[class]
+  pub def group
+    self
+    # ([`Int`](std.Int)) Group ID.
+    id
+    # ([`Permission`](security.unix.Permission)?) Entry permissions. Defaults to empty.
+    permissions = nil
+  do
+    throw nil
+
+  # Constructs the effective-rights mask entry.
+  #[class]
+  pub def mask
+    self
+    # ([`Permission`](security.unix.Permission)?) Entry permissions. Defaults to empty.
+    permissions = nil
+  do
+    throw nil
+
+  # Constructs the entry for all other users.
+  #[class]
+  pub def other
+    self
+    # ([`Permission`](security.unix.Permission)?) Entry permissions. Defaults to empty.
+    permissions = nil
+  do
+    throw nil
+
+  # ([`Sym`](std.Sym)) Entry qualifier: `:USER_OBJ:`, `:USER:`,
+  # `:GROUP_OBJ:`, `:GROUP:`, `:MASK:`, or `:OTHER:`.
+  #[getter]
+  pub def type self
+    throw nil
+
+  # ([`Int`](std.Int)) Numeric user or group ID.
+  #
+  # Raises [`FieldError`](std.FieldError) unless
+  # [`type`](security.unix.Ace.type) is `:USER:` or `:GROUP:`.
+  #[getter]
+  pub def id self
+    throw nil
+
+  # ([`Permission`](security.unix.Permission)) The entry's permissions.
+  #[getter]
+  pub def permissions self
+    throw nil
+
+# Immutable POSIX.1e access-control list.
+#
+# The constructor accepts only built [`Ace`](security.unix.Ace) values; use
+# [`acl`](security.unix.acl) to mix built entries with declarative dictionaries.
+pub class Acl
+  # Constructs an ACL from an iterable of [`Ace`](security.unix.Ace) values.
+  #
+  # The supplied mask entry is preserved; no mask is calculated.
+  #
+  # ## Errors
+  #
+  # | Exception                                     | Condition                                                     |
+  # | --------------------------------------------- | ------------------------------------------------------------- |
+  # | [`ValueError`](std.ValueError)      | A required owner-user, owner-group, or other entry is missing |
+  # | [`ValueError`](std.ValueError)      | Entry qualifiers are duplicated                               |
+  # | [`ValueError`](std.ValueError)      | Named user or group entries are present without a mask entry  |
+  pub def (init)
+    self
+    # Iterable of [`Ace`](security.unix.Ace) values.
+    aces
+  do
+    throw nil
+
+  # ([`Array`](std.Array)-like) Immutable view of
+  # [`Ace`](security.unix.Ace) values. Use `.len` for the entry count.
+  #[getter]
+  pub def aces self
+    throw nil
+
+# Constructs a POSIX entry from declarative arguments.
+#
+# Pass exactly one qualifier. `user_obj:`, `group_obj:`, `mask:`, and `other:`
+# take permissions directly; `user:` and `group:` take a numeric ID and accept
+# a separate `permissions:` value. Named entries default to empty permissions.
+#
+# Permissions may be a [`Permission`](security.unix.Permission), a permission symbol, or
+# an iterable of permission symbols.
+#
+# ## Returns
+#
+# [`Ace`](security.unix.Ace)
+#
+# ## Example
+#
+# ```
+# let owner = ace user_obj: [:READ:, :WRITE:]
+# let named = ace user: 1000 permissions: :READ:
+# ```
+pub def ace
+  # Permissions for the file-owner entry.
+  :user_obj = nil
+  # ([`Int`](std.Int)?) User ID for a named-user entry.
+  :user = nil
+  # Permissions for the file-group entry.
+  :group_obj = nil
+  # ([`Int`](std.Int)?) Group ID for a named-group entry.
+  :group = nil
+  # Permissions for the effective-rights mask entry.
+  :mask = nil
+  # Permissions for the entry covering all other users.
+  :other = nil
+  # Permissions for a `user:` or `group:` entry.
+  :permissions = nil
+do
+  throw nil
+
+# Constructs a POSIX ACL from entries and declarative entry dictionaries.
+#
+# The resulting ACL must satisfy the POSIX completeness rules documented by
+# [`Acl`](security.unix.Acl).
+#
+# ## Returns
+#
+# [`Acl`](security.unix.Acl)
+#
+# ## Example
+#
+# ```
+# acl
+#   $ace(user_obj: [:READ:, :WRITE:])
+#   {group_obj: [:READ:]}
+#   {other: []}
+# ```
+pub def acl
+  # ([`Ace`](security.unix.Ace)\|[`Dict`](std.Dict)) Entries, spread with `...`
+  # to pass a collection.
+  ...aces
+do
+  throw nil
+
+# Returns Unix security information captured for the active VFS context.
+#
+# ## Returns
+#
+# [`Identity`](security.unix.Identity)
+#
+# ## Errors
+#
+# Raises [`UnsupportedError`](std.UnsupportedError) when the active
+# VFS target is not Unix.
+#
+# ## Example
+#
+# ```
+# let info = id()
+# echo "uid=$(info.uid) euid=$(info.euid)"
+# ```
+pub def id()
+  throw nil
+
+# Resolves a Unix user ID in the active VFS target.
+#
+# ## Returns
+#
+# [`Str`](std.Str)
+#
+# ## Errors
+#
+# | Exception                                             | Condition                                                      |
+# | ----------------------------------------------------- | -------------------------------------------------------------- |
+# | [`sys.NotFoundError`](sys.NotFoundError)   | The ID is unknown                                              |
+# | [`UnsupportedError`](std.UnsupportedError)  | The active VFS target is not Unix                              |
+# | [`UnsupportedError`](std.UnsupportedError)  | A [`uuid.Uuid`](uuid.Uuid) is passed on a non-macOS target |
+pub def user_name
+  # ([`Int`](std.Int)\|[`uuid.Uuid`](uuid.Uuid)) Unix user ID,
+  # or on macOS a principal UUID, resolved to a uid first via
+  # [`security.macos.id_for_uuid`](security.macos.id_for_uuid).
+  uid
+do
+  throw nil
+
+# Resolves a Unix user name in the active VFS target.
+#
+# ## Returns
+#
+# [`Int`](std.Int)
+#
+# ## Errors
+#
+# | Exception                                            | Condition                         |
+# | ---------------------------------------------------- | --------------------------------- |
+# | [`sys.NotFoundError`](sys.NotFoundError)  | The name is unknown               |
+# | [`UnsupportedError`](std.UnsupportedError) | The active VFS target is not Unix |
+pub def user_id
+  # ([`Str`](std.Str)) User name.
+  name
+do
+  throw nil
+
+# Resolves a Unix group ID in the active VFS target.
+#
+# ## Returns
+#
+# [`Str`](std.Str)
+#
+# ## Errors
+#
+# | Exception                                             | Condition                                                      |
+# | ----------------------------------------------------- | -------------------------------------------------------------- |
+# | [`sys.NotFoundError`](sys.NotFoundError)   | The ID is unknown                                              |
+# | [`UnsupportedError`](std.UnsupportedError)  | The active VFS target is not Unix                              |
+# | [`UnsupportedError`](std.UnsupportedError)  | A [`uuid.Uuid`](uuid.Uuid) is passed on a non-macOS target |
+pub def group_name
+  # ([`Int`](std.Int)\|[`uuid.Uuid`](uuid.Uuid)) Unix group
+  # ID, or on macOS a principal UUID, resolved to a gid first via
+  # [`security.macos.id_for_uuid`](security.macos.id_for_uuid).
+  gid
+do
+  throw nil
+
+# Resolves a Unix group name in the active VFS target.
+#
+# ## Returns
+#
+# [`Int`](std.Int)
+#
+# ## Errors
+#
+# | Exception                                            | Condition                         |
+# | ---------------------------------------------------- | --------------------------------- |
+# | [`sys.NotFoundError`](sys.NotFoundError)  | The name is unknown               |
+# | [`UnsupportedError`](std.UnsupportedError) | The active VFS target is not Unix |
+pub def group_id
+  # ([`Str`](std.Str)) Group name.
+  name
+do
+  throw nil

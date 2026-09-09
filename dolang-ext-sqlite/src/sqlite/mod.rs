@@ -266,6 +266,10 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         })
         .value("Error", global.types.error)
         .value("Busy", global.types.busy)
+        .value("Connection", global.types.connection)
+        .value("Statement", global.types.statement)
+        .value("Transaction", global.types.transaction)
+        .value("Row", global.types.row)
         .commit();
 }
 

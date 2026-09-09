@@ -1,0 +1,272 @@
+# Parses, edits, validates, and serializes XML element trees.
+
+# An XML attribute.
+pub class Attr
+  # Creates an attribute.
+  #
+  # ## Example
+  #
+  # ```
+  # let attr = Attr "id" "123" namespace: "urn:inventory" prefix: "inv"
+  # ```
+  pub def (init)
+    self
+    # (`Str`) Local attribute name.
+    name
+    # (`Str`) Attribute value.
+    value
+    # (`Str`?) Namespace URI.
+    :namespace = nil
+    # (`Str`?) Preferred namespace prefix.
+    :prefix = nil
+  do
+    throw nil
+
+  # Read-only local attribute name.
+  #[getter]
+  pub def name self
+    throw nil
+
+  # Read-only namespace URI, or `nil` for no namespace.
+  #[getter]
+  pub def namespace self
+    throw nil
+
+  # Read-only preferred prefix, or `nil`.
+  #[getter]
+  pub def prefix self
+    throw nil
+
+  # Read-only qualified name formed from `prefix` and `name`.
+  #[getter]
+  pub def qname self
+    throw nil
+
+  # Mutable attribute value.
+  pub field value = nil
+
+# A parentless XML element.
+#
+# Nodes can be shared or inserted into different trees. Serialization derives
+# namespace declarations from each node rather than from parent pointers.
+pub class Node
+  # Creates an element, optionally with attributes and children.
+  #
+  # Children are not checked here, matching `children.push`; [`verify`](xml.verify)
+  # and serialization reject children other than `Node` and `Str`.
+  # `attrs:` is applied before positional `Attr` values.
+  #
+  # ## Errors
+  #
+  # `TypeError` if `attrs:` is not a dict or one of its values is not a `Str`.
+  #
+  # ## Example
+  #
+  # ```
+  # let item = Node "item" namespace: "urn:inventory" prefix: "inv"
+  # let disk = Node disk
+  #   attrs:
+  #     type: file
+  #     device: disk
+  #   - $ Node driver attrs: {name: "qemu", type: "qcow2"}
+  # ```
+  pub def (init)
+    self
+    # (`Str`) Local element name.
+    tag
+    # (`Str`?) Namespace URI.
+    :namespace = nil
+    # (`Str`?) Preferred namespace prefix.
+    :prefix = nil
+    # (`dict`?) Unnamespaced attributes with `Sym` or `Str` keys and `Str` values.
+    :attrs = nil
+    # ([`Attr`](xml.Attr)\|Value) Attributes or children.
+    ...items
+  do
+    throw nil
+
+  # Mutable array-like view of [`Attr`](xml.Attr) objects in document order.
+  #
+  # The view supports indexed assignment and array mutation methods. Duplicate
+  # expanded names can exist temporarily, but verification rejects them.
+  #[getter]
+  pub def attrs self
+    throw nil
+
+  # Mutable array-like view of child `Node` and `Str` values in document order.
+  #
+  # Iterating a node iterates this view directly.
+  #[getter]
+  pub def children self
+    throw nil
+
+  # Mutable namespace URI, or `nil` for no namespace.
+  pub field namespace = nil
+
+  # Mutable dict containing the complete effective namespace snapshot.
+  #
+  # Keys are prefix strings; `""` is the default namespace. Parsed descendants
+  # retain inherited bindings so they can be detached and serialized.
+  pub field namespaces = nil
+
+  # Mutable preferred prefix, or `nil`.
+  pub field prefix = nil
+
+  # Read-only qualified name formed from `prefix` and `tag`.
+  #[getter]
+  pub def qname self
+    throw nil
+
+  # Mutable local element name.
+  pub field tag = nil
+
+  # Gets the first attribute matching an expanded name.
+  #
+  # ## Example
+  #
+  # ```
+  # let id = node.attr "id" namespace: "urn:inventory"
+  # ```
+  pub def attr
+    self
+    # (`Str`) Local attribute name.
+    name
+    # (`Str`?) Namespace URI.
+    :namespace = nil
+    # Value returned when absent.
+    :default = nil
+    # Callable evaluated when absent.
+    :else = nil
+  do
+    throw nil
+
+  # Deletes all attributes matching an expanded name.
+  #
+  # ## Returns
+  #
+  # `Bool` indicating whether an attribute was deleted.
+  pub def delete_attr
+    self
+    # (`Str`) Local attribute name.
+    name
+    # (`Str`?) Namespace URI.
+    :namespace = nil
+  do
+    throw nil
+
+  # Appends a child.
+  pub def push
+    self
+    # (`Node`\|`Str`) Child value.
+    child
+  do
+    throw nil
+
+  # Updates the first matching attribute or appends one.
+  #
+  # An omitted `prefix:` mutates the existing value. An explicit prefix,
+  # including `nil`, replaces the attribute because identity fields are
+  # immutable.
+  pub def set_attr
+    self
+    # (`Str`) Local attribute name.
+    name
+    # (`Str`) Attribute value.
+    value
+    # (`Str`?) Namespace URI.
+    :namespace = nil
+    # (`Str`?) Preferred namespace prefix.
+    :prefix = nil
+  do
+    throw nil
+
+  # Returns a depth-first, parent-first iterator over this node and descendants.
+  pub def traverse self
+    throw nil
+
+  # Reads an unnamespaced attribute by string or a child by integer index.
+  #
+  # Negative integer indexes count from the end.
+  pub def (index) self key
+    throw nil
+
+  # Updates an unnamespaced attribute or child by index.
+  pub def (set) self key value
+    throw nil
+
+  # Iterates the children.
+  pub def (iter) self
+    throw nil
+
+# Parses an XML document into a parentless element tree.
+#
+# Predefined entities and numeric character references are expanded. Custom
+# DTD entities are not resolved.
+#
+# ## Returns
+#
+# [`Node`](xml.Node), the root element.
+#
+# ## Errors
+#
+# `ValueError` if the document is invalid, lacks a root, or uses an unsupported
+# entity.
+#
+# ## Example
+#
+# ```
+# let doc = decode "<root><child>text</child></root>"
+# assert_eq $doc.tag "root"
+# ```
+pub def decode
+  # (`Str`) XML document.
+  xml
+do
+  throw nil
+
+# Validates and serializes an XML tree.
+#
+# Namespace declaration spelling and placement can differ from the input while
+# preserving element and attribute namespace semantics.
+#
+# ## Returns
+#
+# `Str` containing the serialized XML.
+#
+# ## Errors
+#
+# `ValueError` if the tree is invalid or cyclic.
+#
+# ## Example
+#
+# ```
+# let n = Node "greeting"
+# n.push "hello"
+# assert_eq (encode $n) "<greeting>hello</greeting>"
+# ```
+pub def encode
+  # ([`Node`](xml.Node)\|`Str`) XML node or text.
+  node
+do
+  throw nil
+
+# Checks an entire XML tree without serializing it.
+#
+# Validation covers names, namespace bindings, attribute uniqueness, child and
+# attribute types, and cycles.
+#
+# ## Errors
+#
+# `ValueError` if the tree is invalid or cyclic.
+#
+# ## Example
+#
+# ```
+# let doc = Node "root"
+# verify $doc
+# ```
+pub def verify
+  # ([`Node`](xml.Node)) Root element.
+  node
+do
+  throw nil

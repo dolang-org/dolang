@@ -12,6 +12,27 @@ assert $rec.while
 assert $rec.let
 assert $rec.field
 assert $rec.do
+
+# A declaration names what it defines, so a keyword may be taken as a name.
+def import name
+  "imported $name"
+assert_eq (import "x") "imported x"
+
+class Keywords
+  field tag
+
+  def (init) self
+    self.#tag = "kw"
+
+  pub def import self name
+    "$(self.#tag) import $name"
+
+  pub def while self
+    "$(self.#tag) while"
+
+let kw = Keywords()
+assert_eq $kw.import("y") "kw import y"
+assert_eq $kw.while() "kw while"
 # output: END
 # if else while for let field = + - / %
 # END

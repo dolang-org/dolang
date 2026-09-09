@@ -1,0 +1,225 @@
+# Digest algorithms.
+
+# Supertype for stateful digest handles.
+#
+# Subtype of [`Sink`](std.Sink). Putting a [`Str`](std.Str)
+# or [`Bin`](std.Bin) value updates the digest state with its bytes.
+pub class State
+  # Returns the current digest bytes without consuming the handle.
+  #
+  # ## Returns
+  #
+  # [`Bin`](std.Bin) holding a snapshot of the digest.
+  #
+  # ## Example
+  #
+  # ```
+  # let state = Blake3()
+  # state.update "abc"
+  # let first = state.digest()
+  # let second = state.digest()
+  # assert_eq $first $second
+  # state.update "def"
+  # assert_eq "${state.digest():x}"
+  #   b22b3b2ee0e7c0a8e75a988d1d7e874e3c6de8b00a4427a47887877454b45db1
+  # ```
+  pub def digest self
+    throw nil
+
+  # Updates the digest state with the bytes of `data`.
+  #
+  # ## Returns
+  #
+  # The same handle, for chaining.
+  #
+  # ## Example
+  #
+  # ```
+  # let state = Blake3()
+  # state.update "ab"
+  # state.update b"c"
+  # assert_eq "${state.digest():x}"
+  #   6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85
+  #
+  # let sink = Blake3()
+  # sink.put "ab"
+  # sink.put b"c"
+  # assert_eq $sink.digest() (blake3 "abc")
+  # ```
+  pub def update
+    self
+    # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Input to hash.
+    data
+  do
+    throw nil
+
+# [`State`](digest.State) handle for BLAKE3.
+pub class Blake3: State
+  # Creates a BLAKE3 digest state handle.
+  #
+  # ## Example
+  #
+  # ```
+  # let state = Blake3()
+  # state.update "abc"
+  # assert_eq "${state.digest():x}"
+  #   6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85
+  # ```
+  pub def (init) self
+    throw nil
+
+# [`State`](digest.State) handle for MD5.
+pub class Md5: State
+  # Creates an MD5 digest state handle.
+  #
+  # ## Example
+  #
+  # ```
+  # let state = Md5()
+  # state.update "abc"
+  # assert_eq "${state.digest():x}"
+  #   900150983cd24fb0d6963f7d28e17f72
+  # ```
+  pub def (init) self
+    throw nil
+
+# [`State`](digest.State) handle for SHA-1.
+pub class Sha1: State
+  # Creates a SHA-1 digest state handle.
+  #
+  # ## Example
+  #
+  # ```
+  # let state = Sha1()
+  # state.update "abc"
+  # assert_eq "${state.digest():x}"
+  #   a9993e364706816aba3e25717850c26c9cd0d89d
+  # ```
+  pub def (init) self
+    throw nil
+
+# [`State`](digest.State) handle for SHA-256.
+pub class Sha256: State
+  # Creates a SHA-256 digest state handle.
+  #
+  # ## Example
+  #
+  # ```
+  # let state = Sha256()
+  # state.update "abc"
+  # assert_eq "${state.digest():x}"
+  #   ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+  # ```
+  pub def (init) self
+    throw nil
+
+# [`State`](digest.State) handle for SHA-512.
+pub class Sha512: State
+  # Creates a SHA-512 digest state handle.
+  #
+  # ## Example
+  #
+  # ```
+  # let state = Sha512()
+  # state.update "abc"
+  # assert_eq ("${state.digest():x}"[..10])
+  #   ddaf35a193
+  # ```
+  pub def (init) self
+    throw nil
+
+# Computes the BLAKE3 digest.
+#
+# ## Returns
+#
+# [`Bin`](std.Bin) holding the 32-byte digest.
+#
+# ## Example
+#
+# ```
+# let digest = blake3 "abc"
+# assert_eq $digest.len 32
+# assert_eq "${digest:x}"
+#   6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85
+# ```
+pub def blake3
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Input to hash.
+  data
+do
+  throw nil
+
+# Computes the MD5 digest.
+#
+# ## Returns
+#
+# [`Bin`](std.Bin) holding the 16-byte digest.
+#
+# ## Example
+#
+# ```
+# let digest = md5 "abc"
+# assert_eq "${digest:x}"
+#   900150983cd24fb0d6963f7d28e17f72
+# ```
+pub def md5
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Input to hash.
+  data
+do
+  throw nil
+
+# Computes the SHA-1 digest.
+#
+# ## Returns
+#
+# [`Bin`](std.Bin) holding the 20-byte digest.
+#
+# ## Example
+#
+# ```
+# let digest = sha1 "abc"
+# assert_eq "${digest:x}"
+#   a9993e364706816aba3e25717850c26c9cd0d89d
+# ```
+pub def sha1
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Input to hash.
+  data
+do
+  throw nil
+
+# Computes the SHA-256 digest.
+#
+# ## Returns
+#
+# [`Bin`](std.Bin) holding the 32-byte digest.
+#
+# ## Example
+#
+# ```
+# let digest = sha256 "abc"
+# assert_eq "${digest:x}"
+#   ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+# ```
+pub def sha256
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Input to hash.
+  data
+do
+  throw nil
+
+# Computes the SHA-512 digest.
+#
+# ## Returns
+#
+# [`Bin`](std.Bin) holding the 64-byte digest.
+#
+# ## Example
+#
+# ```
+# let digest = sha512 "abc"
+# assert_eq ("${digest:x}"[..10])
+#   ddaf35a193
+# ```
+pub def sha512
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Input to hash.
+  data
+do
+  throw nil

@@ -20,12 +20,15 @@ import sqlite
 #[vfs windows: false remote: false]
 def basic()
   sqlite.open (Path "test.db") do |conn|
+    assert_type $sqlite.Connection $conn
     conn.execute t"CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)"
     conn.execute t"INSERT INTO test (name) VALUES ('Alice')"
 
     conn.prepare t"SELECT name FROM test" do |stmt|
+      assert_type $sqlite.Statement $stmt
       let rows = [...stmt.query()]
       assert_eq $rows.len 1
+      assert_type $sqlite.Row $rows[0]
       assert_eq $rows[0]["name"] "Alice"
 
 #[test]
@@ -33,6 +36,7 @@ def basic()
 def transaction()
   sqlite.open "test.db" do |conn|
     conn.transaction do |tx|
+      assert_type $sqlite.Transaction $tx
       conn.execute t"CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)"
 
       conn.prepare t"INSERT INTO test (name) VALUES (${#name})" do |stmt|

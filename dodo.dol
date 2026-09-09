@@ -1,4 +1,4 @@
-import sys admin dodo
+import sys admin dodo json
   fs:
     - Path
     - copy
@@ -6,6 +6,7 @@ import sys admin dodo
     - remove
     - with_temp_dir
     - symlink_file
+    - glob
 
 let MIRI_CRATES = $
   - dolang-bytecode
@@ -25,6 +26,28 @@ let COV_IGNORE = $
 let MKDOCS_BINS = $
   - dolang-highlight
   - dolang
+
+# Module search directories for the `do` mkdocstrings handler. This is the
+# sole source of truth for that list -- it used to also live in mkdocs.yml's
+# handler options, but the handler no longer resolves .dol sources itself; it
+# only reads the pre-extracted JSON cache `extract_docs` produces from this
+# list (see with_mkdocs).
+let MKDOCS_DOC_PATHS = $
+  - dolang-shell-modules/lib
+  ...(glob "*/stub")
+
+let MKDOCS_API_DIR = Path "docs/api"
+
+# Public modules that re-export types from a shared private implementation
+# module (`pub let X = impl.X`, e.g. docker.dol and podman.dol both wrap
+# _container.dockman) rather than declaring them directly. The doc extractor
+# sees a re-export like that as a plain value, not a class, so the class list
+# for the page tree has to be pulled from the implementation module instead.
+# Quoted keys: module names are looked up as plain Str, and a bareword key
+# here would compile to a Sym instead and never match.
+let MKDOCS_ALIAS_MODULES = $
+  "docker": _container.dockman
+  "podman": _container.dockman
 
 let DOC_CRATES = $
   - dolang
@@ -172,13 +195,125 @@ def rustdoc_build()
       for crate = DOC_CRATES
         -p $crate
 
-def with_mkdocs spec func
-  # The documentation extractor is an entrypoint of the interpreter itself, so
-  # the handler is given a command line rather than a program to run.
+# Module-name resolution for a .dol source under a search dir: `foo/bar.dol`
+# is module `foo.bar`; `foo/mod.dol` is module `foo`. This is also how
+# identifiers are keyed in the pre-extracted JSON cache the mkdocstrings
+# handler (docs/mkdocstrings_handlers/do/__init__.py) reads.
+def dol_module_name path base
+  let rel = path.relative $base
+  let parts = [...rel.parent.components]
+  if (rel.name != "mod.dol")
+    parts.push $rel.stem
+  ".".join $parts
+
+def collect_doc_jobs()
+  stream do for search_dir = MKDOCS_DOC_PATHS
+    let base = Path $search_dir
+    for path = base.glob "**/*.dol"
+      let name = dol_module_name $path $base
+      put $ record :name :path
+
+# The public, documented classes a module's extracted entities declare
+# directly. Only documented ones: the mkdocstrings handler strips undocumented
+# entities by default (`show_undocumented` option), so a page for one of those
+# would reference an entity collect() can never actually find.
+def module_classes entities
+  let names = []
+  for e = entities
+    if ((e["kind"] == "class") && e["pub"] && e["doc"])
+      names.push $e["name"]
+  names
+
+def write_doc_page path title identifier
+  path.parent.create_dir all: true
+  # The frontmatter `title` is for awesome-nav: with `use_index_title` on, it
+  # reads this instead of falling back to a title-cased directory name (e.g.
+  # `fs.unix` -> "Fs.unix"), which is wrong for names that are meant to stay
+  # lowercase. The `{: #... }` attr_list anchor matches the identifier
+  # mkdocstrings registers for this page's own root heading. Without it,
+  # Python-Markdown's toc extension slugifies the plain title into its own
+  # anchor id (e.g. "Args" -> "args"), which collides workspace-wide with any
+  # unrelated heading that happens to slugify the same way (a module named
+  # `args`, in this case). A matching id here just dedupes against that
+  # registration instead of adding a second, colliding one.
+  path.write |
+    ---
+    title: $title
+    ---
+
+    # $title {: #$identifier }
+
+    ::: $identifier
+
+# Writes docs/api pages for one module: an index page plus one page per public
+# class. Each module gets its own single directory named after its full
+# dotted name (`fs.unix` -> api/fs.unix/, not api/fs/unix/) rather than one
+# nested per dotted component -- otherwise a module like `security.windows`
+# would show up nested under an unrelated `security` section in the nav
+# instead of as its own entry. Private modules (leading `_`, e.g.
+# `_container.dockman`) are implementation detail and get no page of their
+# own -- unless they're aliased in from a public module via
+# MKDOCS_ALIAS_MODULES, in which case their classes are written under the
+# *public* module's directory instead.
+def generate_doc_pages dolang paths_by_name name entities
+  if !(name.starts_with "_")
+    let dir = (MKDOCS_API_DIR / name)
+    write_doc_page (dir / "index.md") $name $name
+    for class_name = module_classes(entities)
+      write_doc_page (dir / "$class_name.md") $class_name "$name.$class_name"
+    let alias = MKDOCS_ALIAS_MODULES.get $name
+    if alias
+      let alias_json = sub do run $dolang -m doc --module $alias $(paths_by_name[alias])
+      for class_name = module_classes(json.decode(alias_json)["entities"])
+        write_doc_page (dir / "$class_name.md") $class_name "$alias.$class_name"
+
+# Runs `dolang -m doc` once per module, in parallel, writing each result as
+# `<out_dir>/<module name>.json`. This is the JSON-only half of extract_docs
+# (see there for the full doc comment on why extraction is parallelized) --
+# used by `install` to feed dolang-lsp's build-time static doc index (see
+# dolang-lsp/build.rs) without also touching the docs/api page tree.
+def extract_doc_json spec out_dir
+  remove $out_dir all: true ignore: true
+  create_dir $out_dir all: true
   let dolang = spec.bin "dolang"
+  let workers = sys.cpu_info().logical_count
+  strand.pool $workers $collect_doc_jobs() do |job|
+    let :name :path = job
+    let text = sub do run $dolang -m doc --module $name $path
+    (out_dir / "$name.json").write $text
+
+# Runs `dolang -m doc` once per module, in parallel, and writes each result as
+# `<out_dir>/<module name>.json` for the mkdocstrings handler to read; also
+# (re)generates the docs/api page tree from the same extraction (see
+# generate_doc_pages). Doc extraction (a debug-build interpreter launch per
+# module) is embarrassingly parallel across modules, so this spreads it over
+# the available cores rather than doing it serially, on demand, one
+# `::: module.Foo.bar` directive at a time.
+def extract_docs spec out_dir
+  remove $out_dir all: true ignore: true
+  create_dir $out_dir all: true
+  remove $MKDOCS_API_DIR all: true ignore: true
+  let dolang = spec.bin "dolang"
+  let jobs = [...collect_doc_jobs()]
+  let paths_by_name = {}
+  for job = jobs
+    paths_by_name.insert $job.name $job.path
+  let workers = sys.cpu_info().logical_count
+  strand.pool $workers $jobs do |job|
+    let :name :path = job
+    let text = sub do run $dolang -m doc --module $name $path
+    (out_dir / "$name.json").write $text
+    generate_doc_pages $dolang $paths_by_name $name (json.decode(text)["entities"])
+
+def with_mkdocs spec func
+  # The handler reads a pre-extracted JSON cache -- one file per module,
+  # produced by extract_docs (see there for why) -- rather than running the
+  # `dolang` extractor itself.
+  let doc_cache = (spec.target_dir / "mkdocs-doc")
+  extract_docs $spec $doc_cache
   env
     DOLANG_HIGHLIGHT: $spec.bin("dolang-highlight")
-    DOLANG_DOC: "$dolang -m doc"
+    DOLANG_DOC_CACHE: $doc_cache
     NO_MKDOCS_2_WARNING: 1
     $func
 
@@ -480,8 +615,16 @@ return $
         if is_windows
           RUSTFLAGS: "-C target-feature=+crt-static"
         do
-          spec.cargo build --bin dolang --bin dolang-lsp
+          spec.cargo build --bin dolang
           vfs_spec.cargo build --bin dolang-vfs
+          # dolang-lsp's build.rs bakes a static hover doc index out of the
+          # same per-module JSON dump `dodo mkdocs` uses (see
+          # extract_doc_json) -- generate it with the dolang binary just
+          # built, then point the build at it via env var.
+          let doc_json = (spec.target_dir / "lsp-doc-json").absolute()
+          extract_doc_json $spec $doc_json
+          env DOLANG_LSP_DOC_JSON_DIR: $doc_json do
+            spec.cargo build --bin dolang-lsp
 
       if is_windows
         verify_windows_crt $spec dolang

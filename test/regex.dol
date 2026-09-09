@@ -1,13 +1,19 @@
+import regex
 import regex:
   - Regex
 import test:
   - assert_eq
+  - assert_type
   - test
 
 #[test]
 def compile_match_and_find()
   let date_pattern = Regex r"(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})"
   let caps = date_pattern.match "2024-03-15"
+
+  assert_type $regex.Captures $caps
+  assert_type $regex.Match $caps[0]
+  assert_type $regex.Find (date_pattern.find "2024-03-15")
 
   assert_eq (str caps[0]) "2024-03-15"
   assert_eq (str caps[1]) "2024"

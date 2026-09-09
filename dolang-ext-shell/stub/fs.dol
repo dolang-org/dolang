@@ -1,0 +1,2834 @@
+# Filesystem access: paths, files, directories, metadata, and permissions.
+#
+# Ordinary metadata such as size, timestamps, ownership, permissions, and file
+# attributes are available through [`Metadata`](fs.Metadata) and
+# [`update_metadata`](fs.update_metadata). Extended attributes use
+# [`xattrs`](fs.xattrs) and related functions. POSIX and NFSv4 ACLs use
+# [`acl`](fs.acl) and [`set_acl`](fs.set_acl). Windows security descriptors can
+# also be fetched and manipulated with full fidelity; see
+# [`fs.windows.sec_desc`](fs.windows.sec_desc) and the
+# [Security Guide](../../shell/security.md). Windows alternate data streams
+# are listed with [`streams`](fs.streams).
+#
+# ## Modules
+#
+# | Module                             | Description              |
+# | ---------------------------------- | ------------------------ |
+# | [`fs.unix`](fs.unix)       | Unix filesystem types    |
+# | [`fs.windows`](fs.windows) | Windows filesystem types |
+#
+# ## Resolution modes {: #fs.resolution-modes }
+#
+# Many functions accept a `resolve:` parameter that controls how symbolic links
+# and other recursive path resolution is handled. Two values are accepted:
+#
+# - **`:TARGET:`** — Resolve all links to their final target. This is the
+#   default for most functions.
+# - **`:LINK:`** — Resolve all links except the final component. For example,
+#   given a symlink `link -> target`, `metadata link resolve: :LINK:` returns
+#   the link's own metadata rather than the target's. This is the default for
+#   `glob`.
+#
+# On Unix, `:LINK:` corresponds to `lstat`-style behavior. On Windows, it
+# applies to both symbolic links and other reparse points such as directory
+# junctions.
+
+# An entry within a directory.
+#
+# Yielded by [`entries`](fs.entries) and
+# [`Path.entries`](fs.Path.entries).
+#
+# ## Operators
+#
+# `path / entry` returns the derived [`Path`](fs.Path) for that directory
+# entry:
+#
+# ```
+# let dir = Path ./src
+# for entry = dir.entries()
+#   echo (dir / entry)
+# ```
+pub class DirEntry
+  # ([`Str`](std.Str)) The final path component for the entry.
+  #
+  # ```
+  # for entry = entries .
+  #   echo "Name: $(entry.name)"
+  # ```
+  #[getter]
+  pub def name self
+    throw nil
+
+  # ([`Sym`](std.Sym)) The file type.
+  #
+  # | Value            | Description                  |
+  # | ---------------- | ---------------------------- |
+  # | `:FILE:`         | Regular file                 |
+  # | `:DIR:`          | Directory                    |
+  # | `:SYMLINK:`      | Symbolic link                |
+  # | `:FIFO:`         | Named pipe (FIFO)            |
+  # | `:CHAR_DEVICE:`  | Character device             |
+  # | `:BLOCK_DEVICE:` | Block device                 |
+  # | `:SOCKET:`       | Unix domain socket           |
+  # | `:UNKNOWN:`      | Type could not be determined |
+  #
+  # ```
+  # for entry = entries .
+  #   if (entry.type == :DIR:)
+  #     echo "Directory: $(entry.name)"
+  # ```
+  #[getter]
+  pub def type self
+    throw nil
+
+  # ([`Int`](std.Int)) The inode number of the entry.
+  #
+  # Unix only: reading it against a Windows target raises
+  # [`FieldError`](std.FieldError).
+  #[getter]
+  pub def ino self
+    throw nil
+
+# An open file.
+#
+# Returned by [`open`](fs.open) and [`Path.open`](fs.Path.open).
+# Every operation on a closed file raises
+# [`StateError`](std.StateError).
+#
+# A file is both an iterator and a sink, so it can be used with `for`,
+# `.next()`, `.put()`, and `strand.redirect`. The open mode fixes which for the
+# file's lifetime: a text-mode file yields and accepts lines, a binary-mode one
+# arbitrary chunks. In either mode the values read from a file concatenate back
+# to exactly the file's bytes.
+pub class File
+  # Closes the file.
+  #
+  # This is required if [`open`](fs.open) was not given a block.
+  # Closing a file that is already closed does nothing.
+  #
+  # Passing a file to a child process as `stdin:`, `stdout:`, or `stderr:` also
+  # closes it: the child receives the file itself, and the seek position is
+  # kept by this process rather than by the operating system, so two live
+  # handles would each believe a cursor the other moves. Use the file after the
+  # handoff and it raises the ordinary closed-file error.
+  #
+  # ## Example
+  #
+  # ```
+  # let file = open data.txt r
+  # let data = file.read()
+  # file.close()
+  # ```
+  pub def close self
+    throw nil
+
+  # Acquires a byte-range lock while `func` runs.
+  #
+  # ## Returns
+  #
+  # The block's result.
+  #
+  # The lock is exclusive unless `shared` is true. It is released before the
+  # method returns, including when the block raises an error or is canceled.
+  # Release runs with interruption masked and may wait indefinitely.
+  #
+  # Locks are mandatory on Windows, where they prevent conflicting file access.
+  # On Unix they are advisory and affect only programs that cooperate through
+  # file locking.
+  #
+  # Native blocking acquisition cannot be canceled. Canceling the strand may
+  # leave a blocking worker waiting for a conflicting lock and delay shutdown.
+  # Use [`try_lock`](fs.File.try_lock) for bounded or cancellable waiting.
+  #
+  # Overlapping active lock ranges on the same file are unsupported, including
+  # identical shared ranges.
+  #
+  # Finite zero-length ranges are invalid on Unix. On Windows they conflict
+  # only with positive-length ranges that start before and end after their
+  # offset. They do not conflict with another zero-length range or a range
+  # starting at the same offset. The zero-length range `0..0` is invalid.
+  #
+  # ## Example
+  #
+  # ```
+  # file.lock (0..128) do |lock|
+  #   update_header()
+  # ```
+  pub def lock
+    self
+    # ([`Range`](std.Range)) Half-open byte range; `..` is the whole
+    # file.
+    range
+    # ([`Func`](std.Func)) Block receiving a
+    # [`FileLock`](fs.FileLock).
+    func
+    # ([`Bool`](std.Bool)?) Acquire a shared rather than exclusive lock.
+    :shared = nil
+  do
+    throw nil
+
+  # Attempts to acquire a byte-range lock without waiting.
+  #
+  # ## Returns
+  #
+  # The block's result.
+  #
+  # The block always runs. [`lock.held`](fs.FileLock.held) is false when
+  # another handle holds a conflicting lock. Other acquisition failures raise
+  # errors.
+  #
+  # ## Example
+  #
+  # ```
+  # file.try_lock (..) do |lock|
+  #   if lock.held
+  #     update_index()
+  # ```
+  pub def try_lock
+    self
+    # ([`Range`](std.Range)) Half-open byte range; `..` is the whole
+    # file.
+    range
+    # ([`Func`](std.Func)) Block receiving a
+    # [`FileLock`](fs.FileLock).
+    func
+    # ([`Bool`](std.Bool)?) Acquire a shared rather than exclusive lock.
+    :shared = nil
+  do
+    throw nil
+
+  # Reads data from the file.
+  #
+  # ## Returns
+  #
+  # [`Str`](std.Str) in text mode, [`Bin`](std.Bin) in binary mode.
+  #
+  # ## Example
+  #
+  # ```
+  # # Read entire file
+  # open input.txt r do |file|
+  #   let content = file.read()
+  #   echo "File contents: $content"
+  #
+  # # Read a specific number of bytes
+  # open data.bin rb do |file|
+  #   let header = file.read 4
+  #   let rest = file.read()
+  #
+  # # Read a record without moving the cursor
+  # open data.bin rb do |file|
+  #   let record = file.read 64 offset: (index * 64)
+  # ```
+  pub def read
+    self
+    # ([`Int`](std.Int)?) Number of bytes to read. Without it, reads to
+    # the end of the file.
+    #
+    # `size` bytes are read however many transfers that takes; a shorter result
+    # means the end of the file was reached, and reading entirely past the end
+    # gives an empty result rather than an error.
+    size = nil
+    # ([`Int`](std.Int)?) Byte offset to read from. Without it, reads at
+    # the cursor and advances it.
+    #
+    # A positional read leaves the cursor where it was, so it can be used
+    # alongside streaming reads on the same handle, and several regions of a
+    # file can be read without seeking between them.
+    #
+    # Because a positional read touches nothing shared, any number of them may
+    # be in flight on one handle at once — several strands can read different
+    # regions of the same open file concurrently. Streaming reads still take
+    # the handle exclusively, since they move the cursor.
+    #
+    # In text mode the bytes read must be complete UTF-8. There is no cursor
+    # for a positional read to carry a split character forward on, so unlike a
+    # streaming read it cannot hold a partial character back for next time.
+    :offset = nil
+  do
+    throw nil
+
+  # Writes data to the file.
+  #
+  # All of `data` is written, however many transfers that takes.
+  #
+  # ## Returns
+  #
+  # [`Int`](std.Int), the number of bytes written.
+  #
+  # ## Errors
+  #
+  # | Exception                             | Condition                                |
+  # | ------------------------------------- | ---------------------------------------- |
+  # | [`StateError`](std.StateError) | `offset:` on a file opened for appending |
+  #
+  # An append handle writes at the end of the file no matter what offset the
+  # platform is given, so an explicit one cannot be honored rather than merely
+  # being unimplemented.
+  #
+  # ## Example
+  #
+  # ```
+  # open output.txt w do |file|
+  #   let bytes_written = file.write "Hello, World!"
+  #   echo "Wrote $bytes_written bytes"
+  #   file.write b"Hello"
+  #
+  # # Patch a record in place without disturbing the cursor
+  # open data.bin r+b do |file|
+  #   file.write $record offset: (index * 64)
+  # ```
+  pub def write
+    self
+    # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Data to write. Strings
+    # are written as UTF-8 text.
+    data
+    # ([`Int`](std.Int)?) Byte offset to write at. Without it, writes at
+    # the cursor and advances it.
+    #
+    # A positional write leaves the cursor where it was, so it can be used
+    # alongside streaming writes on the same handle, and several regions of a
+    # file can be written without seeking between them. Writing past the end
+    # extends the file, zero-filling the gap.
+    #
+    # As with [`read`](fs.File.read), any number of positional writes may be
+    # in flight on one handle at once.
+    :offset = nil
+  do
+    throw nil
+
+  # The method form of [`fs.copy_data`](fs.copy_data).
+  pub def copy_data
+    self
+    # ([`File`](fs.File)) Handle to write to.
+    dst
+    # ([`Range`](std.Range)?) Absolute byte region of the source.
+    :range = nil
+    # ([`Int`](std.Int)?) Number of bytes to take from the source cursor.
+    :size = nil
+    # ([`Int`](std.Int)?) Absolute byte offset in the destination.
+    :offset = nil
+    # ([`Sym`](std.Sym)?) `:AUTO:` (default), `:REQUIRE:`, or `:NEVER:`.
+    :clone = nil
+  do
+    throw nil
+
+  # Truncates the file to the given byte length.
+  #
+  # If the file has buffered unread data, the logical cursor position is
+  # preserved after truncation.
+  #
+  # ## Example
+  #
+  # ```
+  # open data.bin r+ do |file|
+  #   file.set_size 8
+  # ```
+  pub def set_size
+    self
+    # ([`Int`](std.Int)) New file length in bytes.
+    size
+  do
+    throw nil
+
+  # Flushes the file to durable storage, returning once the device reports it
+  # committed.
+  #
+  # ## Example
+  #
+  # ```
+  # open journal.bin w do |file|
+  #   file.write $entry
+  #   file.sync()
+  # ```
+  pub def sync
+    self
+    # ([`Bool`](std.Bool)?) Flush data only, skipping unneeded metadata.
+    # See [`fs.sync`](fs.sync) for what this selects and what a flush
+    # does and does not guarantee.
+    :data = nil
+  do
+    throw nil
+
+  # Gets metadata for the open file.
+  #
+  # ## Returns
+  #
+  # [`Metadata`](fs.Metadata)
+  #
+  # ## Example
+  #
+  # ```
+  # open data.txt r do |file|
+  #   let meta = file.metadata()
+  #   echo "Size: $(meta.size)"
+  #   echo "Modified: $(meta.modified)"
+  # ```
+  pub def metadata self
+    throw nil
+
+  # Gets filesystem metadata for the filesystem backing the open file.
+  #
+  # ## Returns
+  #
+  # [`FsMetadata`](fs.FsMetadata)
+  #
+  # ## Example
+  #
+  # ```
+  # open data.txt r do |file|
+  #   let meta = file.fs_metadata()
+  #   echo "Available: $(meta.available)"
+  # ```
+  pub def fs_metadata self
+    throw nil
+
+  # Gets selected parts of the Windows security descriptor through this file's
+  # existing handle.
+  #
+  # ## Returns
+  #
+  # [`security.windows.SecDesc`](security.windows.SecDesc)
+  #
+  # The operation raises a permission error if the file was opened without the
+  # necessary Windows access rights. Other platforms raise
+  # [`sys.UnsupportedError`](sys.UnsupportedError).
+  pub def sec_desc
+    self
+    # ([`Bool`](std.Bool)?) Load the owner SID. Defaults to `true`.
+    :owner = nil
+    # ([`Bool`](std.Bool)?) Load the primary group SID. Defaults to
+    # `true`.
+    :group = nil
+    # ([`Bool`](std.Bool)?) Load the discretionary ACL. Defaults to
+    # `true`.
+    :dacl = nil
+    # ([`Bool`](std.Bool)?) Load the system ACL. Defaults to `false`.
+    :sacl = nil
+  do
+    throw nil
+
+  # Applies the components selected by a security descriptor's `mask` through
+  # this file's existing handle.
+  #
+  # The descriptor's
+  # [component options](security.windows.SecDesc.(init)--component-options) may
+  # be passed as keyword arguments instead of, or alongside, `desc`, exactly as
+  # [`security.windows.sec_desc`](security.windows.sec_desc)
+  # accepts them.
+  #
+  # The operation raises a permission error if the file was opened without the
+  # necessary Windows access rights. Windows may normalize the resulting
+  # descriptor. Other platforms raise
+  # [`sys.UnsupportedError`](sys.UnsupportedError).
+  pub def update_sec_desc
+    self
+    # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict)?)
+    # Descriptor, packet, or spec.
+    desc = nil
+  do
+    throw nil
+
+  # Gets the ACL stored on the open file.
+  #
+  # ## Returns
+  #
+  # The matching portable ACL type, depending on `kind`, or `nil` when no ACL
+  # metadata is stored.
+  pub def acl
+    self
+    # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`?) ACL format to query. Defaults to
+    # `:POSIX:`.
+    :kind = nil
+    # ([`Bool`](std.Bool)?) Query the directory's inheritable default
+    # ACL.
+    :default = nil
+  do
+    throw nil
+
+  # Sets or removes an ACL on the open file.
+  #
+  # A built ACL supplies its format and must match an explicit `kind:`. An
+  # untyped sequence of declarative ACE dictionaries requires `kind:`. With
+  # `nil`, the omitted kind remains POSIX.
+  pub def set_acl
+    self
+    # (built ACL\|iterable\|[`nil`](std.Nil)) ACL or declarative ACE
+    # sequence.
+    acl
+    # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`?) Required for an untyped ACL
+    # specification.
+    :kind = nil
+    # ([`Bool`](std.Bool)?) Update the directory's inheritable default
+    # ACL.
+    :default = nil
+  do
+    throw nil
+
+  # Lists extended attributes for this file.
+  #
+  # On Windows, this uses NTFS extended attributes. Returned names may differ
+  # in case from the requested name.
+  #
+  # ## Returns
+  #
+  # [`Iter`](std.Iter) of [`XattrEntry`](fs.XattrEntry)
+  #
+  # ## Example
+  #
+  # ```
+  # open data.txt r do |file|
+  #   for attr = file.xattrs()
+  #     echo $attr.name
+  # ```
+  pub def xattrs
+    self
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to query;
+    # `:USER:` and `:SYSTEM:` name well-known namespaces, and `:ANY:` lists all
+    # namespaces.
+    :namespace = nil
+  do
+    throw nil
+
+  # Gets an extended attribute value.
+  #
+  # ## Returns
+  #
+  # [`Bin`](std.Bin)
+  #
+  # ## Example
+  #
+  # ```
+  # open data.txt r do |file|
+  #   let value = file.xattr "comment"
+  # ```
+  pub def xattr
+    self
+    # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
+    # or entry from [`xattrs`](fs.File.xattrs).
+    name
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to query.
+    :namespace = nil
+  do
+    throw nil
+
+  # Sets an extended attribute value.
+  #
+  # On Windows, empty values are rejected. NTFS deletes the attribute instead
+  # of storing an empty value.
+  #
+  # ## Example
+  #
+  # ```
+  # open data.txt r+ do |file|
+  #   file.set_xattr "comment" "ready"
+  # ```
+  pub def set_xattr
+    self
+    # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
+    # or entry from [`xattrs`](fs.File.xattrs).
+    name
+    # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Attribute bytes; strings
+    # use UTF-8.
+    value
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to update.
+    :namespace = nil
+  do
+    throw nil
+
+  # Removes an extended attribute.
+  #
+  # ## Example
+  #
+  # ```
+  # open data.txt r+ do |file|
+  #   file.remove_xattr "comment"
+  # ```
+  pub def remove_xattr
+    self
+    # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
+    # or entry from [`xattrs`](fs.File.xattrs).
+    name
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to update.
+    :namespace = nil
+  do
+    throw nil
+
+  # Lists alternate data streams for this file.
+  #
+  # Windows only.
+  #
+  # ## Returns
+  #
+  # [`Iter`](std.Iter) of
+  # [`fs.windows.StreamEntry`](fs.windows.StreamEntry)
+  #
+  # ## Example
+  #
+  # ```
+  # let path = Path data.txt
+  # open $path r do |file|
+  #   for stream = file.streams()
+  #     echo (path / stream)
+  # ```
+  pub def streams self
+    throw nil
+
+  # Returns the current cursor position in bytes.
+  #
+  # ## Returns
+  #
+  # [`Int`](std.Int)
+  #
+  # ## Example
+  #
+  # ```
+  # open data.txt r do |file|
+  #   assert_eq (file.tell()) 0
+  #   file.read 5
+  #   assert_eq (file.tell()) 5
+  # ```
+  pub def tell self
+    throw nil
+
+  # Moves the file cursor.
+  #
+  # Buffered unread data is discarded before the seek so subsequent reads use
+  # the new cursor position.
+  #
+  # ## Returns
+  #
+  # [`Int`](std.Int), the new absolute byte position.
+  #
+  # ## Example
+  #
+  # ```
+  # open data.bin rb do |file|
+  #   file.seek start: 10   # absolute
+  #   file.seek 10          # relative to the cursor
+  #   file.seek (0 - 4)     # backwards
+  #   file.seek end: (0 - 1)  # relative to the end
+  # ```
+  pub def seek
+    self
+    # ([`Int`](std.Int)?) Byte offset relative to the current position.
+    offset = nil
+    # ([`Int`](std.Int)?) Absolute byte offset from the start of the
+    # file.
+    :start = nil
+    # ([`Int`](std.Int)?) Byte offset relative to the end of the file.
+    :end = nil
+  do
+    throw nil
+
+  # Returns the file as its own iterator.
+  pub def (iter) self
+    throw nil
+
+  # Fetches the next value from the file.
+  #
+  # In text mode this reads the next line as a [`Str`](std.Str),
+  # **including its terminator**, so a `\r\n` file stays `\r\n` and a final
+  # line without one yields a value without one. Use
+  # [`chomp`](std.Iter.chomp) to strip them:
+  #
+  # ```
+  # for line = file.chomp()
+  #   echo $line
+  # ```
+  #
+  # In binary mode it reads a chunk of data of arbitrary length.
+  pub def (next) self
+    throw nil
+
+  # Returns the file as its own sink.
+  pub def (sink) self
+    throw nil
+
+  # Writes a value to the file, verbatim.
+  #
+  # A [`Str`](std.Str) or [`Bin`](std.Bin) contributes its own
+  # bytes and nothing else, and anything else is converted to a string first.
+  # No line ending is appended in either mode, and none is translated.
+  #
+  # Use [`precrimp`](std.Sink.precrimp) to terminate written values, with
+  # [`shell.line_ending()`](shell.line_ending) for the target's
+  # native ending:
+  #
+  # ```
+  # open $path w do |file|
+  #   let lines = file.precrimp()
+  #   lines.put "first"
+  #   lines.put "second"
+  # ```
+  pub def (put)
+    self
+    # Value to write.
+    value
+  do
+    throw nil
+
+# The state of a scoped [`File`](fs.File) lock.
+#
+# Passed to the block given to [`File.lock`](fs.File.lock) and
+# [`File.try_lock`](fs.File.try_lock).
+pub class FileLock
+  # ([`Bool`](std.Bool)) Whether the lock is currently held.
+  #
+  # The value is false when [`try_lock`](fs.File.try_lock) does not acquire
+  # the lock, and after releasing it.
+  #[getter]
+  pub def held self
+    throw nil
+
+  # Releases the lock before the surrounding scope exits.
+  #
+  # Repeated calls have no effect. Release runs with interruption masked.
+  pub def release self
+    throw nil
+
+# Metadata about a filesystem as a whole.
+#
+# Returned by [`fs_metadata`](fs.fs_metadata),
+# [`Path.fs_metadata`](fs.Path.fs_metadata), and
+# [`File.fs_metadata`](fs.File.fs_metadata). For metadata about a single file
+# entry, use [`Metadata`](fs.Metadata).
+#
+# Accessing a field that does not apply to the target platform raises
+# [`FieldError`](std.FieldError).
+pub class FsMetadata
+  # ([`Int`](std.Int)) Total filesystem capacity in bytes.
+  #[getter]
+  pub def capacity self
+    throw nil
+
+  # ([`Int`](std.Int)) Total free space in bytes, including space
+  # reserved from unprivileged users.
+  #[getter]
+  pub def free self
+    throw nil
+
+  # ([`Int`](std.Int)) Free space available to the current process in
+  # bytes.
+  #[getter]
+  pub def available self
+    throw nil
+
+  # ([`Int`](std.Int)?) Filesystem block size in bytes when available.
+  #[getter]
+  pub def block_size self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the filesystem is mounted read-only.
+  #[getter]
+  pub def read_only self
+    throw nil
+
+  # ([`Int`](std.Int)) Total data blocks. Unix only.
+  #[getter]
+  pub def blocks self
+    throw nil
+
+  # ([`Int`](std.Int)) Free data blocks, including reserved blocks. Unix
+  # only.
+  #[getter]
+  pub def blocks_free self
+    throw nil
+
+  # ([`Int`](std.Int)) Free data blocks available to unprivileged users.
+  # Unix only.
+  #[getter]
+  pub def blocks_available self
+    throw nil
+
+  # ([`Int`](std.Int)) Total file nodes. Unix only.
+  #[getter]
+  pub def files self
+    throw nil
+
+  # ([`Int`](std.Int)) Free file nodes. Unix only.
+  #[getter]
+  pub def files_free self
+    throw nil
+
+  # ([`Int`](std.Int)) Free file nodes available to unprivileged users.
+  # Unix only.
+  #[getter]
+  pub def files_available self
+    throw nil
+
+  # ([`Int`](std.Int)) Filesystem fragment size in bytes. Unix only.
+  #[getter]
+  pub def fragment_size self
+    throw nil
+
+  # ([`Int`](std.Int)?) Raw filesystem identifier when the platform
+  # reports one. Unix only.
+  #[getter]
+  pub def fsid self
+    throw nil
+
+  # ([`Int`](std.Int)) Maximum filename length. Unix only.
+  #[getter]
+  pub def name_max self
+    throw nil
+
+  # ([`Int`](std.Int)) Raw Linux filesystem mount attribute mask. Unix
+  # only.
+  #[getter]
+  pub def linux_attrs self
+    throw nil
+
+  # ([`Int`](std.Int)) Raw FreeBSD filesystem mount attribute mask. Unix
+  # only.
+  #[getter]
+  pub def freebsd_attrs self
+    throw nil
+
+  # ([`Int`](std.Int)) Raw macOS filesystem mount attribute mask. Unix
+  # only.
+  #[getter]
+  pub def macos_attrs self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether setuid execution is disabled. Unix only.
+  #[getter]
+  pub def no_suid self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether execution is disabled. Unix only.
+  #[getter]
+  pub def no_exec self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether writes are synchronous. Unix only.
+  #[getter]
+  pub def synchronous self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether device files are disabled. Unix only.
+  #[getter]
+  pub def no_dev self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether access time updates are disabled. Unix
+  # only.
+  #[getter]
+  pub def no_atime self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether directory access time updates are
+  # disabled. Unix only.
+  #[getter]
+  pub def no_dir_atime self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether relative-atime updates are enabled. Unix
+  # only.
+  #[getter]
+  pub def relatime self
+    throw nil
+
+  # ([`Int`](std.Int)) Raw Windows volume flags. Windows only.
+  #[getter]
+  pub def win_flags self
+    throw nil
+
+  # ([`Int`](std.Int)) Raw Windows volume serial number. Windows only.
+  #[getter]
+  pub def volume_serial_number self
+    throw nil
+
+  # ([`Int`](std.Int)) Maximum path component length for the volume.
+  # Windows only.
+  #[getter]
+  pub def component_length_max self
+    throw nil
+
+# Metadata about a single filesystem entry.
+#
+# Returned by [`metadata`](fs.metadata),
+# [`Path.metadata`](fs.Path.metadata), and
+# [`File.metadata`](fs.File.metadata). For filesystem-level capacity and
+# mount metadata, use [`FsMetadata`](fs.FsMetadata).
+#
+# Accessing a field that does not apply to the target platform raises
+# [`FieldError`](std.FieldError). `freebsd_attrs`, `linux_attrs`,
+# `macos_attrs`, and related attribute fields are `nil` when the filesystem or
+# file type does not support querying file attributes.
+pub class Metadata
+  # ([`Int`](std.Int)) File size in bytes.
+  #[getter]
+  pub def size self
+    throw nil
+
+  # ([`Sym`](std.Sym)) File type: `:FILE:`, `:DIR:`, `:SYMLINK:`,
+  # `:FIFO:`, `:CHAR_DEVICE:`, `:BLOCK_DEVICE:`, `:SOCKET:`, or `:UNKNOWN:`.
+  #[getter]
+  pub def type self
+    throw nil
+
+  # ([`DateTime`](time.DateTime)) Last modification time.
+  #[getter]
+  pub def modified self
+    throw nil
+
+  # ([`DateTime`](time.DateTime)) Last access time.
+  #[getter]
+  pub def accessed self
+    throw nil
+
+  # ([`DateTime`](time.DateTime)) Creation or status-change time.
+  #[getter]
+  pub def created self
+    throw nil
+
+  # Owner: the uid as an [`Int`](std.Int) on Unix, or the owner
+  # [`Sid`](security.windows.Sid) on Windows.
+  #
+  # This representation matches the `owner` argument accepted by
+  # [`update_metadata`](fs.update_metadata).
+  #[getter]
+  pub def owner self
+    throw nil
+
+  # Owning group: the gid as an [`Int`](std.Int) on Unix, or the primary
+  # group [`Sid`](security.windows.Sid) on Windows.
+  #
+  # This representation matches the `group` argument accepted by
+  # [`update_metadata`](fs.update_metadata).
+  #[getter]
+  pub def group self
+    throw nil
+
+  # ([`fs.unix.Mode`](fs.unix.Mode)) Permissions and file type. Unix only.
+  #[getter]
+  pub def mode self
+    throw nil
+
+  # ([`Int`](std.Int)) Device ID. Unix only.
+  #[getter]
+  pub def dev self
+    throw nil
+
+  # ([`Int`](std.Int)) Inode number. Unix only.
+  #[getter]
+  pub def ino self
+    throw nil
+
+  # ([`Int`](std.Int)) Hard-link count. Unix only.
+  #[getter]
+  pub def nlink self
+    throw nil
+
+  # ([`Int`](std.Int)) Owner user ID. Unix only.
+  #[getter]
+  pub def uid self
+    throw nil
+
+  # ([`Int`](std.Int)) Owner group ID. Unix only.
+  #[getter]
+  pub def gid self
+    throw nil
+
+  # ([`Int`](std.Int)) Special-device ID. Unix only.
+  #[getter]
+  pub def rdev self
+    throw nil
+
+  # ([`Int`](std.Int)) Preferred block size for I/O. Unix only.
+  #[getter]
+  pub def blksize self
+    throw nil
+
+  # ([`Int`](std.Int)) Number of allocated 512-byte blocks. Unix only.
+  #[getter]
+  pub def blocks self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the platform hidden flag is set.
+  #[getter]
+  pub def hidden self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the platform immutable flag is set.
+  #[getter]
+  pub def immutable self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the platform append-only flag is set.
+  #[getter]
+  pub def append_only self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the platform no-dump flag is set.
+  #[getter]
+  pub def no_dump self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the platform compressed flag is set.
+  #[getter]
+  pub def compressed self
+    throw nil
+
+  # ([`Int`](std.Int)) Raw Windows file attribute bitmask. Windows only.
+  #[getter]
+  pub def win_attrs self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the readonly attribute is set. Windows
+  # only.
+  #[getter]
+  pub def readonly self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the system attribute is set. Windows
+  # only.
+  #[getter]
+  pub def system self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the archive attribute is set. Windows
+  # only.
+  #[getter]
+  pub def archive self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the reparse-point attribute is set.
+  # Windows only.
+  #[getter]
+  pub def reparse_point self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether sparse allocation is enabled. Windows
+  # only.
+  #[getter]
+  pub def sparse self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the encrypted attribute is set. Windows
+  # only.
+  #[getter]
+  pub def encrypted self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the temporary attribute is set. Windows
+  # only.
+  #[getter]
+  pub def temporary self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the offline attribute is set. Windows
+  # only.
+  #[getter]
+  pub def offline self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the not-content-indexed attribute is
+  # set. Windows only.
+  #[getter]
+  pub def not_content_indexed self
+    throw nil
+
+  # ([`Int`](std.Int)) Raw Linux attribute flags. Linux only.
+  #[getter]
+  pub def linux_attrs self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the no-atime flag is set. Linux only.
+  #[getter]
+  pub def no_atime self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the no-copy-on-write flag is set. Linux
+  # only.
+  #[getter]
+  pub def no_copy_on_write self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the synchronous-directory-updates flag
+  # is set. Linux only.
+  #[getter]
+  pub def dir_sync self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the case-insensitive-directory-lookups
+  # flag is set. Linux only.
+  #[getter]
+  pub def casefold self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the data-journaling flag is set. Linux
+  # only.
+  #[getter]
+  pub def data_journaling self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the don't-compress flag is set. Linux
+  # only.
+  #[getter]
+  pub def no_compress self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the project-hierarchy flag is set. Linux
+  # only.
+  #[getter]
+  pub def project_inherit self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the secure-deletion flag is set. Linux
+  # only.
+  #[getter]
+  pub def secure_delete self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the synchronous-updates flag is set.
+  # Linux only.
+  #[getter]
+  pub def sync self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the no-tail-merging flag is set. Linux
+  # only.
+  #[getter]
+  pub def no_tail_merge self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the top-of-directory-hierarchy flag is
+  # set. Linux only.
+  #[getter]
+  pub def top_dir self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the undeletable flag is set. Linux only.
+  #[getter]
+  pub def undelete self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the direct-access flag is set. Linux
+  # only.
+  #[getter]
+  pub def direct_access self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the extent-format flag is set. Linux
+  # only.
+  #[getter]
+  pub def extent_format self
+    throw nil
+
+  # ([`Int`](std.Int)) Raw macOS file flags. macOS only.
+  #[getter]
+  pub def macos_attrs self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the opaque flag is set. macOS only.
+  #[getter]
+  pub def opaque self
+    throw nil
+
+  # ([`Int`](std.Int)) Raw FreeBSD file flags. FreeBSD only.
+  #[getter]
+  pub def freebsd_attrs self
+    throw nil
+
+# A filesystem path.
+#
+# The supertype of [`fs.unix.Path`](fs.unix.Path) and
+# [`fs.windows.Path`](fs.windows.Path); which of the two a constructed path
+# is depends on the current VFS context.
+pub class Path
+  # Converts a string or another path to a path of the current VFS context's
+  # type.
+  #
+  # ## Returns
+  #
+  # [`fs.unix.Path`](fs.unix.Path) or
+  # [`fs.windows.Path`](fs.windows.Path).
+  pub def (init)
+    self
+    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path value.
+    path
+  do
+    throw nil
+
+  # Joins path components into a single path.
+  #
+  # If any component is an absolute path, it replaces everything before it.
+  #
+  # ## Example
+  #
+  # ```
+  # let path = Path.join home user docs file.txt
+  # echo $path.name  # file.txt
+  #
+  # # An absolute path replaces everything before it
+  # let abs = Path.join home /etc config.txt
+  # echo $abs  # /etc/config.txt
+  # ```
+  #[class]
+  pub def join
+    self
+    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path components to join.
+    ...components
+  do
+    throw nil
+
+  # ([`Str`](std.Str)?) The final component of the path, or `nil` if the
+  # path is empty.
+  #
+  # ```
+  # let path = Path /home/user/file.txt
+  # echo $path.name  # file.txt
+  # ```
+  #[getter]
+  pub def name self
+    throw nil
+
+  # ([`Str`](std.Str)?) The final component without its last extension,
+  # or `nil` if the path is empty.
+  #
+  # ```
+  # let path = Path "/home/user/archive.tar.gz"
+  # echo $path.stem  # archive.tar
+  # ```
+  #[getter]
+  pub def stem self
+    throw nil
+
+  # ([`Str`](std.Str)?) The file extension without the leading dot, or
+  # `nil` if the final component has no extension.
+  #
+  # ```
+  # let path = Path "/home/user/file.txt"
+  # echo $path.ext  # txt
+  # ```
+  #[getter]
+  pub def ext self
+    throw nil
+
+  # ([`Path`](fs.Path)?) The parent directory, or `nil` if the path is empty
+  # or contains only one component.
+  #
+  # ```
+  # let path = Path /home/user/file.txt
+  # echo $path.parent  # /home/user
+  # ```
+  #[getter]
+  pub def parent self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the path is absolute, meaning it starts
+  # from the filesystem root.
+  #[getter]
+  pub def is_absolute self
+    throw nil
+
+  # Immutable array-like view of the lexical path components.
+  #
+  # ```
+  # let path = Path "alpha/beta/gamma"
+  # assert_eq [...path.components] ["alpha", "beta", "gamma"]
+  # ```
+  #
+  # Windows paths carry the alternate data stream specified in the final path
+  # component if present.
+  #[getter]
+  pub def components self
+    throw nil
+
+  # Returns a new path with `ext` appended as an additional extension.
+  #
+  # ## Example
+  #
+  # ```
+  # let path = Path "archive.tar"
+  # echo (path.add_ext "gz")  # archive.tar.gz
+  # ```
+  pub def add_ext
+    self
+    # ([`Str`](std.Str)) Extension to append.
+    ext
+  do
+    throw nil
+
+  # Returns a new path with the final extension replaced.
+  #
+  # ## Example
+  #
+  # ```
+  # let path = Path "archive.tar.gz"
+  # echo (path.with_ext "zip")  # archive.tar.zip
+  # ```
+  pub def with_ext
+    self
+    # ([`Str`](std.Str)) Replacement extension.
+    ext
+  do
+    throw nil
+
+  # Returns a new path with the final extension removed.
+  #
+  # ## Example
+  #
+  # ```
+  # let path = Path "archive.tar.gz"
+  # echo (path.without_ext())  # archive.tar
+  # ```
+  pub def without_ext self
+    throw nil
+
+  # Returns a new path with the final component replaced.
+  #
+  # ## Example
+  #
+  # ```
+  # let path = Path "src/main.rs"
+  # echo (path.with_name "lib.rs")  # src/lib.rs
+  # ```
+  pub def with_name
+    self
+    # ([`Str`](std.Str)) Replacement final component.
+    name
+  do
+    throw nil
+
+  # Returns a new path with the final stem replaced, preserving the final
+  # extension when present.
+  #
+  # ## Example
+  #
+  # ```
+  # let path = Path "archive.tar.gz"
+  # echo (path.with_stem "bundle")  # bundle.gz
+  # ```
+  pub def with_stem
+    self
+    # ([`Str`](std.Str)) Replacement stem.
+    stem
+  do
+    throw nil
+
+  # The method form of [`fs.absolute`](fs.absolute).
+  pub def absolute self
+    throw nil
+
+  # The method form of [`fs.canonical`](fs.canonical).
+  pub def canonical self
+    throw nil
+
+  # The method form of [`fs.normalize`](fs.normalize).
+  pub def normalize self
+    throw nil
+
+  # The method form of [`fs.relative`](fs.relative).
+  pub def relative
+    self
+    # ([`Str`](std.Str)\|[`Path`](fs.Path)?) Base directory. Defaults
+    # to the current working directory.
+    base = nil
+  do
+    throw nil
+
+  # The method form of [`fs.exists`](fs.exists).
+  pub def exists self
+    throw nil
+
+  # The method form of [`fs.open`](fs.open).
+  pub def open
+    self
+    # ([`Str`](std.Str)?) File access mode. Defaults to `"r"`.
+    mode = nil
+    # ([`Func`](std.Func)?) Block to run with the file; it is closed when
+    # the block returns.
+    func = nil
+  do
+    throw nil
+
+  # The method form of [`fs.read`](fs.read).
+  pub def read
+    self
+    # ([`Str`](std.Str)?) Optional mode string; only `"b"` is allowed.
+    mode = nil
+  do
+    throw nil
+
+  # The method form of [`fs.write`](fs.write).
+  pub def write
+    self
+    # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Value to write.
+    content
+  do
+    throw nil
+
+  # The method form of [`fs.append`](fs.append).
+  pub def append
+    self
+    # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Content to append.
+    content
+  do
+    throw nil
+
+  # The method form of [`fs.set_size`](fs.set_size).
+  pub def set_size
+    self
+    # ([`Int`](std.Int)) New file length in bytes.
+    size
+  do
+    throw nil
+
+  # The method form of [`fs.sync`](fs.sync).
+  pub def sync
+    self
+    # ([`Bool`](std.Bool)?) Flush data only, skipping unneeded metadata.
+    :data = nil
+  do
+    throw nil
+
+  # The method form of [`fs.metadata`](fs.metadata).
+  pub def metadata
+    self
+    # (`:TARGET:`\|`:LINK:`?)
+    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
+    :resolve = nil
+  do
+    throw nil
+
+  # The method form of [`fs.fs_metadata`](fs.fs_metadata).
+  pub def fs_metadata
+    self
+    # (`:TARGET:`\|`:LINK:`?)
+    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
+    :resolve = nil
+  do
+    throw nil
+
+  # The method form of [`fs.update_metadata`](fs.update_metadata),
+  # which documents the metadata keyword arguments.
+  pub def update_metadata
+    self
+    # (`:TARGET:`\|`:LINK:`?)
+    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
+    :resolve = nil
+  do
+    throw nil
+
+  # The method form of [`fs.entries`](fs.entries).
+  pub def entries self
+    throw nil
+
+  # The method form of [`fs.glob`](fs.glob), searching within this
+  # path.
+  #
+  # Yielded paths contain this path as a prefix.
+  pub def glob
+    self
+    # ([`Str`](std.Str)) Glob pattern.
+    pattern
+    # ([`Int`](std.Int)?) Maximum directory depth to traverse. Defaults
+    # to unlimited.
+    :max_depth = nil
+    # (`:TARGET:`\|`:LINK:`?)
+    # [Resolution mode](fs.resolution-modes). Defaults to `:LINK:`.
+    :resolve = nil
+  do
+    throw nil
+
+  # The method form of [`fs.create_dir`](fs.create_dir).
+  pub def create_dir
+    self
+    # ([`Bool`](std.Bool)?) Create parent directories too.
+    :all = nil
+  do
+    throw nil
+
+  # The method form of [`fs.remove`](fs.remove).
+  pub def remove
+    self
+    # ([`Bool`](std.Bool)?) Remove directories recursively.
+    :all = nil
+    # ([`Bool`](std.Bool)?) Treat a missing path as success.
+    :ignore = nil
+  do
+    throw nil
+
+  # The method form of [`fs.remove_dir`](fs.remove_dir).
+  pub def remove_dir
+    self
+    # ([`Bool`](std.Bool)?) Recursively prune empty directory subtrees.
+    :all = nil
+    # ([`Bool`](std.Bool)?) Ignore missing directories and file-blocked
+    # subtrees.
+    :ignore = nil
+  do
+    throw nil
+
+  # The method form of [`fs.copy`](fs.copy).
+  pub def copy
+    self
+    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Destination path.
+    to
+    # ([`Bool`](std.Bool)?) Allow a recursive directory copy.
+    :all = nil
+  do
+    throw nil
+
+  # The method form of [`fs.move`](fs.move).
+  pub def move
+    self
+    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Destination path.
+    to
+    # ([`Bool`](std.Bool)?) Allow a recursive directory move.
+    :all = nil
+  do
+    throw nil
+
+  # The method form of [`fs.rename`](fs.rename).
+  pub def rename
+    self
+    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Destination path.
+    to
+    # ([`Bool`](std.Bool)?) Whether to replace an existing destination.
+    :replace = nil
+  do
+    throw nil
+
+  # The method form of [`fs.hard_link`](fs.hard_link), with this path
+  # as the existing file.
+  pub def hard_link
+    self
+    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path where the hard link is
+    # created.
+    to
+  do
+    throw nil
+
+  # The method form of [`fs.read_link`](fs.read_link).
+  pub def read_link self
+    throw nil
+
+  # The method form of [`fs.acl`](fs.acl).
+  pub def acl
+    self
+    # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`?) ACL format to query. Defaults to
+    # `:POSIX:`.
+    :kind = nil
+    # ([`Bool`](std.Bool)?) Query the directory's inheritable default
+    # ACL.
+    :default = nil
+    # (`:TARGET:`\|`:LINK:`?)
+    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
+    :resolve = nil
+  do
+    throw nil
+
+  # The method form of [`fs.set_acl`](fs.set_acl).
+  #
+  # Untyped declarative ACL specifications require an explicit `kind:`; a built
+  # ACL supplies its kind and must match one when provided.
+  pub def set_acl
+    self
+    # (built ACL\|iterable\|[`nil`](std.Nil)) ACL or declarative ACE
+    # sequence.
+    acl
+    # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`?) Required for an untyped ACL
+    # specification.
+    :kind = nil
+    # ([`Bool`](std.Bool)?) Update the directory's inheritable default
+    # ACL.
+    :default = nil
+    # (`:TARGET:`\|`:LINK:`?)
+    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
+    :resolve = nil
+  do
+    throw nil
+
+  # The method form of [`fs.xattrs`](fs.xattrs).
+  pub def xattrs
+    self
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to query.
+    :namespace = nil
+    # (`:TARGET:`\|`:LINK:`?)
+    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
+    :resolve = nil
+  do
+    throw nil
+
+  # The method form of [`fs.xattr`](fs.xattr).
+  pub def xattr
+    self
+    # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
+    # or entry from [`xattrs`](fs.Path.xattrs).
+    name
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to query.
+    :namespace = nil
+    # (`:TARGET:`\|`:LINK:`?)
+    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
+    :resolve = nil
+  do
+    throw nil
+
+  # The method form of [`fs.set_xattr`](fs.set_xattr).
+  pub def set_xattr
+    self
+    # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
+    # or entry from [`xattrs`](fs.Path.xattrs).
+    name
+    # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Attribute bytes; strings
+    # use UTF-8.
+    value
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to update.
+    :namespace = nil
+    # (`:TARGET:`\|`:LINK:`?)
+    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
+    :resolve = nil
+  do
+    throw nil
+
+  # The method form of [`fs.remove_xattr`](fs.remove_xattr).
+  pub def remove_xattr
+    self
+    # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
+    # or entry from [`xattrs`](fs.Path.xattrs).
+    name
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to update.
+    :namespace = nil
+    # (`:TARGET:`\|`:LINK:`?)
+    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
+    :resolve = nil
+  do
+    throw nil
+
+# An extended attribute of a filesystem entry.
+#
+# Yielded by [`xattrs`](fs.xattrs), and accepted in place of a name by
+# the functions that read and write attribute values.
+pub class XattrEntry
+  # ([`Str`](std.Str)) Attribute name.
+  #
+  # Windows may report the name with different casing than it was originally
+  # set with.
+  #
+  # ```
+  # for attr = xattrs "data.txt"
+  #   echo $attr.name
+  # ```
+  #[getter]
+  pub def name self
+    throw nil
+
+  # ([`Str`](std.Str)) Extended attribute namespace, such as `user`.
+  #
+  # Linux and FreeBSD only.
+  #
+  # ```
+  # for attr = xattrs "data.txt" namespace: :ANY:
+  #   echo "$(attr.namespace):$(attr.name)"
+  # ```
+  #[getter]
+  pub def namespace self
+    throw nil
+
+  # ([`Int`](std.Int)) Attribute value size in bytes. Windows only.
+  #[getter]
+  pub def size self
+    throw nil
+
+  # ([`Int`](std.Int)) Attribute flags. Windows only.
+  #[getter]
+  pub def flags self
+    throw nil
+
+# Opens a file.
+#
+# ## Returns
+#
+# [`File`](fs.File), or the block's result when `func` is given.
+#
+# ## Example
+#
+# ```
+# # Read a file (auto-closed when the block finishes)
+# open config.txt r do |file|
+#   echo "Content: $(file.read())"
+#
+# # Manual file management
+# let file = open data.txt w
+# file.write "some data"
+# file.close()
+# ```
+pub def open
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the file to open.
+  path
+  # ([`Str`](std.Str)?) File access mode. Defaults to `"r"`.
+  #
+  # | Mode   | Description                              |
+  # | ------ | ---------------------------------------- |
+  # | `"r"`  | Read-only                                |
+  # | `"w"`  | Write-only (truncates existing file)     |
+  # | `"a"`  | Append to existing file                  |
+  # | `"r+"` | Read and write                           |
+  # | `"w+"` | Read and write (truncates existing file) |
+  # | `"a+"` | Read and append                          |
+  #
+  # Add a `"b"` suffix for binary mode, as in `"rb"`, `"wb"`, or `"r+b"`.
+  mode = nil
+  # ([`Func`](std.Func)?) Block to run with the file; it is closed when
+  # the block returns.
+  func = nil
+do
+  throw nil
+
+# Reads the entire contents of a file in one call.
+#
+# ## Returns
+#
+# [`Str`](std.Str), or [`Bin`](std.Bin) in binary mode.
+#
+# ## Example
+#
+# ```
+# let text = read "config.txt"
+# let data = read "archive.bin" "b"
+# ```
+pub def read
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the file to read.
+  path
+  # ([`Str`](std.Str)?) Optional mode string; only `"b"` is allowed.
+  mode = nil
+do
+  throw nil
+
+# Writes the entire contents of a file in one call, creating or truncating it.
+#
+# Binary values are written as raw bytes and strings as UTF-8 text.
+#
+# ## Returns
+#
+# [`Int`](std.Int), the number of bytes written.
+#
+# ## Example
+#
+# ```
+# write "message.txt" "hello"
+# write "data.bin" b"\x01\x02\x03"
+# ```
+pub def write
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the file to write.
+  path
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Value to write.
+  content
+do
+  throw nil
+
+# Appends content to a file, creating it if needed.
+#
+# ## Returns
+#
+# [`Int`](std.Int), the number of bytes written.
+#
+# ## Example
+#
+# ```
+# append "messages.txt" "another message\n"
+# append "data.bin" b"\x04\x05"
+# ```
+pub def append
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the file to append
+  # to.
+  path
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Content to append.
+  content
+do
+  throw nil
+
+# Copies data from one open file to another.
+#
+# This attempts to copy data in the most efficient manner possible:
+#
+# - If both handles are from the same VFS domain, all copying occurs
+#   target-side rather than being relayed.
+# - Copy-on-write cloning of blocks/extents will be used by default if the
+#   platform, filesystem, handle pair, and data size and alignment meet
+#   relevant requirements.
+# - Sparsity will be preserved if possible: blocks of all zero bytes which are
+#   not physically allocated in the source will not be allocated in the
+#   destination, so long as platform, filesystem, data size and alignment
+#   requirements permit it.
+#
+# This operation is not remotely atomic. Concurrent modification of either
+# source or destination in the relevant range will result in unspecified final
+# state in terms of the destination's content in the affected range, and
+# possibly file length if the range overlapped the prior end-of-file. A failed
+# operation may also leave the destination in an unspecified intermediate
+# state.
+#
+# Copying between disjoint regions of one file is allowed; overlapping ones are
+# rejected if detected. Detection requires recognizing when two handles refer
+# to the same file, which is not always possible, in which case an overlapping
+# copy has an unspecified result.
+#
+# ## Returns
+#
+# [`Int`](std.Int), the number of bytes copied. This is the number of
+# bytes requested unless source end-of-file was reached.
+#
+# ## Errors
+#
+# | Exception                                            | Condition                                           |
+# | ---------------------------------------------------- | --------------------------------------------------- |
+# | [`ValueError`](std.ValueError)                | `range:` and `size:` together, or a malformed range |
+# | [`StateError`](std.StateError)                | `offset:` on a handle opened for appending          |
+# | [`StateError`](std.StateError)                | either handle is closed                             |
+# | [`StateError`](std.StateError)                | one handle used as both sides through its cursor    |
+# | [`InvalidInputError`](sys.InvalidInputError) | the two regions overlap within one file             |
+#
+# ## Example
+#
+# ```
+# open source.bin rb do |src|
+#   open dest.bin wb do |dst|
+#     # Splice a fixed region of the source onto wherever dst happens to be
+#     copy_data $src $dst range: (0..4096)
+#
+#     # Copy the rest of src, advancing both cursors
+#     let count = copy_data $src $dst
+#     echo "copied $count bytes"
+#
+# open archive.bin r+b do |file|
+#   # Both sides positional, so one handle can serve as both
+#   copy_data $file $file range: (0..64) offset: 8192
+# ```
+pub def copy_data
+  # ([`File`](fs.File)) Handle to read from.
+  src
+  # ([`File`](fs.File)) Handle to write to.
+  dst
+  # ([`Range`](std.Range)?) Absolute byte region of the source.
+  #
+  # ### Source Addressing
+  #
+  # | `range:` | `size:` | Source                                        |
+  # | -------- | ------- | --------------------------------------------- |
+  # | given    | —       | that absolute region                          |
+  # | —        | given   | that many bytes from the cursor               |
+  # | —        | —       | the cursor to the end of the file             |
+  # | given    | given   | an error — a range already carries its length |
+  #
+  # `range:` follows the same conventions as
+  # [`File.lock`](fs.File.lock): half-open, `..` is the whole file, an open
+  # end means "to the end of the file", an omitted start is `0`, `step` must be
+  # `1`, and endpoints counted from the end are rejected.
+  #
+  # Using cursor-based source addressing advances the cursor by the amount
+  # copied on success.
+  :range = nil
+  # ([`Int`](std.Int)?) Number of bytes to take from the source cursor.
+  :size = nil
+  # ([`Int`](std.Int)?) Absolute byte offset in the destination.
+  #
+  # ### Destination Addressing
+  #
+  # `offset:` writes at an absolute position and leaves the destination cursor
+  # where it was; without it the copy lands at the cursor, which advances. A
+  # handle opened for appending does not support a specified offset.
+  #
+  # As expected, if the destination position would write past the current
+  # end-of-file, the length of the file is extended.
+  :offset = nil
+  # ([`Sym`](std.Sym)?) How blocks should be shared between the source
+  # and destination.
+  #
+  # ### Clone Behavior
+  #
+  # | Value       | Meaning                                                |
+  # | ----------- | ------------------------------------------------------ |
+  # | `:AUTO:`    | share blocks where possible, copy the data otherwise   |
+  # | `:REQUIRE:` | fail rather than copy the data outright                |
+  # | `:NEVER:`   | copy the data outright even where sharing is available |
+  #
+  # On Linux and FreeBSD, `:AUTO:` opportunistically performs copy-on-write
+  # cloning for local filesystems and server-side copying for network mounts.
+  # `:REQUIRE:` explicitly requests a copy-on-write clone and fails if not
+  # possible. On Windows, `:AUTO:` opportunistically performs ReFS extent
+  # duplication or SMB server-side copy when possible, while `:REQUIRE:` only
+  # attempts the ReFS path (which may also work remotely). `:REQUIRE:` fails
+  # with [`UnsupportedError`](sys.UnsupportedError) when the filesystem,
+  # file pair, or range cannot be cloned. Append destinations cannot guarantee
+  # cloning, so they also reject `:REQUIRE:`. macOS does not support range
+  # clones, nor do copies between different VFS domains, and thus `:REQUIRE:`
+  # always fails.
+  #
+  # ### Sparsity
+  #
+  # Positional copies on Linux, FreeBSD, Windows, and macOS targets preserve
+  # source holes (unallocated data blocks containing only logical zero bytes)
+  # when the filesystem exposes them, and replace existing destination data in
+  # those holes with zeroes. Hole deallocation is best effort: when it is
+  # unavailable the zeroes may consume physical storage. On Windows, a file
+  # must be explicitly marked sparse to permit unallocated zero blocks; this
+  # operation will not do so automatically.
+  :clone = nil
+do
+  throw nil
+
+# Truncates a file to the given byte length, creating it if needed.
+#
+# ## Example
+#
+# ```
+# set_size "output.txt" 0
+# set_size (Path "archive.bin") 1024
+# ```
+pub def set_size
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the file.
+  path
+  # ([`Int`](std.Int)) New file length in bytes.
+  size
+do
+  throw nil
+
+# Flushes a file to durable storage, returning once the device reports it
+# committed.
+#
+# The file must already exist — unlike [`set_size`](fs.set_size), this does not
+# create it.
+#
+# Flushing the contents says nothing about the directory entry naming the file,
+# which is a separate inode with its own flush. Nor is it a substitute for the
+# guarantee on a filesystem with delayed allocation or write cancellation,
+# where data written to a file that is removed before it is flushed may never
+# be written at all.
+#
+# ## Example
+#
+# ```
+# write scratch.bin $payload
+# sync scratch.bin
+# ```
+pub def sync
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the file.
+  path
+  # ([`Bool`](std.Bool)?) Flush data only, skipping unneeded metadata.
+  #
+  # A data-only flush (`fdatasync`) omits metadata a reader does not need to
+  # find the contents — notably the modification time — and so can avoid a
+  # second write to the inode. A size change is still flushed either way.
+  # Defaults to `false`.
+  :data = nil
+do
+  throw nil
+
+# Checks whether a file or directory exists at the given path.
+#
+# ## Returns
+#
+# [`Bool`](std.Bool)
+#
+# ## Example
+#
+# ```
+# if exists "temp.txt"
+#   remove "temp.txt"
+# ```
+pub def exists
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to check.
+  path
+do
+  throw nil
+
+# Gets metadata for the given path.
+#
+# ## Returns
+#
+# [`Metadata`](fs.Metadata)
+#
+# ## Example
+#
+# ```
+# let meta = metadata "data.txt"
+# echo "Size: $(meta.size)"
+#
+# # Get symlink metadata without following
+# let link_meta = metadata "link.txt" resolve: :LINK:
+# echo "Link type: $(link_meta.type)"
+# ```
+pub def metadata
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the file or
+  # directory.
+  path
+  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # `:TARGET:`.
+  :resolve = nil
+do
+  throw nil
+
+# Gets metadata for the filesystem containing the given path.
+#
+# ## Returns
+#
+# [`FsMetadata`](fs.FsMetadata)
+#
+# ## Errors
+#
+# | Exception                                          | Condition                           |
+# | -------------------------------------------------- | ----------------------------------- |
+# | [`sys.UnsupportedError`](sys.UnsupportedError) | On Linux, `resolve: :LINK:` is used |
+#
+# ## Example
+#
+# ```
+# let meta = fs_metadata "data.txt"
+# echo "Available: $(meta.available)"
+# ```
+pub def fs_metadata
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to resolve.
+  path
+  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # `:TARGET:`.
+  :resolve = nil
+do
+  throw nil
+
+# Updates timestamps, permissions, ownership, and filesystem attributes.
+#
+# Unspecified metadata is left unchanged. Unix targets support `mode`, numeric
+# or named `owner` and `group` values, and applicable filesystem attributes.
+# Windows targets accept an account name or
+# [`Sid`](security.windows.Sid) for `owner` and `group` and support
+# applicable filesystem attributes. Unix supports `modified` and `accessed`
+# timestamps; Windows also supports `created`.
+#
+# Paths are submitted from left to right and processing stops at the first
+# error. Within each path, ownership, mode, attributes, and timestamps are
+# applied in that order. Backends may use multiple system operations;
+# atomicity and rollback behavior are unspecified.
+#
+# Clearing `sparse` on Windows may allocate storage for every hole. It can be
+# expensive, may fail when the volume lacks space, and is not transactional.
+#
+# ## Errors
+#
+# | Exception                                             | Condition                                        |
+# | ----------------------------------------------------- | ------------------------------------------------ |
+# | [`sys.UnsupportedError`](sys.UnsupportedError) | The operation is used on an unsupported platform |
+#
+# ## Example
+#
+# ```
+# update_metadata "script.sh" mode: 0o755 owner: "deploy" group: "deploy"
+# update_metadata "one.txt" "two.txt" mode: 0o640
+# update_metadata "data.txt" hidden: true
+# update_metadata "link" group: "www-data" resolve: :LINK:
+# update_metadata "artifact.tar" modified: $DateTime.from_unix(1700000000)
+# ```
+pub def update_metadata
+  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # `:TARGET:`.
+  :resolve = nil
+  # ([`Int`](std.Int)\|[`Mode`](fs.unix.Mode)?) Unix permission mode.
+  :mode = nil
+  # ([`Int`](std.Int)\|[`Str`](std.Str)\|[`Sid`](security.windows.Sid)?)
+  # Owner ID, name, or SID.
+  :owner = nil
+  # ([`Int`](std.Int)\|[`Str`](std.Str)\|[`Sid`](security.windows.Sid)?)
+  # Group ID, name, or SID.
+  :group = nil
+  # ([`DateTime`](time.DateTime)?) New modification time.
+  :modified = nil
+  # ([`DateTime`](time.DateTime)?) New access time.
+  :accessed = nil
+  # ([`DateTime`](time.DateTime)?) New creation time. Windows only.
+  :created = nil
+  # ([`Bool`](std.Bool)?) Readonly attribute. Windows.
+  :readonly = nil
+  # ([`Bool`](std.Bool)?) Hidden attribute or flag.
+  :hidden = nil
+  # ([`Bool`](std.Bool)?) System attribute. Windows.
+  :system = nil
+  # ([`Bool`](std.Bool)?) Archive attribute. Windows.
+  :archive = nil
+  # ([`Bool`](std.Bool)?) Compressed flag.
+  :compressed = nil
+  # ([`Bool`](std.Bool)?) Sparse attribute. Windows.
+  :sparse = nil
+  # ([`Bool`](std.Bool)?) Temporary attribute. Windows.
+  :temporary = nil
+  # ([`Bool`](std.Bool)?) Offline attribute. Windows.
+  :offline = nil
+  # ([`Bool`](std.Bool)?) Not-content-indexed attribute. Windows.
+  :not_content_indexed = nil
+  # ([`Bool`](std.Bool)?) Immutable flag.
+  :immutable = nil
+  # ([`Bool`](std.Bool)?) Append-only flag.
+  :append_only = nil
+  # ([`Bool`](std.Bool)?) No-dump flag.
+  :no_dump = nil
+  # ([`Bool`](std.Bool)?) No-atime flag. Linux.
+  :no_atime = nil
+  # ([`Bool`](std.Bool)?) No-copy-on-write flag. Linux.
+  :no_copy_on_write = nil
+  # ([`Bool`](std.Bool)?) Synchronous-directory-updates flag. Linux.
+  :dir_sync = nil
+  # ([`Bool`](std.Bool)?) Casefold flag. Linux.
+  :casefold = nil
+  # ([`Bool`](std.Bool)?) Data-journaling flag. Linux.
+  :data_journaling = nil
+  # ([`Bool`](std.Bool)?) Don't-compress flag. Linux.
+  :no_compress = nil
+  # ([`Bool`](std.Bool)?) Project-hierarchy flag. Linux.
+  :project_inherit = nil
+  # ([`Bool`](std.Bool)?) Secure-deletion flag. Linux.
+  :secure_delete = nil
+  # ([`Bool`](std.Bool)?) Synchronous-updates flag. Linux.
+  :sync = nil
+  # ([`Bool`](std.Bool)?) No-tail-merging flag. Linux.
+  :no_tail_merge = nil
+  # ([`Bool`](std.Bool)?) Top-of-directory-hierarchy flag. Linux.
+  :top_dir = nil
+  # ([`Bool`](std.Bool)?) Undeletable flag. Linux.
+  :undelete = nil
+  # ([`Bool`](std.Bool)?) Direct-access flag. Linux.
+  :direct_access = nil
+  # ([`Bool`](std.Bool)?) Extent-format flag. Linux.
+  :extent_format = nil
+  # ([`Bool`](std.Bool)?) Opaque flag. macOS.
+  :opaque = nil
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Paths to update, in order.
+  ...paths
+do
+  throw nil
+
+# Gets the ACL stored on a path.
+#
+# POSIX ACLs (`kind: :POSIX:`, the default) are supported on Linux and FreeBSD.
+# NFSv4 ACLs (`kind: :NFS4:`) are supported on FreeBSD only. macOS ACLs
+# (`kind: :MACOS:`) are supported on macOS only.
+#
+# ## Returns
+#
+# [`security.unix.Acl`](security.unix.Acl),
+# [`security.nfs4.Acl`](security.nfs4.Acl), or
+# [`security.macos.Acl`](security.macos.Acl), depending on `kind`, or
+# `nil` when no ACL metadata is stored.
+#
+# ## Errors
+#
+# | Exception                                             | Condition                                                    |
+# | ----------------------------------------------------- | ------------------------------------------------------------ |
+# | [`ValueError`](std.ValueError)                 | `kind: :NFS4:` or `:MACOS:` is combined with `default: true` |
+# | [`sys.UnsupportedError`](sys.UnsupportedError) | The target and ACL format combination is unsupported         |
+pub def acl
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to query.
+  path
+  # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`?) ACL format to query. Defaults to
+  # `:POSIX:`.
+  :kind = nil
+  # ([`Bool`](std.Bool)?) Query the directory's inheritable default ACL.
+  :default = nil
+  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # `:TARGET:`.
+  :resolve = nil
+do
+  throw nil
+
+# Sets or removes an ACL.
+#
+# A built ACL supplies its format; an explicit `kind:` must match it. An
+# untyped iterable of declarative ACE dictionaries requires an explicit `kind:`
+# and is coerced by that ACL family. With `nil`, `kind:` selects the format to
+# remove and defaults to `:POSIX:`.
+#
+# POSIX ACLs are supported on Linux and FreeBSD, NFSv4 ACLs on FreeBSD, and
+# macOS ACLs on macOS. Other target and format combinations raise
+# [`sys.UnsupportedError`](sys.UnsupportedError).
+#
+# ## Errors
+#
+# | Exception                                             | Condition                                                                                                       |
+# | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+# | [`ValueError`](std.ValueError)                 | An NFSv4/macOS ACL is combined with `default: true`                                                             |
+# | [`ValueError`](std.ValueError)                 | A built ACL conflicts with the explicit `kind:`                                                                 |
+# | [`TypeError`](std.TypeError)                   | An untyped ACL specification is passed without `kind:`                                                          |
+# | [`sys.UnsupportedError`](sys.UnsupportedError) | An NFSv4 ACL is removed with `kind: :NFS4:` and `acl: nil`; NFSv4 ACLs can be replaced but not cleared to "none" |
+pub def set_acl
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to update.
+  path
+  # (built ACL\|iterable\|[`nil`](std.Nil)) ACL or declarative ACE
+  # sequence.
+  acl
+  # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`?) Required for an untyped ACL
+  # specification.
+  :kind = nil
+  # ([`Bool`](std.Bool)?) Update the directory's inheritable default ACL.
+  :default = nil
+  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # `:TARGET:`.
+  :resolve = nil
+do
+  throw nil
+
+# Lists extended attributes for the given path.
+#
+# On Windows, this uses NTFS extended attributes. Returned names may differ in
+# case from the requested name.
+#
+# ## Returns
+#
+# [`Iter`](std.Iter) of [`XattrEntry`](fs.XattrEntry)
+#
+# ## Example
+#
+# ```
+# for attr = xattrs "data.txt"
+#   echo $attr.name
+# ```
+pub def xattrs
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to query.
+  path
+  # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to query;
+  # `:USER:` and `:SYSTEM:` name well-known namespaces, and `:ANY:` lists all
+  # namespaces.
+  :namespace = nil
+  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # `:TARGET:`.
+  :resolve = nil
+do
+  throw nil
+
+# Gets an extended attribute value.
+#
+# ## Returns
+#
+# [`Bin`](std.Bin)
+#
+# ## Example
+#
+# ```
+# let value = xattr "data.txt" "comment"
+# ```
+pub def xattr
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to query.
+  path
+  # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
+  # or entry from [`xattrs`](fs.xattrs).
+  name
+  # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to query.
+  :namespace = nil
+  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # `:TARGET:`.
+  :resolve = nil
+do
+  throw nil
+
+# Sets an extended attribute value.
+#
+# On Windows, empty values are rejected. NTFS deletes the attribute instead of
+# storing an empty value.
+#
+# ## Example
+#
+# ```
+# set_xattr "data.txt" "comment" "ready"
+# set_xattr "data.txt" "raw" b"\x00\x01"
+# ```
+pub def set_xattr
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to update.
+  path
+  # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
+  # or entry from [`xattrs`](fs.xattrs).
+  name
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Attribute bytes; strings
+  # use UTF-8.
+  value
+  # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to update.
+  :namespace = nil
+  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # `:TARGET:`.
+  :resolve = nil
+do
+  throw nil
+
+# Removes an extended attribute.
+#
+# ## Example
+#
+# ```
+# remove_xattr "data.txt" "comment"
+# ```
+pub def remove_xattr
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to update.
+  path
+  # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
+  # or entry from [`xattrs`](fs.xattrs).
+  name
+  # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to update.
+  :namespace = nil
+  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # `:TARGET:`.
+  :resolve = nil
+do
+  throw nil
+
+# Lists alternate data streams for the given path.
+#
+# Windows only.
+#
+# ## Returns
+#
+# [`Iter`](std.Iter) of
+# [`fs.windows.StreamEntry`](fs.windows.StreamEntry)
+#
+# ## Example
+#
+# ```
+# let path = Path data.txt
+# for stream = streams $path
+#   echo "$(stream.name) $(stream.type)"
+#   echo (path / stream)
+# ```
+pub def streams
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to query.
+  path
+  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # `:TARGET:`.
+  :resolve = nil
+do
+  throw nil
+
+# Reads the entries in a directory.
+#
+# ## Returns
+#
+# [`Iter`](std.Iter) of [`DirEntry`](fs.DirEntry)
+#
+# ## Example
+#
+# ```
+# for entry = entries /home/user/docs
+#   echo "$(entry.name) - $(entry.type)"
+#
+# let files = [...entries "."]
+# echo "Found $(files.len) entries"
+# ```
+pub def entries
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the directory.
+  path
+do
+  throw nil
+
+# Returns an iterator over paths matching a glob pattern.
+#
+# ## Returns
+#
+# [`Iter`](std.Iter) of [`Path`](fs.Path)
+#
+# ## Example
+#
+# ```
+# # Find all text files
+# for path = glob "*.txt"
+#   echo "Found: $path"
+#
+# # Recursive search with a depth limit
+# for path = glob "**/*.rs" max_depth: 3
+#   echo "Source: $path"
+#
+# # Follow symlinks
+# for path = glob "**/*" resolve: :TARGET:
+#   echo "Entry: $path"
+# ```
+pub def glob
+  # ([`Str`](std.Str)) Glob pattern, such as `"*.txt"` or `"**/*.rs"`.
+  #
+  # ### Glob pattern syntax
+  #
+  # - `*` — Match any sequence of characters except the path separator
+  # - `?` — Match a single character
+  # - `**` — Match any sequence of characters including path separators
+  # - `[abc]` — Match any character in the set
+  # - `{a,b,c}` — Match any of the comma-separated patterns
+  pattern
+  # ([`Int`](std.Int)?) Maximum directory depth to traverse. Defaults to
+  # unlimited.
+  :max_depth = nil
+  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # `:LINK:`.
+  :resolve = nil
+do
+  throw nil
+
+# Creates a directory.
+#
+# ## Example
+#
+# ```
+# create_dir new_dir
+# create_dir a/b/c all: true
+# ```
+pub def create_dir
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the directory to
+  # create.
+  path
+  # ([`Bool`](std.Bool)?) Create parent directories too.
+  :all = nil
+do
+  throw nil
+
+# Removes one or more paths from the filesystem.
+#
+# By default this removes a single file or symlink. With `all: true`, it also
+# removes directories recursively, similar to `rm -r`. With `ignore: true`,
+# missing paths are treated as success.
+#
+# ## Example
+#
+# ```
+# remove "temp.txt"
+# remove "missing.txt" ignore: true
+# remove "build" all: true
+# remove "a.txt" "b.txt"
+# ```
+pub def remove
+  # ([`Bool`](std.Bool)?) Remove directories recursively.
+  :all = nil
+  # ([`Bool`](std.Bool)?) Treat a missing path as success.
+  :ignore = nil
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) One or more paths to remove.
+  ...paths
+do
+  throw nil
+
+# Removes one or more directories.
+#
+# By default this removes only empty directories. With `all: true`, it removes
+# directories recursively, but only through subtrees that contain directories
+# and no files or other non-directory entries. Use [`remove`](fs.remove) to
+# delete directories that contain files.
+#
+# ## Example
+#
+# ```
+# # Remove an empty directory
+# remove_dir empty_dir
+#
+# # Remove an empty directory tree
+# remove_dir dir_to_remove all: true
+#
+# # Prune only the empty branches and ignore file-blocked subtrees
+# remove_dir cache tmp all: true ignore: true
+# ```
+pub def remove_dir
+  # ([`Bool`](std.Bool)?) Recursively prune empty directory subtrees.
+  :all = nil
+  # ([`Bool`](std.Bool)?) Ignore missing directories and file-blocked
+  # subtrees.
+  :ignore = nil
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) One or more directories to
+  # remove.
+  ...paths
+do
+  throw nil
+
+# Copies a filesystem entry from one location to another.
+#
+# By default this copies a single file or symlink. With `all: true`, it also
+# copies directories recursively.
+#
+# ## Example
+#
+# ```
+# copy "source.txt" "backup.txt"
+# copy "project" "project-backup" all: true
+# ```
+pub def copy
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Source path.
+  from
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Destination path.
+  to
+  # ([`Bool`](std.Bool)?) Allow a recursive directory copy.
+  :all = nil
+do
+  throw nil
+
+# Moves a filesystem entry from one location to another.
+#
+# This first tries a plain rename. If that fails because the source and
+# destination are on different filesystems, it falls back to copy-and-delete.
+# By default this moves a single file or symlink. With `all: true`, it also
+# moves directories recursively.
+#
+# ## Example
+#
+# ```
+# move "source.txt" "dest.txt"
+# move "project" "archive/project" all: true
+# ```
+pub def move
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Source path.
+  from
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Destination path.
+  to
+  # ([`Bool`](std.Bool)?) Allow a recursive directory move.
+  :all = nil
+do
+  throw nil
+
+# Renames a file or directory.
+#
+# By default this replaces an existing destination. Set `replace` to `false` to
+# fail atomically instead.
+#
+# !!! note
+#     `replace: false` is not supported on FreeBSD.
+#
+# ## Example
+#
+# ```
+# rename "old_name.txt" "new_name.txt"
+# rename "file.txt" "subdir/file.txt"
+#
+# # Fail if the destination exists
+# rename "draft.txt" "published.txt" replace: false
+# ```
+pub def rename
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Source path.
+  from
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Destination path.
+  to
+  # ([`Bool`](std.Bool)?) Whether to replace an existing destination.
+  :replace = nil
+do
+  throw nil
+
+# Creates a hard link at `dst` pointing to the existing file at `src`.
+#
+# This uses the platform-native hard-link operation. The source must already
+# exist, and the link must be created on the same filesystem or volume if the
+# platform requires it.
+#
+# ## Example
+#
+# ```
+# hard_link "data.txt" "data-copy.txt"
+# ```
+pub def hard_link
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Existing file to link to.
+  src
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path where the hard link is
+  # created.
+  dst
+do
+  throw nil
+
+# Creates a symbolic link at `dst` pointing to `src`.
+#
+# On Unix this creates a standard symbolic link. On Windows it determines
+# whether the target is a file or directory by reading its metadata, and fails
+# if the target cannot be accessed; use [`symlink_file`](fs.symlink_file) or
+# [`symlink_dir`](fs.symlink_dir) for explicit control.
+#
+# ## Errors
+#
+# | Exception                                          | Condition                                |
+# | -------------------------------------------------- | ---------------------------------------- |
+# | [`sys.NotFoundError`](sys.NotFoundError)   | The target cannot be accessed on Windows |
+#
+# ## Example
+#
+# ```
+# symlink "/path/to/target" "link_name"
+# ```
+pub def symlink
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Target path the symlink
+  # points to.
+  src
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path where the symlink is
+  # created.
+  dst
+do
+  throw nil
+
+# Creates a file symbolic link at `dst` pointing to `src`.
+#
+# On Unix this is equivalent to [`symlink`](fs.symlink). On Windows it creates a
+# file symlink, which may require appropriate permissions on some Windows
+# versions.
+#
+# ## Example
+#
+# ```
+# symlink_file "/path/to/file" "file_link"
+# ```
+pub def symlink_file
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Target file path.
+  src
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path where the symlink is
+  # created.
+  dst
+do
+  throw nil
+
+# Creates a directory symbolic link at `dst` pointing to `src`.
+#
+# On Unix this is equivalent to [`symlink`](fs.symlink). On Windows it creates a
+# directory symlink, which may require appropriate permissions on some Windows
+# versions.
+#
+# ## Example
+#
+# ```
+# symlink_dir "/path/to/dir" "dir_link"
+# ```
+pub def symlink_dir
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Target directory path.
+  src
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path where the symlink is
+  # created.
+  dst
+do
+  throw nil
+
+# Reads the target of a symbolic link.
+#
+# ## Returns
+#
+# [`Path`](fs.Path), the path the symlink points to.
+#
+# ## Errors
+#
+# | Exception                                                       | Condition                                          |
+# | --------------------------------------------------------------- | -------------------------------------------------- |
+# | [`sys.NotFoundError`](sys.NotFoundError)                | The path does not exist                            |
+# | [`sys.PermissionDeniedError`](sys.PermissionDeniedError) | Permission denied to read the symlink              |
+# | [`sys.UnsupportedError`](sys.UnsupportedError)           | Reading symlinks is not supported on this platform |
+#
+# ## Example
+#
+# ```
+# let link = read_link "./my_link"
+# echo "Link points to: $link"
+# ```
+pub def read_link
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the symlink.
+  path
+do
+  throw nil
+
+# Returns whether a path is absolute.
+#
+# ## Returns
+#
+# [`Bool`](std.Bool)
+#
+# ## Example
+#
+# ```
+# if is_absolute "/etc/passwd"
+#   echo "Absolute path"
+# ```
+pub def is_absolute
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to check.
+  path
+do
+  throw nil
+
+# Returns the absolute form of a path based on the current working directory.
+#
+# ## Returns
+#
+# [`Path`](fs.Path)
+#
+# ## Example
+#
+# ```
+# let abs = absolute "./config.txt"
+# echo $abs  # /current/working/dir/config.txt
+# ```
+pub def absolute
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to make absolute.
+  path
+do
+  throw nil
+
+# Returns the canonical, absolute form of a path, with all intermediate
+# components normalized and symbolic links resolved.
+#
+# ## Returns
+#
+# [`Path`](fs.Path)
+#
+# ## Example
+#
+# ```
+# let abs = canonical "./foo/../bar"
+# echo $abs  # /current/working/dir/bar (with symlinks resolved)
+# ```
+pub def canonical
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to canonicalize.
+  path
+do
+  throw nil
+
+# Returns a normalized path with `.` and `..` components resolved without
+# accessing the filesystem.
+#
+# Unresolvable `..` components in relative paths are preserved.
+#
+# ## Returns
+#
+# [`Path`](fs.Path)
+#
+# ## Example
+#
+# ```
+# let clean = normalize "./foo/../bar/./baz"
+# echo $clean  # bar/baz
+# ```
+pub def normalize
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to normalize.
+  path
+do
+  throw nil
+
+# Returns a path relative to a base directory.
+#
+# ## Returns
+#
+# [`Path`](fs.Path), or the original path if it cannot be made relative.
+#
+# ## Example
+#
+# ```
+# # Relative to the current directory
+# let rel = relative "/home/user/docs/file.txt"
+# echo $rel  # docs/file.txt (if cwd is /home/user)
+#
+# # Relative to a specific base
+# let rel2 = relative "/a/b/c/d" "/a/b"
+# echo $rel2  # c/d
+# ```
+pub def relative
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to make relative.
+  path
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)?) Base directory. Defaults to
+  # the current working directory.
+  base = nil
+do
+  throw nil
+
+# Returns the current user's home directory.
+#
+# | Platform | Result                                                          |
+# | -------- | --------------------------------------------------------------- |
+# | Unix     | `env["HOME"]`, or the home directory from the passwd database   |
+# | Windows  | `FOLDERID_Profile`, typically `C:\Users\<user>`                 |
+#
+# ## Returns
+#
+# [`Path`](fs.Path)
+pub def home_dir()
+  throw nil
+
+# Returns the platform-native directory for temporary files.
+#
+# | Platform | Result                                                      |
+# | -------- | ----------------------------------------------------------- |
+# | Unix     | `$TMPDIR`, otherwise `/tmp`                                 |
+# | Windows  | `%TMP%`, otherwise `%TEMP%`, otherwise the platform default |
+#
+# ## Returns
+#
+# [`Path`](fs.Path)
+pub def temp_dir()
+  throw nil
+
+# Returns the platform-native user cache directory.
+#
+# ## Returns
+#
+# [`Path`](fs.Path)
+#
+# ## Example
+#
+# ```
+# let cache = cache_dir app: blastinator8000
+# echo "Cache: $cache"
+# ```
+pub def cache_dir
+  # ([`Str`](std.Str)?) Application name to scope the result to.
+  #
+  # ### Platform behavior
+  #
+  # Without `app`, the base directories are:
+  #
+  # | Platform       | Result                                                                  |
+  # | -------------- | ----------------------------------------------------------------------- |
+  # | Non-macOS Unix | `$XDG_CACHE_HOME`, otherwise `~/.cache`                                 |
+  # | macOS          | `(home_dir() / "Library" / "Caches")`                                   |
+  # | Windows        | `FOLDERID_LocalAppData`, typically `(home_dir() / "AppData" / "Local")` |
+  #
+  # With `app: myapp`:
+  #
+  # | Platform       | Result                              |
+  # | -------------- | ----------------------------------- |
+  # | Non-macOS Unix | `(cache_dir() / "myapp")`           |
+  # | macOS          | `(cache_dir() / "myapp")`           |
+  # | Windows        | `(cache_dir() / "myapp" / "Cache")` |
+  :app = nil
+do
+  throw nil
+
+# Creates a temporary directory and returns its path.
+#
+# Unlike [`with_temp_dir`](fs.with_temp_dir), this does not remove the directory
+# — the caller owns its lifetime.
+#
+# ## Returns
+#
+# [`Path`](fs.Path)
+#
+# ## Example
+#
+# ```
+# let dir = create_temp_dir()
+# try
+#   let file = (dir / "test.txt")
+#   file.open w do |f|
+#     f.write "Hello, World!"
+# finally
+#   remove_dir $dir all: true
+# ```
+pub def create_temp_dir
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)?) Parent directory. Defaults
+  # to [`temp_dir()`](fs.temp_dir).
+  :parent = nil
+do
+  throw nil
+
+# Creates a temporary directory, invokes a function with the directory path,
+# then removes the directory recursively upon return or error.
+#
+# ## Example
+#
+# ```
+# # Use the temporary directory in the default location
+# with_temp_dir do |dir|
+#   let file = (dir / "test.txt")
+#   file.open w do |f|
+#     f.write "Hello, World!"
+#   echo "Wrote to: $file"
+#
+# # Use a custom parent directory
+# with_temp_dir parent: my_temp do |dir|
+#   echo $dir
+# ```
+pub def with_temp_dir
+  # ([`Func`](std.Func)) Called with a [`Path`](fs.Path) to the
+  # temporary directory.
+  func
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)?) Parent directory. Defaults
+  # to [`temp_dir()`](fs.temp_dir).
+  :parent = nil
+do
+  throw nil

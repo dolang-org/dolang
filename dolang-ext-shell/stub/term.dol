@@ -1,0 +1,809 @@
+# Terminals and consoles: where human-readable output goes, and how it is
+# styled, measured, captured and silenced.
+#
+# ## Style options {: #term.style-options }
+#
+# The styling functions -- [`print`](term.print),
+# [`text`](term.text) and [`Style`](term.Style) -- all accept the same
+# keyword options:
+#
+# | Name            | Type                                                                                                   | Description                        |
+# | --------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------- |
+# | `fg`            | [`Sym`](std.Sym)\|[`Int`](std.Int)\|[`Array`](std.Array)\|[`Tuple`](std.Tuple)? | Foreground color                   |
+# | `bg`            | [`Sym`](std.Sym)\|[`Int`](std.Int)\|[`Array`](std.Array)\|[`Tuple`](std.Tuple)? | Background color                   |
+# | `bold`          | [`Bool`](std.Bool)\|[`Sym`](std.Sym)?                                                      | Enables bold                       |
+# | `dim`           | [`Bool`](std.Bool)\|[`Sym`](std.Sym)?                                                      | Enables dim intensity              |
+# | `italic`        | [`Bool`](std.Bool)\|[`Sym`](std.Sym)?                                                      | Enables italics                    |
+# | `underline`     | [`Bool`](std.Bool)\|[`Sym`](std.Sym)?                                                      | Enables underlining                |
+# | `blink`         | [`Bool`](std.Bool)\|[`Sym`](std.Sym)?                                                      | Enables blinking                   |
+# | `reverse`       | [`Bool`](std.Bool)\|[`Sym`](std.Sym)?                                                      | Reverses foreground and background |
+# | `hidden`        | [`Bool`](std.Bool)\|[`Sym`](std.Sym)?                                                      | Hides text                         |
+# | `strikethrough` | [`Bool`](std.Bool)\|[`Sym`](std.Sym)?                                                      | Enables strikethrough              |
+#
+# Attribute options accept `true` or `:INHERIT:`. `false` is not accepted.
+#
+# Named colors are `:BLACK:`, `:RED:`, `:GREEN:`, `:YELLOW:`, `:BLUE:`,
+# `:MAGENTA:`, `:CYAN:` and `:WHITE:`. Prefix the name with `BRIGHT_` for a
+# bright color, such as `:BRIGHT_RED:`. An [`Int`](std.Int) selects a
+# 256-color palette index, and a three-integer array or tuple an RGB color;
+# numeric values must be 0 through 255. Color options also accept `:INHERIT:`.
+#
+# A [`ValueError`](std.ValueError) is raised for an attribute option
+# whose value is neither `true` nor `:INHERIT:`, an unknown color name, a
+# numeric value out of range, or an RGB value that is not three integers.
+
+# The console interface: where human-readable output goes.
+#
+# `Console` is abstract. The implementations provided are the host console
+# ([`term.console`](term.console)) and
+# [`SinkConsole`](term.SinkConsole).
+#
+# ## Subclassing
+#
+# Do classes may subclass `Console` to implement one. Supply `write` and
+# `flush`; `put`, the sink protocol, and the capability members come from the
+# base:
+#
+# | Console                            | `can_style`    | `is_tty`      | `geometry()`  |
+# | ---------------------------------- | -------------- | ------------- | ------------- |
+# | `Console` (the base)               | `false`        | `false`       | `nil`         |
+# | Host (`term.console`)              | styling policy | real tty test | never `nil`   |
+# | [`SinkConsole`](term.SinkConsole) | as constructed | `false`       | `nil`         |
+#
+# ```
+# class Recorder: term.Console
+#   pub field lines
+#
+#   def (init) self
+#     term.Console.(init) $self
+#     self.lines = []
+#
+#   pub def write self data
+#     self.lines.push (str data)
+#     data.len
+#
+#   pub def flush _self
+#     nil
+#
+# let recorder = Recorder()
+# term.capture $recorder do echo hello
+# assert_eq $recorder.lines ["hello\n"]
+# ```
+#
+# Override [`line_ending`](term.Console.line_ending) to change what `echo`
+# appends; the base reports `"\n"`.
+#
+# A console whose own methods call `echo` does not recurse: while a write is
+# being dispatched, console output falls through to the host.
+pub class Console
+  # Initializes the base console. A subclass calls this from its own `(init)`.
+  pub def (init) self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the console supports ANSI styling.
+  #[getter]
+  pub def can_style self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the console is a real terminal.
+  #
+  # This is the determinative test, unlike
+  # [`geometry()`](term.Console.geometry), which may answer `nil` for a real
+  # terminal that simply cannot report its size.
+  #[getter]
+  pub def is_tty self
+    throw nil
+
+  # ([`Str`](std.Str)) The line ending appropriate to this console's
+  # device.
+  #
+  # The console owns the policy but does not apply it: a caller that wants a
+  # terminated line appends this itself, in a single `write`.
+  #
+  # ```
+  # term.console.write "done$(term.console.line_ending)"
+  # ```
+  #
+  # Every built-in console reports `"\n"`: a console is a terminal-shaped
+  # stream rather than a file, and `echo` writes LF on Windows too. A subclass
+  # may report something else, and `echo`/`print` will honor it. For a *file's*
+  # native ending use [`shell.line_ending`](shell.line_ending)
+  # instead.
+  #[getter]
+  pub def line_ending self
+    throw nil
+
+  # Makes buffered output visible.
+  pub def flush self
+    throw nil
+
+  # Returns the console's dimensions, or `nil` if it is just a stream.
+  #
+  # `nil` is advisory: it also covers a real terminal whose size could not be
+  # determined. Use [`is_tty`](term.Console.is_tty) to test for a real terminal
+  # regardless of whether a size is available.
+  #
+  # The host console never returns `nil` here -- see
+  # [`Geometry`](term.Geometry) for how `rows` and `cols` are each
+  # independently `nil` when unknown, rather than the whole result being
+  # absent.
+  #
+  # ## Returns
+  #
+  # [`Geometry`](term.Geometry)?
+  #
+  # ## Example
+  #
+  # ```
+  # let g = term.console.geometry()
+  # if g
+  #   echo "terminal is $(g.cols)x$(g.rows)"
+  # ```
+  pub def geometry self
+    throw nil
+
+  # Writes bytes verbatim.
+  #
+  # A caller that wants a terminated line assembles it and issues **one**
+  # `write` rather than two -- concurrent strands writing to the same console
+  # would otherwise interleave between the text and its terminator.
+  #
+  # ## Returns
+  #
+  # [`Int`](std.Int) - Bytes written.
+  #
+  # ## Example
+  #
+  # ```
+  # term.console.write b"\x1b[2K"
+  # ```
+  pub def write
+    self
+    # ([`Str`](std.Str)|[`Bin`](std.Bin)) Bytes to write.
+    data
+  do
+    throw nil
+
+  # Accepts values as a [sink](std.Sink).
+  #
+  # A value contributes exactly its own bytes; no terminator is added. Ask for
+  # one with [`precrimp`](std.Sink.precrimp):
+  #
+  # ```
+  # pipeline output: (term.console.precrimp())
+  #   do strand.from ["building", "linking"]
+  # ```
+  pub def (sink) self
+    throw nil
+
+# The dimensions of a terminal-backed [`Console`](term.Console).
+#
+# Returned by [`geometry()`](term.Console.geometry).
+#
+# `rows` and `cols` are independently `nil`: a console may know one dimension
+# without the other. The host console (`term.console`) always returns a
+# `Geometry`, never `nil` itself.
+#
+# ## Subclassing
+#
+# `Geometry` is the interface; reading `rows` or `cols` on a bare instance
+# raises [`UnsupportedError`](std.UnsupportedError). A Do console that
+# implements `geometry()` subclasses this to describe itself:
+#
+# ```
+# class FixedGeometry: term.Geometry
+#   pub field rows
+#   pub field cols
+#
+#   def (init) self rows cols
+#     term.Geometry.(init) $self
+#     self.rows = rows
+#     self.cols = cols
+# ```
+pub class Geometry
+  # Initializes the base. A subclass calls this from its own `(init)`.
+  pub def (init) self
+    throw nil
+
+  # ([`Int`](std.Int)?) Width in character cells, or `nil` if unknown.
+  #
+  # ```
+  # let g = term.console.geometry()
+  # if g.cols
+  #   echo $ term.preformat $ "-" * g.cols
+  # ```
+  #[getter]
+  pub def cols self
+    throw nil
+
+  # ([`Int`](std.Int)?) Height in character cells, or `nil` if unknown.
+  #[getter]
+  pub def rows self
+    throw nil
+
+# A [`Console`](term.Console) over an ordinary [sink](std.Sink).
+#
+# It supplies the rest of the console interface.
+#
+# [`capture`](term.capture) wraps a plain sink in one of these
+# automatically.
+#
+# It implements the [`Console`](term.Console) interface with `write` and
+# `flush`; `flush` emits any partial final line, which is what makes an
+# unterminated `print` visible when a capture scope ends.
+# [`line_ending`](term.Console.line_ending) is the interpreter host's, chosen
+# arbitrarily -- a sink has no platform of its own.
+# [`is_tty`](term.Console.is_tty) is always `false` and
+# [`geometry()`](term.Console.geometry) is `nil`, since a sink is never a
+# terminal.
+#
+# ## Output mode {: #term.SinkConsole.output-mode }
+#
+# The `mode:` given at construction fixes how written data is divided into
+# values for the console's lifetime. In either mode, the values concatenate
+# back to exactly the bytes that were written.
+#
+# - `:LINE:` -- one [`Str`](std.Str) per complete line, **terminator
+#   included**. The default.
+# - `:CHUNK:` -- arbitrary [`Bin`](std.Bin) chunks. Chunk boundaries are
+#   unspecified.
+#
+# ```
+# let lines = []
+# term.capture $lines do echo hello
+# assert_eq $lines ["hello\n"]
+#
+# let chomped = []
+# term.capture (chomped.prechomp()) do echo hello
+# assert_eq $chomped ["hello"]
+#
+# let chunks = []
+# term.capture $chunks mode: :CHUNK: do echo hello
+# # [b"hello\n"]
+# ```
+#
+# Nothing is translated on the way through: a line ending that arrives is the
+# line ending that is stored.
+pub class SinkConsole
+  # Wraps a sink in a console.
+  #
+  # ## Example
+  #
+  # ```
+  # # Style is off by default.
+  # let plain = []
+  # term.capture $plain do echo $warning
+  #
+  # # Opt in to SGR styling.
+  # let styled = []
+  # term.capture (term.SinkConsole styled can_style: true) do echo $warning
+  # ```
+  pub def (init)
+    self
+    # ([`Sink`](std.Sink)) Where output values are written.
+    sink
+    # ([`Bool`](std.Bool)?) Emit ANSI styling. Off by default.
+    :can_style = false
+    # ([`Sym`](std.Sym)?) `:LINE:` (the default) or `:CHUNK:`. See
+    # [Output mode](term.SinkConsole.output-mode).
+    :mode = nil
+  do
+    throw nil
+
+# Reusable terminal style settings.
+#
+# Calling a `Style` applies its saved settings. Supplied options override saved
+# colors or enable additional attributes; omitted options retain saved
+# settings, and `:INHERIT:` clears them.
+pub class Style
+  # Creates a reusable style.
+  #
+  # To style text as well, use [`text`](term.text).
+  #
+  # ## Example
+  #
+  # ```
+  # let warning = term.Style fg: :YELLOW: bold: true
+  # ```
+  pub def (init)
+    self
+    # The [style options](term.style-options).
+    ...options
+  do
+    throw nil
+
+  # Applies or derives the saved style.
+  #
+  # Also accepts the [style options](term.style-options), which override
+  # what is saved.
+  #
+  # ## Returns
+  #
+  # [`Text`](term.Text) when positional arguments are given, otherwise a
+  # derived `Style`.
+  #
+  # ## Example
+  #
+  # ```
+  # let warning = term.Style fg: :YELLOW: bold: true
+  # let urgent = warning fg: :RED: underline: true
+  # let uncolored = urgent fg: :INHERIT:
+  #
+  # echo $warning("Warning")
+  # echo $urgent("Failure")
+  # echo $uncolored("Notice")
+  # ```
+  pub def (call)
+    self
+    # Values converted to display strings.
+    ...args
+  do
+    throw nil
+
+# Validated terminal presentation.
+#
+# Produced by [`text`](term.text), by
+# [`preformat`](term.preformat), or by calling a [`Style`](term.Style).
+#
+# Nested `Text` values are flattened when composed, and an ANSI reset code in a
+# nested value restores the enclosing style. Terminal output functions render
+# `Text` with ANSI styling when stderr is a terminal and as plain text
+# otherwise.
+#
+# ## Formatting {: #term.Text.formatting }
+#
+# A [format specification](std.FmtSpec) applied to `Text` measures
+# terminal cells rather than extended grapheme clusters, the same measure
+# [`width()`](term.Text.width) reports: `width` pads to a cell count,
+# `precision` clips to one at a cluster boundary, and SGR sequences consume
+# neither.
+#
+# Formatting produces a [`Str`](std.Str), so it drops the styling along
+# with every other `str` conversion: `"${label:6}"` is laid out in cells and
+# plain.
+#
+# The console is where the layout and the styling arrive together. Given a
+# [`FmtValue`](std.FmtValue) bound to a `Text`,
+# [`echo`](term.echo), [`print`](term.print),
+# [`text`](term.text) and a [`Style`](term.Style) apply the layout to the
+# encoded form themselves, in the same terminal cells, and keep the styling:
+#
+# ```
+# let label = text("界a", fg: :RED:)
+# echo (std.FmtValue label width: 6)     # padded and still red
+# echo "${label:6}"                      # padded and plain
+# ```
+#
+# A specification asking for a debug or numeric rendering is no longer a
+# request for terminal presentation, and is sanitized like any other value.
+#
+# ## Sequences {: #term.Text.sequences }
+#
+# A `"..."` concatenates its interpolations as it is built, so a `Text` among
+# them is already flattened to its content by the time the console sees the
+# result. A [`t"..."`](std.Fmt) keeps them apart, and the console renders
+# each one for itself -- so styling survives interpolation, at any depth:
+#
+# ```
+# let label = text("界a", fg: :RED:)
+# echo t"tag: ${label:6}|"     # padded in cells and still red
+# echo "tag: ${label:6}|"      # padded and plain
+#
+# let framed = t"[${label:^8}]"
+# echo t"<${framed:>12}>"      # each level lays out what the one inside rendered
+# ```
+#
+# Expanding a sequence this way is the console's own decision, not a
+# conversion: no conversion expands one, which is what stops a sequence from
+# arriving at a consumer already flattened. See
+# [Trust](std.Fmt.trust).
+#
+# Each segment is taken exactly as an argument in its own right would be, so
+# the rules above apply to it unchanged: a `Text` keeps its styling, a
+# specification asking for a debug or numeric rendering is sanitized, and
+# everything else is converted -- [`verbatim`](std) in argument
+# position, `str` inside a `Text` -- and sanitized.
+#
+# The exception is an unfilled [`FmtParam`](std.FmtParam). A parameter
+# printed on its own is just a name and shows itself as such, but one still
+# standing in a sequence means the template was never finished, so the console
+# raises a [`MissingPosError`](std.MissingPosError) or
+# [`MissingKeyError`](std.MissingKeyError) as
+# [`format()`](std.Fmt.format) does, rather than printing a hole
+# where a value was meant to go.
+#
+# ## Example
+#
+# ```
+# let label = term.text ERROR fg: :RED: bold: true
+# echo $label " request failed"
+#
+# # Preserve ANSI escapes for a file or another process.
+# let encoded = label.encode()
+# ```
+pub class Text
+  # Clips the text to a terminal-cell width at an extended grapheme boundary.
+  #
+  # SGR sequences do not contribute to the width. If the text already fits it
+  # is returned unchanged and `suffix` is ignored. Otherwise the suffix is
+  # clipped to the total budget, its width is reserved, and the longest fitting
+  # source prefix is prepended. Styling remains valid across the cut.
+  #
+  # ## Returns
+  #
+  # [`Text`](term.Text)
+  #
+  # ## Example
+  #
+  # ```
+  # let warning = text("abcdef", fg: :YELLOW:)
+  # echo $warning.clip(4, suffix: "…")
+  # ```
+  pub def clip
+    self
+    # ([`Int`](std.Int)) Non-negative terminal-cell budget.
+    width
+    # ([`Str`](std.Str)|[`Text`](term.Text)?) Suffix appended only when
+    # truncating.
+    :suffix = nil
+  do
+    throw nil
+
+  # Returns the ANSI representation: exactly the bytes a terminal write emits.
+  #
+  # This is the inverse of [`preformat`](term.preformat), which takes the
+  # result back (canonicalizing the SGR it re-emits).
+  #
+  # ## Returns
+  #
+  # [`Str`](std.Str)
+  #
+  # ## Example
+  #
+  # ```
+  # let label = text ERROR fg: :RED:
+  # assert_eq (str label) ERROR
+  # fs.write $path $label.encode()
+  # ```
+  pub def encode self
+    throw nil
+
+  # Adds spaces to the beginning of each line without changing ANSI formatting.
+  #
+  # A terminal newline does not gain a trailing indentation prefix.
+  #
+  # ## Returns
+  #
+  # [`Text`](term.Text)
+  #
+  # ## Example
+  #
+  # ```
+  # let diagnostic = [...unit.diagnostics()][0].render()
+  # echo $diagnostic.indent(4)
+  # ```
+  pub def indent
+    self
+    # ([`Int`](std.Int)) Non-negative number of spaces.
+    spaces
+  do
+    throw nil
+
+  # Concatenates values with this text between them.
+  #
+  # Each value is taken the way [`text`](term.text) takes an argument of
+  # its own: a `Text` keeps its styling, and anything else is converted and
+  # sanitized.
+  #
+  # ## Returns
+  #
+  # [`Text`](term.Text)
+  #
+  # ## Example
+  #
+  # ```
+  # let sep = text " | " fg: :YELLOW:
+  # echo $sep.join([text("ok", fg: :GREEN:), "then", 3])
+  # ```
+  pub def join
+    self
+    # Iterable to join. Uses the default input when omitted.
+    iter = nil
+  do
+    throw nil
+
+  # Returns the visible terminal-cell width of the text.
+  #
+  # SGR sequences do not contribute to the width. Widths are summed within each
+  # extended grapheme cluster and capped at two cells per cluster. C0 control
+  # characters contribute zero.
+  #
+  # ## Returns
+  #
+  # [`Int`](std.Int)
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ((text "é").width()) 1
+  # assert_eq ((text "👩‍💻").width()) 2
+  # assert_eq ((text "界").width()) 2
+  # ```
+  pub def width self
+    throw nil
+
+  # Returns the content with the styling dropped.
+  #
+  # The escape sequences are terminal instructions, not content: a `Str`
+  # carrying them counts them in its length, matches them in a search, and
+  # writes them into whatever file or pipe it reaches. Ask for them with
+  # [`encode`](term.Text.encode). `verbatim` reproduces a value as it would
+  # have been written in source, and styled text has no source form, so it
+  # gives the same content this does.
+  pub def (str) self
+    throw nil
+
+# Runs a block with `console` installed as the ambient console, then flushes it
+# and restores the previous one.
+#
+# The override is inherited by all strands spawned inside the call.
+#
+# Captured lines keep their terminator, since the capture reproduces what was
+# written rather than reinterpreting it:
+#
+# ```
+# let lines = []
+# term.capture $lines do
+#   echo "Hello, Alice!"
+# assert_eq $lines ["Hello, Alice!\n"]
+# ```
+#
+# Put a [`prechomp`](std.Sink.prechomp) in front of the sink to strip
+# them:
+#
+# ```
+# let lines = []
+# term.capture (lines.prechomp()) do
+#   echo "Hello, Alice!"
+# assert_eq $lines ["Hello, Alice!"]
+# ```
+#
+# The scope always ends with a flush, so an unterminated `print` still arrives
+# -- with no terminator, because none was written:
+#
+# ```
+# let out = []
+# term.capture $out do print hi
+# assert_eq $out ["hi"]
+# ```
+#
+# ## Returns
+#
+# The block's result.
+#
+# ## Errors
+#
+# | Exception                             | Condition                                                                              |
+# | ------------------------------------- | -------------------------------------------------------------------------------------- |
+# | [`ValueError`](std.ValueError) | `mode:` is given when `console` is already a `Console`, which fixes its own output mode |
+pub def capture
+  # ([`Console`](term.Console)|[`Sink`](std.Sink)) Destination to
+  # install. A plain sink is wrapped in a
+  # [`SinkConsole`](term.SinkConsole) using the requested `mode:`.
+  console
+  # (callable) Block to run.
+  block
+  # ([`Sym`](std.Sym)?) `:LINE:` (the default) or `:CHUNK:`, when
+  # `console` is a plain sink. See
+  # [Output mode](term.SinkConsole.output-mode).
+  :mode = nil
+  # Additional arguments passed to the block.
+  ...args
+do
+  throw nil
+
+# Prints arguments separated by spaces, followed by a newline.
+#
+# Ordinary values are sanitized; [`Text`](term.Text) arguments retain their
+# styling, as does a [`FmtValue`](std.FmtValue) bound to one -- see
+# [Formatting](term.Text.formatting). A [`Fmt`](std.Fmt) is expanded
+# segment by segment, so styling interpolated into one survives -- see
+# [Sequences](term.Text.sequences).
+#
+# ## Example
+#
+# ```
+# echo status: ready count: 3
+# ```
+pub def echo
+  # Values converted with `verbatim` and written safely.
+  ...args
+do
+  throw nil
+
+# Runs a block with default console-bound output silenced: `echo`, `print`,
+# unredirected program `stderr`, and the rest.
+#
+# ## Returns
+#
+# The block's result.
+#
+# ## Example
+#
+# ```
+# # Nothing from this reaches the terminal.
+# mute do run printf "this will not be printed"
+# ```
+pub def mute
+  # (callable) Block to run.
+  block
+  # Additional arguments passed to the block.
+  ...args
+do
+  throw nil
+
+# Returns the current output console.
+#
+# This is the one installed by an enclosing [`capture`](term.capture), or
+# [`console`](term.console) if there is none, and it is where `echo`,
+# `print`, diagnostics and unredirected child process output go.
+#
+# ## Returns
+#
+# [`Console`](term.Console)
+pub def output()
+  throw nil
+
+# Validates existing ANSI-styled text.
+#
+# SGR styling is canonicalized; other terminal controls, hyperlinks included,
+# are removed.
+#
+# ## Returns
+#
+# [`Text`](term.Text)
+#
+# ## Example
+#
+# ```
+# let formatted = preformat input
+# echo $formatted
+# ```
+pub def preformat
+  # ([`Str`](std.Str)) ANSI-formatted input.
+  text
+do
+  throw nil
+
+# Prints concatenated values without separators or a trailing newline.
+#
+# Also accepts the [style options](term.style-options), for which
+# `:INHERIT:` is a no-op here. Styling is omitted when stderr is not a
+# terminal.
+#
+# ## Example
+#
+# ```
+# print "status: " ready fg: :GREEN: bold: true
+# ```
+pub def print
+  # Values converted to display strings.
+  ...args
+do
+  throw nil
+
+# Formats an error value and backtrace for terminal presentation.
+#
+# The returned text does not include a final newline.
+#
+# Ordinary values preserve newlines and tabs but lose other C0/C1 controls and
+# escape sequences. A [`Text`](term.Text) keeps its styling, and so does a
+# [`FmtValue`](std.FmtValue) bound to one, whose layout is applied to
+# the encoded form -- see [Formatting](term.Text.formatting). A
+# [`Fmt`](std.Fmt) is expanded segment by segment -- see
+# [Sequences](term.Text.sequences). Raw stdout and stderr sinks are unchanged
+# and are not sanitized by this module.
+#
+# ## Returns
+#
+# [`Text`](term.Text)
+#
+# ## Errors
+#
+# | Exception                             | Condition                                                  |
+# | ------------------------------------- | ---------------------------------------------------------- |
+# | [`TypeError`](std.TypeError)   | `backtrace` is present but is not a `strand.Backtrace`     |
+# | [`StateError`](std.StateError) | `backtrace` is omitted outside an active exception handler |
+#
+# ## Example
+#
+# ```
+# try
+#   operation()
+# catch error: e
+#   print $render_error(e)
+# ```
+pub def render_error
+  # Error value or message.
+  error
+  # ([`strand.Backtrace`](strand)?) Explicit backtrace. Defaults to
+  # the active one.
+  :backtrace = nil
+do
+  throw nil
+
+# Runs a block and returns its console output as a string.
+#
+# The console counterpart to [`proc.sub`](proc.sub), which captures
+# a strand's implicit output stream instead. Verbatim output is captured, which
+# must be valid UTF-8.
+#
+# ## Returns
+#
+# [`Str`](std.Str)
+#
+# ## Example
+#
+# ```
+# let greeting = term.sub do greet Alice
+# assert_eq $greeting "Hello, Alice!"
+# ```
+pub def sub
+  # (callable) Block to run.
+  block
+  # ([`Bool`](std.Bool)?) Strip one trailing line ending, LF or CRLF.
+  # True by default.
+  :chomp = true
+  # ([`Bool`](std.Bool)?) Keep ANSI styling. False by default.
+  :can_style = false
+  # Additional arguments passed to the block.
+  ...args
+do
+  throw nil
+
+# Constructs terminal text from concatenated values, styled or not.
+#
+# Also accepts the [style options](term.style-options), for which
+# `:INHERIT:` leaves a setting to the surrounding style.
+#
+# This is the general entry point for [`Text`](term.Text): styling is optional,
+# and a plain `text` value is still what measures itself in terminal cells. For
+# a reusable style with no text of its own, construct a [`Style`](term.Style)
+# directly.
+#
+# ## Returns
+#
+# [`Text`](term.Text)
+#
+# ## Example
+#
+# ```
+# let warning = text Warning fg: :YELLOW: bold: true
+# echo $warning
+#
+# # Unstyled, for its measurement and layout methods.
+# let column = text $name
+# echo $column.clip(20, suffix: "…")
+# ```
+pub def text
+  # Values converted to display strings.
+  ...args
+do
+  throw nil
+
+# The host [`Console`](term.Console), which may be taken over by an extension
+# such as `progress`.
+#
+# Unlike [`output()`](term.output), it is not intercepted by an enclosing
+# [`capture`](term.capture).
+pub let console = nil
+
+# A [`Console`](term.Console) that forwards every operation to whatever
+# [`output()`](term.output) currently resolves to, resolved fresh on each
+# call rather than once.
+#
+# Bound as the main strand's implicit output when stdout is a terminal, so
+# unnamed program output keeps following capture and `progress` takeover for
+# the life of the process -- see
+# [Terminal output](../../shell/terminal-output.md#child-process-output).
+pub let default = nil

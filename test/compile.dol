@@ -157,3 +157,90 @@ def root_doc_comments()
     # Module summary.
     #
     # ## Details
+
+# A source exercising every concrete node kind at least once. The prelude
+# bindings are referenced rather than merely configured: a prelude node is
+# recorded where its binding resolves, so one nothing mentions never appears.
+let HIERARCHY_SOURCE = r|-
+  import std
+  import std:
+    - hash
+
+  def mark f
+    f
+
+  pub class Base
+    pub field size = 0
+
+  #[mark]
+  pub class Widget: Base
+    def (init) self n
+      self.size = n
+
+    pub def scale self factor :mode = "up" ...rest
+      let doubled = do |x| (x * 2)
+      let squares = $
+        for x = [1, 2]
+          if (x > 0)
+            - (x * x)
+      for i = [1, 2]
+        if (i > 1)
+          continue
+        else
+          break
+      while false
+        break
+      try
+        echo $ hash $factor
+        std.str $doubled
+      catch _
+        nil
+      finally
+        t.now()
+      return squares
+
+#[test]
+def node_hierarchy()
+  let unit = compile.compile "hierarchy.dol" $HIERARCHY_SOURCE document: true prelude: $
+    sys:
+      - echo
+    time: t
+  for diag = unit.diagnostics()
+    assert_eq $diag.severity :WARNING:
+
+  # Each supertype paired with every concrete kind documented as extending it.
+  let groups = [
+    [compile.Declaration, [compile.Class, compile.Function, compile.Method,
+      compile.SpecialMethod, compile.Field, compile.Bind, compile.SelfParam,
+      compile.ImportModule, compile.ImportItem, compile.PreludeModule,
+      compile.PreludeItem]],
+    [compile.Import, [compile.ImportModule, compile.ImportItem,
+      compile.PreludeModule, compile.PreludeItem]],
+    [compile.Param, [compile.PositionalParam, compile.KeyParam,
+      compile.RestParam]],
+    [compile.Block, [compile.Lambda, compile.If, compile.Else, compile.While,
+      compile.For, compile.Try, compile.Catch, compile.Finally,
+      compile.ForElem, compile.IfElem]],
+    [compile.Reference, [compile.Decorator, compile.Break, compile.Continue,
+      compile.Return]],
+  ]
+
+  let seen = []
+  for _id node = unit.nodes()
+    assert_type $compile.Node $node
+    let ty = type $node
+    if !seen.contains(ty)
+      seen.push $ty
+    for entry = groups
+      let super members = entry
+      if members.contains(ty)
+        assert_type $super $node
+
+  # Every kind the documentation lists is reachable, so a kind that stops being
+  # produced cannot go unnoticed.
+  for entry = groups
+    let _super members = entry
+    for member = members
+      assert $seen.contains(member)
+  assert $seen.contains(compile.Root)
+  assert_eq $seen.len 29

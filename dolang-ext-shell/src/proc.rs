@@ -374,6 +374,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .value("Info", global.types.proc_info)
         .value("Proc", global.types.proc_handle)
         .value("Status", global.types.proc_status)
+        .value("PipeReceiver", global.types.pipe_receiver)
+        .value("PipeSender", global.types.pipe_sender)
         .object("run", run_ty, program::Run::new(global))
         .value("Program", global.types.program)
         .commit();

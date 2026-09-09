@@ -1,0 +1,543 @@
+# Process invocation and output capture: running external programs, and
+# inspecting or controlling processes that are not children of this one.
+#
+# See [External Programs](../../shell/external-programs.md) for lookup,
+# redirection, capture and pipeline behavior.
+
+# Raised when an external program exits unsuccessfully.
+#
+# Spawn, lookup and other I/O failures do not raise this; they raise
+# [`sys.Error`](sys.Error) instead.
+#
+# `str(err)` returns a stable process-failure message, such as an exit status
+# or a fatal signal description.
+#
+# ## Example
+#
+# ```
+# try
+#   run sh -c "exit 42"
+# catch proc.Error: err
+#   assert_eq $err.rc 42
+# ```
+pub class Error: std.RuntimeError
+  # ([`Int`](std.Int)?) The numeric exit status, or `nil` if the process
+  # did not exit normally.
+  #[getter]
+  pub def rc self
+    throw nil
+
+  # ([`Int`](std.Int)?) The fatal signal number, or `nil` when the
+  # process was not signaled.
+  #
+  # A signaled process reports this instead of [`rc`](proc.Error.rc):
+  #
+  # ```
+  # try
+  #   run sh -c r"kill -TERM $$"
+  # catch proc.Error: err
+  #   assert_eq $err.rc nil
+  #   assert_eq $err.signal 15
+  # ```
+  #
+  # Unix only: reading it against a Windows target raises
+  # [`FieldError`](std.FieldError).
+  #[getter]
+  pub def signal self
+    throw nil
+
+# Information about a process at a moment in time.
+#
+# Every field other than [`pid`](proc.Info.pid) and [`name`](proc.Info.name)
+# may be `nil` for reasons beyond those documented on it: the process had
+# already exited and the value was no longer available, it was a kernel process
+# and never had one, or it could not be read for want of permission.
+#
+# ## Example
+#
+# ```
+# for info = proc.enumerate()
+#   if (info.name == "sshd")
+#     echo "$(info.pid) $(info.exe)"
+# ```
+pub class Info
+  # ([`Int`](std.Int)) The process ID.
+  #[getter]
+  pub def pid self
+    throw nil
+
+  # ([`Int`](std.Int)?) The parent process ID.
+  #
+  # Windows does not reparent orphaned processes, so this may be invalid or
+  # reassigned.
+  #[getter]
+  pub def parent_pid self
+    throw nil
+
+  # ([`Str`](std.Str)) The kernel's short name for the process.
+  #
+  # On Unix this reflects whatever the process last set, and is typically
+  # truncated.
+  #[getter]
+  pub def name self
+    throw nil
+
+  # ([`fs.Path`](fs.Path)?) The executable path.
+  #
+  # Reading another user's executable path needs elevated rights on every
+  # platform.
+  #[getter]
+  pub def exe self
+    throw nil
+
+  # ([`Tuple`](std.Tuple)?) The argument vector, as
+  # [`Str`](std.Str) elements.
+  #
+  # Restricted to processes owned by the same user on macOS. Windows represents
+  # arguments as a single string rather than an array, so what is reported here
+  # is split according to typical C runtime conventions;
+  # [`cmdline_win`](proc.Info.cmdline_win) is the raw original.
+  #[getter]
+  pub def cmdline self
+    throw nil
+
+  # ([`fs.Path`](fs.Path)?) The working directory.
+  #
+  # Reading another user's working directory needs elevated rights. On Windows
+  # this is maintained by the C runtime rather than reported authoritatively by
+  # the kernel, so an application may set it to anything.
+  #[getter]
+  pub def cwd self
+    throw nil
+
+  # ([`Status`](proc.Status)?) How the process ended, or `nil` if it was still
+  # running.
+  #[getter]
+  pub def status self
+    throw nil
+
+  # ([`security.unix.Identity`](security.unix.Identity)?) The process
+  # credentials.
+  #
+  # Unix only: reading it on a record captured from another platform raises
+  # [`FieldError`](std.FieldError). On macOS, `groups` is capped at 16
+  # entries.
+  #[getter]
+  pub def unix_id self
+    throw nil
+
+  # ([`Str`](std.Str)?) The command line as a single string.
+  #
+  # Windows only: reading it on a record captured from another platform raises
+  # [`FieldError`](std.FieldError).
+  #
+  # ```
+  # let p = proc.open $pid
+  # echo $p.info().cmdline_win
+  # ```
+  #[getter]
+  pub def cmdline_win self
+    throw nil
+
+  # ([`security.windows.TokenInfo`](security.windows.TokenInfo)?) The
+  # process access token.
+  #
+  # Windows only: reading it on a record captured from another platform raises
+  # [`FieldError`](std.FieldError).
+  #[getter]
+  pub def token_info self
+    throw nil
+
+# Receives values from a strand pipe.
+#
+# Created for connections between
+# [`strand.pipeline`](strand.pipeline)
+# stages and for a [`strand.stream`](strand.stream) strand's
+# implicit input; it cannot be constructed directly.
+#
+# Both framing methods reconfigure the receiver in place. They do not alter
+# values sent directly by another Do pipeline stage.
+pub class PipeReceiver: std.Iter
+  # Selects arbitrary-sized [`Bin`](std.Bin) chunks when the receiver
+  # reads bytes from an external program.
+  #
+  # ## Returns
+  #
+  # [`PipeReceiver`](proc.PipeReceiver)
+  pub def chunks self
+    throw nil
+
+  # Selects line framing when the receiver reads bytes from an external
+  # program. This is the default.
+  #
+  # ## Returns
+  #
+  # [`PipeReceiver`](proc.PipeReceiver)
+  pub def lines self
+    throw nil
+
+  # Closes the receiver and stops its sender.
+  pub def close self
+    throw nil
+
+# Sends values to a strand pipe.
+#
+# Created for connections between
+# [`strand.pipeline`](strand.pipeline)
+# stages and for a [`strand.stream`](strand.stream) strand's
+# implicit output; it cannot be constructed directly.
+pub class PipeSender: std.Sink
+  # Closes the sender, signaling end of input to its receiver.
+  #
+  # If an error is given, the receiver re-raises it after draining any buffered
+  # values.
+  #
+  # ## Errors
+  #
+  # | Exception                           | Condition                                       |
+  # | ----------------------------------- | ----------------------------------------------- |
+  # | [`TypeError`](std.TypeError) | `backtrace` is not a `strand.Backtrace`         |
+  pub def close
+    self
+    # Error value to propagate to the receiver.
+    error = nil
+    # ([`strand.Backtrace`](strand)?) Backtrace for `error`.
+    :backtrace = nil
+  do
+    throw nil
+
+# An open handle to a process that is not a child of this one.
+#
+# Returned by [`open`](proc.open).
+#
+# Using a closed handle raises [`StateError`](std.StateError).
+pub class Proc
+  # ([`Int`](std.Int)) The process ID.
+  #[getter]
+  pub def pid self
+    throw nil
+
+  # Takes a fresh snapshot of process state.
+  #
+  # ## Returns
+  #
+  # [`Info`](proc.Info)
+  pub def info self
+    throw nil
+
+  # Sends a signal to the process.
+  #
+  # ## Errors
+  #
+  # | Exception                                          | Condition           |
+  # | -------------------------------------------------- | ------------------- |
+  # | [`sys.UnsupportedError`](sys.Error)          | The target is Windows |
+  #
+  # ## Example
+  #
+  # ```
+  # let p = proc.open $pid
+  # p.signal :HUP:
+  # ```
+  pub def signal
+    self
+    # ([`Sym`](std.Sym)) Signal name, such as `:TERM:`.
+    sig
+  do
+    throw nil
+
+  # Terminates the process in the manner typical for the target platform:
+  # `SIGTERM` on Unix, `TerminateProcess()` on Windows.
+  #
+  # This is equivalent to [`kill`](proc.Proc.kill) on Windows, where there is
+  # no consistent way to terminate a non-child process gently.
+  pub def terminate self
+    throw nil
+
+  # Terminates the process aggressively in the manner typical for the target
+  # platform: `SIGKILL` on Unix, `TerminateProcess()` on Windows.
+  pub def kill self
+    throw nil
+
+  # Waits for the process to exit.
+  #
+  # ## Returns
+  #
+  # [`Status`](proc.Status)
+  pub def wait self
+    throw nil
+
+  # Closes the handle.
+  pub def close self
+    throw nil
+
+# Function proxy for an external program.
+pub class Program
+  # Creates a program proxy.
+  #
+  # ## Example
+  #
+  # ```
+  # let clang = Program "clang++"
+  # clang --version
+  # ```
+  pub def (init)
+    self
+    # ([`Str`](std.Str)|[`Sym`](std.Sym)|[`fs.Path`](fs.Path))
+    # Program name or path.
+    value
+  do
+    throw nil
+
+  # Resolves the program without running it.
+  #
+  # ## Returns
+  #
+  # [`fs.Path`](fs.Path), or `nil` when the program is not found.
+  #
+  # ## Example
+  #
+  # ```
+  # let git = Program :git:
+  # echo $git.which()
+  # ```
+  pub def which self
+    throw nil
+
+  # Runs the program with the supplied command-line arguments.
+  #
+  # Output is written to the configured streams. See
+  # [External Programs](../../shell/external-programs.md) for lookup, stream
+  # handling and pipeline behavior.
+  #
+  # ## Errors
+  #
+  # | Exception                | Condition                             |
+  # | ------------------------ | ------------------------------------- |
+  # | [`Error`](proc.Error)    | The program exited unsuccessfully     |
+  #
+  # ## Example
+  #
+  # ```
+  # let git = Program git
+  # git status --short
+  # ```
+  pub def (call)
+    self
+    # ([`fs.Path`](fs.Path)|[`Iter`](std.Iter)?) Source for
+    # standard input.
+    :stdin = nil
+    # ([`fs.Path`](fs.Path)|[`Sink`](std.Sink)?) Destination for
+    # standard output.
+    :stdout = nil
+    # ([`fs.Path`](fs.Path)|[`Sink`](std.Sink)|[`Sym`](std.Sym)?)
+    # Destination for standard error, or `:STDOUT:` to merge it with standard
+    # output.
+    :stderr = nil
+    # ([`Dict`](std.Dict)?) Per-launch termination overrides: `signal`,
+    # `grace` and `force`, as
+    # [`with_policy`](proc.with_policy) takes them.
+    :policy = nil
+    # ([`Sym`](std.Sym)?) `:LINE:` (the default) or `:CHUNK:` output
+    # framing.
+    :mode = nil
+    # Command-line arguments.
+    ...args
+  do
+    throw nil
+
+# How a process that is not a child of this one exited.
+#
+# Returned by [`Proc.wait`](proc.Proc.wait).
+#
+# ## Example
+#
+# ```
+# let p = proc.open $pid
+# p.terminate()
+# let status = p.wait()
+# if (status.code != nil)
+#   echo "exited with $(status.code)"
+# ```
+pub class Status
+  # ([`Int`](std.Int)?) The exit code.
+  #
+  # Only Windows can obtain one for a process that is not a child; every other
+  # platform reports `nil`, since reaping an arbitrary process is the parent's
+  # privilege there and a non-parent learns only that it is gone.
+  #[getter]
+  pub def code self
+    throw nil
+
+# Lists the processes running on the target.
+#
+# ## Returns
+#
+# An `Iter` of [`Info`](proc.Info). Destructuring is not supported.
+#
+# ## Example
+#
+# ```
+# for info = enumerate()
+#   echo "$(info.pid) $(info.name)"
+#
+# # `unix_id` is a Unix-only field, so this is a Unix-only search
+# let mine = $
+#   for info = enumerate()
+#     if (info.unix_id.uid == uid)
+#       - $info
+# ```
+pub def enumerate()
+  throw nil
+
+# Describes the process that currently owns `pid`, or the target process itself
+# when `pid` is omitted.
+#
+# Because this bypasses [`open`](proc.open), it works on protected
+# processes on Windows that would otherwise fail with a permission error.
+#
+# ## Returns
+#
+# [`Info`](proc.Info)
+#
+# ## Errors
+#
+# | Exception                              | Condition       |
+# | -------------------------------------- | --------------- |
+# | [`sys.NotFoundError`](sys.Error) | No such process |
+#
+# ## Example
+#
+# ```
+# let info = info $pid
+# echo "$(info.name) started as $(info.cmdline)"
+#
+# # The PID of this interpreter, whatever target is selected
+# let mine = shell.with_host do info()
+# echo $mine.pid
+# ```
+pub def info
+  # ([`Int`](std.Int)?) Process ID. Defaults to the target process: the
+  # one serving the current VFS, which is the process running this interpreter
+  # when none is connected, and otherwise the agent at the far end of the
+  # connection. Pair it with
+  # [`shell.with_host`](shell.with_host) to reach this interpreter
+  # while a target is selected.
+  pid = nil
+do
+  throw nil
+
+# Opens a handle to a process.
+#
+# ## Returns
+#
+# [`Proc`](proc.Proc), or the result of `block` if one was given.
+#
+# ## Errors
+#
+# | Exception                                      | Condition                                |
+# | ---------------------------------------------- | ---------------------------------------- |
+# | [`sys.NotFoundError`](sys.Error)         | No such process, or the PID was recycled |
+# | [`sys.PermissionDeniedError`](sys.Error) | The caller may not open the process      |
+#
+# ## Example
+#
+# ```
+# # Scoped: the handle is closed when the block finishes
+# let name = open $pid do |p|
+#   p.info().name
+#
+# # Manual: closing is the caller's business
+# let p = open $pid
+# try
+#   echo $p.info().name
+# finally
+#   p.close()
+# ```
+pub def open
+  # ([`Info`](proc.Info)|[`Int`](std.Int)) Information record, or a raw
+  # PID.
+  target
+  # (callable?) Block to run with the handle, which is closed when it returns.
+  block = nil
+do
+  throw nil
+
+# Captures the output of a block as a string.
+#
+# Everything written is captured as a byte stream, without line decoding or
+# normalization -- including values put into the strand's output, which
+# contribute exactly their own bytes. For the console counterpart, which
+# captures `echo` and `print` instead, use
+# [`term.sub`](term.sub).
+#
+# ## Returns
+#
+# [`Str`](std.Str)
+#
+# ## Example
+#
+# ```
+# let output = sub do run echo hello
+# assert_eq $output "hello"
+# ```
+pub def sub
+  # (callable) Block whose output to capture.
+  block
+  # ([`Bool`](std.Bool)?) Remove one trailing LF or CRLF. True by
+  # default. This is a whole-capture strip, not a per-value one: it removes at
+  # most one line ending, from the end of the finished string.
+  :chomp = true
+  # Additional arguments passed to the block.
+  ...args
+do
+  throw nil
+
+# Runs a block with temporary process termination defaults.
+#
+# The signal setting is retained when the strand later targets a Unix VFS.
+# Windows launches always use `CTRL_BREAK_EVENT`. With `force: false`, a
+# process that outlives the grace period is orphaned.
+#
+# ## Returns
+#
+# The block's result.
+#
+# ## Example
+#
+# ```
+# with_policy signal: :INT: grace: 2.5 do
+#   run worker
+# ```
+pub def with_policy
+  # (callable) Block to run.
+  block
+  # ([`Sym`](std.Sym)?) Unix signal name. `:TERM:` by default.
+  :signal = nil
+  # ([`time.Duration`](time.Duration)|[`Int`](std.Int)|[`Float`](std.Float)?)
+  # Time before forced termination. Five seconds by default.
+  :grace = nil
+  # ([`Bool`](std.Bool)?) Force termination after the grace period.
+  :force = nil
+  # Additional arguments passed to the block.
+  ...args
+do
+  throw nil
+
+# Runs an external program, or creates a [`Program`](proc.Program) proxy.
+#
+# Calling it takes the program name or path as its first argument, followed by
+# the [launch arguments accepted by `Program`](proc.Program.(call)). Index it
+# with a [`Str`](std.Str) or [`fs.Path`](fs.Path) to create a
+# proxy. Destructuring requires a trailing `...`; symbol and string keys create
+# proxies with the corresponding program names.
+#
+# ## Example
+#
+# ```
+# run git status
+# run["clang++"] --version
+#
+# let :git :cargo "clang++": clang ... = run
+# ```
+pub let run = nil

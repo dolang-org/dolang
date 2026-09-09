@@ -1368,6 +1368,8 @@ impl<'v> Object<'v> for MockObject {
 pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("http.mock")
+        .value("Mock", global.types.mock)
+        .value("Request", global.types.request)
         .value("Server", global.types.server)
         .commit();
 }

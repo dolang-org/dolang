@@ -65,7 +65,7 @@ let label = (condition && "yes" || "no")
 
 ### Range Expressions
 
-`..` constructs a [`Range`](../api/std/range.md) value.
+`..` constructs a [`Range`](std.Range) value.
 
 ```
 let bounded = 1..5

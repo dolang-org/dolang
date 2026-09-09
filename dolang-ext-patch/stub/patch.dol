@@ -1,0 +1,209 @@
+# Parses, creates, encodes, and applies unified and git-style patches.
+
+import std:
+  - Iter
+  - RuntimeError
+  - ValueError
+
+# Raised when a patch does not apply cleanly.
+#
+# [`Patch.apply`](patch.Patch.apply) throws `ApplyError` when the patch cannot
+# be applied to the base content it is given.
+#
+# ## Example
+#
+# ```
+# let p = patch.diff "alpha\n" "beta\n"
+#
+# try
+#   p.apply "gamma\n"
+# catch patch.ApplyError: err
+#   echo "apply failed: $err"
+# ```
+pub class ApplyError: RuntimeError
+
+# Raised for malformed patch data.
+#
+# [`decode`](patch.decode) throws `ParseError` when its input cannot be
+# parsed as a patch stream.
+#
+# ## Example
+#
+# ```
+# try
+#   let _ = [...patch.decode "not a patch"]
+# catch patch.ParseError: err
+#   echo "bad patch: $err"
+# ```
+pub class ParseError: ValueError
+
+# One file-level patch operation.
+#
+# `Patch` values are returned by [`diff`](patch.diff) and yielded by
+# [`decode`](patch.decode).
+pub class Patch
+  # Source path of the patch as a [`Path`](fs.Path).
+  #
+  # Present for delete, modify, move, and copy operations.
+  #
+  # ## Example
+  #
+  # ```
+  # let p = [...patch.decode diff_text][0]
+  # echo $p.source
+  # ```
+  #[getter]
+  pub def source self
+    throw nil
+
+  # Target path of the patch as a [`Path`](fs.Path).
+  #
+  # Present for create, modify, move, and copy operations.
+  #
+  # ## Example
+  #
+  # ```
+  # let p = [...patch.decode diff_text][0]
+  # echo $p.target
+  # ```
+  #[getter]
+  pub def target self
+    throw nil
+
+  # Operation kind as a symbol.
+  #
+  # One of `:CREATE:`, `:DELETE:`, `:MODIFY:`, `:MOVE:`, or `:COPY:`.
+  #
+  # ## Example
+  #
+  # ```
+  # let p = patch.diff "alpha\n" "beta\n"
+  # assert_eq $p.type :MODIFY:
+  # ```
+  #[getter]
+  pub def type self
+    throw nil
+
+  # Applies the patch to `base`.
+  #
+  # ## Returns
+  #
+  # [`Str`](std.Str)\|[`Bin`](std.Bin), matching the type of
+  # `base`.
+  #
+  # ## Errors
+  #
+  # | Exception                       | Condition                                                      |
+  # | ------------------------------- | -------------------------------------------------------------- |
+  # | [`ApplyError`](patch.ApplyError) | The patch does not apply cleanly                               |
+  # | [`ApplyError`](patch.ApplyError) | A text result is not valid UTF-8                               |
+  # | `TypeError`                     | `base` is not [`Str`](std.Str) or [`Bin`](std.Bin) |
+  #
+  # ## Example
+  #
+  # ```
+  # let p = patch.diff "alpha\n" "beta\n"
+  # assert_eq (p.apply "alpha\n") "beta\n"
+  # ```
+  pub def apply
+    self
+    # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Content to patch. Text
+    # content must still be valid UTF-8 once patched.
+    base
+  do
+    throw nil
+
+# Iterator over a patch stream.
+#
+# Returned by [`decode`](patch.decode). Each iteration yields one
+# [`Patch`](patch.Patch).
+#
+# ## Example
+#
+# ```
+# for p = patch.decode diff_text
+#   echo $p.type
+# ```
+pub class PatchIter: Iter
+  # Yields the next [`Patch`](patch.Patch), ending iteration once the stream is
+  # exhausted.
+  pub def (next) self
+    throw nil
+
+# Parses a patch stream.
+#
+# ## Returns
+#
+# [`PatchIter`](patch.PatchIter)
+#
+# ## Errors
+#
+# [`ParseError`](patch.ParseError) when iteration reaches malformed patch data.
+#
+# ## Example
+#
+# ```
+# let patches = [...patch.decode diff_text]
+# ```
+pub def decode
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Unified or git-style patch.
+  input
+do
+  throw nil
+
+# Builds a text patch from two versions of the same content.
+#
+# ## Returns
+#
+# [`Patch`](patch.Patch)
+#
+# ## Errors
+#
+# | Exception   | Condition                                                                       |
+# | ----------- | ------------------------------------------------------------------------------- |
+# | `TypeError` | `before` and `after` are not both text or both binary                           |
+# | `TypeError` | `source` or `target` is not a [`Path`](fs.Path) or [`Str`](std.Str) |
+#
+# ## Example
+#
+# ```
+# let p = patch.diff "alpha\n" "beta\n" source: old.txt target: new.txt
+# echo (patch.encode p)
+# ```
+pub def diff
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Original content. Must be
+  # the same kind of value as `after`.
+  before
+  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Modified content.
+  after
+  # ([`Path`](fs.Path)\|[`Str`](std.Str)?) Source filename for the
+  # patch headers.
+  :source = nil
+  # ([`Path`](fs.Path)\|[`Str`](std.Str)?) Target filename for the
+  # patch headers.
+  :target = nil
+do
+  throw nil
+
+# Encodes a [`Patch`](patch.Patch) or iterable of patches back to patch text.
+#
+# ## Returns
+#
+# [`Str`](std.Str) when every encoded byte is valid UTF-8, and
+# [`Bin`](std.Bin) otherwise.
+#
+# ## Errors
+#
+# `TypeError` if an iterable contains a non-`Patch` value.
+#
+# ## Example
+#
+# ```
+# let patches = [...patch.decode diff_text]
+# write output.patch (patch.encode patches)
+# ```
+pub def encode
+  # ([`Patch`](patch.Patch)\|iterable) One patch or an iterable of patches.
+  value
+do
+  throw nil

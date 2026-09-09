@@ -9,46 +9,46 @@ Embedded runtimes may provide a different additional prelude.
 
 ## `std`
 
-| Name                                          | Description                           |
-| --------------------------------------------- | ------------------------------------- |
-| [`Array`](../api/std/array.md)                | [`Array`](../api/std/array.md) type   |
-| [`array`](../api/std/index.md#array-values)   | Variadic array factory                |
-| [`Bin`](../api/std/bin.md)                    | [`Bin`](../api/std/bin.md) type       |
-| [`Bool`](../api/std/bool.md)                  | [`Bool`](../api/std/bool.md) type     |
-| [`bool`](../api/std/index.md#bool-value)      | Truthiness coercion                   |
-| [`class`](../api/std/class.md)                | Inherited class member decorator      |
-| [`dbg`](../api/std/index.md#dbg-value)        | Debug representation                  |
-| [`Dict`](../api/std/dict.md)                  | [`Dict`](../api/std/dict.md) type     |
-| [`dict`](../api/std/index.md#dict)            | Variadic dictionary factory           |
-| [`Float`](../api/std/float.md)                | [`Float`](../api/std/float.md) type   |
-| [`float`](../api/std/index.md#float-value)    | Numeric coercion and parsing          |
-| [`Func`](../api/std/func.md)                  | [`Func`](../api/std/func.md) type     |
-| [`getter`](../api/std/index.md#getter-func)   | Class field getter decorator          |
-| [`Int`](../api/std/int.md)                    | [`Int`](../api/std/int.md) type       |
-| [`int`](../api/std/index.md#int-value)        | Integer coercion and parsing          |
-| [`Range`](../api/std/range.md)                | [`Range`](../api/std/range.md) type   |
-| [`Record`](../api/std/record.md)              | [`Record`](../api/std/record.md) type |
-| [`record`](../api/std/index.md#record)        | Variadic record factory               |
-| [`Set`](../api/std/set.md)                    | [`Set`](../api/std/set.md) type       |
-| [`setter`](../api/std/index.md#setter-func)   | Class field setter decorator          |
-| [`static`](../api/std/static.md)              | Uninherited class member decorator    |
-| [`Str`](../api/std/str.md)                    | [`Str`](../api/std/str.md) type       |
-| [`str`](../api/std/index.md#str-value)        | Textual representation                |
-| [`Sym`](../api/std/sym.md)                    | [`Sym`](../api/std/sym.md) type       |
-| [`sym`](../api/std/index.md#sym-value)        | Symbol interning                      |
-| [`Tuple`](../api/std/tuple.md)                | [`Tuple`](../api/std/tuple.md) type   |
-| [`tuple`](../api/std/index.md#tuple-values)   | Variadic tuple factory                |
-| [`Type`](../api/std/type.md)                  | [`Type`](../api/std/type.md) type     |
-| [`type`](../api/std/index.md#type-value-type) | Type query and test function          |
+| Name                   | Description                        |
+| ---------------------- | ---------------------------------- |
+| [`Array`](std.Array)   | [`Array`](std.Array) type          |
+| [`array`](std.array)   | Variadic array factory             |
+| [`Bin`](std.Bin)       | [`Bin`](std.Bin) type              |
+| [`Bool`](std.Bool)     | [`Bool`](std.Bool) type            |
+| [`bool`](std.bool)     | Truthiness coercion                |
+| [`class`](std.class)   | Inherited class member decorator   |
+| [`dbg`](std.dbg)       | Debug representation               |
+| [`Dict`](std.Dict)     | [`Dict`](std.Dict) type            |
+| [`dict`](std.dict)     | Variadic dictionary factory        |
+| [`Float`](std.Float)   | [`Float`](std.Float) type          |
+| [`float`](std.float)   | Numeric coercion and parsing       |
+| [`Func`](std.Func)     | [`Func`](std.Func) type            |
+| [`getter`](std.getter) | Class field getter decorator       |
+| [`Int`](std.Int)       | [`Int`](std.Int) type              |
+| [`int`](std.int)       | Integer coercion and parsing       |
+| [`Range`](std.Range)   | [`Range`](std.Range) type          |
+| [`Record`](std.Record) | [`Record`](std.Record) type        |
+| [`record`](std.record) | Variadic record factory            |
+| [`Set`](std.Set)       | [`Set`](std.Set) type              |
+| [`setter`](std.setter) | Class field setter decorator       |
+| [`static`](std.static) | Uninherited class member decorator |
+| [`Str`](std.Str)       | [`Str`](std.Str) type              |
+| [`str`](std.str)       | Textual representation             |
+| [`Sym`](std.Sym)       | [`Sym`](std.Sym) type              |
+| [`sym`](std.sym)       | Symbol interning                   |
+| [`Tuple`](std.Tuple)   | [`Tuple`](std.Tuple) type          |
+| [`tuple`](std.tuple)   | Variadic tuple factory             |
+| [`Type`](std.Type)     | [`Type`](std.Type) type            |
+| [`type`](std.type)     | Type query and test function       |
 
 ## `strand`
 
 The module itself is imported, along with these functions:
 
-| Name                                                                    | Description                         |
-| ----------------------------------------------------------------------- | ----------------------------------- |
-| [`fork`](../api/strand/index.md#fork-blocks)                            | Executes blocks concurrently        |
-| [`pipeline`](../api/strand/index.md#pipeline-stage-stages-input-output) | Connects concurrent pipeline stages |
-| [`stream`](../api/strand/index.md#stream-func)                          | Creates a background stream strand  |
-| [`put`](../api/strand/index.md#put-value)                               | Writes to the strand-local output   |
-| [`spawn`](../api/strand/index.md#spawn-func)                            | Creates a background strand         |
+| Name                          | Description                         |
+| ----------------------------- | ----------------------------------- |
+| [`fork`](strand.fork)         | Executes blocks concurrently        |
+| [`pipeline`](strand.pipeline) | Connects concurrent pipeline stages |
+| [`stream`](strand.stream)     | Creates a background stream strand  |
+| [`put`](strand.put)           | Writes to the strand-local output   |
+| [`spawn`](strand.spawn)       | Creates a background strand         |

@@ -1,3 +1,0 @@
-# OsRelease
-
-::: systemd.OsRelease

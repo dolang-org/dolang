@@ -1,0 +1,90 @@
+# Shell quoting and word splitting.
+#
+# The quoting these functions produce is POSIX shell quoting, suitable for a
+# command line handed to `sh`. It is not the right escaping for a Windows
+# command line, nor for running a program directly, as
+# [`run`](../../shell/external-programs.md) does -- arguments passed that way need
+# no quoting at all.
+
+# Quotes a value for use as a single POSIX shell word.
+#
+# The result is a string the shell expands back to exactly `obj`, quoted only
+# when quoting is needed.
+#
+# ## Returns
+#
+# [`Str`](std.Str) - The quoted word.
+#
+# ## Errors
+#
+# | Exception      | Condition                                                    |
+# | -------------- | ------------------------------------------------------------ |
+# | `RuntimeError` | The value contains a NUL byte, which no shell word can carry |
+#
+# ## Example
+#
+# ```
+# assert_eq (quote "hello world") "'hello world'"
+# assert_eq (quote plain) plain
+# ```
+pub def quote
+  # Value to quote, converted to a string as
+  # [`std.verbatim`](std.verbatim) would.
+  obj
+do
+  throw nil
+
+# Joins values into a single POSIX shell command line, quoting each.
+#
+# ## Returns
+#
+# [`Str`](std.Str) - The joined command line.
+#
+# ## Errors
+#
+# | Exception      | Condition                    |
+# | -------------- | ---------------------------- |
+# | `RuntimeError` | A value contains a NUL byte  |
+#
+# ## Example
+#
+# ```
+# assert_eq (join ["echo", "hello world"]) "echo 'hello world'"
+# ```
+pub def join
+  # Iterable of values, each converted to a string as
+  # [`std.verbatim`](std.verbatim) would.
+  iterable
+do
+  throw nil
+
+# Splits a POSIX shell command line into words, undoing quoting.
+#
+# The split is lazy: a malformed line, such as one with an unterminated quote,
+# is not diagnosed when `split` returns but when iteration reaches the end of
+# the input.
+#
+# ## Returns
+#
+# An `Iter` yielding each word as a [`Str`](std.Str).
+#
+# ## Errors
+#
+# | Exception      | Condition                                                     |
+# | -------------- | ------------------------------------------------------------- |
+# | `TypeError`    | `string` is not a [`Str`](std.Str)                       |
+# | `RuntimeError` | Raised during iteration if the line is malformed              |
+#
+# ## Example
+#
+# ```
+# for arg = split "echo 'hello world'"
+#   echo $arg
+# # echo
+# # hello world
+# ```
+pub def split
+  # ([`Str`](std.Str)) Command line to split.
+  string
+do
+  throw nil

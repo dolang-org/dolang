@@ -38,7 +38,7 @@
       "span": {
         "line": 22,
         "col": 8,
-        "offset": 360
+        "offset": 361
       },
       "doc": "The module's default name."
     },
@@ -49,7 +49,7 @@
       "span": {
         "line": 28,
         "col": 10,
-        "offset": 462
+        "offset": 467
       },
       "doc": "A named point.",
       "supers": [
@@ -63,7 +63,7 @@
           "span": {
             "line": 30,
             "col": 12,
-            "offset": 519
+            "offset": 524
           },
           "doc": "The horizontal coordinate.",
           "scope": "instance"
@@ -75,7 +75,7 @@
           "span": {
             "line": 34,
             "col": 12,
-            "offset": 576
+            "offset": 581
           },
           "doc": "How many points exist.",
           "scope": "class"
@@ -87,7 +87,7 @@
           "span": {
             "line": 38,
             "col": 12,
-            "offset": 632
+            "offset": 637
           },
           "doc": "A shared origin.",
           "scope": "static"
@@ -100,9 +100,10 @@
           "span": {
             "line": 41,
             "col": 10,
-            "offset": 675
+            "offset": 680
           },
           "doc": "Build a point.",
+          "scope": "instance",
           "params": [
             {
               "name": "x",
@@ -119,9 +120,10 @@
           "span": {
             "line": 45,
             "col": 10,
-            "offset": 730
+            "offset": 735
           },
           "doc": "Render it.",
+          "scope": "instance",
           "params": []
         },
         {
@@ -131,9 +133,10 @@
           "span": {
             "line": 50,
             "col": 10,
-            "offset": 817
+            "offset": 822
           },
-          "doc": "The coordinate, read as a field."
+          "doc": "The coordinate, read as a field.",
+          "scope": "instance"
         },
         {
           "kind": "method",
@@ -143,9 +146,10 @@
           "span": {
             "line": 54,
             "col": 10,
-            "offset": 868
+            "offset": 873
           },
           "doc": "Move it.",
+          "scope": "instance",
           "params": [
             {
               "name": "by",
@@ -168,7 +172,7 @@
       "span": {
         "line": 62,
         "col": 10,
-        "offset": 1043
+        "offset": 1048
       },
       "doc": "Inherits through a module path rather than an imported item.",
       "supers": [
@@ -182,7 +186,7 @@
           "span": {
             "line": 63,
             "col": 12,
-            "offset": 1074
+            "offset": 1079
           },
           "doc": "",
           "scope": "instance"
@@ -196,7 +200,7 @@
       "span": {
         "line": 68,
         "col": 8,
-        "offset": 1194
+        "offset": 1199
       },
       "doc": "Build something.\n\nThe parameters are laid out vertically, so each can be documented on its own.",
       "params": [

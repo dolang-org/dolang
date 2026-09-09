@@ -1,0 +1,21 @@
+# The `sys.macos` module exposes macOS-specific system types.
+#
+import sys.unix
+#
+# ## Types
+#
+# | Type                  | Description        |
+# | --------------------- | ------------------ |
+# | [`Errno`](sys.macos.Errno) | macOS error number |
+
+# [`sys.unix.Errno`](sys.unix.Errno) originating from macOS.
+pub class Errno: sys.unix.Errno
+  # Creates a macOS error number.
+  #
+  # Known codes are available as class fields such as `Errno.ENOENT`.
+  pub def (init)
+    self
+    # ([`int`](std.Int)) Raw error number.
+    value
+  do
+    throw nil

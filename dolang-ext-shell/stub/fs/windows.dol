@@ -1,0 +1,306 @@
+# Windows filesystem types and security descriptor access.
+
+# [`fs.Path`](fs.Path) using Windows path syntax.
+#
+# See [`fs.Path`](fs.Path) for the fields, methods, and operators every path
+# shares; the members below are Windows-specific.
+#
+# ## Alternate Data Streams
+#
+# The final component may name an NTFS alternate data stream by appending
+# `:stream`, optionally followed by `:$TYPE`:
+#
+# ```
+# let path = Path r"file.txt:zone:$DATA"
+# echo $path.name         # file.txt
+# echo $path.stream_name  # zone
+# echo $path.stream_type  # DATA
+# ```
+#
+# A stream suffix that names more than a stream and a type, or whose type is
+# missing its leading `$`, raises a [`ValueError`](std.ValueError).
+#
+# [`name`](fs.Path.name), [`stem`](fs.Path.stem), and
+# [`ext`](fs.Path.ext) describe the file the stream belongs to, and the
+# methods that rewrite them — [`add_ext`](fs.Path.add_ext),
+# [`with_ext`](fs.Path.with_ext), [`without_ext`](fs.Path.without_ext),
+# [`with_name`](fs.Path.with_name), and
+# [`with_stem`](fs.Path.with_stem) — leave the stream attached to the
+# renamed file:
+#
+# ```
+# let path = Path r"report.txt:zone:$DATA"
+# echo (path.add_ext "gz")       # report.txt.gz:zone:$DATA
+# echo (path.with_stem "sales")  # sales.txt:zone:$DATA
+# ```
+#
+# [`components`](fs.Path.components) yields the final component as it is
+# spelled, suffix included. The `/` operator names a different file rather than
+# a stream of this one, so the stream does not carry over:
+#
+# ```
+# let path = Path r"dir:zone:$DATA"
+# echo (path / "file.txt")  # dir\file.txt
+# ```
+pub class Path
+  # Converts a string or another path to a Windows path.
+  #
+  # Converting a Unix path is allowed only when it is relative.
+  pub def (init)
+    self
+    # ([`Str`](std.Str)\|[`fs.Path`](fs.Path)) Path value.
+    path
+  do
+    throw nil
+
+  # ([`Str`](std.Str)?) Device namespace name for `\\.\name` paths, or
+  # `nil` otherwise.
+  #
+  # ```
+  # let path = Path r"\\.\COM42"
+  # echo $path.device  # COM42
+  # ```
+  #[getter]
+  pub def device self
+    throw nil
+
+  # ([`Str`](std.Str)?) Drive letter for `C:`-style and `\\?\C:`-style
+  # prefixes, or `nil` otherwise.
+  #
+  # ```
+  # let path = Path "C:/work/file.txt"
+  # echo $path.disk  # C
+  # ```
+  #[getter]
+  pub def disk self
+    throw nil
+
+  # ([`Bool`](std.Bool)) Whether the path uses a verbatim `\\?\`
+  # prefix.
+  #
+  # ```
+  # let path = Path r"\\?\C:\work\file.txt"
+  # echo $path.is_verbatim  # true
+  # ```
+  #[getter]
+  pub def is_verbatim self
+    throw nil
+
+  # ([`Str`](std.Str)?) UNC server name, or `nil` if the path does not
+  # use a UNC prefix.
+  #
+  # ```
+  # let path = Path "//server/share/file.txt"
+  # echo $path.server  # server
+  # ```
+  #[getter]
+  pub def server self
+    throw nil
+
+  # ([`Str`](std.Str)?) UNC share name, or `nil` if the path does not
+  # use a UNC prefix.
+  #
+  # ```
+  # let path = Path "//server/share/file.txt"
+  # echo $path.share  # share
+  # ```
+  #[getter]
+  pub def share self
+    throw nil
+
+  # ([`Str`](std.Str)?) Alternate data stream name, or `nil` if no
+  # stream is specified.
+  #
+  # ```
+  # let path = Path "file.txt:zone"
+  # echo $path.name         # file.txt
+  # echo $path.stream_name  # zone
+  # ```
+  #[getter]
+  pub def stream_name self
+    throw nil
+
+  # ([`Str`](std.Str)?) Alternate data stream type without the leading
+  # `$`.
+  #
+  # This is `nil` when no alternate data stream was specified, or one was
+  # specified without an explicit type.
+  #
+  # ```
+  # let path = Path "file.txt:zone:$DATA"
+  # echo $path.stream_type  # DATA
+  # ```
+  #[getter]
+  pub def stream_type self
+    throw nil
+
+  # Gets selected parts of the Windows security descriptor.
+  #
+  # ## Returns
+  #
+  # [`security.windows.SecDesc`](security.windows.SecDesc)
+  #
+  # SACL access requires `SeSecurityPrivilege`.
+  pub def sec_desc
+    self
+    # ([`Bool`](std.Bool)?) Load the owner SID. Defaults to `true`.
+    :owner = nil
+    # ([`Bool`](std.Bool)?) Load the primary group SID. Defaults to
+    # `true`.
+    :group = nil
+    # ([`Bool`](std.Bool)?) Load the discretionary ACL. Defaults to
+    # `true`.
+    :dacl = nil
+    # ([`Bool`](std.Bool)?) Load the system ACL. Defaults to `false`.
+    :sacl = nil
+    # (`:TARGET:`\|`:LINK:`?) Resolution mode; see
+    # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
+    :resolve = nil
+  do
+    throw nil
+
+  # Applies the components selected by a `SecDesc`'s `mask`.
+  #
+  # The descriptor's
+  # [component options](security.windows.SecDesc.(init)--component-options)
+  # may be passed as keyword arguments instead of, or alongside, `desc`,
+  # exactly as
+  # [`sec_desc`](security.windows.sec_desc)
+  # accepts them.
+  #
+  # Windows may normalize the descriptor when associating it with the
+  # filesystem object.
+  #
+  # ## Example
+  #
+  # ```
+  # path.update_sec_desc
+  #   owner: :BUILTIN_ADMINISTRATORS:
+  #   dacl_protected: true
+  #   dacl:
+  #     - allow: :LOCAL_SYSTEM:
+  #       mask: :GENERIC_ALL:
+  #     - allow: :BUILTIN_ADMINISTRATORS:
+  #       mask: :GENERIC_ALL:
+  # ```
+  pub def update_sec_desc
+    self
+    # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict)?)
+    # Descriptor, packet, or spec.
+    desc = nil
+    # (`:TARGET:`\|`:LINK:`?) Resolution mode; see
+    # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
+    :resolve = nil
+  do
+    throw nil
+
+  # Lists alternate data streams for this path.
+  #
+  # ## Returns
+  #
+  # [`Iter`](std.Iter) of [`StreamEntry`](fs.windows.StreamEntry)
+  #
+  # ## Example
+  #
+  # ```
+  # let path = Path "data.txt"
+  # for stream = path.streams()
+  #   echo "$(stream.name) $(stream.type)"
+  #   echo (path / stream)
+  # ```
+  pub def streams
+    self
+    # (`:TARGET:`\|`:LINK:`?) Resolution mode; see
+    # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
+    :resolve = nil
+  do
+    throw nil
+
+# An NTFS alternate data stream of a file.
+#
+# Listed by [`fs.streams`](fs.streams) and
+# [`Path.streams`](fs.windows.Path.streams). Windows only.
+#
+# ## Operators
+#
+# `path / stream` returns the stream-qualified [`Path`](fs.windows.Path) for that
+# entry:
+#
+# ```
+# for stream = streams "data.txt"
+#   echo (Path "data.txt" / stream)
+# ```
+pub class StreamEntry
+  # ([`Str`](std.Str)) Stream name. The unnamed default stream is
+  # reported as `""`.
+  #
+  # ```
+  # for stream = streams "data.txt"
+  #   echo $stream.name
+  # ```
+  #[getter]
+  pub def name self
+    throw nil
+
+  # ([`Str`](std.Str)) Stream type without the leading `$`.
+  #
+  # ```
+  # for stream = streams "data.txt"
+  #   echo $stream.type
+  # ```
+  #[getter]
+  pub def type self
+    throw nil
+
+  # ([`Int`](std.Int)) Logical stream size in bytes.
+  #[getter]
+  pub def size self
+    throw nil
+
+  # ([`Int`](std.Int)) Allocated stream size in bytes.
+  #[getter]
+  pub def alloc_size self
+    throw nil
+
+# Gets selected parts of a Windows security descriptor.
+#
+# ## Returns
+#
+# [`security.windows.SecDesc`](security.windows.SecDesc)
+pub def sec_desc
+  # ([`Str`](std.Str)\|[`Path`](fs.windows.Path)) Path to query.
+  path
+  # ([`Bool`](std.Bool)?) Load the owner SID. Defaults to `true`.
+  :owner = nil
+  # ([`Bool`](std.Bool)?) Load the primary group SID. Defaults to
+  # `true`.
+  :group = nil
+  # ([`Bool`](std.Bool)?) Load the discretionary ACL. Defaults to
+  # `true`.
+  :dacl = nil
+  # ([`Bool`](std.Bool)?) Load the system ACL. Defaults to `false`.
+  :sacl = nil
+  # (`:TARGET:`\|`:LINK:`?) Resolution mode; see
+  # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
+  :resolve = nil
+do
+  throw nil
+
+# Applies the components selected by a Windows security descriptor's `mask`.
+#
+# The descriptor's
+# [component options](security.windows.SecDesc.(init)--component-options) may
+# be passed as keyword arguments instead of, or alongside, `desc`, exactly as
+# [`security.windows.sec_desc`](security.windows.sec_desc)
+# accepts them.
+pub def update_sec_desc
+  # ([`Str`](std.Str)\|[`Path`](fs.windows.Path)) Path to update.
+  path
+  # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict)?)
+  # Descriptor, packet, or spec.
+  desc = nil
+  # (`:TARGET:`\|`:LINK:`?) Resolution mode; see
+  # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
+  :resolve = nil
+do
+  throw nil

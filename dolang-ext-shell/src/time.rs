@@ -934,6 +934,15 @@ impl<'v> Object<'v> for DateTime {
         fmt!(strand, w, ">")
     }
 
+    fn hash<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        _strand: &'a mut Strand<'v, 's>,
+        hasher: &mut impl Hasher,
+    ) -> Result<'v, 's, ()> {
+        this.annex().total_nanos.hash(hasher);
+        Ok(())
+    }
+
     fn eq<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1024,6 +1033,15 @@ impl<'v> Object<'v> for Duration {
         fmt!(strand, w, "<Duration ")?;
         Self::display(this, strand, w)?;
         fmt!(strand, w, ">")
+    }
+
+    fn hash<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        _strand: &'a mut Strand<'v, 's>,
+        hasher: &mut impl Hasher,
+    ) -> Result<'v, 's, ()> {
+        this.annex().total_nanos.hash(hasher);
+        Ok(())
     }
 
     fn eq<'a, 's>(

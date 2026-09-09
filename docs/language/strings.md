@@ -1,7 +1,7 @@
 # Strings
 
-Do has two string types: [`Str`](../api/std/str.md), an immutable UTF-8 string,
-and [`Bin`](../api/std/bin.md), an immutable byte sequence that may hold
+Do has two string types: [`Str`](std.Str), an immutable UTF-8 string,
+and [`Bin`](std.Bin), an immutable byte sequence that may hold
 arbitrary non-UTF-8 data. Both have several literal forms, which vary in how
 much processing they apply to their content:
 
@@ -10,7 +10,7 @@ much processing they apply to their content:
 - [`"..."`](#quoted-strings) — escapes and interpolation
 - [`r"..."`](#raw-strings) — no escapes or interpolation, may span lines
 - [`b"..."`](#binary-strings) — a `Bin` rather than a `Str`
-- [`t"..."`](#formatted-sequences) — a [`Fmt`](../api/std/fmt.md) that keeps
+- [`t"..."`](#formatted-sequences) — a [`Fmt`](std.Fmt) that keeps
   interpolations and literal text separate and inspectable
 - [Here strings](#here-strings) — multi-line, introduced by an indented block
   rather than delimited, with `r` and `t` variants of their own
@@ -287,7 +287,7 @@ assert_ne b"hello" "hello"
 ## Formatted Sequences
 
 Prefixing a quoted string or here string introducer with `t` — `t"..."`,
-`t|`, `t|-` — produces a [`Fmt`](../api/std/fmt.md) instead of a `Str`. The
+`t|`, `t|-` — produces a [`Fmt`](std.Fmt) instead of a `Str`. The
 interpolation syntax is exactly the same; what differs is that the segments
 are kept apart rather than concatenated, so a consumer sees each interpolated
 value instead of only the text it produced.
@@ -304,14 +304,14 @@ assert_eq $seq.len 3
 assert_eq $seq[1].value $name
 ```
 
-Every interpolation is a [`FmtValue`](../api/std/fmt-value.md), whether or not
+Every interpolation is a [`FmtValue`](std.FmtValue), whether or not
 it states a specification, and each records the text it was written as. The
 literal text between them is an ordinary `Str`.
 
 A sequence never expands implicitly: `str` and `"$seq"` raise rather than
 flattening it, and expansion has to be asked for with
-[`format()`](../api/std/fmt.md#format-bindings). See
-[Trust](../api/std/fmt.md#trust) — the distinction between literal text and
+[`format()`](std.Fmt.format). See
+[Trust](std.Fmt.trust) — the distinction between literal text and
 interpolated values is what a consumer such as a query builder acts on.
 
 The multi-line forms `t|` and `t|-` interpolate as an ordinary here string
@@ -348,10 +348,10 @@ assert_eq $stmt[3].name :name:
 
 A number is a name that happens to be an integer: it is never renumbered, so
 `${#0}` means parameter `0` even in a sequence pasted inside another. Filling
-holes is [`Fmt.(call)`](../api/std/fmt.md#call-bindings) and
-[`Fmt.bind`](../api/std/fmt.md#bind-bindings); an unfilled one has no
+holes is [`Fmt.(call)`](std.Fmt.(call)) and
+[`Fmt.bind`](std.Fmt.bind); an unfilled one has no
 designated rendering, so
-[`format()`](../api/std/fmt.md#format-bindings) raises an error.
+[`format()`](std.Fmt.format) raises an error.
 
 ```
 let stmt = t"select * from t where a = ${#0} and c = ${#name}"
@@ -365,6 +365,6 @@ assert_eq $stmt.bind({name: "n"}).len 4
 assert_eq $stmt.format(1, name: "n") "select * from t where a = 1 and c = n"
 ```
 
-A filled hole becomes a [`FmtValue`](../api/std/fmt-value.md).
+A filled hole becomes a [`FmtValue`](std.FmtValue).
 
 Parameters are valid only in a `t` string.

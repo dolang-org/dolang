@@ -27,7 +27,7 @@ the complete previous target.
 
 ## Context Scope
 
-Call [`Vfs.with`](../api/shell/vfs.md#with-func-args) with a block to enter
+Call [`Vfs.with`](shell.Vfs.with) with a block to enter
 its context:
 
 ```
@@ -55,27 +55,27 @@ of later entries.
 
 The following operations use the active context:
 
-| Operation                              | Target behavior                                               |
-| -------------------------------------- | ------------------------------------------------------------- |
-| [`fs`](../api/fs/index.md)             | Reads and writes the target filesystem                        |
-| [`proc.run`](../api/proc/index.md#run) | Resolves and launches programs on the target                  |
-| `shell.env` and `shell.cd`             | Use target environment and path conventions                   |
-| [`sys`](../api/sys/index.md)           | Reports the target OS and CPU                                 |
-| [`security`](../api/security/index.md) | Reports and resolves the target identity                      |
-| VFS-aware extensions                   | Use files or services exposed through the active VFS          |
-| Other APIs                             | Remain in the interpreter process unless documented otherwise |
+| Operation                  | Target behavior                                               |
+| -------------------------- | ------------------------------------------------------------- |
+| [`fs`](fs)                 | Reads and writes the target filesystem                        |
+| [`proc.run`](proc.run)     | Resolves and launches programs on the target                  |
+| `shell.env` and `shell.cd` | Use target environment and path conventions                   |
+| [`sys`](sys)               | Reports the target OS and CPU                                 |
+| [`security`](security)     | Reports and resolves the target identity                      |
+| VFS-aware extensions       | Use files or services exposed through the active VFS          |
+| Other APIs                 | Remain in the interpreter process unless documented otherwise |
 
 ## Paths, Scopes and Handles
 
-A [`Path`](../api/fs/path.md) captures its Unix or Windows path style, but
+A [`Path`](fs.Path) captures its Unix or Windows path style, but
 not a particular host or VFS context. Each operation interprets the path
 literally in the current context at the time of use. An absolute path can
 therefore name a file on any compatible target, while a relative path also
 depends on that context's current working directory.
 
 Constructing `Path` from a string uses the current target's path style.
-[`fs.unix.Path`](../api/fs/unix/path.md) and
-[`fs.windows.Path`](../api/fs/windows/path.md) select a style explicitly.
+[`fs.unix.Path`](fs.unix.Path) and
+[`fs.windows.Path`](fs.windows.Path) select a style explicitly.
 Moving a `Path` between contexts does not retain access to its original target.
 
 Open files and other handles behave differently. A handle is bound to the VFS
@@ -94,7 +94,7 @@ the user's responsibility.
 
 ## Returning to the Host
 
-[`shell.with_host`](../api/shell/index.md#with_host-func-args) temporarily
+[`shell.with_host`](shell.with_host) temporarily
 returns to the interpreter's original host context:
 
 ```
@@ -110,12 +110,12 @@ context, including its original working directory and environment.
 
 ## Connections
 
-[`Vfs func`](../api/shell/vfs.md#vfs-func) connects to any strand which
+[`Vfs func`](shell.Vfs.(init)) connects to any strand which
 speaks the VFS protocol on its input and output pipe, typically by immediately
 running `dolang-vfs --stdio`.
-[`Vfs.unix_socket`](../api/shell/vfs.md#unix_socket-path-key) connects to a
+[`Vfs.unix_socket`](shell.Vfs.unix_socket) connects to a
 `dolang-vfs --listen SOCKET` or `--accept SOCKET` instance on Unix, and
-[`Vfs.windows_admin`](../api/shell/vfs.md#windows_admin-cd-env)
+[`Vfs.windows_admin`](shell.Vfs.windows_admin)
 performs Windows UAC elevation.
 
 A Unix socket connection can be authenticated with a pre-shared key, which both

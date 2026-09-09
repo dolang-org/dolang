@@ -3,22 +3,27 @@ import http.mock
 import test:
   - assert
   - assert_eq
+  - assert_type
   - test
 
 #[test]
 def get_request()
   http.mock.Server do |server|
+    assert_type $http.mock.Server $server
     server.mock
       - method: GET
         path: /get
         respond:
           status: 200
           body: "{\"status\":\"ok\"}"
-      do |_handle|
+      do |handle|
+        assert_type $http.mock.Mock $handle
         http.get (server.url / "/get") do |res|
+          assert_type $http.Response $res
           assert_eq $res.status 200
           let body = res.text()
           assert (body.len > 0)
+        assert_type $http.mock.Request $handle.received()[0]
 
 #[test]
 def redirect_follows()

@@ -2,6 +2,7 @@
 /dolang-code/node_modules
 /dolang-code/.vscode-test/
 /dolang-code/*.vsix
+/docs/api/
 /dot
 /site
 /target

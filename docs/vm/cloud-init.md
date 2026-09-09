@@ -21,7 +21,7 @@ Repeats of a key are coalesced in the order written, but ordering of e.g.
 
 ### `packages:`
 
-Guest packages to install, as an [`Array`](../api/std/array.md) of `Str`.
+Guest packages to install, as an [`Array`](std.Array) of `Str`.
 Names are interpreted by the guest's package manager.
 
 ```
@@ -40,15 +40,15 @@ libvirt.create
 Writes one file during early boot, as a **cloud-init** `write_files` entry.
 Content comes from exactly one of `content:` or `source:`.
 
-| Key        | Type                                                   | Description                         |
-| ---------- | ------------------------------------------------------ | ----------------------------------- |
-| `target`   | [`Str`](../api/std/str.md)                             | Guest path to write                 |
-| `source`?  | [artifact spec](./provisioning.md#artifact-specs)      | File to add; excludes `content:`    |
-| `content`? | [`Str`](../api/std/str.md)\|[`Bin`](../api/std/bin.md) | Literal content; excludes `source:` |
-| `chmod`?   | [`Int`](../api/std/int.md)                             | File mode, e.g. `0o644`             |
-| `owner`?   | [`Str`](../api/std/str.md)                             | `user:group` to own the file        |
-| `append`?  | [`Bool`](../api/std/bool.md)                           | Append instead of truncating        |
-| `defer`?   | [`Bool`](../api/std/bool.md)                           | Write late, after users exist       |
+| Key        | Type                                              | Description                         |
+| ---------- | ------------------------------------------------- | ----------------------------------- |
+| `target`   | [`Str`](std.Str)                                  | Guest path to write                 |
+| `source`?  | [artifact spec](./provisioning.md#artifact-specs) | File to add; excludes `content:`    |
+| `content`? | [`Str`](std.Str)\|[`Bin`](std.Bin)                | Literal content; excludes `source:` |
+| `chmod`?   | [`Int`](std.Int)                                  | File mode, e.g. `0o644`             |
+| `owner`?   | [`Str`](std.Str)                                  | `user:group` to own the file        |
+| `append`?  | [`Bool`](std.Bool)                                | Append instead of truncating        |
+| `defer`?   | [`Bool`](std.Bool)                                | Write late, after users exist       |
 
 `source:` files or `Bin` `content:` data are base64-encoded, so adding large
 files this way is not recommended; a [top-level `add:`](./provisioning.md)
@@ -75,9 +75,9 @@ libvirt.create
 ### `run:`
 
 A command to run as root during early boot, as a **cloud-init** `runcmd` entry.
-A [`Str`](../api/std/str.md) is a shell line and goes in as written, so
+A [`Str`](std.Str) is a shell line and goes in as written, so
 redirection, pipelines and expansion work. An
-[`Array`](../api/std/array.md) is an argument vector, which the shell does not
+[`Array`](std.Array) is an argument vector, which the shell does not
 get to re-interpret — the way to pass an argument containing whitespace or
 shell punctuation.
 

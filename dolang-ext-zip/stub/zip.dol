@@ -1,0 +1,328 @@
+# Reads and writes ZIP archives.
+#
+# The API is VFS-transparent: archive paths use the active VFS context.
+
+# An open ZIP archive.
+#
+# Returned by [`open`](zip.open). Only one file can be open at a time
+# within an archive; opening a second one while another is open raises a
+# concurrency error.
+pub class Archive
+  # Immutable array-like view of [`Entry`](zip.Entry) objects for every entry
+  # in the archive.
+  #
+  # Available in read mode only; reading it on an archive opened in write mode
+  # raises a runtime error. A view obtained before the archive is closed
+  # reports an empty length afterward rather than erroring, since `len` cannot
+  # itself raise an error.
+  #
+  # ## Example
+  #
+  # ```
+  # open "archive.zip" do |archive|
+  #   for entry = archive.entries
+  #     echo "Found: $entry.name"
+  #
+  #   let entries = [...archive.entries]
+  #   echo "Total files: $(entries.len)"
+  # ```
+  #[getter]
+  pub def entries self
+    throw nil
+
+  # Closes the archive and releases resources.
+  #
+  # In read mode this simply closes the archive. In write mode it finalizes
+  # the archive, writing the central directory, before closing.
+  #
+  # ## Example
+  #
+  # ```
+  # let archive = open "data.zip"
+  # # ... use archive ...
+  # archive.close()
+  # ```
+  pub def close self
+    throw nil
+
+  # Creates a directory entry. Write mode only.
+  #
+  # ## Example
+  #
+  # ```
+  # open "output.zip" "w" do |archive|
+  #   archive.create_dir "subdir" mode: 0o755
+  # ```
+  pub def create_dir
+    self
+    # ([`Str`](std.Str)) Name of the directory within the archive. A
+    # trailing `/` is added if missing.
+    name
+    # ([`Int`](std.Int)?) Unix permission bits. Defaults to `0`.
+    :mode = nil
+  do
+    throw nil
+
+  # Opens a file within the archive.
+  #
+  # In read mode this opens an existing entry for reading. In write mode it
+  # always creates a regular file entry -- use [`create_dir`](zip.Archive.create_dir) or
+  # [`symlink`](zip.Archive.symlink) for directory or symlink entries, which carry no
+  # content and so have no use for a write handle.
+  #
+  # `mode`, `size`, and `compression` apply to entries being created; passing
+  # any of them in read mode is an error.
+  #
+  # ## Returns
+  #
+  # [`File`](zip.File) when no `func` is given, otherwise the result of
+  # calling `func`.
+  #
+  # ## Example
+  #
+  # ```
+  # open "archive.zip" do |archive|
+  #   archive.open "document.txt" do |file|
+  #     let content = file.read 1024
+  #     echo $content
+  #
+  # open "output.zip" "w" do |archive|
+  #   archive.open "data.txt" mode: 0o644 do |file|
+  #     file.write "Hello, World!"
+  #
+  # # Store an already-compressed payload without deflating it again
+  # open "bundle.zip" "w" do |archive|
+  #   let total = payload.metadata().size
+  #   archive.open "disk.qcow2" compression: :STORED: size: $total do |file|
+  #     payload.open rb do |source|
+  #       for chunk = source
+  #         file.write $chunk
+  # ```
+  pub def open
+    self
+    # ([`Str`](std.Str)) Name of the file within the archive.
+    name
+    # ([`Int`](std.Int)?) Unix permission bits in write mode. Defaults
+    # to `0`.
+    :mode = nil
+    # ([`Int`](std.Int)?) Expected uncompressed size.
+    #
+    # The writer reserves space for an entry's ZIP64 size fields in its local
+    # file header before any data is written, and patches the real sizes in
+    # afterward. A field that was not reserved cannot appear later, so an
+    # entry that turns out to exceed 4 GiB fails when it is closed unless
+    # `size` announced it up front. Pass the uncompressed size whenever it is
+    # known; it is a hint, and the actual sizes are what end up recorded.
+    :size = nil
+    # ([`Sym`](std.Sym)?) `:STORED:`, `:DEFLATE:` (the default), or
+    # `:ZSTD:`.
+    :compression = nil
+    # (callable?) Called with the [`File`](zip.File), which is closed when it
+    # returns. Omit to receive the handle instead.
+    func = nil
+  do
+    throw nil
+
+  # Creates a symbolic link entry pointing to `target`. Write mode only.
+  #
+  # Argument order matches
+  # [`fs.symlink_file`](fs.symlink_file).
+  #
+  # ## Example
+  #
+  # ```
+  # open "output.zip" "w" do |archive|
+  #   archive.symlink "target.txt" "link.txt" mode: 0o777
+  # ```
+  pub def symlink
+    self
+    # ([`Str`](std.Str)) Path the symlink points to.
+    target
+    # ([`Str`](std.Str)) Name of the symlink within the archive.
+    name
+    # ([`Int`](std.Int)?) Unix permission bits. Defaults to `0`.
+    :mode = nil
+  do
+    throw nil
+
+# A single archive entry's metadata, with a method to open it for reading.
+#
+# Entries are only available for archives opened in read mode, via
+# [`Archive.entries`](zip.Archive.entries).
+pub class Entry
+  # Entry comment.
+  #[getter]
+  pub def comment self
+    throw nil
+
+  # Compressed size in bytes.
+  #[getter]
+  pub def compressed_size self
+    throw nil
+
+  # Compression method as `:STORED:`, `:DEFLATE:`, `:ZSTD:`, or `:UNKNOWN:`.
+  #[getter]
+  pub def compression self
+    throw nil
+
+  # CRC-32 checksum of the uncompressed data.
+  #[getter]
+  pub def crc32 self
+    throw nil
+
+  # Last modification time as [`DateTime`](time.DateTime), or `nil` when
+  # the stored timestamp cannot be represented.
+  #[getter]
+  pub def last_modified self
+    throw nil
+
+  # Unix permission bits, or `nil` when the archive does not provide Unix
+  # metadata.
+  #[getter]
+  pub def mode self
+    throw nil
+
+  # Entry name as an [`fs.unix.Path`](fs.unix.Path).
+  #[getter]
+  pub def name self
+    throw nil
+
+  # Uncompressed size in bytes.
+  #[getter]
+  pub def size self
+    throw nil
+
+  # Entry type as `:FILE:`, `:DIR:`, `:SYMLINK:`, `:FIFO:`, `:CHAR_DEVICE:`,
+  # `:BLOCK_DEVICE:`, or `:UNKNOWN:`.
+  #[getter]
+  pub def type self
+    throw nil
+
+  # Opens the entry for reading.
+  #
+  # ## Returns
+  #
+  # [`File`](zip.File) when no `block` is given, otherwise the result of
+  # calling `block`.
+  #
+  # ## Errors
+  #
+  # Raises a concurrency error if another file is already open in the archive.
+  #
+  # ## Example
+  #
+  # ```
+  # for entry = archive.entries
+  #   entry.open do |file|
+  #     echo (str (file.read entry.size))
+  # ```
+  pub def open
+    self
+    # (callable?) Called with the [`File`](zip.File), which is closed when it
+    # returns. Omit to receive the handle instead.
+    block = nil
+  do
+    throw nil
+
+# An open file within a ZIP archive.
+#
+# Returned by [`Archive.open`](zip.Archive.open) and
+# [`Entry.open`](zip.Entry.open). Entry metadata such as size and Unix mode
+# is available on [`Entry`](zip.Entry) rather than here.
+pub class File
+  # Closes the file.
+  #
+  # ## Example
+  #
+  # ```
+  # open "archive.zip" do |archive|
+  #   let file = archive.open "data.txt"
+  #   let content = file.read 1024
+  #   file.close()
+  # ```
+  pub def close self
+    throw nil
+
+  # Reads data from the file. Read mode only.
+  #
+  # ## Returns
+  #
+  # [`Bin`](std.Bin).
+  #
+  # ## Errors
+  #
+  # Raises a runtime error if called on a file opened in write mode.
+  #
+  # ## Example
+  #
+  # ```
+  # open "archive.zip" do |archive|
+  #   archive.open "document.txt" do |file|
+  #     let data = file.read 4096
+  #     echo "Read $(data.len) bytes"
+  #     echo $ Str $data
+  # ```
+  pub def read
+    self
+    # ([`Int`](std.Int)) Maximum number of bytes to read.
+    size
+  do
+    throw nil
+
+  # Writes data to the file. Write mode only.
+  #
+  # ## Errors
+  #
+  # Raises a runtime error if called on a file opened in read mode.
+  #
+  # ## Example
+  #
+  # ```
+  # open "output.zip" "w" do |archive|
+  #   archive.open "data.bin" do |file|
+  #     file.write "Hello, World!"
+  #     file.write b"\x00\x01\x02\x03"
+  # ```
+  pub def write
+    self
+    # ([`Bin`](std.Bin)\|[`Str`](std.Str)) Data to write.
+    data
+  do
+    throw nil
+
+# Opens a ZIP archive.
+#
+# ## Returns
+#
+# [`Archive`](zip.Archive) when no `func` is given, otherwise the result of
+# calling `func`.
+#
+# ## Example
+#
+# ```
+# # Read an existing archive
+# open "archive.zip" do |archive|
+#   for entry = archive.entries
+#     echo "Entry: $entry.name"
+#
+# # Create a new archive
+# open "output.zip" "w" do |archive|
+#   archive.open "file.txt" do |file|
+#     file.write "Hello, World!"
+# ```
+pub def open
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the ZIP archive
+  # file.
+  path
+  # ([`Str`](std.Str)?) Access mode. Defaults to `"r"`.
+  #
+  # | Mode  | Description                                           |
+  # | ----- | ----------------------------------------------------- |
+  # | `"r"` | Read mode -- opens an existing archive for reading    |
+  # | `"w"` | Write mode -- creates a new archive, truncating any existing one |
+  mode = nil
+  # (callable?) Called with the [`Archive`](zip.Archive), which is closed
+  # when it returns. Omit to receive the handle instead.
+  func = nil
+do
+  throw nil

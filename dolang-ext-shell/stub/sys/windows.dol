@@ -1,0 +1,15 @@
+# The `sys.windows` module exposes Windows-specific system types.
+#
+import sys
+
+# [`sys.ErrorCode`](sys.ErrorCode) containing a Windows system error code.
+pub class WinError: sys.ErrorCode
+  # Creates a Windows system error code.
+  #
+  # Known codes are available as class fields such as `WinError.ERROR_FILE_NOT_FOUND`.
+  pub def (init)
+    self
+    # ([`int`](std.Int)) Unsigned raw code.
+    value
+  do
+    throw nil

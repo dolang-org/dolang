@@ -1,0 +1,1420 @@
+# The `security.windows` module exposes Windows security types.
+#
+# ## Types
+#
+# | Type                                                  | Description                       |
+# | ----------------------------------------------------- | --------------------------------- |
+# | [`AccessMask`](security.windows.AccessMask)                      | Generic Windows object rights     |
+# | [`Ace`](security.windows.Ace)                                     | Windows access-control entry      |
+# | [`AceFlags`](security.windows.AceFlags)                          | ACE header flags                  |
+# | [`Acl`](security.windows.Acl)                                     | Windows access-control list       |
+# | [`SecDesc`](security.windows.SecDesc)                             | Windows security descriptor       |
+# | [`SecDescControl`](security.windows.SecDescControl)              | Security descriptor control flags |
+# | [`SecInfo`](security.windows.SecInfo)                            | Loaded descriptor components      |
+# | [`Sid`](security.windows.Sid)                                     | Windows security identifier       |
+# | [`SidName`](security.windows.SidName)                             | Resolved Windows account identity |
+# | [`TokenGroup`](security.windows.TokenGroup)                       | Windows token group membership    |
+# | [`TokenGroupAttributes`](security.windows.TokenGroupAttributes) | Token group attributes            |
+# | [`TokenInfo`](security.windows.TokenInfo)                         | Windows access token information  |
+#
+# ## Enumeration values
+#
+# ### ACE type values {: #security.windows.ace-type-values }
+#
+# | Code | Symbol                             |
+# | ---- | ---------------------------------- |
+# | 0    | `:ACCESS_ALLOWED:`                 |
+# | 1    | `:ACCESS_DENIED:`                  |
+# | 2    | `:SYSTEM_AUDIT:`                   |
+# | 3    | `:SYSTEM_ALARM:`                   |
+# | 4    | `:ACCESS_ALLOWED_COMPOUND:`        |
+# | 5    | `:ACCESS_ALLOWED_OBJECT:`          |
+# | 6    | `:ACCESS_DENIED_OBJECT:`           |
+# | 7    | `:SYSTEM_AUDIT_OBJECT:`            |
+# | 8    | `:SYSTEM_ALARM_OBJECT:`            |
+# | 9    | `:ACCESS_ALLOWED_CALLBACK:`        |
+# | 10   | `:ACCESS_DENIED_CALLBACK:`         |
+# | 11   | `:ACCESS_ALLOWED_CALLBACK_OBJECT:` |
+# | 12   | `:ACCESS_DENIED_CALLBACK_OBJECT:`  |
+# | 13   | `:SYSTEM_AUDIT_CALLBACK:`          |
+# | 14   | `:SYSTEM_ALARM_CALLBACK:`          |
+# | 15   | `:SYSTEM_AUDIT_CALLBACK_OBJECT:`   |
+# | 16   | `:SYSTEM_ALARM_CALLBACK_OBJECT:`   |
+# | 17   | `:SYSTEM_MANDATORY_LABEL:`         |
+# | 18   | `:SYSTEM_RESOURCE_ATTRIBUTE:`      |
+# | 19   | `:SYSTEM_SCOPED_POLICY_ID:`        |
+# | 20   | `:SYSTEM_PROCESS_TRUST_LABEL:`     |
+# | 21   | `:SYSTEM_ACCESS_FILTER:`           |
+#
+# ### SID name-use values {: #security.windows.sid-name-use-values }
+#
+# | Value                 | Meaning                       |
+# | --------------------- | ----------------------------- |
+# | `:USER:`              | User SID                      |
+# | `:GROUP:`             | Group SID                     |
+# | `:DOMAIN:`            | Domain SID                    |
+# | `:ALIAS:`             | Alias SID                     |
+# | `:WELL_KNOWN_GROUP:`  | Well-known group SID          |
+# | `:DELETED_ACCOUNT:`   | Deleted account SID           |
+# | `:INVALID:`           | Invalid SID                   |
+# | `:UNKNOWN:`           | SID of an unknown type        |
+# | `:COMPUTER:`          | Computer SID                  |
+# | `:LABEL:`             | Mandatory integrity label SID |
+# | `:LOGON_SESSION:`     | Logon session SID             |
+#
+# ## Declarative forms
+#
+# Security descriptors, ACLs, and ACEs have YAML-like declarative forms as an
+# manually constructing type instances. Type constructors are strict and require
+# provided components to already be of the correct type (`Ace`, `Acl`, etc.), but
+# most other functions and methods will accept a declarative specification in
+# their place.
+#
+# Symbols or symbol collections are broadly accepted in lieu of dedicated flag
+# types. Most parameters taking a [`Sid`](security.windows.Sid) also accept a canonical
+# string form or a [well-known SID](security.windows.Sid.(init)--well-known-sids) symbol.
+#
+# ### ACE Specs {: #security.windows.ace-specs }
+#
+# An ACE spec names its trustee under exactly one of `allow:`, `deny:`, or
+# `audit:`. The remaining fields are the options the [`Ace`](security.windows.Ace) class
+# methods take. The `ace` function accepts these fields as named arguments; an
+# ACE nested in an ACL or descriptor uses a dictionary with the same shape.
+#
+# ```
+# ace
+#   allow: :BUILTIN_ADMINISTRATORS:
+#   mask: :GENERIC_ALL:
+#   flags: [:OBJECT_INHERIT:, :CONTAINER_INHERIT:]
+# ```
+#
+# | Key                     | Type                                                                    | Description                        |
+# | ----------------------- | ----------------------------------------------------------------------- | ---------------------------------- |
+# | `allow`                 | [`Sid`](security.windows.Sid)\|[`Str`](std.Str)\|[`Sym`](std.Sym) | Trustee of an access-allowed entry |
+# | `deny`                  | [`Sid`](security.windows.Sid)\|[`Str`](std.Str)\|[`Sym`](std.Sym) | Trustee of an access-denied entry  |
+# | `audit`                 | [`Sid`](security.windows.Sid)\|[`Str`](std.Str)\|[`Sym`](std.Sym) | Trustee of a system-audit entry    |
+# | `mask`                  | [`AccessMask`](security.windows.AccessMask)                                        | Access mask                        |
+# | `flags`                 | [`AceFlags`](security.windows.AceFlags)?                                           | ACE header flags                   |
+# | `object_type`           | [`uuid.Guid`](uuid.Guid)?                                      | Object type                        |
+# | `inherited_object_type` | [`uuid.Guid`](uuid.Guid)?                                      | Inherited object type              |
+# | `callback`              | [`Bool`](std.Bool)?                                            | Build a callback ACE               |
+# | `application_data`      | [`Bin`](std.Bin)?                                              | Trailing application data          |
+# | `successful`            | [`Bool`](std.Bool)?                                            | Audit successful access            |
+# | `failed`                | [`Bool`](std.Bool)?                                            | Audit failed access                |
+#
+# `mask` is required. `successful` and `failed` apply only to `audit`, which
+# requires at least one of them.
+#
+# ### ACL Specs {: #security.windows.acl-specs }
+#
+# An ACL spec is any iterable of ACE specs or [`Ace`](security.windows.Ace) values, in packet
+# order. The `acl` function accepts the entries as separate positional
+# arguments, with `revision:` as an optional key argument.
+#
+# ```
+# acl
+#   - allow: :LOCAL_SYSTEM:
+#     mask: :GENERIC_ALL:
+#   - allow: :BUILTIN_ADMINISTRATORS:
+#     mask: :GENERIC_ALL:
+# ```
+#
+# ```
+# acl
+#   revision: :DIRECTORY_SERVICE:
+#   - allow: $group.sid
+#     mask: :GENERIC_ALL:
+#     object_type: $schema_guid
+# ```
+#
+# ### Descriptor Specs {: #security.windows.descriptor-specs }
+#
+# A descriptor spec is a dictionary of [`SecDesc`'s component
+# options](security.windows.SecDesc.(init)--component-options), where `dacl` and `sacl` accept ACL
+# specs and `owner` and `group` accept any trustee form. The `sec_desc` function
+# accepts these components as key arguments.
+#
+# ```
+# sec_desc
+#   owner: :BUILTIN_ADMINISTRATORS:
+#   dacl_protected: true
+#   dacl:
+#     - allow: :LOCAL_SYSTEM:
+#       mask: :GENERIC_ALL:
+# ```
+#
+
+
+# Generic Windows object access rights.
+#
+# Domain-specific rights such as
+# [`winreg.AccessMask`](winreg.AccessMask) are subtypes. This type
+# names generically applicable rights only.
+#
+pub class AccessMask
+  # `AccessMask ...rights`
+  #
+  # Constructs a mask from symbols or one iterable of symbols.
+  #
+  # #### Supported symbols
+  #
+  # | Symbol                       | Meaning                                          |
+  # | ---------------------------- | ------------------------------------------------ |
+  # | `:DELETE:`                   | Delete the object                                |
+  # | `:READ_CONTROL:`             | Read its security descriptor, except the SACL    |
+  # | `:WRITE_DAC:`                | Change its discretionary access-control list     |
+  # | `:WRITE_OWNER:`              | Change its owner                                 |
+  # | `:SYNCHRONIZE:`              | Synchronize access to the object                 |
+  # | `:STANDARD_RIGHTS_REQUIRED:` | The standard rights required by most objects     |
+  # | `:STANDARD_RIGHTS_ALL:`      | All standard rights                              |
+  # | `:ACCESS_SYSTEM_SECURITY:`   | Access its system access-control list            |
+  # | `:MAXIMUM_ALLOWED:`          | Request the maximum rights allowed to the caller |
+  # | `:GENERIC_READ:`             | Request object-specific read access              |
+  # | `:GENERIC_WRITE:`            | Request object-specific write access             |
+  # | `:GENERIC_EXECUTE:`          | Request object-specific execute access           |
+  # | `:GENERIC_ALL:`              | Request all object-specific access               |
+  #
+  pub def (init)
+    self
+    ...rights
+  do
+    throw nil
+  # `from_int value`
+  #
+  # Constructs a mask from a native integer while preserving unknown bits.
+  #
+  pub def from_int self value
+    throw nil
+  # `specific_rights`
+  #
+  # Returns the object-specific low 16 bits.
+  #
+  pub def specific_rights self
+    throw nil
+  # `standard_rights`
+  #
+  # Returns the standard-rights portion as an `AccessMask`.
+  #
+  pub def standard_rights self
+    throw nil
+  # `generic_rights`
+  #
+  # Returns the generic-rights portion as an `AccessMask`.
+  #
+  pub def generic_rights self
+    throw nil
+  # `int`
+  #
+  # Returns the native integer mask.
+  #
+  pub def int self
+    throw nil
+  # `contains right`
+  #
+  # Tests whether all bits represented by a symbol are set.
+  #
+  # #### Returns
+  #
+  # [`Bool`](std.Bool)
+  #
+  pub def contains self right
+    throw nil
+  # Combines masks with `|`.
+  pub def (bor) self other
+    throw nil
+  # Intersects masks with `&`.
+  pub def (band) self other
+    throw nil
+  # Computes the symmetric difference with `^`.
+  pub def (bxor) self other
+    throw nil
+  # Complements a mask within the supported bit set with `~`.
+  pub def (bnot) self
+    throw nil
+  pub def (eq) self other
+    throw nil
+  # Yields the symbols represented by a mask.
+  pub def (iter) self
+    throw nil
+
+# Flags stored in an ACE header.
+#
+pub class AceFlags
+  # `AceFlags ...flags`
+  #
+  # Constructs flags from symbols or one iterable of symbols.
+  #
+  # #### Supported symbols
+  #
+  # | Symbol                   | Meaning                                                 |
+  # | ------------------------ | ------------------------------------------------------- |
+  # | `:OBJECT_INHERIT:`       | Non-container child objects inherit the entry           |
+  # | `:CONTAINER_INHERIT:`    | Container child objects inherit the entry               |
+  # | `:NO_PROPAGATE_INHERIT:` | Inherited copies stop propagating after one generation  |
+  # | `:INHERIT_ONLY:`         | The entry applies only through inheritance              |
+  # | `:INHERITED:`            | The entry was inherited                                 |
+  # | `:CRITICAL:`             | The entry is critical and cannot be removed             |
+  # | `:SUCCESSFUL_ACCESS:`    | An audit or alarm entry selects successful access       |
+  # | `:FAILED_ACCESS:`        | An audit or alarm entry selects failed access           |
+  #
+  # The trust-protected-filter flag occupies the same bit as `:SUCCESSFUL_ACCESS:`
+  # and has no symbol of its own. Read it from an access-filter entry's
+  # [`trust_protected_filter`](security.windows.Ace.trust_protected_filter) field.
+  #
+  # The [`Ace`](security.windows.ace) constructor sets the
+  # outcome flags from its own `successful` and `failed` parameters and rejects
+  # them in `flags`.
+  #
+  pub def (init)
+    self
+    ...flags
+  do
+    throw nil
+  # `from_int value`
+  #
+  # Constructs flags from a native integer while preserving unknown bits.
+  #
+  pub def from_int self value
+    throw nil
+  # `int`
+  #
+  # Returns the native integer flags.
+  #
+  pub def int self
+    throw nil
+  # `contains flag`
+  #
+  # Tests whether all bits represented by a symbol are set.
+  #
+  # #### Returns
+  #
+  # [`Bool`](std.Bool)
+  #
+  pub def contains self flag
+    throw nil
+  # Combines flags with `|`.
+  pub def (bor) self other
+    throw nil
+  # Intersects flags with `&`.
+  pub def (band) self other
+    throw nil
+  # Computes the symmetric difference with `^`.
+  pub def (bxor) self other
+    throw nil
+  # Complements a value within the supported bit set with `~`.
+  pub def (bnot) self
+    throw nil
+  pub def (eq) self other
+    throw nil
+  # Yields the symbols represented by a value.
+  pub def (iter) self
+    throw nil
+
+# Security descriptor control flags.
+#
+pub class SecDescControl
+  # `SecDescControl ...flags`
+  #
+  # Constructs control flags from symbols or one iterable of symbols.
+  #
+  # #### Supported symbols
+  #
+  # | Symbol                         | Meaning                               |
+  # | ------------------------------ | ------------------------------------- |
+  # | `:OWNER_DEFAULTED:`            | Owner supplied by a default method    |
+  # | `:GROUP_DEFAULTED:`            | Group supplied by a default method    |
+  # | `:DACL_PRESENT:`               | DACL present                          |
+  # | `:DACL_DEFAULTED:`             | DACL supplied by a default method     |
+  # | `:SACL_PRESENT:`               | SACL present                          |
+  # | `:SACL_DEFAULTED:`             | SACL supplied by a default method     |
+  # | `:DACL_AUTO_INHERIT_REQUIRED:` | DACL requires inheritance processing  |
+  # | `:SACL_AUTO_INHERIT_REQUIRED:` | SACL requires inheritance processing  |
+  # | `:DACL_AUTO_INHERITED:`        | DACL was automatically inherited      |
+  # | `:SACL_AUTO_INHERITED:`        | SACL was automatically inherited      |
+  # | `:DACL_PROTECTED:`             | DACL blocks inheritable ACEs          |
+  # | `:SACL_PROTECTED:`             | SACL blocks inheritable ACEs          |
+  # | `:RM_CONTROL_VALID:`           | Resource-manager control byte valid   |
+  # | `:SELF_RELATIVE:`              | Descriptor uses self-relative storage |
+  #
+  pub def (init)
+    self
+    ...flags
+  do
+    throw nil
+  # `contains flag`
+  #
+  # Tests whether all bits represented by a symbol are set.
+  #
+  # #### Returns
+  #
+  # [`Bool`](std.Bool)
+  #
+  pub def contains self flag
+    throw nil
+  # Combines flags with `|`.
+  pub def (bor) self other
+    throw nil
+  # Intersects flags with `&`.
+  pub def (band) self other
+    throw nil
+  # Computes the symmetric difference with `^`.
+  pub def (bxor) self other
+    throw nil
+  # Complements flags within the supported bit set with `~`.
+  pub def (bnot) self
+    throw nil
+  pub def (eq) self other
+    throw nil
+  # Yields the symbols represented by the flags.
+  pub def (iter) self
+    throw nil
+
+# Security descriptor components loaded by a query.
+#
+pub class SecInfo
+  # `SecInfo ...components`
+  #
+  # Constructs flags from component symbols.
+  #
+  # | Symbol    | Component                    |
+  # | --------- | ---------------------------- |
+  # | `:OWNER:` | Owner SID                    |
+  # | `:GROUP:` | Primary group SID            |
+  # | `:DACL:`  | Discretionary ACL            |
+  # | `:SACL:`  | System ACL                   |
+  # | `:ALL:`   | All supported components     |
+  #
+  pub def (init)
+    self
+    ...components
+  do
+    throw nil
+  # `contains component`
+  #
+  # Tests whether a component is selected.
+  #
+  pub def contains self component
+    throw nil
+  # Combines values with `|`.
+  pub def (bor) self other
+    throw nil
+  # Intersects values with `&`.
+  pub def (band) self other
+    throw nil
+  # Computes the symmetric difference with `^`.
+  pub def (bxor) self other
+    throw nil
+  # Complements a value within the supported bit set with `~`.
+  pub def (bnot) self
+    throw nil
+  pub def (eq) self other
+    throw nil
+  # Yields selected symbols.
+  pub def (iter) self
+    throw nil
+
+# Windows access-token group attributes.
+#
+pub class TokenGroupAttributes
+  # `TokenGroupAttributes ...attributes`
+  #
+  # Constructs flags from attribute symbols.
+  #
+  # | Symbol                 | Attribute                              |
+  # | ---------------------- | -------------------------------------- |
+  # | `:MANDATORY:`          | Mandatory group                        |
+  # | `:ENABLED_BY_DEFAULT:` | Enabled by default                     |
+  # | `:ENABLED:`            | Enabled                                |
+  # | `:OWNER:`              | Eligible as an object owner            |
+  # | `:USE_FOR_DENY_ONLY:`  | Used only for deny checks              |
+  # | `:INTEGRITY:`          | Integrity SID                          |
+  # | `:INTEGRITY_ENABLED:`  | Integrity SID enabled                  |
+  # | `:RESOURCE:`           | Resource group                         |
+  # | `:LOGON_ID:`           | Logon-session identifier               |
+  #
+  pub def (init)
+    self
+    ...attributes
+  do
+    throw nil
+  # `contains attribute`
+  #
+  # Tests whether an attribute is set.
+  #
+  pub def contains self attribute
+    throw nil
+  # Combines values with `|`.
+  pub def (bor) self other
+    throw nil
+  # Intersects values with `&`.
+  pub def (band) self other
+    throw nil
+  # Computes the symmetric difference with `^`.
+  pub def (bxor) self other
+    throw nil
+  # Complements a value within the supported bit set with `~`.
+  pub def (bnot) self
+    throw nil
+  pub def (eq) self other
+    throw nil
+  # Yields selected symbols.
+  pub def (iter) self
+    throw nil
+
+# Windows security identifier.
+#
+pub class Sid
+  # `Sid value`
+  #
+  # Constructs a SID from its canonical string, its native binary
+  # representation, or a symbol naming a well-known SID.
+  #
+  # #### Parameters
+  #
+  # | Name    | Type                                                                            | Description        |
+  # | ------- | ------------------------------------------------------------------------------- | ------------------ |
+  # | `value` | [`Str`](std.Str)\|[`Bin`](std.Bin)\|[`Sym`](std.Sym) | SID representation |
+  #
+  # #### Errors
+  #
+  # Raises `ValueError` for a malformed representation, or for a symbol that is
+  # not one of the well-known SIDs below.
+  #
+  # ## Well-known SIDs
+  #
+  # These SIDs are identical on every Windows installation, so naming one takes
+  # no lookup. Any parameter that accepts a `Sid` accepts these symbols.
+  #
+  # SIDs that are relative to a domain or a machine — `Domain Admins`
+  # (`S-1-5-21-<domain>-512`), the local `Administrator` account — have no
+  # symbol: resolving one requires querying the system. The SDDL column is the
+  # two-letter alias the same SID has in an SDDL string, for readers porting one;
+  # those aliases are not accepted as symbols.
+  #
+  # | Symbol                                  | SID            | SDDL | Account or group                       |
+  # | --------------------------------------- | -------------- | ---- | -------------------------------------- |
+  # | `:NULL:`                                | `S-1-0-0`      |      | Null SID                               |
+  # | `:EVERYONE:`                            | `S-1-1-0`      | `WD` | Everyone                               |
+  # | `:LOCAL:`                               | `S-1-2-0`      |      | Local logon                            |
+  # | `:CONSOLE_LOGON:`                       | `S-1-2-1`      |      | Console logon                          |
+  # | `:CREATOR_OWNER:`                       | `S-1-3-0`      | `CO` | Creator owner                          |
+  # | `:CREATOR_GROUP:`                       | `S-1-3-1`      | `CG` | Creator group                          |
+  # | `:OWNER_RIGHTS:`                        | `S-1-3-4`      | `OW` | Owner rights                           |
+  # | `:DIALUP:`                              | `S-1-5-1`      |      | Dialup                                 |
+  # | `:NETWORK:`                             | `S-1-5-2`      | `NU` | Network logon                          |
+  # | `:BATCH:`                               | `S-1-5-3`      | `BU` | Batch logon                            |
+  # | `:INTERACTIVE:`                         | `S-1-5-4`      | `IU` | Interactive logon                      |
+  # | `:SERVICE:`                             | `S-1-5-6`      | `SU` | Service logon                          |
+  # | `:ANONYMOUS:`                           | `S-1-5-7`      | `AN` | Anonymous logon                        |
+  # | `:PRINCIPAL_SELF:`                      | `S-1-5-10`     | `PS` | Principal self                         |
+  # | `:AUTHENTICATED_USERS:`                 | `S-1-5-11`     | `AU` | Authenticated users                    |
+  # | `:RESTRICTED_CODE:`                     | `S-1-5-12`     | `RC` | Restricted code                        |
+  # | `:REMOTE_INTERACTIVE_LOGON:`            | `S-1-5-14`     |      | Remote interactive logon               |
+  # | `:THIS_ORGANIZATION:`                   | `S-1-5-15`     |      | This organization                      |
+  # | `:LOCAL_SYSTEM:`                        | `S-1-5-18`     | `SY` | Local system                           |
+  # | `:LOCAL_SERVICE:`                       | `S-1-5-19`     | `LS` | Local service                          |
+  # | `:NETWORK_SERVICE:`                     | `S-1-5-20`     | `NS` | Network service                        |
+  # | `:LOCAL_ACCOUNT:`                       | `S-1-5-113`    |      | Any local account                      |
+  # | `:LOCAL_ACCOUNT_ADMINISTRATOR:`         | `S-1-5-114`    |      | Local account in Administrators        |
+  # | `:BUILTIN_ADMINISTRATORS:`              | `S-1-5-32-544` | `BA` | BUILTIN\\Administrators                 |
+  # | `:BUILTIN_USERS:`                       | `S-1-5-32-545` | `BU` | BUILTIN\\Users                          |
+  # | `:BUILTIN_GUESTS:`                      | `S-1-5-32-546` | `BG` | BUILTIN\\Guests                         |
+  # | `:BUILTIN_POWER_USERS:`                 | `S-1-5-32-547` | `PU` | BUILTIN\\Power Users                    |
+  # | `:BUILTIN_BACKUP_OPERATORS:`            | `S-1-5-32-551` | `BO` | BUILTIN\\Backup Operators               |
+  # | `:BUILTIN_REMOTE_DESKTOP_USERS:`        | `S-1-5-32-555` | `RD` | BUILTIN\\Remote Desktop Users           |
+  # | `:BUILTIN_REMOTE_MANAGEMENT_USERS:`     | `S-1-5-32-580` | `RM` | BUILTIN\\Remote Management Users        |
+  # | `:ALL_APPLICATION_PACKAGES:`            | `S-1-15-2-1`   | `AC` | All application packages               |
+  # | `:ALL_RESTRICTED_APPLICATION_PACKAGES:` | `S-1-15-2-2`   |      | All restricted application packages    |
+  # | `:UNTRUSTED_LABEL:`                     | `S-1-16-0`     |      | Untrusted integrity level              |
+  # | `:LOW_LABEL:`                           | `S-1-16-4096`  | `LW` | Low integrity level                    |
+  # | `:MEDIUM_LABEL:`                        | `S-1-16-8192`  | `ME` | Medium integrity level                 |
+  # | `:MEDIUM_PLUS_LABEL:`                   | `S-1-16-8448`  | `MP` | Medium-plus integrity level            |
+  # | `:HIGH_LABEL:`                          | `S-1-16-12288` | `HI` | High integrity level                   |
+  # | `:SYSTEM_LABEL:`                        | `S-1-16-16384` | `SI` | System integrity level                 |
+  #
+  # ## Example
+  #
+  # ```
+  # let admins = Sid :BUILTIN_ADMINISTRATORS:
+  # echo $ str $admins
+  # ```
+  #
+  pub def (init) self value
+    throw nil
+  # `revision`
+  #
+  # SID revision number.
+  #
+  pub def revision self
+    throw nil
+  # `identifier_authority`
+  #
+  # The identifier authority as a symbol when it is well known, or its 48-bit
+  # integer value otherwise.
+  #
+  # | Symbol               | Authority           |
+  # | -------------------- | ------------------- |
+  # | `:NULL:`             | Null                |
+  # | `:WORLD:`            | World               |
+  # | `:LOCAL:`            | Local               |
+  # | `:CREATOR:`          | Creator             |
+  # | `:NON_UNIQUE:`       | Non-unique          |
+  # | `:NT:`               | NT                  |
+  # | `:RESOURCE_MANAGER:` | Resource manager    |
+  # | `:APP_PACKAGE:`      | Application package |
+  # | `:MANDATORY_LABEL:`  | Mandatory label     |
+  # | `:SCOPED_POLICY:`    | Scoped policy ID    |
+  # | `:AUTHENTICATION:`   | Authentication      |
+  # | `:PROCESS_TRUST:`    | Process trust       |
+  #
+  pub def identifier_authority self
+    throw nil
+  # `sub_authorities`
+  #
+  # Sub-authorities as an immutable [`Tuple`](std.Tuple).
+  #
+  pub def sub_authorities self
+    throw nil
+  # `sub_authority_count`
+  #
+  # Number of sub-authorities.
+  #
+  pub def sub_authority_count self
+    throw nil
+  # `lookup()`
+  #
+  # Resolves the SID in the active Windows VFS target.
+  #
+  # #### Returns
+  #
+  # [`SidName`](security.windows.SidName)
+  #
+  # #### Errors
+  #
+  # | Exception                                            | Condition                         |
+  # | ---------------------------------------------------- | --------------------------------- |
+  # | [`sys.NotFoundError`](sys.NotFoundError)  | The SID is unmapped               |
+  # | [`UnsupportedError`](std.UnsupportedError) | The active VFS target is Unix     |
+  #
+  pub def lookup self
+    throw nil
+  # `to_bin()`
+  #
+  # Returns the native Windows packet representation.
+  #
+  # #### Returns
+  #
+  # [`Bin`](std.Bin)
+  #
+  # #### Example
+  #
+  # ```
+  # let sid = Sid S-1-5-32-544
+  # echo $sid.identifier_authority
+  # let encoded = sid.to_bin()
+  # ```
+  pub def to_bin self
+    throw nil
+
+# Resolved Windows account identity.
+#
+pub class SidName
+  # `lookup value`
+  #
+  # Resolves an account name or SID in the active VFS target.
+  #
+  # A [`Str`](std.Str) is always an account name, never a SID in its
+  # canonical string form: a SID is given as a [`Sid`](security.windows.Sid), its native
+  # binary representation, or a symbol naming a
+  # [well-known SID](security.windows.Sid.(init)--well-known-sids).
+  #
+  # #### Parameters
+  #
+  # | Name    | Type                                                                                               | Description         |
+  # | ------- | -------------------------------------------------------------------------------------------------- | ------------------- |
+  # | `value` | [`Str`](std.Str)\|[`Sid`](security.windows.Sid)\|[`Bin`](std.Bin)\|[`Sym`](std.Sym) | Account name or SID |
+  #
+  # #### Returns
+  #
+  # `SidName`
+  #
+  # #### Errors
+  #
+  # | Exception                                            | Condition                     |
+  # | ---------------------------------------------------- | ----------------------------- |
+  # | [`sys.NotFoundError`](sys.NotFoundError)  | The identity is unmapped      |
+  # | [`UnsupportedError`](std.UnsupportedError) | The active VFS target is Unix |
+  #
+  pub def lookup self value
+    throw nil
+  # `domain`
+  #
+  # Account domain returned by Windows.
+  #
+  pub def domain self
+    throw nil
+  # `kind`
+  #
+  # Windows SID name-use classification as an uppercase symbol.
+  #
+  # For recognized values, see
+  # [SID name-use values](security.windows.sid-name-use-values).
+  #
+  # #### Example
+  #
+  # ```
+  # let account = SidName.lookup BUILTIN\Users
+  # echo "$account.qualified_name ($account.kind)"
+  # ```
+  #
+  pub def kind self
+    throw nil
+  # `name`
+  #
+  # Unqualified account name.
+  #
+  pub def name self
+    throw nil
+  # `qualified_name`
+  #
+  # The `domain\name` form, or `name` when the domain is empty.
+  #
+  pub def qualified_name self
+    throw nil
+  # `sid`
+  #
+  # Resolved [`Sid`](security.windows.Sid).
+  pub def sid self
+    throw nil
+
+# Immutable view of a native Windows access-control entry.
+#
+# The constructor takes the same fields as an [ACE spec](security.windows.ace-specs). An
+# entry can also be written directly as a spec wherever one is accepted, including
+# [`acl`](security.windows.acl) and the `dacl:` and `sacl:` options of
+# [`sec_desc`](security.windows.sec_desc).
+#
+pub class Ace
+  # `Ace :allow? :deny? :audit? :mask ...options`
+  #
+  # Constructs an access-allowed, access-denied, or system-audit ACE. Exactly one
+  # of `allow`, `deny`, or `audit` names the trustee.
+  #
+  # #### Parameters
+  #
+  # | Name                    | Type                                                        | Description                        |
+  # | ----------------------- | ----------------------------------------------------------- | ---------------------------------- |
+  # | `allow`                 | [`Sid`](security.windows.Sid)?                                          | Trustee for an access-allowed ACE  |
+  # | `deny`                  | [`Sid`](security.windows.Sid)?                                          | Trustee for an access-denied ACE   |
+  # | `audit`                 | [`Sid`](security.windows.Sid)?                                          | Trustee for a system-audit ACE     |
+  # | `mask`                  | [`AccessMask`](security.windows.AccessMask)                            | Access mask                        |
+  # | `flags`                 | [`AceFlags`](security.windows.AceFlags)?                               | ACE header flags                   |
+  # | `object_type`           | [`uuid.Guid`](uuid.Guid)?                          | Object type                        |
+  # | `inherited_object_type` | [`uuid.Guid`](uuid.Guid)?                          | Inherited object type              |
+  # | `callback`              | [`Bool`](std.Bool)?                                | Build a callback ACE               |
+  # | `application_data`      | [`Bin`](std.Bin)?                                  | Trailing application data          |
+  # | `successful`            | [`Bool`](std.Bool)?                                | Audit successful access            |
+  # | `failed`                | [`Bool`](std.Bool)?                                | Audit failed access                |
+  #
+  # #### Returns
+  #
+  # `Ace`
+  #
+  # The constructor is strict: trustees must already be `Sid` values, `mask` must
+  # be an `AccessMask`, `flags` must be `AceFlags`, and object types must be
+  # `uuid.Guid` values. Use the lowercase
+  # [`ace`](security.windows.ace) coercion function for
+  # declarative values such as SID strings and symbolic flags.
+  # Application data is zero-padded to DWORD (32-bit) alignment.
+  #
+  # #### Errors
+  #
+  # | Exception    | Condition                                                                |
+  # | ------------ | ------------------------------------------------------------------------ |
+  # | `ValueError` | Zero or multiple trustee arguments are present                           |
+  # | `ValueError` | An audit has no outcome, both outcomes are false, or flags name outcomes |
+  # | `ValueError` | `successful` or `failed` is supplied for an allow or deny ACE            |
+  #
+  # #### Example
+  #
+  # ```
+  # let entry = Ace
+  #   allow: (Sid :EVERYONE:)
+  #   mask: (AccessMask :GENERIC_READ:)
+  # ```
+  #
+  pub def (init)
+    self
+    :allow = nil
+    :deny = nil
+    :audit = nil
+    :mask
+    ...options
+  do
+    throw nil
+  # `application_data`
+  #
+  # Exact bytes after the projected SID. The value can be empty.
+  #
+  # Raises `FieldError` when the ACE body is not interpreted.
+  #
+  pub def application_data self
+    throw nil
+  # `container_inherit`
+  #
+  # Whether container child objects inherit this ACE.
+  #
+  pub def container_inherit self
+    throw nil
+  # `critical`
+  #
+  # Whether the native critical flag is set.
+  #
+  pub def critical self
+    throw nil
+  # `failed_access`
+  #
+  # Whether an audit or alarm ACE selects failed access.
+  #
+  # Raises `FieldError` for other ACE types.
+  #
+  pub def failed_access self
+    throw nil
+  # `flags`
+  #
+  # [`AceFlags`](security.windows.AceFlags) from the ACE header.
+  #
+  pub def flags self
+    throw nil
+  # `inherit_only`
+  #
+  # Whether this ACE applies only through inheritance.
+  #
+  pub def inherit_only self
+    throw nil
+  # `inherited`
+  #
+  # Whether this ACE was inherited.
+  #
+  pub def inherited self
+    throw nil
+  # `inherited_object_type`
+  #
+  # Inherited-object-type [`uuid.Guid`](uuid.Guid), or `nil`
+  # when the object flag is clear.
+  #
+  # Raises `FieldError` for a non-object ACE.
+  #
+  pub def inherited_object_type self
+    throw nil
+  # `mask`
+  #
+  # [`AccessMask`](security.windows.AccessMask).
+  #
+  # Raises `FieldError` for an ACE layout without a projected mask.
+  #
+  pub def mask self
+    throw nil
+  # `no_propagate_inherit`
+  #
+  # Whether inherited copies stop propagating after one generation.
+  #
+  pub def no_propagate_inherit self
+    throw nil
+  # `object_flags`
+  #
+  # Native object ACE flags.
+  #
+  # Raises `FieldError` for a non-object ACE.
+  #
+  pub def object_flags self
+    throw nil
+  # `object_inherit`
+  #
+  # Whether non-container child objects inherit this ACE.
+  #
+  pub def object_inherit self
+    throw nil
+  # `object_type`
+  #
+  # Object-type [`uuid.Guid`](uuid.Guid), or `nil` when the
+  # object flag is clear.
+  #
+  # Raises `FieldError` for a non-object ACE.
+  #
+  pub def object_type self
+    throw nil
+  # `sid`
+  #
+  # Trustee [`Sid`](security.windows.Sid).
+  #
+  # Raises `FieldError` for an ACE layout without a projected SID.
+  #
+  pub def sid self
+    throw nil
+  # `size`
+  #
+  # Declared ACE packet size.
+  #
+  pub def size self
+    throw nil
+  # `successful_access`
+  #
+  # Whether an audit or alarm ACE selects successful access.
+  #
+  # Raises `FieldError` for other ACE types.
+  #
+  pub def successful_access self
+    throw nil
+  # `trust_protected_filter`
+  #
+  # Whether an access-filter ACE has the trust-protected flag.
+  #
+  # Raises `FieldError` for other ACE types.
+  #
+  pub def trust_protected_filter self
+    throw nil
+  # `type`
+  #
+  # Symbolic native ACE type, or `:UNKNOWN:` for an unrecognized type code.
+  #
+  # For recognized values, see [ACE type values](security.windows.ace-type-values).
+  #
+  pub def type self
+    throw nil
+  # `type_code`
+  #
+  # Native numeric ACE type code.
+  #
+  pub def type_code self
+    throw nil
+  # `to_bin()`
+  #
+  # Returns the exact native ACE packet, including application or unknown data.
+  #
+  # #### Returns
+  #
+  # [`Bin`](std.Bin)
+  pub def to_bin self
+    throw nil
+
+# Immutable view of a native Windows access-control list.
+#
+# A list can also be written as an [ACL spec](security.windows.acl-specs) wherever one
+# is accepted, including the `dacl:` and `sacl:` options of
+# [`sec_desc`](security.windows.sec_desc). The constructor below stays
+# strict: its entries must already be [`Ace`](security.windows.Ace) values.
+#
+pub class Acl
+  # `Acl aces :revision = nil`
+  #
+  # Constructs an ACL from an iterable of [`Ace`](security.windows.Ace) values.
+  #
+  # #### Parameters
+  #
+  # | Name       | Type                                                  | Description                               |
+  # | ---------- | ----------------------------------------------------- | ----------------------------------------- |
+  # | `aces`     | iterable                                              | Entries in packet order                   |
+  # | `revision` | [`Sym`](std.Sym)\|[`Int`](std.Int)? | `:BASIC:`, `:DIRECTORY_SERVICE:`, 2, or 4 |
+  #
+  # Revision 4 is selected when an object ACE is present; otherwise revision 2 is
+  # selected. Supplying revision 2 with an object ACE raises `ValueError`.
+  #
+  pub def (init)
+    self
+    aces
+    :revision = nil
+  do
+    throw nil
+  # `aces`
+  #
+  # Immutable array-like view of [`Ace`](security.windows.Ace) values. Use `.len` for the
+  # entry count.
+  #
+  pub def aces self
+    throw nil
+  # `revision`
+  #
+  # `:BASIC:` or `:DIRECTORY_SERVICE:` for supported revisions, or the native
+  # integer for an unknown parsed revision.
+  #
+  pub def revision self
+    throw nil
+  # `size`
+  #
+  # Declared ACL packet size.
+  #
+  pub def size self
+    throw nil
+  # `to_bin()`
+  #
+  # Returns the exact native ACL packet.
+  #
+  # #### Returns
+  #
+  # [`Bin`](std.Bin)
+  pub def to_bin self
+    throw nil
+
+# Windows security descriptor.
+#
+# A descriptor can also be written as a [descriptor
+# spec](security.windows.descriptor-specs) wherever one is accepted, including
+# [`sec_desc`](security.windows.sec_desc) and every `update_sec_desc`
+# method. The constructor and [`with`](#with-options) below stay strict: `dacl`
+# and `sacl` must already be [`Acl`](security.windows.Acl) values, `owner` and `group`
+# [`Sid`](security.windows.Sid) values.
+#
+pub class SecDesc
+  # `SecDesc ...options`
+  #
+  # Constructs a security descriptor from components and control fields.
+  #
+  # `SecDesc value`
+  #
+  # Parses a self-relative security descriptor.
+  #
+  # #### Parameters
+  #
+  # | Name    | Type                      | Description                 |
+  # | ------- | ------------------------- | --------------------------- |
+  # | `value` | [`Bin`](std.Bin) | Native self-relative packet |
+  #
+  # #### Errors
+  #
+  # - Raises `ValueError` when the packet is malformed or is not self-relative.
+  #
+  # ## Component options
+  #
+  # The constructor and [`with`](#with-options) accept these options:
+  #
+  # | Name                         | Type                             | Description                   |
+  # | ---------------------------- | -------------------------------- | ----------------------------- |
+  # | `owner`                      | [`Sid`](security.windows.Sid)\|`nil`         | Owner, or loaded absent owner |
+  # | `group`                      | [`Sid`](security.windows.Sid)\|`nil`         | Group, or loaded absent group |
+  # | `dacl`                       | [`Acl`](security.windows.Acl)\|`nil`         | DACL, or present null DACL    |
+  # | `sacl`                       | [`Acl`](security.windows.Acl)\|`nil`         | SACL, or present null SACL    |
+  # | `owner_defaulted`            | [`Bool`](std.Bool)      | Owner defaulted flag          |
+  # | `group_defaulted`            | [`Bool`](std.Bool)      | Group defaulted flag          |
+  # | `dacl_present`               | [`Bool`](std.Bool)      | DACL presence                 |
+  # | `dacl_defaulted`             | [`Bool`](std.Bool)      | DACL defaulted flag           |
+  # | `dacl_auto_inherit_required` | [`Bool`](std.Bool)      | DACL inheritance request      |
+  # | `dacl_auto_inherited`        | [`Bool`](std.Bool)      | DACL inherited flag           |
+  # | `dacl_protected`             | [`Bool`](std.Bool)      | DACL protection               |
+  # | `sacl_present`               | [`Bool`](std.Bool)      | SACL presence                 |
+  # | `sacl_defaulted`             | [`Bool`](std.Bool)      | SACL defaulted flag           |
+  # | `sacl_auto_inherit_required` | [`Bool`](std.Bool)      | SACL inheritance request      |
+  # | `sacl_auto_inherited`        | [`Bool`](std.Bool)      | SACL inherited flag           |
+  # | `sacl_protected`             | [`Bool`](std.Bool)      | SACL protection               |
+  # | `rm_control`                 | [`Int`](std.Int)\|`nil` | RM control byte, or clear it  |
+  #
+  # Specifying ACL presence as `false` when using [`with`](#with-options)
+  # clears that field. Specifying `true` for control flags requires the
+  # corresponding field to be present or supplied.
+  #
+  pub def (init)
+    self
+    ...options
+  do
+    throw nil
+  # `control`
+  #
+  # [`SecDescControl`](security.windows.SecDescControl) flags, excluding the self-relative
+  # storage flag.
+  #
+  pub def control self
+    throw nil
+  # `dacl`
+  #
+  # Discretionary [`Acl`](security.windows.Acl), or `nil` for a present null ACL.
+  #
+  # Raises `FieldError` when the DACL was not loaded or is not present.
+  #
+  pub def dacl self
+    throw nil
+  # `dacl_auto_inherit_required`
+  #
+  # Whether DACL inheritance computation was requested.
+  #
+  pub def dacl_auto_inherit_required self
+    throw nil
+  # `dacl_auto_inherited`
+  #
+  # Whether the DACL was produced through inheritance.
+  #
+  pub def dacl_auto_inherited self
+    throw nil
+  # `dacl_defaulted`
+  #
+  # Whether the DACL was supplied by a default mechanism.
+  #
+  pub def dacl_defaulted self
+    throw nil
+  # `dacl_present`
+  #
+  # Whether the DACL is present. A present ACL can be null.
+  #
+  pub def dacl_present self
+    throw nil
+  # `dacl_protected`
+  #
+  # Whether the DACL is protected from inheritance.
+  #
+  pub def dacl_protected self
+    throw nil
+  # `group`
+  #
+  # Primary group [`Sid`](security.windows.Sid).
+  #
+  # Raises `FieldError` when the group was not loaded or is absent.
+  #
+  pub def group self
+    throw nil
+  # `group_defaulted`
+  #
+  # Whether the group was supplied by a default mechanism.
+  #
+  pub def group_defaulted self
+    throw nil
+  # `mask`
+  #
+  # [`SecInfo`](security.windows.SecInfo) flags recording which fields are present.
+  #
+  # Descriptors parsed from a self-relative packet have owner, group, DACL, and
+  # SACL marked as loaded because the native packet does not carry a separate
+  # mask. Descriptors derived from an object or file on Windows may have partial
+  # information depending on what was queried.
+  #
+  pub def mask self
+    throw nil
+  # `owner`
+  #
+  # Owner [`Sid`](security.windows.Sid).
+  #
+  # Raises `FieldError` when the owner was not loaded or is absent.
+  #
+  pub def owner self
+    throw nil
+  # `owner_defaulted`
+  #
+  # Whether the owner was supplied by a default mechanism.
+  #
+  pub def owner_defaulted self
+    throw nil
+  # `revision`
+  #
+  # Security descriptor revision.
+  #
+  pub def revision self
+    throw nil
+  # `rm_control`
+  #
+  # Resource-manager-defined control byte.
+  #
+  # Raises `FieldError` when `rm_control_valid` is false.
+  #
+  pub def rm_control self
+    throw nil
+  # `rm_control_valid`
+  #
+  # Whether the resource-manager control byte is valid.
+  #
+  pub def rm_control_valid self
+    throw nil
+  # `sacl`
+  #
+  # System [`Acl`](security.windows.Acl), or `nil` for a present null ACL.
+  #
+  # Raises `FieldError` when the SACL was not loaded or is not present.
+  #
+  pub def sacl self
+    throw nil
+  # `sacl_auto_inherit_required`
+  #
+  # Whether SACL inheritance computation was requested.
+  #
+  pub def sacl_auto_inherit_required self
+    throw nil
+  # `sacl_auto_inherited`
+  #
+  # Whether the SACL was produced through inheritance.
+  #
+  pub def sacl_auto_inherited self
+    throw nil
+  # `sacl_defaulted`
+  #
+  # Whether the SACL was supplied by a default mechanism.
+  #
+  pub def sacl_defaulted self
+    throw nil
+  # `sacl_present`
+  #
+  # Whether the SACL is present. A present ACL can be null.
+  #
+  pub def sacl_present self
+    throw nil
+  # `sacl_protected`
+  #
+  # Whether the SACL is protected from inheritance.
+  #
+  # ACL-related fields raise `FieldError` when the corresponding ACL was not
+  # loaded.
+  #
+  pub def sacl_protected self
+    throw nil
+  # `to_bin()`
+  #
+  # Returns a canonical self-relative security descriptor packet.
+  #
+  # #### Returns
+  #
+  # [`Bin`](std.Bin)
+  #
+  pub def to_bin self
+    throw nil
+  # `with ...options`
+  #
+  # Returns a descriptor with selected components or control fields replaced.
+  #
+  # #### Returns
+  #
+  # `SecDesc`
+  pub def with
+    self
+    ...options
+  do
+    throw nil
+
+# Windows access token group membership.
+#
+pub class TokenGroup
+  # `attributes`
+  #
+  # [`TokenGroupAttributes`](security.windows.TokenGroupAttributes).
+  #
+  pub def attributes self
+    throw nil
+  # `enabled`
+  #
+  # Whether the group is enabled.
+  #
+  pub def enabled self
+    throw nil
+  # `enabled_by_default`
+  #
+  # Whether the group is enabled by default.
+  #
+  pub def enabled_by_default self
+    throw nil
+  # `integrity`
+  #
+  # Whether the SID is an integrity SID.
+  #
+  pub def integrity self
+    throw nil
+  # `integrity_enabled`
+  #
+  # Whether the integrity SID is enabled.
+  #
+  pub def integrity_enabled self
+    throw nil
+  # `logon_id`
+  #
+  # Whether the group identifies the token's logon session.
+  #
+  pub def logon_id self
+    throw nil
+  # `mandatory`
+  #
+  # Whether the group is mandatory.
+  #
+  pub def mandatory self
+    throw nil
+  # `owner`
+  #
+  # Whether the group can be assigned as an object owner.
+  #
+  pub def owner self
+    throw nil
+  # `resource`
+  #
+  # Whether the group is a resource group.
+  #
+  pub def resource self
+    throw nil
+  # `sid`
+  #
+  # Group [`Sid`](security.windows.Sid).
+  #
+  pub def sid self
+    throw nil
+  # `use_for_deny_only`
+  #
+  # Whether the group is used only for deny access checks.
+  pub def use_for_deny_only self
+    throw nil
+
+# Windows access token information.
+#
+pub class TokenInfo
+  # `groups`
+  #
+  # A lazy array-like view of the token's [`TokenGroup`](security.windows.TokenGroup) objects.
+  #
+  pub def groups self
+    throw nil
+  # `is_elevated`
+  #
+  # Whether the token is elevated.
+  #
+  pub def is_elevated self
+    throw nil
+  # `logon_sid`
+  #
+  # The group SID marked as the token's logon SID, or `nil` if none is present.
+  #
+  pub def logon_sid self
+    throw nil
+  # `owner_sid`
+  #
+  # Default owner SID for objects created by the token.
+  #
+  pub def owner_sid self
+    throw nil
+  # `primary_group_sid`
+  #
+  # Primary group SID for objects created by the token.
+  #
+  pub def primary_group_sid self
+    throw nil
+  # `user_sid`
+  #
+  # SID of the token's user.
+  pub def user_sid self
+    throw nil
+
+# `ace :allow? :deny? :audit? :mask ...options`
+#
+# Constructs an [`Ace`](security.windows.Ace). This function will implicitly coerce
+# arguments that the type constructor would not accept.
+#
+# #### Parameters
+#
+# See [ACE specs](#ace-specs) for the accepted arguments.
+#
+# #### Returns
+#
+# [`Ace`](security.windows.Ace)
+#
+# #### Example
+#
+# ```
+# let entry = ace
+#   deny: :EVERYONE:
+#   mask: :GENERIC_WRITE:
+# ```
+#
+pub def ace
+  :allow = nil
+  :deny = nil
+  :audit = nil
+  :mask
+  ...options
+do
+  throw nil
+
+# `acl ...aces :revision?`
+#
+# Constructs an [`Acl`](security.windows.Acl). This funtion will implicitly coerce
+# arguments that the type constructor would not accept.
+#
+# #### Parameters
+#
+# | Name       | Type                              | Description                          |
+# | ---------- | --------------------------------- | ------------------------------------ |
+# | `aces`     | *                                 | ACE values or specs, in packet order |
+# | `revision` | `:BASIC:`\|`:DIRECTORY_SERVICE:`? | Native ACL revision                  |
+#
+# #### Returns
+#
+# [`Acl`](security.windows.Acl)
+#
+# #### Example
+#
+# ```
+# let dacl = acl
+#   - allow: :LOCAL_SYSTEM:
+#     mask: :GENERIC_ALL:
+#   - allow: :BUILTIN_ADMINISTRATORS:
+#     mask: :GENERIC_ALL:
+# ```
+#
+pub def acl
+  :revision = nil
+  ...aces
+do
+  throw nil
+
+# `sec_desc desc? ...options`
+#
+# Constructs a [`SecDesc`](security.windows.SecDesc). This function will implicitly coerce
+# arguments that the type constructor would not accept.
+#
+# #### Parameters
+#
+# | Name   | Type                                                                               | Description                 |
+# | ------ | ---------------------------------------------------------------------------------- | --------------------------- |
+# | `desc` | [`SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict)? | Descriptor, packet, or spec |
+#
+# The [component options](security.windows.SecDesc.(init)--component-options) may be passed as
+# keyword arguments instead of, or alongside, `desc`. Given both, they amend
+# `desc` the way [`with`](security.windows.SecDesc.with) does.
+#
+# #### Returns
+#
+# [`SecDesc`](security.windows.SecDesc)
+#
+# #### Errors
+#
+# Raises `ValueError` when neither a descriptor nor any component option is
+# given.
+#
+# #### Example
+#
+# ```
+# let descriptor = sec_desc
+#   owner: :BUILTIN_ADMINISTRATORS:
+#   dacl_protected: true
+#   dacl:
+#     - allow: :LOCAL_SYSTEM:
+#       mask: :GENERIC_ALL:
+#
+# let unprotected = sec_desc $descriptor dacl_protected: false
+# ```
+#
+pub def sec_desc
+  desc = nil
+  ...options
+do
+  throw nil
+
+# `token_info()`
+#
+# Returns Windows token information captured for the active VFS context.
+#
+# #### Returns
+#
+# [`TokenInfo`](security.windows.TokenInfo)
+#
+# #### Errors
+#
+# - Raises `UnsupportedError` when the active VFS target is Unix.
+#
+# #### Example
+#
+# ```
+# if token_info().is_elevated
+#   echo elevated
+# ```
+pub def token_info()
+  throw nil

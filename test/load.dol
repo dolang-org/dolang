@@ -1,6 +1,7 @@
 import compile load
   test:
     - assert_eq
+    - assert_type
     - assert_throws
     - test
   std:
@@ -16,6 +17,8 @@ def synthetic_module()
       record answer: 42
     else
       throw ImportError(name)
+
+  assert_type $load.ImportHandler $handle
 
   import synthetic_basic: synthetic
 

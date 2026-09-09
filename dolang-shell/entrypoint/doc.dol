@@ -68,6 +68,7 @@ class Document
   field root module_doc
   field getter class_target static_target
   field children members entities
+  field diagnostics failed
 
   def (init) self path src module all
     self.#path = path
@@ -76,6 +77,13 @@ class Document
     self.#all = all
 
     let unit = compile.compile $path $src recover: true document: true
+    # Recovery is what lets a file be described at all while it is being
+    # written, but it also means a file that failed to parse yields a document
+    # missing whatever the compiler could not read -- so what it reported has
+    # to travel with the description rather than being dropped here.
+    let diagnostics = [...unit.diagnostics()]
+    self.#diagnostics = diagnostics
+    self.#failed = diagnostics.any do |diag| (diag.severity == :ERROR:)
     let id root = unit.nodes().find do |pair| type $pair[1] $compile.Root
     self.#root = id
     self.#module_doc = self.#doc(root)
@@ -89,6 +97,14 @@ class Document
     self.#members = {}
     self.#entities = []
     self.#walk $unit
+
+  # The diagnostics the compiler reported, in source order.
+  pub def diagnostics self
+    self.#diagnostics
+
+  # Whether the source failed to compile, leaving the description incomplete.
+  pub def failed self
+    self.#failed
 
   # The whole document, in the shape the handler consumes.
   pub def result self
@@ -122,11 +138,15 @@ class Document
   #
   # Which comments document a declaration is the compiler's determination; the
   # span it reports covers the block as written, so all that is left here is to
-  # undo the markers and indentation it was written with.
+  # undo the markers and indentation it was written with. A blank leading or
+  # trailing `#` line (common, since a doc block often opens with one before
+  # the first line of prose) would otherwise leave stray leading/trailing
+  # newlines in the joined text, so every consumer of this JSON would need to
+  # trim it defensively before checking for a leading marker like `(Type)`.
   def doc self node
     if (node.doc == nil)
       return ""
-    "\n".join $ self.#text(node.doc).split("\n").map(doc_line)
+    ("\n".join $ self.#text(node.doc).split("\n").map(doc_line)).trim()
 
   # The nodes belonging to one declaration.
   def own self id
@@ -263,6 +283,7 @@ class Document
         pub: $is_pub
         span: (span_json(node.name))
         doc: (self.#doc(node))
+        scope: (self.#scope(id))
       else
         kind: "method"
         name: (self.#text(node.name))
@@ -270,6 +291,7 @@ class Document
         special: $special
         span: (span_json(node.name))
         doc: (self.#doc(node))
+        scope: (self.#scope(id))
         params: (self.#params(id))
 
 args.with
@@ -289,6 +311,16 @@ args.with
     else
       Path(path).read()
     let document = Document (path || "<stdin>") $source $module $all
+    # A description built from a file that did not compile is missing whatever
+    # the compiler could not read, and nothing downstream can tell that from a
+    # file that simply declares less -- so it is not written at all. Warnings
+    # alone are reported only alongside such a failure: a stub declares
+    # signatures whose bodies never use them, so on its own every stub is a
+    # page of unused-parameter warnings that would bury anything worth reading.
+    if document.failed()
+      for diag = document.diagnostics()
+        echo $diag.render()
+      shell.exit 1
     # The document goes to the output stream, where a caller reading the tool's
     # stdout will find it; `echo` addresses the console, which is stderr.
     put "$(json.encode(document.result(), indent: 2))\n"

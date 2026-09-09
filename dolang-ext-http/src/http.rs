@@ -1566,6 +1566,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .value("Client", global.types.client)
         .value("Error", global.types.error)
         .value("Event", global.types.event)
+        .value("Response", global.types.response)
         .value("Status", global.types.status);
 
     for method in global.http_methods.values() {

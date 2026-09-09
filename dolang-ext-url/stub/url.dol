@@ -1,0 +1,188 @@
+# URL parsing and construction utilities.
+
+# Structured URL value with parsed access to components and decoded path/query
+# iteration.
+pub class Url
+  # Parses a URL string or copies an existing `Url`.
+  #
+  # ## Errors
+  #
+  # `ValueError` if the string is not a valid URL.
+  #
+  # ## Example
+  #
+  # ```
+  # let base = Url "https://example.com/api"
+  # let copy = Url $base
+  # ```
+  pub def (init)
+    self
+    # ([`Str`](std.Str)\|[`Url`](url.Url)) URL to parse or copy.
+    value
+  do
+    throw nil
+
+  # The decoded fragment string, or `nil` if absent.
+  #[getter]
+  pub def fragment self
+    throw nil
+
+  # The host string, or `nil` if the URL has no host.
+  #[getter]
+  pub def host self
+    throw nil
+
+  # The decoded last path component, or `nil` if there is no filename.
+  #
+  # This returns `nil` for URLs whose path is empty or ends with `/`.
+  #[getter]
+  pub def name self
+    throw nil
+
+  # The decoded password, or `nil` if not present.
+  #[getter]
+  pub def password self
+    throw nil
+
+  # The serialized path component.
+  #
+  # This preserves percent-encoding. Use [`segments`](url.Url.segments) for decoded
+  # path segments.
+  #[getter]
+  pub def path self
+    throw nil
+
+  # The explicit port number, or `nil` if not present.
+  #[getter]
+  pub def port self
+    throw nil
+
+  # Immutable dictionary-like view of decoded query pairs.
+  #
+  # Duplicate keys and original ordering are preserved.
+  #
+  # ## Returns
+  #
+  # Iterator of `(Str, Str)` tuples.
+  #
+  # ## Example
+  #
+  # ```
+  # let url = Url "https://example.com?q=a+b&q=c"
+  # let pairs = [...url.query]
+  # assert_eq $pairs[0][0] "q"
+  # assert_eq $pairs[0][1] "a b"
+  # assert_eq $pairs[1][1] "c"
+  # ```
+  #[getter]
+  pub def query self
+    throw nil
+
+  # The raw query string without the leading `?`, or `nil` if absent.
+  #[getter]
+  pub def query_raw self
+    throw nil
+
+  # The URL scheme, such as `"https"` or `"file"`.
+  #[getter]
+  pub def scheme self
+    throw nil
+
+  # Immutable array-like view of decoded path segments.
+  #
+  # ## Returns
+  #
+  # Iterator of [`Str`](std.Str) values.
+  #
+  # ## Example
+  #
+  # ```
+  # let url = Url "https://example.com/a%20b/c"
+  # assert_eq [...url.segments] ["a b", "c"]
+  # ```
+  #[getter]
+  pub def segments self
+    throw nil
+
+  # The decoded username, or `nil` if not present.
+  #[getter]
+  pub def username self
+    throw nil
+
+  # Returns a new `Url` with its fragment replaced.
+  #
+  # Pass `nil` to remove the fragment.
+  #
+  # ## Returns
+  #
+  # `Url`
+  pub def with_fragment
+    self
+    # ([`Str`](std.Str)\|`nil`) Fragment string or `nil`.
+    fragment
+  do
+    throw nil
+
+  # Returns a new `Url` with its query rebuilt from decoded key/value pairs.
+  #
+  # ## Returns
+  #
+  # `Url`
+  #
+  # ## Example
+  #
+  # ```
+  # let url = (Url "https://example.com").with_query [
+  #   ["q", "a b"]
+  #   ["tag", "x/y"]
+  # ]
+  # assert_eq $url.query_raw "q=a+b&tag=x%2Fy"
+  # ```
+  pub def with_query
+    self
+    # Iterable of decoded key/value pairs.
+    pairs
+  do
+    throw nil
+
+  # Returns a new `Url` with its raw query replaced.
+  #
+  # Pass `nil` to remove the query.
+  #
+  # ## Returns
+  #
+  # `Url`
+  pub def with_query_raw
+    self
+    # ([`Str`](std.Str)\|`nil`) Raw query string or `nil`.
+    query
+  do
+    throw nil
+
+  # Compares two URLs by their parsed values.
+  pub def (eq) self other
+    throw nil
+
+  # Appends a decoded path segment and returns a new `Url`.
+  #
+  # The segment is percent-encoded as needed. A value starting with `/` is an
+  # absolute path, with optional query and fragment, relative to this URL's
+  # scheme and authority.
+  #
+  # ## Example
+  #
+  # ```
+  # let base = Url "https://example.com"
+  # let child = (base / "a b" / "c/d")
+  # assert_eq $child.path "/a%20b/c%2Fd"
+  # ```
+  pub def (div)
+    self
+    # ([`Str`](std.Str)) Path segment or absolute path.
+    other
+  do
+    throw nil
+
+  # Returns the canonical serialized URL.
+  pub def (str) self
+    throw nil

@@ -1,0 +1,357 @@
+# Streams TAR archives with optional gzip or zstd compression.
+
+import std:
+  - Iter
+  - Sink
+
+# Metadata and streaming content for the current TAR entry.
+#
+# The handle remains valid only until its parent [`Reader`](tar.Reader)
+# advances or leaves scope. Iterating an entry yields arbitrary-sized
+# [`Bin`](std.Bin) chunks until the content is exhausted.
+#
+# ## Example
+#
+# ```
+# for chunk = entry
+#   output.put $chunk
+# ```
+pub class Entry: Iter
+  # Device major number, or `nil` when absent.
+  #[getter]
+  pub def device_major self
+    throw nil
+
+  # Device minor number, or `nil` when absent.
+  #[getter]
+  pub def device_minor self
+    throw nil
+
+  # Numeric group ID.
+  #[getter]
+  pub def gid self
+    throw nil
+
+  # Group name, or `nil` when absent.
+  #[getter]
+  pub def group_name self
+    throw nil
+
+  # Link target as an [`fs.unix.Path`](fs.unix.Path), or `nil` when
+  # absent.
+  #[getter]
+  pub def link_name self
+    throw nil
+
+  # Unix permission bits.
+  #[getter]
+  pub def mode self
+    throw nil
+
+  # Modification time as [`DateTime`](time.DateTime).
+  #[getter]
+  pub def mtime self
+    throw nil
+
+  # Owner name, or `nil` when absent.
+  #[getter]
+  pub def owner_name self
+    throw nil
+
+  # Entry path as an [`fs.unix.Path`](fs.unix.Path).
+  #[getter]
+  pub def path self
+    throw nil
+
+  # Declared content size in bytes.
+  #[getter]
+  pub def size self
+    throw nil
+
+  # Entry type as `:FILE:`, `:DIR:`, `:HARDLINK:`, `:SYMLINK:`, `:FIFO:`,
+  # `:CHAR_DEVICE:`, `:BLOCK_DEVICE:`, `:CONTIGUOUS:`, or `:UNKNOWN:`.
+  #[getter]
+  pub def type self
+    throw nil
+
+  # Numeric owner ID.
+  #[getter]
+  pub def uid self
+    throw nil
+
+  # Reads up to `size` bytes from the current content position.
+  #
+  # ## Returns
+  #
+  # [`Bin`](std.Bin).
+  #
+  # ## Example
+  #
+  # ```
+  # let prefix = entry.read 512
+  # ```
+  pub def read
+    self
+    # ([`Int`](std.Int)) Maximum bytes to read.
+    size
+  do
+    throw nil
+
+  # Yields the next content chunk, ending iteration once the entry is
+  # exhausted.
+  pub def (next) self
+    throw nil
+
+# Content sink for one scoped TAR entry.
+#
+# Subtype of [`Sink`](std.Sink). Putting a [`Str`](std.Str) or
+# [`Bin`](std.Bin) value appends its bytes without adding separators.
+#
+# ## Example
+#
+# ```
+# entry.put "first"
+# entry.put b"second"
+# ```
+pub class EntryWriter: Sink
+  # Writes raw string or binary bytes.
+  #
+  # ## Example
+  #
+  # ```
+  # entry.write header
+  # entry.write b"\x00\x01"
+  # ```
+  pub def write
+    self
+    # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Bytes to write.
+    data
+  do
+    throw nil
+
+# Destructive iterator over the entries in an open TAR archive.
+#
+# Advancing the reader drains unread data from the current entry and
+# invalidates its [`Entry`](tar.Entry) handle. Iteration yields entries in
+# archive order.
+#
+# ## Example
+#
+# ```
+# read "archive.tar" do |archive|
+#   for entry = archive
+#     echo $entry.path
+# ```
+pub class Reader: Iter
+  # Detected compression as `:NONE:`, `:GZIP:`, or `:ZSTD:`.
+  #[getter]
+  pub def compression self
+    throw nil
+
+  # Yields the next [`Entry`](tar.Entry), ending iteration at the end of the
+  # archive.
+  pub def (next) self
+    throw nil
+
+# Sequential writer for a new TAR archive.
+pub class Writer
+  # Selected compression as `:NONE:`, `:GZIP:`, or `:ZSTD:`.
+  #[getter]
+  pub def compression self
+    throw nil
+
+  # Creates a directory entry.
+  #
+  # ## Example
+  #
+  # ```
+  # archive.create_dir "subdir" mode: 0o755
+  # ```
+  pub def create_dir
+    self
+    # ([`Str`](std.Str)\|[`fs.unix.Path`](fs.unix.Path)) Entry
+    # path.
+    path
+    # ([`Int`](std.Int)?) Permission bits. Defaults to `0o755`.
+    :mode = nil
+    # ([`Int`](std.Int)?) Owner ID. Defaults to `0`.
+    :uid = nil
+    # ([`Int`](std.Int)?) Group ID. Defaults to `0`.
+    :gid = nil
+    # ([`DateTime`](time.DateTime)?) Modification time. Defaults to the
+    # Unix epoch.
+    :mtime = nil
+    # ([`Str`](std.Str)?) Owner name.
+    :owner_name = nil
+    # ([`Str`](std.Str)?) Group name.
+    :group_name = nil
+  do
+    throw nil
+
+  # Adds one regular-file entry and calls `func` with a scoped
+  # [`EntryWriter`](tar.EntryWriter).
+  #
+  # For directory, symlink, or hard-link entries, use
+  # [`create_dir`](tar.Writer.create_dir), [`symlink`](tar.Writer.symlink), or
+  # [`hard_link`](tar.Writer.hard_link) instead -- none of them carry content, so none of
+  # them have any use for a write handle.
+  #
+  # ## Returns
+  #
+  # The result of `func`.
+  #
+  # ## Errors
+  #
+  # | Exception          | Condition                                                    |
+  # | ------------------ | ------------------------------------------------------------ |
+  # | `ConcurrencyError` | Another entry is created while an entry scope is active      |
+  # | `ValueError`       | The number of bytes written differs from the declared `size` |
+  #
+  # ## Example
+  #
+  # ```
+  # archive.entry data.bin size: 4 mode: 0o600 do |entry|
+  #   entry.write b"\x00\x01\x02\x03"
+  # ```
+  pub def entry
+    self
+    # ([`Str`](std.Str)\|[`fs.unix.Path`](fs.unix.Path)) Entry
+    # path.
+    path
+    # ([`Int`](std.Int)) Exact content size. Required.
+    :size = nil
+    # ([`Int`](std.Int)?) Permission bits. Defaults to `0o644`.
+    :mode = nil
+    # ([`Int`](std.Int)?) Owner ID. Defaults to `0`.
+    :uid = nil
+    # ([`Int`](std.Int)?) Group ID. Defaults to `0`.
+    :gid = nil
+    # ([`DateTime`](time.DateTime)?) Modification time. Defaults to the
+    # Unix epoch.
+    :mtime = nil
+    # ([`Str`](std.Str)?) Owner name.
+    :owner_name = nil
+    # ([`Str`](std.Str)?) Group name.
+    :group_name = nil
+    # (callable) Entry writer scope, called with an
+    # [`EntryWriter`](tar.EntryWriter).
+    func
+  do
+    throw nil
+
+  # Creates a hard-link entry pointing to `target`.
+  #
+  # Argument order matches [`fs.hard_link`](fs.hard_link).
+  #
+  # ## Example
+  #
+  # ```
+  # archive.hard_link "file.txt" "link.txt"
+  # ```
+  pub def hard_link
+    self
+    # ([`Str`](std.Str)\|[`fs.unix.Path`](fs.unix.Path)) Path the
+    # hard link points to.
+    target
+    # ([`Str`](std.Str)\|[`fs.unix.Path`](fs.unix.Path)) Entry
+    # path.
+    path
+    # ([`Int`](std.Int)?) Permission bits. Defaults to `0o644`.
+    :mode = nil
+    # ([`Int`](std.Int)?) Owner ID. Defaults to `0`.
+    :uid = nil
+    # ([`Int`](std.Int)?) Group ID. Defaults to `0`.
+    :gid = nil
+    # ([`DateTime`](time.DateTime)?) Modification time. Defaults to the
+    # Unix epoch.
+    :mtime = nil
+    # ([`Str`](std.Str)?) Owner name.
+    :owner_name = nil
+    # ([`Str`](std.Str)?) Group name.
+    :group_name = nil
+  do
+    throw nil
+
+  # Creates a symbolic link entry pointing to `target`.
+  #
+  # Argument order matches
+  # [`fs.symlink_file`](fs.symlink_file).
+  #
+  # ## Example
+  #
+  # ```
+  # archive.symlink "target.txt" "link.txt"
+  # ```
+  pub def symlink
+    self
+    # ([`Str`](std.Str)\|[`fs.unix.Path`](fs.unix.Path)) Path the
+    # symlink points to.
+    target
+    # ([`Str`](std.Str)\|[`fs.unix.Path`](fs.unix.Path)) Entry
+    # path.
+    path
+    # ([`Int`](std.Int)?) Permission bits. Defaults to `0o777`.
+    :mode = nil
+    # ([`Int`](std.Int)?) Owner ID. Defaults to `0`.
+    :uid = nil
+    # ([`Int`](std.Int)?) Group ID. Defaults to `0`.
+    :gid = nil
+    # ([`DateTime`](time.DateTime)?) Modification time. Defaults to the
+    # Unix epoch.
+    :mtime = nil
+    # ([`Str`](std.Str)?) Owner name.
+    :owner_name = nil
+    # ([`Str`](std.Str)?) Group name.
+    :group_name = nil
+  do
+    throw nil
+
+# Opens an archive and calls `func` with a [`Reader`](tar.Reader).
+#
+# Compression is detected from gzip or zstd magic bytes.
+#
+# ## Returns
+#
+# The result of `func`.
+#
+# ## Example
+#
+# ```
+# read "archive.tar.gz" do |archive|
+#   for entry = archive
+#     echo "$entry.path: $entry.size bytes"
+# ```
+pub def read
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Archive path.
+  path
+  # (callable) Reader scope, called with a [`Reader`](tar.Reader).
+  func
+do
+  throw nil
+
+# Creates an archive and calls `func` with a [`Writer`](tar.Writer).
+#
+# ## Returns
+#
+# The result of `func`.
+#
+# ## Example
+#
+# ```
+# write "archive.tar.zst" do |archive|
+#   archive.entry greeting.txt size: 5 do |entry|
+#     entry.write hello
+# ```
+pub def write
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Archive path.
+  path
+  # ([`Sym`](std.Sym)?) `:NONE:`, `:GZIP:`, or `:ZSTD:`.
+  #
+  # When omitted, `.gz` and `.tgz` select gzip, `.zst` and `.tzst` select
+  # zstd, and other extensions select no compression. Extension matching is
+  # case-insensitive. An explicit `compression` overrides the path.
+  :compression = nil
+  # (callable) Writer scope, called with a [`Writer`](tar.Writer).
+  func
+do
+  throw nil
