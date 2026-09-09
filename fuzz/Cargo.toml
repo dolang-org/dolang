@@ -4,17 +4,21 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+
 [package.metadata]
 cargo-fuzz = true
 
-[dependencies]
-libfuzzer-sys = "0.4"
+
+[dependencies.libfuzzer-sys]
+version = "0.4"
 
 [dependencies.dolang-bytecode]
-path = "../dolang-bytecode"
+workspace = true
+
 
 [dependencies.dolang-compile]
-path = "../dolang-compile"
+workspace = true
+
 
 [[bin]]
 name = "bytecode_deserialize"
@@ -22,6 +26,7 @@ path = "fuzz_targets/bytecode_deserialize.rs"
 test = false
 doc = false
 bench = false
+
 
 [[bin]]
 name = "gen-bytecode-seeds"

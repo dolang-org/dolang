@@ -8,18 +8,25 @@ repository.workspace = true
 rust-version.workspace = true
 publish = true
 
+
 [lib]
 test = false
 
-[dependencies]
-annotate-snippets = "0.12.10"
-bstr = "1.12.1"
-dolang = { path = "../dolang", version = "0.1.1" }
+
+[dependencies.annotate-snippets]
+workspace = true
+
+
+[dependencies.bstr]
+workspace = true
+
+
+[dependencies.dolang]
+workspace = true
 
 [dependencies.dolang-compile]
-path = "../dolang-compile"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang-runtime]
-path = "../dolang-runtime"
-version = "0.1.1"
+workspace = true

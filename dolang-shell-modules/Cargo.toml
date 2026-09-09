@@ -7,13 +7,18 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lib]
 test = false
 doctest = false
 
-[build-dependencies]
-dolang-private-bundle = { path = "../dolang-private-bundle", version = "0.1.1" }
-dolang-ext-shell = { path = "../dolang-ext-shell", version = "0.1.1" }
+
+[build-dependencies.dolang-private-bundle]
+workspace = true
+
+
+[build-dependencies.dolang-ext-shell]
+workspace = true
 
 [features]
 debug = ["dolang-private-bundle/debug"]

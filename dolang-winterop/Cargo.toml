@@ -7,21 +7,44 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lib]
 test = true
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
 
-[dependencies]
-bitflags = { version = "2.9.4", features = ["serde"] }
-phf = { version = "0.14.0", features = ["macros"] }
-rand = "0.10"
-serde = { version = "1.0", features = ["derive"] }
+[dependencies.bitflags]
+workspace = true
+features = ["serde"]
 
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_LibraryLoader", "Win32_System_Threading"] }
-futures = "0.3.31"
 
-[dev-dependencies]
-postcard = { version = "1.1.3", features = ["use-std"] }
+[dependencies.phf]
+workspace = true
+features = ["macros"]
+
+
+[dependencies.rand]
+workspace = true
+
+
+[dependencies.serde]
+workspace = true
+features = ["derive"]
+
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+workspace = true
+features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+]
+
+
+[target.'cfg(windows)'.dependencies.futures]
+workspace = true
+
+
+[dev-dependencies.postcard]
+workspace = true
+features = ["use-std"]

@@ -7,15 +7,26 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lib]
 test = false
 doctest = false
+
 
 [features]
 default = []
 diagnostic-rendering = ["dep:annotate-snippets", "dep:console"]
 
-[dependencies]
-dolang = { path = "../dolang", version = "0.1.1" }
-annotate-snippets = { version = "0.12.10", optional = true }
-console = { version = "0.16.2", optional = true }
+
+[dependencies.dolang]
+workspace = true
+
+
+[dependencies.annotate-snippets]
+workspace = true
+optional = true
+
+
+[dependencies.console]
+workspace = true
+optional = true

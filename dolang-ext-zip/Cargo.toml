@@ -7,14 +7,26 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lib]
 test = false
 doctest = false
 
-[dependencies]
-futures-lite = { version = "2.6", default-features = false, features = ["std"] }
-tokio = { version = "1.48", features = ["fs", "io-util", "rt"] }
-tokio-util = { version = "0.7", features = ["compat"] }
+
+[dependencies.futures-lite]
+version = "2.6"
+default-features = false
+features = ["std"]
+
+
+[dependencies.tokio]
+workspace = true
+features = ["fs", "io-util", "rt"]
+
+
+[dependencies.tokio-util]
+version = "0.7"
+features = ["compat"]
 
 [dependencies.async_zip]
 package = "astral_async_zip"
@@ -22,17 +34,18 @@ version = "0.0.21"
 default-features = false
 features = ["deflate", "jiff", "tokio", "zstd"]
 
+
 [dependencies.jiff]
 version = "0.2"
 
+
 [dependencies.dolang]
-path = "../dolang"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang-ext-shell]
-path = "../dolang-ext-shell"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang-vfs]
-path = "../dolang-vfs"
-version = "0.1.1"
+workspace = true

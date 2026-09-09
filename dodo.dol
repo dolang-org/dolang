@@ -373,7 +373,7 @@ return $
         profile: asan
         extra:
           -Z build-std
-      env RUSTFLAGS: "-Z sanitizer=address" do both_test $spec
+      env RUSTFLAGS: "-Z sanitizer=address --cfg asan" do both_test $spec
 
   "test-miri":
     help: run tests with miri

@@ -8,16 +8,46 @@ repository.workspace = true
 rust-version.workspace = true
 autobins = false
 
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(asan)"] }
+
+
 [[bin]]
 name = "dolang"
 path = "src/main.rs"
 
+
 [features]
-default = ["base64", "digest", "json", "regex", "glob", "http", "http_mock", "zip", "tar", "sqlite", "xml", "yaml", "progress", "rand", "toml", "patch", "winreg", "winscm", "winnet"]
+default = [
+  "base64",
+  "digest",
+  "json",
+  "regex",
+  "glob",
+  "http",
+  "http_mock",
+  "zip",
+  "tar",
+  "sqlite",
+  "xml",
+  "yaml",
+  "progress",
+  "rand",
+  "toml",
+  "patch",
+  "winreg",
+  "winscm",
+  "winnet",
+]
 debug = ["dolang-shell-main/debug"]
 base64 = ["dep:dolang-ext-base64"]
 digest = ["dep:dolang-ext-digest"]
-json = ["dep:dolang-ext-json", "dolang-ext-http?/json", "dolang-ext-http-mock?/json"]
+json = [
+  "dep:dolang-ext-json",
+  "dolang-ext-http?/json",
+  "dolang-ext-http-mock?/json",
+]
 regex = ["dep:dolang-ext-regex"]
 glob = ["dep:dolang-ext-glob"]
 url = ["dep:dolang-ext-url"]
@@ -36,133 +66,142 @@ winreg = ["dep:dolang-ext-winreg", "dolang-shell-vfs/winreg"]
 winscm = ["dep:dolang-ext-winscm", "dolang-shell-vfs/winscm"]
 winnet = ["dep:dolang-ext-winnet", "dolang-shell-vfs/winnet"]
 
-[dependencies]
-dolang-shell-vfs = { path = "../dolang-shell-vfs", version = "0.1.1", default-features = false }
+
+[dependencies.dolang-shell-vfs]
+workspace = true
+
+
+[dependencies.mimalloc]
+workspace = true
+
+
 [dependencies.dolang-shell-main]
-path = "../dolang-shell-main"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang-shell-modules]
-path = "../dolang-shell-modules"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang]
-path = "../dolang"
-version = "0.1.1"
+workspace = true
 
-[target.'cfg(windows)'.dev-dependencies]
-dolang-vfs = { path = "../dolang-vfs", version = "0.1.1" }
-tokio = { version = "1.48.0", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
+
+[target.'cfg(windows)'.dev-dependencies.dolang-vfs]
+workspace = true
+
+
+[target.'cfg(windows)'.dev-dependencies.tokio]
+workspace = true
+features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"]
 
 [dependencies.dolang-ext-digest]
-path = "../dolang-ext-digest"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-base64]
-path = "../dolang-ext-base64"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-compile]
-path = "../dolang-ext-compile"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang-ext-load]
-path = "../dolang-ext-load"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang-ext-json]
-path = "../dolang-ext-json"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-regex]
-path = "../dolang-ext-regex"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-glob]
-path = "../dolang-ext-glob"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-http]
-path = "../dolang-ext-http"
-version = "0.1.1"
+workspace = true
 optional = true
-default-features = false
+
 
 [dependencies.dolang-ext-http-mock]
-path = "../dolang-ext-http-mock"
-version = "0.1.1"
+workspace = true
 optional = true
-default-features = false
+
 
 [dependencies.dolang-ext-url]
-path = "../dolang-ext-url"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-zip]
-path = "../dolang-ext-zip"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-tar]
-path = "../dolang-ext-tar"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-sqlite]
-path = "../dolang-ext-sqlite"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-xml]
-path = "../dolang-ext-xml"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-yaml]
-path = "../dolang-ext-yaml"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-progress]
-path = "../dolang-ext-progress"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-rand]
-path = "../dolang-ext-rand"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-toml]
-path = "../dolang-ext-toml"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-patch]
-path = "../dolang-ext-patch"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-winreg]
-path = "../dolang-ext-winreg"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-winscm]
-path = "../dolang-ext-winscm"
-version = "0.1.1"
+workspace = true
 optional = true
+
 
 [dependencies.dolang-ext-winnet]
-path = "../dolang-ext-winnet"
-version = "0.1.1"
+workspace = true
 optional = true
 
-[build-dependencies]
-dolang-private-bundle = { path = "../dolang-private-bundle", version = "0.1.1" }
+
+[build-dependencies.dolang-private-bundle]
+workspace = true

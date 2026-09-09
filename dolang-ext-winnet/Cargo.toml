@@ -7,13 +7,27 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lib]
 test = false
 doctest = false
 
-[dependencies]
-dolang = { path = "../dolang", version = "0.1.1" }
-dolang-ext-shell = { path = "../dolang-ext-shell", version = "0.1.1" }
-dolang-vfs = { path = "../dolang-vfs", version = "0.1.1" }
-dolang-vfs-winnet = { path = "../dolang-vfs-winnet", version = "0.1.1" }
-dolang-winterop = { path = "../dolang-winterop", version = "0.1.1" }
+
+[dependencies.dolang]
+workspace = true
+
+
+[dependencies.dolang-ext-shell]
+workspace = true
+
+
+[dependencies.dolang-vfs]
+workspace = true
+
+
+[dependencies.dolang-vfs-winnet]
+workspace = true
+
+
+[dependencies.dolang-winterop]
+workspace = true

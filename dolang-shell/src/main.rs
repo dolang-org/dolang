@@ -49,6 +49,10 @@ extern crate dolang_ext_yaml;
 #[cfg(feature = "zip")]
 extern crate dolang_ext_zip;
 
+#[cfg(not(asan))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = run_vfs_mode(std::env::args_os().skip(1)) {

@@ -7,26 +7,41 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[dependencies]
-bitflags = "2.9.4"
-bitvec = "1.0.1"
-bstr = "1.12.1"
-futures = "0.3.31"
-hex = "0.4.3"
-unicode-segmentation.workspace = true
+
+[dependencies.bitflags]
+workspace = true
+
+
+[dependencies.bitvec]
+workspace = true
+
+
+[dependencies.bstr]
+workspace = true
+
+
+[dependencies.futures]
+workspace = true
+
+
+[dependencies.hex]
+version = "0.4.3"
+
+
+[dependencies.unicode-segmentation]
+workspace = true
 
 [dependencies.dolang-util]
-package = "dolang-private-util"
-path = "../dolang-private-util"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang-bytecode]
-path = "../dolang-bytecode"
-version = "0.1.1"
+workspace = true
+
 
 [dev-dependencies.dolang-compile]
-path = "../dolang-compile"
-version = "0.1.1"
+workspace = true
+
 
 [features]
 default = []

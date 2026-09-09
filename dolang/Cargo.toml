@@ -7,19 +7,21 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lib]
 test = false
 
-[dependencies]
-linkme = "0.3.35"
+
+[dependencies.linkme]
+workspace = true
 
 [dependencies.dolang-compile]
-path = "../dolang-compile"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang-runtime]
-path = "../dolang-runtime"
-version = "0.1.1"
+workspace = true
+
 
 [features]
 default = []

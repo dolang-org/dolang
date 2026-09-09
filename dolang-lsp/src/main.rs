@@ -8,6 +8,10 @@ use tower_lsp_server::Server;
 mod backend;
 mod doc_index;
 
+#[cfg(not(asan))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn log_path() -> PathBuf {
     dirs::state_dir()
         .or_else(dirs::data_local_dir)

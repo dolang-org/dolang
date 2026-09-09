@@ -8,10 +8,16 @@ repository.workspace = true
 rust-version.workspace = true
 autobins = false
 
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(asan)"] }
+
+
 [[bin]]
 name = "dolang-vfs"
 path = "src/bin/dolang-vfs.rs"
 test = false
+
 
 [features]
 default = ["winreg", "winscm", "winnet"]
@@ -19,26 +25,83 @@ winreg = ["dep:dolang-vfs-winreg"]
 winscm = ["dep:dolang-vfs-winscm"]
 winnet = ["dep:dolang-vfs-winnet"]
 
-[dependencies]
-base64 = "0.22.1"
-dolang-rpc = { path = "../dolang-rpc", version = "0.1.1" }
-dolang-vfs = { path = "../dolang-vfs", version = "0.1.1" }
-dolang-vfs-winreg = { path = "../dolang-vfs-winreg", version = "0.1.1", optional = true }
-dolang-vfs-winscm = { path = "../dolang-vfs-winscm", version = "0.1.1", optional = true }
-dolang-vfs-winnet = { path = "../dolang-vfs-winnet", version = "0.1.1", optional = true }
-tokio = { version = "1.48.0", features = ["io-std", "io-util", "macros", "net", "rt", "signal"] }
 
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-nix = { version = "0.31", features = ["fs", "user"] }
+[dependencies.base64]
+workspace = true
 
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Environment", "Win32_System_Registry", "Win32_UI_Shell"] }
 
-[dev-dependencies]
-tempfile = "3"
-tokio = { version = "1.48.0", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+[dependencies.dolang-rpc]
+workspace = true
 
-[target.'cfg(unix)'.dev-dependencies]
-futures = "0.3"
-libc = "0.2"
+
+[dependencies.dolang-vfs]
+workspace = true
+
+
+[dependencies.dolang-vfs-winreg]
+workspace = true
+optional = true
+
+
+[dependencies.dolang-vfs-winscm]
+workspace = true
+optional = true
+
+
+[dependencies.dolang-vfs-winnet]
+workspace = true
+optional = true
+
+
+[dependencies.tokio]
+workspace = true
+features = ["io-std", "io-util", "macros", "net", "rt", "signal"]
+
+[dependencies.mimalloc]
+workspace = true
+
+
+[target.'cfg(unix)'.dependencies.libc]
+workspace = true
+
+
+[target.'cfg(unix)'.dependencies.nix]
+workspace = true
+features = ["fs", "user"]
+
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+workspace = true
+features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_Environment",
+  "Win32_System_Registry",
+  "Win32_UI_Shell",
+]
+
+
+[dev-dependencies.tempfile]
+workspace = true
+
+
+[dev-dependencies.tokio]
+workspace = true
+features = [
+  "fs",
+  "io-util",
+  "macros",
+  "net",
+  "process",
+  "rt-multi-thread",
+  "sync",
+  "time",
+]
+
+
+[target.'cfg(unix)'.dev-dependencies.futures]
+workspace = true
+
+
+[target.'cfg(unix)'.dev-dependencies.libc]
+workspace = true

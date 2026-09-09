@@ -7,13 +7,14 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lib]
 test = false
 doctest = false
 
-[dependencies]
-regex = "1.11"
+
+[dependencies.regex]
+workspace = true
 
 [dependencies.dolang]
-path = "../dolang"
-version = "0.1.1"
+workspace = true

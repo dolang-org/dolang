@@ -7,20 +7,33 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+
 [lib]
 test = false
 doctest = false
 
-[dependencies]
-async-compression = { version = "0.4.42", features = ["gzip", "tokio", "zstd"] }
-astral-tokio-tar = { version = "0.6.4", default-features = false }
-tokio = { version = "1.48", features = ["io-util", "rt", "sync"] }
-tokio-stream = "0.1"
+
+[dependencies.async-compression]
+version = "0.4.42"
+features = ["gzip", "tokio", "zstd"]
+
+
+[dependencies.astral-tokio-tar]
+version = "0.6.4"
+default-features = false
+
+
+[dependencies.tokio]
+workspace = true
+features = ["io-util", "rt", "sync"]
+
+
+[dependencies.tokio-stream]
+version = "0.1"
 
 [dependencies.dolang]
-path = "../dolang"
-version = "0.1.1"
+workspace = true
+
 
 [dependencies.dolang-ext-shell]
-path = "../dolang-ext-shell"
-version = "0.1.1"
+workspace = true
