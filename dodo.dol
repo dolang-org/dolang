@@ -163,7 +163,7 @@ class Spec
     self.cargo build --bin dolang-vfs --bin dolang-private-polyfill
     self.cargo ...rest
 
-let native = Spec (record target: nil) profile: opt
+let native = Spec (record target: nil) profile: dist
 
 def default_shell_tests slow release
   $
