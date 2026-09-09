@@ -163,6 +163,8 @@ class Spec
     self.cargo build --bin dolang-vfs --bin dolang-private-polyfill
     self.cargo ...rest
 
+let native = Spec (record target: nil) profile: opt
+
 def default_shell_tests slow release
   $
     test
@@ -173,8 +175,8 @@ def default_shell_tests slow release
     else
       --timeout 3600
 
-def mkdocs_build_tools spec
-  spec.cargo build
+def mkdocs_build_tools()
+  native.cargo build
     for bin = MKDOCS_BINS
       --bin $bin
 
@@ -270,18 +272,18 @@ def generate_doc_pages modules name entities
 # (see there for the full doc comment on why extraction is parallelized) --
 # used by `install` to feed dolang-lsp's build-time static doc index (see
 # dolang-lsp/build.rs) without also touching the docs/api page tree.
-def extract_doc_json spec out_dir
+def extract_doc_json out_dir
   out_dir.remove all: true ignore: true
   out_dir.create_dir all: true
-  let dolang = spec.bin "dolang"
+  let dolang = native.bin "dolang"
   let workers = sys.cpu_info().logical_count
   strand.pool $workers $collect_doc_jobs() do |job|
     let :name :path = job
     run $dolang -m doc --module $name $path stdout: (out_dir / "$name.json")
 
 # Extracts the JSON cache and regenerates the docs/api page tree from it.
-def extract_docs spec out_dir
-  extract_doc_json $spec $out_dir
+def extract_docs out_dir
+  extract_doc_json $out_dir
   MKDOCS_API_DIR.remove all: true ignore: true
   let modules = $
     for doc = out_dir.glob("*.json").map do |p| json.decode $p.read()
@@ -289,14 +291,14 @@ def extract_docs spec out_dir
   for name document = modules
     generate_doc_pages $modules $name $document["entities"]
 
-def with_mkdocs spec func
+def with_mkdocs func
   # The handler reads a pre-extracted JSON cache -- one file per module,
   # produced by extract_docs (see there for why) -- rather than running the
   # `dolang` extractor itself.
-  let doc_cache = (spec.target_dir / "mkdocs-doc")
-  extract_docs $spec $doc_cache
+  let doc_cache = (native.target_dir / "mkdocs-doc")
+  extract_docs $doc_cache
   env
-    DOLANG_HIGHLIGHT: $spec.bin("dolang-highlight")
+    DOLANG_HIGHLIGHT: $native.bin("dolang-highlight")
     DOLANG_DOC_CACHE: $doc_cache
     NO_MKDOCS_2_WARNING: 1
     $func
@@ -370,7 +372,7 @@ return $
     do |args|
       let spec = Spec $args
         channel: nightly
-        profile: asan
+        profile: opt
         extra:
           -Z build-std
       env RUSTFLAGS: "-Z sanitizer=address --cfg asan" do both_test $spec
@@ -520,17 +522,15 @@ return $
 
   "serve-mkdocs":
     help: build and serve the MkDocs site
-    do |args|
-      let spec = Spec $args
-      mkdocs_build_tools $spec
-      with_mkdocs $spec do dodo.show mkdocs serve
+    do |_|
+      mkdocs_build_tools()
+      with_mkdocs do dodo.show mkdocs serve
 
   mkdocs:
     help: build the MkDocs site
-    do |args|
-      let spec = Spec $args
-      mkdocs_build_tools $spec
-      with_mkdocs $spec do dodo.show mkdocs build --strict
+    do |_|
+      mkdocs_build_tools()
+      with_mkdocs do dodo.show mkdocs build --strict
 
   pages:
     help: build the complete GitHub Pages site
@@ -606,7 +606,8 @@ return $
           # extract_doc_json) -- generate it with the dolang binary just
           # built, then point the build at it via env var.
           let doc_json = (spec.target_dir / "lsp-doc-json").absolute()
-          extract_doc_json $spec $doc_json
+          native.cargo build --bin dolang
+          extract_doc_json $doc_json
           env DOLANG_LSP_DOC_JSON_DIR: $doc_json do
             spec.cargo build --bin dolang-lsp
 

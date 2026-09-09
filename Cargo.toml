@@ -457,6 +457,6 @@ incremental = false
 panic = "abort"
 
 
-[profile.asan]
+[profile.opt]
 inherits = "dev"
 opt-level = 1
