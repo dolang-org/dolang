@@ -1,0 +1,16 @@
+assert_eq "\u{0}" "\0"
+assert_eq "\u{41}" "A"
+assert_eq "\u{1f_642}" "🙂"
+assert_eq "\u{10FFFF}" "􏿿"
+
+assert_eq b"\u{2022}" b"•"
+assert_eq b"\u{ff}" b"ÿ"
+assert_eq b"\u{41}" b"A"
+
+let doc = |-
+  \u{2022}
+assert_eq $doc "•"
+
+assert_eq $(t"\u{2022}").format() "•"
+assert_eq r"\u{2022}" "\\u{2022}"
+

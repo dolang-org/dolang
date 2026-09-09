@@ -1270,13 +1270,7 @@ impl<'a> Parser<'a> {
                         Some(token!(Sym, span)) => {
                             Expr::Literal(span.before_left_char() | span.after_right_char())
                         }
-                        Some(token!(Escape(c), span)) => {
-                            if bin {
-                                Expr::EscapeByte(c as u8, span)
-                            } else {
-                                Expr::Escape(c, span)
-                            }
-                        }
+                        Some(token!(Escape(c), span)) => Expr::Escape(c, span),
                         Some(token @ token!(EscapeByte(..), _)) => {
                             if bin {
                                 let TokenInfo::EscapeByte(b) = token.info else {

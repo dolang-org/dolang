@@ -40,13 +40,18 @@ echo "padded: ${count:05d}"
 
 ### Escaping
 
-| Sequence | Meaning             |
-| -------- | ------------------- |
-| `\n`     | Newline             |
-| `\t`     | Tab                 |
-| `\\`     | Backslash           |
-| `\"`     | Double quote        |
-| `\$`     | Literal dollar sign |
+| Sequence   | Meaning              |
+| ---------- | -------------------- |
+| `\n`       | Newline              |
+| `\t`       | Tab                  |
+| `\\`       | Backslash            |
+| `\"`       | Double quote         |
+| `\$`       | Literal dollar sign  |
+| `\u{NNNN}` | Unicode scalar value |
+
+Unicode escapes contain one to six hexadecimal digits. A single underscore
+may separate adjacent digits, as in `\u{1f_642}`. Leading, trailing, and
+consecutive underscores are not accepted.
 
 ## Interpolation
 
@@ -260,10 +265,12 @@ plus hex byte escapes (`\xNN`):
 ```
 let crlf   = b"\r\n"
 let bullet = b"\xe2\x80\xa2"   # UTF-8 encoding of •
+let check  = b"\u{2022}"       # The same UTF-8 bytes
 ```
 
 `\xNN` is only valid inside binary strings; using it in a regular string is a
-syntax error.
+syntax error. A Unicode escape in a binary string contributes the scalar's
+UTF-8 encoding.
 
 Interpolation works the same way as in regular strings, using `$`:
 

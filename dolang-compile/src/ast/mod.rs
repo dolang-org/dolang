@@ -694,7 +694,10 @@ impl Expr {
                     match expr {
                         Expr::Literal(span) => acc.extend_from_slice(file.str(*span).as_bytes()),
                         Expr::EscapeByte(b, _) => acc.push(*b),
-                        Expr::Escape(c, _) => acc.push(*c as u8),
+                        Expr::Escape(c, _) => {
+                            let mut buf = [0; 4];
+                            acc.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                        }
                         other => acc.extend_from_slice(&other.fold(file)?.to_bin()?),
                     }
                 }

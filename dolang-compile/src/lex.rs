@@ -326,6 +326,9 @@ enum RawState {
     // Escape hex states for binary strings
     EscapeHex,  // Seen \x, waiting for first hex digit
     EscapeHex1, // Seen first hex digit (stored in acc low nibble)
+    // Unicode escape states
+    EscapeUnicodeOpen, // Seen \u, waiting for opening brace
+    EscapeUnicode,     // Inside the brace-delimited scalar value
 }
 
 enum Defer {
@@ -355,8 +358,10 @@ struct RawLexer<'a, I: Iterator<Item = u8>> {
     acc: u128,
     diags: &'a Diags,
     comment: Option<&'a mut dyn Comment>,
-    // Last character was a `_` in a number literal
+    // Last character was a `_` in a number literal or Unicode escape
     underline: bool,
+    // Number of hexadecimal digits in a Unicode escape
+    escape_digits: u8,
     // Raw string tracking fields
     target_hashes: u8,
     current_hashes: u8,
@@ -380,6 +385,7 @@ impl<'a, I: Iterator<Item = u8>> RawLexer<'a, I> {
             diags,
             comment,
             underline: false,
+            escape_digits: 0,
             target_hashes: 0,
             current_hashes: 0,
             quote_offset: 0,
@@ -1216,6 +1222,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                         self.acc = 0;
                         self.trans(EscapeHex);
                     }
+                    Some(b'u') => self.trans(EscapeUnicodeOpen),
                     _ => return self.error(ErrorDiagKind::BadEscape),
                 },
                 // Inside a string or here string there are no comments, so `#`
@@ -1394,6 +1401,43 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                         };
                         let byte = ((self.acc as u8) << 4) | nibble;
                         return self.token(RawToken::EscapeByte(byte), Empty);
+                    }
+                    _ => return self.error(ErrorDiagKind::BadEscape),
+                },
+                EscapeUnicodeOpen => match self.advance() {
+                    Some(b'{') => {
+                        self.acc = 0;
+                        self.escape_digits = 0;
+                        self.underline = false;
+                        self.trans(EscapeUnicode);
+                    }
+                    _ => return self.error(ErrorDiagKind::BadEscape),
+                },
+                EscapeUnicode => match self.advance() {
+                    Some(c @ (b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))
+                        if self.escape_digits < 6 =>
+                    {
+                        let digit = match c {
+                            b'0'..=b'9' => c - b'0',
+                            b'a'..=b'f' => c - b'a' + 10,
+                            b'A'..=b'F' => c - b'A' + 10,
+                            _ => unreachable!(),
+                        };
+                        self.acc = self.acc * 16 + u128::from(digit);
+                        self.escape_digits += 1;
+                        self.underline = false;
+                    }
+                    Some(b'_') if self.escape_digits != 0 && !self.underline => {
+                        self.underline = true;
+                    }
+                    Some(b'}') if self.escape_digits != 0 && !self.underline => {
+                        let Ok(value) = u32::try_from(self.acc) else {
+                            return self.error(ErrorDiagKind::BadEscape);
+                        };
+                        let Some(value) = char::from_u32(value) else {
+                            return self.error(ErrorDiagKind::BadEscape);
+                        };
+                        return self.token(RawToken::Escape(value), Empty);
                     }
                     _ => return self.error(ErrorDiagKind::BadEscape),
                 },
