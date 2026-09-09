@@ -7,7 +7,7 @@ import sys _vfs
     - assert
     - assert_eq
     - assert_throws
-    - skip
+    - ignore
     - test
   shell:
     - Vfs
@@ -34,7 +34,7 @@ def resets_context_to_defaults()
 #[test]
 def windows_admin_captures_current_cwd()
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows"
+    ignore "requires Windows"
 
   with_temp_dir do |dir|
     env TEST_DOLANG_WINDOWS_INHERIT: inherited TEST_DOLANG_WINDOWS_UNSET: present do

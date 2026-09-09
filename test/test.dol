@@ -1,13 +1,40 @@
-import proc shell
+import proc shell term
   fs:
     - with_temp_dir
   test:
     - TestInfo
+    - assert
     - assert_eq
+    - assert_not
     - assert_throws
     - assert_type
     - test
     run: run_tests
+
+#[test]
+def ignored_tests_are_omitted_from_report()
+  with_temp_dir do |dir|
+    let path = (dir / "ignored.dol")
+    path.write r|
+      import test:
+        - ignore
+        - test
+
+      #[test]
+      def ignored()
+        ignore "wrong platform"
+
+      #[test]
+      def passed()
+        nil
+
+    let output = StrBuf()
+    let rc = term.capture (term.SinkConsole(output)) do
+      run_tests jobs: 1 module_jobs: 1 capture: true $path
+    let report = output.freeze()
+    assert_eq $rc 0
+    assert $report.contains("passed: 1/1")
+    assert_not $report.contains("wrong platform")
 
 #[test]
 def metadata_and_predicate_filtering()
@@ -114,10 +141,10 @@ def parametrize_expands_cartesian_product()
       true
     assert_eq (run_tests jobs: 1 module_jobs: 1 filter: filter capture: true path) 0
     assert_eq $seen $
-      - "combo[color=red,size=1]"
-      - "combo[color=red,size=2]"
-      - "combo[color=blue,size=1]"
-      - "combo[color=blue,size=2]"
+      - "combo/color=red/size=1"
+      - "combo/color=red/size=2"
+      - "combo/color=blue/size=1"
+      - "combo/color=blue/size=2"
       - "plain"
 
 #[test]
@@ -140,7 +167,7 @@ def parametrize_sanitizes_slashes_in_case_names()
       seen.push $info.name
       true
     assert_eq (run_tests jobs: 1 module_jobs: 1 filter: filter capture: true path) 0
-    assert_eq $seen ["combo[path=a_b_c]"]
+    assert_eq $seen ["combo/path=a_b_c"]
 
 #[test]
 def parametrize_composes_with_fixture()
@@ -170,7 +197,7 @@ def parametrize_composes_with_fixture()
       seen.push $info.name
       true
     assert_eq (run_tests jobs: 1 module_jobs: 1 filter: filter capture: true path) 0
-    assert_eq $seen ["combo[kind=a]", "combo[kind=b]"]
+    assert_eq $seen ["combo/kind=a", "combo/kind=b"]
 
 #[test]
 def parametrize_per_value_tags_are_honored()
@@ -194,8 +221,8 @@ def parametrize_per_value_tags_are_honored()
       true
     assert_eq (run_tests jobs: 1 module_jobs: 1 filter: filter capture: true path) 0
     assert_eq $seen.len 2
-    assert_eq $seen[0] ["connects[backend=sqlite]", Tuple(["base"])]
-    assert_eq $seen[1] ["connects[backend=postgres]", Tuple(["base", "slow"])]
+    assert_eq $seen[0] ["connects/backend=sqlite", Tuple(["base"])]
+    assert_eq $seen[1] ["connects/backend=postgres", Tuple(["base", "slow"])]
 
 def tagged_module dir
   let path = (dir / "tagged.dol")

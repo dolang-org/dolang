@@ -26,6 +26,7 @@ import winnet rand shell strand sys
     - assert_throws
     - assert_type
     - fixture
+    - ignore
     - skip
     - test
   time:
@@ -40,9 +41,9 @@ let account_policy_resource = strand.Resource 1
 #[fixture]
 def scratch_user block ...rest
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows NetAPI"
+    ignore "requires Windows NetAPI"
   if sys.os_info().is_wine
-    skip "Wine does not implement NetUserGetInfo level 4 or NetUserSetInfo"
+    ignore "Wine does not implement NetUserGetInfo level 4 or NetUserSetInfo"
 
   # NetAPI user names are limited to 20 characters. A random suffix keeps
   # concurrent test variants from sharing an account.
@@ -74,7 +75,7 @@ def scratch_user block ...rest
 #[vfs]
 def unsupported_without_windows_backend()
   if (sys.os_info().family == :WINDOWS:)
-    skip "only exercises the non-Windows backend"
+    ignore "only exercises the non-Windows backend"
   assert_throws $UnsupportedError do
     [...winnet.users()]
   assert_throws $UnsupportedError do
@@ -136,9 +137,9 @@ def join_credentials_are_validated()
 #[vfs]
 def domain_membership_is_readable()
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows NetAPI"
+    ignore "requires Windows NetAPI"
   if sys.os_info().is_wine
-    skip "Wine does not implement NetGetJoinInformation or NetWkstaGetInfo"
+    ignore "Wine does not implement NetGetJoinInformation or NetWkstaGetInfo"
   let status = winnet.join_status()
   let named = [:DOMAIN:, :WORKGROUP:]
   assert_type $winnet.JoinStatus $status
@@ -178,9 +179,9 @@ def domain_membership_is_readable()
 #[fixture]
 def domain_mutation block ...rest
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows NetAPI"
+    ignore "requires Windows NetAPI"
   if sys.os_info().is_wine
-    skip "Wine does not implement NetJoinDomain"
+    ignore "Wine does not implement NetJoinDomain"
   if (shell.env.get("DOLANG_WINNET_JOIN_MUTATION_TEST") != "1")
     skip "set DOLANG_WINNET_JOIN_MUTATION_TEST=1 to re-identify this machine"
   let domain = shell.env.get "DOLANG_WINNET_TEST_DOMAIN"
@@ -229,9 +230,9 @@ def offline_join_provisioning :domain ..._credentials
 #[fixture]
 def scratch_share block ...rest
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows SMB server management"
+    ignore "requires Windows SMB server management"
   if sys.os_info().is_wine
-    skip "Wine does not implement a credible SMB server service"
+    ignore "Wine does not implement a credible SMB server service"
   with_temp_dir do |dir|
     let name = "do-share-$(rand.string 8)"
     let share = try
@@ -374,9 +375,9 @@ def local_share_delete()
   # Creates the share it deletes. A fixture's share belongs to the fixture, and
   # a failure to delete that one has to fail the test rather than be tolerated.
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows SMB server management"
+    ignore "requires Windows SMB server management"
   if sys.os_info().is_wine
-    skip "Wine does not implement a credible SMB server service"
+    ignore "Wine does not implement a credible SMB server service"
   with_temp_dir do |dir|
     let name = "do-share-$(rand.string 8)"
     let share = try
@@ -501,9 +502,9 @@ def local_user_lifecycle :user
 def local_user_delete()
   # Creates the account it deletes, for the same reason as `local_share_delete`.
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows NetAPI"
+    ignore "requires Windows NetAPI"
   if sys.os_info().is_wine
-    skip "Wine does not implement NetUserGetInfo level 4 or NetUserSetInfo"
+    ignore "Wine does not implement NetUserGetInfo level 4 or NetUserSetInfo"
   let name = "do-test-$(rand.string 10)"
   let user = try
     winnet.create_user $name password: "Do!$(rand.string 16)9"
@@ -534,9 +535,9 @@ def local_user_account_rights :user
 #[vfs]
 def local_account_policy()
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows account policy"
+    ignore "requires Windows account policy"
   if sys.os_info().is_wine
-    skip "Wine does not reliably implement NetUserModalsGet"
+    ignore "Wine does not reliably implement NetUserModalsGet"
   let policy = winnet.account_policy()
   assert_type $winnet.AccountPolicy $policy
   assert_type $Int $policy.min_password_length
@@ -550,9 +551,9 @@ def local_account_policy()
 #[vfs]
 def update_local_account_policy()
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows account policy"
+    ignore "requires Windows account policy"
   if sys.os_info().is_wine
-    skip "Wine does not reliably implement NetUserModalsSet"
+    ignore "Wine does not reliably implement NetUserModalsSet"
   if (shell.env.get("DOLANG_WINNET_POLICY_MUTATION_TEST") != "1")
     skip "set DOLANG_WINNET_POLICY_MUTATION_TEST=1 to mutate machine policy"
   account_policy_resource.with do
@@ -570,9 +571,9 @@ def update_local_account_policy()
 #[fixture]
 def scratch_group block ...rest
   if (sys.os_info().family != :WINDOWS:)
-    skip "requires Windows NetAPI"
+    ignore "requires Windows NetAPI"
   if sys.os_info().is_wine
-    skip "Wine does not implement local-group lifecycle operations"
+    ignore "Wine does not implement local-group lifecycle operations"
   let name = "do-group-$(rand.string 8)"
   let group = try
     winnet.create_group $name comment: "created by test/winnet.dol"

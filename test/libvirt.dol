@@ -3,6 +3,7 @@ import digest http libvirt progress rand regex std sys transfer
     - Path
     - with_temp_dir
   test:
+    - ignore
     - skip
     - fixture
     - test
@@ -27,7 +28,7 @@ else
 let APP = "dolang-libvirt-test"
 
 if (sys.os_info().os != :LINUX:)
-  skip "libvirt provisioning requires Linux"
+  ignore "libvirt provisioning requires Linux"
 
 def require_programs programs
   for program = programs
@@ -38,7 +39,7 @@ def require_programs programs
 # checks and fetches `create` performs before it defines one.
 def require_guest_host()
   if (sys.cpu_info().arch != :X86_64:)
-    skip "the CI images require x86-64"
+    ignore "the CI images require x86-64"
   require_programs ["virsh", "libvirtd", "qemu-img", "cloud-localds", "genisoimage", "ssh", "scp", "ssh-keygen"]
 
 #[fixture]

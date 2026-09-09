@@ -6,7 +6,7 @@ import proc sys sys.unix sys.windows _vfs
     - assert_eq
     - assert_type
     - assert_throws
-    - skip
+    - ignore
     - test
   fs:
     - Path
@@ -101,7 +101,7 @@ def termination_policy_options()
 #[vfs]
 def background_strand_process_groups()
   if is_windows
-    skip "Unix process-group assertion"
+    ignore "Unix process-group assertion"
 
   with_temp_dir do |dir|
     let pid_path = (dir / "descendant.pid")
@@ -404,7 +404,7 @@ def non_zero_exit_yields_proc_error()
 #[vfs]
 def signaled_process_yields_proc_error()
   if is_windows
-    skip "requires Unix"
+    ignore "requires Unix"
   let err = assert_throws $proc.Error do
     run sh -c r"kill -TERM $$"
   assert_eq $err.rc nil
@@ -436,7 +436,7 @@ def with_remote_vfs block
 #[test]
 def numeric_signal_crosses_vfs_boundary()
   if is_windows
-    skip "Windows does not accept per-launch signals"
+    ignore "Windows does not accept per-launch signals"
   run sh -c "exit 0" policy: {signal: 15}
   with_remote_vfs do
     run sh -c "exit 0" policy: {signal: 15}

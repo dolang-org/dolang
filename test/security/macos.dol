@@ -16,7 +16,7 @@ import sys
     - assert_eq
     - assert_throws
     - assert_type
-    - skip
+    - ignore
     - test
 
 #[test]
@@ -82,7 +82,7 @@ def constructs_declarative_macos_aces_and_acls()
 #[test]
 def resolves_macos_principal_ids()
   if (sys.os_info().os != :MACOS:)
-    skip "macOS principal ID resolution is not supported on this platform"
+    ignore "macOS principal ID resolution is not supported on this platform"
 
   let info = unix_info()
   let uid_uuid = macos_security.uuid_for_uid $info.euid
@@ -104,7 +104,7 @@ def resolves_macos_principal_ids()
 #[test]
 def rejects_macos_principal_id_resolution_when_unsupported()
   if (sys.os_info().os == :MACOS:)
-    skip "macOS principal ID resolution is supported on this platform"
+    ignore "macOS principal ID resolution is supported on this platform"
 
   assert_throws $UnsupportedError do macos_security.uuid_for_uid 0
   assert_throws $UnsupportedError do macos_security.uuid_for_gid 0

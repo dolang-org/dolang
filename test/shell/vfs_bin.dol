@@ -5,11 +5,11 @@ import sys _vfs
   test:
     - assert
     - assert_eq
-    - skip
+    - ignore
     - test
 
 if (sys.os_info().family == :WINDOWS:)
-  skip "requires Unix metadata"
+  ignore "requires Unix metadata"
 
 def make_file path mode
   path.open w do |file| file.write "fixture"

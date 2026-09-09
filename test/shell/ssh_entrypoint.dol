@@ -7,11 +7,11 @@ import _vfs proc sys
     - assert
     - assert_eq
     - assert_throws
-    - skip
+    - ignore
     - test
 
 if (sys.os_info().family == :WINDOWS:)
-  skip "requires a Unix SSH shim"
+  ignore "requires a Unix SSH shim"
 
 # Writes an `ssh` stand-in into `dir` that drops the SSH options and runs the
 # remote command locally, so the tests exercise the entrypoint without a server.

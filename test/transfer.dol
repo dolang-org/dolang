@@ -12,7 +12,7 @@ import digest http http.mock json tar transfer zip
     - assert
     - assert_eq
     - assert_throws
-    - skip
+    - ignore
     - test
 
 import fs.unix: unix_fs
@@ -456,7 +456,7 @@ def compress_raw source destination format
 #[vfs]
 def raw_compression_round_trips()
   if (os_info().family == :WINDOWS:)
-    skip "requires gzip, zstd, and xz"
+    ignore "requires gzip, zstd, and xz"
 
   let source = Path "payload.bin"
   source.write b"\x00hello\xffworld\n"
@@ -479,7 +479,7 @@ def raw_compression_round_trips()
 #[vfs]
 def raw_decompression_validates_destination_and_strip()
   if (os_info().family == :WINDOWS:)
-    skip "requires gzip"
+    ignore "requires gzip"
 
   let source = Path "payload.bin"
   source.write b"hello"
@@ -494,7 +494,7 @@ def raw_decompression_validates_destination_and_strip()
 #[vfs]
 def corrupt_raw_input_is_not_published()
   if (os_info().family == :WINDOWS:)
-    skip "requires xz"
+    ignore "requires xz"
 
   Path("corrupt.xz").write b"not xz"
   let e = assert_throws $transfer.ArchiveError do transfer.unpack corrupt.xz output
