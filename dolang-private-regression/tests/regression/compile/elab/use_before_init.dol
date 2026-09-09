@@ -1,0 +1,52 @@
+# Test: a `def`/`class` binding is pre-registered by a block's forward
+# reference pre-pass so mutually-recursive/forward declarations can resolve
+# each other's names, but the binding is not actually initialized until its
+# own statement is elaborated. A direct (non-capturing) use before that point
+# would observe an uninitialized local at runtime, so it must be a hard error.
+
+# A class supertype reference is resolved eagerly, in the same scope as the
+# class declaration itself, so referencing a not-yet-declared class here is
+# an error.
+class _Sub: _Base
+class _Base
+# error: use of binding before its declaration has run
+#   --> use_before_init.dol:LL:LL
+#    |
+# LL | class _Sub: _Base
+#    |             ^^^^^
+# LL | class _Base
+#    |       ----- declared here, but not yet initialized at this use
+
+# A static field initializer runs eagerly at class-creation time, in the
+# enclosing scope, so it has the same restriction.
+class _Config
+  #[static]
+  field _value = _later_default()
+def _later_default
+  1
+# error: use of binding before its declaration has run
+#   --> use_before_init.dol:LL:LL
+#    |
+# LL |   field _value = _later_default()
+#    |                  ^^^^^^^^^^^^^^
+# LL | def _later_default
+#    |     -------------- declared here, but not yet initialized at this use
+
+# By contrast, referencing a not-yet-declared top-level `def`/`class` from
+# inside a function body is fine: the body only runs when called, by which
+# point the whole enclosing block has finished elaborating and the forward
+# reference has long since been initialized. This is what makes ordinary
+# mutual recursion between top-level functions work.
+def _even n
+  if (n == 0)
+    true
+  else
+    _odd (n - 1)
+
+def _odd n
+  if (n == 0)
+    false
+  else
+    _even (n - 1)
+
+assert (_even 10)

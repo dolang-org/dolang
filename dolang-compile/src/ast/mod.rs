@@ -35,6 +35,14 @@ pub(crate) struct Var {
     pub(crate) exported: bool,
     // Used?
     pub(crate) used: bool,
+    // Has the binding's initializing statement run yet? `false` only for
+    // bindings pre-registered by a block's forward-reference pre-pass
+    // (`def`/`class`) before their statement is actually elaborated. A
+    // non-capturing use (one that does not cross a function/lambda scope
+    // boundary on its way to the binding) while this is `false` observes
+    // an uninitialized local at runtime, so it is a hard error rather than
+    // silently emitted.
+    pub(crate) initialized: bool,
     // Compile-time provenance of the binding.
     pub(crate) origin: Origin,
     // Filled only by document indexing; references use (index, depth) to find it.
