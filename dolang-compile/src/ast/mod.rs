@@ -1740,16 +1740,23 @@ impl Node for ImportElement {
     }
 }
 
-pub(crate) struct Import(pub(crate) Vec<ImportElement>, pub(crate) Span);
+pub(crate) struct Import {
+    pub(crate) elements: Vec<ImportElement>,
+    pub(crate) import_span: Span,
+    pub(crate) pub_span: Option<Span>,
+}
 
 impl Node for Import {
     fn span(&self) -> Span {
-        self.1 | self.0.last().as_ref().unwrap().span()
+        self.pub_span.unwrap_or(self.import_span) | self.elements.last().as_ref().unwrap().span()
     }
 
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
-        visit.token(Token::Keyword, self.1, None)?;
-        self.0.accept(visit)
+        if let Some(span) = self.pub_span {
+            visit.token(Token::Keyword, span, None)?;
+        }
+        visit.token(Token::Keyword, self.import_span, None)?;
+        self.elements.accept(visit)
     }
 
     fn kind(&self) -> NodeKind {

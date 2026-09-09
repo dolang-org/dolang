@@ -2252,7 +2252,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_import(&mut self, import: &Import, want_result: bool) -> Result<()> {
         let span = import.span();
-        for import in import.0.iter() {
+        for import in &import.elements {
             let module = match import {
                 ImportElement::ModuleAsIs { module, .. }
                 | ImportElement::ModuleRenamed { module, .. } => *module,

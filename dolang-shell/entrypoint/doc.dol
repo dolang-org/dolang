@@ -121,6 +121,8 @@ class Document
       $compile.Class: $self.#class_entry
       $compile.Function: $self.#function_entry
       $compile.Bind: $self.#value_entry
+      $compile.ImportModule: $self.#import_module_entry
+      $compile.ImportItem: $self.#import_item_entry
       $compile.Field: $self.#field_member
       $compile.Method: $self.#method_member
       $compile.SpecialMethod: $self.#special_member
@@ -250,6 +252,27 @@ class Document
       name: (self.#text(node.name))
       pub: $node.is_pub
       span: (span_json(node.name))
+      doc: (self.#doc(node))
+
+  def import_module_entry self _id node
+    if !self.#included(node.is_pub)
+      return
+    self.#entities.push $
+      kind: "import_module"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      module: (self.#text(node.module))
+      doc: (self.#doc(node))
+
+  def import_item_entry self _id node
+    if !self.#included(node.is_pub)
+      return
+    self.#entities.push $
+      kind: "import_item"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      module: (self.#text(node.module))
+      item: (self.#text(node.item))
       doc: (self.#doc(node))
 
   def field_member self id node

@@ -1093,7 +1093,10 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
         ) {
             builder = builder.get("name", |this, strand, out| project_name(this, strand, out));
         }
-        if matches!(T::NAME, "Class" | "Function" | "Method" | "Field" | "Bind") {
+        if matches!(
+            T::NAME,
+            "Class" | "Function" | "Method" | "Field" | "Bind" | "ImportModule" | "ImportItem"
+        ) {
             builder = builder.get("is_pub", |this, strand, out| project_pub(this, strand, out));
         }
         if matches!(T::NAME, "PositionalParam" | "KeyParam") {
@@ -1198,7 +1201,9 @@ fn project_pub<'v, 's, T: NodeMarker + 'static>(
         | compile::Kind::Function { is_pub, .. }
         | compile::Kind::Method { is_pub, .. }
         | compile::Kind::Field { is_pub, .. }
-        | compile::Kind::Bind { is_pub, .. } => is_pub,
+        | compile::Kind::Bind { is_pub, .. }
+        | compile::Kind::ImportModule { is_pub, .. }
+        | compile::Kind::ImportItem { is_pub, .. } => is_pub,
         _ => unreachable!(),
     })?;
     Output::set(strand, out, v);

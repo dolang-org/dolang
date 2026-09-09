@@ -348,14 +348,25 @@ impl<'a> Node<'a> {
                 name: name.as_ref().map(span),
             },
             doc::Kind::SelfParam { name } => Kind::SelfParam { name: span(name) },
-            doc::Kind::ImportModule { module, name } => Kind::ImportModule {
+            doc::Kind::ImportModule {
+                module,
+                name,
+                is_pub,
+            } => Kind::ImportModule {
                 module: span(module),
                 name: span(name),
+                is_pub: *is_pub,
             },
-            doc::Kind::ImportItem { module, item, name } => Kind::ImportItem {
+            doc::Kind::ImportItem {
+                module,
+                item,
+                name,
+                is_pub,
+            } => Kind::ImportItem {
                 module: span(module),
                 item: span(item),
                 name: span(name),
+                is_pub: *is_pub,
             },
             doc::Kind::PreludeModule { module, name } => Kind::PreludeModule { module, name },
             doc::Kind::PreludeItem { module, item, name } => {
@@ -476,6 +487,8 @@ pub enum Kind<'a> {
         module: diag::Span,
         /// The bound name
         name: diag::Span,
+        /// Declared `pub`
+        is_pub: bool,
     },
     /// An item imported from a module
     ImportItem {
@@ -485,6 +498,8 @@ pub enum Kind<'a> {
         item: diag::Span,
         /// The bound name
         name: diag::Span,
+        /// Declared `pub`
+        is_pub: bool,
     },
     /// A module bound by the prelude, which has no source text
     PreludeModule {
@@ -1321,6 +1336,40 @@ mod tests {
             }
         });
         assert_eq!(ids, vec![imports[0], imports[1], imports[1]]);
+    }
+
+    #[test]
+    fn public_imports_are_documented_and_dotted_names_must_be_renamed() {
+        let unit = config().unit(
+            Path::new("imports.dol"),
+            b"pub import std\npub import foo.bar: bar\npub import std:\n  Record: Rec\n",
+        );
+        assert!(!unit.failed, "{:?}", diagnostic_snapshot(&unit));
+        let imports: Vec<_> = unit
+            .nodes()
+            .filter_map(|(_, node)| match node.kind() {
+                Kind::ImportModule { is_pub, .. } | Kind::ImportItem { is_pub, .. } => Some(is_pub),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(imports, vec![true, true, true]);
+
+        let invalid = config().unit(Path::new("imports.dol"), b"pub import foo.bar\n");
+        assert!(invalid.failed);
+        assert!(
+            diagnostic_snapshot(&invalid)
+                .iter()
+                .any(|diagnostic| diagnostic
+                    .contains("public dotted module imports must be renamed"))
+        );
+
+        let nested = config().unit(Path::new("imports.dol"), b"def load()\n  pub import std\n");
+        assert!(nested.failed);
+        assert!(
+            diagnostic_snapshot(&nested)
+                .iter()
+                .any(|diagnostic| diagnostic.contains("`pub` may only be used at the top level"))
+        );
     }
 
     #[test]

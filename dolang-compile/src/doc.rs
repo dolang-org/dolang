@@ -109,11 +109,13 @@ pub(crate) enum Kind {
     ImportModule {
         module: Span,
         name: Span,
+        is_pub: bool,
     },
     ImportItem {
         module: Span,
         item: Span,
         name: Span,
+        is_pub: bool,
     },
     PreludeModule {
         module: alias::Box<str>,

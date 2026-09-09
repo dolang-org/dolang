@@ -38,17 +38,6 @@ let MKDOCS_DOC_PATHS = $
 
 let MKDOCS_API_DIR = Path "docs/api"
 
-# Public modules that re-export types from a shared private implementation
-# module (`pub let X = impl.X`, e.g. docker.dol and podman.dol both wrap
-# _container.dockman) rather than declaring them directly. The doc extractor
-# sees a re-export like that as a plain value, not a class, so the class list
-# for the page tree has to be pulled from the implementation module instead.
-# Quoted keys: module names are looked up as plain Str, and a bareword key
-# here would compile to a Sym instead and never match.
-let MKDOCS_ALIAS_MODULES = $
-  "docker": _container.dockman
-  "podman": _container.dockman
-
 let DOC_CRATES = $
   - dolang
   - dolang-rpc
@@ -213,16 +202,31 @@ def collect_doc_jobs()
       let name = dol_module_name $path $base
       put $ record :name :path
 
-# The public, documented classes a module's extracted entities declare
-# directly. Only documented ones: the mkdocstrings handler strips undocumented
-# entities by default (`show_undocumented` option), so a page for one of those
-# would reference an entity collect() can never actually find.
-def module_classes entities
+# The documented public classes a module declares or re-exports. Only
+# documented ones receive pages because the handler hides undocumented
+# entities by default.
+def module_classes modules module entities chain = []
   let names = []
   for e = entities
     if ((e["kind"] == "class") && e["pub"] && e["doc"])
       names.push $e["name"]
+    else if ((e["kind"] == "import_item") && e["pub"])
+      let key = "$module.$(e["name"])"
+      if chain.contains $key
+        throw "cyclic public doc re-export: $(" -> ".join([...chain, key]))"
+      let source = modules.get $e["module"] else: do
+        throw "public doc re-export $key names missing module $(e["module"])"
+      let target = source["entities"].find do |candidate|
+        (candidate["name"] == e["item"])
+      if (target == nil)
+        throw "public doc re-export $key names missing item $(e["module"]).$(e["item"])"
+      let resolved = module_classes $modules $e["module"] [target] [...chain, key]
+      if resolved.len
+        names.push $e["name"]
   names
+
+def private_doc_module name
+  name.split(".").any do |component| component.starts_with "_"
 
 def write_doc_page path title identifier
   path.parent.create_dir all: true
@@ -252,20 +256,14 @@ def write_doc_page path title identifier
 # would show up nested under an unrelated `security` section in the nav
 # instead of as its own entry. Private modules (leading `_`, e.g.
 # `_container.dockman`) are implementation detail and get no page of their
-# own -- unless they're aliased in from a public module via
-# MKDOCS_ALIAS_MODULES, in which case their classes are written under the
-# *public* module's directory instead.
-def generate_doc_pages dolang paths_by_name name entities
-  if !(name.starts_with "_")
+# own. Any component beginning with `_` makes the module private. Re-exported
+# classes are written under the public importing module instead.
+def generate_doc_pages modules name entities
+  if !private_doc_module(name)
     let dir = (MKDOCS_API_DIR / name)
     write_doc_page (dir / "index.md") $name $name
-    for class_name = module_classes(entities)
+    for class_name = module_classes $modules $name $entities
       write_doc_page (dir / "$class_name.md") $class_name "$name.$class_name"
-    let alias = MKDOCS_ALIAS_MODULES.get $name
-    if alias
-      let alias_json = sub do run $dolang -m doc --module $alias $(paths_by_name[alias])
-      for class_name = module_classes(json.decode(alias_json)["entities"])
-        write_doc_page (dir / "$class_name.md") $class_name "$alias.$class_name"
 
 # Runs `dolang -m doc` once per module, in parallel, writing each result as
 # `<out_dir>/<module name>.json`. This is the JSON-only half of extract_docs
@@ -273,37 +271,23 @@ def generate_doc_pages dolang paths_by_name name entities
 # used by `install` to feed dolang-lsp's build-time static doc index (see
 # dolang-lsp/build.rs) without also touching the docs/api page tree.
 def extract_doc_json spec out_dir
-  remove $out_dir all: true ignore: true
-  create_dir $out_dir all: true
+  out_dir.remove all: true ignore: true
+  out_dir.create_dir all: true
   let dolang = spec.bin "dolang"
   let workers = sys.cpu_info().logical_count
   strand.pool $workers $collect_doc_jobs() do |job|
     let :name :path = job
-    let text = sub do run $dolang -m doc --module $name $path
-    (out_dir / "$name.json").write $text
+    run $dolang -m doc --module $name $path stdout: (out_dir / "$name.json")
 
-# Runs `dolang -m doc` once per module, in parallel, and writes each result as
-# `<out_dir>/<module name>.json` for the mkdocstrings handler to read; also
-# (re)generates the docs/api page tree from the same extraction (see
-# generate_doc_pages). Doc extraction (a debug-build interpreter launch per
-# module) is embarrassingly parallel across modules, so this spreads it over
-# the available cores rather than doing it serially, on demand, one
-# `::: module.Foo.bar` directive at a time.
+# Extracts the JSON cache and regenerates the docs/api page tree from it.
 def extract_docs spec out_dir
-  remove $out_dir all: true ignore: true
-  create_dir $out_dir all: true
-  remove $MKDOCS_API_DIR all: true ignore: true
-  let dolang = spec.bin "dolang"
-  let jobs = [...collect_doc_jobs()]
-  let paths_by_name = {}
-  for job = jobs
-    paths_by_name.insert $job.name $job.path
-  let workers = sys.cpu_info().logical_count
-  strand.pool $workers $jobs do |job|
-    let :name :path = job
-    let text = sub do run $dolang -m doc --module $name $path
-    (out_dir / "$name.json").write $text
-    generate_doc_pages $dolang $paths_by_name $name (json.decode(text)["entities"])
+  extract_doc_json $spec $out_dir
+  MKDOCS_API_DIR.remove all: true ignore: true
+  let modules = $
+    for doc = out_dir.glob("*.json").map do |p| json.decode $p.read()
+      $doc["module"]: $doc
+  for name document = modules
+    generate_doc_pages $modules $name $document["entities"]
 
 def with_mkdocs spec func
   # The handler reads a pre-extracted JSON cache -- one file per module,

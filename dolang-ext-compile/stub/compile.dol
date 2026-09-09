@@ -223,9 +223,17 @@ pub class Import: Declaration
 
 # A module bound by `import foo` or `import foo: bar`.
 pub class ImportModule: Import
+  # Whether the module was imported `pub`.
+  #[getter]
+  pub def is_pub self
+    throw nil
 
 # An item bound from a module, as in `import foo: - bar`.
 pub class ImportItem: Import
+  # Whether the item was imported `pub`.
+  #[getter]
+  pub def is_pub self
+    throw nil
   # The [`Span`](compile.Span) of the item name within the module.
   #[getter]
   pub def item self

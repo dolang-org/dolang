@@ -61,16 +61,17 @@ import
   proc
   _container.dockman: dockman
 
-let docker_cli = proc.run[:docker:]
+pub import _container.dockman:
+  - Image
+  - Container
+  - NoImageError
+  - NoContainerError
+  - ContainerExitError
+  - InvalidImageReferenceError
+  - RegistryAuthError
+  - ArchiveError
 
-pub let Image = dockman.Image
-pub let Container = dockman.Container
-pub let NoImageError = dockman.NoImageError
-pub let NoContainerError = dockman.NoContainerError
-pub let ContainerExitError = dockman.ContainerExitError
-pub let InvalidImageReferenceError = dockman.InvalidImageReferenceError
-pub let RegistryAuthError = dockman.RegistryAuthError
-pub let ArchiveError = dockman.ArchiveError
+let docker_cli = proc.run[:docker:]
 
 class DockerRuntime: dockman.Runtime
   def (init) self

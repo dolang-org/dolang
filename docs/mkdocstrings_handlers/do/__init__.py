@@ -56,6 +56,76 @@ class DoHandler(BaseHandler):
         merged.update(local_options)
         return merged
 
+    def _load_module(self, cache_dir: Path, module: str) -> dict:
+        cached = self._doc_cache.get(module)
+        if cached is not None:
+            return cached
+        cache_file = cache_dir / f"{module}.json"
+        if not cache_file.is_file():
+            raise CollectionError(f"Doc reference names missing module '{module}'.")
+        try:
+            cached = json.loads(cache_file.read_text())
+        except json.JSONDecodeError as e:
+            raise CollectionError(
+                f"doc cache file '{cache_file}' is invalid JSON: {e}"
+            ) from e
+        self._doc_cache[module] = cached
+        return cached
+
+    def _resolve_entity(
+        self,
+        cache_dir: Path,
+        module: str,
+        entity: dict,
+        chain: tuple[tuple[str, str], ...] = (),
+    ) -> dict:
+        kind = entity.get("kind")
+        if kind == "import_module":
+            result = copy.deepcopy(entity)
+            result["kind"] = "value"
+            return result
+        if kind != "import_item":
+            result = copy.deepcopy(entity)
+            result["_doc_source"] = f"{module}.{entity.get('name', '')}"
+            return result
+
+        key = (module, entity.get("name", ""))
+        if key in chain:
+            path = " -> ".join(f"{m}.{n}" for m, n in (*chain, key))
+            raise CollectionError(f"Cyclic public doc re-export: {path}")
+        source_module = entity.get("module", "")
+        source_item = entity.get("item", "")
+        source = self._load_module(cache_dir, source_module)
+        target = _find_entity(source.get("entities", []), [source_item])
+        if target is None:
+            path = " -> ".join(
+                [
+                    *(f"{m}.{n}" for m, n in chain),
+                    f"{module}.{key[1]}",
+                    f"{source_module}.{source_item}",
+                ]
+            )
+            raise CollectionError(f"Unresolved public doc re-export: {path}")
+        result = self._resolve_entity(cache_dir, source_module, target, (*chain, key))
+        result["name"] = entity.get("name", source_item)
+        result["pub"] = entity.get("pub", True)
+        return result
+
+    def _resolve_entities(
+        self, cache_dir: Path, module: str, entities: list[dict]
+    ) -> list[dict]:
+        resolved = [
+            self._resolve_entity(cache_dir, module, entity) for entity in entities
+        ]
+        aliases = {
+            result["_doc_source"]: f"{module}.{source.get('name')}"
+            for source, result in zip(entities, resolved)
+            if source.get("kind") == "import_item" and "_doc_source" in result
+        }
+        for entity in resolved:
+            _rewrite_doc_refs(entity, aliases)
+        return resolved
+
     def collect(self, identifier: str, options: dict) -> dict:
         """Collect documentation for an identifier.
 
@@ -95,13 +165,7 @@ class DoHandler(BaseHandler):
             if cached is None:
                 cache_file = Path(cache_dir) / f"{candidate}.json"
                 if cache_file.is_file():
-                    try:
-                        cached = json.loads(cache_file.read_text())
-                    except json.JSONDecodeError as e:
-                        raise CollectionError(
-                            f"doc cache file '{cache_file}' is invalid JSON: {e}"
-                        ) from e
-                    self._doc_cache[candidate] = cached
+                    cached = self._load_module(Path(cache_dir), candidate)
             if cached is not None:
                 module_name = candidate
                 entity_parts = parts[split:]
@@ -114,7 +178,7 @@ class DoHandler(BaseHandler):
             )
 
         doc_data = copy.deepcopy(cached)
-        entities = doc_data.get("entities", [])
+        entities = self._resolve_entities(Path(cache_dir), module_name, doc_data.get("entities", []))
 
         show_undocumented = options.get("show_undocumented", False)
         if not show_undocumented:
@@ -168,6 +232,16 @@ def _annotate_entities(entities: list[dict], module_name: str) -> None:
         for member in entity.get("members", []):
             member["_identifier"] = f"{module_name}.{name}.{member['name']}"
             member["_module"] = module_name
+
+
+def _rewrite_doc_refs(entity: dict, aliases: dict[str, str]) -> None:
+    """Retarget source-module links to names re-exported by this module."""
+    doc = entity.get("doc", "")
+    for source, target in aliases.items():
+        doc = doc.replace(f"]({source})", f"]({target})")
+    entity["doc"] = doc
+    for member in entity.get("members", []):
+        _rewrite_doc_refs(member, aliases)
 
 
 def _split_doc(doc: str) -> tuple[str, str]:

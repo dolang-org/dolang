@@ -4778,6 +4778,7 @@ impl<'a> Parser<'a> {
         scope: &mut Scope,
         mut elems: Vec<ImportElement>,
         import_span: Span,
+        pub_span: Option<Span>,
     ) -> Result<Import> {
         use TokenInfo::*;
 
@@ -4790,14 +4791,18 @@ impl<'a> Parser<'a> {
                 }
                 Some(token!(Dedent)) => {
                     self.advance();
-                    break Ok(Import(elems, import_span));
+                    break Ok(Import {
+                        elements: elems,
+                        import_span,
+                        pub_span,
+                    });
                 }
                 _ => elems.push(self.parse_import_elem_vert(scope)?),
             }
         }
     }
 
-    fn parse_import(&mut self, scope: &mut Scope) -> Result<Import> {
+    fn parse_import(&mut self, scope: &mut Scope, pub_span: Option<Span>) -> Result<Import> {
         use self::{Ident, Keyword};
         use TokenInfo::*;
 
@@ -4807,13 +4812,19 @@ impl<'a> Parser<'a> {
 
         loop {
             match self.peek()? {
-                None | Some(token!(StmtSep | Dedent)) => break Ok(Import(elems, import_span)),
+                None | Some(token!(StmtSep | Dedent)) => {
+                    break Ok(Import {
+                        elements: elems,
+                        import_span,
+                        pub_span,
+                    });
+                }
                 Some(token!(ArgSep)) => {
                     self.advance();
                     continue;
                 }
                 Some(token!(Indent)) => {
-                    return self.parse_import_vert(scope, elems, import_span);
+                    return self.parse_import_vert(scope, elems, import_span, pub_span);
                 }
                 _ => (),
             }
@@ -4828,7 +4839,11 @@ impl<'a> Parser<'a> {
                                 items: self.parse_import_items(scope)?,
                             });
                             self.expect(scope, &[ExpectKind::Dedent])?;
-                            break Ok(Import(elems, import_span));
+                            break Ok(Import {
+                                elements: elems,
+                                import_span,
+                                pub_span,
+                            });
                         }
                         self.expect(scope, &[ExpectKind::ArgSep])?;
                         match decay_ident!(self.next()?) {
@@ -4877,7 +4892,7 @@ impl<'a> Parser<'a> {
             let span = self.advance();
             self.expect(scope, &[ExpectKind::ArgSep])?;
             match self.peek()? {
-                Some(token!(Keyword(Let | Def | Class))) => (),
+                Some(token!(Keyword(Let | Def | Class | Import))) => (),
                 Some(token @ token!(DecoratorOpen)) => {
                     return Err(self.syntax_error(
                         scope,
@@ -4889,7 +4904,7 @@ impl<'a> Parser<'a> {
                     let _ = self.syntax_error(
                         scope,
                         other,
-                        "`pub` is only valid before `let`, `def`, or `class`",
+                        "`pub` is only valid before `let`, `def`, `class`, or `import`",
                     );
                 }
             }
@@ -4920,7 +4935,26 @@ impl<'a> Parser<'a> {
             Some(token!(Keyword(While))) => self.parse_while(scope),
             Some(token!(Keyword(For))) => self.parse_for(scope),
             Some(token!(Keyword(Bind))) => Ok(Stmt::Bind(self.parse_bind(scope)?)),
-            Some(token!(Keyword(Import))) => Ok(Stmt::Import(self.parse_import(scope)?)),
+            Some(token!(Keyword(Import))) => {
+                let import = self.parse_import(scope, pub_span)?;
+                if pub_span.is_some() {
+                    for element in &import.elements {
+                        if let ImportElement::ModuleAsIs { module, .. } = element
+                            && self.file.str(*module).contains('.')
+                        {
+                            return Err(self.syntax_error(
+                                scope,
+                                Some(Token {
+                                    info: TokenInfo::Ident,
+                                    span: *module,
+                                }),
+                                "public dotted module imports must be renamed",
+                            ));
+                        }
+                    }
+                }
+                Ok(Stmt::Import(import))
+            }
             Some(token!(Keyword(Return), span)) => {
                 self.advance();
                 let expr = match self.peek()? {
