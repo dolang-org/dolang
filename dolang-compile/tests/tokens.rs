@@ -49,26 +49,6 @@ use std::{fmt::Write as _, fs, path::Path};
 
 use dolang_compile::{Config, Context, Kind, NodeId, Token, diag};
 
-#[test]
-fn barewords() {
-    check("tests/tokens/barewords.dol");
-}
-
-#[test]
-fn compact_expr() {
-    check("tests/tokens/compact_expr.dol");
-}
-
-#[test]
-fn params() {
-    check("tests/tokens/params.dol");
-}
-
-#[test]
-fn strings() {
-    check("tests/tokens/strings.dol");
-}
-
 /// Names for [`Token`], as written after the `:` in an annotation.
 ///
 /// The match is exhaustive on purpose: a new token kind should not be able to
@@ -228,8 +208,7 @@ struct Annotation {
     context: Option<String>,
 }
 
-fn check(path: &str) {
-    let path = Path::new(path);
+fn run(path: &Path) {
     let content = fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let source = std::str::from_utf8(&content)
         .unwrap_or_else(|e| panic!("{}: fixture is not UTF-8: {e}", path.display()));
@@ -592,3 +571,5 @@ fn overlapping(annotation: &Annotation, target: usize, tokens: &[Tok]) -> String
         format!("\n    overlapping tokens:{out}")
     }
 }
+
+include!(concat!(env!("OUT_DIR"), "/generated_token_tests.rs"));

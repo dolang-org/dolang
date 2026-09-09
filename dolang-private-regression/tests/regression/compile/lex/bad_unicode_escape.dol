@@ -1,0 +1,69 @@
+"\u{}"
+# error: unexpected escape sequence
+#   --> bad_unicode_escape.dol:LL:LL
+#    |
+# LL | "\u{}"
+#    |  ^^^^
+
+"\u1234"
+# error: unexpected escape sequence
+#   --> bad_unicode_escape.dol:LL:LL
+#    |
+# LL | "\u1234"
+#    |  ^^^
+
+"\u{_1}"
+# error: unexpected escape sequence
+#   --> bad_unicode_escape.dol:LL:LL
+#    |
+# LL | "\u{_1}"
+#    |  ^^^^
+
+"\u{1_}"
+# error: unexpected escape sequence
+#   --> bad_unicode_escape.dol:LL:LL
+#    |
+# LL | "\u{1_}"
+#    |  ^^^^^^
+
+"\u{1__2}"
+# error: unexpected escape sequence
+#   --> bad_unicode_escape.dol:LL:LL
+#    |
+# LL | "\u{1__2}"
+#    |  ^^^^^^
+
+"\u{1234567}"
+# error: unexpected escape sequence
+#   --> bad_unicode_escape.dol:LL:LL
+#    |
+# LL | "\u{1234567}"
+#    |  ^^^^^^^^^^
+
+"\u{110000}"
+# error: unexpected escape sequence
+#   --> bad_unicode_escape.dol:LL:LL
+#    |
+# LL | "\u{110000}"
+#    |  ^^^^^^^^^^
+
+"\u{d800}"
+# error: unexpected escape sequence
+#   --> bad_unicode_escape.dol:LL:LL
+#    |
+# LL | "\u{d800}"
+#    |  ^^^^^^^^
+
+"\u{zz}"
+# error: unexpected escape sequence
+#   --> bad_unicode_escape.dol:LL:LL
+#    |
+# LL | "\u{zz}"
+#    |  ^^^^
+
+"\u{1"
+# error: unexpected escape sequence
+#   --> bad_unicode_escape.dol:LL:LL
+#    |
+# LL | "\u{1"
+#    |  ^^^^^

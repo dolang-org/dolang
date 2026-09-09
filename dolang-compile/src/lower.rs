@@ -435,6 +435,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 Expr::EscapeByte(b, _) => {
                     acc.push(*b);
                 }
+                Expr::Escape(char, _) => {
+                    let mut buf = [0; 4];
+                    acc.extend_from_slice(char.encode_utf8(&mut buf).as_bytes());
+                }
                 other => {
                     if !acc.is_empty() {
                         let cid = self.consttab.bin(self.bintab.id(&acc));

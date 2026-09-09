@@ -25,6 +25,10 @@ version = "0.1.4"
 optional = true
 
 
+[build-dependencies.dolang-private-build]
+workspace = true
+
+
 [features]
 default = []
 debug = ["dolang-util/debug", "dolang-bytecode/debug", "dot-writer"]

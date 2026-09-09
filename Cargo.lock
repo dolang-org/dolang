@@ -860,6 +860,7 @@ name = "dolang-compile"
 version = "0.1.1"
 dependencies = [
  "dolang-bytecode",
+ "dolang-private-build",
  "dolang-private-util",
  "dot-writer",
  "phf",

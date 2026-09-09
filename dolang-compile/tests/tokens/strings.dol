@@ -27,6 +27,15 @@ dbg "a\nb"
 #       ^: literal
 #        ^: string_delim
 
+# Unicode escapes are one token, including their braces and separators.
+#~~: variable, context=call, node=prelude_item
+dbg "a\u{1f_642}b"
+#   ^: string_delim
+#    ^: literal
+#     ^~~~~~~~~~: escape
+#               ^: literal
+#                ^: string_delim
+
 # `$(...)` is a full expression, so its contents tokenize as one.
 #~~: variable, context=call, node=prelude_item
 dbg "sum $(name + 1)"
