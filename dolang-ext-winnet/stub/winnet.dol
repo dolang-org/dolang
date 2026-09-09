@@ -68,34 +68,34 @@ pub class User
   # ```
   pub def update
     self
-    # ([`Str`](std.Str)?) New account name. Applied after every other
+    # ([`Str`](std.Str)) New account name. Applied after every other
     # option.
     :name = nil
-    # ([`Str`](std.Str)?) Password to set.
+    # ([`Str`](std.Str)) Password to set.
     :password = nil
-    # ([`Str`](std.Str)?) Display name.
+    # ([`Str`](std.Str)) Display name.
     :full_name = nil
-    # ([`Str`](std.Str)?) Administrative account comment.
+    # ([`Str`](std.Str)) Administrative account comment.
     :comment = nil
-    # ([`Str`](std.Str)?) User-facing account comment.
+    # ([`Str`](std.Str)) User-facing account comment.
     :user_comment = nil
-    # ([`fs.windows.Path`](fs.windows.Path)?) Home directory.
+    # ([`fs.windows.Path`](fs.windows.Path)) Home directory.
     :home_dir = nil
-    # ([`Str`](std.Str)?) Drive designator assigned to the home directory
+    # ([`Str`](std.Str)) Drive designator assigned to the home directory
     # at logon, such as `"Z:"`.
     :home_dir_drive = nil
-    # ([`fs.windows.Path`](fs.windows.Path)?) Profile path.
+    # ([`fs.windows.Path`](fs.windows.Path)) Profile path.
     :profile = nil
-    # ([`fs.windows.Path`](fs.windows.Path)?) Logon script path.
+    # ([`fs.windows.Path`](fs.windows.Path)) Logon script path.
     :script_path = nil
     # ([`time.DateTime`](time.DateTime)?) Expiration instant. `nil` means
     # the account never expires.
     :account_expires = nil
-    # ([`Bool`](std.Bool)?) Whether the account is disabled.
+    # ([`Bool`](std.Bool)) Whether the account is disabled.
     :disabled = nil
-    # ([`Bool`](std.Bool)?) Whether the password is exempt from expiry.
+    # ([`Bool`](std.Bool)) Whether the password is exempt from expiry.
     :password_never_expires = nil
-    # ([`Bool`](std.Bool)?) Whether the user may change the password.
+    # ([`Bool`](std.Bool)) Whether the user may change the password.
     :password_cannot_change = nil
   do
     throw nil
@@ -279,7 +279,7 @@ pub class Group
   # A fresh [`GroupInfo`](winnet.GroupInfo).
   pub def update
     self
-    # ([`Str`](std.Str)?) New group name.
+    # ([`Str`](std.Str)) New group name.
     :name = nil
     # ([`Str`](std.Str)?) Administrative comment. `nil` clears it.
     :comment = nil
@@ -459,7 +459,7 @@ pub class Share
     :comment = nil
     # ([`Int`](std.Int)?) Connection limit. `nil` is unlimited.
     :max_uses = nil
-    # ([`security.windows.SecDesc`](security.windows.SecDesc)|[`Bin`](std.Bin)|[`Dict`](std.Dict)?)
+    # ([`security.windows.SecDesc`](security.windows.SecDesc)|[`Bin`](std.Bin)|[`Dict`](std.Dict))
     # Security descriptor, self-relative packet, or declarative descriptor.
     :sec_desc = nil
   do
@@ -580,10 +580,10 @@ pub class Connection
   # | [`sys.ResourceBusyError`](sys.ResourceBusyError) | Files or directories are open on the connection and `force` is not set |
   pub def disconnect
     self
-    # ([`Bool`](std.Bool)?) Disconnect even with open files or
+    # ([`Bool`](std.Bool)) Disconnect even with open files or
     # directories on the connection. Defaults to `false`.
     :force = nil
-    # ([`Bool`](std.Bool)?) Remove credentials saved for the server.
+    # ([`Bool`](std.Bool)) Remove credentials saved for the server.
     # Defaults to removing them for a persistent connection.
     :forget_credentials = nil
   do
@@ -774,24 +774,24 @@ pub def account_policy()
 #
 # The resulting [`AccountPolicy`](winnet.AccountPolicy).
 pub def update_account_policy
-  # ([`Int`](std.Int)?) Minimum password length.
+  # ([`Int`](std.Int)) Minimum password length.
   :min_password_length = nil
   # ([`time.Duration`](time.Duration)?) Maximum password age. `nil`
   # selects no limit, so passwords never expire.
   :max_password_age = nil
-  # ([`time.Duration`](time.Duration)?) Minimum password age.
+  # ([`time.Duration`](time.Duration)) Minimum password age.
   :min_password_age = nil
   # ([`time.Duration`](time.Duration)?) Forced-logoff delay. `nil`
   # disables forced logoff.
   :force_logoff = nil
-  # ([`Int`](std.Int)?) Number of prior passwords retained.
+  # ([`Int`](std.Int)) Number of prior passwords retained.
   :password_history_length = nil
-  # ([`time.Duration`](time.Duration)?) Account lockout duration.
+  # ([`time.Duration`](time.Duration)) Account lockout duration.
   :lockout_duration = nil
-  # ([`time.Duration`](time.Duration)?) Failed-logon counter observation
+  # ([`time.Duration`](time.Duration)) Failed-logon counter observation
   # window.
   :lockout_observation_window = nil
-  # ([`Int`](std.Int)?) Failed logons allowed before lockout. Zero
+  # ([`Int`](std.Int)) Failed logons allowed before lockout. Zero
   # disables lockout.
   :lockout_threshold = nil
 do
@@ -837,29 +837,29 @@ pub def create_user
   name
   # ([`Str`](std.Str)) Initial password.
   :password
-  # ([`Str`](std.Str)?) Display name.
+  # ([`Str`](std.Str)) Display name.
   :full_name = nil
-  # ([`Str`](std.Str)?) Administrative account comment.
+  # ([`Str`](std.Str)) Administrative account comment.
   :comment = nil
-  # ([`Str`](std.Str)?) User-facing account comment.
+  # ([`Str`](std.Str)) User-facing account comment.
   :user_comment = nil
-  # ([`fs.windows.Path`](fs.windows.Path)?) Home directory.
+  # ([`fs.windows.Path`](fs.windows.Path)) Home directory.
   :home_dir = nil
-  # ([`Str`](std.Str)?) Drive designator assigned to the home directory
+  # ([`Str`](std.Str)) Drive designator assigned to the home directory
   # at logon, such as `"Z:"`.
   :home_dir_drive = nil
-  # ([`fs.windows.Path`](fs.windows.Path)?) Profile path.
+  # ([`fs.windows.Path`](fs.windows.Path)) Profile path.
   :profile = nil
-  # ([`fs.windows.Path`](fs.windows.Path)?) Logon script path.
+  # ([`fs.windows.Path`](fs.windows.Path)) Logon script path.
   :script_path = nil
   # ([`time.DateTime`](time.DateTime)?) Expiration instant. `nil` means
   # the account never expires.
   :account_expires = nil
-  # ([`Bool`](std.Bool)?) Whether the account is disabled.
+  # ([`Bool`](std.Bool)) Whether the account is disabled.
   :disabled = nil
-  # ([`Bool`](std.Bool)?) Whether the password is exempt from expiry.
+  # ([`Bool`](std.Bool)) Whether the password is exempt from expiry.
   :password_never_expires = nil
-  # ([`Bool`](std.Bool)?) Whether the user may change the password.
+  # ([`Bool`](std.Bool)) Whether the user may change the password.
   :password_cannot_change = nil
 do
   throw nil
@@ -892,7 +892,7 @@ pub def groups()
 pub def create_group
   # ([`Str`](std.Str)) Group name.
   name
-  # ([`Str`](std.Str)?) Administrative comment.
+  # ([`Str`](std.Str)) Administrative comment.
   :comment = nil
 do
   throw nil
@@ -927,18 +927,18 @@ pub def create_share
   name
   # ([`fs.windows.Path`](fs.windows.Path)) Local path to share.
   :path
-  # ([`Sym`](std.Sym)?) Resource kind: `:DISKTREE:` (the default),
+  # ([`Sym`](std.Sym)) Resource kind: `:DISKTREE:` (the default),
   # `:PRINTQ:`, `:DEVICE:`, or `:IPC:`.
   :kind = nil
-  # ([`Str`](std.Str)?) Comment.
+  # ([`Str`](std.Str)) Comment.
   :comment = nil
-  # ([`Int`](std.Int)?) Connection limit. Defaults to unlimited.
+  # ([`Int`](std.Int)) Connection limit. Defaults to unlimited.
   :max_uses = nil
-  # ([`Bool`](std.Bool)?) Mark the share special.
+  # ([`Bool`](std.Bool)) Mark the share special.
   :special = nil
-  # ([`Bool`](std.Bool)?) Mark the share temporary.
+  # ([`Bool`](std.Bool)) Mark the share temporary.
   :temporary = nil
-  # ([`security.windows.SecDesc`](security.windows.SecDesc)|[`Bin`](std.Bin)|[`Dict`](std.Dict)?)
+  # ([`security.windows.SecDesc`](security.windows.SecDesc)|[`Bin`](std.Bin)|[`Dict`](std.Dict))
   # Security descriptor, self-relative packet, or declarative descriptor.
   # Defaults to the one Windows supplies.
   :sec_desc = nil
@@ -994,15 +994,15 @@ pub def connect
   # ([`Str`](std.Str)) Remote resource in UNC form, such as
   # `r"\\server\share"`.
   remote
-  # ([`Str`](std.Str)?) Local device to redirect, such as `"Z:"`.
+  # ([`Str`](std.Str)) Local device to redirect, such as `"Z:"`.
   :local = nil
-  # ([`Str`](std.Str)?) Account to authenticate as.
+  # ([`Str`](std.Str)) Account to authenticate as.
   :user = nil
-  # ([`Str`](std.Str)?) Password for `user`.
+  # ([`Str`](std.Str)) Password for `user`.
   :password = nil
-  # ([`Sym`](std.Sym)?) Resource kind: `:DISK:`, `:PRINT:`, or `:ANY:`.
+  # ([`Sym`](std.Sym)) Resource kind: `:DISK:`, `:PRINT:`, or `:ANY:`.
   :kind = nil
-  # ([`Bool`](std.Bool)?) Record the connection so it is restored at
+  # ([`Bool`](std.Bool)) Record the connection so it is restored at
   # logon.
   #
   # A persistent connection must redirect a local device: Windows only
@@ -1010,7 +1010,7 @@ pub def connect
   # `local` raises [`ValueError`](std.ValueError) rather than silently
   # producing a mapping that disappears at the next logon.
   :persistent = nil
-  # ([`Bool`](std.Bool)?) Override whether credentials are saved for the
+  # ([`Bool`](std.Bool)) Override whether credentials are saved for the
   # server.
   #
   # Supplied credentials are saved for the target server by default when the
@@ -1120,41 +1120,41 @@ pub def machine_info()
 pub def join_domain
   # ([`Str`](std.Str)) Domain to join.
   domain
-  # ([`Str`](std.Str)?) Organizational unit for the computer account.
+  # ([`Str`](std.Str)) Organizational unit for the computer account.
   :ou = nil
-  # ([`Str`](std.Str)?) Domain account authorized to join, such as
+  # ([`Str`](std.Str)) Domain account authorized to join, such as
   # `"CORP\\joiner"`. Must be given together with `password`; omit both to use
   # the caller's own credentials.
   :account = nil
-  # ([`Str`](std.Str)?) Password for `account`.
+  # ([`Str`](std.Str)) Password for `account`.
   :password = nil
-  # ([`Str`](std.Str)?) Password of a pre-created computer account, used
+  # ([`Str`](std.Str)) Password of a pre-created computer account, used
   # instead of `account` and `password`.
   :machine_password = nil
-  # ([`Bool`](std.Bool)?) Create the computer account as part of the
+  # ([`Bool`](std.Bool)) Create the computer account as part of the
   # join.
   :create_account = nil
-  # ([`Bool`](std.Bool)?) Proceed even if already joined to a domain.
+  # ([`Bool`](std.Bool)) Proceed even if already joined to a domain.
   :join_if_joined = nil
-  # ([`Bool`](std.Bool)?) Perform an unsecured join.
+  # ([`Bool`](std.Bool)) Perform an unsecured join.
   :unsecure = nil
-  # ([`Bool`](std.Bool)?) Defer setting the service principal name until
+  # ([`Bool`](std.Bool)) Defer setting the service principal name until
   # a later rename.
   :defer_spn = nil
-  # ([`Bool`](std.Bool)?) Force the service principal name to be set.
+  # ([`Bool`](std.Bool)) Force the service principal name to be set.
   :force_spn = nil
-  # ([`Bool`](std.Bool)?) Join using a domain controller account.
+  # ([`Bool`](std.Bool)) Join using a domain controller account.
   :dc_account = nil
-  # ([`Bool`](std.Bool)?) Join under a rename that has not taken effect
+  # ([`Bool`](std.Bool)) Join under a rename that has not taken effect
   # yet.
   :with_new_name = nil
-  # ([`Bool`](std.Bool)?) Join against a read-only domain controller.
+  # ([`Bool`](std.Bool)) Join against a read-only domain controller.
   :readonly = nil
-  # ([`Bool`](std.Bool)?) Allow an ambiguous domain controller name.
+  # ([`Bool`](std.Bool)) Allow an ambiguous domain controller name.
   :ambiguous_dc = nil
-  # ([`Bool`](std.Bool)?) Do not write the netlogon cache.
+  # ([`Bool`](std.Bool)) Do not write the netlogon cache.
   :no_netlogon_cache = nil
-  # ([`Bool`](std.Bool)?) Fail rather than reuse an existing computer
+  # ([`Bool`](std.Bool)) Fail rather than reuse an existing computer
   # account.
   :no_account_reuse = nil
 do
@@ -1173,13 +1173,13 @@ do
 # | [`sys.InvalidInputError`](sys.InvalidInputError)         | The machine is a domain controller    |
 # | [`sys.PermissionDeniedError`](sys.PermissionDeniedError) | Caller may not unjoin the machine     |
 pub def unjoin_domain
-  # ([`Str`](std.Str)?) Domain account authorized to unjoin. Must be
+  # ([`Str`](std.Str)) Domain account authorized to unjoin. Must be
   # given together with `password`; omit both to use the caller's own
   # credentials.
   :account = nil
-  # ([`Str`](std.Str)?) Password for `account`.
+  # ([`Str`](std.Str)) Password for `account`.
   :password = nil
-  # ([`Bool`](std.Bool)?) Disable the computer account in the domain.
+  # ([`Bool`](std.Bool)) Disable the computer account in the domain.
   :delete_account = nil
 do
   throw nil
@@ -1191,13 +1191,13 @@ do
 pub def rename_machine
   # ([`Str`](std.Str)) New computer name.
   name
-  # ([`Str`](std.Str)?) Domain account authorized to rename. Must be
+  # ([`Str`](std.Str)) Domain account authorized to rename. Must be
   # given together with `password`; omit both to use the caller's own
   # credentials.
   :account = nil
-  # ([`Str`](std.Str)?) Password for `account`.
+  # ([`Str`](std.Str)) Password for `account`.
   :password = nil
-  # ([`Bool`](std.Bool)?) Create the renamed computer account if it is
+  # ([`Bool`](std.Bool)) Create the renamed computer account if it is
   # missing.
   :create_account = nil
 do
@@ -1229,19 +1229,19 @@ pub def provision_computer
   domain
   # ([`Str`](std.Str)) Computer name to provision.
   :machine
-  # ([`Str`](std.Str)?) Organizational unit for the computer account.
+  # ([`Str`](std.Str)) Organizational unit for the computer account.
   :ou = nil
-  # ([`Str`](std.Str)?) Domain controller to provision against.
+  # ([`Str`](std.Str)) Domain controller to provision against.
   :dc = nil
-  # ([`Bool`](std.Bool)?) Reuse an existing computer account.
+  # ([`Bool`](std.Bool)) Reuse an existing computer account.
   :reuse = nil
-  # ([`Bool`](std.Bool)?) Use the default computer account password.
+  # ([`Bool`](std.Bool)) Use the default computer account password.
   :default_password = nil
-  # ([`Bool`](std.Bool)?) Skip searching for an existing account.
+  # ([`Bool`](std.Bool)) Skip searching for an existing account.
   :skip_account_search = nil
-  # ([`Bool`](std.Bool)?) Include root CA certificates in the blob.
+  # ([`Bool`](std.Bool)) Include root CA certificates in the blob.
   :root_ca_certs = nil
-  # ([`Bool`](std.Bool)?) Support provisioning by a down-level privileged
+  # ([`Bool`](std.Bool)) Support provisioning by a down-level privileged
   # user.
   :downlevel_priv_support = nil
 do
@@ -1268,7 +1268,7 @@ pub def apply_offline_join
   # installation to modify -- the mounted image's `Windows` directory for an
   # offline image, or the running system's own when `online` is set.
   :windows_path
-  # ([`Bool`](std.Bool)?) The target installation is the running system.
+  # ([`Bool`](std.Bool)) The target installation is the running system.
   :online = nil
 do
   throw nil

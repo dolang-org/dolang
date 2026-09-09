@@ -181,7 +181,7 @@ pub class Ace
     :type
     # ([`Mask`](security.nfs4.Mask)) Permission mask.
     :mask
-    # ([`Flags`](security.nfs4.Flags)?) Inheritance/audit flags. Defaults to empty.
+    # ([`Flags`](security.nfs4.Flags)) Inheritance/audit flags. Defaults to empty.
     :flags = nil
   do
     throw nil
@@ -195,7 +195,7 @@ pub class Ace
     :type
     # ([`Mask`](security.nfs4.Mask)) Permission mask.
     :mask
-    # ([`Flags`](security.nfs4.Flags)?) Inheritance/audit flags. Defaults to empty.
+    # ([`Flags`](security.nfs4.Flags)) Inheritance/audit flags. Defaults to empty.
     :flags = nil
   do
     throw nil
@@ -209,7 +209,7 @@ pub class Ace
     :type
     # ([`Mask`](security.nfs4.Mask)) Permission mask.
     :mask
-    # ([`Flags`](security.nfs4.Flags)?) Inheritance/audit flags. Defaults to empty.
+    # ([`Flags`](security.nfs4.Flags)) Inheritance/audit flags. Defaults to empty.
     :flags = nil
   do
     throw nil
@@ -225,7 +225,7 @@ pub class Ace
     :type
     # ([`Mask`](security.nfs4.Mask)) Permission mask.
     :mask
-    # ([`Flags`](security.nfs4.Flags)?) Inheritance/audit flags. Defaults to empty.
+    # ([`Flags`](security.nfs4.Flags)) Inheritance/audit flags. Defaults to empty.
     :flags = nil
   do
     throw nil
@@ -241,7 +241,7 @@ pub class Ace
     :type
     # ([`Mask`](security.nfs4.Mask)) Permission mask.
     :mask
-    # ([`Flags`](security.nfs4.Flags)?) Inheritance/audit flags. Defaults to empty.
+    # ([`Flags`](security.nfs4.Flags)) Inheritance/audit flags. Defaults to empty.
     :flags = nil
   do
     throw nil
@@ -328,7 +328,7 @@ pub def ace
   :alarm = nil
   # ([`Mask`](security.nfs4.Mask)\|[`Sym`](std.Sym)) Permission mask.
   :mask
-  # ([`Flags`](security.nfs4.Flags)\|[`Sym`](std.Sym)?) Inheritance/audit
+  # ([`Flags`](security.nfs4.Flags)\|[`Sym`](std.Sym)) Inheritance/audit
   # flags. Defaults to empty.
   :flags = nil
 do

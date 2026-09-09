@@ -534,21 +534,21 @@ pub def compile
   path
   # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Source code to compile.
   source
-  # ([`Str`](std.Str)?) Compile in module mode under this name.
+  # ([`Str`](std.Str)) Compile in module mode under this name.
   #
   # Without it the source is compiled as a script, and running the bytecode
   # yields the value of the final expression or of an early return. In module
   # mode, running it yields a module object holding the exported bindings, or
   # the value of an early return.
   :module = nil
-  # (dict?) Additional imports to bind before the source.
+  # (dict) Additional imports to bind before the source.
   #
   # Accepts the same logical import shapes used by the LSP prelude settings:
   # an array of module names, a dict mapping a module to an alias, or a dict
   # mapping a module to the items to take from it, themselves optionally
   # aliased.
   :prelude = nil
-  # ([`Bool`](std.Bool)?) Continue parsing after syntax errors. Defaults
+  # ([`Bool`](std.Bool)) Continue parsing after syntax errors. Defaults
   # to `false`.
   #
   # Recovery is what lets a file be described while it is still being written,
@@ -556,7 +556,7 @@ pub def compile
   # read. Check [`Unit.diagnostics`](compile.Unit.diagnostics) before trusting
   # one.
   :recover = nil
-  # ([`Bool`](std.Bool)?) Build document nodes. Defaults to `false`.
+  # ([`Bool`](std.Bool)) Build document nodes. Defaults to `false`.
   :document = nil
 do
   throw nil

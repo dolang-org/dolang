@@ -132,7 +132,7 @@ pub class Server
   # ```
   pub def (init)
     self
-    # (callable?) Called with the `Server`, which is shut down when it returns.
+    # (callable) Called with the `Server`, which is shut down when it returns.
     # Omit to receive the server instead.
     func = nil
   do
@@ -255,7 +255,7 @@ pub class Server
   # ```
   pub def mock
     self
-    # (callable?) Called with the [`Mock`](http.mock.Mock) handle. The mocks are
+    # (callable) Called with the [`Mock`](http.mock.Mock) handle. The mocks are
     # unmounted when it returns, however it exits. Omit to receive the handle
     # instead and unmount it yourself. Written last at the call site, as a
     # trailing `do` block.

@@ -51,10 +51,10 @@ pub class DateTime
   #[class]
   pub def from_unix
     self
-    # ([`Int`](std.Int)|[`Float`](std.Float)?) Seconds since the
+    # ([`Int`](std.Int)|[`Float`](std.Float)) Seconds since the
     # Unix epoch.
     seconds = nil
-    # ([`Int`](std.Int)?) Nanoseconds since the Unix epoch, or, when
+    # ([`Int`](std.Int)) Nanoseconds since the Unix epoch, or, when
     # `seconds` is also given, nanoseconds to add to it.
     :nanos = nil
   do

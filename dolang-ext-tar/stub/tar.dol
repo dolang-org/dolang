@@ -172,18 +172,18 @@ pub class Writer
     # ([`Str`](std.Str)\|[`fs.unix.Path`](fs.unix.Path)) Entry
     # path.
     path
-    # ([`Int`](std.Int)?) Permission bits. Defaults to `0o755`.
+    # ([`Int`](std.Int)) Permission bits. Defaults to `0o755`.
     :mode = nil
-    # ([`Int`](std.Int)?) Owner ID. Defaults to `0`.
+    # ([`Int`](std.Int)) Owner ID. Defaults to `0`.
     :uid = nil
-    # ([`Int`](std.Int)?) Group ID. Defaults to `0`.
+    # ([`Int`](std.Int)) Group ID. Defaults to `0`.
     :gid = nil
-    # ([`DateTime`](time.DateTime)?) Modification time. Defaults to the
+    # ([`DateTime`](time.DateTime)) Modification time. Defaults to the
     # Unix epoch.
     :mtime = nil
-    # ([`Str`](std.Str)?) Owner name.
+    # ([`Str`](std.Str)) Owner name.
     :owner_name = nil
-    # ([`Str`](std.Str)?) Group name.
+    # ([`Str`](std.Str)) Group name.
     :group_name = nil
   do
     throw nil
@@ -220,18 +220,18 @@ pub class Writer
     path
     # ([`Int`](std.Int)) Exact content size. Required.
     :size = nil
-    # ([`Int`](std.Int)?) Permission bits. Defaults to `0o644`.
+    # ([`Int`](std.Int)) Permission bits. Defaults to `0o644`.
     :mode = nil
-    # ([`Int`](std.Int)?) Owner ID. Defaults to `0`.
+    # ([`Int`](std.Int)) Owner ID. Defaults to `0`.
     :uid = nil
-    # ([`Int`](std.Int)?) Group ID. Defaults to `0`.
+    # ([`Int`](std.Int)) Group ID. Defaults to `0`.
     :gid = nil
-    # ([`DateTime`](time.DateTime)?) Modification time. Defaults to the
+    # ([`DateTime`](time.DateTime)) Modification time. Defaults to the
     # Unix epoch.
     :mtime = nil
-    # ([`Str`](std.Str)?) Owner name.
+    # ([`Str`](std.Str)) Owner name.
     :owner_name = nil
-    # ([`Str`](std.Str)?) Group name.
+    # ([`Str`](std.Str)) Group name.
     :group_name = nil
     # ([`Func`](std.Func)) Entry writer scope, called with an
     # [`EntryWriter`](tar.EntryWriter).
@@ -256,18 +256,18 @@ pub class Writer
     # ([`Str`](std.Str)\|[`fs.unix.Path`](fs.unix.Path)) Entry
     # path.
     path
-    # ([`Int`](std.Int)?) Permission bits. Defaults to `0o644`.
+    # ([`Int`](std.Int)) Permission bits. Defaults to `0o644`.
     :mode = nil
-    # ([`Int`](std.Int)?) Owner ID. Defaults to `0`.
+    # ([`Int`](std.Int)) Owner ID. Defaults to `0`.
     :uid = nil
-    # ([`Int`](std.Int)?) Group ID. Defaults to `0`.
+    # ([`Int`](std.Int)) Group ID. Defaults to `0`.
     :gid = nil
-    # ([`DateTime`](time.DateTime)?) Modification time. Defaults to the
+    # ([`DateTime`](time.DateTime)) Modification time. Defaults to the
     # Unix epoch.
     :mtime = nil
-    # ([`Str`](std.Str)?) Owner name.
+    # ([`Str`](std.Str)) Owner name.
     :owner_name = nil
-    # ([`Str`](std.Str)?) Group name.
+    # ([`Str`](std.Str)) Group name.
     :group_name = nil
   do
     throw nil
@@ -290,18 +290,18 @@ pub class Writer
     # ([`Str`](std.Str)\|[`fs.unix.Path`](fs.unix.Path)) Entry
     # path.
     path
-    # ([`Int`](std.Int)?) Permission bits. Defaults to `0o777`.
+    # ([`Int`](std.Int)) Permission bits. Defaults to `0o777`.
     :mode = nil
-    # ([`Int`](std.Int)?) Owner ID. Defaults to `0`.
+    # ([`Int`](std.Int)) Owner ID. Defaults to `0`.
     :uid = nil
-    # ([`Int`](std.Int)?) Group ID. Defaults to `0`.
+    # ([`Int`](std.Int)) Group ID. Defaults to `0`.
     :gid = nil
-    # ([`DateTime`](time.DateTime)?) Modification time. Defaults to the
+    # ([`DateTime`](time.DateTime)) Modification time. Defaults to the
     # Unix epoch.
     :mtime = nil
-    # ([`Str`](std.Str)?) Owner name.
+    # ([`Str`](std.Str)) Owner name.
     :owner_name = nil
-    # ([`Str`](std.Str)?) Group name.
+    # ([`Str`](std.Str)) Group name.
     :group_name = nil
   do
     throw nil
@@ -345,7 +345,7 @@ do
 pub def write
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Archive path.
   path
-  # ([`Sym`](std.Sym)?) `:NONE:`, `:GZIP:`, or `:ZSTD:`.
+  # ([`Sym`](std.Sym)) `:NONE:`, `:GZIP:`, or `:ZSTD:`.
   #
   # When omitted, `.gz` and `.tgz` select gzip, `.zst` and `.tzst` select
   # zstd, and other extensions select no compression. Extension matching is

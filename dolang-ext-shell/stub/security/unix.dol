@@ -110,7 +110,7 @@ pub class Ace
   #[class]
   pub def user_obj
     self
-    # ([`Permission`](security.unix.Permission)?) Entry permissions. Defaults to empty.
+    # ([`Permission`](security.unix.Permission)) Entry permissions. Defaults to empty.
     permissions = nil
   do
     throw nil
@@ -121,7 +121,7 @@ pub class Ace
     self
     # ([`Int`](std.Int)) User ID.
     id
-    # ([`Permission`](security.unix.Permission)?) Entry permissions. Defaults to empty.
+    # ([`Permission`](security.unix.Permission)) Entry permissions. Defaults to empty.
     permissions = nil
   do
     throw nil
@@ -130,7 +130,7 @@ pub class Ace
   #[class]
   pub def group_obj
     self
-    # ([`Permission`](security.unix.Permission)?) Entry permissions. Defaults to empty.
+    # ([`Permission`](security.unix.Permission)) Entry permissions. Defaults to empty.
     permissions = nil
   do
     throw nil
@@ -141,7 +141,7 @@ pub class Ace
     self
     # ([`Int`](std.Int)) Group ID.
     id
-    # ([`Permission`](security.unix.Permission)?) Entry permissions. Defaults to empty.
+    # ([`Permission`](security.unix.Permission)) Entry permissions. Defaults to empty.
     permissions = nil
   do
     throw nil
@@ -150,7 +150,7 @@ pub class Ace
   #[class]
   pub def mask
     self
-    # ([`Permission`](security.unix.Permission)?) Entry permissions. Defaults to empty.
+    # ([`Permission`](security.unix.Permission)) Entry permissions. Defaults to empty.
     permissions = nil
   do
     throw nil
@@ -159,7 +159,7 @@ pub class Ace
   #[class]
   pub def other
     self
-    # ([`Permission`](security.unix.Permission)?) Entry permissions. Defaults to empty.
+    # ([`Permission`](security.unix.Permission)) Entry permissions. Defaults to empty.
     permissions = nil
   do
     throw nil
@@ -234,11 +234,11 @@ pub class Acl
 pub def ace
   # Permissions for the file-owner entry.
   :user_obj = nil
-  # ([`Int`](std.Int)?) User ID for a named-user entry.
+  # ([`Int`](std.Int)) User ID for a named-user entry.
   :user = nil
   # Permissions for the file-group entry.
   :group_obj = nil
-  # ([`Int`](std.Int)?) Group ID for a named-group entry.
+  # ([`Int`](std.Int)) Group ID for a named-group entry.
   :group = nil
   # Permissions for the effective-rights mask entry.
   :mask = nil

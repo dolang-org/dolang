@@ -457,7 +457,7 @@ pub class Client
   # ```
   pub def (init)
     self
-    # ([`Str`](std.Str)?) Path to a Unix domain socket to connect
+    # ([`Str`](std.Str)) Path to a Unix domain socket to connect
     # through. Unix only.
     #
     # This is **not** container-transparent: it connects to a socket on the
@@ -471,23 +471,23 @@ pub class Client
     # (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`). Passing `nil` explicitly
     # disables proxy detection entirely rather than selecting the default.
     :proxy = nil
-    # ([`Bool`](std.Bool)?) Give the client a cookie jar, so cookies it
+    # ([`Bool`](std.Bool)) Give the client a cookie jar, so cookies it
     # receives are replayed on later requests.
     #
     # Cookie state belongs to the one client and is shared with nothing else,
     # the module-level request functions included.
     :cookies = nil
-    # ([`Str`](std.Str)|[`Bin`](std.Bin)?) PEM-encoded CA
+    # ([`Str`](std.Str)|[`Bin`](std.Bin)) PEM-encoded CA
     # certificate to add to the trust store.
     :ca_cert = nil
-    # ([`Str`](std.Str)|[`Bin`](std.Bin)?) PKCS#12/PFX client
+    # ([`Str`](std.Str)|[`Bin`](std.Bin)) PKCS#12/PFX client
     # certificate, for mutual TLS.
     :identity = nil
-    # ([`Str`](std.Str)?) Password for `identity`. Defaults to empty.
+    # ([`Str`](std.Str)) Password for `identity`. Defaults to empty.
     # Passing it without `identity` raises
     # [`ValueError`](std.ValueError).
     :password = nil
-    # ([`Sym`](std.Sym)?) Pass `:DANGER_ACCEPT:` to disable TLS
+    # ([`Sym`](std.Sym)) Pass `:DANGER_ACCEPT:` to disable TLS
     # certificate validation. It is the only accepted value, and it is
     # dangerous -- it defeats the point of TLS, so reserve it for testing.
     :invalid_certs = nil
@@ -525,13 +525,13 @@ pub class Client
     self
     # ([`Str`](std.Str)|[`url.Url`](url.Url)) URL to request.
     url
-    # ([`Dict`](std.Dict)?) Request headers -- see
+    # ([`Dict`](std.Dict)) Request headers -- see
     # [`headers`](http.Client.headers).
     :headers = nil
-    # ([`Dict`](std.Dict)?) Query parameters -- see
+    # ([`Dict`](std.Dict)) Query parameters -- see
     # [`query`](http.Client.query).
     :query = nil
-    # ([`Sym`](std.Sym)?) Pass `:IGNORE:` to return the response even
+    # ([`Sym`](std.Sym)) Pass `:IGNORE:` to return the response even
     # when its status is outside `200..=299`, instead of raising
     # [`Status`](http.Status).
     :status = nil
@@ -570,24 +570,24 @@ pub class Client
     self
     # ([`Str`](std.Str)|[`url.Url`](url.Url)) URL to request.
     url
-    # ([`Str`](std.Str)|[`Bin`](std.Bin)?) Request body -- see
+    # ([`Str`](std.Str)|[`Bin`](std.Bin)) Request body -- see
     # [`body`](http.Client.body).
     :body = nil
     # Request body, JSON-serialized -- see [`json`](http.Client.json).
     :json = nil
-    # (iterable?) Request body streamed with a newline after each element --
+    # (iterable) Request body streamed with a newline after each element --
     # see [`lines`](http.Client.lines).
     :lines = nil
-    # (iterable?) Multipart form parts -- see
+    # (iterable) Multipart form parts -- see
     # [`multipart`](http.Client.multipart).
     :multipart = nil
-    # ([`Dict`](std.Dict)?) Request headers -- see
+    # ([`Dict`](std.Dict)) Request headers -- see
     # [`headers`](http.Client.headers).
     :headers = nil
-    # ([`Dict`](std.Dict)?) Query parameters -- see
+    # ([`Dict`](std.Dict)) Query parameters -- see
     # [`query`](http.Client.query).
     :query = nil
-    # ([`Sym`](std.Sym)?) Pass `:IGNORE:` to return the response even
+    # ([`Sym`](std.Sym)) Pass `:IGNORE:` to return the response even
     # when its status is outside `200..=299`, instead of raising
     # [`Status`](http.Status).
     :status = nil
@@ -624,11 +624,11 @@ pub class Client
 pub def get
   # ([`Str`](std.Str)|[`url.Url`](url.Url)) URL to request.
   url
-  # ([`Dict`](std.Dict)?) Request headers.
+  # ([`Dict`](std.Dict)) Request headers.
   :headers = nil
-  # ([`Dict`](std.Dict)?) Query parameters.
+  # ([`Dict`](std.Dict)) Query parameters.
   :query = nil
-  # ([`Sym`](std.Sym)?) Pass `:IGNORE:` to return the response even when
+  # ([`Sym`](std.Sym)) Pass `:IGNORE:` to return the response even when
   # its status is outside `200..=299`.
   :status = nil
   # ([`Func`](std.Func)) Called with the [`Response`](http.Response), which is closed
@@ -657,19 +657,19 @@ do
 pub def post
   # ([`Str`](std.Str)|[`url.Url`](url.Url)) URL to request.
   url
-  # ([`Str`](std.Str)|[`Bin`](std.Bin)?) Request body.
+  # ([`Str`](std.Str)|[`Bin`](std.Bin)) Request body.
   :body = nil
   # Request body, JSON-serialized.
   :json = nil
-  # (iterable?) Request body streamed with a newline after each element.
+  # (iterable) Request body streamed with a newline after each element.
   :lines = nil
-  # (iterable?) Multipart form parts.
+  # (iterable) Multipart form parts.
   :multipart = nil
-  # ([`Dict`](std.Dict)?) Request headers.
+  # ([`Dict`](std.Dict)) Request headers.
   :headers = nil
-  # ([`Dict`](std.Dict)?) Query parameters.
+  # ([`Dict`](std.Dict)) Query parameters.
   :query = nil
-  # ([`Sym`](std.Sym)?) Pass `:IGNORE:` to return the response even when
+  # ([`Sym`](std.Sym)) Pass `:IGNORE:` to return the response even when
   # its status is outside `200..=299`.
   :status = nil
   # ([`Func`](std.Func)) Called with the [`Response`](http.Response), which is closed

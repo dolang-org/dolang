@@ -137,7 +137,7 @@ pub class Regex
     # A callback receives a [`Captures`](regex.Captures) for each match and must
     # return a [`Str`](std.Str).
     replacement
-    # ([`Int`](std.Int)?) How many matches to replace. Replaces all
+    # ([`Int`](std.Int)) How many matches to replace. Replaces all
     # matches when omitted.
     #
     # - `limit: N` (positive) — replace at most N matches.
@@ -173,7 +173,7 @@ pub class Regex
     self
     # ([`Str`](std.Str)) String to split.
     haystack
-    # ([`Int`](std.Int)?) How many splits to perform, and from which end.
+    # ([`Int`](std.Int)) How many splits to perform, and from which end.
     # Splits fully when omitted.
     #
     # - `limit: N` (positive) — split at most N times from the **right**; the
@@ -217,7 +217,7 @@ pub class Regex
     self
     # ([`Str`](std.Str)) String to split.
     haystack
-    # ([`Int`](std.Int)?) How many splits to perform, and from which end.
+    # ([`Int`](std.Int)) How many splits to perform, and from which end.
     # Splits fully when omitted.
     #
     # - `limit: N` (positive) — split at most N times from the **left**; the

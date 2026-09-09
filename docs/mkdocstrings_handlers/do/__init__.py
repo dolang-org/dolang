@@ -327,9 +327,9 @@ def _signature(entity: dict) -> str:
     """The form of a declaration used as its heading.
 
     A parameter table repeats the whole list, so a declaration that renders one
-    keeps only its required positional prefix in the heading; spelling out a
-    keyword-heavy declaration produces a heading too long to scan or to use as
-    a table-of-contents entry.
+    keeps only its first few required parameters in the heading; spelling out
+    a keyword-heavy declaration produces a heading too long to scan or to use
+    as a table-of-contents entry.
     """
     name = entity.get("name", "")
     params = entity.get("params") or []
@@ -340,11 +340,10 @@ def _signature(entity: dict) -> str:
         return " ".join([name, *written])
     kept: list[str] = []
     for param, text in zip(params, written):
-        # Stop at the first optional parameter rather than skipping past it:
-        # what identifies a call is the prefix that must be written out.
-        if param.get("optional") or len(kept) == MAX_SIGNATURE_PARAMS:
+        if len(kept) == MAX_SIGNATURE_PARAMS:
             break
-        kept.append(text)
+        if not param.get("optional"):
+            kept.append(text)
     if len(kept) == len(written):
         return " ".join([name, *kept])
     return " ".join([name, *kept, "…"])

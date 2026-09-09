@@ -1,29 +1,16 @@
 # Terminal progress bars and spinners.
 #
-# Output is coordinated so that `term.echo`, `term.print`, and child process
-# output do not clobber active indicators.
-#
 # Progress state is implicit: `with` activates a progress context for the
 # current scope, and `show` creates widgets at the appropriate nesting depth
 # automatically.
 #
-# When stderr is not a terminal, `with`/`show` switch to a plain-text rendering
-# instead: each indicator prints an indented
-# `icon <parent:id> message bar-or-position elapsed` line through the same
-# `NO_COLOR`/`FORCE_COLOR`-aware output path `term.echo` uses. The `<parent:id>`
-# tag stands in for the tree structure a live redraw would otherwise show
-# visually — `<3>` for a top-level indicator, `<3:7>` for one whose immediate
-# parent is `<3>`. IDs are assigned per `with` scope in creation order and are
-# never reused. [`Indicator.update`](progress.Indicator.update) and
-# [`delta`](progress.Indicator.delta) calls that only change position
-# (`position:`/`delta:`/`total:`) are rate-limited (see `with`'s `interval:`) so
-# a tight loop doesn't flood a log file; `icon:`/`message:` changes always print
-# immediately, since they represent a change in what the indicator is doing, not
-# routine progress. A line is always printed when an indicator is created and
-# when its scope exits, so the last known status is never lost — the first shows
-# `started` and the last shows `finished (Xs)` in place of an elapsed time, so a
-# fast-finishing indicator's closing line doesn't read as just another routine
-# update.
+# When `term.console` is a terminal, indicators are shown below console output
+# lines from `term.echo`, `term.print`, child process output, etc.
+#
+# When `term.console` is not a terminal, indicators produce interleaved log
+# message instead.  Routine progress updates are rate-limited, while changes to
+# an indicator's icon or message are printed immediately. Indicator creation
+# and completion are always logged.
 
 # A progress bar or spinner.
 #
@@ -66,7 +53,7 @@ pub class Indicator
   # unused keys — the common case for a tight loop that only bumps progress.
   pub def delta
     self
-    # ([`Int`](std.Int)?) Amount to adjust by. Positive values increment
+    # ([`Int`](std.Int)) Amount to adjust by. Positive values increment
     # and negative values decrement. Defaults to `1`.
     n = nil
   do
@@ -100,18 +87,18 @@ pub class Indicator
   # ```
   pub def update
     self
-    # ([`Str`](std.Str)?) New prefix icon.
+    # ([`Str`](std.Str)) New prefix icon.
     :icon = nil
-    # ([`Str`](std.Str)?) New message text.
+    # ([`Str`](std.Str)) New message text.
     :message = nil
-    # ([`Int`](std.Int)?) New total. `nil` switches to spinner mode.
+    # ([`Int`](std.Int)) New total. `nil` switches to spinner mode.
     :total = nil
-    # ([`Int`](std.Int)?) Absolute position. Exclusive with `delta`.
+    # ([`Int`](std.Int)) Absolute position. Exclusive with `delta`.
     :position = nil
-    # ([`Int`](std.Int)?) Relative adjustment, positive or negative.
+    # ([`Int`](std.Int)) Relative adjustment, positive or negative.
     # Exclusive with `position`.
     :delta = nil
-    # ([`Sym`](std.Sym)?) New display units: `:COUNT:`, `:BYTES:`, or
+    # ([`Sym`](std.Sym)) New display units: `:COUNT:`, `:BYTES:`, or
     # `:PERCENT:`.
     :units = nil
   do
@@ -140,18 +127,17 @@ pub class Indicator
 #     w.delta()
 # ```
 #
-# !!! warning
-#     The [`Indicator`](progress.Indicator) is only valid inside its callback.
-#     Using it after the callback returns raises a runtime error.
+# The [`Indicator`](progress.Indicator) is only valid inside its callback.
+# Using it after the callback returns raises a runtime error.
 pub def show
-  # ([`Int`](std.Int)?) Total value. The indicator starts in bar mode
+  # ([`Int`](std.Int)) Total value. The indicator starts in bar mode
   # when given and in spinner mode otherwise; the mode changes with `total`.
   :total = nil
-  # ([`Str`](std.Str)?) Initial message.
+  # ([`Str`](std.Str)) Initial message.
   :message = nil
-  # ([`Str`](std.Str)?) Prefix icon, such as `"📦"`.
+  # ([`Str`](std.Str)) Prefix icon, such as `"📦"`.
   :icon = nil
-  # ([`Sym`](std.Sym)?) Unit format.
+  # ([`Sym`](std.Sym)) Unit format.
   #
   # | Value       | Description                         |
   # | ----------- | ----------------------------------- |
@@ -162,7 +148,7 @@ pub def show
   # Units default to `:COUNT:` when `total` is given. With neither `total` nor
   # `units`, spinner mode shows only elapsed time.
   :units = nil
-  # ([`Float`](std.Float)?) Tick interval in seconds. Defaults to `0.08`.
+  # ([`Float`](std.Float)) Tick interval in seconds. Defaults to `0.08`.
   :tick = nil
   # ([`Func`](std.Func)) Callback receiving an [`Indicator`](progress.Indicator).
   func
@@ -181,7 +167,7 @@ do
 #
 # ## Returns
 #
-# An array holding each step's return value, in order.
+# An [`Array`](std.Array) holding each step's return value, in order.
 #
 # ## Example
 #
@@ -195,13 +181,18 @@ do
 #     do package()
 # ```
 pub def steps
-  # ([`Str`](std.Str)?) Overall message prefix.
+  # ([`Str`](std.Str)) Overall message prefix.
   :message = nil
-  # ([`Str`](std.Str)?) Default icon. Defaults to `"●"`.
+  # ([`Str`](std.Str)) Default icon. Defaults to `"●"`.
   :icon = nil
-  # ([`Func`](std.Func)\|[`Dict`](std.Dict)) A step, written either as a callable or as a `dict`
-  # holding one positional callable and optional `name` and `icon` keys. A
-  # step's `icon` overrides the default icon for that step.
+  # ([`Func`](std.Func)\|[`Dict`](std.Dict)) A step callable or specification.
+  #
+  # A specification contains one positional callable and accepts these keys:
+  #
+  # | Key    | Type                 | Description                         |
+  # | ------ | -------------------- | ----------------------------------- |
+  # | `name` | [`Str`](std.Str)     | Step name                           |
+  # | `icon` | [`Str`](std.Str)     | Icon overriding the default         |
   ...steps
 do
   throw nil
@@ -233,37 +224,37 @@ do
 #       alt:
 #         fg: :BLACK:
 #         attrs:
-#           - dim
+#           - :DIM:
 #     message:
 #       fg: :WHITE:
 #       attrs:
-#         - bold
+#         - :BOLD:
 #     position:
 #       fg: :YELLOW:
 #   do progress.show message: "working" do |w|
 #     # ...
 # ```
 pub def with
-  # (`dict`?) Display style overrides.
+  # ([`Dict`](std.Dict)) Display style overrides.
   #
   # Top-level keys name the visual elements of the progress display, and each
-  # element accepts a sub-dict of properties. All keys are optional; omitted
-  # values use the defaults below.
+  # element accepts a nested [`Dict`](std.Dict) of properties. All keys are
+  # optional; omitted values use the defaults below.
   #
   # ## Elements with width and color
   #
   # | Element   | Default width | Default fg | Default attrs |
   # | --------- | ------------- | ---------- | ------------- |
-  # | `bar`     | 20            | `cyan`     |               |
-  # | `message` | 30            |            | `bold`        |
-  # | `icon`    | 2             |            | `bold`        |
+  # | `bar`     | 20            | `:CYAN:`   |               |
+  # | `message` | 30            |            | `:BOLD:`      |
+  # | `icon`    | 2             |            | `:BOLD:`      |
   #
   # ## Color-only elements
   #
   # | Element    | Default fg | Default attrs |
   # | ---------- | ---------- | ------------- |
-  # | `spinner`  | `cyan`     |               |
-  # | `elapsed`  |            | `dim`         |
+  # | `spinner`  | `:CYAN:`   |               |
+  # | `elapsed`  |            | `:DIM:`       |
   # | `position` |            |               |
   # | `total`    |            |               |
   #
@@ -274,25 +265,41 @@ pub def with
   # | `width`  | [`Int`](std.Int) | Character width (bar, message, icon only)     |
   # | `fg`     | [`Sym`](std.Sym) | Foreground color                              |
   # | `bg`     | [`Sym`](std.Sym) | Background color                              |
-  # | `attrs`  | array of `Str`         | Text attributes                               |
-  # | `alt`    | `dict`                 | Alt style for unfilled bar portion (bar only) |
+  # | `attrs`  | [`Array`](std.Array) | Text attribute symbols                        |
+  # | `alt`    | [`Dict`](std.Dict)   | Alt style for unfilled bar portion (bar only) |
   #
-  # The `alt` sub-dict accepts the same `fg`, `bg`, and `attrs` properties. The
-  # default alt style for `bar` is `fg: :BLUE:`.
+  # The `alt` style accepts the same styling properties. Its default foreground
+  # color is `:BLUE:`.
   #
   # ## Color names
   #
-  # `:BLACK:`, `:RED:`, `:GREEN:`, `:YELLOW:`, `:BLUE:`, `:MAGENTA:`,
-  # `:CYAN:`, and `:WHITE:`. Prefix the name with `BRIGHT_` for bright
-  # variants, such as `:BRIGHT_CYAN:`. Use `:BRIGHT:` alone to brighten the
-  # default color.
+  # | Standard     | Bright              |
+  # | ------------ | ------------------- |
+  # | `:BLACK:`    | `:BRIGHT_BLACK:`    |
+  # | `:RED:`      | `:BRIGHT_RED:`      |
+  # | `:GREEN:`    | `:BRIGHT_GREEN:`    |
+  # | `:YELLOW:`   | `:BRIGHT_YELLOW:`   |
+  # | `:BLUE:`     | `:BRIGHT_BLUE:`     |
+  # | `:MAGENTA:`  | `:BRIGHT_MAGENTA:`  |
+  # | `:CYAN:`     | `:BRIGHT_CYAN:`     |
+  # | `:WHITE:`    | `:BRIGHT_WHITE:`    |
+  #
+  # `:BRIGHT:` brightens the default color.
   #
   # ## Attributes
   #
-  # `bold`, `dim`, `italic`, `underlined`, `blink`, `reverse`, `hidden`, and
-  # `strikethrough`.
+  # | Symbol              | Effect        |
+  # | ------------------- | ------------- |
+  # | `:BOLD:`            | Bold          |
+  # | `:DIM:`             | Dim           |
+  # | `:ITALIC:`          | Italic        |
+  # | `:UNDERLINED:`      | Underlined    |
+  # | `:BLINK:`           | Blinking      |
+  # | `:REVERSE:`         | Reverse video |
+  # | `:HIDDEN:`          | Hidden        |
+  # | `:STRIKETHROUGH:`   | Strikethrough |
   :style = nil
-  # (`float`?) Plain-mode rate limit in seconds. Defaults to `5`. Has no effect
+  # ([`Float`](std.Float)) Plain-mode rate limit in seconds. Defaults to `5`. Has no effect
   # when connected to a real terminal.
   :interval = nil
   # ([`Func`](std.Func)) Callback taking no arguments.

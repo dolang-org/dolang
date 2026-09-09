@@ -109,7 +109,7 @@ do
 pub def run
   # ([`Bin`](std.Bin)) Compiled Do bytecode.
   bytecode
-  # ([`Func`](std.Func)?) Program-specific module importer.
+  # ([`Func`](std.Func)) Program-specific module importer.
   :importer = nil
 do
   throw nil

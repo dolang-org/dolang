@@ -201,10 +201,10 @@ pub class Key
     self
     # ([`Str`](std.Str)) Path to the subkey, relative to this key.
     subpath
-    # ([`Sym`](std.Sym)?) [Registry view](winreg.registry-views).
+    # ([`Sym`](std.Sym)) [Registry view](winreg.registry-views).
     # Defaults to `:NATIVE:`.
     :view = nil
-    # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)?) Access
+    # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)) Access
     # rights, as a mask, a symbol, or an iterable of symbols. Defaults to
     # `:READ:`.
     :access = nil
@@ -238,13 +238,13 @@ pub class Key
     self
     # ([`Str`](std.Str)) Path to the subkey, relative to this key.
     subpath
-    # ([`Sym`](std.Sym)?) [Registry view](winreg.registry-views).
+    # ([`Sym`](std.Sym)) [Registry view](winreg.registry-views).
     # Defaults to `:NATIVE:`.
     :view = nil
-    # ([`Bool`](std.Bool)?) Delete the subkey's values and descendants
+    # ([`Bool`](std.Bool)) Delete the subkey's values and descendants
     # too. Without it a subkey that has children is refused.
     :all = nil
-    # ([`Bool`](std.Bool)?) Treat a missing subkey as success.
+    # ([`Bool`](std.Bool)) Treat a missing subkey as success.
     :ignore = nil
   do
     throw nil
@@ -344,7 +344,7 @@ pub class Key
     target_subpath
     # ([`Str`](std.Str)) New link path relative to this key.
     link_subpath
-    # ([`Sym`](std.Sym)?) [Registry view](winreg.registry-views)
+    # ([`Sym`](std.Sym)) [Registry view](winreg.registry-views)
     # used for both the target mapping and the destination. Defaults to
     # `:NATIVE:`.
     :view = nil
@@ -375,14 +375,14 @@ pub class Key
     self
     # ([`Str`](std.Str)) Path to the subkey, relative to this key.
     subpath
-    # ([`Sym`](std.Sym)?) [Registry view](winreg.registry-views).
+    # ([`Sym`](std.Sym)) [Registry view](winreg.registry-views).
     # Defaults to `:NATIVE:`.
     :view = nil
-    # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)?) Access
+    # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)) Access
     # rights, as a mask, a symbol, or an iterable of symbols. Defaults to
     # `:READ:`.
     :access = nil
-    # ([`Sym`](std.Sym)?) [Link
+    # ([`Sym`](std.Sym)) [Link
     # resolution](winreg.link-resolution): `:TARGET:` follows a link,
     # `:LINK:` opens the link key itself. Defaults to `:TARGET:`.
     :resolve = nil
@@ -418,7 +418,7 @@ pub class Key
     self
     # ([`Str`](std.Str)) Link path relative to this key.
     subpath
-    # ([`Sym`](std.Sym)?) [Registry view](winreg.registry-views).
+    # ([`Sym`](std.Sym)) [Registry view](winreg.registry-views).
     # Defaults to `:NATIVE:`.
     :view = nil
   do
@@ -440,15 +440,15 @@ pub class Key
   # ```
   pub def sec_desc
     self
-    # ([`Bool`](std.Bool)?) Load the owner SID. Defaults to `true`.
+    # ([`Bool`](std.Bool)) Load the owner SID. Defaults to `true`.
     :owner = nil
-    # ([`Bool`](std.Bool)?) Load the primary group SID. Defaults to
+    # ([`Bool`](std.Bool)) Load the primary group SID. Defaults to
     # `true`.
     :group = nil
-    # ([`Bool`](std.Bool)?) Load the discretionary ACL. Defaults to
+    # ([`Bool`](std.Bool)) Load the discretionary ACL. Defaults to
     # `true`.
     :dacl = nil
-    # ([`Bool`](std.Bool)?) Load the system ACL. Defaults to `false`.
+    # ([`Bool`](std.Bool)) Load the system ACL. Defaults to `false`.
     :sacl = nil
   do
     throw nil
@@ -469,7 +469,7 @@ pub class Key
     name
     # The Do value to write.
     value
-    # ([`Sym`](std.Sym)?) [Value kind](winreg.value-kinds) to store
+    # ([`Sym`](std.Sym)) [Value kind](winreg.value-kinds) to store
     # under. Omit to let the kind be decided from what is already there, or
     # from `value` itself.
     #
@@ -527,7 +527,7 @@ pub class Key
   # ```
   pub def update_sec_desc
     self
-    # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict)?)
+    # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict))
     # Descriptor, packet, or spec.
     desc = nil
     # The descriptor's [component
@@ -643,10 +643,10 @@ pub def open
   # ([`Sym`](std.Sym)) [Registry root](winreg.registry-roots) to
   # open.
   root
-  # ([`Sym`](std.Sym)?) [Registry view](winreg.registry-views).
+  # ([`Sym`](std.Sym)) [Registry view](winreg.registry-views).
   # Defaults to `:NATIVE:`.
   :view = nil
-  # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)?) Access rights,
+  # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)) Access rights,
   # as a mask, a symbol, or an iterable of symbols. Defaults to `:READ:`.
   :access = nil
   # ([`Func`](std.Func)) Called with the [`Key`](winreg.Key), which is closed when it

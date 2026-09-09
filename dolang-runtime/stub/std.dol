@@ -1563,7 +1563,7 @@ pub class ConcurrencyError: RuntimeError
   #
   pub def (init)
     self
-    # ([`Str`](std.Str)?) detail appended to the generic message
+    # ([`Str`](std.Str)) detail appended to the generic message
     message = nil
   do
     throw nil
@@ -1973,7 +1973,7 @@ pub class FmtParam
     :precision = nil
     :alt = nil
     :kind = nil
-    # ([`Str`](std.Str)?) Interpolation as written in source
+    # ([`Str`](std.Str)) Interpolation as written in source
     :source = nil
   do
     throw nil
@@ -2008,17 +2008,17 @@ pub class FmtParam
     self
     # (Str?) Fill character, `:ZERO:`, or nil
     :fill = nil
-    # (Sym?) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    # (Sym) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
     :align = nil
-    # (Sym?) `:PLUS:` or `:SPACE:`
+    # (Sym) `:PLUS:` or `:SPACE:`
     :sign = nil
-    # (Int?) Minimum width in grapheme clusters
+    # (Int) Minimum width in grapheme clusters
     :width = nil
-    # (Int?) Numeric precision or maximum graphemes
+    # (Int) Numeric precision or maximum graphemes
     :precision = nil
-    # (Bool?) Enables alternate formatting
+    # (Bool) Enables alternate formatting
     :alt = nil
-    # (Sym?) Representation kind
+    # (Sym) Representation kind
     :kind = nil
   do
     throw nil
@@ -2050,17 +2050,17 @@ pub class FmtSpec
     self
     # (Str?) Fill character, `:ZERO:`, or nil
     :fill = nil
-    # (Sym?) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    # (Sym) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
     :align = nil
-    # (Sym?) `:PLUS:` or `:SPACE:`
+    # (Sym) `:PLUS:` or `:SPACE:`
     :sign = nil
-    # (Int?) Minimum width in grapheme clusters
+    # (Int) Minimum width in grapheme clusters
     :width = nil
-    # (Int?) Numeric precision or maximum graphemes
+    # (Int) Numeric precision or maximum graphemes
     :precision = nil
-    # (Bool?) Enables alternate formatting
+    # (Bool) Enables alternate formatting
     :alt = nil
-    # (Sym?) Representation kind
+    # (Sym) Representation kind
     :kind = nil
   do
     throw nil
@@ -2147,17 +2147,17 @@ pub class FmtSpec
     value = nil
     # (Str?) Fill character, `:ZERO:`, or nil
     :fill = nil
-    # (Sym?) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    # (Sym) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
     :align = nil
-    # (Sym?) `:PLUS:` or `:SPACE:`
+    # (Sym) `:PLUS:` or `:SPACE:`
     :sign = nil
-    # (Int?) Minimum width in grapheme clusters
+    # (Int) Minimum width in grapheme clusters
     :width = nil
-    # (Int?) Numeric precision or maximum graphemes
+    # (Int) Numeric precision or maximum graphemes
     :precision = nil
-    # (Bool?) Enables alternate formatting
+    # (Bool) Enables alternate formatting
     :alt = nil
-    # (Sym?) Representation kind
+    # (Sym) Representation kind
     :kind = nil
   do
     throw nil
@@ -2247,19 +2247,19 @@ pub class FmtValue
     value
     # (Str?) Fill character, `:ZERO:`, or nil
     :fill = nil
-    # (Sym?) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    # (Sym) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
     :align = nil
-    # (Sym?) `:PLUS:` or `:SPACE:`
+    # (Sym) `:PLUS:` or `:SPACE:`
     :sign = nil
-    # (Int?) Minimum width in grapheme clusters
+    # (Int) Minimum width in grapheme clusters
     :width = nil
-    # (Int?) Numeric precision or maximum graphemes
+    # (Int) Numeric precision or maximum graphemes
     :precision = nil
-    # (Bool?) Enables alternate formatting
+    # (Bool) Enables alternate formatting
     :alt = nil
-    # (Sym?) Representation kind
+    # (Sym) Representation kind
     :kind = nil
-    # (Str?) Interpolation as written in source
+    # (Str) Interpolation as written in source
     :source = nil
   do
     throw nil
@@ -2295,17 +2295,17 @@ pub class FmtValue
     self
     # (Str?) Fill character, `:ZERO:`, or nil
     :fill = nil
-    # (Sym?) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    # (Sym) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
     :align = nil
-    # (Sym?) `:PLUS:` or `:SPACE:`
+    # (Sym) `:PLUS:` or `:SPACE:`
     :sign = nil
-    # (Int?) Minimum width in grapheme clusters
+    # (Int) Minimum width in grapheme clusters
     :width = nil
-    # (Int?) Numeric precision or maximum graphemes
+    # (Int) Numeric precision or maximum graphemes
     :precision = nil
-    # (Bool?) Enables alternate formatting
+    # (Bool) Enables alternate formatting
     :alt = nil
-    # (Sym?) Representation kind
+    # (Sym) Representation kind
     :kind = nil
   do
     throw nil
@@ -4006,7 +4006,7 @@ pub class StrBuf
   #
   pub def (init)
     self
-    # ([`Str`](std.Str)?) initial contents
+    # ([`Str`](std.Str)) initial contents
     initial = nil
   do
     throw nil
@@ -4106,7 +4106,7 @@ pub class StrBuf
   #
   pub def drain
     self
-    # ([`Int`](std)?) maximum bytes per chunk (defaults to 512 KiB)
+    # ([`Int`](std)) maximum bytes per chunk (defaults to 512 KiB)
     size = nil
   do
     throw nil

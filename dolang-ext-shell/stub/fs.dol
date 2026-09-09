@@ -155,7 +155,7 @@ pub class File
     # ([`Func`](std.Func)) Block receiving a
     # [`FileLock`](fs.FileLock).
     func
-    # ([`Bool`](std.Bool)?) Acquire a shared rather than exclusive lock.
+    # ([`Bool`](std.Bool)) Acquire a shared rather than exclusive lock.
     :shared = nil
   do
     throw nil
@@ -185,7 +185,7 @@ pub class File
     # ([`Func`](std.Func)) Block receiving a
     # [`FileLock`](fs.FileLock).
     func
-    # ([`Bool`](std.Bool)?) Acquire a shared rather than exclusive lock.
+    # ([`Bool`](std.Bool)) Acquire a shared rather than exclusive lock.
     :shared = nil
   do
     throw nil
@@ -215,14 +215,14 @@ pub class File
   # ```
   pub def read
     self
-    # ([`Int`](std.Int)?) Number of bytes to read. Without it, reads to
+    # ([`Int`](std.Int)) Number of bytes to read. Without it, reads to
     # the end of the file.
     #
     # `size` bytes are read however many transfers that takes; a shorter result
     # means the end of the file was reached, and reading entirely past the end
     # gives an empty result rather than an error.
     size = nil
-    # ([`Int`](std.Int)?) Byte offset to read from. Without it, reads at
+    # ([`Int`](std.Int)) Byte offset to read from. Without it, reads at
     # the cursor and advances it.
     #
     # A positional read leaves the cursor where it was, so it can be used
@@ -276,7 +276,7 @@ pub class File
     # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Data to write. Strings
     # are written as UTF-8 text.
     data
-    # ([`Int`](std.Int)?) Byte offset to write at. Without it, writes at
+    # ([`Int`](std.Int)) Byte offset to write at. Without it, writes at
     # the cursor and advances it.
     #
     # A positional write leaves the cursor where it was, so it can be used
@@ -295,13 +295,13 @@ pub class File
     self
     # ([`File`](fs.File)) Handle to write to.
     dst
-    # ([`Range`](std.Range)?) Absolute byte region of the source.
+    # ([`Range`](std.Range)) Absolute byte region of the source.
     :range = nil
-    # ([`Int`](std.Int)?) Number of bytes to take from the source cursor.
+    # ([`Int`](std.Int)) Number of bytes to take from the source cursor.
     :size = nil
-    # ([`Int`](std.Int)?) Absolute byte offset in the destination.
+    # ([`Int`](std.Int)) Absolute byte offset in the destination.
     :offset = nil
-    # ([`Sym`](std.Sym)?) `:AUTO:` (default), `:REQUIRE:`, or `:NEVER:`.
+    # ([`Sym`](std.Sym)) `:AUTO:` (default), `:REQUIRE:`, or `:NEVER:`.
     :clone = nil
   do
     throw nil
@@ -336,7 +336,7 @@ pub class File
   # ```
   pub def sync
     self
-    # ([`Bool`](std.Bool)?) Flush data only, skipping unneeded metadata.
+    # ([`Bool`](std.Bool)) Flush data only, skipping unneeded metadata.
     # See [`fs.sync`](fs.sync) for what this selects and what a flush
     # does and does not guarantee.
     :data = nil
@@ -388,15 +388,15 @@ pub class File
   # [`sys.UnsupportedError`](sys.UnsupportedError).
   pub def sec_desc
     self
-    # ([`Bool`](std.Bool)?) Load the owner SID. Defaults to `true`.
+    # ([`Bool`](std.Bool)) Load the owner SID. Defaults to `true`.
     :owner = nil
-    # ([`Bool`](std.Bool)?) Load the primary group SID. Defaults to
+    # ([`Bool`](std.Bool)) Load the primary group SID. Defaults to
     # `true`.
     :group = nil
-    # ([`Bool`](std.Bool)?) Load the discretionary ACL. Defaults to
+    # ([`Bool`](std.Bool)) Load the discretionary ACL. Defaults to
     # `true`.
     :dacl = nil
-    # ([`Bool`](std.Bool)?) Load the system ACL. Defaults to `false`.
+    # ([`Bool`](std.Bool)) Load the system ACL. Defaults to `false`.
     :sacl = nil
   do
     throw nil
@@ -416,7 +416,7 @@ pub class File
   # [`sys.UnsupportedError`](sys.UnsupportedError).
   pub def update_sec_desc
     self
-    # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict)?)
+    # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict))
     # Descriptor, packet, or spec.
     desc = nil
   do
@@ -430,10 +430,10 @@ pub class File
   # metadata is stored.
   pub def acl
     self
-    # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`?) ACL format to query. Defaults to
+    # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`) ACL format to query. Defaults to
     # `:POSIX:`.
     :kind = nil
-    # ([`Bool`](std.Bool)?) Query the directory's inheritable default
+    # ([`Bool`](std.Bool)) Query the directory's inheritable default
     # ACL.
     :default = nil
   do
@@ -449,10 +449,10 @@ pub class File
     # (built ACL\|iterable\|[`nil`](std.Nil)) ACL or declarative ACE
     # sequence.
     acl
-    # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`?) Required for an untyped ACL
+    # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`) Required for an untyped ACL
     # specification.
     :kind = nil
-    # ([`Bool`](std.Bool)?) Update the directory's inheritable default
+    # ([`Bool`](std.Bool)) Update the directory's inheritable default
     # ACL.
     :default = nil
   do
@@ -476,7 +476,7 @@ pub class File
   # ```
   pub def xattrs
     self
-    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to query;
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Namespace to query;
     # `:USER:` and `:SYSTEM:` name well-known namespaces, and `:ANY:` lists all
     # namespaces.
     :namespace = nil
@@ -500,7 +500,7 @@ pub class File
     # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
     # or entry from [`xattrs`](fs.File.xattrs).
     name
-    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to query.
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Namespace to query.
     :namespace = nil
   do
     throw nil
@@ -524,7 +524,7 @@ pub class File
     # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Attribute bytes; strings
     # use UTF-8.
     value
-    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to update.
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Namespace to update.
     :namespace = nil
   do
     throw nil
@@ -542,7 +542,7 @@ pub class File
     # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
     # or entry from [`xattrs`](fs.File.xattrs).
     name
-    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to update.
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Namespace to update.
     :namespace = nil
   do
     throw nil
@@ -604,12 +604,12 @@ pub class File
   # ```
   pub def seek
     self
-    # ([`Int`](std.Int)?) Byte offset relative to the current position.
+    # ([`Int`](std.Int)) Byte offset relative to the current position.
     offset = nil
-    # ([`Int`](std.Int)?) Absolute byte offset from the start of the
+    # ([`Int`](std.Int)) Absolute byte offset from the start of the
     # file.
     :start = nil
-    # ([`Int`](std.Int)?) Byte offset relative to the end of the file.
+    # ([`Int`](std.Int)) Byte offset relative to the end of the file.
     :end = nil
   do
     throw nil
@@ -1317,7 +1317,7 @@ pub class Path
   # The method form of [`fs.relative`](fs.relative).
   pub def relative
     self
-    # ([`Str`](std.Str)\|[`Path`](fs.Path)?) Base directory. Defaults
+    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Base directory. Defaults
     # to the current working directory.
     base = nil
   do
@@ -1330,9 +1330,9 @@ pub class Path
   # The method form of [`fs.open`](fs.open).
   pub def open
     self
-    # ([`Str`](std.Str)?) File access mode. Defaults to `"r"`.
+    # ([`Str`](std.Str)) File access mode. Defaults to `"r"`.
     mode = nil
-    # ([`Func`](std.Func)?) Block to run with the file; it is closed when
+    # ([`Func`](std.Func)) Block to run with the file; it is closed when
     # the block returns.
     func = nil
   do
@@ -1341,7 +1341,7 @@ pub class Path
   # The method form of [`fs.read`](fs.read).
   pub def read
     self
-    # ([`Str`](std.Str)?) Optional mode string; only `"b"` is allowed.
+    # ([`Str`](std.Str)) Optional mode string; only `"b"` is allowed.
     mode = nil
   do
     throw nil
@@ -1373,7 +1373,7 @@ pub class Path
   # The method form of [`fs.sync`](fs.sync).
   pub def sync
     self
-    # ([`Bool`](std.Bool)?) Flush data only, skipping unneeded metadata.
+    # ([`Bool`](std.Bool)) Flush data only, skipping unneeded metadata.
     :data = nil
   do
     throw nil
@@ -1381,7 +1381,7 @@ pub class Path
   # The method form of [`fs.metadata`](fs.metadata).
   pub def metadata
     self
-    # (`:TARGET:`\|`:LINK:`?)
+    # (`:TARGET:`\|`:LINK:`)
     # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
     :resolve = nil
   do
@@ -1390,7 +1390,7 @@ pub class Path
   # The method form of [`fs.fs_metadata`](fs.fs_metadata).
   pub def fs_metadata
     self
-    # (`:TARGET:`\|`:LINK:`?)
+    # (`:TARGET:`\|`:LINK:`)
     # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
     :resolve = nil
   do
@@ -1400,7 +1400,7 @@ pub class Path
   # which documents the metadata keyword arguments.
   pub def update_metadata
     self
-    # (`:TARGET:`\|`:LINK:`?)
+    # (`:TARGET:`\|`:LINK:`)
     # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
     :resolve = nil
   do
@@ -1418,10 +1418,10 @@ pub class Path
     self
     # ([`Str`](std.Str)) Glob pattern.
     pattern
-    # ([`Int`](std.Int)?) Maximum directory depth to traverse. Defaults
+    # ([`Int`](std.Int)) Maximum directory depth to traverse. Defaults
     # to unlimited.
     :max_depth = nil
-    # (`:TARGET:`\|`:LINK:`?)
+    # (`:TARGET:`\|`:LINK:`)
     # [Resolution mode](fs.resolution-modes). Defaults to `:LINK:`.
     :resolve = nil
   do
@@ -1430,7 +1430,7 @@ pub class Path
   # The method form of [`fs.create_dir`](fs.create_dir).
   pub def create_dir
     self
-    # ([`Bool`](std.Bool)?) Create parent directories too.
+    # ([`Bool`](std.Bool)) Create parent directories too.
     :all = nil
   do
     throw nil
@@ -1438,9 +1438,9 @@ pub class Path
   # The method form of [`fs.remove`](fs.remove).
   pub def remove
     self
-    # ([`Bool`](std.Bool)?) Remove directories recursively.
+    # ([`Bool`](std.Bool)) Remove directories recursively.
     :all = nil
-    # ([`Bool`](std.Bool)?) Treat a missing path as success.
+    # ([`Bool`](std.Bool)) Treat a missing path as success.
     :ignore = nil
   do
     throw nil
@@ -1448,9 +1448,9 @@ pub class Path
   # The method form of [`fs.remove_dir`](fs.remove_dir).
   pub def remove_dir
     self
-    # ([`Bool`](std.Bool)?) Recursively prune empty directory subtrees.
+    # ([`Bool`](std.Bool)) Recursively prune empty directory subtrees.
     :all = nil
-    # ([`Bool`](std.Bool)?) Ignore missing directories and file-blocked
+    # ([`Bool`](std.Bool)) Ignore missing directories and file-blocked
     # subtrees.
     :ignore = nil
   do
@@ -1461,7 +1461,7 @@ pub class Path
     self
     # ([`Str`](std.Str)\|[`Path`](fs.Path)) Destination path.
     to
-    # ([`Bool`](std.Bool)?) Allow a recursive directory copy.
+    # ([`Bool`](std.Bool)) Allow a recursive directory copy.
     :all = nil
   do
     throw nil
@@ -1471,7 +1471,7 @@ pub class Path
     self
     # ([`Str`](std.Str)\|[`Path`](fs.Path)) Destination path.
     to
-    # ([`Bool`](std.Bool)?) Allow a recursive directory move.
+    # ([`Bool`](std.Bool)) Allow a recursive directory move.
     :all = nil
   do
     throw nil
@@ -1481,7 +1481,7 @@ pub class Path
     self
     # ([`Str`](std.Str)\|[`Path`](fs.Path)) Destination path.
     to
-    # ([`Bool`](std.Bool)?) Whether to replace an existing destination.
+    # ([`Bool`](std.Bool)) Whether to replace an existing destination.
     :replace = nil
   do
     throw nil
@@ -1503,13 +1503,13 @@ pub class Path
   # The method form of [`fs.acl`](fs.acl).
   pub def acl
     self
-    # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`?) ACL format to query. Defaults to
+    # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`) ACL format to query. Defaults to
     # `:POSIX:`.
     :kind = nil
-    # ([`Bool`](std.Bool)?) Query the directory's inheritable default
+    # ([`Bool`](std.Bool)) Query the directory's inheritable default
     # ACL.
     :default = nil
-    # (`:TARGET:`\|`:LINK:`?)
+    # (`:TARGET:`\|`:LINK:`)
     # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
     :resolve = nil
   do
@@ -1524,13 +1524,13 @@ pub class Path
     # (built ACL\|iterable\|[`nil`](std.Nil)) ACL or declarative ACE
     # sequence.
     acl
-    # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`?) Required for an untyped ACL
+    # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`) Required for an untyped ACL
     # specification.
     :kind = nil
-    # ([`Bool`](std.Bool)?) Update the directory's inheritable default
+    # ([`Bool`](std.Bool)) Update the directory's inheritable default
     # ACL.
     :default = nil
-    # (`:TARGET:`\|`:LINK:`?)
+    # (`:TARGET:`\|`:LINK:`)
     # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
     :resolve = nil
   do
@@ -1539,9 +1539,9 @@ pub class Path
   # The method form of [`fs.xattrs`](fs.xattrs).
   pub def xattrs
     self
-    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to query.
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Namespace to query.
     :namespace = nil
-    # (`:TARGET:`\|`:LINK:`?)
+    # (`:TARGET:`\|`:LINK:`)
     # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
     :resolve = nil
   do
@@ -1553,9 +1553,9 @@ pub class Path
     # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
     # or entry from [`xattrs`](fs.Path.xattrs).
     name
-    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to query.
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Namespace to query.
     :namespace = nil
-    # (`:TARGET:`\|`:LINK:`?)
+    # (`:TARGET:`\|`:LINK:`)
     # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
     :resolve = nil
   do
@@ -1570,9 +1570,9 @@ pub class Path
     # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Attribute bytes; strings
     # use UTF-8.
     value
-    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to update.
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Namespace to update.
     :namespace = nil
-    # (`:TARGET:`\|`:LINK:`?)
+    # (`:TARGET:`\|`:LINK:`)
     # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
     :resolve = nil
   do
@@ -1584,9 +1584,9 @@ pub class Path
     # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
     # or entry from [`xattrs`](fs.Path.xattrs).
     name
-    # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to update.
+    # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Namespace to update.
     :namespace = nil
-    # (`:TARGET:`\|`:LINK:`?)
+    # (`:TARGET:`\|`:LINK:`)
     # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
     :resolve = nil
   do
@@ -1653,7 +1653,7 @@ pub class XattrEntry
 pub def open
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the file to open.
   path
-  # ([`Str`](std.Str)?) File access mode. Defaults to `"r"`.
+  # ([`Str`](std.Str)) File access mode. Defaults to `"r"`.
   #
   # | Mode   | Description                              |
   # | ------ | ---------------------------------------- |
@@ -1666,7 +1666,7 @@ pub def open
   #
   # Add a `"b"` suffix for binary mode, as in `"rb"`, `"wb"`, or `"r+b"`.
   mode = nil
-  # ([`Func`](std.Func)?) Block to run with the file; it is closed when
+  # ([`Func`](std.Func)) Block to run with the file; it is closed when
   # the block returns.
   func = nil
 do
@@ -1687,7 +1687,7 @@ do
 pub def read
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the file to read.
   path
-  # ([`Str`](std.Str)?) Optional mode string; only `"b"` is allowed.
+  # ([`Str`](std.Str)) Optional mode string; only `"b"` is allowed.
   mode = nil
 do
   throw nil
@@ -1797,7 +1797,7 @@ pub def copy_data
   src
   # ([`File`](fs.File)) Handle to write to.
   dst
-  # ([`Range`](std.Range)?) Absolute byte region of the source.
+  # ([`Range`](std.Range)) Absolute byte region of the source.
   #
   # ### Source Addressing
   #
@@ -1816,9 +1816,9 @@ pub def copy_data
   # Using cursor-based source addressing advances the cursor by the amount
   # copied on success.
   :range = nil
-  # ([`Int`](std.Int)?) Number of bytes to take from the source cursor.
+  # ([`Int`](std.Int)) Number of bytes to take from the source cursor.
   :size = nil
-  # ([`Int`](std.Int)?) Absolute byte offset in the destination.
+  # ([`Int`](std.Int)) Absolute byte offset in the destination.
   #
   # ### Destination Addressing
   #
@@ -1829,7 +1829,7 @@ pub def copy_data
   # As expected, if the destination position would write past the current
   # end-of-file, the length of the file is extended.
   :offset = nil
-  # ([`Sym`](std.Sym)?) How blocks should be shared between the source
+  # ([`Sym`](std.Sym)) How blocks should be shared between the source
   # and destination.
   #
   # ### Clone Behavior
@@ -1902,7 +1902,7 @@ do
 pub def sync
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the file.
   path
-  # ([`Bool`](std.Bool)?) Flush data only, skipping unneeded metadata.
+  # ([`Bool`](std.Bool)) Flush data only, skipping unneeded metadata.
   #
   # A data-only flush (`fdatasync`) omits metadata a reader does not need to
   # find the contents — notably the modification time — and so can avoid a
@@ -1950,7 +1950,7 @@ pub def metadata
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the file or
   # directory.
   path
-  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # (`:TARGET:`\|`:LINK:`) [Resolution mode](fs.resolution-modes). Defaults to
   # `:TARGET:`.
   :resolve = nil
 do
@@ -1977,7 +1977,7 @@ do
 pub def fs_metadata
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to resolve.
   path
-  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # (`:TARGET:`\|`:LINK:`) [Resolution mode](fs.resolution-modes). Defaults to
   # `:TARGET:`.
   :resolve = nil
 do
@@ -2016,76 +2016,76 @@ do
 # update_metadata "artifact.tar" modified: $DateTime.from_unix(1700000000)
 # ```
 pub def update_metadata
-  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # (`:TARGET:`\|`:LINK:`) [Resolution mode](fs.resolution-modes). Defaults to
   # `:TARGET:`.
   :resolve = nil
-  # ([`Int`](std.Int)\|[`Mode`](fs.unix.Mode)?) Unix permission mode.
+  # ([`Int`](std.Int)\|[`Mode`](fs.unix.Mode)) Unix permission mode.
   :mode = nil
-  # ([`Int`](std.Int)\|[`Str`](std.Str)\|[`Sid`](security.windows.Sid)?)
+  # ([`Int`](std.Int)\|[`Str`](std.Str)\|[`Sid`](security.windows.Sid))
   # Owner ID, name, or SID.
   :owner = nil
-  # ([`Int`](std.Int)\|[`Str`](std.Str)\|[`Sid`](security.windows.Sid)?)
+  # ([`Int`](std.Int)\|[`Str`](std.Str)\|[`Sid`](security.windows.Sid))
   # Group ID, name, or SID.
   :group = nil
-  # ([`DateTime`](time.DateTime)?) New modification time.
+  # ([`DateTime`](time.DateTime)) New modification time.
   :modified = nil
-  # ([`DateTime`](time.DateTime)?) New access time.
+  # ([`DateTime`](time.DateTime)) New access time.
   :accessed = nil
-  # ([`DateTime`](time.DateTime)?) New creation time. Windows only.
+  # ([`DateTime`](time.DateTime)) New creation time. Windows only.
   :created = nil
-  # ([`Bool`](std.Bool)?) Readonly attribute. Windows.
+  # ([`Bool`](std.Bool)) Readonly attribute. Windows.
   :readonly = nil
-  # ([`Bool`](std.Bool)?) Hidden attribute or flag.
+  # ([`Bool`](std.Bool)) Hidden attribute or flag.
   :hidden = nil
-  # ([`Bool`](std.Bool)?) System attribute. Windows.
+  # ([`Bool`](std.Bool)) System attribute. Windows.
   :system = nil
-  # ([`Bool`](std.Bool)?) Archive attribute. Windows.
+  # ([`Bool`](std.Bool)) Archive attribute. Windows.
   :archive = nil
-  # ([`Bool`](std.Bool)?) Compressed flag.
+  # ([`Bool`](std.Bool)) Compressed flag.
   :compressed = nil
-  # ([`Bool`](std.Bool)?) Sparse attribute. Windows.
+  # ([`Bool`](std.Bool)) Sparse attribute. Windows.
   :sparse = nil
-  # ([`Bool`](std.Bool)?) Temporary attribute. Windows.
+  # ([`Bool`](std.Bool)) Temporary attribute. Windows.
   :temporary = nil
-  # ([`Bool`](std.Bool)?) Offline attribute. Windows.
+  # ([`Bool`](std.Bool)) Offline attribute. Windows.
   :offline = nil
-  # ([`Bool`](std.Bool)?) Not-content-indexed attribute. Windows.
+  # ([`Bool`](std.Bool)) Not-content-indexed attribute. Windows.
   :not_content_indexed = nil
-  # ([`Bool`](std.Bool)?) Immutable flag.
+  # ([`Bool`](std.Bool)) Immutable flag.
   :immutable = nil
-  # ([`Bool`](std.Bool)?) Append-only flag.
+  # ([`Bool`](std.Bool)) Append-only flag.
   :append_only = nil
-  # ([`Bool`](std.Bool)?) No-dump flag.
+  # ([`Bool`](std.Bool)) No-dump flag.
   :no_dump = nil
-  # ([`Bool`](std.Bool)?) No-atime flag. Linux.
+  # ([`Bool`](std.Bool)) No-atime flag. Linux.
   :no_atime = nil
-  # ([`Bool`](std.Bool)?) No-copy-on-write flag. Linux.
+  # ([`Bool`](std.Bool)) No-copy-on-write flag. Linux.
   :no_copy_on_write = nil
-  # ([`Bool`](std.Bool)?) Synchronous-directory-updates flag. Linux.
+  # ([`Bool`](std.Bool)) Synchronous-directory-updates flag. Linux.
   :dir_sync = nil
-  # ([`Bool`](std.Bool)?) Casefold flag. Linux.
+  # ([`Bool`](std.Bool)) Casefold flag. Linux.
   :casefold = nil
-  # ([`Bool`](std.Bool)?) Data-journaling flag. Linux.
+  # ([`Bool`](std.Bool)) Data-journaling flag. Linux.
   :data_journaling = nil
-  # ([`Bool`](std.Bool)?) Don't-compress flag. Linux.
+  # ([`Bool`](std.Bool)) Don't-compress flag. Linux.
   :no_compress = nil
-  # ([`Bool`](std.Bool)?) Project-hierarchy flag. Linux.
+  # ([`Bool`](std.Bool)) Project-hierarchy flag. Linux.
   :project_inherit = nil
-  # ([`Bool`](std.Bool)?) Secure-deletion flag. Linux.
+  # ([`Bool`](std.Bool)) Secure-deletion flag. Linux.
   :secure_delete = nil
-  # ([`Bool`](std.Bool)?) Synchronous-updates flag. Linux.
+  # ([`Bool`](std.Bool)) Synchronous-updates flag. Linux.
   :sync = nil
-  # ([`Bool`](std.Bool)?) No-tail-merging flag. Linux.
+  # ([`Bool`](std.Bool)) No-tail-merging flag. Linux.
   :no_tail_merge = nil
-  # ([`Bool`](std.Bool)?) Top-of-directory-hierarchy flag. Linux.
+  # ([`Bool`](std.Bool)) Top-of-directory-hierarchy flag. Linux.
   :top_dir = nil
-  # ([`Bool`](std.Bool)?) Undeletable flag. Linux.
+  # ([`Bool`](std.Bool)) Undeletable flag. Linux.
   :undelete = nil
-  # ([`Bool`](std.Bool)?) Direct-access flag. Linux.
+  # ([`Bool`](std.Bool)) Direct-access flag. Linux.
   :direct_access = nil
-  # ([`Bool`](std.Bool)?) Extent-format flag. Linux.
+  # ([`Bool`](std.Bool)) Extent-format flag. Linux.
   :extent_format = nil
-  # ([`Bool`](std.Bool)?) Opaque flag. macOS.
+  # ([`Bool`](std.Bool)) Opaque flag. macOS.
   :opaque = nil
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Paths to update, in order.
   ...paths
@@ -2114,12 +2114,12 @@ do
 pub def acl
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to query.
   path
-  # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`?) ACL format to query. Defaults to
+  # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`) ACL format to query. Defaults to
   # `:POSIX:`.
   :kind = nil
-  # ([`Bool`](std.Bool)?) Query the directory's inheritable default ACL.
+  # ([`Bool`](std.Bool)) Query the directory's inheritable default ACL.
   :default = nil
-  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # (`:TARGET:`\|`:LINK:`) [Resolution mode](fs.resolution-modes). Defaults to
   # `:TARGET:`.
   :resolve = nil
 do
@@ -2150,12 +2150,12 @@ pub def set_acl
   # (built ACL\|iterable\|[`nil`](std.Nil)) ACL or declarative ACE
   # sequence.
   acl
-  # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`?) Required for an untyped ACL
+  # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`) Required for an untyped ACL
   # specification.
   :kind = nil
-  # ([`Bool`](std.Bool)?) Update the directory's inheritable default ACL.
+  # ([`Bool`](std.Bool)) Update the directory's inheritable default ACL.
   :default = nil
-  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # (`:TARGET:`\|`:LINK:`) [Resolution mode](fs.resolution-modes). Defaults to
   # `:TARGET:`.
   :resolve = nil
 do
@@ -2179,11 +2179,11 @@ do
 pub def xattrs
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to query.
   path
-  # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to query;
+  # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Namespace to query;
   # `:USER:` and `:SYSTEM:` name well-known namespaces, and `:ANY:` lists all
   # namespaces.
   :namespace = nil
-  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # (`:TARGET:`\|`:LINK:`) [Resolution mode](fs.resolution-modes). Defaults to
   # `:TARGET:`.
   :resolve = nil
 do
@@ -2206,9 +2206,9 @@ pub def xattr
   # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
   # or entry from [`xattrs`](fs.xattrs).
   name
-  # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to query.
+  # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Namespace to query.
   :namespace = nil
-  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # (`:TARGET:`\|`:LINK:`) [Resolution mode](fs.resolution-modes). Defaults to
   # `:TARGET:`.
   :resolve = nil
 do
@@ -2234,9 +2234,9 @@ pub def set_xattr
   # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Attribute bytes; strings
   # use UTF-8.
   value
-  # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to update.
+  # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Namespace to update.
   :namespace = nil
-  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # (`:TARGET:`\|`:LINK:`) [Resolution mode](fs.resolution-modes). Defaults to
   # `:TARGET:`.
   :resolve = nil
 do
@@ -2255,9 +2255,9 @@ pub def remove_xattr
   # ([`Str`](std.Str)\|[`XattrEntry`](fs.XattrEntry)) Attribute name
   # or entry from [`xattrs`](fs.xattrs).
   name
-  # ([`Str`](std.Str)\|[`Sym`](std.Sym)?) Namespace to update.
+  # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Namespace to update.
   :namespace = nil
-  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # (`:TARGET:`\|`:LINK:`) [Resolution mode](fs.resolution-modes). Defaults to
   # `:TARGET:`.
   :resolve = nil
 do
@@ -2283,7 +2283,7 @@ do
 pub def streams
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to query.
   path
-  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # (`:TARGET:`\|`:LINK:`) [Resolution mode](fs.resolution-modes). Defaults to
   # `:TARGET:`.
   :resolve = nil
 do
@@ -2342,10 +2342,10 @@ pub def glob
   # - `[abc]` — Match any character in the set
   # - `{a,b,c}` — Match any of the comma-separated patterns
   pattern
-  # ([`Int`](std.Int)?) Maximum directory depth to traverse. Defaults to
+  # ([`Int`](std.Int)) Maximum directory depth to traverse. Defaults to
   # unlimited.
   :max_depth = nil
-  # (`:TARGET:`\|`:LINK:`?) [Resolution mode](fs.resolution-modes). Defaults to
+  # (`:TARGET:`\|`:LINK:`) [Resolution mode](fs.resolution-modes). Defaults to
   # `:LINK:`.
   :resolve = nil
 do
@@ -2363,7 +2363,7 @@ pub def create_dir
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the directory to
   # create.
   path
-  # ([`Bool`](std.Bool)?) Create parent directories too.
+  # ([`Bool`](std.Bool)) Create parent directories too.
   :all = nil
 do
   throw nil
@@ -2383,9 +2383,9 @@ do
 # remove "a.txt" "b.txt"
 # ```
 pub def remove
-  # ([`Bool`](std.Bool)?) Remove directories recursively.
+  # ([`Bool`](std.Bool)) Remove directories recursively.
   :all = nil
-  # ([`Bool`](std.Bool)?) Treat a missing path as success.
+  # ([`Bool`](std.Bool)) Treat a missing path as success.
   :ignore = nil
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) One or more paths to remove.
   ...paths
@@ -2412,9 +2412,9 @@ do
 # remove_dir cache tmp all: true ignore: true
 # ```
 pub def remove_dir
-  # ([`Bool`](std.Bool)?) Recursively prune empty directory subtrees.
+  # ([`Bool`](std.Bool)) Recursively prune empty directory subtrees.
   :all = nil
-  # ([`Bool`](std.Bool)?) Ignore missing directories and file-blocked
+  # ([`Bool`](std.Bool)) Ignore missing directories and file-blocked
   # subtrees.
   :ignore = nil
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) One or more directories to
@@ -2439,7 +2439,7 @@ pub def copy
   from
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Destination path.
   to
-  # ([`Bool`](std.Bool)?) Allow a recursive directory copy.
+  # ([`Bool`](std.Bool)) Allow a recursive directory copy.
   :all = nil
 do
   throw nil
@@ -2462,7 +2462,7 @@ pub def move
   from
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Destination path.
   to
-  # ([`Bool`](std.Bool)?) Allow a recursive directory move.
+  # ([`Bool`](std.Bool)) Allow a recursive directory move.
   :all = nil
 do
   throw nil
@@ -2489,7 +2489,7 @@ pub def rename
   from
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Destination path.
   to
-  # ([`Bool`](std.Bool)?) Whether to replace an existing destination.
+  # ([`Bool`](std.Bool)) Whether to replace an existing destination.
   :replace = nil
 do
   throw nil
@@ -2704,7 +2704,7 @@ do
 pub def relative
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to make relative.
   path
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)?) Base directory. Defaults to
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Base directory. Defaults to
   # the current working directory.
   base = nil
 do
@@ -2749,7 +2749,7 @@ pub def temp_dir()
 # echo "Cache: $cache"
 # ```
 pub def cache_dir
-  # ([`Str`](std.Str)?) Application name to scope the result to.
+  # ([`Str`](std.Str)) Application name to scope the result to.
   #
   # ### Platform behavior
   #
@@ -2793,7 +2793,7 @@ do
 #   remove_dir $dir all: true
 # ```
 pub def create_temp_dir
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)?) Parent directory. Defaults
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Parent directory. Defaults
   # to [`temp_dir()`](fs.temp_dir).
   :parent = nil
 do
@@ -2820,7 +2820,7 @@ pub def with_temp_dir
   # ([`Func`](std.Func)) Called with a [`Path`](fs.Path) to the
   # temporary directory.
   func
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)?) Parent directory. Defaults
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Parent directory. Defaults
   # to [`temp_dir()`](fs.temp_dir).
   :parent = nil
 do

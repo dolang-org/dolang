@@ -168,25 +168,6 @@ impl Attr {
     }
 }
 
-impl TryFrom<&str> for Attr {
-    type Error = String;
-
-    fn try_from(s: &str) -> std::result::Result<Self, Self::Error> {
-        use Attr::*;
-        match s {
-            "bold" => Ok(Bold),
-            "dim" => Ok(Dim),
-            "italic" => Ok(Italic),
-            "underlined" => Ok(Underlined),
-            "blink" => Ok(Blink),
-            "reverse" => Ok(Reverse),
-            "hidden" => Ok(Hidden),
-            "strikethrough" => Ok(Strikethrough),
-            _ => Err(format!("unknown attribute: '{s}'")),
-        }
-    }
-}
-
 impl Attr {
     fn ansi(self) -> &'static str {
         use Attr::*;
@@ -803,6 +784,7 @@ pub(crate) struct StyleKeys<'v> {
     pub(crate) attrs: Sym<'v, 'v>,
     pub(crate) alt: Sym<'v, 'v>,
     pub(crate) colors: ColorKeys<'v>,
+    pub(crate) attributes: AttrKeys<'v>,
 }
 
 #[derive(Clone, Copy)]
@@ -812,6 +794,23 @@ pub(crate) struct ColorKeys<'v> {
 
 impl<'v> ColorKeys<'v> {
     fn get<'a>(self, value: Sym<'v, 'a>) -> Option<Color>
+    where
+        'v: 'a,
+    {
+        self.values
+            .binary_search_by_key(&value, |(symbol, _)| -> Sym<'v, 'a> { *symbol })
+            .ok()
+            .map(|index| self.values[index].1)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct AttrKeys<'v> {
+    pub(crate) values: [(Sym<'v, 'v>, Attr); 8],
+}
+
+impl<'v> AttrKeys<'v> {
+    fn get<'a>(self, value: Sym<'v, 'a>) -> Option<Attr>
     where
         'v: 'a,
     {
@@ -837,7 +836,11 @@ fn as_style_dict<'v, 's, 'a>(
         .ok_or_else(|| Error::type_error(strand, "style: expected `Dict`"))
 }
 
-fn parse_attrs<'v, 's>(strand: &mut Strand<'v, 's>, val: &Value<'v>) -> Result<'v, 's, Vec<Attr>> {
+fn parse_attrs<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    val: &Value<'v>,
+    keys: AttrKeys<'v>,
+) -> Result<'v, 's, Vec<Attr>> {
     let arr = val
         .as_array(strand.vm())
         .ok_or_else(|| Error::type_error(strand, "style: attrs: expected Array"))?;
@@ -846,12 +849,15 @@ fn parse_attrs<'v, 's>(strand: &mut Strand<'v, 's>, val: &Value<'v>) -> Result<'
     for i in 0..len {
         strand.with_slots_sync(|strand, [mut elem]| {
             arr.get(strand, i, &mut elem)?;
-            let s = elem
-                .as_str(strand)
-                .ok_or_else(|| Error::type_error(strand, "style: attrs: expected `Str` element"))?
-                .to_string();
-            let attr = Attr::try_from(s.as_str())
-                .map_err(|e| Error::runtime(strand, format!("style: attrs: {e}")))?;
+            let sym = elem
+                .as_sym(strand)
+                .ok_or_else(|| Error::type_error(strand, "style: attrs: expected `Sym` element"))?;
+            let attr = keys.get(sym).ok_or_else(|| {
+                Error::value(
+                    strand,
+                    format!("style: attrs: unknown attribute: {}", sym.as_str(strand)),
+                )
+            })?;
             attrs.push(attr);
             Ok(())
         })?;
@@ -881,7 +887,7 @@ fn parse_element_style<'v, 's>(
             } else if sym == keys.bg {
                 es.bg = Some(parse_color_value(strand, &val, "bg", keys.colors)?);
             } else if sym == keys.attrs {
-                es.attrs = parse_attrs(strand, &val)?;
+                es.attrs = parse_attrs(strand, &val, keys.attributes)?;
             } else {
                 return Err(unknown_key_error(strand, sym));
             }
@@ -917,7 +923,7 @@ fn parse_width_category<'v, 's>(
             } else if sym == keys.bg {
                 es.bg = Some(parse_color_value(strand, &val, "bg", keys.colors)?);
             } else if sym == keys.attrs {
-                es.attrs = parse_attrs(strand, &val)?;
+                es.attrs = parse_attrs(strand, &val, keys.attributes)?;
             } else if sym == keys.alt
                 && let Some(a) = alt.as_deref_mut()
             {

@@ -78,6 +78,13 @@ def indicator_update_units()
     assert_throws $TypeError do indicator.update units: BYTES
 
 #[test]
+def style_attributes_require_symbols()
+  assert_throws $TypeError do
+    progress.with style: {message: {attrs: ["bold"]}} do nil
+  assert_throws $ValueError do
+    progress.with style: {message: {attrs: [:UNKNOWN:]}} do nil
+
+#[test]
 def invalid_step_specs()
   assert_throws $TypeError do progress.steps message: 1
   assert_throws $TypeError do progress.steps icon: 1

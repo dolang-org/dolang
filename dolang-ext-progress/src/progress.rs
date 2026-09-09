@@ -27,7 +27,7 @@ use tokio::io::AsyncWrite;
 use crate::{
     global::Global,
     plain,
-    style::{self, Color, ColorKeys, DEFAULT_ICON, Mode, Style, StyleKeys, Units},
+    style::{self, Attr, AttrKeys, Color, ColorKeys, DEFAULT_ICON, Mode, Style, StyleKeys, Units},
 };
 
 // --- Strand-local state ---
@@ -709,6 +709,18 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
     ]
     .map(|(name, color)| (builder.sym(name), color));
     colors.sort_unstable_by_key(|(symbol, _)| *symbol);
+    let mut attributes = [
+        ("BOLD", Attr::Bold),
+        ("DIM", Attr::Dim),
+        ("ITALIC", Attr::Italic),
+        ("UNDERLINED", Attr::Underlined),
+        ("BLINK", Attr::Blink),
+        ("REVERSE", Attr::Reverse),
+        ("HIDDEN", Attr::Hidden),
+        ("STRIKETHROUGH", Attr::Strikethrough),
+    ]
+    .map(|(name, attribute)| (builder.sym(name), attribute));
+    attributes.sort_unstable_by_key(|(symbol, _)| *symbol);
     let style_keys = StyleKeys {
         bar: builder.sym("bar"),
         spinner: builder.sym("spinner"),
@@ -724,6 +736,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         attrs: builder.sym("attrs"),
         alt: builder.sym("alt"),
         colors: ColorKeys { values: colors },
+        attributes: AttrKeys { values: attributes },
     };
 
     builder

@@ -15,9 +15,9 @@ pub class Attr
     name
     # (`Str`) Attribute value.
     value
-    # (`Str`?) Namespace URI.
+    # (`Str`) Namespace URI.
     :namespace = nil
-    # (`Str`?) Preferred namespace prefix.
+    # (`Str`) Preferred namespace prefix.
     :prefix = nil
   do
     throw nil
@@ -74,11 +74,11 @@ pub class Node
     self
     # (`Str`) Local element name.
     tag
-    # (`Str`?) Namespace URI.
+    # (`Str`) Namespace URI.
     :namespace = nil
-    # (`Str`?) Preferred namespace prefix.
+    # (`Str`) Preferred namespace prefix.
     :prefix = nil
-    # (`dict`?) Unnamespaced attributes with `Sym` or `Str` keys and `Str` values.
+    # (`dict`) Unnamespaced attributes with `Sym` or `Str` keys and `Str` values.
     :attrs = nil
     # ([`Attr`](xml.Attr)\|Value) Attributes or children.
     ...items
@@ -131,7 +131,7 @@ pub class Node
     self
     # (`Str`) Local attribute name.
     name
-    # (`Str`?) Namespace URI.
+    # (`Str`) Namespace URI.
     :namespace = nil
     # Value returned when absent.
     :default = nil
@@ -149,7 +149,7 @@ pub class Node
     self
     # (`Str`) Local attribute name.
     name
-    # (`Str`?) Namespace URI.
+    # (`Str`) Namespace URI.
     :namespace = nil
   do
     throw nil
@@ -173,9 +173,9 @@ pub class Node
     name
     # (`Str`) Attribute value.
     value
-    # (`Str`?) Namespace URI.
+    # (`Str`) Namespace URI.
     :namespace = nil
-    # (`Str`?) Preferred namespace prefix.
+    # (`Str`) Preferred namespace prefix.
     :prefix = nil
   do
     throw nil

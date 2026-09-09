@@ -4,7 +4,7 @@
 #
 # ## Returns
 #
-# `Int` sampled from the requested range.
+# [`Int`](std.Int) sampled from the requested range.
 #
 # ## Errors
 #
@@ -21,9 +21,9 @@
 # assert ((n >= 10) && (n < 20))
 # ```
 pub def int
-  # (`Int`) Exclusive upper bound.
+  # ([`Int`](std.Int)) Exclusive upper bound.
   end
-  # (`Int`) Lower bound; zero when omitted.
+  # ([`Int`](std.Int)) Lower bound; zero when omitted.
   start = 0
 do
   throw nil
@@ -45,7 +45,7 @@ do
 # assert ([1, 2, 3].contains $item)
 # ```
 pub def pick
-  # (`array`) Source array.
+  # ([`Array`](std.Array)) Source array.
   collection
 do
   throw nil
@@ -66,7 +66,7 @@ do
 # assert_eq $sorted [1, 2, 3, 4]
 # ```
 pub def shuffle
-  # (`array`) Array to mutate.
+  # ([`Array`](std.Array)) Array to mutate.
   array
 do
   throw nil
@@ -92,9 +92,9 @@ do
 # assert_eq $text.len 8
 # ```
 pub def string
-  # (`Int`) Number of characters to emit.
+  # ([`Int`](std.Int)) Number of characters to emit.
   len
-  # (`str?`) Characters to sample from.
+  # ([`Str`](std.Str)) Characters to sample from.
   #
   # The alphabet is interpreted as characters, not raw UTF-8 bytes. When
   # omitted, it is `_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ`.

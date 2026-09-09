@@ -1,3 +1,236 @@
+# Creates, provisions, exports, and restores libvirt domains.
+#
+# ## Common Options {: #libvirt.common-domain-options }
+#
+# [`create`](libvirt.create), [`with`](libvirt.with), and
+# [`build`](libvirt.build) accept the domain options documented on `create`.
+# `with` and `build` pass those options through unchanged.
+#
+# | Option          | Type                                      | Description |
+# | --------------- | ----------------------------------------- | ----------- |
+# | `:image?`        | Artifact                                  | Base disk image, optionally gzip-, xz-, or zstd-compressed |
+# | `:bundle?`       | Artifact                                  | Bundle written by `Domain.export` |
+# | `:installer*`    | Artifact                                  | Install media to boot |
+# | `:drivers*`      | Artifact                                  | Driver media read by Setup |
+# | `:name?`         | [`Str`](std.Str)                          | Domain name; generated when omitted |
+# | `:os?`           | [`Sym`](std.Sym)                          | Guest OS, using `sys`'s symbol vocabulary |
+# | `:arch?`         | [`Sym`](std.Sym)                          | Guest CPU architecture; defaults to and must match the host |
+# | `:app?`          | [`Str`](std.Str)                          | Cache and data namespace; derived from `shell.program` by default |
+# | `:user?`         | [`Str`](std.Str)                          | Guest user to create |
+# | `:dolang?`       |                                           | Do build to install |
+# | `:memory?`       | [`Int`](std.Int)                          | Guest memory in MiB; defaults to the bundle or OS value |
+# | `:vcpus?`        | [`Int`](std.Int)                          | Guest vCPU count; defaults to the bundle or OS value |
+# | `:disk_size?`    | [`Str`](std.Str)                          | Disk size; defaults to the OS value, while a bundle keeps its size |
+# | `:cache?`        | [`Sym`](std.Sym)                          | Disk host cache mode |
+# | `:io?`           | [`Sym`](std.Sym)                          | Disk I/O submission mode |
+# | `:connect_uri?`  | [`Str`](std.Str)                          | libvirt connection URI |
+# | `:init?`         | [`Dict`](std.Dict)                        | Early boot provisioning |
+# | `:wait_timeout?` | [`Int`](std.Int)\|[`Float`](std.Float)    | Seconds to wait for the guest; defaults to the OS timeout |
+#
+# Exactly one of `image:`, `bundle:`, and `installer:` is required. A bundle
+# already supplies `os:`, `arch:`, `user:`, `dolang:`, and `init:`, so passing
+# any of them with `bundle:` is an error. `image:`, `bundle:`, `installer:`,
+# `drivers:`, and an `add:` `source:` are artifact specs.
+#
+# ### `:bundle` {: #libvirt.create-bundle }
+#
+# A bundle produced by [`Domain.export`](libvirt.Domain.export):
+# a ZIP holding the domain's flattened disk and a manifest of the configuration
+# that goes with it. Restoring one skips provisioning entirely — no seed, no
+# cloud-init, no payload install — so the domain is ready as soon as it accepts
+# SSH, and the `add:`/`run:` actions then run as usual.
+#
+# The SSH key a bundle's guest trusts is the one generated for the `app:` it was
+# exported under, so `app:` must match; a mismatch is an error rather than a
+# guest that never accepts a connection.
+#
+# ### `:installer` {: #libvirt.create-installer }
+#
+# Install media for a guest that has no cloud image to lay an overlay over. The
+# disk starts blank and Setup writes it, driven by an unattended answer file
+# this module generates and puts on a provisioning disc of its own, alongside
+# the guest payload. Only `os: :WINDOWS:` installs this way.
+#
+# Both `installer:` and `drivers:` may be repeated. The first `installer:` is
+# what the domain boots; any others are attached in the order given, for media
+# split across more than one disc. `drivers:` media is read by Setup and never
+# booted — attach the virtio driver ISO here, without which Setup does not see
+# a virtio disk at all — and is an error without `installer:`.
+#
+# Beyond `digest:`, an `installer:` spec takes two metadata keys, which are
+# alternatives rather than a pair. Multi-edition media otherwise stops to ask
+# which edition to install, which on an unattended install means stopping for
+# good:
+#
+# | Key        | type    | Description                                   |
+# | ---------- | ------- | --------------------------------------------- |
+# | `edition`? | `Str`   | Edition by name, e.g. `"Windows 11 Pro"`     |
+# | `index`?   | `Int`   | Edition by position in the media's image list |
+#
+# ```
+# libvirt.create
+#   installer:
+#     source: ./Win11_24H2_English_x64.iso
+#     edition: Windows 11 Pro
+#   drivers: ./virtio-win.iso
+#   os: :WINDOWS:
+# ```
+#
+# What `create` returns is a guest sitting in **audit mode** with a working
+# sshd and VFS, and nothing else. Windows Update, hibernation and trim policy,
+# account removal, and `sysprep /generalize` are all decisions with no single
+# right answer, so they are the caller's, expressed as
+# [steps](libvirt.create-steps).
+#
+# `init:` is an error here: it names cloud-init provisioning semantics, and an
+# unattended install has no cloud-init. The host needs
+# `swtpm`, `swtpm_setup`, and one of `xorrisofs` or `mkisofs`, all checked
+# before anything is defined.
+#
+# ### `:dolang` {: #libvirt.create-dolang }
+#
+# Do is installed into every guest: `dolang-vfs` is the transport `with`,
+# `upload` and `download` run over, and an unattended install has no guest at
+# all without it. `dolang:` selects *which* build, not whether.
+#
+# Omitted, it installs the release matching this interpreter's version.
+#
+# | Value                            | Behavior |
+# | -------------------------------- | ------------------------------- |
+# | a version tag, e.g. `"v0.1.1"`   | Install specific release version |
+# | a `Path` or `Url`                | Install provided release archive |
+# | an artifact spec                 | Release archive with a pinned digest — see [Artifact Specs](libvirt.artifact-specs) |
+# | `{version: tag}`                 | Explicit form of the version tag |
+#
+# ### `:cache` {: #libvirt.create-cache }
+#
+# Host cache mode for the domain disk. Defaults to the hypervisor's own
+# default, which honors guest flushes.
+#
+# | Value            | Behavior |
+# | ---------------- | -------- |
+# | `:NONE:`         | `O_DIRECT`; no host page cache, guest flushes honored |
+# | `:WRITEBACK:`    | Host page cache, guest flushes honored |
+# | `:WRITETHROUGH:` | Host page cache, every write flushed |
+# | `:DIRECTSYNC:`   | `O_DIRECT` and every write flushed |
+# | `:UNSAFE:`       | Host page cache, guest flushes **ignored** |
+#
+# `:UNSAFE:` loses the disk's contents if the host or the domain dies
+# uncleanly, since nothing the guest wrote is guaranteed to have reached
+# storage until the domain shuts down. That is a fair trade for a disposable
+# build domain — dropping flushes removes them from the critical path, and
+# files written and deleted within one run need never reach storage at all —
+# but it is not a safe default for a domain whose disk matters.
+#
+# ### `:io` {: #libvirt.create-io }
+#
+# Disk I/O submission mode, defaulting to `:IO_URING:`.
+#
+# | Value        | Behavior |
+# | ------------ | -------- |
+# | `:IO_URING:` | `io_uring`; needs QEMU 6.0+ on a 5.1+ kernel |
+# | `:THREADS:`  | Thread pool |
+# | `:NATIVE:`   | Linux AIO; only asynchronous with `cache:` `:NONE:` or `:DIRECTSYNC:` |
+#
+# An older host fails at domain start rather than falling back, so select
+# `:THREADS:` there.
+#
+# `:NATIVE:` needs `O_DIRECT` to be asynchronous; paired with a cache mode
+# that uses the host page cache it quietly degrades to blocking submission.
+# `:IO_URING:` has no such pairing constraint.
+#
+# ### `:init` {: #libvirt.create-init }
+#
+# Boot-time provisioning, interpreted by cloud-init on the guest's first boot,
+# before the post-SSH `add:`/`run:` steps.
+#
+# | Key         | type            | Description                                          |
+# | ----------- | --------------- | ---------------------------------------------------  |
+# | `add`*      | `Dict`          | Writes a file during early boot                      |
+# | `run`*      | `Str`\|`Array`  | Split with `shlex` if a `Str`. Run during early boot |
+# | `packages`* | `Str`\|`Array`  | Guest packages to install                            |
+#
+# ## Steps {: #libvirt.create-steps }
+#
+# | Step     | Description |
+# | -------- | ----------- |
+# | `:add*`   | Uploads a file |
+# | `:run*`   | Runs a block in the guest VFS |
+# | `reboot*` | Reboots the guest and waits |
+#
+# Steps run in the order written, including repeats and interleaving:
+#
+# ```
+# libvirt.create
+#   installer: ./Win11_24H2_English_x64.iso
+#   drivers: ./virtio-win.iso
+#   os: :WINDOWS:
+#   run: do
+#     run powercfg /h off
+#   reboot
+#   run: do
+#     run defrag "C:" /L
+# ```
+#
+# `reboot` is spelled as a bare positional item because it takes no argument.
+#
+# Power state belongs to this module: a step must reboot with `reboot` rather
+# than rebooting the guest itself, and must not shut the guest down —
+# `build` does that, and a step that powers the guest off is an error rather
+# than a case that is tolerated. `reboot` is also the only place a lost
+# connection is not an error; a guest that vanishes during a `run:` block
+# propagates.
+#
+# ### `:add` {: #libvirt.create-add }
+#
+# | Key        | type                 | Description                            |
+# | ---------- | -------------------- | ------------------------------------- |
+# | `target`   | `Str`                | Guest file path to write              |
+# | `source`?  | Artifact             | Resolved and read; excludes `content` |
+# | `content`? | `Str`\|`Bin`         | Embedded directly; excludes `source` |
+# | `chmod`?   | `Int`                | File mode, e.g. `0o644`               |
+#
+# `chmod:` is a Unix file mode and is rejected on a guest provisioned by
+# unattended install.
+#
+# ## Artifact Specs {: #libvirt.artifact-specs }
+#
+# Every artifact this module fetches is spelled one of two ways: a bare
+# `Str`, `Path`, or `Url`, or a dict naming the source under `source:`
+# alongside metadata keys:
+#
+# ```
+# libvirt.create
+#   image:
+#     source: https://example.com/disk.qcow2
+#     digest: blake3:0123...
+#   os: :LINUX:
+# ```
+#
+# | Key       | type                 | Description                              |
+# | --------- | -------------------- | ---------------------------------------- |
+# | `source`  | `Str`\|`Path`\|`Url` | The source to fetch                      |
+# | `digest`? | `Str`                | `algorithm:hex` digest to verify against |
+#
+# A `Path` source is verified in place; a `Url` is downloaded, verified, and
+# cached, and a previously verified digest-pinned entry is returned without
+# contacting the server.
+#
+# ## Disk Compression {: #libvirt.disk-compression }
+#
+# `Domain.export_disk`, `Domain.export`, and `build` accept these `compress:`
+# values:
+#
+# | Value            | Behavior |
+# | ---------------- | -------- |
+# | `true` (default) | Compress with the default algorithm, currently `:ZSTD:` |
+# | `:ZSTD:`         | zstd; needs QEMU 5.1+ to read the result |
+# | `:ZLIB:`         | zlib; readable by any QEMU, and around nine times slower to write |
+# | `false`          | No compression |
+#
+# The disk is compressed rather than its ZIP member. It stays compressed when
+# extracted into the image store, where it backs every domain laid over it.
+#
 import _vfs base64 digest json proc progress rand shell shlex ssh std strand sys tar term time transfer xdg xml zip
   fs:
     - Path
@@ -1268,18 +1501,18 @@ class DomainImpl
 
   # Sends a keystroke to the domain's console, as `virsh send-key` does.
   #
-  # ## Parameters
-  #
-  # | Name        | type           | Description |
-  # | ----------- | -------------- | ----------------------------------------- |
-  # | `key`       | `Str`          | A Linux keycode name, e.g. `"KEY_F9"` |
-  # | `repeat`?   | `Int`          | How many times to send it (default `1`) |
-  # | `interval`? | `Int`\|`Float` | Seconds to wait between presses |
-  #
   # A domain that is rebooting or shutting down refuses the keystroke; that is
   # not an error here, because the point of `repeat:` is to cover a window
   # whose position is not known and which the guest may pass through partway.
-  pub def send_key self key :repeat = 1 :interval = nil
+  pub def send_key
+    self
+    # ([`Str`](std.Str)) Linux keycode name, such as `"KEY_F9"`.
+    key
+    # ([`Int`](std.Int)) Number of times to send the key.
+    :repeat = 1
+    # ([`Int`](std.Int)\|[`Float`](std.Float)) Seconds between key presses.
+    :interval = nil
+  do
     for press = 0..repeat
       if (press > 0 && interval != nil)
         time.sleep $interval
@@ -1292,29 +1525,11 @@ class DomainImpl
 
   # Waits until the domain's guest answers, under a deadline.
   #
-  # ## Parameters
-  #
-  # | Name          | type            | Description |
-  # | ------------- | --------------- | --------------------------------------- |
-  # | `probe`?      | `Sym`           | What answering means — see below |
-  # | `timeout`?    | `Int`\|`Float`  | Seconds to wait; unbounded if omitted |
-  # | `screenshot_dir`? | `Str`\|`Path` | Where to dump the console if the wait runs out |
-  #
-  # `probe:` is `:VFS:` by default, which proves the transport `with` runs
-  # over. `:SSH:` proves only that sshd accepts a connection, which is all a
-  # guest has before its payload is installed.
-  #
   # A wait that runs out prints what it can — the console screenshot, if asked
   # for one, and whatever the last probe complained about — and then throws.
   # Both are printed rather than folded into the error: the last complaint is
   # not always one line, and `std.TimedOutError` is a more useful thing to
   # catch than a message.
-  #
-  # `screenshot_dir:` names a directory rather than a file because the dump is
-  # named for the domain and the moment the wait gave up, so that successive
-  # runs of the same domain do not overwrite each other's evidence. It is best
-  # effort: a guest with no graphics has no console to dump, and failing to
-  # capture one must not replace the timeout that is the real error.
   #
   # ## Errors
   #
@@ -1322,7 +1537,26 @@ class DomainImpl
   # | --------------- | ---------------------------------------------- |
   # | `TimedOutError` | The guest did not answer within `timeout` |
   # | `ValueError`    | The domain has no `dolang:vm` metadata |
-  pub def wait_ready self :probe = :VFS: :timeout = nil :screenshot_dir = nil
+  pub def wait_ready
+    self
+    # ([`Sym`](std.Sym)) Readiness probe.
+    #
+    # `:VFS:` proves the transport `with` runs over. `:SSH:` proves only that
+    # sshd accepts a connection, which is all a guest has before its payload is
+    # installed.
+    :probe = :VFS:
+    # ([`Int`](std.Int)\|[`Float`](std.Float)) Seconds to wait; unbounded when
+    # omitted.
+    :timeout = nil
+    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Directory for a console dump when
+    # the wait expires.
+    #
+    # The dump is named for the domain and the moment the wait gave up, so
+    # successive runs do not overwrite each other's evidence. Capture is best
+    # effort: a guest with no graphics has no console to dump, and a capture
+    # failure does not replace the timeout.
+    :screenshot_dir = nil
+  do
     let guest = self.#guest()
     try
       if (timeout == nil)
@@ -1511,13 +1745,14 @@ class DomainImpl
     if cleanup
       cleanup.workdir.remove all: true ignore: true
 
-  # Every argument is required: `create` is the only caller, and it has already
-  # applied the defaults the module documents.
+  # `create` is the only caller. Defaults live here so its public wrapper can
+  # preserve every option in the variadic argument stream.
   pub def create
     self
-    :image :bundle :name :os :arch :app :user :dolang
-    :memory :vcpus :disk_size :cache :io :connect_uri
-    :init :wait_timeout ...options
+    :image = nil :bundle = nil :name = nil :os = nil :arch = nil
+    :app = nil :user = nil :dolang = nil :memory = nil :vcpus = nil
+    :disk_size = nil :cache = nil :init = nil :wait_timeout = nil
+    :io = DEFAULT_DISK_IO :connect_uri = DEFAULT_CONNECT_URI ...options
   do
     let extra = parse_extra_options $options
     let post = extra.post
@@ -1785,7 +2020,7 @@ pub class Domain
   # one to pass: checking it here is what makes this constructor private.
   def (init) self impl
     if !(type impl DomainImpl)
-      let message = "libvirt.Domain is not constructible; use create, attach, define, or list"
+      let message = "libvirt.Domain is not constructible; use create or attach"
       throw std.TypeError $message
     self.#impl = impl
 
@@ -1824,7 +2059,7 @@ pub class Domain
   # Flattens the shut-off domain's file-backed disk into a standalone qcow2.
   #
   # `compress:` selects the qcow2 compression — see
-  # [`compress:`](libvirt.Domain.export--compress).
+  # [Disk Compression](libvirt.disk-compression).
   pub def export_disk self destination :compress = false
     self.#impl.export_disk $destination :compress
 
@@ -1832,27 +2067,6 @@ pub class Domain
   # variable store and vTPM state of a guest that has them, and the
   # configuration needed to define an equivalent domain again — none of which
   # the disk image alone carries.
-  #
-  # ## Parameters
-  #
-  # | Name        | type            | Description |
-  # | ----------- | --------------- | ----------------------------------------------------- |
-  # | `destination` | `Str`\|`Path` | Bundle to write, conventionally named `.dolvm` |
-  # | `compress`? | `Bool`\|`Sym`   | qcow2 compression — see [`compress:`](#compress) |
-  # | `force`?    | `Bool`          | Export even though the domain did not shut down cleanly |
-  #
-  # ## `compress:`
-  #
-  # | Value              | Behavior |
-  # | ------------------ | -------- |
-  # | `true` (default)   | Compress with the default algorithm, currently `:ZSTD:` |
-  # | `:ZSTD:`           | zstd; needs QEMU 5.1+ to read the result |
-  # | `:ZLIB:`           | zlib; readable by any QEMU, and around nine times slower to write |
-  # | `false`            | No compression |
-  #
-  # The disk is compressed here rather than in the bundle's ZIP, which stores
-  # it: a compressed qcow2 stays compressed in the image store it is extracted
-  # into, where it is a backing file for however many domains are laid over it.
   #
   # ## Returns
   #
@@ -1872,7 +2086,17 @@ pub class Domain
   # domain.export ./freebsd-gold.dolvm
   # domain.undefine()
   # ```
-  pub def export self destination :compress = true :force = false
+  pub def export
+    self
+    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Bundle to write; `.dolvm` is the
+    # conventional extension.
+    destination
+    # ([`Bool`](std.Bool)\|[`Sym`](std.Sym)) qcow2 compression; see
+    # [Disk Compression](libvirt.disk-compression).
+    :compress = true
+    # ([`Bool`](std.Bool)) Export a domain that did not shut down cleanly.
+    :force = false
+  do
     self.#impl.export $destination :compress :force
 
   # Copies one local file into the domain. `chmod:` sets the destination's
@@ -1890,14 +2114,6 @@ pub class Domain
 
   # Runs `block` in the domain's VFS context.
   #
-  # ## Parameters
-  #
-  # | Name    | type       | Description                          |
-  # | ------- | ---------- | ------------------------------------ |
-  # | `block` | callable   | Block to run in the guest            |
-  # | `cd`?   | `Str`\|`Path` | Initial working directory in the guest |
-  # | `env`?  | `Dict`     | Environment overrides for the block  |
-  #
   # ## Returns
   #
   # The result of `block`.
@@ -1914,19 +2130,17 @@ pub class Domain
   # domain.with cd: /usr/src env: {MAKEOBJDIRPREFIX: "/tmp/obj"} do
   #   run make buildworld
   # ```
-  pub def with self block :cd = nil :env = {}
+  pub def with
+    self
+    # ([`Func`](std.Func)) Block to run in the guest.
+    block
+    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Initial guest working directory.
+    :cd = nil
+    # ([`Dict`](std.Dict)) Environment overrides for the block.
+    :env = {}
+  do
     self.#impl.with $block :cd :env
 
-
-# Defines a domain from an XML string.
-pub def define source :connect_uri = DEFAULT_CONNECT_URI
-  let document = DomainXml (xml.decode source)
-  let name = document.name()
-  with_temp_dir do |dir|
-    let path = (dir / "domain.xml")
-    path.write $source
-    virsh $connect_uri define $path
-  Domain $ DomainImpl $name $connect_uri
 
 # Attaches to an existing domain.
 pub def attach name :connect_uri = DEFAULT_CONNECT_URI
@@ -1935,16 +2149,6 @@ pub def attach name :connect_uri = DEFAULT_CONNECT_URI
   # `NoDomainError` from here rather than from the caller's first real use.
   impl.dumpxml()
   Domain $impl
-
-# Lists every domain known to the connection.
-pub def list :connect_uri = DEFAULT_CONNECT_URI
-  let output = capture_virsh $connect_uri [] list --all --name
-  let domains = []
-  for name = output.split "\n"
-    name = name.trim()
-    if (name != "")
-      domains.push (Domain (DomainImpl name connect_uri))
-  domains
 
 # The source of an artifact spec written without metadata.
 def bare_source spec name
@@ -3016,218 +3220,6 @@ class BundleSource: Source
 # `image:`, installing it from `installer:` media, or restoring it from an
 # already-provisioned `bundle:`.
 #
-# ## Parameters
-#
-# Exactly one of `image:`, `bundle:`, and `installer:` is required. A bundle
-# already answers `os:`, `arch:`, `user:`, `dolang:`, and `init:`,
-# so passing any of them with `bundle:` is an error rather than a silently
-# ignored argument — see [`bundle:`](#bundle).
-#
-# `image:`, `bundle:`, `installer:`, `drivers:`, and an `add:` `source:` are all
-# artifact specs — see [Artifact Specs](#artifact-specs).
-#
-# | Name             | type                 | Description |
-# | ---------------- | -------------------- | ------------------------------------------------------ |
-# | `image`?         | Artifact             | Base disk image (may be `.gz`/`.xz`/`.zstd` compressed) |
-# | `bundle`?        | Artifact             | Bundle written by `Domain.export` — see [`bundle:`](#bundle) |
-# | `installer`*     | Artifact             | Install media to boot — see [`installer:`](#installer) |
-# | `drivers`*       | Artifact             | Driver media Setup reads — see [`installer:`](#installer) |
-# | `name`           | `Str`                | Domain name; auto-generated if omitted |
-# | `os`             | `Sym`                | Guest OS, using `sys`'s symbol vocabulary            |
-# | `arch`?          | `Sym`                | Guest CPU architecture, `sys` symbol; must be the host's, which is the default |
-# | `app`?           | `Str`                | Cache/data namespace; derived from `shell.program` by default |
-# | `user`?          | `Str`                | Guest user to create (default `"ci"`) |
-# | `dolang`?        | See below            | Installs Do into the guest — see [`dolang:`](#dolang) |
-# | `memory`?        | `Int`                | Guest memory in MiB (the bundle's, else the OS default) |
-# | `vcpus`?         | `Int`                | Guest vCPU count (the bundle's, else the OS default) |
-# | `disk_size`?     | `Str`                | Disk size (the OS default; a bundle's disk keeps its own size) |
-# | `cache`?         | `Sym`                | Disk host cache mode — see [`cache:`](#cache) |
-# | `io`?            | `Sym`                | Disk I/O submission mode — see [`io:`](#io) |
-# | `connect_uri`?   | `Str`                | libvirt connection URI (default `"qemu:///session"`) |
-# | `init`?          | `Dict`               | Early boot provisioning — see [`init:`](#init) |
-# | `wait_timeout`?  | `Int`\|`Float`       | Seconds to wait for the guest to become reachable; the OS default otherwise |
-# | `add`*           | `Dict`               | Uploads a file — see [`add:`](#add)         |
-# | `run`*           | `func`               | Runs a block in VFS context |
-# | `reboot`*        | positional           | Reboots the guest and waits — see [Steps](#steps) |
-#
-# ## Steps
-#
-# `add:`, `run:` and `reboot` are steps, and they run in the order they are
-# written — repeats included, and interleaved with each other:
-#
-# ```
-# libvirt.create
-#   installer: ./Win11_24H2_English_x64.iso
-#   drivers: ./virtio-win.iso
-#   os: :WINDOWS:
-#   run: do
-#     run powercfg /h off
-#   reboot
-#   run: do
-#     run defrag "C:" /L
-# ```
-#
-# `reboot` is spelled as a bare positional item because it takes no argument.
-#
-# Power state belongs to this module: a step must reboot with `reboot` rather
-# than rebooting the guest itself, and must not shut the guest down —
-# `build` does that, and a step that powers the guest off is an error rather
-# than a case that is tolerated. `reboot` is also the only place a lost
-# connection is not an error; a guest that vanishes during a `run:` block
-# propagates.
-#
-# ## Artifact Specs
-#
-# Every artifact this module fetches is spelled one of two ways: a bare
-# `Str`, `Path`, or `Url`, or a dict naming the source under `source:`
-# alongside metadata keys:
-#
-# ```
-# libvirt.create
-#   image:
-#     source: https://example.com/disk.qcow2
-#     digest: blake3:0123...
-#   os: :LINUX:
-# ```
-#
-# | Key       | type                 | Description                              |
-# | --------- | -------------------- | ---------------------------------------- |
-# | `source`  | `Str`\|`Path`\|`Url` | The source to fetch                      |
-# | `digest`? | `Str`                | `algorithm:hex` digest to verify against |
-#
-# A `Path` source is verified in place; a `Url` is downloaded, verified, and
-# cached, and a previously verified digest-pinned entry is returned without
-# contacting the server.
-#
-# ## `bundle:`
-#
-# A bundle produced by [`Domain.export`](libvirt.Domain.export):
-# a ZIP holding the domain's flattened disk and a manifest of the configuration
-# that goes with it. Restoring one skips provisioning entirely — no seed, no
-# cloud-init, no payload install — so the domain is ready as soon as it accepts
-# SSH, and the `add:`/`run:` actions then run as usual.
-#
-# The SSH key a bundle's guest trusts is the one generated for the `app:` it was
-# exported under, so `app:` must match; a mismatch is an error rather than a
-# guest that never accepts a connection.
-#
-# ## `installer:`
-#
-# Install media for a guest that has no cloud image to lay an overlay over. The
-# disk starts blank and Setup writes it, driven by an unattended answer file
-# this module generates and puts on a provisioning disc of its own, alongside
-# the guest payload. Only `os: :WINDOWS:` installs this way.
-#
-# Both `installer:` and `drivers:` may be repeated. The first `installer:` is
-# what the domain boots; any others are attached in the order given, for media
-# split across more than one disc. `drivers:` media is read by Setup and never
-# booted — attach the virtio driver ISO here, without which Setup does not see
-# a virtio disk at all — and is an error without `installer:`.
-#
-# Beyond `digest:`, an `installer:` spec takes two metadata keys, which are
-# alternatives rather than a pair. Multi-edition media otherwise stops to ask
-# which edition to install, which on an unattended install means stopping for
-# good:
-#
-# | Key        | type    | Description                                   |
-# | ---------- | ------- | --------------------------------------------- |
-# | `edition`? | `Str`   | Edition by name, e.g. `"Windows 11 Pro"`     |
-# | `index`?   | `Int`   | Edition by position in the media's image list |
-#
-# ```
-# libvirt.create
-#   installer:
-#     source: ./Win11_24H2_English_x64.iso
-#     edition: Windows 11 Pro
-#   drivers: ./virtio-win.iso
-#   os: :WINDOWS:
-# ```
-#
-# What `create` returns is a guest sitting in **audit mode** with a working
-# sshd and VFS, and nothing else. Windows Update, hibernation and trim policy,
-# account removal, and `sysprep /generalize` are all decisions with no single
-# right answer, so they are the caller's, expressed as [steps](#steps).
-#
-# `init:` is an error here: it names cloud-init provisioning semantics, and an
-# unattended install has no cloud-init. The host needs
-# `swtpm`, `swtpm_setup`, and one of `xorrisofs` or `mkisofs`, all checked
-# before anything is defined.
-#
-# ## `dolang:`
-#
-# Do is installed into every guest: `dolang-vfs` is the transport `with`,
-# `upload` and `download` run over, and an unattended install has no guest at
-# all without it. `dolang:` selects *which* build, not whether.
-#
-# Omitted, it installs the release matching this interpreter's version.
-#
-# | Value                            | Behavior |
-# | -------------------------------- | ------------------------------- |
-# | a version tag, e.g. `"v0.1.1"`   | Install specific release version |
-# | a `Path` or `Url`                | Install provided release archive |
-# | an artifact spec                 | Release archive with a pinned digest — see [Artifact Specs](#artifact-specs) |
-# | `{version: tag}`                 | Explicit form of the version tag |
-#
-# ## `cache:`
-#
-# Host cache mode for the domain disk. Defaults to the hypervisor's own
-# default, which honors guest flushes.
-#
-# | Value            | Behavior |
-# | ---------------- | -------- |
-# | `:NONE:`         | `O_DIRECT`; no host page cache, guest flushes honored |
-# | `:WRITEBACK:`    | Host page cache, guest flushes honored |
-# | `:WRITETHROUGH:` | Host page cache, every write flushed |
-# | `:DIRECTSYNC:`   | `O_DIRECT` and every write flushed |
-# | `:UNSAFE:`       | Host page cache, guest flushes **ignored** |
-#
-# `:UNSAFE:` loses the disk's contents if the host or the domain dies
-# uncleanly, since nothing the guest wrote is guaranteed to have reached
-# storage until the domain shuts down. That is a fair trade for a disposable
-# build domain — dropping flushes removes them from the critical path, and
-# files written and deleted within one run need never reach storage at all —
-# but it is not a safe default for a domain whose disk matters.
-#
-# ## `io:`
-#
-# Disk I/O submission mode, defaulting to `:IO_URING:`.
-#
-# | Value        | Behavior |
-# | ------------ | -------- |
-# | `:IO_URING:` | `io_uring`; needs QEMU 6.0+ on a 5.1+ kernel |
-# | `:THREADS:`  | Thread pool |
-# | `:NATIVE:`   | Linux AIO; only asynchronous with `cache:` `:NONE:` or `:DIRECTSYNC:` |
-#
-# An older host fails at domain start rather than falling back, so select
-# `:THREADS:` there.
-#
-# `:NATIVE:` needs `O_DIRECT` to be asynchronous; paired with a cache mode
-# that uses the host page cache it quietly degrades to blocking submission.
-# `:IO_URING:` has no such pairing constraint.
-#
-# ## `init:`
-#
-# Boot-time provisioning, interpreted by cloud-init on the guest's first boot,
-# before the post-SSH `add:`/`run:` steps.
-#
-# | Key         | type            | Description                                          |
-# | ----------- | --------------- | ---------------------------------------------------  |
-# | `add`*      | `Dict`          | Writes a file during early boot                      |
-# | `run`*      | `Str`\|`Array`  | Split with `shlex` if a `Str`. Run during early boot |
-# | `packages`* | `Str`\|`Array`  | Guest packages to install                            |
-#
-# ## `add:`
-#
-# | Key        | type                 | Description                            |
-# | ---------- | -------------------- | ------------------------------------- |
-# | `target`   | `Str`                | Guest file path to write              |
-# | `source`?  | Artifact             | Resolved and read; excludes `content` |
-# | `content`? | `Str`\|`Bin`         | Embedded directly; excludes `source` |
-# | `chmod`?   | `Int`                | File mode, e.g. `0o644`               |
-#
-# `chmod:` is a Unix file mode and is rejected on a guest provisioned by
-# unattended install.
-#
 # ## Returns
 #
 # `Domain`
@@ -3272,28 +3264,16 @@ class BundleSource: Source
 #     run uname -a
 # ```
 pub def create
-  :image = nil :bundle = nil :name = nil :os = nil :arch = nil
-  :app = nil :user = nil :dolang = nil :memory = nil :vcpus = nil
-  :disk_size = nil :cache = nil :init = nil :wait_timeout = nil
-  :io = DEFAULT_DISK_IO :connect_uri = DEFAULT_CONNECT_URI ...options
+  # ([`Value`](std.Value)) Options described in
+  # [Common Domain Options](libvirt.common-domain-options).
+  ...options
 do
-  let impl = DomainImpl nil $connect_uri
-  impl.create
-    :image :bundle :name :os :arch :app :user :dolang :memory :vcpus
-    :disk_size :cache :io :connect_uri :init :wait_timeout
-    ...options
+  let impl = DomainImpl nil $DEFAULT_CONNECT_URI
+  impl.create ...options
   Domain $impl
 
 # Creates a domain from an `image:` or a `bundle:`, runs `block` through its
 # VFS, and tears it down — even if `block` throws.
-#
-# ## Parameters
-#
-# Takes the same keyword arguments as `create`, plus:
-#
-# | Name    | type     | Description             |
-# | ------- | -------- | ------------------------ |
-# | `block` | `func`  | Block to run in the VFS |
 #
 # ## Returns
 #
@@ -3308,7 +3288,13 @@ do
 #   do
 #     run uname -a
 # ```
-pub def with block ...options
+pub def with
+  # ([`Func`](std.Func)) Block to run in the guest VFS.
+  block
+  # ([`Value`](std.Value)) Options described in
+  # [Common Domain Options](libvirt.common-domain-options).
+  ...options
+do
   let domain = create ...options
   try
     domain.with $block
@@ -3332,15 +3318,6 @@ pub def with block ...options
 # anything the guest must do for itself belongs, such as reclaiming free space
 # before the disk is flattened.
 #
-# ## Parameters
-#
-# Takes the same keyword arguments as `create`, plus:
-#
-# | Name          | type            | Description |
-# | ------------- | --------------- | ------------------------------------------------ |
-# | `destination` | `Str`\|`Path`   | Bundle to write, conventionally named `.dolvm` |
-# | `compress`?   | `Bool`\|`Sym`   | qcow2 compression, as on [`Domain.export`](libvirt.Domain.export) |
-#
 # ## Returns
 #
 # The `Path` written.
@@ -3355,7 +3332,17 @@ pub def with block ...options
 #     packages:
 #       - git
 # ```
-pub def build destination :compress = true ...options
+pub def build
+  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Bundle to write; `.dolvm` is the
+  # conventional extension.
+  destination
+  # ([`Bool`](std.Bool)\|[`Sym`](std.Sym)) qcow2 compression; see
+  # [Disk Compression](libvirt.disk-compression).
+  :compress = true
+  # ([`Value`](std.Value)) Options described in
+  # [Common Domain Options](libvirt.common-domain-options).
+  ...options
+do
   let domain = create ...options
   let result = nil
   try

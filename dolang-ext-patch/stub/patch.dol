@@ -176,10 +176,10 @@ pub def diff
   before
   # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Modified content.
   after
-  # ([`Path`](fs.Path)\|[`Str`](std.Str)?) Source filename for the
+  # ([`Path`](fs.Path)\|[`Str`](std.Str)) Source filename for the
   # patch headers.
   :source = nil
-  # ([`Path`](fs.Path)\|[`Str`](std.Str)?) Target filename for the
+  # ([`Path`](fs.Path)\|[`Str`](std.Str)) Target filename for the
   # patch headers.
   :target = nil
 do
