@@ -19,6 +19,8 @@ import fs
     - InvalidInputError
     - UnsupportedError
 
+let CHUNK = "abcdefgh".repeat 393217
+
 # Writes `content` to `path` and hands the path back, so a test can set up its
 # source in one line.
 def seeded path content
@@ -278,39 +280,36 @@ def clone_modes_are_accepted_and_require_is_conditional()
 #[vfs]
 def copies_more_than_one_chunk()
   # Larger than the 2 MiB VFS operation bound, so the Do binding must loop.
-  let chunk = "abcdefgh".repeat 393217
-  seeded "large-src.bin" $chunk
+  seeded "large-src.bin" $CHUNK
   open "large-src.bin" rb do |src|
     open "large-dst.bin" wb do |dst|
-      assert_eq (copy_data src dst) $chunk.len
-      assert_eq (src.tell()) $chunk.len
-      assert_eq (dst.tell()) $chunk.len
+      assert_eq (copy_data src dst) $CHUNK.len
+      assert_eq (src.tell()) $CHUNK.len
+      assert_eq (dst.tell()) $CHUNK.len
   let content = fs.read "large-dst.bin" b
-  assert_eq $content.len $chunk.len
+  assert_eq $content.len $CHUNK.len
   # `assert` rather than `assert_eq`: a mismatch here would otherwise print
   # several megabytes of it.
-  assert (str(content) == chunk) "large copy content differs"
+  assert (str(content) == CHUNK) "large copy content differs"
 
 #[test]
 #[vfs]
 def large_same_file_copies_validate_and_preserve_the_whole_request()
-  let chunk = "abcdefgh".repeat 393217
-  let filler = "x".repeat $chunk.len
-  seeded "large-self.bin" "$chunk$filler"
+  let filler = "x".repeat $CHUNK.len
+  seeded "large-self.bin" "$CHUNK$filler"
   open "large-self.bin" r+b do |file|
     # The first 2 MiB step would be disjoint at this offset, but the complete
     # requested regions overlap. Validation must happen before the VFS cap.
     assert_throws $InvalidInputError do
-      copy_data $file $file range: (0..chunk.len) offset: (2 * 1024 * 1024 + 4096)
-    assert_eq (copy_data file file range: (0..chunk.len) offset: chunk.len) $chunk.len
+      copy_data $file $file range: (0..CHUNK.len) offset: (2 * 1024 * 1024 + 4096)
+    assert_eq (copy_data file file range: (0..CHUNK.len) offset: CHUNK.len) $CHUNK.len
   let content = fs.read "large-self.bin"
-  assert (content == "$chunk$chunk") "large same-file copy content differs"
+  assert (content == "$CHUNK$CHUNK") "large same-file copy content differs"
 
 #[test]
 #[vfs]
 def required_clone_loops_when_the_filesystem_supports_it()
-  let chunk = "abcdefgh".repeat 393217
-  seeded "large-clone-src.bin" $chunk
+  seeded "large-clone-src.bin" $CHUNK
   let cloned = 0
   open "large-clone-src.bin" rb do |src|
     open "large-clone-dst.bin" wb do |dst|
@@ -318,39 +317,37 @@ def required_clone_loops_when_the_filesystem_supports_it()
         copy_data $src $dst clone: :REQUIRE:
       catch UnsupportedError: _
         0
-  if (cloned == chunk.len)
+  if (cloned == CHUNK.len)
     seeded "large-clone-src.bin" "changed"
     let content = fs.read "large-clone-dst.bin" b
-    assert_eq $content.len $chunk.len
-    assert (str(content) == chunk) "required clone content differs"
+    assert_eq $content.len $CHUNK.len
+    assert (str(content) == CHUNK) "required clone content differs"
   else
     assert_eq $cloned 0
 
 #[test]
 #[vfs]
 def append_copy_loops_and_tracks_the_actual_end()
-  let chunk = "abcdefgh".repeat 393217
-  seeded "large-append-src.bin" $chunk
+  seeded "large-append-src.bin" $CHUNK
   seeded "large-append-dst.bin" "prefix"
   open "large-append-src.bin" rb do |src|
     open "large-append-dst.bin" a+b do |dst|
-      assert_eq (copy_data src dst) $chunk.len
-      assert_eq (dst.tell()) (chunk.len + 6)
+      assert_eq (copy_data src dst) $CHUNK.len
+      assert_eq (dst.tell()) (CHUNK.len + 6)
   let content = fs.read "large-append-dst.bin" b
-  assert_eq $content.len (chunk.len + 6)
+  assert_eq $content.len (CHUNK.len + 6)
 
 #[test]
 #[vfs]
 def relays_between_two_sessions()
-  let chunk = "abcdefgh".repeat 393217
-  seeded "cross-session-src.txt" $chunk
+  seeded "cross-session-src.txt" $CHUNK
   open "cross-session-src.txt" r do |src|
     # A second connection, so the destination handle belongs to a different
     # session from the source. Nothing about the two is shareable, so this is
     # the route that pumps the bytes through this process.
     with_vfs true do
       open "cross-session-dst.txt" w do |dst|
-        assert_eq (copy_data src dst) $chunk.len
+        assert_eq (copy_data src dst) $CHUNK.len
   let content = fs.read "cross-session-dst.txt"
-  assert_eq $content.len $chunk.len
-  assert (content == chunk) "relay copy content differs"
+  assert_eq $content.len $CHUNK.len
+  assert (content == CHUNK) "relay copy content differs"
