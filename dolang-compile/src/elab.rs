@@ -36,6 +36,54 @@ impl Diagnose for Unbound {
     }
 }
 
+/// A `def`/`class` name was used before its own statement was elaborated,
+/// without crossing a function/lambda scope boundary in between. Such a use
+/// would observe an uninitialized local at runtime, since the binding is
+/// only pre-registered (to permit forward/recursive references from nested
+/// closures) rather than actually assigned until its statement runs.
+#[derive(Clone)]
+struct UseBeforeInit {
+    use_span: Span,
+    decl_span: Option<Span>,
+}
+
+impl Diagnose for UseBeforeInit {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "use of binding before its declaration has run")
+    }
+
+    fn span(&self) -> Span {
+        self.use_span
+    }
+
+    fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
+        if self.decl_span.is_some() {
+            Box::new([Box::new(self.clone()) as Box<dyn Annotate>].into_iter())
+        } else {
+            Box::new([].into_iter())
+        }
+    }
+}
+
+impl Annotate for UseBeforeInit {
+    fn kind(&self) -> AnnotationKind {
+        AnnotationKind::Context
+    }
+
+    fn span(&self) -> Span {
+        self.decl_span
+            .expect("only constructed when decl_span is Some")
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "declared here, but not yet initialized at this use")
+    }
+}
+
 struct DuplicateMemberScope(Span);
 
 impl Diagnose for DuplicateMemberScope {
@@ -963,7 +1011,21 @@ impl<'s> Scope<'s> {
     }
 
     fn insert(&mut self, sym: sym::Id, origin: Origin, epoch: Epoch, exported: bool) -> usize {
-        self.insert_with_lookup(sym, sym, origin, epoch, exported)
+        self.insert_with_lookup(sym, sym, origin, epoch, exported, true)
+    }
+
+    /// Register a binding for a forward-reference pre-pass before its
+    /// initializing statement (`def`/`class`) has actually been elaborated.
+    /// A non-capturing use observed before [`Scope::mark_initialized`] is
+    /// called for the same index is a hard error.
+    fn insert_pending(
+        &mut self,
+        sym: sym::Id,
+        origin: Origin,
+        epoch: Epoch,
+        exported: bool,
+    ) -> usize {
+        self.insert_with_lookup(sym, sym, origin, epoch, exported, false)
     }
 
     fn insert_with_lookup(
@@ -973,6 +1035,7 @@ impl<'s> Scope<'s> {
         origin: Origin,
         epoch: Epoch,
         exported: bool,
+        initialized: bool,
     ) -> usize {
         match self {
             Self::Base => panic!("Can't insert into base scope"),
@@ -985,6 +1048,7 @@ impl<'s> Scope<'s> {
                         captured: false,
                         exported,
                         used: false,
+                        initialized,
                         origin,
                         node: None,
                     },
@@ -1008,12 +1072,28 @@ impl<'s> Scope<'s> {
                         captured: false,
                         exported: false,
                         used: true,
+                        initialized: true,
                         origin: Origin::Synthetic,
                         node: None,
                     },
                     epoch,
                 )));
                 i
+            }
+        }
+    }
+
+    /// Mark a pending binding (see [`Scope::insert_pending`]) as initialized,
+    /// once its statement has been fully elaborated.
+    fn mark_initialized(&self, index: usize, epoch: Epoch) {
+        match self {
+            Self::Base => panic!("Can't mark vars in base scope"),
+            Self::Class { .. } => unreachable!("class scope is not lexical"),
+            Self::Nested { vars, .. } => {
+                vars[index].update(|(mut var, _)| {
+                    var.initialized = true;
+                    (var, epoch)
+                });
             }
         }
     }
@@ -1062,6 +1142,10 @@ impl<'s> Scope<'s> {
                 ..
             } => {
                 if let Some(&index) = index.get(&id) {
+                    let (found, _) = vars[index].get();
+                    if !capture && !found.initialized {
+                        return Err(ResolveError::UseBeforeInit(found.origin));
+                    }
                     vars[index].update(|(var, _)| {
                         let mut var = var;
                         if capture {
@@ -1163,6 +1247,7 @@ pub(crate) type Result<T> = result::Result<T, Error>;
 
 enum ResolveError {
     Unbound,
+    UseBeforeInit(Origin),
 }
 
 impl<'a> Elaborater<'a> {
@@ -1200,6 +1285,14 @@ impl<'a> Elaborater<'a> {
                 // Handle error but leave a diagnostic and fail later
                 self.fail = true;
                 self.diags.push(Unbound(node.span));
+            }
+            Err(ResolveError::UseBeforeInit(decl_origin)) => {
+                node.res = None;
+                self.fail = true;
+                self.diags.push(UseBeforeInit {
+                    use_span: node.span,
+                    decl_span: decl_origin.name(),
+                });
             }
         }
         Ok(())
@@ -1648,7 +1741,7 @@ impl<'a> Elaborater<'a> {
             };
             let origin = Origin::Source(ident.span);
             let lookup_sym = self.symtab.id(&self.bintab.id_str(name));
-            let index = scope.insert_with_lookup(lookup_sym, sym, origin, self.epoch, true);
+            let index = scope.insert_with_lookup(lookup_sym, sym, origin, self.epoch, true, true);
             ident.res = Some(Res {
                 index,
                 depth: 0,
@@ -2043,9 +2136,25 @@ impl<'a> Elaborater<'a> {
             Stmt::Assign(node) => self.visit_assign(scope, node),
             Stmt::Bind(node) => self.visit_bind(scope, node),
             Stmt::Break(span, nl) => self.visit_break(scope, *span, nl),
-            Stmt::Class(class) => self.visit_class(scope, class),
+            Stmt::Class(class) => {
+                let result = self.visit_class(scope, class);
+                if result.is_ok()
+                    && let Some(res) = class.ident.res
+                {
+                    scope.mark_initialized(res.index, self.epoch);
+                }
+                result
+            }
             Stmt::Continue(span, nl) => self.visit_continue(scope, *span, nl),
-            Stmt::Def(def) => self.visit_def(scope, def),
+            Stmt::Def(def) => {
+                let result = self.visit_def(scope, def);
+                if result.is_ok()
+                    && let Some(res) = def.ident.res
+                {
+                    scope.mark_initialized(res.index, self.epoch);
+                }
+                result
+            }
             Stmt::For(node) => self.visit_for(scope, node),
             Stmt::Import(import) => self.visit_import(scope, import),
             Stmt::Let(node) => self.visit_let(scope, node),
@@ -2316,7 +2425,7 @@ impl<'a> Elaborater<'a> {
                         .id(&self.bintab.id_str(self.file.str(ident_span)));
                     let exported = node.pub_span.is_some();
                     let origin = Origin::Source(ident_span);
-                    let index = scope.insert(sym, origin, self.epoch, exported);
+                    let index = scope.insert_pending(sym, origin, self.epoch, exported);
                     node.ident.res = Some(Res {
                         index,
                         depth: 0,
@@ -2329,7 +2438,7 @@ impl<'a> Elaborater<'a> {
                         .id(&self.bintab.id_str(self.file.str(node.ident.span)));
                     let exported = node.pub_span.is_some();
                     let origin = Origin::Source(node.ident.span);
-                    let index = scope.insert(sym, origin, self.epoch, exported);
+                    let index = scope.insert_pending(sym, origin, self.epoch, exported);
                     node.ident.res = Some(Res {
                         index,
                         depth: 0,
