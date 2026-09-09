@@ -2,10 +2,25 @@ import compile std
   test:
     - assert
     - assert_eq
+    - assert_ne
     - assert_type
     - test
   std:
     - hash
+
+def span_text source span
+  source[span.start.byte_offset..span.end.byte_offset]
+
+def declared_name source node
+  let name = node.name
+  if (type(name, compile.Span))
+    span_text $source $name
+  else
+    name
+
+def assert_no_errors unit
+  let errors = [...unit.diagnostics().filter(do |d| (d.severity == :ERROR:))]
+  assert_eq $errors.len 0
 
 def assert_span_contract left right
   assert_type $compile.Span $left
@@ -158,89 +173,406 @@ def root_doc_comments()
     #
     # ## Details
 
-# A source exercising every concrete node kind at least once. The prelude
-# bindings are referenced rather than merely configured: a prelude node is
-# recorded where its binding resolves, so one nothing mentions never appears.
-let HIERARCHY_SOURCE = r|-
-  import std
-  import std:
-    - hash
-
-  def mark f
-    f
-
-  pub class Base
-    pub field size = 0
-
-  #[mark]
-  pub class Widget: Base
-    def (init) self n
-      self.size = n
-
-    pub def scale self factor :mode = "up" ...rest
-      let doubled = do |x| (x * 2)
-      let squares = $
-        for x = [1, 2]
-          if (x > 0)
-            - (x * x)
-      for i = [1, 2]
-        if (i > 1)
-          continue
-        else
-          break
-      while false
-        break
-      try
-        echo $ hash $factor
-        std.str $doubled
-      catch _
-        nil
-      finally
-        t.now()
-      return squares
+#[test]
+def emit_without_recovery_fails_after_diagnostics()
+  let source = "let x = 1\nlet = 2\n"
+  let result = compile.compile "bad.dol" $source
+  let diagnostics = [...result.diagnostics()]
+  assert (diagnostics.len > 0)
+  let err = try
+    result.emit()
+  catch e
+    e
+  assert_type $std.CompileError $err
 
 #[test]
-def node_hierarchy()
-  let unit = compile.compile "hierarchy.dol" $HIERARCHY_SOURCE document: true prelude: $
-    sys:
-      - echo
-    time: t
-  for diag = unit.diagnostics()
-    assert_eq $diag.severity :WARNING:
+def recover_option_keeps_describing_the_source_but_still_refuses_to_emit()
+  let source = "let x = 1\nlet = 2\n"
+  let result = compile.compile "bad.dol" $source recover: true document: true
+  let diagnostics = [...result.diagnostics()]
+  assert (diagnostics.len > 0)
+  # Recovery keeps describing whatever the compiler could still read, despite
+  # the error.
+  let nodes = [...result.nodes()]
+  assert (nodes.len > 0)
+  let err = try
+    result.emit()
+  catch e
+    e
+  assert_type $std.CompileError $err
 
-  # Each supertype paired with every concrete kind documented as extending it.
-  let groups = [
-    [compile.Declaration, [compile.Class, compile.Function, compile.Method,
-      compile.SpecialMethod, compile.Field, compile.Bind, compile.SelfParam,
-      compile.ImportModule, compile.ImportItem, compile.PreludeModule,
-      compile.PreludeItem]],
-    [compile.Import, [compile.ImportModule, compile.ImportItem,
-      compile.PreludeModule, compile.PreludeItem]],
-    [compile.Param, [compile.PositionalParam, compile.KeyParam,
-      compile.RestParam]],
-    [compile.Block, [compile.Lambda, compile.If, compile.Else, compile.While,
-      compile.For, compile.Try, compile.Catch, compile.Finally,
-      compile.ForElem, compile.IfElem]],
-    [compile.Reference, [compile.Decorator, compile.Break, compile.Continue,
-      compile.Return]],
-  ]
+#[test]
+def repeated_imports_stay_distinct_declarations()
+  let source = "import std\nimport std\nstd\n"
+  let unit = compile.compile "imports.dol" $source document: true
+  assert_no_errors $unit
+  let imports = [...unit.nodes().filter(do |pair| type(pair[1], compile.ImportModule))]
+  assert_eq $imports.len 2
+  assert_ne $imports[0][0] $imports[1][0]
 
-  let seen = []
-  for _id node = unit.nodes()
-    assert_type $compile.Node $node
-    let ty = type $node
-    if !seen.contains(ty)
-      seen.push $ty
-    for entry = groups
-      let super members = entry
-      if members.contains(ty)
-        assert_type $super $node
+#[test]
+def pub_imports_are_documented_and_dotted_names_must_be_renamed()
+  let source = "pub import std\npub import foo.bar: bar\npub import std:\n  Record: Rec\n"
+  let unit = compile.compile "imports.dol" $source document: true
+  assert_no_errors $unit
+  let imports = [...unit.nodes().filter(do |pair|
+    (type(pair[1], compile.ImportModule) || type(pair[1], compile.ImportItem)))]
+  assert_eq $imports.len 3
+  for pair = imports
+    assert $pair[1].is_pub
 
-  # Every kind the documentation lists is reachable, so a kind that stops being
-  # produced cannot go unnoticed.
-  for entry = groups
-    let _super members = entry
-    for member = members
-      assert $seen.contains(member)
-  assert $seen.contains(compile.Root)
-  assert_eq $seen.len 29
+  let invalid = compile.compile "imports.dol" "pub import foo.bar\n"
+  let invalid_diags = [...invalid.diagnostics()]
+  assert (invalid_diags.len > 0)
+  let invalid_messages = [...invalid_diags.map(do |d| d.message)]
+  assert (invalid_messages.contains(
+    "public dotted module imports must be renamed"))
+
+  let nested = compile.compile "imports.dol" "def load()\n  pub import std\n"
+  let nested_diags = [...nested.diagnostics()]
+  assert (nested_diags.len > 0)
+  let nested_messages = [...nested_diags.map(do |d| d.message)]
+  assert (nested_messages.contains "`pub` may only be used at the top level")
+
+#[test]
+def anonymous_rest_params_are_indexed()
+  let source = "def f ...\n  1\n"
+  let unit = compile.compile "params.dol" $source document: true
+  assert_no_errors $unit
+  let rest = unit.nodes().find(do |pair| type(pair[1], compile.RestParam))
+  assert_eq $rest[1].name nil
+
+#[test]
+def nonlocal_jumps_target_the_construct_they_leave()
+  let source = |-
+    def invoke block
+      block()
+    def f ...
+      while true
+        invoke do continue
+        invoke do break
+      invoke do return 1
+  let unit = compile.compile "jumps.dol" $source document: true
+  assert_no_errors $unit
+
+  let the_while = unit.nodes().find(do |pair| type(pair[1], compile.While))
+  let the_function = unit.nodes().find(do |pair|
+    (type(pair[1], compile.Function) && (declared_name(source, pair[1]) == "f")))
+
+  let the_continue = unit.nodes().find(do |pair| type(pair[1], compile.Continue))
+  assert_eq $the_continue[1].target $the_while[0]
+
+  let the_break = unit.nodes().find(do |pair| type(pair[1], compile.Break))
+  assert_eq $the_break[1].target $the_while[0]
+
+  let the_return = unit.nodes().find(do |pair| type(pair[1], compile.Return))
+  assert_eq $the_return[1].target $the_function[0]
+
+  # A `do` block's own body reaching a jump crosses no loop or function, so a
+  # non-local jump inside it still targets the enclosing construct rather than
+  # the `do` itself.
+  let lambdas = [...unit.nodes().filter(do |pair| type(pair[1], compile.Lambda))]
+  assert_eq $lambdas.len 3
+  for pair = lambdas
+    assert_ne $pair[0] $the_while[0]
+    assert_ne $pair[0] $the_function[0]
+
+#[test]
+def static_field_initializers_see_the_enclosing_scope_not_a_method_scope()
+  let source = "let x = 1\nclass C\n  #[static]\n  pub field y = str(x)\nC\n"
+  let unit = compile.compile "static.dol" $source document: true
+  assert_no_errors $unit
+  # A static initializer runs where it is written, not inside a synthesized
+  # method, so it introduces no function/lambda/self scope of its own.
+  let scopes = [...unit.nodes().filter(do |pair|
+    (type(pair[1], compile.Function) || type(pair[1], compile.Lambda) ||
+      type(pair[1], compile.SelfParam)))]
+  assert_eq $scopes.len 0
+
+#[test]
+def declarations_parent_to_the_construct_that_encloses_them()
+  let source = |-
+    class Point
+      pub field x = 0
+
+      pub def (init) self x
+        self.x = x
+
+      def hidden self
+        let local = 1
+  let unit = compile.compile "declarations.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+
+  let point = nodes.find(do |pair| type(pair[1], compile.Class))
+  let field_x = nodes.find(do |pair| type(pair[1], compile.Field))
+  let init = nodes.find(do |pair| type(pair[1], compile.SpecialMethod))
+  let hidden = nodes.find(do |pair| type(pair[1], compile.Method))
+  let local = nodes.find(do |pair| type(pair[1], compile.Bind))
+  let self_params = [...nodes.filter(do |pair| type(pair[1], compile.SelfParam))]
+
+  assert_eq $field_x[1].parent $point[0]
+  assert_eq $init[1].parent $point[0]
+  assert_eq $hidden[1].parent $point[0]
+  assert_eq $local[1].parent $hidden[0]
+  # `self` appears once per method that declares it; each belongs to its own
+  # method, not to the class.
+  assert_eq $self_params.len 2
+  for pair = self_params
+    assert_ne $pair[1].parent $point[0]
+
+#[test]
+def doc_comments_attach_only_to_the_declaration_directly_below_them()
+  let source = |-
+    #!/usr/bin/env dolang
+
+    # The greeting to use.
+    pub let greeting = "hi"
+
+    let counted = 1 # how many, so far
+
+    # Fenced off by a blank line.
+
+    def bare
+      1
+
+    def deco f
+      f
+
+    # Makes a widget.
+    #[deco]
+    pub def widget
+      # Where the parts come from.
+      :from
+      ...rest
+    do
+      1
+  let unit = compile.compile "doc.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+
+  let doc_of = do |name ty|
+    let found = nodes.find(do |pair|
+      (type(pair[1], ty) && (declared_name(source, pair[1]) == name)))
+    let doc = found[1].doc
+    if (doc == nil)
+      nil
+    else
+      span_text(source, doc)
+
+  # The interpreter line addresses the shell, not the reader.
+  assert_eq (doc_of("greeting", compile.Bind)) "# The greeting to use."
+  assert_eq (doc_of("counted", compile.Bind)) nil
+  assert_eq (doc_of("bare", compile.Function)) nil
+  # A decorator sits between the block and the keyword without breaking the
+  # association, and the first parameter does not steal it.
+  assert_eq (doc_of("widget", compile.Function)) "# Makes a widget."
+  assert_eq (doc_of("from", compile.KeyParam)) "# Where the parts come from."
+  assert_eq (doc_of("rest", compile.RestParam)) nil
+
+#[test]
+def a_comment_block_runs_until_the_declaration_it_documents()
+  let source = |-
+    # Unrelated commentary.
+
+    class Thing
+      # What it is called.
+      #
+      # Blank comment lines continue the block.
+      pub field name = nil
+  let unit = compile.compile "doc2.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+  let thing = nodes.find(do |pair|
+    (type(pair[1], compile.Class) && (declared_name(source, pair[1]) == "Thing")))
+  assert_eq $thing[1].doc nil
+  let name = nodes.find(do |pair| type(pair[1], compile.Field))
+  assert_eq (span_text(source, name[1].doc)) |-
+    # What it is called.
+      #
+      # Blank comment lines continue the block.
+
+#[test]
+def root_doc_only_attaches_when_nothing_earlier_claims_it()
+  let empty = compile.compile "empty.dol" "" document: true
+  let empty_root = empty.nodes().find(do |pair| type(pair[1], compile.Root))
+  assert_eq $empty_root[1].parent nil
+  assert_eq $empty_root[1].doc nil
+
+  let source = "\n# The answer.\nlet answer = 42\n"
+  let unit = compile.compile "answer.dol" $source document: true
+  let root = unit.nodes().find(do |pair| type(pair[1], compile.Root))
+  assert_eq $root[1].doc nil
+  let answer = unit.nodes().find(do |pair|
+    (type(pair[1], compile.Bind) && (declared_name(source, pair[1]) == "answer")))
+  assert_eq (span_text(source, answer[1].doc)) "# The answer."
+
+#[test]
+def a_construct_spans_its_decorators_and_body_but_not_neighboring_lines()
+  let source = |-
+    def deco f
+      f
+
+    #[deco]
+    pub def widget x
+      let y = x
+      y
+
+    pub class Thing
+      pub field tag = nil
+  let unit = compile.compile "spans.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+
+  let widget = nodes.find(do |pair|
+    (type(pair[1], compile.Function) && (declared_name(source, pair[1]) == "widget")))
+  assert_eq (span_text(source, widget[1].span)) |-
+    #[deco]
+    pub def widget x
+      let y = x
+      y
+
+  # A binding extends over the statement that declares it, not just the name
+  # it binds.
+  let y = nodes.find(do |pair|
+    (type(pair[1], compile.Bind) && (declared_name(source, pair[1]) == "y")))
+  assert_eq (span_text(source, y[1].span)) "let y = x"
+
+  let thing = nodes.find(do |pair| type(pair[1], compile.Class))
+  assert_eq (span_text(source, thing[1].span)) |-
+    pub class Thing
+      pub field tag = nil
+
+#[test]
+def methods_record_visibility_and_special_methods_name_their_protocol()
+  let source = |-
+    class Point
+      pub def (init) self
+        self
+
+      def (str) self
+        self
+
+      pub def visible self
+        self
+
+      def hidden self
+        self
+  let unit = compile.compile "protocol.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+
+  let visible = nodes.find(do |pair|
+    (type(pair[1], compile.Method) && (declared_name(source, pair[1]) == "visible")))
+  assert $visible[1].is_pub
+  let hidden = nodes.find(do |pair|
+    (type(pair[1], compile.Method) && (declared_name(source, pair[1]) == "hidden")))
+  assert $!hidden[1].is_pub
+
+  let special = [...nodes.filter(do |pair| type(pair[1], compile.SpecialMethod))]
+  assert_eq $special.len 2
+
+#[test]
+def parameters_record_form_and_whether_they_have_a_default()
+  let source = "def connect host :port = 8080 ...rest\n  nil\n"
+  let unit = compile.compile "params2.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+
+  let host = nodes.find(do |pair| type(pair[1], compile.PositionalParam))
+  assert_eq $host[1].default nil
+
+  let port = nodes.find(do |pair| type(pair[1], compile.KeyParam))
+  assert_ne $port[1].default nil
+
+  let rest = nodes.find(do |pair| type(pair[1], compile.RestParam))
+  assert_eq (declared_name(source, rest[1])) "rest"
+
+#[test]
+def sibling_catch_handlers_binding_the_same_name_stay_distinct()
+  let source = |-
+    import std
+    def risky x
+      try
+        x
+      catch std.TypeError: err
+        err
+      catch err
+        err
+  let unit = compile.compile "catches.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+
+  let catches = [...nodes.filter(do |pair| type(pair[1], compile.Catch))]
+  assert_eq $catches.len 2
+  let catch_ids = [...catches.map(do |pair| pair[0])]
+
+  let binds = [...nodes.filter(do |pair|
+    ((type(pair[1], compile.PositionalParam) || type(pair[1], compile.KeyParam) ||
+        type(pair[1], compile.RestParam)) &&
+      catch_ids.contains(pair[1].parent)))]
+  assert_eq $binds.len 2
+  assert_ne $binds[0][1].parent $binds[1][1].parent
+
+#[test]
+def decorators_resolve_to_the_prelude_item_they_name()
+  let source = "class Point\n  #[getter]\n  pub def x self\n    0\n"
+  let unit = compile.compile "decorators.dol" $source document: true
+    prelude:
+      std:
+        - getter
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+
+  let getter = nodes.find(do |pair| type(pair[1], compile.PreludeItem))
+  assert_eq $getter[1].item "getter"
+
+  let decorator = nodes.find(do |pair| type(pair[1], compile.Decorator))
+  assert_eq $decorator[1].target $getter[0]
+
+  # The decorator hangs off the method it decorates, so a consumer needs no
+  # source text to know which declaration carries it.
+  let method = nodes.find(do |pair| type(pair[1], compile.Method))
+  assert_eq $decorator[1].parent $method[0]
+
+#[test]
+def unused_prelude_items_are_not_surfaced_as_nodes()
+  let source = "class Point\n  #[getter]\n  pub def x self\n    0\n"
+  let unit = compile.compile "decorators2.dol" $source document: true
+    prelude:
+      std:
+        - getter
+        - static
+  let items = [...unit.nodes().filter(do |pair| type(pair[1], compile.PreludeItem))]
+  assert_eq $items.len 1
+  assert_eq $items[0][1].item "getter"
+
+#[test]
+def superclasses_name_the_import_they_resolve_to()
+  let source = |-
+    import std
+    import std:
+      - Record
+
+    class Named: Record
+      pub field name = nil
+
+    class Tagged: std.Record
+      pub field tag = nil
+  let unit = compile.compile "supers.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+
+  let item = nodes.find(do |pair| type(pair[1], compile.ImportItem))
+
+  let named = nodes.find(do |pair|
+    (type(pair[1], compile.Class) && (declared_name(source, pair[1]) == "Named")))
+  assert_eq $named[1].supers.len 1
+  assert_eq $named[1].supers[0].target $item[0]
+
+  # A dotted path is an expression, so there is nothing to point at and the
+  # consumer is left with just the span.
+  let tagged = nodes.find(do |pair|
+    (type(pair[1], compile.Class) && (declared_name(source, pair[1]) == "Tagged")))
+  assert_eq $tagged[1].supers.len 1
+  assert_eq $tagged[1].supers[0].target nil
