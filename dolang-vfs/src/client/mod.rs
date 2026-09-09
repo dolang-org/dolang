@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
-    future::{Future, poll_fn},
+    future::Future,
     io::{self, IsTerminal},
     mem,
     pin::Pin,
@@ -654,7 +654,7 @@ impl File {
             let mut dst = ReadBuf::uninit(&mut buf[..len]);
             while dst.remaining() > 0 {
                 let before = dst.filled().len();
-                poll_fn(|cx| Pin::new(&mut trailer).poll_read(cx, &mut dst)).await?;
+                trailer.read_buf(&mut dst).await?;
                 if dst.filled().len() == before {
                     // End of the reply, short of what was asked for.
                     return Ok(before);

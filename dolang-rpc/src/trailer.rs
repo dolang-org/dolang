@@ -245,7 +245,7 @@ impl SendShared {
     /// been written entirely within the writer's own `poll_write` call
     /// (`true`) — the same short-write signal `SendFrame::finish` reports,
     /// used by the scheduler to adapt fragment sizing.
-    pub(crate) async fn wait_fragment(shared: &Mutex<Self>) -> io::Result<(SendAction, bool)> {
+    pub(crate) async fn wait_fragment(shared: &Mutex<Self>) -> io::Result<SendAction> {
         let mut needed_drain = false;
         let mut yielded = false;
         loop {
@@ -272,13 +272,12 @@ impl SendShared {
                         Poll::Ready(Ok(())) => {}
                     }
                 }
-                let atomic = !needed_drain;
                 match inner.state {
                     SendState::Fragment | SendState::FragmentDemand | SendState::FragmentFinish => {
-                        Poll::Ready(Ok(Some((SendAction::Fragment, atomic))))
+                        Poll::Ready(Ok(Some(SendAction::Fragment)))
                     }
-                    SendState::Finish => Poll::Ready(Ok(Some((SendAction::Finish, atomic)))),
-                    SendState::Abort => Poll::Ready(Ok(Some((SendAction::Abort, atomic)))),
+                    SendState::Finish => Poll::Ready(Ok(Some(SendAction::Finish))),
+                    SendState::Abort => Poll::Ready(Ok(Some(SendAction::Abort))),
                     SendState::Granted if !yielded => {
                         // One cooperative scheduling turn for the writer to
                         // show up before we fall back to staging.
@@ -1791,7 +1790,7 @@ mod tests {
 
         drop(trailer);
         assert_eq!(
-            SendShared::wait_fragment(&shared).await.unwrap().0,
+            SendShared::wait_fragment(&shared).await.unwrap(),
             SendAction::Abort
         );
         let header_len = FragmentHeader {
@@ -1840,7 +1839,7 @@ mod tests {
         assert_eq!(&lock(&shared).buffer[..], expected_stage);
 
         assert_eq!(
-            SendShared::wait_fragment(&shared).await.unwrap().0,
+            SendShared::wait_fragment(&shared).await.unwrap(),
             SendAction::Fragment
         );
         assert_eq!(&lock(&output)[..], [&header[..], &data].concat());
@@ -1856,7 +1855,7 @@ mod tests {
 
         TrailerSend::new(shared.clone(), ()).finish();
         assert_eq!(
-            SendShared::wait_fragment(&shared).await.unwrap().0,
+            SendShared::wait_fragment(&shared).await.unwrap(),
             SendAction::Finish
         );
         lease.complete();
@@ -1911,7 +1910,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(written, 4);
-        let (action, _) = SendShared::wait_fragment(&shared).await.unwrap();
+        let action = SendShared::wait_fragment(&shared).await.unwrap();
         assert_eq!(action, SendAction::Fragment);
         lease.complete();
 

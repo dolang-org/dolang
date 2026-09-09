@@ -1,5 +1,5 @@
 use std::{
-    io,
+    io::{self, IoSlice},
     pin::Pin,
     process::Stdio,
     task::{Context, Poll},
@@ -1063,6 +1063,24 @@ impl AsyncWrite for StdioSend {
         }
     }
 
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        match &mut self.0 {
+            StdioSendInner::Native(native) => Pin::new(native).poll_write_vectored(cx, bufs),
+            StdioSendInner::Remote(remote) => Pin::new(remote).poll_write_vectored(cx, bufs),
+        }
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        match &self.0 {
+            StdioSendInner::Native(native) => native.is_write_vectored(),
+            StdioSendInner::Remote(remote) => remote.is_write_vectored(),
+        }
+    }
+
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match &mut self.0 {
             StdioSendInner::Native(native) => Pin::new(native).poll_flush(cx),
@@ -1101,6 +1119,22 @@ impl AsyncWrite for NativeStdioSend {
         match &mut *self {
             Self::Pipe(pipe) => Pin::new(pipe).poll_write(cx, buf),
             Self::File(file) => Pin::new(file).poll_write(cx, buf),
+        }
+    }
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        match &mut *self {
+            Self::Pipe(pipe) => Pin::new(pipe).poll_write_vectored(cx, bufs),
+            Self::File(file) => Pin::new(file).poll_write_vectored(cx, bufs),
+        }
+    }
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            Self::Pipe(pipe) => pipe.is_write_vectored(),
+            Self::File(file) => file.is_write_vectored(),
         }
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -1160,6 +1194,43 @@ impl AsyncWrite for NativeStdioSend {
                 self.poll_write(cx, &[])
             }
         }
+    }
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        match &mut *self {
+            Self::File(file) => Pin::new(file).poll_write_vectored(cx, bufs),
+            Self::Pipe { inner, pending } => {
+                if let Some(task) = pending {
+                    return match Pin::new(task).poll(cx) {
+                        Poll::Pending => Poll::Pending,
+                        Poll::Ready(Ok(result)) => {
+                            *pending = None;
+                            Poll::Ready(result)
+                        }
+                        Poll::Ready(Err(error)) => {
+                            *pending = None;
+                            Poll::Ready(Err(io::Error::other(error)))
+                        }
+                    };
+                }
+                let mut data = Vec::new();
+                for buf in bufs {
+                    data.extend_from_slice(buf);
+                }
+                if data.is_empty() {
+                    return Poll::Ready(Ok(0));
+                }
+                let inner = Arc::clone(inner);
+                *pending = Some(tokio::task::spawn_blocking(move || (&*inner).write(&data)));
+                self.poll_write_vectored(cx, &[])
+            }
+        }
+    }
+    fn is_write_vectored(&self) -> bool {
+        true
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.as_mut().poll_write(cx, &[]) {
