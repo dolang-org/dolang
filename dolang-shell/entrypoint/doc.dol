@@ -138,11 +138,15 @@ class Document
   #
   # Which comments document a declaration is the compiler's determination; the
   # span it reports covers the block as written, so all that is left here is to
-  # undo the markers and indentation it was written with.
+  # undo the markers and indentation it was written with. A blank leading or
+  # trailing `#` line (common, since a doc block often opens with one before
+  # the first line of prose) would otherwise leave stray leading/trailing
+  # newlines in the joined text, so every consumer of this JSON would need to
+  # trim it defensively before checking for a leading marker like `(Type)`.
   def doc self node
     if (node.doc == nil)
       return ""
-    "\n".join $ self.#text(node.doc).split("\n").map(doc_line)
+    ("\n".join $ self.#text(node.doc).split("\n").map(doc_line)).trim()
 
   # The nodes belonging to one declaration.
   def own self id

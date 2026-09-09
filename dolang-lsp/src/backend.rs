@@ -344,18 +344,27 @@ fn external_hover(kind: Kind<'_>, content: &str) -> Option<String> {
     Some(render_external_hover(doc_index::lookup(module, item)?))
 }
 
-fn render_external_hover(entry: &doc_index::DocEntry) -> String {
-    let label = doc_index::signature(entry);
+/// Assembles a hover markdown blob from a fenced signature and an optional
+/// leading-parenthesized type/prose split off a doc comment (see
+/// `split_doc_type`), for both a local declaration and an external one from
+/// the static doc index -- the two callers of `split_doc_type`.
+///
+/// A callable's type is a return type, appended directly to the signature
+/// as `-> Type` inside the fence (anticipating the language's own eventual
+/// return-type syntax, the same convention the mkdocstrings handler uses
+/// for generated docs) rather than a separate line below it. A
+/// non-callable's type has nowhere equivalent to go in its signature (`let
+/// x`, `field x` don't return anything), so it stays a `**Type:**` line.
+fn render_hover_markdown(label: &str, callable: bool, type_: Option<&str>, prose: &str) -> String {
+    let mut label = label.to_owned();
+    if callable && let Some(type_) = type_ {
+        label.push_str(" -> ");
+        label.push_str(type_);
+    }
     let fence = if label.contains("```") { "````" } else { "```" };
     let mut markdown = format!("{fence}dolang\n{label}\n{fence}");
-    let (type_, prose) = split_doc_type(entry.doc);
-    let callable = matches!(entry.kind, "function" | "method");
-    if let Some(type_) = type_ {
-        markdown.push_str(if callable {
-            "\n\n**Returns:** "
-        } else {
-            "\n\n**Type:** "
-        });
+    if !callable && let Some(type_) = type_ {
+        markdown.push_str("\n\n**Type:** ");
         markdown.push_str(type_);
     }
     if !prose.is_empty() {
@@ -363,6 +372,13 @@ fn render_external_hover(entry: &doc_index::DocEntry) -> String {
         markdown.push_str(prose);
     }
     markdown
+}
+
+fn render_external_hover(entry: &doc_index::DocEntry) -> String {
+    let label = doc_index::signature(entry);
+    let (type_, prose) = split_doc_type(entry.doc);
+    let callable = matches!(entry.kind, "function" | "method");
+    render_hover_markdown(&label, callable, type_, prose)
 }
 
 /// Pre-render local hover text while the compiler unit and its spans live.
@@ -391,21 +407,7 @@ fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, String> {
             let (label, callable) = declaration_label(content, unit, id, &children)?;
             let doc = node.doc().map(|span| normalize_doc(content, &span));
             let (type_, prose) = doc.as_deref().map(split_doc_type).unwrap_or((None, ""));
-            let fence = if label.contains("```") { "````" } else { "```" };
-            let mut markdown = format!("{fence}dolang\n{label}\n{fence}");
-            if let Some(type_) = type_ {
-                markdown.push_str(if callable {
-                    "\n\n**Returns:** "
-                } else {
-                    "\n\n**Type:** "
-                });
-                markdown.push_str(type_);
-            }
-            if !prose.is_empty() {
-                markdown.push_str("\n\n");
-                markdown.push_str(prose);
-            }
-            Some((id, markdown))
+            Some((id, render_hover_markdown(&label, callable, type_, prose)))
         })
         .collect()
 }
@@ -1827,8 +1829,7 @@ mod tests {
             HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value: concat!(
-                    "```dolang\npub def get self\n```\n\n",
-                    "**Returns:** [`Int`](../std/int.md)\n\n",
+                    "```dolang\npub def get self -> [`Int`](../std/int.md)\n```\n\n",
                     "Gets the count."
                 )
                 .to_owned(),
@@ -1842,9 +1843,8 @@ mod tests {
                 kind: MarkupKind::Markdown,
                 value: concat!(
                     "```dolang\n",
-                    "pub def build value :mode = fast ...rest\n",
+                    "pub def build value :mode = fast ...rest -> [`Widget`](./widget.md)\n",
                     "```\n\n",
-                    "**Returns:** [`Widget`](./widget.md)\n\n",
                     "Builds one."
                 )
                 .to_owned(),
@@ -1895,8 +1895,7 @@ mod tests {
             HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value: concat!(
-                    "```dolang\ndef echo ...args\n```\n\n",
-                    "**Returns:** nil\n\n",
+                    "```dolang\ndef echo ...args -> nil\n```\n\n",
                     "Writes to standard output."
                 )
                 .to_owned(),

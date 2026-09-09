@@ -284,9 +284,14 @@ def _annotate_params(entities: list[dict]) -> None:
         entity["doc_summary"], _ = _split_doc(entity.get("doc", ""))
         if entity.get("kind") in ("function", "method"):
             entity["signature"] = _signature(entity)
-            entity["doc_intro"], entity["doc_sections"] = _split_intro(
-                entity.get("doc", "")
-            )
+            # The same leading-parenthesised-type convention parameter
+            # descriptions use is also written on a function/method's own
+            # doc comment, informally, to give its return type. Peel it off
+            # before splitting the rest into intro/sections, the same way a
+            # parameter's description is split in the loop above.
+            return_type, doc = _split_type((entity.get("doc", "") or "").strip())
+            entity["return_type"] = return_type
+            entity["doc_intro"], entity["doc_sections"] = _split_intro(doc)
         _annotate_params(entity.get("members", []))
 
 

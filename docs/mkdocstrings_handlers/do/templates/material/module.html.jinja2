@@ -52,7 +52,7 @@
 {% for entity in functions %}
 {% set base_id = entity._identifier %}
 {% set sig = entity.signature %}
-{{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 1, role="function", id=base_id, toc_label=sig) }}
+{{ params.signature_heading(sig, entity.return_type, heading_level + 1, base_id, "function", sig) }}
 {% if entity.doc_intro %}
 {{ entity.doc_intro | convert_markdown(heading_level, base_id) }}
 {% endif %}

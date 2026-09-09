@@ -67,7 +67,7 @@
 {% for method in items %}
 {% set method_id = method._identifier %}
 {% set sig = method.signature %}
-{{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 2, role="method", id=method_id, toc_label=sig) }}
+{{ params.signature_heading(sig, method.return_type, heading_level + 2, method_id, "method", sig) }}
 {% if method.doc_intro %}
 {{ method.doc_intro | convert_markdown(heading_level + 1, method_id) }}
 {% endif %}
@@ -83,7 +83,7 @@
 {% for method in constructors %}
 {% set method_id = base_id ~ ".(init)" %}
 {% set sig = method.signature | replace("(init)", entity.name, 1) %}
-{{ ("<code>" ~ sig ~ "</code>") | heading(heading_level + 2, role="method", id=method_id, toc_label=sig) }}
+{{ params.signature_heading(sig, method.return_type, heading_level + 2, method_id, "method", sig) }}
 {% if method.doc_intro %}
 {{ method.doc_intro | convert_markdown(heading_level + 1, method_id) }}
 {% endif %}
