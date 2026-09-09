@@ -16,13 +16,19 @@ let PRELUDE_ITEMS = Set $
 def doc_line line
   line.trim()[1..].without_prefix " "
 
-# Where a name is written, as the handler's templates expect it.
-def span_json span
-  let :line :column :byte_offset = span.start
+# One endpoint of a source span.
+def position_json position
+  let :line :column :byte_offset = position
   $
     :line
     col: $column
     offset: $byte_offset
+
+# Where a name is written.
+def span_json span
+  $
+    start: (position_json(span.start))
+    end: (position_json(span.end))
 
 # Whether one of a declaration's own nodes is a decorator resolving to `target`.
 def decorated own target
@@ -147,7 +153,7 @@ class Document
   # trim it defensively before checking for a leading marker like `(Type)`.
   def doc self node
     if (node.doc == nil)
-      return ""
+      return nil
     ("\n".join $ self.#text(node.doc).split("\n").map(doc_line)).trim()
 
   # The nodes belonging to one declaration.

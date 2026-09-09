@@ -192,7 +192,7 @@ class DoHandler(BaseHandler):
             return {
                 "kind": "module",
                 "module": module_name,
-                "doc": doc_data.get("doc", ""),
+                "doc": doc_data.get("doc") or "",
                 "entities": entities,
                 "_identifier": identifier,
                 "_module": module_name,
@@ -236,7 +236,7 @@ def _annotate_entities(entities: list[dict], module_name: str) -> None:
 
 def _rewrite_doc_refs(entity: dict, aliases: dict[str, str]) -> None:
     """Retarget source-module links to names re-exported by this module."""
-    doc = entity.get("doc", "")
+    doc = entity.get("doc", "") or ""
     for source, target in aliases.items():
         doc = doc.replace(f"]({source})", f"]({target})")
     entity["doc"] = doc
@@ -336,11 +336,16 @@ def _signature(entity: dict) -> str:
 def _annotate_params(entities: list[dict]) -> None:
     """Recursively prepare parameters and signatures for rendering."""
     for entity in entities:
+        # The extraction format distinguishes an absent comment (`null`) from
+        # a present string. Templates operate on Markdown text, so normalize
+        # that absence at the rendering boundary.
+        entity["doc"] = entity.get("doc") or ""
         # Punctuation is what distinguishes `:args` from `...args`, and it is
         # exactly what a slug drops, so collisions are broken by position.
         seen: set[str] = set()
         for index, param in enumerate(entity.get("params") or []):
-            short, rest = _split_doc(param.get("doc", ""))
+            param["doc"] = param.get("doc") or ""
+            short, rest = _split_doc(param["doc"])
             type_, short = _split_type(short)
             param["type"] = type_
             param["doc_short"] = short
