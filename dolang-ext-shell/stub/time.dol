@@ -60,14 +60,10 @@ pub class DateTime
   do
     throw nil
 
-  # Parses an RFC 3339 date-time.
+  # ([`DateTime`](time.DateTime)) Parses an RFC 3339 date-time.
   #
   # An offset is required, and is applied to give the UTC instant; the offset
   # itself is not retained.
-  #
-  # ## Returns
-  #
-  # [`DateTime`](time.DateTime)
   #
   # ## Errors
   #
@@ -109,11 +105,7 @@ pub class DateTime
   pub def date self
     throw nil
 
-  # Returns the RFC 3339 representation, in UTC.
-  #
-  # ## Returns
-  #
-  # [`Str`](std.Str)
+  # ([`Str`](std.Str)) Returns the RFC 3339 representation, in UTC.
   #
   # ## Example
   #
@@ -194,11 +186,7 @@ pub class Date
   do
     throw nil
 
-  # Parses an RFC full-date, `YYYY-MM-DD`.
-  #
-  # ## Returns
-  #
-  # [`Date`](time.Date)
+  # ([`Date`](time.Date)) Parses an RFC full-date, `YYYY-MM-DD`.
   #
   # ## Errors
   #
@@ -250,11 +238,7 @@ pub class Date
   pub def datetime self
     throw nil
 
-  # Returns the date a signed number of days later.
-  #
-  # ## Returns
-  #
-  # [`Date`](time.Date)
+  # ([`Date`](time.Date)) Returns the date a signed number of days later.
   #
   # ## Errors
   #
@@ -275,11 +259,7 @@ pub class Date
   do
     throw nil
 
-  # Returns the date a signed number of days earlier.
-  #
-  # ## Returns
-  #
-  # [`Date`](time.Date)
+  # ([`Date`](time.Date)) Returns the date a signed number of days earlier.
   #
   # ## Errors
   #

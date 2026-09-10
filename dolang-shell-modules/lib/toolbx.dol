@@ -52,7 +52,7 @@ pub def run
 do
   run_command :name :cd :env $cmd ...args.pos_only()
 
-# Run a callable inside a toolbox container.
+# Run a function inside a toolbox container.
 #
 # The block sees the toolbox filesystem and process environment.
 pub def with

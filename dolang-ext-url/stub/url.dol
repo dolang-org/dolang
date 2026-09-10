@@ -63,7 +63,7 @@ pub class Url
   #
   # ## Returns
   #
-  # Iterator of `(Str, Str)` tuples.
+  # [`Iter`](std.Iter) of `(Str, Str)` tuples.
   #
   # ## Example
   #
@@ -92,7 +92,7 @@ pub class Url
   #
   # ## Returns
   #
-  # Iterator of [`Str`](std.Str) values.
+  # [`Iter`](std.Iter) of [`Str`](std.Str) values.
   #
   # ## Example
   #
@@ -123,11 +123,7 @@ pub class Url
   do
     throw nil
 
-  # Returns a new `Url` with its query rebuilt from decoded key/value pairs.
-  #
-  # ## Returns
-  #
-  # `Url`
+  # (`Url`) Returns a new `Url` with its query rebuilt from decoded key/value pairs.
   #
   # ## Example
   #
@@ -140,7 +136,7 @@ pub class Url
   # ```
   pub def with_query
     self
-    # Iterable of decoded key/value pairs.
+    # ([`Iterable`](std.Iterable)) Decoded key/value pairs.
     pairs
   do
     throw nil

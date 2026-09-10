@@ -26,7 +26,7 @@ pub class Mask
   # ## Example
   #
   # ```
-  # let rw = Mask(:READ_DATA:, :WRITE_DATA:)
+  # let rw = Mask :READ_DATA: :WRITE_DATA:
   # ```
   pub def (init)
     self
@@ -290,7 +290,7 @@ pub class Acl
   # evaluation order.
   pub def (init)
     self
-    # Iterable of [`Ace`](security.nfs4.Ace) values.
+    # ([`Iterable`](std.Iterable)) [`Ace`](security.nfs4.Ace) values.
     aces
   do
     throw nil
@@ -301,14 +301,10 @@ pub class Acl
   pub def aces self
     throw nil
 
-# Constructs an NFSv4 entry from declarative arguments.
+# ([`Ace`](security.nfs4.Ace)) Constructs an NFSv4 entry from declarative arguments.
 #
 # Pass exactly one type key. Masks and flags accept their built type, one
 # symbol, or an iterable of symbols.
-#
-# ## Returns
-#
-# [`Ace`](security.nfs4.Ace)
 #
 # ## Example
 #
@@ -317,19 +313,23 @@ pub class Acl
 # ace deny: {user: 1000} mask: :WRITE_DATA:
 # ```
 pub def ace
-  # Principal for an `:ALLOW:` entry: `:OWNER:`, `:OWNING_GROUP:`,
-  # `:EVERYONE:`, `{user: id}`, or `{group: id}`.
+  # ([`Sym`](std.Sym)\|[`Dict`](std.Dict)) Principal for an `:ALLOW:` entry:
+  # `:OWNER:`, `:OWNING_GROUP:`, `:EVERYONE:`, `{user: id}`, or `{group: id}`.
   :allow = nil
-  # Principal for a `:DENY:` entry, in the same forms as `allow:`.
+  # ([`Sym`](std.Sym)\|[`Dict`](std.Dict)) Principal for a `:DENY:` entry, in
+  # the same forms as `allow:`.
   :deny = nil
-  # Principal for an `:AUDIT:` entry, in the same forms as `allow:`.
+  # ([`Sym`](std.Sym)\|[`Dict`](std.Dict)) Principal for an `:AUDIT:` entry, in
+  # the same forms as `allow:`.
   :audit = nil
-  # Principal for an `:ALARM:` entry, in the same forms as `allow:`.
+  # ([`Sym`](std.Sym)\|[`Dict`](std.Dict)) Principal for an `:ALARM:` entry, in
+  # the same forms as `allow:`.
   :alarm = nil
-  # ([`Mask`](security.nfs4.Mask)\|[`Sym`](std.Sym)) Permission mask.
+  # ([`Mask`](security.nfs4.Mask)\|[`Sym`](std.Sym)\|[`Iterable`](std.Iterable))
+  # Permission mask.
   :mask
-  # ([`Flags`](security.nfs4.Flags)\|[`Sym`](std.Sym)) Inheritance/audit
-  # flags. Defaults to empty.
+  # ([`Flags`](security.nfs4.Flags)\|[`Sym`](std.Sym)\|[`Iterable`](std.Iterable))
+  # Inheritance/audit flags. Defaults to empty.
   :flags = nil
 do
   throw nil

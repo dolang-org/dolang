@@ -40,11 +40,11 @@ class TestCollection
   pub def take self
     self.#tests
 
-# Accumulates parametrize axes around a composed test callable. Any
-# decorator that needs to attach metadata beyond "a callable" (currently
+# Accumulates parametrize axes around a composed test function. Any
+# decorator that needs to attach metadata beyond a function (currently
 # only `parametrize`) normalizes its input into a `TestDef` via
 # `to_test_def`; `fixture` reaches through (or creates) one transparently,
-# so `#[fixture]`-only tests register the same callable as before.
+# so `#[fixture]`-only tests register the same function as before.
 class TestDef
   pub field func
   pub field params = []
@@ -53,7 +53,7 @@ class TestDef
     self.func = func
 
   # Transparently forwards to `func`, so a `TestDef` remains a drop-in
-  # callable/stringifiable value wherever the decorated function itself
+  # function/stringifiable value wherever the decorated function itself
   # would be.
   def (call) self ...rest
     self.func(...rest)
@@ -319,7 +319,7 @@ pub def fixture wrap
     test_def.func = Fixture $wrap $test_def.func
     test_def
 
-# Registers a zero-argument test callable.
+# Registers a zero-argument test function.
 #
 # ## Returns
 #

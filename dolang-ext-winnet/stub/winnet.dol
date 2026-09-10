@@ -548,12 +548,8 @@ pub class Connection
   pub def info self
     throw nil
 
-  # The connection's root: the drive root when the connection redirects a local
+  # ([`fs.windows.Path`](fs.windows.Path)) The connection's root: the drive root when the connection redirects a local
   # device, and the remote name otherwise.
-  #
-  # ## Returns
-  #
-  # [`fs.windows.Path`](fs.windows.Path).
   #
   # ## Example
   #
@@ -817,11 +813,7 @@ do
 pub def users()
   throw nil
 
-# Creates a normal enabled local user.
-#
-# ## Returns
-#
-# [`User`](winnet.User).
+# ([`User`](winnet.User)) Creates a normal enabled local user.
 #
 # ## Example
 #
@@ -1057,11 +1049,7 @@ do
 pub def connections()
   throw nil
 
-# Resolves a path on a redirected device to its UNC form.
-#
-# ## Returns
-#
-# [`Str`](std.Str).
+# ([`Str`](std.Str)) Resolves a path on a redirected device to its UNC form.
 #
 # ## Example
 #
@@ -1203,7 +1191,7 @@ pub def rename_machine
 do
   throw nil
 
-# Creates a computer account in the domain and returns the blob that joins a
+# ([`Bin`](std.Bin)) Creates a computer account in the domain and returns the blob that joins a
 # machine to it.
 #
 # Run this where a domain controller is reachable, then apply the blob with
@@ -1211,10 +1199,6 @@ do
 #
 # The blob contains the computer account password. Treat it as a secret:
 # anyone holding it can join a machine as that account.
-#
-# ## Returns
-#
-# [`Bin`](std.Bin).
 #
 # ## Example
 #

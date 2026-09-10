@@ -343,11 +343,7 @@ pub class File
   do
     throw nil
 
-  # Gets metadata for the open file.
-  #
-  # ## Returns
-  #
-  # [`Metadata`](fs.Metadata)
+  # ([`Metadata`](fs.Metadata)) Gets metadata for the open file.
   #
   # ## Example
   #
@@ -360,11 +356,7 @@ pub class File
   pub def metadata self
     throw nil
 
-  # Gets filesystem metadata for the filesystem backing the open file.
-  #
-  # ## Returns
-  #
-  # [`FsMetadata`](fs.FsMetadata)
+  # ([`FsMetadata`](fs.FsMetadata)) Gets filesystem metadata for the filesystem backing the open file.
   #
   # ## Example
   #
@@ -376,12 +368,8 @@ pub class File
   pub def fs_metadata self
     throw nil
 
-  # Gets selected parts of the Windows security descriptor through this file's
+  # ([`security.windows.SecDesc`](security.windows.SecDesc)) Gets selected parts of the Windows security descriptor through this file's
   # existing handle.
-  #
-  # ## Returns
-  #
-  # [`security.windows.SecDesc`](security.windows.SecDesc)
   #
   # The operation raises a permission error if the file was opened without the
   # necessary Windows access rights. Other platforms raise
@@ -446,7 +434,7 @@ pub class File
   # `nil`, the omitted kind remains POSIX.
   pub def set_acl
     self
-    # (built ACL\|iterable\|[`nil`](std.Nil)) ACL or declarative ACE
+    # (built ACL\|[`Iterable`](std.Iterable)\|[`nil`](std.Nil)) ACL or declarative ACE
     # sequence.
     acl
     # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`) Required for an untyped ACL
@@ -483,11 +471,7 @@ pub class File
   do
     throw nil
 
-  # Gets an extended attribute value.
-  #
-  # ## Returns
-  #
-  # [`Bin`](std.Bin)
+  # ([`Bin`](std.Bin)) Gets an extended attribute value.
   #
   # ## Example
   #
@@ -567,11 +551,7 @@ pub class File
   pub def streams self
     throw nil
 
-  # Returns the current cursor position in bytes.
-  #
-  # ## Returns
-  #
-  # [`Int`](std.Int)
+  # ([`Int`](std.Int)) Returns the current cursor position in bytes.
   #
   # ## Example
   #
@@ -1521,7 +1501,7 @@ pub class Path
   # ACL supplies its kind and must match one when provided.
   pub def set_acl
     self
-    # (built ACL\|iterable\|[`nil`](std.Nil)) ACL or declarative ACE
+    # (built ACL\|[`Iterable`](std.Iterable)\|[`nil`](std.Nil)) ACL or declarative ACE
     # sequence.
     acl
     # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`) Required for an untyped ACL
@@ -1912,11 +1892,7 @@ pub def sync
 do
   throw nil
 
-# Checks whether a file or directory exists at the given path.
-#
-# ## Returns
-#
-# [`Bool`](std.Bool)
+# ([`Bool`](std.Bool)) Checks whether a file or directory exists at the given path.
 #
 # ## Example
 #
@@ -1930,11 +1906,7 @@ pub def exists
 do
   throw nil
 
-# Gets metadata for the given path.
-#
-# ## Returns
-#
-# [`Metadata`](fs.Metadata)
+# ([`Metadata`](fs.Metadata)) Gets metadata for the given path.
 #
 # ## Example
 #
@@ -1956,11 +1928,7 @@ pub def metadata
 do
   throw nil
 
-# Gets metadata for the filesystem containing the given path.
-#
-# ## Returns
-#
-# [`FsMetadata`](fs.FsMetadata)
+# ([`FsMetadata`](fs.FsMetadata)) Gets metadata for the filesystem containing the given path.
 #
 # ## Errors
 #
@@ -2147,7 +2115,7 @@ do
 pub def set_acl
   # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to update.
   path
-  # (built ACL\|iterable\|[`nil`](std.Nil)) ACL or declarative ACE
+  # (built ACL\|[`Iterable`](std.Iterable)\|[`nil`](std.Nil)) ACL or declarative ACE
   # sequence.
   acl
   # (`:POSIX:`\|`:NFS4:`\|`:MACOS:`) Required for an untyped ACL
@@ -2189,11 +2157,7 @@ pub def xattrs
 do
   throw nil
 
-# Gets an extended attribute value.
-#
-# ## Returns
-#
-# [`Bin`](std.Bin)
+# ([`Bin`](std.Bin)) Gets an extended attribute value.
 #
 # ## Example
 #
@@ -2608,11 +2572,7 @@ pub def read_link
 do
   throw nil
 
-# Returns whether a path is absolute.
-#
-# ## Returns
-#
-# [`Bool`](std.Bool)
+# ([`Bool`](std.Bool)) Returns whether a path is absolute.
 #
 # ## Example
 #
@@ -2626,11 +2586,7 @@ pub def is_absolute
 do
   throw nil
 
-# Returns the absolute form of a path based on the current working directory.
-#
-# ## Returns
-#
-# [`Path`](fs.Path)
+# ([`Path`](fs.Path)) Returns the absolute form of a path based on the current working directory.
 #
 # ## Example
 #
@@ -2644,12 +2600,8 @@ pub def absolute
 do
   throw nil
 
-# Returns the canonical, absolute form of a path, with all intermediate
+# ([`Path`](fs.Path)) Returns the canonical, absolute form of a path, with all intermediate
 # components normalized and symbolic links resolved.
-#
-# ## Returns
-#
-# [`Path`](fs.Path)
 #
 # ## Example
 #
@@ -2663,14 +2615,10 @@ pub def canonical
 do
   throw nil
 
-# Returns a normalized path with `.` and `..` components resolved without
+# ([`Path`](fs.Path)) Returns a normalized path with `.` and `..` components resolved without
 # accessing the filesystem.
 #
 # Unresolvable `..` components in relative paths are preserved.
-#
-# ## Returns
-#
-# [`Path`](fs.Path)
 #
 # ## Example
 #
@@ -2736,11 +2684,7 @@ pub def home_dir()
 pub def temp_dir()
   throw nil
 
-# Returns the platform-native user cache directory.
-#
-# ## Returns
-#
-# [`Path`](fs.Path)
+# ([`Path`](fs.Path)) Returns the platform-native user cache directory.
 #
 # ## Example
 #
@@ -2772,14 +2716,10 @@ pub def cache_dir
 do
   throw nil
 
-# Creates a temporary directory and returns its path.
+# ([`Path`](fs.Path)) Creates a temporary directory and returns its path.
 #
 # Unlike [`with_temp_dir`](fs.with_temp_dir), this does not remove the directory
 # — the caller owns its lifetime.
-#
-# ## Returns
-#
-# [`Path`](fs.Path)
 #
 # ## Example
 #

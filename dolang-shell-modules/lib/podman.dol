@@ -157,11 +157,7 @@ pub def with
 do
   podman.with $image $func :cd :env :pull
 
-# Builds a Podman image.
-#
-# ## Returns
-#
-# [`Image`](_container.dockman.Image)
+# ([`Image`](_container.dockman.Image)) Builds a Podman image.
 #
 # ## Example
 #

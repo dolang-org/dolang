@@ -185,9 +185,9 @@ pub def steps
   :message = nil
   # ([`Str`](std.Str)) Default icon. Defaults to `"●"`.
   :icon = nil
-  # ([`Func`](std.Func)\|[`Dict`](std.Dict)) A step callable or specification.
+  # ([`Func`](std.Func)\|[`Dict`](std.Dict)) A step function or specification.
   #
-  # A specification contains one positional callable and accepts these keys:
+  # A specification contains one positional function and accepts these keys:
   #
   # | Key    | Type                 | Description                         |
   # | ------ | -------------------- | ----------------------------------- |

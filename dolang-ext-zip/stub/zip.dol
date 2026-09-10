@@ -243,11 +243,7 @@ pub class File
   pub def close self
     throw nil
 
-  # Reads data from the file. Read mode only.
-  #
-  # ## Returns
-  #
-  # [`Bin`](std.Bin).
+  # ([`Bin`](std.Bin)) Reads data from the file. Read mode only.
   #
   # ## Errors
   #

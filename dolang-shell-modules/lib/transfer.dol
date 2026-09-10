@@ -623,21 +623,6 @@ def filesystem_metadata path kind options
     if group_name
       :group_name
 
-let ALLOWED_METADATA = Set $
-  :mode: :dir_mode: :link_mode: :uid: :gid:
-  :owner_name: :group_name: :mtime:
-
-def validate_metadata arguments
-  let positional keyed = arguments.pos_keys()
-  let positional = [...positional]
-  if (positional.len != 0)
-    throw std.ValueError "pack metadata accepts keyed options only"
-  let metadata = (Dict keyed)
-  for key = metadata.keys()
-    if !(ALLOWED_METADATA.contains key)
-      throw std.ValueError "unexpected pack metadata option: $key"
-  metadata
-
 def source_entries source
   let metadata = (source.metadata resolve: :LINK:)
   if (metadata.type == :DIR:)
@@ -733,29 +718,48 @@ pub def pack
   # ([`Str`](std.Str)\|[`fs.Path`](fs.Path)) Relative path prepended
   # to every archive entry.
   :prefix = nil
-  # ([`Value`](std.Value)) Metadata applied to every archive entry, as
-  # keyword arguments.
-  #
-  # Each key overrides what would otherwise be taken from the source file.
-  # Positional arguments are rejected, as is any key not listed here.
-  #
-  # | Name           | Type                                                                       | Meaning                                    |
-  # | -------------- | -------------------------------------------------------------------------- | ------------------------------------------ |
-  # | `mode`         | [`Int`](std.Int)\|[`fs.unix.Mode`](fs.unix.Mode)                  | Permissions for regular files              |
-  # | `dir_mode`     | [`Int`](std.Int)\|[`fs.unix.Mode`](fs.unix.Mode)                  | Permissions for directories                |
-  # | `link_mode`    | [`Int`](std.Int)\|[`fs.unix.Mode`](fs.unix.Mode)                  | Permissions for symlinks                   |
-  # | `uid`          | [`Int`](std.Int)                                                      | Owner ID                                   |
-  # | `gid`          | [`Int`](std.Int)                                                      | Group ID                                   |
-  # | `owner_name`   | [`Str`](std.Str)                                                      | Owner name                                 |
-  # | `group_name`   | [`Str`](std.Str)                                                      | Group name                                 |
-  # | `mtime`        | [`DateTime`](time.DateTime)                                           | Modification time                          |
-  #
-  # Where the source carries no value of its own, `mode` falls back to `0o644`,
-  # `dir_mode` to `0o755`, `link_mode` to `0o777`, `uid` and `gid` to `0`, and
-  # `mtime` to the Unix epoch. A name that cannot be looked up is omitted.
-  ...metadata
+  # ([`Int`](std.Int)\|[`fs.unix.Mode`](fs.unix.Mode)) Permissions for regular
+  # files. Defaults to the source mode, or `0o644` when unavailable.
+  :mode = nil
+  # ([`Int`](std.Int)\|[`fs.unix.Mode`](fs.unix.Mode)) Permissions for
+  # directories. Defaults to the source mode, or `0o755` when unavailable.
+  :dir_mode = nil
+  # ([`Int`](std.Int)\|[`fs.unix.Mode`](fs.unix.Mode)) Permissions for
+  # symlinks. Defaults to the source mode, or `0o777` when unavailable.
+  :link_mode = nil
+  # ([`Int`](std.Int)) Owner ID. Defaults to the source owner, or `0` when
+  # unavailable.
+  :uid = nil
+  # ([`Int`](std.Int)) Group ID. Defaults to the source group, or `0` when
+  # unavailable.
+  :gid = nil
+  # ([`Str`](std.Str)) Owner name. Defaults to the source owner's qualified
+  # name when it can be looked up.
+  :owner_name = nil
+  # ([`Str`](std.Str)) Group name. Defaults to the source group's qualified
+  # name when it can be looked up.
+  :group_name = nil
+  # ([`DateTime`](time.DateTime)) Modification time. Defaults to the source
+  # modification time, or the Unix epoch when unavailable.
+  :mtime = nil
 do
-  metadata = (validate_metadata metadata)
+  let metadata = $
+    if (mode != nil)
+      mode: $mode
+    if (dir_mode != nil)
+      dir_mode: $dir_mode
+    if (link_mode != nil)
+      link_mode: $link_mode
+    if (uid != nil)
+      uid: $uid
+    if (gid != nil)
+      gid: $gid
+    if (owner_name != nil)
+      owner_name: $owner_name
+    if (group_name != nil)
+      group_name: $group_name
+    if (mtime != nil)
+      mtime: $mtime
   source = (parse_location source)
   if (type source Url)
     source = get $source

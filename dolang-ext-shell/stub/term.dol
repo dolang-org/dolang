@@ -422,16 +422,12 @@ pub class Style
 # let encoded = label.encode()
 # ```
 pub class Text
-  # Clips the text to a terminal-cell width at an extended grapheme boundary.
+  # ([`Text`](term.Text)) Clips the text to a terminal-cell width at an extended grapheme boundary.
   #
   # SGR sequences do not contribute to the width. If the text already fits it
   # is returned unchanged and `suffix` is ignored. Otherwise the suffix is
   # clipped to the total budget, its width is reserved, and the longest fitting
   # source prefix is prepended. Styling remains valid across the cut.
-  #
-  # ## Returns
-  #
-  # [`Text`](term.Text)
   #
   # ## Example
   #
@@ -449,14 +445,10 @@ pub class Text
   do
     throw nil
 
-  # Returns the ANSI representation: exactly the bytes a terminal write emits.
+  # ([`Str`](std.Str)) Returns the ANSI representation: exactly the bytes a terminal write emits.
   #
   # This is the inverse of [`preformat`](term.preformat), which takes the
   # result back (canonicalizing the SGR it re-emits).
-  #
-  # ## Returns
-  #
-  # [`Str`](std.Str)
   #
   # ## Example
   #
@@ -468,13 +460,9 @@ pub class Text
   pub def encode self
     throw nil
 
-  # Adds spaces to the beginning of each line without changing ANSI formatting.
+  # ([`Text`](term.Text)) Adds spaces to the beginning of each line without changing ANSI formatting.
   #
   # A terminal newline does not gain a trailing indentation prefix.
-  #
-  # ## Returns
-  #
-  # [`Text`](term.Text)
   #
   # ## Example
   #
@@ -489,15 +477,11 @@ pub class Text
   do
     throw nil
 
-  # Concatenates values with this text between them.
+  # ([`Text`](term.Text)) Concatenates values with this text between them.
   #
   # Each value is taken the way [`text`](term.text) takes an argument of
   # its own: a `Text` keeps its styling, and anything else is converted and
   # sanitized.
-  #
-  # ## Returns
-  #
-  # [`Text`](term.Text)
   #
   # ## Example
   #
@@ -507,20 +491,16 @@ pub class Text
   # ```
   pub def join
     self
-    # Iterable to join. Uses the default input when omitted.
+    # ([`Iterable`](std.Iterable)) Values to join. Uses the default input when omitted.
     iter = nil
   do
     throw nil
 
-  # Returns the visible terminal-cell width of the text.
+  # ([`Int`](std.Int)) Returns the visible terminal-cell width of the text.
   #
   # SGR sequences do not contribute to the width. Widths are summed within each
   # extended grapheme cluster and capped at two cells per cluster. C0 control
   # characters contribute zero.
-  #
-  # ## Returns
-  #
-  # [`Int`](std.Int)
   #
   # ## Example
   #
@@ -654,14 +634,10 @@ do
 pub def output()
   throw nil
 
-# Validates existing ANSI-styled text.
+# ([`Text`](term.Text)) Validates existing ANSI-styled text.
 #
 # SGR styling is canonicalized; other terminal controls, hyperlinks included,
 # are removed.
-#
-# ## Returns
-#
-# [`Text`](term.Text)
 #
 # ## Example
 #
@@ -692,7 +668,7 @@ pub def print
 do
   throw nil
 
-# Formats an error value and backtrace for terminal presentation.
+# ([`Text`](term.Text)) Formats an error value and backtrace for terminal presentation.
 #
 # The returned text does not include a final newline.
 #
@@ -703,10 +679,6 @@ do
 # [`Fmt`](std.Fmt) is expanded segment by segment -- see
 # [Sequences](term.Text.sequences). Raw stdout and stderr sinks are unchanged
 # and are not sanitized by this module.
-#
-# ## Returns
-#
-# [`Text`](term.Text)
 #
 # ## Errors
 #
@@ -732,15 +704,11 @@ pub def render_error
 do
   throw nil
 
-# Runs a block and returns its console output as a string.
+# ([`Str`](std.Str)) Runs a block and returns its console output as a string.
 #
 # The console counterpart to [`proc.sub`](proc.sub), which captures
 # a strand's implicit output stream instead. Verbatim output is captured, which
 # must be valid UTF-8.
-#
-# ## Returns
-#
-# [`Str`](std.Str)
 #
 # ## Example
 #
@@ -761,7 +729,7 @@ pub def sub
 do
   throw nil
 
-# Constructs terminal text from concatenated values, styled or not.
+# ([`Text`](term.Text)) Constructs terminal text from concatenated values, styled or not.
 #
 # Also accepts the [style options](term.style-options), for which
 # `:INHERIT:` leaves a setting to the surrounding style.
@@ -770,10 +738,6 @@ do
 # and a plain `text` value is still what measures itself in terminal cells. For
 # a reusable style with no text of its own, construct a [`Style`](term.Style)
 # directly.
-#
-# ## Returns
-#
-# [`Text`](term.Text)
 #
 # ## Example
 #

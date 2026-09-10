@@ -914,7 +914,7 @@ pub class Acl
   #
   # | Name       | Type                                                  | Description                               |
   # | ---------- | ----------------------------------------------------- | ----------------------------------------- |
-  # | `aces`     | iterable                                              | Entries in packet order                   |
+  # | `aces`     | [`Iterable`](std.Iterable)                            | Entries in packet order                   |
   # | `revision` | [`Sym`](std.Sym)\|[`Int`](std.Int)? | `:BASIC:`, `:DIRECTORY_SERVICE:`, 2, or 4 |
   #
   # Revision 4 is selected when an object ACE is present; otherwise revision 2 is
