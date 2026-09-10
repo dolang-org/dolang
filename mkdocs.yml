@@ -28,6 +28,8 @@ extra_css:
 
 theme:
   name: material
+  logo: dot.png
+  favicon: dot.png
   features:
     - navigation.indexes
   palette:
