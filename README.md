@@ -77,24 +77,12 @@ process.
 
 ## Try It
 
-There are no packaged releases yet — building from source is the only way to
-try Do right now.
-
-### Prerequisites
-
-- Rust 1.93 or later
-
-### Building from Source
+Install a bootstrap archive or build from source by following
+[`BUILD.md`](./BUILD.md). Once installed, run the shell or an example:
 
 ```bash
-# Build the project
-cargo build --release --bin dolang --bin dolang-lsp --bin dolang-vfs
-
-# Run the shell
-./target/release/dolang
-
-# Or run a script
-./target/release/dolang example/cow.dol
+dolang
+dolang example/cow.dol
 ```
 
 See the [Language Guide](https://dolang-org.github.io/dolang/language/)
