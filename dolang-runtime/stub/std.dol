@@ -1877,9 +1877,101 @@ pub class FieldError: RuntimeError
 
 
 #
+# Abstract supertype for numeric values.
+#
+pub class Num
+  # Returns the magnitude of the value.
+  #
+  # Raises [`OverflowError`](std.OverflowError) if the result is not
+  # representable.
+  pub def abs self
+    throw nil
+
+  # Returns the signum of the value: negative one, zero, or positive one.
+  pub def signum self
+    throw nil
+
+  # Rounds to the nearest integral value, with halfway cases away from zero.
+  pub def round self
+    throw nil
+
+  # Rounds toward negative infinity.
+  pub def floor self
+    throw nil
+
+  # Rounds toward positive infinity.
+  pub def ceil self
+    throw nil
+
+  # Rounds toward zero.
+  pub def trunc self
+    throw nil
+
+  # Returns the smallest of this value and `others`.
+  #
+  # If a comparison is unordered, which input is returned is unspecified.
+  pub def min self ...others
+    throw nil
+
+  # Returns the largest of this value and `others`.
+  #
+  # If a comparison is unordered, which input is returned is unspecified.
+  pub def max self ...others
+    throw nil
+
+  # Restricts the value to the inclusive interval from `lower` to `upper`.
+  #
+  # Raises [`ValueError`](std.ValueError) if `lower > upper`. If a comparison
+  # is unordered, which input is returned is unspecified.
+  pub def clamp self lower upper
+    throw nil
+
+  pub def (add) self other
+    throw nil
+
+  pub def (sub) self other
+    throw nil
+
+  pub def (mul) self other
+    throw nil
+
+  pub def (div) self other
+    throw nil
+
+  pub def (ediv) self other
+    throw nil
+
+  pub def (mod) self other
+    throw nil
+
+  pub def (neg) self
+    throw nil
+
+  pub def (eq) self other
+    throw nil
+
+  pub def (lt) self other
+    throw nil
+
+
 # 64-bit floating point numbers.
 #
-pub class Float
+# Rounding preserves signed zero and rounds halfway cases away from zero.
+# `signum` returns NaN for NaN and distinguishes positive and negative zero.
+#
+pub class Float: Num
+  # Difference between `1.0` and the next greater representable value.
+  #[static]
+  pub field EPSILON = nil
+
+  # Positive infinity.
+  #[static]
+  pub field INF = nil
+
+  # A not-a-number value.
+  #[static]
+  pub field NAN = nil
+
   #
   # `Float` accepts a float or an integer that can be represented exactly.
   #
@@ -1897,40 +1989,24 @@ pub class Float
   pub def (init) self
     throw nil
 
-  # Adds two floating-point values.
-  pub def (add) self other
+  # Tests whether the value is NaN.
+  pub def is_nan self
     throw nil
 
-  # Subtracts a floating-point value.
-  pub def (sub) self other
+  # Tests whether the value is finite.
+  pub def is_finite self
     throw nil
 
-  # Multiplies two floating-point values.
-  pub def (mul) self other
+  # Tests whether the value is positive or negative infinity.
+  pub def is_infinite self
     throw nil
 
-  # Divides two floating-point values.
-  pub def (div) self other
+  # Tests whether the value is normal.
+  pub def is_normal self
     throw nil
 
-  # Performs Euclidean division and returns an [`Int`](std.Int).
-  pub def (ediv) self other
-    throw nil
-
-  # Computes the Euclidean remainder.
-  pub def (mod) self other
-    throw nil
-
-  # Negates the value.
-  pub def (neg) self
-    throw nil
-
-  # Tests equality. Mixed Int/Float comparisons are supported.
-  pub def (eq) self other
-    throw nil
-
-  # Orders values. Mixed Int/Float comparisons are supported.
-  pub def (lt) self other
+  # Tests whether the value is subnormal.
+  pub def is_subnormal self
     throw nil
 
 #
@@ -2664,7 +2740,17 @@ pub class IndexError: RuntimeError
 #
 # 128-bit signed integers.
 #
-pub class Int
+# The rounding methods return the receiver unchanged.
+#
+pub class Int: Num
+  # Smallest representable integer.
+  #[static]
+  pub field MIN = nil
+
+  # Largest representable integer.
+  #[static]
+  pub field MAX = nil
+
   #
   # `Int` accepts an integer, a boolean, or an integral float. It rejects
   # fractional floats and interpretive conversions such as parsing strings.
@@ -2682,34 +2768,6 @@ pub class Int
   # ```
   #
   pub def (init) self
-    throw nil
-
-  # Adds two integers.
-  pub def (add) self other
-    throw nil
-
-  # Subtracts an integer.
-  pub def (sub) self other
-    throw nil
-
-  # Multiplies two integers.
-  pub def (mul) self other
-    throw nil
-
-  # Divides two integers and returns a [`Float`](std.Float).
-  pub def (div) self other
-    throw nil
-
-  # Performs Euclidean integer division. Together with `(mod)`, satisfies `x == (x // y) * y + (x % y)`.
-  pub def (ediv) self other
-    throw nil
-
-  # Computes the Euclidean remainder. Together with `(ediv)`, satisfies `x == (x // y) * y + (x % y)`.
-  pub def (mod) self other
-    throw nil
-
-  # Negates the integer.
-  pub def (neg) self
     throw nil
 
   # Computes bitwise AND.
@@ -2734,14 +2792,6 @@ pub class Int
 
   # Shifts right arithmetically, sign-extending negative values.
   pub def (shr) self other
-    throw nil
-
-  # Tests equality. Mixed Int/Float comparisons are supported.
-  pub def (eq) self other
-    throw nil
-
-  # Orders values. Mixed Int/Float comparisons are supported.
-  pub def (lt) self other
     throw nil
 
 # Error raised to signal that an iterator is exhausted. This is used

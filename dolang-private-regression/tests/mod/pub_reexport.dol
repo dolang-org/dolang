@@ -2,4 +2,4 @@ pub import pub_source:
   Thing: RenamedThing
   - answer
 
-pub import math
+pub import import_fixture: math

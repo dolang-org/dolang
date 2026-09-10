@@ -58,6 +58,25 @@ fn rbinop<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for f64 {
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::num::float_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::num::float_mcall(strand, &this, *this.get(), method, args, out).await
+    }
+
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -232,6 +251,25 @@ unsafe impl Collect for Verbatim {
 }
 
 impl<'v> Protocol<'v> for Verbatim {
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::num::float_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::num::float_mcall(strand, &this, this.get().value, method, args, out).await
+    }
+
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -481,6 +519,16 @@ impl<'v> Protocol<'v> for Float {
         fmt!(strand, w, "<type std.Float>")
     }
 
+    fn op_subtype<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        supertype: &Value<'v>,
+    ) -> bool {
+        supertype.eq(strand, &this)
+            || supertype.eq(strand, &strand.singletons().num)
+            || supertype.eq(strand, crate::value::TypeObject::Value)
+    }
+
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -501,6 +549,9 @@ impl<'v> Protocol<'v> for Float {
                 Method(sym::STR_METHOD),
                 Method(sym::DBG_METHOD),
                 Method(sym::CALL_METHOD),
+                Getter(sym::EPSILON_CONST),
+                Getter(sym::INF_CONST),
+                Getter(sym::NAN_CONST),
             ],
             members: members![
                 Method(sym::STR_METHOD),
@@ -521,6 +572,20 @@ impl<'v> Protocol<'v> for Float {
                 Method(sym::LT_METHOD),
                 Method(sym::BOOL_METHOD),
                 Method(sym::HASH_METHOD),
+                Method(sym::ABS),
+                Method(sym::SIGNUM),
+                Method(sym::ROUND),
+                Method(sym::FLOOR),
+                Method(sym::CEIL),
+                Method(sym::TRUNC),
+                Method(sym::MIN),
+                Method(sym::MAX),
+                Method(sym::CLAMP),
+                Method(sym::IS_NAN),
+                Method(sym::IS_FINITE),
+                Method(sym::IS_INFINITE),
+                Method(sym::IS_NORMAL),
+                Method(sym::IS_SUBNORMAL),
             ],
         })
     }
@@ -531,6 +596,21 @@ impl<'v> Protocol<'v> for Float {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        match field.tag() {
+            sym::EPSILON_CONST => {
+                Output::set(strand, out, f64::EPSILON);
+                return Ok(());
+            }
+            sym::INF_CONST => {
+                Output::set(strand, out, f64::INFINITY);
+                return Ok(());
+            }
+            sym::NAN_CONST => {
+                Output::set(strand, out, f64::NAN);
+                return Ok(());
+            }
+            _ => {}
+        }
         match field.tag() {
             sym::INIT_METHOD
             | sym::STR_METHOD
@@ -551,6 +631,23 @@ impl<'v> Protocol<'v> for Float {
             | sym::LT_METHOD
             | sym::BOOL_METHOD
             | sym::HASH_METHOD => {
+                BoundMethod::create(strand, &this, field, out);
+                Ok(())
+            }
+            sym::ABS
+            | sym::SIGNUM
+            | sym::ROUND
+            | sym::FLOOR
+            | sym::CEIL
+            | sym::TRUNC
+            | sym::MIN
+            | sym::MAX
+            | sym::CLAMP
+            | sym::IS_NAN
+            | sym::IS_FINITE
+            | sym::IS_INFINITE
+            | sym::IS_NORMAL
+            | sym::IS_SUBNORMAL => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }

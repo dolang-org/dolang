@@ -10,6 +10,7 @@ use crate::{
 };
 
 pub(crate) mod fmt;
+mod math;
 mod property;
 mod strand;
 
@@ -22,6 +23,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
 
     // Core types
     let value = bc.value.dup();
+    let num = bc.num.dup();
     let type_obj = bc.type_obj.dup();
     let int = bc.int.dup();
     let float = bc.float.dup();
@@ -83,6 +85,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .module("std")
         // Core types
         .value("Value", &value)
+        .value("Num", &num)
         .value("Type", &type_obj)
         .value("Int", &int)
         .value("Float", &float)
@@ -245,5 +248,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Ok(())
         })
         .commit();
+
+    math::configure(builder);
     strand::configure(builder);
 }

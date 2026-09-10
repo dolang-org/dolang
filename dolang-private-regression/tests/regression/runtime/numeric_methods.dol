@@ -1,0 +1,69 @@
+import std:
+  - Float
+  - FieldError
+  - Int
+  - Num
+  - OverflowError
+  - UnsupportedError
+  - ValueError
+
+assert (type 1 Num) msg: int-num
+assert (type 1.0 Num) msg: float-num
+assert_not (type true Num) msg: bool-num
+
+assert_eq $Int.MIN -170141183460469231731687303715884105728
+assert_eq $Int.MAX 170141183460469231731687303715884105727
+assert_throws $OverflowError do Int.MIN.abs()
+
+assert_eq $(-5).abs() 5
+assert_eq $(-5).signum() -1
+assert_eq $0.signum() 0
+assert_eq $5.signum() 1
+assert_eq $5.round() 5
+assert_eq $5.floor() 5
+assert_eq $5.ceil() 5
+assert_eq $5.trunc() 5
+
+assert_eq $1.5.round() 2.0
+assert_eq $(-1.5).round() -2.0
+assert_eq $1.9.floor() 1.0
+assert_eq $1.1.ceil() 2.0
+assert_eq $(-1.9).trunc() -1.0
+assert_eq $(-0.0).signum() -1.0
+assert_eq (1.0 / (-0.0).round()) (-Float.INF)
+
+assert $Float.NAN.is_nan() msg: nan
+assert $Float.INF.is_infinite() msg: infinite
+assert_not $Float.INF.is_finite() msg: finite
+assert $Float.EPSILON.is_normal() msg: epsilon-normal
+assert_not $0.0.is_normal() msg: zero-normal
+assert $5e-324.is_subnormal() msg: subnormal
+assert $Float.NAN.signum().is_nan() msg: nan-signum
+
+assert_eq $3.min() 3
+assert_eq $3.min(4, 2, 5) 2
+assert_eq $3.max(4, 2, 5) 5
+assert_eq $3.min(2.5) 2.5
+assert_eq (type $ 3.min(2.5)) $Float
+assert_eq $3.clamp(0, 2) 2
+assert_eq $(-1).clamp(0, 2) 0
+assert_eq $1.clamp(0, 2) 1
+assert_throws $ValueError do 1.clamp 2 0
+
+class Scalar: Num
+  pub field value = 0
+
+  def (init) self value
+    self.value = value
+
+  pub def (lt) self other
+    (self.value < other.value)
+
+let low = Scalar 1
+let high = Scalar 2
+assert (type low Num) msg: scalar-num
+assert_eq $low.min(high).value 1
+assert_eq $low.max(high).value 2
+assert_eq $(Scalar(3).clamp(low, high)).value 2
+assert_throws $UnsupportedError do low.abs()
+assert_throws $FieldError do low.not_a_num_method()

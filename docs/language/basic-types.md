@@ -3,6 +3,10 @@
 Do is dynamically typed. Values carry their type at runtime, and variables can
 hold any type.
 
+`Int` and `Float` share the abstract [`Num`](std.Num) supertype and its common
+rounding, sign, extrema, and clamping methods. The [`math`](math) module
+provides transcendental functions and integer number theory.
+
 ## Integers (`Int`)
 
 128-bit signed integers.

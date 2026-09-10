@@ -3046,6 +3046,8 @@ impl<'v, 'a> Slots<'v, 'a> {
 pub enum TypeObject {
     /// `std.Value`, the universal supertype
     Value,
+    /// `std.Num`, the abstract numeric supertype
+    Num,
     /// `std.Type`, the type of types
     Type,
     /// `std.Error`, the supertype of every error type
@@ -3120,6 +3122,7 @@ impl<'v> Input<'v> for TypeObject {
         let builtins = vm.singletons();
         InputBy::Borrow(match self {
             TypeObject::Value => &builtins.value,
+            TypeObject::Num => &builtins.num,
             TypeObject::Type => &builtins.type_obj,
             TypeObject::Error => &builtins.error,
             TypeObject::UnsupportedError => &builtins.error_unsupported,

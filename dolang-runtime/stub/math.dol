@@ -1,0 +1,167 @@
+# Floating-point mathematics and integer number theory.
+
+# The ratio of a circle's circumference to its diameter.
+pub let PI = nil
+
+# One full turn in radians.
+pub let TAU = nil
+
+# The base of the natural logarithm.
+pub let E = nil
+
+# Computes the square root.
+pub def sqrt x
+  throw nil
+
+# Computes the cube root.
+pub def cbrt x
+  throw nil
+
+# Computes `e` raised to `x`.
+pub def exp x
+  throw nil
+
+# Computes `e` raised to `x`, minus one, accurately near zero.
+pub def expm1 x
+  throw nil
+
+# Computes two raised to `x`.
+pub def exp2 x
+  throw nil
+
+# Computes the logarithm in a required base.
+pub def log
+  # ([`Num`](std.Num)) Logarithm base.
+  :base
+  # ([`Num`](std.Num)) Value whose logarithm is computed.
+  x
+do
+  throw nil
+
+# Computes the natural logarithm.
+pub def ln x
+  throw nil
+
+# Computes the natural logarithm of `1 + x` accurately near zero.
+pub def ln1p x
+  throw nil
+
+# Computes the base-two logarithm.
+pub def log2 x
+  throw nil
+
+# Computes the base-ten logarithm.
+pub def log10 x
+  throw nil
+
+# Raises `base` to `exponent`.
+pub def pow
+  # ([`Num`](std.Num)) Base value.
+  base
+  # ([`Num`](std.Num)) Exponent value.
+  exponent
+do
+  throw nil
+
+# Computes the sine of an angle in radians.
+pub def sin x
+  throw nil
+
+# Computes the cosine of an angle in radians.
+pub def cos x
+  throw nil
+
+# Computes the tangent of an angle in radians.
+pub def tan x
+  throw nil
+
+# Computes the inverse sine in radians.
+pub def asin x
+  throw nil
+
+# Computes the inverse cosine in radians.
+pub def acos x
+  throw nil
+
+# Computes the inverse tangent in radians.
+pub def atan x
+  throw nil
+
+# Computes the inverse tangent of `y / x`, using both signs to select a quadrant.
+pub def atan2
+  # ([`Num`](std.Num)) Vertical coordinate.
+  y
+  # ([`Num`](std.Num)) Horizontal coordinate.
+  x
+do
+  throw nil
+
+# Computes the hyperbolic sine.
+pub def sinh x
+  throw nil
+
+# Computes the hyperbolic cosine.
+pub def cosh x
+  throw nil
+
+# Computes the hyperbolic tangent.
+pub def tanh x
+  throw nil
+
+# Computes the inverse hyperbolic sine.
+pub def asinh x
+  throw nil
+
+# Computes the inverse hyperbolic cosine.
+pub def acosh x
+  throw nil
+
+# Computes the inverse hyperbolic tangent.
+pub def atanh x
+  throw nil
+
+# Computes the Euclidean norm of two or more coordinates.
+pub def hypot
+  # ([`Num`](std.Num)) First coordinate.
+  first
+  # ([`Num`](std.Num)) Second coordinate.
+  second
+  # ([`Num`](std.Num)) Additional coordinates.
+  ...rest
+do
+  throw nil
+
+# Computes the greatest common divisor of one or more integers.
+pub def gcd
+  # ([`Int`](std.Int)) First value.
+  first
+  # ([`Int`](std.Int)) Additional values.
+  ...rest
+do
+  throw nil
+
+# Computes the least common multiple of one or more integers.
+pub def lcm
+  # ([`Int`](std.Int)) First value.
+  first
+  # ([`Int`](std.Int)) Additional values.
+  ...rest
+do
+  throw nil
+
+# Converts radians to degrees.
+pub def degrees x
+  throw nil
+
+# Converts degrees to radians.
+pub def radians x
+  throw nil
+
+# Returns the magnitude of `x` with the sign of `sign`.
+pub def copysign
+  # ([`Num`](std.Num)) Value providing the magnitude.
+  x
+  # ([`Num`](std.Num)) Value providing the sign.
+  sign
+do
+  throw nil
