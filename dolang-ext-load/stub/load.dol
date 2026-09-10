@@ -53,15 +53,11 @@ pub def import
 do
   throw nil
 
-# Registers a module import handler.
+# ([`ImportHandler`](load.ImportHandler)) Registers a module import handler.
 #
 # Handlers run after native modules and cached Do modules. The first successful
 # handler supplies the imported value. Raise [`ImportError`](std.ImportError)
 # to decline a name; any other error aborts the import.
-#
-# ## Returns
-#
-# [`ImportHandler`](load.ImportHandler)
 #
 # ## Example
 #

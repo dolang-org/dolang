@@ -1,6 +1,8 @@
 import regex
 import regex:
   - Regex
+import std:
+  - Iter
 import test:
   - assert_eq
   - assert_type
@@ -13,7 +15,7 @@ def compile_match_and_find()
 
   assert_type $regex.Captures $caps
   assert_type $regex.Match $caps[0]
-  assert_type $regex.Find (date_pattern.find "2024-03-15")
+  assert_type $Iter (date_pattern.find "2024-03-15")
 
   assert_eq (str caps[0]) "2024-03-15"
   assert_eq (str caps[1]) "2024"

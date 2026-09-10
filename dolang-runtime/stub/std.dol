@@ -34,8 +34,7 @@ pub def bool value
 #
 #
 pub def dbg
-  self
-  # the value to convert
+  # Value to convert.
   value
 do
   throw nil
@@ -74,14 +73,13 @@ pub def float value
 # ```
 #
 pub def getter
-  self
-  # (Func) function used for field reads
+  # ([`Func`](std.Func)) Function used for field reads.
   func
 do
   throw nil
 
 #
-# (`Int`) Returns a hash code computed over all supplied values in sequence. Passing
+# ([`Int`](std.Int)) Returns a hash code computed over all supplied values in sequence. Passing
 # multiple values is useful for combining fields in a `(hash)` implementation:
 #
 # ```
@@ -91,8 +89,7 @@ do
 #
 #
 pub def hash
-  self
-  # one or more values to hash
+  # Values to hash.
   ...values
 do
   throw nil
@@ -118,7 +115,7 @@ pub def int value
 # ```
 #
 pub def record
-  self
+  # Positional and key field values.
   ...pairs
 do
   throw nil
@@ -137,8 +134,7 @@ do
 # ```
 #
 pub def setter
-  self
-  # (Func) function used for field writes
+  # ([`Func`](std.Func)) Function used for field writes.
   func
 do
   throw nil
@@ -152,7 +148,10 @@ pub def str value
 #
 # Interns a string as a [`Sym`](std.Sym).
 #
-pub def sym value
+pub def sym
+  # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Value to intern.
+  value
+do
   throw nil
 
 #
@@ -176,9 +175,9 @@ pub def tuple ...values
 # assert (type 42 Int)
 # ```
 pub def type
-  # the value to query or test
+  # Value to query or test.
   value
-  # the type to check
+  # ([`Type`](std.Type)) Type to check.
   :type = nil
 do
   throw nil

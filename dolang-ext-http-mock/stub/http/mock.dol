@@ -51,12 +51,6 @@ pub class Request
 
   # ([`Dict`](std.Dict)-like) The request headers.
   #
-  # Projected lazily from the underlying request, so reading one header does
-  # not materialize the rest. Header names may repeat; `.get()` takes an
-  # `instance` position to choose among them (`-1`, the default, selects the
-  # last), the same way
-  # [`dict.get`](std.Dict.get) does.
-  #
   # ## Example
   #
   # ```
@@ -132,7 +126,7 @@ pub class Server
   # ```
   pub def (init)
     self
-    # (callable) Called with the `Server`, which is shut down when it returns.
+    # ([`Func`](std.Func)) Called with the `Server`, which is shut down when it returns.
     # Omit to receive the server instead.
     func = nil
   do
@@ -172,7 +166,7 @@ pub class Server
   # | `headers`    | [`Dict`](std.Dict)         | Header name/value pairs that must all be present and equal   |
   # | `query`      | [`Dict`](std.Dict)         | Query parameter name/value pairs that must all be equal      |
   # | `body_json`  |                                  | A JSON value the body must deserialize to and equal          |
-  # | `match`      | callable                         | A `do |req| ...` callback returning a truthy value           |
+  # | `match`      | [`Func`](std.Func)               | A `do |req| ...` callback returning a truthy value           |
   #
   # An item with none of these matches every request. Every matcher on one item
   # must match for that item to match, and each item registers a separate mock,
@@ -255,7 +249,7 @@ pub class Server
   # ```
   pub def mock
     self
-    # (callable) Called with the [`Mock`](http.mock.Mock) handle. The mocks are
+    # ([`Func`](std.Func)) Called with the [`Mock`](http.mock.Mock) handle. The mocks are
     # unmounted when it returns, however it exits. Omit to receive the handle
     # instead and unmount it yourself. Written last at the call site, as a
     # trailing `do` block.

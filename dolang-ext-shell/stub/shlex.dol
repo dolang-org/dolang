@@ -28,7 +28,7 @@
 # assert_eq (quote plain) plain
 # ```
 pub def quote
-  # Value to quote, converted to a string as
+  # ([`Value`](std.Value)) Value to quote, converted to a string as
   # [`std.verbatim`](std.verbatim) would.
   obj
 do
@@ -52,7 +52,7 @@ do
 # assert_eq (join ["echo", "hello world"]) "echo 'hello world'"
 # ```
 pub def join
-  # Iterable of values, each converted to a string as
+  # ([`Iterable`](std.Iterable)) Values, each converted to a string as
   # [`std.verbatim`](std.verbatim) would.
   iterable
 do

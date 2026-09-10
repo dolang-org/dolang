@@ -96,11 +96,7 @@ pub class Status: Error
   pub def body self
     throw nil
 
-  # The saved body excerpt as text.
-  #
-  # ## Returns
-  #
-  # [`Str`](std.Str).
+  # ([`Str`](std.Str)) The saved body excerpt as text.
   #
   # ## Errors
   #
@@ -163,7 +159,7 @@ pub class Event
 #   echo $response.status
 # ```
 #
-# A response is itself callable with a block, for the same effect on one the
+# A response can itself be called with a block, for the same effect on one the
 # caller already holds:
 #
 # ```
@@ -206,11 +202,7 @@ pub class Response
   pub def body self
     throw nil
 
-  # Reads the whole body as text, consuming and closing the response.
-  #
-  # ## Returns
-  #
-  # [`Str`](std.Str).
+  # ([`Str`](std.Str)) Reads the whole body as text, consuming and closing the response.
   #
   # ## Errors
   #
@@ -575,10 +567,10 @@ pub class Client
     :body = nil
     # Request body, JSON-serialized -- see [`json`](http.Client.json).
     :json = nil
-    # (iterable) Request body streamed with a newline after each element --
+    # ([`Iterable`](std.Iterable)) Request body streamed with a newline after each element --
     # see [`lines`](http.Client.lines).
     :lines = nil
-    # (iterable) Multipart form parts -- see
+    # ([`Iterable`](std.Iterable)) Multipart form parts -- see
     # [`multipart`](http.Client.multipart).
     :multipart = nil
     # ([`Dict`](std.Dict)) Request headers -- see
@@ -661,9 +653,9 @@ pub def post
   :body = nil
   # Request body, JSON-serialized.
   :json = nil
-  # (iterable) Request body streamed with a newline after each element.
+  # ([`Iterable`](std.Iterable)) Request body streamed with a newline after each element.
   :lines = nil
-  # (iterable) Multipart form parts.
+  # ([`Iterable`](std.Iterable)) Multipart form parts.
   :multipart = nil
   # ([`Dict`](std.Dict)) Request headers.
   :headers = nil

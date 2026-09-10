@@ -134,11 +134,7 @@ pub class Path
   pub def stream_type self
     throw nil
 
-  # Gets selected parts of the Windows security descriptor.
-  #
-  # ## Returns
-  #
-  # [`security.windows.SecDesc`](security.windows.SecDesc)
+  # ([`security.windows.SecDesc`](security.windows.SecDesc)) Gets selected parts of the Windows security descriptor.
   #
   # SACL access requires `SeSecurityPrivilege`.
   pub def sec_desc

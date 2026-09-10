@@ -144,7 +144,7 @@ class fails to build.
 ### `(call)` as a Class or Static Member
 
 `(call)` is the only special method that may be a class or static member. As an
-instance method it makes instances callable; as a class or static member it
+instance method it allows instances to be called; as a class or static member it
 replaces what happens when the *class* is called.
 
 Declaring it `static` gives a class a factory that subclasses do not inherit,

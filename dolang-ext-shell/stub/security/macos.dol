@@ -237,7 +237,7 @@ pub class Acl
   # evaluation order.
   pub def (init)
     self
-    # Iterable of [`Ace`](security.macos.Ace) values.
+    # ([`Iterable`](std.Iterable)) [`Ace`](security.macos.Ace) values.
     aces
   do
     throw nil
@@ -248,14 +248,10 @@ pub class Acl
   pub def aces self
     throw nil
 
-# Constructs a macOS entry from declarative arguments.
+# ([`Ace`](security.macos.Ace)) Constructs a macOS entry from declarative arguments.
 #
 # Pass exactly one of `allow:` or `deny:`. Masks and flags accept their built
 # type, one symbol, or an iterable of symbols.
-#
-# ## Returns
-#
-# [`Ace`](security.macos.Ace)
 #
 # ## Example
 #
@@ -291,11 +287,7 @@ pub def acl
 do
   throw nil
 
-# Resolves a Unix user ID to its macOS principal UUID.
-#
-# ## Returns
-#
-# [`uuid.Uuid`](uuid.Uuid)
+# ([`uuid.Uuid`](uuid.Uuid)) Resolves a Unix user ID to its macOS principal UUID.
 #
 # ## Errors
 #
@@ -313,11 +305,7 @@ pub def uuid_for_uid
 do
   throw nil
 
-# Resolves a Unix group ID to its macOS principal UUID.
-#
-# ## Returns
-#
-# [`uuid.Uuid`](uuid.Uuid)
+# ([`uuid.Uuid`](uuid.Uuid)) Resolves a Unix group ID to its macOS principal UUID.
 #
 # ## Errors
 #

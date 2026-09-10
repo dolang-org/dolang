@@ -570,7 +570,7 @@ pub class ScManager
     :access = nil
     # ([`Str`](std.Str)) Load-order group.
     :load_order_group = nil
-    # (iterable) Service or load-order-group names this service depends on.
+    # ([`Iterable`](std.Iterable)) Service or load-order-group names this service depends on.
     :dependencies = nil
     # ([`Str`](std.Str)) Account the service runs as.
     :service_start_name = nil
@@ -708,7 +708,7 @@ pub class Service
     :binary_path = nil
     # ([`Str`](std.Str)) Load-order group.
     :load_order_group = nil
-    # (iterable) Service or load-order-group names this service depends on.
+    # ([`Iterable`](std.Iterable)) Service or load-order-group names this service depends on.
     :dependencies = nil
     # ([`Str`](std.Str)) Account the service runs as.
     :service_start_name = nil

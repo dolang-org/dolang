@@ -3,11 +3,7 @@
 # These functions follow the MSVC-compatible convention used by Rust process
 # launching; they do not parse `cmd.exe` or PowerShell syntax.
 
-# Encodes an iterable of arguments as one Windows process command line.
-#
-# ## Returns
-#
-# [`Str`](std.Str)
+# ([`Str`](std.Str)) Encodes an iterable of arguments as one Windows process command line.
 #
 # ## Errors
 #
@@ -21,17 +17,13 @@
 # assert_eq (join ["program", "two words"]) r#"program "two words""#
 # ```
 pub def join
-  # Iterable of values, each converted to a string as
+  # ([`Iterable`](std.Iterable)) Values, each converted to a string as
   # [`std.verbatim`](std.verbatim) would.
   iterable
 do
   throw nil
 
-# Encodes one argument for a Windows process command line.
-#
-# ## Returns
-#
-# [`Str`](std.Str)
+# ([`Str`](std.Str)) Encodes one argument for a Windows process command line.
 #
 # ## Errors
 #

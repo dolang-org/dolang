@@ -54,11 +54,7 @@ do
       --preserve-env=$(",".join(env.keys()))
     -- $cmd ...args
 
-# Runs a verbatim command through `sudo`.
-#
-# ## Returns
-#
-# `nil`
+# (`nil`) Runs a verbatim command through `sudo`.
 #
 # ## Example
 #

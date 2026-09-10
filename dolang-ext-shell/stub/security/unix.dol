@@ -201,7 +201,7 @@ pub class Acl
   # | [`ValueError`](std.ValueError)      | Named user or group entries are present without a mask entry  |
   pub def (init)
     self
-    # Iterable of [`Ace`](security.unix.Ace) values.
+    # ([`Iterable`](std.Iterable)) [`Ace`](security.unix.Ace) values.
     aces
   do
     throw nil
@@ -212,7 +212,7 @@ pub class Acl
   pub def aces self
     throw nil
 
-# Constructs a POSIX entry from declarative arguments.
+# ([`Ace`](security.unix.Ace)) Constructs a POSIX entry from declarative arguments.
 #
 # Pass exactly one qualifier. `user_obj:`, `group_obj:`, `mask:`, and `other:`
 # take permissions directly; `user:` and `group:` take a numeric ID and accept
@@ -221,10 +221,6 @@ pub class Acl
 # Permissions may be a [`Permission`](security.unix.Permission), a permission symbol, or
 # an iterable of permission symbols.
 #
-# ## Returns
-#
-# [`Ace`](security.unix.Ace)
-#
 # ## Example
 #
 # ```
@@ -232,31 +228,32 @@ pub class Acl
 # let named = ace user: 1000 permissions: :READ:
 # ```
 pub def ace
+  # ([`Permission`](security.unix.Permission)\|[`Sym`](std.Sym)\|[`Iterable`](std.Iterable))
   # Permissions for the file-owner entry.
   :user_obj = nil
   # ([`Int`](std.Int)) User ID for a named-user entry.
   :user = nil
+  # ([`Permission`](security.unix.Permission)\|[`Sym`](std.Sym)\|[`Iterable`](std.Iterable))
   # Permissions for the file-group entry.
   :group_obj = nil
   # ([`Int`](std.Int)) Group ID for a named-group entry.
   :group = nil
+  # ([`Permission`](security.unix.Permission)\|[`Sym`](std.Sym)\|[`Iterable`](std.Iterable))
   # Permissions for the effective-rights mask entry.
   :mask = nil
+  # ([`Permission`](security.unix.Permission)\|[`Sym`](std.Sym)\|[`Iterable`](std.Iterable))
   # Permissions for the entry covering all other users.
   :other = nil
+  # ([`Permission`](security.unix.Permission)\|[`Sym`](std.Sym)\|[`Iterable`](std.Iterable))
   # Permissions for a `user:` or `group:` entry.
   :permissions = nil
 do
   throw nil
 
-# Constructs a POSIX ACL from entries and declarative entry dictionaries.
+# ([`Acl`](security.unix.Acl)) Constructs a POSIX ACL from entries and declarative entry dictionaries.
 #
 # The resulting ACL must satisfy the POSIX completeness rules documented by
 # [`Acl`](security.unix.Acl).
-#
-# ## Returns
-#
-# [`Acl`](security.unix.Acl)
 #
 # ## Example
 #
@@ -273,11 +270,7 @@ pub def acl
 do
   throw nil
 
-# Returns Unix security information captured for the active VFS context.
-#
-# ## Returns
-#
-# [`Identity`](security.unix.Identity)
+# ([`Identity`](security.unix.Identity)) Returns Unix security information captured for the active VFS context.
 #
 # ## Errors
 #
@@ -293,11 +286,7 @@ do
 pub def id()
   throw nil
 
-# Resolves a Unix user ID in the active VFS target.
-#
-# ## Returns
-#
-# [`Str`](std.Str)
+# ([`Str`](std.Str)) Resolves a Unix user ID in the active VFS target.
 #
 # ## Errors
 #
@@ -314,11 +303,7 @@ pub def user_name
 do
   throw nil
 
-# Resolves a Unix user name in the active VFS target.
-#
-# ## Returns
-#
-# [`Int`](std.Int)
+# ([`Int`](std.Int)) Resolves a Unix user name in the active VFS target.
 #
 # ## Errors
 #
@@ -332,11 +317,7 @@ pub def user_id
 do
   throw nil
 
-# Resolves a Unix group ID in the active VFS target.
-#
-# ## Returns
-#
-# [`Str`](std.Str)
+# ([`Str`](std.Str)) Resolves a Unix group ID in the active VFS target.
 #
 # ## Errors
 #
@@ -353,11 +334,7 @@ pub def group_name
 do
   throw nil
 
-# Resolves a Unix group name in the active VFS target.
-#
-# ## Returns
-#
-# [`Int`](std.Int)
+# ([`Int`](std.Int)) Resolves a Unix group name in the active VFS target.
 #
 # ## Errors
 #

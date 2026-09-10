@@ -118,7 +118,7 @@ pub class Connection
     # is data whatever it looks like. See [Parameter
     # Binding](sqlite.Statement.parameter-binding).
     sql
-    # Values filling the template's `${#...}` parameters.
+    # ([`Value`](std.Value)) Values filling the template's `${#...}` parameters.
     ...args
   do
     throw nil

@@ -32,11 +32,7 @@ pub class Uuid
   do
     throw nil
 
-  # Generates a random version 4 UUID.
-  #
-  # ## Returns
-  #
-  # `Uuid`
+  # (`Uuid`) Generates a random version 4 UUID.
   #
   # ## Example
   #

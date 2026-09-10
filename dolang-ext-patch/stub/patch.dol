@@ -130,11 +130,7 @@ pub class PatchIter: Iter
   pub def (next) self
     throw nil
 
-# Parses a patch stream.
-#
-# ## Returns
-#
-# [`PatchIter`](patch.PatchIter)
+# ([`PatchIter`](patch.PatchIter)) Parses a patch stream.
 #
 # ## Errors
 #
@@ -151,11 +147,7 @@ pub def decode
 do
   throw nil
 
-# Builds a text patch from two versions of the same content.
-#
-# ## Returns
-#
-# [`Patch`](patch.Patch)
+# ([`Patch`](patch.Patch)) Builds a text patch from two versions of the same content.
 #
 # ## Errors
 #
@@ -203,7 +195,7 @@ do
 # write output.patch (patch.encode patches)
 # ```
 pub def encode
-  # ([`Patch`](patch.Patch)\|iterable) One patch or an iterable of patches.
+  # ([`Patch`](patch.Patch)\|[`Iterable`](std.Iterable)) One patch or an iterable of patches.
   value
 do
   throw nil

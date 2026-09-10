@@ -156,11 +156,7 @@ pub def with
 do
   docker.with $image $func :cd :env :pull
 
-# Build a Docker image.
-#
-# ## Returns
-#
-# [`Image`](_container.dockman.Image)
+# ([`Image`](_container.dockman.Image)) Build a Docker image.
 #
 # ## Example
 #

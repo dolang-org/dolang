@@ -799,7 +799,7 @@ class Guest
   def probe_exec self command
     self.#exec $command stdout: $null
 
-  # The probe `probe` names, as the callable the waits below poll. It raises if
+  # The probe `probe` names, as the function the waits below poll. It raises if
   # the guest does not answer; standard error is the caller's to capture.
   #
   # | Value          | Answers when |
@@ -3216,13 +3216,9 @@ class BundleSource: Source
       memory: $manifest.memory
       vcpus: $manifest.vcpus
 
-# Creates and starts a domain, provisioning it with cloud-init from a base
+# (`Domain`) Creates and starts a domain, provisioning it with cloud-init from a base
 # `image:`, installing it from `installer:` media, or restoring it from an
 # already-provisioned `bundle:`.
-#
-# ## Returns
-#
-# `Domain`
 #
 # ## Errors
 #

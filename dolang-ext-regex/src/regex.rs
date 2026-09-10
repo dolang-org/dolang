@@ -22,7 +22,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .value("Regex", global.types.regex)
         .value("Captures", global.types.captures)
         .value("Match", global.types.match_)
-        .value("Find", global.types.find)
         .commit();
 }
 

@@ -23,11 +23,7 @@ pub class Stdin
   pub def lines self
     throw nil
 
-  # Returns a handle that yields arbitrary-sized [`Bin`](std.Bin) chunks.
-  #
-  # ## Returns
-  #
-  # [`Stdin`](shell.Stdin)
+  # ([`Stdin`](shell.Stdin)) Returns a handle that yields arbitrary-sized [`Bin`](std.Bin) chunks.
   #
   # ## Example
   #
@@ -223,7 +219,7 @@ pub class Vfs
   do
     throw nil
 
-  # Connects to a running `dolang-vfs` daemon on Unix.
+  # ([`Vfs`](shell.Vfs)) Connects to a running `dolang-vfs` daemon on Unix.
   #
   # The socket path is resolved in the active VFS context, so this can reach a
   # daemon visible only from another remote or container VFS. A direct
@@ -231,10 +227,6 @@ pub class Vfs
   #
   # The working directory in which the `dolang-vfs` process started becomes the
   # context's initial working directory.
-  #
-  # ## Returns
-  #
-  # [`Vfs`](shell.Vfs)
   #
   # ## Errors
   #
@@ -283,7 +275,7 @@ pub class Vfs
   do
     throw nil
 
-  # Launches an elevated copy of the active Windows VFS target's current
+  # ([`Vfs`](shell.Vfs)) Launches an elevated copy of the active Windows VFS target's current
   # executable.
   #
   # This can cross an existing VFS connection, such as a connection from WSL to
@@ -299,10 +291,6 @@ pub class Vfs
   # from the non-elevated caller, so console programs using inherited terminal
   # I/O may hang, fail, or produce no output. Redirected and captured output
   # uses ordinary handles and works across the elevated VFS boundary.
-  #
-  # ## Returns
-  #
-  # [`Vfs`](shell.Vfs)
   #
   # ## Example
   #
@@ -356,7 +344,7 @@ pub class Vfs
     self
     # ([`Func`](std.Func)) Function to run.
     func
-    # Additional arguments passed to `func`.
+    # ([`Value`](std.Value)) Additional arguments passed to `func`.
     ...args
   do
     throw nil
@@ -411,7 +399,7 @@ do
 pub def exec
   # ([`Str`](std.Str)|[`Path`](fs.Path)) Program to execute.
   program
-  # Program arguments.
+  # ([`Value`](std.Value)) Program arguments.
   ...args
 do
   throw nil
@@ -427,17 +415,13 @@ pub def exit
 do
   throw nil
 
-# Returns the line ending native to the current [`Vfs`](shell.Vfs) target:
+# ([`Str`](std.Str)) Returns the line ending native to the current [`Vfs`](shell.Vfs) target:
 # `"\r\n"` on Windows, `"\n"` elsewhere.
 #
 # This is a function rather than a value because the answer follows the VFS
 # target, so it is a question about the current context rather than a constant
 # of the module. Values are never terminated implicitly, so a script that wants
 # native endings asks for them by name.
-#
-# ## Returns
-#
-# [`Str`](std.Str)
 #
 # ## Example
 #
@@ -465,7 +449,7 @@ pub def vfs_exe()
 pub def with_host
   # ([`Func`](std.Func)) Function to run.
   func
-  # Additional arguments passed to `func`.
+  # ([`Value`](std.Value)) Additional arguments passed to `func`.
   ...args
 do
   throw nil

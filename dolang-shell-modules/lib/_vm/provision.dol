@@ -72,7 +72,7 @@ pub let PROVISION_SOURCE = r|
   def log message
     echo "[provision] $message"
 
-  # Reports whether a callable completed, rather than raising. A missing
+  # Reports whether a function completed, rather than raising. A missing
   # program raises `sys.NotFoundError` rather than `proc.Error` — there is no
   # process error without a process — so a probe has to catch both or the one
   # case it exists for is the one that escapes.

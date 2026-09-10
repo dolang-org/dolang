@@ -51,8 +51,7 @@ pub class Regex
   #
   # ## Returns
   #
-  # A [`Find`](regex.Find) that yields a [`Captures`](regex.Captures) for each
-  # match.
+  # An [`Iter`](std.Iter) yielding a [`Captures`](regex.Captures) for each match.
   #
   # ## Example
   #
@@ -232,8 +231,8 @@ pub class Regex
 # A successful match along with any capture groups.
 #
 # `Captures` values are returned by [`Regex.match`](regex.Regex.match) and
-# yielded by [`Find`](regex.Find). Coercing one with `str` produces the text of
-# the overall match.
+# yielded by [`Regex.find`](regex.Regex.find). Coercing one with `str` produces
+# the text of the overall match.
 pub class Captures
   # The byte offset of the end of the overall match within the haystack.
   #[getter]
@@ -245,14 +244,10 @@ pub class Captures
   pub def start self
     throw nil
 
-  # Reads a capture group by integer index or by name.
+  # ([`Match`](regex.Match)) Reads a capture group by integer index or by name.
   #
   # Index `0` is the overall match, `1` the first capture group, and so on.
   # Named groups, written `(?<name>...)`, are read by their name.
-  #
-  # ## Returns
-  #
-  # [`Match`](regex.Match)
   #
   # ## Errors
   #
@@ -310,15 +305,4 @@ pub class Match
   # The byte offset of the start of the match within the haystack.
   #[getter]
   pub def start self
-    throw nil
-
-# An iterator over all non-overlapping matches of a pattern in a string.
-#
-# `Find` values are returned by [`Regex.find`](regex.Regex.find) and implement
-# [`Iter`](std.Iter), so they can be used directly in `for` loops. Each
-# iteration yields a [`Captures`](regex.Captures) for one match.
-pub class Find: Iter
-  # Yields a [`Captures`](regex.Captures) for the next match, ending iteration
-  # once the haystack holds no more.
-  pub def (next) self
     throw nil

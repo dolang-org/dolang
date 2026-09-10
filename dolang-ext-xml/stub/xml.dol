@@ -135,7 +135,7 @@ pub class Node
     :namespace = nil
     # Value returned when absent.
     :default = nil
-    # Callable evaluated when absent.
+    # Function evaluated when absent.
     :else = nil
   do
     throw nil

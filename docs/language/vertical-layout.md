@@ -210,13 +210,13 @@ assert_eq $all [1, 2, 3, 4, 5, 6]
 
 The behavior of the spread depends on the context:
 
-| Context    | Spread input                        | Behavior                                                                                       |
-| ---------- | ----------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Arguments  | Iterable                            | Positional arguments                                                                           |
-| Arguments  | Dict-like object or `kv()` iterator | Mixed arguments. Monotonic integer keys starting from `0` are positional, symbol keys are keys |
-| Array      | Iterable                            | Expanded as individual items in place                                                          |
-| Dictionary | Iterable                            | Items assigned incrementing integer keys                                                       |
-| Dictionary | Dict-like object or `kv()` iterator | Key/value pairs, preserving ordering and multiplicity                                          |
+| Context    | Spread input                                       | Behavior                                                                                       |
+| ---------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Arguments  | [`Iterable`](std.Iterable)                         | Positional arguments                                                                           |
+| Arguments  | Dict-like object or [`Iter`](std.Iter) from `kv()` | Mixed arguments. Monotonic integer keys starting from `0` are positional, symbol keys are keys |
+| Array      | [`Iterable`](std.Iterable)                         | Expanded as individual items in place                                                          |
+| Dictionary | [`Iterable`](std.Iterable)                         | Items assigned incrementing integer keys                                                       |
+| Dictionary | Dict-like object or [`Iter`](std.Iter) from `kv()` | Key/value pairs, preserving ordering and multiplicity                                          |
 
 Note that a dictionary is only produced if at least one static key exists in
 addition to any spreads; otherwise, an array results.

@@ -126,12 +126,8 @@ pub class AccessMask
   do
     throw nil
 
-  # Builds a mask from a native integer, preserving every bit including ones
+  # (`AccessMask`) Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
-  #
-  # ## Returns
-  #
-  # `AccessMask`.
   #
   # ## Example
   #
@@ -152,11 +148,7 @@ pub class AccessMask
   pub def int self
     throw nil
 
-  # Tests whether every bit a symbol stands for is set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool).
+  # ([`Bool`](std.Bool)) Tests whether every bit a symbol stands for is set.
   #
   # ## Example
   #
@@ -392,14 +384,10 @@ pub class Key
   do
     throw nil
 
-  # Reads a registry link without following it.
+  # ([`LinkTarget`](winreg.LinkTarget)) Reads a registry link without following it.
   #
   # An alias root such as `:CLASSES_ROOT:` or `:CURRENT_CONFIG:` may report
   # the physical `:LOCAL_MACHINE:` or `:USERS:` path backing it.
-  #
-  # ## Returns
-  #
-  # [`LinkTarget`](winreg.LinkTarget).
   #
   # ## Errors
   #
@@ -424,14 +412,10 @@ pub class Key
   do
     throw nil
 
-  # Reads parts of the key's Windows security descriptor through its open
+  # ([`security.windows.SecDesc`](security.windows.SecDesc)) Reads parts of the key's Windows security descriptor through its open
   # handle.
   #
   # The key must already hold the rights the requested components need.
-  #
-  # ## Returns
-  #
-  # [`security.windows.SecDesc`](security.windows.SecDesc).
   #
   # ## Example
   #
@@ -483,7 +467,7 @@ pub class Key
     # | Do type                          | Kind                                     |
     # | -------------------------------- | ---------------------------------------- |
     # | [`Str`](std.Str)           | `:SZ:`                                   |
-    # | Iterable of [`Str`](std.Str) | `:MULTI_SZ:`                           |
+    # | [`Iterable`](std.Iterable) of [`Str`](std.Str) | `:MULTI_SZ:`            |
     # | [`Bool`](std.Bool)         | `:DWORD:`, with data `0` or `1`          |
     # | [`Int`](std.Int)           | `:DWORD:` if it fits in 32 bits, else `:QWORD:` |
     # | [`Bin`](std.Bin)           | `:BINARY:`                               |
