@@ -55,44 +55,13 @@ process.
 
 ## Quick Look
 
-**Shell-like commands:**
+<p align="center">
+  <img src="docs/cow.png" alt="Do code in Visual Studio Code" width="720">
+</p>
 
-```
-run gcc -o main main.c -Wall -Werror
-```
-
-**External programs as functions:**
-
-```
-let :uname :git ... = run
-
-let kernel = sub do uname -r
-let branch = sub do git rev-parse --abbrev-ref HEAD
-echo "Building on $kernel, branch $branch"
-```
-
-**Structured data and code together:**
-
-```
-import progress podman
-
-let PACKAGES = $
-  - gcc
-  - node
-
-progress.with do podman.build
-  from: fedora:42
-  run: do progress.show
-    total: $PACKAGES.len
-    message: installing packages
-    icon: 📦
-    do |i|
-      for pkg = PACKAGES
-        i.update message: "installing $pkg"
-        run dnf install -y $pkg
-        i.delta()
-  tag: my-image
-```
+<p align="center">
+  <img src="docs/cow-run.webp" alt="cow.dol running in a terminal" width="720">
+</p>
 
 ## Included Modules
 
