@@ -1,4 +1,6 @@
-# Do Language
+<p align="center">
+  <img src="docs/dot-text.png" alt="Do Language mascot and wordmark" width="440">
+</p>
 
 Do is a scripting language for cross-platform CI/CD, DevOps, and automation. It
 combines shell-like commands and indentation-oriented data declaration with
