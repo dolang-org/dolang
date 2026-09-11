@@ -1,8 +1,10 @@
+import atexit
 import json
 import os
 import subprocess
+import threading
 from bisect import bisect_right
-from typing import Any, Dict, Iterator, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from pygments.lexer import Lexer
 from pygments.token import (
@@ -18,6 +20,86 @@ from pygments.token import (
 )
 
 
+class _CompileServer:
+    """A persistent `dolang -m compile server` process.
+
+    Shared by every `DoLexer` instance that requests the same command --
+    MkDocs may construct several lexer instances over one build, and each
+    renders many code fences, so one live process serves all of them instead
+    of every fence separately paying `dolang`'s extension-loading startup
+    cost (the whole reason this class exists; see `-m compile server`'s doc
+    comment in `dolang-shell/entrypoint/compile.dol`).
+    """
+
+    _instances: Dict[Tuple[str, ...], "_CompileServer"] = {}
+    _instances_lock = threading.Lock()
+
+    def __init__(self, command: List[str]):
+        self._command = command
+        self._proc: Optional[subprocess.Popen] = None
+        self._lock = threading.Lock()
+
+    @classmethod
+    def get(cls, command: List[str]) -> "_CompileServer":
+        key = tuple(command)
+        with cls._instances_lock:
+            server = cls._instances.get(key)
+            if server is None:
+                server = cls(command)
+                cls._instances[key] = server
+            return server
+
+    @classmethod
+    def _shutdown_all(cls) -> None:
+        with cls._instances_lock:
+            servers = list(cls._instances.values())
+        for server in servers:
+            server._shutdown()
+
+    def _shutdown(self) -> None:
+        with self._lock:
+            if self._proc is not None and self._proc.poll() is None:
+                self._proc.terminate()
+            self._proc = None
+
+    def _start(self) -> subprocess.Popen:
+        return subprocess.Popen(
+            self._command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def request(self, payload: dict) -> dict:
+        """Sends one JSON request line, returns the decoded JSON response.
+
+        The process is started lazily on first use. If it has died (crashed,
+        or killed by something else entirely) it's restarted once and the
+        request retried, so a single bad process doesn't wedge every
+        remaining code block in the build.
+        """
+        line = (json.dumps(payload) + "\n").encode("utf-8")
+        with self._lock:
+            for attempt in range(2):
+                if self._proc is None or self._proc.poll() is not None:
+                    self._proc = self._start()
+                try:
+                    self._proc.stdin.write(line)
+                    self._proc.stdin.flush()
+                    response_line = self._proc.stdout.readline()
+                    if not response_line:
+                        raise BrokenPipeError("dolang compile server closed its output")
+                    return json.loads(response_line.decode("utf-8"))
+                except (BrokenPipeError, OSError):
+                    self._proc = None
+                    if attempt == 1:
+                        raise
+        raise AssertionError("unreachable")
+
+
+atexit.register(_CompileServer._shutdown_all)
+
+
 class DoLexer(Lexer):
     name = "Do"
     aliases = ["dolang", "dol"]
@@ -29,26 +111,30 @@ class DoLexer(Lexer):
         Initialize the lexer.
 
         Options:
-            json_file: Path to JSON file containing dolang-highlight output
-            highlighter_command: Command to run for highlighting (list of strings).
-                Defaults to DOLANG_HIGHLIGHT env var if set, otherwise dolang-highlight
+            json_file: Path to JSON file containing `dolang -m compile extract` output.
+                Bypasses the compile server entirely.
+            highlighter_command: The one-shot `dolang -m compile extract` command (list of
+                strings). Defaults to DOLANG_HIGHLIGHT env var if set, otherwise
+                "dolang -m compile extract". The persistent server command is derived from
+                this by replacing a trailing "extract" with "server" (or appending "server"
+                if it doesn't end in "extract").
         """
         super().__init__(**options)
         self.json_file = options.get("json_file")
         self.highlighter_command = options.get("highlighter_command")
-        self._tokens = None
+        self._payload = None
 
     def get_tokens_unprocessed(self, text: str) -> Iterator[Tuple[int, Token, str]]:
-        # Load JSON token data (will execute highlighter if needed)
-        json_tokens = self._load_json_tokens(text)
+        # Load the extractor payload (will execute the extractor if needed)
+        payload = self._load_payload(text)
 
-        if not json_tokens or not text:
-            # Fallback to text if no JSON data or source text available
+        if not payload or not text:
+            # Fallback to text if no payload or source text available
             yield 0, Text, text
             return
 
         # Process and sort tokens by start position
-        processed_tokens = self._process_tokens(json_tokens, text)
+        processed_tokens = self._process_tokens(payload, text)
 
         # Generate complete token stream with gaps filled as Text
         current_pos = 0
@@ -74,43 +160,53 @@ class DoLexer(Lexer):
     # Lower number = higher priority (selected when multiple tokens at same offset)
     _TOKEN_PRIORITY_TABLE = {
         # Regular token kinds (priority 0 = highest)
-        "comment": 0,
-        "constant": 0,
-        "delim": 0,
-        "escape": 0,
-        "field": 0,
-        "key": 1,
-        "module_name": 0,
-        "module_item": 1,
-        "keyword": 0,
-        "literal": 0,
-        "number": 0,
-        "operand": 0,
-        "string_delim": 0,
-        "variable": 0,
-        "sigil": 0,
-        # Diagnostic kinds
-        "error": 100,  # Low priority - overshadowed by regular tokens
-        "warning": 100,  # Low priority - filtered out anyway, but explicit here
+        "COMMENT": 0,
+        "CONSTANT": 0,
+        "DELIM": 0,
+        "ESCAPE": 0,
+        "FIELD": 0,
+        "KEY": 1,
+        "MODULE_NAME": 0,
+        "MODULE_ITEM": 1,
+        "KEYWORD": 0,
+        "LITERAL": 0,
+        "NUMBER": 0,
+        "OPERATOR": 0,
+        "STRING_DELIM": 0,
+        "VARIABLE": 0,
+        "SIGIL": 0,
+        # Diagnostic severities, synthesized as low-priority candidates
+        "ERROR": 100,  # Low priority - overshadowed by regular tokens
+        "WARNING": 100,  # Low priority - filtered out anyway, but explicit here
     }
 
     def _get_token_priority(self, kind: str) -> int:
         """Get priority for token kind. Lower number = higher priority."""
         return self._TOKEN_PRIORITY_TABLE.get(kind, 0)
 
-    def _process_tokens(self, json_tokens: list, source_text: str) -> list:
+    def _process_tokens(self, payload: dict, source_text: str) -> list:
         offset_map = self._build_offset_map(source_text)
+        nodes = payload.get("nodes", [])
+
+        # Diagnostics ride through the same span/priority pipeline as tokens,
+        # as low-priority candidates: a real token at the same span always
+        # wins, but an uncovered error span still surfaces (as Token.Error,
+        # logged below) rather than silently vanishing.
+        candidates = list(payload.get("tokens", [])) + [
+            {"kind": d.get("severity"), "span": d.get("span")}
+            for d in payload.get("diagnostics", [])
+        ]
 
         # First, collect all valid tokens with their metadata
         token_candidates = []
 
-        for token_info in json_tokens:
-            span = token_info.get("span", {})
+        for token_info in candidates:
+            span = token_info.get("span") or {}
             start_pos = span.get("start", {})
             end_pos = span.get("end", {})
 
-            start_offset = start_pos.get("offset", 0)
-            end_offset = end_pos.get("offset", start_offset)
+            start_offset = start_pos.get("byte_offset", 0)
+            end_offset = end_pos.get("byte_offset", start_offset)
 
             # Skip invalid spans
             if start_offset >= end_offset or start_offset < 0:
@@ -138,7 +234,7 @@ class DoLexer(Lexer):
             token_type = self._map_token_type(token_info)
 
             # Apply node/context modifiers for richer highlighting
-            token_type = self._apply_modifiers(token_type, token_info)
+            token_type = self._apply_modifiers(token_type, token_info, nodes)
 
             token_candidates.append((start_index, priority, token_type, token_text))
 
@@ -193,84 +289,89 @@ class DoLexer(Lexer):
 
         return char_offsets[index]
 
-    def _load_json_tokens(self, text: str) -> list:
-        if self._tokens is not None:
-            return self._tokens
+    def _load_payload(self, text: str) -> dict:
+        if self._payload is not None:
+            return self._payload
 
         if self.json_file:
             # Load from file (existing behavior)
             with open(self.json_file, "r", encoding="utf-8") as f:
-                tokens = json.load(f)
+                payload = json.load(f)
         else:
-            # Execute dolang-highlight with source text
-            tokens = self._execute_highlighter(text)
+            payload = self._request_from_server(text)
 
-        self._tokens = tokens
-        return tokens
+        self._payload = payload
+        return payload
 
-    def _execute_highlighter(self, source_text: str) -> list:
+    def _base_command(self) -> List[str]:
         if self.highlighter_command:
-            command = self.highlighter_command
-        elif os.environ.get("DOLANG_HIGHLIGHT"):
-            command = os.environ["DOLANG_HIGHLIGHT"].split()
-        else:
-            command = ["dolang-highlight"]
+            return list(self.highlighter_command)
+        if os.environ.get("DOLANG_HIGHLIGHT"):
+            return os.environ["DOLANG_HIGHLIGHT"].split()
+        return ["dolang", "-m", "compile", "extract"]
 
-        try:
-            result = subprocess.run(
-                command,
-                input=source_text.encode("utf-8"),
-                capture_output=True,
-                check=True,
-            )
-            return json.loads(result.stdout.decode("utf-8"))
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"dolang-highlight failed: {e.stderr.decode('utf-8')}")
+    def _server_command(self) -> List[str]:
+        base = self._base_command()
+        if base and base[-1] == "extract":
+            return base[:-1] + ["server"]
+        return base + ["server"]
+
+    def _request_from_server(self, source_text: str) -> dict:
+        server = _CompileServer.get(self._server_command())
+        response = server.request({"source": source_text})
+        if "error" in response:
+            raise RuntimeError(f"dolang compile server failed: {response['error']}")
+        return response
 
     def _map_token_type(self, token_info: Dict[str, Any]) -> Token:
         kind = token_info.get("kind", "text")
 
         # Core token type mappings
         token_mapping = {
-            "keyword": Keyword,
-            "variable": Name.Variable,
-            "sigil": Name.Variable,
-            "number": Number,
-            "literal": String,
-            "comment": Comment,
-            "operand": Operator,
-            "string_delim": String.Double,
-            "delim": Punctuation,
-            "constant": Name.Constant,
-            "escape": String.Escape,
-            "field": Name.Variable,
-            "key": Name.Property,
-            "module_name": Name.Namespace,
-            "module_item": Name.Property,
-            "error": Token.Error,
+            "KEYWORD": Keyword,
+            "VARIABLE": Name.Variable,
+            "SIGIL": Name.Variable,
+            "NUMBER": Number,
+            "LITERAL": String,
+            "COMMENT": Comment,
+            "OPERATOR": Operator,
+            "STRING_DELIM": String.Double,
+            "DELIM": Punctuation,
+            "CONSTANT": Name.Constant,
+            "ESCAPE": String.Escape,
+            "FIELD": Name.Variable,
+            "KEY": Name.Property,
+            "MODULE_NAME": Name.Namespace,
+            "MODULE_ITEM": Name.Property,
+            "ERROR": Token.Error,
         }
 
         base_token = token_mapping.get(kind, Text)
         return base_token
 
-    def _apply_modifiers(self, base_token: Token, token_info: Dict[str, Any]) -> Token:
-        node = token_info.get("node")
+    def _apply_modifiers(
+        self, base_token: Token, token_info: Dict[str, Any], nodes: List[dict]
+    ) -> Token:
+        ref = token_info.get("ref")
+        node_kind = (
+            nodes[ref]["kind"] if ref is not None and 0 <= ref < len(nodes) else None
+        )
         context = token_info.get("context")
 
         # What the name refers to, if it refers to a declaration
-        if node == "class":
+        if node_kind == "Class":
             base_token = Name.Class
-        elif node in ("function", "method", "special_method"):
+        elif node_kind in ("Function", "Method", "SpecialMethod"):
             base_token = Name.Function
-        elif node in ("param", "self_param"):
+        elif node_kind in ("PositionalParam", "KeyParam", "RestParam", "SelfParam"):
             base_token = Name.Variable.Magic
-        elif node == "import_module":
+        elif node_kind == "ImportModule":
             base_token = Name.Namespace
-        elif node in ("prelude_item", "prelude_module"):
+        elif node_kind in ("PreludeItem", "PreludeModule"):
             base_token = Name.Builtin
 
         # Context-based modifiers
-        if context == "call":
+        if context == "CALL":
             base_token = Name.Function
 
         return base_token

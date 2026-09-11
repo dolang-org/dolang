@@ -23,8 +23,7 @@ Core crates:
 
 Tooling: **dolang-shell** (CLI/REPL), **dolang-lsp** (LSP server)
 
-Internal support crates: **dolang-private-build**, **dolang-private-test**,
-**dolang-private-highlight**
+Internal support crates: **dolang-private-build**, **dolang-private-test**
 
 Extensions (`dolang-ext-*`): registered via the `extension!` macro, linked in
 via `linkme`. Each crate name describes its domain (shell, http, json, sqlite,

@@ -1,0 +1,523 @@
+# Compiler tooling: `dolang -m compile extract` describes a Do source file as
+# JSON, for consumers such as the MkDocs syntax lexer and the mkdocstrings
+# API-reference handler.
+
+import args compile json shell
+  fs:
+    - Path
+
+let PRELUDE_ITEMS = Set $
+  - getter
+  - class
+  - static
+
+# One endpoint of a source span.
+def pos_json pos
+  $
+    line: $pos.line
+    column: $pos.column
+    byte_offset: $pos.byte_offset
+
+# Where a name is written.
+def span_json span
+  $
+    start: (pos_json span.start)
+    end: (pos_json span.end)
+
+# A [`Span`](compile.Span) as JSON, or `nil`.
+def span_json_opt span
+  if (span == nil)
+    nil
+  else
+    span_json $span
+
+# A value that is either a [`Span`](compile.Span) (source text) or a
+# [`Str`](std.Str) (a prelude binding, which has none), normalized to JSON.
+def span_or_str v
+  if (v == nil)
+    nil
+  else if (type(v, compile.Span))
+    span_json $v
+  else
+    v
+
+# Node kind name, matching `NodeMarker::NAME` in dolang-ext-compile.
+let KIND_NAMES = $
+  $compile.Root: "Root"
+  $compile.Class: "Class"
+  $compile.Function: "Function"
+  $compile.Method: "Method"
+  $compile.SpecialMethod: "SpecialMethod"
+  $compile.Field: "Field"
+  $compile.Bind: "Bind"
+  $compile.SelfParam: "SelfParam"
+  $compile.ImportModule: "ImportModule"
+  $compile.ImportItem: "ImportItem"
+  $compile.PreludeModule: "PreludeModule"
+  $compile.PreludeItem: "PreludeItem"
+  $compile.PositionalParam: "PositionalParam"
+  $compile.KeyParam: "KeyParam"
+  $compile.RestParam: "RestParam"
+  $compile.Lambda: "Lambda"
+  $compile.If: "If"
+  $compile.Else: "Else"
+  $compile.While: "While"
+  $compile.For: "For"
+  $compile.Try: "Try"
+  $compile.Catch: "Catch"
+  $compile.Finally: "Finally"
+  $compile.ForElem: "ForElem"
+  $compile.IfElem: "IfElem"
+  $compile.Decorator: "Decorator"
+  $compile.Break: "Break"
+  $compile.Continue: "Continue"
+  $compile.Return: "Return"
+
+# A node reference as a `nodes` array index, or `nil`.
+def node_ref id_to_index id
+  if (id == nil)
+    nil
+  else
+    id_to_index.get $id default: nil
+
+# One entry of a `Class` node's `supers`.
+def super_json id_to_index s
+  $
+    span: (span_json s.span)
+    target: (node_ref id_to_index s.target)
+
+# One `nodes` entry. Fields a node's concrete kind doesn't expose (see the
+# conditional getter registration in `NodeObject::build`, dolang-ext-compile)
+# are absent from unpacking, so each is bound with a `nil` default here rather
+# than tracked separately per kind.
+def node_json id_to_index node
+  bind node
+    :name = nil
+    :is_pub = nil
+    :default = nil
+    :key = nil
+    :module = nil
+    :item = nil
+    :target = nil
+    :supers = nil
+    ...
+  $
+    kind: (KIND_NAMES.get (type node))
+    span: (span_json node.span)
+    parent: (node_ref id_to_index node.parent)
+    doc: (span_json_opt node.doc)
+    if (name != nil)
+      name: (span_or_str name)
+    if (is_pub != nil)
+      is_pub: $is_pub
+    if (default != nil)
+      default: (span_json(default))
+    if (key != nil)
+      key: (span_json(key))
+    if (module != nil)
+      module: (span_or_str module)
+    if (item != nil)
+      item: (span_or_str item)
+    if (target != nil)
+      target: (node_ref id_to_index target)
+    if (supers != nil)
+      supers: [...supers.map do |s| (super_json id_to_index s)]
+
+# One `tokens` entry.
+def token_json id_to_index token
+  $
+    kind: $token.kind
+    span: (span_json token.span)
+    ref: (node_ref id_to_index token.node)
+    context: $token.context
+
+def annotation_json a
+  $
+    kind: $a.kind
+    span: (span_json a.span)
+    message: $a.message
+
+def note_json n
+  $
+    kind: $n.kind
+    message: $n.message
+
+def patch_json p
+  $
+    span: (span_json p.span)
+    message: $p.message
+    sub: $p.sub
+
+# One `diagnostics` entry: the full projection the compiler reports, not just
+# a severity/span pair.
+def diagnostic_json diag
+  $
+    severity: $diag.severity
+    message: $diag.message
+    span: (span_json diag.span)
+    annotations: [...diag.annotations.map(annotation_json)]
+    notes: [...diag.notes.map(note_json)]
+    patches: [...diag.patches.map(patch_json)]
+
+# Walks `unit.nodes()` once, building the `nodes` JSON array alongside the
+# NodeId -> array-index map (used to resolve `parent`/`target`/`supers` node
+# references and `tokens[].ref`) and a parent -> children map, both reused by
+# the `--doc` cooked projection so it never re-walks the tree.
+class Index
+  field id_to_index nodes_json children by_id
+
+  def (init) self unit
+    self.#id_to_index = {}
+    self.#nodes_json = []
+    self.#children = {}
+    self.#by_id = {}
+    for id node = unit.nodes()
+      self.#id_to_index[id] = self.#nodes_json.len
+      self.#by_id[id] = node
+      self.#nodes_json.push (node_json self.#id_to_index node)
+      let parent = node.parent
+      if (parent != nil)
+        if !(self.#children.contains parent)
+          self.#children[parent] = []
+        self.#children[parent].push $node
+    for group = self.#children.values()
+      group.sort key: (do |node| node.span.start.byte_offset)
+
+  pub def nodes_json self
+    self.#nodes_json
+
+  pub def id_to_index self
+    self.#id_to_index
+
+  # The root [`compile.Root`](compile.Root) node ID.
+  pub def root self
+    let id _node = self.#by_id.find do |pair| type $pair[1] $compile.Root
+    id
+
+  # The nodes belonging to one declaration, in source order.
+  pub def own self id
+    self.#children.get $id default: []
+
+# Whether one of a declaration's own nodes is a decorator resolving to `target`.
+def decorated own target
+  if (target == nil)
+    return false
+  own.any do |child|
+    (type(child, compile.Decorator) && child.target == target)
+
+# The prelude bindings whose presence as a decorator means something here.
+def prelude_items unit
+  $
+    for id node = unit.nodes()
+      if (type node compile.PreludeItem && node.module == "std" && PRELUDE_ITEMS.contains node.item)
+        $node.item: $id
+
+# One comment line, with its terminator, indentation and marker removed.
+def doc_line line
+  line.trim()[1..].without_prefix " "
+
+# The documented declarations of one source file, described from an
+# already-built [`Index`](#Index) rather than re-walking `unit.nodes()`.
+class Document
+  field src module all index
+  field getter class_target static_target
+  field members entities
+
+  def (init) self src module all index
+    self.#src = src
+    self.#module = module
+    self.#all = all
+    self.#index = index
+
+  # The whole cooked-documentation projection, in the shape the handler and
+  # the LSP doc index consume.
+  pub def result self unit path
+    let decorators = prelude_items $unit
+    self.#getter = decorators.get "getter" default: nil
+    self.#class_target = decorators.get "class" default: nil
+    self.#static_target = decorators.get "static" default: nil
+    self.#members = {}
+    self.#entities = []
+    self.#walk $unit
+    $
+      source: $path
+      module: $self.#module
+      doc: (self.#doc_of(unit.node(self.#index.root())))
+      entities: $self.#entities
+
+  def walk self unit
+    let dispatch = $
+      $compile.Class: $self.#class_entry
+      $compile.Function: $self.#function_entry
+      $compile.Bind: $self.#value_entry
+      $compile.ImportModule: $self.#import_module_entry
+      $compile.ImportItem: $self.#import_item_entry
+      $compile.Field: $self.#field_member
+      $compile.Method: $self.#method_member
+      $compile.SpecialMethod: $self.#special_member
+    let nodes = [...unit.nodes()]
+    nodes.sort key: do |pair| pair[1].span.start.byte_offset
+    for id node = nodes
+      if let handler = dispatch.get (type node) default: nil
+        handler(id, node)
+
+  def text self span
+    self.#src[span.start.byte_offset..span.end.byte_offset]
+
+  def doc_of self node
+    if (node == nil || node.doc == nil)
+      return nil
+    ("\n".join $ self.#text(node.doc).split("\n").map(doc_line)).trim()
+
+  def own self id
+    self.#index.own $id
+
+  def included self is_pub
+    (is_pub || self.#all)
+
+  def scope self id
+    let own = self.#own(id)
+    if decorated(own, self.#class_target)
+      "class"
+    else if decorated(own, self.#static_target)
+      "static"
+    else
+      "instance"
+
+  def param_info self child
+    if (type(child, compile.PositionalParam))
+      [self.#text(child.name), child.default != nil]
+    else if (type(child, compile.KeyParam))
+      [":$(self.#text(child.key))", child.default != nil]
+    else if (type(child, compile.RestParam))
+      let bound = if (child.name == nil)
+        ""
+      else
+        self.#text(child.name)
+      ["...$bound", false]
+    else
+      nil
+
+  def params self id
+    let result = []
+    for child = self.#own(id)
+      let info = self.#param_info $child
+      if (info == nil)
+        continue
+      let name optional = info
+      let param = $
+        name: $name
+        optional: $optional
+        doc: (self.#doc_of(child))
+      result.push $param
+    result
+
+  def supers self node
+    [...node.supers.map do |s| self.#text(s.span)]
+
+  def add_member self node member
+    let list = self.#members.get $node.parent else: do return
+    list.push $member
+
+  def class_entry self id node
+    if !self.#included(node.is_pub)
+      return
+    let list = []
+    self.#members[id] = list
+    self.#entities.push $
+      kind: "class"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      span: (span_json(node.name))
+      doc: (self.#doc_of(node))
+      supers: (self.#supers(node))
+      members: $list
+
+  def function_entry self id node
+    if !self.#included(node.is_pub)
+      return
+    self.#entities.push $
+      kind: "function"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      span: (span_json(node.name))
+      doc: (self.#doc_of(node))
+      params: (self.#params(id))
+
+  def value_entry self _id node
+    if (node.parent != self.#index.root() || !self.#included(node.is_pub))
+      return
+    self.#entities.push $
+      kind: "value"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      span: (span_json(node.name))
+      doc: (self.#doc_of(node))
+
+  def import_module_entry self _id node
+    if !self.#included(node.is_pub)
+      return
+    self.#entities.push $
+      kind: "import_module"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      module: (self.#text(node.module))
+      doc: (self.#doc_of(node))
+
+  def import_item_entry self _id node
+    if !self.#included(node.is_pub)
+      return
+    self.#entities.push $
+      kind: "import_item"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      module: (self.#text(node.module))
+      item: (self.#text(node.item))
+      doc: (self.#doc_of(node))
+
+  def field_member self id node
+    if !self.#included(node.is_pub)
+      return nil
+    self.#add_member $node $
+      kind: "field"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      span: (span_json(node.name))
+      doc: (self.#doc_of(node))
+      scope: (self.#scope(id))
+
+  def method_member self id node
+    if self.#included(node.is_pub)
+      self.#method_entry $id $node $node.is_pub false
+
+  def special_member self id node
+    self.#method_entry $id $node true true
+
+  def method_entry self id node is_pub special
+    self.#add_member $node $
+      if decorated(self.#own(id), self.#getter)
+        kind: "field"
+        name: (self.#text(node.name))
+        pub: $is_pub
+        span: (span_json(node.name))
+        doc: (self.#doc_of(node))
+        scope: (self.#scope(id))
+      else
+        kind: "method"
+        name: (self.#text(node.name))
+        pub: $is_pub
+        special: $special
+        span: (span_json(node.name))
+        doc: (self.#doc_of(node))
+        scope: (self.#scope(id))
+        params: (self.#params(id))
+
+# Describes one source. Returns `[true, result]` on success, or
+# `[false, diagnostics]` when --doc was requested but the source didn't
+# compile cleanly -- shared between the one-shot CLI and the server, which
+# each catch that failure and render it their own way (a terminal-friendly
+# render vs a JSON error field).
+#
+# The raw dump is best-effort: a source riddled with errors (a doc-comment
+# code fence naming things that don't exist, a file mid-edit) still gets
+# whatever nodes/tokens the compiler could recover, with its diagnostics
+# reported alongside them. Only the cooked --doc projection can't tolerate
+# this: a description built from a file that did not compile is missing
+# whatever the compiler could not read, and nothing downstream can tell that
+# from a file that simply declares less -- so it is not written at all.
+def build_extract source display_path module doc all
+  let unit = compile.compile $display_path $source recover: true document: true
+  let diagnostics = [...unit.diagnostics()]
+  if (doc && diagnostics.any do |diag| (diag.severity == :ERROR:))
+    throw std.RuntimeError ("\n".join $ diagnostics.map do |diag| diag.render())
+  let index = Index $unit
+  let id_to_index = index.id_to_index()
+  $
+    source:
+      path: $display_path
+      module: $module
+    nodes: $index.nodes_json()
+    tokens:
+      for token = unit.tokens()
+        (token_json id_to_index token)
+    diagnostics:
+      for diag = diagnostics
+        (diagnostic_json diag)
+    if doc
+      doc: $Document(source, module, all, index).result(unit, display_path)
+
+def extract p
+  let :doc :module :all :path ... = p.extract
+  let source = if (path == nil)
+    shell.stdin.read()
+  else
+    Path(path).read()
+  let display_path = (path || "<stdin>")
+  let result = try
+    build_extract $source $display_path $module $doc $all
+  catch std.RuntimeError: e
+    echo $e
+    shell.exit 1
+  put $ json.encode $result indent: 2
+
+# One `server` request/response cycle: the extraction (matching `extract`'s
+# output) on success, or `{error: <message>}` on failure -- a malformed
+# request and a source that failed --doc are indistinguishable to a client,
+# and both just mean "this one didn't work, keep the connection".
+def serve_line line
+  try
+    # JSON object keys decode as `Str`, so the pattern below matches them as
+    # quoted (`Str`) keys rather than bareword (`Sym`) ones.
+    bind json.decode(line)
+      "source": source
+      "path": path = nil
+      "module": module = nil
+      "doc": doc = false
+      "all": all = false
+    build_extract $source (path || "<server>") $module $doc $all
+  catch e
+    $
+      error: "$e"
+
+# Reads newline-delimited JSON extraction requests from stdin, writing one
+# newline-delimited JSON response per request to stdout, flushed immediately
+# so a client reading line-by-line never blocks waiting for more input to
+# arrive. Requests are the same fields as `extract`'s flags, plus `source`
+# (the text to compile -- there is no file to read `path` from; `path` is
+# only used for diagnostics and the output's `source.path`):
+#
+# ```
+# {"source": "let x = 1", "path": "example.dol", "doc": false, "module": null, "all": false}
+# ```
+#
+# Meant for a client that would otherwise shell out to `extract` once per
+# source and pay `dolang`'s extension-loading startup cost every time (the
+# MkDocs syntax lexer, for one) -- one process serves any number of requests
+# instead.
+def serve()
+  for line = shell.stdin.chomp()
+    if (line.trim() == "")
+      continue
+    put "$(json.encode(serve_line(line)))\n"
+    shell.stdout.flush()
+
+args.with
+  help: Describe a Do source file's compiler output as JSON.
+  - cmd: extract
+    help: Dump raw compiler nodes, tokens, and diagnostics, optionally with a cooked documentation projection.
+    - flag: doc
+      help: Also emit the cooked documentation projection (module doc + public entities)
+    - opt: module
+      default: nil
+      help: Module name recorded in the output
+    - flag: all
+      help: With --doc, include declarations that are not `pub`
+    - arg: path
+      default: nil
+      help: Source file; standard input is read when omitted
+    do |p|
+      extract $p
+  - cmd: server
+    help: Serve newline-delimited JSON extraction requests from stdin until stdin closes.
+    do |_p|
+      serve()

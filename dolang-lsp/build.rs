@@ -11,6 +11,14 @@ use std::{collections::HashMap, env, fmt::Write as _, fs, path::PathBuf};
 
 mod doc_markdown;
 
+// `dolang -m compile extract --doc` nests the cooked documentation
+// projection this build script wants under "doc", alongside the raw
+// nodes/tokens/diagnostics dump it doesn't.
+#[derive(serde::Deserialize)]
+struct ExtractJson {
+    doc: ModuleJson,
+}
+
 #[derive(serde::Deserialize)]
 struct ModuleJson {
     module: String,
@@ -83,8 +91,9 @@ fn collect_rows(dir: &str) -> Vec<Row> {
         }
         let text = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-        let module: ModuleJson = serde_json::from_str(&text)
-            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()));
+        let module: ModuleJson = serde_json::from_str::<ExtractJson>(&text)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
+            .doc;
         modules.insert(module.module.clone(), module);
     }
     for module in modules.values() {

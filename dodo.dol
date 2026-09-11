@@ -18,13 +18,11 @@ let MIRI_CRATES = $
 
 let COV_IGNORE = $
   - dolang-private-util/src/hashbrown
-  - dolang-private-highlight
   - dolang-private-build
   - dolang-private-test
   - dolang-private-polyfill
 
 let MKDOCS_BINS = $
-  - dolang-highlight
   - dolang
 
 # Module search directories for the `do` mkdocstrings handler. This is the
@@ -278,14 +276,18 @@ def extract_doc_json spec out_dir
   let workers = sys.cpu_info().logical_count
   strand.pool $workers $collect_doc_jobs() do |job|
     let :name :path = job
-    run (spec.bin "dolang") -m doc --module $name $path stdout: (out_dir / "$name.json")
+    run (spec.bin "dolang") -m compile extract --doc --module $name $path stdout: (out_dir / "$name.json")
 
 # Extracts the JSON cache and regenerates the docs/api page tree from it.
+#
+# `dolang -m compile extract --doc` nests the cooked documentation projection
+# under "doc" alongside the raw nodes/tokens/diagnostics dump; only the
+# former is relevant here, so it's unwrapped once when the cache is loaded.
 def extract_docs out_dir
   extract_doc_json $native $out_dir
   MKDOCS_API_DIR.remove all: true ignore: true
   let modules = $
-    for doc = out_dir.glob("*.json").map do |p| json.decode $p.read()
+    for doc = out_dir.glob("*.json").map do |p| (json.decode(p.read())["doc"])
       $doc["module"]: $doc
   for name document = modules
     generate_doc_pages $modules $name $document["entities"]
@@ -297,7 +299,7 @@ def with_mkdocs func
   let doc_cache = (native.target_dir / "mkdocs-doc")
   extract_docs $doc_cache
   env
-    DOLANG_HIGHLIGHT: $native.bin("dolang-highlight")
+    DOLANG_HIGHLIGHT: "$(native.bin "dolang") -m compile extract"
     DOLANG_DOC_CACHE: $doc_cache
     NO_MKDOCS_2_WARNING: 1
     $func
