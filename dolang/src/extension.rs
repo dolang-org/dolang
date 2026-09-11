@@ -1,11 +1,19 @@
 //! Extension interface.
 //!
 //! Allows enumerating and applying extensions from linked crates when configuring a Do compiler or VM.
+//!
+//! On Wasm, discovery iterators are empty and `extension!` performs no registration.
+//! Apply concrete [`Extension`] implementations explicitly when configuring the host.
 
-use std::{collections::HashMap, error, ptr::NonNull, sync::OnceLock};
+#[cfg(any(not(target_family = "wasm"), test))]
+use std::collections::HashMap;
+#[cfg(not(target_family = "wasm"))]
+use std::sync::OnceLock;
+use std::{error, ptr::NonNull};
 
 #[doc(hidden)]
 pub mod __private {
+    #[cfg(not(target_family = "wasm"))]
     pub use linkme;
 
     pub const fn parse_version_component(value: &str) -> u32 {
@@ -31,6 +39,7 @@ pub mod __private {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 use linkme::distributed_slice;
 
 use crate::{compile::Config, runtime::vm::Builder};
@@ -100,6 +109,7 @@ pub struct Vtbl {
     name: &'static str,
     description: &'static str,
     version: Version,
+    #[cfg(not(target_family = "wasm"))]
     depends: &'static [&'static str],
 
     apply_compiler: unsafe fn(this: NonNull<()>, config: &mut Config) -> Result<(), Error>,
@@ -123,6 +133,7 @@ impl Vtbl {
                 name: T::NAME,
                 description: T::DESCRIPTION,
                 version: T::VERSION,
+                #[cfg(not(target_family = "wasm"))]
                 depends: T::DEPENDS,
                 apply_compiler: |this, config| unsafe {
                     this.cast::<T>()
@@ -143,14 +154,17 @@ impl Vtbl {
 }
 
 #[doc(hidden)]
+#[cfg(not(target_family = "wasm"))]
 #[distributed_slice]
 pub static EXTENSIONS: [Erased];
 
 // Keep the PE/COFF section non-empty. With no linked extensions, linkme's
 // start marker can resolve to null under Wine and constructing the empty slice
 // then trips Rust's `slice::from_raw_parts` precondition check.
+#[cfg(not(target_family = "wasm"))]
 struct Anchor;
 
+#[cfg(not(target_family = "wasm"))]
 impl Extension for Anchor {
     type Error = std::convert::Infallible;
 
@@ -171,8 +185,10 @@ impl Extension for Anchor {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 static ANCHOR: Anchor = Anchor;
 
+#[cfg(not(target_family = "wasm"))]
 #[distributed_slice(EXTENSIONS)]
 static EXTENSIONS_ANCHOR: Erased = Vtbl::erase(&ANCHOR);
 
@@ -185,6 +201,7 @@ static EXTENSIONS_ANCHOR: Erased = Vtbl::erase(&ANCHOR);
 /// # Panics
 ///
 /// Panics on a duplicate name, a dependency that isn't present, or a cycle.
+#[cfg(any(not(target_family = "wasm"), test))]
 fn order(items: &[(&'static str, &'static [&'static str])]) -> Vec<usize> {
     let mut index_of = HashMap::with_capacity(items.len());
     for (index, (name, _)) in items.iter().enumerate() {
@@ -237,6 +254,7 @@ fn order(items: &[(&'static str, &'static [&'static str])]) -> Vec<usize> {
     ordered
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn extensions() -> impl Iterator<Item = &'static Erased> {
     static ORDERED: OnceLock<Vec<&'static Erased>> = OnceLock::new();
 
@@ -260,6 +278,7 @@ fn extensions() -> impl Iterator<Item = &'static Erased> {
 }
 
 /// Register extension.
+#[cfg(not(target_family = "wasm"))]
 #[macro_export]
 macro_rules! extension {
     ($expr: expr) => {
@@ -414,4 +433,16 @@ mod tests {
     fn duplicate_name_panics() {
         order(&[("a", &[]), ("a", &[])]);
     }
+}
+
+#[cfg(target_family = "wasm")]
+fn extensions() -> impl Iterator<Item = &'static Erased> {
+    std::iter::empty()
+}
+
+/// Extension discovery is unavailable on Wasm; apply implementations explicitly.
+#[cfg(target_family = "wasm")]
+#[macro_export]
+macro_rules! extension {
+    ($expr:expr) => {};
 }

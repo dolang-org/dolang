@@ -12,7 +12,7 @@ rust-version.workspace = true
 test = false
 
 
-[dependencies.linkme]
+[target.'cfg(not(target_family = "wasm"))'.dependencies.linkme]
 workspace = true
 
 [dependencies.dolang-compile]

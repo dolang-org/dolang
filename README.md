@@ -2,11 +2,13 @@
   <img src="docs/dot-text.png" alt="Do Language mascot and wordmark" width="440">
 </p>
 
+<p align="center">
+  <a href="https://dolang-org.github.io/dolang/">Documentation</a> · <a href="https://dolang-org.github.io/dolang/playground/">Playground</a>
+</p>
+
 Do is a scripting language for cross-platform CI/CD, DevOps, and automation. It
 combines shell-like commands and indentation-oriented data declaration with
 ordinary functions, structured concurrency, and remote-capable system APIs.
-
-[Documentation](https://dolang-org.github.io/dolang/)
 
 > **⚠️ Experimental:** Do is early and still taking shape — syntax, the
 > standard library, and APIs are all subject to change, and it's not ready

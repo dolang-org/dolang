@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Edit and run Do in your browser.">
+    <link rel="icon" type="image/png" href="/src/assets/dot.png">
+    <title>Do playground</title>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="../"><img src="/src/assets/dot-text-light.png" alt="Do" height="40"><span>playground</span></a>
+      <a href="../">Documentation ↗</a>
+    </header>
+    <main>
+      <div class="intro"><p>Edit an example and run it in your browser. Press Ctrl+Enter (Cmd+Enter on macOS) to run.</p></div>
+      <div class="toolbar">
+        <label for="example">Example</label><select id="example"></select>
+        <button id="run" disabled>Run</button><button id="stop" disabled>Stop</button>
+        <span id="status" role="status">Loading…</span>
+      </div>
+      <div class="workspace">
+        <section aria-label="Source"><div class="panel-title">playground.dol</div><div id="editor"></div></section>
+        <section aria-label="Execution"><div class="panel-title">Output <span id="snapshot"></span></div><pre id="output"></pre><div id="error-section" hidden><h2>Errors</h2><pre id="error" role="alert"></pre></div></section>
+      </div>
+      <section class="diagnostics" id="diagnostics-section" hidden><h2>Diagnostics</h2><ul id="diagnostics"></ul></section>
+      <details class="playground-help">
+        <summary>Using the playground</summary>
+        <p><code>echo ...args</code> prints its arguments separated by spaces and ends with a newline.</p>
+        <h2>Available modules</h2>
+        <ul class="modules">
+          <li><code>base64</code></li>
+          <li><code>compile</code></li>
+          <li><code>digest</code></li>
+          <li><code>glob</code></li>
+          <li><code>json</code></li>
+          <li><code>load</code></li>
+          <li><code>rand</code></li>
+          <li><code>regex</code></li>
+          <li><code>std</code></li>
+          <li><code>strand</code></li>
+          <li><code>toml</code></li>
+          <li><code>url</code></li>
+          <li><code>uuid</code></li>
+          <li><code>xml</code></li>
+          <li><code>yaml</code></li>
+        </ul>
+      </details>
+      <footer>Runs entirely in your browser. Shell commands, filesystem, and network access are unavailable.</footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

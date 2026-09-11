@@ -1,0 +1,11 @@
+# title: Pipeline
+import strand:
+  - from
+  - each
+  - collect
+
+let doubled = pipeline
+  do from [1, 2, 3]
+  do each do |x| (x * 2)
+  do collect()
+echo $doubled

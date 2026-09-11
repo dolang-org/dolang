@@ -1,0 +1,8 @@
+# title: URL construction
+import url
+
+let base = url.Url https://example.com/search
+let query = base.with_query $
+  q: Do language
+  tag: scripts/tools
+echo $ query.with_fragment results

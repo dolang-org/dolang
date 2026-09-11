@@ -481,7 +481,11 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 }
             };
 
-            Output::set(strand, out, dst.as_str());
+            // `toml::to_string` terminates the last top-level entry with a
+            // newline like every other; the other formats don't, so trim it
+            // for consistency.
+            let dst = dst.strip_suffix('\n').unwrap_or(&dst);
+            Output::set(strand, out, dst);
             Ok(())
         })
         .function("decode", async move |strand, args, out| {

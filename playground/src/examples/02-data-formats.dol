@@ -1,0 +1,16 @@
+# title: Data Formats
+import json toml yaml
+
+let data = json.decode r|
+  {
+    "name": "Do",
+    "numbers": [1, 2, 3]
+  }
+
+echo -- toml --
+echo (toml.encode data)
+echo -- yaml --
+echo (yaml.encode data)
+data["numbers"].push 4
+echo -- json --
+echo (json.encode data)

@@ -1,0 +1,8 @@
+# title: XML editing
+import xml
+
+let node = xml.decode r#"<service name="demo">ready</service>"#
+node.set_attr name playground
+node.push "!"
+let document = xml.encode $node
+echo $document
