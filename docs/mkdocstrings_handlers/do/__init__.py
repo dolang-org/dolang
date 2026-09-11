@@ -64,7 +64,10 @@ class DoHandler(BaseHandler):
         if not cache_file.is_file():
             raise CollectionError(f"Doc reference names missing module '{module}'.")
         try:
-            cached = json.loads(cache_file.read_text())
+            # `dolang -m compile extract --doc` nests the cooked documentation
+            # projection under "doc" alongside the raw nodes/tokens/diagnostics
+            # dump; only the former is relevant here.
+            cached = json.loads(cache_file.read_text())["doc"]
         except json.JSONDecodeError as e:
             raise CollectionError(
                 f"doc cache file '{cache_file}' is invalid JSON: {e}"

@@ -16,14 +16,17 @@ let FIXTURE = (Path "dolang-shell/tests/doc")
 def describe ...flags
   let buf = BinBuf()
   cd $FIXTURE do
-    run $shell.exe -m doc --module fixture ...flags fixture.dol stdout: $buf mode: :CHUNK:
+    run $shell.exe -m compile extract --doc --module fixture ...flags fixture.dol stdout: $buf mode: :CHUNK:
   Str $buf.freeze()
 
-# The whole documented shape of a source file, held against a golden.
+# The whole extractor output for a source file (raw nodes/tokens/diagnostics
+# plus the cooked documentation projection under "doc"), held against a
+# golden.
 #
-# The JSON is consumed by the mkdocstrings handler and its templates, so a
-# change here is a change to the rendered site; set `DOLANG_TEST_UPDATE=1` to
-# rewrite the golden once the new shape is what was intended.
+# The "doc" part is consumed by the mkdocstrings handler and its templates,
+# so a change there is a change to the rendered site; set
+# `DOLANG_TEST_UPDATE=1` to rewrite the golden once the new shape is what was
+# intended.
 #[test]
 def documents_a_source_file()
   let golden = (FIXTURE / "fixture.json")
@@ -36,7 +39,7 @@ def documents_a_source_file()
 # The names of the entities the fixture exports, in the order reported.
 def names ...flags
   let out = describe ...flags
-  let entities = json.decode(out)["entities"]
+  let entities = json.decode(out)["doc"]["entities"]
   let names = []
   for entity = entities
     names.push $entity["name"]
