@@ -19,17 +19,17 @@ button:disabled { opacity: .4; cursor: default; }
 .workspace { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); border: 1px solid #363b50; border-radius: 8px; overflow: hidden; }
 .workspace section { min-width: 0; background: #1d202d; }
 .workspace section + section { border-left: 1px solid #363b50; }
-.panel-title { display: flex; align-items: center; gap: .5em; padding: .7rem 1rem; color: #b0b7cf; background: #252938; font-family: monospace; font-size: .85rem; line-height: 1.5; }
+.panel-title { display: flex; align-items: center; gap: .5em; padding: .7rem 1rem; color: #b0b7cf; background: #252938; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: .85rem; line-height: 1.5; }
 #snapshot { font-family: system-ui, sans-serif; }
 .cm-editor { min-height: 390px; font-size: 14px; }
-.cm-scroller { font-family: ui-monospace, monospace; }
+.cm-scroller { font-family: "JetBrains Mono", ui-monospace, monospace; }
 .cm-content { padding: 1rem 0; caret-color: #fff; }
 .cm-gutters { background: #1d202d; color: #7f88a4; border: 0; }
 .cm-editor.cm-focused { outline: none !important; }
 .cm-editor.cm-focused::after { content: ""; position: absolute; inset: 0; border: 2px solid #7185e7; pointer-events: none; z-index: 201; }
 .cm-selectionBackground, .cm-focused .cm-selectionBackground { background: #3b4569 !important; }
 .cm-tooltip { background: #252938; border: 1px solid #7185e7; color: #e6e8f0; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 1rem; font: 14px/1.6 ui-monospace, monospace; min-height: 1.6em; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 1rem; font: 14px/1.6 "JetBrains Mono", ui-monospace, monospace; min-height: 1.6em; }
 h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; margin: 1.3rem 1rem .5rem; color: #a3a9bf; }
 #error { color: #ffaaa5; }
 .diagnostics { margin-top: 1rem; }
@@ -38,6 +38,7 @@ h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; margin:
 #diagnostics button { padding: .3rem 0; text-align: left; border: 0; background: none; color: #e4ba8f; white-space: pre-wrap; }
 footer { margin-top: 2rem; font-size: .85rem; }
 .token-keyword, .token-operator { color: #c8a4f8; }
+.token-punctuation { color: #6f7690; }
 .token-string { color: #b9d991; }
 .token-number, .token-constant { color: #f4bc87; }
 .token-function { color: #9cbcff; }
