@@ -152,11 +152,11 @@ pub(crate) struct Repr(NonNull<u8>);
 impl PartialEq for Repr {
     fn eq(&self, other: &Self) -> bool {
         // Preserve NaN behavior
+        #[cfg(target_pointer_width = "64")]
         if self.0 == Self::NAN.0 || other.0 == Self::NAN.0 {
-            false
-        } else {
-            self.0 == other.0
+            return false;
         }
+        self.0 == other.0
     }
 }
 
@@ -233,8 +233,11 @@ impl Repr {
                     known::NIL => Decode::Prim(Prim::Nil),
                     known::FALSE => Decode::Prim(Prim::Bool(false)),
                     known::TRUE => Decode::Prim(Prim::Bool(true)),
+                    #[cfg(target_pointer_width = "64")]
                     known::POS_INF => Decode::Prim(Prim::F64(f64::INFINITY)),
+                    #[cfg(target_pointer_width = "64")]
                     known::NEG_INF => Decode::Prim(Prim::F64(f64::NEG_INFINITY)),
+                    #[cfg(target_pointer_width = "64")]
                     known::NAN => Decode::Prim(Prim::F64(f64::NAN)),
                     _ => Decode::Object(this.cast::<Header>()),
                 }
@@ -309,7 +312,7 @@ impl Repr {
 
     #[cfg(not(target_pointer_width = "64"))]
     #[inline]
-    pub(crate) fn from_f64(value: f64) -> Option<Self> {
+    pub(crate) fn from_f64(_value: f64) -> Option<Self> {
         None
     }
 }

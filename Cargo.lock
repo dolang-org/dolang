@@ -936,8 +936,6 @@ dependencies = [
 name = "dolang-ext-load"
 version = "0.1.1"
 dependencies = [
- "anstyle",
- "console",
  "dolang",
 ]
 

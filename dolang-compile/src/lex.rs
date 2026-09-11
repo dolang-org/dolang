@@ -494,13 +494,19 @@ impl<'a, I: Iterator<Item = u8>> RawLexer<'a, I> {
     }
 
     fn comment(&mut self, state: RawState) {
+        // A newline is lookahead; EOF has not consumed a byte to exclude.
+        let end = if state == RawState::End {
+            self.offset
+        } else {
+            self.offset - 1
+        };
         if let Some(comment) = &mut self.comment {
             comment.comment(Span {
                 start: self.start,
-                end: self.offset - 1,
+                end,
             })
         }
-        self.start = self.offset - 1;
+        self.start = end;
         self.state = state;
         self.defer = None;
     }
