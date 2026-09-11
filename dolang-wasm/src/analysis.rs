@@ -84,32 +84,20 @@ pub(crate) fn analyze(source: &str) -> Analysis {
     config.recover(true).document(true);
     let unit = config.unit(Path::new("playground.dol"), source.as_bytes());
     let offsets = Offsets::new(source);
-    let names = [
-        "constant",
-        "operator",
-        "string",
-        "property",
-        "function",
-        "keyword",
-        "number",
-        "parameter",
-        "variable",
-        "namespace",
-        "comment",
-        "class",
-    ];
     let mut tokens = Vec::new();
     unit.tokens(&mut |token, span: Span, node: Option<NodeId>, context| {
         let (from, to) = offsets.range(&span);
-        if from == to || matches!(token, Token::Delim) {
+        if from == to {
             return;
         }
+        // Unlike the LSP, which leaves `Token::Delim` (`(`, `-`, etc.) to the
+        // client's TextMate grammar, the playground has no such grammar, so
+        // delimiters must be classified here or they render unstyled.
         let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
-        let (class, _) = classify_token(token, kind.as_ref(), context);
         tokens.push(TokenRange {
             from,
             to,
-            kind: names[class as usize],
+            kind: classify_token(token, kind.as_ref(), context),
         });
     });
     tokens.sort_by_key(|token| (token.from, token.to));
@@ -119,45 +107,31 @@ pub(crate) fn analyze(source: &str) -> Analysis {
     }
 }
 
-const TT_CONSTANT: u32 = 0;
-const TT_OPERATOR: u32 = 1;
-const TT_STRING: u32 = 2;
-const TT_PROPERTY: u32 = 3;
-const TT_FUNCTION: u32 = 4;
-const TT_KEYWORD: u32 = 5;
-const TT_NUMBER: u32 = 6;
-const TT_PARAMETER: u32 = 7;
-const TT_VARIABLE: u32 = 8;
-const TT_NAMESPACE: u32 = 9;
-const TT_COMMENT: u32 = 10;
-const TT_CLASS: u32 = 11;
-
-const MOD_PRELUDE: u32 = 1 << 0;
-
-fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> (u32, u32) {
+fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> &'static str {
     match token {
-        Token::Comment => (TT_COMMENT, 0),
-        Token::Constant => (TT_CONSTANT, 0),
-        Token::Delim => (TT_OPERATOR, 0),
-        Token::Escape => (TT_STRING, 0),
+        Token::Comment => "comment",
+        Token::Constant => "constant",
+        Token::Delim => "punctuation",
+        Token::Escape => "string",
         Token::Field => match context {
-            Context::Call => (TT_FUNCTION, 0),
-            Context::None => (TT_PROPERTY, 0),
+            Context::Call => "function",
+            Context::None => "property",
         },
-        Token::Method => (TT_FUNCTION, 0),
-        Token::Key => (TT_PROPERTY, 0),
-        Token::ModuleName => (TT_NAMESPACE, 0),
-        Token::ModuleItem => (TT_PROPERTY, 0),
-        Token::Keyword => (TT_KEYWORD, 0),
-        Token::Literal => (TT_STRING, 0),
-        Token::Number => (TT_NUMBER, 0),
-        Token::Operator => (TT_OPERATOR, 0),
-        Token::StringDelim => (TT_STRING, 0),
+        Token::Method => "function",
+        Token::Key => "property",
+        Token::ModuleName => "namespace",
+        Token::ModuleItem => "property",
+        Token::Keyword => "keyword",
+        Token::Literal => "string",
+        Token::Number => "number",
+        Token::Operator => "operator",
+        Token::StringDelim => "string",
         Token::Variable => match (context, kind) {
-            (_, Some(Kind::Class { .. })) => (TT_CLASS, 0),
-            (Context::Call, Some(Kind::PreludeItem { .. })) => (TT_FUNCTION, MOD_PRELUDE),
-            (Context::Call, Some(Kind::PreludeModule { .. })) => (TT_FUNCTION, MOD_PRELUDE),
-            (Context::Call, _) => (TT_FUNCTION, 0),
+            (_, Some(Kind::Class { .. })) => "class",
+            (Context::Call, Some(Kind::PreludeItem { .. } | Kind::PreludeModule { .. })) => {
+                "function"
+            }
+            (Context::Call, _) => "function",
             (
                 Context::None,
                 Some(
@@ -166,17 +140,18 @@ fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> (u
                     | Kind::RestParam { .. }
                     | Kind::SelfParam { .. },
                 ),
-            ) => (TT_PARAMETER, 0),
+            ) => "parameter",
             (
                 Context::None,
                 Some(Kind::Function { .. } | Kind::Method { .. } | Kind::SpecialMethod { .. }),
-            ) => (TT_FUNCTION, 0),
-            (Context::None, Some(Kind::PreludeItem { .. })) => (TT_VARIABLE, MOD_PRELUDE),
-            (Context::None, Some(Kind::PreludeModule { .. })) => (TT_NAMESPACE, MOD_PRELUDE),
-            (Context::None, Some(Kind::ImportModule { .. })) => (TT_NAMESPACE, 0),
-            (Context::None, _) => (TT_VARIABLE, 0),
+            ) => "function",
+            (Context::None, Some(Kind::PreludeItem { .. })) => "variable",
+            (Context::None, Some(Kind::PreludeModule { .. } | Kind::ImportModule { .. })) => {
+                "namespace"
+            }
+            (Context::None, _) => "variable",
         },
-        Token::Sigil => (TT_OPERATOR, 0),
+        Token::Sigil => "operator",
     }
 }
 
@@ -214,6 +189,21 @@ pub mod tests {
                 "{kind}"
             );
         }
+    }
+
+    #[wasm_bindgen_test]
+    fn delimiters_are_classified_as_punctuation() {
+        // `(`/`)` and the vertical-layout `-` are both `Token::Delim`; the
+        // playground has no TextMate grammar to fall back on for them like
+        // the LSP's clients do, so they must show up here.
+        let source = "let x = (1 + 2)\nfoo\n  - 1\n";
+        let result = analyze(source);
+        assert!(
+            result
+                .tokens
+                .iter()
+                .any(|token| token.kind == "punctuation")
+        );
     }
 
     #[wasm_bindgen_test]

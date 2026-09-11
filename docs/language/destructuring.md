@@ -46,19 +46,33 @@ assert_eq $first "ultramarine"
 assert_eq $foo 42
 ```
 
+### Non-symbol Keys
+
+`:key` and `key: name` match **symbol** keys. External inputs such as decoded
+JSON will typically have string keys. To destructure such data, use a constant
+expression instead of a bare key:
+
+```
+import json
+
+let payload = json.decode r|
+  {"name": "Alice", "age": 30}
+
+let "name": name "age": age = payload
+assert_eq $name "Alice"
+assert_eq $age 30
+```
+
 ## `bind`
 
 `bind` is similar to `let` but takes the scrutinee (the value to destructure)
 first and provides the destructuring pattern in vertical layout. This is
-useful when the pattern is more complex than what you're destructuring. It also
-supports default values for missing elements:
+useful when the pattern is more complex than what you're destructuring.
 
 ```
 bind {1, foo: false, 2, bar: nil}
-  - a
-  - b
-  :foo
-  :bar
+  a b
+  :foo :bar
 assert_eq $a 1
 assert_eq $b 2
 assert_eq $foo false
@@ -67,39 +81,36 @@ assert_eq $bar nil
 
 ### Default Values in `bind`
 
-Positional defaults:
+`bind` also permits specifying default values for missing items:
 
 ```
 bind []
-  - a = 1
-  - b = 2
+  a = 1
+  b = 2
 assert_eq $a 1
 assert_eq $b 2
 
 bind [false]
-  - a = 1
-  - b = 2
+  a = 1
+  b = 2
 assert_eq $a false
 assert_eq $b 2
-```
 
-Key defaults:
-
-```
 bind {}
   :foo = 42
 assert_eq $foo 42
 
 bind {foo: nil}
   :foo = 42
-assert_eq $foo nil  # nil is a present value, not missing
+# nil is a present value, not missing
+assert_eq $foo nil
 ```
 
 ## Conditional Destructuring
 
 `let` and `bind` after `if` or `while` make the destructuring itself the
 condition: the bindings are in scope for the branch body when the pattern
-matches, and the failure branch runs when it does not.
+matches, and the else branch runs when it does not.
 
 ```
 if let a b = [1, 2]
@@ -132,9 +143,6 @@ while let a b = pairs.get(i)
   i = (i + 1)
 ```
 
-The bindings are scoped to the branch body, so they are not visible after the
-`if`, in an `else` branch, or after the loop.
-
 Both forms also work where `if` appears in
 [vertical layout](./vertical-layout.md), building arrays, dictionaries, or
 argument lists:
@@ -151,7 +159,7 @@ let parts = $
 
 ### What Counts as a Match
 
-Only a *shape* mismatch takes the failure branch: too few or too many
+Only a *shape* mismatch takes the else branch: too few or too many
 positional elements, or a missing or unexpected key. Any other error raised
 while destructuring propagates as usual. In particular, destructuring a value
 that does not support it at all is an error rather than a silent non-match:
@@ -184,9 +192,6 @@ if let value = lookup key
 else
   echo "not found"
 ```
-
-Since `if let` uses horizontal pattern layout, `=` ends the pattern, so this
-form takes no default value. Use `if bind` when a default is needed.
 
 ## Destructuring in `for`
 

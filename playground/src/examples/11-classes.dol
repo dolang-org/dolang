@@ -1,0 +1,71 @@
+# title: Classes
+class Animal
+  pub field name = nil
+  field sound = "..."
+
+  # Inherited: each subclass gets its own separate counter.
+  #[class]
+  field created = 0
+
+  # Not inherited: this field exists only on `Animal`
+  #[static]
+  pub field total_created = 0
+
+  def (init) self name sound
+    self.name = name
+    self.#sound = sound
+    type(self).#created = (type(self).#created + 1)
+    Animal.total_created = (Animal.total_created + 1)
+
+  pub def speak self
+    "$(self.name) says $(self.#sound)"
+
+  #[class]
+  #[getter]
+  pub def count cls
+    cls.#created
+
+class Dog: Animal
+  def (init) self name
+    Animal.(init) $self $name woof
+
+class Cat: Animal
+  def (init) self name
+    Animal.(init) $self $name meow
+
+let rex = Dog "Rex"
+let fido = Dog "Fido"
+let whiskers = Cat "Whiskers"
+echo $rex.speak()
+echo $fido.speak()
+echo $whiskers.speak()
+echo "Dogs created: $(Dog.count)"
+echo "Cats created: $(Cat.count)"
+echo "Total animals created: $(Animal.total_created)"
+
+class Vec2
+  field x = 0
+  field y = 0
+
+  def (init) self x y
+    self.#x = x
+    self.#y = y
+
+  #[getter]
+  pub def x self
+    self.#x
+
+  #[getter]
+  pub def y self
+    self.#y
+
+  def (add) self other
+    Vec2 (self.#x + other.#x) (self.#y + other.#y)
+
+  def (str) self
+    "($(self.#x), $(self.#y))"
+
+let a = Vec2 1 2
+let b = Vec2 3 4
+echo "a + b = $(a + b)"
+echo "a.x = $(a.x)"
