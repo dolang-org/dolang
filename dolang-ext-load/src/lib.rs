@@ -3,3 +3,5 @@
 mod extension;
 mod global;
 mod load;
+
+pub use extension::LoadExt;
