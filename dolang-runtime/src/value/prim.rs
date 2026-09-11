@@ -75,15 +75,14 @@ impl Display for Prim {
 impl Prim {
     pub(crate) fn op_get<'v, 'a, 's>(
         self,
-        _receiver: &'a Value<'v>,
+        receiver: &'a Value<'v>,
         strand: &'a mut Strand<'v, 's>,
         field: Sym<'v, 'a>,
         _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match self {
-            // `Int` has no fields, but it is the one primitive whose values
-            // take field syntax at all, so a miss names the field.
-            Prim::Int(_) => Err(Error::field(strand, field)),
+            Prim::Int(_) => crate::object::num::int_get(strand, receiver, field, _out),
+            Prim::F64(_) => crate::object::num::float_get(strand, receiver, field, _out),
             _ => Err(Error::type_error(strand, "field get not supported")),
         }
     }
@@ -92,11 +91,18 @@ impl Prim {
         self,
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
-        _args: Args<'v, 'a>,
-        _out: Slot<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match self {
-            Prim::Int(_) => Err(Error::field(strand, method)),
+            Prim::Int(value) => {
+                let receiver = Value::from_prim(strand, self);
+                crate::object::num::int_mcall(strand, &receiver, value, method, args, out).await
+            }
+            Prim::F64(value) => {
+                let receiver = Value::from_prim(strand, self);
+                crate::object::num::float_mcall(strand, &receiver, value, method, args, out).await
+            }
             _ => Err(Error::type_error(strand, "method call not supported")),
         }
     }

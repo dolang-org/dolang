@@ -1,4 +1,4 @@
-import math
+import import_fixture: math
 let caught = try
   echo $math.foobar
   false

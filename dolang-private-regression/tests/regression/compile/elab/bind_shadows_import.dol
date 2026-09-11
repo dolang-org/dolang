@@ -1,4 +1,4 @@
-import math:
+import import_fixture:
   - add
 # warning: unused variable
 #   --> bind_shadows_import.dol:LL:LL

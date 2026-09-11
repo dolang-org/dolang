@@ -84,22 +84,22 @@ impl<'v> Protocol<'v> for i128 {
     }
 
     fn op_get<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         field: Sym<'v, 'a>,
         _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::field(strand, field))
+        super::num::int_get(strand, &this, field, _out)
     }
 
     async fn op_mcall<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         _args: Args<'v, 'a>,
         _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::field(strand, method))
+        super::num::int_mcall(strand, &this, *this.get(), method, _args, _out).await
     }
 
     fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
@@ -363,22 +363,22 @@ impl<'v> Protocol<'v> for Verbatim {
     }
 
     fn op_get<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         field: Sym<'v, 'a>,
         _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::field(strand, field))
+        super::num::int_get(strand, &this, field, _out)
     }
 
     async fn op_mcall<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         _args: Args<'v, 'a>,
         _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::field(strand, method))
+        super::num::int_mcall(strand, &this, this.get().value, method, _args, _out).await
     }
 
     fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
@@ -624,6 +624,16 @@ impl<'v> Protocol<'v> for Int {
         fmt!(strand, w, "<type std.Int>")
     }
 
+    fn op_subtype<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        supertype: &Value<'v>,
+    ) -> bool {
+        supertype.eq(strand, &this)
+            || supertype.eq(strand, &strand.singletons().num)
+            || supertype.eq(strand, crate::value::TypeObject::Value)
+    }
+
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
@@ -632,6 +642,8 @@ impl<'v> Protocol<'v> for Int {
                 Method(sym::STR_METHOD),
                 Method(sym::DBG_METHOD),
                 Method(sym::CALL_METHOD),
+                Getter(sym::MIN_CONST),
+                Getter(sym::MAX_CONST),
             ],
             members: members![
                 Method(sym::STR_METHOD),
@@ -658,6 +670,15 @@ impl<'v> Protocol<'v> for Int {
                 Method(sym::LT_METHOD),
                 Method(sym::BOOL_METHOD),
                 Method(sym::HASH_METHOD),
+                Method(sym::ABS),
+                Method(sym::SIGNUM),
+                Method(sym::ROUND),
+                Method(sym::FLOOR),
+                Method(sym::CEIL),
+                Method(sym::TRUNC),
+                Method(sym::MIN),
+                Method(sym::MAX),
+                Method(sym::CLAMP),
             ],
         })
     }
@@ -668,6 +689,17 @@ impl<'v> Protocol<'v> for Int {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        match field.tag() {
+            sym::MIN_CONST => {
+                Output::set(strand, out, i128::MIN);
+                return Ok(());
+            }
+            sym::MAX_CONST => {
+                Output::set(strand, out, i128::MAX);
+                return Ok(());
+            }
+            _ => {}
+        }
         match field.tag() {
             sym::INIT_METHOD
             | sym::STR_METHOD
@@ -694,6 +726,18 @@ impl<'v> Protocol<'v> for Int {
             | sym::LT_METHOD
             | sym::BOOL_METHOD
             | sym::HASH_METHOD => {
+                BoundMethod::create(strand, &this, field, out);
+                Ok(())
+            }
+            sym::ABS
+            | sym::SIGNUM
+            | sym::ROUND
+            | sym::FLOOR
+            | sym::CEIL
+            | sym::TRUNC
+            | sym::MIN
+            | sym::MAX
+            | sym::CLAMP => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
