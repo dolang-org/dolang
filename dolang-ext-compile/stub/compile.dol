@@ -67,6 +67,18 @@ pub class Unit
   do
     throw nil
 
+  # Returns a fresh iterator of [`Token`](compile.Token) objects covering the
+  # whole source, in source order.
+  #
+  # ## Example
+  #
+  # ```
+  # for token = unit.tokens()
+  #   echo $token.kind $token.span
+  # ```
+  pub def tokens self
+    throw nil
+
   # Consumes the unit and returns bytecode as [`Bin`](std.Bin).
   #
   # ## Errors
@@ -356,6 +368,62 @@ pub class Continue: Reference
 
 # A `return`. Its `target` is the function returned from.
 pub class Return: Reference
+
+# A syntactic token.
+#
+# Tokens describe how a span of source text should be presented (for syntax
+# highlighting, say), which is a different question from what it *is* --
+# [`Node`](compile.Node) answers that. A token that names a declaration
+# reports it as an opaque [`NodeId`](compile.NodeId) in `node`, resolvable
+# with [`Unit.node`](compile.Unit.node).
+#
+# ## Example
+#
+# ```
+# for token = unit.tokens()
+#   echo $token.kind $token.span
+# ```
+pub class Token
+  # The token kind.
+  #
+  # | Value            | Meaning                                                  |
+  # | ---------------- | --------------------------------------------------------- |
+  # | `:COMMENT:`      | A comment                                                  |
+  # | `:CONSTANT:`     | A non-numeric, non-string constant such as `nil` or `false` |
+  # | `:DELIM:`        | A delimiter such as `(`, `[`, etc                          |
+  # | `:ESCAPE:`       | An escape within a string                                  |
+  # | `:FIELD:`        | A field, e.g. `bar` in `foo.bar`                           |
+  # | `:METHOD:`       | A method declaration name                                  |
+  # | `:KEY:`          | A key such as `foo:`                                       |
+  # | `:MODULE_NAME:`  | A module name                                              |
+  # | `:MODULE_ITEM:`  | A module item                                              |
+  # | `:KEYWORD:`      | A keyword such as `while`, `for`, `do`, `import`           |
+  # | `:LITERAL:`      | A literal string, including non-escape, non-interpolated portions of quoted strings |
+  # | `:NUMBER:`       | A numeric constant                                         |
+  # | `:OPERATOR:`     | A unary or binary operator such as `+` or `-`               |
+  # | `:STRING_DELIM:` | A string delimiter (`"`)                                   |
+  # | `:VARIABLE:`     | A variable                                                 |
+  # | `:SIGIL:`        | A sigil like `$` or `...`                                  |
+  #[getter]
+  pub def kind self
+    throw nil
+
+  # The [`Span`](compile.Span) of source text the token covers.
+  #[getter]
+  pub def span self
+    throw nil
+
+  # The [`NodeId`](compile.NodeId) of the declaration this token names, or
+  # `nil` when it names none.
+  #[getter]
+  pub def node self
+    throw nil
+
+  # The syntactic context the token appears in, currently only `:CALL:` (a
+  # callee position) or `nil`.
+  #[getter]
+  pub def context self
+    throw nil
 
 # A compiler diagnostic.
 #

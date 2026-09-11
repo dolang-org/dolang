@@ -25,6 +25,8 @@ pub(crate) struct Types<'v> {
     unit: Type<'v, UnitObject<'v>>,
     diagnostic_iter: Type<'v, DiagnosticIter>,
     node_iter: Type<'v, NodeIter>,
+    token_iter: Type<'v, TokenIter<'v>>,
+    token: Type<'v, TokenObject>,
     node_id: Type<'v, NodeIdObject>,
     super_ref: Type<'v, SuperObject>,
     node: Type<'v, NodeObject<NodeTag>>,
@@ -49,6 +51,23 @@ pub(crate) struct Syms<'v> {
     context: Sym<'v, 'v>,
     info: Sym<'v, 'v>,
     help: Sym<'v, 'v>,
+    token_comment: Sym<'v, 'v>,
+    token_constant: Sym<'v, 'v>,
+    token_delim: Sym<'v, 'v>,
+    token_escape: Sym<'v, 'v>,
+    token_field: Sym<'v, 'v>,
+    token_method: Sym<'v, 'v>,
+    token_key: Sym<'v, 'v>,
+    token_module_name: Sym<'v, 'v>,
+    token_module_item: Sym<'v, 'v>,
+    token_keyword: Sym<'v, 'v>,
+    token_literal: Sym<'v, 'v>,
+    token_number: Sym<'v, 'v>,
+    token_operator: Sym<'v, 'v>,
+    token_string_delim: Sym<'v, 'v>,
+    token_variable: Sym<'v, 'v>,
+    token_sigil: Sym<'v, 'v>,
+    token_context_call: Sym<'v, 'v>,
 }
 
 pub(crate) struct Global<'v> {
@@ -131,6 +150,8 @@ impl<'v> Global<'v> {
                 unit: builder.register_type(),
                 diagnostic_iter: builder.register_type(),
                 node_iter: builder.register_type(),
+                token_iter: builder.register_type(),
+                token: builder.register_type(),
                 node_id: builder.register_type(),
                 super_ref: builder.register_type(),
                 node,
@@ -184,6 +205,23 @@ impl<'v> Global<'v> {
                 context: builder.sym("CONTEXT"),
                 info: builder.sym("INFO"),
                 help: builder.sym("HELP"),
+                token_comment: builder.sym("COMMENT"),
+                token_constant: builder.sym("CONSTANT"),
+                token_delim: builder.sym("DELIM"),
+                token_escape: builder.sym("ESCAPE"),
+                token_field: builder.sym("FIELD"),
+                token_method: builder.sym("METHOD"),
+                token_key: builder.sym("KEY"),
+                token_module_name: builder.sym("MODULE_NAME"),
+                token_module_item: builder.sym("MODULE_ITEM"),
+                token_keyword: builder.sym("KEYWORD"),
+                token_literal: builder.sym("LITERAL"),
+                token_number: builder.sym("NUMBER"),
+                token_operator: builder.sym("OPERATOR"),
+                token_string_delim: builder.sym("STRING_DELIM"),
+                token_variable: builder.sym("VARIABLE"),
+                token_sigil: builder.sym("SIGIL"),
+                token_context_call: builder.sym("CALL"),
             },
             next_unit_id: Cell::new(1),
         }
@@ -274,6 +312,18 @@ pub(crate) struct DiagnosticIter {
 pub(crate) struct NodeIter {
     cursor: Option<compile::NodeId>,
 }
+// Tokens are popped off the end, so `tokens` is stored in reverse emission order.
+pub(crate) struct TokenIter<'v> {
+    tokens: Vec<TokenAnnex<'v>>,
+}
+pub(crate) struct TokenObject;
+pub(crate) struct TokenAnnex<'v> {
+    global: State<'v, Global<'v>>,
+    kind: compile::Token,
+    span: SpanData,
+    node: Option<compile::NodeId>,
+    context: compile::Context,
+}
 pub(crate) struct NodeIdObject;
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
@@ -346,6 +396,27 @@ fn severity<'v>(global: State<'v, Global<'v>>, severity: compile::Severity) -> S
         compile::Severity::Error => global.syms.error,
         compile::Severity::Warning => global.syms.warning,
         _ => global.syms.warning,
+    }
+}
+
+fn token_kind_sym<'v>(global: State<'v, Global<'v>>, token: compile::Token) -> Sym<'v, 'v> {
+    match token {
+        compile::Token::Comment => global.syms.token_comment,
+        compile::Token::Constant => global.syms.token_constant,
+        compile::Token::Delim => global.syms.token_delim,
+        compile::Token::Escape => global.syms.token_escape,
+        compile::Token::Field => global.syms.token_field,
+        compile::Token::Method => global.syms.token_method,
+        compile::Token::Key => global.syms.token_key,
+        compile::Token::ModuleName => global.syms.token_module_name,
+        compile::Token::ModuleItem => global.syms.token_module_item,
+        compile::Token::Keyword => global.syms.token_keyword,
+        compile::Token::Literal => global.syms.token_literal,
+        compile::Token::Number => global.syms.token_number,
+        compile::Token::Operator => global.syms.token_operator,
+        compile::Token::StringDelim => global.syms.token_string_delim,
+        compile::Token::Variable => global.syms.token_variable,
+        compile::Token::Sigil => global.syms.token_sigil,
     }
 }
 
@@ -748,6 +819,39 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 }
                 create_node(strand, this, id_data.id, &mut out)
             })
+            .method("tokens", async move |this, strand, args, mut out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let global = strand.state::<Global<'v>>();
+                let mut tokens = {
+                    let borrow = this.borrow(strand)?;
+                    let Some(unit) = borrow.unit.as_ref() else {
+                        return Err(Error::state_error(strand, "unit was emitted"));
+                    };
+                    let mut tokens = Vec::new();
+                    unit.tokens(&mut |kind, span, node, context| {
+                        tokens.push(TokenAnnex {
+                            global,
+                            kind,
+                            span: span_data(span),
+                            node,
+                            context,
+                        });
+                    });
+                    tokens
+                };
+                // Popped off the end by TokenIter::next, so store in reverse.
+                tokens.reverse();
+                let ty = global.types.token_iter;
+                ty.create(strand, TokenIter { tokens }, &mut out);
+                ty.cast(&out).unwrap().enter_sync(strand, |strand, iter| {
+                    Output::set(
+                        strand,
+                        Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()),
+                        this,
+                    );
+                });
+                Ok(())
+            })
             .method("emit", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let unit = this
@@ -854,6 +958,94 @@ impl<'v> Object<'v> for NodeIter {
         let Some(id) = result else { return Ok(false) };
         iter.cursor = Some(id);
         Ok(true)
+    }
+}
+
+impl<'v> Object<'v> for TokenIter<'v> {
+    const NAME: &'v str = "TokenIter";
+    const MODULE: &'v str = "compile";
+    const SLOTS: usize = 1;
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.supertype(TypeObject::Iter)
+    }
+    async fn iter<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, this);
+        Ok(())
+    }
+    async fn next<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        let mut iter = this.borrow_mut(strand)?;
+        let Some(annex) = iter.tokens.pop() else {
+            return Ok(false);
+        };
+        let ty = annex.global.types.token;
+        with_unit(strand, Mut::slot::<OWNER>(&iter), |strand, owner| {
+            ty.create_with_annex(strand, TokenObject, annex, &mut out);
+            ty.cast(&out).unwrap().enter_sync(strand, |strand, tok| {
+                Output::set(
+                    strand,
+                    Mut::slot_mut::<OWNER>(&mut tok.borrow_mut_unwrap()),
+                    owner,
+                )
+            });
+            Ok(())
+        })?;
+        Ok(true)
+    }
+}
+
+impl<'v> Object<'v> for TokenObject {
+    const NAME: &'v str = "Token";
+    const MODULE: &'v str = "compile";
+    const SLOTS: usize = 1;
+    type Annex = TokenAnnex<'v>;
+    type Type = ();
+    type TypeAnnex = ();
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder
+            .get("kind", |this, strand, out| {
+                Output::set(
+                    strand,
+                    out,
+                    token_kind_sym(this.annex().global, this.annex().kind),
+                );
+                Ok(())
+            })
+            .get("span", |this, strand, out| {
+                create_span(this.annex().global, strand, this.annex().span.clone(), out);
+                Ok(())
+            })
+            .get("node", |this, strand, mut out| {
+                let b = this.borrow(strand)?;
+                if let Some(id) = this.annex().node {
+                    let u = with_unit(strand, Ref::slot::<OWNER>(&b), |strand, owner| {
+                        Ok(owner.borrow(strand)?.identity)
+                    })?;
+                    create_node_id(strand, u, id, &mut out)
+                } else {
+                    Output::set(strand, out, Nil)
+                };
+                Ok(())
+            })
+            .get("context", |this, strand, out| {
+                match this.annex().context {
+                    compile::Context::Call => {
+                        Output::set(strand, out, this.annex().global.syms.token_context_call)
+                    }
+                    _ => Output::set(strand, out, Nil),
+                };
+                Ok(())
+            })
     }
 }
 
@@ -1682,6 +1874,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
         .module("compile")
         .value("Unit", global.types.unit)
         .value("NodeId", global.types.node_id)
+        .value("Token", global.types.token)
         .value("Super", global.types.super_ref)
         .value("Node", global.types.node)
         .value("Declaration", global.types.declaration)
