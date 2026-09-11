@@ -163,7 +163,7 @@ class Spec
     self.cargo build --bin dolang-vfs --bin dolang-private-polyfill
     self.cargo ...rest
 
-let native = Spec (record target: nil) profile: dist
+let native = Spec (record target: nil)
 
 def default_shell_tests slow release
   $
@@ -272,18 +272,17 @@ def generate_doc_pages modules name entities
 # (see there for the full doc comment on why extraction is parallelized) --
 # used by `install` to feed dolang-lsp's build-time static doc index (see
 # dolang-lsp/build.rs) without also touching the docs/api page tree.
-def extract_doc_json out_dir
+def extract_doc_json spec out_dir
   out_dir.remove all: true ignore: true
   out_dir.create_dir all: true
-  let dolang = native.bin "dolang"
   let workers = sys.cpu_info().logical_count
   strand.pool $workers $collect_doc_jobs() do |job|
     let :name :path = job
-    run $dolang -m doc --module $name $path stdout: (out_dir / "$name.json")
+    run (spec.bin "dolang") -m doc --module $name $path stdout: (out_dir / "$name.json")
 
 # Extracts the JSON cache and regenerates the docs/api page tree from it.
 def extract_docs out_dir
-  extract_doc_json $out_dir
+  extract_doc_json $native $out_dir
   MKDOCS_API_DIR.remove all: true ignore: true
   let modules = $
     for doc = out_dir.glob("*.json").map do |p| json.decode $p.read()
@@ -605,8 +604,7 @@ return $
           # extract_doc_json) -- generate it with the dolang binary just
           # built, then point the build at it via env var.
           let doc_json = (spec.target_dir / "lsp-doc-json").absolute()
-          native.cargo build --bin dolang
-          extract_doc_json $doc_json
+          extract_doc_json $spec $doc_json
           env DOLANG_LSP_DOC_JSON_DIR: $doc_json do
             spec.cargo build --bin dolang-lsp
 
