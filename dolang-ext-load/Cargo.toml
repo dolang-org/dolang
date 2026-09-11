@@ -16,10 +16,3 @@ doctest = false
 [dependencies.dolang]
 workspace = true
 
-
-[dependencies.anstyle]
-workspace = true
-
-
-[dependencies.console]
-workspace = true
