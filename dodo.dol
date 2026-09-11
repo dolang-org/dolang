@@ -1,4 +1,4 @@
-import sys admin dodo json
+import sys admin dodo json toml
   fs:
     - Path
     - copy
@@ -169,6 +169,33 @@ def default_shell_tests slow release
       --tags !release
     else
       --timeout 3600
+
+def wasm_tool name
+  let manifest = toml.decode $Path("dolang-wasm/Cargo.toml").read()
+  let version = manifest["dependencies"]["wasm-bindgen"]
+  let tools_dir = Path "target/wasm-bindgen/$(version.without_prefix "=")"
+  run_cargo install wasm-bindgen-cli --version $version --locked --root $tools_dir
+  let bin = (tools_dir / "bin" / name).absolute()
+  if (sys.os_info().family == :WINDOWS:)
+    bin = bin.add_ext exe
+  bin
+
+def wasm_build()
+  let bindgen = wasm_tool wasm-bindgen
+  run_cargo build -p dolang-wasm --target wasm32-unknown-unknown --release --locked
+  dodo.show $bindgen
+    --target web --out-dir playground/pkg
+    target/wasm32-unknown-unknown/release/dolang_wasm.wasm
+
+def wasm_test()
+  let runner = wasm_tool wasm-bindgen-test-runner
+  env CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: $runner do
+    run_cargo test -p dolang-wasm --target wasm32-unknown-unknown --lib --locked
+
+def playground_build()
+  wasm_build()
+  dodo.show npm --prefix playground ci
+  dodo.show npm --prefix playground run build
 
 def rustdoc_build()
   env RUSTDOCFLAGS: "--cfg docsrs" do
@@ -524,6 +551,32 @@ return $
     do |_|
       with_mkdocs do dodo.show mkdocs build --strict
 
+  "wasm-build":
+    help: build browser Wasm adapter
+    do |_|
+      wasm_build()
+
+  playground:
+    help: build the static browser playground into target/playground
+    do |_| playground_build()
+
+  "serve-playground":
+    help: build and serve the static browser playground
+    do |_|
+      playground_build()
+      dodo.show python3 -m http.server 8080 -d target/playground/ -b localhost
+
+  "wasm-test":
+    help: run adapter tests as Wasm in Node
+    do |_| wasm_test()
+
+  "playground-test":
+    help: build and test the browser playground (requires Playwright Chromium)
+    do |_|
+      playground_build()
+      run_cargo clippy -p dolang-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
+      dodo.show npm --prefix playground test
+
   pages:
     help: build the complete GitHub Pages site
     do |_|
@@ -531,6 +584,8 @@ return $
       rustdoc_build()
       copy target/doc site/rustdoc all: true
       copy .github/rustdoc-index.html site/rustdoc/index.html
+      playground_build()
+      copy target/playground site/playground all: true
 
   fmt:
     help: format Rust

@@ -136,16 +136,32 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: playground/package-lock.json
+
       - name: Prereqs
         run: |
           run python -m pip install --requirement docs/requirements.txt
           run cargo install rumdl
+          run rustup target add wasm32-unknown-unknown
+          run npm --prefix playground ci
+          run npx --prefix playground playwright install --with-deps chromium
 
       - name: Lint docs
         run: dodo.run lint-docs
 
       - name: Build docs site
-        run: dodo.run mkdocs --target x86_64-linux
+        run: dodo.run mkdocs
 
       - name: Build Rust API docs
         run: dodo.run rustdoc
+
+      - name: Run Wasm tests
+        run: dodo.run wasm-test
+
+      - name: Run playground tests
+        run: dodo.run playground-test

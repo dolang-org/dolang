@@ -26,3 +26,9 @@
 .md-footer {
     display: none;
 }
+
+.playground-link {
+    font-size: .7rem;
+    font-weight: 600;
+    white-space: nowrap;
+}

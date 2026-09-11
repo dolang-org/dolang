@@ -1,0 +1,7 @@
+# title: Base64
+import base64
+
+let message = "Hello, Do!"
+let encoded = base64.encode $message
+echo "Encoded: $encoded"
+echo "Decoded: $(base64.decode encoded)"

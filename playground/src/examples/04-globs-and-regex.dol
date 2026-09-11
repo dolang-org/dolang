@@ -1,0 +1,13 @@
+# title: Globs and Regex
+import glob regex
+
+let paths = ["src/main.dol", "docs/intro.md", "test/example.dol"]
+let matching = $
+  for path = paths
+    if glob.matches "**/*.dol" $path
+      $path
+echo $matching
+
+let digits = regex.Regex "[0-9]+"
+let redacted = digits.replace "job-123 finished in 45 seconds" "#"
+echo $redacted

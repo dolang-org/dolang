@@ -11,3 +11,9 @@
 /.claude
 /.cache
 __pycache__
+
+# Browser playground build products
+/playground/node_modules/
+/playground/pkg/
+/playground/test-results/
+/playground/playwright-report/

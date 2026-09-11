@@ -1,0 +1,13 @@
+# title: Runtime compilation
+import compile load
+
+# Compile a source string and execute the resulting bytecode.
+let source = r|
+  let numbers = [3, 5, 8]
+  let total = 0
+  for number = numbers
+    total = (total + number)
+  total
+let unit = compile.compile generated.dol $source
+let result = load.run $unit.emit()
+echo "Compiled result: $result"

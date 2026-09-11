@@ -1,0 +1,9 @@
+# title: Random names and UUIDs
+import rand uuid
+
+let adjective = rand.pick ["quiet", "bright", "swift"]
+let animal = rand.pick ["otter", "fox", "owl"]
+let name = "$adjective-$animal"
+let id = uuid.Uuid.generate()
+echo "Name: $name"
+echo "UUID: $id"

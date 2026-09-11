@@ -15,6 +15,7 @@ on:
       - "Cargo.lock"
       - "dodo.dol"
       - "docs/**"
+      - "playground/**"
       - "lib/**"
       - "mkdocs.yml"
 
@@ -45,6 +46,17 @@ jobs:
           # the other workflows rather than hardcoding "true".
           save-cache: ${{ github.ref == 'refs/heads/master' }}
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: playground/package-lock.json
+
+      - name: Install Wasm target
+        run: |
+          run rustup target add wasm32-unknown-unknown
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -58,6 +70,12 @@ jobs:
 
       - name: Build docs site
         run: dodo.run pages
+
+      - name: Install browser for playground tests
+        run: run npm --prefix playground exec -- playwright install --with-deps chromium
+
+      - name: Test playground
+        run: dodo.run playground-test
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v5

@@ -1,0 +1,8 @@
+# title: Hashing
+import digest
+
+let message = "Hello, Do!"
+let hash = digest.sha256 $message
+
+# Digests are binary values; the `x` format spec renders them as hex.
+echo "SHA-256: ${hash:x}"

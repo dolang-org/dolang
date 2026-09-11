@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "dolang-wasm",
   "dolang",
   "dolang-private-build",
   "dolang-private-bundle",
@@ -440,6 +441,7 @@ version = "1"
 
 [workspace.dependencies.wax]
 version = "0.7"
+default-features = false
 
 
 [workspace.dependencies.windows-sys]

@@ -23,11 +23,15 @@ plugins:
             show_private: false
   - awesome-nav
 
+exclude_docs: |
+  /overrides/
+
 extra_css:
   - extra.css
 
 theme:
   name: material
+  custom_dir: docs/overrides
   logo: dot.png
   favicon: dot.png
   features:
