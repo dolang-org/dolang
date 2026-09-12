@@ -172,9 +172,11 @@ def default_shell_tests slow release
       --timeout 3600
 
 def wasm_tool name
-  let manifest = toml.decode $Path("dolang-wasm/Cargo.toml").read()
-  let version = manifest["dependencies"]["wasm-bindgen"]
-  let tools_dir = Path "target/wasm-bindgen/$(version.without_prefix "=")"
+  # The CLI must exactly match the locked library version.
+  let lock = toml.decode $Path("Cargo.lock").read()
+  let package = lock["package"].find(do |package| package["name"] == "wasm-bindgen")
+  let version = package["version"]
+  let tools_dir = Path "target/wasm-bindgen/$version"
   run_cargo install wasm-bindgen-cli --version $version --locked --root $tools_dir
   let bin = (tools_dir / "bin" / name).absolute()
   if (sys.os_info().family == :WINDOWS:)

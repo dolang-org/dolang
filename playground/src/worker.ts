@@ -1,20 +1,62 @@
-import init, { analyze, run } from '../pkg/dolang_wasm.js';
+import init, { analyze, run, type Host } from '../pkg/dolang_wasm.js';
 import wasmUrl from '../pkg/dolang_wasm_bg.wasm?url';
-import type { Request, Reply } from './protocol';
+import type { PageCall, Reply, Request } from './protocol';
 
 const reply = (message: Reply) => self.postMessage(message);
+const runs = new Map<number, AbortController>();
+const calls = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
+let nextCall = 0;
+
+// Forwards a host call to the page; the page answers with `return`.
+function forward(id: number, call: PageCall, signal: AbortSignal): Promise<void> {
+  const callId = ++nextCall;
+  return new Promise((resolve, reject) => {
+    calls.set(callId, { resolve, reject });
+    signal.addEventListener('abort', () => {
+      calls.delete(callId);
+      reply({ type: 'abortCall', callId });
+    }, { once: true });
+    reply({ type: 'call', id, callId, ...call });
+  });
+}
+
+// Capabilities available in the worker are implemented here directly;
+// the rest are forwarded to the page.
+const host = (id: number): Host => ({
+  echo: (text, signal) => forward(id, { method: 'echo', args: [text] }, signal),
+});
+
 // Serialize requests even when run yields to the browser executor.
 let pending = init({ module_or_path: wasmUrl }).then(() => reply({ type: 'ready' }));
 pending.catch(error => reply({ type: 'failure', message: String(error) }));
 self.onmessage = (event: MessageEvent<Request>) => {
   const request = event.data;
+  // Cancellation and call results bypass the queue, since the run they
+  // affect is still pending in it.
+  if (request.type === 'cancel') {
+    runs.get(request.id)?.abort();
+    return;
+  }
+  if (request.type === 'return') {
+    const call = calls.get(request.callId);
+    calls.delete(request.callId);
+    if (request.error === undefined) call?.resolve();
+    else call?.reject(new Error(request.error));
+    return;
+  }
+  const { type, id, version, source } = request;
+  const controller = new AbortController();
+  if (type === 'run') runs.set(id, controller);
   pending = pending.then(async () => {
-    const { id, version, source } = request;
-    if (request.type === 'analyze') {
+    if (type === 'analyze') {
       reply({ type: 'analysis', id, version, value: analyze(source) });
     } else {
-      const value = await run(source, (chunk: string) => reply({ type: 'output', id, version, chunk }));
-      reply({ type: 'result', id, version, value });
+      try {
+        const value = await run(source, host(id), controller.signal);
+        reply({ type: 'result', id, version, value });
+      } finally {
+        runs.delete(id);
+      }
     }
   }).catch(error => reply({ type: 'failure', message: String(error) }));
 };
