@@ -5,12 +5,13 @@ loads the Wasm adapter, analyzes source, and executes one fresh VM per run.
 Compiler byte offsets are converted to UTF-16 in Rust. Token classification is a
 local adaptation of the LSP mapping, without an additional grammar.
 
-Included extensions: `base64`, `compile`, `digest`, `glob`, `json`, `load`,
-`rand`, `regex`, `time`, `toml`, `url`, `uuid`, `xml`, and `yaml`. Glob
+Included extensions: `base64`, `compile`, `digest`, `glob`, `http`, `json`,
+`load`, `rand`, `regex`, `time`, `toml`, `url`, `uuid`, `xml`, and `yaml`. Glob
 matching has no filesystem traversal; patch paths are strings on Wasm.
 Randomness uses the browser's crypto API, and timers use the host's
-`setTimeout`. Dynamic modules can be supplied as source strings through
-`compile` and `load`.
+`setTimeout`. HTTP requests use the browser's `fetch`, so cross-origin requests
+need CORS and request bodies are buffered. Dynamic modules can be supplied as
+source strings through `compile` and `load`.
 
 ## Build
 

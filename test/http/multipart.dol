@@ -165,6 +165,31 @@ def binary_body_parts_round_trip()
         assert_eq $parts[1]["body"] b"\x00\x01hello\xff"
 
 #[test]
+def iterable_body_parts_round_trip()
+  http.mock.Server do |server|
+    server.mock
+      - method: POST
+        path: /multipart-iterable
+        respond:
+          status: 201
+          body: iterable
+      do |handle|
+        http.post (server.url / "/multipart-iterable")
+          multipart:
+            - name: chunks
+              filename: chunks.txt
+              body: ["hello ", b"world"]
+          do |res|
+            assert_eq $res.status 201
+            assert_eq $res.text() "iterable"
+
+        let parts = (parts_of handle)
+        assert_eq $parts.len 1
+        assert_eq $parts[0]["name"] "chunks"
+        assert_eq $parts[0]["filename"] "chunks.txt"
+        assert_eq (str parts[0]["body"]) "hello world"
+
+#[test]
 def file_backed_part_round_trips()
   http.mock.Server do |server|
     server.mock

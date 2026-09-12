@@ -1,0 +1,84 @@
+def assert_eq actual expected
+  if (actual != expected)
+    throw std.RuntimeError "expected $(dbg expected), got $(dbg actual)"
+def assert value
+  assert_eq $value true
+
+import http
+
+# The test harness prepends `let base = "<origin>"`.
+let api = "$base/api"
+
+let data = http.get $api/json do |res| res.json()
+assert_eq $data["name"] Do
+assert_eq $data["tags"] ["http", "wasm"]
+
+let name = http.Client do |client|
+  client.get $api/json do |res| (res.json()["name"])
+assert_eq $name Do
+
+let text = http.post $api/echo body: "plain text" do |res| res.text()
+assert_eq $text "plain text"
+let binary = http.post $api/echo body: b"\x00\xff" do |res| res.body()
+assert_eq $binary b"\x00\xff"
+let joined = http.post $api/echo body: ["a", b"b", 3] do |res| res.text()
+assert_eq $joined ab3
+let lines = http.post $api/echo lines: ["one", "two"] do |res| res.text()
+assert_eq $lines "one\ntwo\n"
+
+let json_type json_body = http.post $api/echo json: {answer: 42} do |res| $
+  - $res.headers["x-request-content-type"]
+  - $res.json()
+assert_eq $json_type application/json
+assert_eq $json_body["answer"] 42
+
+let form_type form = http.post $api/echo
+  multipart:
+    - name: note
+      body: hello
+    - name: payload
+      filename: payload.bin
+      body: b"\x01\x02"
+    - name: chunks
+      body: ["chunk ", b"data"]
+  do |res| $
+    - $res.headers["x-request-content-type"]
+    - $res.text()
+assert (form_type.starts_with "multipart/form-data; boundary=")
+assert (form.contains "name=\"note\"\r\n\r\nhello\r\n")
+assert (form.contains "name=\"payload\"; filename=\"payload.bin\"")
+assert (form.contains "name=\"chunks\"")
+assert (form.contains "chunk data")
+
+let size = 0
+http.get $api/lines do |res|
+  for chunk = res.chunks()
+    size = (size + chunk.len)
+assert_eq $size 19
+let received = http.get $api/lines do |res| ([...res.lines()])
+assert_eq $received ["one", "two", "three", "four"]
+
+let events = http.get $api/events do |res| ([...res.events()])
+assert_eq $events.len 2
+assert_eq $events[0].type greeting
+assert_eq $events[0].data hello
+assert_eq $events[1].type message
+assert_eq $events[1].data "line one\nline two"
+
+let missing = try
+  http.get $api/missing
+  nil
+catch http.Status: err
+  err
+assert_eq $missing.status 404
+assert_eq $missing.text() "no such thing"
+
+let unsupported = try
+  http.Client cookies: true
+  nil
+catch std.RuntimeError: err
+  str $err
+assert_eq $unsupported "cookies is not supported in the browser"
+
+echo "http passed"
+"http passed"

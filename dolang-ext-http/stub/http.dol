@@ -16,6 +16,19 @@ import std:
 #   query: {page: 1}
 #   headers: {authorization: "Bearer $token"}
 # ```
+#
+# ## Browser
+#
+# Browser builds, such as the playground, send requests through `fetch`:
+#
+# - Cross-origin requests succeed only against servers that send CORS headers,
+#   and only CORS-exposed response headers are visible.
+# - The browser controls forbidden headers such as `Cookie`, `Host` and
+#   `User-Agent`, and cookies follow its credentials rules.
+# - Request bodies are buffered, not streamed.
+# - The [`Client`](http.Client) options `unix_socket`, `proxy`, `cookies`,
+#   `ca_cert`, `identity`, `password` and `invalid_certs` raise
+#   [`RuntimeError`](std.RuntimeError).
 
 # A transport or protocol failure.
 #
@@ -432,6 +445,9 @@ pub class Response
 # ```
 pub class Client
   # Builds a client.
+  #
+  # Browser builds accept only `func`; any other option raises
+  # [`RuntimeError`](std.RuntimeError).
   #
   # ## Returns
   #

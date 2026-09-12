@@ -1,9 +1,8 @@
 use std::{
     hash::{Hash, Hasher},
     io,
+    time::SystemTime,
 };
-
-use web_time::SystemTime;
 
 use dolang::runtime::value::fmt::Format;
 
@@ -175,28 +174,42 @@ impl DateTimeAnnex {
     }
 
     pub(crate) fn from_system_time(time: SystemTime) -> io::Result<Self> {
-        match time.duration_since(SystemTime::UNIX_EPOCH) {
-            Ok(duration) => {
-                let total_nanos = i128::from(duration.as_secs())
-                    .checked_mul(NANOS_PER_SEC_I128)
-                    .and_then(|secs| secs.checked_add(i128::from(duration.subsec_nanos())))
-                    .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflow")
-                    })?;
-                Ok(Self { total_nanos })
-            }
-            Err(err) => {
-                let duration = err.duration();
-                let total_nanos = i128::from(duration.as_secs())
-                    .checked_mul(NANOS_PER_SEC_I128)
-                    .and_then(|secs| secs.checked_add(i128::from(duration.subsec_nanos())))
-                    .and_then(|total_nanos| total_nanos.checked_neg())
-                    .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflow")
-                    })?;
-                Ok(Self { total_nanos })
-            }
-        }
+        Self::from_epoch_offset(
+            time.duration_since(SystemTime::UNIX_EPOCH)
+                .map_err(|err| err.duration()),
+        )
+    }
+
+    /// Reads the current time. std's clock is unavailable in the browser, so
+    /// this reads the host clock through `web_time`.
+    pub(crate) fn now() -> io::Result<Self> {
+        Self::from_epoch_offset(
+            web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map_err(|err| err.duration()),
+        )
+    }
+
+    /// Converts an offset from the Unix epoch: `Ok` after it, `Err` before it.
+    fn from_epoch_offset(
+        offset: std::result::Result<std::time::Duration, std::time::Duration>,
+    ) -> io::Result<Self> {
+        let (duration, before_epoch) = match offset {
+            Ok(duration) => (duration, false),
+            Err(duration) => (duration, true),
+        };
+        let total_nanos = i128::from(duration.as_secs())
+            .checked_mul(NANOS_PER_SEC_I128)
+            .and_then(|secs| secs.checked_add(i128::from(duration.subsec_nanos())))
+            .and_then(|total_nanos| {
+                if before_epoch {
+                    total_nanos.checked_neg()
+                } else {
+                    Some(total_nanos)
+                }
+            })
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflow"))?;
+        Ok(Self { total_nanos })
     }
 
     pub(crate) fn to_system_time(&self) -> io::Result<SystemTime> {
@@ -470,7 +483,7 @@ impl<'v> Object<'v> for Date {
             })
             .type_method("today", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let now = DateTimeAnnex::from_system_time(SystemTime::now()).into_do(strand)?;
+                let now = DateTimeAnnex::now().into_do(strand)?;
                 let date = OffsetDateTime::from_unix_timestamp_nanos(now.total_nanos())
                     .map_err(|_| Error::runtime(strand, "invalid DateTime"))?
                     .date();
@@ -889,7 +902,7 @@ impl<'v> Object<'v> for DateTime {
             })
             .type_method("now", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let annex = DateTimeAnnex::from_system_time(SystemTime::now()).into_do(strand)?;
+                let annex = DateTimeAnnex::now().into_do(strand)?;
                 this.create_with_annex(strand, DateTime, annex, out);
                 Ok(())
             })

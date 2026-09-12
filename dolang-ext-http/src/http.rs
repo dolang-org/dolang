@@ -1,15 +1,11 @@
-use std::{
-    borrow::Cow,
-    fmt, mem,
-    pin::Pin,
-    result, str,
-    task::{Context, Poll},
-};
+use std::{borrow::Cow, mem, pin::Pin, result, str};
 
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{object::fmt, strand::InterruptMask};
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+use dolang::runtime::value::View;
 use dolang::runtime::{
     Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Type, Value,
     call,
@@ -17,64 +13,28 @@ use dolang::runtime::{
     method,
     object::{DictLike, DictView, DictViewSink, Mut, Ref, TypeBuilder},
     unpack,
-    value::{BinEmbryo, Empty, TypeObject, View},
+    value::{BinEmbryo, TypeObject},
     vm::Builder,
 };
 use dolang_ext_time::{as_datetime, datetime};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+use reqwest::tls::{Certificate, Identity};
 use reqwest::{
-    Method,
+    Method, StatusCode,
     header::{HeaderMap, HeaderName, HeaderValue},
     multipart,
-    tls::{Certificate, Identity},
 };
 
 use bstr::ByteSlice;
 use bytes::Bytes;
 use dolang_ext_url::{create_url, value_to_url};
-use futures::stream::Stream;
-use tokio::sync::mpsc;
+use futures::stream::{Stream, StreamExt as _};
 
 use crate::{
+    body::IterBodies,
     global::Global,
     sse::{EventIter, SseParser},
 };
-
-/// Custom error type for body streaming errors
-#[derive(Debug)]
-struct BodyError;
-
-struct BytesFormat(Vec<u8>);
-
-impl<'v> Format<'v> for BytesFormat {
-    fn write_str<'s>(&mut self, _strand: &mut Strand<'v, 's>, s: &str) -> Result<'v, 's, ()> {
-        self.0.extend_from_slice(s.as_bytes());
-        Ok(())
-    }
-}
-
-impl fmt::Display for BodyError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "request body stream error")
-    }
-}
-
-impl std::error::Error for BodyError {}
-
-/// Stream wrapper for tokio mpsc receiver
-struct BodyStream(mpsc::Receiver<result::Result<Bytes, BodyError>>);
-
-impl Stream for BodyStream {
-    type Item = result::Result<Bytes, BodyError>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.0.poll_recv(cx)
-    }
-}
-
-struct MultipartStream {
-    sender: mpsc::Sender<result::Result<Bytes, BodyError>>,
-    body_index: usize,
-}
 
 pub(crate) struct Client {
     inner: Option<reqwest::Client>,
@@ -240,7 +200,7 @@ impl<'v> DictLike<'v> for ResponseHeaders {
                 borrow
                     .inner
                     .as_ref()
-                    .map(|inner| inner.headers().iter().count())
+                    .map(|inner| inner.headers.iter().count())
             })
             .unwrap_or(0)
     }
@@ -258,7 +218,7 @@ impl<'v> DictLike<'v> for ResponseHeaders {
             .inner
             .as_ref()
             .ok_or_else(|| Error::state_error(strand, "closed"))?;
-        header_get(strand, inner.headers(), key, instance, out)
+        header_get(strand, &inner.headers, key, instance, out)
     }
 
     fn flatten<'s>(
@@ -272,7 +232,7 @@ impl<'v> DictLike<'v> for ResponseHeaders {
             .inner
             .as_ref()
             .ok_or_else(|| Error::state_error(strand, "closed"))?;
-        header_flatten(strand, inner.headers(), sink)
+        header_flatten(strand, &inner.headers, sink)
     }
 }
 
@@ -327,15 +287,15 @@ fn parse_status_policy<'v, 's>(
 async fn status_error<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
-    mut response: reqwest::Response,
+    mut response: ResponseParts,
 ) -> Error<'v, 's> {
-    let status = response.status();
-    let url = Some(response.url().clone());
-    let headers = mem::take(response.headers_mut());
+    let status = response.status;
+    let url = Some(response.url.clone());
+    let headers = mem::take(&mut response.headers);
     let message = response
-        .error_for_status_ref()
-        .map(|_| status_message(status, url.as_ref()))
-        .unwrap_or_else(|err| err.to_string());
+        .error_message
+        .take()
+        .unwrap_or_else(|| status_message(status, url.as_ref()));
 
     let mut body = Vec::new();
     let mut truncated = false;
@@ -528,53 +488,6 @@ impl<T> ResultExt<T> for result::Result<T, reqwest::Error> {
     }
 }
 
-/// Pumps data from a VM iterator into a channel for request body streaming
-async fn pump_request_body<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    iterator: &Value<'v>,
-    sender: mpsc::Sender<result::Result<Bytes, BodyError>>,
-    lines: bool,
-) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async move |strand, [mut item]| {
-            loop {
-                match iterator.next(strand, &mut item).await {
-                    Ok(true) => {
-                        let mut vec = if let Some(slice) = item.as_bin(strand) {
-                            slice.to_vec()
-                        } else {
-                            let mut format = BytesFormat(Vec::new());
-                            item.display(strand, &mut format)?;
-                            format.0
-                        };
-
-                        if lines {
-                            vec.push(b'\n')
-                        }
-
-                        // Send to channel (with backpressure)
-                        if sender.send(Ok(vec.into())).await.is_err() {
-                            // Receiver dropped - request completed/cancelled
-                            return Ok(());
-                        }
-                    }
-                    Ok(false) => {
-                        // Iterator exhausted - close channel
-                        drop(sender);
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        // Send dummy error to signal stream failure
-                        // Real VM error propagates through pump_result
-                        let _ = sender.send(Err(BodyError)).await;
-                        return Err(e);
-                    }
-                }
-            }
-        })
-        .await
-}
-
 fn multipart_text_field<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: Option<&Value<'v>>,
@@ -596,8 +509,8 @@ async fn multipart_part<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     part_spec: &Value<'v>,
-    bodies: &Value<'v>,
-) -> Result<'v, 's, (String, multipart::Part, Option<MultipartStream>)> {
+    bodies: &mut IterBodies<'v, '_, '_>,
+) -> Result<'v, 's, (String, multipart::Part)> {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum BodyKind {
         Body,
@@ -703,27 +616,7 @@ async fn multipart_part<'v, 's>(
                 } else {
                     match body.iter(strand, &mut body_iter).await {
                         Ok(()) => {
-                            let bodies = bodies.as_array(strand).ok_or_else(|| {
-                                Error::state_error(strand, "multipart body roots missing")
-                            })?;
-                            let body_index = bodies.len(strand)?;
-                            bodies.push(strand, &body)?;
-                            let (sender, receiver) = mpsc::channel(8);
-                            let mut part = multipart::Part::stream(reqwest::Body::wrap_stream(
-                                BodyStream(receiver),
-                            ));
-                            if let Some(filename) = filename {
-                                part = part.file_name(filename);
-                            }
-                            if let Some(content_type) = content_type {
-                                part = part.mime_str(&content_type).map_err(|err| {
-                                    Error::value(
-                                        strand,
-                                        format!("multipart part content_type: {err}"),
-                                    )
-                                })?;
-                            }
-                            return Ok((name, part, Some(MultipartStream { sender, body_index })));
+                            multipart::Part::stream(bodies.add(strand, &body_iter, false).await?)
                         }
                         Err(e) if e.kind() == ErrorKind::Type => {
                             multipart::Part::text(body.to_string(strand)?)
@@ -741,7 +634,7 @@ async fn multipart_part<'v, 's>(
                     })?;
                 }
 
-                Ok((name, part, None))
+                Ok((name, part))
             },
         )
         .await
@@ -763,7 +656,7 @@ async fn request<'v, 's>(
             mut key,
             mut value,
             mut body_iterator,
-            mut multipart_bodies,
+            mut body_roots,
             mut tmp,
         ]| {
             let mut url = None;
@@ -841,9 +734,7 @@ async fn request<'v, 's>(
             let url = value_to_url(st, &url)?;
             let mut builder = client.request(method, url);
 
-            // Track streaming setup for later
-            let mut stream = None;
-            let mut multipart_streams = Vec::new();
+            let mut bodies = IterBodies::new(&mut body_roots);
 
             if let Some(body) = body {
                 // Try direct conversions first (backward compatibility)
@@ -857,13 +748,8 @@ async fn request<'v, 's>(
                     // Try to get an iterator for streaming
                     match body.iter(st, &mut body_iterator).await {
                         Ok(()) => {
-                            // We have an iterator - set up streaming
-                            let (sender, receiver) = mpsc::channel(8);
-                            builder =
-                                builder.body(reqwest::Body::wrap_stream(BodyStream(receiver)));
-
-                            // Store sender for later pump creation
-                            stream = Some((sender, false));
+                            // We have an iterator - stream it where the target can
+                            builder = builder.body(bodies.add(st, &body_iterator, false).await?);
                         }
                         Err(e) if e.kind() == ErrorKind::Type => {
                             // Not iterable - convert to string
@@ -885,14 +771,8 @@ async fn request<'v, 's>(
             }
 
             if let Some(lines) = lines {
-                match lines.iter(st, &mut body_iterator).await {
-                    Ok(()) => {
-                        let (sender, receiver) = mpsc::channel(8);
-                        builder = builder.body(reqwest::Body::wrap_stream(BodyStream(receiver)));
-                        stream = Some((sender, true));
-                    }
-                    Err(e) => return Err(e),
-                }
+                lines.iter(st, &mut body_iterator).await?;
+                builder = builder.body(bodies.add(st, &body_iterator, true).await?);
             }
 
             if let Some(multipart) = multipart {
@@ -903,15 +783,10 @@ async fn request<'v, 's>(
                     ));
                 }
 
-                Output::set(st, &mut multipart_bodies, Empty::Array);
                 let mut form = multipart::Form::new();
                 multipart.iter(st, &mut iter).await?;
                 while iter.next(st, &mut item).await? {
-                    let (name, part, multipart_stream) =
-                        multipart_part(st, global, &item, &multipart_bodies).await?;
-                    if let Some(multipart_stream) = multipart_stream {
-                        multipart_streams.push(multipart_stream);
-                    }
+                    let (name, part) = multipart_part(st, global, &item, &mut bodies).await?;
                     form = form.part(name, part);
                 }
                 builder = builder.multipart(form);
@@ -922,60 +797,14 @@ async fn request<'v, 's>(
             }
             builder = builder.headers(headers);
 
-            // Execute request, running pump concurrently if streaming
-            let response = if let Some((sender, lines)) = stream {
-                // Create pump future now, after all other uses of st
-                let pump = st.spawn_scoped(None, async move |strand| {
-                    pump_request_body(strand, &body_iterator, sender, lines).await
-                });
-
-                // Wait for both to complete
-                let (response_result, pump_result) = futures::join!(builder.send(), pump);
-
-                pump_result?;
-
-                // Then handle response
-                response_result.into_http(st)?
-            } else if !multipart_streams.is_empty() {
-                let multipart_roots = &multipart_bodies;
-                let pumps = multipart_streams
-                    .into_iter()
-                    .map(|stream| {
-                        st.spawn_scoped(None, async move |strand| {
-                            strand
-                                .with_slots(async move |strand, [mut body]| {
-                                    let bodies = multipart_roots.as_array(strand).ok_or_else(|| {
-                                        Error::state_error(strand, "multipart body roots missing")
-                                    })?;
-                                    if !bodies.get(strand, stream.body_index, &mut body)? {
-                                        return Err(Error::state_error(
-                                            strand,
-                                            "multipart body root missing",
-                                        ));
-                                    }
-                                    pump_request_body(strand, &body, stream.sender, false).await
-                                })
-                                .await
-                        })
-                    })
-                    .collect::<Vec<_>>();
-
-                let (response_result, pump_results) =
-                    futures::join!(builder.send(), futures::future::join_all(pumps));
-
-                for pump_result in pump_results {
-                    pump_result?;
-                }
-
-                response_result.into_http(st)?
-            } else {
-                // Non-streaming path
-                builder.send().await.into_http(st)?
-            };
-            if status == StatusPolicy::Check && !response.status().is_success() {
+            // Execute request, pumping any streamed bodies concurrently
+            let response = ResponseParts::new(bodies.send(st, builder).await?);
+            if status == StatusPolicy::Check && !response.status.is_success() {
                 return Err(status_error(st, global, response).await);
             }
-            let response = Response::new(response);
+            let response = Response {
+                inner: Some(response),
+            };
             global
                 .types
                 .response
@@ -1043,85 +872,113 @@ impl<'v> Object<'v> for Client {
             password = None,
             invalid_certs = None
         )?;
-        let mut builder = reqwest::ClientBuilder::new();
-
-        builder = if let Some(unix_socket) = unix_socket {
-            #[cfg(unix)]
-            {
-                builder.unix_socket(
-                    unix_socket
-                        .as_str(strand)
-                        .ok_or_else(|| Error::type_error(strand, "unix_socket: expected Str"))?
-                        .to_string(),
-                )
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = unix_socket;
-                return Err(Error::runtime(strand, "unix_socket only available on Unix"));
-            }
-        } else {
-            builder
-        };
-
-        if let Some(proxy) = proxy {
-            if proxy.is_nil() {
-                builder = builder.no_proxy();
-            } else {
-                let url = value_to_url(strand, &proxy)?;
-                builder = builder.proxy(reqwest::Proxy::all(url.as_str()).into_http(strand)?);
-            }
-        }
-
-        if let Some(cookies) = cookies {
-            builder = builder.cookie_store(
-                cookies
-                    .as_bool(strand)
-                    .ok_or_else(|| Error::type_error(strand, "cookies: expected Bool"))?,
-            );
-        }
-
-        if let Some(ca_cert) = ca_cert {
-            let cert = match ca_cert.view(strand) {
-                View::Str(s) => strand.access(|x| Certificate::from_pem(s.as_str(x).as_bytes())),
-                View::Bin(b) => strand.access(|x| Certificate::from_pem(b.as_slice(x))),
-                _ => return Err(Error::type_error(strand, "ca_cert: expected Str or Bin")),
-            }
-            .into_http(strand)?;
-            builder = builder.add_root_certificate(cert);
-        }
-
-        if let Some(identity) = identity {
-            let id_bytes = identity
-                .as_bin(strand)
-                .ok_or_else(|| Error::type_error(strand, "identity: expected Str or Bin"))?;
-            let pass = match password {
-                Some(p) => p
-                    .as_str(strand)
-                    .ok_or_else(|| Error::type_error(strand, "password: expected Str"))?
-                    .to_string(),
-                None => String::new(),
-            };
-            let id = strand
-                .access(|x| Identity::from_pkcs12_der(id_bytes.as_slice(x), &pass))
-                .into_http(strand)?;
-            builder = builder.identity(id);
-        } else if password.is_some() {
-            return Err(Error::value(strand, "password requires identity"));
-        }
-
-        if let Some(invalid_certs) = invalid_certs {
-            let sym = invalid_certs
-                .as_sym(strand.vm())
-                .ok_or_else(|| Error::type_error(strand, "invalid_certs: expected symbol"))?;
-            if sym != global.syms.danger_accept {
-                return Err(Error::value(
+        // Fetch has no equivalent for these options.
+        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+        let builder = {
+            let options = [
+                ("unix_socket", unix_socket),
+                ("proxy", proxy),
+                ("cookies", cookies),
+                ("ca_cert", ca_cert),
+                ("identity", identity),
+                ("password", password),
+                ("invalid_certs", invalid_certs),
+            ];
+            if let Some((name, _)) = options.into_iter().find(|(_, value)| value.is_some()) {
+                return Err(Error::runtime(
                     strand,
-                    "invalid_certs: expected :DANGER_ACCEPT:",
+                    format!("{name} is not supported in the browser"),
                 ));
             }
-            builder = builder.danger_accept_invalid_certs(true);
-        }
+            reqwest::ClientBuilder::new()
+        };
+
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        let builder = {
+            let mut builder = reqwest::ClientBuilder::new();
+
+            builder = if let Some(unix_socket) = unix_socket {
+                #[cfg(unix)]
+                {
+                    builder.unix_socket(
+                        unix_socket
+                            .as_str(strand)
+                            .ok_or_else(|| Error::type_error(strand, "unix_socket: expected Str"))?
+                            .to_string(),
+                    )
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = unix_socket;
+                    return Err(Error::runtime(strand, "unix_socket only available on Unix"));
+                }
+            } else {
+                builder
+            };
+
+            if let Some(proxy) = proxy {
+                if proxy.is_nil() {
+                    builder = builder.no_proxy();
+                } else {
+                    let url = value_to_url(strand, &proxy)?;
+                    builder = builder.proxy(reqwest::Proxy::all(url.as_str()).into_http(strand)?);
+                }
+            }
+
+            if let Some(cookies) = cookies {
+                builder = builder.cookie_store(
+                    cookies
+                        .as_bool(strand)
+                        .ok_or_else(|| Error::type_error(strand, "cookies: expected Bool"))?,
+                );
+            }
+
+            if let Some(ca_cert) = ca_cert {
+                let cert = match ca_cert.view(strand) {
+                    View::Str(s) => {
+                        strand.access(|x| Certificate::from_pem(s.as_str(x).as_bytes()))
+                    }
+                    View::Bin(b) => strand.access(|x| Certificate::from_pem(b.as_slice(x))),
+                    _ => return Err(Error::type_error(strand, "ca_cert: expected Str or Bin")),
+                }
+                .into_http(strand)?;
+                builder = builder.add_root_certificate(cert);
+            }
+
+            if let Some(identity) = identity {
+                let id_bytes = identity
+                    .as_bin(strand)
+                    .ok_or_else(|| Error::type_error(strand, "identity: expected Str or Bin"))?;
+                let pass = match password {
+                    Some(p) => p
+                        .as_str(strand)
+                        .ok_or_else(|| Error::type_error(strand, "password: expected Str"))?
+                        .to_string(),
+                    None => String::new(),
+                };
+                let id = strand
+                    .access(|x| Identity::from_pkcs12_der(id_bytes.as_slice(x), &pass))
+                    .into_http(strand)?;
+                builder = builder.identity(id);
+            } else if password.is_some() {
+                return Err(Error::value(strand, "password requires identity"));
+            }
+
+            if let Some(invalid_certs) = invalid_certs {
+                let sym = invalid_certs
+                    .as_sym(strand.vm())
+                    .ok_or_else(|| Error::type_error(strand, "invalid_certs: expected symbol"))?;
+                if sym != global.syms.danger_accept {
+                    return Err(Error::value(
+                        strand,
+                        "invalid_certs: expected :DANGER_ACCEPT:",
+                    ));
+                }
+                builder = builder.danger_accept_invalid_certs(true);
+            }
+
+            builder
+        };
 
         if let Some(func) = func {
             strand
@@ -1178,12 +1035,59 @@ impl<'v> Object<'v> for Client {
 }
 
 pub(crate) struct Response {
-    pub(crate) inner: Option<reqwest::Response>,
+    pub(crate) inner: Option<ResponseParts>,
 }
 
-impl Response {
-    fn new(inner: reqwest::Response) -> Self {
-        Self { inner: Some(inner) }
+/// Body of a response as a stream of chunks.
+type ByteStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>>>>;
+
+/// An open response: its metadata and unread body.
+///
+/// The body is read through `bytes_stream`, the one body API that reqwest's
+/// native and browser backends share.
+pub(crate) struct ResponseParts {
+    status: StatusCode,
+    url: url::Url,
+    headers: HeaderMap,
+    /// reqwest's message for a failure status, captured before the body is taken.
+    error_message: Option<String>,
+    body: ByteStream,
+}
+
+impl ResponseParts {
+    fn new(mut response: reqwest::Response) -> Self {
+        let error_message = response
+            .error_for_status_ref()
+            .err()
+            .map(|err| err.to_string());
+        Self {
+            status: response.status(),
+            url: response.url().clone(),
+            headers: mem::take(response.headers_mut()),
+            error_message,
+            body: Box::pin(response.bytes_stream()),
+        }
+    }
+
+    /// Reads the next chunk of the body, or `None` at its end.
+    pub(crate) async fn chunk(&mut self) -> reqwest::Result<Option<Bytes>> {
+        self.body.next().await.transpose()
+    }
+
+    /// Reads the rest of the body.
+    async fn bytes(mut self) -> reqwest::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        while let Some(chunk) = self.chunk().await? {
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    }
+
+    /// Reads the rest of the body as text, replacing invalid UTF-8.
+    async fn text(self) -> reqwest::Result<String> {
+        let bytes = self.bytes().await?;
+        Ok(String::from_utf8(bytes)
+            .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned()))
     }
 }
 
@@ -1239,7 +1143,7 @@ impl<'v> Object<'v> for Response {
                     .inner
                     .as_ref()
                     .ok_or_else(|| Error::state_error(strand, "closed"))?;
-                create_url(strand, inner.url().clone(), out);
+                create_url(strand, inner.url.clone(), out);
                 Ok(())
             })
             .get("status", |this, strand, out| {
@@ -1247,11 +1151,7 @@ impl<'v> Object<'v> for Response {
                 if borrow.inner.is_none() {
                     return Err(Error::state_error(strand, "closed"));
                 }
-                Output::set(
-                    strand,
-                    out,
-                    borrow.inner.as_ref().unwrap().status().as_u16(),
-                );
+                Output::set(strand, out, borrow.inner.as_ref().unwrap().status.as_u16());
                 Ok(())
             })
             .get("headers", |this, strand, out| {
@@ -1267,7 +1167,7 @@ impl<'v> Object<'v> for Response {
                     return Err(Error::state_error(strand, "closed"));
                 };
                 let res = inner.bytes().await.into_http(strand)?;
-                Output::set(strand, out, res.as_ref());
+                Output::set(strand, out, res.as_slice());
                 Ok(())
             })
             .method("text", async move |this, strand, args, out| {
@@ -1289,7 +1189,7 @@ impl<'v> Object<'v> for Response {
                 let Some(inner) = borrow.inner.take() else {
                     return Err(Error::state_error(strand, "closed"));
                 };
-                if inner.status().is_success() {
+                if inner.status.is_success() {
                     borrow.inner = Some(inner);
                     drop(borrow);
                     Ok(())

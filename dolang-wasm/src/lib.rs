@@ -35,6 +35,9 @@ fn config() -> Config<'static> {
     dolang_ext_glob::GlobExt
         .apply_compiler(&mut config)
         .unwrap();
+    dolang_ext_http::HttpExt
+        .apply_compiler(&mut config)
+        .unwrap();
     dolang_ext_load::LoadExt
         .apply_compiler(&mut config)
         .unwrap();
@@ -84,6 +87,7 @@ async fn execute(source: String, host: Host, signal: AbortSignal) -> RunResult {
         dolang_ext_compile::CompileExt.apply_vm(builder).unwrap();
         dolang_ext_digest::DigestExt.apply_vm(builder).unwrap();
         dolang_ext_glob::GlobExt.apply_vm(builder).unwrap();
+        dolang_ext_http::HttpExt.apply_vm(builder).unwrap();
         dolang_ext_load::LoadExt.apply_vm(builder).unwrap();
         dolang_ext_rand::RandExt.apply_vm(builder).unwrap();
         dolang_ext_regex::RegexExt.apply_vm(builder).unwrap();
@@ -316,6 +320,26 @@ pub mod tests {
         let (result, _) = run_source(include_str!("../../playground/tests/extensions.dol")).await;
         assert!(result.error.is_none(), "{:?}", result.error);
         assert_eq!(result.result.as_deref(), Some("extensions passed"));
+    }
+
+    #[wasm_bindgen_test]
+    async fn http_rejects_unsupported_client_options() {
+        for option in [
+            "unix_socket",
+            "proxy",
+            "cookies",
+            "ca_cert",
+            "identity",
+            "password",
+            "invalid_certs",
+        ] {
+            let (result, _) = run_source(&format!("import http\nhttp.Client {option}: nil")).await;
+            let error = result.error.expect(option);
+            assert!(
+                error.contains(&format!("{option} is not supported in the browser")),
+                "{error}"
+            );
+        }
     }
 
     #[wasm_bindgen_test]
