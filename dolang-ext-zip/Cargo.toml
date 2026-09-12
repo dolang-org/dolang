@@ -47,5 +47,9 @@ workspace = true
 workspace = true
 
 
+[dependencies.dolang-ext-time]
+workspace = true
+
+
 [dependencies.dolang-vfs]
 workspace = true

@@ -907,7 +907,7 @@ dependencies = [
  "bytes",
  "dolang",
  "dolang-ext-json",
- "dolang-ext-shell",
+ "dolang-ext-time",
  "dolang-ext-url",
  "futures",
  "httpdate",
@@ -923,7 +923,7 @@ dependencies = [
  "bstr",
  "dolang",
  "dolang-ext-json",
- "dolang-ext-shell",
+ "dolang-ext-time",
  "dolang-ext-url",
  "futures",
  "http",
@@ -1000,6 +1000,7 @@ dependencies = [
  "console",
  "dolang",
  "dolang-ext-compile",
+ "dolang-ext-time",
  "dolang-ext-uuid",
  "dolang-vfs",
  "dolang-winterop",
@@ -1011,7 +1012,6 @@ dependencies = [
  "phf",
  "rand",
  "shlex 2.0.1",
- "time",
  "tokio",
  "unicode-segmentation",
  "unicode-width",
@@ -1041,8 +1041,21 @@ dependencies = [
  "async-compression",
  "dolang",
  "dolang-ext-shell",
+ "dolang-ext-time",
  "tokio",
  "tokio-stream",
+]
+
+[[package]]
+name = "dolang-ext-time"
+version = "0.1.1"
+dependencies = [
+ "dolang",
+ "futures",
+ "gloo-timers",
+ "time",
+ "tokio",
+ "web-time",
 ]
 
 [[package]]
@@ -1078,6 +1091,7 @@ version = "0.1.1"
 dependencies = [
  "dolang",
  "dolang-ext-shell",
+ "dolang-ext-time",
  "dolang-vfs",
  "dolang-vfs-winnet",
  "dolang-winterop",
@@ -1133,6 +1147,7 @@ dependencies = [
  "astral_async_zip",
  "dolang",
  "dolang-ext-shell",
+ "dolang-ext-time",
  "dolang-vfs",
  "futures-lite",
  "jiff",
@@ -1410,6 +1425,7 @@ dependencies = [
  "dolang-ext-load",
  "dolang-ext-rand",
  "dolang-ext-regex",
+ "dolang-ext-time",
  "dolang-ext-toml",
  "dolang-ext-url",
  "dolang-ext-uuid",
@@ -1777,6 +1793,18 @@ name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
+
+[[package]]
+name = "gloo-timers"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "h2"

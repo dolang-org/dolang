@@ -17,7 +17,6 @@ use crate::{
     io_mode::{encode_value, strip_line_ending},
     local::TerminationPolicy,
     program,
-    time::coerce_duration,
 };
 
 mod foreign;
@@ -99,7 +98,6 @@ fn parse_signal_with_number<'v, 's>(
 
 fn apply_policy_values<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     mut policy: TerminationPolicy,
     signal: Option<&Value<'v>>,
     grace: Option<&Value<'v>>,
@@ -109,7 +107,7 @@ fn apply_policy_values<'v, 's>(
         policy.signal = parse_signal(strand, signal)?;
     }
     if let Some(grace) = grace {
-        policy.grace = parse_grace(strand, global, grace)?;
+        policy.grace = parse_grace(strand, grace)?;
     }
     if let Some(force) = force {
         policy.force = force
@@ -121,16 +119,15 @@ fn apply_policy_values<'v, 's>(
 
 fn parse_grace<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     value: &Value<'v>,
 ) -> Result<'v, 's, std::time::Duration> {
-    if global.types.duration.cast(value).is_none() && value.as_f64(strand).is_none() {
+    if !dolang_ext_time::is_duration(strand, value) && value.as_f64(strand).is_none() {
         return Err(Error::type_error(
             strand,
             "termination grace must be a Duration or Float",
         ));
     }
-    coerce_duration(strand, global, value, "termination grace")
+    dolang_ext_time::coerce_duration(strand, value, "termination grace")
 }
 
 pub(crate) fn parse_policy_dict<'v, 's>(
@@ -159,7 +156,7 @@ pub(crate) fn parse_policy_dict<'v, 's>(
                 }
                 policy.signal = parse_signal_with_number(strand, &value, true)?;
             } else if key == global.syms.grace {
-                policy.grace = parse_grace(strand, global, &value)?;
+                policy.grace = parse_grace(strand, &value)?;
             } else if key == global.syms.force {
                 policy.force = value
                     .as_bool(strand)
@@ -315,7 +312,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let old_policy = global.local.get(strand).termination_policy();
             let policy = apply_policy_values(
                 strand,
-                global,
                 old_policy.clone(),
                 signal.as_deref(),
                 grace.as_deref(),

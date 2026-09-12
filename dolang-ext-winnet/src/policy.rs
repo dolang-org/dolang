@@ -29,7 +29,7 @@ fn optional_duration<'v, 's>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     match value {
-        Some(value) => dolang_ext_shell::duration(strand, Duration::from_secs(value), out),
+        Some(value) => dolang_ext_time::duration(strand, Duration::from_secs(value), out),
         None => {
             Output::set(strand, out, Nil);
             Ok(())
@@ -53,7 +53,7 @@ fn duration<'v, 's>(
     value: &Value<'v>,
     name: &str,
 ) -> Result<'v, 's, u64> {
-    let value = dolang_ext_shell::as_duration(strand, value)
+    let value = dolang_ext_time::as_duration(strand, value)
         .ok_or_else(|| Error::type_error(strand, format!("{name} must be a time.Duration")))?;
     if value.subsec_nanos() != 0 {
         return Err(Error::value(
@@ -84,7 +84,7 @@ impl<'v> Object<'v> for AccountPolicy {
                 optional_duration(strand, this.annex().max_password_age(), out)
             })
             .get("min_password_age", |this, strand, out| {
-                dolang_ext_shell::duration(
+                dolang_ext_time::duration(
                     strand,
                     Duration::from_secs(this.annex().min_password_age()),
                     out,
@@ -98,14 +98,14 @@ impl<'v> Object<'v> for AccountPolicy {
                 Ok(())
             })
             .get("lockout_duration", |this, strand, out| {
-                dolang_ext_shell::duration(
+                dolang_ext_time::duration(
                     strand,
                     Duration::from_secs(this.annex().lockout_duration()),
                     out,
                 )
             })
             .get("lockout_observation_window", |this, strand, out| {
-                dolang_ext_shell::duration(
+                dolang_ext_time::duration(
                     strand,
                     Duration::from_secs(this.annex().lockout_observation_window()),
                     out,

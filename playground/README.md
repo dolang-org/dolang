@@ -6,10 +6,11 @@ Compiler byte offsets are converted to UTF-16 in Rust. Token classification is a
 local adaptation of the LSP mapping, without an additional grammar.
 
 Included extensions: `base64`, `compile`, `digest`, `glob`, `json`, `load`,
-`rand`, `regex`, `toml`, `url`, `uuid`, `xml`, and `yaml`. Glob
+`rand`, `regex`, `time`, `toml`, `url`, `uuid`, `xml`, and `yaml`. Glob
 matching has no filesystem traversal; patch paths are strings on Wasm.
-Randomness uses the browser's crypto API. Dynamic modules can be supplied as
-source strings through `compile` and `load`.
+Randomness uses the browser's crypto API, and timers use the host's
+`setTimeout`. Dynamic modules can be supplied as source strings through
+`compile` and `load`.
 
 ## Build
 

@@ -45,9 +45,7 @@ use crate::{
         readdir::{DirEntryIter, DirEntryIterAnnex},
     },
     global::Global,
-    security,
-    time::datetime_to_unix_nanos,
-    util,
+    security, util,
 };
 
 fn sec_desc_mask<'v, 's>(
@@ -344,9 +342,9 @@ fn metadata_patch<'v, 's>(
     let group = group
         .map(|group| parse_ownership_identity(strand, global, &group, "group"))
         .transpose()?;
-    let modified = parse_timestamp_arg(strand, global, modified, "modified")?;
-    let accessed = parse_timestamp_arg(strand, global, accessed, "accessed")?;
-    let created = parse_timestamp_arg(strand, global, created, "created")?;
+    let modified = parse_timestamp_arg(strand, modified, "modified")?;
+    let accessed = parse_timestamp_arg(strand, accessed, "accessed")?;
+    let created = parse_timestamp_arg(strand, created, "created")?;
     let follow = resolve_sym(strand, global, resolve, true)?;
     let mut patch = dolang_vfs::metadata::MetadataPatch::new();
     if let Some(mode) = mode {
@@ -754,14 +752,13 @@ async fn remove_dir<'v, 's>(
 
 fn parse_timestamp_arg<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     value: Option<Slot<'v, '_>>,
     name: &str,
 ) -> Result<'v, 's, Option<i128>> {
     let Some(value) = value else {
         return Ok(None);
     };
-    datetime_to_unix_nanos(strand, global.types.date_time, &value)
+    dolang_ext_time::datetime_to_unix_nanos(strand, &value)
         .map(Some)
         .map_err(|_| Error::type_error(strand, format!("{name}: expected DateTime")))
 }

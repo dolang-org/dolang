@@ -59,7 +59,7 @@ optional = true
 workspace = true
 
 
-[dependencies.dolang-ext-shell]
+[dependencies.dolang-ext-time]
 workspace = true
 
 

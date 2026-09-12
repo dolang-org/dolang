@@ -76,7 +76,7 @@ fn nullable_time<'v, 's>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     match seconds {
-        Some(seconds) => dolang_ext_shell::datetime(
+        Some(seconds) => dolang_ext_time::datetime(
             strand,
             SystemTime::UNIX_EPOCH + Duration::from_secs(seconds),
             out,
@@ -171,7 +171,7 @@ fn update_from_slots<'v, 's>(
         update = if value.is_nil() {
             update.account_expires(None)
         } else {
-            let time = dolang_ext_shell::as_datetime(strand, &value).ok_or_else(|| {
+            let time = dolang_ext_time::as_datetime(strand, &value).ok_or_else(|| {
                 Error::type_error(strand, "account_expires must be a time.DateTime or nil")
             })?;
             let seconds = time
@@ -470,7 +470,7 @@ impl<'v> Object<'v> for UserInfo {
                 Ok(())
             })
             .get("password_age", |this, strand, out| {
-                dolang_ext_shell::duration(
+                dolang_ext_time::duration(
                     strand,
                     Duration::from_secs(this.annex().info.password_age()),
                     out,

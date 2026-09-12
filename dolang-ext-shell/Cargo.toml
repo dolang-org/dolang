@@ -46,11 +46,6 @@ workspace = true
 version = "2.0"
 
 
-[dependencies.time]
-version = "0.3"
-features = ["formatting", "parsing"]
-
-
 [dependencies.anstyle]
 workspace = true
 
@@ -98,6 +93,10 @@ workspace = true
 
 
 [dependencies.dolang-ext-uuid]
+workspace = true
+
+
+[dependencies.dolang-ext-time]
 workspace = true
 
 

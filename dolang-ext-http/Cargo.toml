@@ -60,5 +60,5 @@ features = ["query", "stream", "native-tls", "http2", "cookies", "multipart"]
 workspace = true
 
 
-[dependencies.dolang-ext-shell]
+[dependencies.dolang-ext-time]
 workspace = true
