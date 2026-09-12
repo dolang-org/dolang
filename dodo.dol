@@ -380,6 +380,14 @@ def install_bin_symlink spec bin_dir from to
   tmp.rename $dst
   echo "link: $dst -> $src"
 
+def build_pages()
+  with_mkdocs do dodo.show mkdocs build --strict
+  rustdoc_build()
+  copy target/doc site/rustdoc all: true
+  copy .github/rustdoc-index.html site/rustdoc/index.html
+  playground_build()
+  copy target/playground site/playground all: true
+
 return $
   common:
     - opt: target
@@ -583,12 +591,13 @@ return $
   pages:
     help: build the complete GitHub Pages site
     do |_|
-      with_mkdocs do dodo.show mkdocs build --strict
-      rustdoc_build()
-      copy target/doc site/rustdoc all: true
-      copy .github/rustdoc-index.html site/rustdoc/index.html
-      playground_build()
-      copy target/playground site/playground all: true
+      build_pages()
+
+  "serve-pages":
+    help: build and serve the complete GitHub Pages site
+    do |_|
+      build_pages()
+      dodo.show python3 -m http.server 8080 -d site/ -b localhost
 
   fmt:
     help: format Rust

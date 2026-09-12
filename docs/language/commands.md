@@ -23,7 +23,7 @@ are literal strings.
 Most punctuation and characters that aren't reserved by the language are
 treated as literal strings within command arguments:
 
-```
+```playground
 echo https://example.com/path?query=1&other=2
 # prints: https://example.com/path?query=1&other=2
 

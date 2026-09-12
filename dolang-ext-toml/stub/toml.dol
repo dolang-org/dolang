@@ -25,7 +25,11 @@
 #
 # ## Example
 #
-# ```
+# ```playground
+# #> import toml:
+# #>   - decode
+# #> import test:
+# #>   - assert_eq
 # assert_eq (decode "42") 42
 # assert_eq (decode "[1, 2, 3]") [1, 2, 3]
 #
@@ -75,8 +79,8 @@ do
 # assert_eq (encode 42) "42"
 # assert_eq (decode $ encode [1, 2, 3]) [1, 2, 3]
 #
-# let doc = encode {"name": "alice", "enabled": true}
-# assert_eq (decode $doc) {"name": "alice", "enabled": true}
+# let doc = encode {"enabled": true, "name": "alice"}
+# assert_eq (decode doc) {"enabled": true, "name": "alice"}
 # ```
 pub def encode
   # The value to serialize.

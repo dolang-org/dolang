@@ -46,7 +46,7 @@ strand do not impact other strands.
 The [`strand.spawn`](strand.spawn) function creates a new
 background strand:
 
-```
+```playground
 let worker = spawn do
   echo "Running in background"
   42
@@ -70,7 +70,9 @@ The returned [Strand](strand.Strand) handle allows you to:
 The [`strand.fork`](strand.fork) function executes
 multiple blocks concurrently and returns their results as an array:
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 import strand
 
 let results = fork
@@ -140,7 +142,9 @@ The
 [`strand.pipeline`](strand.pipeline)
 function connects multiple stages into a data processing pipeline:
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 import strand
 
 let result = pipeline
@@ -162,7 +166,7 @@ input.
 The [`strand.channel`](strand.channel) function creates a
 sender/receiver pair for communicating between strands:
 
-```
+```playground
 import strand
 
 let send recv = strand.channel()
@@ -192,7 +196,9 @@ its output side and `Sinkable` for its input side, making it easy to bridge
 background processing with the rest of your program without manually creating
 and threading channels.
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 import strand
 
 let s = stream do strand.each do |x| (x * 2)

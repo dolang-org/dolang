@@ -734,7 +734,9 @@ pub class Array
   #
   # ## Example
   #
-  # ```
+  # ```playground
+  # #> import test:
+  # #>   - assert_eq
   # let arr = ["bbb", "a", "cc"]
   # arr.sort key: (do |x| x.len)
   # assert_eq $arr ["a", "cc", "bbb"]
@@ -765,7 +767,9 @@ pub class Array
   #
   # Arrays also accept [`Range`](std.Range) values for slicing:
   #
-  # ```
+  # ```playground
+  # #> import test:
+  # #>   - assert_eq
   # let arr = [0, 1, 2, 3]
   # assert_eq $arr[1..3] [1, 2]
   # assert_eq $arr[..2] [0, 1]
@@ -1650,7 +1654,9 @@ pub class Dict
   #
   # ## Example
   #
-  # ```
+  # ```playground
+  # #> import test:
+  # #>   - assert
   # let d = {a: 1, b: 2}
   # d.insert "multi" "first"
   # d.insert "multi" "second"
@@ -1845,7 +1851,7 @@ pub class Dict
     throw nil
 
   # ```
-  # let name age: years = {name: "Alice", age: 30}
+  # let :name age: years = {name: "Alice", age: 30}
   # ```
   # Indexes the value.
   pub def (index) self index
@@ -2453,7 +2459,9 @@ pub class FmtValue
 #
 # ## Example
 #
-# ```
+# ```playground
+# #> import test:
+# #>   - assert_eq
 # let user = "root"
 # let seq = t"user: ${user:>8}"
 #
@@ -3146,7 +3154,9 @@ pub class Range
   #
   # ## Example
   #
-  # ```
+  # ```playground
+  # #> import test:
+  # #>   - assert
   # # Increasing Range [0, 5)
   # let r1 = Range 0 5
   # assert (r1.contains 0)
@@ -3865,7 +3875,9 @@ pub class Str
   #
   # ## Example
   #
-  # ```
+  # ```playground
+  # #> import test:
+  # #>   - assert_eq
   # assert_eq [..."a,b,c".split ","] ["a", "b", "c"]
   # assert_eq [..."a,b,c".split "," limit: 1] ["a", "b,c"]
   #
@@ -4500,13 +4512,13 @@ pub class Tuple
   # Tuples also accept [`Range`](std.Range) values for slicing:
   #
   # ```
-  # let tup = tuple([0, 1, 2, 3])
-  # assert_eq $tup[1..3] (tuple [1, 2])
-  # assert_eq $tup[..2] (tuple [0, 1])
-  # assert_eq $tup[2..] (tuple [2, 3])
-  # assert_eq $tup[..] (tuple [0, 1, 2, 3])
-  # assert_eq $tup[Range 0 4 2] (tuple [0, 2])
-  # assert_eq $tup[Range nil nil -1] (tuple [3, 2, 1, 0])
+  # let tup = Tuple [0, 1, 2, 3]
+  # assert_eq $tup[1..3] (tuple 1 2)
+  # assert_eq $tup[..2] (tuple 0 1)
+  # assert_eq $tup[2..] (tuple 2 3)
+  # assert_eq $tup[..] (tuple 0 1 2 3)
+  # assert_eq $tup[Range 0 4 2] (tuple 0 2)
+  # assert_eq $tup[Range nil nil -1] (tuple 3 2 1 0)
   # ```
   #
   # Slice indexing returns a new tuple. Omitted `start` means `0`, omitted `end`

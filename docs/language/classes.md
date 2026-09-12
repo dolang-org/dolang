@@ -150,7 +150,7 @@ replaces what happens when the *class* is called.
 Declaring it `static` gives a class a factory that subclasses do not inherit,
 so the factory can construct a subtype without re-entering itself:
 
-```
+```playground
 class Shape
   pub field kind = ""
 
@@ -164,8 +164,8 @@ class Shape
 
 class Circle: Shape
 
-let s = Shape "round"     # prints "building round"
-let c = Circle "arc"      # no factory: Circle did not inherit it
+Shape "round"     # prints "building round"
+Circle "arc"      # no factory: Circle did not inherit it
 ```
 
 `Type.(call)` performs the default instantiation the override replaced. It is
@@ -217,8 +217,8 @@ pub class Point
   pub field y = 0
 
   def (init) self x y
-    self.#x = x
-    self.#y = y
+    self.x = x
+    self.y = y
 ```
 
 ## Private Fields
@@ -271,7 +271,7 @@ assert_eq $a.add(3) 13
 Call a class like a function to create an instance. Arguments are passed to
 `(init)`:
 
-```
+```playground
 class Rectangle
   pub field width = 0
   pub field height = 0
@@ -456,7 +456,10 @@ See [Basic Types](basic-types.md#type-inspection) for more on `type`.
 Arithmetic, shift, bitwise, and comparison operators are dispatched to special
 methods. Define the method corresponding to the operator:
 
-```
+```playground
+#> import test:
+#>   - assert
+#>   - assert_eq
 class Vec2
   pub field x = 0
   pub field y = 0
@@ -515,7 +518,9 @@ for `>>`.
 **Ordering:** Defining `(lt)` and `(eq)` is sufficient for all four comparison
 operators. `<=`, `>`, and `>=` are derived automatically:
 
-```
+```playground
+#> import test:
+#>   - assert
 class Num
   pub field val = 0
 
@@ -552,8 +557,8 @@ class Point
   field y = 0
 
   def (init) self x y
-    self.x = x
-    self.y = y
+    self.#x = x
+    self.#y = y
 ```
 
 ### `(call)`: Function Call
@@ -567,10 +572,10 @@ class Multiplier
   field factor = 1
 
   def (init) self factor
-    self.factor = factor
+    self.#factor = factor
 
   def (call) self x
-    (x * self.factor)
+    (x * self.#factor)
 
 let double = Multiplier 2
 echo (double 5)   # 10
@@ -587,11 +592,11 @@ class Point
   field y = 0
 
   def (init) self x y
-    self.x = x
-    self.y = y
+    self.#x = x
+    self.#y = y
 
   def (unpack) self
-    {x: self.x, y: self.y}
+    {x: self.#x, y: self.#y}
 
 let p = Point 3 4
 let :x :y = p
@@ -610,11 +615,11 @@ class NumberRange
   field stop = 0
 
   def (init) self start stop
-    self.start = start
-    self.stop = stop
+    self.#start = start
+    self.#stop = stop
 
   def (iter) self
-    (Range start: self.start end: self.stop).iter()
+    (Range start: self.#start end: self.#stop).iter()
 
 let r = NumberRange 0 5
 assert_eq [...r] [0, 1, 2, 3, 4]
@@ -634,17 +639,17 @@ class Counter
   field stop = 0
 
   def (init) self start stop
-    self.current = start
-    self.stop = stop
+    self.#current = start
+    self.#stop = stop
 
   def (iter) self
     self
 
   def (next) self
-    if (self.current >= self.stop)
+    if (self.#current >= self.#stop)
       throw IterStop()
-    let value = self.current
-    self.current = (self.current + 1)
+    let value = self.#current
+    self.#current = (self.#current + 1)
     value
 ```
 
@@ -652,12 +657,12 @@ An iterator should conventionally implement `(iter)` by returning `self`.
 
 ### `(sink)`: Obtain Sink
 
-Invoked to obtain a sink object, such as by `strand.put` or
-`strand.redirect output: $instance`
+Invoked to obtain a sink object, such as by [`strand.put`](strand.put) or
+[`strand.redirect`](strand.redirect) with `output: $instance`:
 
 ```
 class ListCollector
-  field items = nil
+  pub field items = nil
 
   def (init) self
     self.items = []
@@ -666,11 +671,11 @@ class ListCollector
     self.items.sink()
 
 let collector = ListCollector()
-redirect output: $collector do
+strand.redirect output: $collector do
   put 1
   put 2
   put 3
-assert_eq $collector.items [0, 1, 2]
+assert_eq $collector.items [1, 2, 3]
 ```
 
 ### `(put)`: Sink Protocol
@@ -734,7 +739,9 @@ def (hash) self
 **Important:** if you define `(eq)`, you should also define `(hash)` so that
 equal objects produce the same hash:
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 import std:
   - hash
 
@@ -767,7 +774,7 @@ assert_eq $d[p2] "hello"
 Called when an instance is converted to a string via `str()` or used in string
 interpolation. Must return a `Str`. Falls back to `(dbg)` if not defined:
 
-```
+```playground
 class Point
   pub field x = 0
   pub field y = 0
@@ -833,7 +840,9 @@ operation asked for, and [`FmtSpec.pad`](std.FmtSpec.pad)
 applies the fill, alignment, width, and precision to a string, so a class that
 only wants the standard layout applied to its own text is one line:
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 class Field
   pub field name = ""
 
@@ -870,7 +879,9 @@ not understand should raise an error itself.
 `(index)` is called for `instance[key]` reads; `(assign)` is called for
 `instance[key] = value` writes:
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 class Table
   pub field data = nil
 
@@ -905,7 +916,7 @@ class Dynamic
     self.#data[key]
 
   def (set) self key value
-    self.data[key] = value
+    self.#data[key] = value
 
 let d = Dynamic()
 d.foo = 42

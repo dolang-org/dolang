@@ -1,8 +1,6 @@
-def assert_eq actual expected
-  if (actual != expected)
-    throw std.RuntimeError "expected $(dbg expected), got $(dbg actual)"
-def assert value
-  assert_eq $value true
+import test:
+  - assert
+  - assert_eq
 
 import base64 compile digest glob load rand regex time toml url uuid xml
 assert_eq (base64.encode b"hello") aGVsbG8=

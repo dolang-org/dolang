@@ -32,3 +32,18 @@
     font-weight: 600;
     white-space: nowrap;
 }
+
+/* Link under a `playground` fence, tucked against the code block. */
+.md-typeset .playground-example {
+    margin: 1em 0;
+}
+.md-typeset .playground-example > .highlight {
+    margin-bottom: 0;
+}
+.md-typeset .playground-open {
+    display: block;
+    font-size: .64rem;
+    font-weight: 600;
+    text-align: right;
+    margin-top: .2em;
+}

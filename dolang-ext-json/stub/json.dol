@@ -24,7 +24,11 @@
 #
 # ## Example
 #
-# ```
+# ```playground
+# #> import json:
+# #>   - decode
+# #> import test:
+# #>   - assert_eq
 # assert_eq (decode "null") nil
 # assert_eq (decode "42") 42
 # assert_eq (decode "[1, 2, 3]") [1, 2, 3]

@@ -52,7 +52,9 @@ assert_eq $foo 42
 JSON will typically have string keys. To destructure such data, use a constant
 expression instead of a bare key:
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 import json
 
 let payload = json.decode r|
@@ -69,7 +71,9 @@ assert_eq $age 30
 first and provides the destructuring pattern in vertical layout. This is
 useful when the pattern is more complex than what you're destructuring.
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 bind {1, foo: false, 2, bar: nil}
   a b
   :foo :bar
@@ -83,7 +87,9 @@ assert_eq $bar nil
 
 `bind` also permits specifying default values for missing items:
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 bind []
   a = 1
   b = 2
@@ -197,7 +203,7 @@ else
 
 Destructure elements during iteration:
 
-```
+```playground
 for k v = {name: "Alice", age: 30}
   echo "$k: $v"
 

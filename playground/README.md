@@ -13,6 +13,10 @@ Randomness uses the browser's crypto API, and timers use the host's
 need CORS and request bodies are buffered. Dynamic modules can be supplied as
 source strings through `compile` and `load`.
 
+A `test` module provides the assertion functions of the shell's `test` module
+(`assert`, `assert_not`, `assert_eq`, `assert_ne`, `assert_throws`, and
+`assert_type`), so documentation examples that use them run unchanged.
+
 ## Build
 
 Install Node 24 and the `wasm32-unknown-unknown` Rust target:

@@ -20,7 +20,9 @@ pub class Key
   # Defaults to `nil` when the key has not been set in the current
   # strand.
   #
-  # ```
+  # ```playground
+  # #> import test:
+  # #>   - assert_eq
   # let key = strand.Key()
   # assert_eq $key.value nil
   #
@@ -281,6 +283,35 @@ do
 pub def put
   # (input) value to write
   value
+do
+  throw nil
+
+# Calls a function with the strand-local input or output replaced, returning its
+# result.
+#
+# The previous input and output are restored when `block` returns or raises.
+# Keyword arguments must precede `block`; arguments after it are passed to
+# `block`.
+#
+# ## Example
+#
+# ```playground
+# #> import test:
+# #>   - assert_eq
+# let doubled = []
+# strand.redirect input: [1, 2, 3] output: $doubled do
+#   strand.each do |x| (x * 2)
+# assert_eq $doubled [2, 4, 6]
+# ```
+pub def redirect
+  # ([`Iterable`](std.Iterable)) replacement for the strand-local input
+  :input = nil
+  # ([`Sinkable`](std.Sinkable)) replacement for the strand-local output
+  :output = nil
+  # ([`Func`](std.Func)) function to call
+  block
+  # arguments passed to `block`
+  ...args
 do
   throw nil
 

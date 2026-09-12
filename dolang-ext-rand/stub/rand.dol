@@ -17,14 +17,15 @@
 #
 # ```
 # assert_eq (int 1) 0
-# let n = int 20 10
+# let n = int 10 20
 # assert ((n >= 10) && (n < 20))
 # ```
 pub def int
+  # ([`Int`](std.Int)) Inclusive lower bound, or the exclusive upper bound when
+  # `end` is omitted.
+  start
   # ([`Int`](std.Int)) Exclusive upper bound.
-  end
-  # ([`Int`](std.Int)) Lower bound; zero when omitted.
-  start = 0
+  end = nil
 do
   throw nil
 
@@ -58,7 +59,11 @@ do
 #
 # ## Example
 #
-# ```
+# ```playground
+# #> import rand:
+# #>   - shuffle
+# #> import test:
+# #>   - assert_eq
 # let items = [1, 2, 3, 4]
 # shuffle $items
 # let sorted = [...items]

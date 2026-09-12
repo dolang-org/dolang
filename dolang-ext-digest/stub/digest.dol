@@ -21,7 +21,7 @@ pub class State
   # assert_eq $first $second
   # state.update "def"
   # assert_eq "${state.digest():x}"
-  #   b22b3b2ee0e7c0a8e75a988d1d7e874e3c6de8b00a4427a47887877454b45db1
+  #   b34b56076712fd7fb9c067245a6c85e16174b3ef2e35df7b56b7f164e5c36446
   # ```
   pub def digest self
     throw nil
@@ -34,7 +34,12 @@ pub class State
   #
   # ## Example
   #
-  # ```
+  # ```playground
+  # #> import digest:
+  # #>   - Blake3
+  # #>   - blake3
+  # #> import test:
+  # #>   - assert_eq
   # let state = Blake3()
   # state.update "ab"
   # state.update b"c"

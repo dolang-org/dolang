@@ -74,7 +74,11 @@ pub class DateTime
   #
   # ## Example
   #
-  # ```
+  # ```playground
+  # #> import time:
+  # #>   - DateTime
+  # #> import test:
+  # #>   - assert_eq
   # let dt = DateTime.parse_rfc("2024-01-02T03:04:05Z")
   # assert_eq $dt.rfc() "2024-01-02T03:04:05Z"
   # ```

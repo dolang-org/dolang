@@ -5,6 +5,7 @@ repo_url: https://github.com/dolang-org/dolang
 hooks:
   - docs/hooks/lexer_hook.py
   - docs/hooks/inline_autorefs_hook.py
+  - docs/hooks/playground_hook.py
 
 plugins:
   - search

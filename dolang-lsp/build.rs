@@ -104,12 +104,18 @@ fn collect_rows(dir: &str) -> Vec<Row> {
     rows
 }
 
+/// Converts extracted doc Markdown, written for the mkdocs site, for hover.
+fn hover_doc(doc: Option<&str>) -> String {
+    let doc = doc_markdown::remove_manual_anchors(doc.unwrap_or_default());
+    doc_markdown::remove_playground_markup(&doc)
+}
+
 fn add_module(rows: &mut Vec<Row>, modules: &HashMap<String, ModuleJson>, module: &ModuleJson) {
     rows.push(Row {
         module: module.module.clone(),
         item: String::new(),
         kind: "module",
-        doc: doc_markdown::remove_manual_anchors(module.doc.as_deref().unwrap_or_default()),
+        doc: hover_doc(module.doc.as_deref()),
         params: Vec::new(),
     });
     for entity in &module.entities {
@@ -202,7 +208,7 @@ fn add_entity(rows: &mut Vec<Row>, module: &str, prefix: &str, entity: &Entity) 
             "field" => "field",
             _ => "value",
         },
-        doc: doc_markdown::remove_manual_anchors(entity.doc.as_deref().unwrap_or_default()),
+        doc: hover_doc(entity.doc.as_deref()),
         params: entity.params.clone(),
     });
     for member in &entity.members {

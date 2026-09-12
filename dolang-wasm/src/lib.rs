@@ -1,4 +1,5 @@
 mod analysis;
+mod asserts;
 mod host;
 
 use dolang::{
@@ -99,6 +100,7 @@ async fn execute(source: String, host: Host, signal: AbortSignal) -> RunResult {
         dolang_ext_json::JsonExt.apply_vm(builder).unwrap();
         dolang_ext_yaml::YamlExt.apply_vm(builder).unwrap();
         host::configure(builder, host);
+        asserts::configure(builder);
         builder
             .enter_with_slots(async move |strand, [mut out]| {
                 let interrupt = strand.interrupt_token();
@@ -340,6 +342,25 @@ pub mod tests {
                 "{error}"
             );
         }
+    }
+
+    #[wasm_bindgen_test]
+    async fn test_module_asserts() {
+        let (result, _) = run_source(
+            "import test\ntest.assert_ne 1 2\ntest.assert_type $std.Int 1\ntest.assert_throws $std.RuntimeError str: \"assertion failed: 1 == 2\" do\n  test.assert_eq 1 2\n\"ok\"",
+        )
+        .await;
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert_eq!(result.result.as_deref(), Some("ok"));
+        let (result, _) = run_source("import test\ntest.assert_eq 1 2 oops").await;
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("assertion failed: 1 == 2: oops")),
+            "{:?}",
+            result.error
+        );
     }
 
     #[wasm_bindgen_test]
