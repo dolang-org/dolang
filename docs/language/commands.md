@@ -40,7 +40,7 @@ Use `$` to insert variable values (or more complex [compact
 expressions](expressions.md#compact-expressions)).
 
 ```
-let name = Alice
+let name = "Alice"
 echo hello $name
 # prints: hello Alice
 ```
