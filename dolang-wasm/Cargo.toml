@@ -15,6 +15,7 @@ dolang-ext-base64.workspace = true
 dolang-ext-compile.workspace = true
 dolang-ext-digest.workspace = true
 dolang-ext-glob.workspace = true
+dolang-ext-http = { workspace = true, features = ["json"] }
 dolang-ext-json.workspace = true
 dolang-ext-load.workspace = true
 dolang-ext-rand.workspace = true

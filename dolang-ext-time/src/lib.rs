@@ -4,7 +4,7 @@ mod extension;
 mod global;
 mod time;
 
-use std::io;
+use std::{io, time::SystemTime};
 
 use dolang::runtime::{Output, Result, Strand, Value};
 
@@ -13,10 +13,7 @@ pub use extension::TimeExt;
 use crate::global::Global;
 
 /// Extracts a Do `time.DateTime` runtime value.
-pub fn as_datetime<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    value: &Value<'v>,
-) -> Option<web_time::SystemTime> {
+pub fn as_datetime<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Option<SystemTime> {
     let global = strand.state::<Global<'v>>();
     let datetime = global.types.date_time.cast(value)?;
     datetime.enter_sync(strand, |_strand, inst| inst.annex().to_system_time().ok())
@@ -25,7 +22,7 @@ pub fn as_datetime<'v, 's>(
 /// Constructs a Do `time.DateTime` from a Rust system time.
 pub fn datetime<'v>(
     strand: &mut Strand<'v, '_>,
-    time: web_time::SystemTime,
+    time: SystemTime,
     out: impl Output<'v>,
 ) -> io::Result<()> {
     let global = strand.state::<Global<'v>>();

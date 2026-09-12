@@ -1,0 +1,34 @@
+# title: HTTP requests
+import http url strand:
+ - from
+ - pool
+
+# JSONPlaceholder is a public test API that allows cross-origin requests.
+let API = url.Url https://jsonplaceholder.typicode.com
+let POSTS = (API / "posts")
+let NUM_POSTS = 8
+let NUM_COMMENTS = 2
+let NUM_WORKERS = 4
+
+# Parallel fetch pipeline
+pipeline
+  # Fetch first NUM_POSTS posts and feed them into pipeline
+  do from $ http.get $POSTS do |res| res.json()[..NUM_POSTS]
+  # Process posts with worker pool
+  do pool $NUM_WORKERS do |post|
+    # Feed first NUM_COMMENTS per post into pipeline
+    from $ http.get (POSTS / str post["id"] / "comments") do |res|
+      res.json()[..NUM_COMMENTS]
+  # Print name and body of each comment
+  do for "name": name "body": body ...
+    echo "comment: $name"
+    echo "  $(body.replace "\n" "\n  ")"
+
+# POST example
+let post = http.post (API / "posts")
+  json:
+    title: Hello from Do
+    body: Sent from the playground
+    userId: 1
+  do |res| res.json()
+echo "Created post $(post["id"]): $(post["title"])"

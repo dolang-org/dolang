@@ -17,6 +17,36 @@ for (const path of ['/', '/repo/playground/']) {
     await page.goto(path);
     await run(page);
     await expect(page.locator('#output')).toHaveText('Hello, world!\n');
+    // The HTTP example calls a public API; answer it locally to keep tests offline.
+    let routed = 0;
+    await page.context().route('https://jsonplaceholder.typicode.com/**', route => {
+      routed++;
+      const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' };
+      switch (route.request().method()) {
+        case 'OPTIONS':
+          return route.fulfill({ status: 204, headers: { ...cors, 'Access-Control-Allow-Methods': 'GET, POST' } });
+        case 'POST':
+          return route.fulfill({ status: 201, headers: cors, json: { ...route.request().postDataJSON(), id: 101 } });
+        default: {
+          const path = new URL(route.request().url()).pathname;
+          const comments = /^\/posts\/(\d+)\/comments$/.exec(path);
+          if (comments) {
+            const postId = Number(comments[1]);
+            return route.fulfill({
+              headers: cors,
+              json: [1, 2, 3].map(n => ({ postId, id: postId * 10 + n, name: `comment ${n}`, email: 'do@example.com', body: 'first line\nsecond line' })),
+            });
+          }
+          if (path === '/posts') {
+            return route.fulfill({
+              headers: cors,
+              json: Array.from({ length: 10 }, (_, i) => ({ userId: 1, id: i + 1, title: `post ${i + 1}`, body: 'post body' })),
+            });
+          }
+          return route.fulfill({ status: 404, headers: cors, json: {} });
+        }
+      }
+    });
     const names = await page.locator('#example option').evaluateAll(options =>
       options.map(option => (option as HTMLOptionElement).value));
     for (const name of names.filter(name => name !== 'Hello, Do' && name !== 'Blank')) {
@@ -25,6 +55,7 @@ for (const path of ['/', '/repo/playground/']) {
       await expect(page.locator('#error')).toBeEmpty();
       await expect(page.locator('#output')).not.toBeEmpty();
     }
+    expect(routed).toBeGreaterThan(0);
     expect(errors).toEqual([]);
   });
 }
@@ -169,6 +200,13 @@ test('Share link round-trips compressed source and selects Blank on load', async
   await expect(page.locator('#example')).toHaveValue('Blank');
   await run(page);
   await expect(page.locator('#output')).toHaveText('shared-source\n');
+});
+
+test('http requests run through fetch in Wasm', async ({ page, baseURL }) => {
+  await source(page, `let base = "${baseURL}"\n` + readFileSync(new URL('./http.dol', import.meta.url), 'utf8'));
+  await run(page);
+  await expect(page.locator('#error')).toBeEmpty();
+  await expect(page.locator('#output')).toHaveText('http passed\n');
 });
 
 test('portable extensions and dynamic modules execute in Wasm', async ({ page }) => {

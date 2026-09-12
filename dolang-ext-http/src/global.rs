@@ -45,6 +45,7 @@ pub(crate) struct Syms<'v> {
     pub(crate) identity: Sym<'v, 'v>,
     pub(crate) password: Sym<'v, 'v>,
     pub(crate) invalid_certs: Sym<'v, 'v>,
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub(crate) danger_accept: Sym<'v, 'v>,
 }
 
@@ -114,6 +115,7 @@ impl<'v> Global<'v> {
                 identity: builder.sym("identity"),
                 password: builder.sym("password"),
                 invalid_certs: builder.sym("invalid_certs"),
+                #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
                 danger_accept: builder.sym("DANGER_ACCEPT"),
             },
         }
