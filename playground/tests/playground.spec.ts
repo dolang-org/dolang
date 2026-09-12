@@ -68,6 +68,15 @@ test('Unicode highlighting survives incomplete source and rapid edits', async ({
   await expect(page.locator('#diagnostics')).toBeEmpty();
 });
 
+test('echo output streams live before a run finishes', async ({ page }) => {
+  await source(page, 'echo first\nwhile true\n  nil');
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.locator('#status')).toHaveText('Running…');
+  await expect(page.locator('#output')).toHaveText('first\n');
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(page.locator('#status')).toHaveText('Ready');
+});
+
 test('Stop replaces a busy worker and runs the edited source', async ({ page }) => {
   await source(page, 'while true\n  nil');
   await page.getByRole('button', { name: 'Run', exact: true }).click();

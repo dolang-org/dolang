@@ -5,6 +5,7 @@ use dolang::{
     extension::Extension,
     runtime::{Arg, Bytecode, Frame, vm::Builder},
 };
+use js_sys::Function;
 use serde::Serialize;
 use std::{cell::RefCell, path::Path, rc::Rc};
 use wasm_bindgen::prelude::*;
@@ -62,7 +63,7 @@ fn config() -> Config<'static> {
     config
 }
 
-async fn execute(source: String) -> RunResult {
+async fn execute(source: String, on_output: &Function) -> RunResult {
     let mut response = RunResult::default();
     let config = config();
     let unit = config.unit(Path::new("playground.dol"), source.as_bytes());
@@ -74,6 +75,7 @@ async fn execute(source: String) -> RunResult {
     }
     let output = Rc::new(RefCell::new(String::new()));
     let captured = output.clone();
+    let on_output = on_output.clone();
     let result = Builder::build(async move |builder| {
         dolang_ext_base64::Base64Ext.apply_vm(builder).unwrap();
         dolang_ext_compile::CompileExt.apply_vm(builder).unwrap();
@@ -101,9 +103,10 @@ async fn execute(source: String) -> RunResult {
                         }
                     }
                 }
-                let mut output = captured.borrow_mut();
-                output.push_str(&line.join(" "));
-                output.push('\n');
+                let mut text = line.join(" ");
+                text.push('\n');
+                captured.borrow_mut().push_str(&text);
+                let _ = on_output.call1(&JsValue::NULL, &JsValue::from_str(&text));
                 Ok(())
             })
             .commit();
@@ -143,8 +146,8 @@ async fn execute(source: String) -> RunResult {
 }
 
 #[wasm_bindgen]
-pub async fn run(source: String) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(&execute(source).await).map_err(Into::into)
+pub async fn run(source: String, on_output: Function) -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(&execute(source, &on_output).await).map_err(Into::into)
 }
 
 #[wasm_bindgen]
@@ -158,7 +161,7 @@ pub mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     async fn run_source(source: &str) -> RunResult {
-        execute(source.into()).await
+        execute(source.into(), &Function::new_no_args("")).await
     }
 
     #[wasm_bindgen_test]
@@ -184,6 +187,28 @@ pub mod tests {
         let result = run_source("echo status: ready count: 3").await;
         assert!(result.error.is_none(), "{:?}", result.error);
         assert_eq!(result.output, "status: ready count: 3\n");
+    }
+
+    #[wasm_bindgen_test]
+    async fn output_streams_incrementally() {
+        use wasm_bindgen::{JsCast, closure::Closure};
+
+        let chunks = Rc::new(RefCell::new(Vec::new()));
+        let captured = chunks.clone();
+        let on_output = Closure::wrap(Box::new(move |chunk: JsValue| {
+            captured.borrow_mut().push(chunk.as_string().unwrap());
+        }) as Box<dyn FnMut(JsValue)>);
+        let result = execute(
+            "echo one\necho two".into(),
+            on_output.as_ref().unchecked_ref(),
+        )
+        .await;
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert_eq!(result.output, "one\ntwo\n");
+        assert_eq!(
+            *chunks.borrow(),
+            vec!["one\n".to_string(), "two\n".to_string()]
+        );
     }
 
     #[wasm_bindgen_test]

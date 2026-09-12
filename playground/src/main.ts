@@ -117,6 +117,8 @@ function replaceWorker(message = 'Loading…') {
       if (reply.version !== version || reply.id !== latestAnalysis || activeRun !== undefined) return;
       view.dispatch({ effects: tokenEffect.of(reply.value.tokens) });
       showDiagnostics(reply.value.diagnostics);
+    } else if (reply.type === 'output') {
+      if (reply.id === activeRun) element('output').append(reply.chunk);
     } else if (reply.id === activeRun) {
       activeRun = undefined;
       outputVersion = reply.version;
