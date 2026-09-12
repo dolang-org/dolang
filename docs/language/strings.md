@@ -32,7 +32,7 @@ for how adjacent tokens join.
 Double quotes delimit a string with escape processing and interpolation:
 
 ```
-let name = Alice
+let name = "Alice"
 echo "Hello, $name!"
 echo "2 + 2 = $(2 + 2)"
 echo "padded: ${count:05d}"
@@ -62,7 +62,7 @@ conservative than in [compact expressions](expressions.md#compact-expressions):
 - Anything beyond basic variable access must use `$()`: `"result: $(1 + 2)"`
 
 ```
-let name = Alice
+let name = "Alice"
 let age = 30
 
 echo "Hello, $name!"
@@ -207,7 +207,7 @@ let with_gap = |-
 Interpolation works the same way as in quoted strings:
 
 ```
-let name = Alice
+let name = "Alice"
 let greeting = |
   Hello, $name!
   You have $(3 + 1) messages.

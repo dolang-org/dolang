@@ -84,7 +84,7 @@ create_user name: Alice age: 30
 The shorthand also works at call sites to pass a variable as a key argument:
 
 ```
-let name = Alice
+let name = "Alice"
 let age = 30
 create_user :name :age
 # equivalent to: create_user name: $name age: $age
