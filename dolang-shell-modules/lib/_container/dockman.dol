@@ -1,4 +1,4 @@
-import progress json patch rand shlex strand proc sys transfer _vfs
+import progress json patch rand shlex strand proc sys transfer _vfs time
   std:
     - RuntimeError
     - TypeError
@@ -616,7 +616,7 @@ pub class Runtime
             try
               return strand.redirect input: $input do agent.with $thunk
             finally
-              agent.stop()
+              time.timeout 30 do agent.stop()
       catch proc.Error: e
         classify_image_error $ctr $lines
         report_unknown $lines
@@ -1040,7 +1040,7 @@ pub class Builder
     # `--rm` then removes. If no session was ever established nothing will tell
     # the agent to exit, so force removal is the only way out.
     if self.#agent
-      self.#agent.stop()
+      time.timeout 30 do self.#agent.stop()
       self.#agent = nil
     else if self.#ctr_name
       try
@@ -1386,7 +1386,7 @@ pub class Container
             nil
           func()
       finally
-        vfs.stop()
+        time.timeout 30 do vfs.stop()
 
   # Current container state.
   pub def state self

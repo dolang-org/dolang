@@ -1,4 +1,4 @@
-import _vfs proc
+import _vfs proc time
   shell:
     - Vfs
   _container.common:
@@ -41,7 +41,7 @@ do
       try
         return strand.redirect input: $input do agent.with $thunk
       finally
-        agent.stop()
+        time.timeout 30 do agent.stop()
 
 pub def run
   cmd

@@ -1,6 +1,6 @@
 # Query administrator privileges and elevate to them in a cross-platform manner.
 
-import sudo sys shell
+import sudo sys shell time
   security.unix: security_unix
   security.windows: security_windows
 
@@ -57,7 +57,7 @@ do
     try
       vfs.with $block
     finally
-      vfs.stop()
+      time.timeout 30 do vfs.stop()
   else
     if (security_unix.id().euid == 0)
       return shell.env $env do

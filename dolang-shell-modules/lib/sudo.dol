@@ -1,7 +1,7 @@
 # Run direct commands or block-scoped operations with elevated privileges via
 # `sudo`.
 
-import _vfs shell proc
+import _vfs shell proc time
   strand:
     - pipeline
 
@@ -36,7 +36,7 @@ do
         try
           return strand.redirect :input do a.with $thunk
         finally
-          a.stop()
+          time.timeout 30 do a.stop()
 
 def run_command
   cmd

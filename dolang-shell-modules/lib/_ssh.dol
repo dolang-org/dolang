@@ -1,4 +1,4 @@
-import _vfs
+import _vfs time
 import
   shell:
     - Vfs
@@ -114,4 +114,4 @@ do
   try
     vfs.with $block
   finally
-    vfs.stop()
+    time.timeout 30 do vfs.stop()
