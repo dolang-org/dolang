@@ -22,7 +22,6 @@ mod shlex;
 mod syntax;
 mod sys;
 mod term;
-mod time;
 mod util;
 
 use std::{
@@ -125,59 +124,6 @@ pub async fn flush<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
         .flush()
         .await
         .map_err(|error| Error::runtime(strand, error))
-}
-
-pub fn as_datetime<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    value: &Value<'v>,
-) -> Option<std::time::SystemTime> {
-    let global = strand.state::<Global<'v>>();
-    let datetime = global.types.date_time.cast(value)?;
-    datetime.enter_sync(strand, |_strand, inst| inst.annex().to_system_time().ok())
-}
-
-pub fn datetime<'v>(
-    strand: &mut Strand<'v, '_>,
-    time: std::time::SystemTime,
-    out: impl Output<'v>,
-) -> io::Result<()> {
-    let global = strand.state::<Global<'v>>();
-    let annex = time::DateTimeAnnex::from_system_time(time)?;
-    global
-        .types
-        .date_time
-        .create_with_annex(strand, time::DateTime, annex, out);
-    Ok(())
-}
-
-/// Constructs a Do `time.Duration` from a Rust duration.
-pub fn duration<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    duration: std::time::Duration,
-    out: impl Output<'v>,
-) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
-    let total_nanos =
-        i128::from(duration.as_secs()) * 1_000_000_000 + i128::from(duration.subsec_nanos());
-    global.types.duration.create_with_annex(
-        strand,
-        time::Duration,
-        time::DurationAnnex::from_total_nanos(total_nanos),
-        out,
-    );
-    Ok(())
-}
-
-/// Extracts a non-negative Do `time.Duration` runtime value.
-pub fn as_duration<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    value: &Value<'v>,
-) -> Option<std::time::Duration> {
-    let global = strand.state::<Global<'v>>();
-    let duration = global.types.duration.cast(value)?;
-    duration.enter_sync(strand, |strand, duration| {
-        duration.annex().to_std_duration(strand).ok()
-    })
 }
 
 /// Extracts a `security.windows.Sid` runtime value.

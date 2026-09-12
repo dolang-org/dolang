@@ -1,0 +1,40 @@
+[package]
+name = "dolang-ext-time"
+version = "0.1.1"
+description = "Date, time, and timer extension for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+
+[lib]
+test = false
+doctest = false
+
+
+[dependencies.dolang]
+workspace = true
+
+
+[dependencies.futures]
+workspace = true
+
+
+[dependencies.time]
+version = "0.3"
+features = ["formatting", "parsing"]
+
+
+[dependencies.web-time]
+version = "1.1"
+
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies.tokio]
+workspace = true
+features = ["time"]
+
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies.gloo-timers]
+version = "0.3"
+features = ["futures"]

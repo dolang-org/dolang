@@ -193,7 +193,7 @@ fn parse_common_entry_options<'v, 's>(
     let uid = optional_u64(strand, uid, 0, "uid")?;
     let gid = optional_u64(strand, gid, 0, "gid")?;
     let mtime = match mtime {
-        Some(value) => dolang_ext_shell::as_datetime(strand, &value)
+        Some(value) => dolang_ext_time::as_datetime(strand, &value)
             .ok_or_else(|| Error::type_error(strand, "mtime must be a DateTime"))?
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|_| Error::value(strand, "mtime is before the Unix epoch"))?
@@ -474,7 +474,7 @@ impl<'v> Object<'v> for TarEntry {
                         .header()
                         .mtime()
                         .into_do(strand)?;
-                    dolang_ext_shell::datetime(
+                    dolang_ext_time::datetime(
                         strand,
                         SystemTime::UNIX_EPOCH + Duration::from_secs(seconds),
                         out,

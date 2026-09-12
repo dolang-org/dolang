@@ -41,6 +41,9 @@ fn config() -> Config<'static> {
     dolang_ext_regex::RegexExt
         .apply_compiler(&mut config)
         .unwrap();
+    dolang_ext_time::TimeExt
+        .apply_compiler(&mut config)
+        .unwrap();
     dolang_ext_toml::TomlExt
         .apply_compiler(&mut config)
         .unwrap();
@@ -84,6 +87,7 @@ async fn execute(source: String, on_output: &Function) -> RunResult {
         dolang_ext_load::LoadExt.apply_vm(builder).unwrap();
         dolang_ext_rand::RandExt.apply_vm(builder).unwrap();
         dolang_ext_regex::RegexExt.apply_vm(builder).unwrap();
+        dolang_ext_time::TimeExt.apply_vm(builder).unwrap();
         dolang_ext_toml::TomlExt.apply_vm(builder).unwrap();
         dolang_ext_url::UrlExt.apply_vm(builder).unwrap();
         dolang_ext_uuid::UuidExt.apply_vm(builder).unwrap();
@@ -226,6 +230,36 @@ pub mod tests {
         let result = run_source(include_str!("../../playground/tests/extensions.dol")).await;
         assert!(result.error.is_none(), "{:?}", result.error);
         assert_eq!(result.result.as_deref(), Some("extensions passed"));
+    }
+
+    #[wasm_bindgen_test]
+    async fn time_extension() {
+        let result = run_source(
+            r#"import time
+def check ok message
+  if (!ok)
+    throw std.RuntimeError $message
+let start = time.DateTime.now()
+time.sleep 0.05
+let elapsed = (time.DateTime.now() - start)
+check (elapsed.nanos >= 40000000) "sleep returned after $elapsed"
+check (time.timeout(1, do :done:) == :done:) "timeout did not return the block result"
+let timed_out = try
+  time.timeout 0.01 do
+    time.sleep 10000
+    false
+catch std.TimedOutError: _
+  true
+check $timed_out "timeout did not interrupt sleep"
+check (time.DateTime.from_unix(1).rfc() == "1970-01-01T00:00:01Z") "from_unix"
+check (time.DateTime.now().unix_secs > 1700000000) "DateTime.now"
+check (time.Date.today().year >= 2024) "Date.today"
+check (time.Date.from_ymd(2024, 2, 29).rfc() == "2024-02-29") "Date.from_ymd"
+"time passed""#,
+        )
+        .await;
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert_eq!(result.result.as_deref(), Some("time passed"));
     }
 
     #[wasm_bindgen_test]

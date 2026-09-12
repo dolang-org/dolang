@@ -4,7 +4,7 @@ def assert_eq actual expected
 def assert value
   assert_eq $value true
 
-import base64 compile digest glob load rand regex toml url uuid xml
+import base64 compile digest glob load rand regex time toml url uuid xml
 assert_eq (base64.encode b"hello") aGVsbG8=
 assert_eq (base64.decode "aGVsbG8=") b"hello"
 assert_eq $(digest.sha256 "hello").len 32
@@ -18,6 +18,20 @@ assert ((random >= 0) && (random < 100))
 assert_eq $(uuid.Uuid.generate()).version 4
 assert_eq $(uuid.Guid(str(uuid.Uuid.NIL))).data1 0
 assert_eq $(xml.decode "<hello>world</hello>").tag hello
+let start = time.DateTime.now()
+time.sleep 0.02
+let elapsed = (time.DateTime.now() - start)
+assert (elapsed.nanos >= 10000000)
+assert_eq (time.timeout 1 do :done:) :done:
+let timed_out = try
+  time.timeout 0.01 do
+    time.sleep 10000
+    false
+catch std.TimedOutError: _
+  true
+assert $timed_out
+assert_eq (time.DateTime.from_unix(1).rfc()) "1970-01-01T00:00:01Z"
+assert (time.Date.today().year >= 2024)
 let unit = compile.compile generated.dol "(20 + 22)"
 assert_eq (load.run(unit.emit())) 42
 let module = compile.compile dynamic.dol "pub let answer = 42" module: dynamic

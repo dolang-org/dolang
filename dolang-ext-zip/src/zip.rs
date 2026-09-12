@@ -663,7 +663,7 @@ impl<'v> Object<'v> for Entry {
                 };
                 let system_time = std::time::SystemTime::UNIX_EPOCH
                     + std::time::Duration::new(secs, timestamp.subsec_nanosecond() as u32);
-                dolang_ext_shell::datetime(strand, system_time, out).into_do(strand)
+                dolang_ext_time::datetime(strand, system_time, out).into_do(strand)
             })
             .method_with_slots(
                 "open",

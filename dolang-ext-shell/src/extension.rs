@@ -10,9 +10,7 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::{
-    fs, global::Global, pipe_channel, platform, proc, security, shell, shlex, sys, term, time,
-};
+use crate::{fs, global::Global, pipe_channel, platform, proc, security, shell, shlex, sys, term};
 
 /// Shell extension
 pub struct Shell;
@@ -33,6 +31,7 @@ impl Extension for Shell {
     const NAME: &str = "shell";
     const VERSION: Version = dolang::package_version!();
     const DESCRIPTION: &str = "Do Shell Extension";
+    const DEPENDS: &'static [&'static str] = &[<dolang_ext_time::TimeExt as Extension>::NAME];
 
     fn apply_compiler(&self, config: &mut Config) -> Result<(), Infallible> {
         shell::configure_compiler(config);
@@ -41,7 +40,6 @@ impl Extension for Shell {
         sys::configure_compiler(config);
         proc::configure_compiler(config);
         shlex::configure_compiler(config);
-        time::configure_compiler(config);
         Ok(())
     }
 
@@ -57,7 +55,6 @@ impl Extension for Shell {
         proc::configure_vm(builder, global);
         fs::configure_vm(builder, global);
         shlex::configure_vm(builder);
-        time::configure_vm(builder, global);
         Ok(())
     }
 }

@@ -45,6 +45,7 @@ members = [
   "dolang-ext-rand",
   "dolang-ext-patch",
   "dolang-ext-uuid",
+  "dolang-ext-time",
   "dolang-rpc",
   "fuzz",
 ]
@@ -90,6 +91,7 @@ default-members = [
   "dolang-ext-rand",
   "dolang-ext-patch",
   "dolang-ext-uuid",
+  "dolang-ext-time",
   "dolang-rpc",
 ]
 resolver = "3"
@@ -190,6 +192,11 @@ version = "0.1.1"
 
 [workspace.dependencies.dolang-ext-tar]
 path = "dolang-ext-tar"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-time]
+path = "dolang-ext-time"
 version = "0.1.1"
 
 

@@ -8,7 +8,7 @@ use dolang::runtime::{
 };
 use dolang_vfs::metadata::{FileType, Metadata as VfsMetadata, Mode as VfsMode};
 
-use crate::{fs::attrs, global::Global, security::Permission, time::create_datetime, util};
+use crate::{fs::attrs, global::Global, security::Permission, util};
 
 const NANOS_PER_SEC_I128: i128 = 1_000_000_000;
 
@@ -145,12 +145,11 @@ fn timestamp_nanos(secs: i64, nanos: i64) -> i128 {
 
 fn write_timestamp<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     secs: i64,
     nanos: i64,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    create_datetime(strand, global, timestamp_nanos(secs, nanos), out)
+    dolang_ext_time::create_datetime(strand, timestamp_nanos(secs, nanos), out)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -258,33 +257,15 @@ impl<'v> Object<'v> for Metadata {
             })
             .get("modified", |this, strand, out| {
                 let annex = this.annex();
-                write_timestamp(
-                    strand,
-                    annex.global,
-                    annex.inner.mtime(),
-                    annex.inner.mtime_nsec(),
-                    out,
-                )
+                write_timestamp(strand, annex.inner.mtime(), annex.inner.mtime_nsec(), out)
             })
             .get("accessed", |this, strand, out| {
                 let annex = this.annex();
-                write_timestamp(
-                    strand,
-                    annex.global,
-                    annex.inner.atime(),
-                    annex.inner.atime_nsec(),
-                    out,
-                )
+                write_timestamp(strand, annex.inner.atime(), annex.inner.atime_nsec(), out)
             })
             .get("created", |this, strand, out| {
                 let annex = this.annex();
-                write_timestamp(
-                    strand,
-                    annex.global,
-                    annex.inner.ctime(),
-                    annex.inner.ctime_nsec(),
-                    out,
-                )
+                write_timestamp(strand, annex.inner.ctime(), annex.inner.ctime_nsec(), out)
             })
             .get("mode", move |this, strand, out| {
                 let annex = this.annex();

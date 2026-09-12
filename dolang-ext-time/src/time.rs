@@ -1,20 +1,18 @@
 use std::{
     hash::{Hash, Hasher},
     io,
-    time::SystemTime,
 };
+
+use web_time::SystemTime;
 
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::strand::InterruptMask;
-use dolang::{
-    compile::Config,
-    runtime::{
-        Error, Instance, Object, Output, Result, Slot, State, Strand, Type, call, error::ResultExt,
-        object::TypeBuilder, unpack, value::Root, vm::Builder,
-    },
+use dolang::runtime::{
+    Error, Instance, Object, Output, Result, Slot, State, Strand, Type, call, error::ResultExt,
+    object::TypeBuilder, unpack, value::Root, vm::Builder,
 };
 use futures::future::{AbortHandle, Abortable};
 use time::{
@@ -27,6 +25,31 @@ use crate::global::Global;
 const NANOS_PER_SEC_I128: i128 = 1_000_000_000;
 const NANOS_PER_SEC_F64: f64 = 1_000_000_000.0;
 const NANOS_PER_DAY_I128: i128 = 86_400 * NANOS_PER_SEC_I128;
+
+/// Sleeps for at least `duration`.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+async fn sleep(duration: std::time::Duration) {
+    tokio::time::sleep(duration).await;
+}
+
+/// Sleeps for at least `duration`.
+///
+/// `setTimeout` takes whole milliseconds and fires almost immediately for
+/// delays above `i32::MAX`, so the delay is rounded up and waited out in
+/// chunks. Dropping the future clears the pending timeout.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+async fn sleep(duration: std::time::Duration) {
+    const MAX_DELAY_MILLIS: u128 = i32::MAX as u128;
+    let mut remaining = duration.as_nanos().div_ceil(1_000_000);
+    loop {
+        let chunk = remaining.min(MAX_DELAY_MILLIS);
+        gloo_timers::future::TimeoutFuture::new(chunk as u32).await;
+        remaining -= chunk;
+        if remaining == 0 {
+            break;
+        }
+    }
+}
 
 pub(crate) struct Calendar<'v> {
     pub(crate) date: Type<'v, Date>,
@@ -447,7 +470,11 @@ impl<'v> Object<'v> for Date {
             })
             .type_method("today", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                this.create_with_annex(strand, Date, OffsetDateTime::now_utc().date(), out);
+                let now = DateTimeAnnex::from_system_time(SystemTime::now()).into_do(strand)?;
+                let date = OffsetDateTime::from_unix_timestamp_nanos(now.total_nanos())
+                    .map_err(|_| Error::runtime(strand, "invalid DateTime"))?
+                    .date();
+                this.create_with_annex(strand, Date, date, out);
                 Ok(())
             })
             .type_method("from_ymd", async move |this, strand, args, out| {
@@ -1075,15 +1102,13 @@ impl<'v> Object<'v> for Duration {
     }
 }
 
-pub(crate) fn configure_compiler<'a>(_config: &mut Config<'a>) {}
-
 pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("time")
         .function("sleep", async move |strand, args, _out| {
             let ([duration], []) = unpack!(strand, args, 1, 0)?;
             let duration = coerce_duration(strand, global, &duration, "sleep duration")?;
-            tokio::time::sleep(duration).await;
+            sleep(duration).await;
             Ok(())
         })
         .function("timeout", async move |strand, args, out| {
@@ -1097,7 +1122,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             strand.spawn_task(async move {
                 let _ = Abortable::new(
                     async move {
-                        tokio::time::sleep(duration).await;
+                        sleep(duration).await;
                         interrupt_clone.timeout();
                     },
                     reg,
