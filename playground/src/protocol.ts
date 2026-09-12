@@ -21,4 +21,5 @@ export type Reply =
   | { type: 'ready' }
   | { type: 'failure'; message: string }
   | { type: 'analysis'; id: number; version: number; value: Analysis }
+  | { type: 'output'; id: number; version: number; chunk: string }
   | { type: 'result'; id: number; version: number; value: RunResult };

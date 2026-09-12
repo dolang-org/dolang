@@ -19,7 +19,7 @@ for (const path of ['/', '/repo/playground/']) {
     await expect(page.locator('#output')).toHaveText('Hello, world!\n');
     const names = await page.locator('#example option').evaluateAll(options =>
       options.map(option => (option as HTMLOptionElement).value));
-    for (const name of names.filter(name => name !== 'Hello, Do')) {
+    for (const name of names.filter(name => name !== 'Hello, Do' && name !== 'Blank')) {
       await page.locator('#example').selectOption(name);
       await run(page);
       await expect(page.locator('#error')).toBeEmpty();
@@ -66,6 +66,15 @@ test('Unicode highlighting survives incomplete source and rapid edits', async ({
   await expect(page.locator('.token-comment')).toHaveText('# final');
   await expect(page.locator('.token-number')).toHaveCount(0);
   await expect(page.locator('#diagnostics')).toBeEmpty();
+});
+
+test('echo output streams live before a run finishes', async ({ page }) => {
+  await source(page, 'echo first\nwhile true\n  nil');
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.locator('#status')).toHaveText('Running…');
+  await expect(page.locator('#output')).toHaveText('first\n');
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(page.locator('#status')).toHaveText('Ready');
 });
 
 test('Stop replaces a busy worker and runs the edited source', async ({ page }) => {
@@ -132,6 +141,19 @@ test('boxed floating point special values work on Wasm', async ({ page }) => {
   await run(page);
   await expect(page.locator('#error')).toBeEmpty();
   await expect(page.locator('#output')).toHaveText('["inf", "-inf", "NaN", false]\n');
+});
+
+test('Share link round-trips compressed source and selects Blank on load', async ({ page }) => {
+  await source(page, 'echo shared-source');
+  await page.getByRole('button', { name: 'Share link' }).click();
+  await expect.poll(() => page.url()).toContain('?src=');
+  const url = page.url();
+  await page.goto(url);
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
+  await expect(page.getByRole('textbox', { name: 'Do source' })).toHaveText('echo shared-source');
+  await expect(page.locator('#example')).toHaveValue('Blank');
+  await run(page);
+  await expect(page.locator('#output')).toHaveText('shared-source\n');
 });
 
 test('portable extensions and dynamic modules execute in Wasm', async ({ page }) => {

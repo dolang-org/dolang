@@ -4,11 +4,13 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { setDiagnostics } from '@codemirror/lint';
 import type { Diagnostic, Reply, Request, TokenRange } from './protocol';
 import { examples } from './examples';
+import { decodeSource, encodeSource } from './share';
 import './style.css';
 
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const runButton = element<HTMLButtonElement>('run');
 const stopButton = element<HTMLButtonElement>('stop');
+const shareButton = element<HTMLButtonElement>('share');
 const select = element<HTMLSelectElement>('example');
 const status = element('status');
 const tokenEffect = StateEffect.define<TokenRange[]>();
@@ -36,29 +38,21 @@ let worker: Worker;
 let generation = 0;
 let ready = false;
 let timer: ReturnType<typeof setTimeout>;
-const view = new EditorView({
-  parent: element('editor'),
-  state: EditorState.create({
-    doc: examples['Hello, Do'],
-    extensions: [lineNumbers(), history(), highlights, EditorView.lineWrapping,
-      EditorView.theme({
-        '.cm-gutters': { backgroundColor: '#1d202d', color: '#7f88a4', border: 'none' },
-        '.cm-content': { padding: '1rem 0' },
-      }, { dark: true }),
-      EditorView.contentAttributes.of({ 'aria-label': 'Do source', spellcheck: 'false' }),
-      keymap.of([{ key: 'Mod-Enter', run: () => { startRun(); return true; } }, ...defaultKeymap, ...historyKeymap, indentWithTab]),
-      EditorView.updateListener.of(update => {
-        if (update.docChanged) {
-          version++;
-          element('diagnostics').replaceChildren();
-          element('diagnostics-section').hidden = true;
-          showSnapshot();
-          scheduleAnalysis();
-        }
-      }),
-    ],
-  }),
-});
+let view: EditorView;
+
+const blankLabel = 'Blank';
+
+async function initialSource(): Promise<{ doc: string, label: string }> {
+  const shared = new URLSearchParams(location.search).get('src');
+  if (shared) {
+    try {
+      return { doc: await decodeSource(shared), label: blankLabel };
+    } catch {
+      console.warn('Could not decode shared source from URL; loading default example instead.');
+    }
+  }
+  return { doc: examples['Hello, Do'], label: 'Hello, Do' };
+}
 
 function controls() {
   runButton.disabled = !ready || activeRun !== undefined;
@@ -123,6 +117,8 @@ function replaceWorker(message = 'Loading…') {
       if (reply.version !== version || reply.id !== latestAnalysis || activeRun !== undefined) return;
       view.dispatch({ effects: tokenEffect.of(reply.value.tokens) });
       showDiagnostics(reply.value.diagnostics);
+    } else if (reply.type === 'output') {
+      if (reply.id === activeRun) element('output').append(reply.chunk);
     } else if (reply.id === activeRun) {
       activeRun = undefined;
       outputVersion = reply.version;
@@ -170,6 +166,52 @@ stopButton.onclick = () => {
   setError('Stopped. Buffered output was discarded.');
   replaceWorker('Restarting…');
 };
+shareButton.onclick = async () => {
+  try {
+    const param = await encodeSource(view.state.doc.toString());
+    const url = `${location.origin}${location.pathname}?src=${param}`;
+    window.history.replaceState(null, '', url);
+    await navigator.clipboard.writeText(url);
+    const original = shareButton.textContent;
+    shareButton.textContent = 'Copied!';
+    setTimeout(() => { shareButton.textContent = original; }, 1500);
+  } catch (err) {
+    setError(`Could not create share link: ${err instanceof Error ? err.message : String(err)}`);
+  }
+};
+select.add(new Option(blankLabel, blankLabel));
 for (const name of Object.keys(examples)) select.add(new Option(name, name));
-select.onchange = () => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: examples[select.value] } });
-replaceWorker();
+select.onchange = () => view.dispatch({
+  changes: { from: 0, to: view.state.doc.length, insert: select.value === blankLabel ? '' : examples[select.value] },
+});
+
+async function init() {
+  const { doc, label } = await initialSource();
+  view = new EditorView({
+    parent: element('editor'),
+    state: EditorState.create({
+      doc,
+      extensions: [lineNumbers(), history(), highlights, EditorView.lineWrapping,
+        EditorView.theme({
+          '.cm-gutters': { backgroundColor: '#1d202d', color: '#7f88a4', border: 'none' },
+          '.cm-content': { padding: '1rem 0' },
+        }, { dark: true }),
+        EditorView.contentAttributes.of({ 'aria-label': 'Do source', spellcheck: 'false' }),
+        keymap.of([{ key: 'Mod-Enter', run: () => { startRun(); return true; } }, ...defaultKeymap, ...historyKeymap, indentWithTab]),
+        EditorView.updateListener.of(update => {
+          if (update.docChanged) {
+            version++;
+            element('diagnostics').replaceChildren();
+            element('diagnostics-section').hidden = true;
+            showSnapshot();
+            scheduleAnalysis();
+          }
+        }),
+      ],
+    }),
+  });
+  select.value = label;
+  shareButton.disabled = false;
+  replaceWorker();
+}
+init();

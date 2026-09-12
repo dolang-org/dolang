@@ -1,0 +1,33 @@
+# title: Vertical Comprehensions
+# `for`/`if` in a vertical context build data or parameters instead of running
+# statements: each branch contributes items (or `key: value` pairs) to the
+# array or dict being assembled.
+
+# Comprehension with a branch on each side of `if`.
+echo
+  for n = ..6
+    if (n % 2 == 0)
+      "$n (even)"
+    else
+      "$n (odd)"
+
+# Comprehensions can sit alongside plain `- item` lines in the same array.
+let menu = $
+  - starter
+  for course = 1..4
+    - "course $course"
+  - dessert
+echo $menu
+
+# `key: value` lines make the same construct build a dict instead of an array.
+let squares = $
+  for n = 1..6
+    $n: (n * n)
+echo $squares
+
+# Nested `for` loops behave like a Cartesian product
+let grid = $
+  for row = 1..3
+    for col = 1..3
+      [row, col]
+echo $grid

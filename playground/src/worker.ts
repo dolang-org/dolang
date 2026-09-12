@@ -13,7 +13,8 @@ self.onmessage = (event: MessageEvent<Request>) => {
     if (request.type === 'analyze') {
       reply({ type: 'analysis', id, version, value: analyze(source) });
     } else {
-      reply({ type: 'result', id, version, value: await run(source) });
+      const value = await run(source, (chunk: string) => reply({ type: 'output', id, version, chunk }));
+      reply({ type: 'result', id, version, value });
     }
   }).catch(error => reply({ type: 'failure', message: String(error) }));
 };
