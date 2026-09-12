@@ -55,7 +55,9 @@ pub class Regex
   #
   # ## Example
   #
-  # ```
+  # ```playground
+  # #> import regex:
+  # #>   - Regex
   # let pattern = Regex r"\d+"
   # for caps = pattern.find "one 1 two 2 three 3"
   #   echo $caps  # => 1, then 2, then 3
@@ -80,7 +82,9 @@ pub class Regex
   #
   # ## Example
   #
-  # ```
+  # ```playground
+  # #> import regex:
+  # #>   - Regex
   # let pattern = Regex r"\d+"
   # let caps = pattern.match "abc 42 def"
   # echo $caps  # => 42
@@ -118,7 +122,7 @@ pub class Regex
   # # Callback replacement
   # let upper = Regex r"[a-z]+"
   # echo $ upper.replace "hello world" do |caps|
-  #   caps[0].upper()
+  #   str(caps[0]).upper()
   # # => HELLO WORLD
   # ```
   pub def replace
@@ -195,7 +199,11 @@ pub class Regex
   #
   # ## Example
   #
-  # ```
+  # ```playground
+  # #> import regex:
+  # #>   - Regex
+  # #> import test:
+  # #>   - assert_eq
   # let ws = Regex r"\s+"
   # assert_eq [...ws.split "hello  world  foo"] ["hello", "world", "foo"]
   #
@@ -256,7 +264,9 @@ pub class Captures
   #
   # ## Example
   #
-  # ```
+  # ```playground
+  # #> import regex:
+  # #>   - Regex
   # let date = Regex r"(\d{4})-(\d{2})-(\d{2})"
   # let caps = date.match "2024-03-15"
   #
@@ -289,7 +299,9 @@ pub class Match
   #
   # ## Example
   #
-  # ```
+  # ```playground
+  # #> import regex:
+  # #>   - Regex
   # let date = Regex r"(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})"
   # let caps = date.match "prefix 2024-03-15 suffix"
   #

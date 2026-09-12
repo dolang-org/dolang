@@ -66,7 +66,11 @@ do
 #
 # ## Example
 #
-# ```
+# ```playground
+# #> import base64:
+# #>   - encode
+# #> import test:
+# #>   - assert_eq
 # assert_eq (encode "") ""
 # assert_eq (encode "hello") "aGVsbG8="
 # assert_eq (encode b"hello") "aGVsbG8="

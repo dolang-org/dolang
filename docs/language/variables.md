@@ -63,7 +63,7 @@ f()  # prints: 42
 
 Closures can mutate captured variables:
 
-```
+```playground
 let counter = 0
 let inc = do
   counter = (counter + 1)

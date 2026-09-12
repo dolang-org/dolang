@@ -117,7 +117,7 @@ while let a b = pairs.get(i)
 
 Iterate over arrays, dictionaries, ranges, and other iterables:
 
-```
+```playground
 for item = [1, 2, 3]
   echo $item
 
@@ -185,7 +185,9 @@ for item = items
 
 Return a value from a function early.
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 def find_first arr pred
   for item = arr
     if pred $item

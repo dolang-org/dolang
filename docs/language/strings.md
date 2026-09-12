@@ -61,7 +61,7 @@ conservative than in [compact expressions](expressions.md#compact-expressions):
 - Simple variable substitution works: `"hello $name"`
 - Anything beyond basic variable access must use `$()`: `"result: $(1 + 2)"`
 
-```
+```playground
 let name = "Alice"
 let age = 30
 
@@ -132,16 +132,18 @@ anything where literal characters such as `$` or `\` must appear frequently:
 regular expressions, Windows file paths, etc. Internal newlines are also
 permitted.
 
-```
+```playground
 # Simple raw string - no escapes, no interpolation
 let pattern = r"^\d+$"
 echo $pattern  # ^\d+$
 
 # Raw strings can contain unescaped backslashes
 let path = r"C:\Users\Alice\Documents"
+echo $path  # C:\Users\Alice\Documents
 
 # Raw strings don't interpolate
 let value = 42
+echo "The value is $value"   # The value is 42
 echo r"The value is $value"  # The value is $value
 ```
 
@@ -299,7 +301,9 @@ interpolation syntax is exactly the same; what differs is that the segments
 are kept apart rather than concatenated, so a consumer sees each interpolated
 value instead of only the text it produced.
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 let name = "Alice"
 let seq = t"hello ${name:>8}!"
 
@@ -360,7 +364,9 @@ holes is [`Fmt.(call)`](std.Fmt.(call)) and
 designated rendering, so
 [`format()`](std.Fmt.format) raises an error.
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 let stmt = t"select * from t where a = ${#0} and c = ${#name}"
 
 # Call fills every hole at once; bind fills some and returns the rest.

@@ -67,7 +67,11 @@ pub class Url
   #
   # ## Example
   #
-  # ```
+  # ```playground
+  # #> import url:
+  # #>   - Url
+  # #> import test:
+  # #>   - assert_eq
   # let url = Url "https://example.com?q=a+b&q=c"
   # let pairs = [...url.query]
   # assert_eq $pairs[0][0] "q"
@@ -128,10 +132,7 @@ pub class Url
   # ## Example
   #
   # ```
-  # let url = (Url "https://example.com").with_query [
-  #   ["q", "a b"]
-  #   ["tag", "x/y"]
-  # ]
+  # let url = (Url "https://example.com").with_query {q: "a b", tag: "x/y"}
   # assert_eq $url.query_raw "q=a+b&tag=x%2Fy"
   # ```
   pub def with_query

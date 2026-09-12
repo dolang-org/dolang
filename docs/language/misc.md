@@ -74,7 +74,7 @@ a value to an external program, and preserves the textual forms of constants
 in Do source code where possible. Numeric literals in unevaluated contexts
 remember their verbatim text:
 
-```
+```playground
 def print_verbatim x
   echo (std.verbatim x)
 

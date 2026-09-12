@@ -78,7 +78,9 @@ let all = ..
 
 Open-ended forms are primarily used for slicing:
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 let arr = [0, 1, 2, 3]
 assert_eq $arr[1..3] [1, 2]
 assert_eq $arr[..2] [0, 1]
@@ -102,10 +104,10 @@ The `$` prefix introduces a compact expression at statement level. It supports:
 - Boolean not: `$!flag`
 
 ```
-let person = {name: "Alice", age: 30}
+let person = record name: "Alice" age: 30
 echo $person.name
-echo $person["age"]
-echo $Str(person.age)
+echo $person[:age:]
+echo $str(person.age)
 ```
 
 ### Implicit

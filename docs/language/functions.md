@@ -145,7 +145,7 @@ Iteration yields positional and key arguments in invocation order as key/value
 tuples, where the key is the positional argument index (0-origin) for
 positional arguments.
 
-```
+```playground
 def echo_all ...args
   for k v = args
     echo "$k: $v"

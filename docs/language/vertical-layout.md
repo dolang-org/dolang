@@ -181,7 +181,9 @@ assert_eq $bar []
 `if let` and `if bind` work here too, and their bindings are in scope for the
 items of the matching branch:
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 let pair = [1, 2]
 let items = $
   if let a b = pair
@@ -198,7 +200,9 @@ See [Conditional Destructuring](./destructuring.md#conditional-destructuring).
 
 Use `...` to spread in vertical layout. It must not be preceded by `-`.
 
-```
+```playground
+#> import test:
+#>   - assert_eq
 let extras = [4, 5, 6]
 let all = $
   - 1

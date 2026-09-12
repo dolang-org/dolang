@@ -23,7 +23,11 @@
 #
 # ## Example
 #
-# ```
+# ```playground
+# #> import yaml:
+# #>   - decode
+# #> import test:
+# #>   - assert_eq
 # let doc = decode |
 #   name: Alice
 #   enabled: true
