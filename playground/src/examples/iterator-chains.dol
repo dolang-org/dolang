@@ -1,0 +1,15 @@
+# title: Iterator Chains
+let numbers = 1..11
+
+let even_squares = [...numbers.filter(do |x| x % 2 == 0).map(do |x| x * x).take 3]
+echo "First three even squares: $even_squares"
+
+let sum = (numbers.fold 0 (do |acc x| acc + x))
+echo "Sum 1-10: $sum"
+
+let letters = ["a", "b", "c"]
+let combined = [...numbers.take(3).chain(letters)]
+echo "Chained: $combined"
+
+for pair = letters.enumerate()
+  echo "$(pair[0]): $(pair[1])"

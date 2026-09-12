@@ -1,5 +1,4 @@
-// Files are named with a numeric prefix (01-, 02-, ...) to fix their display
-// order; the prefix itself carries no meaning beyond sort order. Each file's
+// Files are sorted by name, which determines display order. Each file's
 // first line is a `# title: ...` comment naming the example, stripped below
 // along with the file's trailing newline.
 const files = import.meta.glob('./examples/*.dol', { eager: true, query: '?raw', import: 'default' }) as Record<string, string>;
