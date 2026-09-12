@@ -77,6 +77,21 @@ test('echo output streams live before a run finishes', async ({ page }) => {
   await expect(page.locator('#status')).toHaveText('Ready');
 });
 
+test('Stop cancels a suspended run and keeps its output', async ({ page }) => {
+  await source(page, 'import time\necho start\ntry\n  time.sleep 1000\nfinally\n  echo cleanup');
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.locator('#output')).toHaveText('start\n');
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(page.locator('#status')).toHaveText('Stopped');
+  await expect(page.locator('#output')).toHaveText('start\ncleanup\n');
+  await expect(page.locator('#error')).toContainText('canceled');
+  await expect(page.locator('#error')).toContainText('at ');
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
+  await source(page, 'echo again');
+  await run(page);
+  await expect(page.locator('#output')).toHaveText('again\n');
+});
+
 test('Stop replaces a busy worker and runs the edited source', async ({ page }) => {
   await source(page, 'while true\n  nil');
   await page.getByRole('button', { name: 'Run', exact: true }).click();

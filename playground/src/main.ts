@@ -2,7 +2,7 @@ import { EditorState, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, keymap, lineNumbers, type DecorationSet } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { setDiagnostics } from '@codemirror/lint';
-import type { Diagnostic, Reply, Request, TokenRange } from './protocol';
+import type { Diagnostic, PageCall, Reply, Request, TokenRange } from './protocol';
 import { examples } from './examples';
 import { decodeSource, encodeSource } from './share';
 import './style.css';
@@ -29,10 +29,15 @@ const highlights = StateField.define<DecorationSet>({
   provide: field => EditorView.decorations.from(field),
 });
 
+// How long a canceled run may take to unwind before its worker is replaced.
+const stopGraceMs = 1000;
+
 let version = 0;
 let requestId = 0;
 let latestAnalysis = 0;
 let activeRun: number | undefined;
+let stopping = false;
+let stopTimer: ReturnType<typeof setTimeout> | undefined;
 let outputVersion: number | undefined;
 let worker: Worker;
 let generation = 0;
@@ -56,14 +61,17 @@ async function initialSource(): Promise<{ doc: string, label: string }> {
 
 function controls() {
   runButton.disabled = !ready || activeRun !== undefined;
-  stopButton.disabled = activeRun === undefined;
+  stopButton.disabled = activeRun === undefined || stopping;
 }
 function showSnapshot() {
   element('snapshot').textContent = outputVersion !== undefined && outputVersion !== version ? '(earlier source)' : '';
 }
-function send(type: Request['type']): number {
+function post(message: Request) {
+  worker.postMessage(message);
+}
+function send(type: 'analyze' | 'run'): number {
   const id = ++requestId;
-  worker.postMessage({ type, id, version, source: view.state.doc.toString() } satisfies Request);
+  post({ type, id, version, source: view.state.doc.toString() });
   return id;
 }
 function scheduleAnalysis() {
@@ -94,8 +102,21 @@ function showDiagnostics(diagnostics: Diagnostic[]) {
   view.dispatch(setDiagnostics(view.state, diagnostics));
   element('diagnostics-section').hidden = diagnostics.length === 0;
 }
+// Performs a host call forwarded by the worker for run `id`.
+function hostCall(id: number, call: PageCall) {
+  switch (call.method) {
+    case 'echo':
+      if (id === activeRun) element('output').append(call.args[0]);
+      break;
+  }
+}
+function endStop() {
+  clearTimeout(stopTimer);
+  stopping = false;
+}
 function replaceWorker(message = 'Loading…') {
   clearTimeout(timer);
+  endStop();
   worker?.terminate();
   const currentGeneration = ++generation;
   ready = false;
@@ -117,14 +138,21 @@ function replaceWorker(message = 'Loading…') {
       if (reply.version !== version || reply.id !== latestAnalysis || activeRun !== undefined) return;
       view.dispatch({ effects: tokenEffect.of(reply.value.tokens) });
       showDiagnostics(reply.value.diagnostics);
-    } else if (reply.type === 'output') {
-      if (reply.id === activeRun) element('output').append(reply.chunk);
+    } else if (reply.type === 'call') {
+      try {
+        hostCall(reply.id, reply);
+        post({ type: 'return', callId: reply.callId });
+      } catch (error) {
+        post({ type: 'return', callId: reply.callId, error: String(error) });
+      }
+    } else if (reply.type === 'abortCall') {
+      // Page calls complete synchronously, so there is nothing to abort.
     } else if (reply.id === activeRun) {
+      endStop();
       activeRun = undefined;
       outputVersion = reply.version;
-      element('output').textContent = reply.value.output;
       setError(reply.value.error ?? '');
-      status.textContent = reply.value.error ? 'Failed' : 'Finished';
+      status.textContent = reply.value.canceled ? 'Stopped' : reply.value.error ? 'Failed' : 'Finished';
       showSnapshot();
       if (reply.version === version) showDiagnostics(reply.value.diagnostics);
       controls();
@@ -146,6 +174,7 @@ function failWorker(message: string) {
     generation++;
     ready = false;
     activeRun = undefined;
+    endStop();
     status.textContent = 'Could not load playground. Reload to retry.';
     controls();
   }
@@ -163,8 +192,16 @@ function startRun() {
 }
 runButton.onclick = startRun;
 stopButton.onclick = () => {
-  setError('Stopped. Buffered output was discarded.');
-  replaceWorker('Restarting…');
+  if (activeRun === undefined || stopping) return;
+  stopping = true;
+  post({ type: 'cancel', id: activeRun });
+  status.textContent = 'Stopping…';
+  controls();
+  // Code that never suspends cannot observe cancellation (#679).
+  stopTimer = setTimeout(() => {
+    setError('Stopped. The run did not respond to cancellation.');
+    replaceWorker('Restarting…');
+  }, stopGraceMs);
 };
 shareButton.onclick = async () => {
   try {

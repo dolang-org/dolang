@@ -1431,6 +1431,7 @@ dependencies = [
  "dolang-ext-uuid",
  "dolang-ext-xml",
  "dolang-ext-yaml",
+ "futures",
  "getrandom 0.4.2",
  "js-sys",
  "serde",

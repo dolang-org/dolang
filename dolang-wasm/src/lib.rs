@@ -1,20 +1,23 @@
 mod analysis;
+mod host;
 
 use dolang::{
     compile::Config,
     extension::Extension,
-    runtime::{Arg, Bytecode, Frame, vm::Builder},
+    runtime::{Bytecode, Frame, error::ErrorKind, vm::Builder},
 };
-use js_sys::Function;
+use futures::future::{self, Either};
 use serde::Serialize;
-use std::{cell::RefCell, path::Path, rc::Rc};
+use std::{path::Path, pin::pin};
 use wasm_bindgen::prelude::*;
+
+pub use host::{AbortSignal, Host};
 
 #[derive(Default, Serialize)]
 struct RunResult {
-    output: String,
     result: Option<String>,
     error: Option<String>,
+    canceled: bool,
     diagnostics: Vec<analysis::Diagnostic>,
 }
 
@@ -66,7 +69,7 @@ fn config() -> Config<'static> {
     config
 }
 
-async fn execute(source: String, on_output: &Function) -> RunResult {
+async fn execute(source: String, host: Host, signal: AbortSignal) -> RunResult {
     let mut response = RunResult::default();
     let config = config();
     let unit = config.unit(Path::new("playground.dol"), source.as_bytes());
@@ -76,9 +79,6 @@ async fn execute(source: String, on_output: &Function) -> RunResult {
         response.error = Some(error.to_string());
         return response;
     }
-    let output = Rc::new(RefCell::new(String::new()));
-    let captured = output.clone();
-    let on_output = on_output.clone();
     let result = Builder::build(async move |builder| {
         dolang_ext_base64::Base64Ext.apply_vm(builder).unwrap();
         dolang_ext_compile::CompileExt.apply_vm(builder).unwrap();
@@ -94,35 +94,30 @@ async fn execute(source: String, on_output: &Function) -> RunResult {
         dolang_ext_xml::XmlExt.apply_vm(builder).unwrap();
         dolang_ext_json::JsonExt.apply_vm(builder).unwrap();
         dolang_ext_yaml::YamlExt.apply_vm(builder).unwrap();
-        builder
-            .module("playground")
-            .function("echo", async move |strand, args, _| {
-                let mut line = Vec::new();
-                for arg in args {
-                    match arg {
-                        Arg::Pos(value) => line.push(value.to_verbatim(strand)?),
-                        Arg::Key(key, value) => {
-                            let key = key.as_str(strand).to_owned();
-                            line.push(format!("{key}: {}", value.to_verbatim(strand)?));
-                        }
-                    }
-                }
-                let mut text = line.join(" ");
-                text.push('\n');
-                captured.borrow_mut().push_str(&text);
-                let _ = on_output.call1(&JsValue::NULL, &JsValue::from_str(&text));
-                Ok(())
-            })
-            .commit();
+        host::configure(builder, host);
         builder
             .enter_with_slots(async move |strand, [mut out]| {
-                match Bytecode::new(bytes)
-                    .run(strand, &mut out)
-                    .await
-                    .and_then(|_| out.to_string(strand))
-                {
+                let interrupt = strand.interrupt_token();
+                let result = {
+                    let run = pin!(async {
+                        Bytecode::new(bytes)
+                            .run(strand, &mut out)
+                            .await
+                            .and_then(|_| out.to_string(strand))
+                    });
+                    // Cancel on abort, then let the run unwind normally.
+                    match future::select(run, host::aborted(&signal)).await {
+                        Either::Left((result, _)) => result,
+                        Either::Right((_, run)) => {
+                            interrupt.cancel();
+                            run.await
+                        }
+                    }
+                };
+                match result {
                     Ok(value) => Ok(value),
                     Err(error) => {
+                        let canceled = error.kind() == ErrorKind::Canceled;
                         let mut message = error.display(strand).to_string();
                         for frame in error.backtrace() {
                             message.push_str(&format!(
@@ -134,24 +129,27 @@ async fn execute(source: String, on_output: &Function) -> RunResult {
                                 message.push_str(&format!(" ({path}:{})", line + 1));
                             }
                         }
-                        Err(message)
+                        Err((message, canceled))
                     }
                 }
             })
             .await
     })
     .await;
-    response.output = output.borrow().clone();
     match result {
         Ok(value) => response.result = Some(value),
-        Err(error) => response.error = Some(error),
+        Err((error, canceled)) => {
+            response.error = Some(error);
+            response.canceled = canceled;
+        }
     }
     response
 }
 
+/// Runs `source` in a fresh VM. Aborting `signal` cancels the run.
 #[wasm_bindgen]
-pub async fn run(source: String, on_output: Function) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(&execute(source, &on_output).await).map_err(Into::into)
+pub async fn run(source: String, host: Host, signal: AbortSignal) -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(&execute(source, host, signal).await).map_err(Into::into)
 }
 
 #[wasm_bindgen]
@@ -162,79 +160,167 @@ pub fn analyze(source: &str) -> Result<JsValue, JsValue> {
 #[cfg(all(test, target_family = "wasm"))]
 pub mod tests {
     use super::*;
+    use js_sys::{Array, Function, Reflect};
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    async fn run_source(source: &str) -> RunResult {
-        execute(source.into(), &Function::new_no_args("")).await
+    /// Evaluates a JavaScript function body.
+    fn js<T: JsCast>(body: &str) -> T {
+        Function::new_no_args(body)
+            .call0(&JsValue::NULL)
+            .unwrap()
+            .unchecked_into()
+    }
+
+    fn field(object: &JsValue, name: &str) -> JsValue {
+        Reflect::get(object, &name.into()).unwrap()
+    }
+
+    /// A host whose `echo` records chunks synchronously.
+    fn recording_host() -> Host {
+        js("const chunks = []; return { chunks, echo(text) { chunks.push(text); } };")
+    }
+
+    fn chunks(host: &Host) -> Vec<String> {
+        Array::from(&field(host, "chunks"))
+            .iter()
+            .map(|chunk| chunk.as_string().unwrap())
+            .collect()
+    }
+
+    fn never_aborted() -> AbortSignal {
+        host::AbortController::new().signal()
+    }
+
+    async fn run_with(source: &str, host: &Host, signal: AbortSignal) -> (RunResult, String) {
+        let owned = host.unchecked_ref::<JsValue>().clone().unchecked_into();
+        let result = execute(source.into(), owned, signal).await;
+        (result, chunks(host).concat())
+    }
+
+    async fn run_source(source: &str) -> (RunResult, String) {
+        run_with(source, &recording_host(), never_aborted()).await
     }
 
     #[wasm_bindgen_test]
     async fn results_and_fresh_state() {
-        assert_eq!(run_source("(1 + 2)").await.result.as_deref(), Some("3"));
+        assert_eq!(run_source("(1 + 2)").await.0.result.as_deref(), Some("3"));
         assert_eq!(
-            run_source("let x = 9\nx").await.result.as_deref(),
+            run_source("let x = 9\nx").await.0.result.as_deref(),
             Some("9")
         );
-        assert!(run_source("x").await.error.is_some());
+        assert!(run_source("x").await.0.error.is_some());
         assert_eq!(
-            run_source("(1.25 + 2.5)").await.result.as_deref(),
+            run_source("(1.25 + 2.5)").await.0.result.as_deref(),
             Some("3.75")
         );
         assert_eq!(
-            run_source("(1099511627776 + 1)").await.result.as_deref(),
+            run_source("(1099511627776 + 1)").await.0.result.as_deref(),
             Some("1099511627777")
         );
     }
 
     #[wasm_bindgen_test]
     async fn echo_prints_key_arguments() {
-        let result = run_source("echo status: ready count: 3").await;
+        let (result, output) = run_source("echo status: ready count: 3").await;
         assert!(result.error.is_none(), "{:?}", result.error);
-        assert_eq!(result.output, "status: ready count: 3\n");
+        assert_eq!(output, "status: ready count: 3\n");
     }
 
     #[wasm_bindgen_test]
-    async fn output_streams_incrementally() {
-        use wasm_bindgen::{JsCast, closure::Closure};
+    async fn echo_calls_host_per_line() {
+        let host = recording_host();
+        let (result, _) = run_with("echo one\necho two", &host, never_aborted()).await;
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert_eq!(chunks(&host), ["one\n", "two\n"]);
+    }
 
-        let chunks = Rc::new(RefCell::new(Vec::new()));
-        let captured = chunks.clone();
-        let on_output = Closure::wrap(Box::new(move |chunk: JsValue| {
-            captured.borrow_mut().push(chunk.as_string().unwrap());
-        }) as Box<dyn FnMut(JsValue)>);
-        let result = execute(
-            "echo one\necho two".into(),
-            on_output.as_ref().unchecked_ref(),
+    #[wasm_bindgen_test]
+    async fn echo_awaits_host_promise() {
+        // The first call settles last; awaiting keeps the output in order.
+        let host: Host = js(r#"
+            const chunks = [];
+            let delay = 20;
+            return {
+              chunks,
+              echo(text) {
+                const ms = delay;
+                delay = 0;
+                return new Promise(resolve => setTimeout(() => { chunks.push(text); resolve(); }, ms));
+              },
+            };
+        "#);
+        let (result, output) = run_with("echo one\necho two", &host, never_aborted()).await;
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert_eq!(output, "one\ntwo\n");
+    }
+
+    #[wasm_bindgen_test]
+    async fn host_rejection_is_do_error() {
+        let host: Host = js(
+            "return { chunks: [], echo() { return Promise.reject(new Error('host refused')); } };",
+        );
+        let (result, _) = run_with("echo hi", &host, never_aborted()).await;
+        assert!(result.error.unwrap().contains("host refused"));
+        let (result, _) = run_with(
+            "try\n  echo hi\n  false\ncatch _\n  true",
+            &host,
+            never_aborted(),
         )
         .await;
-        assert!(result.error.is_none(), "{:?}", result.error);
-        assert_eq!(result.output, "one\ntwo\n");
-        assert_eq!(
-            *chunks.borrow(),
-            vec!["one\n".to_string(), "two\n".to_string()]
-        );
+        assert_eq!(result.result.as_deref(), Some("true"));
     }
 
     #[wasm_bindgen_test]
     async fn errors_preserve_output() {
-        let result = run_source("echo hello 42\nthrow std.RuntimeError \"oops\"").await;
-        assert_eq!(result.output, "hello 42\n");
+        let (result, output) = run_source("echo hello 42\nthrow std.RuntimeError \"oops\"").await;
+        assert_eq!(output, "hello 42\n");
         assert!(result.error.unwrap().contains("oops"));
-        let result = run_source("let =").await;
+        assert!(!result.canceled);
+        let (result, _) = run_source("let =").await;
         assert!(result.error.is_some());
         assert!(!result.diagnostics.is_empty());
     }
 
     #[wasm_bindgen_test]
+    async fn abort_cancels_and_unwinds() {
+        let host = recording_host();
+        let (result, output) = run_with(
+            "import time\ntry\n  time.sleep 10000\nfinally\n  echo cleanup",
+            &host,
+            js("const c = new AbortController(); setTimeout(() => c.abort(), 50); return c.signal;"),
+        )
+        .await;
+        assert!(result.canceled, "{:?}", result.error);
+        assert!(result.error.unwrap().contains("canceled"));
+        assert_eq!(output, "cleanup\n");
+    }
+
+    #[wasm_bindgen_test]
+    async fn abort_signals_pending_upcall() {
+        let host: Host = js(r#"
+            const state = { chunks: [], aborted: false };
+            state.echo = (text, signal) => {
+              signal.addEventListener('abort', () => { state.aborted = true; });
+              return new Promise(() => {});
+            };
+            return state;
+        "#);
+        let (result, _) = run_with("echo hang", &host, js("const c = new AbortController(); setTimeout(() => c.abort(), 50); return c.signal;")).await;
+        assert!(result.canceled, "{:?}", result.error);
+        assert_eq!(field(&host, "aborted"), JsValue::TRUE);
+    }
+
+    #[wasm_bindgen_test]
     async fn browser_extensions() {
-        let result = run_source(include_str!("../../playground/tests/extensions.dol")).await;
+        let (result, _) = run_source(include_str!("../../playground/tests/extensions.dol")).await;
         assert!(result.error.is_none(), "{:?}", result.error);
         assert_eq!(result.result.as_deref(), Some("extensions passed"));
     }
 
     #[wasm_bindgen_test]
     async fn time_extension() {
-        let result = run_source(
+        let (result, _) = run_source(
             r#"import time
 def check ok message
   if (!ok)
@@ -265,14 +351,14 @@ check (time.Date.from_ymd(2024, 2, 29).rfc() == "2024-02-29") "Date.from_ymd"
     #[wasm_bindgen_test]
     async fn extensions_and_pipeline() {
         for module in ["json", "yaml"] {
-            let result = run_source(&format!(
+            let (result, _) = run_source(&format!(
                 "import {module}\n{module}.decode ({module}.encode [1, 2, 3])"
             ))
             .await;
             assert!(result.error.is_none(), "{:?}", result.error);
             assert_eq!(result.result.as_deref(), Some("[1, 2, 3]"));
         }
-        let result = run_source(
+        let (result, _) = run_source(
             "import strand:\n  - from\n  - each\n  - collect\npipeline\n  do from [1, 2, 3]\n  do each do |x| (x * 2)\n  do collect()",
         ).await;
         assert!(result.error.is_none(), "{:?}", result.error);
