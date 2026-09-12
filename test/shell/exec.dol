@@ -1,5 +1,6 @@
 import _vfs
 import proc
+import time
 import shell:
   - Vfs
 import fs:
@@ -53,4 +54,4 @@ def remote_vfs_is_unsupported()
     vfs.with do
       assert_throws $UnsupportedError do shell.exec echo
   finally
-    vfs.stop()
+    time.timeout 30 do vfs.stop()

@@ -1,4 +1,4 @@
-import sys _vfs
+import sys _vfs time
   testlib.vfs:
     - vfs
   strand:
@@ -52,7 +52,7 @@ def windows_admin_captures_current_cwd()
           assert_eq $env["TEST_DOLANG_WINDOWS_INHERIT"] inherited
           assert_eq $env.get("TEST_DOLANG_WINDOWS_UNSET", default: nil) nil
       finally
-        vfs.stop()
+        time.timeout 30 do vfs.stop()
 
 #[test]
 def stdio_vfs_runs_over_strand_stream()
@@ -70,7 +70,7 @@ def stdio_vfs_runs_over_strand_stream()
         with_host do assert_eq $vfs_exe() nil
         open $marker w do |file| file.write "remote"
     finally
-      vfs.stop()
+      time.timeout 30 do vfs.stop()
 
     open $marker r do |file| assert_eq $file.read() "remote"
 
@@ -81,7 +81,7 @@ def stopping_stdio_vfs_joins_launcher()
     let vfs = Vfs do
       run $vfs_bin --stdio
       open $marker w do |file| file.write "stopped"
-    vfs.stop()
+    time.timeout 30 do vfs.stop()
     assert $marker.exists()
 
 #[test]

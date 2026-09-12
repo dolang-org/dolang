@@ -5,6 +5,7 @@ import test: unittest _vfs
     - pipeline
   - sys
   - fs
+  - time
 
 let vfs_bin = _vfs.bin()
 
@@ -21,13 +22,13 @@ pub def with_vfs remote block
     try
       vfs.with $block
     finally
-      vfs.stop()
+      time.timeout 30 do vfs.stop()
   else if (sys.os_info().family == :WINDOWS:)
     let vfs = Vfs.windows_admin elevate: false
     try
       vfs.with $block
     finally
-      vfs.stop()
+      time.timeout 30 do vfs.stop()
   else
     fs.with_temp_dir do |dir|
       dir.update_metadata mode: 0o700
@@ -42,7 +43,7 @@ pub def with_vfs remote block
           try
             return strand.redirect input: $input do vfs.with $block
           finally
-            vfs.stop()
+            time.timeout 30 do vfs.stop()
 
 # Runs `block` inside a fresh temp directory since a test will likely create
 # files.
