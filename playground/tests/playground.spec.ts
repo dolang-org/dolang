@@ -19,7 +19,7 @@ for (const path of ['/', '/repo/playground/']) {
     await expect(page.locator('#output')).toHaveText('Hello, world!\n');
     const names = await page.locator('#example option').evaluateAll(options =>
       options.map(option => (option as HTMLOptionElement).value));
-    for (const name of names.filter(name => name !== 'Hello, Do')) {
+    for (const name of names.filter(name => name !== 'Hello, Do' && name !== 'Blank')) {
       await page.locator('#example').selectOption(name);
       await run(page);
       await expect(page.locator('#error')).toBeEmpty();
@@ -132,6 +132,19 @@ test('boxed floating point special values work on Wasm', async ({ page }) => {
   await run(page);
   await expect(page.locator('#error')).toBeEmpty();
   await expect(page.locator('#output')).toHaveText('["inf", "-inf", "NaN", false]\n');
+});
+
+test('Share link round-trips compressed source and selects Blank on load', async ({ page }) => {
+  await source(page, 'echo shared-source');
+  await page.getByRole('button', { name: 'Share link' }).click();
+  await expect.poll(() => page.url()).toContain('?src=');
+  const url = page.url();
+  await page.goto(url);
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
+  await expect(page.getByRole('textbox', { name: 'Do source' })).toHaveText('echo shared-source');
+  await expect(page.locator('#example')).toHaveValue('Blank');
+  await run(page);
+  await expect(page.locator('#output')).toHaveText('shared-source\n');
 });
 
 test('portable extensions and dynamic modules execute in Wasm', async ({ page }) => {
