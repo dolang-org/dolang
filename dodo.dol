@@ -22,15 +22,6 @@ let COV_IGNORE = $
   - dolang-private-test
   - dolang-private-polyfill
 
-# Module search directories for the `do` mkdocstrings handler. This is the
-# sole source of truth for that list -- it used to also live in mkdocs.yml's
-# handler options, but the handler no longer resolves .dol sources itself; it
-# only reads the pre-extracted JSON cache `extract_docs` produces from this
-# list (see with_mkdocs).
-let MKDOCS_DOC_PATHS = $
-  - dolang-shell-modules/lib
-  ...(glob "*/stub")
-
 let MKDOCS_API_DIR = Path "docs/api"
 
 let DOC_CRATES = $
@@ -39,51 +30,22 @@ let DOC_CRATES = $
   - dolang-winterop
   - dolang-vfs
 
-let PUBLISH_CRATES = $
-  - dolang-rpc
-  - dolang-private-build
-  - dolang-private-util
-  - dolang-winterop
-  - dolang-vfs
-  - dolang-vfs-winreg
-  - dolang-vfs-winscm
-  - dolang-vfs-winnet
-  - dolang-shell-vfs
-  - dolang-bytecode
-  - dolang-runtime
-  - dolang-compile
-  - dolang-lsp
-  - dolang
-  - dolang-ext-yaml
-  - dolang-ext-toml
-  - dolang-ext-regex
-  - dolang-ext-rand
-  - dolang-ext-url
-  - dolang-ext-json
-  - dolang-ext-glob
-  - dolang-ext-digest
-  - dolang-ext-base64
-  - dolang-ext-uuid
-  - dolang-ext-time
-  - dolang-ext-load
-  - dolang-private-test
-  - dolang-ext-compile
-  - dolang-ext-xml
-  - dolang-ext-shell
-  - dolang-ext-winreg
-  - dolang-ext-winscm
-  - dolang-ext-winnet
-  - dolang-ext-zip
-  - dolang-ext-sqlite
-  - dolang-ext-progress
-  - dolang-ext-patch
-  - dolang-ext-http
-  - dolang-ext-http-mock
-  - dolang-ext-tar
-  - dolang-shell-main
-  - dolang-private-bundle
-  - dolang-shell-modules
-  - dolang-shell
+def doc_paths()
+  $
+    dolang-shell-modules/lib
+    ...(glob "*/stub")
+
+# Names of workspace members whose manifests allow publishing. Cargo orders a
+# multi-package publish by dependency itself, so member order doesn't matter.
+def publish_crates()
+  let workspace = toml.decode $Path("Cargo.toml").read()
+  stream do for member = workspace["workspace"]["members"]
+    bind toml.decode((Path member / "Cargo.toml").read())["package"]
+      "name": name
+      "publish": publish = true
+      ...
+    if publish
+      put $name
 
 let TARGETS = $
   for arch = ["x86_64", "aarch64"]
@@ -218,7 +180,7 @@ def dol_module_name path base
   ".".join $parts
 
 def collect_doc_jobs()
-  stream do for search_dir = MKDOCS_DOC_PATHS
+  stream do for search_dir = doc_paths()
     let base = Path $search_dir
     for path = base.glob "**/*.dol"
       let name = dol_module_name $path $base
@@ -701,12 +663,12 @@ return $
         throw std.RuntimeError "__DATA,__interpose section missing from $bin -- posix_spawn guard was stripped"
 
   publish:
-    help: publish workspace crates in dependency order
+    help: publish workspace crates
     - arg: args
       help: "arguments to `cargo publish`"
       collect: true
     do |args|
       dodo.show cargo publish
-        for crate = PUBLISH_CRATES
+        for crate = publish_crates()
           -p $crate
         ...args.args
