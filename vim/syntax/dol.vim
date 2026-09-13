@@ -39,7 +39,7 @@ syn region dolStringInterp matchgroup=dolSpecial start="\$(" end=")" contains=@d
 " rather than by scanning for the first `}`.
 syn region dolStringInterp matchgroup=dolSpecial start="\${#\?" end="}" contains=@dolFmtInterpList contained
 " `$#0`/`$#name`: a parameter with no specification.
-syn match dolStringInterp "\$#\%(\d\+\|[A-Za-z_][A-Za-z0-9_]*\)" contained
+syn region dolStringInterp matchgroup=dolSpecial start="\$#\ze[A-Za-z0-9_]" end="\zs\ze[^A-Za-z0-9_]" contains=dolIdentifier contained
 " The specification runs to the closing brace of the interpolation, but may
 " itself interpolate a width or precision.
 syn region dolFmtSpec matchgroup=dolColon start=":" end="}"me=s-1 contains=dolStringInterp contained

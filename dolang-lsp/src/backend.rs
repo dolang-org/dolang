@@ -61,7 +61,7 @@ fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> (u
     match token {
         Token::Comment => (TT_COMMENT, 0),
         Token::Constant => (TT_CONSTANT, 0),
-        Token::Delim => (TT_OPERATOR, 0),
+        Token::Delim | Token::Sigil => (TT_OPERATOR, 0),
         Token::Escape => (TT_STRING, 0),
         Token::Field => match context {
             Context::Call => (TT_FUNCTION, 0),
@@ -99,7 +99,6 @@ fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> (u
             (Context::None, Some(Kind::ImportModule { .. })) => (TT_NAMESPACE, 0),
             (Context::None, _) => (TT_VARIABLE, 0),
         },
-        Token::Sigil => (TT_VARIABLE, 0),
     }
 }
 
@@ -945,8 +944,10 @@ impl Backend {
             let statics = static_fields(&unit);
             unit.tokens(
                 &mut |leaf, span: diag::Span, node: Option<NodeId>, context: Context| {
+                    // Punctuation and sigils have no semantic token type, so
+                    // they are left to the client's own syntax highlighting.
                     if span.start().byte_offset() != span.end().byte_offset()
-                        && !matches!(leaf, Token::Delim)
+                        && !matches!(leaf, Token::Delim | Token::Sigil)
                     {
                         let doc_node = node.and_then(|id| unit.node(id));
                         let kind = doc_node.map(|node| node.kind());

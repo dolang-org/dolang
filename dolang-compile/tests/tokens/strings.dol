@@ -61,6 +61,22 @@ dbg "n=${name:05d}"
 #                ^: delim
 #                 ^: string_delim
 
+# A parameter names a hole in a sequence; `$#name` is the shorthand for
+# `${#name}`, and both sigils are tokens in either form.
+#~~: variable, context=call, node=prelude_item
+dbg t"x=${#name}"
+#       ^: sigil
+#        ^: delim
+#         ^: sigil
+#          ^~~~: variable
+#              ^: delim
+
+#~~: variable, context=call, node=prelude_item
+dbg t"x=$#name"
+#       ^: sigil
+#        ^: sigil
+#         ^~~~: variable
+
 # A raw string interpolates nothing, so `$b` is literal text.
 #~~: variable, context=call, node=prelude_item
 dbg r"a$b"
