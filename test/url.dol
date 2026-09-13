@@ -4,6 +4,8 @@ import
     - Iterable
     - ImmutableError
     - TypeError
+    - UnexpectedKeyError
+    - UnexpectedPosError
   test:
     - assert
     - assert_eq
@@ -72,6 +74,19 @@ def with_query_fragment()
 
   let rebuilt = parsed.with_query [["q", "a b"], ["slash", "a/b"]]
   assert_eq $rebuilt.query_raw "q=a+b&slash=a%2Fb"
+
+  let keyed = parsed.with_query q: "a b" slash: a/b
+  assert_eq $keyed.query_raw "q=a+b&slash=a%2Fb"
+
+  let empty = parsed.with_query()
+  assert_eq $empty.query_raw ""
+
+  assert_throws $UnexpectedPosError do
+    parsed.with_query [] []
+  assert_throws $UnexpectedKeyError do
+    parsed.with_query first: 1 {q: "a b"}
+  assert_throws $UnexpectedKeyError do
+    parsed.with_query {q: "a b"} last: 2
 
   let no_query = parsed.with_query_raw nil
   assert_eq $no_query.query_raw nil

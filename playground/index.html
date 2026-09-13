@@ -30,27 +30,33 @@
       <section class="diagnostics" id="diagnostics-section" hidden><h2>Diagnostics</h2><ul id="diagnostics"></ul></section>
       <details class="playground-help">
         <summary>Using the playground</summary>
-        <p><code>echo ...args</code> prints its arguments separated by spaces and ends with a newline.</p>
+        <h2>Available prelude</h2>
+        <p>The <a href="../language/prelude/">core prelude</a> is available, plus these functions from <a href="../api/term/"><code>term</code></a>:</p>
+        <ul class="names">
+          <li><a href="../api/term/#term.echo"><code>echo</code></a></li>
+          <li><a href="../api/term/#term.print"><code>print</code></a></li>
+        </ul>
         <h2>Available modules</h2>
-        <ul class="modules">
-          <li><code>base64</code></li>
-          <li><code>compile</code></li>
-          <li><code>digest</code></li>
-          <li><code>glob</code></li>
-          <li><code>http</code></li>
-          <li><code>json</code></li>
-          <li><code>load</code></li>
-          <li><code>rand</code></li>
-          <li><code>regex</code></li>
-          <li><code>std</code></li>
-          <li><code>strand</code></li>
-          <li><code>term</code></li>
-          <li><code>time</code></li>
-          <li><code>toml</code></li>
-          <li><code>url</code></li>
-          <li><code>uuid</code></li>
-          <li><code>xml</code></li>
-          <li><code>yaml</code></li>
+        <ul class="names">
+          <li><a href="../api/base64/"><code>base64</code></a></li>
+          <li><a href="../api/compile/"><code>compile</code></a></li>
+          <li><a href="../api/digest/"><code>digest</code></a></li>
+          <li><a href="../api/glob/"><code>glob</code></a></li>
+          <li><a href="../api/http/"><code>http</code></a></li>
+          <li><a href="../api/json/"><code>json</code></a></li>
+          <li><a href="../api/load/"><code>load</code></a></li>
+          <li><a href="../api/rand/"><code>rand</code></a></li>
+          <li><a href="../api/regex/"><code>regex</code></a></li>
+          <li><a href="../api/std/"><code>std</code></a></li>
+          <li><a href="../api/strand/"><code>strand</code></a></li>
+          <li><a href="../api/term/"><code>term</code></a></li>
+          <li><a href="../api/test/"><code>test</code></a> (assertions only)</li>
+          <li><a href="../api/time/"><code>time</code></a></li>
+          <li><a href="../api/toml/"><code>toml</code></a></li>
+          <li><a href="../api/url/"><code>url</code></a></li>
+          <li><a href="../api/uuid/"><code>uuid</code></a></li>
+          <li><a href="../api/xml/"><code>xml</code></a></li>
+          <li><a href="../api/yaml/"><code>yaml</code></a></li>
         </ul>
       </details>
       <footer>Runs entirely in your browser. Shell commands and filesystem access are unavailable.</footer>

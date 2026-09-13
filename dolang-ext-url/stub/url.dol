@@ -129,16 +129,22 @@ pub class Url
 
   # (`Url`) Returns a new `Url` with its query rebuilt from decoded key/value pairs.
   #
+  # Pairs come from either a single iterable or key arguments, not both.
+  #
   # ## Example
   #
   # ```
-  # let url = (Url "https://example.com").with_query {q: "a b", tag: "x/y"}
+  # let base = Url "https://example.com"
+  # let url = base.with_query q: "a b" tag: "x/y"
   # assert_eq $url.query_raw "q=a+b&tag=x%2Fy"
+  # assert_eq $base.with_query({q: "a b", tag: "x/y"}) $url
   # ```
   pub def with_query
     self
     # ([`Iterable`](std.Iterable)) Decoded key/value pairs.
-    pairs
+    pairs = nil
+    # Query values keyed by argument name.
+    ...keys
   do
     throw nil
 
