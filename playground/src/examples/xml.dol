@@ -1,8 +1,62 @@
 # title: XML editing
 import xml
 
-let node = xml.decode r#"<service name="demo">ready</service>"#
-node.set_attr name playground
-node.push "!"
-let document = xml.encode $node
-echo $document
+let domain = xml.decode r|
+  <domain type="kvm">
+    <name>web01</name>
+    <memory unit="MiB">2048</memory>
+    <metadata>
+      <app:owner xmlns:app="urn:example:app" app:team="platform">ops</app:owner>
+    </metadata>
+    <devices>
+      <disk type="file" device="disk">
+        <source file="/var/lib/images/web01.qcow2"/>
+        <target dev="vda" bus="virtio"/>
+      </disk>
+      <interface type="network">
+        <source network="default"/>
+      </interface>
+    </devices>
+  </domain>
+
+# `traverse` walks every element and text node, parents first.
+def find tag
+  for node = domain.traverse()
+    if (type(node, xml.Node) && node.tag == tag)
+      return node
+
+# A string index reads an attribute; an integer index reads a child.
+let memory = find memory
+echo "$(find("name")[0]): $(memory[0]) $(memory["unit"])"
+memory.children[0] = (str(int(memory[0]) * 2))
+
+# Namespaced attributes are looked up by local name and namespace URI.
+let APP = "urn:example:app"
+let owner = find owner
+echo "owner: $(owner[0]), team: $(owner.attr "team" namespace: APP)"
+owner.set_attr team storage namespace: $APP
+
+let disk = find disk
+for attr = disk.attrs
+  echo "disk $(attr.qname) = $(attr.value)"
+(find "target").delete_attr bus
+
+# Build a new element with attributes and children.
+let cdrom = xml.Node disk
+  attrs:
+    type: file
+    device: cdrom
+  - $ xml.Node source attrs: {file: "/images/install.iso"}
+  - $ xml.Node readonly
+
+# Text is stored as plain `Str` children, including indentation.
+let devices = (find "devices").children
+devices.insert (devices.len - 1) "\n    " $cdrom
+
+# `verify` checks names, namespaces, and structure without serializing.
+try
+  xml.verify $ xml.Node "not a name"
+catch std.ValueError: err
+  echo "invalid: $err"
+
+echo $ xml.encode $domain

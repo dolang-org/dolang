@@ -11,7 +11,7 @@ echo "Today: $(today.weekday), $(today.month) $(today.day)"
 echo "A week from today: $(today.add_days 7)"
 
 # The offset is applied, giving a UTC instant
-let leap = DateTime.parse_rfc "2024-02-29T12:30:00+02:00"
+let leap = DateTime.parse_rfc 2024-02-29T12:30:00+02:00
 echo "Parsed: $leap"
 
 # A timeout interrupts a block that runs too long

@@ -6,9 +6,10 @@ import http url strand:
 # JSONPlaceholder is a public test API that allows cross-origin requests.
 let API = url.Url https://jsonplaceholder.typicode.com
 let POSTS = (API / "posts")
+let COMMENTS = (API / "comments")
 let NUM_POSTS = 8
 let NUM_COMMENTS = 2
-let NUM_WORKERS = 4
+let NUM_WORKERS = 2
 
 # Parallel fetch pipeline
 pipeline
@@ -17,8 +18,9 @@ pipeline
   # Process posts with worker pool
   do pool $NUM_WORKERS do |post|
     # Feed first NUM_COMMENTS per post into pipeline
-    from $ http.get (POSTS / str post["id"] / "comments") do |res|
-      res.json()[..NUM_COMMENTS]
+    from $ http.get
+      (COMMENTS.with_query postId: post["id"])
+      do |res| res.json()[..NUM_COMMENTS]
   # Print name and body of each comment
   do for "name": name "body": body ...
     echo "comment: $name"

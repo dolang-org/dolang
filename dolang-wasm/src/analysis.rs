@@ -90,9 +90,10 @@ pub(crate) fn analyze(source: &str) -> Analysis {
         if from == to {
             return;
         }
-        // Unlike the LSP, which leaves `Token::Delim` (`(`, `-`, etc.) to the
-        // client's TextMate grammar, the playground has no such grammar, so
-        // delimiters must be classified here or they render unstyled.
+        // Unlike the LSP, which leaves `Token::Delim` (`(`, `-`, etc.) and
+        // `Token::Sigil` to the client's own syntax highlighting, the
+        // playground has nothing else to fall back on, so they must be
+        // classified here or they render unstyled.
         let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
         tokens.push(TokenRange {
             from,
@@ -151,7 +152,7 @@ fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> &'
             }
             (Context::None, _) => "variable",
         },
-        Token::Sigil => "operator",
+        Token::Sigil => "sigil",
     }
 }
 
@@ -194,8 +195,8 @@ pub mod tests {
     #[wasm_bindgen_test]
     fn delimiters_are_classified_as_punctuation() {
         // `(`/`)` and the vertical-layout `-` are both `Token::Delim`; the
-        // playground has no TextMate grammar to fall back on for them like
-        // the LSP's clients do, so they must show up here.
+        // playground has no other highlighting to fall back on for them, so
+        // they must show up here.
         let source = "let x = (1 + 2)\nfoo\n  - 1\n";
         let result = analyze(source);
         assert!(
@@ -217,7 +218,7 @@ pub mod tests {
             .iter()
             .find(|token| token.from == from)
             .unwrap();
-        assert_eq!(sigil.kind, "operator");
+        assert_eq!(sigil.kind, "sigil");
         assert_eq!(sigil.to, sigil.from + 1);
         assert!(result.tokens.iter().any(|token| token.kind == "variable"));
     }
@@ -236,7 +237,7 @@ pub mod tests {
                 .iter()
                 .find(|token| token.from == from)
                 .unwrap_or_else(|| panic!("no token at byte {byte}"));
-            assert_eq!(sigil.kind, "operator");
+            assert_eq!(sigil.kind, "sigil");
             assert_eq!(sigil.to, sigil.from + 1);
         }
     }

@@ -92,24 +92,34 @@
             ]
         },
         "string_interp": {
-            "match": "\\$[A-Za-z0-9_]+",
-            "name": "variable.other.normal.dol"
+            "match": "(\\$)([A-Za-z0-9_]+)",
+            "captures": {
+                "1": { "name": "punctuation.definition.variable.dol" },
+                "2": { "name": "variable.other.normal.dol" }
+            }
         },
         "string_interp_param": {
-            "match": "(\\$#)([A-Za-z_][A-Za-z0-9_]*|[0-9]+)",
-            "name": "variable.other.normal.dol"
+            "match": "(\\$)(#)(?:([0-9]+)|([A-Za-z_][A-Za-z0-9_]*))",
+            "captures": {
+                "1": { "name": "punctuation.definition.variable.dol" },
+                "2": { "name": "punctuation.definition.variable.dol" },
+                "3": { "name": "constant.numeric.dol" },
+                "4": { "name": "variable.other.normal.dol" }
+            }
         },
         "string_interp_braces": {
-            "begin": "(\\$)(\\{)(#)?",
+            "begin": "(\\$\\{)(?:(#)(?:([0-9]+)|([A-Za-z_][A-Za-z0-9_]*)))?",
             "end": "\\}",
             "beginCaptures": {
-                "1": { "name": "variable.other.normal.dol" },
-                "2": { "name": "punctuation.section.brace.begin.dol" },
-                "3": { "name": "variable.other.normal.dol" }
+                "1": { "name": "punctuation.section.embedded.begin.dol" },
+                "2": { "name": "punctuation.definition.variable.dol" },
+                "3": { "name": "constant.numeric.dol" },
+                "4": { "name": "variable.other.normal.dol" }
             },
             "endCaptures": {
-                "0": { "name": "punctuation.section.brace.end.dol" }
+                "0": { "name": "punctuation.section.embedded.end.dol" }
             },
+            "name": "meta.embedded.line.dol",
             "patterns": [
                 { "include": "#string" },
                 { "include": "#symbol" },
@@ -129,17 +139,18 @@
             "beginCaptures": {
                 "0": { "name": "punctuation.separator.dol" }
             },
-            "name": "constant.other.format.dol",
+            "name": "constant.other.placeholder.dol",
             "patterns": [
                 { "include": "#string_interp_parens" },
                 { "include": "#string_interp" }
             ]
         },
         "string_interp_parens": {
-            "begin": "(\\$)(\\()",
+            "begin": "\\$\\(",
             "end": "\\)",
-            "beginCaptures": { "2": { "name": "punctuation.section.group.begin.dol" }, "1": { "name": "variable.other.normal.dol"} },
-            "endCaptures": { "0": { "name": "punctuation.section.group.end.dol" } },
+            "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.dol" } },
+            "endCaptures": { "0": { "name": "punctuation.section.embedded.end.dol" } },
+            "name": "meta.embedded.line.dol",
             "patterns": [{ "include": "#expr" }]
         },
         "escape": {
@@ -195,9 +206,12 @@
             "name": "punctuation.separator.dol"
         },
         "compact_expr": {
-            "begin": "(\\$|\\.{3})(?=[^ \\t])",
+            "begin": "(?:(\\$)|(\\.{3}))(?=[^ \\t])",
             "end": "(?=\\s|$)",
-            "beginCaptures": { "1": { "name": "variable.other.normal.dol" } },
+            "beginCaptures": {
+                "1": { "name": "punctuation.definition.variable.dol" },
+                "2": { "name": "keyword.other.special.dol" }
+            },
             "patterns": [{ "include": "#expr" }]
         },
         "full_expr": {

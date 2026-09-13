@@ -40,6 +40,7 @@ h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; margin:
 footer { margin-top: 2rem; font-size: .85rem; }
 .token-keyword, .token-operator { color: #c8a4f8; }
 .token-punctuation { color: #6f7690; }
+.token-sigil { color: #f29ab8; }
 .token-string { color: #b9d991; }
 .token-number, .token-constant { color: #f4bc87; }
 .token-function { color: #9cbcff; }
@@ -68,4 +69,4 @@ footer { margin-top: 2rem; font-size: .85rem; }
 .playground-help summary { cursor: pointer; color: #e6e8f0; }
 .playground-help h2 { margin-left: 0; }
 .playground-help p { max-width: 85ch; }
-.playground-help .modules { display: flex; flex-wrap: wrap; gap: .4rem .6rem; list-style: none; padding: 0; margin: 0; }
+.playground-help .names { display: flex; flex-wrap: wrap; gap: .4rem .6rem; list-style: none; padding: 0; margin: 0; }
