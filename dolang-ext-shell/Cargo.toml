@@ -54,13 +54,6 @@ workspace = true
 workspace = true
 
 
-[dependencies.unicode-segmentation]
-workspace = true
-
-
-[dependencies.unicode-width]
-workspace = true
-
 [dependencies.tokio]
 workspace = true
 features = [
@@ -97,6 +90,10 @@ workspace = true
 
 
 [dependencies.dolang-ext-time]
+workspace = true
+
+
+[dependencies.dolang-ext-term]
 workspace = true
 
 

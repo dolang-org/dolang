@@ -234,10 +234,11 @@ pub let PROVISION_SOURCE = r|
       term.Console.(init) $self
       self.consoles = [...consoles.pos_only()]
 
-    pub def write self data
+    pub def write self ...data
+      let written = 0
       for console = self.consoles
-        console.write $data
-      data.len
+        written = (console.write ...data)
+      written
 
     pub def flush self
       for console = self.consoles

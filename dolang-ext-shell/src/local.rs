@@ -189,31 +189,6 @@ pub(crate) struct Local {
     env: RefCell<Rc<Env>>,
     vfs: RefCell<Vfs>,
     background: Cell<bool>,
-    /// Set while dispatching a write into the ambient console.
-    ///
-    /// A console written in Do may itself call `echo`; without this guard that
-    /// would route straight back into the same console and recurse until the
-    /// call-depth limit. While set, console writes bypass the capture and go to
-    /// the host.
-    capturing: Cell<bool>,
-    /// The `can_style` the ambient console reported when it was installed.
-    ///
-    /// Snapshotted rather than read live because `can_style` is defined to be
-    /// fixed for the life of an installed console — which is what makes a
-    /// capture's styling deterministic — and because the styling query is a
-    /// sync, infallible one reachable from a public Rust API.
-    ///
-    /// Only meaningful while a capture is installed; the host answers from
-    /// `Terminal::ansi` instead.
-    capture_can_style: Cell<bool>,
-    /// The `is_tty` the ambient console reported when it was installed.
-    ///
-    /// Snapshotted for the same reason as [`Self::capture_can_style`]: the
-    /// question is defined to be fixed for the life of an installed console.
-    ///
-    /// Only meaningful while a capture is installed; the host answers from
-    /// `Terminal::stderr_is_terminal` instead.
-    capture_is_tty: Cell<bool>,
     termination_policy: RefCell<TerminationPolicy>,
     invocation: RefCell<InvocationOverride>,
 }
@@ -229,9 +204,6 @@ impl<'v> strand::Local<'v> for Local {
             ))),
             vfs: RefCell::new(vfs),
             background: Cell::new(false),
-            capturing: Cell::new(false),
-            capture_can_style: Cell::new(false),
-            capture_is_tty: Cell::new(false),
             termination_policy: RefCell::new(TerminationPolicy::default()),
             invocation: RefCell::new(InvocationOverride::default()),
         }
@@ -243,13 +215,6 @@ impl<'v> strand::Local<'v> for Local {
             env: self.env.clone(),
             vfs: self.vfs.clone(),
             background: Cell::new(self.background.get() || kind == strand::InheritKind::Background),
-            // Inherited so that a strand spawned from inside a console's own
-            // write stays guarded rather than routing back into it.
-            capturing: Cell::new(self.capturing.get()),
-            // Inherited alongside the capture root itself, so a strand spawned
-            // inside a capture answers the styling question the same way.
-            capture_can_style: Cell::new(self.capture_can_style.get()),
-            capture_is_tty: Cell::new(self.capture_is_tty.get()),
             termination_policy: self.termination_policy.clone(),
             invocation: self.invocation.clone(),
         }
@@ -316,30 +281,6 @@ impl Local {
 
     pub(crate) fn background(&self) -> bool {
         self.background.get()
-    }
-
-    pub(crate) fn capturing(&self) -> bool {
-        self.capturing.get()
-    }
-
-    pub(crate) fn set_capturing(&self, v: bool) -> bool {
-        self.capturing.replace(v)
-    }
-
-    pub(crate) fn capture_can_style(&self) -> bool {
-        self.capture_can_style.get()
-    }
-
-    pub(crate) fn set_capture_can_style(&self, v: bool) -> bool {
-        self.capture_can_style.replace(v)
-    }
-
-    pub(crate) fn capture_is_tty(&self) -> bool {
-        self.capture_is_tty.get()
-    }
-
-    pub(crate) fn set_capture_is_tty(&self, v: bool) -> bool {
-        self.capture_is_tty.replace(v)
     }
 
     pub(crate) fn termination_policy(&self) -> TerminationPolicy {

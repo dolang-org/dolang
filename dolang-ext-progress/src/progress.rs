@@ -598,7 +598,7 @@ async fn write_plain_line<'v, 's>(
                 let root = global.output.borrow();
                 Output::set(strand, &mut output, &*root);
             }
-            dolang_ext_shell::write_terminal_line(strand, &output, info.line_ending(), line).await
+            dolang_ext_term::write_terminal_line(strand, &output, info.line_ending(), line).await
         })
         .await
 }
@@ -770,11 +770,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                         "progress context already active",
                     ));
                 }
-                let line_ending = dolang_ext_shell::terminal_line_ending(strand)?;
-                let ansi = dolang_ext_shell::ansi_enabled(strand);
+                let line_ending = dolang_ext_term::terminal_line_ending(strand)?;
+                let ansi = dolang_ext_term::ansi_enabled(strand);
                 {
                     let mut output = global.output.borrow_mut();
-                    dolang_ext_shell::terminal_output(strand, &mut *output);
+                    dolang_ext_term::terminal_output(strand, &mut *output);
                 }
                 let config = plain::PlainConfig::new(style, interval, line_ending, ansi);
 
@@ -798,7 +798,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             }
 
             let multi = MultiProgress::new();
-            let ansi = dolang_ext_shell::ansi_enabled(strand);
+            let ansi = dolang_ext_term::ansi_enabled(strand);
             let state_rc = Rc::new(RefCell::new(ProgressState {
                 multi: Some(multi.clone()),
                 style,

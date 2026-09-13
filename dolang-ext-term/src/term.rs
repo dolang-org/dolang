@@ -14,44 +14,47 @@ use dolang::{
 };
 
 use crate::{
-    console::{self, DefaultOutput, HostConsole, SubConsole},
+    console::{self, DefaultOutput, SubConsole},
     global::Global,
-    io_mode::{IoMode, strip_line_ending},
+    util::{Framing, strip_line_ending},
 };
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
 /// Runs `f` with `console` installed as the ambient console for this strand.
 ///
-/// The override lives in a strand-local GC root, so it is inherited by strands
+/// The override lives in strand-local GC roots, so it is inherited by strands
 /// spawned inside `f` and restored on every path out.
 ///
-/// `can_style`/`is_tty` are the answers the console gave when it was
+/// `can_style` and `line_ending` are the answers the console gave when it was
 /// handed over; they are snapshotted rather than re-read, which is what fixes
-/// them for the life of the capture.
+/// them for the life of the capture and spares every `echo` a dispatch.
 async fn with_capture<'v, 's, R>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     console: &Slot<'v, '_>,
     can_style: bool,
-    is_tty: bool,
+    line_ending: &Slot<'v, '_>,
     f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> R,
 ) -> R {
     strand
-        .with_slots(async move |strand, [mut prev]| {
+        .with_slots(async move |strand, [mut prev, mut prev_ending]| {
             let mut root = global.capture.slot(strand);
             Output::set(strand, &mut prev, &root);
             Output::set(strand, &mut root, console);
+            let mut ending = global.capture_line_ending.slot(strand);
+            Output::set(strand, &mut prev_ending, &ending);
+            Output::set(strand, &mut ending, line_ending);
             let prev_can_style = global.local.get(strand).set_capture_can_style(can_style);
-            let prev_is_tty = global.local.get(strand).set_capture_is_tty(is_tty);
             let result = f(strand).await;
             let mut root = global.capture.slot(strand);
             Output::set(strand, &mut root, &prev);
+            let mut ending = global.capture_line_ending.slot(strand);
+            Output::set(strand, &mut ending, &prev_ending);
             global
                 .local
                 .get(strand)
                 .set_capture_can_style(prev_can_style);
-            global.local.get(strand).set_capture_is_tty(prev_is_tty);
             result
         })
         .await
@@ -1214,7 +1217,7 @@ fn create_text<'v>(
         });
 }
 
-fn create_preformatted_text<'v, 's>(
+pub(crate) fn create_preformatted_text<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     value: &str,
@@ -1497,7 +1500,6 @@ pub(crate) fn style_keys<'v>(builder: &mut Builder<'v>) -> StyleKeys<'v> {
 pub(crate) fn configure_compiler(config: &mut Config<'_>) {
     config
         .prelude()
-        .import_module("term")
         .import_items("term")
         .items(["echo", "print"])
         .commit();
@@ -1522,7 +1524,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         colors,
         inherit,
     } = keys;
-    let backtrace = builder.sym("backtrace");
     let chomp_sym = builder.sym("chomp");
     let can_style = global.syms.can_style;
 
@@ -1534,23 +1535,23 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .value("SinkConsole", global.types.sink_console)
         .value("Geometry", global.types.geometry)
         .value("Default", global.types.default)
-        .object("console", global.types.host_console, HostConsole)
+        // A getter: the host installs its console after this module commits.
+        .get("console", move |strand, out| {
+            console::host_or_nil(strand, out);
+            Ok(())
+        })
         .object("default", global.types.default, DefaultOutput)
-        .function("output", async move |strand, args, out| {
+        .function_with_slots("output", async move |strand, args, out, [mut console]| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
             // The *ambient* console: whatever an enclosing `capture` installed,
             // else the host. `term.console` is a name, so it pins instead.
-            let root = global.capture.slot(strand);
-            if root.is_nil() {
-                global.types.host_console.create(strand, HostConsole, out);
-            } else {
-                Output::set(strand, out, &root);
-            }
+            console::ambient(strand, &mut console)?;
+            Output::set(strand, out, &console);
             Ok(())
         })
         .function_with_slots(
             "capture",
-            async move |strand, args, out, [mut console, mut tmp]| {
+            async move |strand, args, out, [mut console, mut line_ending, mut tmp]| {
                 let mode_sym = global.syms.mode;
                 let ([target, func], [mode], rest) =
                     unpack!(strand, args, 2, 0, mode_sym = None, ...)?;
@@ -1567,7 +1568,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     // the console interface. A bare sink does not style — pass
                     // a `term.SinkConsole` built with `can_style: true` to say
                     // otherwise.
-                    let mode = console::parse_mode(strand, mode.as_deref())?;
+                    let mode = crate::util::parse_mode(strand, mode.as_deref())?;
                     console::create_sink_console(
                         strand,
                         &target,
@@ -1578,13 +1579,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     .await?;
                 }
                 let can_style = console::can_style(strand, &console)?;
-                let is_tty = console::console_is_tty(strand, &console)?;
+                console::line_ending(strand, &console, &mut line_ending)?;
                 let result = with_capture(
                     strand,
                     global,
                     &console,
                     can_style,
-                    is_tty,
+                    &line_ending,
                     async move |strand| func.call(strand, rest, out).await,
                 )
                 .await;
@@ -1596,7 +1597,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         )
         .function_with_slots(
             "sub",
-            async move |strand, args, out, [mut console, mut tmp]| {
+            async move |strand, args, out, [mut console, mut line_ending, mut tmp]| {
                 let ([func], [chomp, can_style], rest) =
                     unpack!(strand, args, 1, 0, chomp_sym = None, can_style = None, ...)?;
                 let chomp = chomp.map(|v| v.to_bool(strand)).unwrap_or(true);
@@ -1605,13 +1606,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     .types
                     .sub_console
                     .create(strand, SubConsole::new(can_style), &mut console);
-                // A capture buffer is never a terminal.
+                Output::set(strand, &mut line_ending, console::LINE_ENDING);
                 with_capture(
                     strand,
                     global,
                     &console,
                     can_style,
-                    false,
+                    &line_ending,
                     async move |strand| func.call(strand, rest, &mut tmp).await,
                 )
                 .await?;
@@ -1631,7 +1632,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         )
         .function_with_slots(
             "mute",
-            async move |strand, args, out, [mut console, mut scratch]| {
+            async move |strand, args, out, [mut console, mut scratch, mut line_ending]| {
                 let ([func], [], rest) = unpack!(strand, args, 1, 0, ...)?;
                 // A console over std.null discards everything written to it —
                 // the same mechanism `capture` uses, just wired to a sink that
@@ -1641,10 +1642,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     strand,
                     &scratch,
                     false,
-                    IoMode::Line,
+                    Framing::Line,
                     Slot::reborrow(&mut console),
                 )
                 .await?;
+                Output::set(strand, &mut line_ending, console::LINE_ENDING);
                 // The strand's own implicit output only needs touching when it
                 // is still `term.default` — the startup placeholder that
                 // itself forwards through this same capture. Anything else
@@ -1664,7 +1666,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                             global,
                             &console,
                             false,
-                            false,
+                            &line_ending,
                             async move |strand| func.call(strand, rest, out).await,
                         )
                         .await
@@ -1672,13 +1674,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     .await
             },
         )
-        .function("echo", async move |strand, args, _| {
+        .function_with_slots("echo", async move |strand, args, _, [mut line]| {
             let ansi = console::ansi(strand);
-            let mut output = String::new();
+            let mut output = StrEmbryo::new();
             let mut space = false;
             for arg in args {
                 if space {
-                    output.push(' ');
+                    output.write_str(strand, " ")?;
                 }
                 space = true;
                 match arg {
@@ -1693,7 +1695,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     )?,
                     Arg::Key(key, value) => {
                         append_key(strand, &mut output, key)?;
-                        output.push_str(": ");
+                        output.write_str(strand, ": ")?;
                         append_value(
                             strand,
                             global,
@@ -1706,11 +1708,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     }
                 }
             }
+            output.finish(strand, &mut line);
             // The console supplies the terminator: only it knows what its own
             // line ending is.
-            console::writeln(strand, output.as_bytes()).await
+            console::write_line(strand, &line).await
         })
-        .function("print", async move |strand, args, _| {
+        .function_with_slots("print", async move |strand, args, _, [mut text]| {
             let (
                 [],
                 [
@@ -1757,7 +1760,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     attr(strand, strikethrough_value, "strikethrough", inherit, false)?,
                 ],
             };
-            let mut output = String::new();
+            let mut output = StrEmbryo::new();
             render_args(
                 strand,
                 global,
@@ -1766,7 +1769,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 console::ansi(strand),
                 args,
             )?;
-            console::write(strand, output.as_bytes()).await
+            output.finish(strand, &mut text);
+            console::write_value(strand, &text).await
         })
         .function("text", async move |strand, args, out| {
             make_text(strand, global, keys, Style::default(), args, out)
@@ -1778,12 +1782,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 .ok_or_else(|| Error::type_error(strand, "preformat: expected Str"))?
                 .pin();
             create_preformatted_text(strand, global, &value, out)
-        })
-        .function("render_error", async move |strand, args, out| {
-            let ([error], [backtrace]) = unpack!(strand, args, 1, 0, backtrace = None)?;
-            let rendered =
-                crate::diagnostic::render_error_value(strand, &error, backtrace.as_deref())?;
-            create_preformatted_text(strand, global, &rendered, out)
         })
         .commit();
 }

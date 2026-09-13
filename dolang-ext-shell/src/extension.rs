@@ -10,7 +10,9 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::{fs, global::Global, pipe_channel, platform, proc, security, shell, shlex, sys, term};
+use crate::{
+    console, fs, global::Global, pipe_channel, platform, proc, security, shell, shlex, sys,
+};
 
 /// Shell extension
 pub struct Shell;
@@ -31,11 +33,13 @@ impl Extension for Shell {
     const NAME: &str = "shell";
     const VERSION: Version = dolang::package_version!();
     const DESCRIPTION: &str = "Do Shell Extension";
-    const DEPENDS: &'static [&'static str] = &[<dolang_ext_time::TimeExt as Extension>::NAME];
+    const DEPENDS: &'static [&'static str] = &[
+        <dolang_ext_time::TimeExt as Extension>::NAME,
+        <dolang_ext_term::TermExt as Extension>::NAME,
+    ];
 
     fn apply_compiler(&self, config: &mut Config) -> Result<(), Infallible> {
         shell::configure_compiler(config);
-        term::configure_compiler(config);
         security::configure_compiler(config);
         sys::configure_compiler(config);
         proc::configure_compiler(config);
@@ -47,8 +51,8 @@ impl Extension for Shell {
         let global = Global::new(builder);
         let global = builder.register_state(global);
         pipe_channel::install(builder);
+        console::install(builder, global);
         shell::configure_vm(builder, global);
-        term::configure_vm(builder, global);
         security::configure_vm(builder, global);
         sys::configure_vm(builder, global);
         platform::configure_vm(builder, global);

@@ -613,9 +613,13 @@ def do_subclass_console()
       term.Console.(init) $self
       self.lines = []
 
-    pub def write self data
-      self.lines.push (str data)
-      data.len
+    pub def write self ...data
+      let pieces = [...data.pos_only()]
+      self.lines.push $pieces
+      let written = 0
+      for piece = pieces
+        written = (written + piece.len)
+      written
 
     pub def flush _self
       nil
@@ -624,9 +628,9 @@ def do_subclass_console()
   term.capture $recorder do
     echo terminated
     print bare
-  # `echo` assembles payload and terminator and issues one `write`, so the
-  # subclass sees a single call with the line already terminated.
-  assert_eq $recorder.lines ["terminated\n", "bare"]
+  # `echo` passes payload and terminator to one `write`, so the subclass sees
+  # a single call with the line and its terminator as separate pieces.
+  assert_eq $recorder.lines [["terminated", "\n"], ["bare"]]
 
   # Supplying only the two write members is enough: the capability members
   # have safe defaults, which the subclass inherits from the base. That
@@ -655,9 +659,12 @@ def do_console_declares_capabilities()
       term.Console.(init) $self
       self.lines = []
 
-    pub def write self data
-      self.lines.push (str data)
-      data.len
+    pub def write self ...data
+      let line = ""
+      for piece = [...data.pos_only()]
+        line = "$line$piece"
+      self.lines.push $line
+      line.len
 
     pub def flush _self
       nil
@@ -687,9 +694,12 @@ def do_console_chooses_its_terminator()
       term.Console.(init) $self
       self.lines = []
 
-    pub def write self data
-      self.lines.push (str data)
-      data.len
+    pub def write self ...data
+      let line = ""
+      for piece = [...data.pos_only()]
+        line = "$line$piece"
+      self.lines.push $line
+      line.len
 
     pub def flush _self
       nil
@@ -699,6 +709,49 @@ def do_console_chooses_its_terminator()
     echo terminated
     print bare
   assert_eq $crlf.lines ["terminated\r\n", "bare"]
+
+#[test]
+def capture_reads_line_ending_once()
+  # `line_ending` is read when the console is installed, not on every `echo`.
+  class Shifty: term.Console
+    pub field lines
+    pub field line_ending = "\n"
+
+    def (init) self
+      term.Console.(init) $self
+      self.lines = []
+
+    pub def write self ...data
+      self.lines.push [...data.pos_only()]
+      nil
+
+    pub def flush _self
+      nil
+
+  let shifty = Shifty()
+  term.capture $shifty do
+    echo one
+    shifty.line_ending = "\r\n"
+    echo two
+  assert_eq $shifty.lines [["one", "\n"], ["two", "\n"]]
+
+  class Bad: term.Console
+    pub field line_ending = 42
+
+    def (init) self
+      term.Console.(init) $self
+
+  assert_throws $TypeError do term.capture (Bad()) do nil
+
+#[test]
+def console_write_takes_pieces()
+  let out = []
+  let console = term.SinkConsole $out
+  assert_eq (console.write "a" b"b" "\n") 3
+  assert_eq $out ["ab\n"]
+  assert_throws $TypeError do console.write "a" 1
+
+  assert_eq (term.sub do term.output().write "a" "b") ab
 
 #[test]
 def bare_geometry_refuses()
@@ -728,10 +781,13 @@ def reentrant_console_does_not_recurse()
           term.Console.(init) $self
           self.seen = []
 
-        pub def write self data
-          self.seen.push (str data)
-          echo "loud: $(str data)"
-          data.len
+        pub def write self ...data
+          let line = ""
+          for piece = [...data.pos_only()]
+            line = "$line$piece"
+          self.seen.push $line
+          echo "loud: $line"
+          line.len
 
         pub def flush _self
           nil

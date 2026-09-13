@@ -11,7 +11,8 @@
     "@codemirror/commands": "^6.10.0",
     "@codemirror/lint": "^6.8.0",
     "@codemirror/state": "^6.5.0",
-    "@codemirror/view": "^6.38.0"
+    "@codemirror/view": "^6.38.0",
+    "ansi_up": "^6.0.6"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",

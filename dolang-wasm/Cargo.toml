@@ -20,6 +20,7 @@ dolang-ext-json.workspace = true
 dolang-ext-load.workspace = true
 dolang-ext-rand.workspace = true
 dolang-ext-regex.workspace = true
+dolang-ext-term.workspace = true
 dolang-ext-time.workspace = true
 dolang-ext-toml.workspace = true
 dolang-ext-url.workspace = true

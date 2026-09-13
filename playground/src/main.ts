@@ -2,6 +2,7 @@ import { EditorState, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, keymap, lineNumbers, type DecorationSet } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { setDiagnostics } from '@codemirror/lint';
+import { AnsiUp } from 'ansi_up';
 import type { Diagnostic, PageCall, Reply, Request, TokenRange } from './protocol';
 import { examples } from './examples';
 import { decodeSource, encodeSource } from './share';
@@ -44,6 +45,16 @@ let generation = 0;
 let ready = false;
 let timer: ReturnType<typeof setTimeout>;
 let view: EditorView;
+// Output decoders for the active run. Both keep state across writes, which may
+// end partway through a character or escape sequence.
+let decoder = new TextDecoder();
+let ansi = newAnsi();
+
+function newAnsi(): AnsiUp {
+  const ansi = new AnsiUp();
+  ansi.use_classes = true;
+  return ansi;
+}
 
 const blankLabel = 'Blank';
 
@@ -102,11 +113,15 @@ function showDiagnostics(diagnostics: Diagnostic[]) {
   view.dispatch(setDiagnostics(view.state, diagnostics));
   element('diagnostics-section').hidden = diagnostics.length === 0;
 }
+// Renders console output; ansi_up escapes HTML and turns SGR styling into spans.
+function appendOutput(text: string) {
+  if (text) element('output').insertAdjacentHTML('beforeend', ansi.ansi_to_html(text));
+}
 // Performs a host call forwarded by the worker for run `id`.
 function hostCall(id: number, call: PageCall) {
   switch (call.method) {
-    case 'echo':
-      if (id === activeRun) element('output').append(call.args[0]);
+    case 'write':
+      if (id === activeRun) appendOutput(decoder.decode(call.args[0], { stream: true }));
       break;
   }
 }
@@ -148,6 +163,7 @@ function replaceWorker(message = 'Loading…') {
     } else if (reply.type === 'abortCall') {
       // Page calls complete synchronously, so there is nothing to abort.
     } else if (reply.id === activeRun) {
+      appendOutput(decoder.decode());
       endStop();
       activeRun = undefined;
       outputVersion = reply.version;
@@ -183,6 +199,8 @@ function startRun() {
   if (!ready || activeRun !== undefined) return;
   clearTimeout(timer);
   element('output').textContent = '';
+  decoder = new TextDecoder();
+  ansi = newAnsi();
   setError('');
   outputVersion = version;
   showSnapshot();

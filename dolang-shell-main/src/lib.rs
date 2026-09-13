@@ -186,9 +186,14 @@ fn run(config: Arc<dyn Config>) -> Outcome {
             let batch_config = config.clone();
             let module_config = config.clone();
             let entrypoint_config = config.clone();
+            let backtrace_sym = builder.sym("backtrace");
 
             builder
                 .module("_shell")
+                .function("render_error", async move |strand, args, out| {
+                    let ([error], [backtrace]) = unpack!(strand, args, 1, 0, backtrace_sym = None)?;
+                    dolang_ext_shell::render_error(strand, &error, backtrace.as_deref(), out)
+                })
                 .function("compile_script", async move |strand, args, out| {
                     let ([path], []) = unpack!(strand, args, 1, 0)?;
                     let path = dolang_ext_shell::as_path(strand, &path).ok_or_else(|| {

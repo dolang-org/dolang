@@ -1,8 +1,11 @@
 use dolang::runtime::{
-    Arg, Error, Result, Strand,
+    Error, Instance, Object, Output, Result, Slot, Strand,
+    object::TypeBuilder,
+    unpack,
+    value::{Root, TypeObject, View},
     vm::{Builder, Stateful},
 };
-use js_sys::{Function, Object, Promise, Reflect};
+use js_sys::{Function, Object as JsObject, Promise, Reflect, Uint8Array};
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::JsFuture;
 
@@ -13,7 +16,11 @@ const HOST: &str = r#"
  * aborts when the VM abandons the call before it settles.
  */
 export interface Host {
-  echo(text: string, signal: AbortSignal): void | Promise<void>;
+  /**
+   * Receives console output: UTF-8 with ANSI SGR styling. A write may end
+   * partway through a character or escape sequence.
+   */
+  write(data: Uint8Array, signal: AbortSignal): void | Promise<void>;
 }
 "#;
 
@@ -23,8 +30,11 @@ extern "C" {
     pub type Host;
 
     #[wasm_bindgen(method, catch)]
-    fn echo(this: &Host, text: &str, signal: &AbortSignal)
-    -> std::result::Result<JsValue, JsValue>;
+    fn write(
+        this: &Host,
+        data: &Uint8Array,
+        signal: &AbortSignal,
+    ) -> std::result::Result<JsValue, JsValue>;
 
     #[wasm_bindgen(typescript_type = "AbortSignal")]
     pub type AbortSignal;
@@ -33,7 +43,7 @@ extern "C" {
     fn aborted(this: &AbortSignal) -> bool;
 
     #[wasm_bindgen(method, js_name = addEventListener)]
-    fn add_event_listener(this: &AbortSignal, kind: &str, listener: &Function, options: &Object);
+    fn add_event_listener(this: &AbortSignal, kind: &str, listener: &Function, options: &JsObject);
 
     pub(crate) type AbortController;
 
@@ -106,32 +116,99 @@ pub(crate) fn aborted(signal: &AbortSignal) -> JsFuture {
         if signal.aborted() {
             let _ = resolve.call0(&JsValue::UNDEFINED);
         } else {
-            let options = Object::new();
+            let options = JsObject::new();
             let _ = Reflect::set(&options, &"once".into(), &JsValue::TRUE);
             signal.add_event_listener("abort", &resolve, &options);
         }
     }))
 }
 
+/// The host console, reachable as `term.console`. Output goes to the host's
+/// `write`, which renders it on the page.
+struct PlaygroundConsole;
+
+impl<'v> Object<'v> for PlaygroundConsole {
+    const NAME: &'v str = "Console";
+    const MODULE: &'v str = "playground";
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder
+            .supertype(TypeObject::Sink)
+            .method("write", async move |_this, strand, args, out| {
+                let bytes = dolang_ext_term::write_data(strand, args)?;
+                write_host(strand, &bytes).await?;
+                Output::set(strand, out, bytes.len());
+                Ok(())
+            })
+            .method("flush", async move |_this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                Ok(())
+            })
+            .get("line_ending", |_this, strand, out| {
+                Output::set(strand, out, LINE_ENDING);
+                Ok(())
+            })
+            // The page renders SGR styling.
+            .get("can_style", |_this, strand, out| {
+                Output::set(strand, out, true);
+                Ok(())
+            })
+            // The page is not a terminal: it has no cursor to move.
+            .get("is_tty", |_this, strand, out| {
+                Output::set(strand, out, false);
+                Ok(())
+            })
+            .method("geometry", async move |_this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                Ok(())
+            })
+    }
+
+    async fn sink<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, this);
+        Ok(())
+    }
+
+    async fn put<'a, 's>(
+        _this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        value: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let bytes = match value.view(strand) {
+            View::Str(value) => value.pin().as_bytes().to_vec(),
+            View::Bin(value) => value.pin().to_vec(),
+            _ => value.to_string(strand)?.into_bytes(),
+        };
+        write_host(strand, &bytes).await
+    }
+}
+
+const LINE_ENDING: &str = "\n";
+
+async fn write_host<'v, 's>(strand: &mut Strand<'v, 's>, bytes: &[u8]) -> Result<'v, 's, ()> {
+    // A copy, not a view of Wasm memory, which the host may keep past the call.
+    let data = Uint8Array::from(bytes);
+    upcall(strand, |host, signal| host.write(&data, signal)).await?;
+    Ok(())
+}
+
+/// Registers the host and installs its console as `term`'s. `TermExt` must
+/// already be applied.
 pub(crate) fn configure(builder: &mut Builder<'_>, host: Host) {
     builder.register_state(HostState { host });
-    builder
-        .module("playground")
-        .function("echo", async move |strand, args, _| {
-            let mut line = Vec::new();
-            for arg in args {
-                match arg {
-                    Arg::Pos(value) => line.push(value.to_verbatim(strand)?),
-                    Arg::Key(key, value) => {
-                        let key = key.as_str(strand).to_owned();
-                        line.push(format!("{key}: {}", value.to_verbatim(strand)?));
-                    }
-                }
-            }
-            let mut text = line.join(" ");
-            text.push('\n');
-            upcall(strand, |host, signal| host.echo(&text, signal)).await?;
-            Ok(())
-        })
-        .commit();
+    let console_type = dolang_ext_term::console_type(builder);
+    let console = builder
+        .build_type::<PlaygroundConsole>((), ())
+        .nominal_supertype(console_type)
+        .build();
+    let mut root = Root::new(builder);
+    console.create(builder, PlaygroundConsole, &mut root);
+    dolang_ext_term::install_console(builder, &*root, true, LINE_ENDING);
 }

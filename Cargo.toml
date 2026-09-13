@@ -25,6 +25,7 @@ members = [
   "dolang-shell",
   "dolang-private-util",
   "dolang-ext-shell",
+  "dolang-ext-term",
   "dolang-ext-http",
   "dolang-ext-http-mock",
   "dolang-ext-url",
@@ -71,6 +72,7 @@ default-members = [
   "dolang-shell",
   "dolang-private-util",
   "dolang-ext-shell",
+  "dolang-ext-term",
   "dolang-ext-http",
   "dolang-ext-http-mock",
   "dolang-ext-url",
@@ -192,6 +194,11 @@ version = "0.1.1"
 
 [workspace.dependencies.dolang-ext-tar]
 path = "dolang-ext-tar"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-term]
+path = "dolang-ext-term"
 version = "0.1.1"
 
 

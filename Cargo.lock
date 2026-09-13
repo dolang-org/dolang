@@ -966,6 +966,7 @@ version = "0.1.1"
 dependencies = [
  "dolang",
  "dolang-ext-shell",
+ "dolang-ext-term",
  "dolang-private-build",
  "dolang-private-test",
  "futures",
@@ -1000,6 +1001,7 @@ dependencies = [
  "console",
  "dolang",
  "dolang-ext-compile",
+ "dolang-ext-term",
  "dolang-ext-time",
  "dolang-ext-uuid",
  "dolang-vfs",
@@ -1013,8 +1015,6 @@ dependencies = [
  "rand",
  "shlex 2.0.1",
  "tokio",
- "unicode-segmentation",
- "unicode-width",
 ]
 
 [[package]]
@@ -1044,6 +1044,16 @@ dependencies = [
  "dolang-ext-time",
  "tokio",
  "tokio-stream",
+]
+
+[[package]]
+name = "dolang-ext-term"
+version = "0.1.1"
+dependencies = [
+ "dolang",
+ "futures",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
@@ -1426,6 +1436,7 @@ dependencies = [
  "dolang-ext-load",
  "dolang-ext-rand",
  "dolang-ext-regex",
+ "dolang-ext-term",
  "dolang-ext-time",
  "dolang-ext-toml",
  "dolang-ext-url",

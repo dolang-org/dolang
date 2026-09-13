@@ -6,7 +6,8 @@ Compiler byte offsets are converted to UTF-16 in Rust. Token classification is a
 local adaptation of the LSP mapping, without an additional grammar.
 
 Included extensions: `base64`, `compile`, `digest`, `glob`, `http`, `json`,
-`load`, `rand`, `regex`, `time`, `toml`, `url`, `uuid`, `xml`, and `yaml`. Glob
+`load`, `rand`, `regex`, `term`, `time`, `toml`, `url`, `uuid`, `xml`, and
+`yaml`. Glob
 matching has no filesystem traversal; patch paths are strings on Wasm.
 Randomness uses the browser's crypto API, and timers use the host's
 `setTimeout`. HTTP requests use the browser's `fetch`, so cross-origin requests
@@ -16,6 +17,13 @@ source strings through `compile` and `load`.
 A `test` module provides the assertion functions of the shell's `test` module
 (`assert`, `assert_not`, `assert_eq`, `assert_ne`, `assert_throws`, and
 `assert_type`), so documentation examples that use them run unchanged.
+
+The adapter installs the host console for `term`, so `echo`, `print`, and
+`term.console` write to the output panel. The console reports `can_style` as
+`true` and `is_tty` as `false`, and has no geometry. The page renders SGR
+styling with [ansi_up](https://github.com/drudru/ansi_up): colors, bold, dim,
+italic, and underline are shown; blink, reverse, hidden, and strikethrough are
+not.
 
 ## Build
 
@@ -73,7 +81,7 @@ errors.
 
 The worker's host is a table. Capabilities available in a worker are
 implemented there directly; capabilities that need the page are forwarded as
-messages. `echo` is forwarded.
+messages. `write` is forwarded, and the page decodes its bytes.
 
 | Message     | Direction     | Purpose                                                 |
 | ----------- | ------------- | ------------------------------------------------------- |
