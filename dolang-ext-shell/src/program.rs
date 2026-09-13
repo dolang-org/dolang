@@ -115,7 +115,7 @@ async fn resolve_io<'v, 's, 'a>(
     // Framing for whichever output streams end up pumped into a sink. Applies
     // to both, since a redirect that splits them is already naming two sinks
     // and can chomp them independently.
-    let mode = crate::console::parse_mode(strand, mode_key.as_deref())?;
+    let mode = crate::io_mode::parse_mode(strand, mode_key.as_deref())?;
     let explicit = Streams {
         stdin: stdin_key.is_some(),
         stdout: stdout_key.is_some(),
@@ -287,8 +287,12 @@ async fn configure_direct_input<'v, 's>(
 /// terminal-following handle (`term.default`, bound when it is). Either way,
 /// nothing has redirected this stream, which is what licenses falling through
 /// to raw fd inheritance instead of a value-framed pump.
-fn is_default_stdout<'v>(global: State<'v, Global<'v>>, value: &Value<'v>) -> bool {
-    global.types.stdout.cast(value).is_some() || global.types.default.cast(value).is_some()
+fn is_default_stdout<'v>(
+    strand: &Strand<'v, '_>,
+    global: State<'v, Global<'v>>,
+    value: &Value<'v>,
+) -> bool {
+    global.types.stdout.cast(value).is_some() || dolang_ext_term::is_default_output(strand, value)
 }
 
 async fn configure_direct_output<'v, 's>(
@@ -301,7 +305,7 @@ async fn configure_direct_output<'v, 's>(
         command.stdout_null();
         return Ok(true);
     }
-    if is_default_stdout(global, output) {
+    if is_default_stdout(strand, global, output) {
         command.stdout_inherit().into_sys(strand)?;
         return Ok(true);
     }
@@ -329,7 +333,7 @@ async fn configure_direct_stderr<'v, 's>(
         command.stderr_null();
         return Ok(true);
     }
-    if is_default_stdout(global, stderr) {
+    if is_default_stdout(strand, global, stderr) {
         command.stderr_inherit_stdout().into_sys(strand)?;
         return Ok(true);
     }
@@ -438,7 +442,7 @@ where
         if read == 0 {
             break;
         }
-        crate::console::write(strand, &buf[..read]).await?;
+        dolang_ext_term::write(strand, &buf[..read]).await?;
     }
     Ok(())
 }
@@ -670,9 +674,9 @@ async fn run<'v, 's>(
     // A capture routes regardless of whether stdout/stderr is a terminal:
     // gating it on a tty would make capture work interactively and silently
     // not in CI.
-    let captured = !global.capture.slot(strand).is_nil();
+    let captured = dolang_ext_term::is_captured(strand);
     let stdout_to_console = !io.explicit.stdout
-        && is_default_stdout(global, io.value.stdout)
+        && is_default_stdout(strand, global, io.value.stdout)
         && (captured || (console_owned && global.terminal.stdout_is_terminal));
     let stderr_to_console =
         !io.explicit.stderr && (captured || (console_owned && global.terminal.stderr_is_terminal));

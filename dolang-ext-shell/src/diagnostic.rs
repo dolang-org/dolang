@@ -12,10 +12,7 @@ use dolang::{
     runtime::{Error, Frame, Result, Strand, Value},
 };
 
-use crate::{
-    syntax::{SemanticToken, classify_node, highlight_range},
-    term,
-};
+use crate::syntax::{SemanticToken, classify_node, highlight_range};
 
 #[derive(Clone)]
 struct RenderedFrame {
@@ -221,9 +218,10 @@ async fn write_preformatted_stderr<'v, 's>(
     strand: &mut Strand<'v, 's>,
     rendered: &str,
 ) -> Result<'v, 's, ()> {
-    let rendered = term::filter_preformatted(strand, rendered, crate::console::ansi(strand))?;
-    crate::console::writeln(strand, rendered.as_bytes()).await?;
-    crate::console::flush(strand).await
+    let ansi = dolang_ext_term::ansi_enabled(strand);
+    let rendered = dolang_ext_term::filter_preformatted(strand, rendered, ansi)?;
+    dolang_ext_term::writeln(strand, rendered.as_bytes()).await?;
+    dolang_ext_term::flush(strand).await
 }
 
 pub async fn print_error_stderr<'v, 's>(

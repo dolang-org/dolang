@@ -44,11 +44,11 @@
 # `flush`; `put`, the sink protocol, and the capability members come from the
 # base:
 #
-# | Console                            | `can_style`    | `is_tty`      | `geometry()`  |
-# | ---------------------------------- | -------------- | ------------- | ------------- |
-# | `Console` (the base)               | `false`        | `false`       | `nil`         |
-# | Host (`term.console`)              | styling policy | real tty test | never `nil`   |
-# | [`SinkConsole`](term.SinkConsole) | as constructed | `false`       | `nil`         |
+# | Console                            | `can_style`    | `is_tty`          | `geometry()`  |
+# | ---------------------------------- | -------------- | ----------------- | ------------- |
+# | `Console` (the base)               | `false`        | `false`           | `nil`         |
+# | Host (`term.console`)              | styling policy | usable terminal   | never `nil`   |
+# | [`SinkConsole`](term.SinkConsole) | as constructed | `false`           | `nil`         |
 #
 # ```
 # class Recorder: term.Console
@@ -58,9 +58,12 @@
 #     term.Console.(init) $self
 #     self.lines = []
 #
-#   pub def write self data
-#     self.lines.push (str data)
-#     data.len
+#   pub def write self ...data
+#     let line = ""
+#     for piece = data.pos_only()
+#       line = "$line$piece"
+#     self.lines.push $line
+#     line.len
 #
 #   pub def flush _self
 #     nil
@@ -85,28 +88,34 @@ pub class Console
   pub def can_style self
     throw nil
 
-  # ([`Bool`](std.Bool)) Whether the console is a real terminal.
+  # ([`Bool`](std.Bool)) Whether the console is usable as a terminal.
   #
   # This is the determinative test, unlike
   # [`geometry()`](term.Console.geometry), which may answer `nil` for a real
   # terminal that simply cannot report its size.
+  #
+  # The host console reports `false` while an extension such as `progress` has
+  # taken the terminal over, even though `geometry()` still reports the
+  # terminal's size.
   #[getter]
   pub def is_tty self
     throw nil
 
-  # ([`Str`](std.Str)) The line ending appropriate to this console's
-  # device.
+  # ([`Str`](std.Str)|[`Bin`](std.Bin)) The line ending appropriate to
+  # this console's device.
   #
-  # The console owns the policy but does not apply it: a caller that wants a
-  # terminated line appends this itself, in a single `write`.
+  # The console owns the policy but does not apply it: `echo` passes this to
+  # [`write`](term.Console.write) as the last piece of the line. It is read
+  # once, when the console is installed, so changing it afterward does not
+  # affect an installation already in effect.
   #
   # ```
-  # term.console.write "done$(term.console.line_ending)"
+  # term.console.write done $term.console.line_ending
   # ```
   #
   # Every built-in console reports `"\n"`: a console is a terminal-shaped
   # stream rather than a file, and `echo` writes LF on Windows too. A subclass
-  # may report something else, and `echo`/`print` will honor it. For a *file's*
+  # may report something else, and `echo` will honor it. For a *file's*
   # native ending use [`shell.line_ending`](shell.line_ending)
   # instead.
   #[getter]
@@ -144,23 +153,24 @@ pub class Console
 
   # Writes bytes verbatim.
   #
-  # A caller that wants a terminated line assembles it and issues **one**
-  # `write` rather than two -- concurrent strands writing to the same console
-  # would otherwise interleave between the text and its terminator.
+  # A caller that wants a terminated line passes the text and its terminator
+  # to **one** `write` rather than making two calls -- concurrent strands
+  # writing to the same console would otherwise interleave between the text
+  # and its terminator.
   #
-  # ## Returns
+  # #### Returns
   #
-  # [`Int`](std.Int) - Bytes written.
+  # [`Int`](std.Int) - Total bytes written.
   #
-  # ## Example
+  # #### Example
   #
   # ```
-  # term.console.write b"\x1b[2K"
+  # term.console.write b"\x1b[2K" "\r"
   # ```
   pub def write
     self
-    # ([`Str`](std.Str)|[`Bin`](std.Bin)) Bytes to write.
-    data
+    # ([`Str`](std.Str)|[`Bin`](std.Bin)) Pieces to write, in order.
+    ...data
   do
     throw nil
 
@@ -668,42 +678,6 @@ pub def print
 do
   throw nil
 
-# ([`Text`](term.Text)) Formats an error value and backtrace for terminal presentation.
-#
-# The returned text does not include a final newline.
-#
-# Ordinary values preserve newlines and tabs but lose other C0/C1 controls and
-# escape sequences. A [`Text`](term.Text) keeps its styling, and so does a
-# [`FmtValue`](std.FmtValue) bound to one, whose layout is applied to
-# the encoded form -- see [Formatting](term.Text.formatting). A
-# [`Fmt`](std.Fmt) is expanded segment by segment -- see
-# [Sequences](term.Text.sequences). Raw stdout and stderr sinks are unchanged
-# and are not sanitized by this module.
-#
-# ## Errors
-#
-# | Exception                             | Condition                                                  |
-# | ------------------------------------- | ---------------------------------------------------------- |
-# | [`TypeError`](std.TypeError)   | `backtrace` is present but is not a `strand.Backtrace`     |
-# | [`StateError`](std.StateError) | `backtrace` is omitted outside an active exception handler |
-#
-# ## Example
-#
-# ```
-# try
-#   operation()
-# catch error: e
-#   print $render_error(e)
-# ```
-pub def render_error
-  # Error value or message.
-  error
-  # ([`strand.Backtrace`](strand)) Explicit backtrace. Defaults to
-  # the active one.
-  :backtrace = nil
-do
-  throw nil
-
 # ([`Str`](std.Str)) Runs a block and returns its console output as a string.
 #
 # The console counterpart to [`proc.sub`](proc.sub), which captures
@@ -755,8 +729,8 @@ pub def text
 do
   throw nil
 
-# The host [`Console`](term.Console), which may be taken over by an extension
-# such as `progress`.
+# The host [`Console`](term.Console), supplied by the application running Do,
+# which may be taken over by an extension such as `progress`.
 #
 # Unlike [`output()`](term.output), it is not intercepted by an enclosing
 # [`capture`](term.capture).

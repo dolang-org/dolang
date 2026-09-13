@@ -243,6 +243,24 @@ def console_write_is_verbatim_but_echo_sanitizes()
     assert_eq $err.read() "a$ESC[31mb\nab\n"
 
 #[test]
+def console_write_takes_pieces()
+  with_temp_dir do |dir|
+    let src = r|
+      import term
+      import shell
+      import fs
+      let written = term.console.write "hé" b"llo" "\n"
+      fs.write $shell.args[0] (str(written))
+
+    let path = script $dir pieces.dol $src
+    let out = (dir / "out.txt")
+    let err = (dir / "err.txt")
+    run $shell.exe --no-cache $path $out stderr: $err
+
+    assert_eq $out.read() "7"
+    assert_eq $err.read() "héllo\n"
+
+#[test]
 def naming_shell_stderr_inherits_the_stream()
   # A grandchild given `stderr: $shell.stderr` writes to the inherited stream
   # rather than being pumped through a sink.

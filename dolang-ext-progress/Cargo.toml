@@ -33,6 +33,10 @@ workspace = true
 workspace = true
 
 
+[dependencies.dolang-ext-term]
+workspace = true
+
+
 [build-dependencies.dolang-private-build]
 workspace = true
 

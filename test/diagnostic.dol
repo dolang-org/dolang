@@ -1,4 +1,5 @@
 import
+  _shell
   compile
   strand
   term
@@ -41,7 +42,7 @@ def error()
   let plain = try
     throw "boom"
   catch e
-    term.render_error $e
+    _shell.render_error $e
   assert_eq (type plain) $term.Text
   assert ((str plain).contains "boom")
   assert (!(str(plain).ends_with("\n")))
@@ -51,13 +52,13 @@ def error_explicit_backtrace()
   let color = try
     throw "boom"
   catch e
-    term.render_error $e backtrace: (strand.error_backtrace())
+    _shell.render_error $e backtrace: (strand.error_backtrace())
   assert ((str color).contains "boom")
 
 #[test]
 def error_no_backtrace()
   let err = try
-    term.render_error "boom"
+    _shell.render_error "boom"
   catch e
     e
   assert_eq (str err) "state error: no active handled exception"
@@ -65,7 +66,7 @@ def error_no_backtrace()
 #[test]
 def error_bad_type()
   let type_err = try
-    term.render_error "boom" backtrace: "bad"
+    _shell.render_error "boom" backtrace: "bad"
   catch e
     e
   assert_eq (str type_err) "type error: expected strand.Backtrace"

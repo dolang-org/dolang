@@ -1,0 +1,28 @@
+[package]
+name = "dolang-ext-term"
+version = "0.1.1"
+description = "Terminal styling and console extension for the Do language."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+
+[lib]
+doctest = false
+
+
+[dependencies.unicode-segmentation]
+workspace = true
+
+
+[dependencies.unicode-width]
+workspace = true
+
+
+[dependencies.dolang]
+workspace = true
+
+
+[dev-dependencies.futures]
+workspace = true

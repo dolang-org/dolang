@@ -10,6 +10,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWriteExt};
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
     fs::{read_all, read_into_spare},
+    global::Global,
 };
 
 /// How a byte stream is quantized into values.
@@ -29,6 +30,22 @@ pub(crate) enum IoMode {
     Line,
     /// Arbitrary `Bin` chunks, at whatever boundaries the reads fall on.
     Chunk,
+}
+
+/// Decodes a `:LINE:`/`:CHUNK:` framing argument, defaulting to line framing.
+pub(crate) fn parse_mode<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    mode: Option<&Value<'v>>,
+) -> Result<'v, 's, IoMode> {
+    let global = strand.state::<Global<'v>>();
+    match mode {
+        None => Ok(IoMode::Line),
+        Some(value) => match value.as_sym(strand) {
+            Some(sym) if sym == global.syms.line => Ok(IoMode::Line),
+            Some(sym) if sym == global.syms.chunk => Ok(IoMode::Chunk),
+            _ => Err(Error::value(strand, "mode must be :LINE: or :CHUNK:")),
+        },
+    }
 }
 
 pub(crate) async fn read_value<'v, R>(

@@ -9,7 +9,7 @@ use std::{
 use dolang::runtime::{
     Sym, Type,
     object::{FlagLikeExt, Flags},
-    strand::{LocalKey, LocalRootKey},
+    strand::LocalKey,
     value::TypeObject,
     vm::{Builder, Stateful},
 };
@@ -19,7 +19,7 @@ use tokio::{
 };
 
 use crate::{
-    console::{Console, DefaultOutput, HostConsole, SinkConsole, SubConsole},
+    console::HostConsole,
     error::{
         AddrInUseError, AddrNotAvailableError, AlreadyExistsError, ArgumentListTooLongError,
         BrokenPipeError, ConnectionAbortedError, ConnectionRefusedError, ConnectionResetError,
@@ -43,7 +43,7 @@ use crate::{
         stream::{StreamEntry, StreamIter},
         xattr::{XattrEntry, XattrIter},
     },
-    geometry::{Geometry, HostGeometry},
+    geometry::HostGeometry,
     local::Local,
     pipe_channel::{PipeReceiver, PipeSender},
     proc::{Capture, Info as ProcInfo, Proc, Procs, Status as ProcStatus},
@@ -57,7 +57,6 @@ use crate::{
     shell::{Stderr, Stdin, Stdout, Vfs},
     shell_args::ArgsData,
     sys::{CpuInfo, OsInfo},
-    term::{StyleKeys, StyleObject, Text},
 };
 
 pub(crate) struct Types<'v> {
@@ -79,12 +78,7 @@ pub(crate) struct Types<'v> {
     pub(crate) stdin: Type<'v, Stdin>,
     pub(crate) stdout: Type<'v, Stdout>,
     pub(crate) stderr: Type<'v, Stderr>,
-    pub(crate) console: Type<'v, Console>,
     pub(crate) host_console: Type<'v, HostConsole>,
-    pub(crate) sink_console: Type<'v, SinkConsole>,
-    pub(crate) sub_console: Type<'v, SubConsole>,
-    pub(crate) default: Type<'v, DefaultOutput>,
-    pub(crate) geometry: Type<'v, Geometry>,
     pub(crate) host_geometry: Type<'v, HostGeometry>,
     pub(crate) os_info: Type<'v, OsInfo>,
     pub(crate) cpu_info: Type<'v, CpuInfo>,
@@ -160,8 +154,6 @@ pub(crate) struct Types<'v> {
     pub(crate) pipe_receiver: Type<'v, PipeReceiver>,
     pub(crate) pipe_sender: Type<'v, PipeSender>,
     pub(crate) vfs: Type<'v, Vfs>,
-    pub(crate) text: Type<'v, Text>,
-    pub(crate) style: Type<'v, StyleObject>,
     pub(crate) access_mask: Type<'v, Flags<AccessMask>>,
     pub(crate) ace_flags: Type<'v, Flags<AceFlags>>,
     pub(crate) sec_desc_control: Type<'v, Flags<SecDescControl>>,
@@ -174,23 +166,11 @@ pub(crate) struct Types<'v> {
 pub(crate) struct Syms<'v> {
     pub(crate) any: Sym<'v, 'v>,
     pub(crate) code: Sym<'v, 'v>,
-    /// `FmtValue.value`, the value a format specification is bound to
-    pub(crate) value: Sym<'v, 'v>,
-    /// `Fmt.len`, the number of segments in a sequence
-    pub(crate) len: Sym<'v, 'v>,
-    /// `FmtParam.name`, the parameter an unbound position names
-    pub(crate) name: Sym<'v, 'v>,
     pub(crate) block_device: Sym<'v, 'v>,
     pub(crate) char_device: Sym<'v, 'v>,
     pub(crate) chunk: Sym<'v, 'v>,
     pub(crate) close: Sym<'v, 'v>,
-    pub(crate) write: Sym<'v, 'v>,
-    pub(crate) line_ending: Sym<'v, 'v>,
     pub(crate) mode: Sym<'v, 'v>,
-    pub(crate) flush: Sym<'v, 'v>,
-    pub(crate) can_style: Sym<'v, 'v>,
-    pub(crate) is_tty: Sym<'v, 'v>,
-    pub(crate) geometry: Sym<'v, 'v>,
     pub(crate) dir: Sym<'v, 'v>,
     pub(crate) fifo: Sym<'v, 'v>,
     pub(crate) file: Sym<'v, 'v>,
@@ -274,15 +254,7 @@ pub(crate) struct Global<'v> {
     pub(crate) stdio: Stdio,
     pub(crate) types: Types<'v>,
     pub(crate) syms: Syms<'v>,
-    /// The symbols naming `term`'s style options.
-    pub(crate) style_keys: StyleKeys<'v>,
     pub(crate) local: LocalKey<'v, Local>,
-    /// The console installed by an enclosing `term.capture`, or `nil` for none.
-    ///
-    /// A strand-local root rather than a `Local` field because it holds a GC
-    /// value; it is duplicated into derived strands at spawn, so a capture
-    /// covers whatever the block spawns.
-    pub(crate) capture: LocalRootKey<'v>,
     pub(crate) args: RefCell<ArgsData>,
     pub(crate) program: RefCell<Option<ProgramSource>>,
 }
@@ -316,7 +288,7 @@ pub(crate) struct Terminal {
     /// syscalls).
     pub(crate) stdout_is_terminal: bool,
     /// Whether stderr is a terminal, for every purpose that answer feeds:
-    /// `HostConsole::is_tty`, `console::ansi`'s tty-detection fallback, and
+    /// `HostConsole::is_tty`, the tty-detection fallback of [`Self::ansi`], and
     /// [`crate::stderr_is_tty`]. Cached at startup — real terminal-ness
     /// cannot change mid-process — and already folds in `DOLANG_CONSOLE`'s
     /// `tty=` override, so every reader downstream gets the overridden
@@ -424,25 +396,13 @@ impl<'v> Global<'v> {
             .nominal_supertype(path)
             .build();
 
-        let console = builder.register_type::<Console>();
+        let console = dolang_ext_term::console_type(builder);
         let host_console = builder
             .build_type::<HostConsole>((), ())
             .nominal_supertype(console)
             .build();
-        let sink_console = builder
-            .build_type::<SinkConsole>((), ())
-            .nominal_supertype(console)
-            .build();
-        let sub_console = builder
-            .build_type::<SubConsole>((), ())
-            .nominal_supertype(console)
-            .build();
-        let default = builder
-            .build_type::<DefaultOutput>((), ())
-            .nominal_supertype(console)
-            .build();
 
-        let geometry = builder.register_type::<Geometry>();
+        let geometry = dolang_ext_term::geometry_type(builder);
         let host_geometry = builder
             .build_type::<HostGeometry>((), ())
             .nominal_supertype(geometry)
@@ -494,12 +454,7 @@ impl<'v> Global<'v> {
                 stdin: builder.register_type(),
                 stdout: builder.register_type(),
                 stderr: builder.register_type(),
-                console,
                 host_console,
-                sink_console,
-                sub_console,
-                default,
-                geometry,
                 host_geometry,
                 os_info: builder.register_type(),
                 cpu_info: builder.register_type(),
@@ -704,8 +659,6 @@ impl<'v> Global<'v> {
                 pipe_receiver: builder.register_type(),
                 pipe_sender: builder.register_type(),
                 vfs: builder.register_type(),
-                text: builder.register_type(),
-                style: builder.register_type(),
                 access_mask: AccessMask::register_type(builder),
                 ace_flags: AceFlags::register_type(builder),
                 sec_desc_control: SecDescControl::register_type(builder),
@@ -714,24 +667,14 @@ impl<'v> Global<'v> {
                 mode: Mode::register_type(builder),
                 permission: Permission::register_type(builder),
             },
-            style_keys: crate::term::style_keys(builder),
             syms: Syms {
                 any: builder.sym("ANY"),
                 code: builder.sym("code"),
-                value: builder.sym("value"),
-                len: builder.sym("len"),
-                name: builder.sym("name"),
                 block_device: builder.sym("BLOCK_DEVICE"),
                 char_device: builder.sym("CHAR_DEVICE"),
                 chunk: builder.sym("CHUNK"),
                 close: builder.sym("close"),
-                write: builder.sym("write"),
-                line_ending: builder.sym("line_ending"),
                 mode: builder.sym("mode"),
-                flush: builder.sym("flush"),
-                can_style: builder.sym("can_style"),
-                is_tty: builder.sym("is_tty"),
-                geometry: builder.sym("geometry"),
                 dir: builder.sym("DIR"),
                 fifo: builder.sym("FIFO"),
                 file: builder.sym("FILE"),
@@ -801,7 +744,6 @@ impl<'v> Global<'v> {
                 well_known_sids: WellKnownSids::new(builder),
             },
             local: builder.local(),
-            capture: builder.local_root(),
             args: RefCell::new(Rc::from([])),
             program: RefCell::new(None),
         }

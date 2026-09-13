@@ -1,6 +1,6 @@
 # Utilities for writing and running test suites.
 
-import compile load progress strand term
+import _shell compile load progress strand term
   fs:
     - Path
   time:
@@ -254,7 +254,7 @@ class Harness
           print (err_style "failed") ": " (name_style "$module/$(failure.test)") ": "
         else
           print (err_style "failed") ": " (name_style "$module") ": "
-        echo $ term.render_error $e backtrace: $failure.backtrace
+        echo $ _shell.render_error $e backtrace: $failure.backtrace
         if failure.output
           print "  ──\n" $term.preformat(failure.output).indent(2)
     print (pass_style "passed") ": $(self.#success)/$(self.#total - skipped - ignored)"

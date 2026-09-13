@@ -130,7 +130,9 @@ capture — naming it pins to the host, the same as for writes.
 ## Terminal Detection and Dimensions
 
 [`term.console.is_tty`](term.Console.is_tty) is the determinative
-test for whether stderr is a real terminal.
+test for whether stderr is usable as a terminal. It is `false` while an
+extension such as `progress` has taken the terminal over, during which
+`geometry()` still reports the real terminal's size.
 
 [`term.console.geometry()`](term.Console.geometry) returns the
 terminal's `rows` and `cols`, but is only advisory. It never answers `nil`

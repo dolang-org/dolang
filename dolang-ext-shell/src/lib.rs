@@ -21,7 +21,6 @@ mod shell_args;
 mod shlex;
 mod syntax;
 mod sys;
-mod term;
 mod util;
 
 use std::{
@@ -39,7 +38,10 @@ pub use crate::{
     global::ProgramSource,
     security::AccessMask as WindowsAccessMask,
 };
-use dolang::runtime::{Error, Output, Result, Strand, Value};
+use dolang::runtime::{Error, Output, Result, Slot, Strand, Value};
+pub use dolang_ext_term::{
+    ansi_enabled, terminal_line_ending, terminal_output, write_terminal_line,
+};
 pub use dolang_vfs::Vfs;
 #[cfg(unix)]
 use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
@@ -85,10 +87,7 @@ pub fn stdout<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
 pub fn default_output<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
     let global = strand.state::<Global<'v>>();
     if global.terminal.stdout_is_terminal {
-        global
-            .types
-            .default
-            .create(strand, console::DefaultOutput, out)
+        dolang_ext_term::default_output(strand, out)
     } else {
         global.types.stdout.create(strand, shell::Stdout, out)
     }
@@ -359,22 +358,17 @@ pub fn vfs<'v, 's, 'a>(strand: &'a Strand<'v, 's>) -> Vfs {
     local.vfs()
 }
 
-/// Returns whether stderr is a terminal — the same override-aware answer
-/// `term.console.is_tty` and `console::ansi`'s tty-detection fallback use, so
-/// `DOLANG_CONSOLE=tty=...` also governs whether an extension can take over
-/// the terminal ([`with_terminal`]) or render an interactive display
+/// Returns whether stderr is a terminal — the same override-aware answer the
+/// host console's styling policy falls back on, so `DOLANG_CONSOLE=tty=...`
+/// also governs whether an extension can take over the terminal
+/// ([`with_terminal`]) or render an interactive display
 /// (`dolang-ext-progress`'s indicatif vs. plain choice).
 ///
-/// Capture-blind: unlike [`crate::console::is_tty`], this always answers
-/// about stderr itself, never an installed capture console.
+/// Unlike `term.console.is_tty`, this always answers about stderr itself: it
+/// ignores installed capture consoles, and stays true while an extension has
+/// taken the terminal over.
 pub fn stderr_is_tty<'v>(strand: &Strand<'v, '_>) -> bool {
     strand.state::<Global<'v>>().terminal.stderr_is_terminal
-}
-
-/// Whether ANSI styling should be emitted to stderr, per the same
-/// NO_COLOR/FORCE_COLOR/tty policy `term.echo`/`term.print` use.
-pub fn ansi_enabled<'v>(strand: &Strand<'v, '_>) -> bool {
-    crate::console::ansi(strand)
 }
 
 /// Stderr's terminal width in columns, the same override-aware answer
@@ -389,29 +383,18 @@ pub fn stderr_cols<'v>(strand: &Strand<'v, '_>) -> Option<u16> {
         .or_else(|| ::console::Term::stderr().size_checked().map(|(_, c)| c))
 }
 
-/// Stores the ambient terminal output in `out`.
+/// Formats an error value and backtrace as a `term.Text`, the way an uncaught
+/// error is reported.
 ///
-/// The caller is responsible for keeping that value rooted for as long as it
-/// needs to keep using this output.
-pub fn terminal_output<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
-    let global = strand.state::<Global<'v>>();
-    let capture = global.capture.slot(strand);
-    Output::set(strand, out, &capture);
-}
-
-/// Returns the line ending of the ambient terminal output.
-pub fn terminal_line_ending<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, Vec<u8>> {
-    console::ambient_line_ending(strand)
-}
-
-/// Write a line (newline appended) through a snapshotted terminal output.
-pub async fn write_terminal_line<'v, 's>(
+/// `backtrace` defaults to that of the active handled exception.
+pub fn render_error<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    output: &Value<'v>,
-    line_ending: &[u8],
-    line: &str,
+    error: &Value<'v>,
+    backtrace: Option<&Value<'v>>,
+    out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    crate::console::write_line_to(strand, output, line_ending, line.as_bytes()).await
+    let rendered = diagnostic::render_error_value(strand, error, backtrace)?;
+    dolang_ext_term::preformatted_text(strand, &rendered, out)
 }
 
 /// Redirect terminal output (`term.echo`/`term.print` and default child stderr)
