@@ -15,7 +15,7 @@ export interface RunResult {
   diagnostics: Diagnostic[];
 }
 /** Host methods the worker forwards to the page. */
-export type PageMethod = 'echo';
+export type PageMethod = 'write';
 /** A host method's arguments without its trailing `AbortSignal`. */
 export type HostArgs<M extends keyof Host> =
   Host[M] extends (...args: [...infer A, AbortSignal]) => unknown ? A : never;

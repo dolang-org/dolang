@@ -1,0 +1,65 @@
+# title: Styled Output
+import term
+
+let pass = term.Style fg: :GREEN: bold: true
+let fail = term.Style fg: :RED: bold: true
+let muted = term.Style dim: true
+
+# A `t"..."` keeps each interpolated value apart, so styled text keeps its
+# styling and is padded in terminal cells. A plain `"..."` flattens it first.
+let label = pass("ready")
+echo t"styled: [${label:^9}]"
+echo "plain:  [${label:^9}]"
+
+# `${#name}` leaves a hole to fill later, making a reusable template.
+let row = t"${#status}  ${#name:<6} ${#secs:>6.2f}s"
+let results = $
+  - ["build", true, 12.5]
+  - ["lint", true, 3.25]
+  - ["test", false, 41.0]
+
+for name passed secs = results
+  let status = if passed
+    pass "PASS"
+  else
+    fail "FAIL"
+  echo $ row :status :name :secs
+
+echo $ muted "$(results.len) steps"
+
+# An `Int` color selects from the 256-color PALETTE, and an array of three is
+# RGB. Each character of the DOT picks its style from a dictionary.
+let BROWN = term.Style fg: [115, 58, 36] bold: true
+let PALETTE = $
+  "#": $BROWN
+  "O": (term.Style fg: [48, 50, 58] bold: true)
+  "=": $BROWN
+  "%": (term.Style fg: [201, 142, 92])
+  "@": (term.Style fg: [244, 190, 170])
+  ":": (term.Style fg: [220, 220, 220])
+  "0": (term.Style fg: [200, 200, 200] bold: true)
+  "*": (term.Style fg: [222, 145, 130] bold: true)
+
+let DOT = r#"
+           #######
+       #####%%%%%#####
+     ###@@@@@@@@%%%%%###
+    ###@@@@@@@@@@@%%%%%#######
+   ###@@@@@@@@@@@@@%%%%##%%%%%#####
+   ###@@@@@@@@@@@@@%%%%%#%%%%%%%%%####
+    ###@@@@@@@@@@@%%%%%%%%%%%%%%%%%%###
+      ####@@@@@@%%%%%%%%%%%%%%%%%%%%%%##
+      ########%%%%%%%%%%%%%%%OOO0O%%%%%##
+   ###%%%%%%%%%%%%%%%%%%%%%%OOOOOOO%%%%%###
+  #####%%%%%%%%%%::::::::::%%OOOOO%%%%%%%%*##
+    ##%%%%%%%%::::::::============:::::::***##
+    ###%%%%%:::::======::========::::::::###
+     ####%%%:::::::::=====::::::::::#####
+       ####%::::::::==::::::::::####
+          ######::::::::::###
+                ##########
+"#
+
+print
+  for ch = DOT.graphemes()
+    $(PALETTE.get ch default: do |x| x)(ch)

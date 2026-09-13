@@ -48,6 +48,9 @@ fn config() -> Config<'static> {
     dolang_ext_regex::RegexExt
         .apply_compiler(&mut config)
         .unwrap();
+    dolang_ext_term::TermExt
+        .apply_compiler(&mut config)
+        .unwrap();
     dolang_ext_time::TimeExt
         .apply_compiler(&mut config)
         .unwrap();
@@ -65,11 +68,6 @@ fn config() -> Config<'static> {
     dolang_ext_yaml::YamlExt
         .apply_compiler(&mut config)
         .unwrap();
-    config
-        .prelude()
-        .import_items("playground")
-        .items(["echo"])
-        .commit();
     config
 }
 
@@ -92,6 +90,7 @@ async fn execute(source: String, host: Host, signal: AbortSignal) -> RunResult {
         dolang_ext_load::LoadExt.apply_vm(builder).unwrap();
         dolang_ext_rand::RandExt.apply_vm(builder).unwrap();
         dolang_ext_regex::RegexExt.apply_vm(builder).unwrap();
+        dolang_ext_term::TermExt.apply_vm(builder).unwrap();
         dolang_ext_time::TimeExt.apply_vm(builder).unwrap();
         dolang_ext_toml::TomlExt.apply_vm(builder).unwrap();
         dolang_ext_url::UrlExt.apply_vm(builder).unwrap();
@@ -182,9 +181,11 @@ pub mod tests {
         Reflect::get(object, &name.into()).unwrap()
     }
 
-    /// A host whose `echo` records chunks synchronously.
+    /// A host whose `write` records decoded chunks synchronously.
     fn recording_host() -> Host {
-        js("const chunks = []; return { chunks, echo(text) { chunks.push(text); } };")
+        js(
+            "const chunks = []; const decoder = new TextDecoder(); return { chunks, write(data) { chunks.push(decoder.decode(data, { stream: true })); } };",
+        )
     }
 
     fn chunks(host: &Host) -> Vec<String> {
@@ -242,6 +243,22 @@ pub mod tests {
     }
 
     #[wasm_bindgen_test]
+    async fn term_console_styles_output() {
+        let (result, output) = run_source(
+            r#"import term
+let warning = term.text warning bold: true
+echo $warning
+print a b
+term.console.write c b"d\n"
+[term.console.can_style, term.console.is_tty, term.console.geometry(), term.output() == term.console]"#,
+        )
+        .await;
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert_eq!(result.result.as_deref(), Some("[true, false, nil, true]"));
+        assert_eq!(output, "\x1b[1mwarning\x1b[0m\nabcd\n");
+    }
+
+    #[wasm_bindgen_test]
     async fn echo_awaits_host_promise() {
         // The first call settles last; awaiting keeps the output in order.
         let host: Host = js(r#"
@@ -249,7 +266,8 @@ pub mod tests {
             let delay = 20;
             return {
               chunks,
-              echo(text) {
+              write(data) {
+                const text = new TextDecoder().decode(data);
                 const ms = delay;
                 delay = 0;
                 return new Promise(resolve => setTimeout(() => { chunks.push(text); resolve(); }, ms));
@@ -264,7 +282,7 @@ pub mod tests {
     #[wasm_bindgen_test]
     async fn host_rejection_is_do_error() {
         let host: Host = js(
-            "return { chunks: [], echo() { return Promise.reject(new Error('host refused')); } };",
+            "return { chunks: [], write() { return Promise.reject(new Error('host refused')); } };",
         );
         let (result, _) = run_with("echo hi", &host, never_aborted()).await;
         assert!(result.error.unwrap().contains("host refused"));
@@ -306,7 +324,7 @@ pub mod tests {
     async fn abort_signals_pending_upcall() {
         let host: Host = js(r#"
             const state = { chunks: [], aborted: false };
-            state.echo = (text, signal) => {
+            state.write = (data, signal) => {
               signal.addEventListener('abort', () => { state.aborted = true; });
               return new Promise(() => {});
             };

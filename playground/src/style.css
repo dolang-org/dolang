@@ -30,7 +30,7 @@ button:disabled { opacity: .4; cursor: default; }
 .cm-selectionBackground, .cm-focused .cm-selectionBackground { background: #3b4569 !important; }
 .cm-tooltip { background: #252938; border: 1px solid #7185e7; color: #e6e8f0; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 1rem; font: 14px/1.6 "JetBrains Mono", ui-monospace, monospace; min-height: 1.6em; }
-#output { height: var(--panel-height); margin: 0; padding-top: 1rem; padding-bottom: 1rem; overflow-y: auto; }
+#output { height: var(--panel-height); margin: 0; padding-top: 1rem; padding-bottom: 1rem; overflow-y: auto; line-height: 1.4; font-variant-ligatures: none; }
 h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; margin: 1.3rem 1rem .5rem; color: #a3a9bf; }
 #error { color: #ffaaa5; }
 .diagnostics { margin-top: 1rem; }
@@ -46,6 +46,22 @@ footer { margin-top: 2rem; font-size: .85rem; }
 .token-class, .token-namespace { color: #81d5cc; }
 .token-property, .token-parameter { color: #e5c790; }
 .token-comment { color: #8d97ae; font-style: italic; }
+.ansi-black-fg { color: #5a6078; } .ansi-black-bg { background: #5a6078; }
+.ansi-red-fg { color: #ff7a85; } .ansi-red-bg { background: #8f3a42; }
+.ansi-green-fg { color: #b9d991; } .ansi-green-bg { background: #4c6b30; }
+.ansi-yellow-fg { color: #e5c790; } .ansi-yellow-bg { background: #7a6230; }
+.ansi-blue-fg { color: #9cbcff; } .ansi-blue-bg { background: #3a5294; }
+.ansi-magenta-fg { color: #c8a4f8; } .ansi-magenta-bg { background: #65448f; }
+.ansi-cyan-fg { color: #81d5cc; } .ansi-cyan-bg { background: #2f6b65; }
+.ansi-white-fg { color: #d5d8e3; } .ansi-white-bg { background: #a3a9bf; }
+.ansi-bright-black-fg { color: #8d97ae; } .ansi-bright-black-bg { background: #7f88a4; }
+.ansi-bright-red-fg { color: #ffaaa5; } .ansi-bright-red-bg { background: #c2545d; }
+.ansi-bright-green-fg { color: #d4f0a8; } .ansi-bright-green-bg { background: #6d9446; }
+.ansi-bright-yellow-fg { color: #f4d9a8; } .ansi-bright-yellow-bg { background: #a88a45; }
+.ansi-bright-blue-fg { color: #bcd2ff; } .ansi-bright-blue-bg { background: #5470c0; }
+.ansi-bright-magenta-fg { color: #dcc4ff; } .ansi-bright-magenta-bg { background: #8a63bd; }
+.ansi-bright-cyan-fg { color: #a8ece4; } .ansi-bright-cyan-bg { background: #45948c; }
+.ansi-bright-white-fg { color: #ffffff; } .ansi-bright-white-bg { background: #e6e8f0; }
 @media (max-width: 720px) { .workspace { grid-template-columns: 1fr; } .workspace section + section { border-left: 0; border-top: 1px solid #363b50; } #status { width: 100%; margin: 0; } }
 
 .playground-help { margin-top: 1.5rem; color: #a3a9bf; font-size: .9rem; line-height: 1.6; }

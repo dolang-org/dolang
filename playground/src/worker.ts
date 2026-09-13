@@ -23,7 +23,7 @@ function forward(id: number, call: PageCall, signal: AbortSignal): Promise<void>
 // Capabilities available in the worker are implemented here directly;
 // the rest are forwarded to the page.
 const host = (id: number): Host => ({
-  echo: (text, signal) => forward(id, { method: 'echo', args: [text] }, signal),
+  write: (data, signal) => forward(id, { method: 'write', args: [data] }, signal),
 });
 
 // Serialize requests even when run yields to the browser executor.

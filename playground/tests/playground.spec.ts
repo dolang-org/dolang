@@ -182,6 +182,17 @@ test('Wasm initialization failures are visible', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeDisabled();
 });
 
+test('term styling renders and markup is escaped', async ({ page }) => {
+  await source(page, 'import term\nlet warning = term.text warning fg: :RED: bold: true\necho $warning plain\necho "<b>&</b>"');
+  await run(page);
+  await expect(page.locator('#error')).toBeEmpty();
+  await expect(page.locator('#output')).toHaveText('warning plain\n<b>&</b>\n');
+  const styled = page.locator('#output span.ansi-red-fg');
+  await expect(styled).toHaveText('warning');
+  await expect(styled).toHaveCSS('font-weight', '700');
+  await expect(page.locator('#output b')).toHaveCount(0);
+});
+
 test('boxed floating point special values work on Wasm', async ({ page }) => {
   await source(page, 'echo [str(1.0 / 0.0), str(-1.0 / 0.0), str(0.0 / 0.0), (0.0 / 0.0 == 0.0 / 0.0)]');
   await run(page);
