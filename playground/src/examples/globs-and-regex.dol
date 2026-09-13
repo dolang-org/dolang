@@ -9,4 +9,4 @@ let matching = $
 echo $matching
 
 let digits = regex.Regex "[0-9]+"
-echo $ digits.replace "job-123 finished in 45 seconds" "#"
+echo $ digits.replace "job-123 finished in 45 seconds" "##"

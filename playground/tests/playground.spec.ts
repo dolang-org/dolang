@@ -28,10 +28,10 @@ for (const path of ['/', '/repo/playground/']) {
         case 'POST':
           return route.fulfill({ status: 201, headers: cors, json: { ...route.request().postDataJSON(), id: 101 } });
         default: {
-          const path = new URL(route.request().url()).pathname;
-          const comments = /^\/posts\/(\d+)\/comments$/.exec(path);
-          if (comments) {
-            const postId = Number(comments[1]);
+          const url = new URL(route.request().url());
+          const path = url.pathname;
+          if (path === '/comments') {
+            const postId = Number(url.searchParams.get('postId'));
             return route.fulfill({
               headers: cors,
               json: [1, 2, 3].map(n => ({ postId, id: postId * 10 + n, name: `comment ${n}`, email: 'do@example.com', body: 'first line\nsecond line' })),
@@ -53,6 +53,7 @@ for (const path of ['/', '/repo/playground/']) {
       await page.locator('#example').selectOption(name);
       await run(page);
       await expect(page.locator('#error')).toBeEmpty();
+      await expect(page.locator('#diagnostics')).toBeEmpty();
       await expect(page.locator('#output')).not.toBeEmpty();
     }
     expect(routed).toBeGreaterThan(0);

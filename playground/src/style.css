@@ -69,4 +69,4 @@ footer { margin-top: 2rem; font-size: .85rem; }
 .playground-help summary { cursor: pointer; color: #e6e8f0; }
 .playground-help h2 { margin-left: 0; }
 .playground-help p { max-width: 85ch; }
-.playground-help .modules { display: flex; flex-wrap: wrap; gap: .4rem .6rem; list-style: none; padding: 0; margin: 0; }
+.playground-help .names { display: flex; flex-wrap: wrap; gap: .4rem .6rem; list-style: none; padding: 0; margin: 0; }

@@ -14,7 +14,7 @@ let outputs = $
   json: (json.encode data)
 
 for format text = outputs
-  echo -- $format --
+  echo -- "$format" --
   echo $text
 
 # Checksum each output, as hex and in the base64 `sha256-...` form used by
