@@ -369,6 +369,127 @@ pub class Continue: Reference
 # A `return`. Its `target` is the function returned from.
 pub class Return: Reference
 
+# A type in an annotation or return type.
+#
+# Its parent is what it describes: the parameter, binding, or field it
+# annotates, or the function, method, or lambda whose return type it is. A
+# declaration naming several fields yields one type per field.
+pub class Type: Node
+  # The type as a [`TypeExpr`](compile.TypeExpr).
+  #[getter]
+  pub def expr self
+    throw nil
+
+# A binder: a name standing for a type within the function, method, or class
+# that is its parent.
+pub class Binder: Declaration
+  # How the binder takes a type argument: `:POS:` for `T`, `:KEY:` for `:K`, or
+  # `:REST:` for `...R`.
+  #[getter]
+  pub def kind self
+    throw nil
+
+# Supertype of the forms a type takes.
+#
+# Parentheses that only group a type are not a form of their own. A unit
+# converts all of its types the first time one is asked for, so the same type
+# always yields the same objects.
+pub class TypeExpr
+  # The [`Span`](compile.Span) of the type as written, including any
+  # parentheses around it.
+  #[getter]
+  pub def span self
+    throw nil
+
+# A possibly dotted name, such as `Str` or `time.Duration`.
+pub class NameType: TypeExpr
+  # The [`Span`](compile.Span) of the first name.
+  #[getter]
+  pub def head self
+    throw nil
+
+  # The [`NodeId`](compile.NodeId) of the node the first name refers to, or
+  # `nil` when the compiler could not resolve it.
+  #[getter]
+  pub def target self
+    throw nil
+
+# A constant, such as `:TARGET:` or `nil`.
+pub class ConstType: TypeExpr
+  # The constant's value: a [`Sym`](std.Sym), [`Str`](std.Str),
+  # [`Int`](std.Int), [`Bool`](std.Bool), or `nil`.
+  #[getter]
+  pub def value self
+    throw nil
+
+# Type arguments applied to a type, such as `Array[Int]`.
+pub class AppType: TypeExpr
+  # An array of [`TypeArg`](compile.TypeArg) objects.
+  #[getter]
+  pub def args self
+    throw nil
+
+  # The [`TypeExpr`](compile.TypeExpr) the arguments apply to.
+  #[getter]
+  pub def base self
+    throw nil
+
+# A dict schema, such as `{name: Str, ?port: Int}`.
+pub class SchemaType: TypeExpr
+  # An array of [`TypeArg`](compile.TypeArg) objects, one per entry.
+  #[getter]
+  pub def args self
+    throw nil
+
+# A union, such as `(Str | Path)`.
+pub class UnionType: TypeExpr
+  # An array of the member [`TypeExpr`](compile.TypeExpr) objects, in the order
+  # written.
+  #[getter]
+  pub def members self
+    throw nil
+
+# A function type, such as `(Int, ?Int) -> Int`.
+pub class FuncType: TypeExpr
+  # An array of [`TypeArg`](compile.TypeArg) objects, one per parameter.
+  #[getter]
+  pub def params self
+    throw nil
+
+  # The return [`TypeExpr`](compile.TypeExpr).
+  #[getter]
+  pub def ret self
+    throw nil
+
+# An item in the `[]`, `()`, or `{}` of a type.
+pub class TypeArg
+  # The [`Span`](compile.Span) of the key as written, or `nil` unless `kind` is
+  # `:KEY:`. A bareword key is a symbol and a quoted one is a string.
+  #[getter]
+  pub def key self
+    throw nil
+
+  # How the item is given: `:POS:` for `T`, `:KEY:` for `key: T`, or `:REST:`
+  # for `...T`.
+  #[getter]
+  pub def kind self
+    throw nil
+
+  # Whether the item is marked optional with `?`.
+  #[getter]
+  pub def optional self
+    throw nil
+
+  # The [`Span`](compile.Span) of the item, without a trailing `,`.
+  #[getter]
+  pub def span self
+    throw nil
+
+  # The item's [`TypeExpr`](compile.TypeExpr).
+  #[getter]
+  pub def ty self
+    throw nil
+
 # A syntactic token.
 #
 # Tokens describe how a span of source text should be presented (for syntax

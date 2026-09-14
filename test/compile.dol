@@ -548,6 +548,89 @@ def unused_prelude_items_are_not_surfaced_as_nodes()
   assert_eq $items.len 1
   assert_eq $items[0][1].item "getter"
 
+# The node of the given type whose declared name is `name`, as an `[id, node]` pair.
+def named_node source nodes kind name
+  nodes.find(do |pair|
+    (type(pair[1], kind) && (declared_name(source, pair[1]) == name)))
+
+# The `[id, node]` pairs of the types describing the node `id`.
+def types_of nodes id
+  [...nodes.filter(do |pair| (type(pair[1], compile.Type) && (pair[1].parent == id)))]
+
+#[test]
+def types_describe_what_they_annotate()
+  let source = r|-
+    import std:
+      - @Record
+    def lookup[T] key @Str table @std.Dict[Str, T] -> (T | nil)
+      table.get $key default: nil
+    class Box[T]
+      pub field first second @T = nil
+    let record @Record = nil
+    let consts @(:a: | "b" | 1 | true | nil) = nil
+    let schema @{name: Str, ?port: Int, ...Dict[Str, Str]} = nil
+    let func @((Int, ?Int) -> Int) = nil
+  let unit = compile.compile "types.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+
+  let lookup = (named_node source nodes compile.Function "lookup")
+  let binder = nodes.find(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == lookup[0])))
+  assert_eq (declared_name(source, binder[1])) "T"
+  assert_eq $binder[1].kind :POS:
+
+  # A return type describes its function
+  let returns = (types_of nodes lookup[0])
+  assert_eq $returns.len 1
+  let union = returns[0][1].expr
+  assert_type $compile.UnionType $union
+  assert_eq (span_text(source, union.span)) "(T | nil)"
+  assert_eq $union.members[0].target $binder[0]
+  assert_type $compile.ConstType $union.members[1]
+
+  # A dotted name resolves its head
+  let table = (named_node source nodes compile.PositionalParam "table")
+  let app = (types_of(nodes, table[0])[0][1].expr)
+  assert_type $compile.AppType $app
+  assert_eq (span_text(source, app.base.span)) "std.Dict"
+  assert_eq (span_text(source, app.base.head)) "std"
+  let std_module = nodes.find(do |pair| (type(pair[1], compile.PreludeModule) && (pair[1].name == "std")))
+  assert_eq $app.base.target $std_module[0]
+  assert_eq $app.args[1].ty.target $binder[0]
+
+  # Each field a declaration names is described by its annotation
+  let box = (named_node source nodes compile.Class "Box")
+  let box_binder = nodes.find(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == box[0])))
+  for name = ["first", "second"]
+    let field = (named_node source nodes compile.Field name)
+    let described = (types_of nodes field[0])
+    assert_eq $described.len 1
+    assert_eq $described[0][1].expr.target $box_binder[0]
+
+  # A type-only import is a target like any other
+  let item = nodes.find(do |pair| type(pair[1], compile.ImportItem))
+  let record = (named_node source nodes compile.Bind "record")
+  assert_eq (types_of(nodes, record[0])[0][1].expr.target) $item[0]
+
+  let consts = (named_node source nodes compile.Bind "consts")
+  let members = (types_of(nodes, consts[0])[0][1].expr.members)
+  assert_eq [...members.map(do |m| m.value)] [:a:, "b", 1, true, nil]
+
+  let schema = (named_node source nodes compile.Bind "schema")
+  let args = (types_of(nodes, schema[0])[0][1].expr.args)
+  assert_eq [...args.map(do |a| a.kind)] [:KEY:, :KEY:, :REST:]
+  assert_eq [...args.map(do |a| a.optional)] [false, true, false]
+  assert_eq (span_text(source, args[0].key)) "name"
+  assert_eq (span_text(source, args[1].span)) "?port: Int"
+  assert_eq $args[2].key nil
+  assert_type $compile.AppType $args[2].ty
+
+  let func = (named_node source nodes compile.Bind "func")
+  let func_type = (types_of(nodes, func[0])[0][1].expr)
+  assert_type $compile.FuncType $func_type
+  assert_eq $func_type.params.len 2
+  assert_type $compile.NameType $func_type.ret
+
 #[test]
 def superclasses_name_the_import_they_resolve_to()
   let source = |-

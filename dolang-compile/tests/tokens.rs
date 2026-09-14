@@ -139,6 +139,8 @@ fn node_name(kind: &Kind<'_>) -> &'static str {
         Kind::Break { .. } => "break",
         Kind::Continue { .. } => "continue",
         Kind::Return { .. } => "return",
+        Kind::Type { .. } => "type",
+        Kind::Binder { .. } => "binder",
         _ => "unknown",
     }
 }
@@ -172,6 +174,7 @@ const NODE_NAMES: &[&str] = &[
     "break",
     "continue",
     "return",
+    "binder",
     // A token that refers to no declaration at all.
     "none",
 ];

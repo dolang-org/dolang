@@ -1,6 +1,6 @@
 use super::{Parser, Result, Scope, stream::ExpectKind};
 use crate::{
-    ast::{Ident, Import, ImportElement, ImportItem},
+    ast::{Ident, Import, ImportElement, ImportItem, TypeOnly},
     lex::{Keyword, Op, Token, TokenInfo},
     source::Span,
 };
@@ -80,7 +80,7 @@ impl Parser<'_> {
                         Some(token!(Ident, span)) => ImportItem::AsIs {
                             bind: Ident::new(span),
                             delim_span: minus_span,
-                            at_span: None,
+                            type_only: None,
                         },
                         Some(token!(At, at_span)) => {
                             self.parse_type_import_item(scope, minus_span, at_span)?
@@ -98,6 +98,7 @@ impl Parser<'_> {
                             item: token.span,
                             bind: Ident::new(span),
                             delim_span: token.span.after_right_char(),
+                            minus_span: None,
                             type_only: None,
                         },
                         other => {
@@ -126,11 +127,15 @@ impl Parser<'_> {
         use self::Ident;
         use TokenInfo::*;
 
+        let type_only = Some(TypeOnly {
+            at_span,
+            node: None,
+        });
         match decay_ident!(self.next()?) {
             Some(token!(Ident, span)) => Ok(ImportItem::AsIs {
                 bind: Ident::new(span),
                 delim_span: minus_span,
-                at_span: Some(at_span),
+                type_only,
             }),
             Some(token!(Key, item)) => {
                 self.expect(scope, &[ExpectKind::ArgSep])?;
@@ -139,7 +144,8 @@ impl Parser<'_> {
                         item,
                         bind: Ident::new(span),
                         delim_span: item.after_right_char(),
-                        type_only: Some((minus_span, at_span)),
+                        minus_span: Some(minus_span),
+                        type_only,
                     }),
                     other => Err(self.syntax_error(
                         scope,

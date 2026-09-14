@@ -5,7 +5,7 @@ pub(crate) mod ty;
 pub(crate) mod visit;
 
 pub(crate) use self::ty::{
-    Annot, Binder, BinderKind, Binders, RetType, TypeArg, TypeArgKind, TypeExpr, TypeKey,
+    Annot, Binder, BinderKind, Binders, RetType, TypeArg, TypeArgKind, TypeDecl, TypeExpr, TypeKey,
 };
 
 use std::{
@@ -1712,16 +1712,35 @@ pub(crate) enum ImportItem {
     AsIs {
         bind: Ident,
         delim_span: Span,
-        /// The `@` of an item named only in types
-        at_span: Option<Span>,
+        type_only: Option<TypeOnly>,
     },
     Renamed {
         item: Span,
         bind: Ident,
         delim_span: Span,
-        /// The `-` and `@` of an item named only in types
-        type_only: Option<(Span, Span)>,
+        /// The `-` before an item named only in types
+        minus_span: Option<Span>,
+        type_only: Option<TypeOnly>,
     },
+}
+
+/// What marks an import item as named only in types
+pub(crate) struct TypeOnly {
+    pub(crate) at_span: Span,
+    /// The item's document node, which its name has no variable to carry
+    pub(crate) node: Option<doc::Id>,
+}
+
+/// Visit the name an import item binds.
+fn accept_import_bind<'a, V: Visit>(
+    bind: &'a Ident,
+    type_only: &Option<TypeOnly>,
+    visit: &'a mut V,
+) -> ControlFlow<V::Break> {
+    match type_only {
+        Some(type_only) => visit.token(Token::Variable, bind.span, type_only.node),
+        None => visit.node(bind),
+    }
 }
 
 impl ImportItem {
@@ -1734,8 +1753,9 @@ impl ImportItem {
     /// Whether the item binds a name for types alone, and so is never imported
     pub(crate) fn is_type_only(&self) -> bool {
         match self {
-            ImportItem::AsIs { at_span, .. } => at_span.is_some(),
-            ImportItem::Renamed { type_only, .. } => type_only.is_some(),
+            ImportItem::AsIs { type_only, .. } | ImportItem::Renamed { type_only, .. } => {
+                type_only.is_some()
+            }
         }
     }
 }
@@ -1747,26 +1767,29 @@ impl Node for ImportItem {
                 item,
                 bind,
                 delim_span,
+                minus_span,
                 type_only,
             } => {
-                if let Some((minus_span, at_span)) = type_only {
+                if let Some(minus_span) = minus_span {
                     visit.token(Token::Delim, *minus_span, None)?;
-                    visit.token(Token::Sigil, *at_span, None)?;
+                }
+                if let Some(type_only) = type_only {
+                    visit.token(Token::Sigil, type_only.at_span, None)?;
                 }
                 visit.token(Token::ModuleItem, *item, None)?;
                 visit.token(Token::Delim, *delim_span, None)?;
-                visit.node(bind)
+                accept_import_bind(bind, type_only, visit)
             }
             ImportItem::AsIs {
                 bind,
                 delim_span,
-                at_span,
+                type_only,
             } => {
                 visit.token(Token::Delim, *delim_span, None)?;
-                if let Some(at_span) = at_span {
-                    visit.token(Token::Sigil, *at_span, None)?;
+                if let Some(type_only) = type_only {
+                    visit.token(Token::Sigil, type_only.at_span, None)?;
                 }
-                visit.node(bind)
+                accept_import_bind(bind, type_only, visit)
             }
         }
     }

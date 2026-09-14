@@ -128,7 +128,7 @@ fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> &'
         Token::Operator => "operator",
         Token::StringDelim => "string",
         Token::Variable => match (context, kind) {
-            (_, Some(Kind::Class { .. })) => "class",
+            (_, Some(Kind::Class { .. } | Kind::Binder { .. })) => "class",
             (Context::Call, Some(Kind::PreludeItem { .. } | Kind::PreludeModule { .. })) => {
                 "function"
             }

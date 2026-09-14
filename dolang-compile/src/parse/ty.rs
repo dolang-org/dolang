@@ -118,6 +118,7 @@ impl Parser<'_> {
                     kind,
                     ident: Ident::new(ident),
                     delim_span,
+                    node: None,
                 });
                 if delim_span.is_none() {
                     break this.expect(scope, &[ExpectKind::RightBracket])?;
@@ -252,7 +253,11 @@ impl Parser<'_> {
                         }
                     }
                 }
-                TypeExpr::Name { head, fields }
+                TypeExpr::Name {
+                    head,
+                    fields,
+                    decl: None,
+                }
             }
             Some(token!(TokenInfo::LeftParen)) => {
                 let left = self.advance();

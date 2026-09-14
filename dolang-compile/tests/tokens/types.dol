@@ -47,23 +47,25 @@ let l = (do |x @Int| -> Array[Int] [x])
 
 def first[T, :K, ...R] xs @Array[T] -> T
   #      ^: delim
-  #       ^: variable, node=none
+  #       ^: variable, node=binder
   #        ^: delim
   #          ^: sigil
-  #           ^: variable, node=none
+  #           ^: variable, node=binder
   #              ^~~: sigil
-  #                 ^: variable, node=none
+  #                 ^: variable, node=binder
   #                  ^: delim
+  #                              ^: variable, node=binder
+  #                                    ^: variable, node=binder
   xs
 
 class Base
 class Map[K, V]: Base[K]
 #        ^: delim
-#         ^: variable, node=none
+#         ^: variable, node=binder
 #              ^: delim
 #                ^~~~: variable
 #                    ^: delim
-#                     ^: variable, node=none
+#                     ^: variable, node=binder
 #                      ^: delim
 
 let shape @Base = nil
@@ -87,9 +89,12 @@ do
 import import_fixture:
   - @Adder
   # ^: sigil
-  #  ^~~~~: variable
+  #  ^~~~~: variable, node=import_item
   - @Summer: Total
   # ^: sigil
   #  ^~~~~~: module_item
   #        ^: delim
-  #          ^~~~~: variable
+  #          ^~~~~: variable, node=import_item
+
+let adder @Adder = nil
+#          ^~~~~: variable, node=import_item

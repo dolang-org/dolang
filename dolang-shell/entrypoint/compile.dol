@@ -72,6 +72,8 @@ let KIND_NAMES = $
   $compile.Break: "Break"
   $compile.Continue: "Continue"
   $compile.Return: "Return"
+  $compile.Type: "Type"
+  $compile.Binder: "Binder"
 
 # A node reference as a `nodes` array index, or `nil`.
 def node_ref id_to_index id

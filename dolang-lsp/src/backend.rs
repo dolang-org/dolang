@@ -77,7 +77,7 @@ fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> (u
         Token::Operator => (TT_OPERATOR, 0),
         Token::StringDelim => (TT_STRING, 0),
         Token::Variable => match (context, kind) {
-            (_, Some(Kind::Class { .. })) => (TT_CLASS, 0),
+            (_, Some(Kind::Class { .. } | Kind::Binder { .. })) => (TT_CLASS, 0),
             (Context::Call, Some(Kind::PreludeItem { .. })) => (TT_FUNCTION, MOD_PRELUDE),
             (Context::Call, Some(Kind::PreludeModule { .. })) => (TT_FUNCTION, MOD_PRELUDE),
             (Context::Call, _) => (TT_FUNCTION, 0),

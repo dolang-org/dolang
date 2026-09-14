@@ -1,5 +1,6 @@
 pub use dolang_compile::{
-    Config, Context, EmitToken, Error, ErrorKind, Items, Kind, Mode, Node, NodeId, Prelude, Super,
-    Supers, Token, Unit,
+    BinderKind, Config, Context, EmitToken, Error, ErrorKind, Items, Kind, Mode, Node, NodeId,
+    Prelude, Super, Supers, Token, TypeArg, TypeArgKind, TypeArgs, TypeConst, TypeExpr, TypeExprs,
+    TypeKind, Unit,
     diag::{Annotation, AnnotationKind, Diag, Note, NoteKind, Patch, Pos, Severity, Span},
 };

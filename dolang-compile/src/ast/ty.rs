@@ -8,12 +8,17 @@ use super::{
     Expr, Ident,
     visit::{Node, NodeKind, Token, Visit},
 };
-use crate::source::Span;
+use crate::{doc, source::Span};
 
 /// A type expression
 pub(crate) enum TypeExpr {
     /// A possibly dotted name, e.g. `Str` or `time.Duration`
-    Name { head: Ident, fields: Vec<Span> },
+    Name {
+        head: Ident,
+        fields: Vec<Span>,
+        /// What the head names when that is not a variable. Set only when documenting.
+        decl: Option<TypeDecl>,
+    },
     /// A constant: a symbol, string, integer, boolean or `nil`
     Const { expr: Box<Expr> },
     /// Type arguments applied to a type, e.g. `Array[Int]`
@@ -45,6 +50,14 @@ pub(crate) enum TypeExpr {
     },
     /// A type that could not be interpreted
     Error,
+}
+
+/// A binder or type-only import named by a type, neither of which has a variable
+pub(crate) struct TypeDecl {
+    /// The declared name, which identifies the declaration
+    pub(crate) span: Span,
+    /// The declaration's document node
+    pub(crate) node: Option<doc::Id>,
 }
 
 /// An item in `[]`, `()` or `{}` within a type
@@ -100,6 +113,8 @@ pub(crate) struct Binder {
     pub(crate) ident: Ident,
     /// The trailing `,`
     pub(crate) delim_span: Option<Span>,
+    /// The binder's document node, which it has no variable to carry
+    pub(crate) node: Option<doc::Id>,
 }
 
 pub(crate) enum BinderKind {
@@ -112,10 +127,14 @@ pub(crate) enum BinderKind {
 }
 
 impl TypeExpr {
-    /// Visit the head of each name within the type, with whether the name is dotted.
-    pub(crate) fn each_name<F: FnMut(&mut Ident, bool)>(&mut self, f: &mut F) {
+    /// Visit each name within the type: its head, what the head names besides a variable,
+    /// and whether the name is dotted.
+    pub(crate) fn each_name<F: FnMut(&mut Ident, &mut Option<TypeDecl>, bool)>(
+        &mut self,
+        f: &mut F,
+    ) {
         match self {
-            TypeExpr::Name { head, fields } => f(head, !fields.is_empty()),
+            TypeExpr::Name { head, fields, decl } => f(head, decl, !fields.is_empty()),
             TypeExpr::Const { .. } | TypeExpr::Error => {}
             TypeExpr::App { base, args, .. } => {
                 base.each_name(f);
@@ -155,8 +174,11 @@ impl TypeArg {
 impl Node for TypeExpr {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
-            TypeExpr::Name { head, fields } => {
-                visit.node(head)?;
+            TypeExpr::Name { head, fields, decl } => {
+                match decl {
+                    Some(decl) => visit.token(Token::Variable, head.span, decl.node)?,
+                    None => visit.node(head)?,
+                }
                 for field in fields {
                     visit.token(Token::Operator, field.before_left_char(), None)?;
                     visit.token(Token::Field, *field, None)?;
@@ -291,7 +313,7 @@ impl Node for Binder {
             BinderKind::Key { colon_span } => visit.token(Token::Sigil, colon_span, None)?,
             BinderKind::Rest { ellipsis_span } => visit.token(Token::Sigil, ellipsis_span, None)?,
         }
-        visit.node(&self.ident)?;
+        visit.token(Token::Variable, self.ident.span, self.node)?;
         if let Some(span) = self.delim_span {
             visit.token(Token::Delim, span, None)?;
         }

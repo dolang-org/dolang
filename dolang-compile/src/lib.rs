@@ -395,6 +395,16 @@ impl<'a> Node<'a> {
             doc::Kind::Return { target } => Kind::Return {
                 target: target.map(public_node_id),
             },
+            doc::Kind::Type { expr } => Kind::Type {
+                expr: TypeExpr {
+                    file: self.file,
+                    expr,
+                },
+            },
+            doc::Kind::Binder { name, kind } => Kind::Binder {
+                name: span(name),
+                kind: *kind,
+            },
         }
     }
 }
@@ -558,7 +568,242 @@ pub enum Kind<'a> {
         /// The function returned from
         target: Option<NodeId>,
     },
+    /// A type in an annotation or return type.
+    ///
+    /// Its parent is what it describes: the parameter, binding or field it
+    /// annotates, or the function, method or lambda whose return type it is. A
+    /// declaration naming several fields yields one type per field.
+    Type {
+        /// The type as written
+        expr: TypeExpr<'a>,
+    },
+    /// A binder, a name standing for a type.  The function, method or class
+    /// declaring it is its parent.
+    Binder {
+        /// The bound name
+        name: diag::Span,
+        /// How the binder takes a type argument
+        kind: BinderKind,
+    },
 }
+
+/// How a [`Kind::Binder`] takes a type argument
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BinderKind {
+    /// `T`
+    Pos,
+    /// `:K`
+    Key,
+    /// `...R`, taking any number of further arguments
+    Rest,
+}
+
+/// A type as written, with the names in it resolved
+#[derive(Copy, Clone)]
+pub struct TypeExpr<'a> {
+    file: &'a File<'a>,
+    expr: &'a doc::TypeExpr,
+}
+
+impl<'a> TypeExpr<'a> {
+    /// The type as written, including any parentheses around it
+    pub fn span(&self) -> diag::Span {
+        convert_span(self.file, self.expr.span)
+    }
+
+    /// The form the type takes
+    pub fn kind(&self) -> TypeKind<'a> {
+        let file = self.file;
+        let args = |args: &'a [doc::TypeArg]| TypeArgs {
+            file,
+            args: args.iter(),
+        };
+        match &self.expr.kind {
+            doc::TypeKind::Name { head, target } => TypeKind::Name {
+                head: convert_span(file, *head),
+                target: target.map(public_node_id),
+            },
+            doc::TypeKind::Const(value) => TypeKind::Const(match value {
+                doc::TypeConst::Sym(name) => TypeConst::Sym(name),
+                doc::TypeConst::Str(value) => TypeConst::Str(value),
+                doc::TypeConst::Int(value) => TypeConst::Int(*value),
+                doc::TypeConst::Bool(value) => TypeConst::Bool(*value),
+                doc::TypeConst::Nil => TypeConst::Nil,
+            }),
+            doc::TypeKind::App { base, args: items } => TypeKind::App {
+                base: TypeExpr { file, expr: base },
+                args: args(items),
+            },
+            doc::TypeKind::Schema { args: items } => TypeKind::Schema { args: args(items) },
+            doc::TypeKind::Union { members } => TypeKind::Union {
+                members: TypeExprs {
+                    file,
+                    exprs: members.iter(),
+                },
+            },
+            doc::TypeKind::Func { params, ret } => TypeKind::Func {
+                params: args(params),
+                ret: TypeExpr { file, expr: ret },
+            },
+        }
+    }
+}
+
+/// The form of a [`TypeExpr`]
+#[non_exhaustive]
+pub enum TypeKind<'a> {
+    /// A possibly dotted name, e.g. `Str` or `time.Duration`
+    Name {
+        /// The first name, which is the one resolved
+        head: diag::Span,
+        /// The node the first name refers to, where the compiler could resolve it
+        target: Option<NodeId>,
+    },
+    /// A constant
+    Const(TypeConst<'a>),
+    /// Type arguments applied to a type, e.g. `Array[Int]`
+    App {
+        /// The type the arguments apply to
+        base: TypeExpr<'a>,
+        /// The arguments
+        args: TypeArgs<'a>,
+    },
+    /// A dict schema, e.g. `{name: Str, ?port: Int}`
+    Schema {
+        /// The entries
+        args: TypeArgs<'a>,
+    },
+    /// A union, e.g. `(Str | Path)`
+    Union {
+        /// The members, in the order written
+        members: TypeExprs<'a>,
+    },
+    /// A function type, e.g. `(Int, ?Int) -> Int`
+    Func {
+        /// The parameters
+        params: TypeArgs<'a>,
+        /// The return type
+        ret: TypeExpr<'a>,
+    },
+}
+
+/// A constant type
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TypeConst<'a> {
+    /// A symbol, by name
+    Sym(&'a str),
+    /// A string
+    Str(&'a str),
+    /// An integer
+    Int(i128),
+    /// A boolean
+    Bool(bool),
+    /// `nil`
+    Nil,
+}
+
+/// An item in the `[]`, `()` or `{}` of a type
+#[derive(Copy, Clone)]
+pub struct TypeArg<'a> {
+    file: &'a File<'a>,
+    arg: &'a doc::TypeArg,
+}
+
+impl<'a> TypeArg<'a> {
+    /// The item as written, without a trailing `,`
+    pub fn span(&self) -> diag::Span {
+        convert_span(self.file, self.arg.span)
+    }
+
+    /// Whether the item is marked optional with `?`
+    pub fn optional(&self) -> bool {
+        self.arg.optional
+    }
+
+    /// How the item is given
+    pub fn kind(&self) -> TypeArgKind {
+        match &self.arg.kind {
+            doc::TypeArgKind::Pos => TypeArgKind::Pos,
+            doc::TypeArgKind::Key { key } => TypeArgKind::Key {
+                key: convert_span(self.file, *key),
+            },
+            doc::TypeArgKind::Rest => TypeArgKind::Rest,
+        }
+    }
+
+    /// The item's type
+    pub fn ty(&self) -> TypeExpr<'a> {
+        TypeExpr {
+            file: self.file,
+            expr: &self.arg.ty,
+        }
+    }
+}
+
+/// How a [`TypeArg`] is given
+#[non_exhaustive]
+#[derive(Clone, Debug)]
+pub enum TypeArgKind {
+    /// `T`
+    Pos,
+    /// `key: T`
+    Key {
+        /// The key as written: a bareword for a symbol, or a quoted string
+        key: diag::Span,
+    },
+    /// `...T`, for any number of further items
+    Rest,
+}
+
+/// Iterator over the items of a type
+#[derive(Clone)]
+pub struct TypeArgs<'a> {
+    file: &'a File<'a>,
+    args: slice::Iter<'a, doc::TypeArg>,
+}
+
+impl<'a> Iterator for TypeArgs<'a> {
+    type Item = TypeArg<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.args.next().map(|arg| TypeArg {
+            file: self.file,
+            arg,
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.args.size_hint()
+    }
+}
+
+impl ExactSizeIterator for TypeArgs<'_> {}
+
+/// Iterator over the members of a union
+#[derive(Clone)]
+pub struct TypeExprs<'a> {
+    file: &'a File<'a>,
+    exprs: slice::Iter<'a, doc::TypeExpr>,
+}
+
+impl<'a> Iterator for TypeExprs<'a> {
+    type Item = TypeExpr<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.exprs.next().map(|expr| TypeExpr {
+            file: self.file,
+            expr,
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.exprs.size_hint()
+    }
+}
+
+impl ExactSizeIterator for TypeExprs<'_> {}
 
 /// A superclass reference
 pub struct Super<'a> {

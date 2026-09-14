@@ -1,7 +1,7 @@
 import b:
-  - @Bar:
-# error: got <unindent>, expected: <whitespace>
+  - @Bar: 123
+# error: expected identifier for renamed import
 #   --> type_import_rename_errors.dol:LL:LL
 #    |
-# LL |   - @Bar:
-#    |          ^
+# LL |   - @Bar: 123
+#    |           ^^^

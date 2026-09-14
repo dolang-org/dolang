@@ -34,6 +34,7 @@ pub fn classify_node(kind: Option<&Kind<'_>>) -> NodeClass {
         ) => NodeClass::Param,
         Some(
             Kind::Class { .. }
+            | Kind::Binder { .. }
             | Kind::Function { .. }
             | Kind::Method { .. }
             | Kind::SpecialMethod { .. },

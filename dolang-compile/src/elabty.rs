@@ -17,7 +17,7 @@ use crate::{
     ast::{
         Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, DictElem, Expr, ExprBody,
         FieldInit, For, Function, Ident, If, ImportElement, LValue, Origin, Param, PatIdent,
-        Pattern, PrimStmt, Res, Root, Stmt, TypeExpr, Var,
+        Pattern, PrimStmt, Res, Root, Stmt, TypeDecl, TypeExpr, Var,
     },
     diag::Severity,
     source::{Diagnose, Diags, File, Span},
@@ -149,7 +149,7 @@ struct TypeName {
 
 enum Found {
     Var { res: Res, import: bool },
-    Type { import: bool },
+    Type { import: bool, span: Span },
 }
 
 impl<'s> Frame<'s> {
@@ -273,6 +273,7 @@ impl Check<'_> {
                         found.used.set(true);
                         return Some(Found::Type {
                             import: found.import,
+                            span: found.span,
                         });
                     }
                 }
@@ -289,10 +290,10 @@ impl Check<'_> {
     }
 
     fn ty(&mut self, frame: &Frame<'_>, ty: &mut TypeExpr) {
-        ty.each_name(&mut |head, dotted| self.name(frame, head, dotted));
+        ty.each_name(&mut |head, decl, dotted| self.name(frame, head, decl, dotted));
     }
 
-    fn name(&self, frame: &Frame<'_>, head: &mut Ident, dotted: bool) {
+    fn name(&self, frame: &Frame<'_>, head: &mut Ident, decl: &mut Option<TypeDecl>, dotted: bool) {
         let name = self.file.str(head.span);
         match self.lookup(frame, name, head.span.start) {
             None => self.diags.push(UnboundType(head.span)),
@@ -302,7 +303,8 @@ impl Check<'_> {
                     self.diags.push(DottedNonImport(head.span));
                 }
             }
-            Some(Found::Type { import }) => {
+            Some(Found::Type { import, span }) => {
+                *decl = Some(TypeDecl { span, node: None });
                 if dotted && !import {
                     self.diags.push(DottedNonImport(head.span));
                 }

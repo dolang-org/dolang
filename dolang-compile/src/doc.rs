@@ -7,7 +7,7 @@ use std::{
 
 use dolang_util::alias;
 
-use crate::source::Span;
+use crate::{BinderKind, source::Span};
 
 mod comment;
 mod index;
@@ -154,6 +154,77 @@ pub(crate) enum Kind {
     Return {
         target: Option<Id>,
     },
+
+    // Types
+    /// A type in an annotation or return type, describing its parent
+    Type {
+        expr: TypeExpr,
+    },
+    Binder {
+        name: Span,
+        kind: BinderKind,
+    },
+}
+
+/// A type as written, with the names in it resolved to nodes
+#[derive(Debug)]
+pub(crate) struct TypeExpr {
+    /// The type, including any parentheses around it
+    pub(crate) span: Span,
+    pub(crate) kind: TypeKind,
+}
+
+/// The form of a type. Parentheses that only group are not a form of their own.
+#[derive(Debug)]
+pub(crate) enum TypeKind {
+    Name {
+        head: Span,
+        target: Option<Id>,
+    },
+    Const(TypeConst),
+    App {
+        base: alias::Box<TypeExpr>,
+        args: alias::Box<[TypeArg]>,
+    },
+    Schema {
+        args: alias::Box<[TypeArg]>,
+    },
+    Union {
+        members: alias::Box<[TypeExpr]>,
+    },
+    Func {
+        params: alias::Box<[TypeArg]>,
+        ret: alias::Box<TypeExpr>,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) enum TypeConst {
+    Sym(alias::Box<str>),
+    Str(alias::Box<str>),
+    Int(i128),
+    Bool(bool),
+    Nil,
+}
+
+/// An item in `[]`, `()` or `{}` within a type
+#[derive(Debug)]
+pub(crate) struct TypeArg {
+    /// The item without its trailing `,`
+    pub(crate) span: Span,
+    pub(crate) optional: bool,
+    pub(crate) kind: TypeArgKind,
+    pub(crate) ty: TypeExpr,
+}
+
+#[derive(Debug)]
+pub(crate) enum TypeArgKind {
+    Pos,
+    /// The key as written, quotes and all
+    Key {
+        key: Span,
+    },
+    Rest,
 }
 
 impl Kind {
@@ -176,7 +247,8 @@ impl Kind {
             | Kind::KeyParam { name, .. }
             | Kind::SelfParam { name }
             | Kind::ImportModule { name, .. }
-            | Kind::ImportItem { name, .. } => Some(*name),
+            | Kind::ImportItem { name, .. }
+            | Kind::Binder { name, .. } => Some(*name),
             Kind::RestParam { name } => *name,
             Kind::Root
             | Kind::PreludeModule { .. }
@@ -194,7 +266,8 @@ impl Kind {
             | Kind::Decorator { .. }
             | Kind::Break { .. }
             | Kind::Continue { .. }
-            | Kind::Return { .. } => None,
+            | Kind::Return { .. }
+            | Kind::Type { .. } => None,
         }
     }
 }
