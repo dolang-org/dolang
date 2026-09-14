@@ -6,7 +6,7 @@ mod time;
 
 use std::{io, time::SystemTime};
 
-use dolang::runtime::{Alloc, Error, Output, Result, Strand, Value};
+use dolang::runtime::{AllocExt, Error, Output, Result, Strand, Value};
 
 pub use extension::TimeExt;
 

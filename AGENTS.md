@@ -855,7 +855,7 @@ that only look up state should take `&Vm<'v>`, never a builder.
 
 `Builder::lazy` defers registration until something needs it. The setup runs at
 most once: when Do code imports one of the modules it declares, or when Rust
-code forces its tag through `Alloc`. Declare it under the `Tag` of the state it
+code forces its tag through an `Alloc`. Declare it under the `Tag` of the state it
 registers, so `force_state` can run it and return that state:
 
 ```rust
@@ -874,7 +874,9 @@ fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Self::Error> {
   `apply_vm` and move them into the setup.
 - `Vm::state` never runs a setup, and panics on state whose setup hasn't run.
   Public functions for other crates that create objects call
-  `strand.force_state::<Global>()` (`Alloc` must be in scope).
+  `strand.force_state::<Global>()` (`AllocExt` must be in scope). A function
+  that only needs to force can take `&mut dyn Alloc<'v>`, so it works from a
+  strand or during registration.
 - Code that only recognizes existing objects can use `Vm::try_state`: if it
   returns `None`, the setup hasn't run, so no instance exists.
 

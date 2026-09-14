@@ -4,12 +4,12 @@ use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::object::fmt;
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value, object::TypeBuilder,
-    unpack,
+    AllocExt, Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value,
+    object::TypeBuilder, unpack,
 };
 use dolang_vfs::target::OperatingSystem;
 
-use crate::global::Global;
+use crate::global::ErrorGlobal;
 
 macro_rules! error_codes {
     (
@@ -284,7 +284,7 @@ pub(crate) fn create_system_code<'v, 's>(
     raw: i32,
     out: impl Output<'v>,
 ) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<ErrorGlobal<'v>>();
     match operating_system {
         OperatingSystem::FreeBsd => create(
             strand,
@@ -310,7 +310,7 @@ pub(crate) fn extract_system_code<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Option<(OperatingSystem, i32)> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.try_state::<ErrorGlobal<'v>>()?;
     if let Some(value) = global.types.freebsd_errno.cast(value) {
         return value.enter_sync(strand, |_strand, value| {
             Some((OperatingSystem::FreeBsd, value.annex().value as i32))

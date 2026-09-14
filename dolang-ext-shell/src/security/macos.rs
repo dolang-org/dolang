@@ -87,7 +87,7 @@ impl<'v> ArrayLike<'v> for MacosAclAces {
     ) -> Result<'v, 's, ()> {
         let ace = this.annex().entries()[index];
         strand
-            .state::<Global<'v>>()
+            .state::<MacosSecurityGlobal<'v>>()
             .types
             .macos_ace
             .create_with_annex(strand, MacosAceObject, ace, out);
@@ -109,7 +109,7 @@ impl<'v> Object<'v> for MacosAclObject {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([mut iterable], []) = unpack!(strand, args, 1, 0)?;
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<MacosSecurityGlobal<'v>>();
         iterable.iter(strand, &mut out).await?;
         let mut entries = Vec::new();
         while out.next(strand, &mut iterable).await? {
@@ -133,7 +133,7 @@ impl<'v> Object<'v> for MacosAclObject {
 
 pub(crate) fn create_macos_acl<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, MacosSecurityGlobal<'v>>,
     acl: Option<VfsMacosAcl>,
     out: &mut Slot<'v, '_>,
 ) {
@@ -152,7 +152,7 @@ pub(crate) struct MacosAceObject;
 
 async fn macos_ace_mask<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, MacosSecurityGlobal<'v>>,
     mask: Option<&Value<'v>>,
 ) -> Result<'v, 's, VfsMacosAceMask> {
     let Some(value) = mask else {
@@ -171,7 +171,7 @@ async fn macos_ace_mask<'v, 's>(
 
 async fn macos_ace_flags<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, MacosSecurityGlobal<'v>>,
     flags: Option<&Value<'v>>,
 ) -> Result<'v, 's, VfsMacosAceFlags> {
     let Some(value) = flags else {
@@ -203,7 +203,7 @@ impl<'v> Object<'v> for MacosAceObject {
                 $builder.type_method($name, async move |this, strand, args, out| {
                     let ([principal], [mask, flags]) =
                         unpack!(strand, args, 1, 0, mask_sym = None, flags_sym = None)?;
-                    let global = strand.state::<Global<'v>>();
+                    let global = strand.state::<MacosSecurityGlobal<'v>>();
                     let qualifier =
                         dolang_ext_uuid::cast_uuid(strand, &principal).ok_or_else(|| {
                             Error::type_error(strand, "principal: expected uuid.Uuid")
@@ -238,12 +238,18 @@ impl<'v> Object<'v> for MacosAceObject {
                 Ok(())
             })
             .get("mask", |this, strand, out| {
-                let mask = strand.state::<Global<'v>>().types.macos_ace_mask;
+                let mask = strand
+                    .state::<MacosSecurityGlobal<'v>>()
+                    .types
+                    .macos_ace_mask;
                 mask.create_flags(strand, MacosAceMask(this.annex().mask()), out);
                 Ok(())
             })
             .get("flags", |this, strand, out| {
-                let flags = strand.state::<Global<'v>>().types.macos_ace_flags;
+                let flags = strand
+                    .state::<MacosSecurityGlobal<'v>>()
+                    .types
+                    .macos_ace_flags;
                 flags.create_flags(strand, MacosAceFlags(this.annex().flags()), out);
                 Ok(())
             })
@@ -252,7 +258,7 @@ impl<'v> Object<'v> for MacosAceObject {
 
 async fn coerce_mask<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, MacosSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsMacosAceMask> {
@@ -267,7 +273,7 @@ async fn coerce_mask<'v, 's>(
 
 async fn coerce_flags<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, MacosSecurityGlobal<'v>>,
     value: Option<&Value<'v>>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsMacosAceFlags> {
@@ -287,7 +293,7 @@ async fn coerce_flags<'v, 's>(
 
 async fn coerce_ace<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, MacosSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsMacosAce> {
@@ -378,7 +384,7 @@ async fn coerce_ace<'v, 's>(
 
 pub(super) async fn coerce_acl<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, MacosSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsMacosAcl> {
@@ -402,7 +408,7 @@ pub(super) async fn coerce_acl<'v, 's>(
 
 async fn ace_from_args<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, MacosSecurityGlobal<'v>>,
     args: Args<'v, '_>,
 ) -> Result<'v, 's, VfsMacosAce> {
     let mask_sym = global.syms.mask;
@@ -446,17 +452,17 @@ async fn ace_from_args<'v, 's>(
 /// `uuid.Uuid` (macOS only) as well as the usual numeric uid/gid.
 pub(super) async fn resolve_uid_or_gid_arg<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    local: LocalKey<'v, Local>,
     value: &Value<'v>,
     want: VfsPrincipalIdKind,
 ) -> Result<'v, 's, u32> {
     let Some(uuid) = dolang_ext_uuid::cast_uuid(strand, value) else {
         return value.to_u32(strand);
     };
-    if global.local.get(strand).target().os() != OperatingSystem::Macos {
+    if local.get(strand).target().os() != OperatingSystem::Macos {
         return Err(Error::not_supported(strand));
     }
-    let vfs = global.local.get(strand).vfs();
+    let vfs = local.get(strand).vfs();
     let id = error::io_result(
         strand,
         vfs.resolve_principal_id(VfsPrincipalId::Uuid(uuid), want)
@@ -472,7 +478,10 @@ pub(super) async fn resolve_uid_or_gid_arg<'v, 's>(
     })
 }
 
-pub(super) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(
+    builder: &mut Register<'v>,
+    global: State<'v, MacosSecurityGlobal<'v>>,
+) {
     let macos_uid_sym = builder.sym("UID");
     let macos_gid_sym = builder.sym("GID");
     builder

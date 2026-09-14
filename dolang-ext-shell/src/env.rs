@@ -7,10 +7,10 @@ use dolang::runtime::{
     value::View,
 };
 
-use crate::{global::Global, local};
+use crate::{global::ShellGlobal, local};
 
 pub(crate) struct Env<'v> {
-    pub(crate) global: State<'v, Global<'v>>,
+    pub(crate) global: State<'v, ShellGlobal<'v>>,
 }
 
 struct EnvView;

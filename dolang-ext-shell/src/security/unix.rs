@@ -66,7 +66,7 @@ impl<'v> Object<'v> for Identity {
 /// demand from a getter.
 pub(crate) fn create_identity<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, UnixSecurityGlobal<'v>>,
     info: &UnixSecurityInfo,
     out: &mut Slot<'v, '_>,
 ) {
@@ -118,7 +118,7 @@ impl<'v> ArrayLike<'v> for PosixAclAces {
     ) -> Result<'v, 's, ()> {
         let ace = this.annex().entries()[index];
         strand
-            .state::<Global<'v>>()
+            .state::<UnixSecurityGlobal<'v>>()
             .types
             .posix_ace
             .create_with_annex(strand, PosixAceObject, ace, out);
@@ -140,7 +140,7 @@ impl<'v> Object<'v> for PosixAclObject {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([mut iterable], []) = unpack!(strand, args, 1, 0)?;
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<UnixSecurityGlobal<'v>>();
         iterable.iter(strand, &mut out).await?;
         let mut entries = Vec::new();
         while out.next(strand, &mut iterable).await? {
@@ -165,7 +165,7 @@ impl<'v> Object<'v> for PosixAclObject {
 
 pub(crate) fn create_posix_acl<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, UnixSecurityGlobal<'v>>,
     acl: Option<VfsPosixAcl>,
     out: &mut Slot<'v, '_>,
 ) {
@@ -184,7 +184,7 @@ pub(crate) struct PosixAceObject;
 
 async fn posix_permissions<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, UnixSecurityGlobal<'v>>,
     permissions: Option<&Value<'v>>,
 ) -> Result<'v, 's, VfsPermission> {
     let Some(value) = permissions else {
@@ -200,7 +200,7 @@ async fn posix_permissions<'v, 's>(
 
 async fn coerce_permissions<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, UnixSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsPermission> {
@@ -257,7 +257,7 @@ impl<'v> Object<'v> for PosixAceObject {
             ($builder:expr, $name:literal, $qualifier:expr) => {
                 $builder.type_method($name, async move |this, strand, args, out| {
                     let ([], [permissions]) = unpack!(strand, args, 0, 1)?;
-                    let global = strand.state::<Global<'v>>();
+                    let global = strand.state::<UnixSecurityGlobal<'v>>();
                     let permissions =
                         posix_permissions(strand, global, permissions.as_deref()).await?;
                     this.create_with_annex(
@@ -279,7 +279,7 @@ impl<'v> Object<'v> for PosixAceObject {
         builder
             .type_method("user", async move |this, strand, args, out| {
                 let ([id], [permissions]) = unpack!(strand, args, 1, 1)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<UnixSecurityGlobal<'v>>();
                 let permissions = posix_permissions(strand, global, permissions.as_deref()).await?;
                 let id = posix_id(strand, &id, "uid")?;
                 this.create_with_annex(
@@ -292,7 +292,7 @@ impl<'v> Object<'v> for PosixAceObject {
             })
             .type_method("group", async move |this, strand, args, out| {
                 let ([id], [permissions]) = unpack!(strand, args, 1, 1)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<UnixSecurityGlobal<'v>>();
                 let permissions = posix_permissions(strand, global, permissions.as_deref()).await?;
                 let id = posix_id(strand, &id, "gid")?;
                 this.create_with_annex(
@@ -324,7 +324,7 @@ impl<'v> Object<'v> for PosixAceObject {
                 Ok(())
             })
             .get("permissions", |this, strand, out| {
-                let permission = strand.state::<Global<'v>>().types.permission;
+                let permission = strand.state::<UnixSecurityGlobal<'v>>().types.permission;
                 permission.create_flags(strand, Permission(this.annex().permissions()), out);
                 Ok(())
             })
@@ -333,7 +333,7 @@ impl<'v> Object<'v> for PosixAceObject {
 
 async fn coerce_ace<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, UnixSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsPosixAce> {
@@ -436,7 +436,7 @@ async fn coerce_ace<'v, 's>(
 
 pub(super) async fn coerce_acl<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, UnixSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsPosixAcl> {
@@ -460,7 +460,7 @@ pub(super) async fn coerce_acl<'v, 's>(
 
 async fn ace_from_args<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, UnixSecurityGlobal<'v>>,
     args: Args<'v, '_>,
 ) -> Result<'v, 's, VfsPosixAce> {
     let user_obj = global.syms.user_obj;
@@ -539,7 +539,10 @@ async fn ace_from_args<'v, 's>(
     Ok(VfsPosixAce::new(qualifier, permissions))
 }
 
-pub(super) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(
+    builder: &mut Register<'v>,
+    global: State<'v, UnixSecurityGlobal<'v>>,
+) {
     builder
         .module("security.unix")
         .value("Identity", global.types.unix_identity)
@@ -576,7 +579,7 @@ pub(super) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         })
         .function("id", async move |strand, args, mut out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
-            let security = security_info(strand, global)?;
+            let security = security_info(strand, global.local)?;
             let Some(info) = security.unix() else {
                 return Err(Error::not_supported(strand));
             };
@@ -589,7 +592,8 @@ pub(super) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 return Err(Error::not_supported(strand));
             }
             let vfs = global.local.get(strand).vfs();
-            let uid = resolve_uid_or_gid_arg(strand, global, &uid, VfsPrincipalIdKind::Uid).await?;
+            let uid =
+                resolve_uid_or_gid_arg(strand, global.local, &uid, VfsPrincipalIdKind::Uid).await?;
             let name = error::io_result(strand, vfs.user_name(uid).await)?;
             Output::set(strand, out, name.as_str());
             Ok(())
@@ -614,7 +618,8 @@ pub(super) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 return Err(Error::not_supported(strand));
             }
             let vfs = global.local.get(strand).vfs();
-            let gid = resolve_uid_or_gid_arg(strand, global, &gid, VfsPrincipalIdKind::Gid).await?;
+            let gid =
+                resolve_uid_or_gid_arg(strand, global.local, &gid, VfsPrincipalIdKind::Gid).await?;
             let name = error::io_result(strand, vfs.group_name(gid).await)?;
             Output::set(strand, out, name.as_str());
             Ok(())

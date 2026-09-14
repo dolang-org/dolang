@@ -5,8 +5,8 @@ use std::{
 
 use bstr::ByteSlice;
 use dolang::runtime::{
-    BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand, call,
-    method,
+    AllocExt, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand,
+    call, method,
     object::{Mut, Ref, TypeBuilder},
     strand::InterruptMask,
     unpack,
@@ -29,7 +29,7 @@ use crate::{
         file_lock::FileLock as FileLockObject, fs_metadata::create_fs_metadata,
         metadata::create_metadata, read_all, read_into_spare, stream, xattr,
     },
-    global::Global,
+    global::{FsGlobal, WindowsSecurityGlobal},
     io_mode::encode_value,
     util,
 };
@@ -255,7 +255,7 @@ impl<'v, 'a> Pinned<'v, 'a> {
 /// (`:AUTO:`/`:REQUIRE:`/`:NEVER:`), defaulting to [`CopyMode::Auto`].
 pub(crate) fn copy_mode_sym<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     slot: Option<Slot<'v, '_>>,
 ) -> Result<'v, 's, CopyMode> {
     let Some(slot) = slot else {
@@ -309,7 +309,7 @@ impl<'v> CopySide<'v, '_> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn copy_data<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     src: Instance<'v, '_, File<'v>>,
     dst: Instance<'v, '_, File<'v>>,
     range: Option<Slot<'v, '_>>,
@@ -463,7 +463,7 @@ pub(crate) struct File<'v> {
 }
 
 pub(crate) struct FileAnnex<'v> {
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     is_binary: bool,
     /// Whether the file was opened for appending, in which case every write
     /// lands at the end and an explicit offset cannot be honored.
@@ -472,7 +472,7 @@ pub(crate) struct FileAnnex<'v> {
 
 pub(crate) async fn open<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     mode: &str,
 ) -> Result<'v, 's, VfsFile> {
@@ -486,7 +486,7 @@ pub(crate) async fn open<'v, 's>(
 
 pub(crate) async fn open_native<'v>(
     strand: &Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     mode: &str,
 ) -> io::Result<VfsFile> {
@@ -503,7 +503,7 @@ pub(crate) async fn open_native<'v>(
 impl<'v> File<'v> {
     pub(crate) fn create(
         _strand: &Strand<'v, '_>,
-        global: State<'v, Global<'v>>,
+        global: State<'v, FsGlobal<'v>>,
         file: VfsFile,
         mode: &str,
     ) -> (Self, FileAnnex<'v>) {
@@ -678,7 +678,7 @@ impl<'v> File<'v> {
 
     pub(crate) async fn open<'s>(
         strand: &mut Strand<'v, 's>,
-        global: State<'v, Global<'v>>,
+        global: State<'v, FsGlobal<'v>>,
         path: vfs_path::Path<'_>,
         opt1: Option<Slot<'v, '_>>,
         opt2: Option<Slot<'v, '_>>,
@@ -879,7 +879,7 @@ impl<'v> File<'v> {
     async fn metadata<'s>(
         &self,
         strand: &mut Strand<'v, 's>,
-        global: State<'v, Global<'v>>,
+        global: State<'v, FsGlobal<'v>>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let file_ref = self
@@ -895,7 +895,7 @@ impl<'v> File<'v> {
     async fn fs_metadata<'s>(
         &self,
         strand: &mut Strand<'v, 's>,
-        global: State<'v, Global<'v>>,
+        global: State<'v, FsGlobal<'v>>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let file_ref = self
@@ -1306,7 +1306,6 @@ impl<'v> Object<'v> for File<'v> {
                     sacl = None
                 )?;
                 let mask = super::sec_desc_mask(strand, owner, group, dacl, sacl)?;
-                let global = this.annex().global;
                 let descriptor = {
                     let borrow = this.borrow(strand)?;
                     let file = borrow
@@ -1315,14 +1314,14 @@ impl<'v> Object<'v> for File<'v> {
                         .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
                     file.sec_desc(mask).await.into_sys(strand)?
                 };
-                crate::security::create_sec_desc(strand, global, descriptor, &mut out);
+                let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
+                crate::security::create_sec_desc(strand, windows, descriptor, &mut out);
                 Ok(())
             })
             .method("acl", async move |this, strand, args, mut out| {
                 let ([], [kind, default]) =
                     unpack!(strand, args, 0, 0, kind_acl = None, default_acl = None)?;
-                let global = this.annex().global;
-                let kind = crate::security::acl_kind_sym(strand, global, kind)?;
+                let kind = crate::security::acl_kind_sym(strand, kind)?;
                 let default = super::acl_default(strand, default.as_deref())?;
                 super::check_acl_default(strand, kind, default)?;
                 let acl = {
@@ -1333,16 +1332,14 @@ impl<'v> Object<'v> for File<'v> {
                         .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
                     file.acl(kind, default).await.into_sys(strand)?
                 };
-                crate::security::create_any_acl(strand, global, acl, &mut out);
+                crate::security::create_any_acl(strand, acl, &mut out);
                 Ok(())
             })
             .method("set_acl", async move |this, strand, args, _out| {
                 let ([acl_value], [kind, default]) =
                     unpack!(strand, args, 1, 0, kind_acl = None, default_acl = None)?;
-                let global = this.annex().global;
                 let (kind, acl) = crate::security::resolve_acl_input(
                     strand,
-                    global,
                     &acl_value,
                     kind,
                     &crate::security::SpecPath::root("File.set_acl.acl"),
@@ -1360,10 +1357,10 @@ impl<'v> Object<'v> for File<'v> {
                     .into_sys(strand)
             })
             .method("update_sec_desc", async move |this, strand, args, _out| {
-                let global = this.annex().global;
+                let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
                 let descriptor = crate::security::sec_desc_from_args(
                     strand,
-                    global,
+                    windows,
                     args,
                     &crate::security::SpecPath::root("update_sec_desc"),
                 )

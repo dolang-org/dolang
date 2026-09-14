@@ -1,8 +1,8 @@
-use dolang::runtime::{State, vm::Builder};
+use dolang::runtime::{State, vm::Register};
 
-use crate::global::Global;
+use crate::global::ErrorGlobal;
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, ErrorGlobal<'v>>) {
     builder
         .module("sys.unix")
         .value("Errno", global.types.errno)

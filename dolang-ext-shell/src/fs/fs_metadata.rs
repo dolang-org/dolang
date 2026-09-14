@@ -1,7 +1,7 @@
 use dolang::runtime::{Object, Output, Result, State, Strand, Sym, object::TypeBuilder};
 use dolang_vfs::metadata::FsMetadata as VfsFsMetadata;
 
-use crate::{global::Global, util};
+use crate::{global::FsGlobal, util};
 
 pub(crate) struct FsMetadata;
 
@@ -11,7 +11,7 @@ pub(crate) struct FsMetadataAnnex {
 
 pub(crate) fn create_fs_metadata<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     metadata: VfsFsMetadata,
     out: impl Output<'v>,
 ) {

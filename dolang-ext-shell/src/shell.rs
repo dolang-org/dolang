@@ -13,12 +13,13 @@ use dolang::runtime::object::fmt;
 use dolang::{
     compile::Config,
     runtime::{
-        Arg, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call, method,
+        AllocExt, Arg, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
+        method,
         object::{Mut, Ref, TypeBuilder},
         strand::Redirect,
         unpack,
         value::{AsTuple, Nil, TypeObject},
-        vm::Builder,
+        vm::Register,
     },
 };
 
@@ -26,8 +27,8 @@ use crate::util;
 use crate::{
     env::Env as EnvObject,
     error::{ErrorExt, ResultExt as _},
-    fs::path::{PathAnnex, create_path_annex, path_from_value},
-    global::{Global, ProgramSource},
+    fs::path::{cast_path, create_path, path_from_value},
+    global::{FsGlobal, Global, ProgramSource, ShellGlobal},
     io_mode::{IoMode, encode_value, line_ending, read_raw, read_value, write_raw},
     local::{Local, ProgramOverride},
     pipe_channel,
@@ -153,7 +154,7 @@ impl<'v> Object<'v> for Stdin {
             })
             .method("lines", async move |_this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<ShellGlobal<'v>>();
                 global
                     .types
                     .stdin
@@ -162,7 +163,7 @@ impl<'v> Object<'v> for Stdin {
             })
             .method("chunks", async move |_this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<ShellGlobal<'v>>();
                 global
                     .types
                     .stdin
@@ -178,7 +179,7 @@ impl<'v> Object<'v> for Stdin {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<ShellGlobal<'v>>();
         let Some(other) = global.types.stdin.cast(other) else {
             return Ok(false);
         };
@@ -262,7 +263,7 @@ impl<'v> Object<'v> for Stdout {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<ShellGlobal<'v>>();
         Ok(global.types.stdout.cast(other).is_some())
     }
 
@@ -338,7 +339,7 @@ impl<'v> Object<'v> for Stderr {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<ShellGlobal<'v>>();
         Ok(global.types.stderr.cast(other).is_some())
     }
 
@@ -377,7 +378,6 @@ const REMOTE_VFS_PIPE_BUFFER_SIZE: usize = 1024 * 1024;
 /// clear the pending pipe-buffer-size hint afterward, success or failure.
 async fn negotiate_stream_pipes<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     input: &Value<'v>,
     output: &Value<'v>,
 ) -> Result<
@@ -390,7 +390,7 @@ async fn negotiate_stream_pipes<'v, 's>(
         StdioSend,
     ),
 > {
-    let recv_guard = pipe_channel::negotiate_recv(input, strand, global)
+    let recv_guard = pipe_channel::negotiate_recv(input, strand)
         .await?
         .ok_or_else(|| Error::type_error(strand, "Vfs: stream iterator is not a pipe channel"))?;
     // Stolen, not duplicated: the session outlives the pipeline stage that
@@ -399,7 +399,7 @@ async fn negotiate_stream_pipes<'v, 's>(
     // disconnect into a hang. See `SendGuard::steal_send_pipe`.
     let recv = recv_guard.steal_recv_pipe().into_sys(strand)?;
 
-    let send_guard = pipe_channel::negotiate_send(output, strand, global)
+    let send_guard = pipe_channel::negotiate_send(output, strand)
         .await?
         .ok_or_else(|| Error::type_error(strand, "Vfs: stream sink is not a pipe channel"))?;
     let send = send_guard.steal_send_pipe().into_sys(strand)?;
@@ -412,7 +412,7 @@ pub(crate) struct Vfs;
 pub(crate) struct VfsAnnex<'v> {
     vfs: VfsVfs,
     source: VfsSource,
-    global: State<'v, Global<'v>>,
+    global: State<'v, ShellGlobal<'v>>,
 }
 
 enum VfsSource {
@@ -452,7 +452,7 @@ impl<'v> Object<'v> for Vfs {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([callable], []) = unpack!(strand, args, 1, 0)?;
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<ShellGlobal<'v>>();
         strand
             .with_slots(
                 async move |strand,
@@ -520,7 +520,7 @@ impl<'v> Object<'v> for Vfs {
                     )?;
 
                     let (recv_guard, recv, send_guard, send) =
-                        negotiate_stream_pipes(strand, global, &from_bg_recv, &to_bg_send).await?;
+                        negotiate_stream_pipes(strand, &from_bg_recv, &to_bg_send).await?;
 
                     let vfs = match VfsVfs::new_split(recv, send).await {
                         Ok(client) => client,
@@ -570,8 +570,8 @@ impl<'v> Object<'v> for Vfs {
         builder
             .type_method("unix_socket", async move |_this, strand, args, out| {
                 let ([path], [key]) = unpack!(strand, args, 1, 0, key_sym = None)?;
-                let global = strand.vm().state::<Global<'v>>();
-                let path = path_from_value(strand, global, &path)?;
+                let global = strand.vm().state::<ShellGlobal<'v>>();
+                let path = path_from_value(strand, &path)?;
                 let key = key
                     .map(|key| bytes_from_value(strand, &key, "key"))
                     .transpose()?;
@@ -603,7 +603,7 @@ impl<'v> Object<'v> for Vfs {
                 let borrow = this.annex();
                 Local::with_vfs(
                     strand,
-                    borrow.global,
+                    borrow.global.local,
                     borrow.vfs.clone(),
                     async move |strand| func.call(strand, args, out).await,
                 )
@@ -649,10 +649,10 @@ impl<'v> Object<'v> for Vfs {
                     Some(elevate) => util::bool(strand, elevate, "elevate")?,
                     None => true,
                 };
-                let global = strand.vm().state::<Global<'v>>();
+                let global = strand.vm().state::<ShellGlobal<'v>>();
                 let current_cwd = global.local.get(strand).cwd().clone();
                 let cwd = if let Some(cd) = cd {
-                    let cd = path_from_value(strand, global, &cd)?;
+                    let cd = path_from_value(strand, &cd)?;
                     if cd.is_absolute() {
                         cd
                     } else {
@@ -744,7 +744,11 @@ pub(crate) fn configure_compiler<'a>(config: &mut Config<'a>) {
         .commit();
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(
+    builder: &mut Register<'v>,
+    core: State<'v, Global<'v>>,
+    global: State<'v, ShellGlobal<'v>>,
+) {
     let env_ty = builder.register_type::<EnvObject>();
     let args_ty = builder.register_type::<ShellArgs>();
     let args_sym = builder.sym("args");
@@ -779,7 +783,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .function("exec", async move |strand, mut args, _| {
             let program = match args.next() {
                 None => return Err(Error::missing_positional(strand, 0)),
-                Some(Arg::Pos(program)) => path_from_value(strand, global, &program)?,
+                Some(Arg::Pos(program)) => path_from_value(strand, &program)?,
                 Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
             };
 
@@ -853,7 +857,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let invocation = global.local.get(strand).invocation();
             let args = invocation
                 .args
-                .unwrap_or_else(|| global.args.borrow().clone());
+                .unwrap_or_else(|| core.args.borrow().clone());
             args_ty.create_with_annex(strand, ShellArgs, args, out);
             Ok(())
         })
@@ -861,15 +865,15 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let invocation = global.local.get(strand).invocation();
             match invocation.program {
                 Some(ProgramOverride::Path(path)) => {
-                    let annex = PathAnnex::try_new(strand, path, global)?;
-                    create_path_annex(strand, annex, out);
+                    let fs = strand.force_state::<FsGlobal<'v>>();
+                    create_path(strand, fs, path, out)?;
                 }
                 Some(ProgramOverride::Module(name)) => Output::set(strand, out, name.as_ref()),
-                None => match global.program.borrow().as_ref() {
+                None => match core.program.borrow().as_ref() {
                     Some(ProgramSource::Path(path)) => {
                         let path = vfs_path::PathBuf::from_native(path.clone()).into_sys(strand)?;
-                        let annex = PathAnnex::try_new(strand, path, global)?;
-                        create_path_annex(strand, annex, out);
+                        let fs = strand.force_state::<FsGlobal<'v>>();
+                        create_path(strand, fs, path, out)?;
                     }
                     Some(ProgramSource::Module(name)) => Output::set(strand, out, name.as_str()),
                     None => Output::set(strand, out, Nil),
@@ -897,14 +901,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 let program = if let Some(program) = program {
                     if let Some(name) = program.as_str(strand) {
                         Some(ProgramOverride::Module(name.to_string().into_boxed_str()))
-                    } else if let Some(path) = global.types.unix_path.cast(&program) {
-                        Some(ProgramOverride::Path(
-                            path.enter_sync(strand, |_strand, path| path.annex().path_buf()),
-                        ))
-                    } else if let Some(path) = global.types.windows_path.cast(&program) {
-                        Some(ProgramOverride::Path(
-                            path.enter_sync(strand, |_strand, path| path.annex().path_buf()),
-                        ))
+                    } else if let Some(path) = cast_path(strand, &program) {
+                        Some(ProgramOverride::Path(path))
                     } else {
                         return Err(Error::type_error(
                             strand,
@@ -937,16 +935,15 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 std::env::current_exe().expect("could not get current exe"),
             )
             .expect("current executable path is UTF-8");
-            let annex = PathAnnex::try_new(strand, exe, global)?;
-            create_path_annex(strand, annex, out);
-            Ok(())
+            let fs = strand.force_state::<FsGlobal<'v>>();
+            create_path(strand, fs, exe, out)
         })
         .function("vfs_exe", async move |strand, args, out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
             match global.local.get(strand).vfs_exe() {
                 Some(path) => {
-                    let annex = PathAnnex::try_new(strand, path, global)?;
-                    create_path_annex(strand, annex, out);
+                    let fs = strand.force_state::<FsGlobal<'v>>();
+                    create_path(strand, fs, path, out)?;
                 }
                 None => Output::set(strand, out, Nil),
             }
@@ -960,25 +957,23 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             };
 
             let host_vfs = error::io_result(strand, VfsVfs::direct())?;
-            Local::with_vfs(strand, global, host_vfs, async move |strand| {
+            Local::with_vfs(strand, global.local, host_vfs, async move |strand| {
                 func.call(strand, args, out).await
             })
             .await
         })
         .function("cd", async move |strand, mut args, out| {
-            use crate::fs::path::PathAnnex;
-
             let dir = match args.next() {
                 None => {
                     let cwd = global.local.get(strand).cwd().clone();
-                    let annex = PathAnnex::try_new(strand, cwd, global)?;
-                    create_path_annex(strand, annex, out);
+                    let fs = strand.force_state::<FsGlobal<'v>>();
+                    create_path(strand, fs, cwd, out)?;
                     return Ok(());
                 }
                 Some(Arg::Pos(slot)) => slot,
                 Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
             };
-            let dir = path_from_value(strand, global, &dir)?;
+            let dir = path_from_value(strand, &dir)?;
             let local = global.local.get(strand);
 
             let path = local.cwd().join(dir.as_str());

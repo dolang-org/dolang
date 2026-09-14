@@ -11,7 +11,7 @@ use dolang_vfs::process::{StdioRecv, StdioSend};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
+    AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
     object::{Mut, Ref, TypeBuilder},
     unpack,
     value::{Nil, TypeObject},
@@ -19,7 +19,7 @@ use dolang::runtime::{
 
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
-    global::Global,
+    global::PipeGlobal,
     io_mode::{IoMode, encode_value, read_value},
 };
 
@@ -420,7 +420,7 @@ impl Drop for RecvEndGuard {
 #[derive(Clone)]
 pub(crate) struct PipeAnnex<'v> {
     shared: Rc<RefCell<PipeChannelShared>>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, PipeGlobal<'v>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -528,8 +528,10 @@ pub(crate) struct PipeSender;
 pub(crate) async fn negotiate_recv<'v, 's>(
     input: &Value<'v>,
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
 ) -> Result<'v, 's, Option<RecvGuard>> {
+    let Some(global) = strand.try_state::<PipeGlobal<'v>>() else {
+        return Ok(None);
+    };
     let Some(cast) = global.types.pipe_receiver.cast(input) else {
         return Ok(None);
     };
@@ -634,8 +636,10 @@ pub(crate) async fn negotiate_recv<'v, 's>(
 pub(crate) async fn negotiate_send<'v, 's>(
     output: &Value<'v>,
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
 ) -> Result<'v, 's, Option<SendGuard>> {
+    let Some(global) = strand.try_state::<PipeGlobal<'v>>() else {
+        return Ok(None);
+    };
     let Some(cast) = global.types.pipe_sender.cast(output) else {
         return Ok(None);
     };
@@ -751,9 +755,8 @@ pub(crate) fn make_pair<'v, 's>(
     mut out_recv: Slot<'v, '_>,
     buffer_size: Option<usize>,
 ) {
-    let vm = strand.vm();
     let inner = Rc::new(RefCell::new(PipeChannelShared::new(buffer_size)));
-    let global = vm.state::<Global<'v>>();
+    let global = strand.force_state::<PipeGlobal<'v>>();
     let recv_annex = PipeAnnex {
         shared: inner.clone(),
         global,

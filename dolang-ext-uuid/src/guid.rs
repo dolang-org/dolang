@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
-    Alloc, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    AllocExt, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     object::TypeBuilder, unpack, value::View,
 };
 

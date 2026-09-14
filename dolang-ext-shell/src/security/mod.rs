@@ -7,14 +7,16 @@ use dolang::runtime::value::fmt::Format;
 use dolang::{
     compile::Config,
     runtime::{
-        Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Type, Value,
+        AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym,
+        Type, Value,
         object::{
             ArrayLike, ArrayView, FlagLike, Flags, FlagsInstanceExt, FlagsTypeExt, Mut, Ref,
             TypeBuilder, fmt,
         },
+        strand::LocalKey,
         unpack,
         value::{AsTuple, Dict, Nil},
-        vm::Builder,
+        vm::Register,
     },
 };
 
@@ -45,7 +47,12 @@ use dolang_winterop::{
     },
 };
 
-use crate::{error, global::Global, util};
+use crate::{
+    error,
+    global::{MacosSecurityGlobal, Nfs4SecurityGlobal, UnixSecurityGlobal, WindowsSecurityGlobal},
+    local::Local,
+    util,
+};
 
 pub(crate) fn configure_compiler<'a>(_config: &mut Config<'a>) {}
 
@@ -78,10 +85,10 @@ macro_rules! flags_ops {
     };
 }
 
-mod macos;
-mod nfs4;
-mod unix;
-mod windows;
+pub(crate) mod macos;
+pub(crate) mod nfs4;
+pub(crate) mod unix;
+pub(crate) mod windows;
 
 pub(crate) use macos::{
     MacosAceFlags, MacosAceMask, MacosAceObject, MacosAclObject, create_macos_acl,
@@ -152,15 +159,23 @@ impl std::fmt::Display for SpecPath<'_> {
 /// `security.macos.Acl`).
 pub(crate) fn create_any_acl<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
     acl: Option<VfsAnyAcl>,
     out: &mut Slot<'v, '_>,
 ) {
     match acl {
         None => Output::set(strand, out, Nil),
-        Some(VfsAnyAcl::Posix(acl)) => create_posix_acl(strand, global, Some(acl), out),
-        Some(VfsAnyAcl::Nfs4(acl)) => create_nfs4_acl(strand, global, Some(acl), out),
-        Some(VfsAnyAcl::Macos(acl)) => create_macos_acl(strand, global, Some(acl), out),
+        Some(VfsAnyAcl::Posix(acl)) => {
+            let global = strand.force_state::<UnixSecurityGlobal<'v>>();
+            create_posix_acl(strand, global, Some(acl), out)
+        }
+        Some(VfsAnyAcl::Nfs4(acl)) => {
+            let global = strand.force_state::<Nfs4SecurityGlobal<'v>>();
+            create_nfs4_acl(strand, global, Some(acl), out)
+        }
+        Some(VfsAnyAcl::Macos(acl)) => {
+            let global = strand.force_state::<MacosSecurityGlobal<'v>>();
+            create_macos_acl(strand, global, Some(acl), out)
+        }
         Some(_) => Output::set(strand, out, Nil),
     }
 }
@@ -169,25 +184,30 @@ pub(crate) fn create_any_acl<'v>(
 /// yields [`VfsAclKind::Posix`], a `security.nfs4.Acl` yields
 /// [`VfsAclKind::Nfs4`], a `security.macos.Acl` yields [`VfsAclKind::Macos`].
 /// Other values yield `None`.
-fn built_acl_from_value<'v>(
-    strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
-    value: &Value<'v>,
-) -> Option<VfsAnyAcl> {
+fn built_acl_from_value<'v>(strand: &mut Strand<'v, '_>, value: &Value<'v>) -> Option<VfsAnyAcl> {
     if value.is_nil() {
         return None;
     }
-    if let Some(acl) = global.types.posix_acl.cast(value) {
+    if let Some(acl) = strand
+        .try_state::<UnixSecurityGlobal<'v>>()
+        .and_then(|global| global.types.posix_acl.cast(value))
+    {
         return Some(VfsAnyAcl::Posix(
             acl.enter_sync(strand, |_strand, acl| acl.annex().clone()),
         ));
     }
-    if let Some(acl) = global.types.nfs4_acl.cast(value) {
+    if let Some(acl) = strand
+        .try_state::<Nfs4SecurityGlobal<'v>>()
+        .and_then(|global| global.types.nfs4_acl.cast(value))
+    {
         return Some(VfsAnyAcl::Nfs4(
             acl.enter_sync(strand, |_strand, acl| acl.annex().clone()),
         ));
     }
-    if let Some(acl) = global.types.macos_acl.cast(value) {
+    if let Some(acl) = strand
+        .try_state::<MacosSecurityGlobal<'v>>()
+        .and_then(|global| global.types.macos_acl.cast(value))
+    {
         return Some(VfsAnyAcl::Macos(
             acl.enter_sync(strand, |_strand, acl| acl.annex().clone()),
         ));
@@ -198,13 +218,12 @@ fn built_acl_from_value<'v>(
 /// Resolves the ACL and kind accepted by the three filesystem setter APIs.
 pub(crate) async fn resolve_acl_input<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     value: &Value<'v>,
     kind: Option<Slot<'v, '_>>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, (VfsAclKind, Option<VfsAnyAcl>)> {
     let explicit_kind = match kind {
-        Some(kind) => Some(acl_kind_sym(strand, global, Some(kind))?),
+        Some(kind) => Some(acl_kind_sym(strand, Some(kind))?),
         None => None,
     };
 
@@ -212,7 +231,7 @@ pub(crate) async fn resolve_acl_input<'v, 's>(
         return Ok((explicit_kind.unwrap_or(VfsAclKind::Posix), None));
     }
 
-    if let Some(acl) = built_acl_from_value(strand, global, value) {
+    if let Some(acl) = built_acl_from_value(strand, value) {
         let actual = acl.kind();
         if let Some(expected) = explicit_kind
             && expected != actual
@@ -232,9 +251,16 @@ pub(crate) async fn resolve_acl_input<'v, 's>(
         )
     })?;
     let acl = match kind {
-        VfsAclKind::Posix => VfsAnyAcl::Posix(unix::coerce_acl(strand, global, value, path).await?),
-        VfsAclKind::Nfs4 => VfsAnyAcl::Nfs4(nfs4::coerce_acl(strand, global, value, path).await?),
+        VfsAclKind::Posix => {
+            let global = strand.force_state::<UnixSecurityGlobal<'v>>();
+            VfsAnyAcl::Posix(unix::coerce_acl(strand, global, value, path).await?)
+        }
+        VfsAclKind::Nfs4 => {
+            let global = strand.force_state::<Nfs4SecurityGlobal<'v>>();
+            VfsAnyAcl::Nfs4(nfs4::coerce_acl(strand, global, value, path).await?)
+        }
         VfsAclKind::Macos => {
+            let global = strand.force_state::<MacosSecurityGlobal<'v>>();
             VfsAnyAcl::Macos(macos::coerce_acl(strand, global, value, path).await?)
         }
         _ => return Err(Error::not_supported(strand)),
@@ -246,7 +272,6 @@ pub(crate) async fn resolve_acl_input<'v, 's>(
 /// defaulting to [`VfsAclKind::Posix`] when absent.
 pub(crate) fn acl_kind_sym<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     slot: Option<Slot<'v, '_>>,
 ) -> Result<'v, 's, VfsAclKind> {
     let Some(slot) = slot else {
@@ -255,44 +280,41 @@ pub(crate) fn acl_kind_sym<'v, 's>(
     let sym = slot
         .as_sym(strand)
         .ok_or_else(|| Error::type_error(strand, "kind: expected :POSIX:, :NFS4:, or :MACOS:"))?;
-    if sym == global.syms.posix {
-        Ok(VfsAclKind::Posix)
-    } else if sym == global.syms.nfs4 {
-        Ok(VfsAclKind::Nfs4)
-    } else if sym == global.syms.macos {
-        Ok(VfsAclKind::Macos)
-    } else {
-        Err(Error::value(
+    match sym.as_str(strand.vm()) {
+        "POSIX" => Ok(VfsAclKind::Posix),
+        "NFS4" => Ok(VfsAclKind::Nfs4),
+        "MACOS" => Ok(VfsAclKind::Macos),
+        _ => Err(Error::value(
             strand,
             "kind: expected :POSIX:, :NFS4:, or :MACOS:",
-        ))
+        )),
     }
 }
 
 fn security_info<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    local: LocalKey<'v, Local>,
 ) -> Result<'v, 's, SecurityInfo> {
-    Ok(global.local.get(strand).security())
+    Ok(local.get(strand).security())
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, local: LocalKey<'v, Local>) {
     builder
         .module("security")
         .function("user_name", async move |strand, args, out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
-            let family = global.local.get(strand).target().os().family();
-            let vfs = global.local.get(strand).vfs();
+            let family = local.get(strand).target().os().family();
+            let vfs = local.get(strand).vfs();
             let name = match family {
                 OperatingSystemFamily::Unix => {
-                    let security = security_info(strand, global)?;
+                    let security = security_info(strand, local)?;
                     let Some(info) = security.unix() else {
                         unreachable!("Unix target returned Windows security information")
                     };
                     error::io_result(strand, vfs.user_name(info.uid()).await)?
                 }
                 OperatingSystemFamily::Windows => {
-                    let security = security_info(strand, global)?;
+                    let security = security_info(strand, local)?;
                     let Some(info) = security.windows() else {
                         unreachable!("Windows target returned Unix security information")
                     };
@@ -305,9 +327,4 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             Ok(())
         })
         .commit();
-
-    unix::configure_vm(builder, global);
-    macos::configure_vm(builder, global);
-    nfs4::configure_vm(builder, global);
-    windows::configure_vm(builder, global);
 }

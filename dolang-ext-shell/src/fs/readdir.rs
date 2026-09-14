@@ -11,14 +11,14 @@ use dolang_vfs::{
 };
 
 use crate::error::ErrorExt as ShellErrorExt;
-use crate::global::Global;
+use crate::global::FsGlobal;
 
 use crate::fs::metadata::file_type_to_sym;
 
 pub(crate) struct DirEntry;
 
 pub(crate) struct DirEntryAnnex<'v> {
-    pub(crate) global: State<'v, Global<'v>>,
+    pub(crate) global: State<'v, FsGlobal<'v>>,
     pub(crate) name: String,
     pub(crate) file_type: FileType,
     pub(crate) ino: Option<u64>,
@@ -29,13 +29,13 @@ pub(crate) struct DirEntryIter {
 }
 
 pub(crate) struct DirEntryIterAnnex<'v> {
-    pub(crate) global: State<'v, Global<'v>>,
+    pub(crate) global: State<'v, FsGlobal<'v>>,
 }
 
 pub(crate) fn create_dir_entry<'v, 's>(
     strand: &mut Strand<'v, 's>,
     entry: &VfsDirEntry,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let name = entry.file_name().to_string_lossy().into_owned();
@@ -131,7 +131,7 @@ impl<'v> Object<'v> for DirEntryIter {
 
 pub(crate) fn path_with_entry<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     entry: &Value<'v>,
 ) -> Result<'v, 's, vfs_path::PathBuf> {

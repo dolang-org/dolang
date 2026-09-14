@@ -6,14 +6,14 @@ use dolang::{
         strand::Redirect,
         unpack,
         value::{TypeObject, View},
-        vm::Builder,
+        vm::Register,
     },
 };
 use dolang_vfs::process::Signal;
 
 use crate::{
     error::ResultExt,
-    global::Global,
+    global::{ErrorGlobal, PipeGlobal, ProcGlobal},
     io_mode::{encode_value, strip_line_ending},
     local::TerminationPolicy,
     program,
@@ -132,7 +132,7 @@ fn parse_grace<'v, 's>(
 
 pub(crate) fn parse_policy_dict<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
     value: &Value<'v>,
     base: TerminationPolicy,
     allow_signal: bool,
@@ -287,7 +287,12 @@ pub(crate) fn configure_compiler<'a>(config: &mut Config<'a>) {
         .commit();
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(
+    builder: &mut Register<'v>,
+    global: State<'v, ProcGlobal<'v>>,
+    errors: State<'v, ErrorGlobal<'v>>,
+    pipes: State<'v, PipeGlobal<'v>>,
+) {
     let capture_ty = global.types.capture;
     let windows_arguments_ty = builder.register_type::<WindowsArguments>();
     let chomp_sym = builder.sym("chomp");
@@ -366,12 +371,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             let ([target], [block]) = unpack!(strand, args, 1, 1)?;
             foreign::open(strand, global, &target, block.as_ref(), out).await
         })
-        .value("Error", global.types.proc_error)
+        .value("Error", errors.types.proc_error)
         .value("Info", global.types.proc_info)
         .value("Proc", global.types.proc_handle)
         .value("Status", global.types.proc_status)
-        .value("PipeReceiver", global.types.pipe_receiver)
-        .value("PipeSender", global.types.pipe_sender)
+        .value("PipeReceiver", pipes.types.pipe_receiver)
+        .value("PipeSender", pipes.types.pipe_sender)
         .object("run", run_ty, program::Run::new(global))
         .value("Program", global.types.program)
         .commit();

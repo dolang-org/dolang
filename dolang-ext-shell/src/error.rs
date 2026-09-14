@@ -9,11 +9,11 @@ use dolang_vfs::{
 };
 
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, object::TypeBuilder, unpack,
-    value::TypeObject,
+    AllocExt, Args, Error, Instance, Object, Output, Result, Slot, Strand, Type,
+    object::TypeBuilder, unpack, value::TypeObject,
 };
 
-use crate::{error_code, global::Global};
+use crate::{error_code, global::ErrorGlobal};
 
 pub(crate) struct SysError;
 pub(crate) struct InvalidInputError;
@@ -110,7 +110,7 @@ impl<'v, T: SysErrorType<'v>> Object<'v> for SysErrorObject<T> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let code_sym = strand.state::<Global<'v>>().syms.code;
+        let code_sym = strand.force_state::<ErrorGlobal<'v>>().syms.code;
         let ([message], [code]) = unpack!(strand, args, 1, 0, code_sym = None)?;
         let message = message
             .as_str(strand)
@@ -286,7 +286,7 @@ pub(crate) fn vfs_error<'v, 's>(strand: &mut Strand<'v, 's>, error: VfsError) ->
 }
 
 fn sys_error<'v, 's>(strand: &mut Strand<'v, 's>, error: VfsError) -> Error<'v, 's> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<ErrorGlobal<'v>>();
     let message = error.message().to_owned();
     let system_code = error
         .system_code()
@@ -476,7 +476,7 @@ pub(crate) fn proc_status_error<'v, 's>(
     name: &str,
     status: dolang_vfs::process::ProcessStatus,
 ) -> Error<'v, 's> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<ErrorGlobal<'v>>();
     let operating_system = global.local.get(strand).target().os();
     Error::object_with_annex(
         strand,

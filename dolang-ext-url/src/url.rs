@@ -5,7 +5,7 @@ use dolang::runtime::value::fmt::Format;
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    Alloc, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     error::ResultExt,
     object::{ArrayLike, ArrayView, Cast, DictLike, DictView, DictViewSink, TypeBuilder},
     unpack,

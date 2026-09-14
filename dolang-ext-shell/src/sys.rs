@@ -1,10 +1,10 @@
 use dolang::{
     compile::Config,
-    runtime::{Error, Object, Output, State, Sym, object::TypeBuilder, unpack, vm::Builder},
+    runtime::{Error, Object, Output, State, Sym, object::TypeBuilder, unpack, vm::Register},
 };
 use dolang_vfs::target::{Architecture, OperatingSystem, OperatingSystemFamily};
 
-use crate::global::Global;
+use crate::global::{ErrorGlobal, SysGlobal};
 
 pub(crate) fn configure_compiler<'a>(_config: &mut Config<'a>) {}
 
@@ -71,7 +71,11 @@ impl<'v> Object<'v> for CpuInfo {
     }
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(
+    builder: &mut Register<'v>,
+    global: State<'v, SysGlobal<'v>>,
+    errors: State<'v, ErrorGlobal<'v>>,
+) {
     let linux = builder.sym("LINUX");
     let macos = builder.sym("MACOS");
     let freebsd = builder.sym("FREEBSD");
@@ -129,51 +133,51 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         })
         .value("OsInfo", global.types.os_info)
         .value("CpuInfo", global.types.cpu_info)
-        .value("ErrorCode", global.types.error_code)
-        .value("Error", global.types.sys_error)
-        .value("InvalidInputError", global.types.invalid_input)
-        .value("NotFoundError", global.types.not_found)
-        .value("PermissionDeniedError", global.types.permission_denied)
-        .value("AlreadyExistsError", global.types.already_exists)
-        .value("TimedOutError", global.types.timed_out)
-        .value("UnsupportedError", global.types.unsupported)
-        .value("ConnectionRefusedError", global.types.connection_refused)
-        .value("ConnectionResetError", global.types.connection_reset)
-        .value("HostUnreachableError", global.types.host_unreachable)
-        .value("NetworkUnreachableError", global.types.network_unreachable)
-        .value("ConnectionAbortedError", global.types.connection_aborted)
-        .value("NotConnectedError", global.types.not_connected)
-        .value("AddrInUseError", global.types.addr_in_use)
-        .value("AddrNotAvailableError", global.types.addr_not_available)
-        .value("NetworkDownError", global.types.network_down)
-        .value("BrokenPipeError", global.types.broken_pipe)
-        .value("WouldBlockError", global.types.would_block)
-        .value("NotADirectoryError", global.types.not_adirectory)
-        .value("IsADirectoryError", global.types.is_adirectory)
-        .value("DirectoryNotEmptyError", global.types.directory_not_empty)
-        .value("ReadOnlyFilesystemError", global.types.read_only_filesystem)
+        .value("ErrorCode", errors.types.error_code)
+        .value("Error", errors.types.sys_error)
+        .value("InvalidInputError", errors.types.invalid_input)
+        .value("NotFoundError", errors.types.not_found)
+        .value("PermissionDeniedError", errors.types.permission_denied)
+        .value("AlreadyExistsError", errors.types.already_exists)
+        .value("TimedOutError", errors.types.timed_out)
+        .value("UnsupportedError", errors.types.unsupported)
+        .value("ConnectionRefusedError", errors.types.connection_refused)
+        .value("ConnectionResetError", errors.types.connection_reset)
+        .value("HostUnreachableError", errors.types.host_unreachable)
+        .value("NetworkUnreachableError", errors.types.network_unreachable)
+        .value("ConnectionAbortedError", errors.types.connection_aborted)
+        .value("NotConnectedError", errors.types.not_connected)
+        .value("AddrInUseError", errors.types.addr_in_use)
+        .value("AddrNotAvailableError", errors.types.addr_not_available)
+        .value("NetworkDownError", errors.types.network_down)
+        .value("BrokenPipeError", errors.types.broken_pipe)
+        .value("WouldBlockError", errors.types.would_block)
+        .value("NotADirectoryError", errors.types.not_adirectory)
+        .value("IsADirectoryError", errors.types.is_adirectory)
+        .value("DirectoryNotEmptyError", errors.types.directory_not_empty)
+        .value("ReadOnlyFilesystemError", errors.types.read_only_filesystem)
         .value(
             "StaleNetworkFileHandleError",
-            global.types.stale_network_file_handle,
+            errors.types.stale_network_file_handle,
         )
-        .value("WriteZeroError", global.types.write_zero)
-        .value("StorageFullError", global.types.storage_full)
-        .value("NotSeekableError", global.types.not_seekable)
-        .value("QuotaExceededError", global.types.quota_exceeded)
-        .value("FileTooLargeError", global.types.file_too_large)
-        .value("ResourceBusyError", global.types.resource_busy)
-        .value("ExecutableFileBusyError", global.types.executable_file_busy)
-        .value("DeadlockError", global.types.deadlock)
-        .value("CrossesDevicesError", global.types.crosses_devices)
-        .value("TooManyLinksError", global.types.too_many_links)
-        .value("InvalidFilenameError", global.types.invalid_filename)
+        .value("WriteZeroError", errors.types.write_zero)
+        .value("StorageFullError", errors.types.storage_full)
+        .value("NotSeekableError", errors.types.not_seekable)
+        .value("QuotaExceededError", errors.types.quota_exceeded)
+        .value("FileTooLargeError", errors.types.file_too_large)
+        .value("ResourceBusyError", errors.types.resource_busy)
+        .value("ExecutableFileBusyError", errors.types.executable_file_busy)
+        .value("DeadlockError", errors.types.deadlock)
+        .value("CrossesDevicesError", errors.types.crosses_devices)
+        .value("TooManyLinksError", errors.types.too_many_links)
+        .value("InvalidFilenameError", errors.types.invalid_filename)
         .value(
             "ArgumentListTooLongError",
-            global.types.argument_list_too_long,
+            errors.types.argument_list_too_long,
         )
-        .value("InvalidDataError", global.types.invalid_data)
-        .value("InterruptedError", global.types.interrupted)
-        .value("UnexpectedEofError", global.types.unexpected_eof)
-        .value("OutOfMemoryError", global.types.out_of_memory)
+        .value("InvalidDataError", errors.types.invalid_data)
+        .value("InterruptedError", errors.types.interrupted)
+        .value("UnexpectedEofError", errors.types.unexpected_eof)
+        .value("OutOfMemoryError", errors.types.out_of_memory)
         .commit();
 }
