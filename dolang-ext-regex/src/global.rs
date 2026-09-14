@@ -1,6 +1,6 @@
 use dolang::runtime::{
     Type,
-    vm::{Builder, Stateful},
+    vm::{Register, Stateful},
 };
 
 use crate::regex::{Captures, Find, Match, Regex, RegexSplit};
@@ -24,7 +24,7 @@ impl<'v> Stateful<'v> for Global<'v> {
 }
 
 impl<'v> Global<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         let types = Types {
             regex: builder.register_type(),
             captures: builder.register_type(),

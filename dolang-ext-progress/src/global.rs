@@ -4,7 +4,7 @@ use dolang::runtime::{
     Sym, Type,
     strand::LocalKey,
     value::Root,
-    vm::{Builder, Stateful},
+    vm::{Register, Stateful},
 };
 
 use crate::progress::{Indicator, ProgressLocal};
@@ -35,7 +35,7 @@ impl<'v> Stateful<'v> for Global<'v> {
 }
 
 impl<'v> Global<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>, local: LocalKey<'v, ProgressLocal>) -> Self {
         Self {
             types: Types {
                 indicator: builder.register_type(),
@@ -45,7 +45,7 @@ impl<'v> Global<'v> {
                 bytes: builder.sym("BYTES"),
                 percent: builder.sym("PERCENT"),
             },
-            local: builder.local(),
+            local,
             output: RefCell::new(Root::new(builder)),
             plain_active: Cell::new(false),
         }

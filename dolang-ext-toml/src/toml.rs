@@ -16,7 +16,7 @@ use dolang::runtime::{
     error::Error,
     unpack,
     value::{Empty, View},
-    vm::Builder,
+    vm::Register,
 };
 
 const DATETIME_FIELD: &str = "$__toml_private_datetime";
@@ -447,7 +447,7 @@ fn parse<'v, 's>(
         .map_err(|e| Error::value(strand, e.to_string()))
 }
 
-pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
+pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
     builder
         .module("toml")
         .function("encode", async move |strand, args, out| {

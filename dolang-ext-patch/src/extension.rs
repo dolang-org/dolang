@@ -10,7 +10,10 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::{global::Global, patch};
+use crate::{
+    global::{self, Global},
+    patch,
+};
 
 pub struct PatchExt;
 
@@ -36,9 +39,11 @@ impl Extension for PatchExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        patch::configure_vm(builder, global);
+        builder.lazy::<global::Tag>(&["patch"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state(global);
+            patch::configure_vm(reg, global);
+        });
         Ok(())
     }
 }

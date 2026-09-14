@@ -1,14 +1,25 @@
 use std::{collections::HashSet, mem};
 
 use dolang::runtime::{
-    Error, Object, State, call, error::ErrorKind, method, object::TypeBuilder, unpack, vm::Builder,
+    Error, Object, State, call,
+    error::ErrorKind,
+    method,
+    object::TypeBuilder,
+    unpack,
+    vm::{Builder, Register},
 };
 
 use crate::global::Global;
 
-pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
-    let importer_sym = builder.sym("importer");
+/// Registers the importer that consults `load.import_handler` callbacks.
+///
+/// Importers can't be added once the VM is entered, so this runs eagerly. Until the `load`
+/// module has been set up, no handler can have been registered, so the importer declines.
+pub(crate) fn configure_importer<'v>(builder: &mut Builder<'v>) {
     builder.importer(async move |strand, name, mut out| {
+        let Some(global) = strand.try_state::<Global<'v>>() else {
+            return Err(Error::import(strand, name));
+        };
         let dict = global
             .handlers
             .as_dict(strand)
@@ -46,7 +57,10 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<
             })
             .await
     });
+}
 
+pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
+    let importer_sym = builder.sym("importer");
     builder
         .module("load")
         .value("ImportHandler", global.types.import_handler)

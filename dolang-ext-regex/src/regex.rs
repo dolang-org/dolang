@@ -10,13 +10,13 @@ use dolang::runtime::{
     object::{Mut, Ref, TypeBuilder, Unpack, UnpackItem},
     unpack,
     value::{Nil, PinStr, TypeObject},
-    vm::Builder,
+    vm::Register,
 };
 use regex as rx;
 
 use crate::global::Global;
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("regex")
         .value("Regex", global.types.regex)

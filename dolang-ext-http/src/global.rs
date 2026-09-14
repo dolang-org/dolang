@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use dolang::runtime::{
     Sym, Type,
-    vm::{Builder, Stateful},
+    vm::{Register, Stateful},
 };
 use reqwest::Method;
 
@@ -62,7 +62,7 @@ impl<'v> Stateful<'v> for Global<'v> {
 }
 
 impl<'v> Global<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         let http_methods = HashMap::from_iter([
             (builder.sym("get"), Method::GET),
             (builder.sym("post"), Method::POST),

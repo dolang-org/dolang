@@ -13,6 +13,9 @@ use dolang::{
 /// Random number generation extension
 pub struct RandExt;
 
+/// Lazy setup tag
+struct Tag;
+
 #[derive(Debug)]
 pub enum Infallible {}
 
@@ -35,7 +38,7 @@ impl Extension for RandExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        crate::rand::configure(builder);
+        builder.lazy::<Tag>(&["rand"], crate::rand::configure);
         Ok(())
     }
 }

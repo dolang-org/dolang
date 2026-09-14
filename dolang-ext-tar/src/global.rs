@@ -1,6 +1,6 @@
 use dolang::runtime::{
     Sym, Type,
-    vm::{Builder, Stateful},
+    vm::{Register, Stateful},
 };
 
 use crate::tar::{TarEntry, TarEntryWriter, TarReader, TarWriter};
@@ -39,7 +39,7 @@ impl<'v> Stateful<'v> for Global<'v> {
 }
 
 impl<'v> Global<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         Self {
             types: Types {
                 reader: builder.register_type(),

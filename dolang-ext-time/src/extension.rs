@@ -10,7 +10,10 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::{global::Global, time};
+use crate::{
+    global::{self, Global},
+    time,
+};
 
 /// Time extension
 pub struct TimeExt;
@@ -37,9 +40,11 @@ impl Extension for TimeExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        time::configure_vm(builder, global);
+        builder.lazy::<global::Tag>(&["time"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state(global);
+            time::configure_vm(reg, global);
+        });
         Ok(())
     }
 }

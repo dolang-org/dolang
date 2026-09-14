@@ -3,7 +3,7 @@ use dolang::runtime::{
     object::TypeBuilder,
     unpack,
     value::{TypeObject, View},
-    vm::Builder,
+    vm::Register,
 };
 
 pub(crate) struct DigestState;
@@ -211,7 +211,7 @@ impl<'v, T: Algorithm> Object<'v> for Digestible<T> {
     }
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>) {
     let state = builder.register_type::<DigestState>();
     let blake3 = builder
         .build_type::<Blake3State>((), ())

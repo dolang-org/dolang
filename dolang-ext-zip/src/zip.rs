@@ -21,7 +21,7 @@ use dolang::runtime::{
     strand::InterruptMask,
     unpack,
     value::{BinEmbryo, View},
-    vm::Builder,
+    vm::Register,
 };
 use dolang_vfs::file::File as VfsFile;
 use futures_lite::io::AsyncWriteExt as _;
@@ -910,7 +910,7 @@ impl<'v> Object<'v> for File {
     }
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     let close = builder.sym("close");
     builder
         .module("zip")

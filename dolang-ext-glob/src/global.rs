@@ -1,6 +1,6 @@
 use dolang::runtime::{
     Type,
-    vm::{Builder, Stateful},
+    vm::{Register, Stateful},
 };
 
 use crate::glob::Glob;
@@ -20,7 +20,7 @@ impl<'v> Stateful<'v> for Global<'v> {
 }
 
 impl<'v> Global<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         let types = Types {
             glob: builder.register_type(),
         };

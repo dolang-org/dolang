@@ -5,7 +5,7 @@ use dolang::runtime::{
     Args, Error, Object, Result, Slot, State, Strand, call, method,
     object::{FlagsTypeExt, TypeBuilder},
     unpack,
-    vm::Builder,
+    vm::Register,
 };
 use dolang_ext_shell::{ErrorExt, ResultExt};
 use dolang_vfs_winreg::{PredefinedRoot, Resolve, View};
@@ -550,7 +550,7 @@ impl<'v> Object<'v> for Key {
     }
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("winreg")
         .value("AccessMask", global.types.access_mask)

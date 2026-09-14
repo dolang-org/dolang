@@ -13,6 +13,9 @@ use dolang::{
 /// YAML extension
 pub struct YamlExt;
 
+/// Lazy setup tag
+struct Tag;
+
 #[derive(Debug)]
 pub enum Infallible {}
 
@@ -35,7 +38,7 @@ impl Extension for YamlExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        crate::yaml::configure(builder);
+        builder.lazy::<Tag>(&["yaml"], crate::yaml::configure);
         Ok(())
     }
 }

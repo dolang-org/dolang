@@ -5,7 +5,7 @@ use dolang::runtime::{
     Args, Error, Object, Result, Slot, State, Strand, call, method,
     object::{FlagsTypeExt, TypeBuilder},
     unpack,
-    vm::Builder,
+    vm::Register,
 };
 use dolang_ext_shell::ResultExt;
 use dolang_vfs_winscm::{CreateServiceOptions, ErrorControl, ServiceStateFilter, StartType};
@@ -377,7 +377,7 @@ impl<'v> Object<'v> for ScManager {
     }
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("winscm")
         .value("ScManager", global.types.manager)

@@ -9,7 +9,7 @@ use crate::{
 };
 use dolang::runtime::{
     Sym, Type,
-    vm::{Builder, Stateful},
+    vm::{Register, Stateful},
 };
 
 pub(crate) struct Types<'v> {
@@ -138,7 +138,7 @@ impl<'v> Stateful<'v> for Global<'v> {
 }
 
 impl<'v> Global<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         Self {
             types: Types {
                 user: builder.register_type(),

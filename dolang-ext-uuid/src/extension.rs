@@ -10,7 +10,10 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::{global::Global, uuid};
+use crate::{
+    global::{self, Global},
+    uuid,
+};
 
 /// Uuid extension
 pub struct UuidExt;
@@ -37,9 +40,11 @@ impl Extension for UuidExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        uuid::configure_vm(builder, global);
+        builder.lazy::<global::Tag>(&["uuid"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state(global);
+            uuid::configure_vm(reg, global);
+        });
         Ok(())
     }
 }

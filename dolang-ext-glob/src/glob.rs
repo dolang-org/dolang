@@ -9,13 +9,13 @@ use dolang::runtime::{
     object::{Cast, TypeBuilder},
     unpack,
     value::{Str, View},
-    vm::Builder,
+    vm::Register,
 };
 use wax::{Glob as WaxGlob, Program as _};
 
 use crate::global::Global;
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("glob")
         .value("Glob", global.types.glob)

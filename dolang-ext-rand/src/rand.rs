@@ -1,4 +1,4 @@
-use dolang::runtime::{Error, Output, Result, Strand, unpack, value::Value, vm::Builder};
+use dolang::runtime::{Error, Output, Result, Strand, unpack, value::Value, vm::Register};
 use rand::RngExt;
 
 const DEFAULT_ALPHABET: &str = "_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -13,7 +13,7 @@ fn require_i64<'v, 's>(
         .map_err(|_| Error::type_error(strand, msg))
 }
 
-pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
+pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
     let alphabet_key = builder.sym("alphabet");
 
     builder

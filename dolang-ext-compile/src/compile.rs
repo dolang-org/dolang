@@ -14,7 +14,7 @@ use dolang::{
         object::{Mut, Ref, TypeBuilder},
         unpack,
         value::{Array, Dict, Empty, Nil, PinBin, PinStr, TypeObject, View},
-        vm::{Builder, Stateful},
+        vm::{Register, Stateful},
     },
 };
 
@@ -115,7 +115,7 @@ impl<'v> Stateful<'v> for Global<'v> {
 }
 
 impl<'v> Global<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         let node = builder.register_type();
         let declaration = builder
             .build_type::<NodeObject<DeclarationTag>>((), ())
@@ -1864,7 +1864,7 @@ impl<'v> Object<'v> for Patch {
     }
 }
 
-pub(crate) fn configure<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     let module = builder.sym("module");
     let prelude = builder.sym("prelude");
     let recover = builder.sym("recover");

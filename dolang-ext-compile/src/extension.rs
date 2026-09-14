@@ -35,9 +35,11 @@ impl Extension for CompileExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = crate::compile::Global::new(builder);
-        let global = builder.register_state(global);
-        crate::compile::configure(builder, global);
+        builder.lazy::<crate::compile::Tag>(&["compile"], |reg| {
+            let global = crate::compile::Global::new(reg);
+            let global = reg.register_state(global);
+            crate::compile::configure(reg, global);
+        });
         Ok(())
     }
 }

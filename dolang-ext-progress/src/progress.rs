@@ -17,7 +17,7 @@ use dolang::runtime::{
     strand::{self, Local},
     unpack,
     value::{Empty, Singleton, Slot, View},
-    vm::Builder,
+    vm::Register,
 };
 use dolang_ext_shell::with_terminal;
 use indicatif as ix;
@@ -677,7 +677,7 @@ fn step_message(overall: Option<&str>, name: Option<&str>) -> String {
 
 // --- VM configuration ---
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     let style_kw = builder.sym("style");
     let interval_kw = builder.sym("interval");
     let total_kw = builder.sym("total");

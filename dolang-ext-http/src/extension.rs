@@ -10,7 +10,10 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::{global::Global, http};
+use crate::{
+    global::{self, Global},
+    http,
+};
 
 /// Http extension
 pub struct HttpExt;
@@ -37,9 +40,11 @@ impl Extension for HttpExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        http::configure_vm(builder, global);
+        builder.lazy::<global::Tag>(&["http"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state(global);
+            http::configure_vm(reg, global);
+        });
         Ok(())
     }
 }

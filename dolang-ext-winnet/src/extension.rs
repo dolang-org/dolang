@@ -1,4 +1,4 @@
-use crate::global::Global;
+use crate::global::{self, Global};
 use dolang::{
     compile::Config,
     extension,
@@ -18,16 +18,18 @@ impl Extension for WinnetExt {
         Ok(())
     }
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Self::Error> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        let module = builder.module("winnet");
-        let module = crate::user::configure_module(module, global);
-        let module = crate::policy::configure_module(module, global);
-        let module = crate::group::configure_module(module, global);
-        let module = crate::share::configure_module(module, global);
-        let module = crate::connection::configure_module(module, global);
-        let module = crate::domain::configure_module(module, global);
-        crate::machine::configure_module(module, global).commit();
+        builder.lazy::<global::Tag>(&["winnet"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state(global);
+            let module = reg.module("winnet");
+            let module = crate::user::configure_module(module, global);
+            let module = crate::policy::configure_module(module, global);
+            let module = crate::group::configure_module(module, global);
+            let module = crate::share::configure_module(module, global);
+            let module = crate::connection::configure_module(module, global);
+            let module = crate::domain::configure_module(module, global);
+            crate::machine::configure_module(module, global).commit();
+        });
         Ok(())
     }
 }

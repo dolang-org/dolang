@@ -10,7 +10,7 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::global::Global;
+use crate::global::{self, Global};
 
 /// Regex extension
 pub struct RegexExt;
@@ -37,9 +37,11 @@ impl Extension for RegexExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        crate::regex::configure_vm(builder, global);
+        builder.lazy::<global::Tag>(&["regex"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state(global);
+            crate::regex::configure_vm(reg, global);
+        });
         Ok(())
     }
 }

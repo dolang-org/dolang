@@ -35,9 +35,11 @@ impl Extension for XmlExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let state = crate::global::Global::new(builder);
-        let state = builder.register_state(state);
-        crate::xml::configure(builder, state);
+        builder.lazy::<crate::global::Tag>(&["xml"], |reg| {
+            let state = crate::global::Global::new(reg);
+            let state = reg.register_state(state);
+            crate::xml::configure(reg, state);
+        });
         Ok(())
     }
 }

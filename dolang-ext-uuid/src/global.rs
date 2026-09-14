@@ -1,6 +1,6 @@
 use dolang::runtime::{
     Sym, Type,
-    vm::{Builder, Stateful},
+    vm::{Register, Stateful},
 };
 
 use crate::{guid::Guid, uuid::Uuid};
@@ -29,7 +29,7 @@ impl<'v> Stateful<'v> for Global<'v> {
 }
 
 impl<'v> Global<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         Self {
             types: Types {
                 uuid: builder.register_type(),

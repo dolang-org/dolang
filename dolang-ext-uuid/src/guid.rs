@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    Alloc, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     object::TypeBuilder, unpack, value::View,
 };
 
@@ -34,7 +34,7 @@ pub fn create_guid<'v, 'a>(
     id: dolang_winterop::guid::Guid,
     out: Slot<'v, 'a>,
 ) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<Global<'v>>();
     create_guid_with_global(global, strand, id, out);
 }
 
@@ -43,7 +43,8 @@ pub fn downcast_guid<'v>(
     strand: &mut Strand<'v, '_>,
     value: &Value<'v>,
 ) -> Option<dolang_winterop::guid::Guid> {
-    let global = strand.state::<Global<'v>>();
+    // No `Guid` can exist before the extension is initialized
+    let global = strand.try_state::<Global<'v>>()?;
     global
         .types
         .guid

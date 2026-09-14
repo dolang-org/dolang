@@ -10,7 +10,10 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::{global::Global, sqlite};
+use crate::{
+    global::{self, Global},
+    sqlite,
+};
 
 /// SQLite extension
 pub struct SqliteExt;
@@ -37,9 +40,11 @@ impl Extension for SqliteExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        sqlite::configure_vm(builder, global);
+        builder.lazy::<global::Tag>(&["sqlite"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state(global);
+            sqlite::configure_vm(reg, global);
+        });
         Ok(())
     }
 }

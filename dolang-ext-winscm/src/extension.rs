@@ -10,7 +10,7 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::global::Global;
+use crate::global::{self, Global};
 
 /// Windows Service Control Manager extension.
 pub struct WinscmExt;
@@ -38,9 +38,11 @@ impl Extension for WinscmExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        crate::manager::configure_vm(builder, global);
+        builder.lazy::<global::Tag>(&["winscm"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state(global);
+            crate::manager::configure_vm(reg, global);
+        });
         Ok(())
     }
 }
