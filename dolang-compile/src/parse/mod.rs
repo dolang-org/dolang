@@ -159,6 +159,7 @@ mod params;
 mod stmt;
 mod stream;
 mod string;
+mod ty;
 mod vert;
 
 #[derive(Debug, Clone)]

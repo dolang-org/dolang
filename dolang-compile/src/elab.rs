@@ -12,8 +12,8 @@ use crate::{
     ast::{
         self, Arg, ArrayElem, Assign, Bind, Block, Class, Def, DictElem, Expand, Expr, ExprBody,
         For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key, LValue, Let,
-        Method, NlGuard, NlInfo, Origin, Pair, Param, Pattern, PatternBind, PrimStmt, Res, Return,
-        Root, SideEffect, Single, Stmt, Try, Var, While, visit::Node,
+        Method, NlGuard, NlInfo, Origin, Pair, Param, PatIdent, Pattern, PatternBind, PrimStmt,
+        Res, Return, Root, SideEffect, Single, Stmt, Try, Var, While, visit::Node,
     },
     diag::{AnnotationKind, Severity},
     source::{Annotate, Diagnose, Diags, File, Patch, Span},
@@ -1330,7 +1330,9 @@ impl<'a> Elaborater<'a> {
                     let mut scope = scope.nested_loop();
                     // Inject loop binds into inner scope
                     match bind {
-                        Pattern::Ident(ident) => self.bind_ident(&mut scope, ident, false)?,
+                        Pattern::Ident(PatIdent { ident, .. }) => {
+                            self.bind_ident(&mut scope, ident, false)?
+                        }
                         Pattern::Unpack(params) => {
                             for param in params.iter_mut() {
                                 self.visit_param_non_const_default(&mut scope, param)?;
@@ -1395,7 +1397,9 @@ impl<'a> Elaborater<'a> {
                     let mut scope = scope.nested_loop();
                     // Inject loop binds into inner scope
                     match bind {
-                        Pattern::Ident(ident) => self.bind_ident(&mut scope, ident, false)?,
+                        Pattern::Ident(PatIdent { ident, .. }) => {
+                            self.bind_ident(&mut scope, ident, false)?
+                        }
                         Pattern::Unpack(params) => {
                             for param in params.iter_mut() {
                                 self.visit_param_non_const_default(&mut scope, param)?;
@@ -1665,7 +1669,9 @@ impl<'a> Elaborater<'a> {
                     let mut scope = scope.nested_loop();
                     // Inject loop binds into inner scope
                     match bind {
-                        Pattern::Ident(ident) => self.bind_ident(&mut scope, ident, false)?,
+                        Pattern::Ident(PatIdent { ident, .. }) => {
+                            self.bind_ident(&mut scope, ident, false)?
+                        }
                         Pattern::Unpack(params) => {
                             for param in params.iter_mut() {
                                 self.visit_param_non_const_default(&mut scope, param)?;
@@ -1729,7 +1735,7 @@ impl<'a> Elaborater<'a> {
         // In a class body, let bindings are not inserted into the lexical index.
         // Private fields use their unique private sym; pub fields use the plain sym.
         if scope.is_class()
-            && let Pattern::Ident(ident) = &mut node.bind
+            && let Pattern::Ident(PatIdent { ident, .. }) = &mut node.bind
         {
             let name = self.file.str(ident.span);
             let sym = if node.pub_span.is_none() {
@@ -1786,7 +1792,7 @@ impl<'a> Elaborater<'a> {
         export: bool,
     ) -> Result<()> {
         match pat {
-            Pattern::Ident(ident) => self.bind_ident(scope, ident, export)?,
+            Pattern::Ident(PatIdent { ident, .. }) => self.bind_ident(scope, ident, export)?,
             Pattern::Unpack(params) => {
                 for param in params.iter_mut() {
                     self.visit_param_non_const_default(scope, param)?;
@@ -1825,7 +1831,7 @@ impl<'a> Elaborater<'a> {
     /// resolve them positionally.
     fn bind_pattern(&mut self, scope: &mut Scope<'_>, pattern: &mut Pattern) -> Result<()> {
         match pattern {
-            Pattern::Ident(ident) => self.bind_ident(scope, ident, false)?,
+            Pattern::Ident(PatIdent { ident, .. }) => self.bind_ident(scope, ident, false)?,
             Pattern::Unpack(params) => {
                 for param in params.iter_mut() {
                     self.visit_param_non_const_default(scope, param)?;

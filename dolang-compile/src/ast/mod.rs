@@ -1,7 +1,10 @@
 #[cfg(feature = "debug")]
 pub(crate) mod dot;
 
+pub(crate) mod ty;
 pub(crate) mod visit;
+
+pub(crate) use self::ty::{Annot, TypeArg, TypeArgKind, TypeExpr, TypeKey};
 
 use std::{
     collections::VecDeque,
@@ -1446,6 +1449,7 @@ pub(crate) struct ParamDefault {
 pub(crate) enum Param {
     Pos {
         ident: Ident,
+        ty: Option<Box<Annot>>,
         default: Option<ParamDefault>,
     },
     Key {
@@ -1453,30 +1457,36 @@ pub(crate) enum Param {
         /// The `:`, which precedes the key in `:name` and follows it in `name:`
         colon_span: Span,
         ident: Ident,
+        ty: Option<Box<Annot>>,
         default: Option<ParamDefault>,
     },
     ConstKey {
         key_expr: Expr,
         key_const: Const,
         ident: Ident,
+        ty: Option<Box<Annot>>,
         default: Option<ParamDefault>,
         colon_span: Span,
     },
     Rest {
         ellipsis_span: Span,
         ident: Option<Ident>,
+        ty: Option<Box<Annot>>,
     },
 }
 
 impl Node for Param {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
-            Param::Pos { ident, default } => {
+            Param::Pos { ident, ty, default } => {
                 visit.token(
                     Token::Variable,
                     ident.span,
                     ident.res.as_ref().and_then(|r| r.node),
                 )?;
+                if let Some(ty) = ty {
+                    visit.node(&**ty)?;
+                }
                 if let Some(default) = default {
                     visit.token(Token::Delim, default.delim_span, None)?;
                     visit.node(&default.expr)?;
@@ -1487,6 +1497,7 @@ impl Node for Param {
                 key_span,
                 colon_span,
                 ident,
+                ty,
                 default,
             } => {
                 visit.token(Token::Key, *key_span, None)?;
@@ -1496,6 +1507,9 @@ impl Node for Param {
                     ident.span,
                     ident.res.as_ref().and_then(|r| r.node),
                 )?;
+                if let Some(ty) = ty {
+                    visit.node(&**ty)?;
+                }
                 if let Some(default) = default {
                     visit.token(Token::Delim, default.delim_span, None)?;
                     visit.node(&default.expr)?;
@@ -1505,6 +1519,7 @@ impl Node for Param {
             Param::ConstKey {
                 key_expr,
                 ident,
+                ty,
                 default,
                 colon_span,
                 ..
@@ -1516,6 +1531,9 @@ impl Node for Param {
                     ident.span,
                     ident.res.as_ref().and_then(|r| r.node),
                 )?;
+                if let Some(ty) = ty {
+                    visit.node(&**ty)?;
+                }
                 if let Some(default) = default {
                     visit.token(Token::Delim, default.delim_span, None)?;
                     visit.node(&default.expr)?;
@@ -1525,6 +1543,7 @@ impl Node for Param {
             Param::Rest {
                 ellipsis_span,
                 ident,
+                ty,
             } => {
                 visit.token(Token::Sigil, *ellipsis_span, None)?;
                 if let Some(ident) = ident {
@@ -1533,6 +1552,9 @@ impl Node for Param {
                         ident.span,
                         ident.res.as_ref().and_then(|r| r.node),
                     )?;
+                }
+                if let Some(ty) = ty {
+                    visit.node(&**ty)?;
                 }
                 ControlFlow::Continue(())
             }
@@ -1569,22 +1591,34 @@ where
     }
 }
 
+/// A pattern that binds a single name
+pub(crate) struct PatIdent {
+    pub(crate) ident: Ident,
+    pub(crate) ty: Option<Box<Annot>>,
+}
+
 pub(crate) enum Pattern {
-    Ident(Ident),
+    Ident(PatIdent),
     Unpack(Vec<Param>),
 }
 
 impl Node for Pattern {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
-            Pattern::Ident(ident) => ident.accept(visit),
+            Pattern::Ident(PatIdent { ident, ty }) => {
+                ident.accept(visit)?;
+                if let Some(ty) = ty {
+                    visit.node(&**ty)?;
+                }
+                ControlFlow::Continue(())
+            }
             Pattern::Unpack(params) => params.accept(visit),
         }
     }
 
     fn kind(&self) -> NodeKind {
         match self {
-            Pattern::Ident(ident) => ident.kind(),
+            Pattern::Ident(PatIdent { ident, .. }) => ident.kind(),
             Pattern::Unpack(_) => NodeKind::Pattern,
         }
     }
@@ -2159,6 +2193,8 @@ pub(crate) struct FieldName {
 pub(crate) struct FieldDecl {
     pub(crate) decorators: Vec<Decorator>,
     pub(crate) fields: Vec<FieldName>,
+    /// Annotation shared by every field the declaration names
+    pub(crate) ty: Option<Box<Annot>>,
     pub(crate) init: FieldInit,
     pub(crate) field_span: Span,
     pub(crate) equal_span: Option<Span>,
@@ -2201,6 +2237,9 @@ impl Node for FieldDecl {
         visit.token(Token::Keyword, self.field_span, None)?;
         for field in &self.fields {
             visit.token(Token::Field, field.ident.span, field.node)?;
+        }
+        if let Some(ty) = &self.ty {
+            visit.node(&**ty)?;
         }
         if let Some(span) = self.equal_span {
             visit.token(Token::Operator, span, None)?;

@@ -4,7 +4,7 @@ use super::{
     stream::ExpectKind,
 };
 use crate::{
-    ast::{Ident, Param, ParamDefault, Pattern},
+    ast::{Annot, Ident, Param, ParamDefault, PatIdent, Pattern},
     lex::{Keyword, Op, Token, TokenInfo},
     source::Span,
 };
@@ -59,7 +59,7 @@ impl Parser<'_> {
             0 => unreachable!(),
             1 => match &params[0] {
                 Param::Pos { default: None, .. } => match params.into_iter().next().unwrap() {
-                    Param::Pos { ident, .. } => Pattern::Ident(ident),
+                    Param::Pos { ident, ty, .. } => Pattern::Ident(PatIdent { ident, ty }),
                     _ => unreachable!(),
                 },
                 _ => Pattern::Unpack(params),
@@ -137,11 +137,13 @@ impl Parser<'_> {
                             ));
                         }
                     };
+                    let ty = self.parse_param_annot(scope)?;
                     let default = self.parse_param_default(scope, mode)?;
                     params.push(Param::Key {
                         key_span: key,
                         colon_span: key.after_right_char(),
                         ident: Ident::new(ident_span),
+                        ty,
                         default,
                     });
                 }
@@ -152,11 +154,13 @@ impl Parser<'_> {
                         &mut variadic_trailing_reported,
                     );
                     let key = self.advance();
+                    let ty = self.parse_param_annot(scope)?;
                     let default = self.parse_param_default(scope, mode)?;
                     params.push(Param::Key {
                         key_span: key,
                         colon_span: key.before_left_char(),
                         ident: Ident::new(key),
+                        ty,
                         default,
                     })
                 }
@@ -169,6 +173,7 @@ impl Parser<'_> {
                         variadic_span,
                         &mut variadic_trailing_reported,
                     );
+                    let ty = self.parse_param_annot(scope)?;
                     let default = self.parse_param_default(scope, mode)?;
                     if default.is_some() {
                         seen_optional = true;
@@ -178,6 +183,7 @@ impl Parser<'_> {
                     }
                     params.push(Param::Pos {
                         ident: Ident::new(span),
+                        ty,
                         default,
                     })
                 }
@@ -218,10 +224,12 @@ impl Parser<'_> {
                             ));
                         }
                     };
+                    let ty = self.parse_param_annot(scope)?;
 
                     params.push(Param::Rest {
                         ellipsis_span,
                         ident,
+                        ty,
                     });
                     variadic = true;
                     variadic_span = Some(ellipsis_span);
@@ -249,6 +257,7 @@ impl Parser<'_> {
                             ));
                         }
                     };
+                    let ty = self.parse_param_annot(scope)?;
 
                     let default = if matches!(mode, ParamMode::VertPattern) {
                         self.parse_param_default(scope, mode)?
@@ -260,6 +269,7 @@ impl Parser<'_> {
                         key_expr,
                         key_const,
                         ident: Ident::new(ident_span),
+                        ty,
                         default,
                         colon_span,
                     });
@@ -272,6 +282,7 @@ impl Parser<'_> {
                             variadic_span,
                             &mut variadic_trailing_reported,
                         );
+                        let ty = self.parse_param_annot(scope)?;
                         let default = self.parse_param_default(scope, mode)?;
                         if default.is_some() {
                             seen_optional = true;
@@ -281,6 +292,7 @@ impl Parser<'_> {
                         }
                         params.push(Param::Pos {
                             ident: Ident::new(span),
+                            ty,
                             default,
                         })
                     }
@@ -302,6 +314,15 @@ impl Parser<'_> {
                 },
             }
         }
+    }
+
+    /// Parse the annotation after a bound name, which whitespace must separate from it
+    fn parse_param_annot(&mut self, scope: &mut Scope<'_>) -> Result<Option<Box<Annot>>> {
+        let Some(token!(TokenInfo::ArgSep)) = self.peek()? else {
+            return Ok(None);
+        };
+        self.advance();
+        self.parse_annot(scope)
     }
 
     fn parse_param_default(

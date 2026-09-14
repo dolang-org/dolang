@@ -592,6 +592,24 @@ bind args
   :verbose = false
 ```
 
+### Type Annotations
+
+Annotations document types and have no runtime effect. `@` and a type follow a
+bound name, separated from it by whitespace, and precede any default:
+
+```
+let count @Int = 0
+def connect :host @Str = "localhost" :port @(Int | nil) = nil
+  echo $host
+class Point
+  pub field x y @Int = 0
+```
+
+An annotation is a compact type, so whitespace ends it. Parenthesize unions and
+function types: `@Str|Path` is not a union, but `@(Str | Path)` is. Other forms:
+`@Dict[Str, Array[Int]]`, `@{name: Str, ?port: Int}`, `@((Int, ?Int) -> Int)`,
+`@(:a: | :b:)`.
+
 ### Concurrency
 
 ```

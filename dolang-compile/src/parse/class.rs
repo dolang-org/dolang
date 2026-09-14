@@ -77,6 +77,7 @@ impl Parser<'_> {
         self.expect(scope, &[ExpectKind::ArgSep])?;
 
         let mut fields = Vec::new();
+        let mut ty = None;
 
         loop {
             match decay_ident!(self.next()?) {
@@ -86,6 +87,23 @@ impl Parser<'_> {
 
             if let Some(token!(ArgSep)) = self.peek()? {
                 self.advance();
+                // One annotation after the names covers all of them
+                if let Some(token!(At)) = self.peek()? {
+                    ty = self.parse_annot(scope)?;
+                    if let Some(token!(ArgSep)) = self.peek()? {
+                        self.advance();
+                    }
+                    match self.peek()? {
+                        Some(token!(Equal)) | None | Some(token!(StmtSep | Dedent)) => break,
+                        other => {
+                            return Err(self.syntax_error(
+                                scope,
+                                other,
+                                "expected `=` or end of field declaration after type",
+                            ));
+                        }
+                    }
+                }
             }
 
             match self.peek()? {
@@ -126,6 +144,7 @@ impl Parser<'_> {
                         private_sym: None,
                     })
                     .collect(),
+                ty,
                 init,
                 field_span,
                 equal_span: Some(equal_span),
@@ -144,6 +163,7 @@ impl Parser<'_> {
                     private_sym: None,
                 })
                 .collect(),
+            ty,
             init: FieldInit::None,
             field_span,
             equal_span: None,

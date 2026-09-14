@@ -1,0 +1,98 @@
+# Annotations do not change what a program does.
+
+let x @Int = 1
+assert_eq $x 1
+
+let :name @Str :age @Int = {name: "Alice", age: 30}
+assert_eq $name "Alice"
+assert_eq $age 30
+
+let "key": value @Str = {"key": "v"}
+assert_eq $value "v"
+
+let first @Str ...rest @Int = ["a", 1, 2]
+assert_eq $first "a"
+assert_eq [...rest] [1, 2]
+
+let total = 0
+for _k @Sym v @(Int | Str) = {a: 1, b: 2}
+  total = (total + v)
+assert_eq $total 3
+
+def connect :host @Str = "localhost" :port @Int = 8080
+  "$host:$port"
+assert_eq $connect() "localhost:8080"
+assert_eq (connect port: 22) "localhost:22"
+
+def gather first @Int ...rest @Int
+  [first, {...rest}]
+assert_eq (gather 1 2 3) [1, {2, 3}]
+
+def vertical
+  - a @Int
+  - b @Str = "x"
+  :flag @Bool = false
+  ... @Value
+do
+  [a, b, flag]
+assert_eq (vertical 1) [1, "x", false]
+
+bind [1]
+  - y @Int
+  - z @(Int | nil) = nil
+assert_eq $y 1
+assert_eq $z nil
+
+bind {verbose: true}
+  :verbose @Bool = false
+assert_eq $verbose true
+
+let double = do |n @Int| (n * 2)
+assert_eq $double(4) 8
+
+let matched = if let a @Int b @Int = [1, 2]
+  (a + b)
+else
+  0
+assert_eq $matched 3
+
+# A single annotated name still branches on truthiness
+let found = if let v @(Int | nil) = nil
+  v
+else
+  false
+assert_eq $found false
+
+class Point
+  pub field px py @Int = 0
+  pub field label @(Str | nil) = nil
+
+let p = Point()
+assert_eq $p.px 0
+assert_eq $p.py 0
+assert_eq $p.label nil
+
+def forms
+  - a @time.Duration = 1
+  - b @Array[Int] = 2
+  - c @Dict[Str, Array[Int]] = 3
+  - d @{name: Str, ?port: Int, ...Dict[Str, Value]} = 4
+  - e @((Int, ?Int) -> Int) = 5
+  - f @(Int -> Int -> Int) = 6
+  - g @(() -> Int) = 7
+  - h @((Str, ?port: Int, ...Str) -> Conn) = 8
+  - i @(:TARGET: | :LINK:) = 9
+  - j @"str" = 10
+  - k @42 = 11
+  - l @-1 = 12
+  - m @true = 13
+  - n @nil = 14
+  - o @{"x-custom": Str} = 15
+  - q @Tuple[...Str] = 16
+  - r @(
+      | Str
+      | Path
+    ) = 17
+do
+  [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, q, r]
+assert_eq $forms() [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]

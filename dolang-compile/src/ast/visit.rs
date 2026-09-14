@@ -160,6 +160,9 @@ pub enum NodeKind {
     Body,
     Pattern,
     Key,
+    Type,
+    TypeArg,
+    Annot,
 }
 
 impl fmt::Display for NodeKind {

@@ -25,6 +25,7 @@ nav:
     - language/destructuring.md
     - language/modules.md
     - language/classes.md
+    - language/types.md
     - language/error-handling.md
     - language/concurrency.md
     - language/decorators.md

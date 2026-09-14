@@ -1,0 +1,99 @@
+let a @(?Int) = 1
+# error: parenthesized type is a parameter list, which must be followed by `->`
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let a @(?Int) = 1
+#    |        ^^^^^^
+let b @() = 1
+# error: parenthesized type is a parameter list, which must be followed by `->`
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let b @() = 1
+#    |        ^^
+let c @(Int, Str) = 1
+# error: parenthesized type is a parameter list, which must be followed by `->`
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let c @(Int, Str) = 1
+#    |        ^^^^^^^^^^
+let d @Array[?Int] = 1
+# error: type arguments cannot be optional
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let d @Array[?Int] = 1
+#    |              ^
+let e @((?...Int) -> Int) = 1
+# error: a rest item cannot be optional
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let e @((?...Int) -> Int) = 1
+#    |          ^
+let f @((?Int, Int) -> Int) = 1
+# error: required positional items must precede any optional positional items
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let f @((?Int, Int) -> Int) = 1
+#    |                ^^^
+let g @"$a" = 1
+# error: expression is not a constant
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let g @"$a" = 1
+#    |        ^^^^
+let h @1.5 = 1
+# error: a constant type must be a symbol, string, integer, boolean, or `nil`
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let h @1.5 = 1
+#    |        ^^^
+let i @b"x" = 1
+# error: a constant type must be a symbol, string, integer, boolean, or `nil`
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let i @b"x" = 1
+#    |        ^^^^
+let j @(Int | Str -> Int) = 1
+# error: a union must be parenthesized to be a parameter type
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let j @(Int | Str -> Int) = 1
+#    |                   ^^
+let k @{0: Int} = 1
+# error: a key in a type must be a name or a string
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let k @{0: Int} = 1
+#    |          ^
+let l @ Int = 1
+# error: expected type
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let l @ Int = 1
+#    |        ^
+let m@Int = 1
+# error: invalid pattern
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let m@Int = 1
+#    |      ^
+let n @do = 1
+# error: expected type
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let n @do = 1
+#    |        ^^
+class Q
+  field r @Int s
+  # error: expected `=` or end of field declaration after type
+  #   --> type_errors.dol:LL:LL
+  #    |
+  # LL |   field r @Int s
+  #    |                ^
+  field t
+def p x @Array [Int]
+  # error: invalid parameter
+  #   --> type_errors.dol:LL:LL
+  #    |
+  # LL | def p x @Array [Int]
+  #    |                ^
+  x

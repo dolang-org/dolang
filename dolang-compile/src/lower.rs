@@ -10,8 +10,8 @@ use crate::{
         Arg, ArrayElem, Assign, Bind, Block, Class, ClassMember, ClassSuper, Const, Decorator, Def,
         DictElem, Expand, Expr, ExprBody, FieldInit, FmtParamName, For, FormatAlign, FormatKind,
         FormatSign, FormatSpec, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem,
-        Key, LValue, Let, MemberScope, Method, NlGuard, Pair, Param, ParamDefault, Pattern,
-        PatternBind, PrimStmt, Res, Return, Root, Single, Stmt, Try, While, visit::Node,
+        Key, LValue, Let, MemberScope, Method, NlGuard, Pair, Param, ParamDefault, PatIdent,
+        Pattern, PatternBind, PrimStmt, Res, Return, Root, Single, Stmt, Try, While, visit::Node,
     },
     cfg::{self, BlockRefMut, Inst, InstInfo, Term, TermInfo},
     constant::{self, ConstantExt},
@@ -1199,7 +1199,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_pattern(&mut self, bind: &'a Pattern, want_result: bool) -> Result<()> {
         match bind {
-            Pattern::Ident(Ident { res, span }) => {
+            Pattern::Ident(PatIdent {
+                ident: Ident { res, span },
+                ..
+            }) => {
                 let res = res.as_ref().expect("unresolved assignment lhs");
                 self.lower_store_res(res, *span, want_result);
             }

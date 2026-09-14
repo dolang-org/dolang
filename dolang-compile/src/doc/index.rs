@@ -126,20 +126,22 @@ impl Scope<'_> {
 
 impl Index<'_> {
     fn param_kind(param: &Param) -> (Kind, Span) {
-        let (kind, key_span, ident, default) = match param {
-            Param::Pos { ident, default } => (
+        let (kind, key_span, ident, ty, default) = match param {
+            Param::Pos { ident, ty, default } => (
                 Kind::PositionalParam {
                     name: ident.span,
                     default: default.as_ref().map(|default| default.expr.span()),
                 },
                 None,
                 Some(ident.span),
+                ty,
                 default,
             ),
             Param::Key {
                 key_span,
                 colon_span,
                 ident,
+                ty,
                 default,
             } => (
                 Kind::KeyParam {
@@ -151,11 +153,13 @@ impl Index<'_> {
                 // `:name` form it is where the parameter starts.
                 Some(*key_span | *colon_span),
                 Some(ident.span),
+                ty,
                 default,
             ),
             Param::ConstKey {
                 key_expr,
                 ident,
+                ty,
                 default,
                 ..
             } => {
@@ -168,23 +172,27 @@ impl Index<'_> {
                     },
                     Some(key),
                     Some(ident.span),
+                    ty,
                     default,
                 )
             }
             Param::Rest {
                 ellipsis_span,
                 ident,
+                ty,
             } => (
                 Kind::RestParam {
                     name: ident.as_ref().map(|ident| ident.span),
                 },
                 Some(*ellipsis_span),
                 ident.as_ref().map(|ident| ident.span),
+                ty,
                 &None,
             ),
         };
+        let ty_span = ty.as_ref().map(|ty| ty.span());
         let default_span = default.as_ref().map(|default| default.expr.span());
-        let span = [key_span, ident, default_span]
+        let span = [key_span, ident, ty_span, default_span]
             .into_iter()
             .flatten()
             .reduce(|acc, span| acc | span)
@@ -390,7 +398,7 @@ impl Index<'_> {
     ) {
         let (kind, span) = Self::param_kind(param);
         let ident = match param {
-            Param::Pos { ident, default } | Param::Key { ident, default, .. } => {
+            Param::Pos { ident, default, .. } | Param::Key { ident, default, .. } => {
                 if let Some(default) = default {
                     self.expr(scope, &mut default.expr);
                 }
@@ -440,7 +448,11 @@ impl Index<'_> {
         extent: Option<Span>,
     ) {
         match pattern {
-            Pattern::Ident(ident) => {
+            Pattern::Ident(PatIdent { ident, ty }) => {
+                let span = extent.unwrap_or_else(|| match ty {
+                    Some(ty) => ident.span | ty.span(),
+                    None => ident.span,
+                });
                 self.declaration(
                     scope,
                     ident,
@@ -448,7 +460,7 @@ impl Index<'_> {
                         name: ident.span,
                         is_pub,
                     },
-                    extent.unwrap_or(ident.span),
+                    span,
                 );
             }
             Pattern::Unpack(params) => {

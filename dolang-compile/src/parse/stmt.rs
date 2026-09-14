@@ -204,6 +204,7 @@ impl Parser<'_> {
                     func: Function {
                         params: vec![Param::Pos {
                             ident: Ident::new(var_span),
+                            ty: None,
                             default: None,
                         }],
                         body: catch_block,
@@ -231,6 +232,7 @@ impl Parser<'_> {
                     func: Function {
                         params: vec![Param::Pos {
                             ident: Ident::new(var_span),
+                            ty: None,
                             default: None,
                         }],
                         body: catch_block,

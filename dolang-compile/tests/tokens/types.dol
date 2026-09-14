@@ -1,0 +1,46 @@
+# Type annotations reuse the existing token kinds.
+
+let f @((Str, ?port: Int, ...Str) -> Conn) = nil
+#     ^: sigil
+#      ^: delim
+#       ^: delim
+#        ^~~: variable, node=none
+#           ^: delim
+#             ^: operator
+#              ^~~~: key
+#                  ^: delim
+#                         ^~~: sigil
+#                               ^: delim
+#                                 ^~: operator
+#                                    ^~~~: variable, node=none
+#                                        ^: delim
+
+let t @(:a: | :b:) = nil
+#       ^~~: constant
+#           ^: operator
+#             ^~~: constant
+
+let u @(| time.Duration | Str) = nil
+#       ^: operator
+#         ^~~~: variable
+#             ^: operator
+#              ^~~~~~~~: field
+#                       ^: operator
+
+let s @{name: Str, ...Dict[Str, Value]} = nil
+#      ^: delim
+#       ^~~~: key
+#                         ^: delim
+#                                     ^: delim
+
+class Point
+  field x y @Int = 0
+  #         ^: sigil
+  #          ^~~: variable
+
+def connect
+  :port @Int = 22
+  #     ^: sigil
+  #      ^~~: variable
+do
+  dbg $port
