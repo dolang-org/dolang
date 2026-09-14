@@ -34,7 +34,7 @@ fn pipe_pair<'v>(
     mut send: impl Output<'v>,
     mut recv: impl Output<'v>,
 ) {
-    if let Some(pipe) = strand.vm().pipe_handler.as_ref() {
+    if let Some(pipe) = strand.vm().pipe_handler.borrow().as_ref() {
         pipe(
             strand,
             Slot::from_output(&mut send),

@@ -410,7 +410,7 @@ impl<'v> StrandInner<'v> {
                 .map(|vtbl| (vtbl.init)())
                 .collect::<Vec<_>>()
                 .into(),
-            local_roots: (0..vm.local_root_count)
+            local_roots: (0..vm.local_root_count.get())
                 .map(|_| UnsafeCell::new(Value::NIL))
                 .collect::<Vec<_>>()
                 .into(),

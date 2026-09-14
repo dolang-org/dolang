@@ -46,20 +46,20 @@ use crate::{
     vm::Alloc,
 };
 
-use dolang_util::alias;
+use dolang_util::{alias, arena::ArenaVec};
 use protocol::{GcObj, Protocol, TypeHandle};
 
 type VtblEntry = (NonNull<()>, unsafe fn(NonNull<()>));
 
 pub(crate) struct TypeTable<'v> {
-    entries: Vec<VtblEntry>,
+    entries: ArenaVec<VtblEntry>,
     _phantom: std::marker::PhantomData<&'v ()>,
 }
 
 impl<'v> TypeTable<'v> {
     pub(crate) fn new() -> Self {
         Self {
-            entries: Vec::new(),
+            entries: ArenaVec::new(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -69,7 +69,7 @@ impl<'v> TypeTable<'v> {
     /// The value must be `repr(C)` with `arena::Vtbl` as its (transitive) first field so that
     /// the GC header's vtbl pointer remains valid.
     #[inline(never)]
-    pub(crate) fn register<V: 'v>(&mut self, vtbl: V) -> NonNull<V> {
+    pub(crate) fn register<V: 'v>(&self, vtbl: V) -> NonNull<V> {
         let ptr = alias::Box::into_non_null(alias::Box::new(vtbl));
         self.entries.push((ptr.cast(), |ptr| unsafe {
             drop(alias::Box::<V>::from_non_null(ptr.cast()))
@@ -79,7 +79,7 @@ impl<'v> TypeTable<'v> {
     }
 
     /// Register a protocol vtbl for type `T` and return a type-safe handle.
-    pub(crate) fn register_type_handle<T>(&mut self) -> TypeHandle<'v, T>
+    pub(crate) fn register_type_handle<T>(&self) -> TypeHandle<'v, T>
     where
         T: ?Sized + gc::Boxable<protocol::Header> + Protocol<'v>,
     {
@@ -91,7 +91,7 @@ impl<'v> TypeTable<'v> {
 
 impl<'v> Drop for TypeTable<'v> {
     fn drop(&mut self) {
-        for (ptr, free) in self.entries.drain(..) {
+        for (ptr, free) in self.entries.drain() {
             unsafe { free(ptr) }
         }
     }

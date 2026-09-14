@@ -104,8 +104,9 @@ impl<'v> Vm<'v> {
         name: &str,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if let Some(module) = self.native_modules.get(name) {
-            out.store(module.dup());
+        let module = self.native_modules.borrow().get(name).map(Value::dup);
+        if let Some(module) = module {
+            out.store(module);
             return Ok(());
         }
         loop {
@@ -453,7 +454,7 @@ impl<'v> Vm<'v> {
     }
 
     pub(crate) fn check_trap<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        if let Some(trap) = self.trap.as_ref() {
+        if let Some(trap) = self.trap.borrow().as_ref() {
             trap(strand)?
         }
         Ok(())

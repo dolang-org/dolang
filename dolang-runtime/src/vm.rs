@@ -1,7 +1,7 @@
 use std::{
     any::TypeId,
     borrow::Cow,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, hash_map::Entry},
     future::Future,
     marker::PhantomData,
@@ -12,7 +12,7 @@ use std::{
     task::{Poll, Waker},
 };
 
-use dolang_util::alias;
+use dolang_util::{alias, arena::ArenaVec};
 use futures::{
     channel::mpsc,
     stream::{FuturesUnordered, StreamExt},
@@ -124,15 +124,15 @@ type ChannelFactory<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot
 /// - [`Strand`]
 pub struct Vm<'v> {
     pub(crate) import_cache: RefCell<HashMap<String, ImportCacheEntry<'v>>>,
-    pub(crate) native_modules: HashMap<&'v str, Value<'v>>,
-    pub(crate) importers: Vec<Value<'v>>,
-    pub(crate) pipe_handler: Option<Box<ChannelFactory<'v>>>,
-    pub(crate) trap: Option<Box<Trap<'v>>>,
+    pub(crate) native_modules: RefCell<HashMap<&'v str, Value<'v>>>,
+    pub(crate) importers: ArenaVec<Value<'v>>,
+    pub(crate) pipe_handler: RefCell<Option<Box<ChannelFactory<'v>>>>,
+    pub(crate) trap: RefCell<Option<Box<Trap<'v>>>>,
     // SAFETY: GC objects may point into state, so `arena` must be cleared first (but not dropped)
-    pub(crate) state: HashMap<TypeId, ErasedState>,
+    pub(crate) state: RefCell<HashMap<TypeId, ErasedState>>,
     // SAFETY: must be unregistered after clearing GC objects and state, as this invalidates
     // all Sym<'v, 'v>
-    pub(crate) symroots: Vec<GcObj<'v, SymObj>>,
+    pub(crate) symroots: ArenaVec<GcObj<'v, SymObj>>,
     pub(crate) symtab: sym::Table<'v>,
     // SAFETY: must be dropped before arena, as it holds GC objects
     pub(crate) singletons: Singletons<'v>,
@@ -142,7 +142,7 @@ pub struct Vm<'v> {
     pub(crate) builtin_types: BuiltinTypes<'v>,
     pub(crate) types: TypeTable<'v>,
     /// Class object singletons for user-registered [`Object`] types.
-    pub(crate) type_singletons: Vec<Value<'v>>,
+    pub(crate) type_singletons: ArenaVec<Value<'v>>,
     /// Instance vtbls of user-registered [`Object`] types that declared an error
     /// kind via a nominal supertype.
     ///
@@ -150,29 +150,29 @@ pub struct Vm<'v> {
     /// error, so [`crate::error::Error::kind`] classifies its instances by
     /// looking their vtbl up here. Only types that declared a kind appear, which
     /// in practice is a handful per VM.
-    pub(crate) error_kind_vtbls: Vec<NonNull<ObjectVtbl<'v>>>,
-    pub(crate) locals: Vec<LocalVtbl<'v>>,
-    pub(crate) local_root_count: usize,
+    pub(crate) error_kind_vtbls: ArenaVec<NonNull<ObjectVtbl<'v>>>,
+    pub(crate) locals: ArenaVec<LocalVtbl<'v>>,
+    pub(crate) local_root_count: Cell<usize>,
     pub(crate) spawn_tx: RefCell<Option<mpsc::UnboundedSender<SpawnedFuture<'v>>>>,
     // Strings that have to be allocated for the lifetime of the VM
-    pub(crate) strings: Vec<alias::Box<str>>,
+    pub(crate) strings: RefCell<Vec<alias::Box<str>>>,
 }
 
 impl<'v> Drop for Vm<'v> {
     fn drop(&mut self) {
         // Drop things in a safe order
         self.import_cache.get_mut().clear();
-        self.native_modules.clear();
-        self.importers.clear();
-        self.pipe_handler = None;
-        self.type_singletons.clear();
+        self.native_modules.get_mut().clear();
+        self.importers.drain().for_each(drop);
+        *self.pipe_handler.get_mut() = None;
+        self.type_singletons.drain().for_each(drop);
         // Close spawn channel (should already be None after enter() returns)
         self.spawn_tx.get_mut().take();
         // GC objects could point into state, so clear it before state
         self.arena.clear();
         // Anything that still points into state at this point is bound to be leaked
-        self.state.clear();
-        self.symroots.clear();
+        self.state.get_mut().clear();
+        self.symroots.drain().for_each(drop);
         self.symtab.clear();
     }
 }
@@ -204,10 +204,10 @@ impl<'v> Vm<'v> {
             .expect("spawn channel closed");
     }
 
-    pub(crate) fn string(&mut self, str: &str) -> &'v str {
+    pub(crate) fn string(&self, str: &str) -> &'v str {
         let str = alias::Box::new_str(str);
         let ptr = &raw const *str;
-        self.strings.push(str);
+        self.strings.borrow_mut().push(str);
         unsafe { &*ptr }
     }
 
@@ -220,10 +220,15 @@ impl<'v> Vm<'v> {
     /// Fetch previously-registered state handle
     #[inline]
     pub fn state<T: Stateful<'v>>(&self) -> State<'v, T> {
-        let Some(entry) = self.state.get(&TypeId::of::<T::Tag>()) else {
+        let Some(ptr) = self
+            .state
+            .borrow()
+            .get(&TypeId::of::<T::Tag>())
+            .map(|entry| entry.ptr)
+        else {
             panic!("state not registered")
         };
-        State(entry.ptr.cast(), PhantomData)
+        State(ptr.cast(), PhantomData)
     }
 
     pub(crate) fn arena(&self) -> &Arena<'v> {
@@ -638,7 +643,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         let sym = self.vm.sym(name);
         self.push(
             sym,
-            NativeField::Value(Value::from_input(&self.vm.inner, value)),
+            NativeField::Value(Value::from_input(self.vm.inner, value)),
         );
         self
     }
@@ -723,32 +728,36 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
                 panic!(
                     "duplicate native module member {}.{}",
                     self.name,
-                    pair[0].0.as_str(&self.vm.inner),
+                    pair[0].0.as_str(self.vm.inner),
                 );
             }
         }
 
         let module = NativeModule::new(self.name, items);
-        self.vm.inner.native_modules.insert(
-            self.name,
-            Value::from_object(GcObj::new(
-                self.vm.inner.arena(),
-                self.vm.inner.builtin_types.native_module,
-                module,
-            )),
-        );
+        let module = Value::from_object(GcObj::new(
+            self.vm.inner.arena(),
+            self.vm.inner.builtin_types.native_module,
+            module,
+        ));
+        let replaced = self
+            .vm
+            .inner
+            .native_modules
+            .borrow_mut()
+            .insert(self.name, module);
+        drop(replaced);
         self.vm
     }
 }
 
 /// Virtual machine builder.
 pub struct Builder<'v> {
-    pub(crate) inner: Vm<'v>,
+    pub(crate) inner: &'v Vm<'v>,
 }
 
 impl<'v> Alloc<'v> for Builder<'v> {
     fn alloc_vm(&mut self, _: private::Sealed) -> &Vm<'v> {
-        &self.inner
+        self.inner
     }
 }
 
@@ -756,7 +765,7 @@ impl<'v> Deref for Builder<'v> {
     type Target = Vm<'v>;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        self.inner
     }
 }
 
@@ -787,27 +796,33 @@ impl Builder<'static> {
         // Create builtin class singleton objects
         let builtin_classes = Singletons::new(&arena, &builtin_types);
 
+        let vm = Vm {
+            arena,
+            builtin_types,
+            singletons: builtin_classes,
+            types,
+            symtab,
+            symroots: Default::default(),
+            state: Default::default(),
+            native_modules: Default::default(),
+            importers: Default::default(),
+            pipe_handler: Default::default(),
+            trap: Default::default(),
+            import_cache: Default::default(),
+            locals: Default::default(),
+            local_root_count: Cell::new(0),
+            spawn_tx: Default::default(),
+            strings: Default::default(),
+            type_singletons: Default::default(),
+            error_kind_vtbls: Default::default(),
+        };
+
+        // Safety: VM is kept alive for the same duration as its contents, as it's self-referential.
+        // `vm` is not moved after this point and outlives `this`, which is the only way the
+        // reference escapes; every `'v`-branded value is confined to `f`, which returns before
+        // `vm` is dropped
         let mut this = Builder {
-            inner: Vm {
-                arena,
-                builtin_types,
-                singletons: builtin_classes,
-                types,
-                symtab,
-                symroots: Default::default(),
-                state: Default::default(),
-                native_modules: Default::default(),
-                importers: Default::default(),
-                pipe_handler: None,
-                trap: None,
-                import_cache: Default::default(),
-                locals: Default::default(),
-                local_root_count: 0,
-                spawn_tx: Default::default(),
-                strings: Default::default(),
-                type_singletons: Default::default(),
-                error_kind_vtbls: Default::default(),
-            },
+            inner: unsafe { mem::transmute::<&Vm<'static>, &'static Vm<'static>>(&vm) },
         };
 
         stdlib::configure(&mut this);
@@ -832,7 +847,7 @@ impl<'v> Builder<'v> {
     /// Register custom state that will live for the life of the VM, and can therefore be
     /// referenced by native objects, functions, and modules, etc.
     pub fn register_state<T: Stateful<'v>>(&mut self, value: T) -> State<'v, T> {
-        match self.inner.state.entry(TypeId::of::<T::Tag>()) {
+        match self.inner.state.borrow_mut().entry(TypeId::of::<T::Tag>()) {
             Entry::Occupied(_) => panic!("duplicate state registration"),
             Entry::Vacant(entry) => {
                 let state = alias::Box::into_non_null(alias::Box::new(value));
@@ -858,8 +873,8 @@ impl<'v> Builder<'v> {
 
     /// Register a strand-local GC root key.
     pub fn local_root(&mut self) -> LocalRootKey<'v> {
-        let index = self.inner.local_root_count;
-        self.inner.local_root_count += 1;
+        let index = self.inner.local_root_count.get();
+        self.inner.local_root_count.set(index + 1);
         LocalRootKey::new(index)
     }
 
@@ -923,9 +938,9 @@ impl<'v> Builder<'v> {
         T::Annex: Default,
     {
         let name = self.inner.string(name);
-        self.inner
-            .native_modules
-            .insert(name, ty.create_raw(&self.inner, value, Default::default()));
+        let module = ty.create_raw(self.inner, value, Default::default());
+        let replaced = self.inner.native_modules.borrow_mut().insert(name, module);
+        drop(replaced);
         self
     }
 
@@ -938,9 +953,9 @@ impl<'v> Builder<'v> {
         annex: T::Annex,
     ) -> &mut Self {
         let name = self.inner.string(name);
-        self.inner
-            .native_modules
-            .insert(name, ty.create_raw(&self.inner, value, annex));
+        let module = ty.create_raw(self.inner, value, annex);
+        let replaced = self.inner.native_modules.borrow_mut().insert(name, module);
+        drop(replaced);
         self
     }
 
@@ -950,7 +965,7 @@ impl<'v> Builder<'v> {
         &mut self,
         factory: impl for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot<'v, '_>) + 'v,
     ) -> &mut Self {
-        self.inner.pipe_handler = Some(Box::new(factory));
+        *self.inner.pipe_handler.borrow_mut() = Some(Box::new(factory));
         self
     }
 
@@ -1026,7 +1041,7 @@ impl<'v> Builder<'v> {
         &mut self,
         trap: impl for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v,
     ) -> &mut Self {
-        self.inner.trap = Some(Box::new(trap));
+        *self.inner.trap.borrow_mut() = Some(Box::new(trap));
         self
     }
 
@@ -1038,13 +1053,7 @@ impl<'v> Builder<'v> {
         *self.inner.spawn_tx.borrow_mut() = Some(tx);
 
         let group = StrandGroup::new();
-        // Safety: VM is kept alive for the same duration as its contents, as it's self-referential.
-        // In particular, it is not dropped before leaving this function, at which point all strand
-        // lifetimes have ended
-        let strand = StrandInner::new(
-            unsafe { mem::transmute::<&Vm<'v>, &'v Vm<'v>>(&self.inner) },
-            None,
-        );
+        let strand = StrandInner::new(self.inner, None);
         let _guard = unsafe { strand.init_group_leader(&group) };
         let native = Native {
             module: "<host>".into(),
