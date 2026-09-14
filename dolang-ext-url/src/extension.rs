@@ -10,7 +10,10 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::{global::Global, url};
+use crate::{
+    global::{self, Global},
+    url,
+};
 
 /// Url extension
 pub struct UrlExt;
@@ -37,9 +40,11 @@ impl Extension for UrlExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        url::configure_vm(builder, global);
+        builder.lazy::<global::Tag>(&["url"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state(global);
+            url::configure_vm(reg, global);
+        });
         Ok(())
     }
 }

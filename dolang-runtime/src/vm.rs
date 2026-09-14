@@ -107,9 +107,110 @@ impl<'v, T: 'v> AsRef<T> for State<'v, T> {
 }
 
 /// Capability to allocate or otherwise perturb GC state in controlled ways.
+///
+/// Dyn-compatible, so a function can take `&mut dyn Alloc<'v>`. The generic operations live
+/// in [`AllocExt`], which every `Alloc` implements.
 pub trait Alloc<'v> {
     #[doc(hidden)]
-    fn alloc_vm(&mut self, _: private::Sealed) -> &Vm<'v>;
+    fn alloc_vm(&mut self, _: private::Sealed) -> &'v Vm<'v>;
+}
+
+/// Lazy setup operations, available on every [`Alloc`], including `dyn Alloc`.
+pub trait AllocExt<'v>: Alloc<'v> {
+    /// Run the lazy setup declared under tag `K` with [`Builder::lazy`], unless it has
+    /// already run.
+    ///
+    /// Does nothing if no lazy setup is declared under `K`, so a crate can move between eager
+    /// and lazy registration without affecting callers.
+    fn force<K: 'static>(&mut self) {
+        let vm = self.alloc_vm(private::Sealed);
+        let unit = vm.lazy.borrow().by_tag.get(&TypeId::of::<K>()).copied();
+        if let Some(unit) = unit {
+            force_lazy_unit(self, unit);
+        }
+    }
+
+    /// Run the lazy setup declared under `T::Tag`, then fetch the state registered with that
+    /// tag.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no state is registered under `T::Tag` once the setup has run.
+    fn force_state<T: Stateful<'v>>(&mut self) -> State<'v, T> {
+        self.force::<T::Tag>();
+        self.alloc_vm(private::Sealed).state()
+    }
+}
+
+impl<'v, A: Alloc<'v> + ?Sized> AllocExt<'v> for A {}
+
+type LazyInit<'v> = Box<dyn FnOnce(&mut Register<'v>) + 'v>;
+
+enum LazyPhase<'v> {
+    Pending(LazyInit<'v>),
+    Running,
+    Done,
+}
+
+struct LazyUnit<'v> {
+    tag_name: &'static str,
+    modules: Box<[&'v str]>,
+    phase: LazyPhase<'v>,
+}
+
+/// Setups declared with [`Builder::lazy`].
+#[derive(Default)]
+pub(crate) struct LazyTable<'v> {
+    units: Vec<LazyUnit<'v>>,
+    by_tag: HashMap<TypeId, usize>,
+    pub(crate) by_module: HashMap<&'v str, usize>,
+    /// Units whose setup is on the call stack, innermost last.
+    running: Vec<usize>,
+}
+
+/// Run the setup of a lazy unit unless it has already run.
+///
+/// Requiring `Alloc` ties forcing to a context that may allocate.
+pub(crate) fn force_lazy_unit<'v, A: Alloc<'v> + ?Sized>(alloc: &mut A, unit: usize) {
+    let vm = alloc.alloc_vm(private::Sealed);
+    let init = {
+        let mut lazy = vm.lazy.borrow_mut();
+        let lazy = &mut *lazy;
+        let entry = &mut lazy.units[unit];
+        match mem::replace(&mut entry.phase, LazyPhase::Running) {
+            LazyPhase::Pending(init) => {
+                lazy.running.push(unit);
+                init
+            }
+            LazyPhase::Running => panic!("cyclic initialization of lazy unit {}", entry.tag_name),
+            LazyPhase::Done => {
+                entry.phase = LazyPhase::Done;
+                return;
+            }
+        }
+    };
+
+    // Safety: `alloc` holds allocation capability for `vm`, and the register is only lent out
+    // behind `&mut` for the duration of `init`
+    let mut reg = unsafe { Register::new(vm) };
+    init(&mut reg);
+
+    let mut lazy = vm.lazy.borrow_mut();
+    let lazy = &mut *lazy;
+    lazy.running.pop();
+    let entry = &mut lazy.units[unit];
+    entry.phase = LazyPhase::Done;
+    let native_modules = vm.native_modules.borrow();
+    if let Some(name) = entry
+        .modules
+        .iter()
+        .find(|name| !native_modules.contains_key(**name))
+    {
+        panic!(
+            "lazy unit {} did not register declared module {name}",
+            entry.tag_name
+        );
+    }
 }
 
 type Trap<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v;
@@ -157,11 +258,14 @@ pub struct Vm<'v> {
     pub(crate) spawn_tx: RefCell<Option<mpsc::UnboundedSender<SpawnedFuture<'v>>>>,
     // Strings that have to be allocated for the lifetime of the VM
     pub(crate) strings: RefCell<Vec<alias::Box<str>>>,
+    // SAFETY: pending setups may capture GC values, so this must be cleared before `arena`
+    pub(crate) lazy: RefCell<LazyTable<'v>>,
 }
 
 impl<'v> Drop for Vm<'v> {
     fn drop(&mut self) {
         // Drop things in a safe order
+        *self.lazy.get_mut() = Default::default();
         self.import_cache.get_mut().clear();
         self.native_modules.get_mut().clear();
         self.importers.drain().for_each(drop);
@@ -219,17 +323,66 @@ impl<'v> Vm<'v> {
     }
 
     /// Fetch previously-registered state handle
+    ///
+    /// # Panics
+    ///
+    /// Panics if no state is registered under `T::Tag`. State registered by a lazy setup
+    /// that hasn't run yet is not registered; use [`AllocExt::force_state`] to run it first.
     #[inline]
     pub fn state<T: Stateful<'v>>(&self) -> State<'v, T> {
-        let Some(ptr) = self
-            .state
+        match self.try_state() {
+            Some(state) => state,
+            None => self.state_missing(TypeId::of::<T::Tag>()),
+        }
+    }
+
+    /// Fetch previously-registered state handle, if any.
+    ///
+    /// Returns `None` for state registered by a lazy setup that hasn't run yet.
+    #[inline]
+    pub fn try_state<T: Stateful<'v>>(&self) -> Option<State<'v, T>> {
+        self.state
             .borrow()
             .get(&TypeId::of::<T::Tag>())
-            .map(|entry| entry.ptr)
-        else {
-            panic!("state not registered")
-        };
-        State(ptr.cast(), PhantomData)
+            .map(|entry| State(entry.ptr.cast(), PhantomData))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn state_missing(&self, tag: TypeId) -> ! {
+        let lazy = self.lazy.borrow();
+        if let Some(&unit) = lazy.by_tag.get(&tag)
+            && !matches!(lazy.units[unit].phase, LazyPhase::Done)
+        {
+            panic!(
+                "state of lazy unit {} has not been initialized; use `AllocExt::force_state`",
+                lazy.units[unit].tag_name
+            )
+        }
+        panic!("state not registered")
+    }
+
+    /// Insert a native module, enforcing ownership of names declared by lazy units.
+    fn insert_native_module(&self, name: &'v str, module: Value<'v>) {
+        {
+            let lazy = self.lazy.borrow();
+            let owner = lazy.by_module.get(name).copied();
+            let running = lazy.running.last().copied();
+            match (owner, running) {
+                (owner, running) if owner == running => {}
+                (Some(owner), _) => panic!(
+                    "module {name} is declared by lazy unit {}",
+                    lazy.units[owner].tag_name
+                ),
+                (None, Some(running)) => panic!(
+                    "lazy unit {} registered undeclared module {name}",
+                    lazy.units[running].tag_name
+                ),
+                (None, None) => unreachable!(),
+            }
+        }
+        let replaced = self.native_modules.borrow_mut().insert(name, module);
+        drop(replaced);
     }
 
     pub(crate) fn arena(&self) -> &Arena<'v> {
@@ -740,13 +893,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
             self.vm.inner.builtin_types.native_module,
             module,
         ));
-        let replaced = self
-            .vm
-            .inner
-            .native_modules
-            .borrow_mut()
-            .insert(self.name, module);
-        drop(replaced);
+        self.vm.inner.insert_native_module(self.name, module);
         self.vm
     }
 }
@@ -773,7 +920,7 @@ impl<'v> Register<'v> {
 }
 
 impl<'v> Alloc<'v> for Register<'v> {
-    fn alloc_vm(&mut self, _: private::Sealed) -> &Vm<'v> {
+    fn alloc_vm(&mut self, _: private::Sealed) -> &'v Vm<'v> {
         self.inner
     }
 }
@@ -801,7 +948,7 @@ pub struct Builder<'v> {
 }
 
 impl<'v> Alloc<'v> for Builder<'v> {
-    fn alloc_vm(&mut self, _: private::Sealed) -> &Vm<'v> {
+    fn alloc_vm(&mut self, _: private::Sealed) -> &'v Vm<'v> {
         self.reg.inner
     }
 }
@@ -866,6 +1013,7 @@ impl Builder<'static> {
             strings: Default::default(),
             type_singletons: Default::default(),
             error_kind_vtbls: Default::default(),
+            lazy: Default::default(),
         };
 
         // Safety: VM is kept alive for the same duration as its contents, as it's self-referential.
@@ -977,8 +1125,7 @@ impl<'v> Register<'v> {
     {
         let name = self.inner.string(name);
         let module = ty.create_raw(self.inner, value, Default::default());
-        let replaced = self.inner.native_modules.borrow_mut().insert(name, module);
-        drop(replaced);
+        self.inner.insert_native_module(name, module);
         self
     }
 
@@ -992,8 +1139,7 @@ impl<'v> Register<'v> {
     ) -> &mut Self {
         let name = self.inner.string(name);
         let module = ty.create_raw(self.inner, value, annex);
-        let replaced = self.inner.native_modules.borrow_mut().insert(name, module);
-        drop(replaced);
+        self.inner.insert_native_module(name, module);
         self
     }
 }
@@ -1013,6 +1159,57 @@ impl<'v> Builder<'v> {
         let index = self.reg.inner.local_root_count.get();
         self.reg.inner.local_root_count.set(index + 1);
         LocalRootKey::new(index)
+    }
+
+    /// Declare a lazy setup under tag `K`.
+    ///
+    /// `init` runs at most once: when Do code imports one of `modules`, or when Rust code
+    /// calls [`AllocExt::force`] with `K`. Declaring the setup under the `Tag` of the state it
+    /// registers lets [`AllocExt::force_state`] run it and fetch that state in one step.
+    ///
+    /// `init` must register every module in `modules`, and no other modules. Strand-local keys,
+    /// importers, and traps are only available on `Builder`; reserve them before declaring the
+    /// setup and move them into `init`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a setup is already declared under `K`, or if a module in `modules` is already
+    /// registered or declared by another setup.
+    pub fn lazy<K: 'static>(
+        &mut self,
+        modules: &[&str],
+        init: impl FnOnce(&mut Register<'v>) + 'v,
+    ) -> &mut Self {
+        let vm = self.reg.inner;
+        let tag_name = std::any::type_name::<K>();
+        let mut lazy = vm.lazy.borrow_mut();
+        let lazy = &mut *lazy;
+        let unit = lazy.units.len();
+        match lazy.by_tag.entry(TypeId::of::<K>()) {
+            Entry::Occupied(_) => panic!("duplicate lazy unit {tag_name}"),
+            Entry::Vacant(entry) => {
+                entry.insert(unit);
+            }
+        }
+        let native_modules = vm.native_modules.borrow();
+        let modules = modules
+            .iter()
+            .map(|name| {
+                if native_modules.contains_key(*name) || lazy.by_module.contains_key(*name) {
+                    panic!("module {name} declared by lazy unit {tag_name} is already registered");
+                }
+                let name = vm.string(name);
+                lazy.by_module.insert(name, unit);
+                name
+            })
+            .collect();
+        lazy.units.push(LazyUnit {
+            tag_name,
+            modules,
+            phase: LazyPhase::Pending(Box::new(init)),
+        });
+        drop(native_modules);
+        self
     }
 
     // Internal function for dolang-ext-shell only
@@ -1227,5 +1424,139 @@ impl Bytecode {
         strand
             .run(strand.inner, &mut frame, Slot::from_output(&mut out))
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, rc::Rc};
+
+    use super::*;
+    use crate::test_support::with_builder;
+
+    struct TagA;
+    struct TagB;
+
+    struct TestState {
+        value: i64,
+    }
+
+    impl<'v> Stateful<'v> for TestState {
+        type Tag = TagA;
+    }
+
+    #[test]
+    fn lazy_unit_runs_once_on_import() {
+        with_builder(async |vm| {
+            let runs = Rc::new(Cell::new(0));
+            let counter = runs.clone();
+            vm.lazy::<TagA>(&["lazy_test"], move |reg| {
+                counter.set(counter.get() + 1);
+                reg.register_state(TestState { value: 7 });
+                reg.module("lazy_test").value("x", 7_i64).commit();
+            });
+            assert_eq!(runs.get(), 0);
+            vm.enter_with_slots(async move |strand, [mut out]| {
+                assert!(strand.try_state::<TestState>().is_none());
+                strand.import("lazy_test", &mut out).await.unwrap();
+                strand.import("lazy_test", &mut out).await.unwrap();
+                assert_eq!(runs.get(), 1);
+                assert_eq!(strand.state::<TestState>().value, 7);
+            })
+            .await
+        });
+    }
+
+    #[test]
+    fn force_state_runs_setup() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&[], |reg| {
+                reg.register_state(TestState { value: 3 });
+            });
+            vm.enter(async |strand| {
+                assert!(strand.try_state::<TestState>().is_none());
+                assert_eq!(strand.force_state::<TestState>().value, 3);
+                assert_eq!(strand.try_state::<TestState>().unwrap().value, 3);
+                // Forcing again is a no-op
+                strand.force::<TagA>();
+            })
+            .await
+        });
+    }
+
+    #[test]
+    fn force_without_lazy_unit_is_noop() {
+        with_builder(async |vm| {
+            vm.register_state(TestState { value: 5 });
+            assert_eq!(vm.force_state::<TestState>().value, 5);
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "has not been initialized")]
+    fn state_before_force_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&[], |reg| {
+                reg.register_state(TestState { value: 1 });
+            });
+            vm.state::<TestState>();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "cyclic initialization")]
+    fn cyclic_force_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&[], |reg| reg.force::<TagB>());
+            vm.lazy::<TagB>(&[], |reg| reg.force::<TagA>());
+            vm.force::<TagA>();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "did not register declared module")]
+    fn missing_declared_module_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&["lazy_missing"], |_| {});
+            vm.force::<TagA>();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "registered undeclared module")]
+    fn undeclared_module_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&[], |reg| {
+                reg.module("lazy_undeclared").commit();
+            });
+            vm.force::<TagA>();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "is already registered")]
+    fn declaring_registered_module_panics() {
+        with_builder(async |vm| {
+            vm.module("lazy_taken").commit();
+            vm.lazy::<TagA>(&["lazy_taken"], |_| {});
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "is already registered")]
+    fn declaring_module_of_other_unit_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&["lazy_taken"], |_| {});
+            vm.lazy::<TagB>(&["lazy_taken"], |_| {});
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "is declared by lazy unit")]
+    fn committing_module_of_lazy_unit_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&["lazy_owned"], |_| {});
+            vm.module("lazy_owned").commit();
+        });
     }
 }

@@ -2105,7 +2105,7 @@ impl<'v> BinEmbryo<'v> {
     }
 
     /// Creates an empty embryo with space reserved for at least `capacity` bytes.
-    pub fn new_with_capacity(alloc: &mut impl Alloc<'v>, capacity: usize) -> Self {
+    pub fn new_with_capacity(alloc: &mut dyn Alloc<'v>, capacity: usize) -> Self {
         let mut this = Self::new();
         this.reserve(alloc, capacity);
         this
@@ -2137,7 +2137,7 @@ impl<'v> BinEmbryo<'v> {
 
     /// Ensures the embryo can accept at least `additional` more bytes
     /// without reallocating.
-    pub fn reserve(&mut self, alloc: &mut impl Alloc<'v>, additional: usize) {
+    pub fn reserve(&mut self, alloc: &mut dyn Alloc<'v>, additional: usize) {
         if additional == 0 {
             return;
         }
@@ -2172,7 +2172,7 @@ impl<'v> BinEmbryo<'v> {
     }
 
     /// Appends `slice` to the embryo.
-    pub fn extend(&mut self, alloc: &mut impl Alloc<'v>, slice: &[u8]) {
+    pub fn extend(&mut self, alloc: &mut dyn Alloc<'v>, slice: &[u8]) {
         if slice.is_empty() {
             return;
         }
@@ -2190,7 +2190,7 @@ impl<'v> BinEmbryo<'v> {
     /// Panics if `start > end` or `end > self.len()`.
     pub(crate) fn splice(
         &mut self,
-        alloc: &mut impl Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         start: usize,
         end: usize,
         replacement: &[u8],
@@ -2279,7 +2279,7 @@ impl<'v> BinEmbryo<'v> {
         Slot::from_output(&mut out).store(value);
     }
 
-    fn allocate(alloc: &mut impl Alloc<'v>, capacity: usize) -> gc::Embryo<'v, Header, [u8]> {
+    fn allocate(alloc: &mut dyn Alloc<'v>, capacity: usize) -> gc::Embryo<'v, Header, [u8]> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         unsafe { gc::Embryo::<Header, [u8]>::from_arena_capacity(vm.arena(), capacity) }
     }
@@ -2292,7 +2292,7 @@ impl<'v> StrEmbryo<'v> {
     }
 
     /// Creates an empty embryo with space reserved for at least `capacity` bytes.
-    pub fn new_with_capacity(alloc: &mut impl Alloc<'v>, capacity: usize) -> Self {
+    pub fn new_with_capacity(alloc: &mut dyn Alloc<'v>, capacity: usize) -> Self {
         let mut this = Self::new();
         this.reserve(alloc, capacity);
         this
@@ -2336,7 +2336,7 @@ impl<'v> StrEmbryo<'v> {
 
     /// Ensures the embryo can accept at least `additional` more bytes
     /// without reallocating.
-    pub fn reserve(&mut self, alloc: &mut impl Alloc<'v>, additional: usize) {
+    pub fn reserve(&mut self, alloc: &mut dyn Alloc<'v>, additional: usize) {
         if additional == 0 {
             return;
         }
@@ -2368,7 +2368,7 @@ impl<'v> StrEmbryo<'v> {
     }
 
     /// Appends `slice` to the embryo.
-    pub fn extend(&mut self, alloc: &mut impl Alloc<'v>, slice: &str) {
+    pub fn extend(&mut self, alloc: &mut dyn Alloc<'v>, slice: &str) {
         if slice.is_empty() {
             return;
         }
@@ -2395,7 +2395,7 @@ impl<'v> StrEmbryo<'v> {
     /// Panics if `start > end` or `end > self.len()`.
     pub(crate) unsafe fn splice(
         &mut self,
-        alloc: &mut impl Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         start: usize,
         end: usize,
         replacement: &[u8],
@@ -2953,7 +2953,7 @@ pub struct Root<'v>(Gc<'v, RootInner<'v>>);
 impl<'v> Root<'v> {
     /// Create new root.
     #[inline]
-    pub fn new(alloc: &mut impl Alloc<'v>) -> Self {
+    pub fn new(alloc: &mut dyn Alloc<'v>) -> Self {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         Self(Gc::new(vm.arena(), RootInner(Value::NIL)))
     }

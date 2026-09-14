@@ -49,11 +49,11 @@ pub use object::{Instance, Object, Type};
 pub mod vm {
     pub use dolang_runtime::frame::Frame;
     pub use dolang_runtime::vm::{
-        Alloc, Builder, Bytecode, ModuleBuilder, Register, State, Stateful, Vm,
+        Alloc, AllocExt, Builder, Bytecode, ModuleBuilder, Register, State, Stateful, Vm,
     };
 }
 
-pub use vm::{Alloc, Bytecode, Frame, State, Vm};
+pub use vm::{Alloc, AllocExt, Bytecode, Frame, State, Vm};
 
 /// Strands
 pub mod strand {

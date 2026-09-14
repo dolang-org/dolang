@@ -851,6 +851,33 @@ should take `&mut Register<'v>`; only VM-wide configuration (strand-local keys,
 importers, traps) needs `&mut Builder<'v>`. Functions exported for other crates
 that only look up state should take `&Vm<'v>`, never a builder.
 
+### Lazy Setup
+
+`Builder::lazy` defers registration until something needs it. The setup runs at
+most once: when Do code imports one of the modules it declares, or when Rust
+code forces its tag through `Alloc`. Declare it under the `Tag` of the state it
+registers, so `force_state` can run it and return that state:
+
+```rust
+fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Self::Error> {
+    builder.lazy::<global::Tag>(&["my_ext"], |reg| {
+        let global = Global::new(reg);
+        let global = reg.register_state(global);
+        configure_vm(reg, global);
+    });
+    Ok(())
+}
+```
+
+- The setup must register exactly the modules it declares; anything else panics.
+- Strand-local keys, importers, and traps are `Builder`-only. Reserve them in
+  `apply_vm` and move them into the setup.
+- `Vm::state` never runs a setup, and panics on state whose setup hasn't run.
+  Public functions for other crates that create objects call
+  `strand.force_state::<Global>()` (`Alloc` must be in scope).
+- Code that only recognizes existing objects can use `Vm::try_state`: if it
+  returns `None`, the setup hasn't run, so no instance exists.
+
 ### Global State (`State<'v, T>`)
 
 `Register::register_state` stores a value for the lifetime of the VM and returns

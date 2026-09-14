@@ -21,7 +21,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, Slots, StrEmbryo, Value},
-    vm::{ImportCacheEntry, ImportGuard, Vm},
+    vm::{ImportCacheEntry, ImportGuard, Vm, force_lazy_unit},
 };
 use dolang_bytecode::{Opcode, builtin};
 
@@ -104,7 +104,14 @@ impl<'v> Vm<'v> {
         name: &str,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let module = self.native_modules.borrow().get(name).map(Value::dup);
+        let mut module = self.native_modules.borrow().get(name).map(Value::dup);
+        if module.is_none() {
+            let unit = self.lazy.borrow().by_module.get(name).copied();
+            if let Some(unit) = unit {
+                force_lazy_unit(strand, unit);
+                module = self.native_modules.borrow().get(name).map(Value::dup);
+            }
+        }
         if let Some(module) = module {
             out.store(module);
             return Ok(());

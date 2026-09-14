@@ -3000,6 +3000,12 @@ impl<'v, 'a, T: Object<'v>> DerefMut for TypeBuilder<'v, 'a, T> {
     }
 }
 
+impl<'v, 'a, T: Object<'v>> Alloc<'v> for TypeBuilder<'v, 'a, T> {
+    fn alloc_vm(&mut self, sealed: crate::vm::private::Sealed) -> &'v Vm<'v> {
+        self.inner.vm.alloc_vm(sealed)
+    }
+}
+
 impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
     pub(crate) fn new(
         vm: &'a mut Register<'v>,

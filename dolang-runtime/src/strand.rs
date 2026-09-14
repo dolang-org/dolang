@@ -218,6 +218,14 @@ pub struct LocalKey<'v, T> {
     phantom: PhantomData<(*mut T, &'v mut &'v ())>,
 }
 
+impl<T> Clone for LocalKey<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for LocalKey<'_, T> {}
+
 impl<'v, T> LocalKey<'v, T> {
     // SAFETY: index must match position of associated vtbl in VmInner
     pub(crate) unsafe fn new(index: usize) -> Self {
@@ -1436,8 +1444,8 @@ impl<'v, 'a> AsRef<Vm<'v>> for Strand<'v, 'a> {
 }
 
 impl<'v, 'a> Alloc<'v> for Strand<'v, 'a> {
-    fn alloc_vm(&mut self, _: crate::vm::private::Sealed) -> &Vm<'v> {
-        self
+    fn alloc_vm(&mut self, _: crate::vm::private::Sealed) -> &'v Vm<'v> {
+        self.vm()
     }
 }
 

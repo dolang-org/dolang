@@ -10,6 +10,19 @@ preventing mixing objects from different VM instances. It manages a
 garbage collector, global symbol table, type registry, loaded programs,
 etc.
 
+Registration goes through `Register`, a handle lent out only as
+`&mut Register` from a context that may allocate. `Builder` and
+`TypeBuilder` dereference to it. Strand-local keys, importers, traps, and lazy
+setups are declared on `Builder` alone, because strands and the import path
+depend on them being fixed before the VM is entered.
+
+A lazy setup (`Builder::lazy`) is keyed by a tag type and owns a set of module
+names. It runs at most once, with a fresh `Register`, when an import misses a
+module it owns or when `AllocExt::force` names its tag. Forcing requires an
+`Alloc` because setup allocates; `Vm::state` never forces, and panics on state whose
+setup hasn't run. The table tracks the running setups to report cycles, and
+rejects any module registered outside the setup that declared it.
+
 ## Value Representation
 
 Values use a tagged pointer scheme where LSB bits encode type tags. Primitives
