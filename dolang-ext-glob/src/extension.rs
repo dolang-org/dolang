@@ -10,7 +10,7 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::global::Global;
+use crate::global::{self, Global};
 
 pub struct GlobExt;
 
@@ -36,9 +36,11 @@ impl Extension for GlobExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        crate::glob::configure_vm(builder, global);
+        builder.lazy::<global::Tag>(&["glob"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state(global);
+            crate::glob::configure_vm(reg, global);
+        });
         Ok(())
     }
 }

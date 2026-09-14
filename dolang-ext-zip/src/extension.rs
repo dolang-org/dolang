@@ -10,7 +10,10 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::{global::Global, zip};
+use crate::{
+    global::{self, Global},
+    zip,
+};
 
 /// Zip extension
 pub struct ZipExt;
@@ -37,9 +40,11 @@ impl Extension for ZipExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        zip::configure_vm(builder, global);
+        builder.lazy::<global::Tag>(&["zip"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state(global);
+            zip::configure_vm(reg, global);
+        });
         Ok(())
     }
 }

@@ -1,7 +1,7 @@
 use dolang::runtime::{
     Sym, Type,
     object::{FlagLikeExt, Flags},
-    vm::{Builder, Stateful},
+    vm::{Register, Stateful},
 };
 
 use crate::{
@@ -100,7 +100,7 @@ impl<'v> Stateful<'v> for Global<'v> {
 }
 
 impl<'v> Global<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         let manager = builder.register_type::<ScManager>();
         let service = builder.register_type::<Service>();
         let config = builder.register_type::<Config>();

@@ -14,7 +14,7 @@ use dolang::runtime::{
     object::{DictLike, DictView, DictViewSink, Mut, Ref, TypeBuilder},
     unpack,
     value::{BinEmbryo, TypeObject},
-    vm::Builder,
+    vm::Register,
 };
 use dolang_ext_time::{as_datetime, datetime};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -1459,7 +1459,7 @@ impl<'v> Object<'v> for LineIter<'v> {
     }
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     let mut http = builder.module("http");
 
     http = http

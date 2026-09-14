@@ -291,7 +291,7 @@ pub(crate) struct Sid;
 
 pub(crate) fn create_sid<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     sid: VfsSid,
     out: &mut Slot<'v, '_>,
 ) {
@@ -319,13 +319,13 @@ pub(crate) fn as_windows_sid<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Option<VfsSid> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.try_state::<WindowsSecurityGlobal<'v>>()?;
     let sid = global.types.sid.cast(value)?;
     sid.enter_sync(strand, |_strand, sid| Some(sid.annex().clone()))
 }
 
 pub(crate) fn windows_sid<'v>(strand: &mut Strand<'v, '_>, sid: VfsSid, out: &mut Slot<'v, '_>) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<WindowsSecurityGlobal<'v>>();
     create_sid(strand, global, sid, out);
 }
 
@@ -404,7 +404,7 @@ const WELL_KNOWN_SIDS: &[(&str, WellKnownSid)] = &[
 pub(crate) struct WellKnownSids<'v>(Box<[(Sym<'v, 'v>, WellKnownSid)]>);
 
 impl<'v> WellKnownSids<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         let mut entries: Box<[_]> = WELL_KNOWN_SIDS
             .iter()
             .map(|(name, well_known)| (builder.sym(name), *well_known))
@@ -429,7 +429,7 @@ fn sid_from_sym<'v, 's>(
     sym: Sym<'v, '_>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsSid> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<WindowsSecurityGlobal<'v>>();
     match global.syms.well_known_sids.get(sym) {
         Some(sid) => Ok(sid),
         None => {
@@ -555,7 +555,7 @@ impl<'v> Object<'v> for Sid {
             .method("lookup", async move |this, strand, args, mut out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let sid = this.annex().clone();
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 if global.local.get(strand).target().os().family() != OperatingSystemFamily::Windows
                 {
                     return Err(Error::not_supported(strand));
@@ -575,7 +575,7 @@ impl<'v> Object<'v> for Sid {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<WindowsSecurityGlobal<'v>>();
         let Some(other) = global.types.sid.cast(other) else {
             return Err(Error::not_supported(strand));
         };
@@ -627,7 +627,7 @@ pub(crate) struct Acl;
 
 fn create_acl<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     descriptor: Instance<'v, '_, SecDesc>,
     component: AclComponent,
     out: &mut Slot<'v, '_>,
@@ -658,7 +658,7 @@ fn with_acl<'v, 's, T>(
     if let AclAnnex::Owned(acl) = &*this.annex() {
         return Ok(f(acl));
     }
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<WindowsSecurityGlobal<'v>>();
     let borrow = this.borrow(strand)?;
     let descriptor = global
         .types
@@ -697,7 +697,7 @@ impl<'v> ArrayLike<'v> for AclAces {
         index: usize,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<WindowsSecurityGlobal<'v>>();
         global
             .types
             .ace
@@ -732,7 +732,7 @@ impl<'v> Object<'v> for Acl {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<WindowsSecurityGlobal<'v>>();
         let revision_sym = global.syms.revision;
         let ([mut iterable], [revision]) = unpack!(strand, args, 1, 0, revision_sym = None)?;
         let revision = revision
@@ -822,7 +822,7 @@ fn ace_u8<'v, 's>(
 /// iterable of symbols naming generic rights, or a raw integer.
 async fn ace_mask<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, WinAccessMask> {
@@ -868,7 +868,7 @@ async fn ace_flags<'v, 's>(
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, WinAceFlags> {
-    let ace_flags = strand.state::<Global<'v>>().types.ace_flags;
+    let ace_flags = strand.state::<WindowsSecurityGlobal<'v>>().types.ace_flags;
     if let Some(flags) = ace_flags.cast_flags(value) {
         return Ok(flags.0);
     }
@@ -905,7 +905,7 @@ fn with_ace<'v, 's, T>(
     if let AceAnnex::Owned(ace) = &*this.annex() {
         return Ok(f(ace));
     }
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<WindowsSecurityGlobal<'v>>();
     let borrow = this.borrow(strand)?;
     let acl = global
         .types
@@ -941,7 +941,7 @@ impl<'v> Object<'v> for Ace {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<WindowsSecurityGlobal<'v>>();
         let allow_sym = global.syms.allow;
         let deny_sym = global.syms.deny;
         let audit_sym = global.syms.audit;
@@ -1190,7 +1190,7 @@ impl<'v> Object<'v> for Ace {
             })
             .get("flags", |this, strand, out| {
                 let value = with_ace(this, strand, |ace| ace.flags())?;
-                let flags = strand.state::<Global<'v>>().types.ace_flags;
+                let flags = strand.state::<WindowsSecurityGlobal<'v>>().types.ace_flags;
                 flags.create_flags(strand, AceFlags(value), out);
                 Ok(())
             })
@@ -1203,7 +1203,7 @@ impl<'v> Object<'v> for Ace {
                 let Some(value) = with_ace(this, strand, |ace| ace.mask())? else {
                     return Err(Error::field(strand, mask_field));
                 };
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 global
                     .types
                     .access_mask
@@ -1214,7 +1214,7 @@ impl<'v> Object<'v> for Ace {
                 let Some(value) = with_ace(this, strand, |ace| ace.sid())? else {
                     return Err(Error::field(strand, sid_field));
                 };
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 create_sid(strand, global, value, &mut out);
                 Ok(())
             })
@@ -1480,7 +1480,7 @@ impl SecDescComponents {
 
 fn downcast_sid_component<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     value: Option<&Value<'v>>,
     name: &'static str,
 ) -> Result<'v, 's, NullableComponent<VfsSid>> {
@@ -1509,7 +1509,7 @@ fn downcast_sid_component<'v, 's>(
 
 fn downcast_acl_component<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     value: Option<&Value<'v>>,
     name: &'static str,
 ) -> Result<'v, 's, NullableComponent<VfsAclBuf>> {
@@ -1544,7 +1544,7 @@ fn parse_bool_component<'v, 's>(
 /// symbol naming a well-known SID.
 fn coerce_sid<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsSid> {
@@ -1562,7 +1562,7 @@ fn coerce_sid<'v, 's>(
 /// instead of [`coerce_sid`] and handle the string themselves.
 fn coerce_sid_non_str<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, Option<VfsSid>> {
@@ -1604,7 +1604,7 @@ struct AceComponents {
 
 async fn ace_components_from_spec<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     dict: Dict<'v, '_>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, AceComponents> {
@@ -1737,7 +1737,7 @@ async fn ace_components_from_spec<'v, 's>(
 
 async fn coerce_ace<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsAceBuf> {
@@ -1835,7 +1835,7 @@ fn ace_from_components<'v, 's>(
 /// Reads an ACE from the lowercase `ace` function's named arguments.
 async fn ace_from_args<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     args: Args<'v, '_>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsAceBuf> {
@@ -1947,7 +1947,7 @@ struct AclComponents {
 
 async fn acl_components_from_spec<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     dict: Dict<'v, '_>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, AclComponents> {
@@ -2004,7 +2004,7 @@ async fn acl_components_from_spec<'v, 's>(
 
 async fn coerce_acl<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsAclBuf> {
@@ -2042,7 +2042,7 @@ async fn coerce_acl<'v, 's>(
 /// optional keyword argument.
 async fn acl_from_args<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     args: Args<'v, '_>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsAclBuf> {
@@ -2073,7 +2073,7 @@ async fn acl_from_args<'v, 's>(
 /// Parses an ACL revision option.
 fn acl_revision<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, AclRevision> {
@@ -2109,7 +2109,7 @@ fn empty_sec_desc() -> VfsSecDesc {
 
 fn coerce_sid_option<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, Option<VfsSid>> {
@@ -2121,7 +2121,7 @@ fn coerce_sid_option<'v, 's>(
 
 async fn coerce_acl_option<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, Option<VfsAclBuf>> {
@@ -2133,7 +2133,7 @@ async fn coerce_acl_option<'v, 's>(
 
 async fn sec_desc_components_from_spec<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     dict: Dict<'v, '_>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, SecDescComponents> {
@@ -2337,7 +2337,7 @@ async fn sec_desc_components_from_spec<'v, 's>(
 /// descriptor spec into a native security descriptor.
 async fn coerce_sec_desc<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsSecDesc> {
@@ -2364,7 +2364,7 @@ async fn coerce_sec_desc<'v, 's>(
 
 pub(crate) async fn sec_desc_from_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     value: &Value<'v>,
     name: &str,
 ) -> Result<'v, 's, VfsSecDesc> {
@@ -2373,7 +2373,7 @@ pub(crate) async fn sec_desc_from_value<'v, 's>(
 
 pub(crate) fn create_sec_desc<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     sec_desc: VfsSecDesc,
     out: &mut Slot<'v, '_>,
 ) {
@@ -2391,7 +2391,7 @@ pub(crate) fn create_sec_desc<'v>(
 /// [`SecDesc::with`](SecDesc) would.
 pub(crate) async fn sec_desc_from_args<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     args: Args<'v, '_>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsSecDesc> {
@@ -2578,7 +2578,7 @@ impl<'v> Object<'v> for SecDesc {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<WindowsSecurityGlobal<'v>>();
         let owner = global.syms.owner;
         let group = global.syms.group;
         let dacl = global.syms.dacl;
@@ -2793,7 +2793,7 @@ impl<'v> Object<'v> for SecDesc {
                 Ok(())
             })
             .get("control", |this, strand, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 global.types.sec_desc_control.create_flags(
                     strand,
                     SecDescControl(this.annex().control()),
@@ -2802,7 +2802,7 @@ impl<'v> Object<'v> for SecDesc {
                 Ok(())
             })
             .get("mask", |this, strand, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 global
                     .types
                     .sec_info
@@ -2821,7 +2821,7 @@ impl<'v> Object<'v> for SecDesc {
                 let Some(value) = descriptor.owner().filter(|_| descriptor.owner_loaded()) else {
                     return Err(Error::field(strand, owner));
                 };
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 create_sid(strand, global, value.clone(), &mut out);
                 Ok(())
             })
@@ -2830,7 +2830,7 @@ impl<'v> Object<'v> for SecDesc {
                 let Some(value) = descriptor.group().filter(|_| descriptor.group_loaded()) else {
                     return Err(Error::field(strand, group));
                 };
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 create_sid(strand, global, value.clone(), &mut out);
                 Ok(())
             })
@@ -2842,7 +2842,7 @@ impl<'v> Object<'v> for SecDesc {
                 if descriptor.dacl().is_none() {
                     Output::set(strand, out, Nil);
                 } else {
-                    let global = strand.state::<Global<'v>>();
+                    let global = strand.state::<WindowsSecurityGlobal<'v>>();
                     create_acl(strand, global, this, AclComponent::Dacl, &mut out);
                 }
                 Ok(())
@@ -2855,7 +2855,7 @@ impl<'v> Object<'v> for SecDesc {
                 if descriptor.sacl().is_none() {
                     Output::set(strand, out, Nil);
                 } else {
-                    let global = strand.state::<Global<'v>>();
+                    let global = strand.state::<WindowsSecurityGlobal<'v>>();
                     create_acl(strand, global, this, AclComponent::Sacl, &mut out);
                 }
                 Ok(())
@@ -3025,7 +3025,7 @@ impl<'v> Object<'v> for SecDesc {
                     sacl_protected = None,
                     rm_control = None
                 )?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 let rm_control = match rm_control_value.as_deref() {
                     Some(value) if value.is_nil() => NullableComponent::Clear,
                     Some(value) => NullableComponent::Set(ace_u8(
@@ -3125,7 +3125,7 @@ pub(crate) struct SidName;
 
 pub(crate) fn create_sid_name<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     name: VfsSidName,
     out: &mut Slot<'v, '_>,
 ) {
@@ -3156,7 +3156,7 @@ impl<'v> Object<'v> for SidName {
         let logon_session = builder.sym("LOGON_SESSION");
         builder
             .get("sid", |this, strand, mut out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 create_sid(strand, global, this.annex().sid().clone(), &mut out);
                 Ok(())
             })
@@ -3197,7 +3197,7 @@ impl<'v> Object<'v> for SidName {
             })
             .type_method("lookup", async move |_this, strand, args, mut out| {
                 let ([value], []) = unpack!(strand, args, 1, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 if global.local.get(strand).target().os().family() != OperatingSystemFamily::Windows
                 {
                     return Err(Error::not_supported(strand));
@@ -3252,7 +3252,7 @@ impl<'v> Object<'v> for TokenGroup {
                 Ok(())
             })
             .get("attributes", |this, strand, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 global.types.token_group_attributes.create_flags(
                     strand,
                     TokenGroupAttributes(this.annex().attributes()),
@@ -3339,7 +3339,7 @@ impl<'v> ArrayLike<'v> for TokenGroups {
             .get(index)
             .expect("array view index was normalized")
             .clone();
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<WindowsSecurityGlobal<'v>>();
         strand.with_slots_sync(|strand, [mut sid]| {
             create_sid(strand, global, token_group.sid().clone(), &mut sid);
             global
@@ -3416,7 +3416,7 @@ impl<'v> Object<'v> for TokenInfo {
 /// needs no slot of its own.
 pub(crate) fn create_token_info<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
     info: &WindowsTokenInfo,
     out: &mut Slot<'v, '_>,
 ) {
@@ -3458,7 +3458,10 @@ pub(crate) fn create_token_info<'v>(
     });
 }
 
-pub(super) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(
+    builder: &mut Register<'v>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
+) {
     builder
         .module("security.windows")
         .value("AccessMask", global.types.access_mask)
@@ -3503,7 +3506,7 @@ pub(super) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         )
         .function("token_info", async move |strand, args, mut out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
-            let security = security_info(strand, global)?;
+            let security = security_info(strand, global.local)?;
             let Some(info) = security.windows() else {
                 return Err(Error::not_supported(strand));
             };

@@ -10,7 +10,7 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::global::Global;
+use crate::global::{self, Global};
 
 /// Indicatif extension
 pub struct IndicatifExt;
@@ -37,9 +37,13 @@ impl Extension for IndicatifExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        crate::progress::configure_vm(builder, global);
+        // Strand-local keys can only be reserved on the builder
+        let local = builder.local();
+        builder.lazy::<global::Tag>(&["progress"], move |reg| {
+            let global = Global::new(reg, local);
+            let global = reg.register_state(global);
+            crate::progress::configure_vm(reg, global);
+        });
         Ok(())
     }
 }

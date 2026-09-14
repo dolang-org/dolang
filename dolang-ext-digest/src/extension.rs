@@ -13,6 +13,9 @@ use dolang::{
 /// Digest extension
 pub struct DigestExt;
 
+/// Lazy setup tag
+struct Tag;
+
 #[derive(Debug)]
 pub enum Infallible {}
 
@@ -35,7 +38,7 @@ impl Extension for DigestExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        crate::digest::configure_vm(builder);
+        builder.lazy::<Tag>(&["digest"], crate::digest::configure_vm);
         Ok(())
     }
 }

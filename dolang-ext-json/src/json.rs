@@ -16,7 +16,7 @@ use dolang::runtime::{
     error::{Error, ResultExt},
     unpack,
     value::{Empty, Nil, View},
-    vm::Builder,
+    vm::Register,
 };
 
 /// Wraps a value for serde serialization.
@@ -267,7 +267,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     }
 }
 
-pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
+pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
     let indent_sym = builder.sym("indent");
 
     builder

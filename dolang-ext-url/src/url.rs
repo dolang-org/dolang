@@ -5,12 +5,12 @@ use dolang::runtime::value::fmt::Format;
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     error::ResultExt,
     object::{ArrayLike, ArrayView, Cast, DictLike, DictView, DictViewSink, TypeBuilder},
     unpack,
     value::{Nil, Str},
-    vm::Builder,
+    vm::Register,
 };
 use percent_encoding::percent_decode_str;
 
@@ -29,12 +29,14 @@ enum UrlOrStr<'v, 'a> {
 }
 
 impl<'v, 'a> UrlOrStr<'v, 'a> {
+    /// `global` is `None` when the extension hasn't been initialized, in which case no `Url`
+    /// can exist yet.
     fn new<'s>(
         strand: &mut Strand<'v, 's>,
-        global: State<'v, Global<'v>>,
+        global: Option<State<'v, Global<'v>>>,
         value: &'a Value<'v>,
     ) -> Result<'v, 's, Self> {
-        if let Some(url) = global.types.url.cast(value) {
+        if let Some(url) = global.and_then(|global| global.types.url.cast(value)) {
             Ok(Self::Url(url))
         } else if let Some(str) = value.as_str(strand) {
             Ok(Self::Str(str))
@@ -168,7 +170,7 @@ fn create_url_with_global<'v, 'a>(
 
 /// Creates a Do `url.Url` object from an owned `url::Url`.
 pub fn create_url<'v, 'a>(strand: &mut Strand<'v, '_>, url: url::Url, out: Slot<'v, 'a>) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<Global<'v>>();
     create_url_with_global(global, strand, url, out);
 }
 
@@ -177,7 +179,7 @@ pub fn value_to_url<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Result<'v, 's, url::Url> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.try_state::<Global<'v>>();
     UrlOrStr::new(strand, global, value)?.to_url(strand)
 }
 
@@ -436,7 +438,7 @@ impl<'v> Object<'v> for Url {
     }
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("url")
         .value("Url", global.types.url)

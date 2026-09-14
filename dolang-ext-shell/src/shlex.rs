@@ -13,7 +13,7 @@ use dolang::{
         object::{Mut, TypeBuilder},
         unpack,
         value::{PinStr, TypeObject},
-        vm::Builder,
+        vm::Register,
     },
 };
 use shlex::Shlex;
@@ -74,7 +74,7 @@ pub(crate) fn configure_compiler<'a>(_config: &mut Config<'a>) {
     // Not added to prelude
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>) {
     let iter = builder.register_type::<Iter>();
 
     builder

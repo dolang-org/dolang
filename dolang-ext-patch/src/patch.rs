@@ -19,7 +19,7 @@ use dolang::runtime::{
     object::{Mut, TypeBuilder},
     unpack,
     value::{Nil, PinBin, PinStr, TypeObject},
-    vm::Builder,
+    vm::Register,
 };
 
 use crate::global::Global;
@@ -124,7 +124,7 @@ pub(crate) struct PatchIter<'v> {
     _backing: Backing<'v>,
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     let source_sym = builder.sym("source");
     let target_sym = builder.sym("target");
 

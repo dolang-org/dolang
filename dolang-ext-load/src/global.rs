@@ -2,7 +2,7 @@ use dolang::runtime::{
     Output,
     object::Type,
     value::{Empty, Root},
-    vm::{Builder, Stateful},
+    vm::{Register, Stateful},
 };
 
 use crate::load::ImportHandler;
@@ -23,7 +23,7 @@ impl<'v> Stateful<'v> for Global<'v> {
 }
 
 impl<'v> Global<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         let mut root = Root::new(builder);
         Output::set(builder, &mut root, Empty::Dict);
         Self {

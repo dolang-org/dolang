@@ -1,14 +1,19 @@
 use std::ops::{BitAnd, BitOr, BitXor, Not};
 
 use dolang::runtime::{
-    Error, Object, Output, Result, State, Strand, Sym,
+    AllocExt, Error, Object, Output, Result, State, Strand, Sym,
     object::{FlagLike, FlagsInstanceExt, FlagsTypeExt, Instance, TypeBuilder},
     unpack,
     value::Value,
 };
 use dolang_vfs::metadata::{FileType, Metadata as VfsMetadata, Mode as VfsMode};
 
-use crate::{fs::attrs, global::Global, security::Permission, util};
+use crate::{
+    fs::attrs,
+    global::{FsGlobal, UnixSecurityGlobal, WindowsSecurityGlobal},
+    security::Permission,
+    util,
+};
 
 const NANOS_PER_SEC_I128: i128 = 1_000_000_000;
 
@@ -89,17 +94,26 @@ impl FlagLike for Mode {
     ) -> TypeBuilder<'v, 'a, dolang::runtime::object::Flags<Self>> {
         builder
             .get("owner", |this, strand, out| {
-                let permission = strand.state::<Global<'v>>().types.permission;
+                let permission = strand
+                    .force_state::<UnixSecurityGlobal<'v>>()
+                    .types
+                    .permission;
                 permission.create_flags(strand, Permission(this.flags().0.owner()), out);
                 Ok(())
             })
             .get("group", |this, strand, out| {
-                let permission = strand.state::<Global<'v>>().types.permission;
+                let permission = strand
+                    .force_state::<UnixSecurityGlobal<'v>>()
+                    .types
+                    .permission;
                 permission.create_flags(strand, Permission(this.flags().0.group()), out);
                 Ok(())
             })
             .get("other", |this, strand, out| {
-                let permission = strand.state::<Global<'v>>().types.permission;
+                let permission = strand
+                    .force_state::<UnixSecurityGlobal<'v>>()
+                    .types
+                    .permission;
                 permission.create_flags(strand, Permission(this.flags().0.other()), out);
                 Ok(())
             })
@@ -119,13 +133,13 @@ impl FlagLike for Mode {
 pub(crate) struct Metadata;
 
 pub(crate) struct MetadataAnnex<'v> {
-    pub(crate) global: State<'v, Global<'v>>,
+    pub(crate) global: State<'v, FsGlobal<'v>>,
     pub(crate) inner: VfsMetadata,
 }
 
 pub(crate) fn file_type_to_sym<'v>(
     file_type: FileType,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
 ) -> Sym<'v, 'v> {
     match file_type {
         FileType::File => global.syms.file,
@@ -175,7 +189,7 @@ fn attr_field<'v, 's>(
 
 pub(crate) fn create_metadata<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     metadata: VfsMetadata,
     out: impl Output<'v>,
 ) {
@@ -343,7 +357,8 @@ impl<'v> Object<'v> for Metadata {
                     let Some(value) = windows.user().cloned() else {
                         return Err(Error::field(strand, owner));
                     };
-                    crate::security::create_sid(strand, annex.global, value, &mut out);
+                    let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
+                    crate::security::create_sid(strand, windows, value, &mut out);
                     return Ok(());
                 }
                 util::option_field(strand, annex.inner.unix().map(|v| v.uid()), owner, out)
@@ -354,7 +369,8 @@ impl<'v> Object<'v> for Metadata {
                     let Some(value) = windows.group().cloned() else {
                         return Err(Error::field(strand, group));
                     };
-                    crate::security::create_sid(strand, annex.global, value, &mut out);
+                    let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
+                    crate::security::create_sid(strand, windows, value, &mut out);
                     return Ok(());
                 }
                 util::option_field(strand, annex.inner.unix().map(|v| v.gid()), group, out)

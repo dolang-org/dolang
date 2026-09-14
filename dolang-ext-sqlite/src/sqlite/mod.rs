@@ -11,7 +11,7 @@ use dolang::runtime::{object::fmt, strand::InterruptMask};
 
 use dolang::runtime::{
     Error, Instance, Object, Result, State, Strand, call, error::ResultExt, method, unpack,
-    vm::Builder,
+    vm::Register,
 };
 use libsqlite3_sys::{
     SQLITE_BUSY, SQLITE_LOCKED, SQLITE_OK, SQLITE_OPEN_CREATE, SQLITE_OPEN_READWRITE, sqlite3,
@@ -85,7 +85,7 @@ fn map_sqlite_errcode<'v, 's>(strand: &mut Strand<'v, 's>, rc: i32) -> Error<'v,
     }
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     // Register the shell VFS for container-aware file operations.
     #[cfg(unix)]
     crate::vfs::register_vfs().expect("Failed to register shell VFS");

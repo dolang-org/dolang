@@ -7,7 +7,10 @@ use std::{
     rc::Rc,
 };
 
-use dolang::runtime::{State, Strand, strand};
+use dolang::runtime::{
+    Strand,
+    strand::{self, LocalKey},
+};
 use dolang_vfs::{
     Vfs,
     process::Signal,
@@ -15,7 +18,7 @@ use dolang_vfs::{
     target::{OperatingSystem, OperatingSystemFamily, TargetInfo},
 };
 
-use crate::{global::Global, shell_args::ArgsData};
+use crate::shell_args::ArgsData;
 use dolang_vfs::path as vfs_path;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -261,18 +264,18 @@ impl Local {
 
     pub(crate) async fn with_vfs<'v, 's, R>(
         strand: &mut Strand<'v, 's>,
-        global: State<'v, Global<'v>>,
+        key: LocalKey<'v, Local>,
         vfs: Vfs,
         f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> R,
     ) -> R {
         let cwd = vfs.cwd().to_path_buf();
         let env = Rc::new(Env::new(None, true, vfs.env(), vfs.target().os()));
-        let local = global.local.get(strand);
+        let local = key.get(strand);
         let orig_vfs = local.replace_vfs(vfs);
         let orig_cwd = local.replace_cwd(cwd);
         let orig_env = local.replace_env(Rc::new(Env::derived(env, HashMap::new())));
         let result = f(strand).await;
-        let local = global.local.get(strand);
+        let local = key.get(strand);
         local.replace_vfs(orig_vfs);
         local.replace_cwd(orig_cwd);
         local.replace_env(orig_env);

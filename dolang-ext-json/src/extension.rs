@@ -13,6 +13,9 @@ use dolang::{
 /// JSON extension
 pub struct JsonExt;
 
+/// Lazy setup tag
+struct Tag;
+
 #[derive(Debug)]
 pub enum Infallible {}
 
@@ -35,7 +38,7 @@ impl Extension for JsonExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        crate::json::configure(builder);
+        builder.lazy::<Tag>(&["json"], crate::json::configure);
         Ok(())
     }
 }

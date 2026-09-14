@@ -18,7 +18,7 @@ use dolang::runtime::{
     object::Ref,
     unpack,
     value::{Array, Nil, View},
-    vm::Builder,
+    vm::Register,
 };
 
 use crate::{
@@ -46,7 +46,7 @@ struct WalkState {
     generated: usize,
 }
 
-pub(crate) fn configure<'v>(builder: &mut Builder<'v>, state: State<'v, Global<'v>>) {
+pub(crate) fn configure<'v>(builder: &mut Register<'v>, state: State<'v, Global<'v>>) {
     builder
         .module("xml")
         .function("decode", async move |strand, args, mut out| {

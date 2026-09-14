@@ -8,7 +8,7 @@ use dolang::runtime::{
     strand::InterruptMask,
     unpack,
     value::{Array, Dict, Empty},
-    vm::Builder,
+    vm::Register,
 };
 use dolang_ext_time::{as_datetime, datetime};
 use dolang_ext_url::create_url;
@@ -1365,7 +1365,7 @@ impl<'v> Object<'v> for MockObject {
     }
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("http.mock")
         .value("Mock", global.types.mock)

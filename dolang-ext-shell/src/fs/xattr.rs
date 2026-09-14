@@ -6,7 +6,7 @@ use dolang::runtime::{
 };
 use dolang_vfs::file::{XattrEntry as VfsXattrEntry, XattrNamespace};
 
-use crate::{error::ResultExt as _, global::Global, util};
+use crate::{error::ResultExt as _, global::FsGlobal, util};
 use dolang_vfs::path as vfs_path;
 
 pub(crate) struct XattrEntry;
@@ -20,12 +20,12 @@ pub(crate) struct XattrIter {
 }
 
 pub(crate) struct XattrIterAnnex<'v> {
-    pub(crate) global: State<'v, Global<'v>>,
+    pub(crate) global: State<'v, FsGlobal<'v>>,
 }
 
 pub(crate) fn create_xattr_entry<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     entry: VfsXattrEntry,
     out: impl Output<'v>,
 ) {
@@ -39,7 +39,7 @@ pub(crate) fn create_xattr_entry<'v>(
 
 pub(crate) fn create_xattr_iter<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     entries: Vec<VfsXattrEntry>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
@@ -56,7 +56,7 @@ pub(crate) fn create_xattr_iter<'v, 's>(
 
 pub(crate) fn parse_name<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     value: &Value<'v>,
     namespace: Option<Slot<'v, '_>>,
 ) -> Result<'v, 's, (String, Option<String>)> {
@@ -83,7 +83,7 @@ pub(crate) fn parse_name<'v, 's>(
 
 pub(crate) fn parse_named_namespace<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     namespace: &Value<'v>,
 ) -> Result<'v, 's, String> {
     if let Some(sym) = namespace.as_sym(strand) {
@@ -104,7 +104,7 @@ pub(crate) fn parse_named_namespace<'v, 's>(
 
 pub(crate) async fn path_list<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     namespace: Option<Slot<'v, '_>>,
     resolve: Option<Slot<'v, '_>>,
@@ -148,7 +148,7 @@ pub(crate) async fn path_list<'v, 's>(
 
 pub(crate) async fn path_get<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     name: &Value<'v>,
     namespace: Option<Slot<'v, '_>>,
@@ -170,7 +170,7 @@ pub(crate) async fn path_get<'v, 's>(
 
 pub(crate) async fn path_set<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     name: &Value<'v>,
     namespace: Option<Slot<'v, '_>>,
@@ -191,7 +191,7 @@ pub(crate) async fn path_set<'v, 's>(
 
 pub(crate) async fn path_remove<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     name: &Value<'v>,
     namespace: Option<Slot<'v, '_>>,

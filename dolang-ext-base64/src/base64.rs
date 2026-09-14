@@ -5,7 +5,7 @@ use ::base64::{
 };
 
 use dolang::runtime::{
-    Error, Output, Result, Strand, Sym, Value, unpack, value::View, vm::Builder,
+    Error, Output, Result, Strand, Sym, Value, unpack, value::View, vm::Register,
 };
 
 /// Base64 alphabet (RFC 4648)
@@ -127,7 +127,7 @@ fn decode_bytes(
         .map_err(|e| e.to_string())
 }
 
-pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
+pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
     let alphabet_sym = builder.sym("alphabet");
     let pad_sym = builder.sym("pad");
     let syms = AlphaSyms {

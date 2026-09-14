@@ -1,6 +1,6 @@
 use dolang::runtime::{
     Sym, Type,
-    vm::{Builder, Stateful},
+    vm::{Register, Stateful},
 };
 
 use crate::{
@@ -28,7 +28,7 @@ impl<'v> Stateful<'v> for Global<'v> {
 }
 
 impl<'v> Global<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         Self {
             attr_type: builder.register_type::<Attr>(),
             node_type: builder.register_type::<Node>(),

@@ -8,12 +8,12 @@ use dolang::runtime::value::fmt::Format;
 use crate::{
     error::ResultExt as _,
     fs::{path_absolute, path_relative},
-    global::Global,
+    global::{FsGlobal, Global, WindowsSecurityGlobal},
 };
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     object::{ArrayLike, ArrayView, TypeBuilder},
     unpack,
 };
@@ -28,37 +28,49 @@ pub(crate) struct WindowsPath;
 
 pub(crate) struct PathAnnex<'v> {
     pub(crate) path: vfs_path::PathBuf,
-    pub(crate) global: State<'v, Global<'v>>,
+    pub(crate) global: State<'v, FsGlobal<'v>>,
 }
 
-fn target_path_type<'v>(strand: &Strand<'v, '_>, global: State<'v, Global<'v>>) -> vfs_path::Kind {
+fn target_path_type<'v>(
+    strand: &Strand<'v, '_>,
+    global: State<'v, FsGlobal<'v>>,
+) -> vfs_path::Kind {
     global.local.get(strand).target().os().path_kind()
+}
+
+/// Extracts the path held by an `fs.unix.Path` or `fs.windows.Path`.
+///
+/// No path object exists before the `fs` setup has run, so this does not
+/// force it.
+pub(crate) fn cast_path<'v>(
+    strand: &mut Strand<'v, '_>,
+    value: &Value<'v>,
+) -> Option<vfs_path::PathBuf> {
+    let global = strand.try_state::<FsGlobal<'v>>()?;
+    path_object_from_value(strand, global, value)
 }
 
 pub(crate) fn path_from_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     value: &Value<'v>,
 ) -> Result<'v, 's, vfs_path::PathBuf> {
-    let path = if let Some(path) = global.types.unix_path.cast(value) {
-        Ok(path.enter_sync(strand, |_strand, inst| inst.annex().path_buf()))
-    } else if let Some(path) = global.types.windows_path.cast(value) {
-        Ok(path.enter_sync(strand, |_strand, inst| inst.annex().path_buf()))
+    if let Some(path) = cast_path(strand, value) {
+        Ok(path)
     } else if let Some(str) = value.as_str(strand) {
-        let target = target_path_type(strand, global);
+        let local = strand.state::<Global<'v>>().local;
+        let target = local.get(strand).target().os().path_kind();
         Ok(strand.access(|x| match target {
             vfs_path::Kind::Unix => vfs_path::PathBuf::from_unix(str.as_str(x)),
             vfs_path::Kind::Windows => vfs_path::PathBuf::from_windows(str.as_str(x)),
         }))
     } else {
         Err(Error::type_error(strand, "expected Path or Str"))
-    }?;
-    Ok(path)
+    }
 }
 
 fn any_path_from_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     value: &Value<'v>,
 ) -> Result<'v, 's, vfs_path::PathBuf> {
     if let Some(path) = global.types.unix_path.cast(value) {
@@ -78,7 +90,7 @@ fn any_path_from_value<'v, 's>(
 
 fn path_object_from_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     value: &Value<'v>,
 ) -> Option<vfs_path::PathBuf> {
     if let Some(path) = global.types.unix_path.cast(value) {
@@ -94,7 +106,7 @@ fn path_object_from_value<'v, 's>(
 
 fn is_path_value<'v>(
     strand: &Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     value: &Value<'v>,
 ) -> bool {
     global.types.unix_path.cast(value).is_some()
@@ -129,7 +141,7 @@ pub(crate) fn safe_concat<'v, 's>(
 
 fn concrete_path_from_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     value: &Value<'v>,
     style: vfs_path::Kind,
 ) -> Result<'v, 's, vfs_path::PathBuf> {
@@ -165,7 +177,7 @@ pub(crate) fn create_path_annex<'v, 's>(
 
 pub(crate) fn create_path<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     path: vfs_path::PathBuf,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
@@ -202,7 +214,7 @@ impl<'v> PathAnnex<'v> {
     pub(crate) fn try_new<'s>(
         strand: &mut Strand<'v, 's>,
         path: vfs_path::PathBuf,
-        global: State<'v, Global<'v>>,
+        global: State<'v, FsGlobal<'v>>,
     ) -> Result<'v, 's, Self> {
         stream_spec(strand, path.to_path())?;
         Ok(Self { path, global })
@@ -287,7 +299,7 @@ impl<'v> Object<'v> for Path {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<FsGlobal<'v>>();
         let ([path], []) = unpack!(strand, args, 1, 0)?;
         let path = any_path_from_value(strand, global, &path)?;
         let target = target_path_type(strand, global);
@@ -297,7 +309,7 @@ impl<'v> Object<'v> for Path {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.type_method("join", async move |_this, strand, args, out| {
-            let global = strand.state::<Global<'v>>();
+            let global = strand.state::<FsGlobal<'v>>();
             let mut target = None;
             let mut buf = None;
             for arg in args {
@@ -336,7 +348,7 @@ macro_rules! impl_concrete_path {
                 args: Args<'v, 'a>,
                 out: Slot<'v, 'a>,
             ) -> Result<'v, 's, ()> {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<FsGlobal<'v>>();
                 let ([path], []) = unpack!(strand, args, 1, 0)?;
                 let path = concrete_path_from_value(strand, global, &path, $style)?;
                 let annex = PathAnnex::try_new(strand, path, global)?;
@@ -485,7 +497,7 @@ macro_rules! impl_concrete_path {
                             resolve = None
                         )?;
                         let annex = this.annex();
-                        let kind = crate::security::acl_kind_sym(strand, annex.global, kind)?;
+                        let kind = crate::security::acl_kind_sym(strand, kind)?;
                         let default = super::acl_default(strand, default.as_deref())?;
                         let follow = super::resolve_sym(strand, annex.global, resolve, true)?;
                         super::acl(
@@ -512,7 +524,6 @@ macro_rules! impl_concrete_path {
                         let annex = this.annex();
                         let (kind, acl) = crate::security::resolve_acl_input(
                             strand,
-                            annex.global,
                             &acl_value,
                             kind,
                             &crate::security::SpecPath::root("Path.set_acl.acl"),
@@ -535,9 +546,10 @@ macro_rules! impl_concrete_path {
                         let ([], [resolve], rest) =
                             unpack!(strand, args, 0, 0, resolve = None, ...)?;
                         let annex = this.annex();
+                        let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
                         let descriptor = crate::security::sec_desc_from_args(
                             strand,
-                            annex.global,
+                            windows,
                             rest,
                             &crate::security::SpecPath::root("update_sec_desc"),
                         )
@@ -670,13 +682,13 @@ macro_rules! impl_concrete_path {
                                 .ok_or_else(|| Error::type_error(strand, "expected Bool"))?,
                             None => false,
                         };
-                        let to = path_from_value(strand, this.annex().global, &to)?;
+                        let to = path_from_value(strand, &to)?;
                         let annex = this.annex();
                         super::copy(strand, annex.global, annex.as_path(), to.to_path(), all).await
                     })
                     .method("rename", async move |this, strand, args, _out| {
                         let ([to], [replace]) = unpack!(strand, args, 1, 0, replace = None)?;
-                        let to = path_from_value(strand, this.annex().global, &to)?;
+                        let to = path_from_value(strand, &to)?;
                         let replace = replace
                             .map(|value| crate::util::bool(strand, value, "replace"))
                             .transpose()?
@@ -693,13 +705,13 @@ macro_rules! impl_concrete_path {
                                 .ok_or_else(|| Error::type_error(strand, "expected Bool"))?,
                             None => false,
                         };
-                        let to = path_from_value(strand, this.annex().global, &to)?;
+                        let to = path_from_value(strand, &to)?;
                         let annex = this.annex();
                         super::move_(strand, annex.global, annex.as_path(), to.to_path(), all).await
                     })
                     .method("hard_link", async move |this, strand, args, _out| {
                         let ([to], []) = unpack!(strand, args, 1, 0)?;
-                        let to = path_from_value(strand, this.annex().global, &to)?;
+                        let to = path_from_value(strand, &to)?;
                         let annex = this.annex();
                         super::hard_link(strand, annex.global, annex.as_path(), to.to_path()).await
                     })
@@ -1076,7 +1088,7 @@ macro_rules! impl_concrete_path {
                         })
                     })
                     .type_method("join", async move |this, strand, args, out| {
-                        let global = strand.state::<Global<'v>>();
+                        let global = strand.state::<FsGlobal<'v>>();
                         let mut buf = match $style {
                             vfs_path::Kind::Unix => vfs_path::PathBuf::from_unix(""),
                             vfs_path::Kind::Windows => vfs_path::PathBuf::from_windows(""),

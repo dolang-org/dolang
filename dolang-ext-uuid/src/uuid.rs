@@ -3,8 +3,8 @@ use std::hash::{Hash, Hasher};
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
-    object::TypeBuilder, unpack, value::View, vm::Builder,
+    AllocExt, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    object::TypeBuilder, unpack, value::View, vm::Register,
 };
 
 use crate::global::Global;
@@ -30,7 +30,7 @@ fn create_uuid_with_global<'v, 'a>(
 
 /// Creates a Do `uuid.Uuid` object from an owned `uuid::Uuid`.
 pub fn create_uuid<'v, 'a>(strand: &mut Strand<'v, '_>, id: uuid::Uuid, out: Slot<'v, 'a>) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<Global<'v>>();
     create_uuid_with_global(global, strand, id, out);
 }
 
@@ -38,7 +38,8 @@ pub fn create_uuid<'v, 'a>(strand: &mut Strand<'v, '_>, id: uuid::Uuid, out: Slo
 /// `None` otherwise. Unlike [`value_to_uuid`], does not accept `Str`/`Bin`
 /// forms.
 pub fn cast_uuid<'v>(strand: &mut Strand<'v, '_>, value: &Value<'v>) -> Option<uuid::Uuid> {
-    let global = strand.state::<Global<'v>>();
+    // No `Uuid` can exist before the extension is initialized
+    let global = strand.try_state::<Global<'v>>()?;
     let inst = global.types.uuid.cast(value)?;
     Some(inst.enter_sync(strand, |_strand, inst| inst.annex().inner))
 }
@@ -51,8 +52,8 @@ pub fn value_to_uuid<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Result<'v, 's, uuid::Uuid> {
-    let global = strand.state::<Global<'v>>();
-    if let Some(inst) = global.types.uuid.cast(value) {
+    let global = strand.try_state::<Global<'v>>();
+    if let Some(inst) = global.and_then(|global| global.types.uuid.cast(value)) {
         return Ok(inst.enter_sync(strand, |_strand, inst| inst.annex().inner));
     }
     if let Some(str) = value.as_str(strand) {
@@ -216,7 +217,7 @@ impl<'v> Object<'v> for Uuid {
     }
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("uuid")
         .value("Uuid", global.types.uuid)

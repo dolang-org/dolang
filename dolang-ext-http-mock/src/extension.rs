@@ -10,7 +10,10 @@ use dolang::{
     runtime::vm::Builder,
 };
 
-use crate::{global::Global, mock};
+use crate::{
+    global::{self, Global},
+    mock,
+};
 
 /// HTTP mock server extension
 pub struct Shell;
@@ -37,9 +40,11 @@ impl Extension for Shell {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        let global = Global::new(builder);
-        let global = builder.register_state(global);
-        mock::configure_vm(builder, global);
+        builder.lazy::<global::Tag>(&["http.mock"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state(global);
+            mock::configure_vm(reg, global);
+        });
         Ok(())
     }
 }

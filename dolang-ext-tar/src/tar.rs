@@ -17,7 +17,7 @@ use dolang::runtime::{
     object::{Mut, Ref, TypeBuilder},
     unpack,
     value::{BinEmbryo, Nil, TypeObject, View},
-    vm::Builder,
+    vm::Register,
 };
 use tokio::io::{
     AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader, DuplexStream,
@@ -969,7 +969,7 @@ fn parse_compression<'v, 's>(
     }
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     let compression_sym = builder.sym("compression");
     builder
         .module("tar")

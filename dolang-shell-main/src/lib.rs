@@ -226,7 +226,9 @@ fn run(config: Arc<dyn Config>) -> Outcome {
                     }
                     Ok(())
                 })
-                .commit()
+                .commit();
+
+            builder
                 .importer(async move |strand, name, out| {
                     let path = load::find_module_file(strand, name, &cli.module_paths).await?;
                     load::load(

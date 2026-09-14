@@ -8,11 +8,11 @@ use dolang::runtime::{
     error::{Error, Result, ResultExt},
     unpack,
     value::{Empty, Nil, View},
-    vm::Builder,
+    vm::Register,
 };
 use saphyr_parser::{Event, Parser, ScalarStyle, Span, StrInput};
 
-pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
+pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
     builder
         .module("yaml")
         .function("decode", async move |strand, args, out| {

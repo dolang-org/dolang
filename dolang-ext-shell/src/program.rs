@@ -6,11 +6,12 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value, method,
+    AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    method,
     object::{TypeBuilder, Unpack, UnpackItem},
     unpack,
     value::{Nil, Singleton},
-    vm::Builder,
+    vm::Register,
 };
 use dolang_vfs::path as vfs_path;
 use dolang_vfs::{process::ProcessControl, target::OperatingSystem};
@@ -19,9 +20,9 @@ use crate::{
     error::{self, ResultExt as _},
     fs::{
         file::{self, File},
-        path::{PathAnnex, create_path_annex, path_from_value},
+        path::{cast_path, create_path, path_from_value},
     },
-    global::Global,
+    global::{FsGlobal, Global, ProcGlobal, ShellGlobal},
     io_mode::{IoMode, encode_value, read_value},
     pipe_channel::{self, RecvGuard, SendGuard},
     proc::{parse_policy_dict, vfs_policy},
@@ -31,18 +32,15 @@ pub(crate) struct Program;
 
 pub(crate) struct ProgramAnnex<'v> {
     name: String,
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
 }
 
 fn program_name_from_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
     value: &Value<'v>,
 ) -> Result<'v, 's, String> {
-    if global.types.unix_path.cast(value).is_some()
-        || global.types.windows_path.cast(value).is_some()
-    {
-        let path = path_from_value(strand, global, value)?;
+    if let Some(path) = cast_path(strand, value) {
         let path = if path.is_absolute() {
             path
         } else {
@@ -89,7 +87,7 @@ struct ResolvedIo<'v, 'a> {
 
 async fn resolve_io<'v, 's, 'a>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
     args: Args<'v, 'a>,
     mut input: Slot<'v, '_>,
     mut output: Slot<'v, '_>,
@@ -123,7 +121,7 @@ async fn resolve_io<'v, 's, 'a>(
     };
 
     let input_temp = if let Some(stdin_key) = stdin_key {
-        if resolve_io_file(strand, global, &stdin_key, "r", &mut input).await? {
+        if resolve_io_file(strand, &stdin_key, "r", &mut input).await? {
             true
         } else {
             stdin_key.iter(strand, Slot::reborrow(&mut input)).await?;
@@ -135,7 +133,7 @@ async fn resolve_io<'v, 's, 'a>(
     };
 
     let output_temp = if let Some(stdout_key) = stdout_key {
-        if resolve_io_file(strand, global, &stdout_key, "w", &mut output).await? {
+        if resolve_io_file(strand, &stdout_key, "w", &mut output).await? {
             true
         } else {
             stdout_key.sink(strand, Slot::reborrow(&mut output)).await?;
@@ -152,7 +150,7 @@ async fn resolve_io<'v, 's, 'a>(
         {
             Output::set(strand, &mut stderr, &output);
             false
-        } else if resolve_io_file(strand, global, &stderr_key, "w", &mut stderr).await? {
+        } else if resolve_io_file(strand, &stderr_key, "w", &mut stderr).await? {
             true
         } else {
             stderr_key.sink(strand, Slot::reborrow(&mut stderr)).await?;
@@ -179,27 +177,24 @@ async fn resolve_io<'v, 's, 'a>(
 
 async fn resolve_io_file<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     arg: &Value<'v>,
     mode: &str,
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, bool> {
-    let Ok(path) = path_from_value(strand, global, arg) else {
+    let Ok(path) = path_from_value(strand, arg) else {
         return Ok(false);
     };
 
-    let file = file::open(strand, global, path.to_path(), mode).await?;
-    let (file, annex) = File::create(strand, global, file, mode);
-    global
-        .types
-        .file
-        .create_with_annex(strand, file, annex, out);
+    let fs = strand.force_state::<FsGlobal<'v>>();
+    let file = file::open(strand, fs, path.to_path(), mode).await?;
+    let (file, annex) = File::create(strand, fs, file, mode);
+    fs.types.file.create_with_annex(strand, file, annex, out);
     Ok(true)
 }
 
 async fn cleanup_io<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
     value: Streams<&Value<'v>>,
     temp: Streams<bool>,
 ) {
@@ -224,11 +219,10 @@ async fn cleanup_io<'v, 's>(
 
 async fn configure_negotiated_input<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     command: &mut Command<'_>,
     input: &Value<'v>,
 ) -> Result<'v, 's, Option<RecvGuard>> {
-    let recv_result = pipe_channel::negotiate_recv(input, strand, global).await?;
+    let recv_result = pipe_channel::negotiate_recv(input, strand).await?;
     if let Some(guard) = recv_result {
         let pipe = guard.recv_pipe().await.into_sys(strand)?;
         command.stdin(pipe).into_sys(strand)?;
@@ -240,11 +234,10 @@ async fn configure_negotiated_input<'v, 's>(
 
 async fn configure_negotiated_output<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     command: &mut Command<'_>,
     output: &Value<'v>,
 ) -> Result<'v, 's, Option<SendGuard>> {
-    let send_result = pipe_channel::negotiate_send(output, strand, global).await?;
+    let send_result = pipe_channel::negotiate_send(output, strand).await?;
     if let Some(guard) = send_result {
         let pipe = guard.send_pipe().await.into_sys(strand)?;
         command.stdout(pipe).into_sys(strand)?;
@@ -256,7 +249,6 @@ async fn configure_negotiated_output<'v, 's>(
 
 async fn configure_direct_input<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     command: &mut Command<'_>,
     input: &Value<'v>,
 ) -> Result<'v, 's, bool> {
@@ -264,11 +256,17 @@ async fn configure_direct_input<'v, 's>(
         command.stdin_null();
         return Ok(true);
     }
-    if global.types.stdin.cast(input).is_some() {
+    if strand
+        .try_state::<ShellGlobal<'v>>()
+        .is_some_and(|shell| shell.types.stdin.cast(input).is_some())
+    {
         command.stdin_inherit().into_sys(strand)?;
         return Ok(true);
     }
-    if let Some(file) = global.types.file.cast(input) {
+    if let Some(file) = strand
+        .try_state::<FsGlobal<'v>>()
+        .and_then(|fs| fs.types.file.cast(input))
+    {
         let stdio = file
             .enter(strand, async |strand, inst| {
                 File::command_recv(inst, strand).await
@@ -287,17 +285,15 @@ async fn configure_direct_input<'v, 's>(
 /// terminal-following handle (`term.default`, bound when it is). Either way,
 /// nothing has redirected this stream, which is what licenses falling through
 /// to raw fd inheritance instead of a value-framed pump.
-fn is_default_stdout<'v>(
-    strand: &Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
-    value: &Value<'v>,
-) -> bool {
-    global.types.stdout.cast(value).is_some() || dolang_ext_term::is_default_output(strand, value)
+fn is_default_stdout<'v>(strand: &Strand<'v, '_>, value: &Value<'v>) -> bool {
+    strand
+        .try_state::<ShellGlobal<'v>>()
+        .is_some_and(|shell| shell.types.stdout.cast(value).is_some())
+        || dolang_ext_term::is_default_output(strand, value)
 }
 
 async fn configure_direct_output<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     command: &mut Command<'_>,
     output: &Value<'v>,
 ) -> Result<'v, 's, bool> {
@@ -305,11 +301,14 @@ async fn configure_direct_output<'v, 's>(
         command.stdout_null();
         return Ok(true);
     }
-    if is_default_stdout(strand, global, output) {
+    if is_default_stdout(strand, output) {
         command.stdout_inherit().into_sys(strand)?;
         return Ok(true);
     }
-    if let Some(file) = global.types.file.cast(output) {
+    if let Some(file) = strand
+        .try_state::<FsGlobal<'v>>()
+        .and_then(|fs| fs.types.file.cast(output))
+    {
         let stdio = file
             .enter(strand, async |strand, inst| {
                 File::command_send(inst, strand).await
@@ -325,7 +324,6 @@ async fn configure_direct_output<'v, 's>(
 
 async fn configure_direct_stderr<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
     command: &mut Command<'_>,
     stderr: &Value<'v>,
 ) -> Result<'v, 's, bool> {
@@ -333,15 +331,21 @@ async fn configure_direct_stderr<'v, 's>(
         command.stderr_null();
         return Ok(true);
     }
-    if is_default_stdout(strand, global, stderr) {
+    if is_default_stdout(strand, stderr) {
         command.stderr_inherit_stdout().into_sys(strand)?;
         return Ok(true);
     }
-    if global.types.stderr.cast(stderr).is_some() {
+    if strand
+        .try_state::<ShellGlobal<'v>>()
+        .is_some_and(|shell| shell.types.stderr.cast(stderr).is_some())
+    {
         command.stderr_inherit().into_sys(strand)?;
         return Ok(true);
     }
-    if let Some(file) = global.types.file.cast(stderr) {
+    if let Some(file) = strand
+        .try_state::<FsGlobal<'v>>()
+        .and_then(|fs| fs.types.file.cast(stderr))
+    {
         let stdio = file
             .enter(strand, async |strand, inst| {
                 File::command_send(inst, strand).await
@@ -356,7 +360,7 @@ async fn configure_direct_stderr<'v, 's>(
 }
 
 fn apply_env_and_cwd<'v, 's>(
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
     strand: &Strand<'v, 's>,
     command: &mut Command<'_>,
 ) {
@@ -456,7 +460,7 @@ async fn output_pump<'v, 's, R>(
 where
     R: AsyncRead + Unpin,
 {
-    let global = strand.vm().state::<Global<'v>>();
+    let global = strand.vm().state::<ProcGlobal<'v>>();
     if let Some(capture) = global.types.capture.cast(output) {
         let mut reader = reader;
         let mut value = String::new();
@@ -621,7 +625,7 @@ async fn run<'v, 's>(
     strand: &mut Strand<'v, 's>,
     name: &str,
     args: Args<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
     io: RunIo<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let (vfs, target, background, mut termination_policy) = {
@@ -670,16 +674,17 @@ async fn run<'v, 's>(
     // console instead, so a child's output does not scribble over an extension
     // that has taken the terminal over. Naming `shell.stdout`/`shell.stderr`
     // explicitly pins the channel to the real stream and opts out.
-    let console_owned = global.terminal.redirected.get();
+    let core = strand.state::<Global<'v>>();
+    let console_owned = core.terminal.redirected.get();
     // A capture routes regardless of whether stdout/stderr is a terminal:
     // gating it on a tty would make capture work interactively and silently
     // not in CI.
     let captured = dolang_ext_term::is_captured(strand);
     let stdout_to_console = !io.explicit.stdout
-        && is_default_stdout(strand, global, io.value.stdout)
-        && (captured || (console_owned && global.terminal.stdout_is_terminal));
+        && is_default_stdout(strand, io.value.stdout)
+        && (captured || (console_owned && core.terminal.stdout_is_terminal));
     let stderr_to_console =
-        !io.explicit.stderr && (captured || (console_owned && global.terminal.stderr_is_terminal));
+        !io.explicit.stderr && (captured || (console_owned && core.terminal.stderr_is_terminal));
 
     let mut stdin_pipe = None;
     let mut stdout_pipe = None;
@@ -690,14 +695,12 @@ async fn run<'v, 's>(
     }
     let stderr_merge = !io.value.stderr.is_nil() && io.value.stderr.eq(strand, io.value.stdout);
 
-    let recv_guard =
-        configure_negotiated_input(strand, global, &mut command, io.value.stdin).await?;
-    let send_guard =
-        configure_negotiated_output(strand, global, &mut command, io.value.stdout).await?;
+    let recv_guard = configure_negotiated_input(strand, &mut command, io.value.stdin).await?;
+    let send_guard = configure_negotiated_output(strand, &mut command, io.value.stdout).await?;
     let stderr_guard = if stderr_inherit || stderr_merge {
         None
     } else {
-        configure_negotiated_output(strand, global, &mut command, io.value.stderr).await?
+        configure_negotiated_output(strand, &mut command, io.value.stderr).await?
     };
     // Which streams were satisfied by pipe-channel negotiation and so need no
     // further wiring.
@@ -711,9 +714,7 @@ async fn run<'v, 's>(
     let _send_guard = send_guard;
     let _stderr_guard = stderr_guard;
 
-    if !negotiated.stdin
-        && !configure_direct_input(strand, global, &mut command, io.value.stdin).await?
-    {
+    if !negotiated.stdin && !configure_direct_input(strand, &mut command, io.value.stdin).await? {
         let (parent_stdin, child_stdin) = vfs.pipe(None).await.into_sys(strand)?;
         command.stdin(child_stdin).into_sys(strand)?;
         stdin_pipe = Some(parent_stdin);
@@ -721,7 +722,7 @@ async fn run<'v, 's>(
 
     let stdout_direct = negotiated.stdout
         || (!stdout_to_console
-            && configure_direct_output(strand, global, &mut command, io.value.stdout).await?);
+            && configure_direct_output(strand, &mut command, io.value.stdout).await?);
     if !stdout_direct {
         let (child_stdout, parent_stdout) = vfs.pipe(None).await.into_sys(strand)?;
         command.stdout(child_stdout).into_sys(strand)?;
@@ -735,7 +736,7 @@ async fn run<'v, 's>(
         && !stderr_merge
         && !negotiated.stderr
         && (stderr_to_console
-            || !configure_direct_stderr(strand, global, &mut command, io.value.stderr).await?)
+            || !configure_direct_stderr(strand, &mut command, io.value.stderr).await?)
     {
         let (child_stderr, parent_stderr) = vfs.pipe(None).await.into_sys(strand)?;
         command.stderr(child_stderr).into_sys(strand)?;
@@ -788,7 +789,7 @@ async fn dispatch_run<'v, 's>(
     strand: &mut Strand<'v, 's>,
     name: &str,
     args: Args<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
 ) -> Result<'v, 's, ()> {
     strand
         .with_slots(async move |strand, [mut input, mut output, mut stderr]| {
@@ -840,7 +841,7 @@ impl<'v> Object<'v> for Program {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([name], []) = unpack!(strand, args, 1, 0)?;
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<ProcGlobal<'v>>();
         let name = program_name_from_value(strand, global, &name)?;
         this.create_with_annex(strand, Program, ProgramAnnex { name, global }, out);
         Ok(())
@@ -883,8 +884,8 @@ impl<'v> Object<'v> for Program {
                 .into_sys(strand)?;
 
             if let Some(path) = resolved {
-                let annex = PathAnnex::try_new(strand, path, global)?;
-                create_path_annex(strand, annex, out);
+                let fs = strand.force_state::<FsGlobal<'v>>();
+                create_path(strand, fs, path, out)?;
             } else {
                 Output::set(strand, out, Nil);
             }
@@ -902,11 +903,11 @@ impl<'v> Object<'v> for Program {
 }
 
 pub(crate) struct Run<'v> {
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
 }
 
 impl<'v> Run<'v> {
-    pub(crate) fn new(global: State<'v, Global<'v>>) -> Self {
+    pub(crate) fn new(global: State<'v, ProcGlobal<'v>>) -> Self {
         Self { global }
     }
 
@@ -992,7 +993,7 @@ impl<'v> Object<'v> for Run<'v> {
 }
 
 pub(crate) fn register_run_type<'v>(
-    builder: &mut Builder<'v>,
+    builder: &mut Register<'v>,
 ) -> dolang::runtime::Type<'v, Run<'v>> {
     builder.register_type()
 }

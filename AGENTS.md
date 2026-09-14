@@ -842,14 +842,52 @@ impl Extension for MyExt {
 extension!(MyExt); // auto-registers via linkme distributed slice
 ```
 
+### `Register` vs. `Builder`
+
+`Builder` dereferences to `Register`, which carries the registration API:
+`sym`, `register_state`, `register_type`, `build_type`, `module`, and
+`module_object`. `TypeBuilder` dereferences to `Register` too. Setup helpers
+should take `&mut Register<'v>`; only VM-wide configuration (strand-local keys,
+importers, traps) needs `&mut Builder<'v>`. Functions exported for other crates
+that only look up state should take `&Vm<'v>`, never a builder.
+
+### Lazy Setup
+
+`Builder::lazy` defers registration until something needs it. The setup runs at
+most once: when Do code imports one of the modules it declares, or when Rust
+code forces its tag through an `Alloc`. Declare it under the `Tag` of the state
+it registers, so `force_state` can run it and return that state:
+
+```rust
+fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Self::Error> {
+    builder.lazy::<global::Tag>(&["my_ext"], |reg| {
+        let global = Global::new(reg);
+        let global = reg.register_state(global);
+        configure_vm(reg, global);
+    });
+    Ok(())
+}
+```
+
+- The setup must register exactly the modules it declares; anything else panics.
+- Strand-local keys, importers, and traps are `Builder`-only. Reserve them in
+  `apply_vm` and move them into the setup.
+- `Vm::state` never runs a setup, and panics on state whose setup hasn't run.
+  Public functions for other crates that create objects call
+  `strand.force_state::<Global>()` (`AllocExt` must be in scope). A function
+  that only needs to force can take `&mut dyn Alloc<'v>`, so it works from a
+  strand or during registration.
+- Code that only recognizes existing objects can use `Vm::try_state`: if it
+  returns `None`, the setup hasn't run, so no instance exists.
+
 ### Global State (`State<'v, T>`)
 
-`Builder::register_state` stores a value for the lifetime of the VM and returns
+`Register::register_state` stores a value for the lifetime of the VM and returns
 a `State<'v, T>` handle. `State` is `Copy` and dereferences to `&T`. Use it to
 hold `Type` handles and other VM-lifetime data that methods need.
 
 ```rust
-use dolang::runtime::{Type, vm::{Builder, Stateful}};
+use dolang::runtime::{Type, vm::{Register, Stateful}};
 
 pub(crate) struct Global<'v> {
     pub(crate) types: Types<'v>,
@@ -866,7 +904,7 @@ impl<'v> Stateful<'v> for Global<'v> {
 }
 
 impl<'v> Global<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         Self { types: Types {
             widget: builder.register_type(),
             widget_iter: builder.register_type(),
@@ -877,10 +915,10 @@ impl<'v> Global<'v> {
 
 ### Modules
 
-`Builder::module` creates a native module with exported values and functions.
+`Register::module` creates a native module with exported values and functions.
 
 ```rust
-pub fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("my_ext")
         .value("Widget", global.types.widget) // export type object
@@ -973,7 +1011,7 @@ fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self
 ### Symbol Registration
 
 Keyword argument names and any other interned symbols must be registered with
-`Builder::sym` (or `TypeBuilder::sym`, which derefs to `Builder`). Capture the
+`Register::sym` (or `TypeBuilder::sym`, which derefs to `Register`). Capture the
 returned `Sym` in a closure — symbols are `Copy`.
 
 ```rust

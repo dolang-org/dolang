@@ -8,7 +8,7 @@
 //! able to call [`Proc::signal`](Procs).
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call, method,
+    AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call, method,
     object::{TypeBuilder, fmt},
     unpack,
     value::{AsTuple, Nil, TypeObject},
@@ -20,7 +20,7 @@ use dolang_vfs::process::{
 use crate::{
     error::ResultExt,
     fs::path::create_path,
-    global::Global,
+    global::{FsGlobal, ProcGlobal, UnixSecurityGlobal, WindowsSecurityGlobal},
     proc::parse_signal,
     security::{create_identity, create_token_info},
 };
@@ -29,13 +29,13 @@ use crate::{
 pub(crate) struct Info;
 
 pub(crate) struct InfoAnnex<'v> {
-    pub(crate) global: State<'v, Global<'v>>,
+    pub(crate) global: State<'v, ProcGlobal<'v>>,
     pub(crate) info: ProcessInfo,
 }
 
 pub(crate) fn create_info<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
     info: ProcessInfo,
     out: impl Output<'v>,
 ) {
@@ -90,7 +90,10 @@ impl<'v> Object<'v> for Info {
             .get("exe", |this, strand, out| {
                 let annex = this.annex();
                 match annex.info.exe() {
-                    Some(exe) => create_path(strand, annex.global, exe.to_path_buf(), out),
+                    Some(exe) => {
+                        let fs = strand.force_state::<FsGlobal<'v>>();
+                        create_path(strand, fs, exe.to_path_buf(), out)
+                    }
                     None => {
                         Output::set(strand, out, Nil);
                         Ok(())
@@ -100,7 +103,10 @@ impl<'v> Object<'v> for Info {
             .get("cwd", |this, strand, out| {
                 let annex = this.annex();
                 match annex.info.cwd() {
-                    Some(cwd) => create_path(strand, annex.global, cwd.to_path_buf(), out),
+                    Some(cwd) => {
+                        let fs = strand.force_state::<FsGlobal<'v>>();
+                        create_path(strand, fs, cwd.to_path_buf(), out)
+                    }
                     None => {
                         Output::set(strand, out, Nil);
                         Ok(())
@@ -125,7 +131,10 @@ impl<'v> Object<'v> for Info {
             .get("unix_id", move |this, strand, mut out| {
                 let annex = this.annex();
                 match annex.info.identity() {
-                    Ok(Some(identity)) => create_identity(strand, annex.global, identity, &mut out),
+                    Ok(Some(identity)) => {
+                        let security = strand.force_state::<UnixSecurityGlobal<'v>>();
+                        create_identity(strand, security, identity, &mut out)
+                    }
                     Ok(None) => Output::set(strand, out, Nil),
                     Err(_) => return Err(Error::field(strand, unix_id)),
                 }
@@ -134,7 +143,10 @@ impl<'v> Object<'v> for Info {
             .get("token_info", move |this, strand, mut out| {
                 let annex = this.annex();
                 match annex.info.token() {
-                    Ok(Some(token)) => create_token_info(strand, annex.global, token, &mut out),
+                    Ok(Some(token)) => {
+                        let security = strand.force_state::<WindowsSecurityGlobal<'v>>();
+                        create_token_info(strand, security, token, &mut out)
+                    }
                     Ok(None) => Output::set(strand, out, Nil),
                     Err(_) => return Err(Error::field(strand, token_info)),
                 }
@@ -206,7 +218,7 @@ impl<'v> Object<'v> for Status {
 pub(crate) struct Procs(pub(crate) VfsProcesses);
 
 pub(crate) struct ProcsAnnex<'v> {
-    pub(crate) global: State<'v, Global<'v>>,
+    pub(crate) global: State<'v, ProcGlobal<'v>>,
 }
 
 impl<'v> Object<'v> for Procs {
@@ -289,7 +301,7 @@ impl<'v> Object<'v> for Proc {
             })
             .method("info", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<ProcGlobal<'v>>();
                 let info = {
                     let borrow = this.borrow(strand)?;
                     let process = expect_open(strand, &borrow)?;
@@ -319,7 +331,7 @@ impl<'v> Object<'v> for Proc {
             })
             .method("wait", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<ProcGlobal<'v>>();
                 let exit = {
                     let borrow = this.borrow(strand)?;
                     let process = expect_open(strand, &borrow)?;
@@ -361,7 +373,7 @@ fn expect_open<'v, 's, 'b>(
 /// races against reuse by construction.
 pub(crate) async fn open_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
     value: &Value<'v>,
 ) -> Result<'v, 's, VfsProcess> {
     let vfs = global.local.get(strand).vfs();
@@ -393,7 +405,7 @@ pub(crate) async fn open_value<'v, 's>(
 /// selected.
 pub(crate) async fn describe<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
     pid: Option<&Value<'v>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
@@ -424,7 +436,7 @@ pub(crate) async fn describe<'v, 's>(
 /// returned and closing it is the caller's business.
 pub(crate) async fn open<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, ProcGlobal<'v>>,
     target: &Value<'v>,
     block: Option<&Slot<'v, '_>>,
     out: Slot<'v, '_>,

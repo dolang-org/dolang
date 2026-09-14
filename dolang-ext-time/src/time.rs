@@ -11,7 +11,7 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::strand::InterruptMask;
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Type, call, error::ResultExt,
-    object::TypeBuilder, unpack, value::Root, vm::Builder,
+    object::TypeBuilder, unpack, value::Root, vm::Register,
 };
 use futures::future::{AbortHandle, Abortable};
 use time::{
@@ -59,7 +59,7 @@ pub(crate) struct Calendar<'v> {
 }
 
 impl<'v> Calendar<'v> {
-    pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
+    pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         let date = builder.register_type();
         let month = builder.register_type();
         let weekday = builder.register_type();
@@ -346,11 +346,11 @@ fn format_datetime_rfc3339<'v, 's>(
 
 pub(crate) fn coerce_duration<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: Option<State<'v, Global<'v>>>,
     value: &dolang::runtime::Value<'v>,
     context: &str,
 ) -> Result<'v, 's, std::time::Duration> {
-    if let Some(duration) = global.types.duration.cast(value) {
+    if let Some(duration) = global.and_then(|global| global.types.duration.cast(value)) {
         return duration.enter_sync(strand, |strand, duration| {
             duration.annex().to_std_duration(strand)
         });
@@ -1115,18 +1115,18 @@ impl<'v> Object<'v> for Duration {
     }
 }
 
-pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("time")
         .function("sleep", async move |strand, args, _out| {
             let ([duration], []) = unpack!(strand, args, 1, 0)?;
-            let duration = coerce_duration(strand, global, &duration, "sleep duration")?;
+            let duration = coerce_duration(strand, Some(global), &duration, "sleep duration")?;
             sleep(duration).await;
             Ok(())
         })
         .function("timeout", async move |strand, args, out| {
             let ([duration, block], []) = unpack!(strand, args, 2, 0)?;
-            let duration = coerce_duration(strand, global, &duration, "timeout duration")?;
+            let duration = coerce_duration(strand, Some(global), &duration, "timeout duration")?;
             let mask = strand.interrupt_mask();
             let timeout_mask = InterruptMask::TIMED_OUT;
             let interrupt = strand.interrupt_token().nested(timeout_mask);

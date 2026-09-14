@@ -1,18 +1,18 @@
 use std::{
     any::TypeId,
     borrow::Cow,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, hash_map::Entry},
     future::Future,
     marker::PhantomData,
     mem,
-    ops::{Deref, Range},
+    ops::{Deref, DerefMut, Range},
     pin::Pin,
     ptr::NonNull,
     task::{Poll, Waker},
 };
 
-use dolang_util::alias;
+use dolang_util::{alias, arena::ArenaVec};
 use futures::{
     channel::mpsc,
     stream::{FuturesUnordered, StreamExt},
@@ -107,9 +107,110 @@ impl<'v, T: 'v> AsRef<T> for State<'v, T> {
 }
 
 /// Capability to allocate or otherwise perturb GC state in controlled ways.
+///
+/// Dyn-compatible, so a function can take `&mut dyn Alloc<'v>`. The generic operations live
+/// in [`AllocExt`], which every `Alloc` implements.
 pub trait Alloc<'v> {
     #[doc(hidden)]
-    fn alloc_vm(&mut self, _: private::Sealed) -> &Vm<'v>;
+    fn alloc_vm(&mut self, _: private::Sealed) -> &'v Vm<'v>;
+}
+
+/// Lazy setup operations, available on every [`Alloc`], including `dyn Alloc`.
+pub trait AllocExt<'v>: Alloc<'v> {
+    /// Run the lazy setup declared under tag `K` with [`Builder::lazy`], unless it has
+    /// already run.
+    ///
+    /// Does nothing if no lazy setup is declared under `K`, so a crate can move between eager
+    /// and lazy registration without affecting callers.
+    fn force<K: 'static>(&mut self) {
+        let vm = self.alloc_vm(private::Sealed);
+        let unit = vm.lazy.borrow().by_tag.get(&TypeId::of::<K>()).copied();
+        if let Some(unit) = unit {
+            force_lazy_unit(self, unit);
+        }
+    }
+
+    /// Run the lazy setup declared under `T::Tag`, then fetch the state registered with that
+    /// tag.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no state is registered under `T::Tag` once the setup has run.
+    fn force_state<T: Stateful<'v>>(&mut self) -> State<'v, T> {
+        self.force::<T::Tag>();
+        self.alloc_vm(private::Sealed).state()
+    }
+}
+
+impl<'v, A: Alloc<'v> + ?Sized> AllocExt<'v> for A {}
+
+type LazyInit<'v> = Box<dyn FnOnce(&mut Register<'v>) + 'v>;
+
+enum LazyPhase<'v> {
+    Pending(LazyInit<'v>),
+    Running,
+    Done,
+}
+
+struct LazyUnit<'v> {
+    tag_name: &'static str,
+    modules: Box<[&'v str]>,
+    phase: LazyPhase<'v>,
+}
+
+/// Setups declared with [`Builder::lazy`].
+#[derive(Default)]
+pub(crate) struct LazyTable<'v> {
+    units: Vec<LazyUnit<'v>>,
+    by_tag: HashMap<TypeId, usize>,
+    pub(crate) by_module: HashMap<&'v str, usize>,
+    /// Units whose setup is on the call stack, innermost last.
+    running: Vec<usize>,
+}
+
+/// Run the setup of a lazy unit unless it has already run.
+///
+/// Requiring `Alloc` ties forcing to a context that may allocate.
+pub(crate) fn force_lazy_unit<'v, A: Alloc<'v> + ?Sized>(alloc: &mut A, unit: usize) {
+    let vm = alloc.alloc_vm(private::Sealed);
+    let init = {
+        let mut lazy = vm.lazy.borrow_mut();
+        let lazy = &mut *lazy;
+        let entry = &mut lazy.units[unit];
+        match mem::replace(&mut entry.phase, LazyPhase::Running) {
+            LazyPhase::Pending(init) => {
+                lazy.running.push(unit);
+                init
+            }
+            LazyPhase::Running => panic!("cyclic initialization of lazy unit {}", entry.tag_name),
+            LazyPhase::Done => {
+                entry.phase = LazyPhase::Done;
+                return;
+            }
+        }
+    };
+
+    // Safety: `alloc` holds allocation capability for `vm`, and the register is only lent out
+    // behind `&mut` for the duration of `init`
+    let mut reg = unsafe { Register::new(vm) };
+    init(&mut reg);
+
+    let mut lazy = vm.lazy.borrow_mut();
+    let lazy = &mut *lazy;
+    lazy.running.pop();
+    let entry = &mut lazy.units[unit];
+    entry.phase = LazyPhase::Done;
+    let native_modules = vm.native_modules.borrow();
+    if let Some(name) = entry
+        .modules
+        .iter()
+        .find(|name| !native_modules.contains_key(**name))
+    {
+        panic!(
+            "lazy unit {} did not register declared module {name}",
+            entry.tag_name
+        );
+    }
 }
 
 type Trap<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v;
@@ -121,18 +222,19 @@ type ChannelFactory<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot
 ///
 /// Other handles automatically dereference to this type and can be used in its place:
 /// - [`Builder`]
+/// - [`Register`]
 /// - [`Strand`]
 pub struct Vm<'v> {
     pub(crate) import_cache: RefCell<HashMap<String, ImportCacheEntry<'v>>>,
-    pub(crate) native_modules: HashMap<&'v str, Value<'v>>,
-    pub(crate) importers: Vec<Value<'v>>,
-    pub(crate) pipe_handler: Option<Box<ChannelFactory<'v>>>,
-    pub(crate) trap: Option<Box<Trap<'v>>>,
+    pub(crate) native_modules: RefCell<HashMap<&'v str, Value<'v>>>,
+    pub(crate) importers: ArenaVec<Value<'v>>,
+    pub(crate) pipe_handler: RefCell<Option<Box<ChannelFactory<'v>>>>,
+    pub(crate) trap: RefCell<Option<Box<Trap<'v>>>>,
     // SAFETY: GC objects may point into state, so `arena` must be cleared first (but not dropped)
-    pub(crate) state: HashMap<TypeId, ErasedState>,
+    pub(crate) state: RefCell<HashMap<TypeId, ErasedState>>,
     // SAFETY: must be unregistered after clearing GC objects and state, as this invalidates
     // all Sym<'v, 'v>
-    pub(crate) symroots: Vec<GcObj<'v, SymObj>>,
+    pub(crate) symroots: ArenaVec<GcObj<'v, SymObj>>,
     pub(crate) symtab: sym::Table<'v>,
     // SAFETY: must be dropped before arena, as it holds GC objects
     pub(crate) singletons: Singletons<'v>,
@@ -142,7 +244,7 @@ pub struct Vm<'v> {
     pub(crate) builtin_types: BuiltinTypes<'v>,
     pub(crate) types: TypeTable<'v>,
     /// Class object singletons for user-registered [`Object`] types.
-    pub(crate) type_singletons: Vec<Value<'v>>,
+    pub(crate) type_singletons: ArenaVec<Value<'v>>,
     /// Instance vtbls of user-registered [`Object`] types that declared an error
     /// kind via a nominal supertype.
     ///
@@ -150,29 +252,32 @@ pub struct Vm<'v> {
     /// error, so [`crate::error::Error::kind`] classifies its instances by
     /// looking their vtbl up here. Only types that declared a kind appear, which
     /// in practice is a handful per VM.
-    pub(crate) error_kind_vtbls: Vec<NonNull<ObjectVtbl<'v>>>,
-    pub(crate) locals: Vec<LocalVtbl<'v>>,
-    pub(crate) local_root_count: usize,
+    pub(crate) error_kind_vtbls: ArenaVec<NonNull<ObjectVtbl<'v>>>,
+    pub(crate) locals: ArenaVec<LocalVtbl<'v>>,
+    pub(crate) local_root_count: Cell<usize>,
     pub(crate) spawn_tx: RefCell<Option<mpsc::UnboundedSender<SpawnedFuture<'v>>>>,
     // Strings that have to be allocated for the lifetime of the VM
-    pub(crate) strings: Vec<alias::Box<str>>,
+    pub(crate) strings: RefCell<Vec<alias::Box<str>>>,
+    // SAFETY: pending setups may capture GC values, so this must be cleared before `arena`
+    pub(crate) lazy: RefCell<LazyTable<'v>>,
 }
 
 impl<'v> Drop for Vm<'v> {
     fn drop(&mut self) {
         // Drop things in a safe order
+        *self.lazy.get_mut() = Default::default();
         self.import_cache.get_mut().clear();
-        self.native_modules.clear();
-        self.importers.clear();
-        self.pipe_handler = None;
-        self.type_singletons.clear();
+        self.native_modules.get_mut().clear();
+        self.importers.drain().for_each(drop);
+        *self.pipe_handler.get_mut() = None;
+        self.type_singletons.drain().for_each(drop);
         // Close spawn channel (should already be None after enter() returns)
         self.spawn_tx.get_mut().take();
         // GC objects could point into state, so clear it before state
         self.arena.clear();
         // Anything that still points into state at this point is bound to be leaked
-        self.state.clear();
-        self.symroots.clear();
+        self.state.get_mut().clear();
+        self.symroots.drain().for_each(drop);
         self.symtab.clear();
     }
 }
@@ -204,10 +309,10 @@ impl<'v> Vm<'v> {
             .expect("spawn channel closed");
     }
 
-    pub(crate) fn string(&mut self, str: &str) -> &'v str {
+    pub(crate) fn string(&self, str: &str) -> &'v str {
         let str = alias::Box::new_str(str);
         let ptr = &raw const *str;
-        self.strings.push(str);
+        self.strings.borrow_mut().push(str);
         unsafe { &*ptr }
     }
 
@@ -218,12 +323,66 @@ impl<'v> Vm<'v> {
     }
 
     /// Fetch previously-registered state handle
+    ///
+    /// # Panics
+    ///
+    /// Panics if no state is registered under `T::Tag`. State registered by a lazy setup
+    /// that hasn't run yet is not registered; use [`AllocExt::force_state`] to run it first.
     #[inline]
     pub fn state<T: Stateful<'v>>(&self) -> State<'v, T> {
-        let Some(entry) = self.state.get(&TypeId::of::<T::Tag>()) else {
-            panic!("state not registered")
-        };
-        State(entry.ptr.cast(), PhantomData)
+        match self.try_state() {
+            Some(state) => state,
+            None => self.state_missing(TypeId::of::<T::Tag>()),
+        }
+    }
+
+    /// Fetch previously-registered state handle, if any.
+    ///
+    /// Returns `None` for state registered by a lazy setup that hasn't run yet.
+    #[inline]
+    pub fn try_state<T: Stateful<'v>>(&self) -> Option<State<'v, T>> {
+        self.state
+            .borrow()
+            .get(&TypeId::of::<T::Tag>())
+            .map(|entry| State(entry.ptr.cast(), PhantomData))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn state_missing(&self, tag: TypeId) -> ! {
+        let lazy = self.lazy.borrow();
+        if let Some(&unit) = lazy.by_tag.get(&tag)
+            && !matches!(lazy.units[unit].phase, LazyPhase::Done)
+        {
+            panic!(
+                "state of lazy unit {} has not been initialized; use `AllocExt::force_state`",
+                lazy.units[unit].tag_name
+            )
+        }
+        panic!("state not registered")
+    }
+
+    /// Insert a native module, enforcing ownership of names declared by lazy units.
+    fn insert_native_module(&self, name: &'v str, module: Value<'v>) {
+        {
+            let lazy = self.lazy.borrow();
+            let owner = lazy.by_module.get(name).copied();
+            let running = lazy.running.last().copied();
+            match (owner, running) {
+                (owner, running) if owner == running => {}
+                (Some(owner), _) => panic!(
+                    "module {name} is declared by lazy unit {}",
+                    lazy.units[owner].tag_name
+                ),
+                (None, Some(running)) => panic!(
+                    "lazy unit {} registered undeclared module {name}",
+                    lazy.units[running].tag_name
+                ),
+                (None, None) => unreachable!(),
+            }
+        }
+        let replaced = self.native_modules.borrow_mut().insert(name, module);
+        drop(replaced);
     }
 
     pub(crate) fn arena(&self) -> &Arena<'v> {
@@ -510,7 +669,7 @@ impl<'v> Vm<'v> {
 #[must_use]
 pub struct ModuleBuilder<'v, 'a> {
     name: &'v str,
-    vm: &'a mut Builder<'v>,
+    vm: &'a mut Register<'v>,
     contents: Vec<(Sym<'v, 'v>, NativeField<'v>)>,
 }
 
@@ -638,7 +797,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         let sym = self.vm.sym(name);
         self.push(
             sym,
-            NativeField::Value(Value::from_input(&self.vm.inner, value)),
+            NativeField::Value(Value::from_input(self.vm.inner, value)),
         );
         self
     }
@@ -704,7 +863,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     ///
     /// # Returns
     ///
-    /// Returns a reference to the [`Builder`] to allow method chaining for
+    /// Returns a reference to the [`Register`] to allow method chaining for
     /// additional configuration.
     ///
     /// # Example
@@ -715,7 +874,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     ///     .commit();
     /// // Module is now available to Do code
     /// ```
-    pub fn commit(self) -> &'a mut Builder<'v> {
+    pub fn commit(self) -> &'a mut Register<'v> {
         let mut items = self.contents;
         items.sort_by_key(|(sym, _)| *sym);
         for pair in items.windows(2) {
@@ -723,46 +882,94 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
                 panic!(
                     "duplicate native module member {}.{}",
                     self.name,
-                    pair[0].0.as_str(&self.vm.inner),
+                    pair[0].0.as_str(self.vm.inner),
                 );
             }
         }
 
         let module = NativeModule::new(self.name, items);
-        self.vm.inner.native_modules.insert(
-            self.name,
-            Value::from_object(GcObj::new(
-                self.vm.inner.arena(),
-                self.vm.inner.builtin_types.native_module,
-                module,
-            )),
-        );
+        let module = Value::from_object(GcObj::new(
+            self.vm.inner.arena(),
+            self.vm.inner.builtin_types.native_module,
+            module,
+        ));
+        self.vm.inner.insert_native_module(self.name, module);
         self.vm
     }
 }
 
+/// Handle for registering symbols, state, native types, and native modules.
+///
+/// [`Builder`] and [`TypeBuilder`] dereference to this type, so setup code that only
+/// registers things should take `&mut Register<'v>`.
+///
+/// A `Register` is only ever lent out behind `&mut`. It implements [`Alloc`], so holding one
+/// by value would permit allocation outside a context that owns that capability.
+pub struct Register<'v> {
+    pub(crate) inner: &'v Vm<'v>,
+}
+
+impl<'v> Register<'v> {
+    /// # Safety
+    ///
+    /// The result must only be lent out as `&mut Register` from a context that already holds
+    /// allocation capability for `vm`.
+    pub(crate) unsafe fn new(vm: &'v Vm<'v>) -> Self {
+        Self { inner: vm }
+    }
+}
+
+impl<'v> Alloc<'v> for Register<'v> {
+    fn alloc_vm(&mut self, _: private::Sealed) -> &'v Vm<'v> {
+        self.inner
+    }
+}
+
+impl<'v> Deref for Register<'v> {
+    type Target = Vm<'v>;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner
+    }
+}
+
+impl<'v> AsRef<Vm<'v>> for Register<'v> {
+    fn as_ref(&self) -> &Vm<'v> {
+        self.inner
+    }
+}
+
 /// Virtual machine builder.
+///
+/// Dereferences to [`Register`] for registration. Configuration that affects every strand
+/// (strand-local keys, importers, traps) is only available here.
 pub struct Builder<'v> {
-    pub(crate) inner: Vm<'v>,
+    reg: Register<'v>,
 }
 
 impl<'v> Alloc<'v> for Builder<'v> {
-    fn alloc_vm(&mut self, _: private::Sealed) -> &Vm<'v> {
-        &self.inner
+    fn alloc_vm(&mut self, _: private::Sealed) -> &'v Vm<'v> {
+        self.reg.inner
     }
 }
 
 impl<'v> Deref for Builder<'v> {
-    type Target = Vm<'v>;
+    type Target = Register<'v>;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        &self.reg
+    }
+}
+
+impl<'v> DerefMut for Builder<'v> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.reg
     }
 }
 
 impl<'v> AsRef<Vm<'v>> for Builder<'v> {
     fn as_ref(&self) -> &Vm<'v> {
-        self
+        self.reg.inner
     }
 }
 
@@ -787,26 +994,36 @@ impl Builder<'static> {
         // Create builtin class singleton objects
         let builtin_classes = Singletons::new(&arena, &builtin_types);
 
+        let vm = Vm {
+            arena,
+            builtin_types,
+            singletons: builtin_classes,
+            types,
+            symtab,
+            symroots: Default::default(),
+            state: Default::default(),
+            native_modules: Default::default(),
+            importers: Default::default(),
+            pipe_handler: Default::default(),
+            trap: Default::default(),
+            import_cache: Default::default(),
+            locals: Default::default(),
+            local_root_count: Cell::new(0),
+            spawn_tx: Default::default(),
+            strings: Default::default(),
+            type_singletons: Default::default(),
+            error_kind_vtbls: Default::default(),
+            lazy: Default::default(),
+        };
+
+        // Safety: VM is kept alive for the same duration as its contents, as it's self-referential.
+        // `vm` is not moved after this point and outlives `this`, which is the only way the
+        // reference escapes; every `'v`-branded value is confined to `f`, which returns before
+        // `vm` is dropped
+        // The builder holds allocation capability, so lending out its `Register` is sound
         let mut this = Builder {
-            inner: Vm {
-                arena,
-                builtin_types,
-                singletons: builtin_classes,
-                types,
-                symtab,
-                symroots: Default::default(),
-                state: Default::default(),
-                native_modules: Default::default(),
-                importers: Default::default(),
-                pipe_handler: None,
-                trap: None,
-                import_cache: Default::default(),
-                locals: Default::default(),
-                local_root_count: 0,
-                spawn_tx: Default::default(),
-                strings: Default::default(),
-                type_singletons: Default::default(),
-                error_kind_vtbls: Default::default(),
+            reg: unsafe {
+                Register::new(mem::transmute::<&Vm<'static>, &'static Vm<'static>>(&vm))
             },
         };
 
@@ -815,7 +1032,7 @@ impl Builder<'static> {
     }
 }
 
-impl<'v> Builder<'v> {
+impl<'v> Register<'v> {
     /// Resolve a name to a symbol. The returned symbol will live for the life of the VM.
     #[inline(never)]
     pub fn sym(&mut self, name: &str) -> Sym<'v, 'v> {
@@ -832,7 +1049,7 @@ impl<'v> Builder<'v> {
     /// Register custom state that will live for the life of the VM, and can therefore be
     /// referenced by native objects, functions, and modules, etc.
     pub fn register_state<T: Stateful<'v>>(&mut self, value: T) -> State<'v, T> {
-        match self.inner.state.entry(TypeId::of::<T::Tag>()) {
+        match self.inner.state.borrow_mut().entry(TypeId::of::<T::Tag>()) {
             Entry::Occupied(_) => panic!("duplicate state registration"),
             Entry::Vacant(entry) => {
                 let state = alias::Box::into_non_null(alias::Box::new(value));
@@ -847,32 +1064,16 @@ impl<'v> Builder<'v> {
         }
     }
 
-    /// Register strand-local state key.
-    pub fn local<T: Local<'v>>(&mut self) -> LocalKey<'v, T> {
-        let index = self.inner.locals.len();
-        let vtbl = LocalVtbl::new::<T>();
-        self.inner.locals.push(vtbl);
-        // Safety: index matches position of vtbl in vector
-        unsafe { LocalKey::new(index) }
-    }
-
-    /// Register a strand-local GC root key.
-    pub fn local_root(&mut self) -> LocalRootKey<'v> {
-        let index = self.inner.local_root_count;
-        self.inner.local_root_count += 1;
-        LocalRootKey::new(index)
-    }
-
     /// Register a native object type.
     ///
     /// Once registered, native objects can be instantiated with [`Type::create`]. Native objects
     /// can also be registered as module items with [`ModuleBuilder::object`], or as entire
-    /// modules with [`Builder::module_object`].
+    /// modules with [`Register::module_object`].
     ///
     /// The type's class object singleton is initialized with default values for `T::Type` and
     /// `T::TypeAnnex`.
     ///
-    /// Use [`Builder::build_type`] when you need to customize registration before committing it.
+    /// Use [`Register::build_type`] when you need to customize registration before committing it.
     pub fn register_type<T: Object<'v>>(&mut self) -> Type<'v, T>
     where
         T::Type: Default,
@@ -887,7 +1088,7 @@ impl<'v> Builder<'v> {
     /// The returned [`TypeBuilder`] has already been passed through [`Object::build`]. Finish
     /// registration with [`TypeBuilder::build`].
     ///
-    /// See [`Builder::register_type`] for the common case where `T::Type` and `T::TypeAnnex`
+    /// See [`Register::register_type`] for the common case where `T::Type` and `T::TypeAnnex`
     /// are both `Default`.
     pub fn build_type<T: Object<'v>>(
         &mut self,
@@ -923,9 +1124,8 @@ impl<'v> Builder<'v> {
         T::Annex: Default,
     {
         let name = self.inner.string(name);
-        self.inner
-            .native_modules
-            .insert(name, ty.create_raw(&self.inner, value, Default::default()));
+        let module = ty.create_raw(self.inner, value, Default::default());
+        self.inner.insert_native_module(name, module);
         self
     }
 
@@ -938,9 +1138,77 @@ impl<'v> Builder<'v> {
         annex: T::Annex,
     ) -> &mut Self {
         let name = self.inner.string(name);
-        self.inner
-            .native_modules
-            .insert(name, ty.create_raw(&self.inner, value, annex));
+        let module = ty.create_raw(self.inner, value, annex);
+        self.inner.insert_native_module(name, module);
+        self
+    }
+}
+
+impl<'v> Builder<'v> {
+    /// Register strand-local state key.
+    pub fn local<T: Local<'v>>(&mut self) -> LocalKey<'v, T> {
+        let index = self.reg.inner.locals.len();
+        let vtbl = LocalVtbl::new::<T>();
+        self.reg.inner.locals.push(vtbl);
+        // Safety: index matches position of vtbl in vector
+        unsafe { LocalKey::new(index) }
+    }
+
+    /// Register a strand-local GC root key.
+    pub fn local_root(&mut self) -> LocalRootKey<'v> {
+        let index = self.reg.inner.local_root_count.get();
+        self.reg.inner.local_root_count.set(index + 1);
+        LocalRootKey::new(index)
+    }
+
+    /// Declare a lazy setup under tag `K`.
+    ///
+    /// `init` runs at most once: when Do code imports one of `modules`, or when Rust code
+    /// calls [`AllocExt::force`] with `K`. Declaring the setup under the `Tag` of the state it
+    /// registers lets [`AllocExt::force_state`] run it and fetch that state in one step.
+    ///
+    /// `init` must register every module in `modules`, and no other modules. Strand-local keys,
+    /// importers, and traps are only available on `Builder`; reserve them before declaring the
+    /// setup and move them into `init`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a setup is already declared under `K`, or if a module in `modules` is already
+    /// registered or declared by another setup.
+    pub fn lazy<K: 'static>(
+        &mut self,
+        modules: &[&str],
+        init: impl FnOnce(&mut Register<'v>) + 'v,
+    ) -> &mut Self {
+        let vm = self.reg.inner;
+        let tag_name = std::any::type_name::<K>();
+        let mut lazy = vm.lazy.borrow_mut();
+        let lazy = &mut *lazy;
+        let unit = lazy.units.len();
+        match lazy.by_tag.entry(TypeId::of::<K>()) {
+            Entry::Occupied(_) => panic!("duplicate lazy unit {tag_name}"),
+            Entry::Vacant(entry) => {
+                entry.insert(unit);
+            }
+        }
+        let native_modules = vm.native_modules.borrow();
+        let modules = modules
+            .iter()
+            .map(|name| {
+                if native_modules.contains_key(*name) || lazy.by_module.contains_key(*name) {
+                    panic!("module {name} declared by lazy unit {tag_name} is already registered");
+                }
+                let name = vm.string(name);
+                lazy.by_module.insert(name, unit);
+                name
+            })
+            .collect();
+        lazy.units.push(LazyUnit {
+            tag_name,
+            modules,
+            phase: LazyPhase::Pending(Box::new(init)),
+        });
+        drop(native_modules);
         self
     }
 
@@ -950,14 +1218,14 @@ impl<'v> Builder<'v> {
         &mut self,
         factory: impl for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot<'v, '_>) + 'v,
     ) -> &mut Self {
-        self.inner.pipe_handler = Some(Box::new(factory));
+        *self.reg.inner.pipe_handler.borrow_mut() = Some(Box::new(factory));
         self
     }
 
     /// Registers a module importer function.  Do `import` statements check 3 sources of modules
     /// in order:
     ///
-    /// 1. Native modules (registered with [`Builder::module`] or [`Builder::module_object`]).
+    /// 1. Native modules (registered with [`Register::module`] or [`Register::module_object`]).
     /// 2. Cached, previously imported Do modules.
     /// 3. Module importers in order of registration.  If any succeed, the module is cached so long as it
     ///    remains referenced.
@@ -995,9 +1263,9 @@ impl<'v> Builder<'v> {
         ) -> Result<'v, 's, ()>
         + 'v,
     ) -> &mut Self {
-        let vtbl = self.inner.builtin_types.native_function;
-        self.inner.importers.push(Value::from_object(GcObj::new(
-            self.inner.arena(),
+        let vtbl = self.reg.inner.builtin_types.native_function;
+        self.reg.inner.importers.push(Value::from_object(GcObj::new(
+            self.reg.inner.arena(),
             vtbl,
             NativeFunction::new(
                 async move |strand, args, out| {
@@ -1026,7 +1294,7 @@ impl<'v> Builder<'v> {
         &mut self,
         trap: impl for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v,
     ) -> &mut Self {
-        self.inner.trap = Some(Box::new(trap));
+        *self.reg.inner.trap.borrow_mut() = Some(Box::new(trap));
         self
     }
 
@@ -1035,16 +1303,10 @@ impl<'v> Builder<'v> {
     /// can be run to obtain its return value. The result of the function is returned.
     pub async fn enter<R>(&mut self, f: impl AsyncFnOnce(&mut Strand<'v, '_>) -> R) -> R {
         let (tx, mut rx) = mpsc::unbounded();
-        *self.inner.spawn_tx.borrow_mut() = Some(tx);
+        *self.reg.inner.spawn_tx.borrow_mut() = Some(tx);
 
         let group = StrandGroup::new();
-        // Safety: VM is kept alive for the same duration as its contents, as it's self-referential.
-        // In particular, it is not dropped before leaving this function, at which point all strand
-        // lifetimes have ended
-        let strand = StrandInner::new(
-            unsafe { mem::transmute::<&Vm<'v>, &'v Vm<'v>>(&self.inner) },
-            None,
-        );
+        let strand = StrandInner::new(self.reg.inner, None);
         let _guard = unsafe { strand.init_group_leader(&group) };
         let native = Native {
             module: "<host>".into(),
@@ -1075,10 +1337,10 @@ impl<'v> Builder<'v> {
         };
 
         // Close spawn channel
-        *self.inner.spawn_tx.borrow_mut() = None;
+        *self.reg.inner.spawn_tx.borrow_mut() = None;
 
         // Cancel all join handles so orphaned background strands can unwind
-        self.inner.arena.cancel_join_handles();
+        self.reg.inner.arena.cancel_join_handles();
 
         // Drain remaining background tasks
         while let Ok(task) = rx.try_recv() {
@@ -1086,7 +1348,7 @@ impl<'v> Builder<'v> {
         }
         while background.next().await.is_some() {}
 
-        self.inner.arena.collect_full();
+        self.reg.inner.arena.collect_full();
         res
     }
 
@@ -1162,5 +1424,139 @@ impl Bytecode {
         strand
             .run(strand.inner, &mut frame, Slot::from_output(&mut out))
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, rc::Rc};
+
+    use super::*;
+    use crate::test_support::with_builder;
+
+    struct TagA;
+    struct TagB;
+
+    struct TestState {
+        value: i64,
+    }
+
+    impl<'v> Stateful<'v> for TestState {
+        type Tag = TagA;
+    }
+
+    #[test]
+    fn lazy_unit_runs_once_on_import() {
+        with_builder(async |vm| {
+            let runs = Rc::new(Cell::new(0));
+            let counter = runs.clone();
+            vm.lazy::<TagA>(&["lazy_test"], move |reg| {
+                counter.set(counter.get() + 1);
+                reg.register_state(TestState { value: 7 });
+                reg.module("lazy_test").value("x", 7_i64).commit();
+            });
+            assert_eq!(runs.get(), 0);
+            vm.enter_with_slots(async move |strand, [mut out]| {
+                assert!(strand.try_state::<TestState>().is_none());
+                strand.import("lazy_test", &mut out).await.unwrap();
+                strand.import("lazy_test", &mut out).await.unwrap();
+                assert_eq!(runs.get(), 1);
+                assert_eq!(strand.state::<TestState>().value, 7);
+            })
+            .await
+        });
+    }
+
+    #[test]
+    fn force_state_runs_setup() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&[], |reg| {
+                reg.register_state(TestState { value: 3 });
+            });
+            vm.enter(async |strand| {
+                assert!(strand.try_state::<TestState>().is_none());
+                assert_eq!(strand.force_state::<TestState>().value, 3);
+                assert_eq!(strand.try_state::<TestState>().unwrap().value, 3);
+                // Forcing again is a no-op
+                strand.force::<TagA>();
+            })
+            .await
+        });
+    }
+
+    #[test]
+    fn force_without_lazy_unit_is_noop() {
+        with_builder(async |vm| {
+            vm.register_state(TestState { value: 5 });
+            assert_eq!(vm.force_state::<TestState>().value, 5);
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "has not been initialized")]
+    fn state_before_force_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&[], |reg| {
+                reg.register_state(TestState { value: 1 });
+            });
+            vm.state::<TestState>();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "cyclic initialization")]
+    fn cyclic_force_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&[], |reg| reg.force::<TagB>());
+            vm.lazy::<TagB>(&[], |reg| reg.force::<TagA>());
+            vm.force::<TagA>();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "did not register declared module")]
+    fn missing_declared_module_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&["lazy_missing"], |_| {});
+            vm.force::<TagA>();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "registered undeclared module")]
+    fn undeclared_module_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&[], |reg| {
+                reg.module("lazy_undeclared").commit();
+            });
+            vm.force::<TagA>();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "is already registered")]
+    fn declaring_registered_module_panics() {
+        with_builder(async |vm| {
+            vm.module("lazy_taken").commit();
+            vm.lazy::<TagA>(&["lazy_taken"], |_| {});
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "is already registered")]
+    fn declaring_module_of_other_unit_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&["lazy_taken"], |_| {});
+            vm.lazy::<TagB>(&["lazy_taken"], |_| {});
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "is declared by lazy unit")]
+    fn committing_module_of_lazy_unit_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&["lazy_owned"], |_| {});
+            vm.module("lazy_owned").commit();
+        });
     }
 }

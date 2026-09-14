@@ -10,7 +10,7 @@ use dolang_vfs::path as vfs_path;
 
 use crate::{
     fs::path::{PathAnnex, create_path_annex},
-    global::Global,
+    global::FsGlobal,
 };
 
 /// Iterator over glob results, yielding Path objects.
@@ -19,7 +19,7 @@ pub(crate) struct GlobIter {
 }
 
 pub(crate) struct GlobIterAnnex<'v> {
-    pub(crate) global: State<'v, Global<'v>>,
+    pub(crate) global: State<'v, FsGlobal<'v>>,
     /// Prefix to prepend to each result path.
     pub(crate) prefix: vfs_path::PathBuf,
 }

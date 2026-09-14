@@ -38,7 +38,7 @@ pub use crate::{
     global::ProgramSource,
     security::AccessMask as WindowsAccessMask,
 };
-use dolang::runtime::{Error, Output, Result, Slot, Strand, Value};
+use dolang::runtime::{Alloc, AllocExt, Error, Output, Result, Slot, Strand, Value};
 pub use dolang_ext_term::{
     ansi_enabled, terminal_line_ending, terminal_output, write_terminal_line,
 };
@@ -49,7 +49,7 @@ pub use shell::{Exec, Exit};
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 
-use crate::global::Global;
+use crate::global::{FsGlobal, Global, ShellGlobal, WindowsSecurityGlobal};
 
 pub use diagnostic::{print_compile_diag_stderr, print_error_stderr, render_message_backtrace};
 use dolang_vfs::path as vfs_path;
@@ -63,7 +63,7 @@ pub use syntax::{
 /// The handle is stateless — the buffered reader itself lives on the VM — so
 /// this and `shell.stdin` read the same stream and cannot split its buffer.
 pub fn stdin<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<ShellGlobal<'v>>();
     global
         .types
         .stdin
@@ -74,7 +74,7 @@ pub fn stdin<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
 ///
 /// Stateless, as with [`stdin`].
 pub fn stdout<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<ShellGlobal<'v>>();
     global.types.stdout.create(strand, shell::Stdout, out)
 }
 
@@ -85,11 +85,10 @@ pub fn stdout<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
 /// literal `shell.stdout` otherwise, since there is nothing to follow and raw
 /// fd inheritance is the cheaper, simpler path.
 pub fn default_output<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
-    let global = strand.state::<Global<'v>>();
-    if global.terminal.stdout_is_terminal {
+    if strand.state::<Global<'v>>().terminal.stdout_is_terminal {
         dolang_ext_term::default_output(strand, out)
     } else {
-        global.types.stdout.create(strand, shell::Stdout, out)
+        stdout(strand, out)
     }
 }
 
@@ -148,7 +147,7 @@ pub fn windows_sid_name<'v>(
     name: dolang_vfs::security::SidName,
     out: &mut dolang::runtime::Slot<'v, '_>,
 ) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<WindowsSecurityGlobal<'v>>();
     security::create_sid_name(strand, global, name, out);
 }
 
@@ -188,15 +187,8 @@ pub async fn set_program<'v, 's>(
 }
 
 pub fn as_path<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Option<PathBuf> {
-    let global = strand.state::<Global<'v>>();
-    if let Some(path) = global.types.unix_path.cast(value) {
-        path.enter_sync(strand, |_strand, inst| {
-            inst.annex().path_buf().to_native().ok()
-        })
-    } else if let Some(path) = global.types.windows_path.cast(value) {
-        path.enter_sync(strand, |_strand, inst| {
-            inst.annex().path_buf().to_native().ok()
-        })
+    if let Some(path) = fs::path::cast_path(strand, value) {
+        path.to_native().ok()
     } else {
         value.as_str(strand).map(|s| PathBuf::from(s.to_string()))
     }
@@ -207,7 +199,7 @@ pub fn as_unix_path<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Option<vfs_path::PathBuf> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.try_state::<FsGlobal<'v>>()?;
     let path = global.types.unix_path.cast(value)?;
     path.enter_sync(strand, |_strand, inst| {
         let path = &inst.annex().path;
@@ -220,7 +212,7 @@ pub fn as_windows_path<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Option<vfs_path::PathBuf> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.try_state::<FsGlobal<'v>>()?;
     let path = global.types.windows_path.cast(value)?;
     path.enter_sync(strand, |_strand, inst| {
         let path = &inst.annex().path;
@@ -234,7 +226,7 @@ pub fn unix_path<'v, 's>(
     path: impl AsRef<str>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<FsGlobal<'v>>();
     fs::path::create_path(
         strand,
         global,
@@ -249,7 +241,7 @@ pub fn windows_path<'v, 's>(
     path: impl AsRef<str>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<FsGlobal<'v>>();
     fs::path::create_path(
         strand,
         global,
@@ -263,7 +255,7 @@ pub fn path<'v, 's>(
     path: PathBuf,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<FsGlobal<'v>>();
     let path = vfs_path::PathBuf::from_native(path).map_err(|e| Error::runtime(strand, e))?;
     fs::path::create_path(strand, global, path, out)
 }
@@ -278,7 +270,7 @@ pub async fn open<'v, 's>(
         "r" | "w" | "a" | "r+" | "w+" | "a+" => {}
         _ => return Err(io::Error::other(format!("invalid mode: {}", mode))),
     }
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<FsGlobal<'v>>();
     fs::file::open_native(
         strand,
         global,
@@ -299,7 +291,7 @@ pub fn create_sec_desc<'v>(
     sec_desc: dolang_winterop::security::SecDesc,
     out: impl Output<'v>,
 ) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<WindowsSecurityGlobal<'v>>();
     global
         .types
         .sec_desc
@@ -319,7 +311,7 @@ pub async fn sec_desc_from_args<'v, 's>(
     args: dolang::runtime::Args<'v, '_>,
     name: &str,
 ) -> Result<'v, 's, dolang_winterop::security::SecDesc> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<WindowsSecurityGlobal<'v>>();
     security::sec_desc_from_args(strand, global, args, &security::SpecPath::root(name)).await
 }
 
@@ -329,7 +321,7 @@ pub async fn sec_desc_from_value<'v, 's>(
     value: &dolang::runtime::Value<'v>,
     name: &str,
 ) -> Result<'v, 's, dolang_winterop::security::SecDesc> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.force_state::<WindowsSecurityGlobal<'v>>();
     security::sec_desc_from_value(strand, global, value, name).await
 }
 
@@ -344,9 +336,12 @@ pub async fn sec_desc_from_value<'v, 's>(
 /// The extension registering the subtype must name [`Shell`] in its
 /// `DEPENDS`, or this type may not exist yet.
 pub fn windows_access_mask_type<'v>(
-    builder: &dolang::runtime::vm::Builder<'v>,
+    alloc: &mut dyn Alloc<'v>,
 ) -> dolang::runtime::Type<'v, dolang::runtime::object::Flags<WindowsAccessMask>> {
-    builder.state::<Global<'v>>().types.access_mask
+    alloc
+        .force_state::<WindowsSecurityGlobal<'v>>()
+        .types
+        .access_mask
 }
 
 /// Returns the [`AnyVfs`] in scope for the strand (the ambient

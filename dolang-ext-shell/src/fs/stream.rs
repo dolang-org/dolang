@@ -7,7 +7,7 @@ use dolang::runtime::{
 use dolang_vfs::file::StreamEntry as VfsStreamEntry;
 use dolang_vfs::path as vfs_path;
 
-use crate::{error::ResultExt as _, global::Global};
+use crate::{error::ResultExt as _, global::FsGlobal};
 
 pub(crate) struct StreamEntry;
 
@@ -20,12 +20,12 @@ pub(crate) struct StreamIter {
 }
 
 pub(crate) struct StreamIterAnnex<'v> {
-    pub(crate) global: State<'v, Global<'v>>,
+    pub(crate) global: State<'v, FsGlobal<'v>>,
 }
 
 pub(crate) fn create_stream_entry<'v>(
     strand: &mut Strand<'v, '_>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     entry: VfsStreamEntry,
     out: impl Output<'v>,
 ) {
@@ -39,7 +39,7 @@ pub(crate) fn create_stream_entry<'v>(
 
 pub(crate) fn create_stream_iter<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     entries: Vec<VfsStreamEntry>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
@@ -64,7 +64,7 @@ pub(crate) fn stream_path(
 
 pub(crate) fn path_with_stream<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     stream: &Value<'v>,
 ) -> Result<'v, 's, vfs_path::PathBuf> {
@@ -80,7 +80,7 @@ pub(crate) fn path_with_stream<'v, 's>(
 
 pub(crate) async fn path_list<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
+    global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     resolve: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
