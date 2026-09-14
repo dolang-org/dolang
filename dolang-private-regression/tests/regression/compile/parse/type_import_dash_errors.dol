@@ -1,0 +1,7 @@
+import c:
+  @Bar: Baz
+# error: invalid import item
+#   --> type_import_dash_errors.dol:LL:LL
+#    |
+# LL |   @Bar: Baz
+#    |   ^

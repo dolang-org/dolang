@@ -92,6 +92,22 @@ A superclass can take type arguments:
 class Registry[V]: Table[Sym, V]
 ```
 
+## Type-Only Imports
+
+`@` before an item in an import's item list binds the item for types alone. The
+item is not imported, and a module none of whose items are imported is not
+loaded:
+
+```
+import geometry:
+  - distance
+  - @Point
+  - @Vector: Offset
+
+def shift p @Point by @Offset -> Point
+  p.add $by
+```
+
 ## Type Syntax
 
 An annotation or return type is a compact type, which whitespace ends. A type
@@ -120,9 +136,11 @@ anywhere in its block; any other binding must come before the type. A dotted
 name must begin with an import.
 
 Documentation tools warn about a name that refers to nothing, a dotted name that
-does not begin with an import, and a binder that is never used. The compiler
-does not consider types when it warns about unused variables, so a binding named
-only in types is still reported as unused unless its name begins with `_`.
+does not begin with an import, and a binder or type-only import that is never
+used. The compiler does not consider types when it warns about unused variables,
+so a binding named only in types is still reported as unused unless its name
+begins with `_`. A [type-only import](#type-only-imports) binds no variable, so
+it is not reported.
 
 ### Constants
 

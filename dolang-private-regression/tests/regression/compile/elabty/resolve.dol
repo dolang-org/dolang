@@ -43,3 +43,22 @@ assert_eq (lambda nil) nil
 
 for i @Int = [1]
   assert_eq $i 1
+
+# A type-only import can be named anywhere in its block, and dotted
+let _before @Early = nil
+import import_fixture:
+  - add
+  - @Early
+  - @Summer: Total
+
+def adder x @Early -> Total.Part
+  (add x 1)
+assert_eq (adder 1) 2
+
+import no_such_module:
+  - @Thing
+let _thing @Thing = nil
+
+# An exported type-only import is not reported as unused
+pub import import_fixture:
+  - @Exported

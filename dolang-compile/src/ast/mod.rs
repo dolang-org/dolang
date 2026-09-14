@@ -1712,12 +1712,32 @@ pub(crate) enum ImportItem {
     AsIs {
         bind: Ident,
         delim_span: Span,
+        /// The `@` of an item named only in types
+        at_span: Option<Span>,
     },
     Renamed {
         item: Span,
         bind: Ident,
         delim_span: Span,
+        /// The `-` and `@` of an item named only in types
+        type_only: Option<(Span, Span)>,
     },
+}
+
+impl ImportItem {
+    pub(crate) fn bind(&self) -> &Ident {
+        match self {
+            ImportItem::AsIs { bind, .. } | ImportItem::Renamed { bind, .. } => bind,
+        }
+    }
+
+    /// Whether the item binds a name for types alone, and so is never imported
+    pub(crate) fn is_type_only(&self) -> bool {
+        match self {
+            ImportItem::AsIs { at_span, .. } => at_span.is_some(),
+            ImportItem::Renamed { type_only, .. } => type_only.is_some(),
+        }
+    }
 }
 
 impl Node for ImportItem {
@@ -1727,13 +1747,25 @@ impl Node for ImportItem {
                 item,
                 bind,
                 delim_span,
+                type_only,
             } => {
+                if let Some((minus_span, at_span)) = type_only {
+                    visit.token(Token::Delim, *minus_span, None)?;
+                    visit.token(Token::Sigil, *at_span, None)?;
+                }
                 visit.token(Token::ModuleItem, *item, None)?;
                 visit.token(Token::Delim, *delim_span, None)?;
                 visit.node(bind)
             }
-            ImportItem::AsIs { bind, delim_span } => {
+            ImportItem::AsIs {
+                bind,
+                delim_span,
+                at_span,
+            } => {
                 visit.token(Token::Delim, *delim_span, None)?;
+                if let Some(at_span) = at_span {
+                    visit.token(Token::Sigil, *at_span, None)?;
+                }
                 visit.node(bind)
             }
         }

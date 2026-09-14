@@ -53,3 +53,27 @@ def _param_hidden x @_Hidden
   #    |                      ^^^^^^^
   class _Hidden
   x
+
+import import_fixture:
+  - @Unused
+  # warning: unused type import
+  #   --> warnings.dol:LL:LL
+  #    |
+  # LL |   - @Unused
+  #    |      ^^^^^^
+  - @_Ignored
+
+def _import_hidden x @Local
+  # warning: unbound type name
+  #   --> warnings.dol:LL:LL
+  #    |
+  # LL | def _import_hidden x @Local
+  #    |                       ^^^^^
+  import import_fixture:
+    - @Local
+  # warning: unused type import
+  #   --> warnings.dol:LL:LL
+  #    |
+  # LL |     - @Local
+  #    |        ^^^^^
+  x

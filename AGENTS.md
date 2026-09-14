@@ -624,6 +624,14 @@ def first[T] items @Array[T] -> T
 class Registry[V]: Table[Sym, V]
 ```
 
+`@` before an import item binds it for types only; the item is not imported:
+
+```
+import geometry:
+  - @Point
+  - @Vector: Offset
+```
+
 An annotation or return type is a compact type, so whitespace ends it, even
 inside `()`. Parenthesize unions and
 function types: `@Str|Path` is not a union, but `@(Str | Path)` is. Other forms:

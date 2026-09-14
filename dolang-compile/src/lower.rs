@@ -2312,6 +2312,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     );
                 }
                 ImportElement::Items { items, .. } => {
+                    // An item named only in types is not imported, nor is a module
+                    // whose items all are
+                    let count = items.iter().filter(|item| !item.is_type_only()).count();
+                    if count == 0 {
+                        continue;
+                    }
                     let cid = self.consttab.str(self.bintab.id_str(self.file.str(module)));
                     self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
                     let get = self.symtab.id(&self.bintab.id_str("get"));
@@ -2321,12 +2327,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         .insts
                         .push(Inst(InstInfo::Builtin(builtin::IMPORT, sig), span));
 
-                    for (i, item) in items.iter().enumerate() {
+                    for (i, item) in items.iter().filter(|item| !item.is_type_only()).enumerate() {
                         let (item_span, bind) = match item {
                             ImportItem::Renamed { item, bind, .. } => (*item, bind),
                             ImportItem::AsIs { bind, .. } => (bind.span, bind),
                         };
-                        if i + 1 != items.len() {
+                        if i + 1 != count {
                             self.block.insts.push(Inst(InstInfo::Dup, span));
                         }
                         let sym = self

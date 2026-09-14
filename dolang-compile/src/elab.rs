@@ -2048,6 +2048,10 @@ impl<'a> Elaborater<'a> {
                 ImportElement::Items { items, .. } => {
                     assert!(!items.is_empty());
                     for item in items.iter_mut() {
+                        // Only types can name the item, so it binds no variable
+                        if item.is_type_only() {
+                            continue;
+                        }
                         let bind = match item {
                             ImportItem::AsIs { bind, .. } | ImportItem::Renamed { bind, .. } => {
                                 bind

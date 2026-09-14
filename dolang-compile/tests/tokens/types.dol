@@ -83,3 +83,13 @@ def connect
   #      ^~~: variable
 do
   dbg $port
+
+import import_fixture:
+  - @Adder
+  # ^: sigil
+  #  ^~~~~: variable
+  - @Summer: Total
+  # ^: sigil
+  #  ^~~~~~: module_item
+  #        ^: delim
+  #          ^~~~~: variable

@@ -1,0 +1,7 @@
+import b:
+  - @Bar:
+# error: got <unindent>, expected: <whitespace>
+#   --> type_import_rename_errors.dol:LL:LL
+#    |
+# LL |   - @Bar:
+#    |          ^

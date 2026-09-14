@@ -76,15 +76,18 @@ impl Parser<'_> {
             items.push(match self.next()? {
                 Some(token!(Op(Op::Minus), minus_span)) => {
                     self.expect(scope, &[ExpectKind::ArgSep])?;
-                    let span = match decay_ident!(self.next()?) {
-                        Some(token!(Ident, span)) => span,
+                    match decay_ident!(self.next()?) {
+                        Some(token!(Ident, span)) => ImportItem::AsIs {
+                            bind: Ident::new(span),
+                            delim_span: minus_span,
+                            at_span: None,
+                        },
+                        Some(token!(At, at_span)) => {
+                            self.parse_type_import_item(scope, minus_span, at_span)?
+                        }
                         other => {
                             return Err(self.syntax_error(scope, other, "invalid import item"));
                         }
-                    };
-                    ImportItem::AsIs {
-                        bind: Ident::new(span),
-                        delim_span: minus_span,
                     }
                 }
                 Some(mut token @ token!(Literal | Key)) => {
@@ -95,6 +98,7 @@ impl Parser<'_> {
                             item: token.span,
                             bind: Ident::new(span),
                             delim_span: token.span.after_right_char(),
+                            type_only: None,
                         },
                         other => {
                             return Err(self.syntax_error(
@@ -109,6 +113,42 @@ impl Parser<'_> {
                     return Err(self.syntax_error(scope, other, "invalid import item"));
                 }
             })
+        }
+    }
+
+    /// Parse the rest of `- @Item` or `- @Item: name`, after the `@`.
+    fn parse_type_import_item(
+        &mut self,
+        scope: &mut Scope,
+        minus_span: Span,
+        at_span: Span,
+    ) -> Result<ImportItem> {
+        use self::Ident;
+        use TokenInfo::*;
+
+        match decay_ident!(self.next()?) {
+            Some(token!(Ident, span)) => Ok(ImportItem::AsIs {
+                bind: Ident::new(span),
+                delim_span: minus_span,
+                at_span: Some(at_span),
+            }),
+            Some(token!(Key, item)) => {
+                self.expect(scope, &[ExpectKind::ArgSep])?;
+                match decay_ident!(self.next()?) {
+                    Some(token!(Ident, span)) => Ok(ImportItem::Renamed {
+                        item,
+                        bind: Ident::new(span),
+                        delim_span: item.after_right_char(),
+                        type_only: Some((minus_span, at_span)),
+                    }),
+                    other => Err(self.syntax_error(
+                        scope,
+                        other,
+                        "expected identifier for renamed import",
+                    )),
+                }
+            }
+            other => Err(self.syntax_error(scope, other, "invalid import item")),
         }
     }
 

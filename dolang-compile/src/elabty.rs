@@ -15,9 +15,9 @@ use dolang_util::intern::BinTable;
 use crate::{
     Compiler,
     ast::{
-        Annot, Arg, ArrayElem, Binder, Binders, Block, Class, ClassMember, DictElem, Expr,
-        ExprBody, FieldInit, For, Function, Ident, If, ImportElement, ImportItem, LValue, Origin,
-        Param, PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeExpr, Var,
+        Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, DictElem, Expr, ExprBody,
+        FieldInit, For, Function, Ident, If, ImportElement, LValue, Origin, Param, PatIdent,
+        Pattern, PrimStmt, Res, Root, Stmt, TypeExpr, Var,
     },
     diag::Severity,
     source::{Diagnose, Diags, File, Span},
@@ -72,6 +72,22 @@ impl Diagnose for UnusedBinder {
     }
 }
 
+struct UnusedTypeImport(Span);
+
+impl Diagnose for UnusedTypeImport {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "unused type import")
+    }
+
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
 pub(crate) fn check(
     root: &mut Root,
     file: &File<'_>,
@@ -118,16 +134,22 @@ enum FrameKind<'s> {
         /// declarations are visible before they appear
         in_body: Cell<bool>,
     },
-    /// The binders of a declaration
-    Binders {
-        binders: &'s [Binder],
-        used: Vec<Cell<bool>>,
-    },
+    /// Names that exist only in types: the binders of a declaration, or the type-only
+    /// imports of a block
+    Types { names: Vec<TypeName> },
+}
+
+/// A name declared for types alone
+struct TypeName {
+    span: Span,
+    /// A type-only import rather than a binder
+    import: bool,
+    used: Cell<bool>,
 }
 
 enum Found {
     Var { res: Res, import: bool },
-    Binder,
+    Type { import: bool },
 }
 
 impl<'s> Frame<'s> {
@@ -146,20 +168,36 @@ impl<'s> Frame<'s> {
         }
     }
 
-    fn binders(outer: &'s Frame<'s>, binders: Option<&'s Binders>) -> Self {
-        let binders = binders.map_or(&[][..], |binders| &binders.binders);
+    fn binders(outer: &'s Frame<'s>, binders: Option<&Binders>) -> Self {
+        let names = binders
+            .into_iter()
+            .flat_map(|binders| &binders.binders)
+            .map(|binder| TypeName {
+                span: binder.ident.span,
+                import: false,
+                used: Cell::new(false),
+            })
+            .collect();
         Frame {
             outer: Some(outer),
-            kind: FrameKind::Binders {
-                binders,
-                used: binders.iter().map(|_| Cell::new(false)).collect(),
-            },
+            kind: FrameKind::Types { names },
         }
     }
 
-    fn enter_body(&self) {
+    /// Enter the statements of the block whose variables this frame holds, where the
+    /// block's declarations are visible before they appear. The returned frame holds the
+    /// block's type-only imports, which are found before its variables.
+    fn body<T: Element>(&'s self, elems: &[T]) -> Frame<'s> {
         if let FrameKind::Vars { in_body, .. } = &self.kind {
             in_body.set(true);
+        }
+        let mut names = Vec::new();
+        for elem in elems {
+            elem.type_imports(&mut names);
+        }
+        Frame {
+            outer: Some(self),
+            kind: FrameKind::Types { names },
         }
     }
 }
@@ -226,13 +264,16 @@ impl Check<'_> {
                     }
                     depth += 1;
                 }
-                FrameKind::Binders { binders, used } => {
-                    if let Some(index) = binders
+                FrameKind::Types { names } => {
+                    if let Some(found) = names
                         .iter()
-                        .rposition(|binder| self.file.str(binder.ident.span) == name)
+                        .rev()
+                        .find(|found| self.file.str(found.span) == name)
                     {
-                        used[index].set(true);
-                        return Some(Found::Binder);
+                        found.used.set(true);
+                        return Some(Found::Type {
+                            import: found.import,
+                        });
                     }
                 }
             }
@@ -261,19 +302,24 @@ impl Check<'_> {
                     self.diags.push(DottedNonImport(head.span));
                 }
             }
-            Some(Found::Binder) => {
-                if dotted {
+            Some(Found::Type { import }) => {
+                if dotted && !import {
                     self.diags.push(DottedNonImport(head.span));
                 }
             }
         }
     }
 
-    fn unused_binders(&self, frame: &Frame<'_>) {
-        if let FrameKind::Binders { binders, used } = &frame.kind {
-            for (binder, used) in binders.iter().zip(used) {
-                if !used.get() && !self.file.str(binder.ident.span).starts_with('_') {
-                    self.diags.push(UnusedBinder(binder.ident.span));
+    fn unused_types(&self, frame: &Frame<'_>) {
+        if let FrameKind::Types { names } = &frame.kind {
+            for name in names {
+                if name.used.get() || self.file.str(name.span).starts_with('_') {
+                    continue;
+                }
+                if name.import {
+                    self.diags.push(UnusedTypeImport(name.span));
+                } else {
+                    self.diags.push(UnusedBinder(name.span));
                 }
             }
         }
@@ -288,17 +334,18 @@ impl Check<'_> {
         if let Some(ret) = ret {
             self.ty(&frame, &mut ret.ty);
         }
-        frame.enter_body();
+        let inner = frame.body(&body.stmts);
         for stmt in body.stmts.iter_mut() {
-            self.stmt(&frame, stmt);
+            self.stmt(&inner, stmt);
         }
+        self.unused_types(&inner);
     }
 
     /// Check a function declared with binders.
     fn def(&mut self, frame: &Frame<'_>, binders: Option<&Binders>, func: &mut Function) {
         let inner = Frame::binders(frame, binders);
         self.function(Some(&inner), func);
-        self.unused_binders(&inner);
+        self.unused_types(&inner);
     }
 
     fn param(&mut self, frame: &Frame<'_>, param: &mut Param) {
@@ -416,7 +463,7 @@ impl Check<'_> {
                 }
             }
         }
-        self.unused_binders(&inner);
+        self.unused_types(&inner);
     }
 
     fn prim(&mut self, frame: &Frame<'_>, prim: &mut PrimStmt) {
@@ -444,10 +491,11 @@ impl Check<'_> {
         if let Some(pattern) = pattern {
             self.pattern(&inner, pattern);
         }
-        inner.enter_body();
+        let body = inner.body(elems);
         for elem in elems.iter_mut() {
-            elem.check(self, &inner);
+            elem.check(self, &body);
         }
+        self.unused_types(&body);
     }
 
     fn if_body<T: Body>(&mut self, frame: &Frame<'_>, node: &mut If<T>) {
@@ -578,6 +626,9 @@ trait Element {
 
     /// Record how the element declares variables of its enclosing block.
     fn declare(&self, _decls: &mut [Option<Decl>]) {}
+
+    /// Collect the type-only imports the element declares in its enclosing block.
+    fn type_imports(&self, _names: &mut Vec<TypeName>) {}
 }
 
 impl Element for Stmt {
@@ -599,11 +650,31 @@ impl Element for Stmt {
                         }
                         ImportElement::Items { items, .. } => {
                             for item in items {
-                                let (ImportItem::AsIs { bind, .. }
-                                | ImportItem::Renamed { bind, .. }) = item;
-                                declare(decls, bind, Decl::Import);
+                                declare(decls, item.bind(), Decl::Import);
                             }
                         }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn type_imports(&self, names: &mut Vec<TypeName>) {
+        match self {
+            Stmt::NlGuard(guard) => guard.body.type_imports(names),
+            Stmt::Import(import) => {
+                for element in &import.elements {
+                    let ImportElement::Items { items, .. } = element else {
+                        continue;
+                    };
+                    for item in items.iter().filter(|item| item.is_type_only()) {
+                        names.push(TypeName {
+                            span: item.bind().span,
+                            import: true,
+                            // An exported name may be used elsewhere
+                            used: Cell::new(import.pub_span.is_some()),
+                        });
                     }
                 }
             }
