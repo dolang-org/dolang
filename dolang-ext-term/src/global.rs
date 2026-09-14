@@ -29,8 +29,6 @@ pub(crate) struct Syms<'v> {
     pub(crate) value: Sym<'v, 'v>,
     /// `Fmt.len`, the number of segments in a sequence
     pub(crate) len: Sym<'v, 'v>,
-    /// `FmtParam.name`, the parameter an unbound position names
-    pub(crate) name: Sym<'v, 'v>,
     pub(crate) chunk: Sym<'v, 'v>,
     pub(crate) line: Sym<'v, 'v>,
     pub(crate) mode: Sym<'v, 'v>,
@@ -108,7 +106,6 @@ impl<'v> Global<'v> {
             syms: Syms {
                 value: builder.sym("value"),
                 len: builder.sym("len"),
-                name: builder.sym("name"),
                 chunk: builder.sym("CHUNK"),
                 line: builder.sym("LINE"),
                 mode: builder.sym("mode"),

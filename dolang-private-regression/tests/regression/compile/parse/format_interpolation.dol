@@ -47,6 +47,90 @@ echo "${42:4294967296}"
 # LL | echo "${42:4294967296}"
 #    |                     ^
 
+echo "${42:\u{3e}5}"
+# error: escapes are only valid as the fill character in format specifications
+#   --> format_interpolation.dol:LL:LL
+#    |
+# LL | echo "${42:\u{3e}5}"
+#    |            ^^^^^^
+
+echo "${42:\u{2b}d}"
+# error: escapes are only valid as the fill character in format specifications
+#   --> format_interpolation.dol:LL:LL
+#    |
+# LL | echo "${42:\u{2b}d}"
+#    |            ^^^^^^
+
+echo "${42:\u{7d}}"
+# error: escapes are only valid as the fill character in format specifications
+#   --> format_interpolation.dol:LL:LL
+#    |
+# LL | echo "${42:\u{7d}}"
+#    |            ^^^^^^
+
+echo "${42:\u{7d}\u{3e}5}"
+# error: escapes are only valid as the fill character in format specifications
+#   --> format_interpolation.dol:LL:LL
+#    |
+# LL | echo "${42:\u{7d}\u{3e}5}"
+#    |                  ^^^^^^
+
+echo "${42:*\u{3e}5}"
+# error: escapes are only valid as the fill character in format specifications
+#   --> format_interpolation.dol:LL:LL
+#    |
+# LL | echo "${42:*\u{3e}5}"
+#    |             ^^^^^^
+
+echo "${42:>\u{2b}d}"
+# error: escapes are only valid as the fill character in format specifications
+#   --> format_interpolation.dol:LL:LL
+#    |
+# LL | echo "${42:>\u{2b}d}"
+#    |             ^^^^^^
+
+echo "${42:>\u{23}x}"
+# error: escapes are only valid as the fill character in format specifications
+#   --> format_interpolation.dol:LL:LL
+#    |
+# LL | echo "${42:>\u{23}x}"
+#    |             ^^^^^^
+
+echo "${42:>\u{30}5}"
+# error: escapes are only valid as the fill character in format specifications
+#   --> format_interpolation.dol:LL:LL
+#    |
+# LL | echo "${42:>\u{30}5}"
+#    |             ^^^^^^
+
+echo "${42:>\u{35}}"
+# error: escapes are only valid as the fill character in format specifications
+#   --> format_interpolation.dol:LL:LL
+#    |
+# LL | echo "${42:>\u{35}}"
+#    |             ^^^^^^
+
+echo "${1.5:5\u{2e}2f}"
+# error: escapes are only valid as the fill character in format specifications
+#   --> format_interpolation.dol:LL:LL
+#    |
+# LL | echo "${1.5:5\u{2e}2f}"
+#    |              ^^^^^^
+
+echo "${1.5:.\u{32}f}"
+# error: escapes are only valid as the fill character in format specifications
+#   --> format_interpolation.dol:LL:LL
+#    |
+# LL | echo "${1.5:.\u{32}f}"
+#    |              ^^^^^^
+
+echo "${42:5\u{64}}"
+# error: escapes are only valid as the fill character in format specifications
+#   --> format_interpolation.dol:LL:LL
+#    |
+# LL | echo "${42:5\u{64}}"
+#    |             ^^^^^^
+
 echo b"${42:5}"
 # error: formatted interpolation is not valid in binary strings
 #   --> format_interpolation.dol:LL:LL

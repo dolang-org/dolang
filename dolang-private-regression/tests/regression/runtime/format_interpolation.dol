@@ -27,6 +27,8 @@ assert_eq "${:x::!}" ":x:"
 # Fill and alignment, including Unicode, escapes, and alignment glyphs as fill.
 assert_eq "${"x":界^9s}" "界界界界x界界界界"
 assert_eq "${"x":\"<3s}" "x\"\""
+assert_eq "${"x":\u{7d}>3s}" "}}x"
+assert_eq "${"x":\u{3e}>3s}" ">>x"
 assert_eq "${"x":>3s}" "  x"
 assert_eq "${"x":<<4s}" "x<<<"
 assert_eq "${"x":>>4s}" ">>>x"

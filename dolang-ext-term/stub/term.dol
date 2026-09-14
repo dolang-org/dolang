@@ -414,13 +414,10 @@ pub class Style
 # everything else is converted -- [`verbatim`](std) in argument
 # position, `str` inside a `Text` -- and sanitized.
 #
-# The exception is an unfilled [`FmtParam`](std.FmtParam). A parameter
-# printed on its own is just a name and shows itself as such, but one still
-# standing in a sequence means the template was never finished, so the console
-# raises a [`MissingPosError`](std.MissingPosError) or
-# [`MissingKeyError`](std.MissingKeyError) as
-# [`format()`](std.Fmt.format) does, rather than printing a hole
-# where a value was meant to go.
+# The exception is a [`FmtParam`](std.FmtParam). A parameter printed on its
+# own is just a name and shows itself as such, but a hole means nothing to the
+# console, so one inside a sequence raises a
+# [`ValueError`](std.ValueError).
 #
 # ## Example
 #

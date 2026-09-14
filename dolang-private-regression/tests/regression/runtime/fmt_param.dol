@@ -2,11 +2,10 @@ import std:
   - Fmt
   - FmtValue
   - FmtParam
-  - Set
 
-# A parameter names an unbound position. The name is an Int or a Sym, and
-# nothing else: binding is keyed lookup, and those are the two kinds of key an
-# argument pack and a dict literal can supply.
+# A parameter names a hole whose meaning is up to the consumer. The name is an
+# Int or a Sym, and nothing else: those are the two kinds of key an argument
+# pack and a dict literal can supply.
 let positional = FmtParam 0
 let named = FmtParam :user:
 assert_eq (type positional) $FmtParam
@@ -113,7 +112,7 @@ assert_eq $short[1].name 0
 assert_eq $short[3].name :name:
 assert_eq $short[1].source r"$#0"
 assert_eq $short.format(1, name: "n") "a=1 b=n"
-assert_eq $(t"x$#k").params() (Set([:k:]))
+assert_eq $(t"x$#k").format(k: 1) "x1"
 
 # The shorthand takes the name and nothing else, so a `:` after one is text.
 let labeled = t"$#name: $#0"
@@ -127,58 +126,19 @@ let short_doc = t|-
   a=$#k
 assert_eq $short_doc[1].name :k:
 
-# Calling the sequence fills every hole at once. Positional arguments are sugar
-# for integer keys, so `call` and `bind` substitute the same way and differ only
-# in what they insist on.
+# `format` is the reference implementation of holes: it fills them from its
+# arguments before expanding. A positional argument fills the hole named by its
+# position, and a keyword argument the hole named by its key.
 let stmt = t"select * from t where a = ${#0} and c = ${#name}"
-assert_eq $(stmt 1 name: "n").format() "select * from t where a = 1 and c = n"
-assert_eq $(stmt.bind {0: 1, name: "n"}).format() $(stmt 1 name: "n").format()
+assert_eq $stmt.format(1, name: "n") "select * from t where a = 1 and c = n"
 
-# A filled hole is a bound value, never literal text: that is what keeps a
-# template assembled at runtime inside the guarantee its literal segments came
-# from the program.
-let filled = stmt 1 name: "n"
-assert_eq (type filled[1]) $FmtValue
-assert_eq $filled[1].value 1
-
-# It also keeps the parameter's specification and the text it was written as,
-# both of which belong to the template rather than to the value that arrived
-# late.
+# A filled hole keeps the parameter's specification, which belongs to the
+# template rather than to the value that arrived late.
 let layout = t"[${#0:>4}]"
-let laid = layout 7
-assert_eq $laid[1].width 4
-assert_eq $laid.format() "[   7]"
-assert_eq (dbg laid) r##"t"[${#0:>4}]""##
-
-# `bind` fills what it names and leaves the rest, so a template can be filled in
-# stages. A dict is what it takes because only a dict can name a sparse set of
-# positions.
-let sparse = t"${#0}-${#2}-${#name}"
-let partial = sparse.bind {2: "z", name: "n"}
-assert_eq $partial.len 5
-assert_eq (type partial[0]) $FmtParam
-assert_eq (type partial[2]) $FmtValue
-assert_eq $(partial.bind {0: "x"}).format() "x-z-n"
-assert_throws $std.TypeError do sparse.bind [1, 2]
-
-# Binding nothing is allowed and changes nothing.
-assert_eq $sparse.bind({}) $sparse
-
-# A name that no hole uses is an error either way round -- a misspelled key is
-# reported as the key that was written, not as a parameter nothing has heard of.
-assert_throws $std.UnexpectedKeyError do sparse.bind {nope: 1}
-assert_throws $std.UnexpectedPosError do sparse.bind {7: 1}
-assert_throws $std.UnexpectedKeyError do sparse.bind {0: "x", 2: "z", nope: 1}
-
-# `call` alone insists every hole is filled.
-assert_throws $std.MissingPosError do stmt name: "n"
-assert_throws $std.MissingKeyError do stmt 1
-assert_throws $std.UnexpectedPosError do stmt 1 2 name: "n"
-
-# `format` takes the same arguments, filling and expanding in one step rather
-# than two. Filling is on `call`'s terms, so the same checks apply.
-assert_eq $stmt.format(1, name: "n") $(stmt 1 name: "n").format()
 assert_eq $layout.format(7) "[   7]"
+
+# Filling is exhaustive: a hole left unfilled and an argument no hole consumed
+# are both errors. A misspelled key is reported as the key that was written.
 assert_throws $std.MissingPosError do stmt.format(name: "n")
 assert_throws $std.MissingKeyError do stmt.format(1)
 assert_throws $std.UnexpectedPosError do stmt.format(1, 2, name: "n")
@@ -188,37 +148,16 @@ assert_throws $std.UnexpectedKeyError do stmt.format(1, name: "n", nope: 2)
 let bare = t"plain"
 assert_throws $std.UnexpectedPosError do bare.format(1)
 
-# A hole may be filled more than once over: repeating a name fills every hole
-# that bears it.
+# Repeating a name fills every hole that bears it.
 let twice = t"${#k}/${#k}"
-assert_eq $(twice.bind {k: 9}).format() "9/9"
+assert_eq $twice.format(k: 9) "9/9"
 
-# A sequence bound inside a sequence has holes of its own, and they are reached
-# before anything past the binding.
+# Holes inside a bound sequence are filled too, depth first, and a name is
+# never renumbered: a nested `${#0}` is filled by the same argument.
 let inner = t"${#k}-x"
 let outer = t"[${inner}]"
-assert_eq $(outer.bind {k: 5}).format() "[5-x]"
-let joined = outer.bind {k: 5}
-assert_eq (type joined[1]) $FmtValue
-
-# A sequence with no holes takes an empty binding and rejects anything else.
-let plain = t"a$n"
-assert_eq $plain.bind({}) $plain
-assert_throws $std.UnexpectedPosError do plain "x"
-
-# `params` is the template's signature: the names, in the order binding reaches
-# them. The set drops a repeat and keeps where the name was first reached.
-assert_eq $stmt.params() (Set([0, :name:]))
-assert_eq $sparse.params() (Set([0, 2, :name:]))
-assert_eq $twice.params() (Set([:k:]))
-assert_eq $outer.params() (Set([:k:]))
-assert_eq $plain.params() (Set([]))
-assert_eq $(stmt 1 name: "n").params() (Set([]))
-
-# The set keeps where each name was first reached, so iterating it gives the
-# order the template reads in.
-let repeated = t"${#b}${#a}${#b}"
-let order = $
-  for name = repeated.params()
-    - $name
-assert_eq $order [:b:, :a:]
+assert_eq $outer.format(k: 5) "[5-x]"
+let nested = t"<${#0}>"
+let wrapped = t"${#0}${nested}"
+assert_eq $wrapped.format(1) "1<1>"
+assert_throws $std.MissingKeyError do outer.format()

@@ -11,8 +11,10 @@ let label = pass("ready")
 echo t"styled: [${label:^9}]"
 echo "plain:  [${label:^9}]"
 
-# `${#name}` leaves a hole to fill later, making a reusable template.
-let row = t"$#status ${#name:<6} ${#secs:>6.2f}s"
+# A function that builds the `t"..."` makes a reusable template.
+def row status name secs
+  t"$status ${name:<6} ${secs:>6.2f}s"
+
 let results = $
   - ["build", true, 12.5]
   - ["lint", true, 3.25]
@@ -23,7 +25,7 @@ for name passed secs = results
     pass "PASS"
   else
     fail "FAIL"
-  echo $ row :status :name :secs
+  echo $ row $status $name $secs
 
 echo $ muted "$(results.len) steps"
 

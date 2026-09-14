@@ -9,7 +9,6 @@ import shell term strand
     - test
   std:
     - FmtValue
-    - MissingKeyError
     - TypeError
     - UnsupportedError
     - ValueError
@@ -301,12 +300,10 @@ def console_refuses_unbound_parameters()
   let hole = std.FmtParam :user:
   assert_eq (term.sub do echo hole) r"${#user}"
 
-  # Reaching the console inside a sequence is different: the template was
-  # never finished, so the console refuses it exactly as `format` does rather
-  # than printing a hole where a value was meant to go.
+  # Inside a sequence a hole means nothing to the console, so it refuses the
+  # sequence rather than printing a hole where a value was meant to go.
   let stmt = std.Fmt ["user: ", hole]
-  assert_throws $MissingKeyError do stmt.format()
-  assert_throws $MissingKeyError do term.sub do echo $stmt
+  assert_throws $ValueError do term.sub do echo $stmt
 
 # --- Terminal output capture ----------------------------------------------
 

@@ -990,26 +990,21 @@ fn append_segments<'v, 's>(
     argument: bool,
     value: &Value<'v>,
 ) -> Result<'v, 's, ()> {
-    strand.with_slots_sync(|strand, [mut len, mut segment, mut name]| {
+    strand.with_slots_sync(|strand, [mut len, mut segment]| {
         value.get(strand, global.syms.len, &mut len)?;
         let len = len.to_usize(strand)?;
         for index in 0..len {
             value.index(strand, index, &mut segment)?;
-            // A parameter shows itself readily enough on its own, but one
-            // still standing in a sequence means the template was never
-            // finished. `Fmt.format()` refuses that, and the console agrees
-            // rather than printing a hole where a value was meant to go.
+            // A parameter shows itself readily enough on its own, but a hole
+            // means nothing to the console, which would otherwise print it
+            // where a value was meant to go.
             if segment.is_instance_of(strand, TypeObject::FmtParam) {
-                segment.get(strand, global.syms.name, &mut name)?;
-                // A hole nobody filled is a parameter nobody supplied, and is
-                // reported as one: positionally when its name is an integer,
-                // by key otherwise.
-                return Err(
-                    match name.as_int(strand).and_then(|i| usize::try_from(i).ok()) {
-                        Some(index) => Error::missing_positional(strand, index),
-                        None => Error::missing_key(strand, &name),
-                    },
-                );
+                // Its display is the source it was written as.
+                let source = segment.to_string(strand)?;
+                return Err(Error::value(
+                    strand,
+                    format!("{source}: term does not accept template parameters"),
+                ));
             }
             append_value(strand, global, out, parent, ansi, argument, &segment)?;
         }
