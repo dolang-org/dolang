@@ -855,8 +855,8 @@ that only look up state should take `&Vm<'v>`, never a builder.
 
 `Builder::lazy` defers registration until something needs it. The setup runs at
 most once: when Do code imports one of the modules it declares, or when Rust
-code forces its tag through an `Alloc`. Declare it under the `Tag` of the state it
-registers, so `force_state` can run it and return that state:
+code forces its tag through an `Alloc`. Declare it under the `Tag` of the state
+it registers, so `force_state` can run it and return that state:
 
 ```rust
 fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Self::Error> {

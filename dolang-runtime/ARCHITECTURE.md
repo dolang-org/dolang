@@ -19,9 +19,9 @@ depend on them being fixed before the VM is entered.
 A lazy setup (`Builder::lazy`) is keyed by a tag type and owns a set of module
 names. It runs at most once, with a fresh `Register`, when an import misses a
 module it owns or when `AllocExt::force` names its tag. Forcing requires an
-`Alloc` because setup allocates; `Vm::state` never forces, and panics on state whose
-setup hasn't run. The table tracks the running setups to report cycles, and
-rejects any module registered outside the setup that declared it.
+`Alloc` because setup allocates; `Vm::state` never forces, and panics on state
+whose setup hasn't run. The table tracks the running setups to report cycles,
+and rejects any module registered outside the setup that declared it.
 
 ## Value Representation
 
