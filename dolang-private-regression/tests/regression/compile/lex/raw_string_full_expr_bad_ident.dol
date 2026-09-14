@@ -1,13 +1,13 @@
-echo (r?)
+echo (r;)
 # error: unexpected character in identifier
 #   --> raw_string_full_expr_bad_ident.dol:LL:LL
 #    |
-# LL | echo (r?)
+# LL | echo (r;)
 #    |       ^^
 
-echo (b?)
+echo (b;)
 # error: unexpected character in identifier
 #   --> raw_string_full_expr_bad_ident.dol:LL:LL
 #    |
-# LL | echo (b?)
+# LL | echo (b;)
 #    |       ^^

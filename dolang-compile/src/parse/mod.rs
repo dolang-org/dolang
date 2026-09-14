@@ -62,7 +62,10 @@ macro_rules! decay_shell {
             | TokenInfo::Op(_)
             | TokenInfo::RBar
             | TokenInfo::TBar
-            | TokenInfo::DecoratorOpen => TokenInfo::Literal)
+            | TokenInfo::DecoratorOpen
+            | TokenInfo::Arrow
+            | TokenInfo::At
+            | TokenInfo::Question => TokenInfo::Literal)
     }
 }
 
@@ -104,6 +107,9 @@ macro_rules! expr_tail_break {
             | TokenInfo::Literal
             | TokenInfo::Equal
             | TokenInfo::Escape(_)
+            | TokenInfo::Arrow
+            | TokenInfo::At
+            | TokenInfo::Question
     };
 }
 
@@ -135,7 +141,10 @@ macro_rules! decay_string {
             | TokenInfo::TBar
             | TokenInfo::ArgSep
             | TokenInfo::Hash
-            | TokenInfo::DecoratorOpen => TokenInfo::Literal)
+            | TokenInfo::DecoratorOpen
+            | TokenInfo::Arrow
+            | TokenInfo::At
+            | TokenInfo::Question => TokenInfo::Literal)
     }
 }
 

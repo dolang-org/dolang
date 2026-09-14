@@ -1,0 +1,33 @@
+# `@`, `?` and `->` are tokens, but in shell-like and string position they
+# are ordinary text, as they were before type syntax existed.
+assert_eq user@host r"user@host"
+assert_eq @foo r"@foo"
+assert_eq foo?.txt r"foo?.txt"
+assert_eq ? r"?"
+assert_eq a->b r"a->b"
+assert_eq -> r"->"
+assert_eq ->5 r"->5"
+assert_eq a-->b r"a-->b"
+assert_eq r? r"r?"
+
+let name = "world"
+assert_eq $name@host "world@host"
+assert_eq $name? "world?"
+assert_eq $name->x "world->x"
+
+assert_eq "a@b?c->d" r"a@b?c->d"
+assert_eq "$name@" "world@"
+assert_eq "${name:@^9}" "@@world@@"
+assert_eq "${name:?}" "\"world\""
+
+let doc = |-
+  @echo off
+  @@ -1 +1 @@
+  a->b? c
+assert_eq $doc "@echo off\n@@ -1 +1 @@\na->b? c"
+
+let items = $
+  - @foo
+  - a->b
+  - ?
+assert_eq $items ["@foo", "a->b", "?"]

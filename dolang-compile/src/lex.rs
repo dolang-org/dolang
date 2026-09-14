@@ -217,6 +217,8 @@ pub(crate) enum Mode {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum RawToken {
+    Arrow,
+    At,
     DecoratorOpen,
     Dollar,
     DQuote,
@@ -232,6 +234,7 @@ enum RawToken {
     Literal,
     Op(Op),
     NewlineIndent,
+    Question,
     RightParen,
     Space,
     LeftBracket,
@@ -256,6 +259,8 @@ enum RawToken {
 enum RawState {
     Amp,
     AmpAmp,
+    Arrow,
+    At,
     Backslash,
     Bang,
     BangEqual,
@@ -313,6 +318,7 @@ enum RawState {
     PostDot { negative: bool },
     LeadingZero { negative: bool },
     Hash,
+    Question,
     LtLt,
     GtGt,
     R,
@@ -687,6 +693,8 @@ macro_rules! lex {
                 Some(b'&') => emit!($self.$method, $token, Amp),
                 Some(b'{') => emit!($self.$method, $token, LeftBrace),
                 Some(b'}') => emit!($self.$method, $token, RightBrace),
+                Some(b'@') => emit!($self.$method, $token, At),
+                Some(b'?') => emit!($self.$method, $token, Question),
                 // Only in the modes that have no comments. Elsewhere `#` mid
                 // literal is ordinary text (`echo foo#bar`), and routing it to
                 // `Hash` would start a comment there.
@@ -912,7 +920,13 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                         self.acc = (c - b'0') as u128;
                         self.trans(Integer { negative: true, radix: 10 })
                     },
+                    match Some(b'>') => self.trans(Arrow),
                 }),
+                // Type syntax tokens return without lookahead, so the parser can
+                // switch lexer modes immediately after them
+                Arrow => return self.token(RawToken::Arrow, Empty),
+                At => return self.token(RawToken::At, Empty),
+                Question => return self.token(RawToken::Question, Empty),
                 Plus => symbol!(self, RawToken::Op(Op::Plus), {}),
                 Star => symbol!(self, RawToken::Op(Op::Star), {}),
                 Slash => symbol!(self, RawToken::Op(Op::Slash), {
@@ -1466,6 +1480,8 @@ pub(crate) struct Error;
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) enum TokenInfo {
     ArgSep,
+    Arrow,
+    At,
     Bool(bool),
     DecoratorOpen,
     Dedent,
@@ -1483,6 +1499,7 @@ pub(crate) enum TokenInfo {
     LeftParen,
     Literal,
     Op(Op),
+    Question,
     RightParen,
     StmtSep,
     LeftBracket,
@@ -1841,6 +1858,9 @@ impl<'a> Iterator for Lexer<'a> {
                     self.set_indent(span);
                     continue;
                 }
+                Ok((Arrow, span)) => self.token(TokenInfo::Arrow, span),
+                Ok((At, span)) => self.token(TokenInfo::At, span),
+                Ok((Question, span)) => self.token(TokenInfo::Question, span),
                 Ok((DecoratorOpen, span)) => self.token(TokenInfo::DecoratorOpen, span),
                 Ok((Dollar, span)) => self.token(TokenInfo::Dollar, span),
                 Ok((DQuote, span)) => self.token(TokenInfo::DQuote, span),

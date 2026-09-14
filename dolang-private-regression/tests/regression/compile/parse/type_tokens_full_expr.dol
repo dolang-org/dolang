@@ -1,0 +1,40 @@
+echo (@)
+# error: invalid expression
+#   --> type_tokens_full_expr.dol:LL:LL
+#    |
+# LL | echo (@)
+#    |       ^
+
+echo (r?)
+# error: got ?, expected: )
+#   --> type_tokens_full_expr.dol:LL:LL
+#    |
+# LL | echo (r?)
+#    |        ^
+# error: implicit concatenation not permitted after delimited expression
+#   --> type_tokens_full_expr.dol:LL:LL
+#    |
+# LL | echo (r?)
+#    |         ^
+#    |
+# help: insert `$` if you intended for the entire argument to be an expression
+#    |
+# LL | echo $(r?)
+#    |      +
+
+echo (a->b)
+# error: got ->, expected: )
+#   --> type_tokens_full_expr.dol:LL:LL
+#    |
+# LL | echo (a->b)
+#    |        ^^
+# error: implicit concatenation not permitted after delimited expression
+#   --> type_tokens_full_expr.dol:LL:LL
+#    |
+# LL | echo (a->b)
+#    |          ^
+#    |
+# help: insert `$` if you intended for the entire argument to be an expression
+#    |
+# LL | echo $(a->b)
+#    |      +

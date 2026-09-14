@@ -13,6 +13,8 @@ use crate::{
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ExpectKind {
     ArgSep,
+    Arrow,
+    At,
     Const,
     DecoratorOpen,
     Dedent,
@@ -29,6 +31,7 @@ pub(crate) enum ExpectKind {
     LeftParen,
     Literal,
     Op(Op),
+    Question,
     RightParen,
     StmtSep,
     LeftBracket,
@@ -61,6 +64,8 @@ impl Display for ExpectKind {
 
         match self {
             ArgSep => &"<whitespace>",
+            Arrow => &"->",
+            At => &"@",
             Const => &"constant",
             DecoratorOpen => &"#[",
             Dedent => &"<unindent>",
@@ -76,6 +81,7 @@ impl Display for ExpectKind {
             LeftParen => &"(",
             Keyword(k) => k as &dyn Display,
             Op(op) => op as &dyn Display,
+            Question => &"?",
             RightParen => &")",
             Literal => &"literal",
             StmtSep => &"<new statement>",
@@ -107,6 +113,9 @@ impl From<&TokenInfo> for ExpectKind {
 
         match value {
             ArgSep => ExpectKind::ArgSep,
+            Arrow => ExpectKind::Arrow,
+            At => ExpectKind::At,
+            Question => ExpectKind::Question,
             Bool(_) | Int(_) | F64 | Keyword(Keyword::Nil) => ExpectKind::Const,
             DecoratorOpen => ExpectKind::DecoratorOpen,
             Dedent => ExpectKind::Dedent,
