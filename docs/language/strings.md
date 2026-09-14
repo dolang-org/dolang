@@ -339,7 +339,8 @@ let doc = t|-
 
 ### Parameters
 
-A `${#...}` introduces an *unbound* interpolation which can be filled later.
+A `${#...}` produces a [`FmtParam`](std.FmtParam) segment: a named hole whose
+meaning is up to the consumer of the sequence, such as a SQL placeholder.
 `${#0}` names a position, `${#name}` names a key, and both take a specification
 like any other formatted interpolation:
 
@@ -359,26 +360,17 @@ assert_eq $stmt[3].name :name:
 ```
 
 A number is a name that happens to be an integer: it is never renumbered, so
-`${#0}` means parameter `0` even in a sequence pasted inside another. Filling
-holes is [`Fmt.(call)`](std.Fmt.(call)) and
-[`Fmt.bind`](std.Fmt.bind); an unfilled one has no
-designated rendering, so
-[`format()`](std.Fmt.format) raises an error.
+`${#0}` means parameter `0` even in a sequence pasted inside another.
+
+[`format()`](std.Fmt.format) is the reference implementation of holes: it
+fills them from its arguments before expanding, and raises an error for a hole
+left unfilled.
 
 ```playground
 #> import test:
 #>   - assert_eq
 let stmt = t"select * from t where a = ${#0} and c = ${#name}"
-
-# Call fills every hole at once; bind fills some and returns the rest.
-assert_eq $(stmt 1 name: "n").format() "select * from t where a = 1 and c = n"
-assert_eq $stmt.bind({name: "n"}).len 4
-
-# `format` takes the same arguments as a call, for a template filled only to
-# be expanded.
 assert_eq $stmt.format(1, name: "n") "select * from t where a = 1 and c = n"
 ```
-
-A filled hole becomes a [`FmtValue`](std.FmtValue).
 
 Parameters are valid only in a `t` string.

@@ -219,10 +219,8 @@ pub class Connection
 # ```
 #
 # Filling is exhaustive: every parameter must be supplied on every call, and
-# an argument naming no parameter raises. Use
-# [`Fmt.bind`](std.Fmt.bind) to fill some holes before
-# preparing, and [`Fmt.params()`](std.Fmt.params) to ask what a template
-# still wants.
+# an argument naming no parameter raises. To fix some values ahead of time,
+# build the template in a function that interpolates them.
 #
 # Neither form ever becomes SQL text -- only the template's literal text does
 # -- so an interpolated value cannot alter the statement it appears in,

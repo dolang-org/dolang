@@ -221,13 +221,13 @@ def repeated_parameter()
 
 #[test]
 def prebound_parameter()
-  # `Fmt.bind` fills some holes before the statement is prepared; what it fills
-  # becomes the statement's own and is no longer asked for.
+  # A function that builds the template fixes some values ahead of time; what
+  # it interpolates becomes the statement's own and is no longer asked for.
+  let insert = (do |a| t"INSERT INTO t VALUES ($a, ${#b})")
   sqlite.open ":memory:" do |conn|
     conn.execute t"CREATE TABLE t (a INTEGER, b TEXT)"
 
-    let template = t"INSERT INTO t VALUES (${#a}, ${#b})"
-    conn.prepare (template.bind {a: 7}) do |stmt|
+    conn.prepare (insert 7) do |stmt|
       assert_eq (stmt.execute b: "seven") 1
       assert_throws $UnexpectedKeyError do
         stmt.execute a: 8 b: "eight"

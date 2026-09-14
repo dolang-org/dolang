@@ -2019,9 +2019,9 @@ pub class Float: Num
 # An unbound interpolation in a [`Fmt`](std.Fmt).
 #
 # A [`FmtValue`](std.FmtValue) already carries a value. A `FmtParam` carries
-# only a name and the options that will apply once something is bound to it, so
-# a template can be written once and filled in later: a prepared statement, a
-# reusable message.
+# only a name and a specification. What the hole means is up to the consumer of
+# the sequence — a SQL statement binds it as a placeholder, for example.
+# [`Fmt.format`](std.Fmt.format) fills holes from its arguments.
 #
 # `FmtParam` exposes the same formatting fields and `pad` method as
 # [`FmtSpec`](std.FmtSpec). Calling it with new keyword options returns a new
@@ -2514,9 +2514,14 @@ pub class Fmt
   # each interpolation through its own specification. This is the only way to get
   # the expansion — see [Trust](std.Fmt.trust).
   #
-  # Given arguments, it fills the [parameters](std.FmtParam) first, on the same
-  # exhaustive terms as [`(call)`](#call-bindings). Use `(call)` when the filled
-  # sequence is what a consumer wants.
+  # Given arguments, it fills the [parameters](std.FmtParam) first. Positional
+  # argument *i* fills `${#i}`, and a keyword argument fills `${#name}`:
+  #
+  # - Holes inside a bound `Fmt` are filled too, depth first. Names are never
+  #   renumbered, so a nested `${#0}` is filled by argument `0` as well.
+  # - A filled hole keeps the parameter's specification and
+  #   [`source`](std.FmtParam.source).
+  # - A hole left unfilled, or an argument no hole consumed, is an error.
   #
   #
   # ## Errors
@@ -2539,82 +2544,6 @@ pub class Fmt
   # ```
   #
   pub def format self ...bindings
-    throw nil
-
-  #
-  # ([`Set`](std.Set)) The unbound [parameter](std.FmtParam) names, in depth-first, parent-first
-  # order.
-  #
-  #
-  # ## Example
-  #
-  # ```
-  # let stmt = t"select * from t where a = ${#0} and c = ${#name}"
-  # assert_eq $stmt.params() (Set([0, :name:]))
-  # assert_eq $(t"no holes").params() (Set([]))
-  # ```
-  #
-  pub def params self
-    throw nil
-
-  #
-  # (`Fmt`) Fills the [parameters](std.FmtParam) `bindings` names and returns the
-  # result. A parameter it does not name stays a parameter, so a template can be
-  # filled in stages.
-  #
-  # Binding is keyed lookup: a parameter written `${#0}` is filled by key `0`, and
-  # `${#name}` by key `name`. A dict is what `bind` takes because only a dict can
-  # name a sparse set of positions.
-  #
-  # A binding descends into a sequence bound inside the sequence, so a template
-  # pasted into another is filled along with it.
-  #
-  #
-  # ## Errors
-  #
-  # | Exception                                         | Condition                        |
-  # | ------------------------------------------------- | -------------------------------- |
-  # | [`TypeError`](std.TypeError)                    | `bindings` is not a dict         |
-  # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A named key no parameter uses    |
-  # | [`UnexpectedPosError`](std.UnexpectedPosError) | An integer key no parameter uses |
-  #
-  # ## Example
-  #
-  # ```
-  # let stmt = t"select * from t where a = ${#0} and c = ${#name}"
-  # let partial = stmt.bind {name: "n"}
-  # assert_eq $(partial.bind {0: 1}).format() "select * from t where a = 1 and c = n"
-  # ```
-  #
-  pub def bind self bindings
-    throw nil
-
-  #
-  # (`Fmt`) Fills every parameter at once and insists the two sides match exactly: each
-  # parameter is filled, and each argument is used.
-  #
-  # Positional arguments are sugar for integer keys — argument *i* fills parameter
-  # `i` — so `(call)` and [`bind`](std.Fmt.bind) substitute identically and differ
-  # only in their checks.
-  #
-  #
-  # ## Errors
-  #
-  # | Exception                                         | Condition                     |
-  # | ------------------------------------------------- | ----------------------------- |
-  # | [`MissingPosError`](std.MissingPosError)       | A numbered parameter unfilled |
-  # | [`MissingKeyError`](std.MissingKeyError)       | A named parameter unfilled    |
-  # | [`UnexpectedPosError`](std.UnexpectedPosError) | A positional argument unused  |
-  # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A keyword argument unused     |
-  #
-  # ## Example
-  #
-  # ```
-  # let stmt = t"select * from t where a = ${#0} and c = ${#name}"
-  # assert_eq $(stmt 1 name: "n").format() "select * from t where a = 1 and c = n"
-  # ```
-  #
-  pub def (call) self ...bindings
     throw nil
 
   #
