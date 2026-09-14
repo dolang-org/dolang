@@ -8,7 +8,10 @@ mod local;
 mod term;
 mod util;
 
-use dolang::runtime::{Args, Input, Output, Result, Slot, Strand, Type, Value, vm::Builder};
+use dolang::runtime::{
+    Args, Input, Output, Result, Slot, Strand, Type, Value,
+    vm::{Builder, Vm},
+};
 
 pub use crate::{console::Console, extension::TermExt, geometry::Geometry};
 
@@ -43,16 +46,16 @@ pub fn install_console<'v>(
 /// A native console type registers this as a nominal supertype. The extension
 /// registering the subtype must name [`TermExt`] in its `DEPENDS`, or this type
 /// may not exist yet.
-pub fn console_type<'v>(builder: &Builder<'v>) -> Type<'v, Console> {
-    builder.state::<Global<'v>>().types.console
+pub fn console_type<'v>(vm: &Vm<'v>) -> Type<'v, Console> {
+    vm.state::<Global<'v>>().types.console
 }
 
 /// The `term.Geometry` type object.
 ///
 /// A native geometry type registers this as a nominal supertype, subject to
 /// the same `DEPENDS` requirement as [`console_type`].
-pub fn geometry_type<'v>(builder: &Builder<'v>) -> Type<'v, Geometry> {
-    builder.state::<Global<'v>>().types.geometry
+pub fn geometry_type<'v>(vm: &Vm<'v>) -> Type<'v, Geometry> {
+    vm.state::<Global<'v>>().types.geometry
 }
 
 /// Collects the arguments of a `Console.write` call — any number of `Str` or

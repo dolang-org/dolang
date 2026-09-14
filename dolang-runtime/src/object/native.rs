@@ -27,7 +27,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Case, Input, InputBy, Output, Slot, Slots, TypeObject, Value, private::Sealed},
-    vm::{Alloc, Builder, Vm},
+    vm::{Alloc, Register, Vm},
 };
 
 use super::{
@@ -2727,7 +2727,7 @@ unsafe impl<'v> Upcast<Vtbl<'v>> for ObjectVtbl<'v> {}
 unsafe impl<'v> Upcast<arena::Vtbl> for ObjectVtbl<'v> {}
 
 struct FinishResult<'v, 'a> {
-    vm: &'a mut Builder<'v>,
+    vm: &'a mut Register<'v>,
     inst_vtbl: NonNull<ObjectVtbl<'v>>,
     type_vtbl: NonNull<TypeVtbl<'v>>,
     singleton_idx: usize,
@@ -2740,7 +2740,7 @@ struct FinishResult<'v, 'a> {
 /// Holds all the Vec fields and builder reference. Methods on this type are
 /// monomorphic, avoiding duplication across the ~52 `Object` types.
 pub struct TypeBuilderInner<'v, 'a> {
-    pub(crate) vm: &'a mut Builder<'v>,
+    pub(crate) vm: &'a mut Register<'v>,
     pub(crate) entries: Vec<(Sym<'v, 'v>, Entry<'v>)>,
     pub(crate) type_entries: Vec<(Sym<'v, 'v>, Entry<'v>)>,
     pub(crate) supertypes: Vec<Value<'v>>,
@@ -2748,20 +2748,20 @@ pub struct TypeBuilderInner<'v, 'a> {
 }
 
 impl<'v, 'a> Deref for TypeBuilderInner<'v, 'a> {
-    type Target = Builder<'v>;
-    fn deref(&self) -> &Builder<'v> {
+    type Target = Register<'v>;
+    fn deref(&self) -> &Register<'v> {
         self.vm
     }
 }
 
 impl<'v, 'a> DerefMut for TypeBuilderInner<'v, 'a> {
-    fn deref_mut(&mut self) -> &mut Builder<'v> {
+    fn deref_mut(&mut self) -> &mut Register<'v> {
         self.vm
     }
 }
 
 impl<'v, 'a> TypeBuilderInner<'v, 'a> {
-    fn new(vm: &'a mut Builder<'v>) -> Self {
+    fn new(vm: &'a mut Register<'v>) -> Self {
         Self {
             vm,
             entries: Vec::new(),
@@ -2976,10 +2976,10 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
 
 /// Builder for registering methods and field accessors on an [`Object`] type during VM setup.
 ///
-/// Returned by [`Builder::build_type`](crate::vm::Builder::build_type) after passing through
+/// Returned by [`Register::build_type`](crate::vm::Register::build_type) after passing through
 /// [`Object::build`], and consumed by [`TypeBuilder::build`] to create the native type.
-/// Implements [`Deref`]/[`DerefMut`] to [`Builder`] so that `Builder` methods
-/// (e.g. [`Builder::sym`]) can be called directly when capturing symbols in closures.
+/// Implements [`Deref`]/[`DerefMut`] to [`Register`] so that `Register` methods
+/// (e.g. [`Register::sym`]) can be called directly when capturing symbols in closures.
 pub struct TypeBuilder<'v, 'a, T: Object<'v>> {
     pub(crate) inner: TypeBuilderInner<'v, 'a>,
     type_value: T::Type,
@@ -2988,21 +2988,21 @@ pub struct TypeBuilder<'v, 'a, T: Object<'v>> {
 }
 
 impl<'v, 'a, T: Object<'v>> Deref for TypeBuilder<'v, 'a, T> {
-    type Target = Builder<'v>;
-    fn deref(&self) -> &Builder<'v> {
+    type Target = Register<'v>;
+    fn deref(&self) -> &Register<'v> {
         self.inner.vm
     }
 }
 
 impl<'v, 'a, T: Object<'v>> DerefMut for TypeBuilder<'v, 'a, T> {
-    fn deref_mut(&mut self) -> &mut Builder<'v> {
+    fn deref_mut(&mut self) -> &mut Register<'v> {
         self.inner.vm
     }
 }
 
 impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
     pub(crate) fn new(
-        vm: &'a mut Builder<'v>,
+        vm: &'a mut Register<'v>,
         type_value: T::Type,
         type_annex: T::TypeAnnex,
     ) -> Self {
@@ -3945,7 +3945,7 @@ mod tests {
         sig, sym,
         test_support::{args_from_slots, with_builder},
         value::TypeObject,
-        vm::Stateful,
+        vm::{Builder, Stateful},
     };
 
     use super::*;

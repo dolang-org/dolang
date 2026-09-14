@@ -344,9 +344,9 @@ pub async fn sec_desc_from_value<'v, 's>(
 /// The extension registering the subtype must name [`Shell`] in its
 /// `DEPENDS`, or this type may not exist yet.
 pub fn windows_access_mask_type<'v>(
-    builder: &dolang::runtime::vm::Builder<'v>,
+    vm: &dolang::runtime::vm::Vm<'v>,
 ) -> dolang::runtime::Type<'v, dolang::runtime::object::Flags<WindowsAccessMask>> {
-    builder.state::<Global<'v>>().types.access_mask
+    vm.state::<Global<'v>>().types.access_mask
 }
 
 /// Returns the [`AnyVfs`] in scope for the strand (the ambient

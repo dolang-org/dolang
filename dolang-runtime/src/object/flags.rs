@@ -32,7 +32,7 @@ use crate::{
     sym::Sym,
     unpack,
     value::{Output, Slot, Value},
-    vm::Builder,
+    vm::Register,
 };
 
 /// A Rust-side bitset that can be exposed to Do as a [`Flags`] native type.
@@ -82,7 +82,7 @@ pub trait FlagLike:
 /// Non-customizable registration helpers for [`FlagLike`] representations.
 pub trait FlagLikeExt: FlagLike {
     /// Starts building `Flags<Self>` as a Do-visible native type.
-    fn build_type<'v, 'a>(builder: &'a mut Builder<'v>) -> TypeBuilder<'v, 'a, Flags<Self>> {
+    fn build_type<'v, 'a>(builder: &'a mut Register<'v>) -> TypeBuilder<'v, 'a, Flags<Self>> {
         let mut entries = Vec::with_capacity(Self::BITS.len());
         let mut all = Self::ZERO;
         for &(name, bits) in Self::BITS {
@@ -120,7 +120,7 @@ pub trait FlagLikeExt: FlagLike {
     }
 
     /// Registers `Flags<Self>` as a Do-visible native type.
-    fn register_type<'v>(builder: &mut Builder<'v>) -> Type<'v, Flags<Self>> {
+    fn register_type<'v>(builder: &mut Register<'v>) -> Type<'v, Flags<Self>> {
         Self::build_type(builder).build()
     }
 }

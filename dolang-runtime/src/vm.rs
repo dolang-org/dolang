@@ -6,7 +6,7 @@ use std::{
     future::Future,
     marker::PhantomData,
     mem,
-    ops::{Deref, Range},
+    ops::{Deref, DerefMut, Range},
     pin::Pin,
     ptr::NonNull,
     task::{Poll, Waker},
@@ -121,6 +121,7 @@ type ChannelFactory<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot
 ///
 /// Other handles automatically dereference to this type and can be used in its place:
 /// - [`Builder`]
+/// - [`Register`]
 /// - [`Strand`]
 pub struct Vm<'v> {
     pub(crate) import_cache: RefCell<HashMap<String, ImportCacheEntry<'v>>>,
@@ -515,7 +516,7 @@ impl<'v> Vm<'v> {
 #[must_use]
 pub struct ModuleBuilder<'v, 'a> {
     name: &'v str,
-    vm: &'a mut Builder<'v>,
+    vm: &'a mut Register<'v>,
     contents: Vec<(Sym<'v, 'v>, NativeField<'v>)>,
 }
 
@@ -709,7 +710,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     ///
     /// # Returns
     ///
-    /// Returns a reference to the [`Builder`] to allow method chaining for
+    /// Returns a reference to the [`Register`] to allow method chaining for
     /// additional configuration.
     ///
     /// # Example
@@ -720,7 +721,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     ///     .commit();
     /// // Module is now available to Do code
     /// ```
-    pub fn commit(self) -> &'a mut Builder<'v> {
+    pub fn commit(self) -> &'a mut Register<'v> {
         let mut items = self.contents;
         items.sort_by_key(|(sym, _)| *sym);
         for pair in items.windows(2) {
@@ -750,18 +751,34 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     }
 }
 
-/// Virtual machine builder.
-pub struct Builder<'v> {
+/// Handle for registering symbols, state, native types, and native modules.
+///
+/// [`Builder`] and [`TypeBuilder`] dereference to this type, so setup code that only
+/// registers things should take `&mut Register<'v>`.
+///
+/// A `Register` is only ever lent out behind `&mut`. It implements [`Alloc`], so holding one
+/// by value would permit allocation outside a context that owns that capability.
+pub struct Register<'v> {
     pub(crate) inner: &'v Vm<'v>,
 }
 
-impl<'v> Alloc<'v> for Builder<'v> {
+impl<'v> Register<'v> {
+    /// # Safety
+    ///
+    /// The result must only be lent out as `&mut Register` from a context that already holds
+    /// allocation capability for `vm`.
+    pub(crate) unsafe fn new(vm: &'v Vm<'v>) -> Self {
+        Self { inner: vm }
+    }
+}
+
+impl<'v> Alloc<'v> for Register<'v> {
     fn alloc_vm(&mut self, _: private::Sealed) -> &Vm<'v> {
         self.inner
     }
 }
 
-impl<'v> Deref for Builder<'v> {
+impl<'v> Deref for Register<'v> {
     type Target = Vm<'v>;
 
     fn deref(&self) -> &Self::Target {
@@ -769,9 +786,43 @@ impl<'v> Deref for Builder<'v> {
     }
 }
 
+impl<'v> AsRef<Vm<'v>> for Register<'v> {
+    fn as_ref(&self) -> &Vm<'v> {
+        self.inner
+    }
+}
+
+/// Virtual machine builder.
+///
+/// Dereferences to [`Register`] for registration. Configuration that affects every strand
+/// (strand-local keys, importers, traps) is only available here.
+pub struct Builder<'v> {
+    reg: Register<'v>,
+}
+
+impl<'v> Alloc<'v> for Builder<'v> {
+    fn alloc_vm(&mut self, _: private::Sealed) -> &Vm<'v> {
+        self.reg.inner
+    }
+}
+
+impl<'v> Deref for Builder<'v> {
+    type Target = Register<'v>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.reg
+    }
+}
+
+impl<'v> DerefMut for Builder<'v> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.reg
+    }
+}
+
 impl<'v> AsRef<Vm<'v>> for Builder<'v> {
     fn as_ref(&self) -> &Vm<'v> {
-        self
+        self.reg.inner
     }
 }
 
@@ -821,8 +872,11 @@ impl Builder<'static> {
         // `vm` is not moved after this point and outlives `this`, which is the only way the
         // reference escapes; every `'v`-branded value is confined to `f`, which returns before
         // `vm` is dropped
+        // The builder holds allocation capability, so lending out its `Register` is sound
         let mut this = Builder {
-            inner: unsafe { mem::transmute::<&Vm<'static>, &'static Vm<'static>>(&vm) },
+            reg: unsafe {
+                Register::new(mem::transmute::<&Vm<'static>, &'static Vm<'static>>(&vm))
+            },
         };
 
         stdlib::configure(&mut this);
@@ -830,7 +884,7 @@ impl Builder<'static> {
     }
 }
 
-impl<'v> Builder<'v> {
+impl<'v> Register<'v> {
     /// Resolve a name to a symbol. The returned symbol will live for the life of the VM.
     #[inline(never)]
     pub fn sym(&mut self, name: &str) -> Sym<'v, 'v> {
@@ -862,32 +916,16 @@ impl<'v> Builder<'v> {
         }
     }
 
-    /// Register strand-local state key.
-    pub fn local<T: Local<'v>>(&mut self) -> LocalKey<'v, T> {
-        let index = self.inner.locals.len();
-        let vtbl = LocalVtbl::new::<T>();
-        self.inner.locals.push(vtbl);
-        // Safety: index matches position of vtbl in vector
-        unsafe { LocalKey::new(index) }
-    }
-
-    /// Register a strand-local GC root key.
-    pub fn local_root(&mut self) -> LocalRootKey<'v> {
-        let index = self.inner.local_root_count.get();
-        self.inner.local_root_count.set(index + 1);
-        LocalRootKey::new(index)
-    }
-
     /// Register a native object type.
     ///
     /// Once registered, native objects can be instantiated with [`Type::create`]. Native objects
     /// can also be registered as module items with [`ModuleBuilder::object`], or as entire
-    /// modules with [`Builder::module_object`].
+    /// modules with [`Register::module_object`].
     ///
     /// The type's class object singleton is initialized with default values for `T::Type` and
     /// `T::TypeAnnex`.
     ///
-    /// Use [`Builder::build_type`] when you need to customize registration before committing it.
+    /// Use [`Register::build_type`] when you need to customize registration before committing it.
     pub fn register_type<T: Object<'v>>(&mut self) -> Type<'v, T>
     where
         T::Type: Default,
@@ -902,7 +940,7 @@ impl<'v> Builder<'v> {
     /// The returned [`TypeBuilder`] has already been passed through [`Object::build`]. Finish
     /// registration with [`TypeBuilder::build`].
     ///
-    /// See [`Builder::register_type`] for the common case where `T::Type` and `T::TypeAnnex`
+    /// See [`Register::register_type`] for the common case where `T::Type` and `T::TypeAnnex`
     /// are both `Default`.
     pub fn build_type<T: Object<'v>>(
         &mut self,
@@ -958,6 +996,24 @@ impl<'v> Builder<'v> {
         drop(replaced);
         self
     }
+}
+
+impl<'v> Builder<'v> {
+    /// Register strand-local state key.
+    pub fn local<T: Local<'v>>(&mut self) -> LocalKey<'v, T> {
+        let index = self.reg.inner.locals.len();
+        let vtbl = LocalVtbl::new::<T>();
+        self.reg.inner.locals.push(vtbl);
+        // Safety: index matches position of vtbl in vector
+        unsafe { LocalKey::new(index) }
+    }
+
+    /// Register a strand-local GC root key.
+    pub fn local_root(&mut self) -> LocalRootKey<'v> {
+        let index = self.reg.inner.local_root_count.get();
+        self.reg.inner.local_root_count.set(index + 1);
+        LocalRootKey::new(index)
+    }
 
     // Internal function for dolang-ext-shell only
     #[doc(hidden)]
@@ -965,14 +1021,14 @@ impl<'v> Builder<'v> {
         &mut self,
         factory: impl for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot<'v, '_>) + 'v,
     ) -> &mut Self {
-        *self.inner.pipe_handler.borrow_mut() = Some(Box::new(factory));
+        *self.reg.inner.pipe_handler.borrow_mut() = Some(Box::new(factory));
         self
     }
 
     /// Registers a module importer function.  Do `import` statements check 3 sources of modules
     /// in order:
     ///
-    /// 1. Native modules (registered with [`Builder::module`] or [`Builder::module_object`]).
+    /// 1. Native modules (registered with [`Register::module`] or [`Register::module_object`]).
     /// 2. Cached, previously imported Do modules.
     /// 3. Module importers in order of registration.  If any succeed, the module is cached so long as it
     ///    remains referenced.
@@ -1010,9 +1066,9 @@ impl<'v> Builder<'v> {
         ) -> Result<'v, 's, ()>
         + 'v,
     ) -> &mut Self {
-        let vtbl = self.inner.builtin_types.native_function;
-        self.inner.importers.push(Value::from_object(GcObj::new(
-            self.inner.arena(),
+        let vtbl = self.reg.inner.builtin_types.native_function;
+        self.reg.inner.importers.push(Value::from_object(GcObj::new(
+            self.reg.inner.arena(),
             vtbl,
             NativeFunction::new(
                 async move |strand, args, out| {
@@ -1041,7 +1097,7 @@ impl<'v> Builder<'v> {
         &mut self,
         trap: impl for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v,
     ) -> &mut Self {
-        *self.inner.trap.borrow_mut() = Some(Box::new(trap));
+        *self.reg.inner.trap.borrow_mut() = Some(Box::new(trap));
         self
     }
 
@@ -1050,10 +1106,10 @@ impl<'v> Builder<'v> {
     /// can be run to obtain its return value. The result of the function is returned.
     pub async fn enter<R>(&mut self, f: impl AsyncFnOnce(&mut Strand<'v, '_>) -> R) -> R {
         let (tx, mut rx) = mpsc::unbounded();
-        *self.inner.spawn_tx.borrow_mut() = Some(tx);
+        *self.reg.inner.spawn_tx.borrow_mut() = Some(tx);
 
         let group = StrandGroup::new();
-        let strand = StrandInner::new(self.inner, None);
+        let strand = StrandInner::new(self.reg.inner, None);
         let _guard = unsafe { strand.init_group_leader(&group) };
         let native = Native {
             module: "<host>".into(),
@@ -1084,10 +1140,10 @@ impl<'v> Builder<'v> {
         };
 
         // Close spawn channel
-        *self.inner.spawn_tx.borrow_mut() = None;
+        *self.reg.inner.spawn_tx.borrow_mut() = None;
 
         // Cancel all join handles so orphaned background strands can unwind
-        self.inner.arena.cancel_join_handles();
+        self.reg.inner.arena.cancel_join_handles();
 
         // Drain remaining background tasks
         while let Ok(task) = rx.try_recv() {
@@ -1095,7 +1151,7 @@ impl<'v> Builder<'v> {
         }
         while background.next().await.is_some() {}
 
-        self.inner.arena.collect_full();
+        self.reg.inner.arena.collect_full();
         res
     }
 
