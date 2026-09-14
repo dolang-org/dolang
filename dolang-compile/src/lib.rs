@@ -6,6 +6,7 @@ pub(crate) mod constant;
 pub mod diag;
 pub(crate) mod doc;
 pub(crate) mod elab;
+pub(crate) mod elabty;
 pub(crate) mod emit;
 pub(crate) mod flow;
 pub(crate) mod lex;
@@ -646,6 +647,8 @@ pub(crate) struct PreludeItem {
     item: String,
     bind: String,
     res: Option<Res>,
+    /// Never read by the code, so lowering does not import it. A type may still name it.
+    unused: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -659,11 +662,15 @@ pub(crate) enum PreludeImport {
         bind: String,
         res: Option<Res>,
         insert: bool,
+        /// As [`PreludeItem::unused`]
+        unused: bool,
     },
     ModuleRenamed {
         module: String,
         bind: String,
         res: Option<Res>,
+        /// As [`PreludeItem::unused`]
+        unused: bool,
     },
 }
 
@@ -699,6 +706,7 @@ impl<'a, 'b> Prelude<'a, 'b> {
             module,
             bind,
             res: None,
+            unused: false,
             insert: false,
         });
         self
@@ -717,6 +725,7 @@ impl<'a, 'b> Prelude<'a, 'b> {
             module: module.into(),
             bind: name.into(),
             res: None,
+            unused: false,
         });
         self
     }
@@ -752,6 +761,7 @@ impl<'a, 'b> Items<'a, 'b> {
                 item: item.clone(),
                 bind: item,
                 res: None,
+                unused: false,
             }),
             _ => unreachable!(),
         };
@@ -782,6 +792,7 @@ impl<'a, 'b> Items<'a, 'b> {
                 item: item.into(),
                 bind: name.into(),
                 res: None,
+                unused: false,
             }),
             _ => unreachable!(),
         };
@@ -921,6 +932,17 @@ impl<'a> Config<'a> {
         }
 
         compiler.prelude = prelude;
+        // Types only matter to documentation, and a unit that failed to elaborate has no
+        // scopes to resolve them in
+        if self.document && !failed {
+            elabty::check(
+                &mut ast,
+                &compiler.file,
+                &compiler.symtab,
+                &compiler.bintab,
+                &diags,
+            );
+        }
         let document = self
             .document
             .then(|| doc::index(&mut ast, &mut compiler.prelude, &compiler.file, &comments));

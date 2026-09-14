@@ -2398,15 +2398,15 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         module,
                         items: fields,
                     } => {
-                        if fields.iter().all(|f| f.res.is_none()) {
+                        if fields.iter().all(|f| f.unused) {
                             // Unused, skip entirely
                             continue;
                         }
                         module
                     }
-                    PreludeImport::ModuleAsIs { module, res, .. }
-                    | PreludeImport::ModuleRenamed { module, res, .. } => {
-                        if res.is_none() {
+                    PreludeImport::ModuleAsIs { module, unused, .. }
+                    | PreludeImport::ModuleRenamed { module, unused, .. } => {
+                        if *unused {
                             // Unused, skip
                             continue;
                         }
@@ -2470,7 +2470,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         self.block
                             .insts
                             .push(Inst(InstInfo::Builtin(builtin::IMPORT, sig), span));
-                        let used: Vec<_> = fields.iter().filter(|f| f.res.is_some()).collect();
+                        let used: Vec<_> = fields.iter().filter(|f| !f.unused).collect();
                         for (i, field) in used.iter().enumerate() {
                             if i + 1 != used.len() {
                                 self.block.insts.push(Inst(InstInfo::Dup, span));

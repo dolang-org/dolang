@@ -1,0 +1,45 @@
+# document
+# Type names resolve like variables, without warnings, and change nothing at runtime.
+
+import regression: _reg
+
+class Point
+  pub field x y @Int = 0
+
+def origin p @Point -> Point
+  p
+assert_eq $origin(nil) nil
+
+# A declaration can be named before it appears
+let _early @_Later = nil
+class _Later
+
+def first[T, :K, ...R] items @Array[T] key: _key @K = nil ..._rest @R -> T
+  items[0]
+assert_eq (first([1])) 1
+
+class Box[T]: Point
+  pub field value @(T | nil) = nil
+
+  pub def get[U] self fallback @U -> (T | U)
+    (self.value || fallback)
+assert_eq (Box().get 2) 2
+
+let _dotted @_reg.Thing = nil
+let _prelude @Str = ""
+
+def shadow[Str] x @Str
+  x
+assert_eq (shadow 1) 1
+
+def outer()
+  let _inner @_Inner = nil
+  class _Inner
+  nil
+assert_eq $outer() nil
+
+let lambda = (do |x @Point| -> Point x)
+assert_eq (lambda nil) nil
+
+for i @Int = [1]
+  assert_eq $i 1

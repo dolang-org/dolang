@@ -66,6 +66,12 @@ class Map[K, V]: Base[K]
 #                     ^: variable, node=none
 #                      ^: delim
 
+let shape @Base = nil
+#          ^~~~: variable, node=class
+
+let r @Record = nil
+#      ^~~~~~: variable, node=prelude_item
+
 class Point
   field x y @Int = 0
   #         ^: sigil

@@ -1,0 +1,55 @@
+# document
+let _missing @Missing = nil
+# warning: unbound type name
+#   --> warnings.dol:LL:LL
+#    |
+# LL | let _missing @Missing = nil
+#    |               ^^^^^^^
+
+class _Holder[T]
+# warning: unused binder
+#   --> warnings.dol:LL:LL
+#    |
+# LL | class _Holder[T]
+#    |               ^
+
+let _value = 1
+let _dotted @_value.Field = nil
+# warning: a dotted type name must begin with an import
+#   --> warnings.dol:LL:LL
+#    |
+# LL | let _dotted @_value.Field = nil
+#    |              ^^^^^^
+
+def _unused[T, _Ignored] x @Int
+  # warning: unused binder
+  #   --> warnings.dol:LL:LL
+  #    |
+  # LL | def _unused[T, _Ignored] x @Int
+  #    |             ^
+  x
+
+def _dotted_binder[T] x @T.Field
+  # warning: a dotted type name must begin with an import
+  #   --> warnings.dol:LL:LL
+  #    |
+  # LL | def _dotted_binder[T] x @T.Field
+  #    |                          ^
+  x
+
+let _before @_After = nil
+# warning: unbound type name
+#   --> warnings.dol:LL:LL
+#    |
+# LL | let _before @_After = nil
+#    |              ^^^^^^
+let _After = nil
+
+def _param_hidden x @_Hidden
+  # warning: unbound type name
+  #   --> warnings.dol:LL:LL
+  #    |
+  # LL | def _param_hidden x @_Hidden
+  #    |                      ^^^^^^^
+  class _Hidden
+  x

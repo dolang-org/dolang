@@ -562,6 +562,15 @@ pub fn configure_compiler(config: &mut Config, content: &[u8]) -> Vec<Directive>
     // Parse directives from source
     let directives = parse_directives(content);
 
+    // A `# document` line near the top compiles the file as documentation tools do
+    if content
+        .lines()
+        .take(10)
+        .any(|line| line.trim_ascii_end() == b"# document")
+    {
+        config.document(true);
+    }
+
     // Set up standard regression prelude
     config
         .prelude()

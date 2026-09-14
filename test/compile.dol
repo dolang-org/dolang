@@ -117,7 +117,8 @@ def nodes()
 
 #[test]
 def document_option()
-  let source = "let answer = 42\nanswer\n"
+  # Naming a prelude item only in a type must not import it
+  let source = "let answer @Str = 42\nanswer\n"
   let default = compile.compile "option.dol" $source
   let disabled = compile.compile "option.dol" $source document: false
   let enabled = compile.compile "option.dol" $source document: true

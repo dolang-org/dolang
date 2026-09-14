@@ -50,6 +50,8 @@ pub(crate) struct Var {
     pub(crate) initialized: bool,
     // Compile-time provenance of the binding.
     pub(crate) origin: Origin,
+    // Named by a type. Set only when documenting, and never read by lowering.
+    pub(crate) type_used: bool,
     // Filled only by document indexing; references use (index, depth) to find it.
     pub(crate) node: Option<doc::Id>,
 }

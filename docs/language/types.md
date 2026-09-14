@@ -114,6 +114,16 @@ whitespace is insignificant.
 A name is an identifier, or a module name followed by `.`-separated names, such
 as `time.Duration`.
 
+A name refers to a binder, or to what the same identifier would refer to as a
+variable where the type is written. A `def`, `class`, or import can be named
+anywhere in its block; any other binding must come before the type. A dotted
+name must begin with an import.
+
+Documentation tools warn about a name that refers to nothing, a dotted name that
+does not begin with an import, and a binder that is never used. The compiler
+does not consider types when it warns about unused variables, so a binding named
+only in types is still reported as unused unless its name begins with `_`.
+
 ### Constants
 
 A constant type is a symbol, string, integer, boolean, or `nil`. A string

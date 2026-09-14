@@ -55,7 +55,9 @@ pub(crate) fn index(
             PreludeImport::ModuleAsIs {
                 module, bind, res, ..
             }
-            | PreludeImport::ModuleRenamed { module, bind, res } => {
+            | PreludeImport::ModuleRenamed {
+                module, bind, res, ..
+            } => {
                 index.prelude(
                     &scope,
                     res,
@@ -230,10 +232,11 @@ impl Index<'_> {
 
     fn prelude(&mut self, scope: &Scope<'_>, res: &mut Option<Res>, kind: Kind) {
         let Some(res) = res else { return };
-        if !scope
-            .binding(*res)
-            .is_some_and(|var| var.get().is_emitted())
-        {
+        // An import the code never reads is not emitted, but a type may still name it
+        if !scope.binding(*res).is_some_and(|var| {
+            let var = var.get();
+            var.is_emitted() || var.type_used
+        }) {
             return;
         }
         if let Some(id) = scope.node(*res) {
@@ -243,6 +246,16 @@ impl Index<'_> {
         let id = self.push(scope, kind, Span::INVALID);
         res.node = Some(id);
         scope.bind(*res, id);
+    }
+
+    fn annot(&mut self, scope: &Scope<'_>, annot: &mut Option<Box<Annot>>) {
+        if let Some(annot) = annot {
+            self.ty(scope, &mut annot.ty);
+        }
+    }
+
+    fn ty(&mut self, scope: &Scope<'_>, ty: &mut TypeExpr) {
+        ty.each_name(&mut |head, _| self.reference(scope, head));
     }
 
     fn block(&mut self, scope: &Scope<'_>, stmts: &mut [Stmt]) {
@@ -378,6 +391,9 @@ impl Index<'_> {
         for (i, param) in func.params.iter_mut().enumerate() {
             self.param(&inner, param, true, false, method && i == 0, None);
         }
+        if let Some(ret) = &mut func.ret {
+            self.ty(&inner, &mut ret.ty);
+        }
         self.block(&inner, &mut func.body.stmts);
     }
 
@@ -438,6 +454,11 @@ impl Index<'_> {
         } else if signature {
             self.push(scope, kind, span);
         }
+        let (Param::Pos { ty, .. }
+        | Param::Key { ty, .. }
+        | Param::ConstKey { ty, .. }
+        | Param::Rest { ty, .. }) = param;
+        self.annot(scope, ty);
     }
 
     fn pattern(
@@ -462,6 +483,7 @@ impl Index<'_> {
                     },
                     span,
                 );
+                self.annot(scope, ty);
             }
             Pattern::Unpack(params) => {
                 for param in params {
@@ -575,6 +597,9 @@ impl Index<'_> {
             .iter_mut()
             .map(|s| {
                 self.reference(scope, &mut s.ident);
+                for arg in &mut s.args {
+                    self.ty(scope, arg.ty_mut());
+                }
                 Super {
                     span: s
                         .fields
@@ -640,6 +665,7 @@ impl Index<'_> {
                         FieldInit::Expr(expr) | FieldInit::Const(expr, _) => self.expr(scope, expr),
                         FieldInit::Thunk(func) => self.function(scope, func, None, true, true),
                     }
+                    self.annot(scope, &mut field.ty);
                     for name in &mut field.fields {
                         let id = self.push(
                             scope,

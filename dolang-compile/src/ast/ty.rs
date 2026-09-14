@@ -111,6 +111,47 @@ pub(crate) enum BinderKind {
     Rest { ellipsis_span: Span },
 }
 
+impl TypeExpr {
+    /// Visit the head of each name within the type, with whether the name is dotted.
+    pub(crate) fn each_name<F: FnMut(&mut Ident, bool)>(&mut self, f: &mut F) {
+        match self {
+            TypeExpr::Name { head, fields } => f(head, !fields.is_empty()),
+            TypeExpr::Const { .. } | TypeExpr::Error => {}
+            TypeExpr::App { base, args, .. } => {
+                base.each_name(f);
+                for arg in args {
+                    arg.ty_mut().each_name(f);
+                }
+            }
+            TypeExpr::Schema { args, .. } => {
+                for arg in args {
+                    arg.ty_mut().each_name(f);
+                }
+            }
+            TypeExpr::Group { ty, .. } => ty.each_name(f),
+            TypeExpr::Union { members, .. } => {
+                for member in members {
+                    member.each_name(f);
+                }
+            }
+            TypeExpr::Func { params, ret, .. } => {
+                for param in params {
+                    param.ty_mut().each_name(f);
+                }
+                ret.each_name(f);
+            }
+        }
+    }
+}
+
+impl TypeArg {
+    pub(crate) fn ty_mut(&mut self) -> &mut TypeExpr {
+        match &mut self.kind {
+            TypeArgKind::Pos(ty) | TypeArgKind::Key { ty, .. } | TypeArgKind::Rest { ty, .. } => ty,
+        }
+    }
+}
+
 impl Node for TypeExpr {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {

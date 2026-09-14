@@ -1050,6 +1050,7 @@ impl<'s> Scope<'s> {
                         used: false,
                         initialized,
                         origin,
+                        type_used: false,
                         node: None,
                     },
                     epoch,
@@ -1074,6 +1075,7 @@ impl<'s> Scope<'s> {
                         used: true,
                         initialized: true,
                         origin: Origin::Synthetic,
+                        type_used: false,
                         node: None,
                     },
                     epoch,
@@ -2658,6 +2660,7 @@ impl<'a> Elaborater<'a> {
                         bind,
                         res,
                         insert,
+                        ..
                     } => {
                         let id = self.symtab.id(&self.bintab.id_str(bind));
                         if let Ok(existing) = scope.resolve(id, self.epoch)
@@ -2692,23 +2695,19 @@ impl<'a> Elaborater<'a> {
         self.visit_block_inner(&mut scope, &mut node.body)?;
 
         if let Some(prelude) = &mut prelude {
-            // Mark prelude items that were never read (by clearing resolution)
+            // Mark prelude imports that were never read, which lowering skips
             for import in prelude.iter_mut() {
                 match import {
                     PreludeImport::Items { items, .. } => {
                         for item in items.iter_mut() {
                             let res = item.res.as_ref().unwrap();
-                            if !scope.is_read(res.index, res.depth) {
-                                item.res = None
-                            }
+                            item.unused = !scope.is_read(res.index, res.depth);
                         }
                     }
-                    PreludeImport::ModuleAsIs { res, .. }
-                    | PreludeImport::ModuleRenamed { res, .. } => {
-                        let r = res.as_ref().unwrap();
-                        if !scope.is_read(r.index, r.depth) {
-                            *res = None
-                        }
+                    PreludeImport::ModuleAsIs { res, unused, .. }
+                    | PreludeImport::ModuleRenamed { res, unused, .. } => {
+                        let res = res.as_ref().unwrap();
+                        *unused = !scope.is_read(res.index, res.depth);
                     }
                 }
             }
