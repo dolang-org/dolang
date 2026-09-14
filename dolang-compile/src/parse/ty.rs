@@ -57,6 +57,9 @@ impl Parser<'_> {
         Ok(match self.peek()? {
             Some(token!(TokenInfo::At)) => {
                 let at_span = self.advance();
+                if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+                    self.advance();
+                }
                 let ty = self.with_type_mode(|this| this.parse_type_compact(scope))?;
                 Some(Box::new(Annot { at_span, ty }))
             }

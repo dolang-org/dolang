@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     ast::{Annot, Ident, Param, ParamDefault, PatIdent, Pattern},
-    lex::{Keyword, Mode, Op, Token, TokenInfo},
+    lex::{Keyword, Op, Token, TokenInfo},
     source::Span,
 };
 
@@ -315,15 +315,10 @@ impl Parser<'_> {
         }
     }
 
-    /// Parse the annotation after a bound name, which whitespace must separate from it
-    /// where whitespace is significant
+    /// Parse the annotation after a bound name, with optional whitespace before it.
     fn parse_param_annot(&mut self, scope: &mut Scope<'_>) -> Result<Option<Box<Annot>>> {
-        match self.peek()? {
-            Some(token!(TokenInfo::ArgSep)) => {
-                self.advance();
-            }
-            Some(token!(TokenInfo::At)) if self.mode() == Mode::FullExpr => {}
-            _ => return Ok(None),
+        if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+            self.advance();
         }
         self.parse_annot(scope)
     }

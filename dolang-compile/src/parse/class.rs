@@ -87,21 +87,21 @@ impl Parser<'_> {
 
             if let Some(token!(ArgSep)) = self.peek()? {
                 self.advance();
-                // One annotation after the names covers all of them
-                if let Some(token!(At)) = self.peek()? {
-                    ty = self.parse_annot(scope)?;
-                    if let Some(token!(ArgSep)) = self.peek()? {
-                        self.advance();
-                    }
-                    match self.peek()? {
-                        Some(token!(Equal)) | None | Some(token!(StmtSep | Dedent)) => break,
-                        other => {
-                            return Err(self.syntax_error(
-                                scope,
-                                other,
-                                "expected `=` or end of field declaration after type",
-                            ));
-                        }
+            }
+            // One annotation after the names covers all of them
+            if let Some(token!(At)) = self.peek()? {
+                ty = self.parse_annot(scope)?;
+                if let Some(token!(ArgSep)) = self.peek()? {
+                    self.advance();
+                }
+                match self.peek()? {
+                    Some(token!(Equal)) | None | Some(token!(StmtSep | Dedent)) => break,
+                    other => {
+                        return Err(self.syntax_error(
+                            scope,
+                            other,
+                            "expected `=` or end of field declaration after type",
+                        ));
                     }
                 }
             }

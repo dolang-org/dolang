@@ -11,11 +11,6 @@ let b = (do |x| ->Int x)
 # LL | let b = (do |x| ->Int x)
 #    |                   ^^^
 let c = (do |x @ Int| x)
-# error: expected type
-#   --> return_type_errors.dol:LL:LL
-#    |
-# LL | let c = (do |x @ Int| x)
-#    |                 ^
 let d = do -> Int|Str 1
 # error: invalid unary operator
 #   --> return_type_errors.dol:LL:LL

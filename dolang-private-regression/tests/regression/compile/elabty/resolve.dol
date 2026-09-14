@@ -32,6 +32,23 @@ def shadow[Str] x @Str
   x
 assert_eq (shadow 1) 1
 
+# Whitespace on either side of an annotation marker is optional.
+def annotation_spacing _compact@Int _spaced @ Str :_key@ Bool ..._rest@Sym
+  nil
+assert_eq (annotation_spacing 1 2 _key: true :VALUE:) nil
+
+def vertical_annotation_spacing
+  _before @Int
+  _after@ Str
+  _both @ Bool
+do
+  nil
+assert_eq (vertical_annotation_spacing 1 "hello" true) nil
+
+class _SpacedFields
+  pub field compact@Int = 1
+  pub field spaced @ Str = "value"
+
 def outer()
   let _inner @_Inner = nil
   class _Inner

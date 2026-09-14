@@ -65,17 +65,7 @@ let k @{0: Int} = 1
 # LL | let k @{0: Int} = 1
 #    |          ^
 let l @ Int = 1
-# error: expected type
-#   --> type_errors.dol:LL:LL
-#    |
-# LL | let l @ Int = 1
-#    |        ^
 let m@Int = 1
-# error: invalid pattern
-#   --> type_errors.dol:LL:LL
-#    |
-# LL | let m@Int = 1
-#    |      ^
 let n @do = 1
 # error: expected type
 #   --> type_errors.dol:LL:LL
