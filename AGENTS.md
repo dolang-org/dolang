@@ -328,7 +328,7 @@ def add a b
 pub def exported x        # public (module export)
   (x + 1)
 
-def connect :host = localhost :port = 8080
+def connect :host = "localhost" :port = 8080
   echo "Connecting to $host:$port"
 
 def log level ...rest     # variadic
