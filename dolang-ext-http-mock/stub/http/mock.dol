@@ -34,22 +34,22 @@
 # [`Server.received_requests`](http.mock.Server.received_requests), and passed to a
 # `match:` or `respond:` callback.
 pub class Request
-  # ([`Str`](std.Str)) The request method, such as `"GET"`.
+  # The request method, such as `"GET"`.
   #[getter]
-  pub def method self
+  pub def method self -> Str
     throw nil
 
-  # ([`Str`](std.Str)) The full request URL.
+  # The full request URL.
   #[getter]
-  pub def url self
+  pub def url self -> Str
     throw nil
 
-  # ([`Bin`](std.Bin)) The raw request body.
+  # The raw request body.
   #[getter]
-  pub def body self
+  pub def body self -> Bin
     throw nil
 
-  # ([`Dict`](std.Dict)-like) The request headers.
+  # The request headers.
   #
   # ## Example
   #
@@ -61,7 +61,7 @@ pub class Request
   #       status: 200
   # ```
   #[getter]
-  pub def headers self
+  pub def headers self -> Dict
     throw nil
 
 # A handle to the mocks one [`Server.mock`](http.mock.Server.mock) call registered.
@@ -89,7 +89,7 @@ pub class Mock
   #     assert_eq $reqs.len 1
   #     assert_eq $reqs[0].method "POST"
   # ```
-  pub def received self
+  pub def received self -> Array[Request]
     throw nil
 
   # Re-checks every `expect:` this handle's items carry against the requests
@@ -126,13 +126,13 @@ pub class Server
   # ```
   pub def (init)
     self
-    # ([`Func`](std.Func)) Called with the `Server`, which is shut down when it returns.
+    # Called with the `Server`, which is shut down when it returns.
     # Omit to receive the server instead.
-    func = nil
-  do
+    func @ Func = nil
+  do -> Value
     throw nil
 
-  # ([`url.Url`](url.Url)) The server's base URL. Use `/` to build
+  # The server's base URL. Use `/` to build
   # request paths.
   #
   # ## Example
@@ -142,13 +142,13 @@ pub class Server
   #   http.get (server.url / "/users/42")
   # ```
   #[getter]
-  pub def url self
+  pub def url self -> Url
     throw nil
 
-  # ([`Str`](std.Str)) The bound socket address, such as
+  # The bound socket address, such as
   # `127.0.0.1:41823`.
   #[getter]
-  pub def address self
+  pub def address self -> Str
     throw nil
 
   # Registers one or more mocks.
@@ -249,14 +249,14 @@ pub class Server
   # ```
   pub def mock
     self
-    # ([`Func`](std.Func)) Called with the [`Mock`](http.mock.Mock) handle. The mocks are
+    # Called with the [`Mock`](http.mock.Mock) handle. The mocks are
     # unmounted when it returns, however it exits. Omit to receive the handle
     # instead and unmount it yourself. Written last at the call site, as a
     # trailing `do` block.
-    func = nil
-    # ([`Dict`](std.Dict)) Mock items, as described above.
-    ...items
-  do
+    func @ Func = nil
+    # Mock items, as described above.
+    ...items @ Dict
+  do -> Mock
     throw nil
 
   # Every request the server received, whichever mock matched it -- or none.
@@ -266,7 +266,7 @@ pub class Server
   # ## Returns
   #
   # An [`Array`](std.Array) of [`Request`](http.mock.Request).
-  pub def received_requests self
+  pub def received_requests self -> Array[Request]
     throw nil
 
   # Removes every mock registered on the server and forgets every request it

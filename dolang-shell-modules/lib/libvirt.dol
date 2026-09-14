@@ -251,6 +251,9 @@ import _vfs base64 digest json proc progress rand shell shlex ssh std strand sys
     - WINDOWS_ROOT
     - WINDOWS_VFS_COMMAND
 
+import std:
+  - @RuntimeError
+
 let VM_NAMESPACE = "https://github.com/dolang-org/dolang"
 let DEFAULT_CONNECT_URI = "qemu:///session"
 # The `sd*` targets attachable media is assigned, in order. The SATA
@@ -1491,7 +1494,7 @@ class DomainImpl
   # ## Returns
   #
   # The `Path` written.
-  pub def screenshot self destination
+  pub def screenshot self destination -> Path
     let destination = Path(destination).absolute()
     destination.parent.create_dir all: true
     # QEMU dumps the console as PNG for the video models this module emits,
@@ -1506,12 +1509,12 @@ class DomainImpl
   # whose position is not known and which the guest may pass through partway.
   pub def send_key
     self
-    # ([`Str`](std.Str)) Linux keycode name, such as `"KEY_F9"`.
-    key
-    # ([`Int`](std.Int)) Number of times to send the key.
-    :repeat = 1
-    # ([`Int`](std.Int)\|[`Float`](std.Float)) Seconds between key presses.
-    :interval = nil
+    # Linux keycode name, such as `"KEY_F9"`.
+    key @ Str
+    # Number of times to send the key.
+    :repeat @ Int = 1
+    # Seconds between key presses.
+    :interval @ (Int | Float) = nil
   do
     for press = 0..repeat
       if (press > 0 && interval != nil)
@@ -1539,23 +1542,23 @@ class DomainImpl
   # | `ValueError`    | The domain has no `dolang:vm` metadata |
   pub def wait_ready
     self
-    # ([`Sym`](std.Sym)) Readiness probe.
+    # Readiness probe.
     #
     # `:VFS:` proves the transport `with` runs over. `:SSH:` proves only that
     # sshd accepts a connection, which is all a guest has before its payload is
     # installed.
-    :probe = :VFS:
-    # ([`Int`](std.Int)\|[`Float`](std.Float)) Seconds to wait; unbounded when
+    :probe @ Sym = :VFS:
+    # Seconds to wait; unbounded when
     # omitted.
-    :timeout = nil
-    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Directory for a console dump when
+    :timeout @ (Int | Float) = nil
+    # Directory for a console dump when
     # the wait expires.
     #
     # The dump is named for the domain and the moment the wait gave up, so
     # successive runs do not overwrite each other's evidence. Capture is best
     # effort: a guest with no graphics has no console to dump, and a capture
     # failure does not replace the timeout.
-    :screenshot_dir = nil
+    :screenshot_dir @ (Str | Path) = nil
   do
     let guest = self.#guest()
     try
@@ -2088,15 +2091,15 @@ pub class Domain
   # ```
   pub def export
     self
-    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Bundle to write; `.dolvm` is the
+    # Bundle to write; `.dolvm` is the
     # conventional extension.
-    destination
-    # ([`Bool`](std.Bool)\|[`Sym`](std.Sym)) qcow2 compression; see
+    destination @ (Str | Path)
+    # qcow2 compression; see
     # [Disk Compression](libvirt.disk-compression).
-    :compress = true
-    # ([`Bool`](std.Bool)) Export a domain that did not shut down cleanly.
-    :force = false
-  do
+    :compress @ (Bool | Sym) = true
+    # Export a domain that did not shut down cleanly.
+    :force @ Bool = false
+  do -> Path
     self.#impl.export $destination :compress :force
 
   # Copies one local file into the domain. `chmod:` sets the destination's
@@ -2132,13 +2135,13 @@ pub class Domain
   # ```
   pub def with
     self
-    # ([`Func`](std.Func)) Block to run in the guest.
-    block
-    # ([`Str`](std.Str)\|[`Path`](fs.Path)) Initial guest working directory.
-    :cd = nil
-    # ([`Dict`](std.Dict)) Environment overrides for the block.
-    :env = {}
-  do
+    # Block to run in the guest.
+    block @ Func
+    # Initial guest working directory.
+    :cd @ (Str | Path) = nil
+    # Environment overrides for the block.
+    :env @ Dict = {}
+  do -> Value
     self.#impl.with $block :cd :env
 
 
@@ -3216,7 +3219,7 @@ class BundleSource: Source
       memory: $manifest.memory
       vcpus: $manifest.vcpus
 
-# (`Domain`) Creates and starts a domain, provisioning it with cloud-init from a base
+# Creates and starts a domain, provisioning it with cloud-init from a base
 # `image:`, installing it from `installer:` media, or restoring it from an
 # already-provisioned `bundle:`.
 #
@@ -3260,10 +3263,10 @@ class BundleSource: Source
 #     run uname -a
 # ```
 pub def create
-  # ([`Value`](std.Value)) Options described in
+  # Options described in
   # [Common Domain Options](libvirt.common-domain-options).
-  ...options
-do
+  ...options @ Value
+do -> Domain
   let impl = DomainImpl nil $DEFAULT_CONNECT_URI
   impl.create ...options
   Domain $impl
@@ -3285,12 +3288,12 @@ do
 #     run uname -a
 # ```
 pub def with
-  # ([`Func`](std.Func)) Block to run in the guest VFS.
-  block
-  # ([`Value`](std.Value)) Options described in
+  # Block to run in the guest VFS.
+  block @ Func
+  # Options described in
   # [Common Domain Options](libvirt.common-domain-options).
-  ...options
-do
+  ...options @ Value
+do -> Value
   let domain = create ...options
   try
     domain.with $block
@@ -3329,16 +3332,16 @@ do
 #       - git
 # ```
 pub def build
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Bundle to write; `.dolvm` is the
+  # Bundle to write; `.dolvm` is the
   # conventional extension.
-  destination
-  # ([`Bool`](std.Bool)\|[`Sym`](std.Sym)) qcow2 compression; see
+  destination @ (Str | Path)
+  # qcow2 compression; see
   # [Disk Compression](libvirt.disk-compression).
-  :compress = true
-  # ([`Value`](std.Value)) Options described in
+  :compress @ (Bool | Sym) = true
+  # Options described in
   # [Common Domain Options](libvirt.common-domain-options).
-  ...options
-do
+  ...options @ Value
+do -> Path
   let domain = create ...options
   let result = nil
   try

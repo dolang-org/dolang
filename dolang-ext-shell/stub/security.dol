@@ -1,8 +1,8 @@
 # Platform-neutral security APIs.
 
-# ([`Str`](std.Str)) Get the current user's name.
+# Get the current user's name.
 #
 # This is the real user ID's name on Unix, or the access token's user SID's
 # name on Windows.
-pub def user_name()
+pub def user_name() -> Str
   throw nil

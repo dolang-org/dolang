@@ -1,5 +1,8 @@
 # Annotations do not change what a program does.
 
+for prelude_type = [Iter, Iterable, Sink, Sinkable, Value]
+  assert (type prelude_type Type)
+
 let x @Int = 1
 assert_eq $x 1
 

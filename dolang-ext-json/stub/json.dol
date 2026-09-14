@@ -38,9 +38,9 @@
 # assert_eq $obj["age"] 30
 # ```
 pub def decode
-  # (`Str`) JSON string to parse.
-  json
-do
+  # JSON string to parse.
+  json @ Str
+do -> Value
   throw nil
 
 # Serializes a Do value to a JSON string.
@@ -73,7 +73,7 @@ do
 pub def encode
   # The value to serialize.
   value
-  # ([`Int`](std.Int)) Spaces per level; one line when omitted.
-  :indent = nil
-do
+  # Spaces per level; one line when omitted.
+  :indent @ Int = nil
+do -> Str
   throw nil

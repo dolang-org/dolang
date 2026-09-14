@@ -370,10 +370,10 @@ pub class OsRelease
 
 # Returns parsed OS-identification data from an `os-release` file.
 pub def os_release
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)) File to read. Defaults to
+  # File to read. Defaults to
   # `/etc/os-release`, falling back to `/usr/lib/os-release` as required by
   # the os-release specification.
-  :path = nil
+  :path @ (Str | Path) = nil
 do
   if (path == nil)
     let etc = Path /etc/os-release

@@ -647,19 +647,19 @@ def prog_default()
 # echo "format=$(p.format) file=$(p.file)"
 # ```
 pub def parse
-  # ([`Array`](std.Array)) Argument list. Defaults to `shell.args`.
-  :args = nil
+  # Argument list. Defaults to `shell.args`.
+  :args @ Array = nil
 
-  # ([`Str`](std.Str)) Program name shown in help output and error messages.
+  # Program name shown in help output and error messages.
   #
   # Defaults to `shell.program`: the stem of the script filename for scripts,
   # or the module name for modules.
-  :program = nil
+  :program @ Str = nil
 
-  # ([`Dict`](std.Dict)\|[`Func`](std.Func)) Argument specification items.
+  # Argument specification items.
   #
   # See the spec declaration reference at the top of this page.
-  ...spec
+  ...spec @ (Dict | Func)
 do
   let p = Parser name: (program || prog_default()) ...spec
   p.parse
@@ -691,24 +691,24 @@ do
 #       echo "Rolling back $(p.rollbox.service)"
 # ```
 pub def with
-  # ([`Array`](std.Array)) Argument list. Defaults to `shell.args`.
-  :args = nil
+  # Argument list. Defaults to `shell.args`.
+  :args @ Array = nil
 
-  # ([`Bool`](std.Bool)) Print errors or help and exit when `true`.
+  # Print errors or help and exit when `true`.
   #
   # When `false`, throws `args.Error` or `args.Help` instead.
-  :exit = true
+  :exit @ Bool = true
 
-  # ([`Str`](std.Str)) Program name shown in help output and error messages.
+  # Program name shown in help output and error messages.
   #
   # Defaults to `shell.program`: the stem of the script filename for scripts,
   # or the module name for modules.
-  :program = nil
+  :program @ Str = nil
 
-  # ([`Dict`](std.Dict)\|[`Func`](std.Func)) Argument specification items.
+  # Argument specification items.
   #
   # Accepts the same spec declarations as `args.parse`.
-  ...spec
+  ...spec @ (Dict | Func)
 do
   let p = Parser name: (program || prog_default()) ...spec
   try

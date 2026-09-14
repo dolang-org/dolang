@@ -167,16 +167,16 @@ class Operation
 # exec.run "./tool.dol" import: {config: {answer: 42}}
 # ```
 pub def run
-  # ([`Str`](std.Str)) Script path.
-  path
-  # ([`Str`](std.Str)) See [common parameters](exec.common-parameters).
-  :app = nil
-  # ([`Dict`](std.Dict)) See [common parameters](exec.common-parameters).
-  :prelude = {}
-  # ([`Dict`](std.Dict)) See [common parameters](exec.common-parameters).
-  :inject = {}
-  # ([`Dict`](std.Dict)) See [common parameters](exec.common-parameters).
-  :import = {}
+  # Script path.
+  path @ Str
+  # See [common parameters](exec.common-parameters).
+  :app @ Str = nil
+  # See [common parameters](exec.common-parameters).
+  :prelude @ Dict = {}
+  # See [common parameters](exec.common-parameters).
+  :inject @ Dict = {}
+  # See [common parameters](exec.common-parameters).
+  :import @ Dict = {}
 do
   (Operation path mode: "script" name: nil :app :prelude :inject :import).run()
 
@@ -197,18 +197,18 @@ do
 # let injected = exec.module "./plugin.dol" inject: {answer: 42}
 # ```
 pub def module
-  # ([`Str`](std.Str)) Module source path.
-  path
-  # ([`Str`](std.Str)) Module name. Defaults to the source file stem.
-  :name = nil
-  # ([`Str`](std.Str)) See [common parameters](exec.common-parameters).
-  :app = nil
-  # ([`Dict`](std.Dict)) See [common parameters](exec.common-parameters).
-  :prelude = {}
-  # ([`Dict`](std.Dict)) See [common parameters](exec.common-parameters).
-  :inject = {}
-  # ([`Dict`](std.Dict)) See [common parameters](exec.common-parameters).
-  :import = {}
+  # Module source path.
+  path @ Str
+  # Module name. Defaults to the source file stem.
+  :name @ Str = nil
+  # See [common parameters](exec.common-parameters).
+  :app @ Str = nil
+  # See [common parameters](exec.common-parameters).
+  :prelude @ Dict = {}
+  # See [common parameters](exec.common-parameters).
+  :inject @ Dict = {}
+  # See [common parameters](exec.common-parameters).
+  :import @ Dict = {}
 do
   let name = module_name (fs.Path path) $name
   (Operation path mode: "module" :name :app :prelude :inject :import).run()

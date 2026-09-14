@@ -120,9 +120,9 @@ pub class ManagerAccessMask
   # ```
   pub def (init)
     self
-    # ([`Sym`](std.Sym)) Rights, given as symbols or as a single
+    # Rights, given as symbols or as a single
     # iterable of symbols. See [Accepted symbols](winscm.ManagerAccessMask.accepted-symbols).
-    ...rights
+    ...rights @ Sym
   do
     throw nil
 
@@ -135,9 +135,9 @@ pub class ManagerAccessMask
   #[class]
   pub def from_int
     self
-    # ([`Int`](std.Int)) Native Windows access mask.
-    value
-  do
+    # Native Windows access mask.
+    value @ Int
+  do -> ManagerAccessMask
     throw nil
 
   # The complete native mask as an [`Int`](std.Int), including bits this
@@ -153,10 +153,10 @@ pub class ManagerAccessMask
   # [`Bool`](std.Bool).
   pub def contains
     self
-    # ([`Sym`](std.Sym)) Right to test. See [Accepted
+    # Right to test. See [Accepted
     # symbols](winscm.ManagerAccessMask.accepted-symbols).
-    right
-  do
+    right @ Sym
+  do -> Bool
     throw nil
 
 # Access rights for a [`Service`](winscm.Service) handle.
@@ -220,9 +220,9 @@ pub class ServiceAccessMask
   # ```
   pub def (init)
     self
-    # ([`Sym`](std.Sym)) Rights, given as symbols or as a single
+    # Rights, given as symbols or as a single
     # iterable of symbols. See [Accepted symbols](winscm.ServiceAccessMask.accepted-symbols).
-    ...rights
+    ...rights @ Sym
   do
     throw nil
 
@@ -235,9 +235,9 @@ pub class ServiceAccessMask
   #[class]
   pub def from_int
     self
-    # ([`Int`](std.Int)) Native Windows access mask.
-    value
-  do
+    # Native Windows access mask.
+    value @ Int
+  do -> ServiceAccessMask
     throw nil
 
   # The complete native mask as an [`Int`](std.Int), including bits this
@@ -253,10 +253,10 @@ pub class ServiceAccessMask
   # [`Bool`](std.Bool).
   pub def contains
     self
-    # ([`Sym`](std.Sym)) Right to test. See [Accepted
+    # Right to test. See [Accepted
     # symbols](winscm.ServiceAccessMask.accepted-symbols).
-    right
-  do
+    right @ Sym
+  do -> Bool
     throw nil
 
 # Windows service type flags.
@@ -290,9 +290,9 @@ pub class ServiceType
   # ```
   pub def (init)
     self
-    # ([`Sym`](std.Sym)) Service types, given as symbols or as a single
+    # Service types, given as symbols or as a single
     # iterable of symbols. See [Accepted symbols](winscm.ServiceType.accepted-symbols).
-    ...types
+    ...types @ Sym
   do
     throw nil
 
@@ -305,9 +305,9 @@ pub class ServiceType
   #[class]
   pub def from_int
     self
-    # ([`Int`](std.Int)) Native service type mask.
-    value
-  do
+    # Native service type mask.
+    value @ Int
+  do -> ServiceType
     throw nil
 
   # The complete native value as an [`Int`](std.Int), including bits this
@@ -323,10 +323,10 @@ pub class ServiceType
   # [`Bool`](std.Bool).
   pub def contains
     self
-    # ([`Sym`](std.Sym)) Service type to test. See [Accepted
+    # Service type to test. See [Accepted
     # symbols](winscm.ServiceType.accepted-symbols).
-    service_type
-  do
+    service_type @ Sym
+  do -> Bool
     throw nil
 
 # Service status changes to observe.
@@ -364,9 +364,9 @@ pub class NotifyMask
   # ```
   pub def (init)
     self
-    # ([`Sym`](std.Sym)) Status changes, given as symbols or as a single
+    # Status changes, given as symbols or as a single
     # iterable of symbols. See [Accepted symbols](winscm.NotifyMask.accepted-symbols).
-    ...changes
+    ...changes @ Sym
   do
     throw nil
 
@@ -379,9 +379,9 @@ pub class NotifyMask
   #[class]
   pub def from_int
     self
-    # ([`Int`](std.Int)) Native notification mask.
-    value
-  do
+    # Native notification mask.
+    value @ Int
+  do -> NotifyMask
     throw nil
 
   # The complete native mask as an [`Int`](std.Int), including bits this
@@ -397,10 +397,10 @@ pub class NotifyMask
   # [`Bool`](std.Bool).
   pub def contains
     self
-    # ([`Sym`](std.Sym)) Status change to test. See [Accepted
+    # Status change to test. See [Accepted
     # symbols](winscm.NotifyMask.accepted-symbols).
-    change
-  do
+    change @ Sym
+  do -> Bool
     throw nil
 
 # Controls a running service accepts.
@@ -441,9 +441,9 @@ pub class ServiceControlsAccepted
   # Builds a value from controls.
   pub def (init)
     self
-    # ([`Sym`](std.Sym)) Controls, given as symbols or as a single
+    # Controls, given as symbols or as a single
     # iterable of symbols. See [Accepted symbols](winscm.ServiceControlsAccepted.accepted-symbols).
-    ...controls
+    ...controls @ Sym
   do
     throw nil
 
@@ -456,9 +456,9 @@ pub class ServiceControlsAccepted
   #[class]
   pub def from_int
     self
-    # ([`Int`](std.Int)) Native controls-accepted mask.
-    value
-  do
+    # Native controls-accepted mask.
+    value @ Int
+  do -> ServiceControlsAccepted
     throw nil
 
   # The complete native value as an [`Int`](std.Int), including bits this
@@ -474,10 +474,10 @@ pub class ServiceControlsAccepted
   # [`Bool`](std.Bool).
   pub def contains
     self
-    # ([`Sym`](std.Sym)) Control to test. See [Accepted
+    # Control to test. See [Accepted
     # symbols](winscm.ServiceControlsAccepted.accepted-symbols).
-    control
-  do
+    control @ Sym
+  do -> Bool
     throw nil
 
 # An open handle to the Windows Service Control Manager.
@@ -511,16 +511,15 @@ pub class ScManager
   # ```
   pub def open_service
     self
-    # ([`Str`](std.Str)) Service name.
-    name
-    # ([`ServiceAccessMask`](winscm.ServiceAccessMask)|[`Sym`](std.Sym))
+    # Service name.
+    name @ Str
     # Rights the returned handle requests, as a mask, a symbol, or an iterable
     # of symbols. Defaults to `:SERVICE_QUERY_STATUS:`.
-    :access = nil
-    # ([`Func`](std.Func)) Called with the [`Service`](winscm.Service), which is closed
+    :access @ (ServiceAccessMask | Sym) = nil
+    # Called with the [`Service`](winscm.Service), which is closed
     # when it returns. Omit to receive the handle instead.
-    func = nil
-  do
+    func @ Func = nil
+  do -> Value
     throw nil
 
   # Creates a service.
@@ -540,11 +539,10 @@ pub class ScManager
   # ```
   pub def create_service
     self
-    # ([`Str`](std.Str)) Service name.
-    name
-    # ([`Str`](std.Str)) Display name. Omit to pass `NULL` to Windows.
-    :display_name = nil
-    # ([`Str`](std.Str)|[`fs.windows.Path`](fs.windows.Path))
+    # Service name.
+    name @ Str
+    # Display name. Omit to pass `NULL` to Windows.
+    :display_name @ Str = nil
     # Service executable path or command line. Omit to pass `NULL` to Windows.
     #
     # A [`Str`](std.Str) is passed to Windows verbatim. An absolute
@@ -553,33 +551,32 @@ pub class ScManager
     # [`Str`](std.Str) values or absolute
     # [`fs.windows.Path`](fs.windows.Path) values; each element is quoted
     # with the Windows command-line rules.
-    :binary_path = nil
-    # ([`ServiceType`](winscm.ServiceType)|[`Sym`](std.Sym)) Service
+    :binary_path @ (Str | Path) = nil
+    # Service
     # type, as a value, a symbol, or an iterable of symbols. Defaults to
     # `:WIN32_OWN_PROCESS:`.
-    :service_type = nil
-    # ([`Sym`](std.Sym)) [Start type](winscm.start-types). Defaults
+    :service_type @ (ServiceType | Sym) = nil
+    # [Start type](winscm.start-types). Defaults
     # to `:DEMAND_START:`.
-    :start_type = nil
-    # ([`Sym`](std.Sym)) [Error control
+    :start_type @ Sym = nil
+    # [Error control
     # level](winscm.error-control-levels). Defaults to `:NORMAL:`.
-    :error_control = nil
-    # ([`ServiceAccessMask`](winscm.ServiceAccessMask)|[`Sym`](std.Sym))
+    :error_control @ Sym = nil
     # Rights the returned handle requests, as a mask, a symbol, or an iterable
     # of symbols. Defaults to `:SERVICE_QUERY_STATUS:`.
-    :access = nil
-    # ([`Str`](std.Str)) Load-order group.
-    :load_order_group = nil
-    # ([`Iterable`](std.Iterable)) Service or load-order-group names this service depends on.
-    :dependencies = nil
-    # ([`Str`](std.Str)) Account the service runs as.
-    :service_start_name = nil
-    # ([`Str`](std.Str)) Password for `service_start_name`.
-    :password = nil
-    # ([`Func`](std.Func)) Called with the [`Service`](winscm.Service), which is closed
+    :access @ (ServiceAccessMask | Sym) = nil
+    # Load-order group.
+    :load_order_group @ Str = nil
+    # Service or load-order-group names this service depends on.
+    :dependencies @ Iterable = nil
+    # Account the service runs as.
+    :service_start_name @ Str = nil
+    # Password for `service_start_name`.
+    :password @ Str = nil
+    # Called with the [`Service`](winscm.Service), which is closed
     # when it returns. Omit to receive the handle instead.
-    func = nil
-  do
+    func @ Func = nil
+  do -> Value
     throw nil
 
   # Opens a live forward enumeration of matching services. Entries are fetched
@@ -598,14 +595,14 @@ pub class ScManager
   # ```
   pub def enumerate_services
     self
-    # ([`ServiceType`](winscm.ServiceType)|[`Sym`](std.Sym)) Types to
+    # Types to
     # include, as a value, a symbol, or an iterable of symbols. Defaults to
     # `:WIN32:`.
-    :service_type = nil
-    # ([`Sym`](std.Sym)) [State filter](winscm.state-filters).
+    :service_type @ (ServiceType | Sym) = nil
+    # [State filter](winscm.state-filters).
     # Defaults to `:ALL:`.
-    :state_filter = nil
-  do
+    :state_filter @ Sym = nil
+  do -> Iter[ServiceInfo]
     throw nil
 
 # An open Windows service handle.
@@ -623,8 +620,8 @@ pub class Service
   # Starts the service.
   pub def start
     self
-    # ([`Str`](std.Str)) Arguments passed to the service's `main`.
-    ...args
+    # Arguments passed to the service's `main`.
+    ...args @ Str
   do
     throw nil
 
@@ -641,9 +638,9 @@ pub class Service
   # ```
   pub def control
     self
-    # ([`Sym`](std.Sym)) [Control request](winscm.control-requests).
-    control
-  do
+    # [Control request](winscm.control-requests).
+    control @ Sym
+  do -> Status
     throw nil
 
   # Marks the service for deletion.
@@ -658,7 +655,7 @@ pub class Service
   # ## Returns
   #
   # [`Status`](winscm.Status).
-  pub def query_status self
+  pub def query_status self -> Status
     throw nil
 
   # Waits until one of the requested status changes occurs.
@@ -668,10 +665,10 @@ pub class Service
   # The [`Status`](winscm.Status) observed after the change.
   pub def wait_for_status_change
     self
-    # ([`NotifyMask`](winscm.NotifyMask)|[`Sym`](std.Sym)) Changes to
+    # Changes to
     # observe, as a mask, a symbol, or an iterable of symbols.
-    mask
-  do
+    mask @ (NotifyMask | Sym)
+  do -> Status
     throw nil
 
   # Fetches the current service configuration.
@@ -679,7 +676,7 @@ pub class Service
   # ## Returns
   #
   # An immutable [`ServiceConfig`](winscm.ServiceConfig) snapshot.
-  pub def config self
+  pub def config self -> ServiceConfig
     throw nil
 
   # Updates the supplied configuration fields. Omitted fields are left
@@ -694,28 +691,27 @@ pub class Service
   # ```
   pub def update_config
     self
-    # ([`ServiceType`](winscm.ServiceType)|[`Sym`](std.Sym)) Service type
+    # Service type
     # flags.
-    :service_type = nil
-    # ([`Sym`](std.Sym)) [Start type](winscm.start-types).
-    :start_type = nil
-    # ([`Sym`](std.Sym)) [Error control
+    :service_type @ (ServiceType | Sym) = nil
+    # [Start type](winscm.start-types).
+    :start_type @ Sym = nil
+    # [Error control
     # level](winscm.error-control-levels).
-    :error_control = nil
-    # ([`Str`](std.Str)|[`fs.windows.Path`](fs.windows.Path))
+    :error_control @ Sym = nil
     # Service command line, taking the forms
     # [`create_service`](winscm.ScManager.create_service) accepts.
-    :binary_path = nil
-    # ([`Str`](std.Str)) Load-order group.
-    :load_order_group = nil
-    # ([`Iterable`](std.Iterable)) Service or load-order-group names this service depends on.
-    :dependencies = nil
-    # ([`Str`](std.Str)) Account the service runs as.
-    :service_start_name = nil
-    # ([`Str`](std.Str)) Password for `service_start_name`.
-    :password = nil
-    # ([`Str`](std.Str)) Display name.
-    :display_name = nil
+    :binary_path @ (Str | Path) = nil
+    # Load-order group.
+    :load_order_group @ Str = nil
+    # Service or load-order-group names this service depends on.
+    :dependencies @ Iterable = nil
+    # Account the service runs as.
+    :service_start_name @ Str = nil
+    # Password for `service_start_name`.
+    :password @ Str = nil
+    # Display name.
+    :display_name @ Str = nil
   do
     throw nil
 
@@ -726,17 +722,17 @@ pub class Service
   # [`security.windows.SecDesc`](security.windows.SecDesc).
   pub def sec_desc
     self
-    # ([`Bool`](std.Bool)) Load the owner SID. Defaults to `true`.
-    :owner = nil
-    # ([`Bool`](std.Bool)) Load the primary group SID. Defaults to
+    # Load the owner SID. Defaults to `true`.
+    :owner @ Bool = nil
+    # Load the primary group SID. Defaults to
     # `true`.
-    :group = nil
-    # ([`Bool`](std.Bool)) Load the discretionary ACL. Defaults to
+    :group @ Bool = nil
+    # Load the discretionary ACL. Defaults to
     # `true`.
-    :dacl = nil
-    # ([`Bool`](std.Bool)) Load the system ACL. Defaults to `false`.
-    :sacl = nil
-  do
+    :dacl @ Bool = nil
+    # Load the system ACL. Defaults to `false`.
+    :sacl @ Bool = nil
+  do -> SecDesc
     throw nil
 
   # Applies the components a Windows security descriptor's `mask` selects.
@@ -748,9 +744,8 @@ pub class Service
   # accepts them.
   pub def update_sec_desc
     self
-    # ([`security.windows.SecDesc`](security.windows.SecDesc)|[`Bin`](std.Bin)|[`Dict`](std.Dict))
     # Descriptor, self-relative packet, or specification dict.
-    desc = nil
+    desc @ (SecDesc | Bin | Dict) = nil
     # Component options, as above.
     ...options
   do
@@ -760,54 +755,54 @@ pub class Service
 #
 # Returned by [`Service.config`](winscm.Service.config).
 pub class ServiceConfig
-  # ([`ServiceType`](winscm.ServiceType)) Service type flags.
+  # Service type flags.
   #[getter]
-  pub def service_type self
+  pub def service_type self -> ServiceType
     throw nil
 
-  # ([`Sym`](std.Sym)|[`Int`](std.Int)) [Start
+  # [Start
   # type](winscm.start-types). A native value this module does not name is
   # returned as an [`Int`](std.Int).
   #[getter]
-  pub def start_type self
+  pub def start_type self -> (Sym | Int)
     throw nil
 
-  # ([`Sym`](std.Sym)|[`Int`](std.Int)) [Error control
+  # [Error control
   # level](winscm.error-control-levels). A native value this module does
   # not name is returned as an [`Int`](std.Int).
   #[getter]
-  pub def error_control self
+  pub def error_control self -> (Sym | Int)
     throw nil
 
-  # ([`Str`](std.Str)) Service command line.
+  # Service command line.
   #[getter]
-  pub def binary_path self
+  pub def binary_path self -> Str
     throw nil
 
-  # ([`Str`](std.Str)?) Load-order group.
+  # Load-order group.
   #[getter]
-  pub def load_order_group self
+  pub def load_order_group self -> (Str | nil)
     throw nil
 
-  # ([`Int`](std.Int)) Load-order tag within `load_order_group`.
+  # Load-order tag within `load_order_group`.
   #[getter]
-  pub def tag_id self
+  pub def tag_id self -> Int
     throw nil
 
-  # ([`Tuple`](std.Tuple)) Service and load-order-group names this
+  # Service and load-order-group names this
   # service depends on.
   #[getter]
-  pub def dependencies self
+  pub def dependencies self -> Tuple
     throw nil
 
-  # ([`Str`](std.Str)) Account the service runs as.
+  # Account the service runs as.
   #[getter]
-  pub def service_start_name self
+  pub def service_start_name self -> Str
     throw nil
 
-  # ([`Str`](std.Str)) Display name.
+  # Display name.
   #[getter]
-  pub def display_name self
+  pub def display_name self -> Str
     throw nil
 
 # Snapshot of a service's current status.
@@ -815,50 +810,50 @@ pub class ServiceConfig
 # Returned by [`Service.query_status`](winscm.Service.query_status) and
 # [`Service.control`](winscm.Service.control).
 pub class Status
-  # ([`ServiceType`](winscm.ServiceType)) Service type flags.
+  # Service type flags.
   #[getter]
-  pub def service_type self
+  pub def service_type self -> ServiceType
     throw nil
 
-  # ([`Sym`](std.Sym)|[`Int`](std.Int)) [Service
+  # [Service
   # state](winscm.service-states). A native value this module does not name
   # is returned as an [`Int`](std.Int).
   #[getter]
-  pub def current_state self
+  pub def current_state self -> (Sym | Int)
     throw nil
 
-  # ([`ServiceControlsAccepted`](winscm.ServiceControlsAccepted)) Controls the
+  # Controls the
   # service accepts in its current state.
   #[getter]
-  pub def controls_accepted self
+  pub def controls_accepted self -> ServiceControlsAccepted
     throw nil
 
-  # ([`Int`](std.Int)) Windows error code from the service's last start
+  # Windows error code from the service's last start
   # or stop.
   #[getter]
-  pub def win32_exit_code self
+  pub def win32_exit_code self -> Int
     throw nil
 
-  # ([`Int`](std.Int)) Service-defined exit code.
+  # Service-defined exit code.
   #[getter]
-  pub def service_specific_exit_code self
+  pub def service_specific_exit_code self -> Int
     throw nil
 
-  # ([`Int`](std.Int)) Progress checkpoint the service increments during
+  # Progress checkpoint the service increments during
   # a pending operation.
   #[getter]
-  pub def check_point self
+  pub def check_point self -> Int
     throw nil
 
-  # ([`Int`](std.Int)) Milliseconds the service expects a pending
+  # Milliseconds the service expects a pending
   # operation to take.
   #[getter]
-  pub def wait_hint self
+  pub def wait_hint self -> Int
     throw nil
 
-  # ([`Int`](std.Int)) Identifier of the service's process.
+  # Identifier of the service's process.
   #[getter]
-  pub def process_id self
+  pub def process_id self -> Int
     throw nil
 
 # One entry in a service enumeration.
@@ -874,19 +869,19 @@ pub class Status
 #   echo "$name: $(status.current_state)"
 # ```
 pub class ServiceInfo
-  # ([`Str`](std.Str)) Service name.
+  # Service name.
   #[getter]
-  pub def name self
+  pub def name self -> Str
     throw nil
 
-  # ([`Str`](std.Str)?) Display name.
+  # Display name.
   #[getter]
-  pub def display_name self
+  pub def display_name self -> (Str | nil)
     throw nil
 
-  # ([`Status`](winscm.Status)) Status captured during enumeration.
+  # Status captured during enumeration.
   #[getter]
-  pub def status self
+  pub def status self -> Status
     throw nil
 
 # Opens the local Service Control Manager.
@@ -904,12 +899,11 @@ pub class ServiceInfo
 #     echo $info.name
 # ```
 pub def open
-  # ([`ManagerAccessMask`](winscm.ManagerAccessMask)|[`Sym`](std.Sym))
   # Rights the returned handle requests, as a mask, a symbol, or an iterable of
   # symbols. Defaults to `:SC_MANAGER_CONNECT:`.
-  :access = nil
-  # ([`Func`](std.Func)) Called with the [`ScManager`](winscm.ScManager), which is closed
+  :access @ (ManagerAccessMask | Sym) = nil
+  # Called with the [`ScManager`](winscm.ScManager), which is closed
   # when it returns. Omit to receive the handle instead.
-  func = nil
-do
+  func @ Func = nil
+do -> Value
   throw nil

@@ -1,5 +1,4 @@
 # Run block-scoped operations on SSH hosts through a remote VFS.
-
 import _ssh
 
 # Runs `block` on `host` through SSH and a remote VFS. Filesystem access,
@@ -57,48 +56,48 @@ import _ssh
 #       cargo build --release
 # ```
 pub def with
-  # ([`Str`](std.Str)) SSH destination.
-  host
-  # ([`Func`](std.Func)) Block to run under the remote VFS.
-  block
-  # ([`Str`](std.Str)) Remote user.
-  :user = nil
-  # ([`Int`](std.Int)) SSH server port.
-  :port = nil
-  # ([`Bool`](std.Bool)) Restrict authentication to configured identities.
-  :identities_only = false
-  # ([`Bool`](std.Bool)) Forward the authentication agent.
-  :forward_agent = false
-  # ([`Int`](std.Int)) Connection timeout in seconds.
-  :connect_timeout = nil
-  # ([`Int`](std.Int)) Protocol keepalive interval in seconds.
-  :keepalive_interval = nil
-  # ([`Int`](std.Int)) Unanswered keepalives allowed before disconnecting.
-  :keepalive_count = nil
-  # ([`Bool`](std.Bool)) Disable interactive prompts.
-  :batch = false
-  # ([`Sym`](std.Sym)) Host-key verification policy.
+  # SSH destination.
+  host @ Str
+  # Block to run under the remote VFS.
+  block @ Func
+  # Remote user.
+  :user @ Str = nil
+  # SSH server port.
+  :port @ Int = nil
+  # Restrict authentication to configured identities.
+  :identities_only @ Bool = false
+  # Forward the authentication agent.
+  :forward_agent @ Bool = false
+  # Connection timeout in seconds.
+  :connect_timeout @ Int = nil
+  # Protocol keepalive interval in seconds.
+  :keepalive_interval @ Int = nil
+  # Unanswered keepalives allowed before disconnecting.
+  :keepalive_count @ Int = nil
+  # Disable interactive prompts.
+  :batch @ Bool = false
+  # Host-key verification policy.
   #
   # | Value          | Meaning                                                  |
   # | -------------- | --------------------------------------------------------- |
   # | `:DEFAULT:`    | Use SSH's own configured checking policy                 |
   # | `:STRICT:`     | Reject any host key not already in the known-hosts file  |
   # | `:ACCEPT_NEW:` | Accept and record an unknown host key; reject a changed one |
-  :host_key = :DEFAULT:
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Override the known-hosts file.
-  :known_hosts = nil
-  # ([`Iterable`](std.Iterable)) Remote VFS launcher command and arguments.
-  :command = ["dolang-vfs"]
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Initial remote working directory.
-  :cd = nil
-  # ([`Dict`](std.Dict)) Initial remote environment overrides.
-  :env = {}
-  # ([`Bool`](std.Bool)\|[`Str`](std.Str)) Import the remote login
+  :host_key @ Sym = :DEFAULT:
+  # Override the known-hosts file.
+  :known_hosts @ (Str | Path) = nil
+  # Remote VFS launcher command and arguments.
+  :command @ Iterable = ["dolang-vfs"]
+  # Initial remote working directory.
+  :cd @ (Str | Path) = nil
+  # Initial remote environment overrides.
+  :env @ Dict = {}
+  # Import the remote login
   # environment. `false` skips it entirely; a path names the login shell to
   # use instead of the one in the passwd database, and is ignored on Windows
   # hosts, which have no login shell. `env` overrides win over imported
   # values.
-  :login_env = true
+  :login_env @ (Bool | Str) = true
   # Additional options
   #
   # | Name       | Type                                | Description                |
@@ -106,7 +105,7 @@ pub def with
   # | `identity` | [`Str`](std.Str)\|[`Path`](fs.Path) | Identity file. Repeatable  |
   # | `jump`     | [`Str`](std.Str)                    | Jump host. Repeatable      |
   ...options
-do
+do -> Value
   _ssh.with_program ssh
     $host
     $block

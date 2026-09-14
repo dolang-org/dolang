@@ -9,7 +9,7 @@ pub class WinError: sys.ErrorCode
   # Known codes are available as class fields such as `WinError.ERROR_FILE_NOT_FOUND`.
   pub def (init)
     self
-    # ([`int`](std.Int)) Unsigned raw code.
-    value
+    # Unsigned raw code.
+    value @ Int
   do
     throw nil

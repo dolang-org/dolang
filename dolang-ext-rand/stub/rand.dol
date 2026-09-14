@@ -21,12 +21,12 @@
 # assert ((n >= 10) && (n < 20))
 # ```
 pub def int
-  # ([`Int`](std.Int)) Inclusive lower bound, or the exclusive upper bound when
+  # Inclusive lower bound, or the exclusive upper bound when
   # `end` is omitted.
-  start
-  # ([`Int`](std.Int)) Exclusive upper bound.
-  end = nil
-do
+  start @ Int
+  # Exclusive upper bound.
+  end @ Int = nil
+do -> Int
   throw nil
 
 # Selects one random element from an array.
@@ -46,9 +46,9 @@ do
 # assert ([1, 2, 3].contains $item)
 # ```
 pub def pick
-  # ([`Array`](std.Array)) Source array.
-  collection
-do
+  # Source array.
+  collection @ Array
+do -> collection
   throw nil
 
 # Shuffles an array in place using a uniform Fisher-Yates pass.
@@ -71,8 +71,8 @@ do
 # assert_eq $sorted [1, 2, 3, 4]
 # ```
 pub def shuffle
-  # ([`Array`](std.Array)) Array to mutate.
-  array
+  # Array to mutate.
+  array @ Array
 do
   throw nil
 
@@ -97,12 +97,12 @@ do
 # assert_eq $text.len 8
 # ```
 pub def string
-  # ([`Int`](std.Int)) Number of characters to emit.
-  len
-  # ([`Str`](std.Str)) Characters to sample from.
+  # Number of characters to emit.
+  len @ Int
+  # Characters to sample from.
   #
   # The alphabet is interpreted as characters, not raw UTF-8 bytes. When
   # omitted, it is `_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ`.
-  :alphabet = nil
-do
+  :alphabet @ Str = nil
+do -> Str
   throw nil

@@ -17,8 +17,8 @@ pub class Url
   # ```
   pub def (init)
     self
-    # ([`Str`](std.Str)\|[`Url`](url.Url)) URL to parse or copy.
-    value
+    # URL to parse or copy.
+    value @ (Str | Url)
   do
     throw nil
 
@@ -79,7 +79,7 @@ pub class Url
   # assert_eq $pairs[1][1] "c"
   # ```
   #[getter]
-  pub def query self
+  pub def query self -> Iter
     throw nil
 
   # The raw query string without the leading `?`, or `nil` if absent.
@@ -105,7 +105,7 @@ pub class Url
   # assert_eq [...url.segments] ["a b", "c"]
   # ```
   #[getter]
-  pub def segments self
+  pub def segments self -> Iter
     throw nil
 
   # The decoded username, or `nil` if not present.
@@ -122,12 +122,12 @@ pub class Url
   # `Url`
   pub def with_fragment
     self
-    # ([`Str`](std.Str)\|`nil`) Fragment string or `nil`.
-    fragment
-  do
+    # Fragment string or `nil`.
+    fragment @ (Str | nil)
+  do -> Url
     throw nil
 
-  # (`Url`) Returns a new `Url` with its query rebuilt from decoded key/value pairs.
+  # Returns a new `Url` with its query rebuilt from decoded key/value pairs.
   #
   # Pairs come from either a single iterable or key arguments, not both.
   #
@@ -141,11 +141,11 @@ pub class Url
   # ```
   pub def with_query
     self
-    # ([`Iterable`](std.Iterable)) Decoded key/value pairs.
-    pairs = nil
+    # Decoded key/value pairs.
+    pairs @ Iterable = nil
     # Query values keyed by argument name.
     ...keys
-  do
+  do -> Url
     throw nil
 
   # Returns a new `Url` with its raw query replaced.
@@ -157,9 +157,9 @@ pub class Url
   # `Url`
   pub def with_query_raw
     self
-    # ([`Str`](std.Str)\|`nil`) Raw query string or `nil`.
-    query
-  do
+    # Raw query string or `nil`.
+    query @ (Str | nil)
+  do -> Url
     throw nil
 
   # Compares two URLs by their parsed values.
@@ -181,8 +181,8 @@ pub class Url
   # ```
   pub def (div)
     self
-    # ([`Str`](std.Str)) Path segment or absolute path.
-    other
+    # Path segment or absolute path.
+    other @ Str
   do
     throw nil
 

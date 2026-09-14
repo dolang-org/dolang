@@ -48,12 +48,12 @@ pub class ImportHandler
 # load.run $bytecode importer: $importer
 # ```
 pub def import
-  # ([`Str`](std.Str)) Module name to import.
-  name
+  # Module name to import.
+  name @ Str
 do
   throw nil
 
-# ([`ImportHandler`](load.ImportHandler)) Registers a module import handler.
+# Registers a module import handler.
 #
 # Handlers run after native modules and cached Do modules. The first successful
 # handler supplies the imported value. Raise [`ImportError`](std.ImportError)
@@ -73,9 +73,9 @@ do
 # handle.unregister()
 # ```
 pub def import_handler
-  # ([`Func`](std.Func)) Called with the requested module name.
-  callback
-do
+  # Called with the requested module name.
+  callback @ Func
+do -> ImportHandler
   throw nil
 
 # Executes compiled Do bytecode.
@@ -103,9 +103,9 @@ do
 # assert_eq $result 2
 # ```
 pub def run
-  # ([`Bin`](std.Bin)) Compiled Do bytecode.
-  bytecode
-  # ([`Func`](std.Func)) Program-specific module importer.
-  :importer = nil
-do
+  # Compiled Do bytecode.
+  bytecode @ Bin
+  # Program-specific module importer.
+  :importer @ Func = nil
+do -> Value
   throw nil

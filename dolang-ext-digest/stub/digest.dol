@@ -23,7 +23,7 @@ pub class State
   # assert_eq "${state.digest():x}"
   #   b34b56076712fd7fb9c067245a6c85e16174b3ef2e35df7b56b7f164e5c36446
   # ```
-  pub def digest self
+  pub def digest self -> Bin
     throw nil
 
   # Updates the digest state with the bytes of `data`.
@@ -53,8 +53,8 @@ pub class State
   # ```
   pub def update
     self
-    # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Input to hash.
-    data
+    # Input to hash.
+    data @ (Str | Bin)
   do
     throw nil
 
@@ -148,9 +148,9 @@ pub class Sha512: State
 #   6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85
 # ```
 pub def blake3
-  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Input to hash.
-  data
-do
+  # Input to hash.
+  data @ (Str | Bin)
+do -> Bin
   throw nil
 
 # Computes the MD5 digest.
@@ -167,9 +167,9 @@ do
 #   900150983cd24fb0d6963f7d28e17f72
 # ```
 pub def md5
-  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Input to hash.
-  data
-do
+  # Input to hash.
+  data @ (Str | Bin)
+do -> Bin
   throw nil
 
 # Computes the SHA-1 digest.
@@ -186,9 +186,9 @@ do
 #   a9993e364706816aba3e25717850c26c9cd0d89d
 # ```
 pub def sha1
-  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Input to hash.
-  data
-do
+  # Input to hash.
+  data @ (Str | Bin)
+do -> Bin
   throw nil
 
 # Computes the SHA-256 digest.
@@ -205,9 +205,9 @@ do
 #   ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 # ```
 pub def sha256
-  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Input to hash.
-  data
-do
+  # Input to hash.
+  data @ (Str | Bin)
+do -> Bin
   throw nil
 
 # Computes the SHA-512 digest.
@@ -224,7 +224,7 @@ do
 #   ddaf35a193
 # ```
 pub def sha512
-  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Input to hash.
-  data
-do
+  # Input to hash.
+  data @ (Str | Bin)
+do -> Bin
   throw nil

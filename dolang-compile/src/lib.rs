@@ -49,9 +49,10 @@ use dolang_util::intern::{self, BinTable};
 use ast::Res;
 
 const STD_PRELUDE: &[&str] = &[
-    "Array", "Bin", "BinBuf", "Bool", "Dict", "Float", "Func", "Int", "Range", "Record", "Set",
-    "Str", "StrBuf", "Sym", "Tuple", "Type", "array", "bool", "class", "dbg", "dict", "float",
-    "getter", "int", "record", "setter", "static", "str", "sym", "tuple", "type",
+    "Array", "Bin", "BinBuf", "Bool", "Dict", "Float", "Func", "Int", "Iter", "Iterable", "Range",
+    "Record", "Set", "Sink", "Sinkable", "Str", "StrBuf", "Sym", "Tuple", "Type", "Value", "array",
+    "bool", "class", "dbg", "dict", "float", "getter", "int", "record", "setter", "static", "str",
+    "sym", "tuple", "type",
 ];
 
 #[derive(Debug)]

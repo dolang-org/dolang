@@ -30,8 +30,8 @@ pub class Mask
   # ```
   pub def (init)
     self
-    # ([`Sym`](std.Sym)) Mask bits, or one iterable of them.
-    ...bits
+    # Mask bits, or one iterable of them.
+    ...bits @ Sym
   do
     throw nil
 
@@ -42,9 +42,9 @@ pub class Mask
   # [`Bool`](std.Bool)
   pub def contains
     self
-    # ([`Sym`](std.Sym)) Bits to test for.
-    bit
-  do
+    # Bits to test for.
+    bit @ Sym
+  do -> Bool
     throw nil
 
   # Union of two masks.
@@ -106,8 +106,8 @@ pub class Flags
   # ```
   pub def (init)
     self
-    # ([`Sym`](std.Sym)) Flag bits, or one iterable of them.
-    ...bits
+    # Flag bits, or one iterable of them.
+    ...bits @ Sym
   do
     throw nil
 
@@ -118,9 +118,9 @@ pub class Flags
   # [`Bool`](std.Bool)
   pub def contains
     self
-    # ([`Sym`](std.Sym)) Bits to test for.
-    bit
-  do
+    # Bits to test for.
+    bit @ Sym
+  do -> Bool
     throw nil
 
   # Union of two flag sets.
@@ -176,13 +176,13 @@ pub class Ace
   #[class]
   pub def owner
     self
-    # ([`Sym`](std.Sym)) Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
+    # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
     # or `:ALARM:`.
-    :type
-    # ([`Mask`](security.nfs4.Mask)) Permission mask.
-    :mask
-    # ([`Flags`](security.nfs4.Flags)) Inheritance/audit flags. Defaults to empty.
-    :flags = nil
+    :type @ Sym
+    # Permission mask.
+    :mask @ Mask
+    # Inheritance/audit flags. Defaults to empty.
+    :flags @ Flags = nil
   do
     throw nil
 
@@ -190,13 +190,13 @@ pub class Ace
   #[class]
   pub def owning_group
     self
-    # ([`Sym`](std.Sym)) Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
+    # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
     # or `:ALARM:`.
-    :type
-    # ([`Mask`](security.nfs4.Mask)) Permission mask.
-    :mask
-    # ([`Flags`](security.nfs4.Flags)) Inheritance/audit flags. Defaults to empty.
-    :flags = nil
+    :type @ Sym
+    # Permission mask.
+    :mask @ Mask
+    # Inheritance/audit flags. Defaults to empty.
+    :flags @ Flags = nil
   do
     throw nil
 
@@ -204,13 +204,13 @@ pub class Ace
   #[class]
   pub def everyone
     self
-    # ([`Sym`](std.Sym)) Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
+    # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
     # or `:ALARM:`.
-    :type
-    # ([`Mask`](security.nfs4.Mask)) Permission mask.
-    :mask
-    # ([`Flags`](security.nfs4.Flags)) Inheritance/audit flags. Defaults to empty.
-    :flags = nil
+    :type @ Sym
+    # Permission mask.
+    :mask @ Mask
+    # Inheritance/audit flags. Defaults to empty.
+    :flags @ Flags = nil
   do
     throw nil
 
@@ -218,15 +218,15 @@ pub class Ace
   #[class]
   pub def user
     self
-    # ([`Int`](std.Int)) User ID.
-    id
-    # ([`Sym`](std.Sym)) Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
+    # User ID.
+    id @ Int
+    # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
     # or `:ALARM:`.
-    :type
-    # ([`Mask`](security.nfs4.Mask)) Permission mask.
-    :mask
-    # ([`Flags`](security.nfs4.Flags)) Inheritance/audit flags. Defaults to empty.
-    :flags = nil
+    :type @ Sym
+    # Permission mask.
+    :mask @ Mask
+    # Inheritance/audit flags. Defaults to empty.
+    :flags @ Flags = nil
   do
     throw nil
 
@@ -234,46 +234,46 @@ pub class Ace
   #[class]
   pub def group
     self
-    # ([`Int`](std.Int)) Group ID.
-    id
-    # ([`Sym`](std.Sym)) Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
+    # Group ID.
+    id @ Int
+    # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
     # or `:ALARM:`.
-    :type
-    # ([`Mask`](security.nfs4.Mask)) Permission mask.
-    :mask
-    # ([`Flags`](security.nfs4.Flags)) Inheritance/audit flags. Defaults to empty.
-    :flags = nil
+    :type @ Sym
+    # Permission mask.
+    :mask @ Mask
+    # Inheritance/audit flags. Defaults to empty.
+    :flags @ Flags = nil
   do
     throw nil
 
-  # ([`Sym`](std.Sym)) Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`, or
+  # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`, or
   # `:ALARM:`.
   #[getter]
-  pub def type self
+  pub def type self -> Sym
     throw nil
 
-  # ([`Sym`](std.Sym)) Entry qualifier: `:OWNER:`, `:OWNING_GROUP:`,
+  # Entry qualifier: `:OWNER:`, `:OWNING_GROUP:`,
   # `:EVERYONE:`, `:USER:`, or `:GROUP:`.
   #[getter]
-  pub def principal self
+  pub def principal self -> Sym
     throw nil
 
-  # ([`Int`](std.Int)) Numeric user or group ID.
+  # Numeric user or group ID.
   #
   # Raises [`FieldError`](std.FieldError) unless
   # [`principal`](security.nfs4.Ace.principal) is `:USER:` or `:GROUP:`.
   #[getter]
-  pub def id self
+  pub def id self -> Int
     throw nil
 
-  # ([`Mask`](security.nfs4.Mask)) The entry's permission mask.
+  # The entry's permission mask.
   #[getter]
-  pub def mask self
+  pub def mask self -> Mask
     throw nil
 
-  # ([`Flags`](security.nfs4.Flags)) The entry's inheritance/audit flags.
+  # The entry's inheritance/audit flags.
   #[getter]
-  pub def flags self
+  pub def flags self -> Flags
     throw nil
 
 # Immutable NFSv4 access-control list.
@@ -290,18 +290,18 @@ pub class Acl
   # evaluation order.
   pub def (init)
     self
-    # ([`Iterable`](std.Iterable)) [`Ace`](security.nfs4.Ace) values.
-    aces
+    # [`Ace`](security.nfs4.Ace) values.
+    aces @ Iterable
   do
     throw nil
 
-  # ([`Array`](std.Array)-like) Immutable view of [`Ace`](security.nfs4.Ace)
+  # Immutable view of [`Ace`](security.nfs4.Ace)
   # values, in evaluation order. Use `.len` for the entry count.
   #[getter]
-  pub def aces self
+  pub def aces self -> Array[Ace]
     throw nil
 
-# ([`Ace`](security.nfs4.Ace)) Constructs an NFSv4 entry from declarative arguments.
+# Constructs an NFSv4 entry from declarative arguments.
 #
 # Pass exactly one type key. Masks and flags accept their built type, one
 # symbol, or an iterable of symbols.
@@ -313,25 +313,23 @@ pub class Acl
 # ace deny: {user: 1000} mask: :WRITE_DATA:
 # ```
 pub def ace
-  # ([`Sym`](std.Sym)\|[`Dict`](std.Dict)) Principal for an `:ALLOW:` entry:
+  # Principal for an `:ALLOW:` entry:
   # `:OWNER:`, `:OWNING_GROUP:`, `:EVERYONE:`, `{user: id}`, or `{group: id}`.
-  :allow = nil
-  # ([`Sym`](std.Sym)\|[`Dict`](std.Dict)) Principal for a `:DENY:` entry, in
+  :allow @ (Sym | Dict) = nil
+  # Principal for a `:DENY:` entry, in
   # the same forms as `allow:`.
-  :deny = nil
-  # ([`Sym`](std.Sym)\|[`Dict`](std.Dict)) Principal for an `:AUDIT:` entry, in
+  :deny @ (Sym | Dict) = nil
+  # Principal for an `:AUDIT:` entry, in
   # the same forms as `allow:`.
-  :audit = nil
-  # ([`Sym`](std.Sym)\|[`Dict`](std.Dict)) Principal for an `:ALARM:` entry, in
+  :audit @ (Sym | Dict) = nil
+  # Principal for an `:ALARM:` entry, in
   # the same forms as `allow:`.
-  :alarm = nil
-  # ([`Mask`](security.nfs4.Mask)\|[`Sym`](std.Sym)\|[`Iterable`](std.Iterable))
+  :alarm @ (Sym | Dict) = nil
   # Permission mask.
-  :mask
-  # ([`Flags`](security.nfs4.Flags)\|[`Sym`](std.Sym)\|[`Iterable`](std.Iterable))
+  :mask @ (Mask | Sym | Iterable)
   # Inheritance/audit flags. Defaults to empty.
-  :flags = nil
-do
+  :flags @ (Flags | Sym | Iterable) = nil
+do -> Ace
   throw nil
 
 # Constructs an NFSv4 ACL from entries and declarative entry dictionaries.
@@ -342,8 +340,8 @@ do
 #
 # [`Acl`](security.nfs4.Acl)
 pub def acl
-  # ([`Ace`](security.nfs4.Ace)\|[`Dict`](std.Dict)) Entries, spread with `...`
+  # Entries, spread with `...`
   # to pass a collection.
-  ...aces
-do
+  ...aces @ (Ace | Dict)
+do -> Acl
   throw nil

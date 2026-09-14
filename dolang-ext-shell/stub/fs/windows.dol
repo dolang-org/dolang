@@ -48,12 +48,12 @@ pub class Path
   # Converting a Unix path is allowed only when it is relative.
   pub def (init)
     self
-    # ([`Str`](std.Str)\|[`fs.Path`](fs.Path)) Path value.
-    path
+    # Path value.
+    path @ (Str | Path)
   do
     throw nil
 
-  # ([`Str`](std.Str)?) Device namespace name for `\\.\name` paths, or
+  # Device namespace name for `\\.\name` paths, or
   # `nil` otherwise.
   #
   # ```
@@ -61,10 +61,10 @@ pub class Path
   # echo $path.device  # COM42
   # ```
   #[getter]
-  pub def device self
+  pub def device self -> (Str | nil)
     throw nil
 
-  # ([`Str`](std.Str)?) Drive letter for `C:`-style and `\\?\C:`-style
+  # Drive letter for `C:`-style and `\\?\C:`-style
   # prefixes, or `nil` otherwise.
   #
   # ```
@@ -72,10 +72,10 @@ pub class Path
   # echo $path.disk  # C
   # ```
   #[getter]
-  pub def disk self
+  pub def disk self -> (Str | nil)
     throw nil
 
-  # ([`Bool`](std.Bool)) Whether the path uses a verbatim `\\?\`
+  # Whether the path uses a verbatim `\\?\`
   # prefix.
   #
   # ```
@@ -83,10 +83,10 @@ pub class Path
   # echo $path.is_verbatim  # true
   # ```
   #[getter]
-  pub def is_verbatim self
+  pub def is_verbatim self -> Bool
     throw nil
 
-  # ([`Str`](std.Str)?) UNC server name, or `nil` if the path does not
+  # UNC server name, or `nil` if the path does not
   # use a UNC prefix.
   #
   # ```
@@ -94,10 +94,10 @@ pub class Path
   # echo $path.server  # server
   # ```
   #[getter]
-  pub def server self
+  pub def server self -> (Str | nil)
     throw nil
 
-  # ([`Str`](std.Str)?) UNC share name, or `nil` if the path does not
+  # UNC share name, or `nil` if the path does not
   # use a UNC prefix.
   #
   # ```
@@ -105,10 +105,10 @@ pub class Path
   # echo $path.share  # share
   # ```
   #[getter]
-  pub def share self
+  pub def share self -> (Str | nil)
     throw nil
 
-  # ([`Str`](std.Str)?) Alternate data stream name, or `nil` if no
+  # Alternate data stream name, or `nil` if no
   # stream is specified.
   #
   # ```
@@ -117,10 +117,10 @@ pub class Path
   # echo $path.stream_name  # zone
   # ```
   #[getter]
-  pub def stream_name self
+  pub def stream_name self -> (Str | nil)
     throw nil
 
-  # ([`Str`](std.Str)?) Alternate data stream type without the leading
+  # Alternate data stream type without the leading
   # `$`.
   #
   # This is `nil` when no alternate data stream was specified, or one was
@@ -131,28 +131,28 @@ pub class Path
   # echo $path.stream_type  # DATA
   # ```
   #[getter]
-  pub def stream_type self
+  pub def stream_type self -> (Str | nil)
     throw nil
 
-  # ([`security.windows.SecDesc`](security.windows.SecDesc)) Gets selected parts of the Windows security descriptor.
+  # Gets selected parts of the Windows security descriptor.
   #
   # SACL access requires `SeSecurityPrivilege`.
   pub def sec_desc
     self
-    # ([`Bool`](std.Bool)) Load the owner SID. Defaults to `true`.
-    :owner = nil
-    # ([`Bool`](std.Bool)) Load the primary group SID. Defaults to
+    # Load the owner SID. Defaults to `true`.
+    :owner @ Bool = nil
+    # Load the primary group SID. Defaults to
     # `true`.
-    :group = nil
-    # ([`Bool`](std.Bool)) Load the discretionary ACL. Defaults to
+    :group @ Bool = nil
+    # Load the discretionary ACL. Defaults to
     # `true`.
-    :dacl = nil
-    # ([`Bool`](std.Bool)) Load the system ACL. Defaults to `false`.
-    :sacl = nil
-    # (`:TARGET:`\|`:LINK:`) Resolution mode; see
+    :dacl @ Bool = nil
+    # Load the system ACL. Defaults to `false`.
+    :sacl @ Bool = nil
+    # Resolution mode; see
     # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
-    :resolve = nil
-  do
+    :resolve @ (:TARGET: | :LINK:) = nil
+  do -> SecDesc
     throw nil
 
   # Applies the components selected by a `SecDesc`'s `mask`.
@@ -181,12 +181,11 @@ pub class Path
   # ```
   pub def update_sec_desc
     self
-    # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict))
     # Descriptor, packet, or spec.
-    desc = nil
-    # (`:TARGET:`\|`:LINK:`) Resolution mode; see
+    desc @ (SecDesc | Bin | Dict) = nil
+    # Resolution mode; see
     # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
-    :resolve = nil
+    :resolve @ (:TARGET: | :LINK:) = nil
   do
     throw nil
 
@@ -206,10 +205,10 @@ pub class Path
   # ```
   pub def streams
     self
-    # (`:TARGET:`\|`:LINK:`) Resolution mode; see
+    # Resolution mode; see
     # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
-    :resolve = nil
-  do
+    :resolve @ (:TARGET: | :LINK:) = nil
+  do -> Iter
     throw nil
 
 # An NTFS alternate data stream of a file.
@@ -227,7 +226,7 @@ pub class Path
 #   echo (Path "data.txt" / stream)
 # ```
 pub class StreamEntry
-  # ([`Str`](std.Str)) Stream name. The unnamed default stream is
+  # Stream name. The unnamed default stream is
   # reported as `""`.
   #
   # ```
@@ -235,27 +234,27 @@ pub class StreamEntry
   #   echo $stream.name
   # ```
   #[getter]
-  pub def name self
+  pub def name self -> Str
     throw nil
 
-  # ([`Str`](std.Str)) Stream type without the leading `$`.
+  # Stream type without the leading `$`.
   #
   # ```
   # for stream = streams "data.txt"
   #   echo $stream.type
   # ```
   #[getter]
-  pub def type self
+  pub def type self -> Str
     throw nil
 
-  # ([`Int`](std.Int)) Logical stream size in bytes.
+  # Logical stream size in bytes.
   #[getter]
-  pub def size self
+  pub def size self -> Int
     throw nil
 
-  # ([`Int`](std.Int)) Allocated stream size in bytes.
+  # Allocated stream size in bytes.
   #[getter]
-  pub def alloc_size self
+  pub def alloc_size self -> Int
     throw nil
 
 # Gets selected parts of a Windows security descriptor.
@@ -264,22 +263,22 @@ pub class StreamEntry
 #
 # [`security.windows.SecDesc`](security.windows.SecDesc)
 pub def sec_desc
-  # ([`Str`](std.Str)\|[`Path`](fs.windows.Path)) Path to query.
-  path
-  # ([`Bool`](std.Bool)) Load the owner SID. Defaults to `true`.
-  :owner = nil
-  # ([`Bool`](std.Bool)) Load the primary group SID. Defaults to
+  # Path to query.
+  path @ (Str | Path)
+  # Load the owner SID. Defaults to `true`.
+  :owner @ Bool = nil
+  # Load the primary group SID. Defaults to
   # `true`.
-  :group = nil
-  # ([`Bool`](std.Bool)) Load the discretionary ACL. Defaults to
+  :group @ Bool = nil
+  # Load the discretionary ACL. Defaults to
   # `true`.
-  :dacl = nil
-  # ([`Bool`](std.Bool)) Load the system ACL. Defaults to `false`.
-  :sacl = nil
-  # (`:TARGET:`\|`:LINK:`) Resolution mode; see
+  :dacl @ Bool = nil
+  # Load the system ACL. Defaults to `false`.
+  :sacl @ Bool = nil
+  # Resolution mode; see
   # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
-  :resolve = nil
-do
+  :resolve @ (:TARGET: | :LINK:) = nil
+do -> SecDesc
   throw nil
 
 # Applies the components selected by a Windows security descriptor's `mask`.
@@ -290,13 +289,12 @@ do
 # [`security.windows.sec_desc`](security.windows.sec_desc)
 # accepts them.
 pub def update_sec_desc
-  # ([`Str`](std.Str)\|[`Path`](fs.windows.Path)) Path to update.
-  path
-  # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict))
+  # Path to update.
+  path @ (Str | Path)
   # Descriptor, packet, or spec.
-  desc = nil
-  # (`:TARGET:`\|`:LINK:`) Resolution mode; see
+  desc @ (SecDesc | Bin | Dict) = nil
+  # Resolution mode; see
   # [fs](fs.resolution-modes). Defaults to `:TARGET:`.
-  :resolve = nil
+  :resolve @ (:TARGET: | :LINK:) = nil
 do
   throw nil

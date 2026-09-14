@@ -1,10 +1,12 @@
 # Utilities for writing and running test suites.
-
 import _shell compile load progress strand term
   fs:
     - Path
   time:
     - timeout
+
+import std:
+  - @RuntimeError
 
 let err_style = term.Style bold: true fg: :BRIGHT_RED:
 let info_style = term.Style fg: :YELLOW:
@@ -313,7 +315,7 @@ class Fixture
 # def example_test()
 #   do_something()
 # ```
-pub def fixture wrap
+pub def fixture wrap -> A
   do |value|
     let test_def = to_test_def $value
     test_def.func = Fixture $wrap $test_def.func
@@ -333,15 +335,15 @@ pub def fixture wrap
 #   connect()
 # ```
 pub def test
-  # ([`Str`](std.Str)) Reporting name. Defaults to `str(func)`.
-  :name = nil
-  # ([`Iterable`](std.Iterable)) Tags to attach. Order and duplicates are
+  # Reporting name. Defaults to `str(func)`.
+  :name @ Str = nil
+  # Tags to attach. Order and duplicates are
   # preserved.
-  :tags = []
-  # ([`Func`](std.Func)) Test function. Supplied implicitly when this
+  :tags @ Iterable = []
+  # Test function. Supplied implicitly when this
   # function is used as a decorator.
-  func = nil
-do
+  func @ Func = nil
+do -> func
   if (func == nil)
     return do |func| test name: $name tags: $tags $func
   let tag_values = []
@@ -401,12 +403,12 @@ do
 #   backend.ping()
 # ```
 pub def parametrize
-  # ([`Func`](std.Func)) Test function. Supplied implicitly when this
+  # Test function. Supplied implicitly when this
   # function is used as a decorator.
-  func = nil
-  # ([`Iterable`](std.Iterable)) An axis name paired with an iterable of raw
+  func @ Func = nil
+  # An axis name paired with an iterable of raw
   # values and/or `tagged(value, ...tags)` wrappers for that axis.
-  ...axes
+  ...axes @ Iterable
 do
   if (func == nil)
     return do |func| parametrize $func ...axes
@@ -434,8 +436,8 @@ do
 #   connect()
 # ```
 pub def tags
-  # ([`Str`](std.Str)) Tag to add.
-  ...values
+  # Tag to add.
+  ...values @ Str
 do
   let tag_values = []
   for tag = values.pos_only()
@@ -560,20 +562,20 @@ pub def assert_type expected value msg = nil
 # Returns zero when all selected tests pass, or one when any module or test
 # fails.
 pub def run
-  # ([`Int`](std.Int)) Maximum concurrent tests.
-  :jobs = 8
-  # ([`Int`](std.Int)) Maximum concurrent modules.
-  :module_jobs = 4
-  # ([`Func`](std.Func)) Predicate receiving a
+  # Maximum concurrent tests.
+  :jobs @ Int = 8
+  # Maximum concurrent modules.
+  :module_jobs @ Int = 4
+  # Predicate receiving a
   # [`TestInfo`](test.TestInfo). Defaults to accepting every test.
-  :filter = (do |_| true)
-  # ([`Int`](std.Int)) Per-test and module-load timeout in seconds.
-  :timeout = 600
-  # ([`Bool`](std.Bool)) Capture output and show it for failures.
-  :capture = true
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Test file or directory.
-  ...paths
-do
+  :filter @ Func = (do |_| true)
+  # Per-test and module-load timeout in seconds.
+  :timeout @ Int = 600
+  # Capture output and show it for failures.
+  :capture @ Bool = true
+  # Test file or directory.
+  ...paths @ (Str | Path)
+do -> Returns
   let paths = [...paths.pos_only()]
   let harness = Harness :jobs :module_jobs :filter :timeout :capture
   let files = []

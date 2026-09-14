@@ -39,9 +39,9 @@
 # assert_eq $doc["ports"] [80, 443]
 # ```
 pub def decode
-  # ([`Str`](std.Str)) YAML document to parse.
-  yaml
-do
+  # YAML document to parse.
+  yaml @ Str
+do -> Value
   throw nil
 
 # Serializes a Do value to a YAML string.
@@ -75,5 +75,5 @@ do
 pub def encode
   # The value to serialize.
   value
-do
+do -> Str
   throw nil

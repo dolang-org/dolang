@@ -112,15 +112,15 @@ pub class Connection
   # ```
   pub def execute
     self
-    # ([`Fmt`](std.Fmt)) SQL template. A [`Str`](std.Str) raises,
+    # SQL template. A [`Str`](std.Str) raises,
     # because a `Str` cannot say which of its text is data. Only the literal
     # text becomes SQL; an interpolated value is bound as a parameter, so it
     # is data whatever it looks like. See [Parameter
     # Binding](sqlite.Statement.parameter-binding).
-    sql
-    # ([`Value`](std.Value)) Values filling the template's `${#...}` parameters.
-    ...args
-  do
+    sql @ Fmt
+    # Values filling the template's `${#...}` parameters.
+    ...args @ Value
+  do -> Int
     throw nil
 
   # Prepares a statement for repeated execution.
@@ -148,13 +148,13 @@ pub class Connection
   # ```
   pub def prepare
     self
-    # ([`Fmt`](std.Fmt)) SQL template. See [Parameter
+    # SQL template. See [Parameter
     # Binding](sqlite.Statement.parameter-binding).
-    sql
-    # ([`Func`](std.Func)) Called with the [`Statement`](sqlite.Statement),
+    sql @ Fmt
+    # Called with the [`Statement`](sqlite.Statement),
     # which is closed when it returns. Omit to receive the handle instead.
-    func = nil
-  do
+    func @ Func = nil
+  do -> Value
     throw nil
 
   # Runs `func` inside a database transaction.
@@ -187,9 +187,9 @@ pub class Connection
   # ```
   pub def transaction
     self
-    # ([`Func`](std.Func)) Called with the [`Transaction`](sqlite.Transaction).
-    func
-  do
+    # Called with the [`Transaction`](sqlite.Transaction).
+    func @ Func
+  do -> Value
     throw nil
 
 # A compiled SQL statement that can be run repeatedly with different
@@ -303,7 +303,7 @@ pub class Statement
     # Values filling the statement's parameters. See [Parameter
     # binding](sqlite.Statement.parameter-binding).
     ...args
-  do
+  do -> Int
     throw nil
 
   # Runs the statement and iterates its result rows.
@@ -334,7 +334,7 @@ pub class Statement
     # Values filling the statement's parameters. See [Parameter
     # binding](sqlite.Statement.parameter-binding).
     ...args
-  do
+  do -> Iter[Row]
     throw nil
 
 # A single result row.
@@ -402,9 +402,9 @@ pub class Row
   # ```
   pub def (index)
     self
-    # ([`Int`](std.Int)\|[`Str`](std.Str)) Column position or
+    # Column position or
     # name.
-    key
+    key @ (Int | Str)
   do
     throw nil
 
@@ -467,22 +467,22 @@ pub class Transaction
 #   conn.execute t"CREATE TABLE scratch (n INTEGER)"
 # ```
 pub def open
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the database
+  # Path to the database
   # file, or `":memory:"` for a private in-memory database. A relative path
   # resolves against the current directory of the active VFS context.
-  path
-  # ([`Int`](std.Int)) Attempts to retry an operation that fails
+  path @ (Str | Path)
+  # Attempts to retry an operation that fails
   # because the database is busy. Defaults to `10`; `0` disables retrying. See
   # [Busy retry](sqlite.Connection.busy-retry).
-  :retries = nil
-  # ([`Int`](std.Int)) Milliseconds to wait before the first retry.
+  :retries @ Int = nil
+  # Milliseconds to wait before the first retry.
   # Defaults to `1`.
-  :min_wait = nil
-  # ([`Int`](std.Int)) Ceiling in milliseconds for the doubling retry
+  :min_wait @ Int = nil
+  # Ceiling in milliseconds for the doubling retry
   # wait. Defaults to `1000`.
-  :max_wait = nil
-  # ([`Func`](std.Func)) Called with the [`Connection`](sqlite.Connection),
+  :max_wait @ Int = nil
+  # Called with the [`Connection`](sqlite.Connection),
   # which is closed when it returns. Omit to receive the handle instead.
-  func = nil
-do
+  func @ Func = nil
+do -> Value
   throw nil

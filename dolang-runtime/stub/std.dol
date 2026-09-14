@@ -29,14 +29,14 @@ pub def bool value
   throw nil
 
 #
-# ([`Str`](std.Str)) Converts a value to its debug representation. Shows internal structure (e.g.
+# Converts a value to its debug representation. Shows internal structure (e.g.
 # quotes strings, shows type tags).
 #
 #
 pub def dbg
   # Value to convert.
   value
-do
+do -> Str
   throw nil
 
 #
@@ -58,7 +58,7 @@ pub def float value
   throw nil
 
 #
-# ([`Getter`](std.Getter)) Builds a getter object from a function.
+# Builds a getter object from a function.
 #
 #
 # ## Example
@@ -72,14 +72,14 @@ pub def float value
 #     obj.#port
 # ```
 #
-pub def getter
-  # ([`Func`](std.Func)) Function used for field reads.
-  func
-do
+pub def getter[T, R]
+  # Function used for field reads.
+  func @ (T -> R)
+do -> Getter[T, R]
   throw nil
 
 #
-# ([`Int`](std.Int)) Returns a hash code computed over all supplied values in sequence. Passing
+# Returns a hash code computed over all supplied values in sequence. Passing
 # multiple values is useful for combining fields in a `(hash)` implementation:
 #
 # ```
@@ -91,7 +91,7 @@ do
 pub def hash
   # Values to hash.
   ...values
-do
+do -> Int
   throw nil
 
 #
@@ -101,7 +101,7 @@ pub def int value
   throw nil
 
 #
-# ([`Record`](std.Record)) Creates a record from positional and key arguments.
+# Creates a record from positional and key arguments.
 #
 # Positional arguments receive incrementing integer keys starting at `0`.
 # Key arguments become symbol fields.
@@ -117,11 +117,11 @@ pub def int value
 pub def record
   # Positional and key field values.
   ...pairs
-do
+do -> Record
   throw nil
 
 #
-# ([`Setter`](std.Setter)) Builds a setter object from a function.
+# Builds a setter object from a function.
 #
 #
 # ## Example
@@ -133,61 +133,61 @@ do
 #     obj.#_port = value
 # ```
 #
-pub def setter
-  # ([`Func`](std.Func)) Function used for field writes.
-  func
-do
+pub def setter[T, V]
+  # Function used for field writes.
+  func @ ((T, V) -> nil)
+do -> Setter[T, V]
   throw nil
 
 #
 # Returns the general-purpose [`Str`](std.Str) representation of a value.
 #
-pub def str value
+pub def str value -> Str
   throw nil
 
 #
 # Interns a string as a [`Sym`](std.Sym).
 #
 pub def sym
-  # ([`Str`](std.Str)\|[`Sym`](std.Sym)) Value to intern.
-  value
-do
+  # Value to intern.
+  value @ (Str | Sym)
+do -> Sym
   throw nil
 
 #
 # Creates a tuple from positional arguments.
 #
-pub def tuple ...values
+pub def tuple[...Ts] ...values@Ts -> Tuple[...Ts]
   throw nil
 
-#
-# Returns the value's type, or tests whether it is an instance of `type`.
-#
-# When `:type` is omitted, returns the value's type object. When provided,
-# returns whether the value is an instance of that type, including through
-# inheritance.
-#
+# Returns the value's type
 #
 # ## Example
 #
 # ```
 # assert_eq (type 42) $Int
-# assert (type 42 Int)
 # ```
-pub def type
-  # Value to query or test.
-  value
-  # ([`Type`](std.Type)) Type to check.
-  :type = nil
-do
+pub def type value@Value -> Type
   throw nil
 
 #
-# ([`Str`](std.Str)) Converts a value to its verbatim representation. Preserves the literal textual
+# Tests whether `value` is an instance of `type`.
+#
+#
+# ## Example
+#
+# ```
+# assert (type 42 Int)
+# ```
+pub def type value@Value type@Type
+  throw nil
+
+#
+# Converts a value to its verbatim representation. Preserves the literal textual
 # form of values where possible, which is useful for passing values as
 # command-line arguments to external programs.
 #
-pub def verbatim value
+pub def verbatim value -> Str
   throw nil
 
 # The following types are declared out of alphabetical order because many
@@ -237,8 +237,8 @@ pub class RuntimeError: Error
   #
   pub def (init)
     self
-    # ([`Str`](std.Str)) the error's complete string form
-    message
+    # the error's complete string form
+    message @ Str
   do
     throw nil
 
@@ -248,8 +248,8 @@ pub class RuntimeError: Error
 # are instances of `Iterable`, which can be used for type testing.
 #
 pub class Iterable
-  # ([`Iter`](std.Iter)) Returns an iterator over the value.
-  pub def iter self
+  # Returns an iterator over the value.
+  pub def iter self -> Iter
     throw nil
 
   # Tests whether every item is truthy, or satisfies `pred`.
@@ -317,8 +317,8 @@ pub class Iterable
 # Abstract type for values that implement the `(sink)` protocol.
 #
 pub class Sinkable
-  # ([`Sink`](std.Sink)) Returns a sink over the value.
-  pub def sink self
+  # Returns a sink over the value.
+  pub def sink self -> Sink
     throw nil
 
   # Writes a value to the sink.
@@ -544,7 +544,7 @@ pub class Array
     throw nil
 
   #
-  # ([`Int`](std)) Returns the number of elements.
+  # Returns the number of elements.
   #
   #
   # ## Example
@@ -554,7 +554,7 @@ pub class Array
   # ```
   #
   #[getter]
-  pub def len self
+  pub def len self -> Int
     throw nil
 
   #
@@ -570,7 +570,7 @@ pub class Array
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the array contains the given element (by equality).
+  # Tests whether the array contains the given element (by equality).
   #
   #
   # ## Example
@@ -587,21 +587,21 @@ pub class Array
     self
     # the value to check
     element
-  do
+  do -> Bool
     throw nil
 
   #
-  # ([`Array`](std.Array)) Returns a shallow copy of the array. Contents are *not* copied recursively.
+  # Returns a shallow copy of the array. Contents are *not* copied recursively.
   #
   #
   # When inherited by a Do subclass, `copy()` calls the subclass constructor with
   # the source array as a single positional argument.
   #
-  pub def copy self
+  pub def copy self -> Array
     throw nil
 
   #
-  # ([`Bool`](std)) Indicates whether an element was removed. Deletes the element at `index` if it exists.
+  # Indicates whether an element was removed. Deletes the element at `index` if it exists.
   # Negative indexes count from the end.
   #
   # Out-of-bounds indexes are ignored.
@@ -617,7 +617,7 @@ pub class Array
   # assert_eq $arr [10]
   # ```
   #
-  pub def delete self index
+  pub def delete self index -> Bool
     throw nil
 
   #
@@ -637,8 +637,8 @@ pub class Array
   #
   pub def get
     self
-    # ([`Int`](std)) the index to access
-    index
+    # the index to access
+    index @ Int
     :default = nil
     :else = nil
   do
@@ -660,15 +660,15 @@ pub class Array
   #
   pub def insert
     self
-    # ([`Int`](std)) the position to insert at
-    index
+    # the position to insert at
+    index @ Int
     # values to insert
     ...values
   do
     throw nil
 
   #
-  # ([`Iter`](std.Iter)) Returns an iterator yielding `[index, value]` pairs.
+  # Returns an iterator yielding `[index, value]` pairs.
   #
   #
   # ## Example
@@ -681,7 +681,7 @@ pub class Array
   # # 2: 30
   # ```
   #
-  pub def pairs self
+  pub def pairs self -> Iter
     throw nil
 
   #
@@ -704,8 +704,8 @@ pub class Array
   #
   pub def pop
     self
-    # ([`Int`](std)) optional index to remove; defaults to the last element
-    index = nil
+    # optional index to remove; defaults to the last element
+    index @ Int = nil
     :default = nil
     :else = nil
   do
@@ -848,13 +848,13 @@ pub class Bin
   # ```
   pub def (init)
     self
-    # ([`Bin`](std.Bin)\|[`Str`](std.Str)) source bytes
-    value
+    # source bytes
+    value @ (Bin | Str)
   do
     throw nil
 
   #
-  # ([`Int`](std)) Returns the byte length of the binary data.
+  # Returns the byte length of the binary data.
   #
   #
   # ## Example
@@ -865,12 +865,12 @@ pub class Bin
   # ```
   #
   #[getter]
-  pub def len self
+  pub def len self -> Int
     throw nil
 
   #
   #
-  # ([`Bin`](std.Bin)) Removes one trailing line terminator.
+  # Removes one trailing line terminator.
   #
   # One complete terminator — `\r\n` or `\n`, never a lone `\r` — and nothing else.
   # Data without one is returned unchanged.
@@ -887,11 +887,11 @@ pub class Bin
   # `.map do |x| x.chomp()`, with the mapping done inline. Distinct from
   # [`trim_end`](#trim_end-chars), which strips whitespace generally.
   #
-  pub def chomp self
+  pub def chomp self -> Bin
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the binary data contains the given bytes.
+  # Tests whether the binary data contains the given bytes.
   #
   #
   # ## Example
@@ -905,13 +905,13 @@ pub class Bin
   #
   pub def contains
     self
-    # ([`Bin`](std.Bin)) the bytes to find
-    needle
-  do
+    # the bytes to find
+    needle @ Bin
+  do -> Bool
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the binary data ends with the given suffix.
+  # Tests whether the binary data ends with the given suffix.
   #
   #
   # ## Example
@@ -922,13 +922,13 @@ pub class Bin
   #
   pub def ends_with
     self
-    # ([`Bin`](std.Bin)) the suffix bytes
-    suffix
-  do
+    # the suffix bytes
+    suffix @ Bin
+  do -> Bool
     throw nil
 
   #
-  # ([`Bin`](std.Bin)) Joins values from an input source using this binary data as a separator.
+  # Joins values from an input source using this binary data as a separator.
   #
   #
   # ## Example
@@ -941,11 +941,11 @@ pub class Bin
     self
     # iterable to join; uses the default input when omitted
     iter = nil
-  do
+  do -> Bin
     throw nil
 
   #
-  # ([`Iter`](std.Iter)) Like `split`, but yields segments in **right-to-left** order. Mirrors
+  # Like `split`, but yields segments in **right-to-left** order. Mirrors
   # [`str.rsplit`](std.Str.rsplit).
   #
   #
@@ -958,15 +958,15 @@ pub class Bin
   #
   pub def rsplit
     self
-    # ([`Bin`](std.Bin)) the delimiter bytes
-    delimiter
-    # ([`Int`](std)) max splits; negative means split from left
-    limit = nil
-  do
+    # the delimiter bytes
+    delimiter @ Bin
+    # max splits; negative means split from left
+    limit @ Int = nil
+  do -> Iter
     throw nil
 
   #
-  # ([`Iter`](std.Iter)) Splits the binary data by the delimiter, returning an iterator that yields
+  # Splits the binary data by the delimiter, returning an iterator that yields
   # segments in **left-to-right** order.
   #
   # The optional `limit` works identically to
@@ -986,15 +986,15 @@ pub class Bin
   #
   pub def split
     self
-    # ([`Bin`](std.Bin)) the delimiter bytes
-    delimiter
-    # ([`Int`](std)) max splits; negative means split from right
-    limit = nil
-  do
+    # the delimiter bytes
+    delimiter @ Bin
+    # max splits; negative means split from right
+    limit @ Int = nil
+  do -> Iter
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the binary data starts with the given prefix.
+  # Tests whether the binary data starts with the given prefix.
   #
   #
   # ## Example
@@ -1006,13 +1006,13 @@ pub class Bin
   #
   pub def starts_with
     self
-    # ([`Bin`](std.Bin)) the prefix bytes
-    prefix
-  do
+    # the prefix bytes
+    prefix @ Bin
+  do -> Bool
     throw nil
 
   #
-  # ([`Bin`](std.Bin)) Removes bytes (or specified characters) from both ends.
+  # Removes bytes (or specified characters) from both ends.
   #
   #
   # ## Example
@@ -1026,13 +1026,12 @@ pub class Bin
   #
   pub def trim
     self
-    # ([`Bin`](std.Bin) \| [`Iterable`](std.Iterable))
-    chars = nil
-  do
+    chars @ (Bin | Iterable) = nil
+  do -> Bin
     throw nil
 
   #
-  # ([`Bin`](std.Bin)) Removes bytes (or specified characters) from the end.
+  # Removes bytes (or specified characters) from the end.
   #
   #
   # ## Example
@@ -1044,13 +1043,12 @@ pub class Bin
   #
   pub def trim_end
     self
-    # ([`Bin`](std.Bin) \| [`Iterable`](std.Iterable))
-    chars = nil
-  do
+    chars @ (Bin | Iterable) = nil
+  do -> Bin
     throw nil
 
   #
-  # ([`Bin`](std.Bin)) Removes bytes (or specified characters) from the start.
+  # Removes bytes (or specified characters) from the start.
   #
   #
   # ## Example
@@ -1062,13 +1060,12 @@ pub class Bin
   #
   pub def trim_start
     self
-    # ([`Bin`](std.Bin) \| [`Iterable`](std.Iterable))
-    chars = nil
-  do
+    chars @ (Bin | Iterable) = nil
+  do -> Bin
     throw nil
 
   #
-  # ([`Array`](std.Array)) Unpacks binary data into an array of byte values (integers from 0-255).
+  # Unpacks binary data into an array of byte values (integers from 0-255).
   #
   #
   # ## Example
@@ -1078,11 +1075,11 @@ pub class Bin
   # assert_eq $bytes.unpack() [104, 101, 108, 108, 111]
   # ```
   #
-  pub def unpack self
+  pub def unpack self -> Array
     throw nil
 
   #
-  # ([`Bin`](std.Bin)) Returns the binary data with the prefix removed if it matches, otherwise
+  # Returns the binary data with the prefix removed if it matches, otherwise
   # returns the original data.
   #
   #
@@ -1095,13 +1092,13 @@ pub class Bin
   #
   pub def without_prefix
     self
-    # ([`Bin`](std.Bin)) the prefix to remove
-    prefix
-  do
+    # the prefix to remove
+    prefix @ Bin
+  do -> Bin
     throw nil
 
   #
-  # ([`Bin`](std.Bin)) Returns the binary data with the suffix removed if it matches, otherwise returns
+  # Returns the binary data with the suffix removed if it matches, otherwise returns
   # the original data.
   #
   #
@@ -1113,9 +1110,9 @@ pub class Bin
   #
   pub def without_suffix
     self
-    # ([`Bin`](std.Bin)) the suffix to remove
-    suffix
-  do
+    # the suffix to remove
+    suffix @ Bin
+  do -> Bin
     throw nil
 
   #
@@ -1140,7 +1137,7 @@ pub class Bin
     throw nil
 
   #
-  # ([`Bin`](std.Bin)) Packs an array of integers (0-255) into binary data.
+  # Packs an array of integers (0-255) into binary data.
   #
   #
   # ## Example
@@ -1153,13 +1150,13 @@ pub class Bin
   #[class]
   pub def pack
     self
-    # ([`Array`](std.Array)) array of integers (0-255)
-    array
-  do
+    # array of integers (0-255)
+    array @ Array
+  do -> Bin
     throw nil
 
   #
-  # ([`Array`](std.Array)) Unpacks any value that can be converted to binary into an array of byte values.
+  # Unpacks any value that can be converted to binary into an array of byte values.
   #
   #
   # ## Example
@@ -1168,7 +1165,7 @@ pub class Bin
   # assert_eq (bin.unpack b"hello") [104, 101, 108, 108, 111]
   # ```
   #[class]
-  pub def unpack self value
+  pub def unpack self value -> Array
     throw nil
 
 
@@ -1189,13 +1186,13 @@ pub class BinBuf
   #
   pub def (init)
     self
-    # ([`Bin`](std.Bin)) initial contents
-    initial = nil
+    # initial contents
+    initial @ Bin = nil
   do
     throw nil
 
   #
-  # ([`Int`](std.Int)) Returns the byte length of the buffer's current contents.
+  # Returns the byte length of the buffer's current contents.
   #
   # ## Example
   #
@@ -1204,7 +1201,7 @@ pub class BinBuf
   # ```
   #
   #[getter]
-  pub def len self
+  pub def len self -> Int
     throw nil
 
   #
@@ -1245,7 +1242,7 @@ pub class BinBuf
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the buffer's contents contain the given bytes.
+  # Tests whether the buffer's contents contain the given bytes.
   #
   #
   # ## Example
@@ -1256,13 +1253,13 @@ pub class BinBuf
   #
   pub def contains
     self
-    # ([`Bin`](std.Bin)) the bytes to find
-    needle
-  do
+    # the bytes to find
+    needle @ Bin
+  do -> Bool
     throw nil
 
   #
-  # ([`Iter`](std.Iter)) Returns an iterator that removes and yields up to `size` bytes at a time
+  # Returns an iterator that removes and yields up to `size` bytes at a time
   # from the front of the buffer as it's consumed.
   #
   #
@@ -1285,13 +1282,13 @@ pub class BinBuf
   #
   pub def drain
     self
-    # ([`Int`](std)) maximum bytes per chunk (defaults to 512 KiB)
-    size = nil
-  do
+    # maximum bytes per chunk (defaults to 512 KiB)
+    size @ Int = nil
+  do -> Iter
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the buffer's contents end with the given suffix.
+  # Tests whether the buffer's contents end with the given suffix.
   #
   #
   # ## Example
@@ -1302,9 +1299,9 @@ pub class BinBuf
   #
   pub def ends_with
     self
-    # ([`Bin`](std.Bin)) the suffix bytes
-    suffix
-  do
+    # the suffix bytes
+    suffix @ Bin
+  do -> Bool
     throw nil
 
   #
@@ -1321,13 +1318,12 @@ pub class BinBuf
   #
   pub def extend
     self
-    # ([`Bin`](std.Bin) \| [`Str`](std.Str))
-    value
+    value @ (Bin | Str)
   do
     throw nil
 
   #
-  # ([`Bin`](std.Bin)) Converts the buffer's current contents into an immutable [`Bin`](std.Bin)
+  # Converts the buffer's current contents into an immutable [`Bin`](std.Bin)
   # in place, without copying, and empties the buffer. The buffer stays usable
   # afterward, and the returned value is unaffected by later mutation.
   #
@@ -1343,7 +1339,7 @@ pub class BinBuf
   # assert_eq $frozen b"abc"
   # ```
   #
-  pub def freeze self
+  pub def freeze self -> Bin
     throw nil
 
   #
@@ -1361,10 +1357,10 @@ pub class BinBuf
   #
   pub def insert
     self
-    # ([`Int`](std)) insertion point
-    index
-    # ([`Int`](std) (0-255)\) [`Bin`](std.Bin)\
-    value
+    # insertion point
+    index @ Int
+    # Byte value (0-255) or binary data.
+    value @ (Int | Bin)
   do
     throw nil
 
@@ -1381,13 +1377,13 @@ pub class BinBuf
   #
   pub def push
     self
-    # ([`Int`](std) (0-255)) byte values to append
-    ...bytes
+    # byte values (0-255) to append
+    ...bytes @ Int
   do
     throw nil
 
   #
-  # ([`Int`](std)\|[`Bin`](std.Bin)) Removes and returns a byte or a range of bytes, shifting the rest of the
+  # Removes and returns a byte or a range of bytes, shifting the rest of the
   # buffer left in place. An [`Int`](std) index removes and returns a
   # single byte; a [`Range`](std.Range) removes and returns a [`Bin`](std.Bin)
   # of the removed bytes.
@@ -1407,13 +1403,12 @@ pub class BinBuf
   #
   pub def remove
     self
-    # ([`Int`](std) \| [`Range`](std.Range))
-    index_or_range
-  do
+    index_or_range @ (Int | Range)
+  do -> (Int | Bin)
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the buffer's contents start with the given prefix.
+  # Tests whether the buffer's contents start with the given prefix.
   #
   #
   # ## Example
@@ -1424,9 +1419,9 @@ pub class BinBuf
   #
   pub def starts_with
     self
-    # ([`Bin`](std.Bin)) the prefix bytes
-    prefix
-  do
+    # the prefix bytes
+    prefix @ Bin
+  do -> Bool
     throw nil
 
   #
@@ -1442,8 +1437,8 @@ pub class BinBuf
   #
   pub def truncate
     self
-    # ([`Int`](std)) new length
-    len
+    # new length
+    len @ Int
   do
     throw nil
 
@@ -1550,8 +1545,8 @@ pub class CompileError: RuntimeError
   #
   pub def (init)
     self
-    # ([`Str`](std.Str)) description of the compilation failure
-    message
+    # description of the compilation failure
+    message @ Str
   do
     throw nil
 
@@ -1566,8 +1561,8 @@ pub class ConcurrencyError: RuntimeError
   #
   pub def (init)
     self
-    # ([`Str`](std.Str)) detail appended to the generic message
-    message = nil
+    # detail appended to the generic message
+    message @ Str = nil
   do
     throw nil
 
@@ -1582,8 +1577,8 @@ pub class CyclicImportError: RuntimeError
   #
   pub def (init)
     self
-    # ([`Str`](std.Str)) the module at which the cycle was detected
-    name
+    # the module at which the cycle was detected
+    name @ Str
   do
     throw nil
 
@@ -1626,12 +1621,12 @@ pub class Dict
     throw nil
 
   #
-  # ([`Int`](std)) Returns the number of key-value pairs (counting each value in a multi-map
+  # Returns the number of key-value pairs (counting each value in a multi-map
   # separately).
   #
   #
   #[getter]
-  pub def len self
+  pub def len self -> Int
     throw nil
 
   #
@@ -1647,7 +1642,7 @@ pub class Dict
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the dictionary contains the given key. If a value is provided,
+  # Tests whether the dictionary contains the given key. If a value is provided,
   # tests whether any value associated with that key matches the given value
   # (multi-map aware).
   #
@@ -1677,11 +1672,11 @@ pub class Dict
     key
     # optional value to check for (multi-map)
     value = nil
-  do
+  do -> Bool
     throw nil
 
   #
-  # ([`Dict`](std.Dict)) Returns a shallow copy of the dictionary.
+  # Returns a shallow copy of the dictionary.
   #
   # Insertion order and multiple per-key values are preserved. Keys and
   # values are *not* copied recursively.
@@ -1690,11 +1685,11 @@ pub class Dict
   # When inherited by a Do subclass, `copy()` calls the subclass constructor with
   # the source dict as a single positional argument.
   #
-  pub def copy self
+  pub def copy self -> Dict
     throw nil
 
   #
-  # ([`Int`](std)) Returns a count derived from the dictionary's multi-map structure.
+  # Returns a count derived from the dictionary's multi-map structure.
   #
   # With no `key`, it returns the number of distinct keys. With a `key`, it returns
   # the number of values associated with that key.
@@ -1702,11 +1697,11 @@ pub class Dict
   # Missing keys return `0`.
   #
   #
-  pub def count self key = nil
+  pub def count self key = nil -> Int
     throw nil
 
   #
-  # ([`Bool`](std)) Indicates whether any values were removed. Removes all values for the key.
+  # Indicates whether any values were removed. Removes all values for the key.
   #
   #
   # ## Example
@@ -1722,7 +1717,7 @@ pub class Dict
     self
     # the key to remove
     key
-  do
+  do -> Bool
     throw nil
 
   #
@@ -1743,8 +1738,8 @@ pub class Dict
     self
     # the key to look up
     key
-    # ([`Int`](std)) which value to retrieve when a key has multiple values (0-indexed; negative counts from end; default: last)
-    instance = nil
+    # which value to retrieve when a key has multiple values (0-indexed; negative counts from end; default: last)
+    instance @ Int = nil
     :default = nil
     :else = nil
   do
@@ -1764,22 +1759,22 @@ pub class Dict
     throw nil
 
   #
-  # ([`Iter`](std.Iter)) Returns an iterator of keys. Each distinct key is yielded exactly once, in the
+  # Returns an iterator of keys. Each distinct key is yielded exactly once, in the
   # order its first pair was inserted.
   #
   # If duplicate-key iteration is needed, use [`pairs`](#pairs) instead.
   #
   #
-  pub def keys self
+  pub def keys self -> Iter
     throw nil
 
   #
-  # ([`Iter`](std.Iter)) Returns an iterator yielding `[key, value]` pairs, the same as ordinary
+  # Returns an iterator yielding `[key, value]` pairs, the same as ordinary
   # iteration. This method is present to allow uniform key/value iteration
   # over both [`Dict`](std.Dict) and [`Array`](std.Array).
   #
   #
-  pub def pairs self
+  pub def pairs self -> Iter
     throw nil
 
   #
@@ -1807,22 +1802,22 @@ pub class Dict
     self
     # the key to remove
     key
-    # (Int) which value to remove when a key has multiple values (0-indexed; negative counts from end; default: first)
-    instance = nil
+    # which value to remove when a key has multiple values (0-indexed; negative counts from end; default: first)
+    instance @ Int = nil
     :default = nil
     :else = nil
   do
     throw nil
 
   #
-  # ([`Iter`](std.Iter)) Returns an iterator of values. With no argument, it yields all stored values in
+  # Returns an iterator of values. With no argument, it yields all stored values in
   # pair insertion order. With a `key`, it yields only the values associated with
   # that key, in that key's insertion order.
   #
   # Missing keys return an empty iterator.
   #
   #
-  pub def values self key = nil
+  pub def values self key = nil -> Iter
     throw nil
 
   #
@@ -1876,8 +1871,8 @@ pub class FieldError: RuntimeError
   #
   pub def (init)
     self
-    # ([`Sym`](std.Sym)) the field that does not exist
-    name
+    # the field that does not exist
+    name @ Sym
   do
     throw nil
 
@@ -2045,8 +2040,7 @@ pub class FmtParam
   #
   pub def (init)
     self
-    # ([`Int`](std.Int)\) [`sym`](std.Sym)
-    name
+    name @ (Int | Sym)
     :fill = nil
     :align = nil
     :sign = nil
@@ -2054,8 +2048,8 @@ pub class FmtParam
     :precision = nil
     :alt = nil
     :kind = nil
-    # ([`Str`](std.Str)) Interpolation as written in source
-    :source = nil
+    # Interpolation as written in source
+    :source @ Str = nil
   do
     throw nil
 
@@ -2087,20 +2081,20 @@ pub class FmtParam
   #
   pub def (call)
     self
-    # (Str?) Fill character, `:ZERO:`, or nil
-    :fill = nil
-    # (Sym) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
-    :align = nil
-    # (Sym) `:PLUS:` or `:SPACE:`
-    :sign = nil
-    # (Int) Minimum width in grapheme clusters
-    :width = nil
-    # (Int) Numeric precision or maximum graphemes
-    :precision = nil
-    # (Bool) Enables alternate formatting
-    :alt = nil
-    # (Sym) Representation kind
-    :kind = nil
+    # Fill character, `:ZERO:`, or nil
+    :fill @ (Str | nil) = nil
+    # `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    :align @ Sym = nil
+    # `:PLUS:` or `:SPACE:`
+    :sign @ Sym = nil
+    # Minimum width in grapheme clusters
+    :width @ Int = nil
+    # Numeric precision or maximum graphemes
+    :precision @ Int = nil
+    # Enables alternate formatting
+    :alt @ Bool = nil
+    # Representation kind
+    :kind @ Sym = nil
   do
     throw nil
 
@@ -2129,20 +2123,20 @@ pub class FmtSpec
   #
   pub def (init)
     self
-    # (Str?) Fill character, `:ZERO:`, or nil
-    :fill = nil
-    # (Sym) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
-    :align = nil
-    # (Sym) `:PLUS:` or `:SPACE:`
-    :sign = nil
-    # (Int) Minimum width in grapheme clusters
-    :width = nil
-    # (Int) Numeric precision or maximum graphemes
-    :precision = nil
-    # (Bool) Enables alternate formatting
-    :alt = nil
-    # (Sym) Representation kind
-    :kind = nil
+    # Fill character, `:ZERO:`, or nil
+    :fill @ (Str | nil) = nil
+    # `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    :align @ Sym = nil
+    # `:PLUS:` or `:SPACE:`
+    :sign @ Sym = nil
+    # Minimum width in grapheme clusters
+    :width @ Int = nil
+    # Numeric precision or maximum graphemes
+    :precision @ Int = nil
+    # Enables alternate formatting
+    :alt @ Bool = nil
+    # Representation kind
+    :kind @ Sym = nil
   do
     throw nil
 
@@ -2226,25 +2220,25 @@ pub class FmtSpec
     self
     # value to bind
     value = nil
-    # (Str?) Fill character, `:ZERO:`, or nil
-    :fill = nil
-    # (Sym) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
-    :align = nil
-    # (Sym) `:PLUS:` or `:SPACE:`
-    :sign = nil
-    # (Int) Minimum width in grapheme clusters
-    :width = nil
-    # (Int) Numeric precision or maximum graphemes
-    :precision = nil
-    # (Bool) Enables alternate formatting
-    :alt = nil
-    # (Sym) Representation kind
-    :kind = nil
+    # Fill character, `:ZERO:`, or nil
+    :fill @ (Str | nil) = nil
+    # `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    :align @ Sym = nil
+    # `:PLUS:` or `:SPACE:`
+    :sign @ Sym = nil
+    # Minimum width in grapheme clusters
+    :width @ Int = nil
+    # Numeric precision or maximum graphemes
+    :precision @ Int = nil
+    # Enables alternate formatting
+    :alt @ Bool = nil
+    # Representation kind
+    :kind @ Sym = nil
   do
     throw nil
 
   #
-  # ([`Str`](std.Str)) Applies fill, alignment, width, and truncation to a string.
+  # Applies fill, alignment, width, and truncation to a string.
   #
   #
   # ## Example
@@ -2255,9 +2249,9 @@ pub class FmtSpec
   # ```
   pub def pad
     self
-    # ([`Str`](std.Str)) String to lay out
-    value
-  do
+    # String to lay out
+    value @ Str
+  do -> Str
     throw nil
 
 
@@ -2324,24 +2318,24 @@ pub class FmtValue
   #
   pub def (init)
     self
-    # (Value) Value to bind
-    value
-    # (Str?) Fill character, `:ZERO:`, or nil
-    :fill = nil
-    # (Sym) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
-    :align = nil
-    # (Sym) `:PLUS:` or `:SPACE:`
-    :sign = nil
-    # (Int) Minimum width in grapheme clusters
-    :width = nil
-    # (Int) Numeric precision or maximum graphemes
-    :precision = nil
-    # (Bool) Enables alternate formatting
-    :alt = nil
-    # (Sym) Representation kind
-    :kind = nil
-    # (Str) Interpolation as written in source
-    :source = nil
+    # Value to bind
+    value @ Value
+    # Fill character, `:ZERO:`, or nil
+    :fill @ (Str | nil) = nil
+    # `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    :align @ Sym = nil
+    # `:PLUS:` or `:SPACE:`
+    :sign @ Sym = nil
+    # Minimum width in grapheme clusters
+    :width @ Int = nil
+    # Numeric precision or maximum graphemes
+    :precision @ Int = nil
+    # Enables alternate formatting
+    :alt @ Bool = nil
+    # Representation kind
+    :kind @ Sym = nil
+    # Interpolation as written in source
+    :source @ Str = nil
   do
     throw nil
 
@@ -2374,20 +2368,20 @@ pub class FmtValue
   #
   pub def (call)
     self
-    # (Str?) Fill character, `:ZERO:`, or nil
-    :fill = nil
-    # (Sym) `:LEFT:`, `:RIGHT:`, or `:CENTER:`
-    :align = nil
-    # (Sym) `:PLUS:` or `:SPACE:`
-    :sign = nil
-    # (Int) Minimum width in grapheme clusters
-    :width = nil
-    # (Int) Numeric precision or maximum graphemes
-    :precision = nil
-    # (Bool) Enables alternate formatting
-    :alt = nil
-    # (Sym) Representation kind
-    :kind = nil
+    # Fill character, `:ZERO:`, or nil
+    :fill @ (Str | nil) = nil
+    # `:LEFT:`, `:RIGHT:`, or `:CENTER:`
+    :align @ Sym = nil
+    # `:PLUS:` or `:SPACE:`
+    :sign @ Sym = nil
+    # Minimum width in grapheme clusters
+    :width @ Int = nil
+    # Numeric precision or maximum graphemes
+    :precision @ Int = nil
+    # Enables alternate formatting
+    :alt @ Bool = nil
+    # Representation kind
+    :kind @ Sym = nil
   do
     throw nil
 
@@ -2510,7 +2504,7 @@ pub class Fmt
     throw nil
 
   #
-  # ([`Str`](std.Str)) Expands the sequence and returns the result: literal text as it stands, and
+  # Expands the sequence and returns the result: literal text as it stands, and
   # each interpolation through its own specification. This is the only way to get
   # the expansion — see [Trust](std.Fmt.trust).
   #
@@ -2543,7 +2537,7 @@ pub class Fmt
   # assert_eq $stmt.format(1, name: "n") "select * from t where a = 1 and c = n"
   # ```
   #
-  pub def format self ...bindings
+  pub def format self ...bindings -> Str
     throw nil
 
   #
@@ -2620,7 +2614,7 @@ pub class Func
 # - reading `obj.name` calls `getter.get(obj)`
 # - calling `obj.name(...)` first calls `getter.get(obj)`, then calls the result
 #
-pub class Getter
+pub class Getter[T, R]
   #
   #
   # Returns the field value for `obj`.
@@ -2628,8 +2622,8 @@ pub class Getter
   pub def get
     self
     # instance being accessed
-    obj
-  do
+    obj @ T
+  do -> R
     throw nil
 
 
@@ -2655,8 +2649,8 @@ pub class ImportError: RuntimeError
   #
   pub def (init)
     self
-    # ([`Str`](std.Str)) the module that could not be found
-    name
+    # the module that could not be found
+    name @ Str
   do
     throw nil
 
@@ -2991,8 +2985,8 @@ pub class MissingPosError: RuntimeError
   #
   pub def (init)
     self
-    # ([`Int`](std.Int)) zero-based position of the missing item
-    index
+    # zero-based position of the missing item
+    index @ Int
   do
     throw nil
 
@@ -3076,7 +3070,7 @@ pub class Range
     throw nil
 
   #
-  # (`Bool`) Tests whether the given value is within the Range interval. For increasing
+  # Tests whether the given value is within the Range interval. For increasing
   # ranges (start < end), checks if value is in \[start, end). For decreasing
   # ranges (start > end), checks if value is in (end, start].
   #
@@ -3102,7 +3096,7 @@ pub class Range
     self
     # the value to check
     value
-  do
+  do -> Bool
     throw nil
 
   # Iterates the interval. Open-ended ranges require a concrete start.
@@ -3170,7 +3164,7 @@ pub class Record
     throw nil
 
   #
-  # (`Bool`) Tests whether the record contains the given key. If a value is provided,
+  # Tests whether the record contains the given key. If a value is provided,
   # tests whether any value associated with that key matches.
   #
   #
@@ -3193,13 +3187,13 @@ pub class Record
   #[class]
   pub def contains
     self
-    # (record) the record to check
-    rec
-    # ([`Int`](std.Int)\|[`Sym`](std.Sym)) the key to check
-    key
+    # the record to check
+    rec @ Record
+    # the key to check
+    key @ (Int | Sym)
     # optional value to check for (multi-map)
     value = nil
-  do
+  do -> Bool
     throw nil
 
   #
@@ -3249,11 +3243,11 @@ pub class Record
     throw nil
 
   #
-  # (`Int`) Returns the number of fields.
+  # Returns the number of fields.
   #
   #
   #[class]
-  pub def len self rec
+  pub def len self rec -> Int
     throw nil
 
   #
@@ -3300,11 +3294,11 @@ pub class Set
     throw nil
 
   #
-  # ([`Int`](std)) Returns the number of members.
+  # Returns the number of members.
   #
   #
   #[getter]
-  pub def len self
+  pub def len self -> Int
     throw nil
 
   #
@@ -3339,104 +3333,104 @@ pub class Set
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the Set contains `value`.
+  # Tests whether the Set contains `value`.
   #
   #
   pub def contains
     self
     # the value to test
     value
-  do
+  do -> Bool
     throw nil
 
   #
-  # ([`Set`](std.Set)) Returns a shallow copy of the Set.
+  # Returns a shallow copy of the Set.
   #
   # Insertion order is preserved. Contained values are *not* recursively copied.
   #
   #
-  pub def copy self
+  pub def copy self -> Set
     throw nil
 
   #
-  # ([`Bool`](std)) Indicates whether a value was removed. Removes `value` if present.
+  # Indicates whether a value was removed. Removes `value` if present.
   #
   #
   pub def delete
     self
     # the value to remove
     value
-  do
+  do -> Bool
     throw nil
 
   #
-  # ([`Set`](std.Set)) Returns a new Set containing members from the receiver that are not present in
+  # Returns a new Set containing members from the receiver that are not present in
   # `other`.
   #
   #
   pub def diff
     self
-    # ([`Set`](std.Set)) other Set
-    other
-  do
+    # other Set
+    other @ Set
+  do -> Set
     throw nil
 
   #
-  # ([`Set`](std.Set)) Returns a new Set containing members that are present in both sets, in
+  # Returns a new Set containing members that are present in both sets, in
   # the receiver's insertion order.
   #
   #
   pub def intersect
     self
-    # ([`Set`](std.Set)) other Set
-    other
-  do
+    # other Set
+    other @ Set
+  do -> Set
     throw nil
 
   #
-  # ([`Bool`](std)) Returns `true` when every member of the receiver is present in `other`.
+  # Returns `true` when every member of the receiver is present in `other`.
   #
   #
   pub def is_subset
     self
-    # ([`Set`](std.Set)) other Set
-    other
-  do
+    # other Set
+    other @ Set
+  do -> Bool
     throw nil
 
   #
-  # ([`Bool`](std)) Returns `true` when every member of `other` is present in the receiver.
+  # Returns `true` when every member of `other` is present in the receiver.
   #
   #
   pub def is_superset
     self
-    # ([`Set`](std.Set)) other Set
-    other
-  do
+    # other Set
+    other @ Set
+  do -> Bool
     throw nil
 
   #
-  # ([`Set`](std.Set)) Returns a new Set containing members present in exactly one of the two
+  # Returns a new Set containing members present in exactly one of the two
   # sets.
   #
   #
   pub def sym_diff
     self
-    # ([`Set`](std.Set)) other Set
-    other
-  do
+    # other Set
+    other @ Set
+  do -> Set
     throw nil
 
   #
-  # ([`Set`](std.Set)) Returns a new Set containing all members from `self`, then first-seen members
+  # Returns a new Set containing all members from `self`, then first-seen members
   # from `other`.
   #
   #
   pub def union
     self
-    # ([`Set`](std.Set)) other Set
-    other
-  do
+    # other Set
+    other @ Set
+  do -> Set
     throw nil
 
   #
@@ -3458,7 +3452,7 @@ pub class Set
 #
 # - writing `obj.name = value` calls `setter.set(obj, value)`
 #
-pub class Setter
+pub class Setter[T, V]
   #
   #
   # Updates the field value for `obj`.
@@ -3466,9 +3460,9 @@ pub class Setter
   pub def set
     self
     # instance being assigned
-    obj
+    obj @ T
     # new field value
-    value
+    value @ V
   do
     throw nil
 
@@ -3503,8 +3497,8 @@ pub class StateError: RuntimeError
   #
   pub def (init)
     self
-    # ([`Str`](std.Str)) description of the invalid state
-    message
+    # description of the invalid state
+    message @ Str
   do
     throw nil
 
@@ -3557,7 +3551,7 @@ pub class Str
     throw nil
 
   #
-  # ([`Int`](std)) Returns the byte length of the string.
+  # Returns the byte length of the string.
   #
   #
   # ## Example
@@ -3568,11 +3562,11 @@ pub class Str
   # ```
   #
   #[getter]
-  pub def len self
+  pub def len self -> Int
     throw nil
 
   #
-  # ([`Iterable`](std.Iterable)) Returns an immutable view of the string's Unicode scalar values.
+  # Returns an immutable view of the string's Unicode scalar values.
   #
   # The view supports `len`, positive and negative indexing, contiguous range
   # slicing, iteration, spreading, and positional destructuring. Elements and
@@ -3589,11 +3583,11 @@ pub class Str
   # assert_eq $scalars[-1] "́"
   # ```
   #
-  pub def scalars self
+  pub def scalars self -> Iterable
     throw nil
 
   #
-  # ([`Int`](std)) Returns the Unicode scalar value encoded by a single-scalar string.
+  # Returns the Unicode scalar value encoded by a single-scalar string.
   #
   #
   # ## Errors
@@ -3608,11 +3602,11 @@ pub class Str
   # assert_eq ("😀".scalar()) 128512
   # ```
   #
-  pub def scalar self
+  pub def scalar self -> Int
     throw nil
 
   #
-  # ([`Str`](std.Str)) Removes one trailing line terminator.
+  # Removes one trailing line terminator.
   #
   # One complete terminator — `\r\n` or `\n`, never a lone `\r` — and nothing else.
   # A string without one is returned unchanged.
@@ -3637,11 +3631,11 @@ pub class Str
   # [`Iter.chomp`](std.Iter.chomp) lifts this over an iterator — it is exactly
   # `.map do |x| x.chomp()`, with the mapping done inline.
   #
-  pub def chomp self
+  pub def chomp self -> Str
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the string contains the given substring.
+  # Tests whether the string contains the given substring.
   #
   #
   # ## Example
@@ -3655,13 +3649,13 @@ pub class Str
   #
   pub def contains
     self
-    # ([`Str`](std.Str)) the substring to find
-    needle
-  do
+    # the substring to find
+    needle @ Str
+  do -> Bool
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the string ends with the given suffix.
+  # Tests whether the string ends with the given suffix.
   #
   #
   # ## Example
@@ -3672,13 +3666,13 @@ pub class Str
   #
   pub def ends_with
     self
-    # ([`Str`](std.Str)) the suffix string
-    suffix
-  do
+    # the suffix string
+    suffix @ Str
+  do -> Bool
     throw nil
 
   #
-  # ([`Iterable`](std.Iterable)) Returns an immutable view of the string's extended grapheme clusters.
+  # Returns an immutable view of the string's extended grapheme clusters.
   #
   # The view has the same indexing, slicing, iteration, spreading, and destructuring
   # operations as [`scalars`](#scalars). It keeps combining sequences and emoji
@@ -3693,11 +3687,11 @@ pub class Str
   # assert_eq [...graphemes] ["é", "👩‍💻"]
   # ```
   #
-  pub def graphemes self
+  pub def graphemes self -> Iterable
     throw nil
 
   #
-  # ([`Str`](std.Str)) Joins values from an input source using this string as a separator.
+  # Joins values from an input source using this string as a separator.
   #
   #
   # ## Example
@@ -3710,11 +3704,11 @@ pub class Str
     self
     # iterable to join; uses the default input when omitted
     iter = nil
-  do
+  do -> Str
     throw nil
 
   #
-  # ([`Str`](std.Str)) Returns the string converted to lowercase.
+  # Returns the string converted to lowercase.
   #
   #
   # ## Example
@@ -3724,11 +3718,11 @@ pub class Str
   # assert_eq ("Hello World".lower()) "hello world"
   # ```
   #
-  pub def lower self
+  pub def lower self -> Str
     throw nil
 
   #
-  # ([`Str`](std.Str)) Returns the string repeated `count` times.
+  # Returns the string repeated `count` times.
   #
   #
   # ## Example
@@ -3740,13 +3734,13 @@ pub class Str
   #
   pub def repeat
     self
-    # ([`Int`](std)) non-negative repetition count
-    count
-  do
+    # non-negative repetition count
+    count @ Int
+  do -> Str
     throw nil
 
   #
-  # ([`Str`](std.Str)) Returns a new string with all non-overlapping occurrences of `from` replaced
+  # Returns a new string with all non-overlapping occurrences of `from` replaced
   # with `to`.
   #
   #
@@ -3760,15 +3754,15 @@ pub class Str
   #
   pub def replace
     self
-    # ([`Str`](std.Str)) substring to replace
-    from
-    # ([`Str`](std.Str)) replacement string
-    to
-  do
+    # substring to replace
+    from @ Str
+    # replacement string
+    to @ Str
+  do -> Str
     throw nil
 
   #
-  # ([`Iter`](std.Iter)) Like `split`, but yields segments in **right-to-left** order (rightmost segment
+  # Like `split`, but yields segments in **right-to-left** order (rightmost segment
   # first).
   #
   #
@@ -3784,21 +3778,21 @@ pub class Str
   #
   pub def rsplit
     self
-    # ([`Str`](std.Str)) the delimiter string
-    delimiter
-    # ([`Int`](std)) Maximum splits; negative values split from the left.
+    # the delimiter string
+    delimiter @ Str
+    # Maximum splits; negative values split from the left.
     #
     # - `limit: N` splits at most N times from the **right**; the last element
     #   yielded is the unsplit left remainder.
     # - `limit: -N` splits at most N times from the **left**, but still yields
     #   segments right-to-left.
     # - Omitted splits fully with no limit.
-    limit = nil
-  do
+    limit @ Int = nil
+  do -> Iter
     throw nil
 
   #
-  # ([`Iter`](std.Iter)) Splits the string by the delimiter, returning an iterator that yields segments
+  # Splits the string by the delimiter, returning an iterator that yields segments
   # in **left-to-right** order.
   #
   #
@@ -3818,9 +3812,9 @@ pub class Str
   #
   pub def split
     self
-    # ([`Str`](std.Str)) the delimiter string
-    delimiter
-    # ([`Int`](std)) Maximum splits; negative values split from the right.
+    # the delimiter string
+    delimiter @ Str
+    # Maximum splits; negative values split from the right.
     #
     # - `limit: N` (positive) splits at most N times from the **left**; the last
     #   element is the unsplit remainder.
@@ -3828,12 +3822,12 @@ pub class Str
     #   yields segments left-to-right. This is useful for splitting off a known-length
     #   suffix such as a file extension.
     # - Omitted splits fully with no limit.
-    limit = nil
-  do
+    limit @ Int = nil
+  do -> Iter
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the string starts with the given prefix.
+  # Tests whether the string starts with the given prefix.
   #
   #
   # ## Example
@@ -3845,13 +3839,13 @@ pub class Str
   #
   pub def starts_with
     self
-    # ([`Str`](std.Str)) the prefix string
-    prefix
-  do
+    # the prefix string
+    prefix @ Str
+  do -> Bool
     throw nil
 
   #
-  # ([`Str`](std.Str)) Removes whitespace (or specified characters) from both ends.
+  # Removes whitespace (or specified characters) from both ends.
   #
   #
   # ## Example
@@ -3864,13 +3858,12 @@ pub class Str
   #
   pub def trim
     self
-    # ([`Str`](std.Str)\) [`Iterable`](std.Iterable)
-    chars = nil
-  do
+    chars @ (Str | Iterable) = nil
+  do -> Str
     throw nil
 
   #
-  # ([`Str`](std.Str)) Removes whitespace (or specified characters) from the end.
+  # Removes whitespace (or specified characters) from the end.
   #
   #
   # ## Example
@@ -3882,13 +3875,12 @@ pub class Str
   #
   pub def trim_end
     self
-    # ([`Str`](std.Str)\) [`Iterable`](std.Iterable)
-    chars = nil
-  do
+    chars @ (Str | Iterable) = nil
+  do -> Str
     throw nil
 
   #
-  # ([`Str`](std.Str)) Removes whitespace (or specified characters) from the start.
+  # Removes whitespace (or specified characters) from the start.
   #
   #
   # ## Example
@@ -3900,13 +3892,12 @@ pub class Str
   #
   pub def trim_start
     self
-    # ([`Str`](std.Str)\) [`Iterable`](std.Iterable)
-    chars = nil
-  do
+    chars @ (Str | Iterable) = nil
+  do -> Str
     throw nil
 
   #
-  # ([`Str`](std.Str)) Returns the string converted to uppercase.
+  # Returns the string converted to uppercase.
   #
   #
   # ## Example
@@ -3916,11 +3907,11 @@ pub class Str
   # assert_eq ("Hello World".upper()) "HELLO WORLD"
   # ```
   #
-  pub def upper self
+  pub def upper self -> Str
     throw nil
 
   #
-  # ([`Str`](std.Str)) Returns the string with the prefix removed if it matches, otherwise returns
+  # Returns the string with the prefix removed if it matches, otherwise returns
   # the original string.
   #
   #
@@ -3933,13 +3924,13 @@ pub class Str
   #
   pub def without_prefix
     self
-    # ([`Str`](std.Str)) the prefix to remove
-    prefix
-  do
+    # the prefix to remove
+    prefix @ Str
+  do -> Str
     throw nil
 
   #
-  # ([`Str`](std.Str)) Returns the string with the suffix removed if it matches, otherwise returns
+  # Returns the string with the suffix removed if it matches, otherwise returns
   # the original string.
   #
   #
@@ -3951,9 +3942,9 @@ pub class Str
   #
   pub def without_suffix
     self
-    # ([`Str`](std.Str)) the suffix to remove
-    suffix
-  do
+    # the suffix to remove
+    suffix @ Str
+  do -> Str
     throw nil
 
   #
@@ -3996,13 +3987,13 @@ pub class StrBuf
   #
   pub def (init)
     self
-    # ([`Str`](std.Str)) initial contents
-    initial = nil
+    # initial contents
+    initial @ Str = nil
   do
     throw nil
 
   #
-  # ([`Int`](std)) Returns the byte length of the buffer's current contents.
+  # Returns the byte length of the buffer's current contents.
   #
   #
   # ## Example
@@ -4012,7 +4003,7 @@ pub class StrBuf
   # ```
   #
   #[getter]
-  pub def len self
+  pub def len self -> Int
     throw nil
 
   #
@@ -4051,7 +4042,7 @@ pub class StrBuf
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the buffer's contents contain the given substring.
+  # Tests whether the buffer's contents contain the given substring.
   #
   #
   # ## Example
@@ -4062,13 +4053,13 @@ pub class StrBuf
   #
   pub def contains
     self
-    # ([`Str`](std.Str)) the substring to find
-    needle
-  do
+    # the substring to find
+    needle @ Str
+  do -> Bool
     throw nil
 
   #
-  # ([`Iter`](std.Iter)) Returns an iterator that removes and yields up to `size` bytes at a time
+  # Returns an iterator that removes and yields up to `size` bytes at a time
   # from the front of the buffer as it's consumed.
   #
   # Each chunk boundary is rounded down to the nearest UTF-8 code point
@@ -4096,13 +4087,13 @@ pub class StrBuf
   #
   pub def drain
     self
-    # ([`Int`](std)) maximum bytes per chunk (defaults to 512 KiB)
-    size = nil
-  do
+    # maximum bytes per chunk (defaults to 512 KiB)
+    size @ Int = nil
+  do -> Iter
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the buffer's contents end with the given suffix.
+  # Tests whether the buffer's contents end with the given suffix.
   #
   #
   # ## Example
@@ -4113,9 +4104,9 @@ pub class StrBuf
   #
   pub def ends_with
     self
-    # ([`Str`](std.Str)) the suffix string
-    suffix
-  do
+    # the suffix string
+    suffix @ Str
+  do -> Bool
     throw nil
 
   #
@@ -4131,13 +4122,13 @@ pub class StrBuf
   #
   pub def extend
     self
-    # ([`Str`](std.Str)) string to append
-    value
+    # string to append
+    value @ Str
   do
     throw nil
 
   #
-  # ([`Str`](std.Str)) Converts the buffer's current contents into an immutable [`Str`](std.Str)
+  # Converts the buffer's current contents into an immutable [`Str`](std.Str)
   # in place, without copying, and empties the buffer. The buffer stays usable
   # afterward, and the returned string is unaffected by later mutation.
   #
@@ -4153,7 +4144,7 @@ pub class StrBuf
   # assert_eq $frozen "abc"
   # ```
   #
-  pub def freeze self
+  pub def freeze self -> Str
     throw nil
 
   #
@@ -4170,15 +4161,15 @@ pub class StrBuf
   #
   pub def insert
     self
-    # ([`Int`](std)) insertion point; must fall on a UTF-8 boundary
-    index
-    # ([`Str`](std.Str)) string to insert
-    value
+    # insertion point; must fall on a UTF-8 boundary
+    index @ Int
+    # string to insert
+    value @ Str
   do
     throw nil
 
   #
-  # ([`Str`](std.Str)) Removes and returns the substring covered by `range`, shifting the rest of
+  # Removes and returns the substring covered by `range`, shifting the rest of
   # the buffer left in place.
   #
   #
@@ -4195,13 +4186,13 @@ pub class StrBuf
   #
   pub def remove
     self
-    # ([`Range`](std.Range)) byte range to remove; must fall on UTF-8 boundaries
-    range
-  do
+    # byte range to remove; must fall on UTF-8 boundaries
+    range @ Range
+  do -> Str
     throw nil
 
   #
-  # ([`Bool`](std)) Tests whether the buffer's contents start with the given prefix.
+  # Tests whether the buffer's contents start with the given prefix.
   #
   #
   # ## Example
@@ -4212,9 +4203,9 @@ pub class StrBuf
   #
   pub def starts_with
     self
-    # ([`Str`](std.Str)) the prefix string
-    prefix
-  do
+    # the prefix string
+    prefix @ Str
+  do -> Bool
     throw nil
 
   #
@@ -4230,8 +4221,8 @@ pub class StrBuf
   #
   pub def truncate
     self
-    # ([`Int`](std)) new length; must fall on a UTF-8 boundary
-    len
+    # new length; must fall on a UTF-8 boundary
+    len @ Int
   do
     throw nil
 
@@ -4381,30 +4372,30 @@ pub class Tuple
     throw nil
 
   #
-  # (`Int`) Returns the number of elements.
+  # Returns the number of elements.
   #
   #
   #[getter]
-  pub def len self
+  pub def len self -> Int
     throw nil
 
   #
-  # (`Bool`) Tests whether the tuple contains the given element (by equality).
+  # Tests whether the tuple contains the given element (by equality).
   #
   #
   pub def contains
     self
     # the value to check
     element
-  do
+  do -> Bool
     throw nil
 
   #
-  # ([`Tuple`](std.Tuple)) Returns a shallow copy of the tuple. Because tuples are immutable, the
+  # Returns a shallow copy of the tuple. Because tuples are immutable, the
   # returned copy may be the same object.
   #
   #
-  pub def copy self
+  pub def copy self -> Tuple
     throw nil
 
   #
@@ -4414,18 +4405,18 @@ pub class Tuple
   #
   pub def get
     self
-    # (Int) the index to access
-    index
+    # the index to access
+    index @ Int
     :default = nil
     :else = nil
   do
     throw nil
 
   #
-  # ([`Iter`](std.Iter)) Returns an iterator yielding `[index, value]` pairs.
+  # Returns an iterator yielding `[index, value]` pairs.
   #
   #
-  pub def pairs self
+  pub def pairs self -> Iter
     throw nil
 
   #
@@ -4476,8 +4467,8 @@ pub class TypeError: RuntimeError
   #
   pub def (init)
     self
-    # ([`Str`](std.Str)) description of the mismatch
-    message
+    # description of the mismatch
+    message @ Str
   do
     throw nil
 
@@ -4512,8 +4503,8 @@ pub class UnexpectedPosError: RuntimeError
   #
   pub def (init)
     self
-    # ([`Int`](std.Int)) zero-based position of the unexpected item
-    index
+    # zero-based position of the unexpected item
+    index @ Int
   do
     throw nil
 
@@ -4541,8 +4532,8 @@ pub class ValueError: RuntimeError
   #
   pub def (init)
     self
-    # ([`Str`](std.Str)) description of the problem with the value
-    message
+    # description of the problem with the value
+    message @ Str
   do
     throw nil
 

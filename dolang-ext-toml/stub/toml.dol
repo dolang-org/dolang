@@ -42,9 +42,9 @@
 # assert_eq $doc["server"]["port"] 8080
 # ```
 pub def decode
-  # ([`Str`](std.Str)) TOML input to parse.
-  toml
-do
+  # TOML input to parse.
+  toml @ Str
+do -> Value
   throw nil
 
 # Serializes a Do value to a TOML string.
@@ -85,5 +85,5 @@ do
 pub def encode
   # The value to serialize.
   value
-do
+do -> Str
   throw nil

@@ -66,8 +66,8 @@ pub class Resource
   # Raises [`ValueError`](std.ValueError) if `count` is zero.
   pub def (init)
     self
-    # ([`Int`](std.Int)) maximum concurrent admissions
-    count
+    # maximum concurrent admissions
+    count @ Int
   do
     throw nil
 
@@ -93,8 +93,8 @@ pub class Resource
   # ```
   pub def with
     self
-    # (Func) scoped work to execute
-    block
+    # scoped work to execute
+    block @ Func
   do
     throw nil
 
@@ -122,8 +122,8 @@ pub class Sender: std.Sink
     self
     # Optional error value to propagate
     error = nil
-    # ([`strand.Backtrace`](strand)) Optional backtrace for that error
-    :backtrace = nil
+    # Optional backtrace for that error
+    :backtrace @ strand.Backtrace = nil
   do
     throw nil
 
@@ -131,10 +131,10 @@ pub class Sender: std.Sink
 # Handles a background strand created by [`spawn`](strand).
 pub class Strand
   #
-  # ([`Bool`](std.Bool)) Whether the strand has completed execution.
+  # Whether the strand has completed execution.
   #
   #[getter]
-  pub def done self
+  pub def done self -> Bool
     throw nil
 
   #
@@ -167,10 +167,10 @@ pub class Strand
 # ordinary shutdown after input closes.
 pub class Stream
   #
-  # ([`Bool`](std.Bool)) Whether the strand has completed execution.
+  # Whether the strand has completed execution.
   #
   #[getter]
-  pub def done self
+  pub def done self -> Bool
     throw nil
 
   #
@@ -202,87 +202,87 @@ pub class Stream
 
 # Creates a channel for communication between strands.
 pub def channel
-  # (Int) Buffer capacity (default: 1, unbuffered)
-  :buffer = nil
+  # Buffer capacity (default: 1, unbuffered)
+  :buffer @ Int = nil
 do
   throw nil
 
 # Creates a pipeline stage that collects input values.
 pub def collect
-  # (output) collection to add to (defaults to a new `array`)
-  :target = nil
+  # collection to add to (defaults to a new `array`)
+  :target @ output = nil
 do
   throw nil
 
 # Creates a pipeline stage that transforms each input value.
 pub def each
-  # (Func) a function that transforms a single value
-  func
+  # a function that transforms a single value
+  func @ Func
 do
   throw nil
 
 # Runs blocks concurrently and returns their results in block order.
 pub def fork
-  # (Func) functions to execute concurrently
-  ...blocks
+  # functions to execute concurrently
+  ...blocks @ Func
 do
   throw nil
 
 # Creates a pipeline stage that emits values from an iterable.
 pub def from
-  # (input) an iterable to emit values from
-  value
+  # an iterable to emit values from
+  value @ input
 do
   throw nil
 
 # Applies a function concurrently to values pulled from an iterator.
 pub def map
-  # ([`Int`](std.Int)) number of worker strands
-  count
-  # (Func) function applied to each input value
-  func
-  # (input) source; defaults to the strand-local iterator
-  :input = nil
-  # (output) destination; defaults to the strand-local sink
-  :output = nil
+  # number of worker strands
+  count @ Int
+  # function applied to each input value
+  func @ Func
+  # source; defaults to the strand-local iterator
+  :input @ input = nil
+  # destination; defaults to the strand-local sink
+  :output @ output = nil
 do
   throw nil
 
 # Connects pipeline stages and runs them concurrently.
 pub def pipeline
-  # ([`Iterable`](std.Iterable)) override strand-local input for the first stage
-  :input = nil
-  # ([`Sinkable`](std.Sinkable)) override strand-local output for the last stage
-  :output = nil
-  # ([`Func`](std.Func)) pipeline stages
-  ...stages
+  # override strand-local input for the first stage
+  :input @ Iterable = nil
+  # override strand-local output for the last stage
+  :output @ Sinkable = nil
+  # pipeline stages
+  ...stages @ Func
 do
   throw nil
 
 # Runs a function over an iterator with a fixed number of scoped workers.
 pub def pool
-  # ([`Int`](std.Int)) number of worker strands
-  count
-  # ([`Iterable`](std.Iterable)) iterable of items
-  input
-  # ([`Func`](std.Func)) function applied to each input value
-  func
+  # number of worker strands
+  count @ Int
+  # iterable of items
+  input @ Iterable
+  # function applied to each input value
+  func @ Func
 do
   throw nil
 
 # Runs a function over the strand-local input with a fixed number of scoped workers.
 pub def pool
-  # ([`Int`](std.Int)) number of worker strands
-  count
-  # ([`Func`](std.Func)) function applied to each input value
-  func
+  # number of worker strands
+  count @ Int
+  # function applied to each input value
+  func @ Func
 do
   throw nil
 
 # Writes a value to the strand-local output.
 pub def put
-  # (input) value to write
-  value
+  # value to write
+  value @ input
 do
   throw nil
 
@@ -304,12 +304,12 @@ do
 # assert_eq $doubled [2, 4, 6]
 # ```
 pub def redirect
-  # ([`Iterable`](std.Iterable)) replacement for the strand-local input
-  :input = nil
-  # ([`Sinkable`](std.Sinkable)) replacement for the strand-local output
-  :output = nil
-  # ([`Func`](std.Func)) function to call
-  block
+  # replacement for the strand-local input
+  :input @ Iterable = nil
+  # replacement for the strand-local output
+  :output @ Sinkable = nil
+  # function to call
+  block @ Func
   # arguments passed to `block`
   ...args
 do
@@ -317,21 +317,21 @@ do
 
 # Runs a function in a background strand.
 pub def spawn
-  # (Func) the function to execute
-  func
+  # the function to execute
+  func @ Func
 do
   throw nil
 
 # Runs a function in a background strand with channel-backed endpoints.
 pub def stream
-  # (Func) the function to execute
-  func
+  # the function to execute
+  func @ Func
 do
   throw nil
 
 # Creates a pipeline stage that filters input values.
 pub def where
-  # (Func) a function returning a truthy/falsy value
-  predicate
+  # a function returning a truthy/falsy value
+  predicate @ Func
 do
   throw nil

@@ -62,9 +62,9 @@ pub class Unit
   # The [`Node`](compile.Node), or `nil` when the ID belongs to another unit.
   pub def node
     self
-    # ([`NodeId`](compile.NodeId)) The ID to look up.
-    id
-  do
+    # The ID to look up.
+    id @ NodeId
+  do -> (Node | nil)
     throw nil
 
   # Returns a fresh iterator of [`Token`](compile.Token) objects covering the
@@ -591,7 +591,7 @@ pub class Diagnostic
   # ## Returns
   #
   # [`term.Text`](term.Text), without a final newline.
-  pub def render self
+  pub def render self -> Text
     throw nil
 
 # An additional highlighted region attached to a
@@ -717,34 +717,34 @@ pub class Pos
 #       echo: echo_alias
 # ```
 pub def compile
-  # ([`Str`](std.Str)) Source path, used in debug information and
+  # Source path, used in debug information and
   # diagnostics.
-  path
-  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Source code to compile.
-  source
-  # ([`Str`](std.Str)) Compile in module mode under this name.
+  path @ Str
+  # Source code to compile.
+  source @ (Str | Bin)
+  # Compile in module mode under this name.
   #
   # Without it the source is compiled as a script, and running the bytecode
   # yields the value of the final expression or of an early return. In module
   # mode, running it yields a module object holding the exported bindings, or
   # the value of an early return.
-  :module = nil
-  # (dict) Additional imports to bind before the source.
+  :module @ Str = nil
+  # Additional imports to bind before the source.
   #
   # Accepts the same logical import shapes used by the LSP prelude settings:
   # an array of module names, a dict mapping a module to an alias, or a dict
   # mapping a module to the items to take from it, themselves optionally
   # aliased.
-  :prelude = nil
-  # ([`Bool`](std.Bool)) Continue parsing after syntax errors. Defaults
+  :prelude @ Dict = nil
+  # Continue parsing after syntax errors. Defaults
   # to `false`.
   #
   # Recovery is what lets a file be described while it is still being written,
   # at the cost of a document that is missing whatever the compiler could not
   # read. Check [`Unit.diagnostics`](compile.Unit.diagnostics) before trusting
   # one.
-  :recover = nil
-  # ([`Bool`](std.Bool)) Build document nodes. Defaults to `false`.
-  :document = nil
-do
+  :recover @ Bool = nil
+  # Build document nodes. Defaults to `false`.
+  :document @ Bool = nil
+do -> Unit
   throw nil
