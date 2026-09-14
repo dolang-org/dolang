@@ -24,3 +24,9 @@ assert_eq $pos nil
 let type: ty short: sh = rest
 assert_eq $ty $Bool
 assert_eq $sh "v"
+
+bind {1}
+  x
+  y = nil
+assert_eq $x 1
+assert_eq $y nil

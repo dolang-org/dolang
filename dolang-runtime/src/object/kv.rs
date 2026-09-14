@@ -1188,7 +1188,7 @@ impl<'v> Inner<'v> {
             if let Some(value) = inner.get(strand, &key, Some(0))? {
                 out.at(i).store(value.dup());
             } else if i >= sig.required
-                && let Some(default) = sig.optional.get(i)
+                && let Some(default) = sig.optional.get(i - sig.required)
             {
                 out.at(i).store(default.dup());
             } else {

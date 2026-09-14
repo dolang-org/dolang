@@ -101,7 +101,7 @@ def greet name = "World"
 greet()        # Hello, World!
 greet Alice    # Hello, Alice!
 
-def connect :host = localhost :port = 8080
+def connect :host = "localhost" :port = 8080
   echo "Connecting to $host:$port"
 
 connect()                      # localhost:8080
