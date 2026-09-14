@@ -2,12 +2,15 @@ use super::{
     ExprMode, Parser, Result, Scope,
     diag::{
         InvalidConstType, NonConstExpr, OptionalRest, OptionalTypeArg, ParamsWithoutArrow,
-        RequiredAfterOptional,
+        RequiredAfterOptional, RestMustBeTrailing,
     },
     stream::ExpectKind,
 };
 use crate::{
-    ast::{Annot, Const, Ident, RetType, TypeArg, TypeArgKind, TypeExpr, TypeKey, visit::Node},
+    ast::{
+        Annot, Binder, BinderKind, Binders, Const, Ident, RetType, TypeArg, TypeArgKind, TypeExpr,
+        TypeKey, visit::Node,
+    },
     lex::{Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
 };
@@ -72,6 +75,68 @@ impl Parser<'_> {
             this.parse_type_compact(scope)
         })?;
         Ok(Some(Box::new(RetType { arrow_span, ty })))
+    }
+
+    /// Parse the binders in `[]` after a declared name if they are next.
+    pub(super) fn parse_binders(&mut self, scope: &mut Scope) -> Result<Option<Box<Binders>>> {
+        let Some(token!(TokenInfo::LeftBracket)) = self.peek()? else {
+            return Ok(None);
+        };
+        let open = self.advance();
+        self.with_mode(Mode::FullExpr, |this| {
+            let mut binders = Vec::new();
+            let mut rest_span = None;
+            let close = loop {
+                if let Some(token!(TokenInfo::RightBracket)) = this.peek()?
+                    && !binders.is_empty()
+                {
+                    break this.advance();
+                }
+                if let Some(span) = rest_span.take() {
+                    this.fail = true;
+                    this.diags.push(RestMustBeTrailing(span));
+                }
+                let (kind, ident) = match this.next()? {
+                    Some(token!(TokenInfo::DittoKey, span)) => (
+                        BinderKind::Key {
+                            colon_span: span.before_left_char(),
+                        },
+                        span,
+                    ),
+                    Some(token!(TokenInfo::Ellipsis, ellipsis_span)) => {
+                        rest_span = Some(ellipsis_span);
+                        let ident = this.expect(scope, &[ExpectKind::Ident])?;
+                        (BinderKind::Rest { ellipsis_span }, ident)
+                    }
+                    token => match decay_ident!(token) {
+                        Some(token!(TokenInfo::Ident, span)) => (BinderKind::Pos, span),
+                        token => return Err(this.syntax_error(scope, token, "expected binder")),
+                    },
+                };
+                let delim_span = this.consume_comma()?;
+                binders.push(Binder {
+                    kind,
+                    ident: Ident::new(ident),
+                    delim_span,
+                });
+                if delim_span.is_none() {
+                    break this.expect(scope, &[ExpectKind::RightBracket])?;
+                }
+            };
+            Ok(Some(Box::new(Binders {
+                binders,
+                bracket_span: open | close,
+            })))
+        })
+    }
+
+    /// Parse type arguments in `[]` after the opening bracket.
+    pub(super) fn parse_type_bracket_args(
+        &mut self,
+        scope: &mut Scope,
+        open: Span,
+    ) -> Result<(Vec<TypeArg>, Span)> {
+        self.parse_type_args(scope, Delim::Bracket, open)
     }
 
     /// Lex a compact type so that whitespace ends it, even within a full expression.

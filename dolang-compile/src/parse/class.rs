@@ -250,33 +250,40 @@ impl Parser<'_> {
 
         // Class name can be either `Name` (Ident) or `Name:` (Key) if there's a superclass
         // The span of a Key token excludes the `:`, so we can use it directly for the identifier
-        let (ident, colon_span, super_refs) = match self.next()? {
+        let (ident, binders, colon_span) = match self.next()? {
             Some(token!(TokenInfo::Ident, span)) => {
-                // Plain identifier, no superclasses
-                (Ident::new(span), None, vec![])
+                // Binders end the name, so a `:` after them is a token of its own
+                let binders = self.parse_binders(scope)?;
+                let colon_span = match self.peek()? {
+                    Some(token!(TokenInfo::Colon)) if binders.is_some() => Some(self.advance()),
+                    _ => None,
+                };
+                (Ident::new(span), binders, colon_span)
             }
             Some(token!(TokenInfo::Key, span)) => {
-                // Identifier with colon suffix; parse space-separated dotted names
-                let colon_span = span.after_right_char();
-                let mut super_refs = vec![];
-                loop {
-                    match self.peek()? {
-                        None
-                        | Some(
-                            token!(TokenInfo::StmtSep | TokenInfo::Indent | TokenInfo::Dedent),
-                        ) => break,
-                        Some(token!(TokenInfo::ArgSep)) => {
-                            self.advance();
-                        }
-                        _ => super_refs.push(self.parse_class_super(scope)?),
-                    }
-                }
-                (Ident::new(span), Some(colon_span), super_refs)
+                (Ident::new(span), None, Some(span.after_right_char()))
             }
             other => {
                 return Err(self.syntax_error(scope, other, "expected class name after `class`"));
             }
         };
+
+        // Superclasses are space-separated dotted names
+        let mut super_refs = vec![];
+        if colon_span.is_some() {
+            loop {
+                match self.peek()? {
+                    None
+                    | Some(token!(TokenInfo::StmtSep | TokenInfo::Indent | TokenInfo::Dedent)) => {
+                        break;
+                    }
+                    Some(token!(TokenInfo::ArgSep)) => {
+                        self.advance();
+                    }
+                    _ => super_refs.push(self.parse_class_super(scope)?),
+                }
+            }
+        }
 
         let body = match self.next()? {
             Some(token!(TokenInfo::Indent)) => {
@@ -298,6 +305,7 @@ impl Parser<'_> {
             class_span,
             decorators,
             ident,
+            binders,
             colon_span,
             super_refs,
             body,
@@ -325,6 +333,19 @@ impl Parser<'_> {
             };
             fields.push(field);
         }
-        Ok(ClassSuper { ident, fields })
+        let (args, bracket_span) = match self.peek()? {
+            Some(token!(TokenInfo::LeftBracket)) => {
+                let open = self.advance();
+                let (args, bracket_span) = self.parse_type_bracket_args(scope, open)?;
+                (args, Some(bracket_span))
+            }
+            _ => (vec![], None),
+        };
+        Ok(ClassSuper {
+            ident,
+            fields,
+            args,
+            bracket_span,
+        })
     }
 }

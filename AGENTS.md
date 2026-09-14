@@ -614,6 +614,16 @@ def add a @Int b @Int -> Int
 let double = (do |x @Int| -> Int x * 2)
 ```
 
+`[]` directly after a `def` or `class` name declares binders (names standing for
+types; also `:K` and a trailing `...R`), and a superclass may take type
+arguments:
+
+```
+def first[T] items @Array[T] -> T
+  items[0]
+class Registry[V]: Table[Sym, V]
+```
+
 An annotation or return type is a compact type, so whitespace ends it, even
 inside `()`. Parenthesize unions and
 function types: `@Str|Path` is not a union, but `@(Str | Path)` is. Other forms:

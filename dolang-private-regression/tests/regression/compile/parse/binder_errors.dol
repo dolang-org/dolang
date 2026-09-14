@@ -1,0 +1,50 @@
+def late[...R, T] x
+  # error: rest parameter must be trailing
+  #   --> binder_errors.dol:LL:LL
+  #    |
+  # LL | def late[...R, T] x
+  #    |          ^^^
+  x
+
+class Bounded[T @Int]
+# error: got @, expected: ]
+#   --> binder_errors.dol:LL:LL
+#    |
+# LL | class Bounded[T @Int]
+#    |                 ^
+
+class Defaulted[T = Int]
+# error: got =, expected: ]
+#   --> binder_errors.dol:LL:LL
+#    |
+# LL | class Defaulted[T = Int]
+#    |                   ^
+
+class Empty[]
+# error: expected binder
+#   --> binder_errors.dol:LL:LL
+#    |
+# LL | class Empty[]
+#    |             ^
+
+class Union: (Base | Other)
+# error: expected superclass name
+#   --> binder_errors.dol:LL:LL
+#    |
+# LL | class Union: (Base | Other)
+#    |              ^
+
+class Twice: Base[Int][Str]
+# error: expected superclass name
+#   --> binder_errors.dol:LL:LL
+#    |
+# LL | class Twice: Base[Int][Str]
+#    |                       ^
+
+def spaced [T] x
+  # error: invalid parameter
+  #   --> binder_errors.dol:LL:LL
+  #    |
+  # LL | def spaced [T] x
+  #    |            ^
+  x

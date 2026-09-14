@@ -88,6 +88,29 @@ pub(crate) struct RetType {
     pub(crate) ty: TypeExpr,
 }
 
+/// The binders in `[]` after the name of a `def` or `class`
+pub(crate) struct Binders {
+    pub(crate) binders: Vec<Binder>,
+    pub(crate) bracket_span: Span,
+}
+
+/// A name that stands for a type argument
+pub(crate) struct Binder {
+    pub(crate) kind: BinderKind,
+    pub(crate) ident: Ident,
+    /// The trailing `,`
+    pub(crate) delim_span: Option<Span>,
+}
+
+pub(crate) enum BinderKind {
+    /// `T`
+    Pos,
+    /// `:K`
+    Key { colon_span: Span },
+    /// `...R`
+    Rest { ellipsis_span: Span },
+}
+
 impl Node for TypeExpr {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
@@ -205,6 +228,37 @@ impl Node for Annot {
 
     fn kind(&self) -> NodeKind {
         NodeKind::Annot
+    }
+}
+
+impl Node for Binders {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        visit.token(Token::Delim, self.bracket_span.left_char(), None)?;
+        self.binders.accept(visit)?;
+        visit.token(Token::Delim, self.bracket_span.right_char(), None)
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::Binders
+    }
+}
+
+impl Node for Binder {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        match self.kind {
+            BinderKind::Pos => {}
+            BinderKind::Key { colon_span } => visit.token(Token::Sigil, colon_span, None)?,
+            BinderKind::Rest { ellipsis_span } => visit.token(Token::Sigil, ellipsis_span, None)?,
+        }
+        visit.node(&self.ident)?;
+        if let Some(span) = self.delim_span {
+            visit.token(Token::Delim, span, None)?;
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::Binder
     }
 }
 

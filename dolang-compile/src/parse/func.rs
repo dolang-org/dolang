@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     ast::{
-        Block, Decorator, Def, Expr, Function, Ident, Method, Param, PrimStmt, RetType,
+        Binders, Block, Decorator, Def, Expr, Function, Ident, Method, Param, PrimStmt, RetType,
         SpecialMethod, Stmt,
     },
     lex::{self, Keyword, Op, Token, TokenInfo},
@@ -134,10 +134,7 @@ impl Parser<'_> {
         Ok(decorators)
     }
 
-    fn parse_def_common(
-        &mut self,
-        scope: &mut Scope,
-    ) -> Result<(Span, Span, Option<SpecialMethod>, Function)> {
+    fn parse_def_common(&mut self, scope: &mut Scope) -> Result<DefCommon> {
         let def_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Def)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
         // A declaration names what it defines; nothing after `def` is read as
@@ -153,6 +150,7 @@ impl Parser<'_> {
                 return Err(self.syntax_error(scope, token, "expected function or special method"));
             }
         };
+        let binders = self.parse_binders(scope)?;
         let params = match self.peek()? {
             Some(token!(TokenInfo::Indent)) => self.parse_params(scope, ParamMode::VertFunc)?,
             Some(token!(TokenInfo::LeftParen)) => {
@@ -175,7 +173,13 @@ impl Parser<'_> {
         }
         self.expect(scope, &[ExpectKind::Indent])?;
         let body = self.parse_block_through_dedent(scope)?;
-        Ok((def_span, name_span, special, Function { params, ret, body }))
+        Ok(DefCommon {
+            def_span,
+            name_span,
+            special,
+            binders,
+            func: Function { params, ret, body },
+        })
     }
 
     pub(super) fn parse_def(
@@ -184,7 +188,13 @@ impl Parser<'_> {
         pub_span: Option<Span>,
         decorators: Vec<Decorator>,
     ) -> Result<Def> {
-        let (def_span, name_span, special, func) = self.parse_def_common(scope)?;
+        let DefCommon {
+            def_span,
+            name_span,
+            special,
+            binders,
+            func,
+        } = self.parse_def_common(scope)?;
 
         if special.is_some() {
             self.fail = true;
@@ -195,6 +205,7 @@ impl Parser<'_> {
             def_span,
             decorators,
             ident: Ident::new(name_span),
+            binders,
             func,
             pub_span,
         })
@@ -206,7 +217,13 @@ impl Parser<'_> {
         pub_span: Option<Span>,
         decorators: Vec<Decorator>,
     ) -> Result<Method> {
-        let (def_span, name_span, special, func) = self.parse_def_common(scope)?;
+        let DefCommon {
+            def_span,
+            name_span,
+            special,
+            binders,
+            func,
+        } = self.parse_def_common(scope)?;
         Ok(Method {
             def_span,
             decorators,
@@ -214,8 +231,18 @@ impl Parser<'_> {
             special,
             node: None,
             private_sym: None,
+            binders,
             func,
             pub_span,
         })
     }
+}
+
+/// What a function and a method declaration share
+struct DefCommon {
+    def_span: Span,
+    name_span: Span,
+    special: Option<SpecialMethod>,
+    binders: Option<Box<Binders>>,
+    func: Function,
 }

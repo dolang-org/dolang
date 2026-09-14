@@ -71,6 +71,27 @@ let double = do |x @Int| -> Int (x * 2)
 let halve = (do |x @Int| -> Int x // 2)
 ```
 
+## Binders
+
+`[]` directly after the name of a `def` or `class` declares binders: names that
+stand for types within the declaration. A binder is a name, `:name` for a
+keyword type argument, or `...name` for any number of further type arguments.
+A rest binder must come last.
+
+```
+def first[T] items @Array[T] -> T
+  items[0]
+
+class Table[K, V]
+  pub field rows @Dict[K, V] = {}
+```
+
+A superclass can take type arguments:
+
+```
+class Registry[V]: Table[Sym, V]
+```
+
 ## Type Syntax
 
 An annotation or return type is a compact type, which whitespace ends. A type

@@ -143,3 +143,46 @@ def forms
 do
   [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, q, r]
 assert_eq $forms() [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+
+def head[T] xs @Array[T] -> T
+  xs[0]
+assert_eq (head [5, 6]) 5
+
+def keyed[:K, ...R] -> nil
+  nil
+assert_eq $keyed() nil
+
+def unit_binders[T]()
+  7
+assert_eq $unit_binders() 7
+
+def vert[T]
+  - x @T
+do -> T
+  x
+assert_eq (vert 3) 3
+
+def split[
+  A,
+  B,
+] a @A b @B
+  [a, b]
+assert_eq (split 1 2) [1, 2]
+
+class Base
+  pub field tag = "base"
+
+class Pair[A, B]: Base[A]
+  pub def swap[C] _self pair @Array[C] -> Array[C]
+    [pair[1], pair[0]]
+
+let pair = Pair()
+assert_eq $pair.tag base
+assert_eq (pair.swap [1, 2]) [2, 1]
+
+class Holder[T]
+  pub field value @(T | nil) = nil
+assert_eq $Holder().value nil
+
+class Tagged[T]: Base
+assert_eq $Tagged().tag base

@@ -4,7 +4,9 @@ pub(crate) mod dot;
 pub(crate) mod ty;
 pub(crate) mod visit;
 
-pub(crate) use self::ty::{Annot, RetType, TypeArg, TypeArgKind, TypeExpr, TypeKey};
+pub(crate) use self::ty::{
+    Annot, Binder, BinderKind, Binders, RetType, TypeArg, TypeArgKind, TypeExpr, TypeKey,
+};
 
 use std::{
     collections::VecDeque,
@@ -1957,6 +1959,7 @@ pub(crate) struct Def {
     pub(crate) def_span: Span,
     pub(crate) decorators: Vec<Decorator>,
     pub(crate) ident: Ident,
+    pub(crate) binders: Option<Box<Binders>>,
     // Function
     pub(crate) func: Function,
     pub(crate) pub_span: Option<Span>,
@@ -1974,6 +1977,9 @@ impl Node for Def {
             self.ident.span,
             self.ident.res.as_ref().and_then(|r| r.node),
         )?;
+        if let Some(binders) = &self.binders {
+            visit.node(&**binders)?;
+        }
         visit.node(&self.func)
     }
 
@@ -1989,6 +1995,7 @@ pub(crate) struct Method {
     pub(crate) special: Option<SpecialMethod>,
     pub(crate) node: Option<doc::Id>,
     pub(crate) private_sym: Option<sym::Id>,
+    pub(crate) binders: Option<Box<Binders>>,
     pub(crate) func: Function,
     pub(crate) pub_span: Option<Span>,
 }
@@ -2001,6 +2008,9 @@ impl Node for Method {
         }
         visit.token(Token::Keyword, self.def_span, None)?;
         visit.token(Token::Method, self.name_span, self.node)?;
+        if let Some(binders) = &self.binders {
+            visit.node(&**binders)?;
+        }
         visit.node(&self.func)
     }
 
@@ -2098,6 +2108,7 @@ pub(crate) struct Class {
     pub(crate) decorators: Vec<Decorator>,
     // Class name identifier
     pub(crate) ident: Ident,
+    pub(crate) binders: Option<Box<Binders>>,
     // Span of the `:` delimiter (if superclasses are present)
     pub(crate) colon_span: Option<Span>,
     // Superclass references (empty = no superclasses)
@@ -2118,6 +2129,9 @@ impl Node for Class {
             self.ident.span,
             self.ident.res.as_ref().and_then(|r| r.node),
         )?;
+        if let Some(binders) = &self.binders {
+            visit.node(&**binders)?;
+        }
         if let Some(colon_span) = self.colon_span {
             visit.token(Token::Delim, colon_span, None)?;
         }
@@ -2135,6 +2149,9 @@ impl Node for Class {
 pub(crate) struct ClassSuper {
     pub(crate) ident: Ident,
     pub(crate) fields: Vec<Span>,
+    /// Type arguments, which only annotate the superclass
+    pub(crate) args: Vec<TypeArg>,
+    pub(crate) bracket_span: Option<Span>,
 }
 
 impl Node for ClassSuper {
@@ -2143,6 +2160,11 @@ impl Node for ClassSuper {
         for field in &self.fields {
             visit.token(Token::Operator, field.before_left_char(), None)?;
             visit.token(Token::Field, *field, None)?;
+        }
+        if let Some(bracket_span) = self.bracket_span {
+            visit.token(Token::Delim, bracket_span.left_char(), None)?;
+            self.args.accept(visit)?;
+            visit.token(Token::Delim, bracket_span.right_char(), None)?;
         }
         ControlFlow::Continue(())
     }

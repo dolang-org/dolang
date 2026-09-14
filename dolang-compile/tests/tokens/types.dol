@@ -45,6 +45,27 @@ let l = (do |x @Int| -> Array[Int] [x])
 #                            ^: delim
 #                                  ^: delim
 
+def first[T, :K, ...R] xs @Array[T] -> T
+  #      ^: delim
+  #       ^: variable, node=none
+  #        ^: delim
+  #          ^: sigil
+  #           ^: variable, node=none
+  #              ^~~: sigil
+  #                 ^: variable, node=none
+  #                  ^: delim
+  xs
+
+class Base
+class Map[K, V]: Base[K]
+#        ^: delim
+#         ^: variable, node=none
+#              ^: delim
+#                ^~~~: variable
+#                    ^: delim
+#                     ^: variable, node=none
+#                      ^: delim
+
 class Point
   field x y @Int = 0
   #         ^: sigil

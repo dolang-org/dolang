@@ -164,6 +164,8 @@ pub enum NodeKind {
     TypeArg,
     Annot,
     RetType,
+    Binders,
+    Binder,
 }
 
 impl fmt::Display for NodeKind {
