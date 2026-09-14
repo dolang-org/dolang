@@ -213,6 +213,9 @@ pub(crate) enum Mode {
     String,
     Heredoc,
     RawHeredoc,
+    /// A compact type within a full expression: lexed as in `Shell`, so whitespace
+    /// ends it, except that a newline is only whitespace and leaves indentation alone
+    Type,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -1581,6 +1584,8 @@ pub(crate) struct Lexer<'a> {
     heredoc_baseline: Offset,
     // Remaining span to drain when heredoc_pending is true (start advances as tokens are emitted)
     heredoc_ws: Span,
+    // Lexing in `Mode::Type`, which the raw lexer sees as `Mode::Shell`
+    type_mode: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -1601,15 +1606,27 @@ impl<'a> Lexer<'a> {
             nl: 0,
             heredoc_baseline: 0,
             heredoc_ws: Default::default(),
+            type_mode: false,
         }
     }
 
     pub(crate) fn set_mode(&mut self, mode: Mode) -> Mode {
-        let prev = self.raw.set_mode(mode);
+        let prev = self.mode();
+        self.type_mode = mode == Mode::Type;
+        self.raw
+            .set_mode(if self.type_mode { Mode::Shell } else { mode });
         if matches!(mode, Mode::Heredoc | Mode::RawHeredoc) {
             self.heredoc_baseline = self.current;
         }
         prev
+    }
+
+    pub(crate) fn mode(&self) -> Mode {
+        if self.type_mode {
+            Mode::Type
+        } else {
+            self.raw.mode
+        }
     }
 
     // Inject an error; used by the parser to force resynchronization
@@ -1847,6 +1864,7 @@ impl<'a> Iterator for Lexer<'a> {
                     self.raw.diags.push(e);
                     return Some(Err(Error));
                 }
+                Ok((NewlineIndent, span)) if self.type_mode => self.token(TokenInfo::ArgSep, span),
                 Ok((NewlineIndent, span)) => {
                     if let res @ Some(..) = self.newline(span) {
                         return res;

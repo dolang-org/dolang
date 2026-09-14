@@ -605,7 +605,17 @@ class Point
   pub field x y @Int = 0
 ```
 
-An annotation is a compact type, so whitespace ends it. Parenthesize unions and
+`->`, whitespace, and a type give a return type, after the parameters (or after
+the `do` ending vertical parameters):
+
+```
+def add a @Int b @Int -> Int
+  (a + b)
+let double = (do |x @Int| -> Int x * 2)
+```
+
+An annotation or return type is a compact type, so whitespace ends it, even
+inside `()`. Parenthesize unions and
 function types: `@Str|Path` is not a union, but `@(Str | Path)` is. Other forms:
 `@Dict[Str, Array[Int]]`, `@{name: Str, ?port: Int}`, `@((Int, ?Int) -> Int)`,
 `@(:a: | :b:)`.

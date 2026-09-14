@@ -121,6 +121,7 @@ impl Parser<'_> {
             } else {
                 FieldInit::Thunk(Function {
                     params: vec![],
+                    ret: None,
                     body: Block {
                         stmts: vec![Stmt::Prim(PrimStmt::Expr(rhs))],
                         vars: vec![],

@@ -22,14 +22,14 @@ class _Base
 class _Config
   #[static]
   field _value = _later_default()
-def _later_default
+def _later_default()
   1
 # error: use of binding before its declaration has run
 #   --> use_before_init.dol:LL:LL
 #    |
 # LL |   field _value = _later_default()
 #    |                  ^^^^^^^^^^^^^^
-# LL | def _later_default
+# LL | def _later_default()
 #    |     -------------- declared here, but not yet initialized at this use
 
 # By contrast, referencing a not-yet-declared top-level `def`/`class` from

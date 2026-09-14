@@ -45,10 +45,38 @@ class Point
   pub field x y @Int = 0
 ```
 
+## Return Types
+
+`->` followed by whitespace and a type gives a function's return type. It comes
+after the parameters, or after the `do` that ends vertical parameters:
+
+```
+def add a @Int b @Int -> Int
+  (a + b)
+
+def greeting() -> Str
+  "hello"
+
+def build
+  :tag @Str
+  ...args @Str
+do -> Array[Str]
+  [tag, ...args]
+```
+
+A `do` block's return type follows its parameters:
+
+```
+let double = do |x @Int| -> Int (x * 2)
+let halve = (do |x @Int| -> Int x // 2)
+```
+
 ## Type Syntax
 
-An annotation is a compact type, which whitespace ends. A type that needs
-whitespace or operators must be parenthesized. Within `()`, `[]`, and `{}`,
+An annotation or return type is a compact type, which whitespace ends. A type
+that needs whitespace or operators must be parenthesized. This holds within
+full expressions too: in `(do |x| -> Array[Int] [x])`, the space after
+`Array[Int]` ends the type. Within a type's own `()`, `[]`, and `{}`,
 whitespace is insignificant.
 
 | Syntax                                | Meaning                   |

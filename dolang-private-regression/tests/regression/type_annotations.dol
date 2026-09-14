@@ -63,14 +63,61 @@ else
   false
 assert_eq $found false
 
+def add a @Int b @Int -> Int
+  (a + b)
+assert_eq (add 1 2) 3
+
+def unit() -> nil
+  nil
+assert_eq $unit() nil
+
+def listed
+  - a @Int
+  - b @Int = 2
+do -> Array[Int]
+  [a, b]
+assert_eq (listed 1) [1, 2]
+
+let inc = do |n @Int| -> Int (n + 1)
+assert_eq $inc(1) 2
+
+let thrice = do |n| -> Int
+  (n * 3)
+assert_eq $thrice(2) 6
+
+let seven = do -> Int 7
+assert_eq $seven() 7
+
+# In a full expression, whitespace still ends a type
+let pair = (do |x @Int y @(Int | nil)| -> Array[Int] [x, y])
+assert_eq (pair 1 2) [1, 2]
+
+let nested = (do |x @Array[Int]| x)
+assert_eq (nested([1])) [1]
+
+let five = (do -> Int 5)
+assert_eq $five() 5
+
+let spread = (
+  do |x @Int
+      y @Int|
+    -> Array[Int]
+    [x, y]
+)
+assert_eq (spread 3 4) [3, 4]
+
 class Point
   pub field px py @Int = 0
+
+  pub def sum self -> Int
+    (self.px + self.py)
   pub field label @(Str | nil) = nil
 
 let p = Point()
 assert_eq $p.px 0
 assert_eq $p.py 0
 assert_eq $p.label nil
+assert_eq $p.sum() 0
 
 def forms
   - a @time.Duration = 1

@@ -33,6 +33,18 @@ let s @{name: Str, ...Dict[Str, Value]} = nil
 #                         ^: delim
 #                                     ^: delim
 
+def add a @Int -> Int
+  #            ^~: operator
+  #               ^~~: variable
+  a
+
+let l = (do |x @Int| -> Array[Int] [x])
+#              ^: sigil
+#                    ^~: operator
+#                       ^~~~~: variable
+#                            ^: delim
+#                                  ^: delim
+
 class Point
   field x y @Int = 0
   #         ^: sigil

@@ -7,7 +7,7 @@ use super::{
     stream::ExpectKind,
 };
 use crate::{
-    ast::{Annot, Const, Ident, TypeArg, TypeArgKind, TypeExpr, TypeKey, visit::Node},
+    ast::{Annot, Const, Ident, RetType, TypeArg, TypeArgKind, TypeExpr, TypeKey, visit::Node},
     lex::{Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
 };
@@ -54,11 +54,43 @@ impl Parser<'_> {
         Ok(match self.peek()? {
             Some(token!(TokenInfo::At)) => {
                 let at_span = self.advance();
-                let ty = self.parse_type_compact(scope)?;
+                let ty = self.with_type_mode(|this| this.parse_type_compact(scope))?;
                 Some(Box::new(Annot { at_span, ty }))
             }
             _ => None,
         })
+    }
+
+    /// Parse a `->` return type if one is next.
+    pub(super) fn parse_ret_type(&mut self, scope: &mut Scope) -> Result<Option<Box<RetType>>> {
+        let Some(token!(TokenInfo::Arrow)) = self.peek()? else {
+            return Ok(None);
+        };
+        let arrow_span = self.advance();
+        let ty = self.with_type_mode(|this| {
+            this.expect(scope, &[ExpectKind::ArgSep])?;
+            this.parse_type_compact(scope)
+        })?;
+        Ok(Some(Box::new(RetType { arrow_span, ty })))
+    }
+
+    /// Lex a compact type so that whitespace ends it, even within a full expression.
+    ///
+    /// The token before the type must already be consumed.
+    fn with_type_mode<R>(
+        &mut self,
+        f: impl for<'b> FnOnce(&'b mut Self) -> Result<R>,
+    ) -> Result<R> {
+        if self.mode() != Mode::FullExpr {
+            return f(self);
+        }
+        let res = self.with_mode(Mode::Type, f)?;
+        // Finding the end of the type peeked the whitespace after it, which means
+        // nothing in the enclosing full expression
+        if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+            self.advance();
+        }
+        Ok(res)
     }
 
     /// Parse a compact type, which whitespace ends in shell-like contexts.

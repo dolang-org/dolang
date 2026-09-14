@@ -169,6 +169,7 @@ impl Parser<'_> {
 
         let body = Function {
             params: vec![],
+            ret: None,
             body: body_block,
         };
 
@@ -207,6 +208,7 @@ impl Parser<'_> {
                             ty: None,
                             default: None,
                         }],
+                        ret: None,
                         body: catch_block,
                     },
                     catch_span,
@@ -235,6 +237,7 @@ impl Parser<'_> {
                             ty: None,
                             default: None,
                         }],
+                        ret: None,
                         body: catch_block,
                     },
                     catch_span,
@@ -250,6 +253,7 @@ impl Parser<'_> {
             Some((
                 Function {
                     params: vec![],
+                    ret: None,
                     body: finally_block,
                 },
                 finally_span,

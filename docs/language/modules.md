@@ -113,7 +113,7 @@ pub def helper x
 pub let VERSION = "1.0"
 
 # Private (not exported)
-def internal_detail
+def internal_detail()
   42
 ```
 

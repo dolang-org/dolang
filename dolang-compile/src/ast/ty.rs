@@ -82,6 +82,12 @@ pub(crate) struct Annot {
     pub(crate) ty: TypeExpr,
 }
 
+/// A `->` return type on a function
+pub(crate) struct RetType {
+    pub(crate) arrow_span: Span,
+    pub(crate) ty: TypeExpr,
+}
+
 impl Node for TypeExpr {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
@@ -199,5 +205,16 @@ impl Node for Annot {
 
     fn kind(&self) -> NodeKind {
         NodeKind::Annot
+    }
+}
+
+impl Node for RetType {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        visit.token(Token::Operator, self.arrow_span, None)?;
+        visit.node(&self.ty)
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::RetType
     }
 }

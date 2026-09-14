@@ -4,7 +4,8 @@ use super::{
 };
 use crate::{
     ast::{
-        Block, Decorator, Def, Expr, Function, Ident, Method, Param, PrimStmt, SpecialMethod, Stmt,
+        Block, Decorator, Def, Expr, Function, Ident, Method, Param, PrimStmt, RetType,
+        SpecialMethod, Stmt,
     },
     lex::{self, Keyword, Op, Token, TokenInfo},
     source::Span,
@@ -25,10 +26,12 @@ impl Parser<'_> {
 
     pub(super) fn parse_lambda(&mut self, scope: &mut Scope, do_span: Span) -> Result<Expr> {
         let params = self.parse_lambda_params(scope)?;
+        let ret = self.parse_ret_type(scope)?;
         let expr = self.parse_expr(scope, ExprMode::Full)?;
         Ok(Expr::Lambda {
             func: Function {
                 params,
+                ret,
                 body: Block {
                     stmts: vec![Stmt::Prim(PrimStmt::Expr(expr))],
                     vars: Default::default(),
@@ -39,9 +42,9 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_do_params(&mut self, scope: &mut Scope) -> Result<Vec<Param>> {
+    fn parse_do_params(&mut self, scope: &mut Scope) -> Result<(Vec<Param>, Option<Box<RetType>>)> {
         match self.peek()? {
-            Some(token!(TokenInfo::Indent)) => return Ok(vec![]),
+            Some(token!(TokenInfo::Indent)) => return Ok((vec![], None)),
             Some(token!(TokenInfo::ArgSep)) => self.advance(),
             _ => {
                 let token = self.next()?;
@@ -52,7 +55,7 @@ impl Parser<'_> {
                 ));
             }
         };
-        match self.peek()? {
+        let params = match self.peek()? {
             Some(token!(TokenInfo::Op(Op::Bar))) => {
                 self.advance();
                 let params = self.parse_params(scope, ParamMode::HorizFunc)?;
@@ -60,10 +63,17 @@ impl Parser<'_> {
                 if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
                     self.advance();
                 }
-                Ok(params)
+                params
             }
-            _ => Ok(vec![]),
+            _ => vec![],
+        };
+        let ret = self.parse_ret_type(scope)?;
+        if ret.is_some()
+            && let Some(token!(TokenInfo::ArgSep)) = self.peek()?
+        {
+            self.advance();
         }
+        Ok((params, ret))
     }
 
     pub(super) fn parse_do_block(
@@ -72,12 +82,13 @@ impl Parser<'_> {
         allow_trailing: bool,
     ) -> Result<Expr> {
         let do_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
-        let params = self.parse_do_params(scope)?;
+        let (params, ret) = self.parse_do_params(scope)?;
         match self.peek()? {
             Some(token!(TokenInfo::Indent)) if allow_trailing => {
                 self.advance();
                 let function = Function {
                     params,
+                    ret,
                     body: self.parse_block_through_dedent(scope)?,
                 };
                 Ok(Expr::Lambda {
@@ -88,6 +99,7 @@ impl Parser<'_> {
             _ => Ok(Expr::Lambda {
                 func: Function {
                     params,
+                    ret,
                     body: Block {
                         stmts: vec![if allow_trailing {
                             self.parse_stmt(scope)?
@@ -146,18 +158,24 @@ impl Parser<'_> {
             Some(token!(TokenInfo::LeftParen)) => {
                 let left = self.advance();
                 let _right = self.expect_matching(scope, ExpectKind::RightParen, left);
-                self.expect(scope, &[ExpectKind::Indent])?;
                 // FIXME: include paren spans somewhere
                 vec![]
             }
-            _ => {
-                let params = self.parse_params(scope, ParamMode::HorizFunc)?;
-                self.expect(scope, &[ExpectKind::Indent])?;
-                params
-            }
+            _ => self.parse_params(scope, ParamMode::HorizFunc)?,
         };
+        // The return type follows the parameters, or the `do` ending vertical ones
+        if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+            self.advance();
+        }
+        let ret = self.parse_ret_type(scope)?;
+        if ret.is_some()
+            && let Some(token!(TokenInfo::ArgSep)) = self.peek()?
+        {
+            self.advance();
+        }
+        self.expect(scope, &[ExpectKind::Indent])?;
         let body = self.parse_block_through_dedent(scope)?;
-        Ok((def_span, name_span, special, Function { params, body }))
+        Ok((def_span, name_span, special, Function { params, ret, body }))
     }
 
     pub(super) fn parse_def(

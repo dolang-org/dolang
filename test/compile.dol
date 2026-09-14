@@ -40,7 +40,7 @@ def assert_span_contract left right
 #[test]
 def success()
   let result = compile.compile "ok.dol" |-
-    def foo
+    def foo()
       1
     foo()
 
@@ -333,7 +333,7 @@ def doc_comments_attach_only_to_the_declaration_directly_below_them()
 
     # Fenced off by a blank line.
 
-    def bare
+    def bare()
       1
 
     def deco f

@@ -1,0 +1,31 @@
+let a = (do -> Int)
+# error: invalid expression
+#   --> return_type_errors.dol:LL:LL
+#    |
+# LL | let a = (do -> Int)
+#    |                   ^
+let b = (do |x| ->Int x)
+# error: got identifier, expected: <whitespace>
+#   --> return_type_errors.dol:LL:LL
+#    |
+# LL | let b = (do |x| ->Int x)
+#    |                   ^^^
+let c = (do |x @ Int| x)
+# error: expected type
+#   --> return_type_errors.dol:LL:LL
+#    |
+# LL | let c = (do |x @ Int| x)
+#    |                 ^
+let d = do -> Int|Str 1
+# error: invalid unary operator
+#   --> return_type_errors.dol:LL:LL
+#    |
+# LL | let d = do -> Int|Str 1
+#    |                  ^
+def e x -> Int -> Int
+  # error: got ->, expected: <indent>
+  #   --> return_type_errors.dol:LL:LL
+  #    |
+  # LL | def e x -> Int -> Int
+  #    |                ^^
+  x

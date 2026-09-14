@@ -4,7 +4,7 @@ pub(crate) mod dot;
 pub(crate) mod ty;
 pub(crate) mod visit;
 
-pub(crate) use self::ty::{Annot, TypeArg, TypeArgKind, TypeExpr, TypeKey};
+pub(crate) use self::ty::{Annot, RetType, TypeArg, TypeArgKind, TypeExpr, TypeKey};
 
 use std::{
     collections::VecDeque,
@@ -2338,12 +2338,16 @@ impl Block {
 
 pub(crate) struct Function {
     pub(crate) params: Vec<Param>,
+    pub(crate) ret: Option<Box<RetType>>,
     pub(crate) body: Block,
 }
 
 impl Node for Function {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         self.params.accept(visit)?;
+        if let Some(ret) = &self.ret {
+            visit.node(&**ret)?;
+        }
         visit.node(&self.body)
     }
 

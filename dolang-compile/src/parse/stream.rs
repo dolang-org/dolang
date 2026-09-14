@@ -212,34 +212,6 @@ impl<'a> Peek<'a> {
         self.peek = Inner::Full(Ok(token))
     }
 
-    fn peek_with_mode(&mut self, mode: Mode) -> Result<Option<&mut Token>> {
-        Ok(loop {
-            break match self.peek {
-                Inner::Empty => {
-                    let prev = self.lexer.set_mode(mode);
-                    let next = self.lexer.next();
-                    self.lexer.set_mode(prev);
-                    match next {
-                        None => {
-                            self.peek = Inner::End;
-                            None
-                        }
-                        Some(next) => {
-                            self.peek = Inner::Full(next);
-                            continue;
-                        }
-                    }
-                }
-                Inner::Full(Ok(ref mut t)) => Some(t),
-                Inner::Full(Err(e)) => {
-                    self.peek = Inner::Empty;
-                    return Err(e.into());
-                }
-                Inner::End => None,
-            };
-        })
-    }
-
     pub(crate) fn span(&self) -> Span {
         self.lexer.span()
     }
@@ -310,13 +282,8 @@ impl Parser<'_> {
         res
     }
 
-    #[expect(dead_code)]
-    fn peek_with_mode(&mut self, mode: Mode) -> Result<Option<&mut Token>> {
-        let res = self.lex.peek_with_mode(mode);
-        if res.is_err() {
-            self.fail = true;
-        }
-        res
+    pub(super) fn mode(&self) -> Mode {
+        self.lex.lexer.mode()
     }
 
     pub(super) fn next(&mut self) -> Result<Option<Token>> {

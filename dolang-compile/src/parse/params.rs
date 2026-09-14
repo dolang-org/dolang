@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     ast::{Annot, Ident, Param, ParamDefault, PatIdent, Pattern},
-    lex::{Keyword, Op, Token, TokenInfo},
+    lex::{Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
 };
 
@@ -98,6 +98,9 @@ impl Parser<'_> {
                     }
                     break Ok(params);
                 }
+                Some(token!(TokenInfo::Arrow)) if matches!(mode, ParamMode::HorizFunc) => {
+                    break Ok(params);
+                }
                 token @ Some(token!(TokenInfo::Dedent)) if mode.is_vertical() => {
                     if params.is_empty() {
                         return Err(self.syntax_error(
@@ -109,7 +112,6 @@ impl Parser<'_> {
                     self.advance();
                     if matches!(mode, ParamMode::VertFunc) {
                         self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
-                        self.expect(scope, &[ExpectKind::Indent])?;
                     }
                     break Ok(params);
                 }
@@ -297,9 +299,6 @@ impl Parser<'_> {
                         })
                     }
                     _ => {
-                        if matches!(mode, ParamMode::VertFunc) {
-                            break Ok(params);
-                        }
                         let token = self.next()?;
                         return Err(self.syntax_error(
                             scope,
@@ -317,11 +316,15 @@ impl Parser<'_> {
     }
 
     /// Parse the annotation after a bound name, which whitespace must separate from it
+    /// where whitespace is significant
     fn parse_param_annot(&mut self, scope: &mut Scope<'_>) -> Result<Option<Box<Annot>>> {
-        let Some(token!(TokenInfo::ArgSep)) = self.peek()? else {
-            return Ok(None);
-        };
-        self.advance();
+        match self.peek()? {
+            Some(token!(TokenInfo::ArgSep)) => {
+                self.advance();
+            }
+            Some(token!(TokenInfo::At)) if self.mode() == Mode::FullExpr => {}
+            _ => return Ok(None),
+        }
         self.parse_annot(scope)
     }
 
