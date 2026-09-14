@@ -1,18 +1,18 @@
-# Type annotations reuse the existing token kinds.
+# Type syntax has token kinds distinct from runtime expressions.
 
 let f @((Str, ?port: Int, ...Str) -> Conn) = nil
-#     ^: sigil
+#     ^: annotation
 #      ^: delim
 #       ^: delim
-#        ^~~: variable, node=none
+#        ^~~: type_token, node=none
 #           ^: delim
 #             ^: operator
-#              ^~~~: key
+#              ^~~~: type_key
 #                  ^: delim
 #                         ^~~: sigil
 #                               ^: delim
 #                                 ^~: operator
-#                                    ^~~~: variable, node=none
+#                                    ^~~~: type_token, node=none
 #                                        ^: delim
 
 let t @(:a: | :b:) = nil
@@ -22,79 +22,79 @@ let t @(:a: | :b:) = nil
 
 let u @(| time.Duration | Str) = nil
 #       ^: operator
-#         ^~~~: variable
+#         ^~~~: type_token
 #             ^: operator
-#              ^~~~~~~~: field
+#              ^~~~~~~~: type_token
 #                       ^: operator
 
 let s @{name: Str, ...Dict[Str, Value]} = nil
 #      ^: delim
-#       ^~~~: key
+#       ^~~~: type_key
 #                         ^: delim
 #                                     ^: delim
 
 def add a @Int -> Int
   #            ^~: operator
-  #               ^~~: variable
+  #               ^~~: type_token
   a
 
 let l = (do |x @Int| -> Array[Int] [x])
-#              ^: sigil
+#              ^: annotation
 #                    ^~: operator
-#                       ^~~~~: variable
+#                       ^~~~~: type_token
 #                            ^: delim
 #                                  ^: delim
 
 def first[T, :K, ...R] xs @Array[T] -> T
   #      ^: delim
-  #       ^: variable, node=binder
+  #       ^: binder_token, node=binder
   #        ^: delim
   #          ^: sigil
-  #           ^: variable, node=binder
+  #           ^: binder_token, node=binder
   #              ^~~: sigil
-  #                 ^: variable, node=binder
+  #                 ^: binder_token, node=binder
   #                  ^: delim
-  #                              ^: variable, node=binder
-  #                                    ^: variable, node=binder
+  #                              ^: type_token, node=binder
+  #                                    ^: type_token, node=binder
   xs
 
 class Base
 class Map[K, V]: Base[K]
 #        ^: delim
-#         ^: variable, node=binder
+#         ^: binder_token, node=binder
 #              ^: delim
-#                ^~~~: variable
+#                ^~~~: type_token
 #                    ^: delim
-#                     ^: variable, node=binder
+#                     ^: type_token, node=binder
 #                      ^: delim
 
 let shape @Base = nil
-#          ^~~~: variable, node=class
+#          ^~~~: type_token, node=class
 
 let r @Record = nil
-#      ^~~~~~: variable, node=prelude_item
+#      ^~~~~~: type_token, node=prelude_item
 
 class Point
   field x y @Int = 0
-  #         ^: sigil
-  #          ^~~: variable
+  #         ^: annotation
+  #          ^~~: type_token
 
 def connect
   :port @Int = 22
-  #     ^: sigil
-  #      ^~~: variable
+  #     ^: annotation
+  #      ^~~: type_token
 do
   dbg $port
 
 import import_fixture:
   - @Adder
-  # ^: sigil
-  #  ^~~~~: variable, node=import_item
+  # ^: annotation
+  #  ^~~~~: type_token, node=import_item
   - @Summer: Total
-  # ^: sigil
-  #  ^~~~~~: module_item
+  # ^: annotation
+  #  ^~~~~~: type_token
   #        ^: delim
-  #          ^~~~~: variable, node=import_item
+  #          ^~~~~: type_token, node=import_item
 
 let adder @Adder = nil
-#          ^~~~~: variable, node=import_item
+#          ^~~~~: type_token, node=import_item

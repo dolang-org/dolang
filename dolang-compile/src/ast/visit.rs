@@ -53,6 +53,10 @@ impl Visit for SpanVisit {
 /// Syntactic token
 #[derive(Copy, Clone, Debug)]
 pub enum Token {
+    /// The `@` marker introducing a type annotation or type-only import
+    Annotation,
+    /// A type binder declaration
+    Binder,
     /// Comment
     Comment,
     /// Non-numeric, non-string constant such as `nil` or `false`
@@ -81,6 +85,10 @@ pub enum Token {
     Operator,
     /// A string delimeter (`"`)
     StringDelim,
+    /// A name within a type expression
+    Type,
+    /// A keyed argument within a type expression
+    TypeKey,
     /// A variable
     Variable,
     /// A sigil like `$` or `...`

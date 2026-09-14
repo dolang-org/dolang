@@ -29,17 +29,18 @@ pub(crate) struct Types<'v> {
     token_iter: Type<'v, TokenIter<'v>>,
     token: Type<'v, TokenObject>,
     node_id: Type<'v, NodeIdObject>,
-    super_ref: Type<'v, SuperObject>,
     node: Type<'v, NodeObject<NodeTag>>,
     declaration: Type<'v, NodeObject<DeclarationTag>>,
     import: Type<'v, NodeObject<ImportTag>>,
     param: Type<'v, NodeObject<ParamTag>>,
     block: Type<'v, NodeObject<BlockTag>>,
     reference: Type<'v, NodeObject<ReferenceTag>>,
+    binder: Type<'v, NodeObject<BinderTag>>,
     concrete_nodes: ConcreteNodeTypes<'v>,
     type_expr: Type<'v, TypeExprObject<TypeExprTag>>,
     type_kinds: TypeExprTypes<'v>,
     type_arg: Type<'v, TypeExprObject<TypeArgTag>>,
+    arg_kinds: TypeArgTypes<'v>,
     diagnostic: Type<'v, Diagnostic>,
     span: Type<'v, Span>,
     pos: Type<'v, Pos>,
@@ -49,6 +50,8 @@ pub(crate) struct Types<'v> {
 }
 
 pub(crate) struct Syms<'v> {
+    token_annotation: Sym<'v, 'v>,
+    token_binder: Sym<'v, 'v>,
     error: Sym<'v, 'v>,
     warning: Sym<'v, 'v>,
     primary: Sym<'v, 'v>,
@@ -69,11 +72,11 @@ pub(crate) struct Syms<'v> {
     token_number: Sym<'v, 'v>,
     token_operator: Sym<'v, 'v>,
     token_string_delim: Sym<'v, 'v>,
+    token_type: Sym<'v, 'v>,
+    token_type_key: Sym<'v, 'v>,
     token_variable: Sym<'v, 'v>,
     token_sigil: Sym<'v, 'v>,
     token_context_call: Sym<'v, 'v>,
-    pos: Sym<'v, 'v>,
-    rest: Sym<'v, 'v>,
 }
 
 pub(crate) struct Global<'v> {
@@ -113,7 +116,9 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     continue_node: Type<'v, NodeObject<ContinueTag>>,
     return_node: Type<'v, NodeObject<ReturnTag>>,
     type_node: Type<'v, NodeObject<TypeTag>>,
-    binder: Type<'v, NodeObject<BinderTag>>,
+    pos_binder: Type<'v, NodeObject<PosBinderTag>>,
+    key_binder: Type<'v, NodeObject<KeyBinderTag>>,
+    rest_binder: Type<'v, NodeObject<RestBinderTag>>,
 }
 
 pub struct Tag;
@@ -145,6 +150,10 @@ impl<'v> Global<'v> {
             .build_type::<NodeObject<ReferenceTag>>((), ())
             .nominal_supertype(node)
             .build();
+        let binder = builder
+            .build_type::<NodeObject<BinderTag>>((), ())
+            .nominal_supertype(declaration)
+            .build();
         macro_rules! subtype {
             ($tag:ty, $base:expr) => {
                 builder
@@ -154,11 +163,12 @@ impl<'v> Global<'v> {
             };
         }
         let type_expr = builder.register_type();
+        let type_arg = builder.register_type();
         macro_rules! type_subtype {
-            ($tag:ty) => {
+            ($tag:ty, $base:expr) => {
                 builder
                     .build_type::<TypeExprObject<$tag>>((), ())
-                    .nominal_supertype(type_expr)
+                    .nominal_supertype($base)
                     .build()
             };
         }
@@ -170,13 +180,13 @@ impl<'v> Global<'v> {
                 token_iter: builder.register_type(),
                 token: builder.register_type(),
                 node_id: builder.register_type(),
-                super_ref: builder.register_type(),
                 node,
                 declaration,
                 import,
                 param,
                 block,
                 reference,
+                binder,
                 concrete_nodes: ConcreteNodeTypes {
                     root: subtype!(RootTag, node),
                     class: subtype!(ClassTag, declaration),
@@ -208,18 +218,25 @@ impl<'v> Global<'v> {
                     continue_node: subtype!(ContinueTag, reference),
                     return_node: subtype!(ReturnTag, reference),
                     type_node: subtype!(TypeTag, node),
-                    binder: subtype!(BinderTag, declaration),
+                    pos_binder: subtype!(PosBinderTag, binder),
+                    key_binder: subtype!(KeyBinderTag, binder),
+                    rest_binder: subtype!(RestBinderTag, binder),
                 },
                 type_expr,
                 type_kinds: TypeExprTypes {
-                    name: type_subtype!(NameTypeTag),
-                    constant: type_subtype!(ConstTypeTag),
-                    app: type_subtype!(AppTypeTag),
-                    schema: type_subtype!(SchemaTypeTag),
-                    union: type_subtype!(UnionTypeTag),
-                    func: type_subtype!(FuncTypeTag),
+                    name: type_subtype!(NameTypeTag, type_expr),
+                    constant: type_subtype!(ConstTypeTag, type_expr),
+                    app: type_subtype!(AppTypeTag, type_expr),
+                    schema: type_subtype!(SchemaTypeTag, type_expr),
+                    union: type_subtype!(UnionTypeTag, type_expr),
+                    func: type_subtype!(FuncTypeTag, type_expr),
                 },
-                type_arg: builder.register_type(),
+                type_arg,
+                arg_kinds: TypeArgTypes {
+                    pos: type_subtype!(PosTypeArgTag, type_arg),
+                    key: type_subtype!(KeyTypeArgTag, type_arg),
+                    rest: type_subtype!(RestTypeArgTag, type_arg),
+                },
                 diagnostic: builder.register_type(),
                 span: builder.register_type(),
                 pos: builder.register_type(),
@@ -228,6 +245,8 @@ impl<'v> Global<'v> {
                 patch: builder.register_type(),
             },
             syms: Syms {
+                token_annotation: builder.sym("ANNOTATION"),
+                token_binder: builder.sym("BINDER"),
                 error: builder.sym("ERROR"),
                 warning: builder.sym("WARNING"),
                 primary: builder.sym("PRIMARY"),
@@ -248,11 +267,11 @@ impl<'v> Global<'v> {
                 token_number: builder.sym("NUMBER"),
                 token_operator: builder.sym("OPERATOR"),
                 token_string_delim: builder.sym("STRING_DELIM"),
+                token_type: builder.sym("TYPE"),
+                token_type_key: builder.sym("TYPE_KEY"),
                 token_variable: builder.sym("VARIABLE"),
                 token_sigil: builder.sym("SIGIL"),
                 token_context_call: builder.sym("CALL"),
-                pos: builder.sym("POS"),
-                rest: builder.sym("REST"),
             },
             next_unit_id: Cell::new(1),
         }
@@ -364,11 +383,6 @@ pub(crate) struct NodeIdAnnex {
     unit: u64,
     id: compile::NodeId,
 }
-pub(crate) struct SuperObject {
-    span: SpanData,
-    target: Option<compile::NodeId>,
-}
-
 pub(crate) trait NodeMarker {
     const NAME: &'static str;
 }
@@ -392,7 +406,8 @@ node_tags! {
     KeyParamTag=>"KeyParam", RestParamTag=>"RestParam", LambdaTag=>"Lambda", IfTag=>"If", ElseTag=>"Else",
     WhileTag=>"While", ForTag=>"For", TryTag=>"Try", CatchTag=>"Catch", FinallyTag=>"Finally",
     ForElemTag=>"ForElem", IfElemTag=>"IfElem", DecoratorTag=>"Decorator", BreakTag=>"Break",
-    ContinueTag=>"Continue", ReturnTag=>"Return", TypeTag=>"Type", BinderTag=>"Binder"
+    ContinueTag=>"Continue", ReturnTag=>"Return", TypeTag=>"Type", BinderTag=>"Binder",
+    PosBinderTag=>"PosBinder", KeyBinderTag=>"KeyBinder", RestBinderTag=>"RestBinder"
 }
 pub(crate) struct Diagnostic;
 pub(crate) struct Span;
@@ -419,7 +434,8 @@ macro_rules! type_tags {
 type_tags! {
     TypeExprTag=>"TypeExpr", NameTypeTag=>"NameType", ConstTypeTag=>"ConstType",
     AppTypeTag=>"AppType", SchemaTypeTag=>"SchemaType", UnionTypeTag=>"UnionType",
-    FuncTypeTag=>"FuncType", TypeArgTag=>"TypeArg"
+    FuncTypeTag=>"FuncType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
+    KeyTypeArgTag=>"KeyTypeArg", RestTypeArgTag=>"RestTypeArg"
 }
 
 pub(crate) struct TypeExprTypes<'v> {
@@ -429,6 +445,12 @@ pub(crate) struct TypeExprTypes<'v> {
     schema: Type<'v, TypeExprObject<SchemaTypeTag>>,
     union: Type<'v, TypeExprObject<UnionTypeTag>>,
     func: Type<'v, TypeExprObject<FuncTypeTag>>,
+}
+
+pub(crate) struct TypeArgTypes<'v> {
+    pos: Type<'v, TypeExprObject<PosTypeArgTag>>,
+    key: Type<'v, TypeExprObject<KeyTypeArgTag>>,
+    rest: Type<'v, TypeExprObject<RestTypeArgTag>>,
 }
 
 pub(crate) struct TypeAnnex<'v> {
@@ -446,14 +468,8 @@ enum TypeDetail {
     },
     Arg {
         optional: bool,
-        kind: ArgKind,
+        key: Option<SpanData>,
     },
-}
-
-enum ArgKind {
-    Pos,
-    Key(SpanData),
-    Rest,
 }
 
 const OWNER: usize = 0;
@@ -490,6 +506,8 @@ fn severity<'v>(global: State<'v, Global<'v>>, severity: compile::Severity) -> S
 
 fn token_kind_sym<'v>(global: State<'v, Global<'v>>, token: compile::Token) -> Sym<'v, 'v> {
     match token {
+        compile::Token::Annotation => global.syms.token_annotation,
+        compile::Token::Binder => global.syms.token_binder,
         compile::Token::Comment => global.syms.token_comment,
         compile::Token::Constant => global.syms.token_constant,
         compile::Token::Delim => global.syms.token_delim,
@@ -504,6 +522,8 @@ fn token_kind_sym<'v>(global: State<'v, Global<'v>>, token: compile::Token) -> S
         compile::Token::Number => global.syms.token_number,
         compile::Token::Operator => global.syms.token_operator,
         compile::Token::StringDelim => global.syms.token_string_delim,
+        compile::Token::Type => global.syms.token_type,
+        compile::Token::TypeKey => global.syms.token_type_key,
         compile::Token::Variable => global.syms.token_variable,
         compile::Token::Sigil => global.syms.token_sigil,
     }
@@ -1238,7 +1258,9 @@ fn create_node<'v, 's>(
         Continue,
         Return,
         Type,
-        Binder,
+        PosBinder,
+        KeyBinder,
+        RestBinder,
     }
     let kind = {
         let b = owner.borrow(strand)?;
@@ -1280,7 +1302,12 @@ fn create_node<'v, 's>(
             compile::Kind::Continue { .. } => Which::Continue,
             compile::Kind::Return { .. } => Which::Return,
             compile::Kind::Type { .. } => Which::Type,
-            compile::Kind::Binder { .. } => Which::Binder,
+            compile::Kind::Binder { kind, .. } => match kind {
+                compile::BinderKind::Pos => Which::PosBinder,
+                compile::BinderKind::Key => Which::KeyBinder,
+                compile::BinderKind::Rest => Which::RestBinder,
+                _ => return Err(Error::not_supported(strand)),
+            },
             _ => unreachable!(),
         }
     };
@@ -1322,7 +1349,9 @@ fn create_node<'v, 's>(
         Which::Continue => make!(t.continue_node, ContinueTag),
         Which::Return => make!(t.return_node, ReturnTag),
         Which::Type => make!(t.type_node, TypeTag),
-        Which::Binder => make!(t.binder, BinderTag),
+        Which::PosBinder => make!(t.pos_binder, PosBinderTag),
+        Which::KeyBinder => make!(t.key_binder, KeyBinderTag),
+        Which::RestBinder => make!(t.rest_binder, RestBinderTag),
     }
     Ok(())
 }
@@ -1345,8 +1374,12 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
             Ok(())
         });
         builder = builder.get("span", |this, strand, out| {
-            let span = with_node(this, strand, |n, _| span_data(n.span()))?;
-            create_span(strand.state(), strand, span, out);
+            let span = with_node(this, strand, |n, _| n.span().map(span_data))?;
+            if let Some(span) = span {
+                create_span(strand.state(), strand, span, out)
+            } else {
+                Output::set(strand, out, Nil)
+            };
             Ok(())
         });
         // Every node answers, rather than only the kinds that can be
@@ -1377,7 +1410,9 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 | "PositionalParam"
                 | "KeyParam"
                 | "RestParam"
-                | "Binder"
+                | "PosBinder"
+                | "KeyBinder"
+                | "RestBinder"
         ) {
             builder = builder.get("name", |this, strand, out| project_name(this, strand, out));
         }
@@ -1415,14 +1450,9 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 project_target(this, strand, out)
             });
         }
-        if T::NAME == "Class" {
-            builder = builder.get("supers", |this, strand, out| {
-                project_supers(this, strand, out)
-            });
-        }
-        if T::NAME == "Binder" {
-            builder = builder.get("kind", |this, strand, out| {
-                project_binder_kind(this, strand, out)
+        if T::NAME == "ImportItem" {
+            builder = builder.get("type_only", |this, strand, out| {
+                project_type_only(this, strand, out)
             });
         }
         if T::NAME == "Type" {
@@ -1585,89 +1615,16 @@ fn project_target<'v, 's, T: NodeMarker + 'static>(
     };
     Ok(())
 }
-fn project_supers<'v, 's, T: NodeMarker + 'static>(
-    this: Instance<'v, '_, NodeObject<T>>,
-    strand: &mut Strand<'v, 's>,
-    mut out: Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    let (values, u) = with_node(this, strand, |n, u| {
-        (
-            match n.kind() {
-                compile::Kind::Class { supers, .. } => supers
-                    .map(|s| (span_data(s.span), s.target))
-                    .collect::<Vec<_>>(),
-                _ => unreachable!(),
-            },
-            u,
-        )
-    })?;
-    Output::set(strand, &mut out, Empty::Array);
-    let arr = out.as_array(strand).unwrap();
-    strand.with_slots_sync(|strand, [mut value]| {
-        for (span, target) in values {
-            let ty = strand.state::<Global<'v>>().types.super_ref;
-            ty.create(strand, SuperObject { span, target }, &mut value);
-            ty.cast(&value).unwrap().enter_sync(strand, |strand, s| {
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<OWNER>(&mut s.borrow_mut_unwrap()),
-                    Ref::slot::<OWNER>(&this.borrow_unwrap()),
-                )
-            });
-            arr.push(strand, &mut value)?;
-        }
-        Ok(())
-    })?;
-    let _ = u;
-    Ok(())
-}
-
-impl<'v> Object<'v> for SuperObject {
-    const NAME: &'v str = "Super";
-    const MODULE: &'v str = "compile";
-    const SLOTS: usize = 1;
-    type Annex = ();
-    type Type = ();
-    type TypeAnnex = ();
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder
-            .get("span", |this, strand, out| {
-                let span = this.borrow(strand)?.span.clone();
-                create_span(strand.state(), strand, span, out);
-                Ok(())
-            })
-            .get("target", |this, strand, mut out| {
-                let b = this.borrow(strand)?;
-                if let Some(id) = b.target {
-                    let u = with_unit(strand, Ref::slot::<OWNER>(&b), |strand, owner| {
-                        Ok(owner.borrow(strand)?.identity)
-                    })?;
-                    create_node_id(strand, u, id, &mut out)
-                } else {
-                    Output::set(strand, out, Nil)
-                };
-                Ok(())
-            })
-    }
-}
-
-fn project_binder_kind<'v, 's, T: NodeMarker + 'static>(
+fn project_type_only<'v, 's, T: NodeMarker + 'static>(
     this: Instance<'v, '_, NodeObject<T>>,
     strand: &mut Strand<'v, 's>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let kind = with_node(this, strand, |n, _| match n.kind() {
-        compile::Kind::Binder { kind, .. } => kind,
+    let v = with_node(this, strand, |n, _| match n.kind() {
+        compile::Kind::ImportItem { type_only, .. } => type_only,
         _ => unreachable!(),
     })?;
-    let global = strand.state::<Global<'v>>();
-    let sym = match kind {
-        compile::BinderKind::Pos => global.syms.pos,
-        compile::BinderKind::Key => global.syms.token_key,
-        compile::BinderKind::Rest => global.syms.rest,
-        _ => return Err(Error::not_supported(strand)),
-    };
-    Output::set(strand, out, sym);
+    Output::set(strand, out, v);
     Ok(())
 }
 
@@ -1846,35 +1803,41 @@ fn create_type_args<'v, 's>(
     for arg in args {
         strand.with_slots_sync(|strand, [mut item, mut ty]| {
             create_type_expr(global, strand, unit, arg.ty(), &mut ty)?;
-            let kind = match arg.kind() {
-                compile::TypeArgKind::Pos => ArgKind::Pos,
-                compile::TypeArgKind::Key { key } => ArgKind::Key(span_data(key)),
-                compile::TypeArgKind::Rest => ArgKind::Rest,
-                _ => return Err(Error::not_supported(strand)),
+            let annex = |key| TypeAnnex {
+                global,
+                span: span_data(arg.span()),
+                detail: TypeDetail::Arg {
+                    optional: arg.optional(),
+                    key,
+                },
             };
-            let t = global.types.type_arg;
-            t.create_with_annex(
-                strand,
-                TypeExprObject {
-                    marker: PhantomData,
-                },
-                TypeAnnex {
-                    global,
-                    span: span_data(arg.span()),
-                    detail: TypeDetail::Arg {
-                        optional: arg.optional(),
-                        kind,
-                    },
-                },
-                &mut item,
-            );
-            t.cast(&item).unwrap().enter_sync(strand, |strand, object| {
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<0>(&mut object.borrow_mut_unwrap()),
-                    &*ty,
-                );
-            });
+            macro_rules! make {
+                ($ty:expr, $key:expr) => {{
+                    let t = $ty;
+                    t.create_with_annex(
+                        strand,
+                        TypeExprObject {
+                            marker: PhantomData,
+                        },
+                        annex($key),
+                        &mut item,
+                    );
+                    t.cast(&item).unwrap().enter_sync(strand, |strand, object| {
+                        Output::set(
+                            strand,
+                            Mut::slot_mut::<0>(&mut object.borrow_mut_unwrap()),
+                            &*ty,
+                        );
+                    });
+                }};
+            }
+            let t = &global.types.arg_kinds;
+            match arg.kind() {
+                compile::TypeArgKind::Pos => make!(t.pos, None),
+                compile::TypeArgKind::Key { key } => make!(t.key, Some(span_data(key))),
+                compile::TypeArgKind::Rest => make!(t.rest, None),
+                _ => return Err(Error::not_supported(strand)),
+            }
             array.push(strand, &mut item)
         })?;
     }
@@ -1903,6 +1866,17 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
             create_span(this.annex().global, strand, this.annex().span.clone(), out);
             Ok(())
         });
+        if matches!(T::NAME, "PosTypeArg" | "KeyTypeArg" | "RestTypeArg") {
+            builder = builder
+                .get("optional", |this, strand, out| {
+                    let TypeDetail::Arg { optional, .. } = &this.annex().detail else {
+                        unreachable!()
+                    };
+                    Output::set(strand, out, *optional);
+                    Ok(())
+                })
+                .get("ty", slot!(0));
+        }
         match T::NAME {
             "NameType" => builder
                 .get("head", |this, strand, out| {
@@ -1927,38 +1901,13 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
             "SchemaType" => builder.get("args", slot!(0)),
             "UnionType" => builder.get("members", slot!(0)),
             "FuncType" => builder.get("params", slot!(0)).get("ret", slot!(1)),
-            "TypeArg" => builder
-                .get("kind", |this, strand, out| {
-                    let global = this.annex().global;
-                    let TypeDetail::Arg { kind, .. } = &this.annex().detail else {
-                        unreachable!()
-                    };
-                    let sym = match kind {
-                        ArgKind::Pos => global.syms.pos,
-                        ArgKind::Key(_) => global.syms.token_key,
-                        ArgKind::Rest => global.syms.rest,
-                    };
-                    Output::set(strand, out, sym);
-                    Ok(())
-                })
-                .get("key", |this, strand, out| {
-                    match &this.annex().detail {
-                        TypeDetail::Arg {
-                            kind: ArgKind::Key(key),
-                            ..
-                        } => create_span(this.annex().global, strand, key.clone(), out),
-                        _ => Output::set(strand, out, Nil),
-                    }
-                    Ok(())
-                })
-                .get("optional", |this, strand, out| {
-                    let TypeDetail::Arg { optional, .. } = &this.annex().detail else {
-                        unreachable!()
-                    };
-                    Output::set(strand, out, *optional);
-                    Ok(())
-                })
-                .get("ty", slot!(0)),
+            "KeyTypeArg" => builder.get("key", |this, strand, out| {
+                let TypeDetail::Arg { key: Some(key), .. } = &this.annex().detail else {
+                    unreachable!()
+                };
+                create_span(this.annex().global, strand, key.clone(), out);
+                Ok(())
+            }),
             _ => builder,
         }
     }
@@ -2293,7 +2242,6 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("Unit", global.types.unit)
         .value("NodeId", global.types.node_id)
         .value("Token", global.types.token)
-        .value("Super", global.types.super_ref)
         .value("Node", global.types.node)
         .value("Declaration", global.types.declaration)
         .value("Import", global.types.import)
@@ -2333,7 +2281,10 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("Continue", global.types.concrete_nodes.continue_node)
         .value("Return", global.types.concrete_nodes.return_node)
         .value("Type", global.types.concrete_nodes.type_node)
-        .value("Binder", global.types.concrete_nodes.binder)
+        .value("Binder", global.types.binder)
+        .value("PosBinder", global.types.concrete_nodes.pos_binder)
+        .value("KeyBinder", global.types.concrete_nodes.key_binder)
+        .value("RestBinder", global.types.concrete_nodes.rest_binder)
         .value("TypeExpr", global.types.type_expr)
         .value("NameType", global.types.type_kinds.name)
         .value("ConstType", global.types.type_kinds.constant)
@@ -2342,6 +2293,9 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("UnionType", global.types.type_kinds.union)
         .value("FuncType", global.types.type_kinds.func)
         .value("TypeArg", global.types.type_arg)
+        .value("PosTypeArg", global.types.arg_kinds.pos)
+        .value("KeyTypeArg", global.types.arg_kinds.key)
+        .value("RestTypeArg", global.types.arg_kinds.rest)
         .value("Diagnostic", global.types.diagnostic)
         .value("Span", global.types.span)
         .value("Pos", global.types.pos)

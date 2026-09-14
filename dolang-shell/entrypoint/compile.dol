@@ -73,7 +73,81 @@ let KIND_NAMES = $
   $compile.Continue: "Continue"
   $compile.Return: "Return"
   $compile.Type: "Type"
-  $compile.Binder: "Binder"
+  $compile.PosBinder: "PosBinder"
+  $compile.KeyBinder: "KeyBinder"
+  $compile.RestBinder: "RestBinder"
+
+# Type expression kind name, matching the `compile` class names.
+let TYPE_KIND_NAMES = $
+  $compile.NameType: "NameType"
+  $compile.ConstType: "ConstType"
+  $compile.AppType: "AppType"
+  $compile.SchemaType: "SchemaType"
+  $compile.UnionType: "UnionType"
+  $compile.FuncType: "FuncType"
+
+# Type argument kind name, matching the `compile` class names.
+let TYPE_ARG_KIND_NAMES = $
+  $compile.PosTypeArg: "PosTypeArg"
+  $compile.KeyTypeArg: "KeyTypeArg"
+  $compile.RestTypeArg: "RestTypeArg"
+
+# How a type argument is given, as the documentation projection names it.
+let ARG_KINDS = $
+  $compile.PosTypeArg: pos
+  $compile.KeyTypeArg: key
+  $compile.RestTypeArg: rest
+
+# The type of a constant type's value, which JSON alone cannot tell apart.
+def const_type value
+  if (value == nil)
+    "Nil"
+  else if type(value, std.Sym)
+    "Sym"
+  else if type(value, std.Str)
+    "Str"
+  else if type(value, std.Bool)
+    "Bool"
+  else
+    "Int"
+
+# A type expression, with the node each name refers to as a `nodes` index.
+def type_expr_json id_to_index expr
+  $
+    kind: (TYPE_KIND_NAMES.get (type expr))
+    span: (span_json expr.span)
+    if type(expr, compile.NameType)
+      head: (span_json expr.head)
+      target: (node_ref id_to_index expr.target)
+    if type(expr, compile.ConstType)
+      type: (const_type expr.value)
+      value: $expr.value
+    if type(expr, compile.AppType)
+      base: (type_expr_json id_to_index expr.base)
+    if (type(expr, compile.AppType) || type(expr, compile.SchemaType))
+      args: [...expr.args.map do |arg| (type_arg_json id_to_index arg)]
+    if type(expr, compile.UnionType)
+      members: [...expr.members.map do |member| (type_expr_json id_to_index member)]
+    if type(expr, compile.FuncType)
+      params: [...expr.params.map do |arg| (type_arg_json id_to_index arg)]
+      ret: (type_expr_json id_to_index expr.ret)
+
+# An item in the `[]`, `()` or `{}` of a type expression.
+def type_arg_json id_to_index arg
+  $
+    kind: (TYPE_ARG_KIND_NAMES.get (type arg))
+    span: (span_json arg.span)
+    optional: $arg.optional
+    if type(arg, compile.KeyTypeArg)
+      key: (span_json arg.key)
+    type: (type_expr_json id_to_index arg.ty)
+
+# Where a node starts, for ordering. A prelude node has no span, and comes first.
+def start_offset node
+  if (node.span == nil)
+    -1
+  else
+    node.span.start.byte_offset
 
 # A node reference as a `nodes` array index, or `nil`.
 def node_ref id_to_index id
@@ -81,12 +155,6 @@ def node_ref id_to_index id
     nil
   else
     id_to_index.get $id default: nil
-
-# One entry of a `Class` node's `supers`.
-def super_json id_to_index s
-  $
-    span: (span_json s.span)
-    target: (node_ref id_to_index s.target)
 
 # One `nodes` entry. Fields a node's concrete kind doesn't expose (see the
 # conditional getter registration in `NodeObject::build`, dolang-ext-compile)
@@ -101,11 +169,12 @@ def node_json id_to_index node
     :module = nil
     :item = nil
     :target = nil
-    :supers = nil
+    :type_only = nil
+    :expr = nil
     ...
   $
     kind: (KIND_NAMES.get (type node))
-    span: (span_json node.span)
+    span: (span_json_opt node.span)
     parent: (node_ref id_to_index node.parent)
     doc: (span_json_opt node.doc)
     if (name != nil)
@@ -122,8 +191,10 @@ def node_json id_to_index node
       item: (span_or_str item)
     if (target != nil)
       target: (node_ref id_to_index target)
-    if (supers != nil)
-      supers: [...supers.map do |s| (super_json id_to_index s)]
+    if (type_only != nil)
+      type_only: $type_only
+    if (expr != nil)
+      expr: (type_expr_json id_to_index expr)
 
 # One `tokens` entry.
 def token_json id_to_index token
@@ -162,7 +233,7 @@ def diagnostic_json diag
     patches: [...diag.patches.map(patch_json)]
 
 # Walks `unit.nodes()` once, building the `nodes` JSON array alongside the
-# NodeId -> array-index map (used to resolve `parent`/`target`/`supers` node
+# NodeId -> array-index map (used to resolve `parent`/`target` node
 # references and `tokens[].ref`) and a parent -> children map, both reused by
 # the `--doc` cooked projection so it never re-walks the tree.
 class Index
@@ -181,9 +252,10 @@ class Index
       if (parent != nil)
         if !(self.#children.contains parent)
           self.#children[parent] = []
-        self.#children[parent].push $node
+        self.#children[parent].push $id
+    let by_id = self.#by_id
     for group = self.#children.values()
-      group.sort key: (do |node| node.span.start.byte_offset)
+      group.sort key: (do |child| start_offset(by_id[child]))
 
   pub def nodes_json self
     self.#nodes_json
@@ -191,14 +263,25 @@ class Index
   pub def id_to_index self
     self.#id_to_index
 
+  # The node with an ID, or `nil`.
+  pub def node self id
+    if (id == nil)
+      return nil
+    self.#by_id.get $id default: nil
+
   # The root [`compile.Root`](compile.Root) node ID.
   pub def root self
     let id _node = self.#by_id.find do |pair| type $pair[1] $compile.Root
     id
 
+  # The IDs of the nodes belonging to one declaration, in source order.
+  pub def own_ids self id
+    self.#children.get $id default: []
+
   # The nodes belonging to one declaration, in source order.
   pub def own self id
-    self.#children.get $id default: []
+    let by_id = self.#by_id
+    [...self.own_ids(id).map(do |child| by_id[child])]
 
 # Whether one of a declaration's own nodes is a decorator resolving to `target`.
 def decorated own target
@@ -258,7 +341,7 @@ class Document
       $compile.Method: $self.#method_member
       $compile.SpecialMethod: $self.#special_member
     let nodes = [...unit.nodes()]
-    nodes.sort key: do |pair| pair[1].span.start.byte_offset
+    nodes.sort key: do |pair| (start_offset pair[1])
     for id node = nodes
       if let handler = dispatch.get (type node) default: nil
         handler(id, node)
@@ -302,20 +385,121 @@ class Document
 
   def params self id
     let result = []
-    for child = self.#own(id)
+    for child_id = self.#index.own_ids(id)
+      let child = self.#index.node $child_id
       let info = self.#param_info $child
       if (info == nil)
         continue
       let name optional = info
+      let ty = self.#type_of $child_id
       let param = $
         name: $name
         optional: $optional
         doc: (self.#doc_of(child))
+        if (ty != nil)
+          type: $ty
       result.push $param
     result
 
-  def supers self node
-    [...node.supers.map do |s| self.#text(s.span)]
+  # The binders declared by a function, method, or class, as written.
+  def binders self id
+    let result = []
+    for child = self.#own(id)
+      if type(child, compile.PosBinder)
+        result.push $self.#text(child.name)
+      else if type(child, compile.KeyBinder)
+        result.push ":$(self.#text(child.name))"
+      else if type(child, compile.RestBinder)
+        result.push "...$(self.#text(child.name))"
+    result
+
+  # The type describing a node, as a tree, or `nil`.
+  def type_of self id
+    for child = self.#own(id)
+      if type(child, compile.Type)
+        return self.#type_tree(child.expr)
+    nil
+
+  # A type expression as a tree whose text is given as written. A name also
+  # gives the `nodes` index of what it refers to.
+  def type_tree self expr
+    if type(expr, compile.NameType)
+      self.#name_tree $expr
+    else if type(expr, compile.ConstType)
+      $
+        kind: "const"
+        text: (self.#text(expr.span))
+    else if type(expr, compile.AppType)
+      $
+        kind: "app"
+        base: (self.#type_tree(expr.base))
+        args: (self.#type_args(expr.args))
+    else if type(expr, compile.SchemaType)
+      $
+        kind: "schema"
+        args: (self.#type_args(expr.args))
+    else if type(expr, compile.UnionType)
+      let members = []
+      for member = expr.members
+        members.push $self.#type_tree(member)
+      $
+        kind: "union"
+        members: $members
+    else
+      $
+        kind: "func"
+        params: (self.#type_args(expr.params))
+        ret: (self.#type_tree(expr.ret))
+
+  def name_tree self expr
+    let target = self.#index.node $expr.target
+    $
+      kind: "name"
+      name: (self.#text(expr.span))
+      target: (node_ref(self.#index.id_to_index(), expr.target))
+      # An import's node gives its names only as spans
+      if type(target, compile.ImportItem)
+        module: (self.#text(target.module))
+        item: (self.#text(target.item))
+      if type(target, compile.ImportModule)
+        module: (self.#text(target.module))
+
+  def type_args self args
+    let result = []
+    for arg = args
+      result.push $
+        kind: (ARG_KINDS.get (type arg))
+        optional: $arg.optional
+        if type(arg, compile.KeyTypeArg)
+          key: (self.#text(arg.key))
+        type: (self.#type_tree(arg.ty))
+    result
+
+  # A class's superclasses, in source order.
+  def supers self id
+    let result = []
+    for child = self.#own(id)
+      if type(child, compile.Type)
+        result.push $self.#super_json(child.expr)
+    result
+
+  # A superclass naming an imported item, as its module and item, or else its
+  # text.
+  def super_json self expr
+    let text = self.#text(expr.span)
+    if (!type(expr, compile.NameType) || expr.target == nil || text != self.#text(expr.head))
+      return text
+    let target = self.#index.node $expr.target
+    if type(target, compile.ImportItem)
+      $
+        module: (self.#text(target.module))
+        item: (self.#text(target.item))
+    else if type(target, compile.PreludeItem)
+      $
+        module: $target.module
+        item: $target.item
+    else
+      text
 
   def add_member self node member
     let list = self.#members.get $node.parent else: do return
@@ -325,6 +509,7 @@ class Document
     if !self.#included(node.is_pub)
       return
     let list = []
+    let binders = self.#binders(id)
     self.#members[id] = list
     self.#entities.push $
       kind: "class"
@@ -332,19 +517,27 @@ class Document
       pub: $node.is_pub
       span: (span_json(node.name))
       doc: (self.#doc_of(node))
-      supers: (self.#supers(node))
+      if (binders.len > 0)
+        binders: $binders
+      supers: (self.#supers(id))
       members: $list
 
   def function_entry self id node
     if !self.#included(node.is_pub)
       return
+    let returns = self.#type_of $id
+    let binders = self.#binders(id)
     self.#entities.push $
       kind: "function"
       name: (self.#text(node.name))
       pub: $node.is_pub
       span: (span_json(node.name))
       doc: (self.#doc_of(node))
+      if (binders.len > 0)
+        binders: $binders
       params: (self.#params(id))
+      if (returns != nil)
+        returns: $returns
 
   def value_entry self _id node
     if (node.parent != self.#index.root() || !self.#included(node.is_pub))
@@ -367,7 +560,8 @@ class Document
       doc: (self.#doc_of(node))
 
   def import_item_entry self _id node
-    if !self.#included(node.is_pub)
+    # An item imported for types only is not a value the module exports
+    if (node.type_only || !self.#included(node.is_pub))
       return
     self.#entities.push $
       kind: "import_item"
@@ -380,6 +574,7 @@ class Document
   def field_member self id node
     if !self.#included(node.is_pub)
       return nil
+    let ty = self.#type_of $id
     self.#add_member $node $
       kind: "field"
       name: (self.#text(node.name))
@@ -387,6 +582,8 @@ class Document
       span: (span_json(node.name))
       doc: (self.#doc_of(node))
       scope: (self.#scope(id))
+      if (ty != nil)
+        type: $ty
 
   def method_member self id node
     if self.#included(node.is_pub)
@@ -396,6 +593,8 @@ class Document
     self.#method_entry $id $node true true
 
   def method_entry self id node is_pub special
+    let returns = self.#type_of $id
+    let binders = self.#binders(id)
     self.#add_member $node $
       if decorated(self.#own(id), self.#getter)
         kind: "field"
@@ -404,6 +603,8 @@ class Document
         span: (span_json(node.name))
         doc: (self.#doc_of(node))
         scope: (self.#scope(id))
+        if (returns != nil)
+          type: $returns
       else
         kind: "method"
         name: (self.#text(node.name))
@@ -412,7 +613,11 @@ class Document
         span: (span_json(node.name))
         doc: (self.#doc_of(node))
         scope: (self.#scope(id))
+        if (binders.len > 0)
+          binders: $binders
         params: (self.#params(id))
+        if (returns != nil)
+          returns: $returns
 
 # Describes one source. Returns `[true, result]` on success, or
 # `[false, diagnostics]` when --doc was requested but the source didn't

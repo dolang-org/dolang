@@ -39,17 +39,6 @@ impl Id {
     }
 }
 
-/// A superclass reference.
-///
-/// A reference is a use site rather than a child, so it cannot be expressed by
-/// parentage.  `target` is the node the reference resolves to when it is simply
-/// an identifier, which is what gives a consumer the import provenance.
-#[derive(Copy, Clone, Debug)]
-pub(crate) struct Super {
-    pub(crate) span: Span,
-    pub(crate) target: Option<Id>,
-}
-
 /// Everything about a node that varies by what kind of node it is.
 ///
 /// A declared name and `pub` belong to the kinds that have them rather than to
@@ -63,7 +52,6 @@ pub(crate) enum Kind {
     Class {
         name: Span,
         is_pub: bool,
-        supers: alias::Box<[Super]>,
     },
     Function {
         name: Span,
@@ -116,6 +104,7 @@ pub(crate) enum Kind {
         item: Span,
         name: Span,
         is_pub: bool,
+        type_only: bool,
     },
     PreludeModule {
         module: alias::Box<str>,
@@ -156,7 +145,7 @@ pub(crate) enum Kind {
     },
 
     // Types
-    /// A type in an annotation or return type, describing its parent
+    /// A type in an annotation, return type or superclass list, describing its parent
     Type {
         expr: TypeExpr,
     },
@@ -278,14 +267,20 @@ pub(crate) struct Node {
     /// The node this one is lexically inside, if any
     pub(crate) parent: Option<Id>,
     pub(crate) kind: Kind,
-    /// The whole construct, from its first decorator to the end of its body
-    pub(crate) span: Span,
+    /// The whole construct, from its first decorator to the end of its body. A
+    /// prelude binding has no source text, and so has none.
+    pub(crate) span: Option<Span>,
     /// The doc comment block attached to this node, if any
     pub(crate) doc: Option<Span>,
 }
 
 impl Node {
-    pub(crate) fn new(parent: Option<Id>, kind: Kind, span: Span, doc: Option<Span>) -> Self {
+    pub(crate) fn new(
+        parent: Option<Id>,
+        kind: Kind,
+        span: Option<Span>,
+        doc: Option<Span>,
+    ) -> Self {
         Self {
             parent,
             kind,

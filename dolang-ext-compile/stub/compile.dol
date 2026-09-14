@@ -106,22 +106,6 @@ pub class Unit
 # ```
 pub class NodeId
 
-# A superclass reference written in a class declaration.
-#
-# Reported by [`Class.supers`](compile.Class.supers) in the order the references
-# were written.
-pub class Super
-  # The [`Span`](compile.Span) of the reference as written.
-  #[getter]
-  pub def span self
-    throw nil
-
-  # The [`NodeId`](compile.NodeId) of the node the reference names, or `nil` when
-  # it is not a plain identifier the compiler could resolve.
-  #[getter]
-  pub def target self
-    throw nil
-
 # Supertype of every document node.
 #
 # Nodes form a tree rooted at [`Root`](compile.Root), reached through
@@ -147,7 +131,8 @@ pub class Node
   pub def parent self
     throw nil
 
-  # The [`Span`](compile.Span) the node covers in the source.
+  # The [`Span`](compile.Span) the node covers in the source, or `nil` for a
+  # prelude node, which has no source text.
   #[getter]
   pub def span self
     throw nil
@@ -173,15 +158,12 @@ pub class Declaration: Node
     throw nil
 
 # A class declaration.
+#
+# Each superclass is a [`Type`](compile.Type) node the class parents.
 pub class Class: Declaration
   # Whether the class was declared `pub`.
   #[getter]
   pub def is_pub self
-    throw nil
-
-  # An array of [`Super`](compile.Super) references, in the order written.
-  #[getter]
-  pub def supers self
     throw nil
 
 # A `def` at statement level.
@@ -251,11 +233,17 @@ pub class ImportItem: Import
   pub def item self
     throw nil
 
+  # Whether the item was imported with `@`, for types only. Such an item binds no
+  # variable.
+  #[getter]
+  pub def type_only self
+    throw nil
+
 # A module bound by the prelude.
 #
 # A prelude binding comes from the compiler's configuration rather than the
 # source, so its `name` and `module` are [`Str`](std.Str) values and its
-# `span` covers no source text.
+# `span` is `nil`.
 #
 # A prelude node is recorded where its binding resolves, so a configured
 # prelude the source never mentions produces no node at all.
@@ -369,25 +357,30 @@ pub class Continue: Reference
 # A `return`. Its `target` is the function returned from.
 pub class Return: Reference
 
-# A type in an annotation or return type.
+# A type in an annotation, return type, or superclass list.
 #
 # Its parent is what it describes: the parameter, binding, or field it
-# annotates, or the function, method, or lambda whose return type it is. A
-# declaration naming several fields yields one type per field.
+# annotates, the function, method, or lambda whose return type it is, or the
+# class it is a superclass of. A declaration naming several fields yields one
+# type per field.
 pub class Type: Node
   # The type as a [`TypeExpr`](compile.TypeExpr).
   #[getter]
   pub def expr self
     throw nil
 
-# A binder: a name standing for a type within the function, method, or class
-# that is its parent.
+# Supertype of binders: names standing for types within the function, method,
+# or class that is their parent.
 pub class Binder: Declaration
-  # How the binder takes a type argument: `:POS:` for `T`, `:KEY:` for `:K`, or
-  # `:REST:` for `...R`.
-  #[getter]
-  pub def kind self
-    throw nil
+
+# A positional binder, such as `T`.
+pub class PosBinder: Binder
+
+# A keyed binder, such as `:K`.
+pub class KeyBinder: Binder
+
+# A rest binder, such as `...R`.
+pub class RestBinder: Binder
 
 # Supertype of the forms a type takes.
 #
@@ -461,20 +454,8 @@ pub class FuncType: TypeExpr
   pub def ret self
     throw nil
 
-# An item in the `[]`, `()`, or `{}` of a type.
+# Supertype of the items in the `[]`, `()`, or `{}` of a type.
 pub class TypeArg
-  # The [`Span`](compile.Span) of the key as written, or `nil` unless `kind` is
-  # `:KEY:`. A bareword key is a symbol and a quoted one is a string.
-  #[getter]
-  pub def key self
-    throw nil
-
-  # How the item is given: `:POS:` for `T`, `:KEY:` for `key: T`, or `:REST:`
-  # for `...T`.
-  #[getter]
-  pub def kind self
-    throw nil
-
   # Whether the item is marked optional with `?`.
   #[getter]
   pub def optional self
@@ -489,6 +470,20 @@ pub class TypeArg
   #[getter]
   pub def ty self
     throw nil
+
+# A positional item, such as `T`.
+pub class PosTypeArg: TypeArg
+
+# A keyed item, such as `name: T`.
+pub class KeyTypeArg: TypeArg
+  # The [`Span`](compile.Span) of the key as written. A bareword key is a symbol
+  # and a quoted one is a string.
+  #[getter]
+  pub def key self
+    throw nil
+
+# A rest item, such as `...T`.
+pub class RestTypeArg: TypeArg
 
 # A syntactic token.
 #
@@ -509,6 +504,8 @@ pub class Token
   #
   # | Value            | Meaning                                                  |
   # | ---------------- | --------------------------------------------------------- |
+  # | `:ANNOTATION:`   | An `@` annotation marker                                  |
+  # | `:BINDER:`       | A type binder declaration                                 |
   # | `:COMMENT:`      | A comment                                                  |
   # | `:CONSTANT:`     | A non-numeric, non-string constant such as `nil` or `false` |
   # | `:DELIM:`        | A delimiter such as `(`, `[`, etc                          |
@@ -523,6 +520,8 @@ pub class Token
   # | `:NUMBER:`       | A numeric constant                                         |
   # | `:OPERATOR:`     | A unary or binary operator such as `+` or `-`               |
   # | `:STRING_DELIM:` | A string delimiter (`"`)                                   |
+  # | `:TYPE:`         | A name within a type expression                           |
+  # | `:TYPE_KEY:`     | A keyed argument within a type expression                 |
   # | `:VARIABLE:`     | A variable                                                 |
   # | `:SIGIL:`        | A sigil like `$` or `...`                                  |
   #[getter]

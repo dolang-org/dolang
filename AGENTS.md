@@ -810,19 +810,27 @@ paragraph becomes a subsection of `Parameters` named for the parameter. A
 declaration that renders a table has its signature heading abbreviated to the
 required positional prefix, since the table already carries the full list.
 
-The language has no type annotations yet, so as a stopgap a parameter's
-description may open with its type in parentheses, which is parsed out into the
-Type column:
+A parameter's type annotation fills its Type column, a return type annotation
+follows the signature heading, and a field's annotation follows its name. Names
+in an annotation link to their documentation where it exists:
+
+```
+# Image name or ID.
+image @Str
+```
+
+A declaration without an annotation may instead open its description with its
+type in parentheses:
 
 ```
 # ([`Str`](../std/str.md)) Image name or ID.
 image
 ```
 
-Write the type as markdown, links included; it is matched by paren depth, so a
+Write that type as markdown, links included; it is matched by paren depth, so a
 link's own parentheses are safe. A description that must begin with a literal
 parenthetical needs rewording, since the leading group is always taken as a
-type.
+type. Giving a declaration both is a build warning, and the annotation is used.
 
 ### Code Examples
 

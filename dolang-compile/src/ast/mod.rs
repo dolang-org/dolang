@@ -1738,7 +1738,7 @@ fn accept_import_bind<'a, V: Visit>(
     visit: &'a mut V,
 ) -> ControlFlow<V::Break> {
     match type_only {
-        Some(type_only) => visit.token(Token::Variable, bind.span, type_only.node),
+        Some(type_only) => visit.token(Token::Type, bind.span, type_only.node),
         None => visit.node(bind),
     }
 }
@@ -1774,9 +1774,17 @@ impl Node for ImportItem {
                     visit.token(Token::Delim, *minus_span, None)?;
                 }
                 if let Some(type_only) = type_only {
-                    visit.token(Token::Sigil, type_only.at_span, None)?;
+                    visit.token(Token::Annotation, type_only.at_span, None)?;
                 }
-                visit.token(Token::ModuleItem, *item, None)?;
+                visit.token(
+                    if type_only.is_some() {
+                        Token::Type
+                    } else {
+                        Token::ModuleItem
+                    },
+                    *item,
+                    None,
+                )?;
                 visit.token(Token::Delim, *delim_span, None)?;
                 accept_import_bind(bind, type_only, visit)
             }
@@ -1787,7 +1795,7 @@ impl Node for ImportItem {
             } => {
                 visit.token(Token::Delim, *delim_span, None)?;
                 if let Some(type_only) = type_only {
-                    visit.token(Token::Sigil, type_only.at_span, None)?;
+                    visit.token(Token::Annotation, type_only.at_span, None)?;
                 }
                 accept_import_bind(bind, type_only, visit)
             }
@@ -2213,10 +2221,14 @@ pub(crate) struct ClassSuper {
 
 impl Node for ClassSuper {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
-        visit.node(&self.ident)?;
+        visit.token(
+            Token::Type,
+            self.ident.span,
+            self.ident.res.as_ref().and_then(|res| res.node),
+        )?;
         for field in &self.fields {
             visit.token(Token::Operator, field.before_left_char(), None)?;
-            visit.token(Token::Field, *field, None)?;
+            visit.token(Token::Type, *field, None)?;
         }
         if let Some(bracket_span) = self.bracket_span {
             visit.token(Token::Delim, bracket_span.left_char(), None)?;

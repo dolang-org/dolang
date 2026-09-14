@@ -26,9 +26,9 @@ pub let default_name = "world"
 let secret = "shhh"
 
 # A named point.
-pub class Point: Record
+pub class Point[T, :K, ...R]: Record
   # The horizontal coordinate.
-  pub field x = 0
+  pub field x @Int = 0
 
   # How many points exist.
   #[class]
@@ -48,11 +48,11 @@ pub class Point: Record
 
   # The coordinate, read as a field.
   #[getter]
-  pub def horizontal self
+  pub def horizontal self -> Int
     self.x
 
   # Move it.
-  pub def shift self by :clamp = false
+  pub def shift[U] self by :clamp = false
     self.x = (self.x + by)
 
   # Not exported.
@@ -62,6 +62,14 @@ pub class Point: Record
 # Inherits through a module path rather than an imported item.
 pub class Tagged: std.Record
   pub field tag = nil
+
+# Place a point.
+pub def place point @Point :limit @(Int | nil) = nil -> std.Dict[Str, Record]
+  nil
+
+# The first of some items.
+pub def first[T] items @Array[T] :fallback @((Int, ?Str) -> T) = nil :options @{name: Str, ?port: Int, ...Dict[Str, Str]} = nil :mode @(:fast: | "slow" | 1 | true) = nil -> T
+  items[0]
 
 # Build something.
 #

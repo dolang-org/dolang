@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import html
 import json
 import os
 import re
@@ -12,7 +13,13 @@ from typing import Any
 # How many parameters a signature keeps once a parameter table repeats them.
 MAX_SIGNATURE_PARAMS = 3
 
+from mkdocstrings import get_logger
 from mkdocstrings._internal.handlers.base import BaseHandler, CollectionError
+
+_logger = get_logger(__name__)
+
+# Characters Markdown reads as syntax, escaped in the text of a type
+_MARKDOWN_SPECIAL = re.compile(r"([\\`*_\[\]])")
 
 
 def get_handler(
@@ -47,6 +54,9 @@ class DoHandler(BaseHandler):
         # triggering a separate `collect()` call -- without this cache, every
         # one of them would re-read and re-parse the same cache file.
         self._doc_cache: dict[str, dict] = {}
+        # Keyed by module name, like `_doc_cache`: what the names in the module's
+        # types refer to, from the raw nodes alongside its documentation.
+        self._type_scopes: dict[str, _TypeScope] = {}
 
     def get_templates_dir(self, handler: str | None = None) -> Path:
         return Path(__file__).parent / "templates"
@@ -66,13 +76,15 @@ class DoHandler(BaseHandler):
         try:
             # `dolang -m compile extract --doc` nests the cooked documentation
             # projection under "doc" alongside the raw nodes/tokens/diagnostics
-            # dump; only the former is relevant here.
-            cached = json.loads(cache_file.read_text())["doc"]
+            # dump. Types in the former refer to the raw nodes by index.
+            extracted = json.loads(cache_file.read_text())
         except json.JSONDecodeError as e:
             raise CollectionError(
                 f"doc cache file '{cache_file}' is invalid JSON: {e}"
             ) from e
+        cached = extracted["doc"]
         self._doc_cache[module] = cached
+        self._type_scopes[module] = _TypeScope(module, extracted.get("nodes", []))
         return cached
 
     def _resolve_entity(
@@ -90,6 +102,10 @@ class DoHandler(BaseHandler):
         if kind != "import_item":
             result = copy.deepcopy(entity)
             result["_doc_source"] = f"{module}.{entity.get('name', '')}"
+            # Types are rendered in the module declaring them, which a
+            # re-export does not change
+            self._load_module(cache_dir, module)
+            _render_annotations(result, self._type_scopes[module])
             return result
 
         key = (module, entity.get("name", ""))
@@ -188,7 +204,7 @@ class DoHandler(BaseHandler):
         if not show_undocumented:
             _strip_undocumented(entities)
 
-        _annotate_params(entities)
+        _annotate_params(entities, module_name)
 
         if not entity_parts:
             # Module-level: return all public entities as a synthetic module object.
@@ -296,12 +312,12 @@ def _split_intro(doc: str) -> tuple[str, str]:
 
 
 def _split_type(text: str) -> tuple[str, str]:
-    """Split a leading parenthesised type off a parameter description.
+    """Split a leading parenthesised type off a description.
 
-    Until the language carries type annotations of its own, a description may
-    open with its type in parentheses. A type is written as markdown and so
-    holds parentheses of its own -- ``([`Str`](../std/str.md))`` -- so the
-    group is matched by depth rather than to the first ``)``.
+    A declaration without a type annotation may open its description with its
+    type in parentheses. That type is written as markdown and so holds
+    parentheses of its own -- ``([`Str`](../std/str.md))`` -- so the group is
+    matched by depth rather than to the first ``)``.
     """
     if not text.startswith("("):
         return "", text
@@ -315,6 +331,148 @@ def _split_type(text: str) -> tuple[str, str]:
                 return text[1:index].strip(), text[index + 1 :].lstrip()
     # Unbalanced, so there is no group to take and the text is all description.
     return "", text
+
+
+class _TypeScope:
+    """What the names in one module's types refer to.
+
+    A name in a type gives the index of the raw node it refers to. Only the
+    nodes that decide how a name renders are kept: the prelude bindings, and
+    the classes the module declares at top level.
+    """
+
+    def __init__(self, module: str, nodes: list[dict]) -> None:
+        self.module = module
+        root = next(
+            (index for index, node in enumerate(nodes) if node.get("kind") == "Root"),
+            None,
+        )
+        self.targets = {
+            index: node
+            for index, node in enumerate(nodes)
+            if node.get("kind") in ("PreludeItem", "PreludeModule")
+            or (node.get("kind") == "Class" and node.get("parent") == root)
+        }
+
+    def name(self, ty: dict) -> tuple[str, str | None]:
+        """How to show a possibly dotted name, and what to link it to, if anything.
+
+        A name the module has in scope without importing it -- a prelude binding
+        or its own class -- is shown as written. An imported name is shown with
+        its module, since the page it appears on does not show the import.
+        """
+        name = ty.get("name", "")
+        head, dot, fields = name.partition(".")
+        rest = dot + fields
+        node = self.targets.get(ty.get("target"))
+        kind = node.get("kind") if node else None
+        if kind == "PreludeItem":
+            return name, f"{node['module']}.{node['item']}{rest}"
+        if kind == "PreludeModule":
+            return name, f"{node['module']}{rest}"
+        if kind == "Class":
+            return name, f"{self.module}.{name}"
+        if "item" in ty:
+            path = f"{ty['module']}.{ty['item']}{rest}"
+            return path, path
+        if "module" in ty:
+            module = ty["module"]
+            # `import time` binds the first name of the path, which the type
+            # then spells out in full
+            path = name if name.startswith(f"{module}.") else f"{module}{rest}"
+            return path, path
+        # A binder, or a declaration with no page of its own
+        return name, None
+
+
+# How tightly each type form binds, so that it is parenthesized where needed
+_BINDS_FUNC, _BINDS_UNION, _BINDS_COMPACT = range(3)
+
+
+def _escape_type_text(text: str) -> str:
+    """Escape text for HTML that Markdown will still read."""
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", html.escape(text, quote=False))
+
+
+def _render_type(ty: dict, scope: _TypeScope, context: int) -> str:
+    """Render a type tree in a position binding as tightly as `context`."""
+    kind = ty.get("kind")
+    if kind == "name":
+        name, link = scope.name(ty)
+        text = _escape_type_text(name)
+        if link:
+            return f'<autoref identifier="{html.escape(link)}" optional>{text}</autoref>'
+        return text
+    if kind == "const":
+        return _escape_type_text(ty.get("text", ""))
+    if kind == "app":
+        base = _render_type(ty["base"], scope, _BINDS_COMPACT)
+        rendered = f"{base}\\[{_render_type_args(ty['args'], scope)}\\]"
+        binding = _BINDS_COMPACT
+    elif kind == "schema":
+        rendered = f"{{{_render_type_args(ty['args'], scope)}}}"
+        binding = _BINDS_COMPACT
+    elif kind == "union":
+        rendered = " | ".join(
+            _render_type(member, scope, _BINDS_COMPACT) for member in ty["members"]
+        )
+        binding = _BINDS_UNION
+    elif kind == "func":
+        params = _render_type_args(ty["params"], scope)
+        ret = _render_type(ty["ret"], scope, _BINDS_FUNC)
+        rendered = f"({params}) -&gt; {ret}"
+        binding = _BINDS_FUNC
+    else:
+        return ""
+    return f"({rendered})" if binding < context else rendered
+
+
+def _render_type_args(args: list[dict], scope: _TypeScope) -> str:
+    rendered = []
+    for arg in args:
+        text = "?" if arg.get("optional") else ""
+        if arg.get("kind") == "rest":
+            text += "..."
+        elif arg.get("kind") == "key":
+            text += f"{_escape_type_text(arg.get('key', ''))}: "
+        rendered.append(text + _render_type(arg["type"], scope, _BINDS_FUNC))
+    return ", ".join(rendered)
+
+
+def _type_html(ty: dict | None, scope: _TypeScope) -> str:
+    """Render an annotation, linking the names documented elsewhere.
+
+    The result passes through Markdown, which leaves the tags alone but still
+    reads the text between them, so that text is escaped for both. Links are
+    optional: a name with no documentation renders as plain text. Like an
+    annotation in source, it is a compact type, so a union or function type is
+    parenthesized.
+    """
+    if not ty:
+        return ""
+    return f"<code>{_render_type(ty, scope, _BINDS_COMPACT)}</code>"
+
+
+def _render_annotations(entity: dict, scope: _TypeScope) -> None:
+    """Render the annotations of an entity and its members, in its module's scope."""
+    for param in entity.get("params") or []:
+        param["annotation"] = _type_html(param.get("type"), scope)
+    if entity.get("kind") in ("function", "method"):
+        entity["return_annotation"] = _type_html(entity.get("returns"), scope)
+    elif entity.get("kind") == "field":
+        entity["annotation"] = _type_html(entity.get("type"), scope)
+    for member in entity.get("members", []):
+        _render_annotations(member, scope)
+
+
+def _choose_type(path: str, what: str, rendered: str, doc_type: str) -> str:
+    """The type to render: the annotation, or failing that the doc comment's."""
+    if rendered and doc_type:
+        _logger.warning(
+            f"{path}: {what} is both annotated and given a parenthesized type in "
+            "its doc comment; the annotation is used"
+        )
+    return rendered or doc_type
 
 
 def _slug(name: str) -> str:
@@ -334,7 +492,7 @@ def _signature(entity: dict) -> str:
     a keyword-heavy declaration produces a heading too long to scan or to use
     as a table-of-contents entry.
     """
-    name = entity.get("name", "")
+    name = _declaration_name(entity)
     params = entity.get("params") or []
     if not params:
         return f"{name}()"
@@ -352,9 +510,20 @@ def _signature(entity: dict) -> str:
     return " ".join([name, *kept, "…"])
 
 
-def _annotate_params(entities: list[dict]) -> None:
-    """Recursively prepare parameters and signatures for rendering."""
+def _declaration_name(entity: dict) -> str:
+    """A declaration's name followed by its type binders."""
+    name = entity.get("name", "")
+    binders = entity.get("binders") or []
+    return f"{name}[{', '.join(binders)}]" if binders else name
+
+
+def _annotate_params(entities: list[dict], path: str) -> None:
+    """Recursively prepare parameters and signatures for rendering.
+
+    ``path`` qualifies the entities' names in warnings.
+    """
     for entity in entities:
+        name = f"{path}.{entity.get('name', '')}"
         # The extraction format distinguishes an absent comment (`null`) from
         # a present string. Templates operate on Markdown text, so normalize
         # that absence at the rendering boundary.
@@ -365,7 +534,13 @@ def _annotate_params(entities: list[dict]) -> None:
         for index, param in enumerate(entity.get("params") or []):
             param["doc"] = param.get("doc") or ""
             short, rest = _split_doc(param["doc"])
-            type_, short = _split_type(short)
+            doc_type, short = _split_type(short)
+            type_ = _choose_type(
+                name,
+                f"parameter `{param.get('name', '')}`",
+                param.get("annotation", ""),
+                doc_type,
+            )
             param["type"] = type_
             param["doc_short"] = short
             param["doc_rest"] = rest
@@ -380,24 +555,29 @@ def _annotate_params(entities: list[dict]) -> None:
         # What a one-line table cell can hold, wherever an entity is listed
         # rather than rendered: the same first paragraph a parameter table takes.
         entity["doc_summary"], _ = _split_doc(entity.get("doc", ""))
+        entity["declaration_name"] = _declaration_name(entity)
         if entity.get("kind") in ("function", "method"):
             entity["signature"] = _signature(entity)
-            # The same leading-parenthesised-type convention parameter
-            # descriptions use is also written on a function/method's own
-            # doc comment, informally, to give its return type. Peel it off
-            # before splitting the rest into intro/sections, the same way a
-            # parameter's description is split in the loop above.
-            return_type, doc = _split_type((entity.get("doc", "") or "").strip())
-            entity["return_type"] = return_type
+            # Without a return type annotation, a function/method's own doc
+            # comment may open with a parenthesised type, the same convention
+            # parameter descriptions use. Peel it off before splitting the rest
+            # into intro/sections, the same way a parameter's description is
+            # split in the loop above.
+            doc_type, doc = _split_type((entity.get("doc", "") or "").strip())
+            entity["return_type"] = _choose_type(
+                name, "the return type", entity.get("return_annotation", ""), doc_type
+            )
             entity["doc_intro"], entity["doc_sections"] = _split_intro(doc)
         elif entity.get("kind") == "field":
-            # Same leading-parenthesised-type convention as a parameter's
-            # description (see `_split_type`), peeled off before the rest is
-            # rendered as the field's doc.
-            type_, doc = _split_type((entity.get("doc", "") or "").strip())
-            entity["type"] = type_
+            # Same fallback convention as a parameter's description (see
+            # `_split_type`), peeled off before the rest is rendered as the
+            # field's doc.
+            doc_type, doc = _split_type((entity.get("doc", "") or "").strip())
+            entity["type"] = _choose_type(
+                name, "the type", entity.get("annotation", ""), doc_type
+            )
             entity["doc"] = doc
-        _annotate_params(entity.get("members", []))
+        _annotate_params(entity.get("members", []), name)
 
 
 def _strip_undocumented(entities: list[dict]) -> None:

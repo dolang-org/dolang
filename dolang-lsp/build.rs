@@ -37,6 +37,8 @@ struct Entity {
     #[serde(default)]
     doc: Option<String>,
     #[serde(default)]
+    binders: Vec<String>,
+    #[serde(default)]
     params: Vec<ParamJson>,
     #[serde(default)]
     members: Vec<Entity>,
@@ -44,6 +46,12 @@ struct Entity {
     module: String,
     #[serde(default)]
     item: String,
+    /// A field's annotated type
+    #[serde(default, rename = "type")]
+    type_: Option<TypeJson>,
+    /// A function or method's annotated return type
+    #[serde(default)]
+    returns: Option<TypeJson>,
 }
 
 #[derive(Clone, serde::Deserialize)]
@@ -51,6 +59,102 @@ struct ParamJson {
     name: String,
     #[serde(default)]
     optional: bool,
+    #[serde(default, rename = "type")]
+    type_: Option<TypeJson>,
+}
+
+/// An annotated type, as the tree the extractor gives
+#[derive(Clone, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum TypeJson {
+    Name {
+        name: String,
+    },
+    Const {
+        text: String,
+    },
+    App {
+        base: Box<TypeJson>,
+        args: Vec<TypeArgJson>,
+    },
+    Schema {
+        args: Vec<TypeArgJson>,
+    },
+    Union {
+        members: Vec<TypeJson>,
+    },
+    Func {
+        params: Vec<TypeArgJson>,
+        ret: Box<TypeJson>,
+    },
+}
+
+/// An item in the `[]`, `()` or `{}` of a type
+#[derive(Clone, serde::Deserialize)]
+struct TypeArgJson {
+    kind: String,
+    #[serde(default)]
+    optional: bool,
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(rename = "type")]
+    ty: TypeJson,
+}
+
+/// How tightly a type form binds, so that it is parenthesized where it would have
+/// to be in source
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Binding {
+    Func,
+    Union,
+    Compact,
+}
+
+impl TypeJson {
+    /// The type as written in a position binding as tightly as `context`
+    fn render(&self, context: Binding) -> String {
+        let (text, binding) = match self {
+            TypeJson::Name { name } => return name.clone(),
+            TypeJson::Const { text } => return text.clone(),
+            TypeJson::App { base, args } => (
+                format!("{}[{}]", base.render(Binding::Compact), render_args(args)),
+                Binding::Compact,
+            ),
+            TypeJson::Schema { args } => (format!("{{{}}}", render_args(args)), Binding::Compact),
+            TypeJson::Union { members } => (
+                members
+                    .iter()
+                    .map(|member| member.render(Binding::Compact))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+                Binding::Union,
+            ),
+            TypeJson::Func { params, ret } => (
+                format!("({}) -> {}", render_args(params), ret.render(Binding::Func)),
+                Binding::Func,
+            ),
+        };
+        if binding < context {
+            format!("({text})")
+        } else {
+            text
+        }
+    }
+}
+
+fn render_args(args: &[TypeArgJson]) -> String {
+    args.iter()
+        .map(|arg| {
+            let optional = if arg.optional { "?" } else { "" };
+            let ty = arg.ty.render(Binding::Func);
+            match (arg.kind.as_str(), &arg.key) {
+                ("rest", _) => format!("{optional}...{ty}"),
+                ("key", Some(key)) => format!("{optional}{key}: {ty}"),
+                _ => format!("{optional}{ty}"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// One row of the generated table, before Rust-literal rendering.
@@ -59,7 +163,9 @@ struct Row {
     item: String,
     kind: &'static str,
     doc: String,
+    binders: Vec<String>,
     params: Vec<ParamJson>,
+    type_: Option<String>,
 }
 
 fn main() {
@@ -116,7 +222,9 @@ fn add_module(rows: &mut Vec<Row>, modules: &HashMap<String, ModuleJson>, module
         item: String::new(),
         kind: "module",
         doc: hover_doc(module.doc.as_deref()),
+        binders: Vec::new(),
         params: Vec::new(),
+        type_: None,
     });
     for entity in &module.entities {
         if entity.is_pub {
@@ -209,7 +317,13 @@ fn add_entity(rows: &mut Vec<Row>, module: &str, prefix: &str, entity: &Entity) 
             _ => "value",
         },
         doc: hover_doc(entity.doc.as_deref()),
+        binders: entity.binders.clone(),
         params: entity.params.clone(),
+        type_: entity
+            .returns
+            .as_ref()
+            .or(entity.type_.as_ref())
+            .map(|ty| ty.render(Binding::Compact)),
     });
     for member in &entity.members {
         if member.is_pub {
@@ -223,15 +337,17 @@ fn render(rows: &[Row]) -> String {
     for row in rows {
         write!(
             out,
-            "    DocEntry {{ module: {:?}, item: {:?}, kind: {:?}, doc: {:?}, params: &[",
-            row.module, row.item, row.kind, row.doc,
+            "    DocEntry {{ module: {:?}, item: {:?}, kind: {:?}, doc: {:?}, binders: &{:?}, type_: {:?}, params: &[",
+            row.module, row.item, row.kind, row.doc, row.binders, row.type_,
         )
         .expect("writing to a String cannot fail");
         for param in &row.params {
             write!(
                 out,
-                "Param {{ name: {:?}, optional: {} }}, ",
-                param.name, param.optional,
+                "Param {{ name: {:?}, optional: {}, type_: {:?} }}, ",
+                param.name,
+                param.optional,
+                param.type_.as_ref().map(|ty| ty.render(Binding::Compact)),
             )
             .expect("writing to a String cannot fail");
         }

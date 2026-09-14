@@ -19,6 +19,7 @@ pub enum NodeClass {
     Module,
     Prelude,
     PreludeModule,
+    TypeParameter,
 }
 
 /// Classify what a token refers to.
@@ -34,11 +35,11 @@ pub fn classify_node(kind: Option<&Kind<'_>>) -> NodeClass {
         ) => NodeClass::Param,
         Some(
             Kind::Class { .. }
-            | Kind::Binder { .. }
             | Kind::Function { .. }
             | Kind::Method { .. }
             | Kind::SpecialMethod { .. },
         ) => NodeClass::Function,
+        Some(Kind::Binder { .. }) => NodeClass::TypeParameter,
         Some(Kind::ImportModule { .. }) => NodeClass::Module,
         Some(Kind::PreludeItem { .. }) => NodeClass::Prelude,
         Some(Kind::PreludeModule { .. }) => NodeClass::PreludeModule,
@@ -48,6 +49,8 @@ pub fn classify_node(kind: Option<&Kind<'_>>) -> NodeClass {
 
 fn token_style(token: Token, class: NodeClass, context: Context) -> Option<Style> {
     let color = match token {
+        Token::Annotation => AnsiColor::White,
+        Token::Binder => AnsiColor::Magenta,
         Token::Comment => {
             return Some(
                 Style::new()
@@ -59,6 +62,11 @@ fn token_style(token: Token, class: NodeClass, context: Context) -> Option<Style
         Token::Literal => AnsiColor::Green,
         Token::Operator | Token::Delim | Token::Escape | Token::Key => AnsiColor::Yellow,
         Token::StringDelim | Token::ModuleItem | Token::Number => AnsiColor::Cyan,
+        Token::Type => match class {
+            NodeClass::TypeParameter => AnsiColor::Magenta,
+            _ => AnsiColor::Cyan,
+        },
+        Token::TypeKey => AnsiColor::Yellow,
         // `true`, `nil` and symbols name a value rather than compute one, which
         // is what a number does, so the two do not share a color.
         Token::Constant | Token::ModuleName => AnsiColor::Magenta,
@@ -76,6 +84,7 @@ fn token_style(token: Token, class: NodeClass, context: Context) -> Option<Style
                     AnsiColor::Magenta
                 }
                 NodeClass::Prelude => AnsiColor::Cyan,
+                NodeClass::TypeParameter => AnsiColor::Magenta,
                 NodeClass::Normal => return None,
             },
         },

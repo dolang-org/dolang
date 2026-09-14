@@ -4,7 +4,7 @@ use std::{cell::Cell, collections::HashMap};
 
 use dolang_util::alias;
 
-use super::{Id, Kind, Node, Super, Table, comment::Blocks};
+use super::{Id, Kind, Node, Table, comment::Blocks};
 use crate::{
     PreludeImport,
     ast::{visit::Node as AstNode, *},
@@ -28,10 +28,10 @@ pub(crate) fn index(
     let root_id = index.table.push(Node::new(
         None,
         Kind::Root,
-        Span {
+        Some(Span {
             start: 0,
             end: u32::try_from(file.content().len()).expect("source file is too large"),
-        },
+        }),
         index.blocks.root(),
     ));
     let scope = Scope {
@@ -220,7 +220,7 @@ impl Index<'_> {
         let doc = kind
             .definition()
             .and_then(|_| self.blocks.attached(self.file, span.start));
-        self.table.push(Node::new(parent, kind, span, doc))
+        self.table.push(Node::new(parent, kind, Some(span), doc))
     }
 
     fn reference(&mut self, scope: &Scope<'_>, ident: &mut Ident) {
@@ -254,7 +254,8 @@ impl Index<'_> {
             res.node = Some(id);
             return;
         }
-        let id = self.push(scope, kind, Span::INVALID);
+        // A prelude binding has no source text to span or document
+        let id = self.table.push(Node::new(scope.parent, kind, None, None));
         res.node = Some(id);
         scope.bind(*res, id);
     }
@@ -282,6 +283,34 @@ impl Index<'_> {
         if let Some(expr) = self.type_expr(ty) {
             self.push_to(Some(parent), Kind::Type { expr }, ty.span());
         }
+    }
+
+    /// Record a resolved superclass as a type describing `class`, unless it could not
+    /// be read.
+    fn super_node(&mut self, class: Id, super_ref: &ClassSuper) {
+        let head = super_ref.ident.span;
+        let name = super_ref.fields.last().map_or(head, |field| head | *field);
+        let mut expr = doc::TypeExpr {
+            span: name,
+            kind: doc::TypeKind::Name {
+                head,
+                target: super_ref.ident.res.and_then(|res| res.node),
+            },
+        };
+        if let Some(bracket_span) = super_ref.bracket_span {
+            let Some(args) = self.type_args(&super_ref.args) else {
+                return;
+            };
+            expr = doc::TypeExpr {
+                span: name | bracket_span,
+                kind: doc::TypeKind::App {
+                    base: alias::Box::new(expr),
+                    args,
+                },
+            };
+        }
+        let span = expr.span;
+        self.push_to(Some(class), Kind::Type { expr }, span);
     }
 
     fn type_expr(&self, ty: &TypeExpr) -> Option<doc::TypeExpr> {
@@ -412,7 +441,6 @@ impl Index<'_> {
                     Kind::Class {
                         name,
                         is_pub: class.pub_span.is_some(),
-                        supers: Default::default(),
                     },
                     span,
                 );
@@ -475,6 +503,7 @@ impl Index<'_> {
                             item: span,
                             name: bind.span,
                             is_pub,
+                            type_only: type_only.is_some(),
                         };
                         match type_only {
                             // Only types name the item, so there is no variable to
@@ -503,7 +532,7 @@ impl Index<'_> {
             self.table.push(Node::new(
                 Some(parent),
                 Kind::Decorator { target },
-                decorator.open_span | decorator.close_span,
+                Some(decorator.open_span | decorator.close_span),
                 None,
             ));
         }
@@ -733,31 +762,14 @@ impl Index<'_> {
             self.decorators(id, &mut class.decorators);
         }
         self.binders(id, class.binders.as_deref_mut());
-        let supers = class
-            .super_refs
-            .iter_mut()
-            .map(|s| {
-                self.reference(scope, &mut s.ident);
-                for arg in &mut s.args {
-                    self.ty(scope, arg.ty_mut());
-                }
-                Super {
-                    span: s
-                        .fields
-                        .last()
-                        .map_or(s.ident.span, |field| s.ident.span | *field),
-                    target: if s.fields.is_empty() {
-                        s.ident.res.and_then(|res| res.node)
-                    } else {
-                        None
-                    },
-                }
-            })
-            .collect();
-        if let Some(id) = id
-            && let Kind::Class { supers: out, .. } = &mut self.table[id].kind
-        {
-            *out = supers;
+        for super_ref in &mut class.super_refs {
+            self.reference(scope, &mut super_ref.ident);
+            for arg in &mut super_ref.args {
+                self.ty(scope, arg.ty_mut());
+            }
+            if let Some(id) = id {
+                self.super_node(id, super_ref);
+            }
         }
         let inner = Scope {
             outer: Some(scope),

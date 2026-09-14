@@ -55,6 +55,8 @@ use dolang_compile::{Config, Context, Kind, NodeId, Token, diag};
 /// slip in without a name a fixture can ask for.
 fn token_name(token: Token) -> &'static str {
     match token {
+        Token::Annotation => "annotation",
+        Token::Binder => "binder_token",
         Token::Comment => "comment",
         Token::Constant => "constant",
         Token::Delim => "delim",
@@ -69,6 +71,8 @@ fn token_name(token: Token) -> &'static str {
         Token::Number => "number",
         Token::Operator => "operator",
         Token::StringDelim => "string_delim",
+        Token::Type => "type_token",
+        Token::TypeKey => "type_key",
         Token::Variable => "variable",
         Token::Sigil => "sigil",
     }
@@ -76,7 +80,9 @@ fn token_name(token: Token) -> &'static str {
 
 /// Every token kind, so a fixture naming a kind that does not exist is a
 /// fixture error rather than a mismatch against every token in the file.
-const ALL_TOKENS: [Token; 16] = [
+const ALL_TOKENS: [Token; 20] = [
+    Token::Annotation,
+    Token::Binder,
     Token::Comment,
     Token::Constant,
     Token::Delim,
@@ -91,6 +97,8 @@ const ALL_TOKENS: [Token; 16] = [
     Token::Number,
     Token::Operator,
     Token::StringDelim,
+    Token::Type,
+    Token::TypeKey,
     Token::Variable,
     Token::Sigil,
 ];

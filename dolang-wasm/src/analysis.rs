@@ -110,6 +110,8 @@ pub(crate) fn analyze(source: &str) -> Analysis {
 
 fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> &'static str {
     match token {
+        Token::Annotation => "annotation",
+        Token::Binder => "type-parameter",
         Token::Comment => "comment",
         Token::Constant => "constant",
         Token::Delim => "punctuation",
@@ -127,8 +129,22 @@ fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> &'
         Token::Number => "number",
         Token::Operator => "operator",
         Token::StringDelim => "string",
+        Token::Type => match kind {
+            Some(Kind::Binder { .. }) => "type-parameter",
+            _ => "type",
+        },
+        Token::TypeKey => "property",
         Token::Variable => match (context, kind) {
-            (_, Some(Kind::Class { .. } | Kind::Binder { .. })) => "class",
+            (
+                _,
+                Some(
+                    Kind::Class { .. }
+                    | Kind::Binder { .. }
+                    | Kind::ImportItem {
+                        type_only: true, ..
+                    },
+                ),
+            ) => "class",
             (Context::Call, Some(Kind::PreludeItem { .. } | Kind::PreludeModule { .. })) => {
                 "function"
             }
@@ -185,6 +201,18 @@ pub mod tests {
         let source = "class Widget\n  pub field x\ndef identity value\n  value\nlet w = Widget()\nidentity $w\n# comment\necho \"value: $w\"";
         let result = analyze(source);
         for kind in ["class", "function", "parameter", "comment", "string"] {
+            assert!(
+                result.tokens.iter().any(|token| token.kind == kind),
+                "{kind}"
+            );
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn type_syntax_has_distinct_highlights() {
+        let source = "def first[T] value@T -> Array[T]\n  value";
+        let result = analyze(source);
+        for kind in ["annotation", "type", "type-parameter"] {
             assert!(
                 result.tokens.iter().any(|token| token.kind == kind),
                 "{kind}"

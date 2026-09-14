@@ -176,12 +176,16 @@ impl Node for TypeExpr {
         match self {
             TypeExpr::Name { head, fields, decl } => {
                 match decl {
-                    Some(decl) => visit.token(Token::Variable, head.span, decl.node)?,
-                    None => visit.node(head)?,
+                    Some(decl) => visit.token(Token::Type, head.span, decl.node)?,
+                    None => visit.token(
+                        Token::Type,
+                        head.span,
+                        head.res.as_ref().and_then(|res| res.node),
+                    )?,
                 }
                 for field in fields {
                     visit.token(Token::Operator, field.before_left_char(), None)?;
-                    visit.token(Token::Field, *field, None)?;
+                    visit.token(Token::Type, *field, None)?;
                 }
                 ControlFlow::Continue(())
             }
@@ -261,7 +265,7 @@ impl Node for TypeArg {
                 ty,
             } => {
                 match key {
-                    TypeKey::Sym(span) => visit.token(Token::Key, *span, None)?,
+                    TypeKey::Sym(span) => visit.token(Token::TypeKey, *span, None)?,
                     TypeKey::Str(expr) => visit.node(&**expr)?,
                 }
                 visit.token(Token::Delim, *colon_span, None)?;
@@ -285,7 +289,7 @@ impl Node for TypeArg {
 
 impl Node for Annot {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
-        visit.token(Token::Sigil, self.at_span, None)?;
+        visit.token(Token::Annotation, self.at_span, None)?;
         visit.node(&self.ty)
     }
 
@@ -313,7 +317,7 @@ impl Node for Binder {
             BinderKind::Key { colon_span } => visit.token(Token::Sigil, colon_span, None)?,
             BinderKind::Rest { ellipsis_span } => visit.token(Token::Sigil, ellipsis_span, None)?,
         }
-        visit.token(Token::Variable, self.ident.span, self.node)?;
+        visit.token(Token::Binder, self.ident.span, self.node)?;
         if let Some(span) = self.delim_span {
             visit.token(Token::Delim, span, None)?;
         }

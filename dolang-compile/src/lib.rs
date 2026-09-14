@@ -21,7 +21,6 @@ use std::{
     error,
     fmt::{self, Display},
     io::{self, Write},
-    marker::PhantomData,
     mem,
     num::NonZero,
     ops::ControlFlow,
@@ -268,15 +267,16 @@ impl<'a> Node<'a> {
         self.node.parent.map(public_node_id)
     }
 
-    /// The extent of the whole construct.
+    /// The extent of the whole construct, or `None` for a prelude binding, which
+    /// has no source text.
     ///
     /// This runs from the first decorator, or `pub`, or the keyword — whichever
     /// comes first — through the end of the body, so a construct contains
     /// everything written inside it.
     ///
     /// Order siblings by this; nothing depends on the order nodes are yielded.
-    pub fn span(&self) -> diag::Span {
-        convert_span(self.file, self.node.span)
+    pub fn span(&self) -> Option<diag::Span> {
+        self.node.span.map(|span| convert_span(self.file, span))
     }
 
     /// The name this node declares, where it declares one.
@@ -307,17 +307,9 @@ impl<'a> Node<'a> {
         let span = |span: &source::Span| convert_span(self.file, *span);
         match &self.node.kind {
             doc::Kind::Root => Kind::Root,
-            doc::Kind::Class {
-                name,
-                is_pub,
-                supers,
-            } => Kind::Class {
+            doc::Kind::Class { name, is_pub } => Kind::Class {
                 name: span(name),
                 is_pub: *is_pub,
-                supers: Supers {
-                    file: self.file,
-                    supers: supers.iter(),
-                },
             },
             doc::Kind::Function { name, is_pub } => Kind::Function {
                 name: span(name),
@@ -363,11 +355,13 @@ impl<'a> Node<'a> {
                 item,
                 name,
                 is_pub,
+                type_only,
             } => Kind::ImportItem {
                 module: span(module),
                 item: span(item),
                 name: span(name),
                 is_pub: *is_pub,
+                type_only: *type_only,
             },
             doc::Kind::PreludeModule { module, name } => Kind::PreludeModule { module, name },
             doc::Kind::PreludeItem { module, item, name } => {
@@ -419,14 +413,12 @@ pub enum Kind<'a> {
     /// The complete source document. All other top-level nodes are its children.
     Root,
 
-    /// A class declaration
+    /// A class declaration.  Its superclasses are [`Kind::Type`] children.
     Class {
         /// The class name
         name: diag::Span,
         /// Declared `pub`
         is_pub: bool,
-        /// Superclass references, in the order written
-        supers: Supers<'a>,
     },
     /// A `def` at statement level
     Function {
@@ -511,6 +503,8 @@ pub enum Kind<'a> {
         name: diag::Span,
         /// Declared `pub`
         is_pub: bool,
+        /// Imported with `@`, for types only.  No variable is bound.
+        type_only: bool,
     },
     /// A module bound by the prelude, which has no source text
     PreludeModule {
@@ -568,11 +562,12 @@ pub enum Kind<'a> {
         /// The function returned from
         target: Option<NodeId>,
     },
-    /// A type in an annotation or return type.
+    /// A type in an annotation, return type or superclass list.
     ///
     /// Its parent is what it describes: the parameter, binding or field it
-    /// annotates, or the function, method or lambda whose return type it is. A
-    /// declaration naming several fields yields one type per field.
+    /// annotates, the function, method or lambda whose return type it is, or the
+    /// class it is a superclass of. A declaration naming several fields yields one
+    /// type per field.
     Type {
         /// The type as written
         expr: TypeExpr<'a>,
@@ -804,34 +799,6 @@ impl<'a> Iterator for TypeExprs<'a> {
 }
 
 impl ExactSizeIterator for TypeExprs<'_> {}
-
-/// A superclass reference
-pub struct Super<'a> {
-    /// The reference as written
-    pub span: diag::Span,
-    /// The node it names, when it is an identifier
-    pub target: Option<NodeId>,
-    phantom: PhantomData<&'a ()>,
-}
-
-/// Iterator over a class's superclass references
-#[derive(Clone)]
-pub struct Supers<'a> {
-    file: &'a File<'a>,
-    supers: slice::Iter<'a, doc::Super>,
-}
-
-impl<'a> Iterator for Supers<'a> {
-    type Item = Super<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.supers.next().map(|super_ref| Super {
-            span: convert_span(self.file, super_ref.span),
-            target: super_ref.target.map(public_node_id),
-            phantom: PhantomData,
-        })
-    }
-}
 
 impl VisitAdapter<'_, '_> {
     fn emit_token(
