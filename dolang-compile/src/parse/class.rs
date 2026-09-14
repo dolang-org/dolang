@@ -263,7 +263,7 @@ impl Parser<'_> {
                 self.expect(scope, &[ExpectKind::Dedent])?;
                 block
             }
-            Some(token!(TokenInfo::StmtSep)) => ClassBody { members: vec![] },
+            None | Some(token!(TokenInfo::StmtSep)) => ClassBody { members: vec![] },
             other => {
                 return Err(self.syntax_error(
                     scope,
