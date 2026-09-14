@@ -95,10 +95,11 @@ The format specification is:
 [[fill]align][sign][#][0][width][.precision][conversion]
 ```
 
-`align` is `<`, `>`, or `^`. A preceding Unicode scalar sets the fill
-character. `sign` is `+` or a space, `#` enables alternate formatting, and
-`0` selects numeric-aware zero padding. Width and precision are decimal
-counts.
+`align` is `<`, `>`, or `^`. A preceding Unicode scalar sets the fill character.
+The fill may be written as an escape, such as `\u{7d}` for `}`; an escape
+anywhere else in the specification is an error. `sign` is `+` or a space, `#`
+enables alternate formatting, and `0` selects numeric-aware zero padding. Width
+and precision are decimal counts.
 
 Conversions select the representation:
 

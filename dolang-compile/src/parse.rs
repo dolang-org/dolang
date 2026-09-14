@@ -980,6 +980,11 @@ enum FormatAtom {
     Dynamic(Expr),
 }
 
+/// An escape is data, never specification syntax, so the only place one may
+/// appear is the fill.
+const FORMAT_ESCAPE_MESSAGE: &str =
+    "escapes are only valid as the fill character in format specifications";
+
 impl ParamMode {
     fn is_pattern(&self) -> bool {
         matches!(self, Self::HorizPattern | Self::VertPattern)
@@ -1363,8 +1368,8 @@ impl<'a> Parser<'a> {
                     "\\x escapes are only valid in binary strings",
                 ));
             }
-            Some(token!(Escape(ch), span)) => {
-                return Ok(Some(FormatAtom::Static(FormatValue { value: ch, span })));
+            Some(token @ token!(Escape(_))) => {
+                return Err(self.syntax_error(scope, Some(token), FORMAT_ESCAPE_MESSAGE));
             }
             Some(token) => token,
         };
@@ -1565,6 +1570,41 @@ impl<'a> Parser<'a> {
             }
             None => return Err(self.syntax_error(scope, None, "expected `:`")),
         };
+        let align = |ch| match ch {
+            '<' => Some(FormatAlign::Left),
+            '>' => Some(FormatAlign::Right),
+            '^' => Some(FormatAlign::Center),
+            _ => None,
+        };
+
+        // A leading escape is the fill, so an alignment must follow it.
+        // `next_format_atom` refuses an escape anywhere else.
+        if let Some(escape) = self.peek()?
+            && let TokenInfo::Escape(ch) = escape.info
+        {
+            self.advance();
+            let aligned = match self.peek()? {
+                Some(token!(TokenInfo::RightBrace)) => None,
+                _ => match self.next_format_atom(scope)? {
+                    Some(FormatAtom::Static(second)) => {
+                        align(second.value).map(|value| FormatValue {
+                            value,
+                            span: second.span,
+                        })
+                    }
+                    _ => None,
+                },
+            };
+            let Some(aligned) = aligned else {
+                return Err(self.syntax_error(scope, Some(escape), FORMAT_ESCAPE_MESSAGE));
+            };
+            spec.fill = Some(FormatValue {
+                value: ch,
+                span: escape.span,
+            });
+            spec.align = Some(aligned);
+        }
+
         let mut atoms = VecDeque::new();
         let right = loop {
             match self.peek()? {
@@ -1576,14 +1616,7 @@ impl<'a> Parser<'a> {
             }
         };
 
-        let align = |ch| match ch {
-            '<' => Some(FormatAlign::Left),
-            '>' => Some(FormatAlign::Right),
-            '^' => Some(FormatAlign::Center),
-            _ => None,
-        };
-
-        if matches!(atoms.front(), Some(FormatAtom::Static(_))) {
+        if spec.align.is_none() && matches!(atoms.front(), Some(FormatAtom::Static(_))) {
             let first = match atoms.pop_front().unwrap() {
                 FormatAtom::Static(first) => first,
                 FormatAtom::Dynamic(_) => unreachable!(),
