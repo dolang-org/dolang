@@ -37,7 +37,7 @@ struct Entity {
     #[serde(default)]
     doc: Option<String>,
     #[serde(default)]
-    binders: Vec<String>,
+    binders: Vec<BinderJson>,
     #[serde(default)]
     params: Vec<ParamJson>,
     #[serde(default)]
@@ -61,6 +61,33 @@ struct ParamJson {
     optional: bool,
     #[serde(default, rename = "type")]
     type_: Option<TypeJson>,
+}
+
+/// A type binder, as the extractor gives it
+#[derive(Clone, serde::Deserialize)]
+struct BinderJson {
+    /// The name, with any `:` or `...` sigil
+    name: String,
+    #[serde(default)]
+    bound: Option<TypeJson>,
+    #[serde(default)]
+    default: Option<TypeJson>,
+}
+
+impl BinderJson {
+    /// The binder as its declaration writes it
+    fn render(&self) -> String {
+        let mut text = self.name.clone();
+        if let Some(bound) = &self.bound {
+            write!(text, " @ {}", bound.render(Binding::Compact))
+                .expect("writing to a String cannot fail");
+        }
+        if let Some(default) = &self.default {
+            write!(text, " = {}", default.render(Binding::Compact))
+                .expect("writing to a String cannot fail");
+        }
+        text
+    }
 }
 
 /// An annotated type, as the tree the extractor gives
@@ -320,7 +347,7 @@ fn add_entity(rows: &mut Vec<Row>, module: &str, prefix: &str, entity: &Entity) 
             _ => "value",
         },
         doc: hover_doc(entity.doc.as_deref()),
-        binders: entity.binders.clone(),
+        binders: entity.binders.iter().map(BinderJson::render).collect(),
         params: entity.params.clone(),
         type_: entity
             .returns

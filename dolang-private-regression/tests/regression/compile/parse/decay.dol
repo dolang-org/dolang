@@ -1,6 +1,5 @@
 echo if else while for let field = + - / %
-let rec = record true: true false: true nil: true while: true let: true field: true
-rec[:do:] = true
+let rec = record true: true false: true nil: true while: true let: true field: true do: true
 let field = 1
 assert_eq $field 1
 for field = [2]

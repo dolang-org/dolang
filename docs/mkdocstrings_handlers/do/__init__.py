@@ -369,40 +369,46 @@ def _escape_type_text(text: str) -> str:
     return _MARKDOWN_SPECIAL.sub(r"\\\1", html.escape(text, quote=False))
 
 
-def _render_type(ty: dict, scope: _TypeScope, context: int) -> str:
-    """Render a type tree in a position binding as tightly as `context`."""
+def _render_type(ty: dict, scope: _TypeScope, context: int, plain: bool = False) -> str:
+    """Render a type tree in a position binding as tightly as `context`.
+
+    A `plain` rendering is bare text with no links, for a template to escape.
+    """
+    escape = (lambda text: text) if plain else _escape_type_text
     kind = ty.get("kind")
     if kind == "name":
         name, link = scope.name(ty)
-        text = _escape_type_text(name)
-        if link:
+        text = escape(name)
+        if link and not plain:
             return f'<autoref identifier="{html.escape(link)}" optional>{text}</autoref>'
         return text
     if kind == "const":
-        return _escape_type_text(ty.get("text", ""))
+        return escape(ty.get("text", ""))
     if kind == "app":
-        base = _render_type(ty["base"], scope, _BINDS_COMPACT)
-        rendered = f"{base}\\[{_render_type_args(ty['args'], scope)}\\]"
+        base = _render_type(ty["base"], scope, _BINDS_COMPACT, plain)
+        args = _render_type_args(ty["args"], scope, plain)
+        rendered = f"{base}[{args}]" if plain else f"{base}\\[{args}\\]"
         binding = _BINDS_COMPACT
     elif kind == "schema":
-        rendered = f"{{{_render_type_args(ty['args'], scope)}}}"
+        rendered = f"{{{_render_type_args(ty['args'], scope, plain)}}}"
         binding = _BINDS_COMPACT
     elif kind == "union":
         rendered = " | ".join(
-            _render_type(member, scope, _BINDS_COMPACT) for member in ty["members"]
+            _render_type(member, scope, _BINDS_COMPACT, plain) for member in ty["members"]
         )
         binding = _BINDS_UNION
     elif kind == "func":
-        params = _render_type_args(ty["params"], scope)
-        ret = _render_type(ty["ret"], scope, _BINDS_FUNC)
-        rendered = f"({params}) -&gt; {ret}"
+        params = _render_type_args(ty["params"], scope, plain)
+        ret = _render_type(ty["ret"], scope, _BINDS_FUNC, plain)
+        arrow = "->" if plain else "-&gt;"
+        rendered = f"({params}) {arrow} {ret}"
         binding = _BINDS_FUNC
     else:
         return ""
     return f"({rendered})" if binding < context else rendered
 
 
-def _render_type_args(args: list[dict], scope: _TypeScope) -> str:
+def _render_type_args(args: list[dict], scope: _TypeScope, plain: bool = False) -> str:
     rendered = []
     for arg in args:
         text = "?" if arg.get("optional") else ""
@@ -412,12 +418,23 @@ def _render_type_args(args: list[dict], scope: _TypeScope) -> str:
             rendered.append(text + "...")
             continue
         elif arg.get("kind") == "key_rest":
-            key = _render_type(arg["key_type"], scope, _BINDS_FUNC)
+            key = _render_type(arg["key_type"], scope, _BINDS_FUNC, plain)
             text += f"...{key}: "
         elif arg.get("kind") == "key":
-            text += f"{_escape_type_text(arg.get('key', ''))}: "
-        rendered.append(text + _render_type(arg["type"], scope, _BINDS_FUNC))
+            key = arg.get("key", "")
+            text += f"{key if plain else _escape_type_text(key)}: "
+        rendered.append(text + _render_type(arg["type"], scope, _BINDS_FUNC, plain))
     return ", ".join(rendered)
+
+
+def _binder_text(binder: dict, scope: _TypeScope) -> str:
+    """A binder as its declaration writes it, as plain text."""
+    text = binder.get("name", "")
+    if binder.get("bound"):
+        text += " @ " + _render_type(binder["bound"], scope, _BINDS_COMPACT, plain=True)
+    if binder.get("default"):
+        text += " = " + _render_type(binder["default"], scope, _BINDS_COMPACT, plain=True)
+    return text
 
 
 def _type_html(ty: dict | None, scope: _TypeScope) -> str:
@@ -436,6 +453,9 @@ def _type_html(ty: dict | None, scope: _TypeScope) -> str:
 
 def _render_annotations(entity: dict, scope: _TypeScope) -> None:
     """Render the annotations of an entity and its members, in its module's scope."""
+    entity["binder_text"] = [
+        _binder_text(binder, scope) for binder in entity.get("binders") or []
+    ]
     for param in entity.get("params") or []:
         param["annotation"] = _type_html(param.get("type"), scope)
     if entity.get("kind") in ("function", "method"):
@@ -484,9 +504,9 @@ def _signature(entity: dict) -> str:
 
 
 def _declaration_name(entity: dict) -> str:
-    """A declaration's name followed by its type binders."""
+    """A declaration's name followed by its type binders, as plain text."""
     name = entity.get("name", "")
-    binders = entity.get("binders") or []
+    binders = entity.get("binder_text") or []
     return f"{name}[{', '.join(binders)}]" if binders else name
 
 

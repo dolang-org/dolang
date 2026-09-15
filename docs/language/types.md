@@ -75,7 +75,7 @@ stand for types within the declaration. A binder is a name, `:name` for a
 keyword type argument, or `...name` for any number of further type arguments.
 `@` gives a bound and `=` gives a default; both are type expressions. A
 variadic binder must come last and cannot have a default. An unbounded binder
-is provisionally a type binder; a schema bound such as `S @ {}` explicitly
+is provisionally a type binder; a schema bound such as `S @ {...}` explicitly
 makes it a schema binder.
 
 ```
@@ -179,13 +179,15 @@ let mode @ (:TARGET: | :LINK:) = :TARGET:
 `[]` directly after a type applies generic arguments.
 
 The items of `[]`, `()`, and `{}` share positional, symbol-keyed, and
-`...type` rest syntax. Keyed and open rest items are allowed only in schemas;
-calls and generic applications accept only symbol keys.
+`...type` rest syntax. Keyed and open rest items are allowed in schemas and
+generic applications, but not in function parameter lists.
 
 ```
 let names @ Array[Str] = []
 let index @ Dict[Str, Array[Int]] = {}
 let row @ Tuple[...Str] = Tuple ["id", "name"]
+let result @ Record[value: Int, error: (Error | nil)] = nil
+let open @ Record[name: Str, ...] = nil
 ```
 
 ### Unions

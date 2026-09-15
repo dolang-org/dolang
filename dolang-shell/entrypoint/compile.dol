@@ -419,12 +419,26 @@ class Document
       result.push $param
     result
 
-  # The binders declared by a function, method, or class, as written.
+  # The binders declared by a function, method, class, or alias. A name keeps
+  # its `:` or `...` sigil, as a parameter's does; a bound or default is a type
+  # tree, like an annotation's.
   def binders self id
     let result = []
     for child = self.#own(id)
-      if type(child, compile.Binder)
-        result.push $self.#text(child.span)
+      if !type(child, compile.Binder)
+        continue
+      let sigil = if type(child, compile.KeyBinder)
+        ":"
+      else if type(child, compile.RestBinder)
+        "..."
+      else
+        ""
+      result.push $
+        name: "$sigil$(self.#text(child.name))"
+        if (child.bound != nil)
+          bound: (self.#type_tree(child.bound))
+        if (child.default != nil)
+          default: (self.#type_tree(child.default))
     result
 
   # The type describing a node, as a tree, or `nil`.

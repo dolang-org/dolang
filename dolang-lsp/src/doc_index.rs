@@ -27,7 +27,7 @@ pub(crate) struct DocEntry {
     pub(crate) item: &'static str,
     pub(crate) kind: &'static str,
     pub(crate) doc: &'static str,
-    /// Type binders as written, including `:` or `...` sigils.
+    /// Type binders as declared, with any `:` or `...` sigil, bound, and default.
     pub(crate) binders: &'static [&'static str],
     pub(crate) params: &'static [Param],
     /// The annotated type, as written: a function or method's return type, or a

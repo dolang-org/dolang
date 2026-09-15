@@ -116,18 +116,23 @@ Spreading of dicts preserves duplicate keys and order.
 
 ## Records (`Record`)
 
-Records are similar to dicts but only support symbol and integer keys.
-They allow direct field access with dot syntax:
+Records are immutable product values with symbol and integer keys. They allow
+direct field access with dot syntax:
 
 ```
 let r = record name: Alice age: 30
 echo $r.name # Alice
-r.age = 31
 ```
 
 Records support the same ordering and multi-map semantics as dicts where
-applicable. They are iterable, unpackable, and support index/assignment for
-their key types.
+applicable. They are iterable, unpackable, and support indexing for their key
+types. Build a changed record by spreading the original into a new record:
+
+```
+let updated = record ...r age: 31
+```
+
+Use a class when named fields need to be mutable.
 
 See the [Record API](std.Record) for details.
 

@@ -3,6 +3,7 @@ import args
     - test
     - assert
     - assert_eq
+    - assert_throws
 
 #[test]
 def bool_flag()
@@ -10,6 +11,7 @@ def bool_flag()
     args: ["--verbose"]
     - flag: verbose
   assert $p.verbose
+  assert_throws $std.ImmutableError do p.verbose = false
 
 #[test]
 def bool_flag_default_false()

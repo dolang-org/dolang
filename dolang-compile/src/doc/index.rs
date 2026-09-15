@@ -836,8 +836,16 @@ impl Index<'_> {
         for super_ref in &mut class.super_refs {
             self.reference(scope, &mut super_ref.ident);
             for arg in &mut super_ref.args {
-                if let Some(ty) = arg.ty_mut() {
-                    self.ty(scope, ty);
+                match &mut arg.kind {
+                    TypeArgKind::KeyRest { key_ty, ty, .. } => {
+                        self.ty(scope, key_ty);
+                        self.ty(scope, ty);
+                    }
+                    _ => {
+                        if let Some(ty) = arg.ty_mut() {
+                            self.ty(scope, ty);
+                        }
+                    }
                 }
             }
             if let Some(id) = id {

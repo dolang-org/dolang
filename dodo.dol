@@ -189,7 +189,7 @@ def collect_doc_jobs()
 # The documented public classes a module declares or re-exports. Only
 # documented ones receive pages because the handler hides undocumented
 # entities by default. Each result keeps the bare name used for its filename
-# and identifier alongside the binders shown in its page title.
+# and identifier alongside the binders its page title declares.
 def module_classes modules module entities chain = []
   let classes = []
   for e = entities
@@ -210,21 +210,94 @@ def module_classes modules module entities chain = []
         classes.push [e["name"], resolved[0][1]]
   classes
 
-def class_title entry
-  if entry[1].len
-    "$(entry[0])[$(", ".join(entry[1]))]"
+# How tightly each type form binds, so that it is parenthesized where needed
+let BINDS_FUNC = 0
+let BINDS_UNION = 1
+let BINDS_COMPACT = 2
+
+# A type tree from the extractor, as source writes it in a position binding as
+# tightly as `context`.
+def type_text ty context
+  let kind = ty["kind"]
+  if (kind == "name")
+    return ty["name"]
+  if (kind == "const")
+    return ty["text"]
+  let text = nil
+  let binding = BINDS_COMPACT
+  if (kind == "app")
+    text = "$(type_text(ty["base"], BINDS_COMPACT))[$(type_args_text(ty["args"]))]"
+  else if (kind == "schema")
+    text = "{$(type_args_text(ty["args"]))}"
+  else if (kind == "union")
+    text = " | ".join([...ty["members"].map(do |member| type_text(member, BINDS_COMPACT))])
+    binding = BINDS_UNION
   else
-    entry[0]
+    text = "($(type_args_text(ty["params"]))) -> $(type_text(ty["ret"], BINDS_FUNC))"
+    binding = BINDS_FUNC
+  if (binding < context)
+    "($text)"
+  else
+    text
+
+# The items in the `[]`, `()` or `{}` of a type tree.
+def type_args_text args
+  let parts = []
+  for arg = args
+    let text = (arg["optional"] && "?" || "")
+    let kind = arg["kind"]
+    if (kind == "open_rest")
+      parts.push "$text..."
+      continue
+    if (kind == "rest")
+      text = "$text..."
+    else if (kind == "key_rest")
+      text = "$text...$(type_text(arg["key_type"], BINDS_FUNC)): "
+    else if (kind == "key")
+      text = "$text$(arg["key"]): "
+    parts.push "$text$(type_text(arg["type"], BINDS_FUNC))"
+  ", ".join $parts
+
+# A binder as its declaration writes it.
+def binder_text binder
+  let text = binder["name"]
+  if let bound = binder.get "bound" default: nil
+    text = "$text @ $(type_text(bound, BINDS_COMPACT))"
+  if let value = binder.get "default" default: nil
+    text = "$text = $(type_text(value, BINDS_COMPACT))"
+  text
+
+# A class page's title, naming its binders for the nav, and its heading, which
+# declares them in full.
+def class_titles entry
+  let name binders = entry
+  if !binders.len
+    return [name, name]
+  let names = [...binders.map(do |binder| binder["name"])]
+  let declared = [...binders.map(binder_text)]
+  ["$name[$(", ".join(names))]", "$name[$(", ".join(declared))]"]
+
+# Escapes the Markdown punctuation a title can contain. A binder's schema
+# bound brings braces, as in `Dict[S @ {...}]`, and attr_list takes an
+# unescaped brace as the start of the heading's `{: #... }` list; failing to
+# parse that, it leaves the list in the heading text and the id unassigned.
+def markdown_escape text
+  let escaped = text
+  # The backslash goes first, so the escapes added after it stay single.
+  for c = ["\\", "`", "*", "_", "{", "}", "[", "]"]
+    escaped = escaped.replace $c "\\$c"
+  escaped
 
 def private_doc_module name
   name.split(".").any do |component| component.starts_with "_"
 
-def write_doc_page path title identifier
+def write_doc_page path title heading identifier
   path.parent.create_dir all: true
   # The frontmatter `title` is for awesome-nav: with `use_index_title` on, it
   # reads this instead of falling back to a title-cased directory name (e.g.
   # `fs.unix` -> "Fs.unix"), which is wrong for names that are meant to stay
-  # lowercase. The `{: #... }` attr_list anchor matches the identifier
+  # lowercase. It leaves out what the heading can spell out, like a binder's
+  # bound, to keep the nav terse. The `{: #... }` attr_list anchor matches the identifier
   # mkdocstrings registers for this page's own root heading. Without it,
   # Python-Markdown's toc extension slugifies the plain title into its own
   # anchor id (e.g. "Args" -> "args"), which collides workspace-wide with any
@@ -236,7 +309,7 @@ def write_doc_page path title identifier
     title: $(dbg title)
     ---
 
-    # $title {: #$identifier }
+    # $(markdown_escape heading) {: #$identifier }
 
     ::: $identifier
 
@@ -252,11 +325,13 @@ def write_doc_page path title identifier
 def generate_doc_pages modules name entities
   if !private_doc_module(name)
     let dir = (MKDOCS_API_DIR / name)
-    write_doc_page (dir / "index.md") $name $name
+    write_doc_page (dir / "index.md") $name $name $name
     for entry = module_classes $modules $name $entities
+      let title heading = class_titles $entry
       write_doc_page
         (dir / "$(entry[0]).md")
-        (class_title entry)
+        $title
+        $heading
         "$name.$(entry[0])"
 
 # Runs `dolang -m doc` once per module, in parallel, writing each result as

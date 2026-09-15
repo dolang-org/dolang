@@ -364,11 +364,11 @@ class Parser
   pub def init_rec self
     self.#arg_idx = 0
     self.#drain = false
-    self.#rec = record()
+    self.#rec = {}
     let rec = self.#rec
-    rec.cmd = nil
-    rec.help = false
-    rec.handler = self.handler
+    rec[:cmd:] = nil
+    rec[:help:] = false
+    rec[:handler:] = self.handler
     for o = self.#opts
       rec[o.sym] = if o.collect
         []
@@ -446,11 +446,11 @@ class Parser
     if (sub != nil)
       sub.init_rec()
       let sub_rec = sub.parse_impl $argi
-      self.#rec[sub.#sym] = sub_rec
-      self.#rec.cmd = sub.#sym
-      self.#rec.handler = sub_rec.handler
-      if sub_rec.help
-        self.#rec.help = true
+      self.#rec[sub.#sym] = Record $sub_rec
+      self.#rec[:cmd:] = sub.#sym
+      self.#rec[:handler:] = sub_rec[:handler:]
+      if sub_rec[:help:]
+        self.#rec[:help:] = true
       else
         sub.validate()
       true
@@ -469,7 +469,7 @@ class Parser
         self.#drain = true
         continue
       else if (tok == "--help" || tok == "-h")
-        self.#rec.help = true
+        self.#rec[:help:] = true
         break
       else if tok.starts_with "--"
         self.#parse_long $tok $argi
@@ -478,14 +478,14 @@ class Parser
       else if (self.#sub_cmds.len > 0)
         if !(self.#try_cmd tok argi)
           throw self.#err "unknown command: $tok"
-        if self.#rec.help
+        if self.#rec[:help:]
           break
       else
         self.#assign_arg $tok
     self.#rec
 
   pub def validate self
-    if self.#rec.help
+    if self.#rec[:help:]
       return
     for o = self.#opts
       if !(o.collect || has_default o || type o Flag)
@@ -589,8 +589,8 @@ class Parser
   pub def selected_help self rec
     let prog = self.name
     let sub = self
-    while (rec.cmd != nil)
-      let cmd = rec.cmd
+    while (rec[:cmd:] != nil)
+      let cmd = rec[:cmd:]
       rec = rec[cmd]
       sub = sub.#sub_cmds.map(do |p| p[1]).filter(do |s| s.#sym == cmd).next()
       prog = "$prog $(sub.name)"
@@ -599,11 +599,11 @@ class Parser
   pub def parse self args
     self.init_rec()
     let rec = self.parse_impl (args.iter())
-    if rec.help
-      rec.help = self.selected_help $rec
+    if rec[:help:]
+      rec[:help:] = self.selected_help $rec
     self.validate()
     self.#rec = nil
-    rec
+    Record $rec
 
 # ===========================================================================
 # Public API

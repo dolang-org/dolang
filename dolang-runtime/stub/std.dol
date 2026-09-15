@@ -9,7 +9,7 @@ pub let null = nil
 #
 # Creates an array from positional arguments.
 #
-pub def array ...values
+pub def array[T] ...values @ T -> Array[T]
   throw nil
 
 #
@@ -25,7 +25,7 @@ pub def array ...values
 # assert_eq (bool "hello") true
 # ```
 #
-pub def bool value
+pub def bool value @ Value -> Bool
   throw nil
 
 #
@@ -33,10 +33,7 @@ pub def bool value
 # quotes strings, shows type tags).
 #
 #
-pub def dbg
-  # Value to convert.
-  value
-do -> Str
+pub def dbg value @ Value -> Str
   throw nil
 
 #
@@ -48,13 +45,13 @@ do -> Str
 # literal](../../language/data-structures.md#literals) or [vertical
 # data](../../language/vertical-layout.md#vertical-data) instead.
 #
-pub def dict ...pairs
+pub def dict[...Ts] ...pairs @ Ts -> Dict[Ts]
   throw nil
 
 #
 # Coerces or parses a value as a [`Float`](std.Float).
 #
-pub def float value
+pub def float value @ (Num | Str) -> Float
   throw nil
 
 #
@@ -90,14 +87,14 @@ do -> Getter[T, R]
 #
 pub def hash
   # Values to hash.
-  ...values
+  ...values @ Value
 do -> Int
   throw nil
 
 #
 # Coerces or parses a value as an [`Int`](std.Int).
 #
-pub def int value
+pub def int value @ (Num | Str) -> Int
   throw nil
 
 #
@@ -114,10 +111,10 @@ pub def int value
 # echo $r.name  # Alice
 # ```
 #
-pub def record
+pub def record[...Ts]
   # Positional and key field values.
-  ...pairs
-do -> Record
+  ...args @ Ts
+do -> Record[...Ts]
   throw nil
 
 #
@@ -142,7 +139,7 @@ do -> Setter[T, V]
 #
 # Returns the general-purpose [`Str`](std.Str) representation of a value.
 #
-pub def str value -> Str
+pub def str value @ Value -> Str
   throw nil
 
 #
@@ -167,7 +164,7 @@ pub def tuple[...Ts] ...values@Ts -> Tuple[...Ts]
 # ```
 # assert_eq (type 42) $Int
 # ```
-pub def type value@Value -> Type
+pub def type value @ Value -> Type
   throw nil
 
 #
@@ -187,7 +184,7 @@ pub def type value@Value type@Type
 # form of values where possible, which is useful for passing values as
 # command-line arguments to external programs.
 #
-pub def verbatim value -> Str
+pub def verbatim value @ Value -> Str
   throw nil
 
 # The following types are declared out of alphabetical order because many
@@ -1610,7 +1607,7 @@ pub class CyclicImportError: RuntimeError
 #   values by their position (0-indexed) among values for that key; negative
 #   instance indexes count from the end
 #
-pub class Dict
+pub class Dict[S @ {...}]
   #
   #
   # Builds a dictionary from one spreadable source of key-value pairs. The
@@ -3109,8 +3106,16 @@ pub class Range
 
 
 #
-# Stores ordered symbol and integer keys, including multiple values per key.
-pub class Record
+# Stores immutable, ordered symbol and integer fields.
+#
+# Records preserve insertion order and multiple values for a key. Use a class
+# for mutable named fields. To produce a changed record, spread the old record
+# into a new one:
+#
+# ```
+# let updated = record ...old status: ready
+# ```
+pub class Record[...Ts]
   #
   #
   # Builds a record from one spreadable source of key-value pairs.
@@ -3142,25 +3147,16 @@ pub class Record
   # ```
   # let r = record name: Alice age: 30
   # echo $r.name
-  # r.age = 31
   # ```
   #
   # And indexing for both symbol and integer keys:
   #
   # ```
   # echo $r[:name:]
-  # r[0] = "first"
   # ```
   #
   # Reads a field.
   pub def (get) self name
-    throw nil
-
-  #
-  # Clears all fields.
-  #
-  #[class]
-  pub def clear self rec
     throw nil
 
   #
@@ -3171,8 +3167,7 @@ pub class Record
   # ## Example
   #
   # ```
-  # let r = record 1 2 3 a: "first"
-  # r.insert :a: "second"
+  # let r = record 1 2 3 a: "first" a: "second"
   #
   # # Key-only check
   # assert (record.contains $r 0)
@@ -3188,7 +3183,7 @@ pub class Record
   pub def contains
     self
     # the record to check
-    rec @ Record
+    rec @ Record[...Ts]
     # the key to check
     key @ (Int | Sym)
     # optional value to check for (multi-map)
@@ -3209,27 +3204,11 @@ pub class Record
     throw nil
 
   #
-  # Removes all values for a field.
-  #
-  # Returns [`Bool`](std) indicating whether any values were removed.
-  #
-  #[class]
-  pub def delete self rec key
-    throw nil
-
-  #
   # Gets a field value with optional default. Supports `instance:` for multi-map
   # access. Negative `instance:` indexes count from the end.
   #
   #[class]
   pub def get self rec key :instance = nil :default = nil :else = nil
-    throw nil
-
-  #
-  # Sets a field. Key must be a symbol or integer.
-  #
-  #[class]
-  pub def insert self rec key value
     throw nil
 
   #
@@ -3248,15 +3227,6 @@ pub class Record
   #
   #[class]
   pub def len self rec -> Int
-    throw nil
-
-  #
-  # Removes and returns a value for a field. Supports `instance:` for multi-map
-  # access to remove a specific value by its position among values for that field.
-  # Negative `instance:` indexes count from the end.
-  #
-  #[class]
-  pub def pop self rec key :instance = nil :default = nil :else = nil
     throw nil
 
   #
@@ -4345,7 +4315,7 @@ pub class TimedOutError: RuntimeError
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
 #
-pub class Tuple
+pub class Tuple[...Ts]
   #
   #
   # Builds a tuple from an iterable.
@@ -4395,7 +4365,7 @@ pub class Tuple
   # returned copy may be the same object.
   #
   #
-  pub def copy self -> Tuple
+  pub def copy self -> Tuple[...Ts]
     throw nil
 
   #
