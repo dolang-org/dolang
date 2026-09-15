@@ -9,8 +9,14 @@
 # [`fs.windows.sec_desc`](fs.windows.sec_desc) and the
 # [Security Guide](../../shell/security.md). Windows alternate data streams
 # are listed with [`streams`](fs.streams).
-#
-# ## Resolution modes {: #fs.resolution-modes }
+
+import
+  security.windows:
+    - @Sid
+  time:
+    - @DateTime
+
+# Resolution mode
 #
 # Many functions accept a `resolve:` parameter that controls how symbolic links
 # and other recursive path resolution is handled. Two values are accepted:
@@ -25,6 +31,7 @@
 # On Unix, `:LINK:` corresponds to `lstat`-style behavior. On Windows, it
 # applies to both symbolic links and other reparse points such as directory
 # junctions.
+pub let @Resolve = (:TARGET: | :LINK:)
 
 # An entry within a directory.
 #
@@ -1359,16 +1366,16 @@ pub class Path
   # The method form of [`fs.metadata`](fs.metadata).
   pub def metadata
     self
-    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
-    :resolve @ (:TARGET: | :LINK:) = nil
+    # Resolution mode. Defaults to `:TARGET:`.
+    :resolve @ Resolve = nil
   do
     throw nil
 
   # The method form of [`fs.fs_metadata`](fs.fs_metadata).
   pub def fs_metadata
     self
-    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
-    :resolve @ (:TARGET: | :LINK:) = nil
+    # Resolution mode. Defaults to `:TARGET:`.
+    :resolve @ Resolve = nil
   do
     throw nil
 
@@ -1376,8 +1383,8 @@ pub class Path
   # which documents the metadata keyword arguments.
   pub def update_metadata
     self
-    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
-    :resolve @ (:TARGET: | :LINK:) = nil
+    # Resolution mode. Defaults to `:TARGET:`.
+    :resolve @ Resolve = nil
   do
     throw nil
 
@@ -1396,8 +1403,8 @@ pub class Path
     # Maximum directory depth to traverse. Defaults
     # to unlimited.
     :max_depth @ Int = nil
-    # [Resolution mode](fs.resolution-modes). Defaults to `:LINK:`.
-    :resolve @ (:TARGET: | :LINK:) = nil
+    # Resolution mode. Defaults to `:LINK:`.
+    :resolve @ Resolve = nil
   do
     throw nil
 
@@ -1483,8 +1490,8 @@ pub class Path
     # Query the directory's inheritable default
     # ACL.
     :default @ Bool = nil
-    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
-    :resolve @ (:TARGET: | :LINK:) = nil
+    # Resolution mode. Defaults to `:TARGET:`.
+    :resolve @ Resolve = nil
   do
     throw nil
 
@@ -1502,8 +1509,8 @@ pub class Path
     # Update the directory's inheritable default
     # ACL.
     :default @ Bool = nil
-    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
-    :resolve @ (:TARGET: | :LINK:) = nil
+    # Resolution mode. Defaults to `:TARGET:`.
+    :resolve @ Resolve = nil
   do
     throw nil
 
@@ -1512,8 +1519,8 @@ pub class Path
     self
     # Namespace to query.
     :namespace @ (Str | Sym) = nil
-    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
-    :resolve @ (:TARGET: | :LINK:) = nil
+    # Resolution mode. Defaults to `:TARGET:`.
+    :resolve @ Resolve = nil
   do
     throw nil
 
@@ -1525,8 +1532,8 @@ pub class Path
     name @ (Str | XattrEntry)
     # Namespace to query.
     :namespace @ (Str | Sym) = nil
-    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
-    :resolve @ (:TARGET: | :LINK:) = nil
+    # Resolution mode. Defaults to `:TARGET:`.
+    :resolve @ Resolve = nil
   do
     throw nil
 
@@ -1541,8 +1548,8 @@ pub class Path
     value @ (Str | Bin)
     # Namespace to update.
     :namespace @ (Str | Sym) = nil
-    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
-    :resolve @ (:TARGET: | :LINK:) = nil
+    # Resolution mode. Defaults to `:TARGET:`.
+    :resolve @ Resolve = nil
   do
     throw nil
 
@@ -1554,8 +1561,8 @@ pub class Path
     name @ (Str | XattrEntry)
     # Namespace to update.
     :namespace @ (Str | Sym) = nil
-    # [Resolution mode](fs.resolution-modes). Defaults to `:TARGET:`.
-    :resolve @ (:TARGET: | :LINK:) = nil
+    # Resolution mode. Defaults to `:TARGET:`.
+    :resolve @ Resolve = nil
   do
     throw nil
 
@@ -1909,9 +1916,9 @@ pub def metadata
   # Path to the file or
   # directory.
   path @ (Str | Path)
-  # [Resolution mode](fs.resolution-modes). Defaults to
+  # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ (:TARGET: | :LINK:) = nil
+  :resolve @ Resolve = nil
 do -> Metadata
   throw nil
 
@@ -1932,9 +1939,9 @@ do -> Metadata
 pub def fs_metadata
   # Path to resolve.
   path @ (Str | Path)
-  # [Resolution mode](fs.resolution-modes). Defaults to
+  # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ (:TARGET: | :LINK:) = nil
+  :resolve @ Resolve = nil
 do -> FsMetadata
   throw nil
 
@@ -1971,9 +1978,9 @@ do -> FsMetadata
 # update_metadata "artifact.tar" modified: $DateTime.from_unix(1700000000)
 # ```
 pub def update_metadata
-  # [Resolution mode](fs.resolution-modes). Defaults to
+  # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ (:TARGET: | :LINK:) = nil
+  :resolve @ Resolve = nil
   # Unix permission mode.
   :mode @ (Int | Mode) = nil
   # Owner ID, name, or SID.
@@ -2072,9 +2079,9 @@ pub def acl
   :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
   # Query the directory's inheritable default ACL.
   :default @ Bool = nil
-  # [Resolution mode](fs.resolution-modes). Defaults to
+  # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ (:TARGET: | :LINK:) = nil
+  :resolve @ Resolve = nil
 do -> (Acl | nil)
   throw nil
 
@@ -2107,9 +2114,9 @@ pub def set_acl
   :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
   # Update the directory's inheritable default ACL.
   :default @ Bool = nil
-  # [Resolution mode](fs.resolution-modes). Defaults to
+  # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ (:TARGET: | :LINK:) = nil
+  :resolve @ Resolve = nil
 do
   throw nil
 
@@ -2135,9 +2142,9 @@ pub def xattrs
   # `:USER:` and `:SYSTEM:` name well-known namespaces, and `:ANY:` lists all
   # namespaces.
   :namespace @ (Str | Sym) = nil
-  # [Resolution mode](fs.resolution-modes). Defaults to
+  # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ (:TARGET: | :LINK:) = nil
+  :resolve @ Resolve = nil
 do -> Iter
   throw nil
 
@@ -2156,9 +2163,9 @@ pub def xattr
   name @ (Str | XattrEntry)
   # Namespace to query.
   :namespace @ (Str | Sym) = nil
-  # [Resolution mode](fs.resolution-modes). Defaults to
+  # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ (:TARGET: | :LINK:) = nil
+  :resolve @ Resolve = nil
 do -> Bin
   throw nil
 
@@ -2184,9 +2191,9 @@ pub def set_xattr
   value @ (Str | Bin)
   # Namespace to update.
   :namespace @ (Str | Sym) = nil
-  # [Resolution mode](fs.resolution-modes). Defaults to
+  # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ (:TARGET: | :LINK:) = nil
+  :resolve @ Resolve = nil
 do
   throw nil
 
@@ -2205,9 +2212,9 @@ pub def remove_xattr
   name @ (Str | XattrEntry)
   # Namespace to update.
   :namespace @ (Str | Sym) = nil
-  # [Resolution mode](fs.resolution-modes). Defaults to
+  # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ (:TARGET: | :LINK:) = nil
+  :resolve @ Resolve = nil
 do
   throw nil
 
@@ -2231,9 +2238,9 @@ do
 pub def streams
   # Path to query.
   path @ (Str | Path)
-  # [Resolution mode](fs.resolution-modes). Defaults to
+  # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ (:TARGET: | :LINK:) = nil
+  :resolve @ Resolve = nil
 do -> Iter
   throw nil
 
@@ -2293,9 +2300,8 @@ pub def glob
   # Maximum directory depth to traverse. Defaults to
   # unlimited.
   :max_depth @ Int = nil
-  # [Resolution mode](fs.resolution-modes). Defaults to
-  # `:LINK:`.
-  :resolve @ (:TARGET: | :LINK:) = nil
+  # Resolution mode. Defaults to `:LINK:`.
+  :resolve @ Resolve = nil
 do -> Iter
   throw nil
 
