@@ -718,5 +718,12 @@ def type_followups_are_exposed()
   assert_eq (span_text(source, schema.args[0].span)) "..."
   assert_eq (span_text(source, schema.args[1].key_ty.span)) "K"
   assert_eq (span_text(source, schema.args[2].key_ty.span)) "Tuple[Int, Int]"
+  # Names in a binder's bound and default, and in the aliased type, resolve
+  let prelude_item = do |item|
+    nodes.find(do |pair| (type(pair[1], compile.PreludeItem) && (pair[1].item == item)))[0]
+  assert_eq $binder[1].bound.target (prelude_item "Str")
+  assert_eq $binder[1].default.target (prelude_item "Sym")
+  assert_eq (types_of(nodes, alias[0])[0][1].expr.base.target) (prelude_item "Dict")
+  assert_eq $schema.args[1].key_ty.target $binder[0]
   # Type-only declarations have no runtime imports or bindings to emit.
   unit.emit()

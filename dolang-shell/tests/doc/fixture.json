@@ -782,7 +782,7 @@
             "byte_offset": 494
           }
         },
-        "target": null
+        "target": 4
       },
       "bound": {
         "kind": "UnionType",
@@ -825,7 +825,7 @@
                 "byte_offset": 481
               }
             },
-            "target": null
+            "target": 4
           },
           {
             "kind": "NameType",
@@ -853,7 +853,7 @@
                 "byte_offset": 487
               }
             },
-            "target": null
+            "target": 5
           }
         ]
       }
@@ -4085,7 +4085,7 @@
           "byte_offset": 481
         }
       },
-      "ref": null,
+      "ref": 4,
       "context": null
     },
     {
@@ -4119,7 +4119,7 @@
           "byte_offset": 487
         }
       },
-      "ref": null,
+      "ref": 5,
       "context": null
     },
     {
@@ -4170,7 +4170,7 @@
           "byte_offset": 494
         }
       },
-      "ref": null,
+      "ref": 4,
       "context": null
     },
     {
@@ -8825,19 +8825,19 @@
                 {
                   "kind": "name",
                   "name": "Int",
-                  "target": null
+                  "target": 4
                 },
                 {
                   "kind": "name",
                   "name": "Str",
-                  "target": null
+                  "target": 5
                 }
               ]
             },
             "default": {
               "kind": "name",
               "name": "Int",
-              "target": null
+              "target": 4
             }
           },
           {
