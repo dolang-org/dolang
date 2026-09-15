@@ -199,6 +199,9 @@ pub class Field: Declaration
 
 # A `let` or other binding.
 pub class Bind: Declaration
+
+# A type alias.
+pub class Alias: Declaration
   # Whether the binding was declared `pub`.
   #[getter]
   pub def is_pub self
@@ -220,6 +223,11 @@ pub class ImportModule: Import
   # Whether the module was imported `pub`.
   #[getter]
   pub def is_pub self
+    throw nil
+
+  # Whether the module was imported with `@`, for types only.
+  #[getter]
+  pub def type_only self -> Bool
     throw nil
 
 # An item bound from a module, as in `import foo: - bar`.
@@ -372,6 +380,15 @@ pub class Type: Node
 # Supertype of binders: names standing for types within the function, method,
 # or class that is their parent.
 pub class Binder: Declaration
+  # The binder's bound, or `nil` when it has none.
+  #[getter]
+  pub def bound self -> (TypeExpr | nil)
+    throw nil
+
+  # The binder's default, or `nil` when it has none.
+  #[getter]
+  pub def default self -> (TypeExpr | nil)
+    throw nil
 
 # A positional binder, such as `T`.
 pub class PosBinder: Binder
@@ -427,7 +444,7 @@ pub class AppType: TypeExpr
   pub def base self
     throw nil
 
-# A dict schema, such as `{name: Str, ?port: Int}`.
+# A schema, such as `{name: Str, ?port: Int}`.
 pub class SchemaType: TypeExpr
   # An array of [`TypeArg`](compile.TypeArg) objects, one per entry.
   #[getter]
@@ -466,16 +483,19 @@ pub class TypeArg
   pub def span self
     throw nil
 
-  # The item's [`TypeExpr`](compile.TypeExpr).
-  #[getter]
-  pub def ty self
-    throw nil
-
 # A positional item, such as `T`.
 pub class PosTypeArg: TypeArg
+  # The item's type.
+  #[getter]
+  pub def ty self -> TypeExpr
+    throw nil
 
 # A keyed item, such as `name: T`.
 pub class KeyTypeArg: TypeArg
+  # The item's type.
+  #[getter]
+  pub def ty self -> TypeExpr
+    throw nil
   # The [`Span`](compile.Span) of the key as written. A bareword key is a symbol
   # and a quoted one is a string.
   #[getter]
@@ -484,6 +504,24 @@ pub class KeyTypeArg: TypeArg
 
 # A rest item, such as `...T`.
 pub class RestTypeArg: TypeArg
+  # The item's type.
+  #[getter]
+  pub def ty self -> TypeExpr
+    throw nil
+
+# An unrestricted schema rest item, written `...`.
+pub class OpenRestTypeArg: TypeArg
+
+# A keyed rest item, such as `...K: V`.
+pub class KeyRestTypeArg: TypeArg
+  # The value type.
+  #[getter]
+  pub def ty self -> TypeExpr
+    throw nil
+  # The key type.
+  #[getter]
+  pub def key_ty self -> TypeExpr
+    throw nil
 
 # A syntactic token.
 #

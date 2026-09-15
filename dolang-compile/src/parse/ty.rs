@@ -8,8 +8,8 @@ use super::{
 };
 use crate::{
     ast::{
-        Annot, Binder, BinderKind, Binders, Const, Ident, RetType, TypeArg, TypeArgKind, TypeExpr,
-        TypeKey, visit::Node,
+        Annot, Binder, BinderDefault, BinderKind, Binders, Const, Ident, RetType, TypeArg,
+        TypeArgKind, TypeExpr, TypeKey, visit::Node,
     },
     lex::{Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
@@ -89,6 +89,7 @@ impl Parser<'_> {
         self.with_mode(Mode::FullExpr, |this| {
             let mut binders = Vec::new();
             let mut rest_span = None;
+            let mut seen_default = false;
             let close = loop {
                 if let Some(token!(TokenInfo::RightBracket)) = this.peek()?
                     && !binders.is_empty()
@@ -116,10 +117,40 @@ impl Parser<'_> {
                         token => return Err(this.syntax_error(scope, token, "expected binder")),
                     },
                 };
+                let bound = this.parse_annot(scope)?;
+                let default = if let Some(token!(TokenInfo::Equal)) = this.peek()? {
+                    let equal_span = this.advance();
+                    if matches!(kind, BinderKind::Rest { .. }) {
+                        return Err(this.syntax_error(
+                            scope,
+                            Some(Token {
+                                info: TokenInfo::Equal,
+                                span: equal_span,
+                            }),
+                            "a rest binder cannot have a default",
+                        ));
+                    }
+                    Some(Box::new(BinderDefault {
+                        equal_span,
+                        ty: this.parse_type_full(scope)?,
+                    }))
+                } else {
+                    None
+                };
+                if matches!(kind, BinderKind::Pos) {
+                    if default.is_some() {
+                        seen_default = true;
+                    } else if seen_default {
+                        this.fail = true;
+                        this.diags.push(RequiredAfterOptional(ident));
+                    }
+                }
                 let delim_span = this.consume_comma()?;
                 binders.push(Binder {
                     kind,
                     ident: Ident::new(ident),
+                    bound,
+                    default,
                     delim_span,
                     node: None,
                 });
@@ -146,7 +177,7 @@ impl Parser<'_> {
     /// Lex a compact type so that whitespace ends it, even within a full expression.
     ///
     /// The token before the type must already be consumed.
-    fn with_type_mode<R>(
+    pub(super) fn with_type_mode<R>(
         &mut self,
         f: impl for<'b> FnOnce(&'b mut Self) -> Result<R>,
     ) -> Result<R> {
@@ -345,9 +376,63 @@ impl Parser<'_> {
                             this.fail = true;
                             this.diags.push(OptionalRest(span));
                         }
-                        TypeArgKind::Rest {
-                            ellipsis_span,
-                            ty: this.parse_type_full(scope)?,
+                        // `K:` is one lexer token, while a compound key type such as
+                        // `Tuple[Int, Int]:` leaves the `:` as its own token.
+                        if let Some(token!(TokenInfo::Key, key_span)) = this.peek()? {
+                            if delim != Delim::Brace {
+                                let token = this.next()?;
+                                return Err(this.syntax_error(
+                                    scope,
+                                    token,
+                                    "a keyed rest item is only valid in a schema",
+                                ));
+                            }
+                            this.advance();
+                            TypeArgKind::KeyRest {
+                                ellipsis_span,
+                                key_ty: TypeExpr::Name {
+                                    head: Ident::new(key_span),
+                                    fields: Vec::new(),
+                                    decl: None,
+                                },
+                                colon_span: key_span.after_right_char(),
+                                ty: this.parse_type_full(scope)?,
+                            }
+                        } else if matches!(this.peek()?, Some(token!(TokenInfo::Comma)) | None)
+                            || this
+                                .peek()?
+                                .is_some_and(|token| delim.is_close(&token.info))
+                        {
+                            if delim != Delim::Brace {
+                                let token = this.peek()?;
+                                return Err(this.syntax_error(
+                                    scope,
+                                    token,
+                                    "an open rest item is only valid in a schema",
+                                ));
+                            }
+                            TypeArgKind::OpenRest { ellipsis_span }
+                        } else {
+                            let ty = this.parse_type_full(scope)?;
+                            if let Some(token!(TokenInfo::Colon)) = this.peek()? {
+                                if delim != Delim::Brace {
+                                    let token = this.next()?;
+                                    return Err(this.syntax_error(
+                                        scope,
+                                        token,
+                                        "a keyed rest item is only valid in a schema",
+                                    ));
+                                }
+                                let colon_span = this.advance();
+                                TypeArgKind::KeyRest {
+                                    ellipsis_span,
+                                    key_ty: ty,
+                                    colon_span,
+                                    ty: this.parse_type_full(scope)?,
+                                }
+                            } else {
+                                TypeArgKind::Rest { ellipsis_span, ty }
+                            }
                         }
                     }
                     Some(token!(TokenInfo::Key, span)) => {

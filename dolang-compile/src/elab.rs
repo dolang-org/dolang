@@ -2009,7 +2009,11 @@ impl<'a> Elaborater<'a> {
                     module,
                     bind,
                     insert,
+                    type_only,
                 } => {
+                    if type_only.is_some() {
+                        continue;
+                    }
                     let id = self
                         .symtab
                         .id(&self.bintab.id_str(self.file.str(bind.span)));
@@ -2175,6 +2179,15 @@ impl<'a> Elaborater<'a> {
             Stmt::Return(ret) => self.visit_return(scope, ret),
             Stmt::Throw(node) => self.visit_expr(scope, &mut node.expr, false),
             Stmt::While(node) => self.visit_while(scope, node),
+            Stmt::TypeAlias(alias) => {
+                if let Some(span) = alias.pub_span
+                    && !scope.is_top_level()
+                {
+                    self.diags.push(InappropriatePub(span));
+                    self.fail = true;
+                }
+                Ok(())
+            }
         }
     }
 

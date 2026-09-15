@@ -5,7 +5,8 @@ pub(crate) mod ty;
 pub(crate) mod visit;
 
 pub(crate) use self::ty::{
-    Annot, Binder, BinderKind, Binders, RetType, TypeArg, TypeArgKind, TypeDecl, TypeExpr, TypeKey,
+    Annot, Binder, BinderDefault, BinderKind, Binders, RetType, TypeArg, TypeArgKind, TypeDecl,
+    TypeExpr, TypeKey,
 };
 
 use std::{
@@ -1636,6 +1637,37 @@ pub(crate) struct Let {
     pub(crate) pub_span: Option<Span>,
 }
 
+pub(crate) struct TypeAlias {
+    pub(crate) ident: Ident,
+    pub(crate) binders: Option<Box<Binders>>,
+    pub(crate) ty: TypeExpr,
+    pub(crate) let_span: Span,
+    pub(crate) at_span: Span,
+    pub(crate) equal_span: Span,
+    pub(crate) pub_span: Option<Span>,
+    pub(crate) node: Option<doc::Id>,
+}
+
+impl Node for TypeAlias {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        if let Some(span) = self.pub_span {
+            visit.token(Token::Keyword, span, None)?;
+        }
+        visit.token(Token::Keyword, self.let_span, None)?;
+        visit.token(Token::Annotation, self.at_span, None)?;
+        visit.token(Token::Type, self.ident.span, self.node)?;
+        if let Some(binders) = &self.binders {
+            visit.node(&**binders)?;
+        }
+        visit.token(Token::Operator, self.equal_span, None)?;
+        visit.node(&self.ty)
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::Let
+    }
+}
+
 impl Node for Let {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         if let Some(span) = self.pub_span {
@@ -1812,6 +1844,7 @@ pub(crate) enum ImportElement {
         module: Span,
         bind: Ident,
         insert: bool,
+        type_only: Option<TypeOnly>,
     },
     ModuleRenamed {
         module: Span,
@@ -1827,9 +1860,17 @@ pub(crate) enum ImportElement {
 impl Node for ImportElement {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
-            ImportElement::ModuleAsIs { module, bind, .. } => {
+            ImportElement::ModuleAsIs {
+                module,
+                bind,
+                type_only,
+                ..
+            } => {
+                if let Some(type_only) = type_only {
+                    visit.token(Token::Annotation, type_only.at_span, None)?;
+                }
                 visit.token(Token::ModuleName, *module, None)?;
-                visit.node(bind)
+                accept_import_bind(bind, type_only, visit)
             }
             ImportElement::ModuleRenamed {
                 module,
@@ -2362,6 +2403,7 @@ pub(crate) enum Stmt {
     Prim(PrimStmt),
     Return(Return),
     Throw(Throw),
+    TypeAlias(TypeAlias),
     While(While),
 }
 
@@ -2381,6 +2423,7 @@ impl Node for Stmt {
             Stmt::Prim(prim) => prim.accept(visit),
             Stmt::Return(node) => node.accept(visit),
             Stmt::Throw(node) => node.accept(visit),
+            Stmt::TypeAlias(node) => node.accept(visit),
             Stmt::While(node) => node.accept(visit),
         }
     }
@@ -2400,6 +2443,7 @@ impl Node for Stmt {
             Stmt::Prim(prim) => prim.kind(),
             Stmt::Return(_) => NodeKind::Return,
             Stmt::Throw(_) => NodeKind::Throw,
+            Stmt::TypeAlias(_) => NodeKind::Let,
             Stmt::While(_) => NodeKind::While,
         }
     }

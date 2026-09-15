@@ -2267,7 +2267,15 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             };
 
             match import {
-                ImportElement::ModuleAsIs { bind, insert, .. } => {
+                ImportElement::ModuleAsIs {
+                    bind,
+                    insert,
+                    type_only,
+                    ..
+                } => {
+                    if type_only.is_some() {
+                        continue;
+                    }
                     if *insert {
                         let cid = self.consttab.str(self.bintab.id_str(self.file.str(module)));
                         self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
@@ -2877,6 +2885,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             }
             Stmt::While(node) => {
                 self.lower_while(node, want_result)?;
+                Ok(false)
+            }
+            Stmt::TypeAlias(node) => {
+                if want_result {
+                    self.lower_load_nil(node.span());
+                }
                 Ok(false)
             }
         }

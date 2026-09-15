@@ -698,3 +698,28 @@ def superclasses_are_types_of_their_class()
 
   assert !(record[1].type_only)
   assert $dict[1].type_only
+
+#[test]
+def type_followups_are_exposed()
+  let source = r|-
+    import @not_loaded
+    pub let @Entries[K @ Str = Sym] = Dict[{..., ...K: Int, ...Tuple[Int, Int]: Str}]
+    let value @Entries[Str] = nil
+  let unit = compile.compile "type_followups.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+  let module = nodes.find(do |pair| type(pair[1], compile.ImportModule))
+  assert $module[1].type_only
+  let alias = (named_node source nodes compile.Alias "Entries")
+  assert $alias[1].is_pub
+  let binder = nodes.find(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == alias[0])))
+  assert_eq (span_text(source, binder[1].bound.span)) "Str"
+  assert_eq (span_text(source, binder[1].default.span)) "Sym"
+  let schema = (types_of(nodes, alias[0])[0][1].expr.args[0].ty)
+  assert_type $compile.SchemaType $schema
+  assert_eq [...schema.args.map(do |arg| type arg)] [compile.OpenRestTypeArg, compile.KeyRestTypeArg, compile.KeyRestTypeArg]
+  assert_eq (span_text(source, schema.args[0].span)) "..."
+  assert_eq (span_text(source, schema.args[1].key_ty.span)) "K"
+  assert_eq (span_text(source, schema.args[2].key_ty.span)) "Tuple[Int, Int]"
+  # Type-only declarations have no runtime imports or bindings to emit.
+  unit.emit()

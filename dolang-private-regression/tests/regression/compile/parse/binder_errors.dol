@@ -7,18 +7,8 @@ def late[...R, T] x
   x
 
 class Bounded[T @Int]
-# error: got @, expected: ]
-#   --> binder_errors.dol:LL:LL
-#    |
-# LL | class Bounded[T @Int]
-#    |                 ^
 
 class Defaulted[T = Int]
-# error: got =, expected: ]
-#   --> binder_errors.dol:LL:LL
-#    |
-# LL | class Defaulted[T = Int]
-#    |                   ^
 
 class Empty[]
 # error: expected binder

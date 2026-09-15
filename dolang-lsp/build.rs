@@ -98,7 +98,7 @@ struct TypeArgJson {
     #[serde(default)]
     key: Option<String>,
     #[serde(rename = "type")]
-    ty: TypeJson,
+    ty: Option<TypeJson>,
 }
 
 /// How tightly a type form binds, so that it is parenthesized where it would have
@@ -146,7 +146,10 @@ fn render_args(args: &[TypeArgJson]) -> String {
     args.iter()
         .map(|arg| {
             let optional = if arg.optional { "?" } else { "" };
-            let ty = arg.ty.render(Binding::Func);
+            let Some(ty) = arg.ty.as_ref() else {
+                return format!("{optional}...");
+            };
+            let ty = ty.render(Binding::Func);
             match (arg.kind.as_str(), &arg.key) {
                 ("rest", _) => format!("{optional}...{ty}"),
                 ("key", Some(key)) => format!("{optional}{key}: {ty}"),

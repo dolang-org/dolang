@@ -50,6 +50,7 @@ let KIND_NAMES = $
   $compile.SpecialMethod: "SpecialMethod"
   $compile.Field: "Field"
   $compile.Bind: "Bind"
+  $compile.Alias: "Alias"
   $compile.SelfParam: "SelfParam"
   $compile.ImportModule: "ImportModule"
   $compile.ImportItem: "ImportItem"
@@ -91,12 +92,16 @@ let TYPE_ARG_KIND_NAMES = $
   $compile.PosTypeArg: "PosTypeArg"
   $compile.KeyTypeArg: "KeyTypeArg"
   $compile.RestTypeArg: "RestTypeArg"
+  $compile.OpenRestTypeArg: "OpenRestTypeArg"
+  $compile.KeyRestTypeArg: "KeyRestTypeArg"
 
 # How a type argument is given, as the documentation projection names it.
 let ARG_KINDS = $
   $compile.PosTypeArg: pos
   $compile.KeyTypeArg: key
   $compile.RestTypeArg: rest
+  $compile.OpenRestTypeArg: open_rest
+  $compile.KeyRestTypeArg: key_rest
 
 # The type of a constant type's value, which JSON alone cannot tell apart.
 def const_type value
@@ -140,7 +145,10 @@ def type_arg_json id_to_index arg
     optional: $arg.optional
     if type(arg, compile.KeyTypeArg)
       key: (span_json arg.key)
-    type: (type_expr_json id_to_index arg.ty)
+    if type(arg, compile.KeyRestTypeArg)
+      key_type: (type_expr_json id_to_index arg.key_ty)
+    if !type(arg, compile.OpenRestTypeArg)
+      type: (type_expr_json id_to_index arg.ty)
 
 # Where a node starts, for ordering. A prelude node has no span, and comes first.
 def start_offset node
@@ -160,11 +168,18 @@ def node_ref id_to_index id
 # conditional getter registration in `NodeObject::build`, dolang-ext-compile)
 # are absent from unpacking, so each is bound with a `nil` default here rather
 # than tracked separately per kind.
+def node_default_json id_to_index value
+  if type(value, compile.TypeExpr)
+    type_expr_json $id_to_index $value
+  else
+    span_json $value
+
 def node_json id_to_index node
   bind node
     :name = nil
     :is_pub = nil
     :default = nil
+    :bound = nil
     :key = nil
     :module = nil
     :item = nil
@@ -182,7 +197,9 @@ def node_json id_to_index node
     if (is_pub != nil)
       is_pub: $is_pub
     if (default != nil)
-      default: (span_json(default))
+      default: (node_default_json id_to_index default)
+    if (bound != nil)
+      bound: (type_expr_json id_to_index bound)
     if (key != nil)
       key: (span_json(key))
     if (module != nil)
@@ -335,6 +352,7 @@ class Document
       $compile.Class: $self.#class_entry
       $compile.Function: $self.#function_entry
       $compile.Bind: $self.#value_entry
+      $compile.Alias: $self.#alias_entry
       $compile.ImportModule: $self.#import_module_entry
       $compile.ImportItem: $self.#import_item_entry
       $compile.Field: $self.#field_member
@@ -405,12 +423,8 @@ class Document
   def binders self id
     let result = []
     for child = self.#own(id)
-      if type(child, compile.PosBinder)
-        result.push $self.#text(child.name)
-      else if type(child, compile.KeyBinder)
-        result.push ":$(self.#text(child.name))"
-      else if type(child, compile.RestBinder)
-        result.push "...$(self.#text(child.name))"
+      if type(child, compile.Binder)
+        result.push $self.#text(child.span)
     result
 
   # The type describing a node, as a tree, or `nil`.
@@ -472,7 +486,10 @@ class Document
         optional: $arg.optional
         if type(arg, compile.KeyTypeArg)
           key: (self.#text(arg.key))
-        type: (self.#type_tree(arg.ty))
+        if type(arg, compile.KeyRestTypeArg)
+          key_type: (self.#type_tree(arg.key_ty))
+        if !type(arg, compile.OpenRestTypeArg)
+          type: (self.#type_tree(arg.ty))
     result
 
   # A class's superclasses, in source order.
@@ -549,8 +566,22 @@ class Document
       span: (span_json(node.name))
       doc: (self.#doc_of(node))
 
+  def alias_entry self id node
+    if (node.parent != self.#index.root() || !self.#included(node.is_pub))
+      return
+    let binders = self.#binders(id)
+    self.#entities.push $
+      kind: "alias"
+      name: (self.#text(node.name))
+      pub: $node.is_pub
+      span: (span_json(node.name))
+      doc: (self.#doc_of(node))
+      if (binders.len > 0)
+        binders: $binders
+      type: (self.#type_of(id))
+
   def import_module_entry self _id node
-    if !self.#included(node.is_pub)
+    if (node.type_only || !self.#included(node.is_pub))
       return
     self.#entities.push $
       kind: "import_module"
