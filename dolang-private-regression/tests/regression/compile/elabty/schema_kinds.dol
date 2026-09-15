@@ -1,0 +1,27 @@
+# document
+let _bad @{} = nil
+
+def _bad_param _x@{} -> {}
+  nil
+
+let @S = {}
+let _bad_alias @S = nil
+
+def _good_rest ..._args@S
+  nil
+
+let _same = nil
+let @_same = Str
+# warning: type name shadows a value of the same name
+#   --> schema_kinds.dol:LL:LL
+#    |
+# LL | let @_same = Str
+#    |      ^^^^^
+
+let @_other = Str
+let _other = nil
+# warning: value name shadows a type of the same name
+#   --> schema_kinds.dol:LL:LL
+#    |
+# LL | let _other = nil
+#    |     ^^^^^^

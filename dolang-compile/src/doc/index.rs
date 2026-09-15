@@ -360,27 +360,47 @@ impl Index<'_> {
         args.iter()
             .map(|arg| {
                 let (kind, ty, start) = match &arg.kind {
-                    TypeArgKind::Pos(ty) => (doc::TypeArgKind::Pos, ty, None),
+                    TypeArgKind::Pos(ty) => (doc::TypeArgKind::Pos, Some(ty), None),
                     TypeArgKind::Key { key, ty, .. } => {
                         let key = match key {
                             TypeKey::Sym(span) => *span,
                             TypeKey::Str(expr) => expr.span(),
                         };
-                        (doc::TypeArgKind::Key { key }, ty, Some(key))
+                        (doc::TypeArgKind::Key { key }, Some(ty), Some(key))
                     }
                     TypeArgKind::Rest { ellipsis_span, ty } => {
-                        (doc::TypeArgKind::Rest, ty, Some(*ellipsis_span))
+                        (doc::TypeArgKind::Rest, Some(ty), Some(*ellipsis_span))
                     }
+                    TypeArgKind::OpenRest { ellipsis_span } => {
+                        (doc::TypeArgKind::OpenRest, None, Some(*ellipsis_span))
+                    }
+                    TypeArgKind::KeyRest {
+                        ellipsis_span,
+                        key_ty,
+                        ty,
+                        ..
+                    } => (
+                        doc::TypeArgKind::KeyRest {
+                            key_ty: self.type_expr(key_ty)?,
+                        },
+                        Some(ty),
+                        Some(*ellipsis_span),
+                    ),
                 };
                 let span = [arg.optional, start]
                     .into_iter()
                     .flatten()
-                    .fold(ty.span(), |acc, span| span | acc);
+                    .chain(ty.map(|ty| ty.span()))
+                    .reduce(|acc, span| acc | span)
+                    .expect("a type argument has a source span");
                 Some(doc::TypeArg {
                     span,
                     optional: arg.optional.is_some(),
                     kind,
-                    ty: self.type_expr(ty)?,
+                    ty: match ty {
+                        Some(ty) => Some(self.type_expr(ty)?),
+                        None => None,
+                    },
                 })
             })
             .collect()
@@ -400,8 +420,34 @@ impl Index<'_> {
                 }
             };
             let name = binder.ident.span;
-            let span = sigil.map_or(name, |sigil| sigil | name);
-            let id = self.push_to(Some(parent), Kind::Binder { name, kind }, span);
+            let span = [
+                sigil,
+                Some(name),
+                binder.bound.as_ref().map(|bound| bound.span()),
+                binder.default.as_ref().map(|default| default.ty.span()),
+            ]
+            .into_iter()
+            .flatten()
+            .reduce(|left, right| left | right)
+            .unwrap();
+            let bound = binder
+                .bound
+                .as_ref()
+                .and_then(|bound| self.type_expr(&bound.ty));
+            let default = binder
+                .default
+                .as_ref()
+                .and_then(|default| self.type_expr(&default.ty));
+            let id = self.push_to(
+                Some(parent),
+                Kind::Binder {
+                    name,
+                    kind,
+                    bound,
+                    default,
+                },
+                span,
+            );
             binder.node = Some(id);
             self.type_decls.insert(name.start, id);
         }
@@ -446,6 +492,21 @@ impl Index<'_> {
                 );
             }
             Stmt::Import(import) => self.import(scope, import),
+            Stmt::TypeAlias(alias) => {
+                let name = alias.ident.span;
+                let id = self.push(
+                    scope,
+                    Kind::Alias {
+                        name,
+                        is_pub: alias.pub_span.is_some(),
+                    },
+                    alias.span(),
+                );
+                alias.node = Some(id);
+                self.type_decls.insert(name.start, id);
+                self.binders(Some(id), alias.binders.as_deref_mut());
+                self.type_node(id, &alias.ty);
+            }
             _ => {}
         }
     }
@@ -455,22 +516,30 @@ impl Index<'_> {
         for element in &mut import.elements {
             let element_span = element.span();
             match element {
-                ImportElement::ModuleAsIs { module, bind, .. } => {
+                ImportElement::ModuleAsIs {
+                    module,
+                    bind,
+                    type_only,
+                    ..
+                } => {
                     let name = self.file.str(*module).split('.').next().unwrap();
                     let name = Span {
                         start: module.start,
                         end: module.start + name.len() as u32,
                     };
-                    self.declaration(
-                        scope,
-                        bind,
-                        Kind::ImportModule {
-                            module: *module,
-                            name,
-                            is_pub,
-                        },
-                        element_span,
-                    );
+                    let kind = Kind::ImportModule {
+                        module: *module,
+                        name,
+                        is_pub,
+                        type_only: type_only.is_some(),
+                    };
+                    if let Some(type_only) = type_only {
+                        let id = self.push(scope, kind, element_span);
+                        type_only.node = Some(id);
+                        self.type_decls.insert(bind.span.start, id);
+                    } else {
+                        self.declaration(scope, bind, kind, element_span);
+                    }
                 }
                 ImportElement::ModuleRenamed { module, bind, .. } => {
                     self.declaration(
@@ -480,6 +549,7 @@ impl Index<'_> {
                             module: *module,
                             name: bind.span,
                             is_pub,
+                            type_only: false,
                         },
                         element_span,
                     );
@@ -680,6 +750,7 @@ impl Index<'_> {
                 self.prim(scope, &mut node.rhs);
             }
             Stmt::Import(_) => {}
+            Stmt::TypeAlias(_) => {}
             Stmt::Def(def) => {
                 let id = def.ident.res.and_then(|res| res.node);
                 for decorator in &mut def.decorators {
@@ -765,7 +836,9 @@ impl Index<'_> {
         for super_ref in &mut class.super_refs {
             self.reference(scope, &mut super_ref.ident);
             for arg in &mut super_ref.args {
-                self.ty(scope, arg.ty_mut());
+                if let Some(ty) = arg.ty_mut() {
+                    self.ty(scope, ty);
+                }
             }
             if let Some(id) = id {
                 self.super_node(id, super_ref);

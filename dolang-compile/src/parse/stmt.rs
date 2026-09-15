@@ -6,8 +6,8 @@ use super::{
 use crate::{
     ast::{
         Assign, Bind, Block, CatchHandler, Expr, For, Function, Ident, If, IfBranch, ImportElement,
-        Let, Param, PatternBind, PatternBindKind, PrimStmt, Return, Stmt, Throw, Try, While,
-        visit::Node,
+        Let, Param, PatternBind, PatternBindKind, PrimStmt, Return, Stmt, Throw, Try, TypeAlias,
+        While, visit::Node,
     },
     lex::{Keyword, Token, TokenInfo},
     source::Span,
@@ -27,19 +27,43 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_let(&mut self, scope: &mut Scope, pub_span: Option<Span>) -> Result<Let> {
+    fn parse_let(&mut self, scope: &mut Scope, pub_span: Option<Span>) -> Result<Stmt> {
         let let_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Let)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
+        if let Some(token!(TokenInfo::At)) = self.peek()? {
+            let at_span = self.advance();
+            let ident = match decay_ident!(self.next()?) {
+                Some(token!(TokenInfo::Ident, span)) => Ident::new(span),
+                other => return Err(self.syntax_error(scope, other, "expected alias name")),
+            };
+            let binders = self.parse_binders(scope)?;
+            if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+                self.advance();
+            }
+            let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
+            self.expect(scope, &[ExpectKind::ArgSep])?;
+            let ty = self.with_type_mode(|this| this.parse_type_compact(scope))?;
+            return Ok(Stmt::TypeAlias(TypeAlias {
+                ident,
+                binders,
+                ty,
+                let_span,
+                at_span,
+                equal_span,
+                pub_span,
+                node: None,
+            }));
+        }
         let bind = self.parse_pattern(scope, false)?;
         let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
         let rhs = self.parse_rhs(scope)?;
-        Ok(Let {
+        Ok(Stmt::Let(Let {
             bind,
             rhs,
             let_span,
             equal_span,
             pub_span,
-        })
+        }))
     }
 
     fn parse_bind(&mut self, scope: &mut Scope) -> Result<Bind> {
@@ -361,7 +385,7 @@ impl Parser<'_> {
         }
 
         match self.peek()? {
-            Some(token!(Keyword(Let))) => Ok(Stmt::Let(self.parse_let(scope, pub_span)?)),
+            Some(token!(Keyword(Let))) => self.parse_let(scope, pub_span),
             Some(token!(Keyword(Def))) => {
                 Ok(Stmt::Def(self.parse_def(scope, pub_span, decorators)?))
             }

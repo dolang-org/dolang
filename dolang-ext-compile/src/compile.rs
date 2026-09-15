@@ -93,6 +93,7 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     special_method: Type<'v, NodeObject<SpecialMethodTag>>,
     field: Type<'v, NodeObject<FieldTag>>,
     bind: Type<'v, NodeObject<BindTag>>,
+    alias: Type<'v, NodeObject<AliasTag>>,
     self_param: Type<'v, NodeObject<SelfParamTag>>,
     import_module: Type<'v, NodeObject<ImportModuleTag>>,
     import_item: Type<'v, NodeObject<ImportItemTag>>,
@@ -195,6 +196,7 @@ impl<'v> Global<'v> {
                     special_method: subtype!(SpecialMethodTag, declaration),
                     field: subtype!(FieldTag, declaration),
                     bind: subtype!(BindTag, declaration),
+                    alias: subtype!(AliasTag, declaration),
                     self_param: subtype!(SelfParamTag, declaration),
                     import_module: subtype!(ImportModuleTag, import),
                     import_item: subtype!(ImportItemTag, import),
@@ -236,6 +238,8 @@ impl<'v> Global<'v> {
                     pos: type_subtype!(PosTypeArgTag, type_arg),
                     key: type_subtype!(KeyTypeArgTag, type_arg),
                     rest: type_subtype!(RestTypeArgTag, type_arg),
+                    open_rest: type_subtype!(OpenRestTypeArgTag, type_arg),
+                    key_rest: type_subtype!(KeyRestTypeArgTag, type_arg),
                 },
                 diagnostic: builder.register_type(),
                 span: builder.register_type(),
@@ -401,6 +405,7 @@ node_tags! {
     NodeTag=>"Node", DeclarationTag=>"Declaration", ImportTag=>"Import", ParamTag=>"Param",
     BlockTag=>"Block", ReferenceTag=>"Reference", RootTag=>"Root", ClassTag=>"Class", FunctionTag=>"Function",
     MethodTag=>"Method", SpecialMethodTag=>"SpecialMethod", FieldTag=>"Field", BindTag=>"Bind",
+    AliasTag=>"Alias",
     SelfParamTag=>"SelfParam", ImportModuleTag=>"ImportModule", ImportItemTag=>"ImportItem",
     PreludeModuleTag=>"PreludeModule", PreludeItemTag=>"PreludeItem", PositionalParamTag=>"PositionalParam",
     KeyParamTag=>"KeyParam", RestParamTag=>"RestParam", LambdaTag=>"Lambda", IfTag=>"If", ElseTag=>"Else",
@@ -435,7 +440,9 @@ type_tags! {
     TypeExprTag=>"TypeExpr", NameTypeTag=>"NameType", ConstTypeTag=>"ConstType",
     AppTypeTag=>"AppType", SchemaTypeTag=>"SchemaType", UnionTypeTag=>"UnionType",
     FuncTypeTag=>"FuncType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
-    KeyTypeArgTag=>"KeyTypeArg", RestTypeArgTag=>"RestTypeArg"
+    KeyTypeArgTag=>"KeyTypeArg", RestTypeArgTag=>"RestTypeArg",
+    OpenRestTypeArgTag=>"OpenRestTypeArg",
+    KeyRestTypeArgTag=>"KeyRestTypeArg"
 }
 
 pub(crate) struct TypeExprTypes<'v> {
@@ -451,6 +458,8 @@ pub(crate) struct TypeArgTypes<'v> {
     pos: Type<'v, TypeExprObject<PosTypeArgTag>>,
     key: Type<'v, TypeExprObject<KeyTypeArgTag>>,
     rest: Type<'v, TypeExprObject<RestTypeArgTag>>,
+    open_rest: Type<'v, TypeExprObject<OpenRestTypeArgTag>>,
+    key_rest: Type<'v, TypeExprObject<KeyRestTypeArgTag>>,
 }
 
 pub(crate) struct TypeAnnex<'v> {
@@ -1235,6 +1244,7 @@ fn create_node<'v, 's>(
         SpecialMethod,
         Field,
         Bind,
+        Alias,
         SelfParam,
         ImportModule,
         ImportItem,
@@ -1279,6 +1289,7 @@ fn create_node<'v, 's>(
             compile::Kind::SpecialMethod { .. } => Which::SpecialMethod,
             compile::Kind::Field { .. } => Which::Field,
             compile::Kind::Bind { .. } => Which::Bind,
+            compile::Kind::Alias { .. } => Which::Alias,
             compile::Kind::SelfParam { .. } => Which::SelfParam,
             compile::Kind::ImportModule { .. } => Which::ImportModule,
             compile::Kind::ImportItem { .. } => Which::ImportItem,
@@ -1326,6 +1337,7 @@ fn create_node<'v, 's>(
         Which::SpecialMethod => make!(t.special_method, SpecialMethodTag),
         Which::Field => make!(t.field, FieldTag),
         Which::Bind => make!(t.bind, BindTag),
+        Which::Alias => make!(t.alias, AliasTag),
         Which::SelfParam => make!(t.self_param, SelfParamTag),
         Which::ImportModule => make!(t.import_module, ImportModuleTag),
         Which::ImportItem => make!(t.import_item, ImportItemTag),
@@ -1402,6 +1414,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 | "SpecialMethod"
                 | "Field"
                 | "Bind"
+                | "Alias"
                 | "SelfParam"
                 | "ImportModule"
                 | "ImportItem"
@@ -1418,7 +1431,14 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
         }
         if matches!(
             T::NAME,
-            "Class" | "Function" | "Method" | "Field" | "Bind" | "ImportModule" | "ImportItem"
+            "Class"
+                | "Function"
+                | "Method"
+                | "Field"
+                | "Bind"
+                | "Alias"
+                | "ImportModule"
+                | "ImportItem"
         ) {
             builder = builder.get("is_pub", |this, strand, out| project_pub(this, strand, out));
         }
@@ -1450,13 +1470,22 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 project_target(this, strand, out)
             });
         }
-        if T::NAME == "ImportItem" {
+        if matches!(T::NAME, "ImportModule" | "ImportItem") {
             builder = builder.get("type_only", |this, strand, out| {
                 project_type_only(this, strand, out)
             });
         }
         if T::NAME == "Type" {
             builder = builder.get("expr", |this, strand, out| project_expr(this, strand, out));
+        }
+        if matches!(T::NAME, "PosBinder" | "KeyBinder" | "RestBinder") {
+            builder = builder
+                .get("bound", |this, strand, out| {
+                    project_binder_type(this, strand, true, out)
+                })
+                .get("default", |this, strand, out| {
+                    project_binder_type(this, strand, false, out)
+                });
         }
         builder
     }
@@ -1499,6 +1528,7 @@ fn project_name<'v, 's, T: NodeMarker + 'static>(
         | compile::Kind::SpecialMethod { name }
         | compile::Kind::Field { name, .. }
         | compile::Kind::Bind { name, .. }
+        | compile::Kind::Alias { name, .. }
         | compile::Kind::SelfParam { name }
         | compile::Kind::ImportModule { name, .. }
         | compile::Kind::ImportItem { name, .. }
@@ -1529,6 +1559,7 @@ fn project_pub<'v, 's, T: NodeMarker + 'static>(
         | compile::Kind::Method { is_pub, .. }
         | compile::Kind::Field { is_pub, .. }
         | compile::Kind::Bind { is_pub, .. }
+        | compile::Kind::Alias { is_pub, .. }
         | compile::Kind::ImportModule { is_pub, .. }
         | compile::Kind::ImportItem { is_pub, .. } => is_pub,
         _ => unreachable!(),
@@ -1621,7 +1652,8 @@ fn project_type_only<'v, 's, T: NodeMarker + 'static>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let v = with_node(this, strand, |n, _| match n.kind() {
-        compile::Kind::ImportItem { type_only, .. } => type_only,
+        compile::Kind::ImportModule { type_only, .. }
+        | compile::Kind::ImportItem { type_only, .. } => type_only,
         _ => unreachable!(),
     })?;
     Output::set(strand, out, v);
@@ -1649,6 +1681,39 @@ fn project_expr<'v, 's, T: NodeMarker + 'static>(
         let types = Ref::slot::<UNIT_TYPES>(&unit).as_array(strand).unwrap();
         types.get(strand, index, &mut out)?;
         Ok(())
+    })
+}
+
+fn project_binder_type<'v, 's, T: NodeMarker + 'static>(
+    this: Instance<'v, '_, NodeObject<T>>,
+    strand: &mut Strand<'v, 's>,
+    bound: bool,
+    mut out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let borrow = this.borrow(strand)?;
+    let id = borrow.id;
+    with_unit(strand, Ref::slot::<OWNER>(&borrow), |strand, owner| {
+        let unit = owner.borrow(strand)?;
+        let document = unit
+            .unit
+            .as_ref()
+            .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?;
+        let node = document.node(id).unwrap();
+        let compile::Kind::Binder {
+            bound: binder_bound,
+            default,
+            ..
+        } = node.kind()
+        else {
+            unreachable!()
+        };
+        let ty = if bound { binder_bound } else { default };
+        if let Some(ty) = ty {
+            create_type_expr(strand.state(), strand, unit.identity, ty, &mut out)
+        } else {
+            Output::set(strand, out, Nil);
+            Ok(())
+        }
     })
 }
 
@@ -1801,8 +1866,10 @@ fn create_type_args<'v, 's>(
     Output::set(strand, &mut *out, Empty::Array);
     let array = out.as_array(strand).unwrap();
     for arg in args {
-        strand.with_slots_sync(|strand, [mut item, mut ty]| {
-            create_type_expr(global, strand, unit, arg.ty(), &mut ty)?;
+        strand.with_slots_sync(|strand, [mut item, mut ty, mut key_ty]| {
+            if let Some(arg_ty) = arg.ty() {
+                create_type_expr(global, strand, unit, arg_ty, &mut ty)?;
+            }
             let annex = |key| TypeAnnex {
                 global,
                 span: span_data(arg.span()),
@@ -1836,6 +1903,33 @@ fn create_type_args<'v, 's>(
                 compile::TypeArgKind::Pos => make!(t.pos, None),
                 compile::TypeArgKind::Key { key } => make!(t.key, Some(span_data(key))),
                 compile::TypeArgKind::Rest => make!(t.rest, None),
+                compile::TypeArgKind::OpenRest => {
+                    t.open_rest.create_with_annex(
+                        strand,
+                        TypeExprObject {
+                            marker: PhantomData,
+                        },
+                        annex(None),
+                        &mut item,
+                    );
+                }
+                compile::TypeArgKind::KeyRest { key_ty: key } => {
+                    create_type_expr(global, strand, unit, key, &mut key_ty)?;
+                    let t = t.key_rest;
+                    t.create_with_annex(
+                        strand,
+                        TypeExprObject {
+                            marker: PhantomData,
+                        },
+                        annex(None),
+                        &mut item,
+                    );
+                    t.cast(&item).unwrap().enter_sync(strand, |strand, object| {
+                        let mut borrow = object.borrow_mut_unwrap();
+                        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &*ty);
+                        Output::set(strand, Mut::slot_mut::<1>(&mut borrow), &*key_ty);
+                    });
+                }
                 _ => return Err(Error::not_supported(strand)),
             }
             array.push(strand, &mut item)
@@ -1866,7 +1960,10 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
             create_span(this.annex().global, strand, this.annex().span.clone(), out);
             Ok(())
         });
-        if matches!(T::NAME, "PosTypeArg" | "KeyTypeArg" | "RestTypeArg") {
+        if matches!(
+            T::NAME,
+            "PosTypeArg" | "KeyTypeArg" | "RestTypeArg" | "KeyRestTypeArg"
+        ) {
             builder = builder
                 .get("optional", |this, strand, out| {
                     let TypeDetail::Arg { optional, .. } = &this.annex().detail else {
@@ -1876,6 +1973,9 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
                     Ok(())
                 })
                 .get("ty", slot!(0));
+        }
+        if T::NAME == "KeyRestTypeArg" {
+            builder = builder.get("key_ty", slot!(1));
         }
         match T::NAME {
             "NameType" => builder
@@ -2255,6 +2355,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("SpecialMethod", global.types.concrete_nodes.special_method)
         .value("Field", global.types.concrete_nodes.field)
         .value("Bind", global.types.concrete_nodes.bind)
+        .value("Alias", global.types.concrete_nodes.alias)
         .value("SelfParam", global.types.concrete_nodes.self_param)
         .value("ImportModule", global.types.concrete_nodes.import_module)
         .value("ImportItem", global.types.concrete_nodes.import_item)
@@ -2296,6 +2397,8 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("PosTypeArg", global.types.arg_kinds.pos)
         .value("KeyTypeArg", global.types.arg_kinds.key)
         .value("RestTypeArg", global.types.arg_kinds.rest)
+        .value("OpenRestTypeArg", global.types.arg_kinds.open_rest)
+        .value("KeyRestTypeArg", global.types.arg_kinds.key_rest)
         .value("Diagnostic", global.types.diagnostic)
         .value("Span", global.types.span)
         .value("Pos", global.types.pos)

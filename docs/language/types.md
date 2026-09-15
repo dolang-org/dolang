@@ -22,11 +22,15 @@ def connect :host@Str = "localhost" :port@Int = 8080
   echo "Connecting to $host:$port"
 ```
 
-The annotation on a rest parameter gives the type of each item it collects:
+The annotation on a rest parameter gives the type of each item it collects. A
+schema instead describes the complete argument pack:
 
 ```
 def log level@Sym ...parts@Str
   echo "[$level]" ...parts
+
+def configure ...options@{name: Str, ?port: Int}
+  apply ...options
 ```
 
 A field declaration that names several fields share an annotation, just as
@@ -69,7 +73,10 @@ let halve = (do |x @ Int| -> Int x // 2)
 `[]` directly after the name of a `def` or `class` declares binders: names that
 stand for types within the declaration. A binder is a name, `:name` for a
 keyword type argument, or `...name` for any number of further type arguments.
-A variadic binder must come last.
+`@` gives a bound and `=` gives a default; both are type expressions. A
+variadic binder must come last and cannot have a default. An unbounded binder
+is provisionally a type binder; a schema bound such as `S @ {}` explicitly
+makes it a schema binder.
 
 ```
 def first[T] items @ Array[T] -> T
@@ -77,12 +84,26 @@ def first[T] items @ Array[T] -> T
 
 class Table[K, V]
   pub field rows @ Dict[K, V] = {}
+
+def lookup[K @ Hashable, V = nil] key@K -> V
+  nil
 ```
 
 A superclass can take type arguments:
 
 ```
 class Registry[V]: Table[Sym, V]
+```
+
+## Type Aliases
+
+`let @` declares a name for a type or schema. An alias is visible in types
+after its declaration and has no runtime binding. It may declare binders and
+may be exported.
+
+```
+pub let @Pair[T] = Tuple[T, T]
+let @Options = {name: Str, ?port: Int}
 ```
 
 ## Type-Only Imports
@@ -99,6 +120,14 @@ import geometry:
 
 def shift p@Point by@Offset -> Point
   (p + by)
+```
+
+`@` before a whole module imports its name for types without loading it at
+runtime:
+
+```
+import @geometry
+let point @ geometry.Point = nil
 ```
 
 ## Type Syntax
@@ -149,8 +178,9 @@ let mode @ (:TARGET: | :LINK:) = :TARGET:
 
 `[]` directly after a type applies generic arguments.
 
-The items of `[]`, `()`, and `{}` share one syntax: a type, `key: type`, or
-`...type` for any number of further items.
+The items of `[]`, `()`, and `{}` share positional, symbol-keyed, and
+`...type` rest syntax. Keyed and open rest items are allowed only in schemas;
+calls and generic applications accept only symbol keys.
 
 ```
 let names @ Array[Str] = []
@@ -175,14 +205,23 @@ There is no shorthand for a type that also accepts `nil`; write `(T | nil)`.
 
 ### Schemas
 
-A schema lists the keys a `Dict`, argument pack, or similar construct has and
-the type of each value. Bare keys are symbols and quoted keys are strings, as
-in dict literals. `?` before a key marks it optional, and `...type` gives the
-type of any remaining entries:
+A schema is not itself a type. It lists the positional and keyed entries of a
+`Dict`, argument pack, or similar construct and the type of each value. Put it
+inside `Dict[...]` to describe a dict. Bare keys are symbols and quoted keys are
+strings, as in dict literals. `?` marks an optional key. `...T` allows further
+items with values of type `T`, or splices `T` when it is a schema. `...K: V`
+allows further keyed entries whose keys have type `K` and values have type `V`.
+Schemas are closed unless they contain a rest item. `{...}` is the universal
+schema, shorthand for `{...std.Value}`:
 
 ```
 let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
+let headers @ Dict[{...Str: Str}] = {}
+let anything @ Dict[{...}] = {}
 ```
+
+`Dict[K, V]` is shorthand for the keyed-rest form, roughly
+`Dict[{...K: V}]`.
 
 ### Functions
 

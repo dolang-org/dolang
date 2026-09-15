@@ -216,7 +216,8 @@
           "column": 10,
           "byte_offset": 119
         }
-      }
+      },
+      "type_only": false
     },
     {
       "kind": "Function",
@@ -2482,7 +2483,7 @@
       "parent": 64,
       "doc": null,
       "expr": {
-        "kind": "SchemaType",
+        "kind": "AppType",
         "span": {
           "start": {
             "line": 70,
@@ -2495,126 +2496,42 @@
             "byte_offset": 1368
           }
         },
+        "base": {
+          "kind": "NameType",
+          "span": {
+            "start": {
+              "line": 70,
+              "column": 79,
+              "byte_offset": 1326
+            },
+            "end": {
+              "line": 70,
+              "column": 83,
+              "byte_offset": 1330
+            }
+          },
+          "head": {
+            "start": {
+              "line": 70,
+              "column": 79,
+              "byte_offset": 1326
+            },
+            "end": {
+              "line": 70,
+              "column": 83,
+              "byte_offset": 1330
+            }
+          },
+          "target": 3
+        },
         "args": [
           {
-            "kind": "KeyTypeArg",
+            "kind": "PosTypeArg",
             "span": {
               "start": {
-                "line": 70,
-                "column": 80,
-                "byte_offset": 1327
-              },
-              "end": {
-                "line": 70,
-                "column": 89,
-                "byte_offset": 1336
-              }
-            },
-            "optional": false,
-            "key": {
-              "start": {
-                "line": 70,
-                "column": 80,
-                "byte_offset": 1327
-              },
-              "end": {
                 "line": 70,
                 "column": 84,
                 "byte_offset": 1331
-              }
-            },
-            "type": {
-              "kind": "NameType",
-              "span": {
-                "start": {
-                  "line": 70,
-                  "column": 86,
-                  "byte_offset": 1333
-                },
-                "end": {
-                  "line": 70,
-                  "column": 89,
-                  "byte_offset": 1336
-                }
-              },
-              "head": {
-                "start": {
-                  "line": 70,
-                  "column": 86,
-                  "byte_offset": 1333
-                },
-                "end": {
-                  "line": 70,
-                  "column": 89,
-                  "byte_offset": 1336
-                }
-              },
-              "target": 5
-            }
-          },
-          {
-            "kind": "KeyTypeArg",
-            "span": {
-              "start": {
-                "line": 70,
-                "column": 91,
-                "byte_offset": 1338
-              },
-              "end": {
-                "line": 70,
-                "column": 101,
-                "byte_offset": 1348
-              }
-            },
-            "optional": true,
-            "key": {
-              "start": {
-                "line": 70,
-                "column": 92,
-                "byte_offset": 1339
-              },
-              "end": {
-                "line": 70,
-                "column": 96,
-                "byte_offset": 1343
-              }
-            },
-            "type": {
-              "kind": "NameType",
-              "span": {
-                "start": {
-                  "line": 70,
-                  "column": 98,
-                  "byte_offset": 1345
-                },
-                "end": {
-                  "line": 70,
-                  "column": 101,
-                  "byte_offset": 1348
-                }
-              },
-              "head": {
-                "start": {
-                  "line": 70,
-                  "column": 98,
-                  "byte_offset": 1345
-                },
-                "end": {
-                  "line": 70,
-                  "column": 101,
-                  "byte_offset": 1348
-                }
-              },
-              "target": 4
-            }
-          },
-          {
-            "kind": "RestTypeArg",
-            "span": {
-              "start": {
-                "line": 70,
-                "column": 103,
-                "byte_offset": 1350
               },
               "end": {
                 "line": 70,
@@ -2624,12 +2541,12 @@
             },
             "optional": false,
             "type": {
-              "kind": "AppType",
+              "kind": "SchemaType",
               "span": {
                 "start": {
                   "line": 70,
-                  "column": 106,
-                  "byte_offset": 1353
+                  "column": 84,
+                  "byte_offset": 1331
                 },
                 "end": {
                   "line": 70,
@@ -2637,51 +2554,135 @@
                   "byte_offset": 1367
                 }
               },
-              "base": {
-                "kind": "NameType",
-                "span": {
-                  "start": {
-                    "line": 70,
-                    "column": 106,
-                    "byte_offset": 1353
-                  },
-                  "end": {
-                    "line": 70,
-                    "column": 110,
-                    "byte_offset": 1357
-                  }
-                },
-                "head": {
-                  "start": {
-                    "line": 70,
-                    "column": 106,
-                    "byte_offset": 1353
-                  },
-                  "end": {
-                    "line": 70,
-                    "column": 110,
-                    "byte_offset": 1357
-                  }
-                },
-                "target": 3
-              },
               "args": [
                 {
-                  "kind": "PosTypeArg",
+                  "kind": "KeyTypeArg",
                   "span": {
                     "start": {
                       "line": 70,
-                      "column": 111,
-                      "byte_offset": 1358
+                      "column": 85,
+                      "byte_offset": 1332
                     },
                     "end": {
                       "line": 70,
-                      "column": 114,
-                      "byte_offset": 1361
+                      "column": 94,
+                      "byte_offset": 1341
                     }
                   },
                   "optional": false,
+                  "key": {
+                    "start": {
+                      "line": 70,
+                      "column": 85,
+                      "byte_offset": 1332
+                    },
+                    "end": {
+                      "line": 70,
+                      "column": 89,
+                      "byte_offset": 1336
+                    }
+                  },
                   "type": {
+                    "kind": "NameType",
+                    "span": {
+                      "start": {
+                        "line": 70,
+                        "column": 91,
+                        "byte_offset": 1338
+                      },
+                      "end": {
+                        "line": 70,
+                        "column": 94,
+                        "byte_offset": 1341
+                      }
+                    },
+                    "head": {
+                      "start": {
+                        "line": 70,
+                        "column": 91,
+                        "byte_offset": 1338
+                      },
+                      "end": {
+                        "line": 70,
+                        "column": 94,
+                        "byte_offset": 1341
+                      }
+                    },
+                    "target": 5
+                  }
+                },
+                {
+                  "kind": "KeyTypeArg",
+                  "span": {
+                    "start": {
+                      "line": 70,
+                      "column": 96,
+                      "byte_offset": 1343
+                    },
+                    "end": {
+                      "line": 70,
+                      "column": 106,
+                      "byte_offset": 1353
+                    }
+                  },
+                  "optional": true,
+                  "key": {
+                    "start": {
+                      "line": 70,
+                      "column": 97,
+                      "byte_offset": 1344
+                    },
+                    "end": {
+                      "line": 70,
+                      "column": 101,
+                      "byte_offset": 1348
+                    }
+                  },
+                  "type": {
+                    "kind": "NameType",
+                    "span": {
+                      "start": {
+                        "line": 70,
+                        "column": 103,
+                        "byte_offset": 1350
+                      },
+                      "end": {
+                        "line": 70,
+                        "column": 106,
+                        "byte_offset": 1353
+                      }
+                    },
+                    "head": {
+                      "start": {
+                        "line": 70,
+                        "column": 103,
+                        "byte_offset": 1350
+                      },
+                      "end": {
+                        "line": 70,
+                        "column": 106,
+                        "byte_offset": 1353
+                      }
+                    },
+                    "target": 4
+                  }
+                },
+                {
+                  "kind": "KeyRestTypeArg",
+                  "span": {
+                    "start": {
+                      "line": 70,
+                      "column": 108,
+                      "byte_offset": 1355
+                    },
+                    "end": {
+                      "line": 70,
+                      "column": 119,
+                      "byte_offset": 1366
+                    }
+                  },
+                  "optional": false,
+                  "key_type": {
                     "kind": "NameType",
                     "span": {
                       "start": {
@@ -2708,23 +2709,7 @@
                       }
                     },
                     "target": 5
-                  }
-                },
-                {
-                  "kind": "PosTypeArg",
-                  "span": {
-                    "start": {
-                      "line": 70,
-                      "column": 116,
-                      "byte_offset": 1363
-                    },
-                    "end": {
-                      "line": 70,
-                      "column": 119,
-                      "byte_offset": 1366
-                    }
                   },
-                  "optional": false,
                   "type": {
                     "kind": "NameType",
                     "span": {
@@ -6706,7 +6691,7 @@
       "context": null
     },
     {
-      "kind": "DELIM",
+      "kind": "TYPE",
       "span": {
         "start": {
           "line": 70,
@@ -6715,20 +6700,20 @@
         },
         "end": {
           "line": 70,
-          "column": 80,
-          "byte_offset": 1327
+          "column": 83,
+          "byte_offset": 1330
         }
       },
-      "ref": null,
+      "ref": 3,
       "context": null
     },
     {
-      "kind": "TYPE_KEY",
+      "kind": "DELIM",
       "span": {
         "start": {
           "line": 70,
-          "column": 80,
-          "byte_offset": 1327
+          "column": 83,
+          "byte_offset": 1330
         },
         "end": {
           "line": 70,
@@ -6757,12 +6742,12 @@
       "context": null
     },
     {
-      "kind": "TYPE",
+      "kind": "TYPE_KEY",
       "span": {
         "start": {
           "line": 70,
-          "column": 86,
-          "byte_offset": 1333
+          "column": 85,
+          "byte_offset": 1332
         },
         "end": {
           "line": 70,
@@ -6770,7 +6755,7 @@
           "byte_offset": 1336
         }
       },
-      "ref": 5,
+      "ref": null,
       "context": null
     },
     {
@@ -6791,7 +6776,7 @@
       "context": null
     },
     {
-      "kind": "OPERATOR",
+      "kind": "TYPE",
       "span": {
         "start": {
           "line": 70,
@@ -6800,32 +6785,32 @@
         },
         "end": {
           "line": 70,
-          "column": 92,
-          "byte_offset": 1339
+          "column": 94,
+          "byte_offset": 1341
         }
       },
-      "ref": null,
-      "context": null
-    },
-    {
-      "kind": "TYPE_KEY",
-      "span": {
-        "start": {
-          "line": 70,
-          "column": 92,
-          "byte_offset": 1339
-        },
-        "end": {
-          "line": 70,
-          "column": 96,
-          "byte_offset": 1343
-        }
-      },
-      "ref": null,
+      "ref": 5,
       "context": null
     },
     {
       "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 70,
+          "column": 94,
+          "byte_offset": 1341
+        },
+        "end": {
+          "line": 70,
+          "column": 95,
+          "byte_offset": 1342
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "OPERATOR",
       "span": {
         "start": {
           "line": 70,
@@ -6842,12 +6827,12 @@
       "context": null
     },
     {
-      "kind": "TYPE",
+      "kind": "TYPE_KEY",
       "span": {
         "start": {
           "line": 70,
-          "column": 98,
-          "byte_offset": 1345
+          "column": 97,
+          "byte_offset": 1344
         },
         "end": {
           "line": 70,
@@ -6855,7 +6840,7 @@
           "byte_offset": 1348
         }
       },
-      "ref": 4,
+      "ref": null,
       "context": null
     },
     {
@@ -6876,7 +6861,7 @@
       "context": null
     },
     {
-      "kind": "SIGIL",
+      "kind": "TYPE",
       "span": {
         "start": {
           "line": 70,
@@ -6889,11 +6874,11 @@
           "byte_offset": 1353
         }
       },
-      "ref": null,
+      "ref": 4,
       "context": null
     },
     {
-      "kind": "TYPE",
+      "kind": "DELIM",
       "span": {
         "start": {
           "line": 70,
@@ -6902,20 +6887,20 @@
         },
         "end": {
           "line": 70,
-          "column": 110,
-          "byte_offset": 1357
+          "column": 107,
+          "byte_offset": 1354
         }
       },
-      "ref": 3,
+      "ref": null,
       "context": null
     },
     {
-      "kind": "DELIM",
+      "kind": "SIGIL",
       "span": {
         "start": {
           "line": 70,
-          "column": 110,
-          "byte_offset": 1357
+          "column": 108,
+          "byte_offset": 1355
         },
         "end": {
           "line": 70,
@@ -8982,42 +8967,23 @@
             "optional": true,
             "doc": null,
             "type": {
-              "kind": "schema",
+              "kind": "app",
+              "base": {
+                "kind": "name",
+                "name": "Dict",
+                "target": 3
+              },
               "args": [
                 {
-                  "kind": "key",
-                  "optional": false,
-                  "key": "name",
-                  "type": {
-                    "kind": "name",
-                    "name": "Str",
-                    "target": 5
-                  }
-                },
-                {
-                  "kind": "key",
-                  "optional": true,
-                  "key": "port",
-                  "type": {
-                    "kind": "name",
-                    "name": "Int",
-                    "target": 4
-                  }
-                },
-                {
-                  "kind": "rest",
+                  "kind": "pos",
                   "optional": false,
                   "type": {
-                    "kind": "app",
-                    "base": {
-                      "kind": "name",
-                      "name": "Dict",
-                      "target": 3
-                    },
+                    "kind": "schema",
                     "args": [
                       {
-                        "kind": "pos",
+                        "kind": "key",
                         "optional": false,
+                        "key": "name",
                         "type": {
                           "kind": "name",
                           "name": "Str",
@@ -9025,8 +8991,23 @@
                         }
                       },
                       {
-                        "kind": "pos",
+                        "kind": "key",
+                        "optional": true,
+                        "key": "port",
+                        "type": {
+                          "kind": "name",
+                          "name": "Int",
+                          "target": 4
+                        }
+                      },
+                      {
+                        "kind": "key_rest",
                         "optional": false,
+                        "key_type": {
+                          "kind": "name",
+                          "name": "Str",
+                          "target": 5
+                        },
                         "type": {
                           "kind": "name",
                           "name": "Str",

@@ -172,6 +172,7 @@ impl Parser<'_> {
                     module: span,
                     bind: Ident::new(self.module_name_first(span)),
                     insert: false,
+                    type_only: None,
                 })
             }
             Some(token!(Ident | Key)) => {
@@ -204,6 +205,7 @@ impl Parser<'_> {
                         module: module_span,
                         bind: Ident::new(self.module_name_first(module_span)),
                         insert: false,
+                        type_only: None,
                     })
                 }
             }
@@ -274,6 +276,19 @@ impl Parser<'_> {
                 _ => (),
             }
             elems.push(match decay_ident!(self.peek()?) {
+                Some(token!(At)) => {
+                    let at_span = self.advance();
+                    let (mod_span, _) = self.parse_module_name(scope, false)?;
+                    ImportElement::ModuleAsIs {
+                        module: mod_span,
+                        bind: Ident::new(self.module_name_first(mod_span)),
+                        insert: false,
+                        type_only: Some(TypeOnly {
+                            at_span,
+                            node: None,
+                        }),
+                    }
+                }
                 Some(token!(Ident | Key)) => {
                     let (mod_span, is_key) = self.parse_module_name(scope, true)?;
                     if is_key {
@@ -310,6 +325,7 @@ impl Parser<'_> {
                             module: mod_span,
                             bind: Ident::new(self.module_name_first(mod_span)),
                             insert: false,
+                            type_only: None,
                         }
                     }
                 }

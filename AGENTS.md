@@ -622,18 +622,24 @@ let double = (do |x @ Int| -> Int x * 2)
 ```
 
 `[]` directly after a `def` or `class` name declares binders (names standing for
-types; also `:K` and a trailing `...R`), and a superclass may take type
-arguments:
+types; also `:K` and a trailing `...R`). Binders may have type-expression
+bounds and defaults (`T @ Bound = Default`); a schema bound such as `S @ {}`
+marks a schema binder. A superclass may take type arguments:
 
 ```
 def first[T] items @ Array[T] -> T
   items[0]
 class Registry[V]: Table[Sym, V]
+pub let @Pair[T] = Tuple[T, T]
 ```
 
 `@` before an import item binds it for types only; the item is not imported:
 
 ```
+
+`import @geometry` similarly binds a whole module only for dotted type names
+without loading it at runtime. `let @Name = Type` declares a type-only alias
+visible after its declaration.
 import geometry:
   - @Point
   - @Vector: Offset
@@ -643,7 +649,11 @@ An annotation or return type is a compact type, so the first whitespace after
 it begins ends it, even inside `()`. Parenthesize unions and function types:
 `@Str|Path` is not a union, but `@(Str | Path)` is. Other forms:
 `@Dict[Str, Array[Int]]`, `@{name: Str, ?port: Int}`, `@((Int, ?Int) -> Int)`,
-`@(:a: | :b:)`.
+`@(:a: | :b:)`. Braces form schemas rather than types; use `Dict[{...}]` for a
+dict with a schema. Within a schema, `...K: V` describes arbitrary keyed
+entries, and `{...}` is shorthand for `{...std.Value}`. Schemas are closed
+unless they contain a rest item. Keyed and open rest items are not allowed in
+`[]` or function parameter lists.
 
 ### Concurrency
 

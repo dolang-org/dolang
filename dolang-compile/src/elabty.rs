@@ -17,7 +17,7 @@ use crate::{
     ast::{
         Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, DictElem, Expr, ExprBody,
         FieldInit, For, Function, Ident, If, ImportElement, LValue, Origin, Param, PatIdent,
-        Pattern, PrimStmt, Res, Root, Stmt, TypeDecl, TypeExpr, Var,
+        Pattern, PrimStmt, Res, Root, Stmt, TypeDecl, TypeExpr, Var, visit::Node,
     },
     diag::Severity,
     source::{Diagnose, Diags, File, Span},
@@ -88,6 +88,34 @@ impl Diagnose for UnusedTypeImport {
     }
 }
 
+struct TypeShadowsValue(Span);
+
+impl Diagnose for TypeShadowsValue {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "type name shadows a value of the same name")
+    }
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
+struct ValueShadowsType(Span);
+
+impl Diagnose for ValueShadowsType {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "value name shadows a type of the same name")
+    }
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
 pub(crate) fn check(
     root: &mut Root,
     file: &File<'_>,
@@ -144,6 +172,10 @@ struct TypeName {
     span: Span,
     /// A type-only import rather than a binder
     import: bool,
+    /// The name is visible only at sites after this offset.
+    visible_after: Option<u32>,
+    /// Whether an unused name should be diagnosed.
+    warn_unused: bool,
     used: Cell<bool>,
 }
 
@@ -175,6 +207,8 @@ impl<'s> Frame<'s> {
             .map(|binder| TypeName {
                 span: binder.ident.span,
                 import: false,
+                visible_after: None,
+                warn_unused: true,
                 used: Cell::new(false),
             })
             .collect();
@@ -217,6 +251,58 @@ impl Check<'_> {
         self.symtab
             .get_by_index(sym.index())
             .map(|id| &self.bintab[*id])
+    }
+
+    fn has_value(&self, frame: &Frame<'_>, name: &str, site: u32) -> bool {
+        let mut frame = Some(frame);
+        while let Some(current) = frame {
+            if let FrameKind::Vars {
+                vars,
+                decls,
+                in_body,
+            } = &current.kind
+                && vars.iter().enumerate().rev().any(|(index, cell)| {
+                    let var = cell.get();
+                    if self.sym_name(var.sym) != Some(name) {
+                        return false;
+                    }
+                    let decl = decls.get(index).copied().flatten();
+                    match var.origin {
+                        Origin::Source(span) | Origin::SelfParam(span) => {
+                            span.start < site || (decl.is_some() && in_body.get())
+                        }
+                        Origin::PreludeModule | Origin::PreludeItem { .. } | Origin::Repl => true,
+                        Origin::Synthetic => false,
+                    }
+                })
+            {
+                return true;
+            }
+            frame = current.outer;
+        }
+        false
+    }
+
+    fn has_type(&self, frame: &Frame<'_>, name: &str, site: u32) -> bool {
+        let mut frame = Some(frame);
+        while let Some(current) = frame {
+            if let FrameKind::Types { names } = &current.kind
+                && names.iter().rev().any(|found| {
+                    self.file.str(found.span) == name
+                        && found.visible_after.is_none_or(|offset| site > offset)
+                })
+            {
+                return true;
+            }
+            frame = current.outer;
+        }
+        false
+    }
+
+    fn warn_value_name(&self, frame: &Frame<'_>, ident: &Ident) {
+        if self.has_type(frame, self.file.str(ident.span), ident.span.start) {
+            self.diags.push(ValueShadowsType(ident.span));
+        }
     }
 
     /// Find what `name`, written at `site`, refers to.
@@ -265,11 +351,10 @@ impl Check<'_> {
                     depth += 1;
                 }
                 FrameKind::Types { names } => {
-                    if let Some(found) = names
-                        .iter()
-                        .rev()
-                        .find(|found| self.file.str(found.span) == name)
-                    {
+                    if let Some(found) = names.iter().rev().find(|found| {
+                        self.file.str(found.span) == name
+                            && found.visible_after.is_none_or(|offset| site > offset)
+                    }) {
                         found.used.set(true);
                         return Some(Found::Type {
                             import: found.import,
@@ -315,7 +400,8 @@ impl Check<'_> {
     fn unused_types(&self, frame: &Frame<'_>) {
         if let FrameKind::Types { names } = &frame.kind {
             for name in names {
-                if name.used.get() || self.file.str(name.span).starts_with('_') {
+                if !name.warn_unused || name.used.get() || self.file.str(name.span).starts_with('_')
+                {
                     continue;
                 }
                 if name.import {
@@ -344,13 +430,34 @@ impl Check<'_> {
     }
 
     /// Check a function declared with binders.
-    fn def(&mut self, frame: &Frame<'_>, binders: Option<&Binders>, func: &mut Function) {
-        let inner = Frame::binders(frame, binders);
+    fn def(&mut self, frame: &Frame<'_>, binders: Option<&mut Binders>, func: &mut Function) {
+        let inner = Frame::binders(frame, binders.as_deref());
+        self.binder_types(&inner, binders);
         self.function(Some(&inner), func);
         self.unused_types(&inner);
     }
 
+    fn binder_types(&mut self, frame: &Frame<'_>, binders: Option<&mut Binders>) {
+        for binder in binders.into_iter().flat_map(|binders| &mut binders.binders) {
+            if let Some(bound) = &mut binder.bound {
+                self.ty(frame, &mut bound.ty);
+            }
+            if let Some(default) = &mut binder.default {
+                self.ty(frame, &mut default.ty);
+            }
+        }
+    }
+
     fn param(&mut self, frame: &Frame<'_>, param: &mut Param) {
+        match param {
+            Param::Pos { ident, .. } | Param::Key { ident, .. } | Param::ConstKey { ident, .. } => {
+                self.warn_value_name(frame, ident)
+            }
+            Param::Rest {
+                ident: Some(ident), ..
+            } => self.warn_value_name(frame, ident),
+            Param::Rest { ident: None, .. } => {}
+        }
         match param {
             Param::Pos { ty, default, .. } | Param::Key { ty, default, .. } => {
                 if let Some(default) = default {
@@ -376,7 +483,10 @@ impl Check<'_> {
 
     fn pattern(&mut self, frame: &Frame<'_>, pattern: &mut Pattern) {
         match pattern {
-            Pattern::Ident(PatIdent { ty, .. }) => self.annot(frame, ty),
+            Pattern::Ident(PatIdent { ident, ty }) => {
+                self.warn_value_name(frame, ident);
+                self.annot(frame, ty);
+            }
             Pattern::Unpack(params) => {
                 for param in params {
                     self.param(frame, param);
@@ -401,14 +511,56 @@ impl Check<'_> {
                 self.lvalue(frame, &mut node.lhs);
                 self.prim(frame, &mut node.rhs);
             }
-            Stmt::Import(_) | Stmt::Break(..) | Stmt::Continue(..) => {}
+            Stmt::Import(import) => {
+                for element in &import.elements {
+                    match element {
+                        ImportElement::ModuleAsIs {
+                            bind,
+                            type_only: Some(_),
+                            ..
+                        } => {
+                            if self.has_value(frame, self.file.str(bind.span), bind.span.start) {
+                                self.diags.push(TypeShadowsValue(bind.span));
+                            }
+                        }
+                        ImportElement::Items { items, .. } => {
+                            for item in items.iter().filter(|item| item.is_type_only()) {
+                                let bind = item.bind();
+                                if self.has_value(frame, self.file.str(bind.span), bind.span.start)
+                                {
+                                    self.diags.push(TypeShadowsValue(bind.span));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Stmt::Break(..) | Stmt::Continue(..) => {}
+            Stmt::TypeAlias(alias) => {
+                if self.has_value(
+                    frame,
+                    self.file.str(alias.ident.span),
+                    alias.ident.span.start,
+                ) {
+                    self.diags.push(TypeShadowsValue(alias.ident.span));
+                }
+                let inner = Frame::binders(frame, alias.binders.as_deref());
+                self.binder_types(&inner, alias.binders.as_deref_mut());
+                self.ty(&inner, &mut alias.ty);
+                self.unused_types(&inner);
+            }
             Stmt::Def(def) => {
+                self.warn_value_name(frame, &def.ident);
                 for decorator in &mut def.decorators {
                     self.expr(frame, &mut decorator.expr);
                 }
-                self.def(frame, def.binders.as_deref(), &mut def.func);
+                self.def(frame, def.binders.as_deref_mut(), &mut def.func);
             }
-            Stmt::Class(class) => self.class(frame, class),
+            Stmt::Class(class) => {
+                self.warn_value_name(frame, &class.ident);
+                self.class(frame, class)
+            }
             Stmt::Return(ret) => {
                 if let Some(expr) = &mut ret.expr {
                     self.expr(frame, expr);
@@ -437,9 +589,12 @@ impl Check<'_> {
             self.expr(frame, &mut decorator.expr);
         }
         let inner = Frame::binders(frame, class.binders.as_deref());
+        self.binder_types(&inner, class.binders.as_deref_mut());
         for super_ref in &mut class.super_refs {
             for arg in &mut super_ref.args {
-                self.ty(&inner, arg.ty_mut());
+                if let Some(ty) = arg.ty_mut() {
+                    self.ty(&inner, ty);
+                }
             }
         }
         for member in &mut class.body.members {
@@ -448,7 +603,7 @@ impl Check<'_> {
                     for decorator in &mut method.decorators {
                         self.expr(&inner, &mut decorator.expr);
                     }
-                    self.def(&inner, method.binders.as_deref(), &mut method.func);
+                    self.def(&inner, method.binders.as_deref_mut(), &mut method.func);
                 }
                 ClassMember::Field(field) => {
                     for decorator in &mut field.decorators {
@@ -646,10 +801,17 @@ impl Element for Stmt {
             Stmt::Import(import) => {
                 for element in &import.elements {
                     match element {
-                        ImportElement::ModuleAsIs { bind, .. }
+                        ImportElement::ModuleAsIs {
+                            bind,
+                            type_only: None,
+                            ..
+                        }
                         | ImportElement::ModuleRenamed { bind, .. } => {
                             declare(decls, bind, Decl::Import)
                         }
+                        ImportElement::ModuleAsIs {
+                            type_only: Some(_), ..
+                        } => {}
                         ImportElement::Items { items, .. } => {
                             for item in items {
                                 declare(decls, item.bind(), Decl::Import);
@@ -667,19 +829,41 @@ impl Element for Stmt {
             Stmt::NlGuard(guard) => guard.body.type_imports(names),
             Stmt::Import(import) => {
                 for element in &import.elements {
-                    let ImportElement::Items { items, .. } = element else {
-                        continue;
-                    };
-                    for item in items.iter().filter(|item| item.is_type_only()) {
-                        names.push(TypeName {
-                            span: item.bind().span,
+                    match element {
+                        ImportElement::ModuleAsIs {
+                            bind,
+                            type_only: Some(_),
+                            ..
+                        } => names.push(TypeName {
+                            span: bind.span,
                             import: true,
-                            // An exported name may be used elsewhere
+                            visible_after: None,
+                            warn_unused: true,
                             used: Cell::new(import.pub_span.is_some()),
-                        });
+                        }),
+                        ImportElement::Items { items, .. } => {
+                            for item in items.iter().filter(|item| item.is_type_only()) {
+                                names.push(TypeName {
+                                    span: item.bind().span,
+                                    import: true,
+                                    visible_after: None,
+                                    warn_unused: true,
+                                    // An exported name may be used elsewhere
+                                    used: Cell::new(import.pub_span.is_some()),
+                                });
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
+            Stmt::TypeAlias(alias) => names.push(TypeName {
+                span: alias.ident.span,
+                import: false,
+                visible_after: Some(alias.span().end),
+                warn_unused: false,
+                used: Cell::new(false),
+            }),
             _ => {}
         }
     }

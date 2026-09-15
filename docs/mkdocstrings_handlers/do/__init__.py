@@ -326,7 +326,7 @@ class _TypeScope:
             index: node
             for index, node in enumerate(nodes)
             if node.get("kind") in ("PreludeItem", "PreludeModule")
-            or (node.get("kind") == "Class" and node.get("parent") == root)
+            or (node.get("kind") in ("Class", "Alias") and node.get("parent") == root)
         }
 
     def name(self, ty: dict) -> tuple[str, str | None]:
@@ -345,7 +345,7 @@ class _TypeScope:
             return name, f"{node['module']}.{node['item']}{rest}"
         if kind == "PreludeModule":
             return name, f"{node['module']}{rest}"
-        if kind == "Class":
+        if kind in ("Class", "Alias"):
             return name, f"{self.module}.{name}"
         if "item" in ty:
             path = f"{ty['module']}.{ty['item']}{rest}"
@@ -408,6 +408,12 @@ def _render_type_args(args: list[dict], scope: _TypeScope) -> str:
         text = "?" if arg.get("optional") else ""
         if arg.get("kind") == "rest":
             text += "..."
+        elif arg.get("kind") == "open_rest":
+            rendered.append(text + "...")
+            continue
+        elif arg.get("kind") == "key_rest":
+            key = _render_type(arg["key_type"], scope, _BINDS_FUNC)
+            text += f"...{key}: "
         elif arg.get("kind") == "key":
             text += f"{_escape_type_text(arg.get('key', ''))}: "
         rendered.append(text + _render_type(arg["type"], scope, _BINDS_FUNC))
@@ -435,6 +441,8 @@ def _render_annotations(entity: dict, scope: _TypeScope) -> None:
     if entity.get("kind") in ("function", "method"):
         entity["return_annotation"] = _type_html(entity.get("returns"), scope)
     elif entity.get("kind") == "field":
+        entity["annotation"] = _type_html(entity.get("type"), scope)
+    elif entity.get("kind") == "alias":
         entity["annotation"] = _type_html(entity.get("type"), scope)
     for member in entity.get("members", []):
         _render_annotations(member, scope)

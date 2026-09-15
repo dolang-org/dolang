@@ -76,6 +76,10 @@ pub(crate) enum Kind {
         name: Span,
         is_pub: bool,
     },
+    Alias {
+        name: Span,
+        is_pub: bool,
+    },
     PositionalParam {
         name: Span,
         default: Option<Span>,
@@ -98,6 +102,7 @@ pub(crate) enum Kind {
         module: Span,
         name: Span,
         is_pub: bool,
+        type_only: bool,
     },
     ImportItem {
         module: Span,
@@ -152,6 +157,8 @@ pub(crate) enum Kind {
     Binder {
         name: Span,
         kind: BinderKind,
+        bound: Option<TypeExpr>,
+        default: Option<TypeExpr>,
     },
 }
 
@@ -203,7 +210,7 @@ pub(crate) struct TypeArg {
     pub(crate) span: Span,
     pub(crate) optional: bool,
     pub(crate) kind: TypeArgKind,
-    pub(crate) ty: TypeExpr,
+    pub(crate) ty: Option<TypeExpr>,
 }
 
 #[derive(Debug)]
@@ -214,6 +221,10 @@ pub(crate) enum TypeArgKind {
         key: Span,
     },
     Rest,
+    OpenRest,
+    KeyRest {
+        key_ty: TypeExpr,
+    },
 }
 
 impl Kind {
@@ -232,6 +243,7 @@ impl Kind {
             | Kind::SpecialMethod { name }
             | Kind::Field { name, .. }
             | Kind::Bind { name, .. }
+            | Kind::Alias { name, .. }
             | Kind::PositionalParam { name, .. }
             | Kind::KeyParam { name, .. }
             | Kind::SelfParam { name }

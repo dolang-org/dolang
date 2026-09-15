@@ -359,7 +359,7 @@ class DoLexer(Lexer):
         context = token_info.get("context")
 
         # What the name refers to, if it refers to a declaration
-        if node_kind in ("Class", "PosBinder", "KeyBinder", "RestBinder"):
+        if node_kind in ("Class", "Alias", "PosBinder", "KeyBinder", "RestBinder"):
             base_token = Name.Class
         elif node_kind in ("Function", "Method", "SpecialMethod"):
             base_token = Name.Function

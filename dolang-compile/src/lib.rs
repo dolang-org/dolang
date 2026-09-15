@@ -329,6 +329,10 @@ impl<'a> Node<'a> {
                 name: span(name),
                 is_pub: *is_pub,
             },
+            doc::Kind::Alias { name, is_pub } => Kind::Alias {
+                name: span(name),
+                is_pub: *is_pub,
+            },
             doc::Kind::PositionalParam { name, default } => Kind::PositionalParam {
                 name: span(name),
                 default: default.as_ref().map(span),
@@ -346,10 +350,12 @@ impl<'a> Node<'a> {
                 module,
                 name,
                 is_pub,
+                type_only,
             } => Kind::ImportModule {
                 module: span(module),
                 name: span(name),
                 is_pub: *is_pub,
+                type_only: *type_only,
             },
             doc::Kind::ImportItem {
                 module,
@@ -396,9 +402,22 @@ impl<'a> Node<'a> {
                     expr,
                 },
             },
-            doc::Kind::Binder { name, kind } => Kind::Binder {
+            doc::Kind::Binder {
+                name,
+                kind,
+                bound,
+                default,
+            } => Kind::Binder {
                 name: span(name),
                 kind: *kind,
+                bound: bound.as_ref().map(|expr| TypeExpr {
+                    file: self.file,
+                    expr,
+                }),
+                default: default.as_ref().map(|expr| TypeExpr {
+                    file: self.file,
+                    expr,
+                }),
             },
         }
     }
@@ -459,6 +478,13 @@ pub enum Kind<'a> {
         /// Declared `pub`
         is_pub: bool,
     },
+    /// A type alias
+    Alias {
+        /// The alias name
+        name: diag::Span,
+        /// Declared `pub`
+        is_pub: bool,
+    },
     /// A positional parameter. Its function is its parent.
     PositionalParam {
         /// The bound name
@@ -493,6 +519,8 @@ pub enum Kind<'a> {
         name: diag::Span,
         /// Declared `pub`
         is_pub: bool,
+        /// Imported with `@`, for types only
+        type_only: bool,
     },
     /// An item imported from a module
     ImportItem {
@@ -580,6 +608,10 @@ pub enum Kind<'a> {
         name: diag::Span,
         /// How the binder takes a type argument
         kind: BinderKind,
+        /// The declared upper bound
+        bound: Option<TypeExpr<'a>>,
+        /// The default type argument
+        default: Option<TypeExpr<'a>>,
     },
 }
 
@@ -665,7 +697,7 @@ pub enum TypeKind<'a> {
         /// The arguments
         args: TypeArgs<'a>,
     },
-    /// A dict schema, e.g. `{name: Str, ?port: Int}`
+    /// A schema, e.g. `{name: Str, ?port: Int}`
     Schema {
         /// The entries
         args: TypeArgs<'a>,
@@ -719,29 +751,36 @@ impl<'a> TypeArg<'a> {
     }
 
     /// How the item is given
-    pub fn kind(&self) -> TypeArgKind {
+    pub fn kind(&self) -> TypeArgKind<'a> {
         match &self.arg.kind {
             doc::TypeArgKind::Pos => TypeArgKind::Pos,
             doc::TypeArgKind::Key { key } => TypeArgKind::Key {
                 key: convert_span(self.file, *key),
             },
             doc::TypeArgKind::Rest => TypeArgKind::Rest,
+            doc::TypeArgKind::OpenRest => TypeArgKind::OpenRest,
+            doc::TypeArgKind::KeyRest { key_ty } => TypeArgKind::KeyRest {
+                key_ty: TypeExpr {
+                    file: self.file,
+                    expr: key_ty,
+                },
+            },
         }
     }
 
-    /// The item's type
-    pub fn ty(&self) -> TypeExpr<'a> {
-        TypeExpr {
+    /// The item's type, or `None` for an unrestricted [`TypeArgKind::OpenRest`]
+    pub fn ty(&self) -> Option<TypeExpr<'a>> {
+        self.arg.ty.as_ref().map(|expr| TypeExpr {
             file: self.file,
-            expr: &self.arg.ty,
-        }
+            expr,
+        })
     }
 }
 
 /// How a [`TypeArg`] is given
 #[non_exhaustive]
-#[derive(Clone, Debug)]
-pub enum TypeArgKind {
+#[derive(Clone)]
+pub enum TypeArgKind<'a> {
     /// `T`
     Pos,
     /// `key: T`
@@ -751,6 +790,25 @@ pub enum TypeArgKind {
     },
     /// `...T`, for any number of further items
     Rest,
+    /// `...`, for unrestricted further schema items
+    OpenRest,
+    /// `...K: V`, for any number of keyed items
+    KeyRest {
+        /// The type of each key
+        key_ty: TypeExpr<'a>,
+    },
+}
+
+impl fmt::Debug for TypeArgKind<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pos => f.write_str("Pos"),
+            Self::Key { key } => f.debug_struct("Key").field("key", key).finish(),
+            Self::Rest => f.write_str("Rest"),
+            Self::OpenRest => f.write_str("OpenRest"),
+            Self::KeyRest { .. } => f.write_str("KeyRest { key_ty: ... }"),
+        }
+    }
 }
 
 /// Iterator over the items of a type

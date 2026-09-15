@@ -3,11 +3,14 @@
 {% set show_private = options.get("show_private", false) %}
 
 {% set classes = [] %}
+{% set aliases = [] %}
 {% set functions = [] %}
 {% set values = [] %}
 {% for entity in entities %}
   {% if entity.kind == "class" and (entity.pub or show_private) %}
     {% set _ = classes.append(entity) %}
+  {% elif entity.kind == "alias" and (entity.pub or show_private) %}
+    {% set _ = aliases.append(entity) %}
   {% elif entity.kind == "function" and (entity.pub or show_private) %}
     {% set _ = functions.append(entity) %}
   {% elif entity.kind == "value" and (entity.pub or show_private) %}
@@ -25,7 +28,7 @@
 {{ entity.doc | convert_markdown(0, "") }}
 {% endif %}
 
-{% if classes %}
+{% if classes or aliases %}
 {{ "Types" | heading(heading_level, skip_inventory=true, id="types") }}
 <table>
 <thead><tr><th>Type</th><th>Description</th></tr></thead>
@@ -43,9 +46,23 @@
   <td>{{ cls.doc_summary | convert_markdown(heading_level, cls.name, strip_paragraph=true) }}</td>
 </tr>
 {% endfor %}
+{% for alias in aliases %}
+<tr>
+  <td><autoref identifier="{{ alias._identifier }}"><code>{{ alias.declaration_name }}</code></autoref></td>
+  <td>{{ alias.doc_summary | convert_markdown(heading_level, alias.name, strip_paragraph=true) }}</td>
+</tr>
+{% endfor %}
 </tbody>
 </table>
 {% endif %}
+
+{% for alias in aliases %}
+{% set base_id = alias._identifier %}
+{{ ("<code>" ~ alias.declaration_name ~ " =</code>" ~ alias.annotation) | heading(heading_level + 1, role="class", id=base_id, toc_label=alias.declaration_name) }}
+{% if alias.doc %}
+{{ alias.doc | convert_markdown(heading_level + 1, base_id) }}
+{% endif %}
+{% endfor %}
 
 {% if functions %}
 {{ "Functions" | heading(heading_level, skip_inventory=true, id="functions") }}

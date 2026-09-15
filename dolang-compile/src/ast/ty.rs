@@ -27,7 +27,7 @@ pub(crate) enum TypeExpr {
         args: Vec<TypeArg>,
         bracket_span: Span,
     },
-    /// A dict schema, e.g. `{name: Str, ?port: Int}`
+    /// A schema, e.g. `{name: Str, ?port: Int}`
     Schema {
         args: Vec<TypeArg>,
         brace_span: Span,
@@ -80,6 +80,15 @@ pub(crate) enum TypeArgKind {
     },
     /// `...T`
     Rest { ellipsis_span: Span, ty: TypeExpr },
+    /// `...`, for an unrestricted schema rest
+    OpenRest { ellipsis_span: Span },
+    /// `...K: V`, for any number of keyed items
+    KeyRest {
+        ellipsis_span: Span,
+        key_ty: TypeExpr,
+        colon_span: Span,
+        ty: TypeExpr,
+    },
 }
 
 pub(crate) enum TypeKey {
@@ -111,10 +120,17 @@ pub(crate) struct Binders {
 pub(crate) struct Binder {
     pub(crate) kind: BinderKind,
     pub(crate) ident: Ident,
+    pub(crate) bound: Option<Box<Annot>>,
+    pub(crate) default: Option<Box<BinderDefault>>,
     /// The trailing `,`
     pub(crate) delim_span: Option<Span>,
     /// The binder's document node, which it has no variable to carry
     pub(crate) node: Option<doc::Id>,
+}
+
+pub(crate) struct BinderDefault {
+    pub(crate) equal_span: Span,
+    pub(crate) ty: TypeExpr,
 }
 
 pub(crate) enum BinderKind {
@@ -139,12 +155,12 @@ impl TypeExpr {
             TypeExpr::App { base, args, .. } => {
                 base.each_name(f);
                 for arg in args {
-                    arg.ty_mut().each_name(f);
+                    arg.each_name(f);
                 }
             }
             TypeExpr::Schema { args, .. } => {
                 for arg in args {
-                    arg.ty_mut().each_name(f);
+                    arg.each_name(f);
                 }
             }
             TypeExpr::Group { ty, .. } => ty.each_name(f),
@@ -155,7 +171,7 @@ impl TypeExpr {
             }
             TypeExpr::Func { params, ret, .. } => {
                 for param in params {
-                    param.ty_mut().each_name(f);
+                    param.each_name(f);
                 }
                 ret.each_name(f);
             }
@@ -164,9 +180,22 @@ impl TypeExpr {
 }
 
 impl TypeArg {
-    pub(crate) fn ty_mut(&mut self) -> &mut TypeExpr {
+    fn each_name<F: FnMut(&mut Ident, &mut Option<TypeDecl>, bool)>(&mut self, f: &mut F) {
+        if let TypeArgKind::KeyRest { key_ty, .. } = &mut self.kind {
+            key_ty.each_name(f);
+        }
+        if let Some(ty) = self.ty_mut() {
+            ty.each_name(f);
+        }
+    }
+
+    pub(crate) fn ty_mut(&mut self) -> Option<&mut TypeExpr> {
         match &mut self.kind {
-            TypeArgKind::Pos(ty) | TypeArgKind::Key { ty, .. } | TypeArgKind::Rest { ty, .. } => ty,
+            TypeArgKind::Pos(ty)
+            | TypeArgKind::Key { ty, .. }
+            | TypeArgKind::Rest { ty, .. }
+            | TypeArgKind::KeyRest { ty, .. } => Some(ty),
+            TypeArgKind::OpenRest { .. } => None,
         }
     }
 }
@@ -275,6 +304,20 @@ impl Node for TypeArg {
                 visit.token(Token::Sigil, *ellipsis_span, None)?;
                 visit.node(ty)?
             }
+            TypeArgKind::OpenRest { ellipsis_span } => {
+                visit.token(Token::Sigil, *ellipsis_span, None)?;
+            }
+            TypeArgKind::KeyRest {
+                ellipsis_span,
+                key_ty,
+                colon_span,
+                ty,
+            } => {
+                visit.token(Token::Sigil, *ellipsis_span, None)?;
+                visit.node(key_ty)?;
+                visit.token(Token::Delim, *colon_span, None)?;
+                visit.node(ty)?
+            }
         }
         if let Some(span) = self.delim_span {
             visit.token(Token::Delim, span, None)?;
@@ -318,6 +361,13 @@ impl Node for Binder {
             BinderKind::Rest { ellipsis_span } => visit.token(Token::Sigil, ellipsis_span, None)?,
         }
         visit.token(Token::Binder, self.ident.span, self.node)?;
+        if let Some(bound) = &self.bound {
+            visit.node(&**bound)?;
+        }
+        if let Some(default) = &self.default {
+            visit.token(Token::Operator, default.equal_span, None)?;
+            visit.node(&default.ty)?;
+        }
         if let Some(span) = self.delim_span {
             visit.token(Token::Delim, span, None)?;
         }
