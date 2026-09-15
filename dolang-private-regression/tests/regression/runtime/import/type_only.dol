@@ -1,0 +1,17 @@
+# An item named only in types is not imported
+import import_fixture:
+  - @Adder
+  - add
+  - @Summer: Total
+  add: plus
+  - @Last
+
+# Nor is a module whose items all are
+import no_such_module:
+  - @Thing
+
+def sum x @Thing y @Adder -> Total
+  (add x y)
+
+assert_eq (sum 1 2) 3
+assert_eq (plus 2 2) 4

@@ -15,7 +15,7 @@ echo bad
 #    | ^^^^
 
 pub #[decorator]
-def bad_pub
+def bad_pub()
   nil
 # error: `pub` must follow decorators
 #   --> decorator_errors.dol:LL:LL

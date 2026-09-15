@@ -1,7 +1,12 @@
 #[cfg(feature = "debug")]
 pub(crate) mod dot;
 
+pub(crate) mod ty;
 pub(crate) mod visit;
+
+pub(crate) use self::ty::{
+    Annot, Binder, BinderKind, Binders, RetType, TypeArg, TypeArgKind, TypeDecl, TypeExpr, TypeKey,
+};
 
 use std::{
     collections::VecDeque,
@@ -45,6 +50,8 @@ pub(crate) struct Var {
     pub(crate) initialized: bool,
     // Compile-time provenance of the binding.
     pub(crate) origin: Origin,
+    // Named by a type. Set only when documenting, and never read by lowering.
+    pub(crate) type_used: bool,
     // Filled only by document indexing; references use (index, depth) to find it.
     pub(crate) node: Option<doc::Id>,
 }
@@ -1446,6 +1453,7 @@ pub(crate) struct ParamDefault {
 pub(crate) enum Param {
     Pos {
         ident: Ident,
+        ty: Option<Box<Annot>>,
         default: Option<ParamDefault>,
     },
     Key {
@@ -1453,30 +1461,36 @@ pub(crate) enum Param {
         /// The `:`, which precedes the key in `:name` and follows it in `name:`
         colon_span: Span,
         ident: Ident,
+        ty: Option<Box<Annot>>,
         default: Option<ParamDefault>,
     },
     ConstKey {
         key_expr: Expr,
         key_const: Const,
         ident: Ident,
+        ty: Option<Box<Annot>>,
         default: Option<ParamDefault>,
         colon_span: Span,
     },
     Rest {
         ellipsis_span: Span,
         ident: Option<Ident>,
+        ty: Option<Box<Annot>>,
     },
 }
 
 impl Node for Param {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
-            Param::Pos { ident, default } => {
+            Param::Pos { ident, ty, default } => {
                 visit.token(
                     Token::Variable,
                     ident.span,
                     ident.res.as_ref().and_then(|r| r.node),
                 )?;
+                if let Some(ty) = ty {
+                    visit.node(&**ty)?;
+                }
                 if let Some(default) = default {
                     visit.token(Token::Delim, default.delim_span, None)?;
                     visit.node(&default.expr)?;
@@ -1487,6 +1501,7 @@ impl Node for Param {
                 key_span,
                 colon_span,
                 ident,
+                ty,
                 default,
             } => {
                 visit.token(Token::Key, *key_span, None)?;
@@ -1496,6 +1511,9 @@ impl Node for Param {
                     ident.span,
                     ident.res.as_ref().and_then(|r| r.node),
                 )?;
+                if let Some(ty) = ty {
+                    visit.node(&**ty)?;
+                }
                 if let Some(default) = default {
                     visit.token(Token::Delim, default.delim_span, None)?;
                     visit.node(&default.expr)?;
@@ -1505,6 +1523,7 @@ impl Node for Param {
             Param::ConstKey {
                 key_expr,
                 ident,
+                ty,
                 default,
                 colon_span,
                 ..
@@ -1516,6 +1535,9 @@ impl Node for Param {
                     ident.span,
                     ident.res.as_ref().and_then(|r| r.node),
                 )?;
+                if let Some(ty) = ty {
+                    visit.node(&**ty)?;
+                }
                 if let Some(default) = default {
                     visit.token(Token::Delim, default.delim_span, None)?;
                     visit.node(&default.expr)?;
@@ -1525,6 +1547,7 @@ impl Node for Param {
             Param::Rest {
                 ellipsis_span,
                 ident,
+                ty,
             } => {
                 visit.token(Token::Sigil, *ellipsis_span, None)?;
                 if let Some(ident) = ident {
@@ -1533,6 +1556,9 @@ impl Node for Param {
                         ident.span,
                         ident.res.as_ref().and_then(|r| r.node),
                     )?;
+                }
+                if let Some(ty) = ty {
+                    visit.node(&**ty)?;
                 }
                 ControlFlow::Continue(())
             }
@@ -1569,22 +1595,34 @@ where
     }
 }
 
+/// A pattern that binds a single name
+pub(crate) struct PatIdent {
+    pub(crate) ident: Ident,
+    pub(crate) ty: Option<Box<Annot>>,
+}
+
 pub(crate) enum Pattern {
-    Ident(Ident),
+    Ident(PatIdent),
     Unpack(Vec<Param>),
 }
 
 impl Node for Pattern {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
-            Pattern::Ident(ident) => ident.accept(visit),
+            Pattern::Ident(PatIdent { ident, ty }) => {
+                ident.accept(visit)?;
+                if let Some(ty) = ty {
+                    visit.node(&**ty)?;
+                }
+                ControlFlow::Continue(())
+            }
             Pattern::Unpack(params) => params.accept(visit),
         }
     }
 
     fn kind(&self) -> NodeKind {
         match self {
-            Pattern::Ident(ident) => ident.kind(),
+            Pattern::Ident(PatIdent { ident, .. }) => ident.kind(),
             Pattern::Unpack(_) => NodeKind::Pattern,
         }
     }
@@ -1674,12 +1712,52 @@ pub(crate) enum ImportItem {
     AsIs {
         bind: Ident,
         delim_span: Span,
+        type_only: Option<TypeOnly>,
     },
     Renamed {
         item: Span,
         bind: Ident,
         delim_span: Span,
+        /// The `-` before an item named only in types
+        minus_span: Option<Span>,
+        type_only: Option<TypeOnly>,
     },
+}
+
+/// What marks an import item as named only in types
+pub(crate) struct TypeOnly {
+    pub(crate) at_span: Span,
+    /// The item's document node, which its name has no variable to carry
+    pub(crate) node: Option<doc::Id>,
+}
+
+/// Visit the name an import item binds.
+fn accept_import_bind<'a, V: Visit>(
+    bind: &'a Ident,
+    type_only: &Option<TypeOnly>,
+    visit: &'a mut V,
+) -> ControlFlow<V::Break> {
+    match type_only {
+        Some(type_only) => visit.token(Token::Type, bind.span, type_only.node),
+        None => visit.node(bind),
+    }
+}
+
+impl ImportItem {
+    pub(crate) fn bind(&self) -> &Ident {
+        match self {
+            ImportItem::AsIs { bind, .. } | ImportItem::Renamed { bind, .. } => bind,
+        }
+    }
+
+    /// Whether the item binds a name for types alone, and so is never imported
+    pub(crate) fn is_type_only(&self) -> bool {
+        match self {
+            ImportItem::AsIs { type_only, .. } | ImportItem::Renamed { type_only, .. } => {
+                type_only.is_some()
+            }
+        }
+    }
 }
 
 impl Node for ImportItem {
@@ -1689,14 +1767,37 @@ impl Node for ImportItem {
                 item,
                 bind,
                 delim_span,
+                minus_span,
+                type_only,
             } => {
-                visit.token(Token::ModuleItem, *item, None)?;
+                if let Some(minus_span) = minus_span {
+                    visit.token(Token::Delim, *minus_span, None)?;
+                }
+                if let Some(type_only) = type_only {
+                    visit.token(Token::Annotation, type_only.at_span, None)?;
+                }
+                visit.token(
+                    if type_only.is_some() {
+                        Token::Type
+                    } else {
+                        Token::ModuleItem
+                    },
+                    *item,
+                    None,
+                )?;
                 visit.token(Token::Delim, *delim_span, None)?;
-                visit.node(bind)
+                accept_import_bind(bind, type_only, visit)
             }
-            ImportItem::AsIs { bind, delim_span } => {
+            ImportItem::AsIs {
+                bind,
+                delim_span,
+                type_only,
+            } => {
                 visit.token(Token::Delim, *delim_span, None)?;
-                visit.node(bind)
+                if let Some(type_only) = type_only {
+                    visit.token(Token::Annotation, type_only.at_span, None)?;
+                }
+                accept_import_bind(bind, type_only, visit)
             }
         }
     }
@@ -1923,6 +2024,7 @@ pub(crate) struct Def {
     pub(crate) def_span: Span,
     pub(crate) decorators: Vec<Decorator>,
     pub(crate) ident: Ident,
+    pub(crate) binders: Option<Box<Binders>>,
     // Function
     pub(crate) func: Function,
     pub(crate) pub_span: Option<Span>,
@@ -1940,6 +2042,9 @@ impl Node for Def {
             self.ident.span,
             self.ident.res.as_ref().and_then(|r| r.node),
         )?;
+        if let Some(binders) = &self.binders {
+            visit.node(&**binders)?;
+        }
         visit.node(&self.func)
     }
 
@@ -1955,6 +2060,7 @@ pub(crate) struct Method {
     pub(crate) special: Option<SpecialMethod>,
     pub(crate) node: Option<doc::Id>,
     pub(crate) private_sym: Option<sym::Id>,
+    pub(crate) binders: Option<Box<Binders>>,
     pub(crate) func: Function,
     pub(crate) pub_span: Option<Span>,
 }
@@ -1967,6 +2073,9 @@ impl Node for Method {
         }
         visit.token(Token::Keyword, self.def_span, None)?;
         visit.token(Token::Method, self.name_span, self.node)?;
+        if let Some(binders) = &self.binders {
+            visit.node(&**binders)?;
+        }
         visit.node(&self.func)
     }
 
@@ -2064,6 +2173,7 @@ pub(crate) struct Class {
     pub(crate) decorators: Vec<Decorator>,
     // Class name identifier
     pub(crate) ident: Ident,
+    pub(crate) binders: Option<Box<Binders>>,
     // Span of the `:` delimiter (if superclasses are present)
     pub(crate) colon_span: Option<Span>,
     // Superclass references (empty = no superclasses)
@@ -2084,6 +2194,9 @@ impl Node for Class {
             self.ident.span,
             self.ident.res.as_ref().and_then(|r| r.node),
         )?;
+        if let Some(binders) = &self.binders {
+            visit.node(&**binders)?;
+        }
         if let Some(colon_span) = self.colon_span {
             visit.token(Token::Delim, colon_span, None)?;
         }
@@ -2101,14 +2214,26 @@ impl Node for Class {
 pub(crate) struct ClassSuper {
     pub(crate) ident: Ident,
     pub(crate) fields: Vec<Span>,
+    /// Type arguments, which only annotate the superclass
+    pub(crate) args: Vec<TypeArg>,
+    pub(crate) bracket_span: Option<Span>,
 }
 
 impl Node for ClassSuper {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
-        visit.node(&self.ident)?;
+        visit.token(
+            Token::Type,
+            self.ident.span,
+            self.ident.res.as_ref().and_then(|res| res.node),
+        )?;
         for field in &self.fields {
             visit.token(Token::Operator, field.before_left_char(), None)?;
-            visit.token(Token::Field, *field, None)?;
+            visit.token(Token::Type, *field, None)?;
+        }
+        if let Some(bracket_span) = self.bracket_span {
+            visit.token(Token::Delim, bracket_span.left_char(), None)?;
+            self.args.accept(visit)?;
+            visit.token(Token::Delim, bracket_span.right_char(), None)?;
         }
         ControlFlow::Continue(())
     }
@@ -2159,6 +2284,8 @@ pub(crate) struct FieldName {
 pub(crate) struct FieldDecl {
     pub(crate) decorators: Vec<Decorator>,
     pub(crate) fields: Vec<FieldName>,
+    /// Annotation shared by every field the declaration names
+    pub(crate) ty: Option<Box<Annot>>,
     pub(crate) init: FieldInit,
     pub(crate) field_span: Span,
     pub(crate) equal_span: Option<Span>,
@@ -2201,6 +2328,9 @@ impl Node for FieldDecl {
         visit.token(Token::Keyword, self.field_span, None)?;
         for field in &self.fields {
             visit.token(Token::Field, field.ident.span, field.node)?;
+        }
+        if let Some(ty) = &self.ty {
+            visit.node(&**ty)?;
         }
         if let Some(span) = self.equal_span {
             visit.token(Token::Operator, span, None)?;
@@ -2299,12 +2429,16 @@ impl Block {
 
 pub(crate) struct Function {
     pub(crate) params: Vec<Param>,
+    pub(crate) ret: Option<Box<RetType>>,
     pub(crate) body: Block,
 }
 
 impl Node for Function {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         self.params.accept(visit)?;
+        if let Some(ret) = &self.ret {
+            visit.node(&**ret)?;
+        }
         visit.node(&self.body)
     }
 

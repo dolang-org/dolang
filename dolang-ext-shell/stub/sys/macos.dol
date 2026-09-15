@@ -15,7 +15,7 @@ pub class Errno: sys.unix.Errno
   # Known codes are available as class fields such as `Errno.ENOENT`.
   pub def (init)
     self
-    # ([`int`](std.Int)) Raw error number.
-    value
+    # Raw error number.
+    value @ Int
   do
     throw nil

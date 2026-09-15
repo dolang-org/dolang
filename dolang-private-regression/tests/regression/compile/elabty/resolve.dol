@@ -1,0 +1,81 @@
+# document
+# Type names resolve like variables, without warnings, and change nothing at runtime.
+
+import regression: _reg
+
+class Point
+  pub field x y @Int = 0
+
+def origin p @Point -> Point
+  p
+assert_eq $origin(nil) nil
+
+# A declaration can be named before it appears
+let _early @_Later = nil
+class _Later
+
+def first[T, :K, ...R] items @Array[T] key: _key @K = nil ..._rest @R -> T
+  items[0]
+assert_eq (first([1])) 1
+
+class Box[T]: Point
+  pub field value @(T | nil) = nil
+
+  pub def get[U] self fallback @U -> (T | U)
+    (self.value || fallback)
+assert_eq (Box().get 2) 2
+
+let _dotted @_reg.Thing = nil
+let _prelude @Str = ""
+
+def shadow[Str] x @Str
+  x
+assert_eq (shadow 1) 1
+
+# Whitespace on either side of an annotation marker is optional.
+def annotation_spacing _compact@Int _spaced @ Str :_key@ Bool ..._rest@Sym
+  nil
+assert_eq (annotation_spacing 1 2 _key: true :VALUE:) nil
+
+def vertical_annotation_spacing
+  _before @Int
+  _after@ Str
+  _both @ Bool
+do
+  nil
+assert_eq (vertical_annotation_spacing 1 "hello" true) nil
+
+class _SpacedFields
+  pub field compact@Int = 1
+  pub field spaced @ Str = "value"
+
+def outer()
+  let _inner @_Inner = nil
+  class _Inner
+  nil
+assert_eq $outer() nil
+
+let lambda = (do |x @Point| -> Point x)
+assert_eq (lambda nil) nil
+
+for i @Int = [1]
+  assert_eq $i 1
+
+# A type-only import can be named anywhere in its block, and dotted
+let _before @Early = nil
+import import_fixture:
+  - add
+  - @Early
+  - @Summer: Total
+
+def adder x @Early -> Total.Part
+  (add x 1)
+assert_eq (adder 1) 2
+
+import no_such_module:
+  - @Thing
+let _thing @Thing = nil
+
+# An exported type-only import is not reported as unused
+pub import import_fixture:
+  - @Exported

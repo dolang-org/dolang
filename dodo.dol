@@ -188,12 +188,13 @@ def collect_doc_jobs()
 
 # The documented public classes a module declares or re-exports. Only
 # documented ones receive pages because the handler hides undocumented
-# entities by default.
+# entities by default. Each result keeps the bare name used for its filename
+# and identifier alongside the binders shown in its page title.
 def module_classes modules module entities chain = []
-  let names = []
+  let classes = []
   for e = entities
     if ((e["kind"] == "class") && e["pub"] && e["doc"])
-      names.push $e["name"]
+      classes.push [e["name"], e.get("binders", default: [])]
     else if ((e["kind"] == "import_item") && e["pub"])
       let key = "$module.$(e["name"])"
       if chain.contains $key
@@ -206,8 +207,14 @@ def module_classes modules module entities chain = []
         throw "public doc re-export $key names missing item $(e["module"]).$(e["item"])"
       let resolved = module_classes $modules $e["module"] [target] [...chain, key]
       if resolved.len
-        names.push $e["name"]
-  names
+        classes.push [e["name"], resolved[0][1]]
+  classes
+
+def class_title entry
+  if entry[1].len
+    "$(entry[0])[$(", ".join(entry[1]))]"
+  else
+    entry[0]
 
 def private_doc_module name
   name.split(".").any do |component| component.starts_with "_"
@@ -246,8 +253,11 @@ def generate_doc_pages modules name entities
   if !private_doc_module(name)
     let dir = (MKDOCS_API_DIR / name)
     write_doc_page (dir / "index.md") $name $name
-    for class_name = module_classes $modules $name $entities
-      write_doc_page (dir / "$class_name.md") $class_name "$name.$class_name"
+    for entry = module_classes $modules $name $entities
+      write_doc_page
+        (dir / "$(entry[0]).md")
+        (class_title entry)
+        "$name.$(entry[0])"
 
 # Runs `dolang -m doc` once per module, in parallel, writing each result as
 # `<out_dir>/<module name>.json`. This is the JSON-only half of extract_docs

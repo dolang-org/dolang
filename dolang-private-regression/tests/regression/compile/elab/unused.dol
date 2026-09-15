@@ -21,11 +21,11 @@ pub def foo unused
   #    |             ^^^^^^
   nil
 
-def bar
+def bar()
   # warning: unused variable
   #   --> unused.dol:LL:LL
   #    |
-  # LL | def bar
+  # LL | def bar()
   #    |     ^^^
   nil
 
@@ -33,15 +33,15 @@ def keep value
   value
 
 #[keep]
-def decorated_top
+def decorated_top()
   nil
 
 #[keep]
 class DecoratedTop
 
-pub def outer
+pub def outer()
   #[keep]
-  def decorated_local
+  def decorated_local()
     nil
 
   #[keep]

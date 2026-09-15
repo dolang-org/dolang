@@ -50,8 +50,8 @@ pub class Mode
   # ```
   pub def (init)
     self
-    # ([`Sym`](std.Sym)) Mode bits, or one iterable of them.
-    ...bits
+    # Mode bits, or one iterable of them.
+    ...bits @ Sym
   do
     throw nil
 
@@ -65,30 +65,29 @@ pub class Mode
   #[class]
   pub def from_int
     self
-    # ([`Int`](std.Int)) Raw mode bits.
-    value
+    # Raw mode bits.
+    value @ Int
   do
     throw nil
 
-  # ([`security.unix.Permission`](security.unix.Permission)) Owner
+  # Owner
   # permissions.
   #[getter]
-  pub def owner self
+  pub def owner self -> Permission
     throw nil
 
-  # ([`security.unix.Permission`](security.unix.Permission)) Group
+  # Group
   # permissions.
   #[getter]
-  pub def group self
+  pub def group self -> Permission
     throw nil
 
-  # ([`security.unix.Permission`](security.unix.Permission))
   # Permissions for everyone else.
   #[getter]
-  pub def other self
+  pub def other self -> Permission
     throw nil
 
-  # ([`Int`](std.Int)) The raw `st_mode` value, including the file type
+  # The raw `st_mode` value, including the file type
   # bits.
   #
   # Mask with `0o7777` for the permission bits alone.
@@ -98,7 +97,7 @@ pub class Mode
   # assert_eq (mode.int & 0o7777) 0o755
   # ```
   #[getter]
-  pub def int self
+  pub def int self -> Int
     throw nil
 
   # Tests whether all bits represented by a symbol are set.
@@ -108,9 +107,9 @@ pub class Mode
   # [`Bool`](std.Bool)
   pub def contains
     self
-    # ([`Sym`](std.Sym)) Bits to test for.
-    bit
-  do
+    # Bits to test for.
+    bit @ Sym
+  do -> Bool
     throw nil
 
   # Union of two modes.
@@ -159,7 +158,7 @@ pub class Path
   # root, prefix, or alternate data stream.
   pub def (init)
     self
-    # ([`Str`](std.Str)\|[`fs.Path`](fs.Path)) Path value.
-    path
+    # Path value.
+    path @ (Str | Path)
   do
     throw nil

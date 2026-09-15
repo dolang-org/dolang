@@ -41,10 +41,13 @@ footer { margin-top: 2rem; font-size: .85rem; }
 .token-keyword, .token-operator { color: #c8a4f8; }
 .token-punctuation { color: #6f7690; }
 .token-sigil { color: #f29ab8; }
+.token-annotation { color: #f29ab8; }
 .token-string { color: #b9d991; }
 .token-number, .token-constant { color: #f4bc87; }
 .token-function { color: #9cbcff; }
 .token-class, .token-namespace { color: #81d5cc; }
+.token-type { color: #81d5cc; }
+.token-type-parameter { color: #d8a8ef; }
 .token-property, .token-parameter { color: #e5c790; }
 .token-comment { color: #8d97ae; font-style: italic; }
 .ansi-black-fg { color: #5a6078; } .ansi-black-bg { background: #5a6078; }

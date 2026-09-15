@@ -1,0 +1,7 @@
+import b:
+  - @Bar: 123
+# error: expected identifier for renamed import
+#   --> type_import_rename_errors.dol:LL:LL
+#    |
+# LL |   - @Bar: 123
+#    |           ^^^

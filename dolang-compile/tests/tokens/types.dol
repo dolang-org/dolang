@@ -1,0 +1,100 @@
+# Type syntax has token kinds distinct from runtime expressions.
+
+let f @((Str, ?port: Int, ...Str) -> Conn) = nil
+#     ^: annotation
+#      ^: delim
+#       ^: delim
+#        ^~~: type_token, node=none
+#           ^: delim
+#             ^: operator
+#              ^~~~: type_key
+#                  ^: delim
+#                         ^~~: sigil
+#                               ^: delim
+#                                 ^~: operator
+#                                    ^~~~: type_token, node=none
+#                                        ^: delim
+
+let t @(:a: | :b:) = nil
+#       ^~~: constant
+#           ^: operator
+#             ^~~: constant
+
+let u @(| time.Duration | Str) = nil
+#       ^: operator
+#         ^~~~: type_token
+#             ^: operator
+#              ^~~~~~~~: type_token
+#                       ^: operator
+
+let s @{name: Str, ...Dict[Str, Value]} = nil
+#      ^: delim
+#       ^~~~: type_key
+#                         ^: delim
+#                                     ^: delim
+
+def add a @Int -> Int
+  #            ^~: operator
+  #               ^~~: type_token
+  a
+
+let l = (do |x @Int| -> Array[Int] [x])
+#              ^: annotation
+#                    ^~: operator
+#                       ^~~~~: type_token
+#                            ^: delim
+#                                  ^: delim
+
+def first[T, :K, ...R] xs @Array[T] -> T
+  #      ^: delim
+  #       ^: binder_token, node=binder
+  #        ^: delim
+  #          ^: sigil
+  #           ^: binder_token, node=binder
+  #              ^~~: sigil
+  #                 ^: binder_token, node=binder
+  #                  ^: delim
+  #                              ^: type_token, node=binder
+  #                                    ^: type_token, node=binder
+  xs
+
+class Base
+class Map[K, V]: Base[K]
+#        ^: delim
+#         ^: binder_token, node=binder
+#              ^: delim
+#                ^~~~: type_token
+#                    ^: delim
+#                     ^: type_token, node=binder
+#                      ^: delim
+
+let shape @Base = nil
+#          ^~~~: type_token, node=class
+
+let r @Record = nil
+#      ^~~~~~: type_token, node=prelude_item
+
+class Point
+  field x y @Int = 0
+  #         ^: annotation
+  #          ^~~: type_token
+
+def connect
+  :port @Int = 22
+  #     ^: annotation
+  #      ^~~: type_token
+do
+  dbg $port
+
+import import_fixture:
+  - @Adder
+  # ^: annotation
+  #  ^~~~~: type_token, node=import_item
+  - @Summer: Total
+  # ^: annotation
+  #  ^~~~~~: type_token
+  #        ^: delim
+  #          ^~~~~: type_token, node=import_item
+
+let adder @Adder = nil
+#          ^~~~~: type_token, node=import_item

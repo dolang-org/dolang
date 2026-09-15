@@ -11,14 +11,14 @@ pub class Attr
   # ```
   pub def (init)
     self
-    # (`Str`) Local attribute name.
-    name
-    # (`Str`) Attribute value.
-    value
-    # (`Str`) Namespace URI.
-    :namespace = nil
-    # (`Str`) Preferred namespace prefix.
-    :prefix = nil
+    # Local attribute name.
+    name @ Str
+    # Attribute value.
+    value @ Str
+    # Namespace URI.
+    :namespace @ Str = nil
+    # Preferred namespace prefix.
+    :prefix @ Str = nil
   do
     throw nil
 
@@ -72,16 +72,16 @@ pub class Node
   # ```
   pub def (init)
     self
-    # (`Str`) Local element name.
-    tag
-    # (`Str`) Namespace URI.
-    :namespace = nil
-    # (`Str`) Preferred namespace prefix.
-    :prefix = nil
-    # (`dict`) Unnamespaced attributes with `Sym` or `Str` keys and `Str` values.
-    :attrs = nil
-    # ([`Attr`](xml.Attr)\|Value) Attributes or children.
-    ...items
+    # Local element name.
+    tag @ Str
+    # Namespace URI.
+    :namespace @ Str = nil
+    # Preferred namespace prefix.
+    :prefix @ Str = nil
+    # Unnamespaced attributes with `Sym` or `Str` keys and `Str` values.
+    :attrs @ Dict = nil
+    # Attributes or children.
+    ...items @ (Attr | Value)
   do
     throw nil
 
@@ -129,10 +129,10 @@ pub class Node
   # ```
   pub def attr
     self
-    # (`Str`) Local attribute name.
-    name
-    # (`Str`) Namespace URI.
-    :namespace = nil
+    # Local attribute name.
+    name @ Str
+    # Namespace URI.
+    :namespace @ Str = nil
     # Value returned when absent.
     :default = nil
     # Function evaluated when absent.
@@ -147,18 +147,18 @@ pub class Node
   # `Bool` indicating whether an attribute was deleted.
   pub def delete_attr
     self
-    # (`Str`) Local attribute name.
-    name
-    # (`Str`) Namespace URI.
-    :namespace = nil
-  do
+    # Local attribute name.
+    name @ Str
+    # Namespace URI.
+    :namespace @ Str = nil
+  do -> Bool
     throw nil
 
   # Appends a child.
   pub def push
     self
-    # (`Node`\|`Str`) Child value.
-    child
+    # Child value.
+    child @ (Node | Str)
   do
     throw nil
 
@@ -169,14 +169,14 @@ pub class Node
   # immutable.
   pub def set_attr
     self
-    # (`Str`) Local attribute name.
-    name
-    # (`Str`) Attribute value.
-    value
-    # (`Str`) Namespace URI.
-    :namespace = nil
-    # (`Str`) Preferred namespace prefix.
-    :prefix = nil
+    # Local attribute name.
+    name @ Str
+    # Attribute value.
+    value @ Str
+    # Namespace URI.
+    :namespace @ Str = nil
+    # Preferred namespace prefix.
+    :prefix @ Str = nil
   do
     throw nil
 
@@ -219,9 +219,9 @@ pub class Node
 # assert_eq $doc.tag "root"
 # ```
 pub def decode
-  # (`Str`) XML document.
-  xml
-do
+  # XML document.
+  xml @ Str
+do -> Node
   throw nil
 
 # Validates and serializes an XML tree.
@@ -245,9 +245,9 @@ do
 # assert_eq (encode $n) "<greeting>hello</greeting>"
 # ```
 pub def encode
-  # ([`Node`](xml.Node)\|`Str`) XML node or text.
-  node
-do
+  # XML node or text.
+  node @ (Node | Str)
+do -> Str
   throw nil
 
 # Checks an entire XML tree without serializing it.
@@ -266,7 +266,7 @@ do
 # verify $doc
 # ```
 pub def verify
-  # ([`Node`](xml.Node)) Root element.
-  node
+  # Root element.
+  node @ Node
 do
   throw nil

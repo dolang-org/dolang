@@ -1,7 +1,6 @@
 # Parses, creates, encodes, and applies unified and git-style patches.
 
 import std:
-  - Iter
   - RuntimeError
   - ValueError
 
@@ -107,10 +106,10 @@ pub class Patch
   # ```
   pub def apply
     self
-    # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Content to patch. Text
+    # Content to patch. Text
     # content must still be valid UTF-8 once patched.
-    base
-  do
+    base @ (Str | Bin)
+  do -> (Str | Bin)
     throw nil
 
 # Iterator over a patch stream.
@@ -130,7 +129,7 @@ pub class PatchIter: Iter
   pub def (next) self
     throw nil
 
-# ([`PatchIter`](patch.PatchIter)) Parses a patch stream.
+# Parses a patch stream.
 #
 # ## Errors
 #
@@ -142,12 +141,12 @@ pub class PatchIter: Iter
 # let patches = [...patch.decode diff_text]
 # ```
 pub def decode
-  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Unified or git-style patch.
-  input
-do
+  # Unified or git-style patch.
+  input @ (Str | Bin)
+do -> PatchIter
   throw nil
 
-# ([`Patch`](patch.Patch)) Builds a text patch from two versions of the same content.
+# Builds a text patch from two versions of the same content.
 #
 # ## Errors
 #
@@ -163,18 +162,18 @@ do
 # echo (patch.encode p)
 # ```
 pub def diff
-  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Original content. Must be
+  # Original content. Must be
   # the same kind of value as `after`.
-  before
-  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Modified content.
-  after
-  # ([`Path`](fs.Path)\|[`Str`](std.Str)) Source filename for the
+  before @ (Str | Bin)
+  # Modified content.
+  after @ (Str | Bin)
+  # Source filename for the
   # patch headers.
-  :source = nil
-  # ([`Path`](fs.Path)\|[`Str`](std.Str)) Target filename for the
+  :source @ (Path | Str) = nil
+  # Target filename for the
   # patch headers.
-  :target = nil
-do
+  :target @ (Path | Str) = nil
+do -> Patch
   throw nil
 
 # Encodes a [`Patch`](patch.Patch) or iterable of patches back to patch text.
@@ -195,7 +194,7 @@ do
 # write output.patch (patch.encode patches)
 # ```
 pub def encode
-  # ([`Patch`](patch.Patch)\|[`Iterable`](std.Iterable)) One patch or an iterable of patches.
-  value
-do
+  # One patch or an iterable of patches.
+  value @ (Patch | Iterable)
+do -> (Str | Bin)
   throw nil

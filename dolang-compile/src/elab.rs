@@ -12,8 +12,8 @@ use crate::{
     ast::{
         self, Arg, ArrayElem, Assign, Bind, Block, Class, Def, DictElem, Expand, Expr, ExprBody,
         For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key, LValue, Let,
-        Method, NlGuard, NlInfo, Origin, Pair, Param, Pattern, PatternBind, PrimStmt, Res, Return,
-        Root, SideEffect, Single, Stmt, Try, Var, While, visit::Node,
+        Method, NlGuard, NlInfo, Origin, Pair, Param, PatIdent, Pattern, PatternBind, PrimStmt,
+        Res, Return, Root, SideEffect, Single, Stmt, Try, Var, While, visit::Node,
     },
     diag::{AnnotationKind, Severity},
     source::{Annotate, Diagnose, Diags, File, Patch, Span},
@@ -1050,6 +1050,7 @@ impl<'s> Scope<'s> {
                         used: false,
                         initialized,
                         origin,
+                        type_used: false,
                         node: None,
                     },
                     epoch,
@@ -1074,6 +1075,7 @@ impl<'s> Scope<'s> {
                         used: true,
                         initialized: true,
                         origin: Origin::Synthetic,
+                        type_used: false,
                         node: None,
                     },
                     epoch,
@@ -1330,7 +1332,9 @@ impl<'a> Elaborater<'a> {
                     let mut scope = scope.nested_loop();
                     // Inject loop binds into inner scope
                     match bind {
-                        Pattern::Ident(ident) => self.bind_ident(&mut scope, ident, false)?,
+                        Pattern::Ident(PatIdent { ident, .. }) => {
+                            self.bind_ident(&mut scope, ident, false)?
+                        }
                         Pattern::Unpack(params) => {
                             for param in params.iter_mut() {
                                 self.visit_param_non_const_default(&mut scope, param)?;
@@ -1395,7 +1399,9 @@ impl<'a> Elaborater<'a> {
                     let mut scope = scope.nested_loop();
                     // Inject loop binds into inner scope
                     match bind {
-                        Pattern::Ident(ident) => self.bind_ident(&mut scope, ident, false)?,
+                        Pattern::Ident(PatIdent { ident, .. }) => {
+                            self.bind_ident(&mut scope, ident, false)?
+                        }
                         Pattern::Unpack(params) => {
                             for param in params.iter_mut() {
                                 self.visit_param_non_const_default(&mut scope, param)?;
@@ -1665,7 +1671,9 @@ impl<'a> Elaborater<'a> {
                     let mut scope = scope.nested_loop();
                     // Inject loop binds into inner scope
                     match bind {
-                        Pattern::Ident(ident) => self.bind_ident(&mut scope, ident, false)?,
+                        Pattern::Ident(PatIdent { ident, .. }) => {
+                            self.bind_ident(&mut scope, ident, false)?
+                        }
                         Pattern::Unpack(params) => {
                             for param in params.iter_mut() {
                                 self.visit_param_non_const_default(&mut scope, param)?;
@@ -1729,7 +1737,7 @@ impl<'a> Elaborater<'a> {
         // In a class body, let bindings are not inserted into the lexical index.
         // Private fields use their unique private sym; pub fields use the plain sym.
         if scope.is_class()
-            && let Pattern::Ident(ident) = &mut node.bind
+            && let Pattern::Ident(PatIdent { ident, .. }) = &mut node.bind
         {
             let name = self.file.str(ident.span);
             let sym = if node.pub_span.is_none() {
@@ -1786,7 +1794,7 @@ impl<'a> Elaborater<'a> {
         export: bool,
     ) -> Result<()> {
         match pat {
-            Pattern::Ident(ident) => self.bind_ident(scope, ident, export)?,
+            Pattern::Ident(PatIdent { ident, .. }) => self.bind_ident(scope, ident, export)?,
             Pattern::Unpack(params) => {
                 for param in params.iter_mut() {
                     self.visit_param_non_const_default(scope, param)?;
@@ -1825,7 +1833,7 @@ impl<'a> Elaborater<'a> {
     /// resolve them positionally.
     fn bind_pattern(&mut self, scope: &mut Scope<'_>, pattern: &mut Pattern) -> Result<()> {
         match pattern {
-            Pattern::Ident(ident) => self.bind_ident(scope, ident, false)?,
+            Pattern::Ident(PatIdent { ident, .. }) => self.bind_ident(scope, ident, false)?,
             Pattern::Unpack(params) => {
                 for param in params.iter_mut() {
                     self.visit_param_non_const_default(scope, param)?;
@@ -2040,6 +2048,10 @@ impl<'a> Elaborater<'a> {
                 ImportElement::Items { items, .. } => {
                     assert!(!items.is_empty());
                     for item in items.iter_mut() {
+                        // Only types can name the item, so it binds no variable
+                        if item.is_type_only() {
+                            continue;
+                        }
                         let bind = match item {
                             ImportItem::AsIs { bind, .. } | ImportItem::Renamed { bind, .. } => {
                                 bind
@@ -2652,6 +2664,7 @@ impl<'a> Elaborater<'a> {
                         bind,
                         res,
                         insert,
+                        ..
                     } => {
                         let id = self.symtab.id(&self.bintab.id_str(bind));
                         if let Ok(existing) = scope.resolve(id, self.epoch)
@@ -2686,23 +2699,19 @@ impl<'a> Elaborater<'a> {
         self.visit_block_inner(&mut scope, &mut node.body)?;
 
         if let Some(prelude) = &mut prelude {
-            // Mark prelude items that were never read (by clearing resolution)
+            // Mark prelude imports that were never read, which lowering skips
             for import in prelude.iter_mut() {
                 match import {
                     PreludeImport::Items { items, .. } => {
                         for item in items.iter_mut() {
                             let res = item.res.as_ref().unwrap();
-                            if !scope.is_read(res.index, res.depth) {
-                                item.res = None
-                            }
+                            item.unused = !scope.is_read(res.index, res.depth);
                         }
                     }
-                    PreludeImport::ModuleAsIs { res, .. }
-                    | PreludeImport::ModuleRenamed { res, .. } => {
-                        let r = res.as_ref().unwrap();
-                        if !scope.is_read(r.index, r.depth) {
-                            *res = None
-                        }
+                    PreludeImport::ModuleAsIs { res, unused, .. }
+                    | PreludeImport::ModuleRenamed { res, unused, .. } => {
+                        let res = res.as_ref().unwrap();
+                        *unused = !scope.is_read(res.index, res.depth);
                     }
                 }
             }

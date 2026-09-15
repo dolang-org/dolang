@@ -8,7 +8,7 @@
   heading only exists to register an anchor: without one, a link to the type
   from its module's Types table has nothing to resolve against.
 #}
-{{ ("<code>" ~ entity.name ~ "</code>") | heading(heading_level, role="class", id=base_id, toc_label=entity.name, hidden=true) }}
+{{ ("<code>" ~ entity.declaration_name ~ "</code>") | heading(heading_level, role="class", id=base_id, toc_label=entity.declaration_name, hidden=true) }}
 
 {% if entity.doc %}
 {{ entity.doc | convert_markdown(heading_level, "") }}
@@ -82,7 +82,7 @@
 {{ "Constructor" | heading(heading_level + 1, skip_inventory=true, id="constructor") }}
 {% for method in constructors %}
 {% set method_id = base_id ~ ".(init)" %}
-{% set sig = method.signature | replace("(init)", entity.name, 1) %}
+{% set sig = method.signature | replace("(init)", entity.declaration_name, 1) %}
 {{ params.signature_heading(sig, method.return_type, heading_level + 2, method_id, "method", sig) }}
 {% if method.doc_intro %}
 {{ method.doc_intro | convert_markdown(heading_level + 1, method_id) }}

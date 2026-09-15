@@ -1,6 +1,5 @@
 # Run direct commands or block-scoped operations with elevated privileges via
 # `sudo`.
-
 import _vfs shell proc time
   strand:
     - pipeline
@@ -54,7 +53,7 @@ do
       --preserve-env=$(",".join(env.keys()))
     -- $cmd ...args
 
-# (`nil`) Runs a verbatim command through `sudo`.
+# Runs a verbatim command through `sudo`.
 #
 # ## Example
 #
@@ -64,16 +63,16 @@ do
 pub def run
   # Program to run.
   cmd
-  # ([`Str`](std.Str)) Account to use instead of root.
-  :user = nil
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Working directory requested via
+  # Account to use instead of root.
+  :user @ Str = nil
+  # Working directory requested via
   # sudo.
-  :cd = nil
-  # ([`Dict`](std.Dict)) Environment requested via sudo policy.
-  :env = {}
+  :cd @ (Str | Path) = nil
+  # Environment requested via sudo policy.
+  :env @ Dict = {}
   # Arguments passed verbatim to `cmd`.
   ...args
-do
+do -> nil
   run_command $cmd :user :cd :env ...args.pos_only()
 
 # Runs a block with elevated privileges through `sudo`.
@@ -91,13 +90,13 @@ do
 # sudo.with do run cat /etc/shadow
 # ```
 pub def with
-  # ([`Func`](std.Func)) Block to run.
-  func
-  # ([`Str`](std.Str)) Account to use instead of root.
-  :user = nil
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Initial elevated directory.
-  :cd = nil
-  # ([`Dict`](std.Dict)) Initial environment overrides.
-  :env = {}
-do
+  # Block to run.
+  func @ Func
+  # Account to use instead of root.
+  :user @ Str = nil
+  # Initial elevated directory.
+  :cd @ (Str | Path) = nil
+  # Initial environment overrides.
+  :env @ Dict = {}
+do -> Value
   run_agent $func :user :cd :env

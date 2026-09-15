@@ -6,6 +6,7 @@ pub(crate) mod constant;
 pub mod diag;
 pub(crate) mod doc;
 pub(crate) mod elab;
+pub(crate) mod elabty;
 pub(crate) mod emit;
 pub(crate) mod flow;
 pub(crate) mod lex;
@@ -20,7 +21,6 @@ use std::{
     error,
     fmt::{self, Display},
     io::{self, Write},
-    marker::PhantomData,
     mem,
     num::NonZero,
     ops::ControlFlow,
@@ -49,9 +49,10 @@ use dolang_util::intern::{self, BinTable};
 use ast::Res;
 
 const STD_PRELUDE: &[&str] = &[
-    "Array", "Bin", "BinBuf", "Bool", "Dict", "Float", "Func", "Int", "Range", "Record", "Set",
-    "Str", "StrBuf", "Sym", "Tuple", "Type", "array", "bool", "class", "dbg", "dict", "float",
-    "getter", "int", "record", "setter", "static", "str", "sym", "tuple", "type",
+    "Array", "Bin", "BinBuf", "Bool", "Dict", "Float", "Func", "Int", "Iter", "Iterable", "Range",
+    "Record", "Set", "Sink", "Sinkable", "Str", "StrBuf", "Sym", "Tuple", "Type", "Value", "array",
+    "bool", "class", "dbg", "dict", "float", "getter", "int", "record", "setter", "static", "str",
+    "sym", "tuple", "type",
 ];
 
 #[derive(Debug)]
@@ -267,15 +268,16 @@ impl<'a> Node<'a> {
         self.node.parent.map(public_node_id)
     }
 
-    /// The extent of the whole construct.
+    /// The extent of the whole construct, or `None` for a prelude binding, which
+    /// has no source text.
     ///
     /// This runs from the first decorator, or `pub`, or the keyword — whichever
     /// comes first — through the end of the body, so a construct contains
     /// everything written inside it.
     ///
     /// Order siblings by this; nothing depends on the order nodes are yielded.
-    pub fn span(&self) -> diag::Span {
-        convert_span(self.file, self.node.span)
+    pub fn span(&self) -> Option<diag::Span> {
+        self.node.span.map(|span| convert_span(self.file, span))
     }
 
     /// The name this node declares, where it declares one.
@@ -306,17 +308,9 @@ impl<'a> Node<'a> {
         let span = |span: &source::Span| convert_span(self.file, *span);
         match &self.node.kind {
             doc::Kind::Root => Kind::Root,
-            doc::Kind::Class {
-                name,
-                is_pub,
-                supers,
-            } => Kind::Class {
+            doc::Kind::Class { name, is_pub } => Kind::Class {
                 name: span(name),
                 is_pub: *is_pub,
-                supers: Supers {
-                    file: self.file,
-                    supers: supers.iter(),
-                },
             },
             doc::Kind::Function { name, is_pub } => Kind::Function {
                 name: span(name),
@@ -362,11 +356,13 @@ impl<'a> Node<'a> {
                 item,
                 name,
                 is_pub,
+                type_only,
             } => Kind::ImportItem {
                 module: span(module),
                 item: span(item),
                 name: span(name),
                 is_pub: *is_pub,
+                type_only: *type_only,
             },
             doc::Kind::PreludeModule { module, name } => Kind::PreludeModule { module, name },
             doc::Kind::PreludeItem { module, item, name } => {
@@ -394,6 +390,16 @@ impl<'a> Node<'a> {
             doc::Kind::Return { target } => Kind::Return {
                 target: target.map(public_node_id),
             },
+            doc::Kind::Type { expr } => Kind::Type {
+                expr: TypeExpr {
+                    file: self.file,
+                    expr,
+                },
+            },
+            doc::Kind::Binder { name, kind } => Kind::Binder {
+                name: span(name),
+                kind: *kind,
+            },
         }
     }
 }
@@ -408,14 +414,12 @@ pub enum Kind<'a> {
     /// The complete source document. All other top-level nodes are its children.
     Root,
 
-    /// A class declaration
+    /// A class declaration.  Its superclasses are [`Kind::Type`] children.
     Class {
         /// The class name
         name: diag::Span,
         /// Declared `pub`
         is_pub: bool,
-        /// Superclass references, in the order written
-        supers: Supers<'a>,
     },
     /// A `def` at statement level
     Function {
@@ -500,6 +504,8 @@ pub enum Kind<'a> {
         name: diag::Span,
         /// Declared `pub`
         is_pub: bool,
+        /// Imported with `@`, for types only.  No variable is bound.
+        type_only: bool,
     },
     /// A module bound by the prelude, which has no source text
     PreludeModule {
@@ -557,35 +563,243 @@ pub enum Kind<'a> {
         /// The function returned from
         target: Option<NodeId>,
     },
+    /// A type in an annotation, return type or superclass list.
+    ///
+    /// Its parent is what it describes: the parameter, binding or field it
+    /// annotates, the function, method or lambda whose return type it is, or the
+    /// class it is a superclass of. A declaration naming several fields yields one
+    /// type per field.
+    Type {
+        /// The type as written
+        expr: TypeExpr<'a>,
+    },
+    /// A binder, a name standing for a type.  The function, method or class
+    /// declaring it is its parent.
+    Binder {
+        /// The bound name
+        name: diag::Span,
+        /// How the binder takes a type argument
+        kind: BinderKind,
+    },
 }
 
-/// A superclass reference
-pub struct Super<'a> {
-    /// The reference as written
-    pub span: diag::Span,
-    /// The node it names, when it is an identifier
-    pub target: Option<NodeId>,
-    phantom: PhantomData<&'a ()>,
+/// How a [`Kind::Binder`] takes a type argument
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BinderKind {
+    /// `T`
+    Pos,
+    /// `:K`
+    Key,
+    /// `...R`, taking any number of further arguments
+    Rest,
 }
 
-/// Iterator over a class's superclass references
-#[derive(Clone)]
-pub struct Supers<'a> {
+/// A type as written, with the names in it resolved
+#[derive(Copy, Clone)]
+pub struct TypeExpr<'a> {
     file: &'a File<'a>,
-    supers: slice::Iter<'a, doc::Super>,
+    expr: &'a doc::TypeExpr,
 }
 
-impl<'a> Iterator for Supers<'a> {
-    type Item = Super<'a>;
+impl<'a> TypeExpr<'a> {
+    /// The type as written, including any parentheses around it
+    pub fn span(&self) -> diag::Span {
+        convert_span(self.file, self.expr.span)
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.supers.next().map(|super_ref| Super {
-            span: convert_span(self.file, super_ref.span),
-            target: super_ref.target.map(public_node_id),
-            phantom: PhantomData,
-        })
+    /// The form the type takes
+    pub fn kind(&self) -> TypeKind<'a> {
+        let file = self.file;
+        let args = |args: &'a [doc::TypeArg]| TypeArgs {
+            file,
+            args: args.iter(),
+        };
+        match &self.expr.kind {
+            doc::TypeKind::Name { head, target } => TypeKind::Name {
+                head: convert_span(file, *head),
+                target: target.map(public_node_id),
+            },
+            doc::TypeKind::Const(value) => TypeKind::Const(match value {
+                doc::TypeConst::Sym(name) => TypeConst::Sym(name),
+                doc::TypeConst::Str(value) => TypeConst::Str(value),
+                doc::TypeConst::Int(value) => TypeConst::Int(*value),
+                doc::TypeConst::Bool(value) => TypeConst::Bool(*value),
+                doc::TypeConst::Nil => TypeConst::Nil,
+            }),
+            doc::TypeKind::App { base, args: items } => TypeKind::App {
+                base: TypeExpr { file, expr: base },
+                args: args(items),
+            },
+            doc::TypeKind::Schema { args: items } => TypeKind::Schema { args: args(items) },
+            doc::TypeKind::Union { members } => TypeKind::Union {
+                members: TypeExprs {
+                    file,
+                    exprs: members.iter(),
+                },
+            },
+            doc::TypeKind::Func { params, ret } => TypeKind::Func {
+                params: args(params),
+                ret: TypeExpr { file, expr: ret },
+            },
+        }
     }
 }
+
+/// The form of a [`TypeExpr`]
+#[non_exhaustive]
+pub enum TypeKind<'a> {
+    /// A possibly dotted name, e.g. `Str` or `time.Duration`
+    Name {
+        /// The first name, which is the one resolved
+        head: diag::Span,
+        /// The node the first name refers to, where the compiler could resolve it
+        target: Option<NodeId>,
+    },
+    /// A constant
+    Const(TypeConst<'a>),
+    /// Type arguments applied to a type, e.g. `Array[Int]`
+    App {
+        /// The type the arguments apply to
+        base: TypeExpr<'a>,
+        /// The arguments
+        args: TypeArgs<'a>,
+    },
+    /// A dict schema, e.g. `{name: Str, ?port: Int}`
+    Schema {
+        /// The entries
+        args: TypeArgs<'a>,
+    },
+    /// A union, e.g. `(Str | Path)`
+    Union {
+        /// The members, in the order written
+        members: TypeExprs<'a>,
+    },
+    /// A function type, e.g. `(Int, ?Int) -> Int`
+    Func {
+        /// The parameters
+        params: TypeArgs<'a>,
+        /// The return type
+        ret: TypeExpr<'a>,
+    },
+}
+
+/// A constant type
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TypeConst<'a> {
+    /// A symbol, by name
+    Sym(&'a str),
+    /// A string
+    Str(&'a str),
+    /// An integer
+    Int(i128),
+    /// A boolean
+    Bool(bool),
+    /// `nil`
+    Nil,
+}
+
+/// An item in the `[]`, `()` or `{}` of a type
+#[derive(Copy, Clone)]
+pub struct TypeArg<'a> {
+    file: &'a File<'a>,
+    arg: &'a doc::TypeArg,
+}
+
+impl<'a> TypeArg<'a> {
+    /// The item as written, without a trailing `,`
+    pub fn span(&self) -> diag::Span {
+        convert_span(self.file, self.arg.span)
+    }
+
+    /// Whether the item is marked optional with `?`
+    pub fn optional(&self) -> bool {
+        self.arg.optional
+    }
+
+    /// How the item is given
+    pub fn kind(&self) -> TypeArgKind {
+        match &self.arg.kind {
+            doc::TypeArgKind::Pos => TypeArgKind::Pos,
+            doc::TypeArgKind::Key { key } => TypeArgKind::Key {
+                key: convert_span(self.file, *key),
+            },
+            doc::TypeArgKind::Rest => TypeArgKind::Rest,
+        }
+    }
+
+    /// The item's type
+    pub fn ty(&self) -> TypeExpr<'a> {
+        TypeExpr {
+            file: self.file,
+            expr: &self.arg.ty,
+        }
+    }
+}
+
+/// How a [`TypeArg`] is given
+#[non_exhaustive]
+#[derive(Clone, Debug)]
+pub enum TypeArgKind {
+    /// `T`
+    Pos,
+    /// `key: T`
+    Key {
+        /// The key as written: a bareword for a symbol, or a quoted string
+        key: diag::Span,
+    },
+    /// `...T`, for any number of further items
+    Rest,
+}
+
+/// Iterator over the items of a type
+#[derive(Clone)]
+pub struct TypeArgs<'a> {
+    file: &'a File<'a>,
+    args: slice::Iter<'a, doc::TypeArg>,
+}
+
+impl<'a> Iterator for TypeArgs<'a> {
+    type Item = TypeArg<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.args.next().map(|arg| TypeArg {
+            file: self.file,
+            arg,
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.args.size_hint()
+    }
+}
+
+impl ExactSizeIterator for TypeArgs<'_> {}
+
+/// Iterator over the members of a union
+#[derive(Clone)]
+pub struct TypeExprs<'a> {
+    file: &'a File<'a>,
+    exprs: slice::Iter<'a, doc::TypeExpr>,
+}
+
+impl<'a> Iterator for TypeExprs<'a> {
+    type Item = TypeExpr<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.exprs.next().map(|expr| TypeExpr {
+            file: self.file,
+            expr,
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.exprs.size_hint()
+    }
+}
+
+impl ExactSizeIterator for TypeExprs<'_> {}
 
 impl VisitAdapter<'_, '_> {
     fn emit_token(
@@ -646,6 +860,8 @@ pub(crate) struct PreludeItem {
     item: String,
     bind: String,
     res: Option<Res>,
+    /// Never read by the code, so lowering does not import it. A type may still name it.
+    unused: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -659,11 +875,15 @@ pub(crate) enum PreludeImport {
         bind: String,
         res: Option<Res>,
         insert: bool,
+        /// As [`PreludeItem::unused`]
+        unused: bool,
     },
     ModuleRenamed {
         module: String,
         bind: String,
         res: Option<Res>,
+        /// As [`PreludeItem::unused`]
+        unused: bool,
     },
 }
 
@@ -699,6 +919,7 @@ impl<'a, 'b> Prelude<'a, 'b> {
             module,
             bind,
             res: None,
+            unused: false,
             insert: false,
         });
         self
@@ -717,6 +938,7 @@ impl<'a, 'b> Prelude<'a, 'b> {
             module: module.into(),
             bind: name.into(),
             res: None,
+            unused: false,
         });
         self
     }
@@ -752,6 +974,7 @@ impl<'a, 'b> Items<'a, 'b> {
                 item: item.clone(),
                 bind: item,
                 res: None,
+                unused: false,
             }),
             _ => unreachable!(),
         };
@@ -782,6 +1005,7 @@ impl<'a, 'b> Items<'a, 'b> {
                 item: item.into(),
                 bind: name.into(),
                 res: None,
+                unused: false,
             }),
             _ => unreachable!(),
         };
@@ -921,6 +1145,17 @@ impl<'a> Config<'a> {
         }
 
         compiler.prelude = prelude;
+        // Types only matter to documentation, and a unit that failed to elaborate has no
+        // scopes to resolve them in
+        if self.document && !failed {
+            elabty::check(
+                &mut ast,
+                &compiler.file,
+                &compiler.symtab,
+                &compiler.bintab,
+                &diags,
+            );
+        }
         let document = self
             .document
             .then(|| doc::index(&mut ast, &mut compiler.prelude, &compiler.file, &comments));

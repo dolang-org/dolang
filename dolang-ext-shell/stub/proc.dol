@@ -4,6 +4,9 @@
 # See [External Programs](../../shell/external-programs.md) for lookup,
 # redirection, capture and pipeline behavior.
 
+import std:
+  - @RuntimeError
+
 # Raised when an external program exits unsuccessfully.
 #
 # Spawn, lookup and other I/O failures do not raise this; they raise
@@ -21,13 +24,13 @@
 #   assert_eq $err.rc 42
 # ```
 pub class Error: std.RuntimeError
-  # ([`Int`](std.Int)?) The numeric exit status, or `nil` if the process
+  # The numeric exit status, or `nil` if the process
   # did not exit normally.
   #[getter]
-  pub def rc self
+  pub def rc self -> (Int | nil)
     throw nil
 
-  # ([`Int`](std.Int)?) The fatal signal number, or `nil` when the
+  # The fatal signal number, or `nil` when the
   # process was not signaled.
   #
   # A signaled process reports this instead of [`rc`](proc.Error.rc):
@@ -43,7 +46,7 @@ pub class Error: std.RuntimeError
   # Unix only: reading it against a Windows target raises
   # [`FieldError`](std.FieldError).
   #[getter]
-  pub def signal self
+  pub def signal self -> (Int | nil)
     throw nil
 
 # Information about a process at a moment in time.
@@ -61,36 +64,36 @@ pub class Error: std.RuntimeError
 #     echo "$(info.pid) $(info.exe)"
 # ```
 pub class Info
-  # ([`Int`](std.Int)) The process ID.
+  # The process ID.
   #[getter]
-  pub def pid self
+  pub def pid self -> Int
     throw nil
 
-  # ([`Int`](std.Int)?) The parent process ID.
+  # The parent process ID.
   #
   # Windows does not reparent orphaned processes, so this may be invalid or
   # reassigned.
   #[getter]
-  pub def parent_pid self
+  pub def parent_pid self -> (Int | nil)
     throw nil
 
-  # ([`Str`](std.Str)) The kernel's short name for the process.
+  # The kernel's short name for the process.
   #
   # On Unix this reflects whatever the process last set, and is typically
   # truncated.
   #[getter]
-  pub def name self
+  pub def name self -> Str
     throw nil
 
-  # ([`fs.Path`](fs.Path)?) The executable path.
+  # The executable path.
   #
   # Reading another user's executable path needs elevated rights on every
   # platform.
   #[getter]
-  pub def exe self
+  pub def exe self -> (Path | nil)
     throw nil
 
-  # ([`Tuple`](std.Tuple)?) The argument vector, as
+  # The argument vector, as
   # [`Str`](std.Str) elements.
   #
   # Restricted to processes owned by the same user on macOS. Windows represents
@@ -98,35 +101,35 @@ pub class Info
   # is split according to typical C runtime conventions;
   # [`cmdline_win`](proc.Info.cmdline_win) is the raw original.
   #[getter]
-  pub def cmdline self
+  pub def cmdline self -> (Tuple | nil)
     throw nil
 
-  # ([`fs.Path`](fs.Path)?) The working directory.
+  # The working directory.
   #
   # Reading another user's working directory needs elevated rights. On Windows
   # this is maintained by the C runtime rather than reported authoritatively by
   # the kernel, so an application may set it to anything.
   #[getter]
-  pub def cwd self
+  pub def cwd self -> (Path | nil)
     throw nil
 
-  # ([`Status`](proc.Status)?) How the process ended, or `nil` if it was still
+  # How the process ended, or `nil` if it was still
   # running.
   #[getter]
-  pub def status self
+  pub def status self -> (Status | nil)
     throw nil
 
-  # ([`security.unix.Identity`](security.unix.Identity)?) The process
+  # The process
   # credentials.
   #
   # Unix only: reading it on a record captured from another platform raises
   # [`FieldError`](std.FieldError). On macOS, `groups` is capped at 16
   # entries.
   #[getter]
-  pub def unix_id self
+  pub def unix_id self -> (Identity | nil)
     throw nil
 
-  # ([`Str`](std.Str)?) The command line as a single string.
+  # The command line as a single string.
   #
   # Windows only: reading it on a record captured from another platform raises
   # [`FieldError`](std.FieldError).
@@ -136,16 +139,16 @@ pub class Info
   # echo $p.info().cmdline_win
   # ```
   #[getter]
-  pub def cmdline_win self
+  pub def cmdline_win self -> (Str | nil)
     throw nil
 
-  # ([`security.windows.TokenInfo`](security.windows.TokenInfo)?) The
+  # The
   # process access token.
   #
   # Windows only: reading it on a record captured from another platform raises
   # [`FieldError`](std.FieldError).
   #[getter]
-  pub def token_info self
+  pub def token_info self -> (TokenInfo | nil)
     throw nil
 
 # Receives values from a strand pipe.
@@ -164,7 +167,7 @@ pub class PipeReceiver: std.Iter
   # ## Returns
   #
   # [`PipeReceiver`](proc.PipeReceiver)
-  pub def chunks self
+  pub def chunks self -> PipeReceiver
     throw nil
 
   # Selects line framing when the receiver reads bytes from an external
@@ -173,7 +176,7 @@ pub class PipeReceiver: std.Iter
   # ## Returns
   #
   # [`PipeReceiver`](proc.PipeReceiver)
-  pub def lines self
+  pub def lines self -> PipeReceiver
     throw nil
 
   # Closes the receiver and stops its sender.
@@ -201,8 +204,8 @@ pub class PipeSender: std.Sink
     self
     # Error value to propagate to the receiver.
     error = nil
-    # ([`strand.Backtrace`](strand)) Backtrace for `error`.
-    :backtrace = nil
+    # Backtrace for `error`.
+    :backtrace @ strand.Backtrace = nil
   do
     throw nil
 
@@ -212,9 +215,9 @@ pub class PipeSender: std.Sink
 #
 # Using a closed handle raises [`StateError`](std.StateError).
 pub class Proc
-  # ([`Int`](std.Int)) The process ID.
+  # The process ID.
   #[getter]
-  pub def pid self
+  pub def pid self -> Int
     throw nil
 
   # Takes a fresh snapshot of process state.
@@ -222,7 +225,7 @@ pub class Proc
   # ## Returns
   #
   # [`Info`](proc.Info)
-  pub def info self
+  pub def info self -> Info
     throw nil
 
   # Sends a signal to the process.
@@ -241,8 +244,8 @@ pub class Proc
   # ```
   pub def signal
     self
-    # ([`Sym`](std.Sym)) Signal name, such as `:TERM:`.
-    sig
+    # Signal name, such as `:TERM:`.
+    sig @ Sym
   do
     throw nil
 
@@ -264,7 +267,7 @@ pub class Proc
   # ## Returns
   #
   # [`Status`](proc.Status)
-  pub def wait self
+  pub def wait self -> Status
     throw nil
 
   # Closes the handle.
@@ -283,9 +286,8 @@ pub class Program
   # ```
   pub def (init)
     self
-    # ([`Str`](std.Str)|[`Sym`](std.Sym)|[`fs.Path`](fs.Path))
     # Program name or path.
-    value
+    value @ (Str | Sym | Path)
   do
     throw nil
 
@@ -301,7 +303,7 @@ pub class Program
   # let git = Program :git:
   # echo $git.which()
   # ```
-  pub def which self
+  pub def which self -> (Path | nil)
     throw nil
 
   # Runs the program with the supplied command-line arguments.
@@ -324,23 +326,22 @@ pub class Program
   # ```
   pub def (call)
     self
-    # ([`fs.Path`](fs.Path)|[`Iter`](std.Iter)) Source for
+    # Source for
     # standard input.
-    :stdin = nil
-    # ([`fs.Path`](fs.Path)|[`Sink`](std.Sink)) Destination for
+    :stdin @ (Path | Iter) = nil
+    # Destination for
     # standard output.
-    :stdout = nil
-    # ([`fs.Path`](fs.Path)|[`Sink`](std.Sink)|[`Sym`](std.Sym))
+    :stdout @ (Path | Sink) = nil
     # Destination for standard error, or `:STDOUT:` to merge it with standard
     # output.
-    :stderr = nil
-    # ([`Dict`](std.Dict)) Per-launch termination overrides: `signal`,
+    :stderr @ (Path | Sink | Sym) = nil
+    # Per-launch termination overrides: `signal`,
     # `grace` and `force`, as
     # [`with_policy`](proc.with_policy) takes them.
-    :policy = nil
-    # ([`Sym`](std.Sym)) `:LINE:` (the default) or `:CHUNK:` output
+    :policy @ Dict = nil
+    # `:LINE:` (the default) or `:CHUNK:` output
     # framing.
-    :mode = nil
+    :mode @ Sym = nil
     # Command-line arguments.
     ...args
   do
@@ -360,13 +361,13 @@ pub class Program
 #   echo "exited with $(status.code)"
 # ```
 pub class Status
-  # ([`Int`](std.Int)?) The exit code.
+  # The exit code.
   #
   # Only Windows can obtain one for a process that is not a child; every other
   # platform reports `nil`, since reaping an arbitrary process is the parent's
   # privilege there and a non-parent learns only that it is gone.
   #[getter]
-  pub def code self
+  pub def code self -> (Int | nil)
     throw nil
 
 # Lists the processes running on the target.
@@ -387,10 +388,10 @@ pub class Status
 #     if (info.unix_id.uid == uid)
 #       - $info
 # ```
-pub def enumerate()
+pub def enumerate() -> Info
   throw nil
 
-# ([`Info`](proc.Info)) Describes the process that currently owns `pid`, or the target process itself
+# Describes the process that currently owns `pid`, or the target process itself
 # when `pid` is omitted.
 #
 # Because this bypasses [`open`](proc.open), it works on protected
@@ -413,14 +414,14 @@ pub def enumerate()
 # echo $mine.pid
 # ```
 pub def info
-  # ([`Int`](std.Int)) Process ID. Defaults to the target process: the
+  # Process ID. Defaults to the target process: the
   # one serving the current VFS, which is the process running this interpreter
   # when none is connected, and otherwise the agent at the far end of the
   # connection. Pair it with
   # [`shell.with_host`](shell.with_host) to reach this interpreter
   # while a target is selected.
-  pid = nil
-do
+  pid @ Int = nil
+do -> Info
   throw nil
 
 # Opens a handle to a process.
@@ -451,15 +452,15 @@ do
 #   p.close()
 # ```
 pub def open
-  # ([`Info`](proc.Info)|[`Int`](std.Int)) Information record, or a raw
+  # Information record, or a raw
   # PID.
-  target
-  # ([`Func`](std.Func)) Block to run with the handle, which is closed when it returns.
-  block = nil
-do
+  target @ (Info | Int)
+  # Block to run with the handle, which is closed when it returns.
+  block @ Func = nil
+do -> Value
   throw nil
 
-# ([`Str`](std.Str)) Captures the output of a block as a string.
+# Captures the output of a block as a string.
 #
 # Everything written is captured as a byte stream, without line decoding or
 # normalization -- including values put into the strand's output, which
@@ -474,15 +475,15 @@ do
 # assert_eq $output "hello"
 # ```
 pub def sub
-  # ([`Func`](std.Func)) Block whose output to capture.
-  block
-  # ([`Bool`](std.Bool)) Remove one trailing LF or CRLF. True by
+  # Block whose output to capture.
+  block @ Func
+  # Remove one trailing LF or CRLF. True by
   # default. This is a whole-capture strip, not a per-value one: it removes at
   # most one line ending, from the end of the finished string.
-  :chomp = true
+  :chomp @ Bool = true
   # Additional arguments passed to the block.
   ...args
-do
+do -> Str
   throw nil
 
 # Runs a block with temporary process termination defaults.
@@ -502,15 +503,14 @@ do
 #   run worker
 # ```
 pub def with_policy
-  # ([`Func`](std.Func)) Block to run.
-  block
-  # ([`Sym`](std.Sym)) Unix signal name. `:TERM:` by default.
-  :signal = nil
-  # ([`time.Duration`](time.Duration)|[`Int`](std.Int)|[`Float`](std.Float))
+  # Block to run.
+  block @ Func
+  # Unix signal name. `:TERM:` by default.
+  :signal @ Sym = nil
   # Time before forced termination. Five seconds by default.
-  :grace = nil
-  # ([`Bool`](std.Bool)) Force termination after the grace period.
-  :force = nil
+  :grace @ (Duration | Int | Float) = nil
+  # Force termination after the grace period.
+  :force @ Bool = nil
   # Additional arguments passed to the block.
   ...args
 do

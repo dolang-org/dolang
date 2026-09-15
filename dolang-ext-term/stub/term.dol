@@ -83,12 +83,12 @@ pub class Console
   pub def (init) self
     throw nil
 
-  # ([`Bool`](std.Bool)) Whether the console supports ANSI styling.
+  # Whether the console supports ANSI styling.
   #[getter]
-  pub def can_style self
+  pub def can_style self -> Bool
     throw nil
 
-  # ([`Bool`](std.Bool)) Whether the console is usable as a terminal.
+  # Whether the console is usable as a terminal.
   #
   # This is the determinative test, unlike
   # [`geometry()`](term.Console.geometry), which may answer `nil` for a real
@@ -98,10 +98,10 @@ pub class Console
   # taken the terminal over, even though `geometry()` still reports the
   # terminal's size.
   #[getter]
-  pub def is_tty self
+  pub def is_tty self -> Bool
     throw nil
 
-  # ([`Str`](std.Str)|[`Bin`](std.Bin)) The line ending appropriate to
+  # The line ending appropriate to
   # this console's device.
   #
   # The console owns the policy but does not apply it: `echo` passes this to
@@ -119,7 +119,7 @@ pub class Console
   # native ending use [`shell.line_ending`](shell.line_ending)
   # instead.
   #[getter]
-  pub def line_ending self
+  pub def line_ending self -> (Str | Bin)
     throw nil
 
   # Makes buffered output visible.
@@ -148,7 +148,7 @@ pub class Console
   # if g
   #   echo "terminal is $(g.cols)x$(g.rows)"
   # ```
-  pub def geometry self
+  pub def geometry self -> (Geometry | nil)
     throw nil
 
   # Writes bytes verbatim.
@@ -169,8 +169,8 @@ pub class Console
   # ```
   pub def write
     self
-    # ([`Str`](std.Str)|[`Bin`](std.Bin)) Pieces to write, in order.
-    ...data
+    # Pieces to write, in order.
+    ...data @ (Str | Bin)
   do
     throw nil
 
@@ -215,7 +215,7 @@ pub class Geometry
   pub def (init) self
     throw nil
 
-  # ([`Int`](std.Int)?) Width in character cells, or `nil` if unknown.
+  # Width in character cells, or `nil` if unknown.
   #
   # ```
   # let g = term.console.geometry()
@@ -223,12 +223,12 @@ pub class Geometry
   #   echo $ term.preformat $ "-" * g.cols
   # ```
   #[getter]
-  pub def cols self
+  pub def cols self -> (Int | nil)
     throw nil
 
-  # ([`Int`](std.Int)?) Height in character cells, or `nil` if unknown.
+  # Height in character cells, or `nil` if unknown.
   #[getter]
-  pub def rows self
+  pub def rows self -> (Int | nil)
     throw nil
 
 # A [`Console`](term.Console) over an ordinary [sink](std.Sink).
@@ -290,13 +290,13 @@ pub class SinkConsole
   # ```
   pub def (init)
     self
-    # ([`Sink`](std.Sink)) Where output values are written.
-    sink
-    # ([`Bool`](std.Bool)) Emit ANSI styling. Off by default.
-    :can_style = false
-    # ([`Sym`](std.Sym)) `:LINE:` (the default) or `:CHUNK:`. See
+    # Where output values are written.
+    sink @ Sink
+    # Emit ANSI styling. Off by default.
+    :can_style @ Bool = false
+    # `:LINE:` (the default) or `:CHUNK:`. See
     # [Output mode](term.SinkConsole.output-mode).
-    :mode = nil
+    :mode @ Sym = nil
   do
     throw nil
 
@@ -347,7 +347,7 @@ pub class Style
     self
     # Values converted to display strings.
     ...args
-  do
+  do -> Text
     throw nil
 
 # Validated terminal presentation.
@@ -429,7 +429,7 @@ pub class Style
 # let encoded = label.encode()
 # ```
 pub class Text
-  # ([`Text`](term.Text)) Clips the text to a terminal-cell width at an extended grapheme boundary.
+  # Clips the text to a terminal-cell width at an extended grapheme boundary.
   #
   # SGR sequences do not contribute to the width. If the text already fits it
   # is returned unchanged and `suffix` is ignored. Otherwise the suffix is
@@ -444,15 +444,15 @@ pub class Text
   # ```
   pub def clip
     self
-    # ([`Int`](std.Int)) Non-negative terminal-cell budget.
-    width
-    # ([`Str`](std.Str)|[`Text`](term.Text)) Suffix appended only when
+    # Non-negative terminal-cell budget.
+    width @ Int
+    # Suffix appended only when
     # truncating.
-    :suffix = nil
-  do
+    :suffix @ (Str | Text) = nil
+  do -> Text
     throw nil
 
-  # ([`Str`](std.Str)) Returns the ANSI representation: exactly the bytes a terminal write emits.
+  # Returns the ANSI representation: exactly the bytes a terminal write emits.
   #
   # This is the inverse of [`preformat`](term.preformat), which takes the
   # result back (canonicalizing the SGR it re-emits).
@@ -464,10 +464,10 @@ pub class Text
   # assert_eq (str label) ERROR
   # fs.write $path $label.encode()
   # ```
-  pub def encode self
+  pub def encode self -> Str
     throw nil
 
-  # ([`Text`](term.Text)) Adds spaces to the beginning of each line without changing ANSI formatting.
+  # Adds spaces to the beginning of each line without changing ANSI formatting.
   #
   # A terminal newline does not gain a trailing indentation prefix.
   #
@@ -479,12 +479,12 @@ pub class Text
   # ```
   pub def indent
     self
-    # ([`Int`](std.Int)) Non-negative number of spaces.
-    spaces
-  do
+    # Non-negative number of spaces.
+    spaces @ Int
+  do -> Text
     throw nil
 
-  # ([`Text`](term.Text)) Concatenates values with this text between them.
+  # Concatenates values with this text between them.
   #
   # Each value is taken the way [`text`](term.text) takes an argument of
   # its own: a `Text` keeps its styling, and anything else is converted and
@@ -498,12 +498,12 @@ pub class Text
   # ```
   pub def join
     self
-    # ([`Iterable`](std.Iterable)) Values to join. Uses the default input when omitted.
-    iter = nil
-  do
+    # Values to join. Uses the default input when omitted.
+    iter @ Iterable = nil
+  do -> Text
     throw nil
 
-  # ([`Int`](std.Int)) Returns the visible terminal-cell width of the text.
+  # Returns the visible terminal-cell width of the text.
   #
   # SGR sequences do not contribute to the width. Widths are summed within each
   # extended grapheme cluster and capped at two cells per cluster. C0 control
@@ -516,7 +516,7 @@ pub class Text
   # assert_eq ((text "👩‍💻").width()) 2
   # assert_eq ((text "界").width()) 2
   # ```
-  pub def width self
+  pub def width self -> Int
     throw nil
 
   # Returns the content with the styling dropped.
@@ -574,16 +574,16 @@ pub class Text
 # | ------------------------------------- | -------------------------------------------------------------------------------------- |
 # | [`ValueError`](std.ValueError) | `mode:` is given when `console` is already a `Console`, which fixes its own output mode |
 pub def capture
-  # ([`Console`](term.Console)|[`Sink`](std.Sink)) Destination to
+  # Destination to
   # install. A plain sink is wrapped in a
   # [`SinkConsole`](term.SinkConsole) using the requested `mode:`.
-  console
-  # ([`Func`](std.Func)) Block to run.
-  block
-  # ([`Sym`](std.Sym)) `:LINE:` (the default) or `:CHUNK:`, when
+  console @ (Console | Sink)
+  # Block to run.
+  block @ Func
+  # `:LINE:` (the default) or `:CHUNK:`, when
   # `console` is a plain sink. See
   # [Output mode](term.SinkConsole.output-mode).
-  :mode = nil
+  :mode @ Sym = nil
   # Additional arguments passed to the block.
   ...args
 do
@@ -622,8 +622,8 @@ do
 # mute do run printf "this will not be printed"
 # ```
 pub def mute
-  # ([`Func`](std.Func)) Block to run.
-  block
+  # Block to run.
+  block @ Func
   # Additional arguments passed to the block.
   ...args
 do
@@ -638,10 +638,10 @@ do
 # ## Returns
 #
 # [`Console`](term.Console)
-pub def output()
+pub def output() -> Console
   throw nil
 
-# ([`Text`](term.Text)) Validates existing ANSI-styled text.
+# Validates existing ANSI-styled text.
 #
 # SGR styling is canonicalized; other terminal controls, hyperlinks included,
 # are removed.
@@ -653,9 +653,9 @@ pub def output()
 # echo $formatted
 # ```
 pub def preformat
-  # ([`Str`](std.Str)) ANSI-formatted input.
-  text
-do
+  # ANSI-formatted input.
+  text @ Str
+do -> Text
   throw nil
 
 # Prints concatenated values without separators or a trailing newline.
@@ -675,7 +675,7 @@ pub def print
 do
   throw nil
 
-# ([`Str`](std.Str)) Runs a block and returns its console output as a string.
+# Runs a block and returns its console output as a string.
 #
 # The console counterpart to [`proc.sub`](proc.sub), which captures
 # a strand's implicit output stream instead. Verbatim output is captured, which
@@ -688,19 +688,19 @@ do
 # assert_eq $greeting "Hello, Alice!"
 # ```
 pub def sub
-  # ([`Func`](std.Func)) Block to run.
-  block
-  # ([`Bool`](std.Bool)) Strip one trailing line ending, LF or CRLF.
+  # Block to run.
+  block @ Func
+  # Strip one trailing line ending, LF or CRLF.
   # True by default.
-  :chomp = true
-  # ([`Bool`](std.Bool)) Keep ANSI styling. False by default.
-  :can_style = false
+  :chomp @ Bool = true
+  # Keep ANSI styling. False by default.
+  :can_style @ Bool = false
   # Additional arguments passed to the block.
   ...args
-do
+do -> Str
   throw nil
 
-# ([`Text`](term.Text)) Constructs terminal text from concatenated values, styled or not.
+# Constructs terminal text from concatenated values, styled or not.
 #
 # Also accepts the [style options](term.style-options), for which
 # `:INHERIT:` leaves a setting to the surrounding style.
@@ -723,7 +723,7 @@ do
 pub def text
   # Values converted to display strings.
   ...args
-do
+do -> Text
   throw nil
 
 # The host [`Console`](term.Console), supplied by the application running Do,

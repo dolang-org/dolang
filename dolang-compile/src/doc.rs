@@ -7,7 +7,7 @@ use std::{
 
 use dolang_util::alias;
 
-use crate::source::Span;
+use crate::{BinderKind, source::Span};
 
 mod comment;
 mod index;
@@ -39,17 +39,6 @@ impl Id {
     }
 }
 
-/// A superclass reference.
-///
-/// A reference is a use site rather than a child, so it cannot be expressed by
-/// parentage.  `target` is the node the reference resolves to when it is simply
-/// an identifier, which is what gives a consumer the import provenance.
-#[derive(Copy, Clone, Debug)]
-pub(crate) struct Super {
-    pub(crate) span: Span,
-    pub(crate) target: Option<Id>,
-}
-
 /// Everything about a node that varies by what kind of node it is.
 ///
 /// A declared name and `pub` belong to the kinds that have them rather than to
@@ -63,7 +52,6 @@ pub(crate) enum Kind {
     Class {
         name: Span,
         is_pub: bool,
-        supers: alias::Box<[Super]>,
     },
     Function {
         name: Span,
@@ -116,6 +104,7 @@ pub(crate) enum Kind {
         item: Span,
         name: Span,
         is_pub: bool,
+        type_only: bool,
     },
     PreludeModule {
         module: alias::Box<str>,
@@ -154,6 +143,77 @@ pub(crate) enum Kind {
     Return {
         target: Option<Id>,
     },
+
+    // Types
+    /// A type in an annotation, return type or superclass list, describing its parent
+    Type {
+        expr: TypeExpr,
+    },
+    Binder {
+        name: Span,
+        kind: BinderKind,
+    },
+}
+
+/// A type as written, with the names in it resolved to nodes
+#[derive(Debug)]
+pub(crate) struct TypeExpr {
+    /// The type, including any parentheses around it
+    pub(crate) span: Span,
+    pub(crate) kind: TypeKind,
+}
+
+/// The form of a type. Parentheses that only group are not a form of their own.
+#[derive(Debug)]
+pub(crate) enum TypeKind {
+    Name {
+        head: Span,
+        target: Option<Id>,
+    },
+    Const(TypeConst),
+    App {
+        base: alias::Box<TypeExpr>,
+        args: alias::Box<[TypeArg]>,
+    },
+    Schema {
+        args: alias::Box<[TypeArg]>,
+    },
+    Union {
+        members: alias::Box<[TypeExpr]>,
+    },
+    Func {
+        params: alias::Box<[TypeArg]>,
+        ret: alias::Box<TypeExpr>,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) enum TypeConst {
+    Sym(alias::Box<str>),
+    Str(alias::Box<str>),
+    Int(i128),
+    Bool(bool),
+    Nil,
+}
+
+/// An item in `[]`, `()` or `{}` within a type
+#[derive(Debug)]
+pub(crate) struct TypeArg {
+    /// The item without its trailing `,`
+    pub(crate) span: Span,
+    pub(crate) optional: bool,
+    pub(crate) kind: TypeArgKind,
+    pub(crate) ty: TypeExpr,
+}
+
+#[derive(Debug)]
+pub(crate) enum TypeArgKind {
+    Pos,
+    /// The key as written, quotes and all
+    Key {
+        key: Span,
+    },
+    Rest,
 }
 
 impl Kind {
@@ -176,7 +236,8 @@ impl Kind {
             | Kind::KeyParam { name, .. }
             | Kind::SelfParam { name }
             | Kind::ImportModule { name, .. }
-            | Kind::ImportItem { name, .. } => Some(*name),
+            | Kind::ImportItem { name, .. }
+            | Kind::Binder { name, .. } => Some(*name),
             Kind::RestParam { name } => *name,
             Kind::Root
             | Kind::PreludeModule { .. }
@@ -194,7 +255,8 @@ impl Kind {
             | Kind::Decorator { .. }
             | Kind::Break { .. }
             | Kind::Continue { .. }
-            | Kind::Return { .. } => None,
+            | Kind::Return { .. }
+            | Kind::Type { .. } => None,
         }
     }
 }
@@ -205,14 +267,20 @@ pub(crate) struct Node {
     /// The node this one is lexically inside, if any
     pub(crate) parent: Option<Id>,
     pub(crate) kind: Kind,
-    /// The whole construct, from its first decorator to the end of its body
-    pub(crate) span: Span,
+    /// The whole construct, from its first decorator to the end of its body. A
+    /// prelude binding has no source text, and so has none.
+    pub(crate) span: Option<Span>,
     /// The doc comment block attached to this node, if any
     pub(crate) doc: Option<Span>,
 }
 
 impl Node {
-    pub(crate) fn new(parent: Option<Id>, kind: Kind, span: Span, doc: Option<Span>) -> Self {
+    pub(crate) fn new(
+        parent: Option<Id>,
+        kind: Kind,
+        span: Option<Span>,
+        doc: Option<Span>,
+    ) -> Self {
         Self {
             parent,
             kind,

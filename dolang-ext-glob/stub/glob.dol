@@ -19,8 +19,8 @@ pub class Glob
   # ```
   pub def (init)
     self
-    # ([`Str`](std.Str)) Glob pattern.
-    pattern
+    # Glob pattern.
+    pattern @ Str
   do
     throw nil
 
@@ -39,9 +39,9 @@ pub class Glob
   # ```
   pub def matches
     self
-    # ([`Str`](std.Str)) Candidate string to test.
-    value
-  do
+    # Candidate string to test.
+    value @ Str
+  do -> Bool
     throw nil
 
 # Tests whether `value` matches a glob pattern.
@@ -61,9 +61,9 @@ pub class Glob
 # assert (!(matches "**/*.png" "assets/logo.jpg"))
 # ```
 pub def matches
-  # ([`Glob`](glob.Glob)\|[`Str`](std.Str)) Glob object or pattern text.
-  pattern
-  # ([`Str`](std.Str)) Candidate string to test.
-  value
-do
+  # Glob object or pattern text.
+  pattern @ (Glob | Str)
+  # Candidate string to test.
+  value @ Str
+do -> Bool
   throw nil

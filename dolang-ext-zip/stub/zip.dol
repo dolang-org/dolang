@@ -55,11 +55,11 @@ pub class Archive
   # ```
   pub def create_dir
     self
-    # ([`Str`](std.Str)) Name of the directory within the archive. A
+    # Name of the directory within the archive. A
     # trailing `/` is added if missing.
-    name
-    # ([`Int`](std.Int)) Unix permission bits. Defaults to `0`.
-    :mode = nil
+    name @ Str
+    # Unix permission bits. Defaults to `0`.
+    :mode @ Int = nil
   do
     throw nil
 
@@ -100,12 +100,12 @@ pub class Archive
   # ```
   pub def open
     self
-    # ([`Str`](std.Str)) Name of the file within the archive.
-    name
-    # ([`Int`](std.Int)) Unix permission bits in write mode. Defaults
+    # Name of the file within the archive.
+    name @ Str
+    # Unix permission bits in write mode. Defaults
     # to `0`.
-    :mode = nil
-    # ([`Int`](std.Int)) Expected uncompressed size.
+    :mode @ Int = nil
+    # Expected uncompressed size.
     #
     # The writer reserves space for an entry's ZIP64 size fields in its local
     # file header before any data is written, and patches the real sizes in
@@ -113,14 +113,14 @@ pub class Archive
     # entry that turns out to exceed 4 GiB fails when it is closed unless
     # `size` announced it up front. Pass the uncompressed size whenever it is
     # known; it is a hint, and the actual sizes are what end up recorded.
-    :size = nil
-    # ([`Sym`](std.Sym)) `:STORED:`, `:DEFLATE:` (the default), or
+    :size @ Int = nil
+    # `:STORED:`, `:DEFLATE:` (the default), or
     # `:ZSTD:`.
-    :compression = nil
-    # ([`Func`](std.Func)) Called with the [`File`](zip.File), which is closed when it
+    :compression @ Sym = nil
+    # Called with the [`File`](zip.File), which is closed when it
     # returns. Omit to receive the handle instead.
-    func = nil
-  do
+    func @ Func = nil
+  do -> Value
     throw nil
 
   # Creates a symbolic link entry pointing to `target`. Write mode only.
@@ -136,12 +136,12 @@ pub class Archive
   # ```
   pub def symlink
     self
-    # ([`Str`](std.Str)) Path the symlink points to.
-    target
-    # ([`Str`](std.Str)) Name of the symlink within the archive.
-    name
-    # ([`Int`](std.Int)) Unix permission bits. Defaults to `0`.
-    :mode = nil
+    # Path the symlink points to.
+    target @ Str
+    # Name of the symlink within the archive.
+    name @ Str
+    # Unix permission bits. Defaults to `0`.
+    :mode @ Int = nil
   do
     throw nil
 
@@ -218,10 +218,10 @@ pub class Entry
   # ```
   pub def open
     self
-    # ([`Func`](std.Func)) Called with the [`File`](zip.File), which is closed when it
+    # Called with the [`File`](zip.File), which is closed when it
     # returns. Omit to receive the handle instead.
-    block = nil
-  do
+    block @ Func = nil
+  do -> Value
     throw nil
 
 # An open file within a ZIP archive.
@@ -243,7 +243,7 @@ pub class File
   pub def close self
     throw nil
 
-  # ([`Bin`](std.Bin)) Reads data from the file. Read mode only.
+  # Reads data from the file. Read mode only.
   #
   # ## Errors
   #
@@ -260,9 +260,9 @@ pub class File
   # ```
   pub def read
     self
-    # ([`Int`](std.Int)) Maximum number of bytes to read.
-    size
-  do
+    # Maximum number of bytes to read.
+    size @ Int
+  do -> Bin
     throw nil
 
   # Writes data to the file. Write mode only.
@@ -281,8 +281,8 @@ pub class File
   # ```
   pub def write
     self
-    # ([`Bin`](std.Bin)\|[`Str`](std.Str)) Data to write.
-    data
+    # Data to write.
+    data @ (Bin | Str)
   do
     throw nil
 
@@ -307,18 +307,18 @@ pub class File
 #     file.write "Hello, World!"
 # ```
 pub def open
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Path to the ZIP archive
+  # Path to the ZIP archive
   # file.
-  path
-  # ([`Str`](std.Str)) Access mode. Defaults to `"r"`.
+  path @ (Str | Path)
+  # Access mode. Defaults to `"r"`.
   #
   # | Mode  | Description                                           |
   # | ----- | ----------------------------------------------------- |
   # | `"r"` | Read mode -- opens an existing archive for reading    |
   # | `"w"` | Write mode -- creates a new archive, truncating any existing one |
-  mode = nil
-  # ([`Func`](std.Func)) Called with the [`Archive`](zip.Archive), which is closed
+  mode @ Str = nil
+  # Called with the [`Archive`](zip.Archive), which is closed
   # when it returns. Omit to receive the handle instead.
-  func = nil
-do
+  func @ Func = nil
+do -> Value
   throw nil

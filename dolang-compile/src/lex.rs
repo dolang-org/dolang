@@ -213,10 +213,15 @@ pub(crate) enum Mode {
     String,
     Heredoc,
     RawHeredoc,
+    /// A compact type within a full expression: lexed as in `Shell`, so whitespace
+    /// ends it, except that a newline is only whitespace and leaves indentation alone
+    Type,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum RawToken {
+    Arrow,
+    At,
     DecoratorOpen,
     Dollar,
     DQuote,
@@ -232,6 +237,7 @@ enum RawToken {
     Literal,
     Op(Op),
     NewlineIndent,
+    Question,
     RightParen,
     Space,
     LeftBracket,
@@ -256,6 +262,8 @@ enum RawToken {
 enum RawState {
     Amp,
     AmpAmp,
+    Arrow,
+    At,
     Backslash,
     Bang,
     BangEqual,
@@ -313,6 +321,7 @@ enum RawState {
     PostDot { negative: bool },
     LeadingZero { negative: bool },
     Hash,
+    Question,
     LtLt,
     GtGt,
     R,
@@ -687,6 +696,8 @@ macro_rules! lex {
                 Some(b'&') => emit!($self.$method, $token, Amp),
                 Some(b'{') => emit!($self.$method, $token, LeftBrace),
                 Some(b'}') => emit!($self.$method, $token, RightBrace),
+                Some(b'@') => emit!($self.$method, $token, At),
+                Some(b'?') => emit!($self.$method, $token, Question),
                 // Only in the modes that have no comments. Elsewhere `#` mid
                 // literal is ordinary text (`echo foo#bar`), and routing it to
                 // `Hash` would start a comment there.
@@ -912,7 +923,13 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                         self.acc = (c - b'0') as u128;
                         self.trans(Integer { negative: true, radix: 10 })
                     },
+                    match Some(b'>') => self.trans(Arrow),
                 }),
+                // Type syntax tokens return without lookahead, so the parser can
+                // switch lexer modes immediately after them
+                Arrow => return self.token(RawToken::Arrow, Empty),
+                At => return self.token(RawToken::At, Empty),
+                Question => return self.token(RawToken::Question, Empty),
                 Plus => symbol!(self, RawToken::Op(Op::Plus), {}),
                 Star => symbol!(self, RawToken::Op(Op::Star), {}),
                 Slash => symbol!(self, RawToken::Op(Op::Slash), {
@@ -1466,6 +1483,8 @@ pub(crate) struct Error;
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) enum TokenInfo {
     ArgSep,
+    Arrow,
+    At,
     Bool(bool),
     DecoratorOpen,
     Dedent,
@@ -1483,6 +1502,7 @@ pub(crate) enum TokenInfo {
     LeftParen,
     Literal,
     Op(Op),
+    Question,
     RightParen,
     StmtSep,
     LeftBracket,
@@ -1564,6 +1584,8 @@ pub(crate) struct Lexer<'a> {
     heredoc_baseline: Offset,
     // Remaining span to drain when heredoc_pending is true (start advances as tokens are emitted)
     heredoc_ws: Span,
+    // Lexing in `Mode::Type`, which the raw lexer sees as `Mode::Shell`
+    type_mode: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -1584,15 +1606,27 @@ impl<'a> Lexer<'a> {
             nl: 0,
             heredoc_baseline: 0,
             heredoc_ws: Default::default(),
+            type_mode: false,
         }
     }
 
     pub(crate) fn set_mode(&mut self, mode: Mode) -> Mode {
-        let prev = self.raw.set_mode(mode);
+        let prev = self.mode();
+        self.type_mode = mode == Mode::Type;
+        self.raw
+            .set_mode(if self.type_mode { Mode::Shell } else { mode });
         if matches!(mode, Mode::Heredoc | Mode::RawHeredoc) {
             self.heredoc_baseline = self.current;
         }
         prev
+    }
+
+    pub(crate) fn mode(&self) -> Mode {
+        if self.type_mode {
+            Mode::Type
+        } else {
+            self.raw.mode
+        }
     }
 
     // Inject an error; used by the parser to force resynchronization
@@ -1830,6 +1864,7 @@ impl<'a> Iterator for Lexer<'a> {
                     self.raw.diags.push(e);
                     return Some(Err(Error));
                 }
+                Ok((NewlineIndent, span)) if self.type_mode => self.token(TokenInfo::ArgSep, span),
                 Ok((NewlineIndent, span)) => {
                     if let res @ Some(..) = self.newline(span) {
                         return res;
@@ -1841,6 +1876,9 @@ impl<'a> Iterator for Lexer<'a> {
                     self.set_indent(span);
                     continue;
                 }
+                Ok((Arrow, span)) => self.token(TokenInfo::Arrow, span),
+                Ok((At, span)) => self.token(TokenInfo::At, span),
+                Ok((Question, span)) => self.token(TokenInfo::Question, span),
                 Ok((DecoratorOpen, span)) => self.token(TokenInfo::DecoratorOpen, span),
                 Ok((Dollar, span)) => self.token(TokenInfo::Dollar, span),
                 Ok((DQuote, span)) => self.token(TokenInfo::DQuote, span),

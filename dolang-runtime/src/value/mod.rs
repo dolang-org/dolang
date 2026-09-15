@@ -2909,6 +2909,24 @@ where
     }
 }
 
+/// Input wrapper that interns a name as a symbol, as the `sym` function does.
+pub struct AsSym<'a>(&'a str);
+
+impl<'a> AsSym<'a> {
+    /// Wrap a name for conversion into a symbol.
+    pub fn new(name: &'a str) -> Self {
+        Self(name)
+    }
+}
+
+impl<'v> Input<'v> for AsSym<'_> {
+    #[allow(private_interfaces)]
+    fn input_take<'a>(&'a mut self, vm: &'a Vm<'v>, _: private::Sealed) -> InputBy<'v, 'a> {
+        vm.sym_gc();
+        InputBy::Value(Value::from_object(vm.sym_register_obj(self.0)), None)
+    }
+}
+
 impl<'v, 'a> Deref for Slot<'v, 'a> {
     type Target = Value<'v>;
 

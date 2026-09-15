@@ -37,6 +37,8 @@ const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::NAMESPACE,
     SemanticTokenType::COMMENT,
     SemanticTokenType::CLASS,
+    SemanticTokenType::TYPE,
+    SemanticTokenType::TYPE_PARAMETER,
 ];
 
 const TT_CONSTANT: u32 = 0;
@@ -51,6 +53,8 @@ const TT_VARIABLE: u32 = 8;
 const TT_NAMESPACE: u32 = 9;
 const TT_COMMENT: u32 = 10;
 const TT_CLASS: u32 = 11;
+const TT_TYPE: u32 = 12;
+const TT_TYPE_PARAMETER: u32 = 13;
 
 const MOD_PRELUDE: u32 = 1 << 0;
 const MOD_DECLARATION: u32 = 1 << 1;
@@ -59,6 +63,8 @@ const MOD_STATIC: u32 = 1 << 3;
 
 fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> (u32, u32) {
     match token {
+        Token::Annotation => (TT_OPERATOR, 0),
+        Token::Binder => (TT_TYPE_PARAMETER, 0),
         Token::Comment => (TT_COMMENT, 0),
         Token::Constant => (TT_CONSTANT, 0),
         Token::Delim | Token::Sigil => (TT_OPERATOR, 0),
@@ -76,8 +82,22 @@ fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> (u
         Token::Number => (TT_NUMBER, 0),
         Token::Operator => (TT_OPERATOR, 0),
         Token::StringDelim => (TT_STRING, 0),
+        Token::Type => match kind {
+            Some(Kind::Binder { .. }) => (TT_TYPE_PARAMETER, 0),
+            _ => (TT_TYPE, 0),
+        },
+        Token::TypeKey => (TT_PROPERTY, 0),
         Token::Variable => match (context, kind) {
-            (_, Some(Kind::Class { .. })) => (TT_CLASS, 0),
+            (
+                _,
+                Some(
+                    Kind::Class { .. }
+                    | Kind::Binder { .. }
+                    | Kind::ImportItem {
+                        type_only: true, ..
+                    },
+                ),
+            ) => (TT_CLASS, 0),
             (Context::Call, Some(Kind::PreludeItem { .. })) => (TT_FUNCTION, MOD_PRELUDE),
             (Context::Call, Some(Kind::PreludeModule { .. })) => (TT_FUNCTION, MOD_PRELUDE),
             (Context::Call, _) => (TT_FUNCTION, 0),
@@ -209,30 +229,6 @@ fn normalize_doc_text(doc: &str) -> String {
         .join("\n")
 }
 
-/// Split the provisional leading `(type)` convention from documentation.
-///
-/// Types may contain Markdown links, whose destinations contain parentheses,
-/// so the outer group is matched by depth rather than at the first `)`.
-fn split_doc_type(doc: &str) -> (Option<&str>, &str) {
-    if !doc.starts_with('(') {
-        return (None, doc);
-    }
-    let mut depth = 0;
-    for (index, ch) in doc.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return (Some(doc[1..index].trim()), doc[index + 1..].trim_start());
-                }
-            }
-            _ => {}
-        }
-    }
-    (None, doc)
-}
-
 fn one_line_source(content: &str, span: &diag::Span) -> String {
     span_text(content, span)
         .lines()
@@ -243,25 +239,76 @@ fn one_line_source(content: &str, span: &diag::Span) -> String {
 
 fn parameter_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<String> {
     let node = unit.node(id)?;
-    matches!(
+    if !matches!(
         node.kind(),
         Kind::PositionalParam { .. }
             | Kind::KeyParam { .. }
             | Kind::RestParam { .. }
             | Kind::SelfParam { .. }
-    )
-    .then(|| one_line_source(content, &node.span()))
+    ) {
+        return None;
+    }
+    node.span().map(|span| one_line_source(content, &span))
 }
 
+/// The source text of the type describing a node, if it has one.
+fn type_label(
+    content: &str,
+    unit: &Unit<'_>,
+    id: NodeId,
+    children: &HashMap<NodeId, Vec<NodeId>>,
+) -> Option<String> {
+    children
+        .get(&id)?
+        .iter()
+        .filter_map(|child| unit.node(*child))
+        .find(|child| matches!(child.kind(), Kind::Type { .. }))
+        .and_then(|child| child.span())
+        .map(|span| one_line_source(content, &span))
+}
+
+/// A declaration's signature, including any type it is annotated with.
 fn declaration_label(
     content: &str,
     unit: &Unit<'_>,
     id: NodeId,
     children: &HashMap<NodeId, Vec<NodeId>>,
-) -> Option<(String, bool)> {
+) -> Option<String> {
     let node = unit.node(id)?;
     let kind = node.kind();
-    let name = node.definition().map(|span| span_text(content, &span))?;
+    let mut name = node
+        .definition()
+        .map(|span| span_text(content, &span).to_owned())?;
+    let binders = children
+        .get(&id)
+        .into_iter()
+        .flatten()
+        .filter_map(|child| unit.node(*child))
+        .filter(|child| matches!(child.kind(), Kind::Binder { .. }))
+        .filter_map(|child| child.span())
+        .map(|span| one_line_source(content, &span))
+        .collect::<Vec<_>>();
+    if !binders.is_empty() {
+        name.push('[');
+        name.push_str(&binders.join(", "));
+        name.push(']');
+    }
+    // A class's types are its superclasses, which describe nothing about it
+    let ty = if matches!(kind, Kind::Class { .. }) {
+        None
+    } else {
+        type_label(content, unit, id, children)
+    };
+    let returns = || {
+        ty.as_deref()
+            .map(|ty| format!(" -> {ty}"))
+            .unwrap_or_default()
+    };
+    let annot = || {
+        ty.as_deref()
+            .map(|ty| format!(" @{ty}"))
+            .unwrap_or_default()
+    };
     let params = || {
         children
             .get(&id)
@@ -270,14 +317,16 @@ fn declaration_label(
             .filter_map(|child| parameter_label(content, unit, *child))
             .collect::<Vec<_>>()
     };
-    let callable = matches!(
-        &kind,
-        Kind::Function { .. } | Kind::Method { .. } | Kind::SpecialMethod { .. }
-    );
     let label = match kind {
-        Kind::Class { is_pub, supers, .. } => {
-            let supers = supers
-                .map(|super_ref| span_text(content, &super_ref.span))
+        Kind::Class { is_pub, .. } => {
+            let supers = children
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .filter_map(|child| unit.node(*child))
+                .filter(|child| matches!(child.kind(), Kind::Type { .. }))
+                .filter_map(|child| child.span())
+                .map(|span| span_text(content, &span))
                 .collect::<Vec<_>>();
             format!(
                 "{}class {name}{}",
@@ -292,39 +341,46 @@ fn declaration_label(
         Kind::Function { is_pub, .. } | Kind::Method { is_pub, .. } => {
             let params = params();
             format!(
-                "{}def {name}{}",
+                "{}def {name}{}{}",
                 if is_pub { "pub " } else { "" },
                 if params.is_empty() {
                     String::new()
                 } else {
                     format!(" {}", params.join(" "))
-                }
+                },
+                returns()
             )
         }
         Kind::SpecialMethod { .. } => {
             let params = params();
             format!(
-                "def {name}{}",
+                "def {name}{}{}",
                 if params.is_empty() {
                     String::new()
                 } else {
                     format!(" {}", params.join(" "))
-                }
+                },
+                returns()
             )
         }
         Kind::Field { is_pub, .. } => {
-            format!("{}field {name}", if is_pub { "pub " } else { "" })
+            format!(
+                "{}field {name}{}",
+                if is_pub { "pub " } else { "" },
+                annot()
+            )
         }
         Kind::Bind { is_pub, .. } => {
-            format!("{}let {name}", if is_pub { "pub " } else { "" })
+            format!("{}let {name}{}", if is_pub { "pub " } else { "" }, annot())
         }
+        // A parameter is labeled by its source, annotation included
         Kind::PositionalParam { .. }
         | Kind::KeyParam { .. }
         | Kind::RestParam { .. }
         | Kind::SelfParam { .. } => parameter_label(content, unit, id)?,
         _ => return None,
     };
-    Some((label, callable))
+    Some(label)
 }
 
 /// Hover text for a name that resolves outside this document -- an import or
@@ -343,29 +399,11 @@ fn external_hover(kind: Kind<'_>, content: &str) -> Option<String> {
     Some(render_external_hover(doc_index::lookup(module, item)?))
 }
 
-/// Assembles a hover markdown blob from a fenced signature and an optional
-/// leading-parenthesized type/prose split off a doc comment (see
-/// `split_doc_type`), for both a local declaration and an external one from
-/// the static doc index -- the two callers of `split_doc_type`.
-///
-/// A callable's type is a return type, appended directly to the signature
-/// as `-> Type` inside the fence (anticipating the language's own eventual
-/// return-type syntax, the same convention the mkdocstrings handler uses
-/// for generated docs) rather than a separate line below it. A
-/// non-callable's type has nowhere equivalent to go in its signature (`let
-/// x`, `field x` don't return anything), so it stays a `**Type:**` line.
-fn render_hover_markdown(label: &str, callable: bool, type_: Option<&str>, prose: &str) -> String {
-    let mut label = label.to_owned();
-    if callable && let Some(type_) = type_ {
-        label.push_str(" -> ");
-        label.push_str(type_);
-    }
+/// Assembles a hover markdown blob from a fenced signature and a doc comment,
+/// for both a local declaration and an external one from the static doc index.
+fn render_hover_markdown(label: &str, prose: &str) -> String {
     let fence = if label.contains("```") { "````" } else { "```" };
     let mut markdown = format!("{fence}dolang\n{label}\n{fence}");
-    if !callable && let Some(type_) = type_ {
-        markdown.push_str("\n\n**Type:** ");
-        markdown.push_str(type_);
-    }
     if !prose.is_empty() {
         markdown.push_str("\n\n");
         markdown.push_str(prose);
@@ -374,10 +412,7 @@ fn render_hover_markdown(label: &str, callable: bool, type_: Option<&str>, prose
 }
 
 fn render_external_hover(entry: &doc_index::DocEntry) -> String {
-    let label = doc_index::signature(entry);
-    let (type_, prose) = split_doc_type(entry.doc);
-    let callable = matches!(entry.kind, "function" | "method");
-    render_hover_markdown(&label, callable, type_, prose)
+    render_hover_markdown(&doc_index::signature(entry), entry.doc)
 }
 
 /// Pre-render local hover text while the compiler unit and its spans live.
@@ -389,12 +424,12 @@ fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, String> {
         }
     }
     for ids in children.values_mut() {
+        // A prelude binding, having no span, sorts first
         ids.sort_by_key(|id| {
             unit.node(*id)
                 .expect("child node remains in its unit")
                 .span()
-                .start()
-                .byte_offset()
+                .map(|span| span.start().byte_offset())
         });
     }
 
@@ -403,10 +438,12 @@ fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, String> {
             if let Some(markdown) = external_hover(node.kind(), content) {
                 return Some((id, markdown));
             }
-            let (label, callable) = declaration_label(content, unit, id, &children)?;
+            let label = declaration_label(content, unit, id, &children)?;
             let doc = node.doc().map(|span| normalize_doc(content, &span));
-            let (type_, prose) = doc.as_deref().map(split_doc_type).unwrap_or((None, ""));
-            Some((id, render_hover_markdown(&label, callable, type_, prose)))
+            Some((
+                id,
+                render_hover_markdown(&label, doc.as_deref().unwrap_or("")),
+            ))
         })
         .collect()
 }
@@ -426,13 +463,13 @@ fn build_symbols(unit: &Unit<'_>, index: &DocumentIndex<'_>) -> Vec<DocumentSymb
         let Some(symbol_kind) = symbol_kind(&kind, content) else {
             continue;
         };
-        let Some(name) = node.definition() else {
+        let (Some(name), Some(span)) = (node.definition(), node.span()) else {
             continue;
         };
         let selection_range = index.range_from_span(&name);
         // A client rejects an outline whose selection range escapes its range,
         // so take the union rather than trust the two to nest.
-        let mut range = index.range_from_span(&node.span());
+        let mut range = index.range_from_span(&span);
         range.start = range.start.min(selection_range.start);
         range.end = range.end.max(selection_range.end);
         of_node.insert(id, ids.len());
@@ -1648,18 +1685,6 @@ mod tests {
     }
 
     #[test]
-    fn doc_type_allows_markdown_links_and_rejects_unbalanced_groups() {
-        assert_eq!(
-            split_doc_type("([`Str`](../std/str.md)|nil) Description."),
-            (Some("[`Str`](../std/str.md)|nil"), "Description.")
-        );
-        assert_eq!(
-            split_doc_type("(unfinished Description."),
-            (None, "(unfinished Description.")
-        );
-    }
-
-    #[test]
     fn parse_module_import() {
         let settings =
             Backend::parse_settings_toml(&parse_toml("[prelude]\nshell = true\n")).unwrap();
@@ -1775,24 +1800,23 @@ mod tests {
         let uri: Uri = "file:///hover-test.dol".parse().unwrap();
         let source = concat!(
             "\n",
-            "# (Type) A widget.\n",
-            "class Widget\n",
-            "  # ([`Int`](../std/int.md)) The count.\n",
-            "  pub field count = 0\n",
+            "# A widget.\n",
+            "class Widget[T]\n",
+            "  # The count.\n",
+            "  pub field count @ Int = 0\n",
             "\n",
-            "  # ([`Int`](../std/int.md)) Gets the count.\n",
-            "  pub def get self\n",
+            "  # Gets the count.\n",
+            "  pub def get[U] self -> Int\n",
             "    self.count\n",
             "\n",
-            "# ([`Widget`](./widget.md)) Builds one.\n",
-            "pub def build\n",
-            "  # ([`Int`](../std/int.md))\n",
+            "# Builds one.\n",
+            "pub def build[T, :K, ...R]\n",
             "  # Number of widgets.\n",
-            "  value\n",
+            "  value @ Int\n",
             "  :mode = fast\n",
             "  ...rest\n",
-            "do\n",
-            "  let local = value\n",
+            "do -> Widget\n",
+            "  let local @ Int = value\n",
             "  local\n",
             "\n",
             "let widget = Widget\n",
@@ -1801,78 +1825,52 @@ mod tests {
         );
         harness.open(uri.clone(), source, 1).await;
 
-        let class_hover = hover_at(&mut harness, uri.clone(), 21, 14).await.unwrap();
-        assert_eq!(
-            class_hover.contents,
+        let markdown = |value: &str| {
             HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: "```dolang\nclass Widget\n```\n\n**Type:** Type\n\nA widget.".to_owned(),
+                value: value.to_owned(),
             })
+        };
+
+        let class_hover = hover_at(&mut harness, uri.clone(), 20, 14).await.unwrap();
+        assert_eq!(
+            class_hover.contents,
+            markdown("```dolang\nclass Widget[T]\n```\n\nA widget.")
         );
 
         let field_hover = hover_at(&mut harness, uri.clone(), 4, 13).await.unwrap();
         assert_eq!(
             field_hover.contents,
-            HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: concat!(
-                    "```dolang\npub field count\n```\n\n",
-                    "**Type:** [`Int`](../std/int.md)\n\n",
-                    "The count."
-                )
-                .to_owned(),
-            })
+            markdown("```dolang\npub field count @Int\n```\n\nThe count.")
         );
 
         let method_hover = hover_at(&mut harness, uri.clone(), 7, 11).await.unwrap();
         assert_eq!(
             method_hover.contents,
-            HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: concat!(
-                    "```dolang\npub def get self -> [`Int`](../std/int.md)\n```\n\n",
-                    "Gets the count."
-                )
-                .to_owned(),
-            })
+            markdown("```dolang\npub def get[U] self -> Int\n```\n\nGets the count.")
         );
 
-        let function_hover = hover_at(&mut harness, uri.clone(), 23, 8).await.unwrap();
+        let function_hover = hover_at(&mut harness, uri.clone(), 22, 8).await.unwrap();
         assert_eq!(
             function_hover.contents,
-            HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: concat!(
-                    "```dolang\n",
-                    "pub def build value :mode = fast ...rest -> [`Widget`](./widget.md)\n",
-                    "```\n\n",
-                    "Builds one."
-                )
-                .to_owned(),
-            })
+            markdown(concat!(
+                "```dolang\n",
+                "pub def build[T, :K, ...R] value @ Int :mode = fast ...rest -> Widget\n",
+                "```\n\n",
+                "Builds one."
+            ))
         );
 
-        let parameter_hover = hover_at(&mut harness, uri.clone(), 18, 16).await.unwrap();
+        let parameter_hover = hover_at(&mut harness, uri.clone(), 17, 20).await.unwrap();
         assert_eq!(
             parameter_hover.contents,
-            HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: concat!(
-                    "```dolang\nvalue\n```\n\n",
-                    "**Type:** [`Int`](../std/int.md)\n\n",
-                    "Number of widgets."
-                )
-                .to_owned(),
-            })
+            markdown("```dolang\nvalue @ Int\n```\n\nNumber of widgets.")
         );
 
-        let local_hover = hover_at(&mut harness, uri.clone(), 19, 3).await.unwrap();
+        let local_hover = hover_at(&mut harness, uri.clone(), 18, 3).await.unwrap();
         assert_eq!(
             local_hover.contents,
-            HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: "```dolang\nlet local\n```".to_owned(),
-            })
+            markdown("```dolang\nlet local @Int\n```")
         );
 
         assert!(hover_at(&mut harness, uri, 0, 3).await.is_none());
@@ -2106,6 +2104,39 @@ mod tests {
         assert_eq!(at(1, 3), (TT_PARAMETER, 0));
         // `echo` is a prelude binding, which the client can style differently.
         assert_eq!(at(3, 0), (TT_FUNCTION, MOD_PRELUDE));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn semantic_tokens_classify_type_syntax() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///semantic-token-type-test.dol".parse().unwrap();
+        let source = "def first[T] value@T -> Array[T]\n  value\n";
+        harness.open(uri.clone(), source, 1).await;
+
+        let tokens = harness
+            .send_request::<request::SemanticTokensFullRequest>(SemanticTokensParams {
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                text_document: TextDocumentIdentifier { uri },
+            })
+            .await
+            .unwrap();
+        let data = match tokens {
+            SemanticTokensResult::Tokens(tokens) => tokens.data,
+            SemanticTokensResult::Partial(_) => panic!("unexpected partial tokens"),
+        };
+        let absolute = absolute_tokens(&data);
+        let at = |col: u32| token_at(&absolute, 0, col);
+
+        assert_eq!(
+            at(10),
+            (TT_TYPE_PARAMETER, MOD_DECLARATION | MOD_DEFINITION)
+        );
+        assert_eq!(at(18), (TT_OPERATOR, 0));
+        assert_eq!(at(19), (TT_TYPE_PARAMETER, 0));
+        assert_eq!(at(24), (TT_TYPE, 0));
+        assert_eq!(at(30), (TT_TYPE_PARAMETER, 0));
     }
 
     /// The outline follows the node table's parentage, not the source nesting.

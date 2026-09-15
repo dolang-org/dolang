@@ -592,6 +592,59 @@ bind args
   :verbose = false
 ```
 
+### Type Annotations
+
+Annotations document types and have no runtime effect. `@` and a type follow a
+bound name and precede any default. Whitespace on either side of `@` is
+optional. By convention, write a space on each side, except where several
+bindings share a line: there write none, so whitespace separates only bindings.
+
+```
+let count @ Int = 0
+def connect :host@Str = "localhost" :port@(Int | nil) = nil
+  echo $host
+class Point
+  pub field x y@Int = 0
+```
+
+`->`, whitespace, and a type give a return type, after the parameters (or after
+the `do` ending vertical parameters):
+
+```
+def add a@Int b@Int -> Int
+  (a + b)
+def build
+  :tag @ Str
+  ...args @ Str
+do -> Array[Str]
+  [tag, ...args]
+let double = (do |x @ Int| -> Int x * 2)
+```
+
+`[]` directly after a `def` or `class` name declares binders (names standing for
+types; also `:K` and a trailing `...R`), and a superclass may take type
+arguments:
+
+```
+def first[T] items @ Array[T] -> T
+  items[0]
+class Registry[V]: Table[Sym, V]
+```
+
+`@` before an import item binds it for types only; the item is not imported:
+
+```
+import geometry:
+  - @Point
+  - @Vector: Offset
+```
+
+An annotation or return type is a compact type, so the first whitespace after
+it begins ends it, even inside `()`. Parenthesize unions and function types:
+`@Str|Path` is not a union, but `@(Str | Path)` is. Other forms:
+`@Dict[Str, Array[Int]]`, `@{name: Str, ?port: Int}`, `@((Int, ?Int) -> Int)`,
+`@(:a: | :b:)`.
+
 ### Concurrency
 
 ```
@@ -644,78 +697,107 @@ indicate logic bugs).
 
 ## Documentation Style (docs/)
 
-When writing or editing documentation in `docs/`, follow these guidelines to
-keep prose direct and technical. The recurring problems these address were
-AI-generated verbosity — if a sentence reads like filler, cut it.
+When writing or editing documentation in `docs/` or in doc comments, follow
+these guidelines to keep prose direct and technical. The recurring problems
+these address were AI-generated verbosity — if a sentence reads like filler,
+cut it.
 
-### Page Structure
+### API Reference
 
-**Module pages** (`index.md` in a module directory, or `module.md` for
-leaf modules like `base64.md`):
+The API reference under `docs/api/` is generated from doc comments in Do
+sources. Never write or edit pages there; the directory is not checked in.
+`dodo mkdocs` extracts each module with `dolang -m compile extract --doc`,
+writes a page for the module and one for each documented public class, and
+renders them with the mkdocstrings handler in `docs/mkdocstrings_handlers/do/`.
+LSP hover text for imported and prelude names comes from the same extraction.
 
-1. `# module_name` — heading is the bare module name
-2. One-line or short paragraph describing the module's purpose
-3. `## Types` — only if the module exports type objects. This includes
-   native types and Do-defined classes alike (a class is just a type
-   defined in Do code). Use a link table:
+Documented modules live in:
 
-    ```
-    | Type                    | Description              |
-    | ----------------------- | ------------------------ |
-    | [`State`](./state.md)   | Supertype for ...        |
-    | [`Blake3`](./blake3.md) | BLAKE3 state handle      |
-    ```
+- `dolang-shell-modules/lib/` — modules written in Do, documented where they are
+  implemented.
+- `dolang-runtime/stub/` and `dolang-ext-*/stub/` — stubs for native modules. A
+  stub declares a module's public API, with `throw nil` as each body, to carry
+  its documentation and type annotations. Keep it in step with the native
+  module.
 
-    Don't list internal/return-only types here — only types the module
-    exports as values. Types that are only returned by functions (e.g.
-    `Result` from `compile`) are mentioned in the relevant function's
-    `#### Returns` section and linked to their own page from there.
-4. `## Functions` — each function as `### \`name args\`` (see below)
+A file `foo/bar.dol` documents module `foo.bar`. Only `pub` declarations are
+extracted, and the pages leave out undocumented ones.
 
-**Type pages** (one `.md` file per type):
+#### Doc Comments
 
-1. `# TypeName` — the type name (backtick-wrapped if it could be confused
-   with prose, e.g. `` # `State` ``)
-2. One-line description, ideally stating what supertype it extends if any
-   (e.g. `` [`State`](./state.md) for BLAKE3. ``)
-3. Sections in order, omitting any that don't apply:
-    - `## Constructor` — `### \`TypeName(args)\``; parameters, returns, example
-    - `## Fields` — each as `### \`field_name\`` with description and example
-    - `## Class Methods` — methods on the type object itself
-    - `## Methods` — instance methods, each as `### \`method_name args\``
-    - `## Operators` — if the type overloads `+`, `[]`, iteration, etc.
-    - `## Example` — a longer worked example if the type warrants one
+A block of comment lines directly above a declaration documents it; a blank line
+ends a block. A block on the first line of a file (after any `#!` line)
+documents the module, so a blank line must separate it from the first
+declaration's block.
 
-Each type gets its own page. Don't document a type's full API inline on
-the module page — the module page links to the type page.
+The handler lays out the page: signature headings, parameter tables, and the
+tables of a module's types and functions. A doc comment holds only prose, in
+this order:
 
-**Function/method entries** follow this order (omit sections that don't
-apply):
+1. A brief first paragraph. A class's first paragraph is its summary in the
+   module's table of types.
+2. Further paragraphs, if needed.
+3. Sections as `##` headings, omitting any that don't apply: `## Returns` (only
+   when it says more than the return type), `## Errors`, `## Example`.
 
-1. `### \`name param1 param2 :kw1? :kw2?\`` — signature as heading
-2. One-line or short paragraph description
-3. `#### Parameters` — table with Name, Type, Description columns
-4. `#### Returns` — type and brief note
-5. `#### Errors` — table (or bullet list) of error conditions (only if
-   non-obvious)
-6. `#### Example` — code example
-
-A short code fence may appear without an `Example` heading only when it follows
-the function, method, field, or operator heading directly. Once an entry uses a
-subsection such as `Parameters`, `Returns`, `Errors`, or `Type`, a later code
-fence must be placed under its own `Example` subsection rather than inheriting
-the preceding subsection.
-
-Detailed semantics for a parameter belong beneath `Parameters`, using nested
-headings when useful (for example, `##### Compilation Modes`). Do not place
-parameter details after `Returns` or `Errors`, and do not use bold text as a
-substitute for subsection headings.
+A short code fence may follow the opening paragraphs without a heading. Once a
+section begins, a later code fence goes under its own `## Example` rather than
+inheriting the preceding section. Don't use bold text as a substitute for a
+section heading.
 
 When more than one exception is worth documenting, use a table with
 `Exception` and `Condition` columns so each exception's meaning is explicit.
 Single exceptions may use concise prose. Do not document incidental exceptions
 such as cancellation or interruption unless they are part of the API's
 specific contract.
+
+A parameter's doc comment goes on the parameter itself, so declare documented
+parameters vertically. The first paragraph becomes the parameter's row in the
+table; later paragraphs become a subsection of its own, which may use nested
+headings. A declaration with a parameter table has its signature heading
+abbreviated to its first few required positional parameters.
+
+```
+# Pulls an image.
+pub def pull
+  # Image name or ID.
+  image @ Str
+  # Registry to pull from; the configured default when omitted.
+  :registry @ Str = nil
+do -> Image
+  throw nil
+```
+
+#### Types
+
+Annotations supply the Type column, the return type after a signature heading,
+and a field's type, with names linked to their documentation:
+
+- Annotate what a caller may pass. A keyword to omit rather than pass `nil` is
+  still `:limit @ Int = nil`; a parameter that accepts `nil` is
+  `@ (Int | nil)`.
+- A native property is a method marked `#[getter]`, with its type as the return
+  type: `pub def len self -> Int`.
+- Name a type from another module with a type-only import item (`- @Iter`) when
+  the module is otherwise unused.
+- Leave out an annotation on a parameter that accepts anything.
+
+#### Declarations in Stubs
+
+- Write a declaration without parameters as `def name()`; `def name` directly
+  followed by its body is a syntax error.
+- A constructor is the special method `(init)`. A method on the type object is
+  marked `#[class]` and still declares `self`.
+- Qualify a superclass from another module: `class Error: std.RuntimeError`. A
+  class names one supertype; describe any other protocol it implements in prose.
+
+#### Links
+
+Link to another documented name by its identifier, as in
+``[`Str`](std.Str)`` or ``[`Regex.match`](regex.Regex.match)``. A doc comment's
+relative links resolve against the page that renders it, not the source file.
+Link to a heading on the same page through the page itself
+(`](./index.md#anchor)`), never a bare `](#anchor)`.
 
 ### Voice and Brevity
 
@@ -725,66 +807,24 @@ specific contract.
     - Bad: `Computes the BLAKE3 digest of a string or binary value and returns
       the raw digest bytes.` (the signature already says what it takes and
       returns)
-- **Don't restate what the type signature shows.** If parameters and return
-  types are in a table, the prose shouldn't repeat them.
+- **Don't restate what the annotations show.** Prose shouldn't repeat a
+  parameter's or return value's type.
 - **Don't list interface methods on every concrete type.** If `Blake3`
   implements `State`, say so once — don't re-list `update`, `digest`, etc.
   on the `Blake3` page. Link to `State` instead.
 - **Use Do-native terminology.** Say "callable" or "block", not "thunk". Say
   "supertype", not "nominal base type".
 
-### Parameter Tables
-
-A `?` means different things in the two columns, and the difference is not
-cosmetic:
-
-- **Optional parameters**: `?` suffix on the **name** — the parameter has a
-  default and may be left out (e.g. `:port?`). This matches how the signature
-  heading writes it. Don't write `**(optional)**`.
-- **Nil-accepting types**: `?` suffix on the **type** — `nil` is an accepted
-  value (e.g. `int?`). This is independent of optionality: a required
-  parameter may accept `nil`, and an optional one may reject it.
-
-The rest:
-
-- **Variadic/rest parameters**: write the name as declared (`...args`). The
-  Type column holds what an individual value may be — a concrete type, a
-  union, or `Value` for the universal supertype. Don't write
-  `*`; it is not a type.
-- **Omit type when it's unconstrained**: leave the Type cell empty.
-- **Union types**: use `\|` (e.g. ``
-  [`str`](./std/str.md)\|[`bin`](./std/bin.md) ``).
-
-### Generated Parameter Tables
-
-Pages built from `.dol` sources by mkdocstrings (`::: module`) take their
-parameter tables from the doc comments on the parameters themselves. The first
-paragraph of a parameter's comment becomes its row; anything past the first
-paragraph becomes a subsection of `Parameters` named for the parameter. A
-declaration that renders a table has its signature heading abbreviated to the
-required positional prefix, since the table already carries the full list.
-
-The language has no type annotations yet, so as a stopgap a parameter's
-description may open with its type in parentheses, which is parsed out into the
-Type column:
-
-```
-# ([`Str`](../std/str.md)) Image name or ID.
-image
-```
-
-Write the type as markdown, links included; it is matched by paren depth, so a
-link's own parentheses are safe. A description that must begin with a literal
-parenthetical needs rewording, since the leading group is always taken as a
-type.
-
 ### Code Examples
 
-- **Use plain fences. The MkDocs setup handles highlighting without a language
-  tag.
+- **Use plain fences.** The MkDocs setup handles highlighting without a language
+  tag. A fence tagged `playground` renders the same, plus a link that opens the
+  example in the browser playground; use it for examples that run there.
 - **Don't include `import` lines** in examples unless the example is
   specifically about importing. API doc examples should assume the module's
-  exports are in scope.
+  exports are in scope. In a `playground` fence, write the imports the example
+  needs on lines starting with `#>`, which the page hides but the playground
+  runs.
 - **Use Do idioms in examples.** Prefer `$x.method()` and vertical layout
   over wrapping everything in `(...)`. Break long lines with here strings
   or vertical argument lists, not by cramming into one line.
@@ -807,11 +847,13 @@ type.
 
 Extensions live in `dolang-ext-*` crates and are auto-registered at link time
 via `linkme`. An extension implements the `Extension` trait and calls
-`extension!` to register itself. A typical extension has three files:
+`extension!` to register itself. A typical extension has these files:
 
 - `extension.rs` — trait impl + `extension!` call
 - `global.rs` — global state holding `Type` handles
 - One or more implementation files — object types, module functions, etc.
+- `stub/<module>.dol` — the module's public API and its documentation (see
+  [API Reference](#api-reference))
 
 ### Extension Entry Point
 

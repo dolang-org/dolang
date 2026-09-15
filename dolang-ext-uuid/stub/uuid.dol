@@ -27,12 +27,12 @@ pub class Uuid
   # ```
   pub def (init)
     self
-    # ([`Str`](std.Str)\|[`Bin`](std.Bin)\|[`Uuid`](uuid.Uuid)) UUID to parse or copy.
-    value
+    # UUID to parse or copy.
+    value @ (Str | Bin | Uuid)
   do
     throw nil
 
-  # (`Uuid`) Generates a random version 4 UUID.
+  # Generates a random version 4 UUID.
   #
   # ## Example
   #
@@ -42,7 +42,7 @@ pub class Uuid
   # assert_eq $id.variant :RFC4122:
   # ```
   #[class]
-  pub def generate self
+  pub def generate self -> Uuid
     throw nil
 
   # The raw 16-byte binary form.
@@ -95,8 +95,8 @@ pub class Guid
   # ```
   pub def (init)
     self
-    # ([`Str`](std.Str)\|[`Bin`](std.Bin)\|[`Guid`](uuid.Guid)) GUID text, native packet, or `Guid`.
-    value
+    # GUID text, native packet, or `Guid`.
+    value @ (Str | Bin | Guid)
   do
     throw nil
 
@@ -106,7 +106,7 @@ pub class Guid
   #
   # `Guid`
   #[class]
-  pub def generate self
+  pub def generate self -> Guid
     throw nil
 
   # The raw 16-byte native Windows in-memory GUID packet.

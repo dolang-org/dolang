@@ -33,20 +33,20 @@ def find_windows_command()
 #
 # The result of `block`.
 pub def with_linux
-  # ([`Func`](std.Func)) Block to run in Linux.
-  block
-  # ([`Str`](std.Str)) WSL distribution. Defaults to WSL's configured
+  # Block to run in Linux.
+  block @ Func
+  # WSL distribution. Defaults to WSL's configured
   # default.
-  :distro = nil
-  # ([`Str`](std.Str)) Linux user. Defaults to WSL's configured default.
-  :user = nil
-  # ([`Iterable`](std.Iterable)) Linux VFS launcher command and arguments.
-  :command = ["dolang-vfs"]
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Initial Linux working directory.
-  :cd = nil
-  # ([`Dict`](std.Dict)) Initial Linux environment overrides.
-  :env = {}
-do
+  :distro @ Str = nil
+  # Linux user. Defaults to WSL's configured default.
+  :user @ Str = nil
+  # Linux VFS launcher command and arguments.
+  :command @ Iterable = ["dolang-vfs"]
+  # Initial Linux working directory.
+  :cd @ (Str | Path) = nil
+  # Initial Linux environment overrides.
+  :env @ Dict = {}
+do -> Value
   require_windows()
   let executable = run["wsl.exe"].which()
   if (executable == nil)
@@ -62,17 +62,17 @@ do
 #
 # The result of `block`.
 pub def with_windows
-  # ([`Func`](std.Func)) Block to run on Windows.
-  block
-  # ([`Iterable`](std.Iterable)) Windows VFS launcher command and arguments.
+  # Block to run on Windows.
+  block @ Func
+  # Windows VFS launcher command and arguments.
   # Defaults to `dolang-vfs.exe`, preferring `dolang.exe --vfs` as a
   # fallback.
-  :command = find_windows_command()
-  # ([`Str`](std.Str)\|[`Path`](fs.Path)) Initial Windows working directory.
-  :cd = nil
-  # ([`Dict`](std.Dict)) Initial Windows environment overrides.
-  :env = {}
-do
+  :command @ Iterable = find_windows_command()
+  # Initial Windows working directory.
+  :cd @ (Str | Path) = nil
+  # Initial Windows environment overrides.
+  :env @ Dict = {}
+do -> Value
   require_linux()
   let argv = _wsl.build_windows_command $command :cd :env
   _wsl.with_command $argv $block

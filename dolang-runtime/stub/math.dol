@@ -3,14 +3,14 @@
 # Except where noted, functions accept only [`Int`](std.Int) and
 # [`Float`](std.Float) (or their subclasses) — not arbitrary types.
 
-# ([`Float`](std.Float)) The ratio of a circle's circumference to its diameter.
-pub let PI = nil
+# The ratio of a circle's circumference to its diameter.
+pub let PI @Float = nil
 
-# ([`Float`](std.Float)) One full turn in radians.
-pub let TAU = nil
+# One full turn in radians.
+pub let TAU @Float = nil
 
-# ([`Float`](std.Float)) The base of the natural logarithm.
-pub let E = nil
+# The base of the natural logarithm.
+pub let E @Float = nil
 
 # Computes the square root.
 pub def sqrt x
@@ -34,10 +34,10 @@ pub def exp2 x
 
 # Computes the logarithm in a required base.
 pub def log
-  # ([`Int`](std.Int)\|[`Float`](std.Float)) Logarithm base.
-  :base
-  # ([`Int`](std.Int)\|[`Float`](std.Float)) Value whose logarithm is computed.
-  x
+  # Logarithm base.
+  :base @ (Int | Float)
+  # Value whose logarithm is computed.
+  x @ (Int | Float)
 do
   throw nil
 
@@ -59,10 +59,10 @@ pub def log10 x
 
 # Raises `base` to `exponent`.
 pub def pow
-  # ([`Int`](std.Int)\|[`Float`](std.Float)) Base value.
-  base
-  # ([`Int`](std.Int)\|[`Float`](std.Float)) Exponent value.
-  exponent
+  # Base value.
+  base @ (Int | Float)
+  # Exponent value.
+  exponent @ (Int | Float)
 do
   throw nil
 
@@ -92,10 +92,10 @@ pub def atan x
 
 # Computes the inverse tangent of `y / x`, using both signs to select a quadrant.
 pub def atan2
-  # ([`Int`](std.Int)\|[`Float`](std.Float)) Vertical coordinate.
-  y
-  # ([`Int`](std.Int)\|[`Float`](std.Float)) Horizontal coordinate.
-  x
+  # Vertical coordinate.
+  y @ (Int | Float)
+  # Horizontal coordinate.
+  x @ (Int | Float)
 do
   throw nil
 
@@ -125,30 +125,30 @@ pub def atanh x
 
 # Computes the Euclidean norm of two or more coordinates.
 pub def hypot
-  # ([`Int`](std.Int)\|[`Float`](std.Float)) First coordinate.
-  first
-  # ([`Int`](std.Int)\|[`Float`](std.Float)) Second coordinate.
-  second
-  # ([`Int`](std.Int)\|[`Float`](std.Float)) Additional coordinates.
-  ...rest
+  # First coordinate.
+  first @ (Int | Float)
+  # Second coordinate.
+  second @ (Int | Float)
+  # Additional coordinates.
+  ...rest @ (Int | Float)
 do
   throw nil
 
 # Computes the greatest common divisor of one or more integers.
 pub def gcd
-  # ([`Int`](std.Int)) First value.
-  first
-  # ([`Int`](std.Int)) Additional values.
-  ...rest
+  # First value.
+  first @ Int
+  # Additional values.
+  ...rest @ Int
 do
   throw nil
 
 # Computes the least common multiple of one or more integers.
 pub def lcm
-  # ([`Int`](std.Int)) First value.
-  first
-  # ([`Int`](std.Int)) Additional values.
-  ...rest
+  # First value.
+  first @ Int
+  # Additional values.
+  ...rest @ Int
 do
   throw nil
 
@@ -162,9 +162,9 @@ pub def radians x
 
 # Returns the magnitude of `x` with the sign of `sign`.
 pub def copysign
-  # ([`Int`](std.Int)\|[`Float`](std.Float)) Value providing the magnitude.
-  x
-  # ([`Int`](std.Int)\|[`Float`](std.Float)) Value providing the sign.
-  sign
+  # Value providing the magnitude.
+  x @ (Int | Float)
+  # Value providing the sign.
+  sign @ (Int | Float)
 do
   throw nil

@@ -1,0 +1,7 @@
+import a:
+  - @ Bar
+# error: invalid import item
+#   --> type_import_errors.dol:LL:LL
+#    |
+# LL |   - @ Bar
+#    |      ^

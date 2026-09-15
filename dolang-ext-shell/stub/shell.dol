@@ -20,10 +20,10 @@ pub class Stdin
   # ## Returns
   #
   # [`Stdin`](shell.Stdin)
-  pub def lines self
+  pub def lines self -> Stdin
     throw nil
 
-  # ([`Stdin`](shell.Stdin)) Returns a handle that yields arbitrary-sized [`Bin`](std.Bin) chunks.
+  # Returns a handle that yields arbitrary-sized [`Bin`](std.Bin) chunks.
   #
   # ## Example
   #
@@ -31,7 +31,7 @@ pub class Stdin
   # for chunk = shell.stdin.chunks()
   #   hasher.update $chunk
   # ```
-  pub def chunks self
+  pub def chunks self -> Stdin
     throw nil
 
   # Reads raw bytes.
@@ -52,9 +52,9 @@ pub class Stdin
   # ```
   pub def read
     self
-    # ([`Int`](std.Int)) Maximum bytes to read. Unbounded when omitted.
-    size = nil
-  do
+    # Maximum bytes to read. Unbounded when omitted.
+    size @ Int = nil
+  do -> Bin
     throw nil
 
   # Iterates the stream, yielding lines by default.
@@ -110,9 +110,9 @@ pub class Stdout
   # ```
   pub def write
     self
-    # ([`Str`](std.Str)|[`Bin`](std.Bin)) Bytes to write.
-    data
-  do
+    # Bytes to write.
+    data @ (Str | Bin)
+  do -> Int
     throw nil
 
   # Flushes buffered output to the stream.
@@ -171,9 +171,9 @@ pub class Stderr
   # ```
   pub def write
     self
-    # ([`Str`](std.Str)|[`Bin`](std.Bin)) Bytes to write.
-    data
-  do
+    # Bytes to write.
+    data @ (Str | Bin)
+  do -> Int
     throw nil
 
   # Flushes buffered output to the stream.
@@ -214,12 +214,12 @@ pub class Vfs
   # ```
   pub def (init)
     self
-    # ([`Func`](std.Func)) VFS server launcher.
-    func
+    # VFS server launcher.
+    func @ Func
   do
     throw nil
 
-  # ([`Vfs`](shell.Vfs)) Connects to a running `dolang-vfs` daemon on Unix.
+  # Connects to a running `dolang-vfs` daemon on Unix.
   #
   # The socket path is resolved in the active VFS context, so this can reach a
   # daemon visible only from another remote or container VFS. A direct
@@ -252,9 +252,9 @@ pub class Vfs
   #[class]
   pub def unix_socket
     self
-    # ([`Path`](fs.Path)) Unix socket path.
-    path
-    # ([`Str`](std.Str)|[`Bin`](std.Bin)) Pre-shared key that both
+    # Unix socket path.
+    path @ Path
+    # Pre-shared key that both
     # ends prove knowledge of during the handshake.
     #
     # Supply it when the socket's permissions cannot identify the peer. An
@@ -271,11 +271,11 @@ pub class Vfs
     #
     # This authenticates the connection; it does not encrypt or
     # integrity-protect the session that follows.
-    :key = nil
-  do
+    :key @ (Str | Bin) = nil
+  do -> Vfs
     throw nil
 
-  # ([`Vfs`](shell.Vfs)) Launches an elevated copy of the active Windows VFS target's current
+  # Launches an elevated copy of the active Windows VFS target's current
   # executable.
   #
   # This can cross an existing VFS connection, such as a connection from WSL to
@@ -300,14 +300,14 @@ pub class Vfs
   #[class]
   pub def windows_admin
     self
-    # ([`Path`](fs.Path)) Initial working directory. Defaults to the
+    # Initial working directory. Defaults to the
     # calling strand's.
-    :cd = nil
-    # ([`Dict`](std.Dict)) Environment overrides. Keys may be strings or
+    :cd @ Path = nil
+    # Environment overrides. Keys may be strings or
     # symbols; `nil` unsets a variable and `:INHERIT:` captures the calling
     # strand's current value.
-    :env = nil
-  do
+    :env @ Dict = nil
+  do -> Vfs
     throw nil
 
   # Runs a function in this context.
@@ -342,10 +342,10 @@ pub class Vfs
   # ```
   pub def with
     self
-    # ([`Func`](std.Func)) Function to run.
-    func
-    # ([`Value`](std.Value)) Additional arguments passed to `func`.
-    ...args
+    # Function to run.
+    func @ Func
+    # Additional arguments passed to `func`.
+    ...args @ Value
   do
     throw nil
 
@@ -376,12 +376,12 @@ pub class Vfs
 #   run ls
 # ```
 pub def cd
-  # ([`Str`](std.Str)|[`Path`](fs.Path)) Directory to change to,
+  # Directory to change to,
   # resolved against the current one.
-  path = nil
-  # ([`Func`](std.Func)) Function to run in the new directory.
-  func = nil
-do
+  path @ (Str | Path) = nil
+  # Function to run in the new directory.
+  func @ Func = nil
+do -> Path
   throw nil
 
 # Replaces the interpreter with an external program, after shell cleanup.
@@ -397,10 +397,10 @@ do
 #
 # Never returns.
 pub def exec
-  # ([`Str`](std.Str)|[`Path`](fs.Path)) Program to execute.
-  program
-  # ([`Value`](std.Value)) Program arguments.
-  ...args
+  # Program to execute.
+  program @ (Str | Path)
+  # Program arguments.
+  ...args @ Value
 do
   throw nil
 
@@ -410,12 +410,12 @@ do
 #
 # Never returns; raises an interrupt error that unwinds the interpreter.
 pub def exit
-  # ([`Int`](std.Int)) Exit status. Defaults to `0`.
-  code = nil
+  # Exit status. Defaults to `0`.
+  code @ Int = nil
 do
   throw nil
 
-# ([`Str`](std.Str)) Returns the line ending native to the current [`Vfs`](shell.Vfs) target:
+# Returns the line ending native to the current [`Vfs`](shell.Vfs) target:
 # `"\r\n"` on Windows, `"\n"` elsewhere.
 #
 # This is a function rather than a value because the answer follows the VFS
@@ -428,7 +428,7 @@ do
 # ```
 # run cmd stdout: (lines.precrimp(shell.line_ending()))
 # ```
-pub def line_ending()
+pub def line_ending() -> Str
   throw nil
 
 # Returns the current executable reported by the active VFS context, or `nil`
@@ -437,7 +437,7 @@ pub def line_ending()
 # ## Returns
 #
 # [`fs.Path`](fs.Path) or `nil`.
-pub def vfs_exe()
+pub def vfs_exe() -> (Path | nil)
   throw nil
 
 # Runs a function in the interpreter's original host context, whatever VFS
@@ -447,10 +447,10 @@ pub def vfs_exe()
 #
 # The function's result.
 pub def with_host
-  # ([`Func`](std.Func)) Function to run.
-  func
-  # ([`Value`](std.Value)) Additional arguments passed to `func`.
-  ...args
+  # Function to run.
+  func @ Func
+  # Additional arguments passed to `func`.
+  ...args @ Value
 do
   throw nil
 
@@ -472,15 +472,15 @@ do
 # | [`TypeError`](std.TypeError) | `args` is not iterable            |
 # | [`TypeError`](std.TypeError) | `program` is not a string or path |
 pub def with_override
-  # ([`Func`](std.Func)) Function to run.
-  func
-  # ([`Iterable`](std.Iterable)) Arguments seen as
+  # Function to run.
+  func @ Func
+  # Arguments seen as
   # [`shell.args`](shell.args), converted with
   # [`verbatim`](std.verbatim).
-  :args = nil
-  # ([`Str`](std.Str)|[`Path`](fs.Path)) Identity seen as
+  :args @ Iterable = nil
+  # Identity seen as
   # [`shell.program`](shell.program).
-  :program = nil
+  :program @ (Str | Path) = nil
 do
   throw nil
 

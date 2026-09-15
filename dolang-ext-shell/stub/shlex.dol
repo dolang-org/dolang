@@ -28,10 +28,10 @@
 # assert_eq (quote plain) plain
 # ```
 pub def quote
-  # ([`Value`](std.Value)) Value to quote, converted to a string as
+  # Value to quote, converted to a string as
   # [`std.verbatim`](std.verbatim) would.
-  obj
-do
+  obj @ Value
+do -> Str
   throw nil
 
 # Joins values into a single POSIX shell command line, quoting each.
@@ -52,10 +52,10 @@ do
 # assert_eq (join ["echo", "hello world"]) "echo 'hello world'"
 # ```
 pub def join
-  # ([`Iterable`](std.Iterable)) Values, each converted to a string as
+  # Values, each converted to a string as
   # [`std.verbatim`](std.verbatim) would.
-  iterable
-do
+  iterable @ Iterable
+do -> Str
   throw nil
 
 # Splits a POSIX shell command line into words, undoing quoting.
@@ -84,7 +84,7 @@ do
 # # hello world
 # ```
 pub def split
-  # ([`Str`](std.Str)) Command line to split.
-  string
-do
+  # Command line to split.
+  string @ Str
+do -> Iter[Str]
   throw nil

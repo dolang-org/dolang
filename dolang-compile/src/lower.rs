@@ -10,8 +10,8 @@ use crate::{
         Arg, ArrayElem, Assign, Bind, Block, Class, ClassMember, ClassSuper, Const, Decorator, Def,
         DictElem, Expand, Expr, ExprBody, FieldInit, FmtParamName, For, FormatAlign, FormatKind,
         FormatSign, FormatSpec, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem,
-        Key, LValue, Let, MemberScope, Method, NlGuard, Pair, Param, ParamDefault, Pattern,
-        PatternBind, PrimStmt, Res, Return, Root, Single, Stmt, Try, While, visit::Node,
+        Key, LValue, Let, MemberScope, Method, NlGuard, Pair, Param, ParamDefault, PatIdent,
+        Pattern, PatternBind, PrimStmt, Res, Return, Root, Single, Stmt, Try, While, visit::Node,
     },
     cfg::{self, BlockRefMut, Inst, InstInfo, Term, TermInfo},
     constant::{self, ConstantExt},
@@ -1199,7 +1199,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_pattern(&mut self, bind: &'a Pattern, want_result: bool) -> Result<()> {
         match bind {
-            Pattern::Ident(Ident { res, span }) => {
+            Pattern::Ident(PatIdent {
+                ident: Ident { res, span },
+                ..
+            }) => {
                 let res = res.as_ref().expect("unresolved assignment lhs");
                 self.lower_store_res(res, *span, want_result);
             }
@@ -2309,6 +2312,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     );
                 }
                 ImportElement::Items { items, .. } => {
+                    // An item named only in types is not imported, nor is a module
+                    // whose items all are
+                    let count = items.iter().filter(|item| !item.is_type_only()).count();
+                    if count == 0 {
+                        continue;
+                    }
                     let cid = self.consttab.str(self.bintab.id_str(self.file.str(module)));
                     self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
                     let get = self.symtab.id(&self.bintab.id_str("get"));
@@ -2318,12 +2327,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         .insts
                         .push(Inst(InstInfo::Builtin(builtin::IMPORT, sig), span));
 
-                    for (i, item) in items.iter().enumerate() {
+                    for (i, item) in items.iter().filter(|item| !item.is_type_only()).enumerate() {
                         let (item_span, bind) = match item {
                             ImportItem::Renamed { item, bind, .. } => (*item, bind),
                             ImportItem::AsIs { bind, .. } => (bind.span, bind),
                         };
-                        if i + 1 != items.len() {
+                        if i + 1 != count {
                             self.block.insts.push(Inst(InstInfo::Dup, span));
                         }
                         let sym = self
@@ -2395,15 +2404,15 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         module,
                         items: fields,
                     } => {
-                        if fields.iter().all(|f| f.res.is_none()) {
+                        if fields.iter().all(|f| f.unused) {
                             // Unused, skip entirely
                             continue;
                         }
                         module
                     }
-                    PreludeImport::ModuleAsIs { module, res, .. }
-                    | PreludeImport::ModuleRenamed { module, res, .. } => {
-                        if res.is_none() {
+                    PreludeImport::ModuleAsIs { module, unused, .. }
+                    | PreludeImport::ModuleRenamed { module, unused, .. } => {
+                        if *unused {
                             // Unused, skip
                             continue;
                         }
@@ -2467,7 +2476,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         self.block
                             .insts
                             .push(Inst(InstInfo::Builtin(builtin::IMPORT, sig), span));
-                        let used: Vec<_> = fields.iter().filter(|f| f.res.is_some()).collect();
+                        let used: Vec<_> = fields.iter().filter(|f| !f.unused).collect();
                         for (i, field) in used.iter().enumerate() {
                             if i + 1 != used.len() {
                                 self.block.insts.push(Inst(InstInfo::Dup, span));

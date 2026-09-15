@@ -51,16 +51,16 @@ pub class DateTime
   #[class]
   pub def from_unix
     self
-    # ([`Int`](std.Int)|[`Float`](std.Float)) Seconds since the
+    # Seconds since the
     # Unix epoch.
-    seconds = nil
-    # ([`Int`](std.Int)) Nanoseconds since the Unix epoch, or, when
+    seconds @ (Int | Float) = nil
+    # Nanoseconds since the Unix epoch, or, when
     # `seconds` is also given, nanoseconds to add to it.
-    :nanos = nil
+    :nanos @ Int = nil
   do
     throw nil
 
-  # ([`DateTime`](time.DateTime)) Parses an RFC 3339 date-time.
+  # Parses an RFC 3339 date-time.
   #
   # An offset is required, and is applied to give the UTC instant; the offset
   # itself is not retained.
@@ -85,20 +85,20 @@ pub class DateTime
   #[class]
   pub def parse_rfc
     self
-    # ([`Str`](std.Str)) Date-time text.
-    text
-  do
+    # Date-time text.
+    text @ Str
+  do -> DateTime
     throw nil
 
-  # ([`Float`](std.Float)) Unix seconds. Approximate: far-from-epoch
+  # Unix seconds. Approximate: far-from-epoch
   # instants lose sub-second precision.
   #[getter]
-  pub def unix_secs self
+  pub def unix_secs self -> Float
     throw nil
 
-  # ([`Int`](std.Int)) Unix nanoseconds. Exact.
+  # Unix nanoseconds. Exact.
   #[getter]
-  pub def unix_nanos self
+  pub def unix_nanos self -> Int
     throw nil
 
   # Returns the UTC calendar date.
@@ -106,10 +106,10 @@ pub class DateTime
   # ## Returns
   #
   # [`Date`](time.Date)
-  pub def date self
+  pub def date self -> Date
     throw nil
 
-  # ([`Str`](std.Str)) Returns the RFC 3339 representation, in UTC.
+  # Returns the RFC 3339 representation, in UTC.
   #
   # ## Example
   #
@@ -117,7 +117,7 @@ pub class DateTime
   # let dt = DateTime.from_unix(1700000000)
   # echo $dt.rfc()
   # ```
-  pub def rfc self
+  pub def rfc self -> Str
     throw nil
 
   # Compares two instants.
@@ -142,8 +142,8 @@ pub class DateTime
   # ```
   pub def (sub)
     self
-    # ([`DateTime`](time.DateTime)) Instant to subtract.
-    other
+    # Instant to subtract.
+    other @ DateTime
   do
     throw nil
 
@@ -180,17 +180,17 @@ pub class Date
   #[class]
   pub def from_ymd
     self
-    # ([`Int`](std.Int)) Calendar year.
-    year
-    # ([`Month`](time.Month)|[`Int`](std.Int)) Month, or its number from
+    # Calendar year.
+    year @ Int
+    # Month, or its number from
     # 1 through 12.
-    month
-    # ([`Int`](std.Int)) Day of month.
-    day
+    month @ (Month | Int)
+    # Day of month.
+    day @ Int
   do
     throw nil
 
-  # ([`Date`](time.Date)) Parses an RFC full-date, `YYYY-MM-DD`.
+  # Parses an RFC full-date, `YYYY-MM-DD`.
   #
   # ## Errors
   #
@@ -201,29 +201,29 @@ pub class Date
   #[class]
   pub def parse_rfc
     self
-    # ([`Str`](std.Str)) Date text.
-    text
-  do
+    # Date text.
+    text @ Str
+  do -> Date
     throw nil
 
-  # ([`Int`](std.Int)) Calendar year.
+  # Calendar year.
   #[getter]
-  pub def year self
+  pub def year self -> Int
     throw nil
 
-  # ([`Month`](time.Month)) Calendar month.
+  # Calendar month.
   #[getter]
-  pub def month self
+  pub def month self -> Month
     throw nil
 
-  # ([`Int`](std.Int)) Day of month.
+  # Day of month.
   #[getter]
-  pub def day self
+  pub def day self -> Int
     throw nil
 
-  # ([`Weekday`](time.Weekday)) Day of week.
+  # Day of week.
   #[getter]
-  pub def weekday self
+  pub def weekday self -> Weekday
     throw nil
 
   # Returns the RFC full-date representation, `YYYY-MM-DD`.
@@ -231,7 +231,7 @@ pub class Date
   # ## Returns
   #
   # [`Str`](std.Str)
-  pub def rfc self
+  pub def rfc self -> Str
     throw nil
 
   # Returns midnight UTC on this date.
@@ -239,10 +239,10 @@ pub class Date
   # ## Returns
   #
   # [`DateTime`](time.DateTime)
-  pub def datetime self
+  pub def datetime self -> DateTime
     throw nil
 
-  # ([`Date`](time.Date)) Returns the date a signed number of days later.
+  # Returns the date a signed number of days later.
   #
   # ## Errors
   #
@@ -258,12 +258,12 @@ pub class Date
   # ```
   pub def add_days
     self
-    # ([`Int`](std.Int)) Days to add. May be negative.
-    days
-  do
+    # Days to add. May be negative.
+    days @ Int
+  do -> Date
     throw nil
 
-  # ([`Date`](time.Date)) Returns the date a signed number of days earlier.
+  # Returns the date a signed number of days earlier.
   #
   # ## Errors
   #
@@ -273,9 +273,9 @@ pub class Date
   # | `OverflowError` | The result is outside the supported range  |
   pub def sub_days
     self
-    # ([`Int`](std.Int)) Days to subtract. May be negative.
-    days
-  do
+    # Days to subtract. May be negative.
+    days @ Int
+  do -> Date
     throw nil
 
   # Compares two dates.
@@ -295,8 +295,8 @@ pub class Date
   # The result is always a whole number of days.
   pub def (sub)
     self
-    # ([`Date`](time.Date)) Date to subtract.
-    other
+    # Date to subtract.
+    other @ Date
   do
     throw nil
 
@@ -341,8 +341,8 @@ pub class Month
   #[class]
   pub def (index)
     self
-    # ([`Int`](std.Int)) Month number, 1 through 12.
-    number
+    # Month number, 1 through 12.
+    number @ Int
   do
     throw nil
 
@@ -397,15 +397,15 @@ pub class Weekday
 # Durations do not support arithmetic: they cannot be added, subtracted, scaled
 # or negated.
 pub class Duration
-  # ([`Float`](std.Float)) Seconds. Approximate: long spans lose
+  # Seconds. Approximate: long spans lose
   # sub-second precision.
   #[getter]
-  pub def secs self
+  pub def secs self -> Float
     throw nil
 
-  # ([`Int`](std.Int)) Total nanoseconds. Exact.
+  # Total nanoseconds. Exact.
   #[getter]
-  pub def nanos self
+  pub def nanos self -> Int
     throw nil
 
   # Compares two durations.
@@ -440,10 +440,9 @@ pub class Duration
 # sleep (finish - start)
 # ```
 pub def sleep
-  # ([`Duration`](time.Duration)|[`Int`](std.Int)|[`Float`](std.Float))
   # How long to sleep. See [Duration
   # arguments](time.duration-arguments).
-  duration
+  duration @ (Duration | Int | Float)
 do
   throw nil
 
@@ -473,11 +472,10 @@ do
 #   sleep 10
 # ```
 pub def timeout
-  # ([`Duration`](time.Duration)|[`Int`](std.Int)|[`Float`](std.Float))
   # How long the block may run. See [Duration
   # arguments](time.duration-arguments).
-  duration
-  # ([`Func`](std.Func)) Block to run.
-  block
+  duration @ (Duration | Int | Float)
+  # Block to run.
+  block @ Func
 do
   throw nil

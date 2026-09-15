@@ -120,13 +120,13 @@ pub class AccessMask
   # ```
   pub def (init)
     self
-    # ([`Sym`](std.Sym)) Rights, given as symbols or as a single
+    # Rights, given as symbols or as a single
     # iterable of symbols. See [Accepted symbols](winreg.AccessMask.accepted-symbols).
-    ...rights
+    ...rights @ Sym
   do
     throw nil
 
-  # (`AccessMask`) Builds a mask from a native integer, preserving every bit including ones
+  # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
   #
   # ## Example
@@ -137,9 +137,9 @@ pub class AccessMask
   #[class]
   pub def from_int
     self
-    # ([`Int`](std.Int)) Native Windows access mask.
-    value
-  do
+    # Native Windows access mask.
+    value @ Int
+  do -> AccessMask
     throw nil
 
   # The complete native mask as an [`Int`](std.Int), including bits this
@@ -148,7 +148,7 @@ pub class AccessMask
   pub def int self
     throw nil
 
-  # ([`Bool`](std.Bool)) Tests whether every bit a symbol stands for is set.
+  # Tests whether every bit a symbol stands for is set.
   #
   # ## Example
   #
@@ -158,10 +158,10 @@ pub class AccessMask
   # ```
   pub def contains
     self
-    # ([`Sym`](std.Sym)) Right to test. See [Accepted
+    # Right to test. See [Accepted
     # symbols](winreg.AccessMask.accepted-symbols).
-    right
-  do
+    right @ Sym
+  do -> Bool
     throw nil
 
 # An open registry key.
@@ -191,19 +191,19 @@ pub class Key
   # ```
   pub def create
     self
-    # ([`Str`](std.Str)) Path to the subkey, relative to this key.
-    subpath
-    # ([`Sym`](std.Sym)) [Registry view](winreg.registry-views).
+    # Path to the subkey, relative to this key.
+    subpath @ Str
+    # [Registry view](winreg.registry-views).
     # Defaults to `:NATIVE:`.
-    :view = nil
-    # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)) Access
+    :view @ Sym = nil
+    # Access
     # rights, as a mask, a symbol, or an iterable of symbols. Defaults to
     # `:READ:`.
-    :access = nil
-    # ([`Func`](std.Func)) Called with the new `Key`, which is closed when it returns.
+    :access @ (AccessMask | Sym) = nil
+    # Called with the new `Key`, which is closed when it returns.
     # Omit to receive the handle instead.
-    func = nil
-  do
+    func @ Func = nil
+  do -> Value
     throw nil
 
   # Deletes a subkey.
@@ -228,16 +228,16 @@ pub class Key
   # ```
   pub def delete
     self
-    # ([`Str`](std.Str)) Path to the subkey, relative to this key.
-    subpath
-    # ([`Sym`](std.Sym)) [Registry view](winreg.registry-views).
+    # Path to the subkey, relative to this key.
+    subpath @ Str
+    # [Registry view](winreg.registry-views).
     # Defaults to `:NATIVE:`.
-    :view = nil
-    # ([`Bool`](std.Bool)) Delete the subkey's values and descendants
+    :view @ Sym = nil
+    # Delete the subkey's values and descendants
     # too. Without it a subkey that has children is refused.
-    :all = nil
-    # ([`Bool`](std.Bool)) Treat a missing subkey as success.
-    :ignore = nil
+    :all @ Bool = nil
+    # Treat a missing subkey as success.
+    :ignore @ Bool = nil
   do
     throw nil
 
@@ -255,8 +255,8 @@ pub class Key
   # ```
   pub def delete_value
     self
-    # ([`Str`](std.Str)) Value name; `""` is the key's default value.
-    name
+    # Value name; `""` is the key's default value.
+    name @ Str
   do
     throw nil
 
@@ -279,9 +279,9 @@ pub class Key
   # ```
   pub def get
     self
-    # ([`Str`](std.Str)) Value name; `""` is the key's default value.
-    name
-  do
+    # Value name; `""` is the key's default value.
+    name @ Str
+  do -> Value
     throw nil
 
   # Reads a value as a [`Value`](winreg.Value), or `nil` when it does not exist.
@@ -305,9 +305,9 @@ pub class Key
   # ```
   pub def get_value
     self
-    # ([`Str`](std.Str)) Value name; `""` is the key's default value.
-    name
-  do
+    # Value name; `""` is the key's default value.
+    name @ Str
+  do -> (Value | nil)
     throw nil
 
   # Creates a registry link.
@@ -329,17 +329,17 @@ pub class Key
   # ```
   pub def link
     self
-    # ([`Sym`](std.Sym)) [Registry root](winreg.registry-roots) the
+    # [Registry root](winreg.registry-roots) the
     # target lives under.
-    target_root
-    # ([`Str`](std.Str)) Target path relative to `target_root`.
-    target_subpath
-    # ([`Str`](std.Str)) New link path relative to this key.
-    link_subpath
-    # ([`Sym`](std.Sym)) [Registry view](winreg.registry-views)
+    target_root @ Sym
+    # Target path relative to `target_root`.
+    target_subpath @ Str
+    # New link path relative to this key.
+    link_subpath @ Str
+    # [Registry view](winreg.registry-views)
     # used for both the target mapping and the destination. Defaults to
     # `:NATIVE:`.
-    :view = nil
+    :view @ Sym = nil
   do
     throw nil
 
@@ -365,26 +365,26 @@ pub class Key
   # ```
   pub def open
     self
-    # ([`Str`](std.Str)) Path to the subkey, relative to this key.
-    subpath
-    # ([`Sym`](std.Sym)) [Registry view](winreg.registry-views).
+    # Path to the subkey, relative to this key.
+    subpath @ Str
+    # [Registry view](winreg.registry-views).
     # Defaults to `:NATIVE:`.
-    :view = nil
-    # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)) Access
+    :view @ Sym = nil
+    # Access
     # rights, as a mask, a symbol, or an iterable of symbols. Defaults to
     # `:READ:`.
-    :access = nil
-    # ([`Sym`](std.Sym)) [Link
+    :access @ (AccessMask | Sym) = nil
+    # [Link
     # resolution](winreg.link-resolution): `:TARGET:` follows a link,
     # `:LINK:` opens the link key itself. Defaults to `:TARGET:`.
-    :resolve = nil
-    # ([`Func`](std.Func)) Called with the `Key`, which is closed when it returns.
+    :resolve @ Sym = nil
+    # Called with the `Key`, which is closed when it returns.
     # Omit to receive the handle instead.
-    func = nil
-  do
+    func @ Func = nil
+  do -> Value
     throw nil
 
-  # ([`LinkTarget`](winreg.LinkTarget)) Reads a registry link without following it.
+  # Reads a registry link without following it.
   #
   # An alias root such as `:CLASSES_ROOT:` or `:CURRENT_CONFIG:` may report
   # the physical `:LOCAL_MACHINE:` or `:USERS:` path backing it.
@@ -404,15 +404,15 @@ pub class Key
   # ```
   pub def read_link
     self
-    # ([`Str`](std.Str)) Link path relative to this key.
-    subpath
-    # ([`Sym`](std.Sym)) [Registry view](winreg.registry-views).
+    # Link path relative to this key.
+    subpath @ Str
+    # [Registry view](winreg.registry-views).
     # Defaults to `:NATIVE:`.
-    :view = nil
-  do
+    :view @ Sym = nil
+  do -> LinkTarget
     throw nil
 
-  # ([`security.windows.SecDesc`](security.windows.SecDesc)) Reads parts of the key's Windows security descriptor through its open
+  # Reads parts of the key's Windows security descriptor through its open
   # handle.
   #
   # The key must already hold the rights the requested components need.
@@ -424,17 +424,17 @@ pub class Key
   # ```
   pub def sec_desc
     self
-    # ([`Bool`](std.Bool)) Load the owner SID. Defaults to `true`.
-    :owner = nil
-    # ([`Bool`](std.Bool)) Load the primary group SID. Defaults to
+    # Load the owner SID. Defaults to `true`.
+    :owner @ Bool = nil
+    # Load the primary group SID. Defaults to
     # `true`.
-    :group = nil
-    # ([`Bool`](std.Bool)) Load the discretionary ACL. Defaults to
+    :group @ Bool = nil
+    # Load the discretionary ACL. Defaults to
     # `true`.
-    :dacl = nil
-    # ([`Bool`](std.Bool)) Load the system ACL. Defaults to `false`.
-    :sacl = nil
-  do
+    :dacl @ Bool = nil
+    # Load the system ACL. Defaults to `false`.
+    :sacl @ Bool = nil
+  do -> SecDesc
     throw nil
 
   # Writes a value.
@@ -449,11 +449,11 @@ pub class Key
   # ```
   pub def set
     self
-    # ([`Str`](std.Str)) Value name; `""` is the key's default value.
-    name
+    # Value name; `""` is the key's default value.
+    name @ Str
     # The Do value to write.
     value
-    # ([`Sym`](std.Sym)) [Value kind](winreg.value-kinds) to store
+    # [Value kind](winreg.value-kinds) to store
     # under. Omit to let the kind be decided from what is already there, or
     # from `value` itself.
     #
@@ -476,7 +476,7 @@ pub class Key
     # Coercing a `Bool` into a DWORD or QWORD kind, whether existing or given
     # here, keeps that kind; reading it back returns an
     # [`Int`](std.Int).
-    :kind = nil
+    :kind @ Sym = nil
   do
     throw nil
 
@@ -495,7 +495,7 @@ pub class Key
   # for name = key.subkeys()
   #   echo $name
   # ```
-  pub def subkeys self
+  pub def subkeys self -> Iter[Str]
     throw nil
 
   # Applies the components a Windows security descriptor's `mask` selects,
@@ -511,9 +511,8 @@ pub class Key
   # ```
   pub def update_sec_desc
     self
-    # ([`security.windows.SecDesc`](security.windows.SecDesc)\|[`Bin`](std.Bin)\|[`Dict`](std.Dict))
     # Descriptor, packet, or spec.
-    desc = nil
+    desc @ (SecDesc | Bin | Dict) = nil
     # The descriptor's [component
     # options](security.windows.SecDesc.(init)--component-options), accepted
     # here exactly as
@@ -538,7 +537,7 @@ pub class Key
   # for entry = key.values()
   #   echo "$(entry.name) ($(entry.kind)): $(entry.value)"
   # ```
-  pub def values self
+  pub def values self -> Iter[Value]
     throw nil
 
 # A registry link's target, kept in both its native and canonical forms.
@@ -624,17 +623,17 @@ pub class Value
 # root.close()
 # ```
 pub def open
-  # ([`Sym`](std.Sym)) [Registry root](winreg.registry-roots) to
+  # [Registry root](winreg.registry-roots) to
   # open.
-  root
-  # ([`Sym`](std.Sym)) [Registry view](winreg.registry-views).
+  root @ Sym
+  # [Registry view](winreg.registry-views).
   # Defaults to `:NATIVE:`.
-  :view = nil
-  # ([`AccessMask`](winreg.AccessMask)\|[`Sym`](std.Sym)) Access rights,
+  :view @ Sym = nil
+  # Access rights,
   # as a mask, a symbol, or an iterable of symbols. Defaults to `:READ:`.
-  :access = nil
-  # ([`Func`](std.Func)) Called with the [`Key`](winreg.Key), which is closed when it
+  :access @ (AccessMask | Sym) = nil
+  # Called with the [`Key`](winreg.Key), which is closed when it
   # returns. Omit to receive the handle instead.
-  func = nil
-do
+  func @ Func = nil
+do -> Value
   throw nil

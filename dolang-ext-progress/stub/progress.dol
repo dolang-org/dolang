@@ -53,9 +53,9 @@ pub class Indicator
   # unused keys — the common case for a tight loop that only bumps progress.
   pub def delta
     self
-    # ([`Int`](std.Int)) Amount to adjust by. Positive values increment
+    # Amount to adjust by. Positive values increment
     # and negative values decrement. Defaults to `1`.
-    n = nil
+    n @ Int = nil
   do
     throw nil
 
@@ -87,20 +87,20 @@ pub class Indicator
   # ```
   pub def update
     self
-    # ([`Str`](std.Str)) New prefix icon.
-    :icon = nil
-    # ([`Str`](std.Str)) New message text.
-    :message = nil
-    # ([`Int`](std.Int)) New total. `nil` switches to spinner mode.
-    :total = nil
-    # ([`Int`](std.Int)) Absolute position. Exclusive with `delta`.
-    :position = nil
-    # ([`Int`](std.Int)) Relative adjustment, positive or negative.
+    # New prefix icon.
+    :icon @ Str = nil
+    # New message text.
+    :message @ Str = nil
+    # New total. `nil` switches to spinner mode.
+    :total @ Int = nil
+    # Absolute position. Exclusive with `delta`.
+    :position @ Int = nil
+    # Relative adjustment, positive or negative.
     # Exclusive with `position`.
-    :delta = nil
-    # ([`Sym`](std.Sym)) New display units: `:COUNT:`, `:BYTES:`, or
+    :delta @ Int = nil
+    # New display units: `:COUNT:`, `:BYTES:`, or
     # `:PERCENT:`.
-    :units = nil
+    :units @ Sym = nil
   do
     throw nil
 
@@ -130,14 +130,14 @@ pub class Indicator
 # The [`Indicator`](progress.Indicator) is only valid inside its callback.
 # Using it after the callback returns raises a runtime error.
 pub def show
-  # ([`Int`](std.Int)) Total value. The indicator starts in bar mode
+  # Total value. The indicator starts in bar mode
   # when given and in spinner mode otherwise; the mode changes with `total`.
-  :total = nil
-  # ([`Str`](std.Str)) Initial message.
-  :message = nil
-  # ([`Str`](std.Str)) Prefix icon, such as `"📦"`.
-  :icon = nil
-  # ([`Sym`](std.Sym)) Unit format.
+  :total @ Int = nil
+  # Initial message.
+  :message @ Str = nil
+  # Prefix icon, such as `"📦"`.
+  :icon @ Str = nil
+  # Unit format.
   #
   # | Value       | Description                         |
   # | ----------- | ----------------------------------- |
@@ -147,12 +147,12 @@ pub def show
   #
   # Units default to `:COUNT:` when `total` is given. With neither `total` nor
   # `units`, spinner mode shows only elapsed time.
-  :units = nil
-  # ([`Float`](std.Float)) Tick interval in seconds. Defaults to `0.08`.
-  :tick = nil
-  # ([`Func`](std.Func)) Callback receiving an [`Indicator`](progress.Indicator).
-  func
-do
+  :units @ Sym = nil
+  # Tick interval in seconds. Defaults to `0.08`.
+  :tick @ Float = nil
+  # Callback receiving an [`Indicator`](progress.Indicator).
+  func @ Func
+do -> Value
   throw nil
 
 # Runs a sequence of steps under an indicator tracking step completion.
@@ -181,11 +181,11 @@ do
 #     do package()
 # ```
 pub def steps
-  # ([`Str`](std.Str)) Overall message prefix.
-  :message = nil
-  # ([`Str`](std.Str)) Default icon. Defaults to `"●"`.
-  :icon = nil
-  # ([`Func`](std.Func)\|[`Dict`](std.Dict)) A step function or specification.
+  # Overall message prefix.
+  :message @ Str = nil
+  # Default icon. Defaults to `"●"`.
+  :icon @ Str = nil
+  # A step function or specification.
   #
   # A specification contains one positional function and accepts these keys:
   #
@@ -193,8 +193,8 @@ pub def steps
   # | ------ | -------------------- | ----------------------------------- |
   # | `name` | [`Str`](std.Str)     | Step name                           |
   # | `icon` | [`Str`](std.Str)     | Icon overriding the default         |
-  ...steps
-do
+  ...steps @ (Func | Dict)
+do -> Value
   throw nil
 
 # Activates a progress context for the duration of `func`.
@@ -235,7 +235,7 @@ do
 #     # ...
 # ```
 pub def with
-  # ([`Dict`](std.Dict)) Display style overrides.
+  # Display style overrides.
   #
   # Top-level keys name the visual elements of the progress display, and each
   # element accepts a nested [`Dict`](std.Dict) of properties. All keys are
@@ -298,11 +298,11 @@ pub def with
   # | `:REVERSE:`         | Reverse video |
   # | `:HIDDEN:`          | Hidden        |
   # | `:STRIKETHROUGH:`   | Strikethrough |
-  :style = nil
-  # ([`Float`](std.Float)) Plain-mode rate limit in seconds. Defaults to `5`. Has no effect
+  :style @ Dict = nil
+  # Plain-mode rate limit in seconds. Defaults to `5`. Has no effect
   # when connected to a real terminal.
-  :interval = nil
-  # ([`Func`](std.Func)) Callback taking no arguments.
-  func
-do
+  :interval @ Float = nil
+  # Callback taking no arguments.
+  func @ Func
+do -> Value
   throw nil

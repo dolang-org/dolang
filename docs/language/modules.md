@@ -91,6 +91,9 @@ import math:
   subtract: minus
 ```
 
+An item written `- @Item` or `- @Item: name` is named only in
+[types](./types.md#type-only-imports), and is not imported.
+
 The vertical form is useful when importing multiple modules at once:
 
 ```
@@ -113,7 +116,7 @@ pub def helper x
 pub let VERSION = "1.0"
 
 # Private (not exported)
-def internal_detail
+def internal_detail()
   42
 ```
 

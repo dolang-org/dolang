@@ -1,0 +1,7 @@
+def missing_do
+  nil
+# error: invalid parameter
+#   --> vertical_params_without_do.dol:LL:LL
+#    |
+# LL |   nil
+#    |   ^^^

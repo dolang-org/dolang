@@ -62,9 +62,9 @@ pub class Unit
   # The [`Node`](compile.Node), or `nil` when the ID belongs to another unit.
   pub def node
     self
-    # ([`NodeId`](compile.NodeId)) The ID to look up.
-    id
-  do
+    # The ID to look up.
+    id @ NodeId
+  do -> (Node | nil)
     throw nil
 
   # Returns a fresh iterator of [`Token`](compile.Token) objects covering the
@@ -106,22 +106,6 @@ pub class Unit
 # ```
 pub class NodeId
 
-# A superclass reference written in a class declaration.
-#
-# Reported by [`Class.supers`](compile.Class.supers) in the order the references
-# were written.
-pub class Super
-  # The [`Span`](compile.Span) of the reference as written.
-  #[getter]
-  pub def span self
-    throw nil
-
-  # The [`NodeId`](compile.NodeId) of the node the reference names, or `nil` when
-  # it is not a plain identifier the compiler could resolve.
-  #[getter]
-  pub def target self
-    throw nil
-
 # Supertype of every document node.
 #
 # Nodes form a tree rooted at [`Root`](compile.Root), reached through
@@ -147,7 +131,8 @@ pub class Node
   pub def parent self
     throw nil
 
-  # The [`Span`](compile.Span) the node covers in the source.
+  # The [`Span`](compile.Span) the node covers in the source, or `nil` for a
+  # prelude node, which has no source text.
   #[getter]
   pub def span self
     throw nil
@@ -173,15 +158,12 @@ pub class Declaration: Node
     throw nil
 
 # A class declaration.
+#
+# Each superclass is a [`Type`](compile.Type) node the class parents.
 pub class Class: Declaration
   # Whether the class was declared `pub`.
   #[getter]
   pub def is_pub self
-    throw nil
-
-  # An array of [`Super`](compile.Super) references, in the order written.
-  #[getter]
-  pub def supers self
     throw nil
 
 # A `def` at statement level.
@@ -251,11 +233,17 @@ pub class ImportItem: Import
   pub def item self
     throw nil
 
+  # Whether the item was imported with `@`, for types only. Such an item binds no
+  # variable.
+  #[getter]
+  pub def type_only self
+    throw nil
+
 # A module bound by the prelude.
 #
 # A prelude binding comes from the compiler's configuration rather than the
 # source, so its `name` and `module` are [`Str`](std.Str) values and its
-# `span` covers no source text.
+# `span` is `nil`.
 #
 # A prelude node is recorded where its binding resolves, so a configured
 # prelude the source never mentions produces no node at all.
@@ -369,6 +357,134 @@ pub class Continue: Reference
 # A `return`. Its `target` is the function returned from.
 pub class Return: Reference
 
+# A type in an annotation, return type, or superclass list.
+#
+# Its parent is what it describes: the parameter, binding, or field it
+# annotates, the function, method, or lambda whose return type it is, or the
+# class it is a superclass of. A declaration naming several fields yields one
+# type per field.
+pub class Type: Node
+  # The type as a [`TypeExpr`](compile.TypeExpr).
+  #[getter]
+  pub def expr self
+    throw nil
+
+# Supertype of binders: names standing for types within the function, method,
+# or class that is their parent.
+pub class Binder: Declaration
+
+# A positional binder, such as `T`.
+pub class PosBinder: Binder
+
+# A keyed binder, such as `:K`.
+pub class KeyBinder: Binder
+
+# A rest binder, such as `...R`.
+pub class RestBinder: Binder
+
+# Supertype of the forms a type takes.
+#
+# Parentheses that only group a type are not a form of their own. A unit
+# converts all of its types the first time one is asked for, so the same type
+# always yields the same objects.
+pub class TypeExpr
+  # The [`Span`](compile.Span) of the type as written, including any
+  # parentheses around it.
+  #[getter]
+  pub def span self
+    throw nil
+
+# A possibly dotted name, such as `Str` or `time.Duration`.
+pub class NameType: TypeExpr
+  # The [`Span`](compile.Span) of the first name.
+  #[getter]
+  pub def head self
+    throw nil
+
+  # The [`NodeId`](compile.NodeId) of the node the first name refers to, or
+  # `nil` when the compiler could not resolve it.
+  #[getter]
+  pub def target self
+    throw nil
+
+# A constant, such as `:TARGET:` or `nil`.
+pub class ConstType: TypeExpr
+  # The constant's value: a [`Sym`](std.Sym), [`Str`](std.Str),
+  # [`Int`](std.Int), [`Bool`](std.Bool), or `nil`.
+  #[getter]
+  pub def value self
+    throw nil
+
+# Type arguments applied to a type, such as `Array[Int]`.
+pub class AppType: TypeExpr
+  # An array of [`TypeArg`](compile.TypeArg) objects.
+  #[getter]
+  pub def args self
+    throw nil
+
+  # The [`TypeExpr`](compile.TypeExpr) the arguments apply to.
+  #[getter]
+  pub def base self
+    throw nil
+
+# A dict schema, such as `{name: Str, ?port: Int}`.
+pub class SchemaType: TypeExpr
+  # An array of [`TypeArg`](compile.TypeArg) objects, one per entry.
+  #[getter]
+  pub def args self
+    throw nil
+
+# A union, such as `(Str | Path)`.
+pub class UnionType: TypeExpr
+  # An array of the member [`TypeExpr`](compile.TypeExpr) objects, in the order
+  # written.
+  #[getter]
+  pub def members self
+    throw nil
+
+# A function type, such as `(Int, ?Int) -> Int`.
+pub class FuncType: TypeExpr
+  # An array of [`TypeArg`](compile.TypeArg) objects, one per parameter.
+  #[getter]
+  pub def params self
+    throw nil
+
+  # The return [`TypeExpr`](compile.TypeExpr).
+  #[getter]
+  pub def ret self
+    throw nil
+
+# Supertype of the items in the `[]`, `()`, or `{}` of a type.
+pub class TypeArg
+  # Whether the item is marked optional with `?`.
+  #[getter]
+  pub def optional self
+    throw nil
+
+  # The [`Span`](compile.Span) of the item, without a trailing `,`.
+  #[getter]
+  pub def span self
+    throw nil
+
+  # The item's [`TypeExpr`](compile.TypeExpr).
+  #[getter]
+  pub def ty self
+    throw nil
+
+# A positional item, such as `T`.
+pub class PosTypeArg: TypeArg
+
+# A keyed item, such as `name: T`.
+pub class KeyTypeArg: TypeArg
+  # The [`Span`](compile.Span) of the key as written. A bareword key is a symbol
+  # and a quoted one is a string.
+  #[getter]
+  pub def key self
+    throw nil
+
+# A rest item, such as `...T`.
+pub class RestTypeArg: TypeArg
+
 # A syntactic token.
 #
 # Tokens describe how a span of source text should be presented (for syntax
@@ -388,6 +504,8 @@ pub class Token
   #
   # | Value            | Meaning                                                  |
   # | ---------------- | --------------------------------------------------------- |
+  # | `:ANNOTATION:`   | An `@` annotation marker                                  |
+  # | `:BINDER:`       | A type binder declaration                                 |
   # | `:COMMENT:`      | A comment                                                  |
   # | `:CONSTANT:`     | A non-numeric, non-string constant such as `nil` or `false` |
   # | `:DELIM:`        | A delimiter such as `(`, `[`, etc                          |
@@ -402,6 +520,8 @@ pub class Token
   # | `:NUMBER:`       | A numeric constant                                         |
   # | `:OPERATOR:`     | A unary or binary operator such as `+` or `-`               |
   # | `:STRING_DELIM:` | A string delimiter (`"`)                                   |
+  # | `:TYPE:`         | A name within a type expression                           |
+  # | `:TYPE_KEY:`     | A keyed argument within a type expression                 |
   # | `:VARIABLE:`     | A variable                                                 |
   # | `:SIGIL:`        | A sigil like `$` or `...`                                  |
   #[getter]
@@ -471,7 +591,7 @@ pub class Diagnostic
   # ## Returns
   #
   # [`term.Text`](term.Text), without a final newline.
-  pub def render self
+  pub def render self -> Text
     throw nil
 
 # An additional highlighted region attached to a
@@ -597,34 +717,34 @@ pub class Pos
 #       echo: echo_alias
 # ```
 pub def compile
-  # ([`Str`](std.Str)) Source path, used in debug information and
+  # Source path, used in debug information and
   # diagnostics.
-  path
-  # ([`Str`](std.Str)\|[`Bin`](std.Bin)) Source code to compile.
-  source
-  # ([`Str`](std.Str)) Compile in module mode under this name.
+  path @ Str
+  # Source code to compile.
+  source @ (Str | Bin)
+  # Compile in module mode under this name.
   #
   # Without it the source is compiled as a script, and running the bytecode
   # yields the value of the final expression or of an early return. In module
   # mode, running it yields a module object holding the exported bindings, or
   # the value of an early return.
-  :module = nil
-  # (dict) Additional imports to bind before the source.
+  :module @ Str = nil
+  # Additional imports to bind before the source.
   #
   # Accepts the same logical import shapes used by the LSP prelude settings:
   # an array of module names, a dict mapping a module to an alias, or a dict
   # mapping a module to the items to take from it, themselves optionally
   # aliased.
-  :prelude = nil
-  # ([`Bool`](std.Bool)) Continue parsing after syntax errors. Defaults
+  :prelude @ Dict = nil
+  # Continue parsing after syntax errors. Defaults
   # to `false`.
   #
   # Recovery is what lets a file be described while it is still being written,
   # at the cost of a document that is missing whatever the compiler could not
   # read. Check [`Unit.diagnostics`](compile.Unit.diagnostics) before trusting
   # one.
-  :recover = nil
-  # ([`Bool`](std.Bool)) Build document nodes. Defaults to `false`.
-  :document = nil
-do
+  :recover @ Bool = nil
+  # Build document nodes. Defaults to `false`.
+  :document @ Bool = nil
+do -> Unit
   throw nil

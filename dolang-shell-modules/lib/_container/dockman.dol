@@ -18,6 +18,9 @@ import progress json patch rand shlex strand proc sys transfer _vfs time
     - runtime_dir
     - cache_dir
 
+import std:
+  - @RuntimeError
+
 let COPY_BLOCK_SIZE = 1048576
 
 let SAVE_FORMATS = $

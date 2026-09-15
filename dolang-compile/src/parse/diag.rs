@@ -315,6 +315,76 @@ impl Diagnose for NonConstExpr {
     }
 }
 
+pub(super) struct InvalidConstType(pub(super) Span);
+
+impl Diagnose for InvalidConstType {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "a constant type must be a symbol, string, integer, boolean, or `nil`"
+        )
+    }
+}
+
+pub(super) struct OptionalTypeArg(pub(super) Span);
+
+impl Diagnose for OptionalTypeArg {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "type arguments cannot be optional")
+    }
+}
+
+pub(super) struct OptionalRest(pub(super) Span);
+
+impl Diagnose for OptionalRest {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a rest item cannot be optional")
+    }
+}
+
+pub(super) struct ParamsWithoutArrow(pub(super) Span);
+
+impl Diagnose for ParamsWithoutArrow {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "parenthesized type is a parameter list, which must be followed by `->`"
+        )
+    }
+}
+
 pub(super) struct RequiredAfterOptional(pub(super) Span);
 
 impl Diagnose for RequiredAfterOptional {

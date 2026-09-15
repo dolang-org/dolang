@@ -54,7 +54,6 @@
 # | `host_port`      | [`Value`](std.Value)  | Host port; assigned automatically if omitted |
 # | `host_ip`        | [`Str`](std.Str)      | Optional host address to bind                |
 # | `protocol`       | [`Sym`](std.Sym)      | `:TCP:` (default), `:UDP:`, or `:SCTP:`      |
-
 import
   proc
   _container.dockman: dockman
@@ -88,14 +87,14 @@ let docker = DockerRuntime()
 #
 # `nil`
 pub def run
-  # ([`Str`](std.Str)) Image name or ID.
-  image
-  # ([`Str`](std.Str)) Command to run instead of the image command.
-  cmd
-  # ([`Value`](std.Value)) Arguments passed to `cmd`, plus any of the shared
+  # Image name or ID.
+  image @ Str
+  # Command to run instead of the image command.
+  cmd @ Str
+  # Arguments passed to `cmd`, plus any of the shared
   # [create/run options](docker.create-and-run-parameters).
-  ...args
-do
+  ...args @ Value
+do -> nil
   docker.run $image $cmd ...args
 
 # Creates a stopped Docker container.
@@ -106,13 +105,13 @@ do
 #
 # [`Container`](_container.dockman.Container) in the `:CREATED:` state
 pub def create
-  # ([`Str`](std.Str)) Image name or ID.
-  image
-  # ([`Str`](std.Str)) Command to run instead of the image command.
+  # Image name or ID.
+  image @ Str
+  # Command to run instead of the image command.
   #
   # Optional; omit to use the image's own command.
-  cmd = nil
-  # ([`Dict`](std.Dict)) Container restart policy.
+  cmd @ Str = nil
+  # Container restart policy.
   #
   # | Name          | Type                   | Meaning                              |
   # | ------------- | ---------------------- | ------------------------------------ |
@@ -127,11 +126,11 @@ pub def create
   # | `:ON_FAILURE:`     | Restart after an unsuccessful exit   |
   # | `:ALWAYS:`         | Always restart the container         |
   # | `:UNLESS_STOPPED:` | Restart unless explicitly stopped    |
-  :restart = nil
-  # ([`Value`](std.Value)) Any of the shared
+  :restart @ Dict = nil
+  # Any of the shared
   # [create/run options](docker.create-and-run-parameters).
-  ...args
-do
+  ...args @ Value
+do -> Container
   docker.create $image $cmd :restart ...args
 
 # Runs a function in a temporary Docker container.
@@ -143,20 +142,20 @@ do
 #
 # Result of `func`
 pub def with
-  # ([`Str`](std.Str)) Image name or ID.
-  image
-  # ([`Func`](std.Func)) Function to run.
-  func
-  # ([`Str`](std.Str)) Optional container working directory.
-  :cd = nil
-  # ([`Dict`](std.Dict)) Container environment.
-  :env = {}
-  # ([`Sym`](std.Sym)) Image pull policy: `:MISSING:`, `:ALWAYS:`, or `:NEVER:`.
-  :pull = :MISSING:
-do
+  # Image name or ID.
+  image @ Str
+  # Function to run.
+  func @ Func
+  # Optional container working directory.
+  :cd @ Str = nil
+  # Container environment.
+  :env @ Dict = {}
+  # Image pull policy: `:MISSING:`, `:ALWAYS:`, or `:NEVER:`.
+  :pull @ Sym = :MISSING:
+do -> Value
   docker.with $image $func :cd :env :pull
 
-# ([`Image`](_container.dockman.Image)) Build a Docker image.
+# Build a Docker image.
 #
 # ## Example
 #
@@ -168,15 +167,15 @@ do
 # assert_eq $img.tags()[0].tag my-image
 # ```
 pub def build
-  # ([`Sym`](std.Sym)) Image pull policy for the base image.
+  # Image pull policy for the base image.
   #
   # | Value       | Meaning                                  |
   # | ----------- | ---------------------------------------- |
   # | `:MISSING:` | Pull the image only when it is not local |
   # | `:ALWAYS:`  | Always pull the image                    |
   # | `:NEVER:`   | Never pull the image                     |
-  :pull = :MISSING:
-  # ([`Iterable`](std.Iterable)) Mounts available to every build step.
+  :pull @ Sym = :MISSING:
+  # Mounts available to every build step.
   #
   # Each element is a [`Dict`](std.Dict) with these keys:
   #
@@ -186,14 +185,14 @@ pub def build
   # | `target` | [`Value`](std.Value) | Mount path in the container                  |
   # | `source` | [`Value`](std.Value) | Mount source; required for `:BIND:`           |
   # | `id`     | [`Value`](std.Value) | Optional cache ID; defaults to `target`       |
-  :mounts = []
-  # ([`Str`](std.Str)) Optional working directory for `run` steps.
-  :cd = nil
-  # ([`Dict`](std.Dict)) Environment for `run` steps.
-  :env = {}
-  # ([`Str`](std.Str)) Base image.
-  :from
-  # ([`Value`](std.Value)) Ordered build items.
+  :mounts @ Iterable = []
+  # Optional working directory for `run` steps.
+  :cd @ Str = nil
+  # Environment for `run` steps.
+  :env @ Dict = {}
+  # Base image.
+  :from @ Str
+  # Ordered build items.
   #
   # Vertical keyword items define tags and build steps. Items may be repeated.
   #
@@ -227,8 +226,8 @@ pub def build
   # | --------- | ----------------------------------------------- | -------------------------- |
   # | `source`  | [`Str`](std.Str)\|[`fs.Path`](fs.Path) | Unified patch file         |
   # | `content` | [`Str`](std.Str)\|[`Bin`](std.Bin) | Unified patch data         |
-  ...args
-do
+  ...args @ Value
+do -> Image
   docker.build :pull :mounts :cd :env :from ...args
 
 # List images, returning an iterator of `Image` objects
@@ -237,11 +236,11 @@ do
 #
 # An iterator of `Image` objects, one per repository:tag pair
 pub def images
-  # ([`Bool`](std.Bool)) List all images, including intermediate layers.
-  :all = false
-  # ([`Str`](std.Str)) Optional filter expression (e.g. `"reference=myapp*"`).
-  :filter = nil
-do
+  # List all images, including intermediate layers.
+  :all @ Bool = false
+  # Optional filter expression (e.g. `"reference=myapp*"`).
+  :filter @ Str = nil
+do -> Iter
   docker.images :all :filter
 
 # Get a single image by reference
@@ -250,74 +249,74 @@ do
 #
 # An `Image` object
 pub def image
-  # ([`Str`](std.Str)) Image reference (e.g. `"myapp:latest"`, `"sha256:abc..."`).
-  ref
-do
+  # Image reference (e.g. `"myapp:latest"`, `"sha256:abc..."`).
+  ref @ Str
+do -> Image
   docker.image $ref
 
 # List containers.
 pub def containers
-  # ([`Bool`](std.Bool)) List all containers, including stopped ones.
-  :all = false
-  # ([`Str`](std.Str)) Optional filter expression (e.g. `"name=myapp*"`).
-  :filter = nil
+  # List all containers, including stopped ones.
+  :all @ Bool = false
+  # Optional filter expression (e.g. `"name=myapp*"`).
+  :filter @ Str = nil
 do
   docker.containers :all :filter
 
 # Get a single container by ID or name.
 pub def container
-  # ([`Str`](std.Str)) Container ID or name.
-  ref
+  # Container ID or name.
+  ref @ Str
 do
   docker.container $ref
 
 # Save one or more images to an archive.
 pub def save
-  # ([`Str`](std.Str)\|[`fs.Path`](fs.Path)) Archive path to write.
-  target
-  # ([`Sym`](std.Sym)) Archive format.
+  # Archive path to write.
+  target @ (Str | Path)
+  # Archive format.
   #
   # Docker only supports `:DOCKER_ARCHIVE:`.
-  :format = :DOCKER_ARCHIVE:
-  # ([`Str`](std.Str)\|[`Dict`](std.Dict)) Target platform.
+  :format @ Sym = :DOCKER_ARCHIVE:
+  # Target platform.
   #
   # An `os/arch[/variant]` string, or a `{:os, :arch, :variant}` dict.
-  :platform = nil
-  # ([`Str`](std.Str)) Image references to save. Only `:DOCKER_ARCHIVE:`
+  :platform @ (Str | Dict) = nil
+  # Image references to save. Only `:DOCKER_ARCHIVE:`
   # supports saving more than one.
-  ...images
+  ...images @ Str
 do
   docker.save $target :format :platform ...images
 
 # Load images from an archive.
 pub def load
-  # ([`Str`](std.Str)\|[`fs.Path`](fs.Path)) Archive to load.
-  source
-  # ([`Str`](std.Str)\|[`Dict`](std.Dict)) Target platform.
+  # Archive to load.
+  source @ (Str | Path)
+  # Target platform.
   #
   # An `os/arch[/variant]` string, or a `{:os, :arch, :variant}` dict.
-  :platform = nil
+  :platform @ (Str | Dict) = nil
 do
   docker.load $source :platform
 
 # Pull an image from a registry.
 pub def pull
-  # ([`Str`](std.Str)) Image reference.
-  ref
-  # ([`Str`](std.Str)\|[`Dict`](std.Dict)) Target platform.
+  # Image reference.
+  ref @ Str
+  # Target platform.
   #
   # An `os/arch[/variant]` string, or a `{:os, :arch, :variant}` dict.
-  :platform = nil
+  :platform @ (Str | Dict) = nil
 do
   docker.pull $ref :platform
 
 # Push an image to a registry.
 pub def push
-  # ([`Str`](std.Str)) Image reference.
-  ref
-  # ([`Str`](std.Str)\|[`Dict`](std.Dict)) Target platform.
+  # Image reference.
+  ref @ Str
+  # Target platform.
   #
   # An `os/arch[/variant]` string, or a `{:os, :arch, :variant}` dict.
-  :platform = nil
+  :platform @ (Str | Dict) = nil
 do
   docker.push $ref :platform
