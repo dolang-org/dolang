@@ -2150,7 +2150,9 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let static_field_sym = self.symtab.id(&self.bintab.id_str("static_field"));
         let method_sym = self.symtab.id(&self.bintab.id_str("method"));
 
-        for super_ref in &node.super_refs {
+        // Type-only supertypes and methods exist only for documentation
+        let supers = node.super_refs.iter().filter(|s| !s.type_only);
+        for super_ref in supers.clone() {
             self.lower_class_super(super_ref);
         }
 
@@ -2193,6 +2195,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         }
                     }
                 }
+                ClassMember::Method(def) if def.type_only => {}
                 ClassMember::Method(def) => {
                     let sym = self.lower_method_sym(def);
                     self.lower_member_sym_value(sym, member.span());
@@ -2207,7 +2210,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         class_sig_args.push(sig::Arg::Value);
         class_sig_args.extend(std::iter::repeat_n(
             sig::Arg::Key(super_sym),
-            node.super_refs.len(),
+            supers.count(),
         ));
         for member in &node.body.members {
             match member {
@@ -2230,6 +2233,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         class_sig_args.push(sig::Arg::Value);
                     }
                 }
+                ClassMember::Method(def) if def.type_only => {}
                 ClassMember::Method(_) => {
                     class_sig_args.push(sig::Arg::Key(method_sym));
                     class_sig_args.push(sig::Arg::Value);
@@ -2804,6 +2808,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.lower_scope_leave(self.params.break_id.expect("no break target"), *span)?;
                 Ok(true)
             }
+            Stmt::Class(class) if class.is_protocol() => {
+                if want_result {
+                    self.lower_load_nil(class.span());
+                }
+                Ok(false)
+            }
             Stmt::Class(class) => {
                 self.lower_class(class, want_result)?;
                 Ok(false)
@@ -2824,6 +2834,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 let ud = self.scope_to_upvar_depth(nl.scope_depth);
                 self.block.term = Term(TermInfo::NlBranch(ud, nl.indicator), *span);
                 Ok(true)
+            }
+            Stmt::Def(node) if node.is_type_only() => {
+                if want_result {
+                    self.lower_load_nil(node.span());
+                }
+                Ok(false)
             }
             Stmt::Def(node) => {
                 self.lower_def(node, want_result)?;

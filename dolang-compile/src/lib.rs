@@ -308,19 +308,37 @@ impl<'a> Node<'a> {
         let span = |span: &source::Span| convert_span(self.file, *span);
         match &self.node.kind {
             doc::Kind::Root => Kind::Root,
-            doc::Kind::Class { name, is_pub } => Kind::Class {
+            doc::Kind::Class {
+                name,
+                is_pub,
+                type_only,
+            } => Kind::Class {
                 name: span(name),
                 is_pub: *is_pub,
+                type_only: *type_only,
             },
-            doc::Kind::Function { name, is_pub } => Kind::Function {
+            doc::Kind::Function {
+                name,
+                is_pub,
+                type_only,
+            } => Kind::Function {
                 name: span(name),
                 is_pub: *is_pub,
+                type_only: *type_only,
             },
-            doc::Kind::Method { name, is_pub } => Kind::Method {
+            doc::Kind::Method {
+                name,
+                is_pub,
+                type_only,
+            } => Kind::Method {
                 name: span(name),
                 is_pub: *is_pub,
+                type_only: *type_only,
             },
-            doc::Kind::SpecialMethod { name } => Kind::SpecialMethod { name: span(name) },
+            doc::Kind::SpecialMethod { name, type_only } => Kind::SpecialMethod {
+                name: span(name),
+                type_only: *type_only,
+            },
             doc::Kind::Field { name, is_pub } => Kind::Field {
                 name: span(name),
                 is_pub: *is_pub,
@@ -439,20 +457,26 @@ pub enum Kind<'a> {
         name: diag::Span,
         /// Declared `pub`
         is_pub: bool,
+        /// A protocol, declared `class @Name`, which exists only in types
+        type_only: bool,
     },
     /// A `def` at statement level
     Function {
         /// The function name
         name: diag::Span,
-        /// Declared `pub`
+        /// Declared `pub`, or for an overload, whether its implementation is
         is_pub: bool,
+        /// An overload signature, declared `def @name`, which has no body
+        type_only: bool,
     },
     /// A `def` in a class body.  Its class is its parent.
     Method {
         /// The method name
         name: diag::Span,
-        /// Declared `pub`
+        /// Declared `pub`, or for an overload, whether its implementation is
         is_pub: bool,
+        /// An overload signature or a protocol member, which has no body
+        type_only: bool,
     },
     /// A method implementing a protocol.  Its class is its parent.
     ///
@@ -461,6 +485,8 @@ pub enum Kind<'a> {
     SpecialMethod {
         /// The protocol name, including the parentheses it is written in
         name: diag::Span,
+        /// An overload signature or a protocol member, which has no body
+        type_only: bool,
     },
     /// A field declaration in a class body.  Its class is its parent.
     ///

@@ -294,7 +294,11 @@ impl Index<'_> {
             span: name,
             kind: doc::TypeKind::Name {
                 head,
-                target: super_ref.ident.res.and_then(|res| res.node),
+                target: super_ref
+                    .ident
+                    .res
+                    .and_then(|res| res.node)
+                    .or_else(|| super_ref.decl.as_ref().and_then(|decl| decl.node)),
             },
         };
         if let Some(bracket_span) = super_ref.bracket_span {
@@ -460,17 +464,42 @@ impl Index<'_> {
     }
 
     fn block(&mut self, scope: &Scope<'_>, stmts: &mut [Stmt]) {
+        let file = self.file;
+        // Whether each implementation is `pub`, by name, which its overloads follow
+        let impls: HashMap<&str, bool> = stmts
+            .iter()
+            .filter_map(|stmt| match stmt {
+                Stmt::Def(def) if !def.is_type_only() => {
+                    Some((file.str(def.ident.span), def.pub_span.is_some()))
+                }
+                _ => None,
+            })
+            .collect();
         for stmt in stmts.iter_mut() {
-            self.predeclare(scope, stmt);
+            self.predeclare(scope, stmt, &impls);
         }
         for stmt in stmts.iter_mut() {
             self.stmt(scope, stmt);
         }
     }
 
-    fn predeclare(&mut self, scope: &Scope<'_>, stmt: &mut Stmt) {
+    fn predeclare(&mut self, scope: &Scope<'_>, stmt: &mut Stmt, impls: &HashMap<&str, bool>) {
         match stmt {
-            Stmt::NlGuard(guard) => self.predeclare(scope, &mut guard.body),
+            Stmt::NlGuard(guard) => self.predeclare(scope, &mut guard.body, impls),
+            Stmt::Def(def) if def.is_type_only() => {
+                let name = def.ident.span;
+                let is_pub = impls.get(self.file.str(name)).copied().unwrap_or(false);
+                let id = self.push(
+                    scope,
+                    Kind::Function {
+                        name,
+                        is_pub,
+                        type_only: true,
+                    },
+                    def.span(),
+                );
+                def.node = Some(id);
+            }
             Stmt::Def(def) => {
                 let name = def.ident.span;
                 let span = def.span();
@@ -480,9 +509,24 @@ impl Index<'_> {
                     Kind::Function {
                         name,
                         is_pub: def.pub_span.is_some(),
+                        type_only: false,
                     },
                     span,
                 );
+            }
+            Stmt::Class(class) if class.is_protocol() => {
+                let name = class.ident.span;
+                let id = self.push(
+                    scope,
+                    Kind::Class {
+                        name,
+                        is_pub: class.pub_span.is_some(),
+                        type_only: true,
+                    },
+                    class.span(),
+                );
+                class.node = Some(id);
+                self.type_decls.insert(name.start, id);
             }
             Stmt::Class(class) => {
                 let name = class.ident.span;
@@ -493,6 +537,7 @@ impl Index<'_> {
                     Kind::Class {
                         name,
                         is_pub: class.pub_span.is_some(),
+                        type_only: false,
                     },
                     span,
                 );
@@ -759,7 +804,7 @@ impl Index<'_> {
             Stmt::Import(_) => {}
             Stmt::TypeAlias(_) => {}
             Stmt::Def(def) => {
-                let id = def.ident.res.and_then(|res| res.node);
+                let id = def.ident.res.and_then(|res| res.node).or(def.node);
                 for decorator in &mut def.decorators {
                     self.expr(scope, &mut decorator.expr);
                 }
@@ -832,7 +877,7 @@ impl Index<'_> {
     }
 
     fn class(&mut self, scope: &Scope<'_>, class: &mut Class) {
-        let id = class.ident.res.and_then(|res| res.node);
+        let id = class.ident.res.and_then(|res| res.node).or(class.node);
         for decorator in &mut class.decorators {
             self.expr(scope, &mut decorator.expr);
         }
@@ -841,7 +886,11 @@ impl Index<'_> {
         }
         self.binders(scope, id, class.binders.as_deref_mut());
         for super_ref in &mut class.super_refs {
-            self.reference(scope, &mut super_ref.ident);
+            // A type-only supertype may name a declaration that has no variable
+            match &mut super_ref.decl {
+                Some(decl) => decl.node = self.type_decls.get(&decl.span.start).copied(),
+                None => self.reference(scope, &mut super_ref.ident),
+            }
             for arg in &mut super_ref.args {
                 match &mut arg.kind {
                     TypeArgKind::KeyRest { key_ty, ty, .. } => {
@@ -867,6 +916,19 @@ impl Index<'_> {
             return_target: scope.return_target,
         };
         let scope = &inner;
+        let file = self.file;
+        // Whether each implementation is `pub`, by name, which its overloads follow
+        let impls: HashMap<&str, bool> = class
+            .body
+            .members
+            .iter()
+            .filter_map(|member| match member {
+                ClassMember::Method(method) if !method.type_only && method.special.is_none() => {
+                    Some((file.str(method.name_span), method.pub_span.is_some()))
+                }
+                _ => None,
+            })
+            .collect();
         for member in &mut class.body.members {
             match member {
                 ClassMember::Method(method) => {
@@ -879,11 +941,21 @@ impl Index<'_> {
                         Kind::SpecialMethod {
                             name: method.name_span.before_left_char()
                                 | method.name_span.after_right_char(),
+                            type_only: method.type_only,
                         }
                     } else {
+                        let is_pub = if method.at_span.is_some() {
+                            impls
+                                .get(file.str(method.name_span))
+                                .copied()
+                                .unwrap_or(false)
+                        } else {
+                            method.pub_span.is_some()
+                        };
                         Kind::Method {
                             name: method.name_span,
-                            is_pub: method.pub_span.is_some(),
+                            is_pub,
+                            type_only: method.type_only,
                         }
                     };
                     let id = self.push(scope, kind, span);

@@ -49,17 +49,23 @@ pub(crate) enum Kind {
     Root,
 
     // Declarations
+    /// A class, or with `type_only` a protocol
     Class {
         name: Span,
         is_pub: bool,
+        type_only: bool,
     },
+    /// A function, or with `type_only` an overload signature, which is public with its
+    /// implementation
     Function {
         name: Span,
         is_pub: bool,
+        type_only: bool,
     },
     Method {
         name: Span,
         is_pub: bool,
+        type_only: bool,
     },
     /// A method implementing a protocol, e.g. `(init)`
     ///
@@ -67,6 +73,7 @@ pub(crate) enum Kind {
     /// visibility to report.
     SpecialMethod {
         name: Span,
+        type_only: bool,
     },
     Field {
         name: Span,
@@ -240,7 +247,7 @@ impl Kind {
             Kind::Class { name, .. }
             | Kind::Function { name, .. }
             | Kind::Method { name, .. }
-            | Kind::SpecialMethod { name }
+            | Kind::SpecialMethod { name, .. }
             | Kind::Field { name, .. }
             | Kind::Bind { name, .. }
             | Kind::Alias { name, .. }

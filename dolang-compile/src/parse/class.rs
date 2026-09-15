@@ -1,4 +1,8 @@
-use super::{Parser, Result, Scope, stream::ExpectKind};
+use super::{
+    Parser, Result, Scope,
+    diag::{ProtocolFieldDefault, RedundantTypeOnly},
+    stream::ExpectKind,
+};
 use crate::{
     ast::{
         Block, Class, ClassBody, ClassMember, ClassSuper, Decorator, FieldDecl, FieldInit,
@@ -69,6 +73,7 @@ impl Parser<'_> {
         scope: &mut Scope,
         pub_span: Option<Span>,
         decorators: Vec<Decorator>,
+        protocol: bool,
     ) -> Result<FieldDecl> {
         use self::Ident;
         use TokenInfo::*;
@@ -114,6 +119,10 @@ impl Parser<'_> {
 
         let rhs = if let Some(token!(Equal)) = self.peek()? {
             let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
+            if protocol {
+                self.fail = true;
+                self.diags.push(ProtocolFieldDefault(equal_span));
+            }
             self.expect(scope, &[ExpectKind::ArgSep])?;
             let rhs = self.parse_cmd_or_expr(scope, true)?;
             let init = if let Some(fold) = rhs.fold(self.file) {
@@ -173,7 +182,7 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_class_member(&mut self, scope: &mut Scope) -> Result<ClassMember> {
+    fn parse_class_member(&mut self, scope: &mut Scope, protocol: bool) -> Result<ClassMember> {
         use self::Keyword::*;
         use TokenInfo::*;
 
@@ -189,10 +198,10 @@ impl Parser<'_> {
 
         match self.peek()? {
             Some(token!(Keyword(Field))) => Ok(ClassMember::Field(
-                self.parse_field(scope, pub_span, decorators)?,
+                self.parse_field(scope, pub_span, decorators, protocol)?,
             )),
             Some(token!(Keyword(Def))) => Ok(ClassMember::Method(
-                self.parse_method(scope, pub_span, decorators)?,
+                self.parse_method(scope, pub_span, decorators, protocol)?,
             )),
             Some(token!(Dedent)) | None => {
                 Err(self.syntax_error(scope, None, "expected statement"))
@@ -205,7 +214,7 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_class_block(&mut self, scope: &mut Scope) -> Result<ClassBody> {
+    fn parse_class_block(&mut self, scope: &mut Scope, protocol: bool) -> Result<ClassBody> {
         use TokenInfo::*;
 
         let mut members = Vec::new();
@@ -217,7 +226,7 @@ impl Parser<'_> {
                     Some(token!(StmtSep)) => {
                         self.advance();
                     }
-                    _ => members.push(self.parse_class_member(scope)?),
+                    _ => members.push(self.parse_class_member(scope, protocol)?),
                 }
                 if let Some(token!(ArgSep)) = self.peek()? {
                     self.advance();
@@ -247,6 +256,12 @@ impl Parser<'_> {
     ) -> Result<Class> {
         let class_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Class)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
+        // `@` makes the class a protocol, which exists only in types
+        let at_span = match self.peek()? {
+            Some(token!(TokenInfo::At)) => Some(self.advance()),
+            _ => None,
+        };
+        let protocol = at_span.is_some();
 
         // Class name can be either `Name` (Ident) or `Name:` (Key) if there's a superclass
         // The span of a Key token excludes the `:`, so we can use it directly for the identifier
@@ -280,40 +295,57 @@ impl Parser<'_> {
                     Some(token!(TokenInfo::ArgSep)) => {
                         self.advance();
                     }
-                    _ => super_refs.push(self.parse_class_super(scope)?),
+                    _ => super_refs.push(self.parse_class_super(scope, protocol)?),
                 }
             }
         }
 
-        let body = match self.next()? {
-            Some(token!(TokenInfo::Indent)) => {
-                let block = self.parse_class_block(scope)?;
-                self.expect(scope, &[ExpectKind::Dedent])?;
-                block
-            }
-            None | Some(token!(TokenInfo::StmtSep)) => ClassBody { members: vec![] },
-            other => {
-                return Err(self.syntax_error(
-                    scope,
-                    other,
-                    "expected indent or newline after class declaration",
-                ));
-            }
+        let body = match self.peek()? {
+            // A class without a body may end the block it is in
+            Some(token!(TokenInfo::Dedent)) => ClassBody { members: vec![] },
+            _ => match self.next()? {
+                Some(token!(TokenInfo::Indent)) => {
+                    let block = self.parse_class_block(scope, protocol)?;
+                    self.expect(scope, &[ExpectKind::Dedent])?;
+                    block
+                }
+                None | Some(token!(TokenInfo::StmtSep)) => ClassBody { members: vec![] },
+                other => {
+                    return Err(self.syntax_error(
+                        scope,
+                        other,
+                        "expected indent or newline after class declaration",
+                    ));
+                }
+            },
         };
 
         Ok(Class {
             class_span,
             decorators,
+            at_span,
             ident,
             binders,
             colon_span,
             super_refs,
             body,
             pub_span,
+            node: None,
         })
     }
 
-    fn parse_class_super(&mut self, scope: &mut Scope) -> Result<ClassSuper> {
+    fn parse_class_super(&mut self, scope: &mut Scope, protocol: bool) -> Result<ClassSuper> {
+        let at_span = match self.peek()? {
+            Some(token!(TokenInfo::At)) => {
+                let span = self.advance();
+                if protocol {
+                    self.fail = true;
+                    self.diags.push(RedundantTypeOnly(span));
+                }
+                Some(span)
+            }
+            _ => None,
+        };
         let ident = match decay_ident!(self.next()?) {
             Some(token!(TokenInfo::Ident, span)) => Ident::new(span),
             other => return Err(self.syntax_error(scope, other, "expected superclass name")),
@@ -342,10 +374,13 @@ impl Parser<'_> {
             _ => (vec![], None),
         };
         Ok(ClassSuper {
+            at_span,
+            type_only: protocol || at_span.is_some(),
             ident,
             fields,
             args,
             bracket_span,
+            decl: None,
         })
     }
 }

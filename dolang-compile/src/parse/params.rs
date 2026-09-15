@@ -12,6 +12,8 @@ use crate::{
 #[derive(Copy, Clone)]
 pub(super) enum ParamMode {
     HorizFunc,
+    /// Horizontal parameters of a declaration without a body, which end with the statement
+    HorizSig,
     VertFunc,
     HorizPattern,
     VertPattern,
@@ -26,7 +28,10 @@ impl ParamMode {
         matches!(self, Self::VertFunc | Self::VertPattern)
     }
     fn supports_defaults(&self) -> bool {
-        matches!(self, Self::HorizFunc | Self::VertFunc | Self::VertPattern)
+        matches!(
+            self,
+            Self::HorizFunc | Self::HorizSig | Self::VertFunc | Self::VertPattern
+        )
     }
 }
 
@@ -98,7 +103,14 @@ impl Parser<'_> {
                     }
                     break Ok(params);
                 }
-                Some(token!(TokenInfo::Arrow)) if matches!(mode, ParamMode::HorizFunc) => {
+                Some(token!(TokenInfo::Arrow))
+                    if matches!(mode, ParamMode::HorizFunc | ParamMode::HorizSig) =>
+                {
+                    break Ok(params);
+                }
+                Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent))
+                    if matches!(mode, ParamMode::HorizSig) =>
+                {
                     break Ok(params);
                 }
                 token @ Some(token!(TokenInfo::Dedent)) if mode.is_vertical() => {

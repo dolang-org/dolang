@@ -1,0 +1,64 @@
+class @Sized
+  pub def size self -> Int
+  pub def (str) self -> Str
+
+class @Named[T]: Sized
+  pub field name @ T
+  pub def rename self name@Str
+  pub def rename self name@Sym
+
+class Base
+  pub field base = true
+
+class Thing: @Named[Str] Base @Sized
+  pub field name = "thing"
+
+  def @size self -> Int
+  pub def size _self
+    1
+
+  def @(init) self
+  def (init) _self
+    nil
+
+  pub def (str) _self
+    "Thing"
+
+let thing = Thing()
+assert $thing.base
+assert_eq $thing.name "thing"
+assert_eq $thing.size() 1
+assert (type thing Base)
+assert_eq (str thing) "Thing"
+
+def @twice x @ Int -> Int
+def @twice x @ Float -> Float
+def twice x
+  (x + x)
+
+assert_eq (twice 2) 4
+assert_eq (twice 1.5) 3.0
+
+def @vertical
+  :key @ Str
+  ...rest
+do -> Str
+
+# A type-only declaration yields nil where its value is wanted
+let def_value = if true
+  # warning: `if` without `else` always evaluates to `nil`
+  #   --> type_only.dol:LL:LL
+  #    |
+  # LL | let def_value = if true
+  #    |                 ^^
+  def @nothing()
+assert_eq $def_value nil
+
+let class_value = if true
+  # warning: `if` without `else` always evaluates to `nil`
+  #   --> type_only.dol:LL:LL
+  #    |
+  # LL | let class_value = if true
+  #    |                   ^^
+  class @Nothing
+assert_eq $class_value nil

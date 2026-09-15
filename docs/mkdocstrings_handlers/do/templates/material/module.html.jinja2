@@ -67,7 +67,7 @@
 {% if functions %}
 {{ "Functions" | heading(heading_level, skip_inventory=true, id="functions") }}
 {% for entity in functions %}
-{% set base_id = entity._identifier %}
+{% set base_id = entity._anchor %}
 {% set sig = entity.signature %}
 {{ params.signature_heading(sig, entity.return_type, heading_level + 1, base_id, "function", sig) }}
 {% if entity.doc_intro %}

@@ -1,0 +1,47 @@
+# document
+pub class @Shape
+  pub def area self -> Int
+  pub def area self scale@Int -> Int
+
+pub class Square: @Shape @Missing
+  # warning: unbound type name
+  #   --> type_only.dol:LL:LL
+  #    |
+  # LL | pub class Square: @Shape @Missing
+  #    |                           ^^^^^^^
+  def @area self -> Int
+  pub def area _self
+    1
+  def @perimeter self -> Int
+# warning: type-only def has no implementation
+#   --> type_only.dol:LL:LL
+#    |
+# LL |   def @perimeter self -> Int
+#    |        ^^^^^^^^^
+
+def @lonely x @ Shape -> Shape
+# warning: type-only def has no implementation
+#   --> type_only.dol:LL:LL
+#    |
+# LL | def @lonely x @ Shape -> Shape
+#    |      ^^^^^^
+
+pub def uses shape @ Shape -> Shape
+  shape
+
+let _value = nil
+# warning: value name shadows a type of the same name
+#   --> type_only.dol:LL:LL
+#    |
+# LL | let _value = nil
+#    |     ^^^^^^
+class @_value
+
+let _outer = nil
+def _inner()
+  class @_outer
+# warning: type name shadows a value of the same name
+#   --> type_only.dol:LL:LL
+#    |
+# LL |   class @_outer
+#    |          ^^^^^^

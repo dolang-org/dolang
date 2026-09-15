@@ -1,5 +1,7 @@
 use super::{
-    ExprMode, Parser, Result, Scope, diag::SpecialMethodOutsideClass, params::ParamMode,
+    ExprMode, Parser, Result, Scope,
+    diag::{RedundantTypeOnly, SpecialMethodOutsideClass},
+    params::ParamMode,
     stream::ExpectKind,
 };
 use crate::{
@@ -134,9 +136,23 @@ impl Parser<'_> {
         Ok(decorators)
     }
 
-    fn parse_def_common(&mut self, scope: &mut Scope) -> Result<DefCommon> {
+    /// Parse a `def`, which has no body when it is type-only: marked with `@`, or a
+    /// protocol member.
+    fn parse_def_common(&mut self, scope: &mut Scope, protocol: bool) -> Result<DefCommon> {
         let def_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Def)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
+        let at_span = match self.peek()? {
+            Some(token!(TokenInfo::At)) => {
+                let span = self.advance();
+                if protocol {
+                    self.fail = true;
+                    self.diags.push(RedundantTypeOnly(span));
+                }
+                Some(span)
+            }
+            _ => None,
+        };
+        let type_only = protocol || at_span.is_some();
         // A declaration names what it defines; nothing after `def` is read as
         // the keyword it spells, so a function may take the name of one.
         let (name_span, special) = match decay_ident!(self.next()?) {
@@ -159,6 +175,7 @@ impl Parser<'_> {
                 // FIXME: include paren spans somewhere
                 vec![]
             }
+            _ if type_only => self.parse_params(scope, ParamMode::HorizSig)?,
             _ => self.parse_params(scope, ParamMode::HorizFunc)?,
         };
         // The return type follows the parameters, or the `do` ending vertical ones
@@ -171,10 +188,28 @@ impl Parser<'_> {
         {
             self.advance();
         }
-        self.expect(scope, &[ExpectKind::Indent])?;
-        let body = self.parse_block_through_dedent(scope)?;
+        let body = if type_only {
+            match self.peek()? {
+                None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)) => Block {
+                    stmts: vec![],
+                    vars: Default::default(),
+                    repl: None,
+                },
+                other => {
+                    return Err(self.syntax_error(
+                        scope,
+                        other,
+                        "a type-only declaration has no body",
+                    ));
+                }
+            }
+        } else {
+            self.expect(scope, &[ExpectKind::Indent])?;
+            self.parse_block_through_dedent(scope)?
+        };
         Ok(DefCommon {
             def_span,
+            at_span,
             name_span,
             special,
             binders,
@@ -190,11 +225,12 @@ impl Parser<'_> {
     ) -> Result<Def> {
         let DefCommon {
             def_span,
+            at_span,
             name_span,
             special,
             binders,
             func,
-        } = self.parse_def_common(scope)?;
+        } = self.parse_def_common(scope, false)?;
 
         if special.is_some() {
             self.fail = true;
@@ -204,10 +240,12 @@ impl Parser<'_> {
         Ok(Def {
             def_span,
             decorators,
+            at_span,
             ident: Ident::new(name_span),
             binders,
             func,
             pub_span,
+            node: None,
         })
     }
 
@@ -216,17 +254,21 @@ impl Parser<'_> {
         scope: &mut Scope,
         pub_span: Option<Span>,
         decorators: Vec<Decorator>,
+        protocol: bool,
     ) -> Result<Method> {
         let DefCommon {
             def_span,
+            at_span,
             name_span,
             special,
             binders,
             func,
-        } = self.parse_def_common(scope)?;
+        } = self.parse_def_common(scope, protocol)?;
         Ok(Method {
             def_span,
             decorators,
+            at_span,
+            type_only: protocol || at_span.is_some(),
             name_span,
             special,
             node: None,
@@ -241,6 +283,7 @@ impl Parser<'_> {
 /// What a function and a method declaration share
 struct DefCommon {
     def_span: Span,
+    at_span: Option<Span>,
     name_span: Span,
     special: Option<SpecialMethod>,
     binders: Option<Box<Binders>>,

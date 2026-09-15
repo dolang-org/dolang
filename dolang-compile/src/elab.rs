@@ -151,6 +151,25 @@ impl Diagnose for InappropriatePub {
     }
 }
 
+struct PubOverload(Span);
+
+impl Diagnose for PubOverload {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "a type-only `def` is exported with its implementation, so it cannot be `pub`"
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
 struct BadContinue(Span);
 
 impl Diagnose for BadContinue {
@@ -1225,13 +1244,25 @@ impl<'s> Scope<'s> {
     }
 
     fn finish(self, resolver: &Elaborater, out: &mut Vec<Var>) {
+        self.finish_inner(Some(resolver), out);
+    }
+
+    /// Drain the locals of a scope nothing runs in, such as the parameters of a
+    /// type-only signature. Nothing can read them, so none is reported unused.
+    fn finish_quiet(self, out: &mut Vec<Var>) {
+        self.finish_inner(None, out);
+    }
+
+    fn finish_inner(self, resolver: Option<&Elaborater>, out: &mut Vec<Var>) {
         match self {
             Self::Nested {
                 vars: ref locals, ..
             } => {
                 for local in locals.iter() {
                     let (var, _) = local.get();
-                    if let Some(span) = self.should_warn_unused(resolver, &var) {
+                    if let Some(resolver) = resolver
+                        && let Some(span) = self.should_warn_unused(resolver, &var)
+                    {
                         resolver.diags.push(UnusedVar(span));
                     }
                     out.push(var);
@@ -2323,15 +2354,20 @@ impl<'a> Elaborater<'a> {
 
     fn visit_def(&mut self, scope: &mut Scope<'_>, def: &mut Def) -> Result<()> {
         // Check pub validity
-        if let Some(span) = def.pub_span
-            && !scope.is_top_level()
-            && !scope.is_class()
-        {
-            self.diags.push(InappropriatePub(span));
-            self.fail = true;
+        if let Some(span) = def.pub_span {
+            if def.is_type_only() {
+                self.diags.push(PubOverload(span));
+                self.fail = true;
+            } else if !scope.is_top_level() && !scope.is_class() {
+                self.diags.push(InappropriatePub(span));
+                self.fail = true;
+            }
         }
         for decorator in &mut def.decorators {
             self.visit_expr(scope, &mut decorator.expr, false)?;
+        }
+        if def.is_type_only() {
+            return self.visit_signature(scope, &mut def.func);
         }
         if !def.decorators.is_empty() {
             let res = def
@@ -2345,8 +2381,17 @@ impl<'a> Elaborater<'a> {
     }
 
     fn visit_method(&mut self, scope: &mut Scope<'_>, def: &mut Method) -> Result<()> {
+        if def.at_span.is_some()
+            && let Some(span) = def.pub_span
+        {
+            self.diags.push(PubOverload(span));
+            self.fail = true;
+        }
         for decorator in &mut def.decorators {
             self.visit_expr(scope, &mut decorator.expr, false)?;
+        }
+        if def.type_only {
+            return self.visit_signature(scope, &mut def.func);
         }
         self.visit_function(scope, &mut def.func, None)
     }
@@ -2443,7 +2488,8 @@ impl<'a> Elaborater<'a> {
     fn visit_body_pre(&mut self, scope: &mut Scope<'_>, block: &mut Block) -> Result<()> {
         for stmt in block.stmts.iter_mut() {
             match stmt {
-                Stmt::Def(node) => {
+                // Type-only declarations bind no variables
+                Stmt::Def(node) if !node.is_type_only() => {
                     let ident_span = node.ident.span;
                     let sym = self
                         .symtab
@@ -2457,7 +2503,7 @@ impl<'a> Elaborater<'a> {
                         node: None,
                     });
                 }
-                Stmt::Class(node) => {
+                Stmt::Class(node) if !node.is_protocol() => {
                     let sym = self
                         .symtab
                         .id(&self.bintab.id_str(self.file.str(node.ident.span)));
@@ -2492,7 +2538,7 @@ impl<'a> Elaborater<'a> {
                     }
                 }
                 ast::ClassMember::Method(node)
-                    if node.pub_span.is_none() && node.special.is_none() =>
+                    if node.pub_span.is_none() && node.special.is_none() && !node.type_only =>
                 {
                     let name = self.file.str(node.name_span).to_owned();
                     let private_sym = self.symtab.fresh(self.bintab.id_str(&name));
@@ -2511,7 +2557,9 @@ impl<'a> Elaborater<'a> {
             match member {
                 ast::ClassMember::Field(field) => self.visit_field_decl(scope, field)?,
                 ast::ClassMember::Method(def) => {
-                    self.insert_class_method(scope, def);
+                    if !def.type_only {
+                        self.insert_class_method(scope, def);
+                    }
                     self.visit_method(scope, def)?;
                 }
             }
@@ -2534,9 +2582,16 @@ impl<'a> Elaborater<'a> {
         }
 
         // Resolve superclass references BEFORE inserting the class name
-        // (the class name should not be available in its own superclass references)
-        for super_ref in &mut class.super_refs {
+        // (the class name should not be available in its own superclass references).
+        // A type-only supertype is resolved only when documenting.
+        for super_ref in class.super_refs.iter_mut().filter(|s| !s.type_only) {
             self.visit_ident(scope, &mut super_ref.ident)?;
+        }
+
+        if class.is_protocol() {
+            // A protocol binds no variable; its members are only signatures
+            let mut class_scope = scope.class();
+            return self.visit_class_body(&mut class_scope, &mut class.body);
         }
 
         if scope.is_class() {
@@ -2612,19 +2667,17 @@ impl<'a> Elaborater<'a> {
         Ok(())
     }
 
-    fn visit_function(
+    /// Register parameters as variables of a function's scope. A non-constant default
+    /// is visited before its parameter is inserted, so it can reference prior
+    /// parameters but not the current or later ones.
+    fn visit_params(
         &mut self,
         scope: &mut Scope<'_>,
-        node: &mut Function,
-        mut prelude: Option<&mut [PreludeImport]>,
+        params: &mut [Param],
+        is_class_method: bool,
     ) -> Result<()> {
-        let is_class_method = scope.is_class();
-        let mut scope = scope.function(self.mode != Mode::Repl || prelude.is_none());
-        // Register all parameters as variables in this scope.
-        // Visit non-constant default expressions before inserting each param,
-        // so defaults can reference prior params but not the current or later ones.
-        for (param_idx, param) in node.params.iter_mut().enumerate() {
-            self.visit_param_non_const_default(&mut scope, param)?;
+        for (param_idx, param) in params.iter_mut().enumerate() {
+            self.visit_param_non_const_default(scope, param)?;
             let ident = match param {
                 Param::Pos { ident, .. }
                 | Param::Key { ident, .. }
@@ -2653,6 +2706,28 @@ impl<'a> Elaborater<'a> {
                 node: None,
             });
         }
+        Ok(())
+    }
+
+    /// Elaborate the signature of a type-only declaration, which has no body. Its
+    /// parameters are bound as a function's would be, but nothing can read them.
+    fn visit_signature(&mut self, scope: &mut Scope<'_>, node: &mut Function) -> Result<()> {
+        let is_class_method = scope.is_class();
+        let mut scope = scope.function(true);
+        self.visit_params(&mut scope, &mut node.params, is_class_method)?;
+        scope.finish_quiet(&mut node.body.vars);
+        Ok(())
+    }
+
+    fn visit_function(
+        &mut self,
+        scope: &mut Scope<'_>,
+        node: &mut Function,
+        mut prelude: Option<&mut [PreludeImport]>,
+    ) -> Result<()> {
+        let is_class_method = scope.is_class();
+        let mut scope = scope.function(self.mode != Mode::Repl || prelude.is_none());
+        self.visit_params(&mut scope, &mut node.params, is_class_method)?;
 
         if let Some(prelude) = &mut prelude {
             for import in prelude.iter_mut() {

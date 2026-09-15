@@ -2064,11 +2064,21 @@ pub(crate) struct Def {
     // Span of the `def` keyword
     pub(crate) def_span: Span,
     pub(crate) decorators: Vec<Decorator>,
+    /// The `@` of a type-only overload signature, which has no body
+    pub(crate) at_span: Option<Span>,
     pub(crate) ident: Ident,
     pub(crate) binders: Option<Box<Binders>>,
     // Function
     pub(crate) func: Function,
     pub(crate) pub_span: Option<Span>,
+    /// The document node of a type-only def, which has no variable to carry it
+    pub(crate) node: Option<doc::Id>,
+}
+
+impl Def {
+    pub(crate) fn is_type_only(&self) -> bool {
+        self.at_span.is_some()
+    }
 }
 
 impl Node for Def {
@@ -2078,10 +2088,13 @@ impl Node for Def {
             visit.token(Token::Keyword, span, None)?;
         }
         visit.token(Token::Keyword, self.def_span, None)?;
+        if let Some(span) = self.at_span {
+            visit.token(Token::Annotation, span, None)?;
+        }
         visit.token(
             Token::Variable,
             self.ident.span,
-            self.ident.res.as_ref().and_then(|r| r.node),
+            self.ident.res.as_ref().and_then(|r| r.node).or(self.node),
         )?;
         if let Some(binders) = &self.binders {
             visit.node(&**binders)?;
@@ -2097,6 +2110,10 @@ impl Node for Def {
 pub(crate) struct Method {
     pub(crate) def_span: Span,
     pub(crate) decorators: Vec<Decorator>,
+    /// The `@` of a type-only overload signature
+    pub(crate) at_span: Option<Span>,
+    /// Whether the method has no body: an overload signature, or a protocol member
+    pub(crate) type_only: bool,
     pub(crate) name_span: Span,
     pub(crate) special: Option<SpecialMethod>,
     pub(crate) node: Option<doc::Id>,
@@ -2113,6 +2130,9 @@ impl Node for Method {
             visit.token(Token::Keyword, span, None)?;
         }
         visit.token(Token::Keyword, self.def_span, None)?;
+        if let Some(span) = self.at_span {
+            visit.token(Token::Annotation, span, None)?;
+        }
         visit.token(Token::Method, self.name_span, self.node)?;
         if let Some(binders) = &self.binders {
             visit.node(&**binders)?;
@@ -2212,6 +2232,8 @@ pub(crate) struct Class {
     // Span of the `class` keyword
     pub(crate) class_span: Span,
     pub(crate) decorators: Vec<Decorator>,
+    /// The `@` of a protocol, which exists only in types
+    pub(crate) at_span: Option<Span>,
     // Class name identifier
     pub(crate) ident: Ident,
     pub(crate) binders: Option<Box<Binders>>,
@@ -2221,6 +2243,14 @@ pub(crate) struct Class {
     pub(crate) super_refs: Vec<ClassSuper>,
     pub(crate) body: ClassBody,
     pub(crate) pub_span: Option<Span>,
+    /// The document node of a protocol, which has no variable to carry it
+    pub(crate) node: Option<doc::Id>,
+}
+
+impl Class {
+    pub(crate) fn is_protocol(&self) -> bool {
+        self.at_span.is_some()
+    }
 }
 
 impl Node for Class {
@@ -2230,11 +2260,16 @@ impl Node for Class {
             visit.token(Token::Keyword, span, None)?;
         }
         visit.token(Token::Keyword, self.class_span, None)?;
-        visit.token(
-            Token::Variable,
-            self.ident.span,
-            self.ident.res.as_ref().and_then(|r| r.node),
-        )?;
+        if let Some(span) = self.at_span {
+            visit.token(Token::Annotation, span, None)?;
+            visit.token(Token::Type, self.ident.span, self.node)?;
+        } else {
+            visit.token(
+                Token::Variable,
+                self.ident.span,
+                self.ident.res.as_ref().and_then(|r| r.node),
+            )?;
+        }
         if let Some(binders) = &self.binders {
             visit.node(&**binders)?;
         }
@@ -2253,19 +2288,32 @@ impl Node for Class {
 }
 
 pub(crate) struct ClassSuper {
+    /// The `@` of a supertype that exists only in types
+    pub(crate) at_span: Option<Span>,
+    /// Whether the supertype exists only in types, marked with `@` or in a protocol
+    pub(crate) type_only: bool,
     pub(crate) ident: Ident,
     pub(crate) fields: Vec<Span>,
     /// Type arguments, which only annotate the superclass
     pub(crate) args: Vec<TypeArg>,
     pub(crate) bracket_span: Option<Span>,
+    /// What a type-only head names when that is not a variable. Set only when documenting.
+    pub(crate) decl: Option<TypeDecl>,
 }
 
 impl Node for ClassSuper {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        if let Some(span) = self.at_span {
+            visit.token(Token::Annotation, span, None)?;
+        }
         visit.token(
             Token::Type,
             self.ident.span,
-            self.ident.res.as_ref().and_then(|res| res.node),
+            self.ident
+                .res
+                .as_ref()
+                .and_then(|res| res.node)
+                .or_else(|| self.decl.as_ref().and_then(|decl| decl.node)),
         )?;
         for field in &self.fields {
             visit.token(Token::Operator, field.before_left_char(), None)?;
