@@ -13,10 +13,7 @@ from typing import Any
 # How many parameters a signature keeps once a parameter table repeats them.
 MAX_SIGNATURE_PARAMS = 3
 
-from mkdocstrings import get_logger
 from mkdocstrings._internal.handlers.base import BaseHandler, CollectionError
-
-_logger = get_logger(__name__)
 
 # Characters Markdown reads as syntax, escaped in the text of a type
 _MARKDOWN_SPECIAL = re.compile(r"([\\`*_\[\]])")
@@ -204,7 +201,7 @@ class DoHandler(BaseHandler):
         if not show_undocumented:
             _strip_undocumented(entities)
 
-        _annotate_params(entities, module_name)
+        _annotate_params(entities)
 
         if not entity_parts:
             # Module-level: return all public entities as a synthetic module object.
@@ -309,28 +306,6 @@ def _split_intro(doc: str) -> tuple[str, str]:
         elif fence is None and re.match(r"^#{1,6}(?:\s+|$)", line):
             return text[: match.start()].rstrip(), text[match.start() :].strip()
     return text, ""
-
-
-def _split_type(text: str) -> tuple[str, str]:
-    """Split a leading parenthesised type off a description.
-
-    A declaration without a type annotation may open its description with its
-    type in parentheses. That type is written as markdown and so holds
-    parentheses of its own -- ``([`Str`](../std/str.md))`` -- so the group is
-    matched by depth rather than to the first ``)``.
-    """
-    if not text.startswith("("):
-        return "", text
-    depth = 0
-    for index, char in enumerate(text):
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-            if depth == 0:
-                return text[1:index].strip(), text[index + 1 :].lstrip()
-    # Unbalanced, so there is no group to take and the text is all description.
-    return "", text
 
 
 class _TypeScope:
@@ -465,16 +440,6 @@ def _render_annotations(entity: dict, scope: _TypeScope) -> None:
         _render_annotations(member, scope)
 
 
-def _choose_type(path: str, what: str, rendered: str, doc_type: str) -> str:
-    """The type to render: the annotation, or failing that the doc comment's."""
-    if rendered and doc_type:
-        _logger.warning(
-            f"{path}: {what} is both annotated and given a parenthesized type in "
-            "its doc comment; the annotation is used"
-        )
-    return rendered or doc_type
-
-
 def _slug(name: str) -> str:
     """An anchor-safe form of a parameter name.
 
@@ -517,13 +482,9 @@ def _declaration_name(entity: dict) -> str:
     return f"{name}[{', '.join(binders)}]" if binders else name
 
 
-def _annotate_params(entities: list[dict], path: str) -> None:
-    """Recursively prepare parameters and signatures for rendering.
-
-    ``path`` qualifies the entities' names in warnings.
-    """
+def _annotate_params(entities: list[dict]) -> None:
+    """Recursively prepare parameters and signatures for rendering."""
     for entity in entities:
-        name = f"{path}.{entity.get('name', '')}"
         # The extraction format distinguishes an absent comment (`null`) from
         # a present string. Templates operate on Markdown text, so normalize
         # that absence at the rendering boundary.
@@ -534,13 +495,7 @@ def _annotate_params(entities: list[dict], path: str) -> None:
         for index, param in enumerate(entity.get("params") or []):
             param["doc"] = param.get("doc") or ""
             short, rest = _split_doc(param["doc"])
-            doc_type, short = _split_type(short)
-            type_ = _choose_type(
-                name,
-                f"parameter `{param.get('name', '')}`",
-                param.get("annotation", ""),
-                doc_type,
-            )
+            type_ = param.get("annotation", "")
             param["type"] = type_
             param["doc_short"] = short
             param["doc_rest"] = rest
@@ -558,26 +513,12 @@ def _annotate_params(entities: list[dict], path: str) -> None:
         entity["declaration_name"] = _declaration_name(entity)
         if entity.get("kind") in ("function", "method"):
             entity["signature"] = _signature(entity)
-            # Without a return type annotation, a function/method's own doc
-            # comment may open with a parenthesised type, the same convention
-            # parameter descriptions use. Peel it off before splitting the rest
-            # into intro/sections, the same way a parameter's description is
-            # split in the loop above.
-            doc_type, doc = _split_type((entity.get("doc", "") or "").strip())
-            entity["return_type"] = _choose_type(
-                name, "the return type", entity.get("return_annotation", ""), doc_type
-            )
-            entity["doc_intro"], entity["doc_sections"] = _split_intro(doc)
+            entity["return_type"] = entity.get("return_annotation", "")
+            entity["doc_intro"], entity["doc_sections"] = _split_intro(entity["doc"])
         elif entity.get("kind") == "field":
-            # Same fallback convention as a parameter's description (see
-            # `_split_type`), peeled off before the rest is rendered as the
-            # field's doc.
-            doc_type, doc = _split_type((entity.get("doc", "") or "").strip())
-            entity["type"] = _choose_type(
-                name, "the type", entity.get("annotation", ""), doc_type
-            )
-            entity["doc"] = doc
-        _annotate_params(entity.get("members", []), name)
+            entity["type"] = entity.get("annotation", "")
+            entity["doc"] = entity["doc"].strip()
+        _annotate_params(entity.get("members", []))
 
 
 def _strip_undocumented(entities: list[dict]) -> None:

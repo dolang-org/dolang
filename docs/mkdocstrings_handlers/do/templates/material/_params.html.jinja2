@@ -6,16 +6,14 @@
   parameter appears once it renders: the signature is abbreviated in that case,
   so the table is the only place the full list is written.
 
-  The Type column is filled from the parameter's annotation, or failing that
-  from a parenthesised type opening the description.
+  The Type column is filled from the parameter's annotation.
 #}
 {#
   A function/method's `<code>signature -> ReturnType</code>` heading, with
   the arrow and type appended inside the same `<code>` element when it has a
-  return type, annotated or opening its doc comment in parentheses (see
-  _choose_type in __init__.py) -- the arrow form is the language's own
-  return-type syntax, so it belongs inside `<code>` rather than as
-  descriptive text tacked on after it.
+  return type annotation -- the arrow form is the language's own return-type
+  syntax, so it belongs inside `<code>` rather than as descriptive text tacked
+  on after it.
 
   The return type is run through `convert_markdown` (real links, same as a
   parameter's Type column) rather than left as plain text inside `sig`,

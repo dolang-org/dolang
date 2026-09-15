@@ -47,14 +47,14 @@ pub(crate) static ENTRIES: &[DocEntry] = &[DocEntry {
     module: "term",
     item: "echo",
     kind: "function",
-    doc: "(nil) Writes to standard output.",
+    doc: "Writes to standard output.",
     binders: &[],
     params: &[Param {
         name: "...args",
         optional: false,
         type_: None,
     }],
-    type_: None,
+    type_: Some("nil"),
 }];
 
 /// Looks up a documented module/item pair.

@@ -229,30 +229,6 @@ fn normalize_doc_text(doc: &str) -> String {
         .join("\n")
 }
 
-/// Split the provisional leading `(type)` convention from documentation.
-///
-/// Types may contain Markdown links, whose destinations contain parentheses,
-/// so the outer group is matched by depth rather than at the first `)`.
-fn split_doc_type(doc: &str) -> (Option<&str>, &str) {
-    if !doc.starts_with('(') {
-        return (None, doc);
-    }
-    let mut depth = 0;
-    for (index, ch) in doc.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return (Some(doc[1..index].trim()), doc[index + 1..].trim_start());
-                }
-            }
-            _ => {}
-        }
-    }
-    (None, doc)
-}
-
 fn one_line_source(content: &str, span: &diag::Span) -> String {
     span_text(content, span)
         .lines()
@@ -291,14 +267,13 @@ fn type_label(
         .map(|span| one_line_source(content, &span))
 }
 
-/// A declaration's signature, whether it is callable, and whether the signature
-/// includes a type the declaration is annotated with.
+/// A declaration's signature, including any type it is annotated with.
 fn declaration_label(
     content: &str,
     unit: &Unit<'_>,
     id: NodeId,
     children: &HashMap<NodeId, Vec<NodeId>>,
-) -> Option<(String, bool, bool)> {
+) -> Option<String> {
     let node = unit.node(id)?;
     let kind = node.kind();
     let mut name = node
@@ -342,10 +317,6 @@ fn declaration_label(
             .filter_map(|child| parameter_label(content, unit, *child))
             .collect::<Vec<_>>()
     };
-    let callable = matches!(
-        &kind,
-        Kind::Function { .. } | Kind::Method { .. } | Kind::SpecialMethod { .. }
-    );
     let label = match kind {
         Kind::Class { is_pub, .. } => {
             let supers = children
@@ -409,7 +380,7 @@ fn declaration_label(
         | Kind::SelfParam { .. } => parameter_label(content, unit, id)?,
         _ => return None,
     };
-    Some((label, callable, ty.is_some()))
+    Some(label)
 }
 
 /// Hover text for a name that resolves outside this document -- an import or
@@ -428,29 +399,11 @@ fn external_hover(kind: Kind<'_>, content: &str) -> Option<String> {
     Some(render_external_hover(doc_index::lookup(module, item)?))
 }
 
-/// Assembles a hover markdown blob from a fenced signature and an optional
-/// leading-parenthesized type/prose split off a doc comment (see
-/// `split_doc_type`), for both a local declaration and an external one from
-/// the static doc index -- the two callers of `split_doc_type`.
-///
-/// A callable's type is a return type, appended directly to the signature
-/// as `-> Type` inside the fence (anticipating the language's own eventual
-/// return-type syntax, the same convention the mkdocstrings handler uses
-/// for generated docs) rather than a separate line below it. A
-/// non-callable's type has nowhere equivalent to go in its signature (`let
-/// x`, `field x` don't return anything), so it stays a `**Type:**` line.
-fn render_hover_markdown(label: &str, callable: bool, type_: Option<&str>, prose: &str) -> String {
-    let mut label = label.to_owned();
-    if callable && let Some(type_) = type_ {
-        label.push_str(" -> ");
-        label.push_str(type_);
-    }
+/// Assembles a hover markdown blob from a fenced signature and a doc comment,
+/// for both a local declaration and an external one from the static doc index.
+fn render_hover_markdown(label: &str, prose: &str) -> String {
     let fence = if label.contains("```") { "````" } else { "```" };
     let mut markdown = format!("{fence}dolang\n{label}\n{fence}");
-    if !callable && let Some(type_) = type_ {
-        markdown.push_str("\n\n**Type:** ");
-        markdown.push_str(type_);
-    }
     if !prose.is_empty() {
         markdown.push_str("\n\n");
         markdown.push_str(prose);
@@ -459,12 +412,7 @@ fn render_hover_markdown(label: &str, callable: bool, type_: Option<&str>, prose
 }
 
 fn render_external_hover(entry: &doc_index::DocEntry) -> String {
-    let label = doc_index::signature(entry);
-    let (type_, prose) = split_doc_type(entry.doc);
-    // An annotated type is already part of the signature, and wins over the doc's
-    let type_ = if entry.type_.is_some() { None } else { type_ };
-    let callable = matches!(entry.kind, "function" | "method");
-    render_hover_markdown(&label, callable, type_, prose)
+    render_hover_markdown(&doc_index::signature(entry), entry.doc)
 }
 
 /// Pre-render local hover text while the compiler unit and its spans live.
@@ -490,12 +438,12 @@ fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, String> {
             if let Some(markdown) = external_hover(node.kind(), content) {
                 return Some((id, markdown));
             }
-            let (label, callable, typed) = declaration_label(content, unit, id, &children)?;
+            let label = declaration_label(content, unit, id, &children)?;
             let doc = node.doc().map(|span| normalize_doc(content, &span));
-            let (type_, prose) = doc.as_deref().map(split_doc_type).unwrap_or((None, ""));
-            // An annotated type is already part of the label, and wins over the doc's
-            let type_ = if typed { None } else { type_ };
-            Some((id, render_hover_markdown(&label, callable, type_, prose)))
+            Some((
+                id,
+                render_hover_markdown(&label, doc.as_deref().unwrap_or("")),
+            ))
         })
         .collect()
 }
@@ -1737,18 +1685,6 @@ mod tests {
     }
 
     #[test]
-    fn doc_type_allows_markdown_links_and_rejects_unbalanced_groups() {
-        assert_eq!(
-            split_doc_type("([`Str`](../std/str.md)|nil) Description."),
-            (Some("[`Str`](../std/str.md)|nil"), "Description.")
-        );
-        assert_eq!(
-            split_doc_type("(unfinished Description."),
-            (None, "(unfinished Description.")
-        );
-    }
-
-    #[test]
     fn parse_module_import() {
         let settings =
             Backend::parse_settings_toml(&parse_toml("[prelude]\nshell = true\n")).unwrap();
@@ -1864,123 +1800,28 @@ mod tests {
         let uri: Uri = "file:///hover-test.dol".parse().unwrap();
         let source = concat!(
             "\n",
-            "# (Type) A widget.\n",
+            "# A widget.\n",
             "class Widget[T]\n",
-            "  # ([`Int`](../std/int.md)) The count.\n",
-            "  pub field count = 0\n",
+            "  # The count.\n",
+            "  pub field count @ Int = 0\n",
             "\n",
-            "  # ([`Int`](../std/int.md)) Gets the count.\n",
-            "  pub def get[U] self\n",
+            "  # Gets the count.\n",
+            "  pub def get[U] self -> Int\n",
             "    self.count\n",
             "\n",
-            "# ([`Widget`](./widget.md)) Builds one.\n",
+            "# Builds one.\n",
             "pub def build[T, :K, ...R]\n",
-            "  # ([`Int`](../std/int.md))\n",
             "  # Number of widgets.\n",
-            "  value\n",
+            "  value @ Int\n",
             "  :mode = fast\n",
             "  ...rest\n",
-            "do\n",
-            "  let local = value\n",
+            "do -> Widget\n",
+            "  let local @ Int = value\n",
             "  local\n",
             "\n",
             "let widget = Widget\n",
             "echo $widget.get()\n",
             "echo $ build 1\n",
-        );
-        harness.open(uri.clone(), source, 1).await;
-
-        let class_hover = hover_at(&mut harness, uri.clone(), 21, 14).await.unwrap();
-        assert_eq!(
-            class_hover.contents,
-            HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: "```dolang\nclass Widget[T]\n```\n\n**Type:** Type\n\nA widget.".to_owned(),
-            })
-        );
-
-        let field_hover = hover_at(&mut harness, uri.clone(), 4, 13).await.unwrap();
-        assert_eq!(
-            field_hover.contents,
-            HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: concat!(
-                    "```dolang\npub field count\n```\n\n",
-                    "**Type:** [`Int`](../std/int.md)\n\n",
-                    "The count."
-                )
-                .to_owned(),
-            })
-        );
-
-        let method_hover = hover_at(&mut harness, uri.clone(), 7, 11).await.unwrap();
-        assert_eq!(
-            method_hover.contents,
-            HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: concat!(
-                    "```dolang\npub def get[U] self -> [`Int`](../std/int.md)\n```\n\n",
-                    "Gets the count."
-                )
-                .to_owned(),
-            })
-        );
-
-        let function_hover = hover_at(&mut harness, uri.clone(), 23, 8).await.unwrap();
-        assert_eq!(
-            function_hover.contents,
-            HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: concat!(
-                    "```dolang\n",
-                    "pub def build[T, :K, ...R] value :mode = fast ...rest -> [`Widget`](./widget.md)\n",
-                    "```\n\n",
-                    "Builds one."
-                )
-                .to_owned(),
-            })
-        );
-
-        let parameter_hover = hover_at(&mut harness, uri.clone(), 18, 16).await.unwrap();
-        assert_eq!(
-            parameter_hover.contents,
-            HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: concat!(
-                    "```dolang\nvalue\n```\n\n",
-                    "**Type:** [`Int`](../std/int.md)\n\n",
-                    "Number of widgets."
-                )
-                .to_owned(),
-            })
-        );
-
-        let local_hover = hover_at(&mut harness, uri.clone(), 19, 3).await.unwrap();
-        assert_eq!(
-            local_hover.contents,
-            HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: "```dolang\nlet local\n```".to_owned(),
-            })
-        );
-
-        assert!(hover_at(&mut harness, uri, 0, 3).await.is_none());
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn hover_prefers_annotations_to_doc_types() {
-        let mut harness = Harness::new();
-        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
-        let uri: Uri = "file:///hover-annotation-test.dol".parse().unwrap();
-        let source = concat!(
-            "\n",
-            "# (Int) Greets someone.\n",
-            "def greet name @Str -> Str\n",
-            "  name\n",
-            "class Box\n",
-            "  # The value.\n",
-            "  pub field value @Int = 0\n",
-            "let count @Int = 0\n",
         );
         harness.open(uri.clone(), source, 1).await;
 
@@ -1990,23 +1831,49 @@ mod tests {
                 value: value.to_owned(),
             })
         };
-        let function_hover = hover_at(&mut harness, uri.clone(), 2, 5).await.unwrap();
+
+        let class_hover = hover_at(&mut harness, uri.clone(), 20, 14).await.unwrap();
         assert_eq!(
-            function_hover.contents,
-            markdown("```dolang\ndef greet name @Str -> Str\n```\n\nGreets someone.")
+            class_hover.contents,
+            markdown("```dolang\nclass Widget[T]\n```\n\nA widget.")
         );
-        let param_hover = hover_at(&mut harness, uri.clone(), 2, 11).await.unwrap();
-        assert_eq!(param_hover.contents, markdown("```dolang\nname @Str\n```"));
-        let field_hover = hover_at(&mut harness, uri.clone(), 6, 13).await.unwrap();
+
+        let field_hover = hover_at(&mut harness, uri.clone(), 4, 13).await.unwrap();
         assert_eq!(
             field_hover.contents,
-            markdown("```dolang\npub field value @Int\n```\n\nThe value.")
+            markdown("```dolang\npub field count @Int\n```\n\nThe count.")
         );
-        let bind_hover = hover_at(&mut harness, uri, 7, 5).await.unwrap();
+
+        let method_hover = hover_at(&mut harness, uri.clone(), 7, 11).await.unwrap();
         assert_eq!(
-            bind_hover.contents,
-            markdown("```dolang\nlet count @Int\n```")
+            method_hover.contents,
+            markdown("```dolang\npub def get[U] self -> Int\n```\n\nGets the count.")
         );
+
+        let function_hover = hover_at(&mut harness, uri.clone(), 22, 8).await.unwrap();
+        assert_eq!(
+            function_hover.contents,
+            markdown(concat!(
+                "```dolang\n",
+                "pub def build[T, :K, ...R] value @ Int :mode = fast ...rest -> Widget\n",
+                "```\n\n",
+                "Builds one."
+            ))
+        );
+
+        let parameter_hover = hover_at(&mut harness, uri.clone(), 17, 20).await.unwrap();
+        assert_eq!(
+            parameter_hover.contents,
+            markdown("```dolang\nvalue @ Int\n```\n\nNumber of widgets.")
+        );
+
+        let local_hover = hover_at(&mut harness, uri.clone(), 18, 3).await.unwrap();
+        assert_eq!(
+            local_hover.contents,
+            markdown("```dolang\nlet local @Int\n```")
+        );
+
+        assert!(hover_at(&mut harness, uri, 0, 3).await.is_none());
     }
 
     /// Regression test: a prelude/import binding has no `definition()` span
