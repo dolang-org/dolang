@@ -1,74 +1,67 @@
 # Type Annotations
 
-Type annotations record what a name is expected to hold. The compiler parses
-them and reports malformed ones, but they have no effect at runtime: nothing is
-checked or converted.
+Type annotations record what a type a binding is expected to hold. They are
+inert at runtime with the exception of class declarations. Type checking is not
+presently implemented, so presently they only serve as documentation.
 
-## Annotating Names
+## Annotation
 
-`@` followed by a type annotates the name before it. Whitespace separates the
-name from the `@`, and the annotation comes before any default value:
+`@` after a binding (parameter, let, etc.) and before any default value
+annotates that binding. Whitespace is optional on either side of the `@`. By
+convention, space is used on both sides except where several bindings are
+introduced on the same line, in which case no space is used.
 
 ```
-let count @Int = 0
-let :name @Str :age @Int = record
+let count @ Int = 0
+let :name@Str :age@Int = record
 
-for key @Sym value @Int = scores
+for key@Sym value@Int = scores
   echo "$key: $value"
 
-def connect :host @Str = "localhost" :port @Int = 8080
+def connect :host@Str = "localhost" :port@Int = 8080
   echo "Connecting to $host:$port"
-```
-
-Annotations work wherever a pattern or parameter list binds a name, including
-vertical layout and `do` parameters:
-
-```
-bind args
-  - path @Str
-  :verbose @Bool = false
-
-let double = do |x @Int| (x * 2)
 ```
 
 The annotation on a rest parameter gives the type of each item it collects:
 
 ```
-def log level @Sym ...parts @Str
+def log level@Sym ...parts@Str
   echo "[$level]" ...parts
 ```
 
-A field declaration that names several fields gives them one annotation:
+A field declaration that names several fields share an annotation, just as
+they share a default value:
 
 ```
 class Point
-  pub field x y @Int = 0
+  pub field x y @ Int = 0
 ```
 
 ## Return Types
 
 `->` followed by whitespace and a type gives a function's return type. It comes
-after the parameters, or after the `do` that ends vertical parameters:
+after parameters for single-line `def`s, or after the `do` for vertical
+parameters:
 
 ```
-def add a @Int b @Int -> Int
+def add a@Int b@Int -> Int
   (a + b)
 
 def greeting() -> Str
   "hello"
 
 def build
-  :tag @Str
-  ...args @Str
+  :tag @ Str
+  ...args @ Str
 do -> Array[Str]
-  [tag, ...args]
+  [tag, ...args.pos_only()]
 ```
 
 A `do` block's return type follows its parameters:
 
 ```
-let double = do |x @Int| -> Int (x * 2)
-let halve = (do |x @Int| -> Int x // 2)
+let double = do |x @ Int| -> Int (x * 2)
+let halve = (do |x @ Int| -> Int x // 2)
 ```
 
 ## Binders
@@ -76,14 +69,14 @@ let halve = (do |x @Int| -> Int x // 2)
 `[]` directly after the name of a `def` or `class` declares binders: names that
 stand for types within the declaration. A binder is a name, `:name` for a
 keyword type argument, or `...name` for any number of further type arguments.
-A rest binder must come last.
+A variadic binder must come last.
 
 ```
-def first[T] items @Array[T] -> T
+def first[T] items @ Array[T] -> T
   items[0]
 
 class Table[K, V]
-  pub field rows @Dict[K, V] = {}
+  pub field rows @ Dict[K, V] = {}
 ```
 
 A superclass can take type arguments:
@@ -94,9 +87,9 @@ class Registry[V]: Table[Sym, V]
 
 ## Type-Only Imports
 
-`@` before an item in an import's item list binds the item for types alone. The
-item is not imported, and a module none of whose items are imported is not
-loaded:
+`@` before an item in an import's item list imports it for type annotation
+only. No binding is created, and the module is not imported at all if only
+types are imported from it.
 
 ```
 import geometry:
@@ -104,25 +97,26 @@ import geometry:
   - @Point
   - @Vector: Offset
 
-def shift p @Point by @Offset -> Point
-  p.add $by
+def shift p@Point by@Offset -> Point
+  (p + by)
 ```
 
 ## Type Syntax
 
-An annotation or return type is a compact type, which whitespace ends. A type
-that needs whitespace or operators must be parenthesized. This holds within
-full expressions too: in `(do |x| -> Array[Int] [x])`, the space after
-`Array[Int]` ends the type. Within a type's own `()`, `[]`, and `{}`,
-whitespace is insignificant.
+An annotation or return type is a compact type expression which admits only
+dotted type names and application of generic arguments. More complex type
+expressions require parentheses for grouping. This applies
+*even in contexts that are otherwise space-insensitive*: in
+`(do |x @ Int| -> Array[Int] [x])`, the space after `Array[Int]` ends the type.
+Within a type's own `()`, `[]`, and `{}`, whitespace is insignificant.
 
 | Syntax                                | Meaning                   |
 | ------------------------------------- | ------------------------- |
 | `Str`, `time.Duration`                | Named type                |
-| `:sym:`, `"str"`, `42`, `true`, `nil` | Constant                  |
-| `Array[Int]`                          | Type arguments            |
+| `:SYM:`, `"str"`, `42`, `true`, `nil` | Constant                  |
+| `Array[Int]`                          | Apply generic arguments   |
 | `(Str \| Path)`                       | Union                     |
-| `{name: Str, ?port: Int}`             | Dict schema               |
+| `{name: Str, ?port: Int}`             | Schema                    |
 | `(Int, ?Int) -> Int`                  | Function                  |
 
 ### Names
@@ -148,21 +142,20 @@ A constant type is a symbol, string, integer, boolean, or `nil`. A string
 cannot contain interpolations.
 
 ```
-let mode @(:TARGET: | :LINK:) = :TARGET:
+let mode @ (:TARGET: | :LINK:) = :TARGET:
 ```
 
 ### Type Arguments
 
-`[]` directly after a type supplies its arguments. At statement level, a space
-before the `[` ends the type instead.
+`[]` directly after a type applies generic arguments.
 
 The items of `[]`, `()`, and `{}` share one syntax: a type, `key: type`, or
 `...type` for any number of further items.
 
 ```
-let names @Array[Str] = []
-let index @Dict[Str, Array[Int]] = {}
-let row @Tuple[...Str] = []
+let names @ Array[Str] = []
+let index @ Dict[Str, Array[Int]] = {}
+let row @ Tuple[...Str] = Tuple ["id", "name"]
 ```
 
 ### Unions
@@ -171,7 +164,7 @@ let row @Tuple[...Str] = []
 a long one break across lines:
 
 ```
-let target @(
+let target @ (
   | Str
   | fs.Path
   | nil
@@ -180,27 +173,28 @@ let target @(
 
 There is no shorthand for a type that also accepts `nil`; write `(T | nil)`.
 
-### Dict Schemas
+### Schemas
 
-A schema lists the keys a dict has and the type of each value. Bare keys are
-symbols and quoted keys are strings, as in dict literals. `?` before a key marks
-it optional, and `...type` gives the type of any remaining entries:
+A schema lists the keys a `Dict`, argument pack, or similar construct has and
+the type of each value. Bare keys are symbols and quoted keys are strings, as
+in dict literals. `?` before a key marks it optional, and `...type` gives the
+type of any remaining entries:
 
 ```
-let options @{name: Str, ?port: Int, ...Dict[Str, Value]} = {name: "db"}
+let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
 ```
 
 ### Functions
 
 `->` separates a function's parameters from its return type. Parameters are
-written as in `()`, with `?` before an item marking it optional. A single
-parameter needs no parentheses, and `->` groups to the right:
+written in `()`, with `?` before an item marking it optional. Parentheses can be
+omitted for a single parameter. `->` groups to the right:
 
 ```
-let add @((Int, ?Int) -> Int) = nil
-let connect @((Str, ?port: Int) -> Conn) = nil
-let curried @(Int -> Int -> Int) = nil
-let thunk @(() -> Str) = nil
+let add @ ((Int, ?Int) -> Int) = do |a b = 0| (a + b)
+let address @ ((Str, ?port: Int) -> Str) = do |host :port = 80| "$host:$port"
+let curried @ (Int -> Int -> Int) = do |a| do |b| (a + b)
+let thunk @ (() -> Str) = do "hello"
 ```
 
 A required positional parameter cannot follow an optional one, and a rest
