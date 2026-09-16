@@ -1682,7 +1682,7 @@ pub class Dict[S @ {...}]
   # When inherited by a Do subclass, `copy()` calls the subclass constructor with
   # the source dict as a single positional argument.
   #
-  pub def copy self -> Dict
+  pub def copy self -> Dict[S]
     ...
 
   #

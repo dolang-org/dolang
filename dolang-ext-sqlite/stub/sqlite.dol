@@ -15,8 +15,12 @@
 # transport on Unix hosts, so `docker.with` and `sudo.with` work. Remote
 # transports and Windows UAC elevation are not supported.
 
-import std:
-  - RuntimeError
+import
+  fs:
+    - @Path
+  std:
+    - RuntimeError
+    - @Fmt
 
 # Raised when a SQLite operation fails for any reason other than the database
 # being locked.

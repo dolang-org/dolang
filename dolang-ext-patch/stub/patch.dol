@@ -3,6 +3,8 @@
 import std:
   - RuntimeError
   - ValueError
+import fs:
+  - @Path
 
 # Raised when a patch does not apply cleanly.
 #

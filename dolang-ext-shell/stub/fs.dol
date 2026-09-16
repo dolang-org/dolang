@@ -11,8 +11,14 @@
 # are listed with [`streams`](fs.streams).
 
 import
+  fs.unix:
+    - @Mode
+  @security.macos
+  @security.nfs4
+  @security.unix
   security.windows:
     - @Sid
+    - @SecDesc
   time:
     - @DateTime
 
@@ -2082,7 +2088,7 @@ pub def acl
   # Resolution mode. Defaults to
   # `:TARGET:`.
   :resolve @ Resolve = nil
-do -> (Acl | nil)
+do -> (security.unix.Acl | security.nfs4.Acl | security.macos.Acl | nil)
   ...
 
 # Sets or removes an ACL.

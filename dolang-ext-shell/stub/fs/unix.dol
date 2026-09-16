@@ -1,5 +1,8 @@
 # Unix filesystem types.
 
+import security.unix:
+  - @Permission
+
 # Unix `st_mode` bits: permissions, the set-user-ID/set-group-ID/sticky bits,
 # and the file type.
 #

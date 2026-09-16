@@ -345,7 +345,7 @@ def extract_doc_json spec out_dir
   let workers = sys.cpu_info().logical_count
   strand.pool $workers $collect_doc_jobs() do |job|
     let :name :path = job
-    run (spec.bin "dolang") -m compile extract --doc --module $name $path stdout: (out_dir / "$name.json")
+    run (spec.bin "dolang") -m compile extract --doc --strict --module $name $path stdout: (out_dir / "$name.json")
 
 # Extracts the JSON cache and regenerates the docs/api page tree from it.
 #

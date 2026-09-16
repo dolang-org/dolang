@@ -683,10 +683,11 @@ class Document
 # this: a description built from a file that did not compile is missing
 # whatever the compiler could not read, and nothing downstream can tell that
 # from a file that simply declares less -- so it is not written at all.
-def build_extract source display_path module doc all
+def build_extract source display_path module doc all strict
   let unit = compile.compile $display_path $source recover: true document: true
   let diagnostics = [...unit.diagnostics()]
-  if (doc && diagnostics.any do |diag| (diag.severity == :ERROR:))
+  if ((doc || strict) && diagnostics.any do |diag|
+    (diag.severity == :ERROR: || (strict && diag.severity == :WARNING:)))
     throw std.RuntimeError ("\n".join $ diagnostics.map do |diag| diag.render())
   let index = Index $unit
   let id_to_index = index.id_to_index()
@@ -705,14 +706,14 @@ def build_extract source display_path module doc all
       doc: $Document(source, module, all, index).result(unit, display_path)
 
 def extract p
-  let :doc :module :all :path ... = p.extract
+  let :doc :module :all :strict :path ... = p.extract
   let source = if (path == nil)
     shell.stdin.read()
   else
     Path(path).read()
   let display_path = (path || "<stdin>")
   let result = try
-    build_extract $source $display_path $module $doc $all
+    build_extract $source $display_path $module $doc $all $strict
   catch std.RuntimeError: e
     echo $e
     shell.exit 1
@@ -732,7 +733,8 @@ def serve_line line
       "module": module = nil
       "doc": doc = false
       "all": all = false
-    build_extract $source (path || "<server>") $module $doc $all
+      "strict": strict = false
+    build_extract $source (path || "<server>") $module $doc $all $strict
   catch e
     $
       error: "$e"
@@ -745,7 +747,7 @@ def serve_line line
 # only used for diagnostics and the output's `source.path`):
 #
 # ```
-# {"source": "let x = 1", "path": "example.dol", "doc": false, "module": null, "all": false}
+# {"source": "let x = 1", "path": "example.dol", "doc": false, "module": null, "all": false, "strict": false}
 # ```
 #
 # Meant for a client that would otherwise shell out to `extract` once per
@@ -770,6 +772,8 @@ args.with
       help: Module name recorded in the output
     - flag: all
       help: With --doc, include declarations that are not `pub`
+    - flag: strict
+      help: Fail when compilation emits a warning
     - arg: path
       default: nil
       help: Source file; standard input is read when omitted

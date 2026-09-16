@@ -210,7 +210,7 @@ do
 # Creates a pipeline stage that collects input values.
 pub def collect
   # collection to add to (defaults to a new `array`)
-  :target @ output = nil
+  :target @ Sinkable = nil
 do
   ...
 
@@ -231,7 +231,7 @@ do
 # Creates a pipeline stage that emits values from an iterable.
 pub def from
   # an iterable to emit values from
-  value @ input
+  value @ Iterable
 do
   ...
 
@@ -282,7 +282,7 @@ do
 # Writes a value to the strand-local output.
 pub def put
   # value to write
-  value @ input
+  value
 do
   ...
 

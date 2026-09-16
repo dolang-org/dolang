@@ -22,6 +22,9 @@
 #   echo $id $node.span
 # ```
 
+import term:
+  - @Text
+
 # A staged compilation unit.
 #
 # Provides diagnostics and document nodes for one source file before emitting

@@ -4,8 +4,15 @@
 # See [External Programs](../../shell/external-programs.md) for lookup,
 # redirection, capture and pipeline behavior.
 
-import std:
-  - @RuntimeError
+import
+  fs:
+    - @Path
+  security.unix:
+    - @Identity
+  security.windows:
+    - @TokenInfo
+  time:
+    - @Duration
 
 # Raised when an external program exits unsuccessfully.
 #

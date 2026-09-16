@@ -4,6 +4,9 @@
 # For how byte streams are divided into values when communicating with external
 # programs, see [Output mode](../../shell/external-programs.md#output-mode).
 
+import fs:
+  - @Path
+
 # The process's standard input.
 #
 # Obtained as [`shell.stdin`](shell.stdin).

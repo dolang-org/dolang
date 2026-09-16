@@ -23,6 +23,17 @@
 # the online join would need network, a reachable domain controller and
 # credentials at exactly the wrong moment.
 
+import
+  fs:
+    - @Path
+  security.windows:
+    - @SecDesc
+    - @Sid
+    - @SidName
+  time:
+    - @DateTime
+    - @Duration
+
 # A Windows local user, identified by immutable SID.
 #
 # The SID is what makes this a durable handle: the account may be renamed, by

@@ -1,5 +1,7 @@
 # Run block-scoped operations on SSH hosts through a remote VFS.
 import _ssh
+  fs:
+    - @Path
 
 # Runs `block` on `host` through SSH and a remote VFS. Filesystem access,
 # spawned programs, environment, working directory, system information, and

@@ -62,6 +62,12 @@
 # | `:INACTIVE:` | Services that are stopped       |
 # | `:ALL:`      | Both (the default)              |
 
+import
+  fs:
+    - @Path
+  security.windows:
+    - @SecDesc
+
 # Access rights for a [`ScManager`](winscm.ScManager) handle.
 #
 # A mask is built from symbols, and every API taking one also accepts a bare

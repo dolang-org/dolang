@@ -2,6 +2,9 @@
 #
 # The API is VFS-transparent: archive paths use the active VFS context.
 
+import fs:
+  - @Path
+
 # An open ZIP archive.
 #
 # Returned by [`open`](zip.open). Only one file can be open at a time

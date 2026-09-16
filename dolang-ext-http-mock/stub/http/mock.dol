@@ -28,6 +28,9 @@
 #       body: $req.body
 # ```
 
+import url:
+  - @Url
+
 # A request the mock server received.
 #
 # Returned by [`Mock.received`](http.mock.Mock.received) and

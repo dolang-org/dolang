@@ -48,10 +48,6 @@
 # | [`WouldBlockError`](sys.WouldBlockError)                           | Operation would block                                |
 # | [`WriteZeroError`](sys.WriteZeroError)                             | Write wrote zero bytes                               |
 
-import std:
-  - @RuntimeError
-  - @ValueError
-
 # `Error` is raised for system and I/O failures.
 #
 # It can be subclassed for library-specific operational failures.

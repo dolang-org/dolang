@@ -1,5 +1,8 @@
 # Unix security types and uid/gid identity lookups.
 
+import uuid:
+  - @Uuid
+
 # Unix process identity information for the active VFS target.
 #
 # Returned by [`id`](security.unix.id).

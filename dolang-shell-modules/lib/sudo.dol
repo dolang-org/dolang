@@ -1,6 +1,8 @@
 # Run direct commands or block-scoped operations with elevated privileges via
 # `sudo`.
 import _vfs shell proc time
+  fs:
+    - @Path
   strand:
     - pipeline
 

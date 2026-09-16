@@ -1,5 +1,11 @@
 # Streams TAR archives with optional gzip or zstd compression.
 
+import
+  fs:
+    - @Path
+  time:
+    - @DateTime
+
 # Metadata and streaming content for the current TAR entry.
 #
 # The handle remains valid only until its parent [`Reader`](tar.Reader)

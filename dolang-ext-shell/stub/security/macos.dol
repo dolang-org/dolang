@@ -1,6 +1,9 @@
 # macOS extended access-control-list types and principal identity resolution
 # between Unix uid/gid values and macOS `guid_t` UUIDs.
 
+import uuid:
+  - @Uuid
+
 # macOS extended ACE permission bits.
 pub class Mask
   # Constructs a mask from symbols or one iterable of symbols.

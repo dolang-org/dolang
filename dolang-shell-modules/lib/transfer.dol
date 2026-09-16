@@ -16,10 +16,9 @@ import _vfs digest fs http json proc progress shell std sys tar zip
   url:
     - Url
 
-import std:
-  - @RuntimeError
-
 import fs.unix: unix_fs
+import fs.unix:
+  - @Mode
 import security.unix: security_unix
 
 let DIGESTS = $

@@ -44,6 +44,9 @@
 # | `:TARGET:` | Follow a registry link (the default) |
 # | `:LINK:`   | Open the link key itself             |
 
+import security.windows:
+  - @SecDesc
+
 # Access rights for a registry key.
 #
 # A mask is built from symbols, and most APIs taking one also accept a bare

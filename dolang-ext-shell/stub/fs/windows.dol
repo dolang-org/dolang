@@ -1,6 +1,8 @@
 # Windows filesystem types and security descriptor access.
 
 import @fs
+import security.windows:
+  - @SecDesc
 
 # [`fs.Path`](fs.Path) using Windows path syntax.
 #
