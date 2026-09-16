@@ -1,7 +1,5 @@
 use std::{borrow::Cow, mem};
 
-use dolang::runtime::value::fmt::Format;
-
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
@@ -9,7 +7,10 @@ use dolang::runtime::{
     error::ResultExt,
     object::{Mut, Ref, TypeBuilder, Unpack, UnpackItem},
     unpack,
-    value::{Nil, PinStr, TypeObject},
+    value::{
+        Nil, PinStr, TypeObject, View,
+        fmt::{Format, Kind, Pad},
+    },
     vm::Register,
 };
 use regex as rx;
@@ -165,26 +166,44 @@ impl<'v> Object<'v> for Regex {
                         .transpose()?;
 
                     if let Some(rep) = replacement.as_str(strand) {
-                        // String replacement: delegate to regex crate
+                        // A Str is literal replacement text. Capture expansion belongs to Fmt.
                         let result = match limit_val {
-                            None => strand.access(|x| annex.regex.replace_all(&haystack, rep.as_str(x))),
+                            None => strand.access(|x| {
+                                annex
+                                    .regex
+                                    .replace_all(&haystack, rx::NoExpand(rep.as_str(x)))
+                            }),
                             Some(0) => Cow::Borrowed(&*haystack),
-                            Some(n) if n > 0 => strand.access(|x| annex.regex.replacen(&haystack, n as usize, rep.as_str(x))),
+                            Some(n) if n > 0 => strand.access(|x| {
+                                annex.regex.replacen(
+                                    &haystack,
+                                    n as usize,
+                                    rx::NoExpand(rep.as_str(x)),
+                                )
+                            }),
                             Some(_) => {
                                 return Err(Error::value(strand, "limit must be >= 0"))
                             }
                         };
                         Output::set(strand, out, result.as_ref());
+                    } else if replacement.as_fmt(strand.vm()).is_some() {
+                        let max = replacement_limit(strand, limit_val)?;
+                        let mut result = String::new();
+                        let mut last_end = 0;
+                        for (count, caps) in annex.regex.captures_iter(&haystack).enumerate() {
+                            if count >= max {
+                                break;
+                            }
+                            let matched = caps.get(0).unwrap();
+                            result.push_str(&haystack[last_end..matched.start()]);
+                            render_replacement(strand, &replacement, &caps, &mut result)?;
+                            last_end = matched.end();
+                        }
+                        result.push_str(&haystack[last_end..]);
+                        Output::set(strand, out, result.as_str());
                     } else {
                         // Callback replacement: iterate matches manually
-                        let max = match limit_val {
-                            None => usize::MAX,
-                            Some(0) => 0,
-                            Some(n) if n > 0 => n as usize,
-                            Some(_) => {
-                                return Err(Error::value(strand, "limit must be >= 0"))
-                            }
-                        };
+                        let max = replacement_limit(strand, limit_val)?;
                         let mut result = String::new();
                         let mut last_end = 0;
                         for (count, caps) in annex.regex.captures_iter(&haystack).enumerate() {
@@ -418,6 +437,80 @@ impl<'v> Object<'v> for Regex {
                     });
                 Ok(())
             })
+    }
+}
+
+fn replacement_limit<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    limit: Option<i64>,
+) -> Result<'v, 's, usize> {
+    match limit {
+        None => Ok(usize::MAX),
+        Some(n) if n >= 0 => Ok(n as usize),
+        Some(_) => Err(Error::value(strand, "limit must be >= 0")),
+    }
+}
+
+/// Renders a native template against one set of captures.
+fn render_replacement<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    template: &Value<'v>,
+    captures: &rx::Captures<'_>,
+    out: &mut dyn Format<'v>,
+) -> Result<'v, 's, ()> {
+    let template = template.as_fmt(strand.vm()).unwrap();
+    let len = template.len(strand)?;
+    strand.with_slots_sync(|strand, [mut segment, mut value]| {
+        for index in 0..len {
+            template.get(strand, index, &mut segment)?;
+            match segment.view(strand.vm()) {
+                View::Str(text) => {
+                    let text = text.to_string();
+                    out.write_str(strand, &text)?;
+                }
+                View::FmtValue(bound) => {
+                    let mut spec = bound.spec(strand);
+                    let kind = *spec.kind.get_or_insert(Kind::Str);
+                    bound.value(strand, &mut value)?;
+                    if kind == Kind::Str && value.as_fmt(strand.vm()).is_some() {
+                        let mut padded = Pad::new(spec, out);
+                        render_replacement(strand, &value, captures, &mut padded)?;
+                        padded.finish(strand)?;
+                    } else {
+                        value.fmt(strand, &spec, out)?;
+                    }
+                }
+                View::FmtParam(param) => {
+                    let mut spec = param.spec(strand);
+                    spec.kind.get_or_insert(Kind::Str);
+                    param.name(strand, &mut value)?;
+                    let matched = match value.view(strand.vm()) {
+                        View::Int(index) => usize::try_from(index)
+                            .ok()
+                            .and_then(|index| captures.get(index))
+                            .ok_or_else(|| missing_capture(strand, &value))?,
+                        View::Sym(name) => captures
+                            .name(name.as_str(strand))
+                            .ok_or_else(|| missing_capture(strand, &value))?,
+                        _ => unreachable!("FmtParam names are Int or Sym"),
+                    };
+                    Output::set(strand, &mut value, matched.as_str());
+                    value.fmt(strand, &spec, out)?;
+                }
+                _ => unreachable!("Fmt segments are Str, FmtValue, or FmtParam"),
+            }
+        }
+        Ok(())
+    })
+}
+
+fn missing_capture<'v, 's>(strand: &mut Strand<'v, 's>, name: &Value<'v>) -> Error<'v, 's> {
+    match name
+        .as_int(strand)
+        .and_then(|index| usize::try_from(index).ok())
+    {
+        Some(index) => Error::missing_positional(strand, index),
+        None => Error::missing_key(strand, name),
     }
 }
 
