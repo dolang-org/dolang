@@ -8,5 +8,19 @@ let matching = $
       $path
 echo $matching
 
-let digits = regex.Regex "[0-9]+"
-echo $ digits.replace "job-123 finished in 45 seconds" "##"
+let date = regex.Regex r"(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})"
+let text = "Released 2025-04-12; updated 2026-09-16"
+
+let first = date.match $text
+echo "First date: $first at bytes $(first.start)..$(first.end)"
+echo "Year: $(first["year"]), month: $(first["month"])"
+
+for caps = date.find $text
+  echo "Found: $caps"
+
+echo $ date.replace $text t"$#month/$#day/$#year"
+echo $ date.replace $text t"[$#0]" limit: 1
+
+let separator = regex.Regex r"[;,]\s*"
+echo $ [...separator.split "alpha, beta; gamma"]
+echo $ [...separator.rsplit "alpha, beta; gamma" limit: 1]
