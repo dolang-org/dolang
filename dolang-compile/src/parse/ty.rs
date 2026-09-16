@@ -60,7 +60,7 @@ impl Parser<'_> {
                 if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
                     self.advance();
                 }
-                let ty = self.with_type_mode(|this| this.parse_type_compact(scope))?;
+                let ty = self.with_inline_shell(|this| this.parse_type_compact(scope))?;
                 Some(Box::new(Annot { at_span, ty }))
             }
             _ => None,
@@ -73,7 +73,7 @@ impl Parser<'_> {
             return Ok(None);
         };
         let arrow_span = self.advance();
-        let ty = self.with_type_mode(|this| {
+        let ty = self.with_inline_shell(|this| {
             this.expect(scope, &[ExpectKind::ArgSep])?;
             this.parse_type_compact(scope)
         })?;
@@ -172,25 +172,6 @@ impl Parser<'_> {
         open: Span,
     ) -> Result<(Vec<TypeArg>, Span)> {
         self.parse_type_args(scope, Delim::Bracket, open)
-    }
-
-    /// Lex a compact type so that whitespace ends it, even within a full expression.
-    ///
-    /// The token before the type must already be consumed.
-    pub(super) fn with_type_mode<R>(
-        &mut self,
-        f: impl for<'b> FnOnce(&'b mut Self) -> Result<R>,
-    ) -> Result<R> {
-        if self.mode() != Mode::FullExpr {
-            return f(self);
-        }
-        let res = self.with_mode(Mode::Type, f)?;
-        // Finding the end of the type peeked the whitespace after it, which means
-        // nothing in the enclosing full expression
-        if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
-            self.advance();
-        }
-        Ok(res)
     }
 
     /// Parse a compact type, which whitespace ends in shell-like contexts.

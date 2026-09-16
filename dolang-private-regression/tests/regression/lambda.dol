@@ -11,3 +11,16 @@ let thunk = do
   assert_eq $bar 0
 thunk()
 assert_eq $foo false
+
+# Full-expression lambdas use the same parameter grammar as statement-level lambdas.
+let add_default = (do |a b = 0| a + b)
+assert_eq (add_default 2) 2
+assert_eq (add_default 2 3) 5
+
+let endpoint = (do |host :port = 80| [host, port])
+assert_eq (endpoint "localhost") ["localhost", 80]
+assert_eq (endpoint "localhost" port: 443) ["localhost", 443]
+
+let renamed = (do |value: received = 1| received)
+assert_eq $renamed() 1
+assert_eq (renamed value: 2) 2
