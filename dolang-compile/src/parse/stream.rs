@@ -274,6 +274,25 @@ impl Parser<'_> {
         res
     }
 
+    /// Lex shell-like tokens without processing indentation while within a full expression.
+    ///
+    /// The token before the inline region must already be consumed.
+    pub(super) fn with_inline_shell<R>(
+        &mut self,
+        f: impl for<'b> FnOnce(&'b mut Self) -> Result<R>,
+    ) -> Result<R> {
+        if self.mode() != Mode::FullExpr {
+            return f(self);
+        }
+        let res = self.with_mode(Mode::InlineShell, f)?;
+        // Finding the end of the inline region may have peeked the whitespace
+        // after it, which means nothing in the enclosing full expression.
+        if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+            self.advance();
+        }
+        Ok(res)
+    }
+
     pub(super) fn peek(&mut self) -> Result<Option<Token>> {
         let res = self.lex.peek();
         if res.is_err() {

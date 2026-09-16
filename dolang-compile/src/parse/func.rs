@@ -18,9 +18,11 @@ impl Parser<'_> {
         match self.peek()? {
             Some(token!(TokenInfo::Op(Op::Bar))) => {
                 self.advance();
-                let params = self.parse_params(scope, ParamMode::HorizFunc)?;
-                self.expect(scope, &[ExpectKind::Op(Op::Bar)])?;
-                Ok(params)
+                self.with_inline_shell(|this| {
+                    let params = this.parse_params(scope, ParamMode::HorizFunc)?;
+                    this.expect(scope, &[ExpectKind::Op(Op::Bar)])?;
+                    Ok(params)
+                })
             }
             _ => Ok(vec![]),
         }

@@ -42,7 +42,7 @@ impl Parser<'_> {
             }
             let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
             self.expect(scope, &[ExpectKind::ArgSep])?;
-            let ty = self.with_type_mode(|this| this.parse_type_compact(scope))?;
+            let ty = self.with_inline_shell(|this| this.parse_type_compact(scope))?;
             return Ok(Stmt::TypeAlias(TypeAlias {
                 ident,
                 binders,

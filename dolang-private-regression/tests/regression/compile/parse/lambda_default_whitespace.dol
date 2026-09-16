@@ -1,0 +1,6 @@
+let compact = (do |a b=0| a + b)
+# error: got constant, expected: <whitespace>
+#   --> lambda_default_whitespace.dol:LL:LL
+#    |
+# LL | let compact = (do |a b=0| a + b)
+#    |                        ^
