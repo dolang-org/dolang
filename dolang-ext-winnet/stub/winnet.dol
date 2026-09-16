@@ -34,7 +34,7 @@ pub class User
   # The account's SID.
   #[getter]
   pub def sid self -> Sid
-    throw nil
+    ...
 
   # Reads a fresh snapshot of the account.
   #
@@ -42,7 +42,7 @@ pub class User
   #
   # [`UserInfo`](winnet.UserInfo).
   pub def info self -> UserInfo
-    throw nil
+    ...
 
   # Updates account state.
   #
@@ -98,7 +98,7 @@ pub class User
     # Whether the user may change the password.
     :password_cannot_change @ Bool = nil
   do -> UserInfo
-    throw nil
+    ...
 
   # Lists the account rights assigned through the local security policy.
   #
@@ -107,7 +107,7 @@ pub class User
   # An [`Array`](std.Array) of [`Str`](std.Str), such as
   # `["SeServiceLogonRight"]`.
   pub def rights self -> Array[Str]
-    throw nil
+    ...
 
   # Grants an account right.
   pub def grant_right
@@ -115,7 +115,7 @@ pub class User
     # Right name, such as `"SeServiceLogonRight"`.
     name @ Str
   do
-    throw nil
+    ...
 
   # Revokes an account right.
   #
@@ -125,11 +125,11 @@ pub class User
     # Right name.
     name @ Str
   do
-    throw nil
+    ...
 
   # Deletes the account.
   pub def delete self
-    throw nil
+    ...
 
 # A snapshot of a Windows user account's mutable state.
 #
@@ -140,100 +140,100 @@ pub class UserInfo
   # The account's SID.
   #[getter]
   pub def sid self -> Sid
-    throw nil
+    ...
 
   # Account name.
   #[getter]
   pub def name self -> Str
-    throw nil
+    ...
 
   # Display name.
   #[getter]
   pub def full_name self -> (Str | nil)
-    throw nil
+    ...
 
   # Administrative account comment.
   #[getter]
   pub def comment self -> (Str | nil)
-    throw nil
+    ...
 
   # User-facing account comment.
   #[getter]
   pub def user_comment self -> (Str | nil)
-    throw nil
+    ...
 
   # Home directory.
   #[getter]
   pub def home_dir self -> (Path | nil)
-    throw nil
+    ...
 
   # Drive designator assigned to the home directory
   # at logon, such as `"Z:"`.
   #[getter]
   pub def home_dir_drive self -> (Str | nil)
-    throw nil
+    ...
 
   # Profile path.
   #[getter]
   pub def profile self -> (Path | nil)
-    throw nil
+    ...
 
   # Logon script path.
   #[getter]
   pub def script_path self -> (Path | nil)
-    throw nil
+    ...
 
   # Complete native account flags.
   #[getter]
   pub def flags self -> UserFlags
-    throw nil
+    ...
 
   # Whether the account is disabled.
   #[getter]
   pub def disabled self -> Bool
-    throw nil
+    ...
 
   # Whether the password is exempt from expiry.
   #[getter]
   pub def password_never_expires self -> Bool
-    throw nil
+    ...
 
   # Whether the user may change the password.
   #[getter]
   pub def password_cannot_change self -> Bool
-    throw nil
+    ...
 
   # Time since the password was last
   # changed.
   #[getter]
   pub def password_age self -> Duration
-    throw nil
+    ...
 
   # Whether the password has expired.
   #[getter]
   pub def password_expired self -> Bool
-    throw nil
+    ...
 
   # Last recorded logon.
   #[getter]
   pub def last_logon self -> (DateTime | nil)
-    throw nil
+    ...
 
   # Account expiration, or `nil` when
   # the account never expires.
   #[getter]
   pub def account_expires self -> (DateTime | nil)
-    throw nil
+    ...
 
   # Recorded failed password attempts.
   #[getter]
   pub def bad_password_count self -> Int
-    throw nil
+    ...
 
   # Recorded successful logons.
   #[getter]
   pub def logon_count self -> Int
-    throw nil
+    ...
 
 # Native Windows user-account flags.
 #
@@ -246,7 +246,7 @@ pub class UserFlags
   # module does not name.
   #[getter]
   pub def int self -> Int
-    throw nil
+    ...
 
 # A Windows local group, identified by immutable SID.
 #
@@ -259,7 +259,7 @@ pub class Group
   # The group's SID.
   #[getter]
   pub def sid self -> Sid
-    throw nil
+    ...
 
   # Reads a fresh snapshot of the group.
   #
@@ -267,7 +267,7 @@ pub class Group
   #
   # [`GroupInfo`](winnet.GroupInfo).
   pub def info self -> GroupInfo
-    throw nil
+    ...
 
   # Updates the group.
   #
@@ -284,7 +284,7 @@ pub class Group
     # Administrative comment. `nil` clears it.
     :comment @ (Str | nil) = nil
   do -> GroupInfo
-    throw nil
+    ...
 
   # Lists the group's members.
   #
@@ -293,7 +293,7 @@ pub class Group
   # An [`Iter`](std.Iter) yielding
   # [`security.windows.SidName`](security.windows.SidName)s.
   pub def members self -> Iter[SidName]
-    throw nil
+    ...
 
   # Adds a member to the group.
   #
@@ -307,7 +307,7 @@ pub class Group
     # Account name or SID.
     principal @ (Str | Sid)
   do
-    throw nil
+    ...
 
   # Removes a member from the group.
   #
@@ -321,7 +321,7 @@ pub class Group
     # Account name or SID.
     principal @ (Str | Sid)
   do
-    throw nil
+    ...
 
   # Lists the account rights assigned through the local security policy.
   #
@@ -329,7 +329,7 @@ pub class Group
   #
   # An [`Array`](std.Array) of [`Str`](std.Str).
   pub def rights self -> Array[Str]
-    throw nil
+    ...
 
   # Grants an account right.
   pub def grant_right
@@ -337,7 +337,7 @@ pub class Group
     # Right name, such as `"SeServiceLogonRight"`.
     name @ Str
   do
-    throw nil
+    ...
 
   # Revokes an account right.
   #
@@ -347,11 +347,11 @@ pub class Group
     # Right name.
     name @ Str
   do
-    throw nil
+    ...
 
   # Deletes the group.
   pub def delete self
-    throw nil
+    ...
 
 # A snapshot of a Windows local group.
 #
@@ -361,17 +361,17 @@ pub class GroupInfo
   # The group's SID.
   #[getter]
   pub def sid self -> Sid
-    throw nil
+    ...
 
   # Group name.
   #[getter]
   pub def name self -> Str
-    throw nil
+    ...
 
   # Administrative comment.
   #[getter]
   pub def comment self -> (Str | nil)
-    throw nil
+    ...
 
 # The local password and account-lockout policy.
 #
@@ -381,49 +381,49 @@ pub class AccountPolicy
   # Minimum number of characters a password must have.
   #[getter]
   pub def min_password_length self -> Int
-    throw nil
+    ...
 
   # Maximum password age, or `nil`
   # when passwords do not expire.
   #[getter]
   pub def max_password_age self -> (Duration | nil)
-    throw nil
+    ...
 
   # Minimum time before a password may
   # be changed again.
   #[getter]
   pub def min_password_age self -> Duration
-    throw nil
+    ...
 
   # Delay before users are forcibly
   # logged off once their valid logon hours expire, or `nil` when forced logoff
   # is disabled.
   #[getter]
   pub def force_logoff self -> (Duration | nil)
-    throw nil
+    ...
 
   # Number of previous passwords retained.
   #[getter]
   pub def password_history_length self -> Int
-    throw nil
+    ...
 
   # Time a locked account stays
   # locked.
   #[getter]
   pub def lockout_duration self -> Duration
-    throw nil
+    ...
 
   # Time after which the failed-logon
   # counter resets.
   #[getter]
   pub def lockout_observation_window self -> Duration
-    throw nil
+    ...
 
   # Failed logons allowed before lockout. Zero
   # disables lockout.
   #[getter]
   pub def lockout_threshold self -> Int
-    throw nil
+    ...
 
 # A local SMB share, identified by its immutable name.
 #
@@ -433,7 +433,7 @@ pub class Share
   # The share name.
   #[getter]
   pub def name self -> Str
-    throw nil
+    ...
 
   # Reads a fresh snapshot of the share.
   #
@@ -441,7 +441,7 @@ pub class Share
   #
   # [`ShareInfo`](winnet.ShareInfo).
   pub def info self -> ShareInfo
-    throw nil
+    ...
 
   # Updates the supplied fields.
   #
@@ -460,11 +460,11 @@ pub class Share
     # Security descriptor, self-relative packet, or declarative descriptor.
     :sec_desc @ (SecDesc | Bin | Dict) = nil
   do -> ShareInfo
-    throw nil
+    ...
 
   # Deletes the share, invalidating this handle.
   pub def delete self
-    throw nil
+    ...
 
 # A snapshot of a local SMB share.
 #
@@ -474,51 +474,51 @@ pub class ShareInfo
   # Share name.
   #[getter]
   pub def name self -> Str
-    throw nil
+    ...
 
   # Resource kind: `:DISKTREE:`, `:PRINTQ:`,
   # `:DEVICE:`, or `:IPC:`.
   #[getter]
   pub def kind self -> Sym
-    throw nil
+    ...
 
   # Whether the native special-share flag is set.
   #[getter]
   pub def special self -> Bool
-    throw nil
+    ...
 
   # Whether the native temporary-share flag is set.
   #[getter]
   pub def temporary self -> Bool
-    throw nil
+    ...
 
   # Comment.
   #[getter]
   pub def comment self -> (Str | nil)
-    throw nil
+    ...
 
   # Maximum simultaneous connections, or `nil` when
   # use is unlimited.
   #[getter]
   pub def max_uses self -> (Int | nil)
-    throw nil
+    ...
 
   # Current connection count.
   #[getter]
   pub def current_uses self -> Int
-    throw nil
+    ...
 
   # Shared local path.
   #[getter]
   pub def path self -> Path
-    throw nil
+    ...
 
   # Share
   # security descriptor, or `nil` when the share is left to the server
   # service's default security.
   #[getter]
   pub def sec_desc self -> (SecDesc | nil)
-    throw nil
+    ...
 
 # A connection to a remote SMB resource.
 #
@@ -529,13 +529,13 @@ pub class Connection
   # remote name when it redirects none.
   #[getter]
   pub def name self -> Str
-    throw nil
+    ...
 
   # Whether this handle is still connected. Becomes
   # `false` after [`disconnect`](winnet.Connection.disconnect).
   #[getter]
   pub def connected self -> Bool
-    throw nil
+    ...
 
   # Reads a fresh snapshot of the connection.
   #
@@ -543,7 +543,7 @@ pub class Connection
   #
   # [`ConnectionInfo`](winnet.ConnectionInfo).
   pub def info self -> ConnectionInfo
-    throw nil
+    ...
 
   # The connection's root: the drive root when the connection redirects a local
   # device, and the remote name otherwise.
@@ -555,7 +555,7 @@ pub class Connection
   #   fs.copy $release $conn.path()
   # ```
   pub def path self -> Path
-    throw nil
+    ...
 
   # Disconnects, invalidating this handle.
   #
@@ -580,7 +580,7 @@ pub class Connection
     # Defaults to removing them for a persistent connection.
     :forget_credentials @ Bool = nil
   do
-    throw nil
+    ...
 
 # A snapshot of an SMB client connection.
 #
@@ -591,38 +591,38 @@ pub class ConnectionInfo
   # for a deviceless connection.
   #[getter]
   pub def local self -> (Str | nil)
-    throw nil
+    ...
 
   # Remote resource in UNC form.
   #[getter]
   pub def remote self -> Str
-    throw nil
+    ...
 
   # Network provider name, or `nil` when the provider
   # reports none.
   #[getter]
   pub def provider self -> (Str | nil)
-    throw nil
+    ...
 
   # Account the connection authenticated as. A
   # connection saved in the profile but not currently established has no
   # account to report.
   #[getter]
   pub def user self -> (Str | nil)
-    throw nil
+    ...
 
   # Resource kind: `:DISK:`, `:PRINT:`, or `:ANY:`. A
   # provider resource type this binding does not model reports as `:ANY:`.
   #[getter]
   pub def kind self -> Sym
-    throw nil
+    ...
 
   # `:CONNECTED:` when the connection is established,
   # `:REMEMBERED:` when it is saved in the profile but not currently connected
   # -- what `net use` shows as `Unavailable`.
   #[getter]
   pub def state self -> Sym
-    throw nil
+    ...
 
   # Whether the connection is recorded in the
   # profile and restored at logon. Independent of
@@ -630,7 +630,7 @@ pub class ConnectionInfo
   # reachable is both `:CONNECTED:` and persistent.
   #[getter]
   pub def persistent self -> Bool
-    throw nil
+    ...
 
 # The machine's workgroup or domain membership.
 #
@@ -651,13 +651,13 @@ pub class JoinStatus
   # could not be determined.
   #[getter]
   pub def kind self -> Sym
-    throw nil
+    ...
 
   # Domain or workgroup name, or `nil` when
   # [`kind`](winnet.JoinStatus.kind) is `:UNJOINED:` or `:UNKNOWN:`.
   #[getter]
   pub def name self -> (Str | nil)
-    throw nil
+    ...
 
 # Machine identity and server role.
 #
@@ -680,63 +680,63 @@ pub class MachineInfo
   # NetBIOS computer name.
   #[getter]
   pub def name self -> Str
-    throw nil
+    ...
 
   # Domain or workgroup the machine belongs to. Use
   # [`join_status`](winnet.join_status) to tell which of the two it is.
   #[getter]
   pub def domain self -> Str
-    throw nil
+    ...
 
   # Major OS version.
   #[getter]
   pub def version_major self -> Int
-    throw nil
+    ...
 
   # Minor OS version.
   #[getter]
   pub def version_minor self -> Int
-    throw nil
+    ...
 
   # Server comment.
   #[getter]
   pub def comment self -> (Str | nil)
-    throw nil
+    ...
 
   # Advertised server role mask.
   #[getter]
   pub def server_type self -> ServerType
-    throw nil
+    ...
 
   # Whether the server service supplied
   # [`server_type`](winnet.MachineInfo.server_type) and
   # [`comment`](winnet.MachineInfo.comment).
   #[getter]
   pub def server_started self -> Bool
-    throw nil
+    ...
 
   # Whether the machine advertises the workstation
   # role.
   #[getter]
   pub def workstation self -> Bool
-    throw nil
+    ...
 
   # Whether the machine advertises the server role.
   #[getter]
   pub def server self -> Bool
-    throw nil
+    ...
 
   # Whether the machine advertises as a domain
   # controller.
   #[getter]
   pub def domain_controller self -> Bool
-    throw nil
+    ...
 
   # Whether the machine advertises as a backup
   # domain controller.
   #[getter]
   pub def backup_domain_controller self -> Bool
-    throw nil
+    ...
 
 # Native Windows server-role flags.
 #
@@ -749,7 +749,7 @@ pub class ServerType
   # module does not name.
   #[getter]
   pub def int self -> Int
-    throw nil
+    ...
 
 # Reads the local password and lockout policy.
 #
@@ -757,7 +757,7 @@ pub class ServerType
 #
 # [`AccountPolicy`](winnet.AccountPolicy).
 pub def account_policy() -> AccountPolicy
-  throw nil
+  ...
 
 # Updates the supplied local password and lockout settings.
 #
@@ -788,7 +788,7 @@ pub def update_account_policy
   # disables lockout.
   :lockout_threshold @ Int = nil
 do -> AccountPolicy
-  throw nil
+  ...
 
 # Obtains a handle to an existing local user.
 #
@@ -799,7 +799,7 @@ pub def user
   # Account name, SID, or a prior snapshot.
   principal @ (Str | Sid | UserInfo)
 do -> User
-  throw nil
+  ...
 
 # Lists local user accounts.
 #
@@ -807,7 +807,7 @@ do -> User
 #
 # An [`Iter`](std.Iter) yielding [`UserInfo`](winnet.UserInfo)s.
 pub def users() -> Iter[UserInfo]
-  throw nil
+  ...
 
 # Creates a normal enabled local user.
 #
@@ -850,7 +850,7 @@ pub def create_user
   # Whether the user may change the password.
   :password_cannot_change @ Bool = nil
 do -> User
-  throw nil
+  ...
 
 # Obtains a handle to an existing local group.
 #
@@ -861,7 +861,7 @@ pub def group
   # Group name, SID, or a prior snapshot.
   principal @ (Str | Sid | GroupInfo)
 do -> Group
-  throw nil
+  ...
 
 # Lists local groups.
 #
@@ -869,7 +869,7 @@ do -> Group
 #
 # An [`Iter`](std.Iter) yielding [`GroupInfo`](winnet.GroupInfo)s.
 pub def groups() -> Iter[GroupInfo]
-  throw nil
+  ...
 
 # Creates a local group.
 #
@@ -882,7 +882,7 @@ pub def create_group
   # Administrative comment.
   :comment @ Str = nil
 do -> Group
-  throw nil
+  ...
 
 # Obtains a handle to an existing local SMB share.
 #
@@ -894,7 +894,7 @@ pub def share
   # prior snapshot.
   name_or_info @ (Str | ShareInfo)
 do -> Share
-  throw nil
+  ...
 
 # Lists every local SMB share, administrative and non-disk shares included.
 #
@@ -902,7 +902,7 @@ do -> Share
 #
 # An [`Iter`](std.Iter) yielding [`ShareInfo`](winnet.ShareInfo)s.
 pub def shares() -> Iter[ShareInfo]
-  throw nil
+  ...
 
 # Creates a local SMB share.
 #
@@ -929,7 +929,7 @@ pub def create_share
   # Defaults to the one Windows supplies.
   :sec_desc @ (SecDesc | Bin | Dict) = nil
 do -> Share
-  throw nil
+  ...
 
 # Connects to a remote SMB resource, optionally redirecting a local device.
 #
@@ -1012,7 +1012,7 @@ pub def connect
   # disconnected when it returns. Omit to receive the handle instead.
   func @ Func = nil
 do -> Value
-  throw nil
+  ...
 
 # Obtains a handle to an existing connection.
 #
@@ -1024,7 +1024,7 @@ pub def connection
   # device, remote name, or a prior snapshot.
   name_or_info @ (Str | ConnectionInfo)
 do -> Connection
-  throw nil
+  ...
 
 # Lists every connection, including ones saved in the profile that are not
 # currently connected.
@@ -1041,7 +1041,7 @@ do -> Connection
 #   echo $entry.local $entry.remote $entry.state
 # ```
 pub def connections() -> Iter[ConnectionInfo]
-  throw nil
+  ...
 
 # Resolves a path on a redirected device to its UNC form.
 #
@@ -1054,7 +1054,7 @@ pub def universal_name
   # Path on a redirected device.
   path @ Path
 do -> Str
-  throw nil
+  ...
 
 # Reads the machine's current workgroup or domain membership.
 #
@@ -1062,7 +1062,7 @@ do -> Str
 #
 # [`JoinStatus`](winnet.JoinStatus).
 pub def join_status() -> JoinStatus
-  throw nil
+  ...
 
 # Reads the computer name, domain membership, OS level and server role.
 #
@@ -1070,7 +1070,7 @@ pub def join_status() -> JoinStatus
 #
 # [`MachineInfo`](winnet.MachineInfo).
 pub def machine_info() -> MachineInfo
-  throw nil
+  ...
 
 # Joins the machine to a domain.
 #
@@ -1140,7 +1140,7 @@ pub def join_domain
   # account.
   :no_account_reuse @ Bool = nil
 do
-  throw nil
+  ...
 
 # Removes the machine from its domain.
 #
@@ -1164,7 +1164,7 @@ pub def unjoin_domain
   # Disable the computer account in the domain.
   :delete_account @ Bool = nil
 do
-  throw nil
+  ...
 
 # Renames the machine within its domain.
 #
@@ -1183,7 +1183,7 @@ pub def rename_machine
   # missing.
   :create_account @ Bool = nil
 do
-  throw nil
+  ...
 
 # Creates a computer account in the domain and returns the blob that joins a
 # machine to it.
@@ -1223,7 +1223,7 @@ pub def provision_computer
   # user.
   :downlevel_priv_support @ Bool = nil
 do -> Bin
-  throw nil
+  ...
 
 # Applies a provisioning blob to a Windows installation, joining it to the
 # domain without contacting a domain controller.
@@ -1249,4 +1249,4 @@ pub def apply_offline_join
   # The target installation is the running system.
   :online @ Bool = nil
 do
-  throw nil
+  ...

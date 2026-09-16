@@ -53,7 +53,7 @@ pub class Mode
     # Mode bits, or one iterable of them.
     ...bits @ Sym
   do
-    throw nil
+    ...
 
   # Constructs a mode from a raw `st_mode` value, preserving unknown bits.
   #
@@ -68,24 +68,24 @@ pub class Mode
     # Raw mode bits.
     value @ Int
   do
-    throw nil
+    ...
 
   # Owner
   # permissions.
   #[getter]
   pub def owner self -> Permission
-    throw nil
+    ...
 
   # Group
   # permissions.
   #[getter]
   pub def group self -> Permission
-    throw nil
+    ...
 
   # Permissions for everyone else.
   #[getter]
   pub def other self -> Permission
-    throw nil
+    ...
 
   # The raw `st_mode` value, including the file type
   # bits.
@@ -98,7 +98,7 @@ pub class Mode
   # ```
   #[getter]
   pub def int self -> Int
-    throw nil
+    ...
 
   # Tests whether all bits represented by a symbol are set.
   #
@@ -110,43 +110,43 @@ pub class Mode
     # Bits to test for.
     bit @ Sym
   do -> Bool
-    throw nil
+    ...
 
   # Union of two modes.
   pub def (bor)
     self
     other
   do
-    throw nil
+    ...
 
   # Intersection of two modes.
   pub def (band)
     self
     other
   do
-    throw nil
+    ...
 
   # Symmetric difference of two modes.
   pub def (bxor)
     self
     other
   do
-    throw nil
+    ...
 
   # Complement within the supported bit set.
   pub def (bnot) self
-    throw nil
+    ...
 
   # Compares two modes.
   pub def (eq)
     self
     other
   do
-    throw nil
+    ...
 
   # Yields the symbols represented by the mode.
   pub def (iter) self
-    throw nil
+    ...
 
 # [`fs.Path`](fs.Path) using Unix path syntax.
 #
@@ -161,4 +161,4 @@ pub class Path
     # Path value.
     path @ (Str | Path)
   do
-    throw nil
+    ...

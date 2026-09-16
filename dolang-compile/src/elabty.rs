@@ -431,7 +431,9 @@ impl Check<'_> {
     }
 
     fn function(&mut self, outer: Option<&Frame<'_>>, func: &mut Function) {
-        let Function { params, ret, body } = func;
+        let Function {
+            params, ret, body, ..
+        } = func;
         let frame = Frame::vars(outer, &mut body.vars, &body.stmts);
         for param in params.iter_mut() {
             self.param(&frame, param);

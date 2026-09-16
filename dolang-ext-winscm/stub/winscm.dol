@@ -124,7 +124,7 @@ pub class ManagerAccessMask
     # iterable of symbols. See [Accepted symbols](winscm.ManagerAccessMask.accepted-symbols).
     ...rights @ Sym
   do
-    throw nil
+    ...
 
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
@@ -138,13 +138,13 @@ pub class ManagerAccessMask
     # Native Windows access mask.
     value @ Int
   do -> ManagerAccessMask
-    throw nil
+    ...
 
   # The complete native mask as an [`Int`](std.Int), including bits this
   # type does not name.
   #[getter]
   pub def int self
-    throw nil
+    ...
 
   # Tests whether every bit a symbol stands for is set.
   #
@@ -157,7 +157,7 @@ pub class ManagerAccessMask
     # symbols](winscm.ManagerAccessMask.accepted-symbols).
     right @ Sym
   do -> Bool
-    throw nil
+    ...
 
 # Access rights for a [`Service`](winscm.Service) handle.
 #
@@ -224,7 +224,7 @@ pub class ServiceAccessMask
     # iterable of symbols. See [Accepted symbols](winscm.ServiceAccessMask.accepted-symbols).
     ...rights @ Sym
   do
-    throw nil
+    ...
 
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
@@ -238,13 +238,13 @@ pub class ServiceAccessMask
     # Native Windows access mask.
     value @ Int
   do -> ServiceAccessMask
-    throw nil
+    ...
 
   # The complete native mask as an [`Int`](std.Int), including bits this
   # type does not name.
   #[getter]
   pub def int self
-    throw nil
+    ...
 
   # Tests whether every bit a symbol stands for is set.
   #
@@ -257,7 +257,7 @@ pub class ServiceAccessMask
     # symbols](winscm.ServiceAccessMask.accepted-symbols).
     right @ Sym
   do -> Bool
-    throw nil
+    ...
 
 # Windows service type flags.
 #
@@ -294,7 +294,7 @@ pub class ServiceType
     # iterable of symbols. See [Accepted symbols](winscm.ServiceType.accepted-symbols).
     ...types @ Sym
   do
-    throw nil
+    ...
 
   # Builds a value from a native integer, preserving every bit including ones
   # this type does not name.
@@ -308,13 +308,13 @@ pub class ServiceType
     # Native service type mask.
     value @ Int
   do -> ServiceType
-    throw nil
+    ...
 
   # The complete native value as an [`Int`](std.Int), including bits this
   # type does not name.
   #[getter]
   pub def int self
-    throw nil
+    ...
 
   # Tests whether every bit a symbol stands for is set.
   #
@@ -327,7 +327,7 @@ pub class ServiceType
     # symbols](winscm.ServiceType.accepted-symbols).
     service_type @ Sym
   do -> Bool
-    throw nil
+    ...
 
 # Service status changes to observe.
 #
@@ -368,7 +368,7 @@ pub class NotifyMask
     # iterable of symbols. See [Accepted symbols](winscm.NotifyMask.accepted-symbols).
     ...changes @ Sym
   do
-    throw nil
+    ...
 
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
@@ -382,13 +382,13 @@ pub class NotifyMask
     # Native notification mask.
     value @ Int
   do -> NotifyMask
-    throw nil
+    ...
 
   # The complete native mask as an [`Int`](std.Int), including bits this
   # type does not name.
   #[getter]
   pub def int self
-    throw nil
+    ...
 
   # Tests whether every bit a symbol stands for is set.
   #
@@ -401,7 +401,7 @@ pub class NotifyMask
     # symbols](winscm.NotifyMask.accepted-symbols).
     change @ Sym
   do -> Bool
-    throw nil
+    ...
 
 # Controls a running service accepts.
 #
@@ -445,7 +445,7 @@ pub class ServiceControlsAccepted
     # iterable of symbols. See [Accepted symbols](winscm.ServiceControlsAccepted.accepted-symbols).
     ...controls @ Sym
   do
-    throw nil
+    ...
 
   # Builds a value from a native integer, preserving every bit including ones
   # this type does not name.
@@ -459,13 +459,13 @@ pub class ServiceControlsAccepted
     # Native controls-accepted mask.
     value @ Int
   do -> ServiceControlsAccepted
-    throw nil
+    ...
 
   # The complete native value as an [`Int`](std.Int), including bits this
   # type does not name.
   #[getter]
   pub def int self
-    throw nil
+    ...
 
   # Tests whether every bit a symbol stands for is set.
   #
@@ -478,7 +478,7 @@ pub class ServiceControlsAccepted
     # symbols](winscm.ServiceControlsAccepted.accepted-symbols).
     control @ Sym
   do -> Bool
-    throw nil
+    ...
 
 # An open handle to the Windows Service Control Manager.
 #
@@ -488,7 +488,7 @@ pub class ScManager
   #
   # Closing an already-closed manager does nothing.
   pub def close self
-    throw nil
+    ...
 
   # Opens an existing service.
   #
@@ -520,7 +520,7 @@ pub class ScManager
     # when it returns. Omit to receive the handle instead.
     func @ Func = nil
   do -> Value
-    throw nil
+    ...
 
   # Creates a service.
   #
@@ -577,7 +577,7 @@ pub class ScManager
     # when it returns. Omit to receive the handle instead.
     func @ Func = nil
   do -> Value
-    throw nil
+    ...
 
   # Opens a live forward enumeration of matching services. Entries are fetched
   # from Windows as iteration advances.
@@ -603,7 +603,7 @@ pub class ScManager
     # Defaults to `:ALL:`.
     :state_filter @ Sym = nil
   do -> Iter[ServiceInfo]
-    throw nil
+    ...
 
 # An open Windows service handle.
 #
@@ -615,7 +615,7 @@ pub class Service
   # Closing an already-closed handle does nothing. This releases the handle; it
   # does not stop or delete the service.
   pub def close self
-    throw nil
+    ...
 
   # Starts the service.
   pub def start
@@ -623,7 +623,7 @@ pub class Service
     # Arguments passed to the service's `main`.
     ...args @ Str
   do
-    throw nil
+    ...
 
   # Sends a control request.
   #
@@ -641,14 +641,14 @@ pub class Service
     # [Control request](winscm.control-requests).
     control @ Sym
   do -> Status
-    throw nil
+    ...
 
   # Marks the service for deletion.
   #
   # Windows removes the service once no handle to it remains open and it is not
   # running.
   pub def delete self
-    throw nil
+    ...
 
   # Fetches the current service status.
   #
@@ -656,7 +656,7 @@ pub class Service
   #
   # [`Status`](winscm.Status).
   pub def query_status self -> Status
-    throw nil
+    ...
 
   # Waits until one of the requested status changes occurs.
   #
@@ -669,7 +669,7 @@ pub class Service
     # observe, as a mask, a symbol, or an iterable of symbols.
     mask @ (NotifyMask | Sym)
   do -> Status
-    throw nil
+    ...
 
   # Fetches the current service configuration.
   #
@@ -677,7 +677,7 @@ pub class Service
   #
   # An immutable [`ServiceConfig`](winscm.ServiceConfig) snapshot.
   pub def config self -> ServiceConfig
-    throw nil
+    ...
 
   # Updates the supplied configuration fields. Omitted fields are left
   # unchanged.
@@ -713,7 +713,7 @@ pub class Service
     # Display name.
     :display_name @ Str = nil
   do
-    throw nil
+    ...
 
   # Gets selected parts of the service's Windows security descriptor.
   #
@@ -733,7 +733,7 @@ pub class Service
     # Load the system ACL. Defaults to `false`.
     :sacl @ Bool = nil
   do -> SecDesc
-    throw nil
+    ...
 
   # Applies the components a Windows security descriptor's `mask` selects.
   #
@@ -749,7 +749,7 @@ pub class Service
     # Component options, as above.
     ...options
   do
-    throw nil
+    ...
 
 # Immutable snapshot of a service's configuration.
 #
@@ -758,52 +758,52 @@ pub class ServiceConfig
   # Service type flags.
   #[getter]
   pub def service_type self -> ServiceType
-    throw nil
+    ...
 
   # [Start
   # type](winscm.start-types). A native value this module does not name is
   # returned as an [`Int`](std.Int).
   #[getter]
   pub def start_type self -> (Sym | Int)
-    throw nil
+    ...
 
   # [Error control
   # level](winscm.error-control-levels). A native value this module does
   # not name is returned as an [`Int`](std.Int).
   #[getter]
   pub def error_control self -> (Sym | Int)
-    throw nil
+    ...
 
   # Service command line.
   #[getter]
   pub def binary_path self -> Str
-    throw nil
+    ...
 
   # Load-order group.
   #[getter]
   pub def load_order_group self -> (Str | nil)
-    throw nil
+    ...
 
   # Load-order tag within `load_order_group`.
   #[getter]
   pub def tag_id self -> Int
-    throw nil
+    ...
 
   # Service and load-order-group names this
   # service depends on.
   #[getter]
   pub def dependencies self -> Tuple
-    throw nil
+    ...
 
   # Account the service runs as.
   #[getter]
   pub def service_start_name self -> Str
-    throw nil
+    ...
 
   # Display name.
   #[getter]
   pub def display_name self -> Str
-    throw nil
+    ...
 
 # Snapshot of a service's current status.
 #
@@ -813,48 +813,48 @@ pub class Status
   # Service type flags.
   #[getter]
   pub def service_type self -> ServiceType
-    throw nil
+    ...
 
   # [Service
   # state](winscm.service-states). A native value this module does not name
   # is returned as an [`Int`](std.Int).
   #[getter]
   pub def current_state self -> (Sym | Int)
-    throw nil
+    ...
 
   # Controls the
   # service accepts in its current state.
   #[getter]
   pub def controls_accepted self -> ServiceControlsAccepted
-    throw nil
+    ...
 
   # Windows error code from the service's last start
   # or stop.
   #[getter]
   pub def win32_exit_code self -> Int
-    throw nil
+    ...
 
   # Service-defined exit code.
   #[getter]
   pub def service_specific_exit_code self -> Int
-    throw nil
+    ...
 
   # Progress checkpoint the service increments during
   # a pending operation.
   #[getter]
   pub def check_point self -> Int
-    throw nil
+    ...
 
   # Milliseconds the service expects a pending
   # operation to take.
   #[getter]
   pub def wait_hint self -> Int
-    throw nil
+    ...
 
   # Identifier of the service's process.
   #[getter]
   pub def process_id self -> Int
-    throw nil
+    ...
 
 # One entry in a service enumeration.
 #
@@ -872,17 +872,17 @@ pub class ServiceInfo
   # Service name.
   #[getter]
   pub def name self -> Str
-    throw nil
+    ...
 
   # Display name.
   #[getter]
   pub def display_name self -> (Str | nil)
-    throw nil
+    ...
 
   # Status captured during enumeration.
   #[getter]
   pub def status self -> Status
-    throw nil
+    ...
 
 # Opens the local Service Control Manager.
 #
@@ -906,4 +906,4 @@ pub def open
   # when it returns. Omit to receive the handle instead.
   func @ Func = nil
 do -> Value
-  throw nil
+  ...

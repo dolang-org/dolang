@@ -1,0 +1,8 @@
+def extra_statement()
+  ...
+  nil
+# error: `...` must be the sole statement in a stub function body
+#   --> stub_body.dol:LL:LL
+#    |
+# LL |   nil
+#    |   ^^^

@@ -32,7 +32,7 @@ pub def quote
   # [`std.verbatim`](std.verbatim) would.
   obj @ Value
 do -> Str
-  throw nil
+  ...
 
 # Joins values into a single POSIX shell command line, quoting each.
 #
@@ -56,7 +56,7 @@ pub def join
   # [`std.verbatim`](std.verbatim) would.
   iterable @ Iterable
 do -> Str
-  throw nil
+  ...
 
 # Splits a POSIX shell command line into words, undoing quoting.
 #
@@ -87,4 +87,4 @@ pub def split
   # Command line to split.
   string @ Str
 do -> Iter[Str]
-  throw nil
+  ...

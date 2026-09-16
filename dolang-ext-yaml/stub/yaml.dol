@@ -42,7 +42,7 @@ pub def decode
   # YAML document to parse.
   yaml @ Str
 do -> Value
-  throw nil
+  ...
 
 # Serializes a Do value to a YAML string.
 #
@@ -76,4 +76,4 @@ pub def encode
   # The value to serialize.
   value
 do -> Str
-  throw nil
+  ...

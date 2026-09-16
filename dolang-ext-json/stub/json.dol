@@ -41,7 +41,7 @@ pub def decode
   # JSON string to parse.
   json @ Str
 do -> Value
-  throw nil
+  ...
 
 # Serializes a Do value to a JSON string.
 #
@@ -76,4 +76,4 @@ pub def encode
   # Spaces per level; one line when omitted.
   :indent @ Int = nil
 do -> Str
-  throw nil
+  ...

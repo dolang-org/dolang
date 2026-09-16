@@ -24,7 +24,7 @@ pub class State
   #   b34b56076712fd7fb9c067245a6c85e16174b3ef2e35df7b56b7f164e5c36446
   # ```
   pub def digest self -> Bin
-    throw nil
+    ...
 
   # Updates the digest state with the bytes of `data`.
   #
@@ -56,7 +56,7 @@ pub class State
     # Input to hash.
     data @ (Str | Bin)
   do
-    throw nil
+    ...
 
 # [`State`](digest.State) handle for BLAKE3.
 pub class Blake3: State
@@ -71,7 +71,7 @@ pub class Blake3: State
   #   6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85
   # ```
   pub def (init) self
-    throw nil
+    ...
 
 # [`State`](digest.State) handle for MD5.
 pub class Md5: State
@@ -86,7 +86,7 @@ pub class Md5: State
   #   900150983cd24fb0d6963f7d28e17f72
   # ```
   pub def (init) self
-    throw nil
+    ...
 
 # [`State`](digest.State) handle for SHA-1.
 pub class Sha1: State
@@ -101,7 +101,7 @@ pub class Sha1: State
   #   a9993e364706816aba3e25717850c26c9cd0d89d
   # ```
   pub def (init) self
-    throw nil
+    ...
 
 # [`State`](digest.State) handle for SHA-256.
 pub class Sha256: State
@@ -116,7 +116,7 @@ pub class Sha256: State
   #   ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
   # ```
   pub def (init) self
-    throw nil
+    ...
 
 # [`State`](digest.State) handle for SHA-512.
 pub class Sha512: State
@@ -131,7 +131,7 @@ pub class Sha512: State
   #   ddaf35a193
   # ```
   pub def (init) self
-    throw nil
+    ...
 
 # Computes the BLAKE3 digest.
 #
@@ -151,7 +151,7 @@ pub def blake3
   # Input to hash.
   data @ (Str | Bin)
 do -> Bin
-  throw nil
+  ...
 
 # Computes the MD5 digest.
 #
@@ -170,7 +170,7 @@ pub def md5
   # Input to hash.
   data @ (Str | Bin)
 do -> Bin
-  throw nil
+  ...
 
 # Computes the SHA-1 digest.
 #
@@ -189,7 +189,7 @@ pub def sha1
   # Input to hash.
   data @ (Str | Bin)
 do -> Bin
-  throw nil
+  ...
 
 # Computes the SHA-256 digest.
 #
@@ -208,7 +208,7 @@ pub def sha256
   # Input to hash.
   data @ (Str | Bin)
 do -> Bin
-  throw nil
+  ...
 
 # Computes the SHA-512 digest.
 #
@@ -227,4 +227,4 @@ pub def sha512
   # Input to hash.
   data @ (Str | Bin)
 do -> Bin
-  throw nil
+  ...

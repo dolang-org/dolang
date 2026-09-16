@@ -21,7 +21,7 @@ pub class Stdin
   #
   # [`Stdin`](shell.Stdin)
   pub def lines self -> Stdin
-    throw nil
+    ...
 
   # Returns a handle that yields arbitrary-sized [`Bin`](std.Bin) chunks.
   #
@@ -32,7 +32,7 @@ pub class Stdin
   #   hasher.update $chunk
   # ```
   pub def chunks self -> Stdin
-    throw nil
+    ...
 
   # Reads raw bytes.
   #
@@ -55,7 +55,7 @@ pub class Stdin
     # Maximum bytes to read. Unbounded when omitted.
     size @ Int = nil
   do -> Bin
-    throw nil
+    ...
 
   # Iterates the stream, yielding lines by default.
   #
@@ -69,16 +69,16 @@ pub class Stdin
   # let body = shell.stdin.read()
   # ```
   pub def (iter) self
-    throw nil
+    ...
 
   # Yields the next line or chunk.
   pub def (next) self
-    throw nil
+    ...
 
   # Compares two handles, which are equal when they frame the stream the same
   # way.
   pub def (eq) self other
-    throw nil
+    ...
 
 # The process's standard output.
 #
@@ -113,7 +113,7 @@ pub class Stdout
     # Bytes to write.
     data @ (Str | Bin)
   do -> Int
-    throw nil
+    ...
 
   # Flushes buffered output to the stream.
   #
@@ -121,7 +121,7 @@ pub class Stdout
   # ordering relative to buffered stdout is otherwise not guaranteed. The
   # interpreter flushes on exit.
   pub def flush self
-    throw nil
+    ...
 
   # Accepts values as a [sink](std.Sink), so this handle can be the
   # target of a pipeline or of [`strand.put`](strand).
@@ -142,12 +142,12 @@ pub class Stdout
   # lines.put "hello"                 # writes "hello\n"
   # ```
   pub def (sink) self
-    throw nil
+    ...
 
   # Compares two handles. All instances are interchangeable, so any two are
   # equal.
   pub def (eq) self other
-    throw nil
+    ...
 
 # The process's standard error.
 #
@@ -174,21 +174,21 @@ pub class Stderr
     # Bytes to write.
     data @ (Str | Bin)
   do -> Int
-    throw nil
+    ...
 
   # Flushes buffered output to the stream.
   pub def flush self
-    throw nil
+    ...
 
   # Accepts values as a [sink](std.Sink), writing them verbatim, as
   # [`Stdout`](shell.Stdout.(sink)) does.
   pub def (sink) self
-    throw nil
+    ...
 
   # Compares two handles. All instances are interchangeable, so any two are
   # equal.
   pub def (eq) self other
-    throw nil
+    ...
 
 # An execution context: another machine, container, or privilege level.
 #
@@ -217,7 +217,7 @@ pub class Vfs
     # VFS server launcher.
     func @ Func
   do
-    throw nil
+    ...
 
   # Connects to a running `dolang-vfs` daemon on Unix.
   #
@@ -273,7 +273,7 @@ pub class Vfs
     # integrity-protect the session that follows.
     :key @ (Str | Bin) = nil
   do -> Vfs
-    throw nil
+    ...
 
   # Launches an elevated copy of the active Windows VFS target's current
   # executable.
@@ -308,7 +308,7 @@ pub class Vfs
     # strand's current value.
     :env @ Dict = nil
   do -> Vfs
-    throw nil
+    ...
 
   # Runs a function in this context.
   #
@@ -347,14 +347,14 @@ pub class Vfs
     # Additional arguments passed to `func`.
     ...args @ Value
   do
-    throw nil
+    ...
 
   # Sends a stop request to the connected VFS server.
   #
   # A function-backed `Vfs` then closes and joins its launcher stream. On
   # Windows, it also waits for the elevated process to exit.
   pub def stop self
-    throw nil
+    ...
 
 # Returns the current strand's working directory, or changes it.
 #
@@ -382,7 +382,7 @@ pub def cd
   # Function to run in the new directory.
   func @ Func = nil
 do -> Path
-  throw nil
+  ...
 
 # Replaces the interpreter with an external program, after shell cleanup.
 #
@@ -402,7 +402,7 @@ pub def exec
   # Program arguments.
   ...args @ Value
 do
-  throw nil
+  ...
 
 # Exits the shell.
 #
@@ -413,7 +413,7 @@ pub def exit
   # Exit status. Defaults to `0`.
   code @ Int = nil
 do
-  throw nil
+  ...
 
 # Returns the line ending native to the current [`Vfs`](shell.Vfs) target:
 # `"\r\n"` on Windows, `"\n"` elsewhere.
@@ -429,7 +429,7 @@ do
 # run cmd stdout: (lines.precrimp(shell.line_ending()))
 # ```
 pub def line_ending() -> Str
-  throw nil
+  ...
 
 # Returns the current executable reported by the active VFS context, or `nil`
 # when running on the host.
@@ -438,7 +438,7 @@ pub def line_ending() -> Str
 #
 # [`fs.Path`](fs.Path) or `nil`.
 pub def vfs_exe() -> (Path | nil)
-  throw nil
+  ...
 
 # Runs a function in the interpreter's original host context, whatever VFS
 # contexts are currently entered.
@@ -452,7 +452,7 @@ pub def with_host
   # Additional arguments passed to `func`.
   ...args @ Value
 do
-  throw nil
+  ...
 
 # Runs a function with a scoped command-line arguments or program identity.
 #
@@ -482,7 +482,7 @@ pub def with_override
   # [`shell.program`](shell.program).
   :program @ (Str | Path) = nil
 do
-  throw nil
+  ...
 
 # The command-line arguments of the current invocation.
 #

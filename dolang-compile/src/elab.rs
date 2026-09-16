@@ -2377,6 +2377,9 @@ impl<'a> Elaborater<'a> {
                 .expect("decorated def should have an assigned binding");
             scope.mark_local_used(res.index, self.epoch);
         }
+        if def.func.stub_span.is_some() {
+            return self.visit_signature(scope, &mut def.func);
+        }
         self.visit_function(scope, &mut def.func, None)
     }
 
@@ -2390,7 +2393,7 @@ impl<'a> Elaborater<'a> {
         for decorator in &mut def.decorators {
             self.visit_expr(scope, &mut decorator.expr, false)?;
         }
-        if def.type_only {
+        if def.type_only || def.func.stub_span.is_some() {
             return self.visit_signature(scope, &mut def.func);
         }
         self.visit_function(scope, &mut def.func, None)

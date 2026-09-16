@@ -37,17 +37,17 @@ pub class Request
   # The request method, such as `"GET"`.
   #[getter]
   pub def method self -> Str
-    throw nil
+    ...
 
   # The full request URL.
   #[getter]
   pub def url self -> Str
-    throw nil
+    ...
 
   # The raw request body.
   #[getter]
   pub def body self -> Bin
-    throw nil
+    ...
 
   # The request headers.
   #
@@ -62,7 +62,7 @@ pub class Request
   # ```
   #[getter]
   pub def headers self -> Dict
-    throw nil
+    ...
 
 # A handle to the mocks one [`Server.mock`](http.mock.Server.mock) call registered.
 #
@@ -90,7 +90,7 @@ pub class Mock
   #     assert_eq $reqs[0].method "POST"
   # ```
   pub def received self -> Array[Request]
-    throw nil
+    ...
 
   # Re-checks every `expect:` this handle's items carry against the requests
   # received so far.
@@ -102,13 +102,13 @@ pub class Mock
   # Raises when any item's `expect:` is unsatisfied. The message lists every
   # unsatisfied item, one per line.
   pub def verify self
-    throw nil
+    ...
 
   # Unmounts every mock this handle registered, so they match nothing further.
   #
   # Unmounting already-unmounted mocks does nothing.
   pub def unmount self
-    throw nil
+    ...
 
 # A running mock HTTP server, bound to a random local port.
 pub class Server
@@ -130,7 +130,7 @@ pub class Server
     # Omit to receive the server instead.
     func @ Func = nil
   do -> Value
-    throw nil
+    ...
 
   # The server's base URL. Use `/` to build
   # request paths.
@@ -143,13 +143,13 @@ pub class Server
   # ```
   #[getter]
   pub def url self -> Url
-    throw nil
+    ...
 
   # The bound socket address, such as
   # `127.0.0.1:41823`.
   #[getter]
   pub def address self -> Str
-    throw nil
+    ...
 
   # Registers one or more mocks.
   #
@@ -257,7 +257,7 @@ pub class Server
     # Mock items, as described above.
     ...items @ Dict
   do -> Mock
-    throw nil
+    ...
 
   # Every request the server received, whichever mock matched it -- or none.
   #
@@ -267,13 +267,13 @@ pub class Server
   #
   # An [`Array`](std.Array) of [`Request`](http.mock.Request).
   pub def received_requests self -> Array[Request]
-    throw nil
+    ...
 
   # Removes every mock registered on the server and forgets every request it
   # received.
   pub def reset self
-    throw nil
+    ...
 
   # Shuts the server down. Requests to its address then fail.
   pub def close self
-    throw nil
+    ...

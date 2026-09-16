@@ -12,4 +12,4 @@ pub class WinError: sys.ErrorCode
     # Unsigned raw code.
     value @ Int
   do
-    throw nil
+    ...

@@ -21,7 +21,7 @@ pub def join
   # [`std.verbatim`](std.verbatim) would.
   iterable @ Iterable
 do -> Str
-  throw nil
+  ...
 
 # Encodes one argument for a Windows process command line.
 #
@@ -41,7 +41,7 @@ pub def quote
   # [`std.verbatim`](std.verbatim) would.
   arg
 do -> Str
-  throw nil
+  ...
 
 # Decodes a Windows process command line into its arguments.
 #
@@ -64,4 +64,4 @@ pub def split
   # Command line to decode.
   command_line @ Str
 do -> Iter[Str]
-  throw nil
+  ...

@@ -613,7 +613,7 @@ pub(crate) enum Expr {
         delim: Option<GroupDelim>,
     },
     Lambda {
-        func: Function,
+        func: Box<Function>,
         do_span: Option<Span>,
     },
     Get {
@@ -2522,6 +2522,8 @@ impl Block {
 pub(crate) struct Function {
     pub(crate) params: Vec<Param>,
     pub(crate) ret: Option<Box<RetType>>,
+    /// The `...` of a stub body, in place of the otherwise empty block.
+    pub(crate) stub_span: Option<Span>,
     pub(crate) body: Block,
 }
 
@@ -2530,6 +2532,9 @@ impl Node for Function {
         self.params.accept(visit)?;
         if let Some(ret) = &self.ret {
             visit.node(&**ret)?;
+        }
+        if let Some(span) = self.stub_span {
+            visit.token(Token::Sigil, span, None)?;
         }
         visit.node(&self.body)
     }

@@ -20,27 +20,27 @@ pub class Attr
     # Preferred namespace prefix.
     :prefix @ Str = nil
   do
-    throw nil
+    ...
 
   # Read-only local attribute name.
   #[getter]
   pub def name self
-    throw nil
+    ...
 
   # Read-only namespace URI, or `nil` for no namespace.
   #[getter]
   pub def namespace self
-    throw nil
+    ...
 
   # Read-only preferred prefix, or `nil`.
   #[getter]
   pub def prefix self
-    throw nil
+    ...
 
   # Read-only qualified name formed from `prefix` and `name`.
   #[getter]
   pub def qname self
-    throw nil
+    ...
 
   # Mutable attribute value.
   pub field value = nil
@@ -83,7 +83,7 @@ pub class Node
     # Attributes or children.
     ...items @ (Attr | Value)
   do
-    throw nil
+    ...
 
   # Mutable array-like view of [`Attr`](xml.Attr) objects in document order.
   #
@@ -91,14 +91,14 @@ pub class Node
   # expanded names can exist temporarily, but verification rejects them.
   #[getter]
   pub def attrs self
-    throw nil
+    ...
 
   # Mutable array-like view of child `Node` and `Str` values in document order.
   #
   # Iterating a node iterates this view directly.
   #[getter]
   pub def children self
-    throw nil
+    ...
 
   # Mutable namespace URI, or `nil` for no namespace.
   pub field namespace = nil
@@ -115,7 +115,7 @@ pub class Node
   # Read-only qualified name formed from `prefix` and `tag`.
   #[getter]
   pub def qname self
-    throw nil
+    ...
 
   # Mutable local element name.
   pub field tag = nil
@@ -138,7 +138,7 @@ pub class Node
     # Function evaluated when absent.
     :else = nil
   do
-    throw nil
+    ...
 
   # Deletes all attributes matching an expanded name.
   #
@@ -152,7 +152,7 @@ pub class Node
     # Namespace URI.
     :namespace @ Str = nil
   do -> Bool
-    throw nil
+    ...
 
   # Appends a child.
   pub def push
@@ -160,7 +160,7 @@ pub class Node
     # Child value.
     child @ (Node | Str)
   do
-    throw nil
+    ...
 
   # Updates the first matching attribute or appends one.
   #
@@ -178,25 +178,25 @@ pub class Node
     # Preferred namespace prefix.
     :prefix @ Str = nil
   do
-    throw nil
+    ...
 
   # Returns a depth-first, parent-first iterator over this node and descendants.
   pub def traverse self
-    throw nil
+    ...
 
   # Reads an unnamespaced attribute by string or a child by integer index.
   #
   # Negative integer indexes count from the end.
   pub def (index) self key
-    throw nil
+    ...
 
   # Updates an unnamespaced attribute or child by index.
   pub def (set) self key value
-    throw nil
+    ...
 
   # Iterates the children.
   pub def (iter) self
-    throw nil
+    ...
 
 # Parses an XML document into a parentless element tree.
 #
@@ -222,7 +222,7 @@ pub def decode
   # XML document.
   xml @ Str
 do -> Node
-  throw nil
+  ...
 
 # Validates and serializes an XML tree.
 #
@@ -248,7 +248,7 @@ pub def encode
   # XML node or text.
   node @ (Node | Str)
 do -> Str
-  throw nil
+  ...
 
 # Checks an entire XML tree without serializing it.
 #
@@ -269,4 +269,4 @@ pub def verify
   # Root element.
   node @ Node
 do
-  throw nil
+  ...

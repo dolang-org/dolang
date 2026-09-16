@@ -88,7 +88,7 @@ pub class Connection
   # conn.close()
   # ```
   pub def close self
-    throw nil
+    ...
 
   # Prepares a statement, runs it once, and returns the number of rows it
   # affected.
@@ -121,7 +121,7 @@ pub class Connection
     # Values filling the template's `${#...}` parameters.
     ...args @ Value
   do -> Int
-    throw nil
+    ...
 
   # Prepares a statement for repeated execution.
   #
@@ -155,7 +155,7 @@ pub class Connection
     # which is closed when it returns. Omit to receive the handle instead.
     func @ Func = nil
   do -> Value
-    throw nil
+    ...
 
   # Runs `func` inside a database transaction.
   #
@@ -190,7 +190,7 @@ pub class Connection
     # Called with the [`Transaction`](sqlite.Transaction).
     func @ Func
   do -> Value
-    throw nil
+    ...
 
 # A compiled SQL statement that can be run repeatedly with different
 # parameters.
@@ -270,7 +270,7 @@ pub class Connection
 pub class Statement
   # Closes the statement and releases its resources.
   pub def close self
-    throw nil
+    ...
 
   # Runs the statement and returns the number of rows it affected.
   #
@@ -304,7 +304,7 @@ pub class Statement
     # binding](sqlite.Statement.parameter-binding).
     ...args
   do -> Int
-    throw nil
+    ...
 
   # Runs the statement and iterates its result rows.
   #
@@ -335,7 +335,7 @@ pub class Statement
     # binding](sqlite.Statement.parameter-binding).
     ...args
   do -> Iter[Row]
-    throw nil
+    ...
 
 # A single result row.
 #
@@ -406,7 +406,7 @@ pub class Row
     # name.
     key @ (Int | Str)
   do
-    throw nil
+    ...
 
 # A database transaction in progress.
 #
@@ -427,7 +427,7 @@ pub class Transaction
   #   tx.commit()
   # ```
   pub def commit self
-    throw nil
+    ...
 
   # Rolls the transaction back, discarding its changes.
   #
@@ -440,7 +440,7 @@ pub class Transaction
   #     tx.rollback()
   # ```
   pub def rollback self
-    throw nil
+    ...
 
 # Opens a database connection, creating the database if it does not exist.
 #
@@ -485,4 +485,4 @@ pub def open
   # which is closed when it returns. Omit to receive the handle instead.
   func @ Func = nil
 do -> Value
-  throw nil
+  ...

@@ -6,4 +6,4 @@ pub class Errno: sys.ErrorCode
   # The originating operating system, as `:LINUX:`, `:MACOS:`, or `:FREEBSD:`.
   #[getter]
   pub def os self
-    throw nil
+    ...

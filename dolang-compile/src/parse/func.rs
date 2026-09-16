@@ -31,15 +31,16 @@ impl Parser<'_> {
         let ret = self.parse_ret_type(scope)?;
         let expr = self.parse_expr(scope, ExprMode::Full)?;
         Ok(Expr::Lambda {
-            func: Function {
+            func: Box::new(Function {
                 params,
                 ret,
+                stub_span: None,
                 body: Block {
                     stmts: vec![Stmt::Prim(PrimStmt::Expr(expr))],
                     vars: Default::default(),
                     repl: None,
                 },
-            },
+            }),
             do_span: Some(do_span),
         })
     }
@@ -91,17 +92,19 @@ impl Parser<'_> {
                 let function = Function {
                     params,
                     ret,
+                    stub_span: None,
                     body: self.parse_block_through_dedent(scope)?,
                 };
                 Ok(Expr::Lambda {
-                    func: function,
+                    func: Box::new(function),
                     do_span: Some(do_span),
                 })
             }
             _ => Ok(Expr::Lambda {
-                func: Function {
+                func: Box::new(Function {
                     params,
                     ret,
+                    stub_span: None,
                     body: Block {
                         stmts: vec![if allow_trailing {
                             self.parse_stmt(scope)?
@@ -111,7 +114,7 @@ impl Parser<'_> {
                         vars: Default::default(),
                         repl: None,
                     },
-                },
+                }),
                 do_span: Some(do_span),
             }),
         }
@@ -188,13 +191,16 @@ impl Parser<'_> {
         {
             self.advance();
         }
-        let body = if type_only {
+        let (stub_span, body) = if type_only {
             match self.peek()? {
-                None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)) => Block {
-                    stmts: vec![],
-                    vars: Default::default(),
-                    repl: None,
-                },
+                None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)) => (
+                    None,
+                    Block {
+                        stmts: vec![],
+                        vars: Default::default(),
+                        repl: None,
+                    },
+                ),
                 other => {
                     return Err(self.syntax_error(
                         scope,
@@ -205,7 +211,34 @@ impl Parser<'_> {
             }
         } else {
             self.expect(scope, &[ExpectKind::Indent])?;
-            self.parse_block_through_dedent(scope)?
+            if let Some(token!(TokenInfo::Ellipsis, span)) = self.peek()? {
+                self.advance();
+                while let Some(token!(TokenInfo::StmtSep)) = self.peek()? {
+                    self.advance();
+                }
+                match self.peek()? {
+                    Some(token!(TokenInfo::Dedent)) => {
+                        self.advance();
+                    }
+                    other => {
+                        return Err(self.syntax_error(
+                            scope,
+                            other,
+                            "`...` must be the sole statement in a stub function body",
+                        ));
+                    }
+                }
+                (
+                    Some(span),
+                    Block {
+                        stmts: vec![],
+                        vars: Default::default(),
+                        repl: None,
+                    },
+                )
+            } else {
+                (None, self.parse_block_through_dedent(scope)?)
+            }
         };
         Ok(DefCommon {
             def_span,
@@ -213,7 +246,12 @@ impl Parser<'_> {
             name_span,
             special,
             binders,
-            func: Function { params, ret, body },
+            func: Function {
+                params,
+                ret,
+                stub_span,
+                body,
+            },
         })
     }
 

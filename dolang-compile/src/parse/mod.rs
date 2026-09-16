@@ -276,6 +276,7 @@ impl<'a> Parser<'a> {
         Root(Function {
             params: vec![],
             ret: None,
+            stub_span: None,
             body,
         })
     }
