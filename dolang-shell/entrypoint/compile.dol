@@ -1,6 +1,7 @@
 # Compiler tooling: `dolang -m compile extract` describes a Do source file as
 # JSON, for consumers such as the MkDocs syntax lexer and the mkdocstrings
-# API-reference handler.
+# API-reference handler. The lexer is the only consumer of the source's
+# tokens, so it asks for them with `--tokens`.
 
 import args compile json shell
   fs:
@@ -676,14 +677,18 @@ class Document
 # each catch that failure and render it their own way (a terminal-friendly
 # render vs a JSON error field).
 #
+# `tokens` describes every token of the source, which only syntax highlighting
+# consumes and which dwarfs the rest of the output, so it is written only when
+# asked for.
+#
 # The raw dump is best-effort: a source riddled with errors (a doc-comment
 # code fence naming things that don't exist, a file mid-edit) still gets
-# whatever nodes/tokens the compiler could recover, with its diagnostics
+# whatever nodes and tokens the compiler could recover, with its diagnostics
 # reported alongside them. Only the cooked --doc projection can't tolerate
 # this: a description built from a file that did not compile is missing
 # whatever the compiler could not read, and nothing downstream can tell that
 # from a file that simply declares less -- so it is not written at all.
-def build_extract source display_path module doc all strict
+def build_extract source display_path module doc all strict tokens
   let unit = compile.compile $display_path $source recover: true document: true
   let diagnostics = [...unit.diagnostics()]
   if ((doc || strict) && diagnostics.any do |diag|
@@ -696,9 +701,10 @@ def build_extract source display_path module doc all strict
       path: $display_path
       module: $module
     nodes: $index.nodes_json()
-    tokens:
-      for token = unit.tokens()
-        (token_json id_to_index token)
+    if tokens
+      tokens:
+        for token = unit.tokens()
+          (token_json id_to_index token)
     diagnostics:
       for diag = diagnostics
         (diagnostic_json diag)
@@ -706,14 +712,14 @@ def build_extract source display_path module doc all strict
       doc: $Document(source, module, all, index).result(unit, display_path)
 
 def extract p
-  let :doc :module :all :strict :path ... = p.extract
+  let :doc :module :all :strict :tokens :path ... = p.extract
   let source = if (path == nil)
     shell.stdin.read()
   else
     Path(path).read()
   let display_path = (path || "<stdin>")
   let result = try
-    build_extract $source $display_path $module $doc $all $strict
+    build_extract $source $display_path $module $doc $all $strict $tokens
   catch std.RuntimeError: e
     echo $e
     shell.exit 1
@@ -734,7 +740,8 @@ def serve_line line
       "doc": doc = false
       "all": all = false
       "strict": strict = false
-    build_extract $source (path || "<server>") $module $doc $all $strict
+      "tokens": tokens = false
+    build_extract $source (path || "<server>") $module $doc $all $strict $tokens
   catch e
     $
       error: "$e"
@@ -747,7 +754,7 @@ def serve_line line
 # only used for diagnostics and the output's `source.path`):
 #
 # ```
-# {"source": "let x = 1", "path": "example.dol", "doc": false, "module": null, "all": false, "strict": false}
+# {"source": "let x = 1", "path": "example.dol", "doc": false, "module": null, "all": false, "strict": false, "tokens": false}
 # ```
 #
 # Meant for a client that would otherwise shell out to `extract` once per
@@ -764,9 +771,11 @@ def serve()
 args.with
   help: Describe a Do source file's compiler output as JSON.
   - cmd: extract
-    help: Dump raw compiler nodes, tokens, and diagnostics, optionally with a cooked documentation projection.
+    help: Dump raw compiler nodes and diagnostics, optionally with a cooked documentation projection.
     - flag: doc
       help: Also emit the cooked documentation projection (module doc + public entities)
+    - flag: tokens
+      help: Also emit every source token, which only syntax highlighting needs
     - opt: module
       default: nil
       help: Module name recorded in the output

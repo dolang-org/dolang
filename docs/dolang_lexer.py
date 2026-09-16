@@ -111,8 +111,8 @@ class DoLexer(Lexer):
         Initialize the lexer.
 
         Options:
-            json_file: Path to JSON file containing `dolang -m compile extract` output.
-                Bypasses the compile server entirely.
+            json_file: Path to JSON file containing `dolang -m compile extract
+                --tokens` output. Bypasses the compile server entirely.
             highlighter_command: The one-shot `dolang -m compile extract` command (list of
                 strings). Defaults to DOLANG_HIGHLIGHT env var if set, otherwise
                 "dolang -m compile extract". The persistent server command is derived from
@@ -300,6 +300,13 @@ class DoLexer(Lexer):
         else:
             payload = self._request_from_server(text)
 
+        # Without tokens every fence would render as undifferentiated text, so
+        # say what is missing rather than quietly highlighting nothing.
+        if payload and "tokens" not in payload:
+            raise RuntimeError(
+                "extractor payload has no tokens; produce it with --tokens"
+            )
+
         self._payload = payload
         return payload
 
@@ -318,7 +325,9 @@ class DoLexer(Lexer):
 
     def _request_from_server(self, source_text: str) -> dict:
         server = _CompileServer.get(self._server_command())
-        response = server.request({"source": source_text})
+        # Highlighting is what the source's tokens are for, so this is the one
+        # caller that asks for them.
+        response = server.request({"source": source_text, "tokens": True})
         if "error" in response:
             raise RuntimeError(f"dolang compile server failed: {response['error']}")
         return response
