@@ -226,6 +226,8 @@ class DoHandler(BaseHandler):
         for member in entity.get("members", []):
             member["_identifier"] = f"{identifier}.{member['name']}"
             member["_module"] = module_name
+        _assign_anchors(entity.get("members", []))
+        entity["_anchor"] = identifier
         return entity
 
     def render(self, data: dict, options: dict, *, locale: str | None = None) -> str:
@@ -249,6 +251,23 @@ def _annotate_entities(entities: list[dict], module_name: str) -> None:
         for member in entity.get("members", []):
             member["_identifier"] = f"{module_name}.{name}.{member['name']}"
             member["_module"] = module_name
+        _assign_anchors(entity.get("members", []))
+    _assign_anchors(entities)
+
+
+def _assign_anchors(entities: list[dict]) -> None:
+    """Set ``_anchor``, the heading id, on each entity from its ``_identifier``.
+
+    Overloads share a name, and so an identifier, which links to the first of
+    them; sorting keeps them together in source order. Each later one gets an
+    anchor of its own so that no heading id is repeated.
+    """
+    counts: dict[str, int] = {}
+    for entity in entities:
+        identifier = entity["_identifier"]
+        count = counts.get(identifier, 0) + 1
+        counts[identifier] = count
+        entity["_anchor"] = identifier if count == 1 else f"{identifier}--overload-{count}"
 
 
 def _sort_entities(entities: list[dict]) -> None:
@@ -504,8 +523,13 @@ def _signature(entity: dict) -> str:
 
 
 def _declaration_name(entity: dict) -> str:
-    """A declaration's name followed by its type binders, as plain text."""
+    """A declaration's name followed by its type binders, as plain text.
+
+    A protocol's name keeps the `@` it is declared with.
+    """
     name = entity.get("name", "")
+    if entity.get("protocol"):
+        name = f"@{name}"
     binders = entity.get("binder_text") or []
     return f"{name}[{', '.join(binders)}]" if binders else name
 

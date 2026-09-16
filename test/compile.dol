@@ -566,6 +566,37 @@ def types_of nodes id
   [...nodes.filter(do |pair| (type(pair[1], compile.Type) && (pair[1].parent == id)))]
 
 #[test]
+def type_only_declarations_are_exposed()
+  let source = r|-
+    pub class @Shape
+      pub def area self -> Int
+    def @grow x @ Int -> Int
+    pub def grow x
+      x
+    pub class Square: @Shape
+      def @(init) self
+      def (init) _self
+        nil
+  let unit = compile.compile "type_only.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+  let shape = (named_node source nodes compile.Class "Shape")
+  assert $shape[1].type_only
+  let area = nodes.find(do |pair| (type(pair[1], compile.Method) && (pair[1].parent == shape[0])))
+  assert $area[1].type_only
+  let grows = [...nodes.filter(do |pair| type(pair[1], compile.Function))]
+  assert_eq [...grows.map(do |pair| pair[1].type_only)] [true, false]
+  # An overload is public with its implementation
+  assert $grows[0][1].is_pub
+  let square = (named_node source nodes compile.Class "Square")
+  assert !(square[1].type_only)
+  assert_eq (types_of(nodes, square[0])[0][1].expr.target) $shape[0]
+  let inits = [...nodes.filter(do |pair| type(pair[1], compile.SpecialMethod))]
+  assert_eq [...inits.map(do |pair| pair[1].type_only)] [true, false]
+  # Type-only declarations have nothing to emit
+  unit.emit()
+
+#[test]
 def types_describe_what_they_annotate()
   let source = r|-
     import std:

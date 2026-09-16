@@ -130,6 +130,56 @@ import @geometry
 let point @ geometry.Point = nil
 ```
 
+## Overloads
+
+`def @` declares a signature for the function of the same name without giving it
+a body. The signatures declared this way are the function's overloads, each a
+way it can be called. They may appear anywhere in the block that declares the
+function:
+
+```
+def @double x @ Int -> Int
+def @double x @ Str -> Str
+pub def double x
+  (x + x)
+```
+
+An overload has no runtime binding. It is exported with its implementation, so
+it is never written `pub`. A method, including a special method such as
+`(init)`, takes overloads in its class body the same way.
+
+## Protocols
+
+`class @` declares a protocol, a type made up of the members a value has. A
+protocol has no runtime binding. Its methods have no bodies, its fields have no
+defaults, and methods sharing a name are overloads:
+
+```
+pub class @Shape
+  pub field name @ Str
+  pub def area self -> Int
+  pub def area self scale @ Int -> Int
+```
+
+A protocol is structural: a value with its members is one of its instances,
+whatever its class. A class claims a type with a type-only supertype, written
+with `@`, which is not inherited at runtime and may name any type:
+
+```
+class Square: @Shape
+  pub field name = "square"
+  pub def area _self
+    1
+```
+
+A protocol's own supertypes are type-only already, so they are written without
+`@`:
+
+```
+pub class @Solid: Shape
+  pub def volume self -> Int
+```
+
 ## Type Syntax
 
 An annotation or return type is a compact type expression which admits only

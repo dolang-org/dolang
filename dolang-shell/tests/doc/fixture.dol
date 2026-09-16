@@ -83,3 +83,27 @@ pub def build
   ...args
 do
   echo $from $pull ...args
+
+# Something with an area.
+pub class @Shaped
+  # The area.
+  pub def area self -> Int
+
+  # The area, scaled.
+  pub def area self scale @ Int -> Int
+
+# A point with an area.
+pub class Plot: Point @Shaped
+  # The area of a point.
+  def @area self -> Int
+  pub def area _self
+    0
+
+# Grow a number.
+def @grow x @ Int -> Int
+
+# Grow a string.
+def @grow x @ Str -> Str
+
+pub def grow x
+  (x + x)

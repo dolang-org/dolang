@@ -166,18 +166,35 @@ pub class Class: Declaration
   pub def is_pub self
     throw nil
 
+  # Whether the class is a protocol, declared `class @Name`.
+  #[getter]
+  pub def type_only self -> Bool
+    throw nil
+
 # A `def` at statement level.
 pub class Function: Declaration
-  # Whether the function was declared `pub`.
+  # Whether the function was declared `pub`. An overload is public when its
+  # implementation is.
   #[getter]
   pub def is_pub self
     throw nil
 
+  # Whether the function is an overload signature, declared `def @name`.
+  #[getter]
+  pub def type_only self -> Bool
+    throw nil
+
 # A `def` in a class body. Its class is its parent.
 pub class Method: Declaration
-  # Whether the method was declared `pub`.
+  # Whether the method was declared `pub`. An overload is public when its
+  # implementation is.
   #[getter]
   pub def is_pub self
+    throw nil
+
+  # Whether the method has no body: an overload signature or a protocol member.
+  #[getter]
+  pub def type_only self -> Bool
     throw nil
 
 # A method implementing a protocol, such as `(init)` or `(next)`. Its class is
@@ -187,6 +204,10 @@ pub class Method: Declaration
 # special method is part of the type's interface however it was declared, so
 # there is no visibility to report.
 pub class SpecialMethod: Declaration
+  # Whether the method has no body: an overload signature or a protocol member.
+  #[getter]
+  pub def type_only self -> Bool
+    throw nil
 
 # A field declaration in a class body. Its class is its parent.
 #

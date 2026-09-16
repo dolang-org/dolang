@@ -1,0 +1,8 @@
+class @Proto
+
+pub let value = Proto
+# error: unbound identifier
+#   --> type_only_unbound.dol:LL:LL
+#    |
+# LL | pub let value = Proto
+#    |                 ^^^^^

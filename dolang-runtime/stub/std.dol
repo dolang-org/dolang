@@ -164,8 +164,7 @@ pub def tuple[...Ts] ...values@Ts -> Tuple[...Ts]
 # ```
 # assert_eq (type 42) $Int
 # ```
-pub def type value @ Value -> Type
-  throw nil
+def @type value @ Value -> Type
 
 #
 # Tests whether `value` is an instance of `type`.

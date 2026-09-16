@@ -29,7 +29,9 @@
 
 {% set pub_members = entity.members | selectattr("pub") | list %}
 {% set special_members = entity.members | selectattr("special") | list %}
-{% set all_members = entity.members if show_private else (pub_members + special_members) | unique(attribute="name") | list %}
+{# A public special method is in both lists. Overloads share a name, so each
+   member is told apart by its anchor. #}
+{% set all_members = entity.members if show_private else (pub_members + special_members) | unique(attribute="_anchor") | list %}
 
 {% set class_fields = all_members | selectattr("kind", "equalto", "field") | rejectattr("scope", "equalto", "instance") | list %}
 {% set fields = all_members | selectattr("kind", "equalto", "field") | selectattr("scope", "equalto", "instance") | list %}
@@ -51,10 +53,10 @@
      identifier, not its bare name: a bare name would collide primary-registers
      with any other field/method/module across the whole site that happens to
      share it (autorefs registers heading ids workspace-wide, not per-page). #}
-  {{ "" | heading(heading_level + 2, id=field._identifier, hidden=true, toc_label=field.name) }}
-  <dt><code>{{ field.name }}</code>{% if field.type %} ({{ field.type | convert_markdown(heading_level + 2, field._identifier ~ "--type", strip_paragraph=true) }}){% endif %}</dt>
+  {{ "" | heading(heading_level + 2, id=field._anchor, hidden=true, toc_label=field.name) }}
+  <dt><code>{{ field.name }}</code>{% if field.type %} ({{ field.type | convert_markdown(heading_level + 2, field._anchor ~ "--type", strip_paragraph=true) }}){% endif %}</dt>
   {% if field.doc %}
-  <dd>{{ field.doc | convert_markdown(heading_level + 2, field._identifier) }}</dd>
+  <dd>{{ field.doc | convert_markdown(heading_level + 2, field._anchor) }}</dd>
   {% else %}
   <dd></dd>
   {% endif %}
@@ -65,7 +67,7 @@
 {% macro render_methods(items, title, anchor) %}
 {{ title | heading(heading_level + 1, skip_inventory=true, id=anchor) }}
 {% for method in items %}
-{% set method_id = method._identifier %}
+{% set method_id = method._anchor %}
 {% set sig = method.signature %}
 {{ params.signature_heading(sig, method.return_type, heading_level + 2, method_id, "method", sig) }}
 {% if method.doc_intro %}
@@ -81,7 +83,7 @@
 {% if constructors %}
 {{ "Constructor" | heading(heading_level + 1, skip_inventory=true, id="constructor") }}
 {% for method in constructors %}
-{% set method_id = base_id ~ ".(init)" %}
+{% set method_id = method._anchor %}
 {# A constructor is called through the class's name alone: its binders
    describe the type, not arguments a caller writes. #}
 {% set sig = method.signature | replace("(init)", entity.name, 1) %}

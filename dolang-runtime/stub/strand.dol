@@ -260,7 +260,7 @@ do
   throw nil
 
 # Runs a function over an iterator with a fixed number of scoped workers.
-pub def pool
+def @pool
   # number of worker strands
   count @ Int
   # iterable of items
@@ -268,7 +268,6 @@ pub def pool
   # function applied to each input value
   func @ Func
 do
-  throw nil
 
 # Runs a function over the strand-local input with a fixed number of scoped workers.
 pub def pool

@@ -349,6 +349,9 @@ class LocalTool: tools.build.Tool
   pub field root = "."
 ```
 
+A superclass written with `@` exists only in types, and the class does not
+inherit from it. See [Protocols](types.md#protocols).
+
 ### Member Resolution Order
 
 - Earlier superclasses in the list win when the same member is defined multiple

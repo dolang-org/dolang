@@ -57,18 +57,19 @@ pub(crate) static ENTRIES: &[DocEntry] = &[DocEntry {
     type_: Some("nil"),
 }];
 
-/// Looks up a documented module/item pair.
+/// Looks up a documented module/item pair: one entry, or one per overload in
+/// source order.
 ///
 /// `ENTRIES` is sorted by `(module, item)` at build time (see build.rs), so
 /// this is a plain binary search over a static table rather than a hash
 /// lookup or a runtime parse -- there is nothing to build or cache, and the
 /// module/item strings looked up are already exactly what appears in the
 /// source (an import's module path, a prelude binding's item name).
-pub(crate) fn lookup(module: &str, item: &str) -> Option<&'static DocEntry> {
-    ENTRIES
-        .binary_search_by(|entry| (entry.module, entry.item).cmp(&(module, item)))
-        .ok()
-        .map(|index| &ENTRIES[index])
+pub(crate) fn lookup(module: &str, item: &str) -> &'static [DocEntry] {
+    let key = (module, item);
+    let start = ENTRIES.partition_point(|entry| (entry.module, entry.item) < key);
+    let len = ENTRIES[start..].partition_point(|entry| (entry.module, entry.item) == key);
+    &ENTRIES[start..start + len]
 }
 
 /// A one-line `def name args` / `class Name` / `let name` style signature.

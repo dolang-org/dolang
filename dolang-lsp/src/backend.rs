@@ -188,7 +188,7 @@ fn symbol_kind(kind: &Kind<'_>, content: &str) -> Option<SymbolKind> {
         Kind::Class { .. } => SymbolKind::CLASS,
         Kind::Function { .. } => SymbolKind::FUNCTION,
         Kind::Method { .. } => SymbolKind::METHOD,
-        Kind::SpecialMethod { name } => {
+        Kind::SpecialMethod { name, .. } => {
             if span_text(content, name) == "(init)" {
                 SymbolKind::CONSTRUCTOR
             } else {
@@ -318,7 +318,9 @@ fn declaration_label(
             .collect::<Vec<_>>()
     };
     let label = match kind {
-        Kind::Class { is_pub, .. } => {
+        Kind::Class {
+            is_pub, type_only, ..
+        } => {
             let supers = children
                 .get(&id)
                 .into_iter()
@@ -329,8 +331,9 @@ fn declaration_label(
                 .map(|span| span_text(content, &span))
                 .collect::<Vec<_>>();
             format!(
-                "{}class {name}{}",
+                "{}class {}{name}{}",
                 if is_pub { "pub " } else { "" },
+                if type_only { "@" } else { "" },
                 if supers.is_empty() {
                     String::new()
                 } else {
@@ -340,9 +343,19 @@ fn declaration_label(
         }
         Kind::Function { is_pub, .. } | Kind::Method { is_pub, .. } => {
             let params = params();
+            // Only a statement-level overload is always written with `@`; a protocol
+            // member is type-only without one
+            let at = matches!(
+                kind,
+                Kind::Function {
+                    type_only: true,
+                    ..
+                }
+            );
             format!(
-                "{}def {name}{}{}",
-                if is_pub { "pub " } else { "" },
+                "{}def {}{name}{}{}",
+                if is_pub && !at { "pub " } else { "" },
+                if at { "@" } else { "" },
                 if params.is_empty() {
                     String::new()
                 } else {
@@ -396,7 +409,18 @@ fn external_hover(kind: Kind<'_>, content: &str) -> Option<String> {
         Kind::PreludeItem { module, item, .. } => (module, item),
         _ => return None,
     };
-    Some(render_external_hover(doc_index::lookup(module, item)?))
+    let entries = doc_index::lookup(module, item);
+    if entries.is_empty() {
+        return None;
+    }
+    // Overloads share a name, and each is described in turn
+    Some(
+        entries
+            .iter()
+            .map(render_external_hover)
+            .collect::<Vec<_>>()
+            .join("\n\n---\n\n"),
+    )
 }
 
 /// Assembles a hover markdown blob from a fenced signature and a doc comment,

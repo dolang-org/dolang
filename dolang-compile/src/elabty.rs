@@ -7,6 +7,7 @@
 
 use std::{
     cell::Cell,
+    collections::HashSet,
     fmt::{self, Write},
 };
 
@@ -15,7 +16,7 @@ use dolang_util::intern::BinTable;
 use crate::{
     Compiler,
     ast::{
-        Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, DictElem, Expr, ExprBody,
+        Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Def, DictElem, Expr, ExprBody,
         FieldInit, For, Function, Ident, If, ImportElement, LValue, Origin, Param, PatIdent,
         Pattern, PrimStmt, Res, Root, Stmt, TypeArgKind, TypeDecl, TypeExpr, Var, visit::Node,
     },
@@ -81,6 +82,22 @@ impl Diagnose for UnusedTypeImport {
 
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "unused type import")
+    }
+
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
+struct OverloadWithoutImpl(Span);
+
+impl Diagnose for OverloadWithoutImpl {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "type-only def has no implementation")
     }
 
     fn span(&self) -> Span {
@@ -423,10 +440,27 @@ impl Check<'_> {
             self.ty(&frame, &mut ret.ty);
         }
         let inner = frame.body(&body.stmts);
+        self.overloads(&body.stmts);
         for stmt in body.stmts.iter_mut() {
             self.stmt(&inner, stmt);
         }
         self.unused_types(&inner);
+    }
+
+    /// Warn about a type-only def that no def of the same name among its block's
+    /// statements implements.
+    fn overloads<T: Element>(&self, elems: &[T]) {
+        let impls: HashSet<&str> = elems
+            .iter()
+            .filter_map(Element::def)
+            .filter(|def| !def.is_type_only())
+            .map(|def| self.file.str(def.ident.span))
+            .collect();
+        for def in elems.iter().filter_map(Element::def) {
+            if def.is_type_only() && !impls.contains(self.file.str(def.ident.span)) {
+                self.diags.push(OverloadWithoutImpl(def.ident.span));
+            }
+        }
     }
 
     /// Check a function declared with binders.
@@ -551,14 +585,35 @@ impl Check<'_> {
                 self.unused_types(&inner);
             }
             Stmt::Def(def) => {
-                self.warn_value_name(frame, &def.ident);
+                // An overload names the value its implementation binds
+                if !def.is_type_only() {
+                    self.warn_value_name(frame, &def.ident);
+                }
                 for decorator in &mut def.decorators {
                     self.expr(frame, &mut decorator.expr);
                 }
                 self.def(frame, def.binders.as_deref_mut(), &mut def.func);
             }
             Stmt::Class(class) => {
-                self.warn_value_name(frame, &class.ident);
+                if class.is_protocol() {
+                    // A protocol is visible throughout its block, so a value of the
+                    // block is diagnosed where the value is bound
+                    let mut enclosing = Some(frame);
+                    while let Some(current) = enclosing {
+                        enclosing = current.outer;
+                        if matches!(current.kind, FrameKind::Vars { .. }) {
+                            break;
+                        }
+                    }
+                    let name = self.file.str(class.ident.span);
+                    if let Some(enclosing) = enclosing
+                        && self.has_value(enclosing, name, class.ident.span.start)
+                    {
+                        self.diags.push(TypeShadowsValue(class.ident.span));
+                    }
+                } else {
+                    self.warn_value_name(frame, &class.ident);
+                }
                 self.class(frame, class)
             }
             Stmt::Return(ret) => {
@@ -591,6 +646,11 @@ impl Check<'_> {
         let inner = Frame::binders(frame, class.binders.as_deref());
         self.binder_types(&inner, class.binders.as_deref_mut());
         for super_ref in &mut class.super_refs {
+            // Elaboration resolves the head of a supertype that exists at runtime
+            if super_ref.type_only {
+                let dotted = !super_ref.fields.is_empty();
+                self.name(&inner, &mut super_ref.ident, &mut super_ref.decl, dotted);
+            }
             for arg in &mut super_ref.args {
                 match &mut arg.kind {
                     TypeArgKind::KeyRest { key_ty, ty, .. } => {
@@ -605,9 +665,27 @@ impl Check<'_> {
                 }
             }
         }
+        let impls: HashSet<(bool, &str)> = class
+            .body
+            .members
+            .iter()
+            .filter_map(|member| match member {
+                ClassMember::Method(method) if !method.type_only => {
+                    Some((method.special.is_some(), self.file.str(method.name_span)))
+                }
+                _ => None,
+            })
+            .collect();
         for member in &mut class.body.members {
             match member {
                 ClassMember::Method(method) => {
+                    // Protocol members have no implementation to find
+                    if method.at_span.is_some()
+                        && !impls
+                            .contains(&(method.special.is_some(), self.file.str(method.name_span)))
+                    {
+                        self.diags.push(OverloadWithoutImpl(method.name_span));
+                    }
                     for decorator in &mut method.decorators {
                         self.expr(&inner, &mut decorator.expr);
                     }
@@ -657,6 +735,7 @@ impl Check<'_> {
             self.pattern(&inner, pattern);
         }
         let body = inner.body(elems);
+        self.overloads(elems);
         for elem in elems.iter_mut() {
             elem.check(self, &body);
         }
@@ -794,6 +873,11 @@ trait Element {
 
     /// Collect the type-only imports the element declares in its enclosing block.
     fn type_imports(&self, _names: &mut Vec<TypeName>) {}
+
+    /// The `def` the element is, if it is one.
+    fn def(&self) -> Option<&Def> {
+        None
+    }
 }
 
 impl Element for Stmt {
@@ -872,7 +956,22 @@ impl Element for Stmt {
                 warn_unused: false,
                 used: Cell::new(false),
             }),
+            // A protocol, like a class, is visible throughout its block
+            Stmt::Class(class) if class.is_protocol() => names.push(TypeName {
+                span: class.ident.span,
+                import: false,
+                visible_after: None,
+                warn_unused: false,
+                used: Cell::new(false),
+            }),
             _ => {}
+        }
+    }
+
+    fn def(&self) -> Option<&Def> {
+        match self {
+            Stmt::Def(def) => Some(def),
+            _ => None,
         }
     }
 }

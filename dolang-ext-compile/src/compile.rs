@@ -1470,7 +1470,10 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 project_target(this, strand, out)
             });
         }
-        if matches!(T::NAME, "ImportModule" | "ImportItem") {
+        if matches!(
+            T::NAME,
+            "Class" | "Function" | "Method" | "SpecialMethod" | "ImportModule" | "ImportItem"
+        ) {
             builder = builder.get("type_only", |this, strand, out| {
                 project_type_only(this, strand, out)
             });
@@ -1525,7 +1528,7 @@ fn project_name<'v, 's, T: NodeMarker + 'static>(
         compile::Kind::Class { name, .. }
         | compile::Kind::Function { name, .. }
         | compile::Kind::Method { name, .. }
-        | compile::Kind::SpecialMethod { name }
+        | compile::Kind::SpecialMethod { name, .. }
         | compile::Kind::Field { name, .. }
         | compile::Kind::Bind { name, .. }
         | compile::Kind::Alias { name, .. }
@@ -1652,7 +1655,11 @@ fn project_type_only<'v, 's, T: NodeMarker + 'static>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let v = with_node(this, strand, |n, _| match n.kind() {
-        compile::Kind::ImportModule { type_only, .. }
+        compile::Kind::Class { type_only, .. }
+        | compile::Kind::Function { type_only, .. }
+        | compile::Kind::Method { type_only, .. }
+        | compile::Kind::SpecialMethod { type_only, .. }
+        | compile::Kind::ImportModule { type_only, .. }
         | compile::Kind::ImportItem { type_only, .. } => type_only,
         _ => unreachable!(),
     })?;

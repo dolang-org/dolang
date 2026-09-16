@@ -509,3 +509,39 @@ impl Diagnose for SpecialMethodOutsideClass {
         write!(w, "special methods are only valid in a class body")
     }
 }
+
+/// `@` within a protocol, whose members and supertypes are type-only already
+pub(super) struct RedundantTypeOnly(pub(super) Span);
+
+impl Diagnose for RedundantTypeOnly {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "a protocol's members and supertypes are already type-only"
+        )
+    }
+}
+
+pub(super) struct ProtocolFieldDefault(pub(super) Span);
+
+impl Diagnose for ProtocolFieldDefault {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a protocol field has no default")
+    }
+}

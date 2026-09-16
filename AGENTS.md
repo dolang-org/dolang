@@ -633,6 +633,24 @@ class Registry[V]: Table[Sym, V]
 pub let @Pair[T] = Tuple[T, T]
 ```
 
+`def @name` declares a bodiless overload of the function or method `name` in the
+same block or class body; it is exported with its implementation, so it is
+never `pub`. `class @Name` declares a protocol, whose members have no bodies.
+`@` before a supertype makes it type-only, so the class does not inherit from it
+at runtime:
+
+```
+def @double x@Int -> Int
+def @double x@Str -> Str
+pub def double x
+  (x + x)
+pub class @Shape
+  pub def area self -> Int
+class Square: @Shape
+  pub def area _self
+    1
+```
+
 `@` before an import item binds it for types only; the item is not imported:
 
 ```
@@ -799,7 +817,8 @@ and a field's type, with names linked to their documentation:
 - A constructor is the special method `(init)`. A method on the type object is
   marked `#[class]` and still declares `self`.
 - Qualify a superclass from another module: `class Error: std.RuntimeError`. A
-  class names one supertype; describe any other protocol it implements in prose.
+  class names one runtime supertype; name any other type it implements as a
+  type-only supertype, as in `class Blake3: @State`.
 
 #### Links
 

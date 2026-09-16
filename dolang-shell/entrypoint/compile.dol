@@ -546,6 +546,8 @@ class Document
       kind: "class"
       name: (self.#text(node.name))
       pub: $node.is_pub
+      if node.type_only
+        protocol: true
       span: (span_json(node.name))
       doc: (self.#doc_of(node))
       if (binders.len > 0)
@@ -562,6 +564,8 @@ class Document
       kind: "function"
       name: (self.#text(node.name))
       pub: $node.is_pub
+      if node.type_only
+        type_only: true
       span: (span_json(node.name))
       doc: (self.#doc_of(node))
       if (binders.len > 0)
@@ -655,6 +659,8 @@ class Document
         name: (self.#text(node.name))
         pub: $is_pub
         special: $special
+        if node.type_only
+          type_only: true
         span: (span_json(node.name))
         doc: (self.#doc_of(node))
         scope: (self.#scope(id))
