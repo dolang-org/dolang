@@ -11,8 +11,14 @@
 # are listed with [`streams`](fs.streams).
 
 import
+  fs.unix:
+    - @Mode
+  @security.macos
+  @security.nfs4
+  @security.unix
   security.windows:
     - @Sid
+    - @SecDesc
   time:
     - @DateTime
 
@@ -57,7 +63,7 @@ pub class DirEntry
   # ```
   #[getter]
   pub def name self -> Str
-    throw nil
+    ...
 
   # The file type.
   #
@@ -79,7 +85,7 @@ pub class DirEntry
   # ```
   #[getter]
   pub def type self -> Sym
-    throw nil
+    ...
 
   # The inode number of the entry.
   #
@@ -87,7 +93,7 @@ pub class DirEntry
   # [`FieldError`](std.FieldError).
   #[getter]
   pub def ino self -> Int
-    throw nil
+    ...
 
 # An open file.
 #
@@ -120,7 +126,7 @@ pub class File
   # file.close()
   # ```
   pub def close self
-    throw nil
+    ...
 
   # Acquires a byte-range lock while `func` runs.
   #
@@ -165,7 +171,7 @@ pub class File
     # Acquire a shared rather than exclusive lock.
     :shared @ Bool = nil
   do -> Value
-    throw nil
+    ...
 
   # Attempts to acquire a byte-range lock without waiting.
   #
@@ -195,7 +201,7 @@ pub class File
     # Acquire a shared rather than exclusive lock.
     :shared @ Bool = nil
   do -> Value
-    throw nil
+    ...
 
   # Reads data from the file.
   #
@@ -246,7 +252,7 @@ pub class File
     # streaming read it cannot hold a partial character back for next time.
     :offset @ Int = nil
   do -> Str
-    throw nil
+    ...
 
   # Writes data to the file.
   #
@@ -295,7 +301,7 @@ pub class File
     # in flight on one handle at once.
     :offset @ Int = nil
   do -> Int
-    throw nil
+    ...
 
   # The method form of [`fs.copy_data`](fs.copy_data).
   pub def copy_data
@@ -311,7 +317,7 @@ pub class File
     # `:AUTO:` (default), `:REQUIRE:`, or `:NEVER:`.
     :clone @ Sym = nil
   do
-    throw nil
+    ...
 
   # Truncates the file to the given byte length.
   #
@@ -329,7 +335,7 @@ pub class File
     # New file length in bytes.
     size @ Int
   do
-    throw nil
+    ...
 
   # Flushes the file to durable storage, returning once the device reports it
   # committed.
@@ -348,7 +354,7 @@ pub class File
     # does and does not guarantee.
     :data @ Bool = nil
   do
-    throw nil
+    ...
 
   # Gets metadata for the open file.
   #
@@ -361,7 +367,7 @@ pub class File
   #   echo "Modified: $(meta.modified)"
   # ```
   pub def metadata self -> Metadata
-    throw nil
+    ...
 
   # Gets filesystem metadata for the filesystem backing the open file.
   #
@@ -373,7 +379,7 @@ pub class File
   #   echo "Available: $(meta.available)"
   # ```
   pub def fs_metadata self -> FsMetadata
-    throw nil
+    ...
 
   # Gets selected parts of the Windows security descriptor through this file's
   # existing handle.
@@ -394,7 +400,7 @@ pub class File
     # Load the system ACL. Defaults to `false`.
     :sacl @ Bool = nil
   do -> SecDesc
-    throw nil
+    ...
 
   # Applies the components selected by a security descriptor's `mask` through
   # this file's existing handle.
@@ -414,7 +420,7 @@ pub class File
     # Descriptor, packet, or spec.
     desc @ (SecDesc | Bin | Dict) = nil
   do
-    throw nil
+    ...
 
   # Gets the ACL stored on the open file.
   #
@@ -431,7 +437,7 @@ pub class File
     # ACL.
     :default @ Bool = nil
   do -> (security.unix.Acl | security.nfs4.Acl | security.macos.Acl | nil)
-    throw nil
+    ...
 
   # Sets or removes an ACL on the open file.
   #
@@ -449,7 +455,7 @@ pub class File
     # ACL.
     :default @ Bool = nil
   do
-    throw nil
+    ...
 
   # Lists extended attributes for this file.
   #
@@ -474,7 +480,7 @@ pub class File
     # namespaces.
     :namespace @ (Str | Sym) = nil
   do -> Iter
-    throw nil
+    ...
 
   # Gets an extended attribute value.
   #
@@ -492,7 +498,7 @@ pub class File
     # Namespace to query.
     :namespace @ (Str | Sym) = nil
   do -> Bin
-    throw nil
+    ...
 
   # Sets an extended attribute value.
   #
@@ -516,7 +522,7 @@ pub class File
     # Namespace to update.
     :namespace @ (Str | Sym) = nil
   do
-    throw nil
+    ...
 
   # Removes an extended attribute.
   #
@@ -534,7 +540,7 @@ pub class File
     # Namespace to update.
     :namespace @ (Str | Sym) = nil
   do
-    throw nil
+    ...
 
   # Lists alternate data streams for this file.
   #
@@ -554,7 +560,7 @@ pub class File
   #     echo (path / stream)
   # ```
   pub def streams self -> Iter
-    throw nil
+    ...
 
   # Returns the current cursor position in bytes.
   #
@@ -567,7 +573,7 @@ pub class File
   #   assert_eq (file.tell()) 5
   # ```
   pub def tell self -> Int
-    throw nil
+    ...
 
   # Moves the file cursor.
   #
@@ -597,11 +603,11 @@ pub class File
     # Byte offset relative to the end of the file.
     :end @ Int = nil
   do -> Int
-    throw nil
+    ...
 
   # Returns the file as its own iterator.
   pub def (iter) self
-    throw nil
+    ...
 
   # Fetches the next value from the file.
   #
@@ -617,11 +623,11 @@ pub class File
   #
   # In binary mode it reads a chunk of data of arbitrary length.
   pub def (next) self
-    throw nil
+    ...
 
   # Returns the file as its own sink.
   pub def (sink) self
-    throw nil
+    ...
 
   # Writes a value to the file, verbatim.
   #
@@ -644,7 +650,7 @@ pub class File
     # Value to write.
     value
   do
-    throw nil
+    ...
 
 # The state of a scoped [`File`](fs.File) lock.
 #
@@ -657,13 +663,13 @@ pub class FileLock
   # the lock, and after releasing it.
   #[getter]
   pub def held self -> Bool
-    throw nil
+    ...
 
   # Releases the lock before the surrounding scope exits.
   #
   # Repeated calls have no effect. Release runs with interruption masked.
   pub def release self
-    throw nil
+    ...
 
 # Metadata about a filesystem as a whole.
 #
@@ -678,150 +684,150 @@ pub class FsMetadata
   # Total filesystem capacity in bytes.
   #[getter]
   pub def capacity self -> Int
-    throw nil
+    ...
 
   # Total free space in bytes, including space
   # reserved from unprivileged users.
   #[getter]
   pub def free self -> Int
-    throw nil
+    ...
 
   # Free space available to the current process in
   # bytes.
   #[getter]
   pub def available self -> Int
-    throw nil
+    ...
 
   # Filesystem block size in bytes when available.
   #[getter]
   pub def block_size self -> (Int | nil)
-    throw nil
+    ...
 
   # Whether the filesystem is mounted read-only.
   #[getter]
   pub def read_only self -> Bool
-    throw nil
+    ...
 
   # Total data blocks. Unix only.
   #[getter]
   pub def blocks self -> Int
-    throw nil
+    ...
 
   # Free data blocks, including reserved blocks. Unix
   # only.
   #[getter]
   pub def blocks_free self -> Int
-    throw nil
+    ...
 
   # Free data blocks available to unprivileged users.
   # Unix only.
   #[getter]
   pub def blocks_available self -> Int
-    throw nil
+    ...
 
   # Total file nodes. Unix only.
   #[getter]
   pub def files self -> Int
-    throw nil
+    ...
 
   # Free file nodes. Unix only.
   #[getter]
   pub def files_free self -> Int
-    throw nil
+    ...
 
   # Free file nodes available to unprivileged users.
   # Unix only.
   #[getter]
   pub def files_available self -> Int
-    throw nil
+    ...
 
   # Filesystem fragment size in bytes. Unix only.
   #[getter]
   pub def fragment_size self -> Int
-    throw nil
+    ...
 
   # Raw filesystem identifier when the platform
   # reports one. Unix only.
   #[getter]
   pub def fsid self -> (Int | nil)
-    throw nil
+    ...
 
   # Maximum filename length. Unix only.
   #[getter]
   pub def name_max self -> Int
-    throw nil
+    ...
 
   # Raw Linux filesystem mount attribute mask. Unix
   # only.
   #[getter]
   pub def linux_attrs self -> Int
-    throw nil
+    ...
 
   # Raw FreeBSD filesystem mount attribute mask. Unix
   # only.
   #[getter]
   pub def freebsd_attrs self -> Int
-    throw nil
+    ...
 
   # Raw macOS filesystem mount attribute mask. Unix
   # only.
   #[getter]
   pub def macos_attrs self -> Int
-    throw nil
+    ...
 
   # Whether setuid execution is disabled. Unix only.
   #[getter]
   pub def no_suid self -> Bool
-    throw nil
+    ...
 
   # Whether execution is disabled. Unix only.
   #[getter]
   pub def no_exec self -> Bool
-    throw nil
+    ...
 
   # Whether writes are synchronous. Unix only.
   #[getter]
   pub def synchronous self -> Bool
-    throw nil
+    ...
 
   # Whether device files are disabled. Unix only.
   #[getter]
   pub def no_dev self -> Bool
-    throw nil
+    ...
 
   # Whether access time updates are disabled. Unix
   # only.
   #[getter]
   pub def no_atime self -> Bool
-    throw nil
+    ...
 
   # Whether directory access time updates are
   # disabled. Unix only.
   #[getter]
   pub def no_dir_atime self -> Bool
-    throw nil
+    ...
 
   # Whether relative-atime updates are enabled. Unix
   # only.
   #[getter]
   pub def relatime self -> Bool
-    throw nil
+    ...
 
   # Raw Windows volume flags. Windows only.
   #[getter]
   pub def win_flags self -> Int
-    throw nil
+    ...
 
   # Raw Windows volume serial number. Windows only.
   #[getter]
   pub def volume_serial_number self -> Int
-    throw nil
+    ...
 
   # Maximum path component length for the volume.
   # Windows only.
   #[getter]
   pub def component_length_max self -> Int
-    throw nil
+    ...
 
 # Metadata about a single filesystem entry.
 #
@@ -838,28 +844,28 @@ pub class Metadata
   # File size in bytes.
   #[getter]
   pub def size self -> Int
-    throw nil
+    ...
 
   # File type: `:FILE:`, `:DIR:`, `:SYMLINK:`,
   # `:FIFO:`, `:CHAR_DEVICE:`, `:BLOCK_DEVICE:`, `:SOCKET:`, or `:UNKNOWN:`.
   #[getter]
   pub def type self -> Sym
-    throw nil
+    ...
 
   # Last modification time.
   #[getter]
   pub def modified self -> DateTime
-    throw nil
+    ...
 
   # Last access time.
   #[getter]
   pub def accessed self -> DateTime
-    throw nil
+    ...
 
   # Creation or status-change time.
   #[getter]
   pub def created self -> DateTime
-    throw nil
+    ...
 
   # Owner: the uid as an [`Int`](std.Int) on Unix, or the owner
   # [`Sid`](security.windows.Sid) on Windows.
@@ -868,7 +874,7 @@ pub class Metadata
   # [`update_metadata`](fs.update_metadata).
   #[getter]
   pub def owner self
-    throw nil
+    ...
 
   # Owning group: the gid as an [`Int`](std.Int) on Unix, or the primary
   # group [`Sid`](security.windows.Sid) on Windows.
@@ -877,238 +883,238 @@ pub class Metadata
   # [`update_metadata`](fs.update_metadata).
   #[getter]
   pub def group self
-    throw nil
+    ...
 
   # Permissions and file type. Unix only.
   #[getter]
   pub def mode self -> Mode
-    throw nil
+    ...
 
   # Device ID. Unix only.
   #[getter]
   pub def dev self -> Int
-    throw nil
+    ...
 
   # Inode number. Unix only.
   #[getter]
   pub def ino self -> Int
-    throw nil
+    ...
 
   # Hard-link count. Unix only.
   #[getter]
   pub def nlink self -> Int
-    throw nil
+    ...
 
   # Owner user ID. Unix only.
   #[getter]
   pub def uid self -> Int
-    throw nil
+    ...
 
   # Owner group ID. Unix only.
   #[getter]
   pub def gid self -> Int
-    throw nil
+    ...
 
   # Special-device ID. Unix only.
   #[getter]
   pub def rdev self -> Int
-    throw nil
+    ...
 
   # Preferred block size for I/O. Unix only.
   #[getter]
   pub def blksize self -> Int
-    throw nil
+    ...
 
   # Number of allocated 512-byte blocks. Unix only.
   #[getter]
   pub def blocks self -> Int
-    throw nil
+    ...
 
   # Whether the platform hidden flag is set.
   #[getter]
   pub def hidden self -> Bool
-    throw nil
+    ...
 
   # Whether the platform immutable flag is set.
   #[getter]
   pub def immutable self -> Bool
-    throw nil
+    ...
 
   # Whether the platform append-only flag is set.
   #[getter]
   pub def append_only self -> Bool
-    throw nil
+    ...
 
   # Whether the platform no-dump flag is set.
   #[getter]
   pub def no_dump self -> Bool
-    throw nil
+    ...
 
   # Whether the platform compressed flag is set.
   #[getter]
   pub def compressed self -> Bool
-    throw nil
+    ...
 
   # Raw Windows file attribute bitmask. Windows only.
   #[getter]
   pub def win_attrs self -> Int
-    throw nil
+    ...
 
   # Whether the readonly attribute is set. Windows
   # only.
   #[getter]
   pub def readonly self -> Bool
-    throw nil
+    ...
 
   # Whether the system attribute is set. Windows
   # only.
   #[getter]
   pub def system self -> Bool
-    throw nil
+    ...
 
   # Whether the archive attribute is set. Windows
   # only.
   #[getter]
   pub def archive self -> Bool
-    throw nil
+    ...
 
   # Whether the reparse-point attribute is set.
   # Windows only.
   #[getter]
   pub def reparse_point self -> Bool
-    throw nil
+    ...
 
   # Whether sparse allocation is enabled. Windows
   # only.
   #[getter]
   pub def sparse self -> Bool
-    throw nil
+    ...
 
   # Whether the encrypted attribute is set. Windows
   # only.
   #[getter]
   pub def encrypted self -> Bool
-    throw nil
+    ...
 
   # Whether the temporary attribute is set. Windows
   # only.
   #[getter]
   pub def temporary self -> Bool
-    throw nil
+    ...
 
   # Whether the offline attribute is set. Windows
   # only.
   #[getter]
   pub def offline self -> Bool
-    throw nil
+    ...
 
   # Whether the not-content-indexed attribute is
   # set. Windows only.
   #[getter]
   pub def not_content_indexed self -> Bool
-    throw nil
+    ...
 
   # Raw Linux attribute flags. Linux only.
   #[getter]
   pub def linux_attrs self -> Int
-    throw nil
+    ...
 
   # Whether the no-atime flag is set. Linux only.
   #[getter]
   pub def no_atime self -> Bool
-    throw nil
+    ...
 
   # Whether the no-copy-on-write flag is set. Linux
   # only.
   #[getter]
   pub def no_copy_on_write self -> Bool
-    throw nil
+    ...
 
   # Whether the synchronous-directory-updates flag
   # is set. Linux only.
   #[getter]
   pub def dir_sync self -> Bool
-    throw nil
+    ...
 
   # Whether the case-insensitive-directory-lookups
   # flag is set. Linux only.
   #[getter]
   pub def casefold self -> Bool
-    throw nil
+    ...
 
   # Whether the data-journaling flag is set. Linux
   # only.
   #[getter]
   pub def data_journaling self -> Bool
-    throw nil
+    ...
 
   # Whether the don't-compress flag is set. Linux
   # only.
   #[getter]
   pub def no_compress self -> Bool
-    throw nil
+    ...
 
   # Whether the project-hierarchy flag is set. Linux
   # only.
   #[getter]
   pub def project_inherit self -> Bool
-    throw nil
+    ...
 
   # Whether the secure-deletion flag is set. Linux
   # only.
   #[getter]
   pub def secure_delete self -> Bool
-    throw nil
+    ...
 
   # Whether the synchronous-updates flag is set.
   # Linux only.
   #[getter]
   pub def sync self -> Bool
-    throw nil
+    ...
 
   # Whether the no-tail-merging flag is set. Linux
   # only.
   #[getter]
   pub def no_tail_merge self -> Bool
-    throw nil
+    ...
 
   # Whether the top-of-directory-hierarchy flag is
   # set. Linux only.
   #[getter]
   pub def top_dir self -> Bool
-    throw nil
+    ...
 
   # Whether the undeletable flag is set. Linux only.
   #[getter]
   pub def undelete self -> Bool
-    throw nil
+    ...
 
   # Whether the direct-access flag is set. Linux
   # only.
   #[getter]
   pub def direct_access self -> Bool
-    throw nil
+    ...
 
   # Whether the extent-format flag is set. Linux
   # only.
   #[getter]
   pub def extent_format self -> Bool
-    throw nil
+    ...
 
   # Raw macOS file flags. macOS only.
   #[getter]
   pub def macos_attrs self -> Int
-    throw nil
+    ...
 
   # Whether the opaque flag is set. macOS only.
   #[getter]
   pub def opaque self -> Bool
-    throw nil
+    ...
 
   # Raw FreeBSD file flags. FreeBSD only.
   #[getter]
   pub def freebsd_attrs self -> Int
-    throw nil
+    ...
 
 # A filesystem path.
 #
@@ -1128,7 +1134,7 @@ pub class Path
     # Path value.
     path @ (Str | Path)
   do -> Path
-    throw nil
+    ...
 
   # Joins path components into a single path.
   #
@@ -1150,7 +1156,7 @@ pub class Path
     # Path components to join.
     ...components @ (Str | Path)
   do
-    throw nil
+    ...
 
   # The final component of the path, or `nil` if the
   # path is empty.
@@ -1161,7 +1167,7 @@ pub class Path
   # ```
   #[getter]
   pub def name self -> (Str | nil)
-    throw nil
+    ...
 
   # The final component without its last extension,
   # or `nil` if the path is empty.
@@ -1172,7 +1178,7 @@ pub class Path
   # ```
   #[getter]
   pub def stem self -> (Str | nil)
-    throw nil
+    ...
 
   # The file extension without the leading dot, or
   # `nil` if the final component has no extension.
@@ -1183,7 +1189,7 @@ pub class Path
   # ```
   #[getter]
   pub def ext self -> (Str | nil)
-    throw nil
+    ...
 
   # The parent directory, or `nil` if the path is empty
   # or contains only one component.
@@ -1194,13 +1200,13 @@ pub class Path
   # ```
   #[getter]
   pub def parent self -> (Path | nil)
-    throw nil
+    ...
 
   # Whether the path is absolute, meaning it starts
   # from the filesystem root.
   #[getter]
   pub def is_absolute self -> Bool
-    throw nil
+    ...
 
   # Immutable array-like view of the lexical path components.
   #
@@ -1213,7 +1219,7 @@ pub class Path
   # component if present.
   #[getter]
   pub def components self
-    throw nil
+    ...
 
   # Returns a new path with `ext` appended as an additional extension.
   #
@@ -1228,7 +1234,7 @@ pub class Path
     # Extension to append.
     ext @ Str
   do
-    throw nil
+    ...
 
   # Returns a new path with the final extension replaced.
   #
@@ -1243,7 +1249,7 @@ pub class Path
     # Replacement extension.
     ext @ Str
   do
-    throw nil
+    ...
 
   # Returns a new path with the final extension removed.
   #
@@ -1254,7 +1260,7 @@ pub class Path
   # echo (path.without_ext())  # archive.tar
   # ```
   pub def without_ext self
-    throw nil
+    ...
 
   # Returns a new path with the final component replaced.
   #
@@ -1269,7 +1275,7 @@ pub class Path
     # Replacement final component.
     name @ Str
   do
-    throw nil
+    ...
 
   # Returns a new path with the final stem replaced, preserving the final
   # extension when present.
@@ -1285,19 +1291,19 @@ pub class Path
     # Replacement stem.
     stem @ Str
   do
-    throw nil
+    ...
 
   # The method form of [`fs.absolute`](fs.absolute).
   pub def absolute self
-    throw nil
+    ...
 
   # The method form of [`fs.canonical`](fs.canonical).
   pub def canonical self
-    throw nil
+    ...
 
   # The method form of [`fs.normalize`](fs.normalize).
   pub def normalize self
-    throw nil
+    ...
 
   # The method form of [`fs.relative`](fs.relative).
   pub def relative
@@ -1306,11 +1312,11 @@ pub class Path
     # to the current working directory.
     base @ (Str | Path) = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.exists`](fs.exists).
   pub def exists self
-    throw nil
+    ...
 
   # The method form of [`fs.open`](fs.open).
   pub def open
@@ -1321,7 +1327,7 @@ pub class Path
     # the block returns.
     func @ Func = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.read`](fs.read).
   pub def read
@@ -1329,7 +1335,7 @@ pub class Path
     # Optional mode string; only `"b"` is allowed.
     mode @ Str = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.write`](fs.write).
   pub def write
@@ -1337,7 +1343,7 @@ pub class Path
     # Value to write.
     content @ (Str | Bin)
   do
-    throw nil
+    ...
 
   # The method form of [`fs.append`](fs.append).
   pub def append
@@ -1345,7 +1351,7 @@ pub class Path
     # Content to append.
     content @ (Str | Bin)
   do
-    throw nil
+    ...
 
   # The method form of [`fs.set_size`](fs.set_size).
   pub def set_size
@@ -1353,7 +1359,7 @@ pub class Path
     # New file length in bytes.
     size @ Int
   do
-    throw nil
+    ...
 
   # The method form of [`fs.sync`](fs.sync).
   pub def sync
@@ -1361,7 +1367,7 @@ pub class Path
     # Flush data only, skipping unneeded metadata.
     :data @ Bool = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.metadata`](fs.metadata).
   pub def metadata
@@ -1369,7 +1375,7 @@ pub class Path
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.fs_metadata`](fs.fs_metadata).
   pub def fs_metadata
@@ -1377,7 +1383,7 @@ pub class Path
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.update_metadata`](fs.update_metadata),
   # which documents the metadata keyword arguments.
@@ -1386,11 +1392,11 @@ pub class Path
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.entries`](fs.entries).
   pub def entries self
-    throw nil
+    ...
 
   # The method form of [`fs.glob`](fs.glob), searching within this
   # path.
@@ -1406,7 +1412,7 @@ pub class Path
     # Resolution mode. Defaults to `:LINK:`.
     :resolve @ Resolve = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.create_dir`](fs.create_dir).
   pub def create_dir
@@ -1414,7 +1420,7 @@ pub class Path
     # Create parent directories too.
     :all @ Bool = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.remove`](fs.remove).
   pub def remove
@@ -1424,7 +1430,7 @@ pub class Path
     # Treat a missing path as success.
     :ignore @ Bool = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.remove_dir`](fs.remove_dir).
   pub def remove_dir
@@ -1435,7 +1441,7 @@ pub class Path
     # subtrees.
     :ignore @ Bool = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.copy`](fs.copy).
   pub def copy
@@ -1445,7 +1451,7 @@ pub class Path
     # Allow a recursive directory copy.
     :all @ Bool = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.move`](fs.move).
   pub def move
@@ -1455,7 +1461,7 @@ pub class Path
     # Allow a recursive directory move.
     :all @ Bool = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.rename`](fs.rename).
   pub def rename
@@ -1465,7 +1471,7 @@ pub class Path
     # Whether to replace an existing destination.
     :replace @ Bool = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.hard_link`](fs.hard_link), with this path
   # as the existing file.
@@ -1475,11 +1481,11 @@ pub class Path
     # created.
     to @ (Str | Path)
   do
-    throw nil
+    ...
 
   # The method form of [`fs.read_link`](fs.read_link).
   pub def read_link self
-    throw nil
+    ...
 
   # The method form of [`fs.acl`](fs.acl).
   pub def acl
@@ -1493,7 +1499,7 @@ pub class Path
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.set_acl`](fs.set_acl).
   #
@@ -1512,7 +1518,7 @@ pub class Path
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.xattrs`](fs.xattrs).
   pub def xattrs
@@ -1522,7 +1528,7 @@ pub class Path
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.xattr`](fs.xattr).
   pub def xattr
@@ -1535,7 +1541,7 @@ pub class Path
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.set_xattr`](fs.set_xattr).
   pub def set_xattr
@@ -1551,7 +1557,7 @@ pub class Path
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do
-    throw nil
+    ...
 
   # The method form of [`fs.remove_xattr`](fs.remove_xattr).
   pub def remove_xattr
@@ -1564,7 +1570,7 @@ pub class Path
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do
-    throw nil
+    ...
 
 # An extended attribute of a filesystem entry.
 #
@@ -1582,7 +1588,7 @@ pub class XattrEntry
   # ```
   #[getter]
   pub def name self -> Str
-    throw nil
+    ...
 
   # Extended attribute namespace, such as `user`.
   #
@@ -1594,17 +1600,17 @@ pub class XattrEntry
   # ```
   #[getter]
   pub def namespace self -> Str
-    throw nil
+    ...
 
   # Attribute value size in bytes. Windows only.
   #[getter]
   pub def size self -> Int
-    throw nil
+    ...
 
   # Attribute flags. Windows only.
   #[getter]
   pub def flags self -> Int
-    throw nil
+    ...
 
 # Opens a file.
 #
@@ -1644,7 +1650,7 @@ pub def open
   # the block returns.
   func @ Func = nil
 do -> Value
-  throw nil
+  ...
 
 # Reads the entire contents of a file in one call.
 #
@@ -1664,7 +1670,7 @@ pub def read
   # Optional mode string; only `"b"` is allowed.
   mode @ Str = nil
 do -> Str
-  throw nil
+  ...
 
 # Writes the entire contents of a file in one call, creating or truncating it.
 #
@@ -1686,7 +1692,7 @@ pub def write
   # Value to write.
   content @ (Str | Bin)
 do -> Int
-  throw nil
+  ...
 
 # Appends content to a file, creating it if needed.
 #
@@ -1707,7 +1713,7 @@ pub def append
   # Content to append.
   content @ (Str | Bin)
 do -> Int
-  throw nil
+  ...
 
 # Copies data from one open file to another.
 #
@@ -1837,7 +1843,7 @@ pub def copy_data
   # operation will not do so automatically.
   :clone @ Sym = nil
 do -> Int
-  throw nil
+  ...
 
 # Truncates a file to the given byte length, creating it if needed.
 #
@@ -1853,7 +1859,7 @@ pub def set_size
   # New file length in bytes.
   size @ Int
 do
-  throw nil
+  ...
 
 # Flushes a file to durable storage, returning once the device reports it
 # committed.
@@ -1884,7 +1890,7 @@ pub def sync
   # Defaults to `false`.
   :data @ Bool = nil
 do
-  throw nil
+  ...
 
 # Checks whether a file or directory exists at the given path.
 #
@@ -1898,7 +1904,7 @@ pub def exists
   # Path to check.
   path @ (Str | Path)
 do -> Bool
-  throw nil
+  ...
 
 # Gets metadata for the given path.
 #
@@ -1920,7 +1926,7 @@ pub def metadata
   # `:TARGET:`.
   :resolve @ Resolve = nil
 do -> Metadata
-  throw nil
+  ...
 
 # Gets metadata for the filesystem containing the given path.
 #
@@ -1943,7 +1949,7 @@ pub def fs_metadata
   # `:TARGET:`.
   :resolve @ Resolve = nil
 do -> FsMetadata
-  throw nil
+  ...
 
 # Updates timestamps, permissions, ownership, and filesystem attributes.
 #
@@ -2050,7 +2056,7 @@ pub def update_metadata
   # Paths to update, in order.
   ...paths @ (Str | Path)
 do
-  throw nil
+  ...
 
 # Gets the ACL stored on a path.
 #
@@ -2082,8 +2088,8 @@ pub def acl
   # Resolution mode. Defaults to
   # `:TARGET:`.
   :resolve @ Resolve = nil
-do -> (Acl | nil)
-  throw nil
+do -> (security.unix.Acl | security.nfs4.Acl | security.macos.Acl | nil)
+  ...
 
 # Sets or removes an ACL.
 #
@@ -2118,7 +2124,7 @@ pub def set_acl
   # `:TARGET:`.
   :resolve @ Resolve = nil
 do
-  throw nil
+  ...
 
 # Lists extended attributes for the given path.
 #
@@ -2146,7 +2152,7 @@ pub def xattrs
   # `:TARGET:`.
   :resolve @ Resolve = nil
 do -> Iter
-  throw nil
+  ...
 
 # Gets an extended attribute value.
 #
@@ -2167,7 +2173,7 @@ pub def xattr
   # `:TARGET:`.
   :resolve @ Resolve = nil
 do -> Bin
-  throw nil
+  ...
 
 # Sets an extended attribute value.
 #
@@ -2195,7 +2201,7 @@ pub def set_xattr
   # `:TARGET:`.
   :resolve @ Resolve = nil
 do
-  throw nil
+  ...
 
 # Removes an extended attribute.
 #
@@ -2216,7 +2222,7 @@ pub def remove_xattr
   # `:TARGET:`.
   :resolve @ Resolve = nil
 do
-  throw nil
+  ...
 
 # Lists alternate data streams for the given path.
 #
@@ -2242,7 +2248,7 @@ pub def streams
   # `:TARGET:`.
   :resolve @ Resolve = nil
 do -> Iter
-  throw nil
+  ...
 
 # Reads the entries in a directory.
 #
@@ -2263,7 +2269,7 @@ pub def entries
   # Path to the directory.
   path @ (Str | Path)
 do -> Iter
-  throw nil
+  ...
 
 # Returns an iterator over paths matching a glob pattern.
 #
@@ -2303,7 +2309,7 @@ pub def glob
   # Resolution mode. Defaults to `:LINK:`.
   :resolve @ Resolve = nil
 do -> Iter
-  throw nil
+  ...
 
 # Creates a directory.
 #
@@ -2320,7 +2326,7 @@ pub def create_dir
   # Create parent directories too.
   :all @ Bool = nil
 do
-  throw nil
+  ...
 
 # Removes one or more paths from the filesystem.
 #
@@ -2344,7 +2350,7 @@ pub def remove
   # One or more paths to remove.
   ...paths @ (Str | Path)
 do
-  throw nil
+  ...
 
 # Removes one or more directories.
 #
@@ -2375,7 +2381,7 @@ pub def remove_dir
   # remove.
   ...paths @ (Str | Path)
 do
-  throw nil
+  ...
 
 # Copies a filesystem entry from one location to another.
 #
@@ -2396,7 +2402,7 @@ pub def copy
   # Allow a recursive directory copy.
   :all @ Bool = nil
 do
-  throw nil
+  ...
 
 # Moves a filesystem entry from one location to another.
 #
@@ -2419,7 +2425,7 @@ pub def move
   # Allow a recursive directory move.
   :all @ Bool = nil
 do
-  throw nil
+  ...
 
 # Renames a file or directory.
 #
@@ -2446,7 +2452,7 @@ pub def rename
   # Whether to replace an existing destination.
   :replace @ Bool = nil
 do
-  throw nil
+  ...
 
 # Creates a hard link at `dst` pointing to the existing file at `src`.
 #
@@ -2466,7 +2472,7 @@ pub def hard_link
   # created.
   dst @ (Str | Path)
 do
-  throw nil
+  ...
 
 # Creates a symbolic link at `dst` pointing to `src`.
 #
@@ -2494,7 +2500,7 @@ pub def symlink
   # created.
   dst @ (Str | Path)
 do
-  throw nil
+  ...
 
 # Creates a file symbolic link at `dst` pointing to `src`.
 #
@@ -2514,7 +2520,7 @@ pub def symlink_file
   # created.
   dst @ (Str | Path)
 do
-  throw nil
+  ...
 
 # Creates a directory symbolic link at `dst` pointing to `src`.
 #
@@ -2534,7 +2540,7 @@ pub def symlink_dir
   # created.
   dst @ (Str | Path)
 do
-  throw nil
+  ...
 
 # Reads the target of a symbolic link.
 #
@@ -2560,7 +2566,7 @@ pub def read_link
   # Path to the symlink.
   path @ (Str | Path)
 do -> Path
-  throw nil
+  ...
 
 # Returns whether a path is absolute.
 #
@@ -2574,7 +2580,7 @@ pub def is_absolute
   # Path to check.
   path @ (Str | Path)
 do -> Bool
-  throw nil
+  ...
 
 # Returns the absolute form of a path based on the current working directory.
 #
@@ -2588,7 +2594,7 @@ pub def absolute
   # Path to make absolute.
   path @ (Str | Path)
 do -> Path
-  throw nil
+  ...
 
 # Returns the canonical, absolute form of a path, with all intermediate
 # components normalized and symbolic links resolved.
@@ -2603,7 +2609,7 @@ pub def canonical
   # Path to canonicalize.
   path @ (Str | Path)
 do -> Path
-  throw nil
+  ...
 
 # Returns a normalized path with `.` and `..` components resolved without
 # accessing the filesystem.
@@ -2620,7 +2626,7 @@ pub def normalize
   # Path to normalize.
   path @ (Str | Path)
 do -> Path
-  throw nil
+  ...
 
 # Returns a path relative to a base directory.
 #
@@ -2646,7 +2652,7 @@ pub def relative
   # the current working directory.
   base @ (Str | Path) = nil
 do -> Path
-  throw nil
+  ...
 
 # Returns the current user's home directory.
 #
@@ -2659,7 +2665,7 @@ do -> Path
 #
 # [`Path`](fs.Path)
 pub def home_dir() -> Path
-  throw nil
+  ...
 
 # Returns the platform-native directory for temporary files.
 #
@@ -2672,7 +2678,7 @@ pub def home_dir() -> Path
 #
 # [`Path`](fs.Path)
 pub def temp_dir() -> Path
-  throw nil
+  ...
 
 # Returns the platform-native user cache directory.
 #
@@ -2704,7 +2710,7 @@ pub def cache_dir
   # | Windows        | `(cache_dir() / "myapp" / "Cache")` |
   :app @ Str = nil
 do -> Path
-  throw nil
+  ...
 
 # Creates a temporary directory and returns its path.
 #
@@ -2727,7 +2733,7 @@ pub def create_temp_dir
   # to [`temp_dir()`](fs.temp_dir).
   :parent @ (Str | Path) = nil
 do -> Path
-  throw nil
+  ...
 
 # Creates a temporary directory, invokes a function with the directory path,
 # then removes the directory recursively upon return or error.
@@ -2754,4 +2760,4 @@ pub def with_temp_dir
   # to [`temp_dir()`](fs.temp_dir).
   :parent @ (Str | Path) = nil
 do
-  throw nil
+  ...

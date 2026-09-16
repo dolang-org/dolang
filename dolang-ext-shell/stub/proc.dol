@@ -4,8 +4,15 @@
 # See [External Programs](../../shell/external-programs.md) for lookup,
 # redirection, capture and pipeline behavior.
 
-import std:
-  - @RuntimeError
+import
+  fs:
+    - @Path
+  security.unix:
+    - @Identity
+  security.windows:
+    - @TokenInfo
+  time:
+    - @Duration
 
 # Raised when an external program exits unsuccessfully.
 #
@@ -28,7 +35,7 @@ pub class Error: std.RuntimeError
   # did not exit normally.
   #[getter]
   pub def rc self -> (Int | nil)
-    throw nil
+    ...
 
   # The fatal signal number, or `nil` when the
   # process was not signaled.
@@ -47,7 +54,7 @@ pub class Error: std.RuntimeError
   # [`FieldError`](std.FieldError).
   #[getter]
   pub def signal self -> (Int | nil)
-    throw nil
+    ...
 
 # Information about a process at a moment in time.
 #
@@ -67,7 +74,7 @@ pub class Info
   # The process ID.
   #[getter]
   pub def pid self -> Int
-    throw nil
+    ...
 
   # The parent process ID.
   #
@@ -75,7 +82,7 @@ pub class Info
   # reassigned.
   #[getter]
   pub def parent_pid self -> (Int | nil)
-    throw nil
+    ...
 
   # The kernel's short name for the process.
   #
@@ -83,7 +90,7 @@ pub class Info
   # truncated.
   #[getter]
   pub def name self -> Str
-    throw nil
+    ...
 
   # The executable path.
   #
@@ -91,7 +98,7 @@ pub class Info
   # platform.
   #[getter]
   pub def exe self -> (Path | nil)
-    throw nil
+    ...
 
   # The argument vector, as
   # [`Str`](std.Str) elements.
@@ -102,7 +109,7 @@ pub class Info
   # [`cmdline_win`](proc.Info.cmdline_win) is the raw original.
   #[getter]
   pub def cmdline self -> (Tuple | nil)
-    throw nil
+    ...
 
   # The working directory.
   #
@@ -111,13 +118,13 @@ pub class Info
   # the kernel, so an application may set it to anything.
   #[getter]
   pub def cwd self -> (Path | nil)
-    throw nil
+    ...
 
   # How the process ended, or `nil` if it was still
   # running.
   #[getter]
   pub def status self -> (Status | nil)
-    throw nil
+    ...
 
   # The process
   # credentials.
@@ -127,7 +134,7 @@ pub class Info
   # entries.
   #[getter]
   pub def unix_id self -> (Identity | nil)
-    throw nil
+    ...
 
   # The command line as a single string.
   #
@@ -140,7 +147,7 @@ pub class Info
   # ```
   #[getter]
   pub def cmdline_win self -> (Str | nil)
-    throw nil
+    ...
 
   # The
   # process access token.
@@ -149,7 +156,7 @@ pub class Info
   # [`FieldError`](std.FieldError).
   #[getter]
   pub def token_info self -> (TokenInfo | nil)
-    throw nil
+    ...
 
 # Receives values from a strand pipe.
 #
@@ -168,7 +175,7 @@ pub class PipeReceiver: std.Iter
   #
   # [`PipeReceiver`](proc.PipeReceiver)
   pub def chunks self -> PipeReceiver
-    throw nil
+    ...
 
   # Selects line framing when the receiver reads bytes from an external
   # program. This is the default.
@@ -177,11 +184,11 @@ pub class PipeReceiver: std.Iter
   #
   # [`PipeReceiver`](proc.PipeReceiver)
   pub def lines self -> PipeReceiver
-    throw nil
+    ...
 
   # Closes the receiver and stops its sender.
   pub def close self
-    throw nil
+    ...
 
 # Sends values to a strand pipe.
 #
@@ -207,7 +214,7 @@ pub class PipeSender: std.Sink
     # Backtrace for `error`.
     :backtrace @ strand.Backtrace = nil
   do
-    throw nil
+    ...
 
 # An open handle to a process that is not a child of this one.
 #
@@ -218,7 +225,7 @@ pub class Proc
   # The process ID.
   #[getter]
   pub def pid self -> Int
-    throw nil
+    ...
 
   # Takes a fresh snapshot of process state.
   #
@@ -226,7 +233,7 @@ pub class Proc
   #
   # [`Info`](proc.Info)
   pub def info self -> Info
-    throw nil
+    ...
 
   # Sends a signal to the process.
   #
@@ -247,7 +254,7 @@ pub class Proc
     # Signal name, such as `:TERM:`.
     sig @ Sym
   do
-    throw nil
+    ...
 
   # Terminates the process in the manner typical for the target platform:
   # `SIGTERM` on Unix, `TerminateProcess()` on Windows.
@@ -255,12 +262,12 @@ pub class Proc
   # This is equivalent to [`kill`](proc.Proc.kill) on Windows, where there is
   # no consistent way to terminate a non-child process gently.
   pub def terminate self
-    throw nil
+    ...
 
   # Terminates the process aggressively in the manner typical for the target
   # platform: `SIGKILL` on Unix, `TerminateProcess()` on Windows.
   pub def kill self
-    throw nil
+    ...
 
   # Waits for the process to exit.
   #
@@ -268,11 +275,11 @@ pub class Proc
   #
   # [`Status`](proc.Status)
   pub def wait self -> Status
-    throw nil
+    ...
 
   # Closes the handle.
   pub def close self
-    throw nil
+    ...
 
 # Function proxy for an external program.
 pub class Program
@@ -289,7 +296,7 @@ pub class Program
     # Program name or path.
     value @ (Str | Sym | Path)
   do
-    throw nil
+    ...
 
   # Resolves the program without running it.
   #
@@ -304,7 +311,7 @@ pub class Program
   # echo $git.which()
   # ```
   pub def which self -> (Path | nil)
-    throw nil
+    ...
 
   # Runs the program with the supplied command-line arguments.
   #
@@ -345,7 +352,7 @@ pub class Program
     # Command-line arguments.
     ...args
   do
-    throw nil
+    ...
 
 # How a process that is not a child of this one exited.
 #
@@ -368,7 +375,7 @@ pub class Status
   # privilege there and a non-parent learns only that it is gone.
   #[getter]
   pub def code self -> (Int | nil)
-    throw nil
+    ...
 
 # Lists the processes running on the target.
 #
@@ -389,7 +396,7 @@ pub class Status
 #       - $info
 # ```
 pub def enumerate() -> Info
-  throw nil
+  ...
 
 # Describes the process that currently owns `pid`, or the target process itself
 # when `pid` is omitted.
@@ -422,7 +429,7 @@ pub def info
   # while a target is selected.
   pid @ Int = nil
 do -> Info
-  throw nil
+  ...
 
 # Opens a handle to a process.
 #
@@ -458,7 +465,7 @@ pub def open
   # Block to run with the handle, which is closed when it returns.
   block @ Func = nil
 do -> Value
-  throw nil
+  ...
 
 # Captures the output of a block as a string.
 #
@@ -484,7 +491,7 @@ pub def sub
   # Additional arguments passed to the block.
   ...args
 do -> Str
-  throw nil
+  ...
 
 # Runs a block with temporary process termination defaults.
 #
@@ -514,7 +521,7 @@ pub def with_policy
   # Additional arguments passed to the block.
   ...args
 do
-  throw nil
+  ...
 
 # Runs an external program, or creates a [`Program`](proc.Program) proxy.
 #

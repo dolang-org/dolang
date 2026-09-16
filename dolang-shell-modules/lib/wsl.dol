@@ -2,6 +2,8 @@
 # VFS.
 
 import _wsl sys
+  fs:
+    - @Path
 import std:
   - RuntimeError
 

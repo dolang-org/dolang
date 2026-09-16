@@ -5,9 +5,6 @@ import _shell compile load progress strand term
   time:
     - timeout
 
-import std:
-  - @RuntimeError
-
 let err_style = term.Style bold: true fg: :BRIGHT_RED:
 let info_style = term.Style fg: :YELLOW:
 let pass_style = term.Style fg: :GREEN:
@@ -315,7 +312,7 @@ class Fixture
 # def example_test()
 #   do_something()
 # ```
-pub def fixture wrap -> A
+pub def fixture wrap -> Func
   do |value|
     let test_def = to_test_def $value
     test_def.func = Fixture $wrap $test_def.func
@@ -575,7 +572,7 @@ pub def run
   :capture @ Bool = true
   # Test file or directory.
   ...paths @ (Str | Path)
-do -> Returns
+do -> Int
   let paths = [...paths.pos_only()]
   let harness = Harness :jobs :module_jobs :filter :timeout :capture
   let files = []

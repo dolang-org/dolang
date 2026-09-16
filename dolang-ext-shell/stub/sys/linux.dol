@@ -18,9 +18,9 @@ pub class Errno: sys.unix.Errno
     # Raw error number.
     value @ Int
   do
-    throw nil
+    ...
 
   # The originating operating system, `:LINUX:`.
   #[getter]
   pub def os self
-    throw nil
+    ...

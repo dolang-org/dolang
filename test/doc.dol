@@ -21,7 +21,7 @@ def describe ...flags
 
 # The whole extractor output for a source file (raw nodes/tokens/diagnostics
 # plus the cooked documentation projection under "doc"), held against a
-# golden.
+# golden. Tokens are asked for so the golden covers them too.
 #
 # The "doc" part is consumed by the mkdocstrings handler and its templates,
 # so a change there is a change to the rendered site; set
@@ -30,7 +30,7 @@ def describe ...flags
 #[test]
 def documents_a_source_file()
   let golden = (FIXTURE / "fixture.json")
-  let actual = describe()
+  let actual = describe "--tokens"
   if (env.get("DOLANG_TEST_UPDATE") != nil)
     golden.write $actual
     return
@@ -51,3 +51,10 @@ def private_declarations_appear_only_with_all()
   assert !(names().contains("internal"))
   assert (names("--all").contains("internal"))
   assert (names("--all").contains("secret"))
+
+# Only syntax highlighting consumes the source's tokens, and they dwarf the
+# rest of the output, so they are written only when asked for.
+#[test]
+def tokens_are_written_only_when_asked_for()
+  assert !(json.decode(describe()).contains("tokens"))
+  assert (json.decode(describe("--tokens")).contains("tokens"))

@@ -2,6 +2,9 @@
 #
 # The API is VFS-transparent: archive paths use the active VFS context.
 
+import fs:
+  - @Path
+
 # An open ZIP archive.
 #
 # Returned by [`open`](zip.open). Only one file can be open at a time
@@ -28,7 +31,7 @@ pub class Archive
   # ```
   #[getter]
   pub def entries self
-    throw nil
+    ...
 
   # Closes the archive and releases resources.
   #
@@ -43,7 +46,7 @@ pub class Archive
   # archive.close()
   # ```
   pub def close self
-    throw nil
+    ...
 
   # Creates a directory entry. Write mode only.
   #
@@ -61,7 +64,7 @@ pub class Archive
     # Unix permission bits. Defaults to `0`.
     :mode @ Int = nil
   do
-    throw nil
+    ...
 
   # Opens a file within the archive.
   #
@@ -121,7 +124,7 @@ pub class Archive
     # returns. Omit to receive the handle instead.
     func @ Func = nil
   do -> Value
-    throw nil
+    ...
 
   # Creates a symbolic link entry pointing to `target`. Write mode only.
   #
@@ -143,7 +146,7 @@ pub class Archive
     # Unix permission bits. Defaults to `0`.
     :mode @ Int = nil
   do
-    throw nil
+    ...
 
 # A single archive entry's metadata, with a method to open it for reading.
 #
@@ -153,50 +156,50 @@ pub class Entry
   # Entry comment.
   #[getter]
   pub def comment self
-    throw nil
+    ...
 
   # Compressed size in bytes.
   #[getter]
   pub def compressed_size self
-    throw nil
+    ...
 
   # Compression method as `:STORED:`, `:DEFLATE:`, `:ZSTD:`, or `:UNKNOWN:`.
   #[getter]
   pub def compression self
-    throw nil
+    ...
 
   # CRC-32 checksum of the uncompressed data.
   #[getter]
   pub def crc32 self
-    throw nil
+    ...
 
   # Last modification time as [`DateTime`](time.DateTime), or `nil` when
   # the stored timestamp cannot be represented.
   #[getter]
   pub def last_modified self
-    throw nil
+    ...
 
   # Unix permission bits, or `nil` when the archive does not provide Unix
   # metadata.
   #[getter]
   pub def mode self
-    throw nil
+    ...
 
   # Entry name as an [`fs.unix.Path`](fs.unix.Path).
   #[getter]
   pub def name self
-    throw nil
+    ...
 
   # Uncompressed size in bytes.
   #[getter]
   pub def size self
-    throw nil
+    ...
 
   # Entry type as `:FILE:`, `:DIR:`, `:SYMLINK:`, `:FIFO:`, `:CHAR_DEVICE:`,
   # `:BLOCK_DEVICE:`, or `:UNKNOWN:`.
   #[getter]
   pub def type self
-    throw nil
+    ...
 
   # Opens the entry for reading.
   #
@@ -222,7 +225,7 @@ pub class Entry
     # returns. Omit to receive the handle instead.
     block @ Func = nil
   do -> Value
-    throw nil
+    ...
 
 # An open file within a ZIP archive.
 #
@@ -241,7 +244,7 @@ pub class File
   #   file.close()
   # ```
   pub def close self
-    throw nil
+    ...
 
   # Reads data from the file. Read mode only.
   #
@@ -263,7 +266,7 @@ pub class File
     # Maximum number of bytes to read.
     size @ Int
   do -> Bin
-    throw nil
+    ...
 
   # Writes data to the file. Write mode only.
   #
@@ -284,7 +287,7 @@ pub class File
     # Data to write.
     data @ (Bin | Str)
   do
-    throw nil
+    ...
 
 # Opens a ZIP archive.
 #
@@ -321,4 +324,4 @@ pub def open
   # when it returns. Omit to receive the handle instead.
   func @ Func = nil
 do -> Value
-  throw nil
+  ...

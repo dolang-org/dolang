@@ -42,7 +42,7 @@ pub class Regex
     # RE2-compatible pattern.
     pattern @ Str
   do
-    throw nil
+    ...
 
   # Returns an iterator over all non-overlapping matches in `haystack`.
   #
@@ -64,7 +64,7 @@ pub class Regex
     # String to search in.
     haystack @ Str
   do -> Iter[Captures]
-    throw nil
+    ...
 
   # Searches for the first match anywhere in `haystack`.
   #
@@ -85,7 +85,7 @@ pub class Regex
     # String to search in.
     haystack @ Str
   do -> (Captures | nil)
-    throw nil
+    ...
 
   # Replaces matches of this pattern in `haystack`.
   #
@@ -132,7 +132,7 @@ pub class Regex
     # Negative limits are not supported.
     :limit @ Int = nil
   do -> Str
-    throw nil
+    ...
 
   # Splits `haystack` around matches, yielding segments right to left.
   #
@@ -164,7 +164,7 @@ pub class Regex
     #   still yield segments right to left.
     :limit @ Int = nil
   do -> Iter[Str]
-    throw nil
+    ...
 
   # Splits `haystack` around matches of this pattern.
   #
@@ -209,7 +209,7 @@ pub class Regex
     #   known-length suffix.
     :limit @ Int = nil
   do -> Iter[Str]
-    throw nil
+    ...
 
 # A successful match along with any capture groups.
 #
@@ -220,12 +220,12 @@ pub class Captures
   # The byte offset of the end of the overall match within the haystack.
   #[getter]
   pub def end self -> Int
-    throw nil
+    ...
 
   # The byte offset of the start of the overall match within the haystack.
   #[getter]
   pub def start self -> Int
-    throw nil
+    ...
 
   # Reads a capture group by integer index or by name.
   #
@@ -263,7 +263,7 @@ pub class Captures
     # Group index or name.
     key @ (Int | Str)
   do -> Match
-    throw nil
+    ...
 
 # A single matched span within a string.
 #
@@ -287,9 +287,9 @@ pub class Match
   # ```
   #[getter]
   pub def end self -> Int
-    throw nil
+    ...
 
   # The byte offset of the start of the match within the haystack.
   #[getter]
   pub def start self -> Int
-    throw nil
+    ...

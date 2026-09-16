@@ -1,5 +1,11 @@
 # Streams TAR archives with optional gzip or zstd compression.
 
+import
+  fs:
+    - @Path
+  time:
+    - @DateTime
+
 # Metadata and streaming content for the current TAR entry.
 #
 # The handle remains valid only until its parent [`Reader`](tar.Reader)
@@ -16,64 +22,64 @@ pub class Entry: Iter
   # Device major number, or `nil` when absent.
   #[getter]
   pub def device_major self
-    throw nil
+    ...
 
   # Device minor number, or `nil` when absent.
   #[getter]
   pub def device_minor self
-    throw nil
+    ...
 
   # Numeric group ID.
   #[getter]
   pub def gid self
-    throw nil
+    ...
 
   # Group name, or `nil` when absent.
   #[getter]
   pub def group_name self
-    throw nil
+    ...
 
   # Link target as an [`fs.unix.Path`](fs.unix.Path), or `nil` when
   # absent.
   #[getter]
   pub def link_name self
-    throw nil
+    ...
 
   # Unix permission bits.
   #[getter]
   pub def mode self
-    throw nil
+    ...
 
   # Modification time as [`DateTime`](time.DateTime).
   #[getter]
   pub def mtime self
-    throw nil
+    ...
 
   # Owner name, or `nil` when absent.
   #[getter]
   pub def owner_name self
-    throw nil
+    ...
 
   # Entry path as an [`fs.unix.Path`](fs.unix.Path).
   #[getter]
   pub def path self
-    throw nil
+    ...
 
   # Declared content size in bytes.
   #[getter]
   pub def size self
-    throw nil
+    ...
 
   # Entry type as `:FILE:`, `:DIR:`, `:HARDLINK:`, `:SYMLINK:`, `:FIFO:`,
   # `:CHAR_DEVICE:`, `:BLOCK_DEVICE:`, `:CONTIGUOUS:`, or `:UNKNOWN:`.
   #[getter]
   pub def type self
-    throw nil
+    ...
 
   # Numeric owner ID.
   #[getter]
   pub def uid self
-    throw nil
+    ...
 
   # Reads up to `size` bytes from the current content position.
   #
@@ -87,12 +93,12 @@ pub class Entry: Iter
     # Maximum bytes to read.
     size @ Int
   do -> Bin
-    throw nil
+    ...
 
   # Yields the next content chunk, ending iteration once the entry is
   # exhausted.
   pub def (next) self
-    throw nil
+    ...
 
 # Content sink for one scoped TAR entry.
 #
@@ -119,7 +125,7 @@ pub class EntryWriter: Sink
     # Bytes to write.
     data @ (Str | Bin)
   do
-    throw nil
+    ...
 
 # Destructive iterator over the entries in an open TAR archive.
 #
@@ -138,19 +144,19 @@ pub class Reader: Iter
   # Detected compression as `:NONE:`, `:GZIP:`, or `:ZSTD:`.
   #[getter]
   pub def compression self
-    throw nil
+    ...
 
   # Yields the next [`Entry`](tar.Entry), ending iteration at the end of the
   # archive.
   pub def (next) self
-    throw nil
+    ...
 
 # Sequential writer for a new TAR archive.
 pub class Writer
   # Selected compression as `:NONE:`, `:GZIP:`, or `:ZSTD:`.
   #[getter]
   pub def compression self
-    throw nil
+    ...
 
   # Creates a directory entry.
   #
@@ -178,7 +184,7 @@ pub class Writer
     # Group name.
     :group_name @ Str = nil
   do
-    throw nil
+    ...
 
   # Adds one regular-file entry and calls `func` with a scoped
   # [`EntryWriter`](tar.EntryWriter).
@@ -229,7 +235,7 @@ pub class Writer
     # [`EntryWriter`](tar.EntryWriter).
     func @ Func
   do -> Value
-    throw nil
+    ...
 
   # Creates a hard-link entry pointing to `target`.
   #
@@ -262,7 +268,7 @@ pub class Writer
     # Group name.
     :group_name @ Str = nil
   do
-    throw nil
+    ...
 
   # Creates a symbolic link entry pointing to `target`.
   #
@@ -296,7 +302,7 @@ pub class Writer
     # Group name.
     :group_name @ Str = nil
   do
-    throw nil
+    ...
 
 # Opens an archive and calls `func` with a [`Reader`](tar.Reader).
 #
@@ -319,7 +325,7 @@ pub def read
   # Reader scope, called with a [`Reader`](tar.Reader).
   func @ Func
 do -> Value
-  throw nil
+  ...
 
 # Creates an archive and calls `func` with a [`Writer`](tar.Writer).
 #
@@ -346,4 +352,4 @@ pub def write
   # Writer scope, called with a [`Writer`](tar.Writer).
   func @ Func
 do -> Value
-  throw nil
+  ...

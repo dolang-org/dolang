@@ -1,0 +1,47 @@
+let decorated = 0
+let defaults = 0
+
+def record func
+  decorated = (decorated + 1)
+  func
+
+def make_default()
+  defaults = (defaults + 1)
+  42
+
+#[record]
+def stub value = make_default() :key = value ...rest -> Int
+  ...
+
+assert_eq $decorated 1
+assert_throws $std.RuntimeError str: "stub function called" do stub()
+assert_eq $defaults 1
+assert_throws $std.RuntimeError str: "stub function called" do
+  stub 1 key: 2 extra: 3
+assert_eq $defaults 1
+
+def vertical
+  value = make_default()
+do
+  ...
+
+assert_throws $std.RuntimeError str: "stub function called" do vertical()
+assert_eq $defaults 2
+
+class Base
+  pub def value _self
+    42
+
+class Derived: Base
+  #[record]
+  pub def value _self
+    ...
+
+assert_eq $decorated 2
+assert_throws $std.RuntimeError str: "stub function called" do
+  (Derived()).value()
+
+def required value
+  ...
+
+assert_throws $std.RuntimeError str: "missing positional item: 0" do required()

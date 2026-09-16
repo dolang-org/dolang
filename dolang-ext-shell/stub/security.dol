@@ -5,4 +5,4 @@
 # This is the real user ID's name on Unix, or the access token's user SID's
 # name on Windows.
 pub def user_name() -> Str
-  throw nil
+  ...

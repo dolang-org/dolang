@@ -22,6 +22,9 @@
 #   echo $id $node.span
 # ```
 
+import term:
+  - @Text
+
 # A staged compilation unit.
 #
 # Provides diagnostics and document nodes for one source file before emitting
@@ -39,7 +42,7 @@
 pub class Unit
   # Returns a fresh iterator of [`Diagnostic`](compile.Diagnostic) objects.
   pub def diagnostics self
-    throw nil
+    ...
 
   # Returns a fresh iterator of `[NodeId, Node]` pairs.
   #
@@ -53,7 +56,7 @@ pub class Unit
   #   echo $id $node.span
   # ```
   pub def nodes self
-    throw nil
+    ...
 
   # Looks up a node by [`NodeId`](compile.NodeId).
   #
@@ -65,7 +68,7 @@ pub class Unit
     # The ID to look up.
     id @ NodeId
   do -> (Node | nil)
-    throw nil
+    ...
 
   # Returns a fresh iterator of [`Token`](compile.Token) objects covering the
   # whole source, in source order.
@@ -77,7 +80,7 @@ pub class Unit
   #   echo $token.kind $token.span
   # ```
   pub def tokens self
-    throw nil
+    ...
 
   # Consumes the unit and returns bytecode as [`Bin`](std.Bin).
   #
@@ -88,7 +91,7 @@ pub class Unit
   # | `std.CompileError` | Compilation failed                                 |
   # | `std.StateError`   | The unit, its node iterators, or its nodes are used after emission |
   pub def emit self
-    throw nil
+    ...
 
 # An opaque handle identifying one node within a [`Unit`](compile.Unit).
 #
@@ -123,19 +126,19 @@ pub class Node
   # that has to know it in advance gains nothing.
   #[getter]
   pub def doc self
-    throw nil
+    ...
 
   # The [`NodeId`](compile.NodeId) of the enclosing node, or `nil` for
   # [`Root`](compile.Root).
   #[getter]
   pub def parent self
-    throw nil
+    ...
 
   # The [`Span`](compile.Span) the node covers in the source, or `nil` for a
   # prelude node, which has no source text.
   #[getter]
   pub def span self
-    throw nil
+    ...
 
 # The complete source document.
 #
@@ -155,7 +158,7 @@ pub class Declaration: Node
   # The bound name, as a [`Span`](compile.Span) or a [`Str`](std.Str).
   #[getter]
   pub def name self
-    throw nil
+    ...
 
 # A class declaration.
 #
@@ -164,12 +167,12 @@ pub class Class: Declaration
   # Whether the class was declared `pub`.
   #[getter]
   pub def is_pub self
-    throw nil
+    ...
 
   # Whether the class is a protocol, declared `class @Name`.
   #[getter]
   pub def type_only self -> Bool
-    throw nil
+    ...
 
 # A `def` at statement level.
 pub class Function: Declaration
@@ -177,12 +180,12 @@ pub class Function: Declaration
   # implementation is.
   #[getter]
   pub def is_pub self
-    throw nil
+    ...
 
   # Whether the function is an overload signature, declared `def @name`.
   #[getter]
   pub def type_only self -> Bool
-    throw nil
+    ...
 
 # A `def` in a class body. Its class is its parent.
 pub class Method: Declaration
@@ -190,12 +193,12 @@ pub class Method: Declaration
   # implementation is.
   #[getter]
   pub def is_pub self
-    throw nil
+    ...
 
   # Whether the method has no body: an overload signature or a protocol member.
   #[getter]
   pub def type_only self -> Bool
-    throw nil
+    ...
 
 # A method implementing a protocol, such as `(init)` or `(next)`. Its class is
 # its parent.
@@ -207,7 +210,7 @@ pub class SpecialMethod: Declaration
   # Whether the method has no body: an overload signature or a protocol member.
   #[getter]
   pub def type_only self -> Bool
-    throw nil
+    ...
 
 # A field declaration in a class body. Its class is its parent.
 #
@@ -216,7 +219,7 @@ pub class Field: Declaration
   # Whether the field was declared `pub`.
   #[getter]
   pub def is_pub self
-    throw nil
+    ...
 
 # A `let` or other binding.
 pub class Bind: Declaration
@@ -226,7 +229,7 @@ pub class Alias: Declaration
   # Whether the binding was declared `pub`.
   #[getter]
   pub def is_pub self
-    throw nil
+    ...
 
 # The `self` parameter of a method.
 pub class SelfParam: Declaration
@@ -237,36 +240,36 @@ pub class Import: Declaration
   # binding, a [`Str`](std.Str).
   #[getter]
   pub def module self
-    throw nil
+    ...
 
 # A module bound by `import foo` or `import foo: bar`.
 pub class ImportModule: Import
   # Whether the module was imported `pub`.
   #[getter]
   pub def is_pub self
-    throw nil
+    ...
 
   # Whether the module was imported with `@`, for types only.
   #[getter]
   pub def type_only self -> Bool
-    throw nil
+    ...
 
 # An item bound from a module, as in `import foo: - bar`.
 pub class ImportItem: Import
   # Whether the item was imported `pub`.
   #[getter]
   pub def is_pub self
-    throw nil
+    ...
   # The [`Span`](compile.Span) of the item name within the module.
   #[getter]
   pub def item self
-    throw nil
+    ...
 
   # Whether the item was imported with `@`, for types only. Such an item binds no
   # variable.
   #[getter]
   pub def type_only self
-    throw nil
+    ...
 
 # A module bound by the prelude.
 #
@@ -287,7 +290,7 @@ pub class PreludeItem: Import
   # The item name within the module, as a [`Str`](std.Str).
   #[getter]
   pub def item self
-    throw nil
+    ...
 
 # Supertype of a function's parameters. The function is the parent.
 pub class Param: Node
@@ -297,7 +300,7 @@ pub class Param: Node
   # parameter has one.
   #[getter]
   pub def name self
-    throw nil
+    ...
 
 # A positional parameter.
 pub class PositionalParam: Param
@@ -305,7 +308,7 @@ pub class PositionalParam: Param
   # parameter has no default. Slice the source for its text.
   #[getter]
   pub def default self
-    throw nil
+    ...
 
 # A keyword parameter.
 #
@@ -317,12 +320,12 @@ pub class KeyParam: Param
   # parameter has no default. Slice the source for its text.
   #[getter]
   pub def default self
-    throw nil
+    ...
 
   # The [`Span`](compile.Span) of the key as written, without the `:` sigil.
   #[getter]
   pub def key self
-    throw nil
+    ...
 
 # A rest parameter. Its `name` is `nil` when it is anonymous.
 pub class RestParam: Param
@@ -369,7 +372,7 @@ pub class Reference: Node
   # could not resolve one.
   #[getter]
   pub def target self
-    throw nil
+    ...
 
 # A decorator.
 #
@@ -396,7 +399,7 @@ pub class Type: Node
   # The type as a [`TypeExpr`](compile.TypeExpr).
   #[getter]
   pub def expr self
-    throw nil
+    ...
 
 # Supertype of binders: names standing for types within the function, method,
 # or class that is their parent.
@@ -404,12 +407,12 @@ pub class Binder: Declaration
   # The binder's bound, or `nil` when it has none.
   #[getter]
   pub def bound self -> (TypeExpr | nil)
-    throw nil
+    ...
 
   # The binder's default, or `nil` when it has none.
   #[getter]
   pub def default self -> (TypeExpr | nil)
-    throw nil
+    ...
 
 # A positional binder, such as `T`.
 pub class PosBinder: Binder
@@ -430,20 +433,20 @@ pub class TypeExpr
   # parentheses around it.
   #[getter]
   pub def span self
-    throw nil
+    ...
 
 # A possibly dotted name, such as `Str` or `time.Duration`.
 pub class NameType: TypeExpr
   # The [`Span`](compile.Span) of the first name.
   #[getter]
   pub def head self
-    throw nil
+    ...
 
   # The [`NodeId`](compile.NodeId) of the node the first name refers to, or
   # `nil` when the compiler could not resolve it.
   #[getter]
   pub def target self
-    throw nil
+    ...
 
 # A constant, such as `:TARGET:` or `nil`.
 pub class ConstType: TypeExpr
@@ -451,26 +454,26 @@ pub class ConstType: TypeExpr
   # [`Int`](std.Int), [`Bool`](std.Bool), or `nil`.
   #[getter]
   pub def value self
-    throw nil
+    ...
 
 # Type arguments applied to a type, such as `Array[Int]`.
 pub class AppType: TypeExpr
   # An array of [`TypeArg`](compile.TypeArg) objects.
   #[getter]
   pub def args self
-    throw nil
+    ...
 
   # The [`TypeExpr`](compile.TypeExpr) the arguments apply to.
   #[getter]
   pub def base self
-    throw nil
+    ...
 
 # A schema, such as `{name: Str, ?port: Int}`.
 pub class SchemaType: TypeExpr
   # An array of [`TypeArg`](compile.TypeArg) objects, one per entry.
   #[getter]
   pub def args self
-    throw nil
+    ...
 
 # A union, such as `(Str | Path)`.
 pub class UnionType: TypeExpr
@@ -478,57 +481,57 @@ pub class UnionType: TypeExpr
   # written.
   #[getter]
   pub def members self
-    throw nil
+    ...
 
 # A function type, such as `(Int, ?Int) -> Int`.
 pub class FuncType: TypeExpr
   # An array of [`TypeArg`](compile.TypeArg) objects, one per parameter.
   #[getter]
   pub def params self
-    throw nil
+    ...
 
   # The return [`TypeExpr`](compile.TypeExpr).
   #[getter]
   pub def ret self
-    throw nil
+    ...
 
 # Supertype of the items in the `[]`, `()`, or `{}` of a type.
 pub class TypeArg
   # Whether the item is marked optional with `?`.
   #[getter]
   pub def optional self
-    throw nil
+    ...
 
   # The [`Span`](compile.Span) of the item, without a trailing `,`.
   #[getter]
   pub def span self
-    throw nil
+    ...
 
 # A positional item, such as `T`.
 pub class PosTypeArg: TypeArg
   # The item's type.
   #[getter]
   pub def ty self -> TypeExpr
-    throw nil
+    ...
 
 # A keyed item, such as `name: T`.
 pub class KeyTypeArg: TypeArg
   # The item's type.
   #[getter]
   pub def ty self -> TypeExpr
-    throw nil
+    ...
   # The [`Span`](compile.Span) of the key as written. A bareword key is a symbol
   # and a quoted one is a string.
   #[getter]
   pub def key self
-    throw nil
+    ...
 
 # A rest item, such as `...T`.
 pub class RestTypeArg: TypeArg
   # The item's type.
   #[getter]
   pub def ty self -> TypeExpr
-    throw nil
+    ...
 
 # An unrestricted schema rest item, written `...`.
 pub class OpenRestTypeArg: TypeArg
@@ -538,11 +541,11 @@ pub class KeyRestTypeArg: TypeArg
   # The value type.
   #[getter]
   pub def ty self -> TypeExpr
-    throw nil
+    ...
   # The key type.
   #[getter]
   pub def key_ty self -> TypeExpr
-    throw nil
+    ...
 
 # A syntactic token.
 #
@@ -585,24 +588,24 @@ pub class Token
   # | `:SIGIL:`        | A sigil like `$` or `...`                                  |
   #[getter]
   pub def kind self
-    throw nil
+    ...
 
   # The [`Span`](compile.Span) of source text the token covers.
   #[getter]
   pub def span self
-    throw nil
+    ...
 
   # The [`NodeId`](compile.NodeId) of the declaration this token names, or
   # `nil` when it names none.
   #[getter]
   pub def node self
-    throw nil
+    ...
 
   # The syntactic context the token appears in, currently only `:CALL:` (a
   # callee position) or `nil`.
   #[getter]
   pub def context self
-    throw nil
+    ...
 
 # A compiler diagnostic.
 #
@@ -618,32 +621,32 @@ pub class Diagnostic
   # highlighted source regions.
   #[getter]
   pub def annotations self
-    throw nil
+    ...
 
   # The primary diagnostic message as [`Str`](std.Str).
   #[getter]
   pub def message self
-    throw nil
+    ...
 
   # An array of [`Note`](compile.Note) objects with extra context or help.
   #[getter]
   pub def notes self
-    throw nil
+    ...
 
   # An array of [`Patch`](compile.Patch) objects describing suggested edits.
   #[getter]
   pub def patches self
-    throw nil
+    ...
 
   # The severity as `:ERROR:` or `:WARNING:`.
   #[getter]
   pub def severity self
-    throw nil
+    ...
 
   # The primary source [`Span`](compile.Span).
   #[getter]
   pub def span self
-    throw nil
+    ...
 
   # Renders the diagnostic for terminal presentation.
   #
@@ -651,7 +654,7 @@ pub class Diagnostic
   #
   # [`term.Text`](term.Text), without a final newline.
   pub def render self -> Text
-    throw nil
+    ...
 
 # An additional highlighted region attached to a
 # [`Diagnostic`](compile.Diagnostic).
@@ -659,46 +662,46 @@ pub class Annotation
   # The annotation kind as `:PRIMARY:` or `:CONTEXT:`.
   #[getter]
   pub def kind self
-    throw nil
+    ...
 
   # The annotation label as [`Str`](std.Str).
   #[getter]
   pub def message self
-    throw nil
+    ...
 
   # The annotated [`Span`](compile.Span).
   #[getter]
   pub def span self
-    throw nil
+    ...
 
 # An auxiliary note attached to a [`Diagnostic`](compile.Diagnostic).
 pub class Note
   # The note kind as `:INFO:` or `:HELP:`.
   #[getter]
   pub def kind self
-    throw nil
+    ...
 
   # The note text as [`Str`](std.Str).
   #[getter]
   pub def message self
-    throw nil
+    ...
 
 # A suggested source edit attached to a [`Diagnostic`](compile.Diagnostic).
 pub class Patch
   # Human-readable text describing the suggested change.
   #[getter]
   pub def message self
-    throw nil
+    ...
 
   # The [`Span`](compile.Span) to replace.
   #[getter]
   pub def span self
-    throw nil
+    ...
 
   # The replacement text as [`Str`](std.Str).
   #[getter]
   pub def sub self
-    throw nil
+    ...
 
 # A region of source text.
 #
@@ -708,29 +711,29 @@ pub class Span
   # The exclusive end position as [`Pos`](compile.Pos).
   #[getter]
   pub def end self
-    throw nil
+    ...
 
   # The inclusive start position as [`Pos`](compile.Pos).
   #[getter]
   pub def start self
-    throw nil
+    ...
 
 # A position within source text. All coordinates are zero-based.
 pub class Pos
   # Byte offset from the start of the source.
   #[getter]
   pub def byte_offset self
-    throw nil
+    ...
 
   # Column offset within the line.
   #[getter]
   pub def column self
-    throw nil
+    ...
 
   # Line offset from the start of the source.
   #[getter]
   pub def line self
-    throw nil
+    ...
 
 # Parses and elaborates Do source into a staged compilation unit.
 #
@@ -806,4 +809,4 @@ pub def compile
   # Build document nodes. Defaults to `false`.
   :document @ Bool = nil
 do -> Unit
-  throw nil
+  ...

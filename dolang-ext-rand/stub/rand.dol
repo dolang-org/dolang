@@ -27,7 +27,7 @@ pub def int
   # Exclusive upper bound.
   end @ Int = nil
 do -> Int
-  throw nil
+  ...
 
 # Selects one random element from an array.
 #
@@ -49,7 +49,7 @@ pub def pick
   # Source array.
   collection @ Array
 do -> collection
-  throw nil
+  ...
 
 # Shuffles an array in place using a uniform Fisher-Yates pass.
 #
@@ -74,7 +74,7 @@ pub def shuffle
   # Array to mutate.
   array @ Array
 do
-  throw nil
+  ...
 
 # Generates a random string by sampling characters from `alphabet`.
 #
@@ -105,4 +105,4 @@ pub def string
   # omitted, it is `_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ`.
   :alphabet @ Str = nil
 do -> Str
-  throw nil
+  ...

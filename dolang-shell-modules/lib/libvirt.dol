@@ -251,9 +251,6 @@ import _vfs base64 digest json proc progress rand shell shlex ssh std strand sys
     - WINDOWS_ROOT
     - WINDOWS_VFS_COMMAND
 
-import std:
-  - @RuntimeError
-
 let VM_NAMESPACE = "https://github.com/dolang-org/dolang"
 let DEFAULT_CONNECT_URI = "qemu:///session"
 # The `sd*` targets attachable media is assigned, in order. The SATA

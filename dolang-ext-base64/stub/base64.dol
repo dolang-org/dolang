@@ -49,7 +49,7 @@ pub def decode
   # requires that padding be absent.
   :pad @ Bool = nil
 do -> Bin
-  throw nil
+  ...
 
 # Encodes a string or binary value as base64 text.
 #
@@ -90,4 +90,4 @@ pub def encode
   # Signatures, RFC 7515). Pass `pad:` explicitly to override.
   :pad @ Bool = nil
 do -> Str
-  throw nil
+  ...

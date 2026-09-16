@@ -178,37 +178,37 @@ pub class AccessMask
     self
     ...rights
   do
-    throw nil
+    ...
   # `from_int value`
   #
   # Constructs a mask from a native integer while preserving unknown bits.
   #
   pub def from_int self value
-    throw nil
+    ...
   # `specific_rights`
   #
   # Returns the object-specific low 16 bits.
   #
   pub def specific_rights self
-    throw nil
+    ...
   # `standard_rights`
   #
   # Returns the standard-rights portion as an `AccessMask`.
   #
   pub def standard_rights self
-    throw nil
+    ...
   # `generic_rights`
   #
   # Returns the generic-rights portion as an `AccessMask`.
   #
   pub def generic_rights self
-    throw nil
+    ...
   # `int`
   #
   # Returns the native integer mask.
   #
   pub def int self
-    throw nil
+    ...
   # `contains right`
   #
   # Tests whether all bits represented by a symbol are set.
@@ -218,24 +218,24 @@ pub class AccessMask
   # [`Bool`](std.Bool)
   #
   pub def contains self right
-    throw nil
+    ...
   # Combines masks with `|`.
   pub def (bor) self other
-    throw nil
+    ...
   # Intersects masks with `&`.
   pub def (band) self other
-    throw nil
+    ...
   # Computes the symmetric difference with `^`.
   pub def (bxor) self other
-    throw nil
+    ...
   # Complements a mask within the supported bit set with `~`.
   pub def (bnot) self
-    throw nil
+    ...
   pub def (eq) self other
-    throw nil
+    ...
   # Yields the symbols represented by a mask.
   pub def (iter) self
-    throw nil
+    ...
 
 # Flags stored in an ACE header.
 #
@@ -269,19 +269,19 @@ pub class AceFlags
     self
     ...flags
   do
-    throw nil
+    ...
   # `from_int value`
   #
   # Constructs flags from a native integer while preserving unknown bits.
   #
   pub def from_int self value
-    throw nil
+    ...
   # `int`
   #
   # Returns the native integer flags.
   #
   pub def int self
-    throw nil
+    ...
   # `contains flag`
   #
   # Tests whether all bits represented by a symbol are set.
@@ -291,24 +291,24 @@ pub class AceFlags
   # [`Bool`](std.Bool)
   #
   pub def contains self flag
-    throw nil
+    ...
   # Combines flags with `|`.
   pub def (bor) self other
-    throw nil
+    ...
   # Intersects flags with `&`.
   pub def (band) self other
-    throw nil
+    ...
   # Computes the symmetric difference with `^`.
   pub def (bxor) self other
-    throw nil
+    ...
   # Complements a value within the supported bit set with `~`.
   pub def (bnot) self
-    throw nil
+    ...
   pub def (eq) self other
-    throw nil
+    ...
   # Yields the symbols represented by a value.
   pub def (iter) self
-    throw nil
+    ...
 
 # Security descriptor control flags.
 #
@@ -340,7 +340,7 @@ pub class SecDescControl
     self
     ...flags
   do
-    throw nil
+    ...
   # `contains flag`
   #
   # Tests whether all bits represented by a symbol are set.
@@ -350,24 +350,24 @@ pub class SecDescControl
   # [`Bool`](std.Bool)
   #
   pub def contains self flag
-    throw nil
+    ...
   # Combines flags with `|`.
   pub def (bor) self other
-    throw nil
+    ...
   # Intersects flags with `&`.
   pub def (band) self other
-    throw nil
+    ...
   # Computes the symmetric difference with `^`.
   pub def (bxor) self other
-    throw nil
+    ...
   # Complements flags within the supported bit set with `~`.
   pub def (bnot) self
-    throw nil
+    ...
   pub def (eq) self other
-    throw nil
+    ...
   # Yields the symbols represented by the flags.
   pub def (iter) self
-    throw nil
+    ...
 
 # Security descriptor components loaded by a query.
 #
@@ -388,30 +388,30 @@ pub class SecInfo
     self
     ...components
   do
-    throw nil
+    ...
   # `contains component`
   #
   # Tests whether a component is selected.
   #
   pub def contains self component
-    throw nil
+    ...
   # Combines values with `|`.
   pub def (bor) self other
-    throw nil
+    ...
   # Intersects values with `&`.
   pub def (band) self other
-    throw nil
+    ...
   # Computes the symmetric difference with `^`.
   pub def (bxor) self other
-    throw nil
+    ...
   # Complements a value within the supported bit set with `~`.
   pub def (bnot) self
-    throw nil
+    ...
   pub def (eq) self other
-    throw nil
+    ...
   # Yields selected symbols.
   pub def (iter) self
-    throw nil
+    ...
 
 # Windows access-token group attributes.
 #
@@ -436,30 +436,30 @@ pub class TokenGroupAttributes
     self
     ...attributes
   do
-    throw nil
+    ...
   # `contains attribute`
   #
   # Tests whether an attribute is set.
   #
   pub def contains self attribute
-    throw nil
+    ...
   # Combines values with `|`.
   pub def (bor) self other
-    throw nil
+    ...
   # Intersects values with `&`.
   pub def (band) self other
-    throw nil
+    ...
   # Computes the symmetric difference with `^`.
   pub def (bxor) self other
-    throw nil
+    ...
   # Complements a value within the supported bit set with `~`.
   pub def (bnot) self
-    throw nil
+    ...
   pub def (eq) self other
-    throw nil
+    ...
   # Yields selected symbols.
   pub def (iter) self
-    throw nil
+    ...
 
 # Windows security identifier.
 #
@@ -540,13 +540,13 @@ pub class Sid
   # ```
   #
   pub def (init) self value
-    throw nil
+    ...
   # `revision`
   #
   # SID revision number.
   #
   pub def revision self
-    throw nil
+    ...
   # `identifier_authority`
   #
   # The identifier authority as a symbol when it is well known, or its 48-bit
@@ -568,19 +568,19 @@ pub class Sid
   # | `:PROCESS_TRUST:`    | Process trust       |
   #
   pub def identifier_authority self
-    throw nil
+    ...
   # `sub_authorities`
   #
   # Sub-authorities as an immutable [`Tuple`](std.Tuple).
   #
   pub def sub_authorities self
-    throw nil
+    ...
   # `sub_authority_count`
   #
   # Number of sub-authorities.
   #
   pub def sub_authority_count self
-    throw nil
+    ...
   # `lookup()`
   #
   # Resolves the SID in the active Windows VFS target.
@@ -597,7 +597,7 @@ pub class Sid
   # | [`UnsupportedError`](std.UnsupportedError) | The active VFS target is Unix     |
   #
   pub def lookup self
-    throw nil
+    ...
   # `to_bin()`
   #
   # Returns the native Windows packet representation.
@@ -614,7 +614,7 @@ pub class Sid
   # let encoded = sid.to_bin()
   # ```
   pub def to_bin self
-    throw nil
+    ...
 
 # Resolved Windows account identity.
 #
@@ -646,13 +646,13 @@ pub class SidName
   # | [`UnsupportedError`](std.UnsupportedError) | The active VFS target is Unix |
   #
   pub def lookup self value
-    throw nil
+    ...
   # `domain`
   #
   # Account domain returned by Windows.
   #
   pub def domain self
-    throw nil
+    ...
   # `kind`
   #
   # Windows SID name-use classification as an uppercase symbol.
@@ -668,24 +668,24 @@ pub class SidName
   # ```
   #
   pub def kind self
-    throw nil
+    ...
   # `name`
   #
   # Unqualified account name.
   #
   pub def name self
-    throw nil
+    ...
   # `qualified_name`
   #
   # The `domain\name` form, or `name` when the domain is empty.
   #
   pub def qualified_name self
-    throw nil
+    ...
   # `sid`
   #
   # Resolved [`Sid`](security.windows.Sid).
   pub def sid self
-    throw nil
+    ...
 
 # Immutable view of a native Windows access-control entry.
 #
@@ -751,7 +751,7 @@ pub class Ace
     :mask
     ...options
   do
-    throw nil
+    ...
   # `application_data`
   #
   # Exact bytes after the projected SID. The value can be empty.
@@ -759,19 +759,19 @@ pub class Ace
   # Raises `FieldError` when the ACE body is not interpreted.
   #
   pub def application_data self
-    throw nil
+    ...
   # `container_inherit`
   #
   # Whether container child objects inherit this ACE.
   #
   pub def container_inherit self
-    throw nil
+    ...
   # `critical`
   #
   # Whether the native critical flag is set.
   #
   pub def critical self
-    throw nil
+    ...
   # `failed_access`
   #
   # Whether an audit or alarm ACE selects failed access.
@@ -779,25 +779,25 @@ pub class Ace
   # Raises `FieldError` for other ACE types.
   #
   pub def failed_access self
-    throw nil
+    ...
   # `flags`
   #
   # [`AceFlags`](security.windows.AceFlags) from the ACE header.
   #
   pub def flags self
-    throw nil
+    ...
   # `inherit_only`
   #
   # Whether this ACE applies only through inheritance.
   #
   pub def inherit_only self
-    throw nil
+    ...
   # `inherited`
   #
   # Whether this ACE was inherited.
   #
   pub def inherited self
-    throw nil
+    ...
   # `inherited_object_type`
   #
   # Inherited-object-type [`uuid.Guid`](uuid.Guid), or `nil`
@@ -806,7 +806,7 @@ pub class Ace
   # Raises `FieldError` for a non-object ACE.
   #
   pub def inherited_object_type self
-    throw nil
+    ...
   # `mask`
   #
   # [`AccessMask`](security.windows.AccessMask).
@@ -814,13 +814,13 @@ pub class Ace
   # Raises `FieldError` for an ACE layout without a projected mask.
   #
   pub def mask self
-    throw nil
+    ...
   # `no_propagate_inherit`
   #
   # Whether inherited copies stop propagating after one generation.
   #
   pub def no_propagate_inherit self
-    throw nil
+    ...
   # `object_flags`
   #
   # Native object ACE flags.
@@ -828,13 +828,13 @@ pub class Ace
   # Raises `FieldError` for a non-object ACE.
   #
   pub def object_flags self
-    throw nil
+    ...
   # `object_inherit`
   #
   # Whether non-container child objects inherit this ACE.
   #
   pub def object_inherit self
-    throw nil
+    ...
   # `object_type`
   #
   # Object-type [`uuid.Guid`](uuid.Guid), or `nil` when the
@@ -843,7 +843,7 @@ pub class Ace
   # Raises `FieldError` for a non-object ACE.
   #
   pub def object_type self
-    throw nil
+    ...
   # `sid`
   #
   # Trustee [`Sid`](security.windows.Sid).
@@ -851,13 +851,13 @@ pub class Ace
   # Raises `FieldError` for an ACE layout without a projected SID.
   #
   pub def sid self
-    throw nil
+    ...
   # `size`
   #
   # Declared ACE packet size.
   #
   pub def size self
-    throw nil
+    ...
   # `successful_access`
   #
   # Whether an audit or alarm ACE selects successful access.
@@ -865,7 +865,7 @@ pub class Ace
   # Raises `FieldError` for other ACE types.
   #
   pub def successful_access self
-    throw nil
+    ...
   # `trust_protected_filter`
   #
   # Whether an access-filter ACE has the trust-protected flag.
@@ -873,7 +873,7 @@ pub class Ace
   # Raises `FieldError` for other ACE types.
   #
   pub def trust_protected_filter self
-    throw nil
+    ...
   # `type`
   #
   # Symbolic native ACE type, or `:UNKNOWN:` for an unrecognized type code.
@@ -881,13 +881,13 @@ pub class Ace
   # For recognized values, see [ACE type values](security.windows.ace-type-values).
   #
   pub def type self
-    throw nil
+    ...
   # `type_code`
   #
   # Native numeric ACE type code.
   #
   pub def type_code self
-    throw nil
+    ...
   # `to_bin()`
   #
   # Returns the exact native ACE packet, including application or unknown data.
@@ -896,7 +896,7 @@ pub class Ace
   #
   # [`Bin`](std.Bin)
   pub def to_bin self
-    throw nil
+    ...
 
 # Immutable view of a native Windows access-control list.
 #
@@ -925,27 +925,27 @@ pub class Acl
     aces
     :revision = nil
   do
-    throw nil
+    ...
   # `aces`
   #
   # Immutable array-like view of [`Ace`](security.windows.Ace) values. Use `.len` for the
   # entry count.
   #
   pub def aces self
-    throw nil
+    ...
   # `revision`
   #
   # `:BASIC:` or `:DIRECTORY_SERVICE:` for supported revisions, or the native
   # integer for an unknown parsed revision.
   #
   pub def revision self
-    throw nil
+    ...
   # `size`
   #
   # Declared ACL packet size.
   #
   pub def size self
-    throw nil
+    ...
   # `to_bin()`
   #
   # Returns the exact native ACL packet.
@@ -954,7 +954,7 @@ pub class Acl
   #
   # [`Bin`](std.Bin)
   pub def to_bin self
-    throw nil
+    ...
 
 # Windows security descriptor.
 #
@@ -1016,14 +1016,14 @@ pub class SecDesc
     self
     ...options
   do
-    throw nil
+    ...
   # `control`
   #
   # [`SecDescControl`](security.windows.SecDescControl) flags, excluding the self-relative
   # storage flag.
   #
   pub def control self
-    throw nil
+    ...
   # `dacl`
   #
   # Discretionary [`Acl`](security.windows.Acl), or `nil` for a present null ACL.
@@ -1031,37 +1031,37 @@ pub class SecDesc
   # Raises `FieldError` when the DACL was not loaded or is not present.
   #
   pub def dacl self
-    throw nil
+    ...
   # `dacl_auto_inherit_required`
   #
   # Whether DACL inheritance computation was requested.
   #
   pub def dacl_auto_inherit_required self
-    throw nil
+    ...
   # `dacl_auto_inherited`
   #
   # Whether the DACL was produced through inheritance.
   #
   pub def dacl_auto_inherited self
-    throw nil
+    ...
   # `dacl_defaulted`
   #
   # Whether the DACL was supplied by a default mechanism.
   #
   pub def dacl_defaulted self
-    throw nil
+    ...
   # `dacl_present`
   #
   # Whether the DACL is present. A present ACL can be null.
   #
   pub def dacl_present self
-    throw nil
+    ...
   # `dacl_protected`
   #
   # Whether the DACL is protected from inheritance.
   #
   pub def dacl_protected self
-    throw nil
+    ...
   # `group`
   #
   # Primary group [`Sid`](security.windows.Sid).
@@ -1069,13 +1069,13 @@ pub class SecDesc
   # Raises `FieldError` when the group was not loaded or is absent.
   #
   pub def group self
-    throw nil
+    ...
   # `group_defaulted`
   #
   # Whether the group was supplied by a default mechanism.
   #
   pub def group_defaulted self
-    throw nil
+    ...
   # `mask`
   #
   # [`SecInfo`](security.windows.SecInfo) flags recording which fields are present.
@@ -1086,7 +1086,7 @@ pub class SecDesc
   # information depending on what was queried.
   #
   pub def mask self
-    throw nil
+    ...
   # `owner`
   #
   # Owner [`Sid`](security.windows.Sid).
@@ -1094,19 +1094,19 @@ pub class SecDesc
   # Raises `FieldError` when the owner was not loaded or is absent.
   #
   pub def owner self
-    throw nil
+    ...
   # `owner_defaulted`
   #
   # Whether the owner was supplied by a default mechanism.
   #
   pub def owner_defaulted self
-    throw nil
+    ...
   # `revision`
   #
   # Security descriptor revision.
   #
   pub def revision self
-    throw nil
+    ...
   # `rm_control`
   #
   # Resource-manager-defined control byte.
@@ -1114,13 +1114,13 @@ pub class SecDesc
   # Raises `FieldError` when `rm_control_valid` is false.
   #
   pub def rm_control self
-    throw nil
+    ...
   # `rm_control_valid`
   #
   # Whether the resource-manager control byte is valid.
   #
   pub def rm_control_valid self
-    throw nil
+    ...
   # `sacl`
   #
   # System [`Acl`](security.windows.Acl), or `nil` for a present null ACL.
@@ -1128,31 +1128,31 @@ pub class SecDesc
   # Raises `FieldError` when the SACL was not loaded or is not present.
   #
   pub def sacl self
-    throw nil
+    ...
   # `sacl_auto_inherit_required`
   #
   # Whether SACL inheritance computation was requested.
   #
   pub def sacl_auto_inherit_required self
-    throw nil
+    ...
   # `sacl_auto_inherited`
   #
   # Whether the SACL was produced through inheritance.
   #
   pub def sacl_auto_inherited self
-    throw nil
+    ...
   # `sacl_defaulted`
   #
   # Whether the SACL was supplied by a default mechanism.
   #
   pub def sacl_defaulted self
-    throw nil
+    ...
   # `sacl_present`
   #
   # Whether the SACL is present. A present ACL can be null.
   #
   pub def sacl_present self
-    throw nil
+    ...
   # `sacl_protected`
   #
   # Whether the SACL is protected from inheritance.
@@ -1161,7 +1161,7 @@ pub class SecDesc
   # loaded.
   #
   pub def sacl_protected self
-    throw nil
+    ...
   # `to_bin()`
   #
   # Returns a canonical self-relative security descriptor packet.
@@ -1171,7 +1171,7 @@ pub class SecDesc
   # [`Bin`](std.Bin)
   #
   pub def to_bin self
-    throw nil
+    ...
   # `with ...options`
   #
   # Returns a descriptor with selected components or control fields replaced.
@@ -1183,7 +1183,7 @@ pub class SecDesc
     self
     ...options
   do
-    throw nil
+    ...
 
 # Windows access token group membership.
 #
@@ -1193,66 +1193,66 @@ pub class TokenGroup
   # [`TokenGroupAttributes`](security.windows.TokenGroupAttributes).
   #
   pub def attributes self
-    throw nil
+    ...
   # `enabled`
   #
   # Whether the group is enabled.
   #
   pub def enabled self
-    throw nil
+    ...
   # `enabled_by_default`
   #
   # Whether the group is enabled by default.
   #
   pub def enabled_by_default self
-    throw nil
+    ...
   # `integrity`
   #
   # Whether the SID is an integrity SID.
   #
   pub def integrity self
-    throw nil
+    ...
   # `integrity_enabled`
   #
   # Whether the integrity SID is enabled.
   #
   pub def integrity_enabled self
-    throw nil
+    ...
   # `logon_id`
   #
   # Whether the group identifies the token's logon session.
   #
   pub def logon_id self
-    throw nil
+    ...
   # `mandatory`
   #
   # Whether the group is mandatory.
   #
   pub def mandatory self
-    throw nil
+    ...
   # `owner`
   #
   # Whether the group can be assigned as an object owner.
   #
   pub def owner self
-    throw nil
+    ...
   # `resource`
   #
   # Whether the group is a resource group.
   #
   pub def resource self
-    throw nil
+    ...
   # `sid`
   #
   # Group [`Sid`](security.windows.Sid).
   #
   pub def sid self
-    throw nil
+    ...
   # `use_for_deny_only`
   #
   # Whether the group is used only for deny access checks.
   pub def use_for_deny_only self
-    throw nil
+    ...
 
 # Windows access token information.
 #
@@ -1262,36 +1262,36 @@ pub class TokenInfo
   # A lazy array-like view of the token's [`TokenGroup`](security.windows.TokenGroup) objects.
   #
   pub def groups self
-    throw nil
+    ...
   # `is_elevated`
   #
   # Whether the token is elevated.
   #
   pub def is_elevated self
-    throw nil
+    ...
   # `logon_sid`
   #
   # The group SID marked as the token's logon SID, or `nil` if none is present.
   #
   pub def logon_sid self
-    throw nil
+    ...
   # `owner_sid`
   #
   # Default owner SID for objects created by the token.
   #
   pub def owner_sid self
-    throw nil
+    ...
   # `primary_group_sid`
   #
   # Primary group SID for objects created by the token.
   #
   pub def primary_group_sid self
-    throw nil
+    ...
   # `user_sid`
   #
   # SID of the token's user.
   pub def user_sid self
-    throw nil
+    ...
 
 # `ace :allow? :deny? :audit? :mask ...options`
 #
@@ -1321,7 +1321,7 @@ pub def ace
   :mask
   ...options
 do
-  throw nil
+  ...
 
 # `acl ...aces :revision?`
 #
@@ -1353,7 +1353,7 @@ pub def acl
   :revision = nil
   ...aces
 do
-  throw nil
+  ...
 
 # `sec_desc desc? ...options`
 #
@@ -1396,7 +1396,7 @@ pub def sec_desc
   desc = nil
   ...options
 do
-  throw nil
+  ...
 
 # `token_info()`
 #
@@ -1417,4 +1417,4 @@ do
 #   echo elevated
 # ```
 pub def token_info()
-  throw nil
+  ...

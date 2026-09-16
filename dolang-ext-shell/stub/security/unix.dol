@@ -1,5 +1,8 @@
 # Unix security types and uid/gid identity lookups.
 
+import uuid:
+  - @Uuid
+
 # Unix process identity information for the active VFS target.
 #
 # Returned by [`id`](security.unix.id).
@@ -7,27 +10,27 @@ pub class Identity
   # Real user ID.
   #[getter]
   pub def uid self -> Int
-    throw nil
+    ...
 
   # Real group ID.
   #[getter]
   pub def gid self -> Int
-    throw nil
+    ...
 
   # Effective user ID.
   #[getter]
   pub def euid self -> Int
-    throw nil
+    ...
 
   # Effective group ID.
   #[getter]
   pub def egid self -> Int
-    throw nil
+    ...
 
   # Supplementary group IDs.
   #[getter]
   pub def groups self -> Tuple
-    throw nil
+    ...
 
 # POSIX read/write/execute permission bits.
 pub class Permission
@@ -51,7 +54,7 @@ pub class Permission
     # Permission bits, or one iterable of them.
     ...bits @ Sym
   do
-    throw nil
+    ...
 
   # Tests whether all bits represented by a symbol are set.
   #
@@ -63,43 +66,43 @@ pub class Permission
     # Bits to test for.
     bit @ Sym
   do -> Bool
-    throw nil
+    ...
 
   # Union of two permission sets.
   pub def (bor)
     self
     other
   do
-    throw nil
+    ...
 
   # Intersection of two permission sets.
   pub def (band)
     self
     other
   do
-    throw nil
+    ...
 
   # Symmetric difference of two permission sets.
   pub def (bxor)
     self
     other
   do
-    throw nil
+    ...
 
   # Complement within the supported bit set.
   pub def (bnot) self
-    throw nil
+    ...
 
   # Compares two permission sets.
   pub def (eq)
     self
     other
   do
-    throw nil
+    ...
 
   # Yields the symbols represented by the permission set.
   pub def (iter) self
-    throw nil
+    ...
 
 # Immutable POSIX.1e access-control entry.
 #
@@ -113,7 +116,7 @@ pub class Ace
     # Entry permissions. Defaults to empty.
     permissions @ Permission = nil
   do
-    throw nil
+    ...
 
   # Constructs a named-user entry.
   #[class]
@@ -124,7 +127,7 @@ pub class Ace
     # Entry permissions. Defaults to empty.
     permissions @ Permission = nil
   do
-    throw nil
+    ...
 
   # Constructs the file-group entry.
   #[class]
@@ -133,7 +136,7 @@ pub class Ace
     # Entry permissions. Defaults to empty.
     permissions @ Permission = nil
   do
-    throw nil
+    ...
 
   # Constructs a named-group entry.
   #[class]
@@ -144,7 +147,7 @@ pub class Ace
     # Entry permissions. Defaults to empty.
     permissions @ Permission = nil
   do
-    throw nil
+    ...
 
   # Constructs the effective-rights mask entry.
   #[class]
@@ -153,7 +156,7 @@ pub class Ace
     # Entry permissions. Defaults to empty.
     permissions @ Permission = nil
   do
-    throw nil
+    ...
 
   # Constructs the entry for all other users.
   #[class]
@@ -162,13 +165,13 @@ pub class Ace
     # Entry permissions. Defaults to empty.
     permissions @ Permission = nil
   do
-    throw nil
+    ...
 
   # Entry qualifier: `:USER_OBJ:`, `:USER:`,
   # `:GROUP_OBJ:`, `:GROUP:`, `:MASK:`, or `:OTHER:`.
   #[getter]
   pub def type self -> Sym
-    throw nil
+    ...
 
   # Numeric user or group ID.
   #
@@ -176,12 +179,12 @@ pub class Ace
   # [`type`](security.unix.Ace.type) is `:USER:` or `:GROUP:`.
   #[getter]
   pub def id self -> Int
-    throw nil
+    ...
 
   # The entry's permissions.
   #[getter]
   pub def permissions self -> Permission
-    throw nil
+    ...
 
 # Immutable POSIX.1e access-control list.
 #
@@ -204,13 +207,13 @@ pub class Acl
     # [`Ace`](security.unix.Ace) values.
     aces @ Iterable
   do
-    throw nil
+    ...
 
   # Immutable view of
   # [`Ace`](security.unix.Ace) values. Use `.len` for the entry count.
   #[getter]
   pub def aces self -> Array[Ace]
-    throw nil
+    ...
 
 # Constructs a POSIX entry from declarative arguments.
 #
@@ -243,7 +246,7 @@ pub def ace
   # Permissions for a `user:` or `group:` entry.
   :permissions @ (Permission | Sym | Iterable) = nil
 do -> Ace
-  throw nil
+  ...
 
 # Constructs a POSIX ACL from entries and declarative entry dictionaries.
 #
@@ -263,7 +266,7 @@ pub def acl
   # to pass a collection.
   ...aces @ (Ace | Dict)
 do -> Acl
-  throw nil
+  ...
 
 # Returns Unix security information captured for the active VFS context.
 #
@@ -279,7 +282,7 @@ do -> Acl
 # echo "uid=$(info.uid) euid=$(info.euid)"
 # ```
 pub def id() -> Identity
-  throw nil
+  ...
 
 # Resolves a Unix user ID in the active VFS target.
 #
@@ -296,7 +299,7 @@ pub def user_name
   # [`security.macos.id_for_uuid`](security.macos.id_for_uuid).
   uid @ (Int | Uuid)
 do -> Str
-  throw nil
+  ...
 
 # Resolves a Unix user name in the active VFS target.
 #
@@ -310,7 +313,7 @@ pub def user_id
   # User name.
   name @ Str
 do -> Int
-  throw nil
+  ...
 
 # Resolves a Unix group ID in the active VFS target.
 #
@@ -327,7 +330,7 @@ pub def group_name
   # [`security.macos.id_for_uuid`](security.macos.id_for_uuid).
   gid @ (Int | Uuid)
 do -> Str
-  throw nil
+  ...
 
 # Resolves a Unix group name in the active VFS target.
 #
@@ -341,4 +344,4 @@ pub def group_id
   # Group name.
   name @ Str
 do -> Int
-  throw nil
+  ...

@@ -23,21 +23,21 @@ pub class Indicator
   # Read-only — see [`update`](progress.Indicator.update).
   #[getter]
   pub def icon self
-    throw nil
+    ...
 
   # The indicator message text, as [`Str`](std.Str).
   #
   # Read-only — see [`update`](progress.Indicator.update).
   #[getter]
   pub def message self
-    throw nil
+    ...
 
   # The current position, as [`Int`](std.Int).
   #
   # Read-only — see [`update`](progress.Indicator.update).
   #[getter]
   pub def position self
-    throw nil
+    ...
 
   # The total value for bar mode, as [`Int`](std.Int), or `nil` in
   # spinner mode.
@@ -45,7 +45,7 @@ pub class Indicator
   # Read-only — see [`update`](progress.Indicator.update).
   #[getter]
   pub def total self
-    throw nil
+    ...
 
   # Adjusts the position by `n`.
   #
@@ -57,7 +57,7 @@ pub class Indicator
     # and negative values decrement. Defaults to `1`.
     n @ Int = nil
   do
-    throw nil
+    ...
 
   # Applies one or more changes atomically, in a single redraw.
   #
@@ -102,7 +102,7 @@ pub class Indicator
     # `:PERCENT:`.
     :units @ Sym = nil
   do
-    throw nil
+    ...
 
 # Creates a progress indicator and runs `func` with it.
 #
@@ -153,7 +153,7 @@ pub def show
   # Callback receiving an [`Indicator`](progress.Indicator).
   func @ Func
 do -> Value
-  throw nil
+  ...
 
 # Runs a sequence of steps under an indicator tracking step completion.
 #
@@ -195,7 +195,7 @@ pub def steps
   # | `icon` | [`Str`](std.Str)     | Icon overriding the default         |
   ...steps @ (Func | Dict)
 do -> Value
-  throw nil
+  ...
 
 # Activates a progress context for the duration of `func`.
 #
@@ -305,4 +305,4 @@ pub def with
   # Callback taking no arguments.
   func @ Func
 do -> Value
-  throw nil
+  ...

@@ -33,7 +33,7 @@ pub class Mask
     # Mask bits, or one iterable of them.
     ...bits @ Sym
   do
-    throw nil
+    ...
 
   # Tests whether all bits represented by a symbol are set.
   #
@@ -45,43 +45,43 @@ pub class Mask
     # Bits to test for.
     bit @ Sym
   do -> Bool
-    throw nil
+    ...
 
   # Union of two masks.
   pub def (bor)
     self
     other
   do
-    throw nil
+    ...
 
   # Intersection of two masks.
   pub def (band)
     self
     other
   do
-    throw nil
+    ...
 
   # Symmetric difference of two masks.
   pub def (bxor)
     self
     other
   do
-    throw nil
+    ...
 
   # Complement within the supported bit set.
   pub def (bnot) self
-    throw nil
+    ...
 
   # Compares two masks.
   pub def (eq)
     self
     other
   do
-    throw nil
+    ...
 
   # Yields the symbols represented by the mask.
   pub def (iter) self
-    throw nil
+    ...
 
 # NFSv4 ACE inheritance and audit flags.
 pub class Flags
@@ -109,7 +109,7 @@ pub class Flags
     # Flag bits, or one iterable of them.
     ...bits @ Sym
   do
-    throw nil
+    ...
 
   # Tests whether all bits represented by a symbol are set.
   #
@@ -121,43 +121,43 @@ pub class Flags
     # Bits to test for.
     bit @ Sym
   do -> Bool
-    throw nil
+    ...
 
   # Union of two flag sets.
   pub def (bor)
     self
     other
   do
-    throw nil
+    ...
 
   # Intersection of two flag sets.
   pub def (band)
     self
     other
   do
-    throw nil
+    ...
 
   # Symmetric difference of two flag sets.
   pub def (bxor)
     self
     other
   do
-    throw nil
+    ...
 
   # Complement within the supported bit set.
   pub def (bnot) self
-    throw nil
+    ...
 
   # Compares two flag sets.
   pub def (eq)
     self
     other
   do
-    throw nil
+    ...
 
   # Yields the symbols represented by the flag set.
   pub def (iter) self
-    throw nil
+    ...
 
 # Immutable NFSv4 access-control entry.
 #
@@ -184,7 +184,7 @@ pub class Ace
     # Inheritance/audit flags. Defaults to empty.
     :flags @ Flags = nil
   do
-    throw nil
+    ...
 
   # Constructs the `GROUP@` entry.
   #[class]
@@ -198,7 +198,7 @@ pub class Ace
     # Inheritance/audit flags. Defaults to empty.
     :flags @ Flags = nil
   do
-    throw nil
+    ...
 
   # Constructs the `EVERYONE@` entry.
   #[class]
@@ -212,7 +212,7 @@ pub class Ace
     # Inheritance/audit flags. Defaults to empty.
     :flags @ Flags = nil
   do
-    throw nil
+    ...
 
   # Constructs a named-user entry.
   #[class]
@@ -228,7 +228,7 @@ pub class Ace
     # Inheritance/audit flags. Defaults to empty.
     :flags @ Flags = nil
   do
-    throw nil
+    ...
 
   # Constructs a named-group entry.
   #[class]
@@ -244,19 +244,19 @@ pub class Ace
     # Inheritance/audit flags. Defaults to empty.
     :flags @ Flags = nil
   do
-    throw nil
+    ...
 
   # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`, or
   # `:ALARM:`.
   #[getter]
   pub def type self -> Sym
-    throw nil
+    ...
 
   # Entry qualifier: `:OWNER:`, `:OWNING_GROUP:`,
   # `:EVERYONE:`, `:USER:`, or `:GROUP:`.
   #[getter]
   pub def principal self -> Sym
-    throw nil
+    ...
 
   # Numeric user or group ID.
   #
@@ -264,17 +264,17 @@ pub class Ace
   # [`principal`](security.nfs4.Ace.principal) is `:USER:` or `:GROUP:`.
   #[getter]
   pub def id self -> Int
-    throw nil
+    ...
 
   # The entry's permission mask.
   #[getter]
   pub def mask self -> Mask
-    throw nil
+    ...
 
   # The entry's inheritance/audit flags.
   #[getter]
   pub def flags self -> Flags
-    throw nil
+    ...
 
 # Immutable NFSv4 access-control list.
 #
@@ -293,13 +293,13 @@ pub class Acl
     # [`Ace`](security.nfs4.Ace) values.
     aces @ Iterable
   do
-    throw nil
+    ...
 
   # Immutable view of [`Ace`](security.nfs4.Ace)
   # values, in evaluation order. Use `.len` for the entry count.
   #[getter]
   pub def aces self -> Array[Ace]
-    throw nil
+    ...
 
 # Constructs an NFSv4 entry from declarative arguments.
 #
@@ -330,7 +330,7 @@ pub def ace
   # Inheritance/audit flags. Defaults to empty.
   :flags @ (Flags | Sym | Iterable) = nil
 do -> Ace
-  throw nil
+  ...
 
 # Constructs an NFSv4 ACL from entries and declarative entry dictionaries.
 #
@@ -344,4 +344,4 @@ pub def acl
   # to pass a collection.
   ...aces @ (Ace | Dict)
 do -> Acl
-  throw nil
+  ...

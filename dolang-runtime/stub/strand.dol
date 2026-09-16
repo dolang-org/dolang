@@ -12,7 +12,7 @@ pub class Key
   # ```
   #
   pub def (init) self 
-    throw nil
+    ...
 
   #
   # Gets or sets the value associated with this key in the current strand.
@@ -40,7 +40,7 @@ pub class Key
   # ```
   #[getter]
   pub def value self
-    throw nil
+    ...
 
 
 #
@@ -55,7 +55,7 @@ pub class Receiver: std.Iter
   # Closes the receiver. This prevents any more values from being sent and
   # wakes up any waiting senders.
   pub def close self 
-    throw nil
+    ...
 
 
 # Limits concurrent entry into application-defined scopes.
@@ -69,7 +69,7 @@ pub class Resource
     # maximum concurrent admissions
     count @ Int
   do
-    throw nil
+    ...
 
   #
   # Runs `block` while holding one reservation.
@@ -96,7 +96,7 @@ pub class Resource
     # scoped work to execute
     block @ Func
   do
-    throw nil
+    ...
 
 
 # Sends values into a channel. As a [`Sink`](std.Sink), it accepts `put`.
@@ -125,7 +125,7 @@ pub class Sender: std.Sink
     # Optional backtrace for that error
     :backtrace @ strand.Backtrace = nil
   do
-    throw nil
+    ...
 
 
 # Handles a background strand created by [`spawn`](strand).
@@ -135,14 +135,14 @@ pub class Strand
   #
   #[getter]
   pub def done self -> Bool
-    throw nil
+    ...
 
   #
   # Requests cancellation of the strand, causing a `Canceled` error to be raised
   # if the strand is suspended and on all subsequent suspension attempts.
   #
   pub def cancel self 
-    throw nil
+    ...
 
   #
   # Waits until the strand completes and returns its result. If the strand
@@ -150,14 +150,14 @@ pub class Strand
   # exited with an error, this method re-raises it.
   #
   pub def join self 
-    throw nil
+    ...
 
   #
   # Waits until the strand completes. Unlike [`join()`](#join), this method does
   # not return the strand's return value or re-raise any error. Use this when you
   # only care that the strand finished, not what it returned.
   pub def wait self 
-    throw nil
+    ...
 
 
 # A [`Strand`](strand.Strand) with channel-backed input and output, created by
@@ -171,14 +171,14 @@ pub class Stream
   #
   #[getter]
   pub def done self -> Bool
-    throw nil
+    ...
 
   #
   # Requests cancellation of the strand, causing a `Canceled` error to be raised
   # at the strand's next suspension point.
   #
   pub def cancel self 
-    throw nil
+    ...
 
   #
   # Closes both channels, then waits for the strand to complete. If the strand
@@ -189,7 +189,7 @@ pub class Stream
   # blocked waiting for input or waiting for a consumer to read its output.
   #
   pub def join self 
-    throw nil
+    ...
 
   #
   # Waits for the strand to complete. Unlike [`join()`](#join), this method does
@@ -197,7 +197,7 @@ pub class Stream
   # re-raise any error.
   #
   pub def wait self 
-    throw nil
+    ...
 
 
 # Creates a channel for communication between strands.
@@ -205,35 +205,35 @@ pub def channel
   # Buffer capacity (default: 1, unbuffered)
   :buffer @ Int = nil
 do
-  throw nil
+  ...
 
 # Creates a pipeline stage that collects input values.
 pub def collect
   # collection to add to (defaults to a new `array`)
-  :target @ output = nil
+  :target @ Sinkable = nil
 do
-  throw nil
+  ...
 
 # Creates a pipeline stage that transforms each input value.
 pub def each
   # a function that transforms a single value
   func @ Func
 do
-  throw nil
+  ...
 
 # Runs blocks concurrently and returns their results in block order.
 pub def fork
   # functions to execute concurrently
   ...blocks @ Func
 do
-  throw nil
+  ...
 
 # Creates a pipeline stage that emits values from an iterable.
 pub def from
   # an iterable to emit values from
-  value @ input
+  value @ Iterable
 do
-  throw nil
+  ...
 
 # Applies a function concurrently to values pulled from an iterator.
 pub def map
@@ -246,7 +246,7 @@ pub def map
   # destination; defaults to the strand-local sink
   :output @ output = nil
 do
-  throw nil
+  ...
 
 # Connects pipeline stages and runs them concurrently.
 pub def pipeline
@@ -257,10 +257,10 @@ pub def pipeline
   # pipeline stages
   ...stages @ Func
 do
-  throw nil
+  ...
 
 # Runs a function over an iterator with a fixed number of scoped workers.
-def @pool
+pub def pool
   # number of worker strands
   count @ Int
   # iterable of items
@@ -268,6 +268,7 @@ def @pool
   # function applied to each input value
   func @ Func
 do
+  ...
 
 # Runs a function over the strand-local input with a fixed number of scoped workers.
 pub def pool
@@ -276,14 +277,14 @@ pub def pool
   # function applied to each input value
   func @ Func
 do
-  throw nil
+  ...
 
 # Writes a value to the strand-local output.
 pub def put
   # value to write
-  value @ input
+  value
 do
-  throw nil
+  ...
 
 # Calls a function with the strand-local input or output replaced, returning its
 # result.
@@ -312,25 +313,25 @@ pub def redirect
   # arguments passed to `block`
   ...args
 do
-  throw nil
+  ...
 
 # Runs a function in a background strand.
 pub def spawn
   # the function to execute
   func @ Func
 do
-  throw nil
+  ...
 
 # Runs a function in a background strand with channel-backed endpoints.
 pub def stream
   # the function to execute
   func @ Func
 do
-  throw nil
+  ...
 
 # Creates a pipeline stage that filters input values.
 pub def where
   # a function returning a truthy/falsy value
   predicate @ Func
 do
-  throw nil
+  ...

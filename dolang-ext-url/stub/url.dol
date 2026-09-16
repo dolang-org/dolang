@@ -20,29 +20,29 @@ pub class Url
     # URL to parse or copy.
     value @ (Str | Url)
   do
-    throw nil
+    ...
 
   # The decoded fragment string, or `nil` if absent.
   #[getter]
   pub def fragment self
-    throw nil
+    ...
 
   # The host string, or `nil` if the URL has no host.
   #[getter]
   pub def host self
-    throw nil
+    ...
 
   # The decoded last path component, or `nil` if there is no filename.
   #
   # This returns `nil` for URLs whose path is empty or ends with `/`.
   #[getter]
   pub def name self
-    throw nil
+    ...
 
   # The decoded password, or `nil` if not present.
   #[getter]
   pub def password self
-    throw nil
+    ...
 
   # The serialized path component.
   #
@@ -50,12 +50,12 @@ pub class Url
   # path segments.
   #[getter]
   pub def path self
-    throw nil
+    ...
 
   # The explicit port number, or `nil` if not present.
   #[getter]
   pub def port self
-    throw nil
+    ...
 
   # Immutable dictionary-like view of decoded query pairs.
   #
@@ -80,17 +80,17 @@ pub class Url
   # ```
   #[getter]
   pub def query self -> Iter
-    throw nil
+    ...
 
   # The raw query string without the leading `?`, or `nil` if absent.
   #[getter]
   pub def query_raw self
-    throw nil
+    ...
 
   # The URL scheme, such as `"https"` or `"file"`.
   #[getter]
   pub def scheme self
-    throw nil
+    ...
 
   # Immutable array-like view of decoded path segments.
   #
@@ -106,12 +106,12 @@ pub class Url
   # ```
   #[getter]
   pub def segments self -> Iter
-    throw nil
+    ...
 
   # The decoded username, or `nil` if not present.
   #[getter]
   pub def username self
-    throw nil
+    ...
 
   # Returns a new `Url` with its fragment replaced.
   #
@@ -125,7 +125,7 @@ pub class Url
     # Fragment string or `nil`.
     fragment @ (Str | nil)
   do -> Url
-    throw nil
+    ...
 
   # Returns a new `Url` with its query rebuilt from decoded key/value pairs.
   #
@@ -146,7 +146,7 @@ pub class Url
     # Query values keyed by argument name.
     ...keys
   do -> Url
-    throw nil
+    ...
 
   # Returns a new `Url` with its raw query replaced.
   #
@@ -160,11 +160,11 @@ pub class Url
     # Raw query string or `nil`.
     query @ (Str | nil)
   do -> Url
-    throw nil
+    ...
 
   # Compares two URLs by their parsed values.
   pub def (eq) self other
-    throw nil
+    ...
 
   # Appends a decoded path segment and returns a new `Url`.
   #
@@ -184,8 +184,8 @@ pub class Url
     # Path segment or absolute path.
     other @ Str
   do
-    throw nil
+    ...
 
   # Returns the canonical serialized URL.
   pub def (str) self
-    throw nil
+    ...

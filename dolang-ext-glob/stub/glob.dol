@@ -22,7 +22,7 @@ pub class Glob
     # Glob pattern.
     pattern @ Str
   do
-    throw nil
+    ...
 
   # Tests whether `value` matches this glob.
   #
@@ -42,7 +42,7 @@ pub class Glob
     # Candidate string to test.
     value @ Str
   do -> Bool
-    throw nil
+    ...
 
 # Tests whether `value` matches a glob pattern.
 #
@@ -66,4 +66,4 @@ pub def matches
   # Candidate string to test.
   value @ Str
 do -> Bool
-  throw nil
+  ...

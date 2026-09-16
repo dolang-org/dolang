@@ -1,5 +1,7 @@
 import std:
   - RuntimeError
+import url:
+  - @Url
 
 # HTTP client.
 #
@@ -59,7 +61,7 @@ pub class Error: RuntimeError
   # ```
   #[getter]
   pub def url self -> (Url | nil)
-    throw nil
+    ...
 
 # A response whose status is outside `200..=299`.
 #
@@ -81,25 +83,25 @@ pub class Status: Error
   # The HTTP status code.
   #[getter]
   pub def status self -> Int
-    throw nil
+    ...
 
   # The response URL, or `nil` when none was
   # attached.
   #[getter]
   pub def url self -> (Url | nil)
-    throw nil
+    ...
 
   # The response headers, as
   # [`Response.headers`](http.Response.headers) presents them.
   #[getter]
   pub def headers self -> Dict
-    throw nil
+    ...
 
   # Whether the saved body excerpt was cut off,
   # either by the 64 KiB limit or by a read error while buffering it.
   #[getter]
   pub def truncated self -> Bool
-    throw nil
+    ...
 
   # The saved body excerpt.
   #
@@ -107,7 +109,7 @@ pub class Status: Error
   #
   # [`Bin`](std.Bin).
   pub def body self -> Bin
-    throw nil
+    ...
 
   # The saved body excerpt as text.
   #
@@ -117,7 +119,7 @@ pub class Status: Error
   # | ------------------------------------- | ---------------------------- |
   # | [`ValueError`](std.ValueError) | The excerpt is not valid UTF-8 |
   pub def text self -> Str
-    throw nil
+    ...
 
   # The saved body excerpt, parsed as JSON.
   #
@@ -127,7 +129,7 @@ pub class Status: Error
   #
   # The parsed value.
   pub def json self -> Value
-    throw nil
+    ...
 
 # One item of a Server-Sent Events stream.
 #
@@ -137,24 +139,24 @@ pub class Event
   # stream omits `event:` or sends an empty one.
   #[getter]
   pub def type self -> Str
-    throw nil
+    ...
 
   # The payload text. Multiple `data:` lines are
   # joined with `\n`.
   #[getter]
   pub def data self -> Str
-    throw nil
+    ...
 
   # The event identifier, when the stream sends one.
   #[getter]
   pub def id self -> (Str | nil)
-    throw nil
+    ...
 
   # The reconnection delay the stream suggests, when
   # it sends one.
   #[getter]
   pub def retry self -> (Int | nil)
-    throw nil
+    ...
 
 # An HTTP response.
 #
@@ -184,12 +186,12 @@ pub class Response
   # The HTTP status code.
   #[getter]
   pub def status self -> Int
-    throw nil
+    ...
 
   # The final URL, after any redirects.
   #[getter]
   pub def url self -> Url
-    throw nil
+    ...
 
   # The response headers.
   #
@@ -205,7 +207,7 @@ pub class Response
   # ```
   #[getter]
   pub def headers self -> Dict
-    throw nil
+    ...
 
   # Reads the whole body as bytes, consuming and closing the response.
   #
@@ -213,7 +215,7 @@ pub class Response
   #
   # [`Bin`](std.Bin).
   pub def body self -> Bin
-    throw nil
+    ...
 
   # Reads the whole body as text, consuming and closing the response.
   #
@@ -225,7 +227,7 @@ pub class Response
   # | [`Error`](http.Error)             | A transport or protocol failure       |
   # | [`ValueError`](std.ValueError) | The body is not valid UTF-8       |
   pub def text self -> Str
-    throw nil
+    ...
 
   # Reads the whole body and parses it as JSON, consuming and closing the
   # response.
@@ -254,7 +256,7 @@ pub class Response
   # echo $data["users"][0]["name"]
   # ```
   pub def json self -> Value
-    throw nil
+    ...
 
   # Streams the body as raw byte chunks, so a large response need not be held
   # in memory whole.
@@ -273,7 +275,7 @@ pub class Response
   #   echo "Downloaded $total bytes"
   # ```
   pub def chunks self -> Iter[Bin]
-    throw nil
+    ...
 
   # Streams the body as lines, split on `\n` or `\r\n` with the line ending
   # stripped.
@@ -291,7 +293,7 @@ pub class Response
   #       echo $line
   # ```
   pub def lines self -> Iter[Str]
-    throw nil
+    ...
 
   # Streams the body as a Server-Sent Events stream -- the shape LLM responses,
   # log tails and other `text/event-stream` feeds arrive in.
@@ -316,7 +318,7 @@ pub class Response
   #     echo "[$type] $data"
   # ```
   pub def events self -> Iter[Event]
-    throw nil
+    ...
 
   # Raises [`Status`](http.Status) when the status is outside `200..=299`, and
   # does nothing otherwise.
@@ -324,13 +326,13 @@ pub class Response
   # This is what a request does for you unless `status: :IGNORE:` was passed,
   # so it is only needed on a response fetched with the check suppressed.
   pub def throw_for_status self
-    throw nil
+    ...
 
   # Closes the response, releasing the connection.
   #
   # Closing an already-closed response does nothing.
   pub def close self
-    throw nil
+    ...
 
 # An HTTP client.
 #
@@ -503,7 +505,7 @@ pub class Client
     # Omit to receive the client instead.
     func @ Func = nil
   do -> Value
-    throw nil
+    ...
 
   # Makes a request without a body.
   #
@@ -547,7 +549,7 @@ pub class Client
     # when it returns. Omit to receive the response instead.
     block @ Func = nil
   do -> Value
-    throw nil
+    ...
 
   # Makes a request with a body.
   #
@@ -603,13 +605,13 @@ pub class Client
     # when it returns. Omit to receive the response instead.
     block @ Func = nil
   do -> Value
-    throw nil
+    ...
 
   # Closes the client, releasing its connection pool.
   #
   # Closing an already-closed client does nothing.
   pub def close self
-    throw nil
+    ...
 
 # Makes a `GET` request through a fresh stateless client.
 #
@@ -643,7 +645,7 @@ pub def get
   # when it returns.
   block @ Func = nil
 do -> Value
-  throw nil
+  ...
 
 # Makes a `POST` request through a fresh stateless client.
 #
@@ -684,4 +686,4 @@ pub def post
   # when it returns.
   block @ Func = nil
 do -> Value
-  throw nil
+  ...

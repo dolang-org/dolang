@@ -56,6 +56,8 @@
 # | `protocol`       | [`Sym`](std.Sym)      | `:TCP:` (default), `:UDP:`, or `:SCTP:`      |
 import
   proc
+  fs:
+    - @Path
   _container.dockman: dockman
 
 pub import _container.dockman:

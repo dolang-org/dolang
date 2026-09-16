@@ -15,7 +15,7 @@ pub class ImportHandler
   # handle.unregister()
   # ```
   pub def unregister self
-    throw nil
+    ...
 
 # Imports a module through the VM's ordinary global import resolution.
 #
@@ -51,7 +51,7 @@ pub def import
   # Module name to import.
   name @ Str
 do
-  throw nil
+  ...
 
 # Registers a module import handler.
 #
@@ -76,7 +76,7 @@ pub def import_handler
   # Called with the requested module name.
   callback @ Func
 do -> ImportHandler
-  throw nil
+  ...
 
 # Executes compiled Do bytecode.
 #
@@ -108,4 +108,4 @@ pub def run
   # Program-specific module importer.
   :importer @ Func = nil
 do -> Value
-  throw nil
+  ...

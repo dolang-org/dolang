@@ -541,6 +541,15 @@ impl<'v> Vm<'v> {
         Err(Error::from_value(strand, value))
     }
 
+    fn stub<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        args: Args<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let ([], []) = unpack!(strand, args, 0, 0)?;
+        Err(Error::runtime(strand, "stub function called"))
+    }
+
     #[inline(never)]
     async unsafe fn marshal_var_args<'a, 's>(
         inner: &'s StrandInner<'v>,
@@ -863,6 +872,7 @@ impl<'v> Vm<'v> {
                                 Slot::reborrow(&mut res),
                             )
                         }
+                        builtin::STUB => self.stub(strand, args),
                         _ => unreachable_unchecked(),
                     })
                     .await?;

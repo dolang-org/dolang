@@ -25,7 +25,7 @@ pub class DateTime
   # ```
   #[class]
   pub def now self
-    throw nil
+    ...
 
   # Builds an instant from a Unix timestamp.
   #
@@ -58,7 +58,7 @@ pub class DateTime
     # `seconds` is also given, nanoseconds to add to it.
     :nanos @ Int = nil
   do
-    throw nil
+    ...
 
   # Parses an RFC 3339 date-time.
   #
@@ -88,18 +88,18 @@ pub class DateTime
     # Date-time text.
     text @ Str
   do -> DateTime
-    throw nil
+    ...
 
   # Unix seconds. Approximate: far-from-epoch
   # instants lose sub-second precision.
   #[getter]
   pub def unix_secs self -> Float
-    throw nil
+    ...
 
   # Unix nanoseconds. Exact.
   #[getter]
   pub def unix_nanos self -> Int
-    throw nil
+    ...
 
   # Returns the UTC calendar date.
   #
@@ -107,7 +107,7 @@ pub class DateTime
   #
   # [`Date`](time.Date)
   pub def date self -> Date
-    throw nil
+    ...
 
   # Returns the RFC 3339 representation, in UTC.
   #
@@ -118,19 +118,19 @@ pub class DateTime
   # echo $dt.rfc()
   # ```
   pub def rfc self -> Str
-    throw nil
+    ...
 
   # Compares two instants.
   pub def (eq) self other
-    throw nil
+    ...
 
   # Orders two instants.
   pub def (lt) self other
-    throw nil
+    ...
 
   # Hashes the value.
   pub def (hash) self
-    throw nil
+    ...
 
   # Returns the [`Duration`](time.Duration) from `other` to this instant.
   #
@@ -145,11 +145,11 @@ pub class DateTime
     # Instant to subtract.
     other @ DateTime
   do
-    throw nil
+    ...
 
   # Returns the RFC 3339 representation, as [`rfc`](time.DateTime.rfc) does.
   pub def (str) self
-    throw nil
+    ...
 
 # A calendar date, with no time of day and no time zone.
 #
@@ -160,7 +160,7 @@ pub class Date
   # Returns the current UTC date.
   #[class]
   pub def today self
-    throw nil
+    ...
 
   # Builds a date from calendar components.
   #
@@ -188,7 +188,7 @@ pub class Date
     # Day of month.
     day @ Int
   do
-    throw nil
+    ...
 
   # Parses an RFC full-date, `YYYY-MM-DD`.
   #
@@ -204,27 +204,27 @@ pub class Date
     # Date text.
     text @ Str
   do -> Date
-    throw nil
+    ...
 
   # Calendar year.
   #[getter]
   pub def year self -> Int
-    throw nil
+    ...
 
   # Calendar month.
   #[getter]
   pub def month self -> Month
-    throw nil
+    ...
 
   # Day of month.
   #[getter]
   pub def day self -> Int
-    throw nil
+    ...
 
   # Day of week.
   #[getter]
   pub def weekday self -> Weekday
-    throw nil
+    ...
 
   # Returns the RFC full-date representation, `YYYY-MM-DD`.
   #
@@ -232,7 +232,7 @@ pub class Date
   #
   # [`Str`](std.Str)
   pub def rfc self -> Str
-    throw nil
+    ...
 
   # Returns midnight UTC on this date.
   #
@@ -240,7 +240,7 @@ pub class Date
   #
   # [`DateTime`](time.DateTime)
   pub def datetime self -> DateTime
-    throw nil
+    ...
 
   # Returns the date a signed number of days later.
   #
@@ -261,7 +261,7 @@ pub class Date
     # Days to add. May be negative.
     days @ Int
   do -> Date
-    throw nil
+    ...
 
   # Returns the date a signed number of days earlier.
   #
@@ -276,19 +276,19 @@ pub class Date
     # Days to subtract. May be negative.
     days @ Int
   do -> Date
-    throw nil
+    ...
 
   # Compares two dates.
   pub def (eq) self other
-    throw nil
+    ...
 
   # Orders two dates.
   pub def (lt) self other
-    throw nil
+    ...
 
   # Hashes the value.
   pub def (hash) self
-    throw nil
+    ...
 
   # Returns the [`Duration`](time.Duration) between the two dates' midnights.
   #
@@ -298,11 +298,11 @@ pub class Date
     # Date to subtract.
     other @ Date
   do
-    throw nil
+    ...
 
   # Returns the `YYYY-MM-DD` form, as [`rfc`](time.Date.rfc) does.
   pub def (str) self
-    throw nil
+    ...
 
 # A calendar month.
 #
@@ -319,11 +319,11 @@ pub class Date
 pub class Month
   # Returns the following month, wrapping from December to January.
   pub def next self
-    throw nil
+    ...
 
   # Returns the preceding month, wrapping from January to December.
   pub def previous self
-    throw nil
+    ...
 
   # Returns the month with the given number.
   #
@@ -344,23 +344,23 @@ pub class Month
     # Month number, 1 through 12.
     number @ Int
   do
-    throw nil
+    ...
 
   # Compares two months.
   pub def (eq) self other
-    throw nil
+    ...
 
   # Orders two months, in calendar order.
   pub def (lt) self other
-    throw nil
+    ...
 
   # Hashes the value.
   pub def (hash) self
-    throw nil
+    ...
 
   # Returns the uppercase English name, such as `JANUARY`.
   pub def (str) self
-    throw nil
+    ...
 
 # A day of the week.
 #
@@ -370,23 +370,23 @@ pub class Month
 pub class Weekday
   # Returns the following weekday, wrapping from Sunday to Monday.
   pub def next self
-    throw nil
+    ...
 
   # Returns the preceding weekday, wrapping from Monday to Sunday.
   pub def previous self
-    throw nil
+    ...
 
   # Compares two weekdays.
   pub def (eq) self other
-    throw nil
+    ...
 
   # Hashes the value.
   pub def (hash) self
-    throw nil
+    ...
 
   # Returns the uppercase English name, such as `MONDAY`.
   pub def (str) self
-    throw nil
+    ...
 
 # A signed time span, with nanosecond precision.
 #
@@ -401,28 +401,28 @@ pub class Duration
   # sub-second precision.
   #[getter]
   pub def secs self -> Float
-    throw nil
+    ...
 
   # Total nanoseconds. Exact.
   #[getter]
   pub def nanos self -> Int
-    throw nil
+    ...
 
   # Compares two durations.
   pub def (eq) self other
-    throw nil
+    ...
 
   # Orders two durations.
   pub def (lt) self other
-    throw nil
+    ...
 
   # Hashes the value.
   pub def (hash) self
-    throw nil
+    ...
 
   # Returns a compact seconds form, such as `0s`, `2.5s` or `-2.5s`.
   pub def (str) self
-    throw nil
+    ...
 
 # Suspends the current strand.
 #
@@ -444,7 +444,7 @@ pub def sleep
   # arguments](time.duration-arguments).
   duration @ (Duration | Int | Float)
 do
-  throw nil
+  ...
 
 # Runs a block under a scoped timeout.
 #
@@ -478,4 +478,4 @@ pub def timeout
   # Block to run.
   block @ Func
 do
-  throw nil
+  ...

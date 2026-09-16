@@ -44,6 +44,9 @@
 # | `:TARGET:` | Follow a registry link (the default) |
 # | `:LINK:`   | Open the link key itself             |
 
+import security.windows:
+  - @SecDesc
+
 # Access rights for a registry key.
 #
 # A mask is built from symbols, and most APIs taking one also accept a bare
@@ -124,7 +127,7 @@ pub class AccessMask
     # iterable of symbols. See [Accepted symbols](winreg.AccessMask.accepted-symbols).
     ...rights @ Sym
   do
-    throw nil
+    ...
 
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
@@ -140,13 +143,13 @@ pub class AccessMask
     # Native Windows access mask.
     value @ Int
   do -> AccessMask
-    throw nil
+    ...
 
   # The complete native mask as an [`Int`](std.Int), including bits this
   # type does not name.
   #[getter]
   pub def int self
-    throw nil
+    ...
 
   # Tests whether every bit a symbol stands for is set.
   #
@@ -162,7 +165,7 @@ pub class AccessMask
     # symbols](winreg.AccessMask.accepted-symbols).
     right @ Sym
   do -> Bool
-    throw nil
+    ...
 
 # An open registry key.
 #
@@ -174,7 +177,7 @@ pub class Key
   # Closing an already-closed key does nothing. A key that is never closed
   # explicitly is closed when it is collected.
   pub def close self
-    throw nil
+    ...
 
   # Creates a subkey, or opens it when it already exists.
   #
@@ -204,7 +207,7 @@ pub class Key
     # Omit to receive the handle instead.
     func @ Func = nil
   do -> Value
-    throw nil
+    ...
 
   # Deletes a subkey.
   #
@@ -239,7 +242,7 @@ pub class Key
     # Treat a missing subkey as success.
     :ignore @ Bool = nil
   do
-    throw nil
+    ...
 
   # Deletes a value.
   #
@@ -258,7 +261,7 @@ pub class Key
     # Value name; `""` is the key's default value.
     name @ Str
   do
-    throw nil
+    ...
 
   # Reads a value's data.
   #
@@ -282,7 +285,7 @@ pub class Key
     # Value name; `""` is the key's default value.
     name @ Str
   do -> Value
-    throw nil
+    ...
 
   # Reads a value as a [`Value`](winreg.Value), or `nil` when it does not exist.
   #
@@ -308,7 +311,7 @@ pub class Key
     # Value name; `""` is the key's default value.
     name @ Str
   do -> (Value | nil)
-    throw nil
+    ...
 
   # Creates a registry link.
   #
@@ -341,7 +344,7 @@ pub class Key
     # `:NATIVE:`.
     :view @ Sym = nil
   do
-    throw nil
+    ...
 
   # Opens a subkey.
   #
@@ -382,7 +385,7 @@ pub class Key
     # Omit to receive the handle instead.
     func @ Func = nil
   do -> Value
-    throw nil
+    ...
 
   # Reads a registry link without following it.
   #
@@ -410,7 +413,7 @@ pub class Key
     # Defaults to `:NATIVE:`.
     :view @ Sym = nil
   do -> LinkTarget
-    throw nil
+    ...
 
   # Reads parts of the key's Windows security descriptor through its open
   # handle.
@@ -435,7 +438,7 @@ pub class Key
     # Load the system ACL. Defaults to `false`.
     :sacl @ Bool = nil
   do -> SecDesc
-    throw nil
+    ...
 
   # Writes a value.
   #
@@ -478,7 +481,7 @@ pub class Key
     # [`Int`](std.Int).
     :kind @ Sym = nil
   do
-    throw nil
+    ...
 
   # Lists the names of this key's immediate subkeys.
   #
@@ -496,7 +499,7 @@ pub class Key
   #   echo $name
   # ```
   pub def subkeys self -> Iter[Str]
-    throw nil
+    ...
 
   # Applies the components a Windows security descriptor's `mask` selects,
   # through the key's open handle.
@@ -520,7 +523,7 @@ pub class Key
     # them. They may replace `desc` or accompany it.
     ...options
   do
-    throw nil
+    ...
 
   # Lists this key's values.
   #
@@ -538,7 +541,7 @@ pub class Key
   #   echo "$(entry.name) ($(entry.kind)): $(entry.value)"
   # ```
   pub def values self -> Iter[Value]
-    throw nil
+    ...
 
 # A registry link's target, kept in both its native and canonical forms.
 #
@@ -547,7 +550,7 @@ pub class LinkTarget
   # The lossless `\Registry\...` target as a [`Str`](std.Str).
   #[getter]
   pub def native self
-    throw nil
+    ...
 
   # The canonical [registry root](winreg.registry-roots) the target lives
   # under, or `nil` when the native path is not one this module recognizes.
@@ -556,13 +559,13 @@ pub class LinkTarget
   # `:LOCAL_MACHINE:`.
   #[getter]
   pub def root self
-    throw nil
+    ...
 
   # The target path relative to [`root`](winreg.LinkTarget.root), or `nil` when the native
   # path is not recognized.
   #[getter]
   pub def subpath self
-    throw nil
+    ...
 
 # One named value read from a key.
 #
@@ -577,13 +580,13 @@ pub class Value
   # [`value`](winreg.Value.value) is then the raw [`Bin`](std.Bin) payload.
   #[getter]
   pub def kind self
-    throw nil
+    ...
 
   # The value's name as a [`Str`](std.Str). A key's default value has
   # the name `""`.
   #[getter]
   pub def name self
-    throw nil
+    ...
 
   # The value's data in its natural Do representation.
   #
@@ -604,7 +607,7 @@ pub class Value
   # ```
   #[getter]
   pub def value self
-    throw nil
+    ...
 
 # Opens a predefined registry root.
 #
@@ -636,4 +639,4 @@ pub def open
   # returns. Omit to receive the handle instead.
   func @ Func = nil
 do -> Value
-  throw nil
+  ...

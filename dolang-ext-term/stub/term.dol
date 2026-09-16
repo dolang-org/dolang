@@ -81,12 +81,12 @@
 pub class Console
   # Initializes the base console. A subclass calls this from its own `(init)`.
   pub def (init) self
-    throw nil
+    ...
 
   # Whether the console supports ANSI styling.
   #[getter]
   pub def can_style self -> Bool
-    throw nil
+    ...
 
   # Whether the console is usable as a terminal.
   #
@@ -99,7 +99,7 @@ pub class Console
   # terminal's size.
   #[getter]
   pub def is_tty self -> Bool
-    throw nil
+    ...
 
   # The line ending appropriate to
   # this console's device.
@@ -120,11 +120,11 @@ pub class Console
   # instead.
   #[getter]
   pub def line_ending self -> (Str | Bin)
-    throw nil
+    ...
 
   # Makes buffered output visible.
   pub def flush self
-    throw nil
+    ...
 
   # Returns the console's dimensions, or `nil` if it is just a stream.
   #
@@ -149,7 +149,7 @@ pub class Console
   #   echo "terminal is $(g.cols)x$(g.rows)"
   # ```
   pub def geometry self -> (Geometry | nil)
-    throw nil
+    ...
 
   # Writes bytes verbatim.
   #
@@ -172,7 +172,7 @@ pub class Console
     # Pieces to write, in order.
     ...data @ (Str | Bin)
   do
-    throw nil
+    ...
 
   # Accepts values as a [sink](std.Sink).
   #
@@ -184,7 +184,7 @@ pub class Console
   #   do strand.from ["building", "linking"]
   # ```
   pub def (sink) self
-    throw nil
+    ...
 
 # The dimensions of a terminal-backed [`Console`](term.Console).
 #
@@ -213,7 +213,7 @@ pub class Console
 pub class Geometry
   # Initializes the base. A subclass calls this from its own `(init)`.
   pub def (init) self
-    throw nil
+    ...
 
   # Width in character cells, or `nil` if unknown.
   #
@@ -224,12 +224,12 @@ pub class Geometry
   # ```
   #[getter]
   pub def cols self -> (Int | nil)
-    throw nil
+    ...
 
   # Height in character cells, or `nil` if unknown.
   #[getter]
   pub def rows self -> (Int | nil)
-    throw nil
+    ...
 
 # A [`Console`](term.Console) over an ordinary [sink](std.Sink).
 #
@@ -298,7 +298,7 @@ pub class SinkConsole
     # [Output mode](term.SinkConsole.output-mode).
     :mode @ Sym = nil
   do
-    throw nil
+    ...
 
 # Reusable terminal style settings.
 #
@@ -320,7 +320,7 @@ pub class Style
     # The [style options](term.style-options).
     ...options
   do
-    throw nil
+    ...
 
   # Applies or derives the saved style.
   #
@@ -348,7 +348,7 @@ pub class Style
     # Values converted to display strings.
     ...args
   do -> Text
-    throw nil
+    ...
 
 # Validated terminal presentation.
 #
@@ -450,7 +450,7 @@ pub class Text
     # truncating.
     :suffix @ (Str | Text) = nil
   do -> Text
-    throw nil
+    ...
 
   # Returns the ANSI representation: exactly the bytes a terminal write emits.
   #
@@ -465,7 +465,7 @@ pub class Text
   # fs.write $path $label.encode()
   # ```
   pub def encode self -> Str
-    throw nil
+    ...
 
   # Adds spaces to the beginning of each line without changing ANSI formatting.
   #
@@ -482,7 +482,7 @@ pub class Text
     # Non-negative number of spaces.
     spaces @ Int
   do -> Text
-    throw nil
+    ...
 
   # Concatenates values with this text between them.
   #
@@ -501,7 +501,7 @@ pub class Text
     # Values to join. Uses the default input when omitted.
     iter @ Iterable = nil
   do -> Text
-    throw nil
+    ...
 
   # Returns the visible terminal-cell width of the text.
   #
@@ -517,7 +517,7 @@ pub class Text
   # assert_eq ((text "界").width()) 2
   # ```
   pub def width self -> Int
-    throw nil
+    ...
 
   # Returns the content with the styling dropped.
   #
@@ -528,7 +528,7 @@ pub class Text
   # have been written in source, and styled text has no source form, so it
   # gives the same content this does.
   pub def (str) self
-    throw nil
+    ...
 
 # Runs a block with `console` installed as the ambient console, then flushes it
 # and restores the previous one.
@@ -587,7 +587,7 @@ pub def capture
   # Additional arguments passed to the block.
   ...args
 do
-  throw nil
+  ...
 
 # Prints arguments separated by spaces, followed by a newline.
 #
@@ -606,7 +606,7 @@ pub def echo
   # Values converted with `verbatim` and written safely.
   ...args
 do
-  throw nil
+  ...
 
 # Runs a block with default console-bound output silenced: `echo`, `print`,
 # unredirected program `stderr`, and the rest.
@@ -627,7 +627,7 @@ pub def mute
   # Additional arguments passed to the block.
   ...args
 do
-  throw nil
+  ...
 
 # Returns the current output console.
 #
@@ -639,7 +639,7 @@ do
 #
 # [`Console`](term.Console)
 pub def output() -> Console
-  throw nil
+  ...
 
 # Validates existing ANSI-styled text.
 #
@@ -656,7 +656,7 @@ pub def preformat
   # ANSI-formatted input.
   text @ Str
 do -> Text
-  throw nil
+  ...
 
 # Prints concatenated values without separators or a trailing newline.
 #
@@ -673,7 +673,7 @@ pub def print
   # Values converted to display strings.
   ...args
 do
-  throw nil
+  ...
 
 # Runs a block and returns its console output as a string.
 #
@@ -698,7 +698,7 @@ pub def sub
   # Additional arguments passed to the block.
   ...args
 do -> Str
-  throw nil
+  ...
 
 # Constructs terminal text from concatenated values, styled or not.
 #
@@ -724,7 +724,7 @@ pub def text
   # Values converted to display strings.
   ...args
 do -> Text
-  throw nil
+  ...
 
 # The host [`Console`](term.Console), supplied by the application running Do,
 # which may be taken over by an extension such as `progress`.

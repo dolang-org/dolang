@@ -2391,10 +2391,16 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         Ok(())
     }
 
-    fn lower_block(&mut self, block: &'a Block, mut want_result: bool) -> Result<()> {
+    fn lower_block(
+        &mut self,
+        block: &'a Block,
+        mut want_result: bool,
+        stub_span: Option<Span>,
+    ) -> Result<()> {
         let scope = self.graph.scope(self.block.scope);
-        // FIXME: choose better span for this
-        let span = block.span();
+        // An empty stub block has no span of its own, so use its marker for the
+        // parameter-binding prologue as well as the builtin call.
+        let span = stub_span.unwrap_or_else(|| block.span());
 
         // Prologue
 
@@ -2529,6 +2535,15 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         }
 
         // End prologue
+        if let Some(span) = stub_span {
+            let sig = self.packtab.id(&sig::Pack::new(std::iter::empty()));
+            self.block
+                .insts
+                .push(Inst(InstInfo::Builtin(builtin::STUB, sig), span));
+            self.block.term = Term(TermInfo::Branch(self.params.exit_id), span);
+            self.link(self.params.exit_id);
+            return Ok(());
+        }
         for (i, stmt) in block.stmts.iter().enumerate() {
             if self.lower_stmt(stmt, want_result && i + 1 == block.stmts.len())? {
                 return Ok(());
@@ -2916,7 +2931,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         // Compute order in which to move arguments into locals or upvars
         self.params.bind = Some(self.unpack_order(&function.params, sig));
         self.params.bind_params = Some(&function.params);
-        self.lower_block(&function.body, true)?;
+        self.lower_block(&function.body, true, function.stub_span)?;
         Ok(())
     }
 
@@ -3286,7 +3301,9 @@ impl<'c> Lowerer<'c> {
             };
             match work.ast {
                 WorkAst::Function(function, sig) => scope.lower_function(function, sig)?,
-                WorkAst::Block(block, want_result) => scope.lower_block(block, want_result)?,
+                WorkAst::Block(block, want_result) => {
+                    scope.lower_block(block, want_result, None)?
+                }
                 WorkAst::Stmt(stmt) => scope.lower_nl_guard_body(stmt)?,
                 WorkAst::Args(body) => scope.lower_for_args(body)?,
                 WorkAst::ArrayElems(body) => scope.lower_for_array(body)?,

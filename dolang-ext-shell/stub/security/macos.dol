@@ -1,6 +1,9 @@
 # macOS extended access-control-list types and principal identity resolution
 # between Unix uid/gid values and macOS `guid_t` UUIDs.
 
+import uuid:
+  - @Uuid
+
 # macOS extended ACE permission bits.
 pub class Mask
   # Constructs a mask from symbols or one iterable of symbols.
@@ -34,7 +37,7 @@ pub class Mask
     # Mask bits, or one iterable of them.
     ...bits @ Sym
   do
-    throw nil
+    ...
 
   # Tests whether all bits represented by a symbol are set.
   #
@@ -46,43 +49,43 @@ pub class Mask
     # Bits to test for.
     bit @ Sym
   do -> Bool
-    throw nil
+    ...
 
   # Union of two masks.
   pub def (bor)
     self
     other
   do
-    throw nil
+    ...
 
   # Intersection of two masks.
   pub def (band)
     self
     other
   do
-    throw nil
+    ...
 
   # Symmetric difference of two masks.
   pub def (bxor)
     self
     other
   do
-    throw nil
+    ...
 
   # Complement within the supported bit set.
   pub def (bnot) self
-    throw nil
+    ...
 
   # Compares two masks.
   pub def (eq)
     self
     other
   do
-    throw nil
+    ...
 
   # Yields the symbols represented by the mask.
   pub def (iter) self
-    throw nil
+    ...
 
 # macOS extended ACE inheritance flags.
 pub class Flags
@@ -108,7 +111,7 @@ pub class Flags
     # Flag bits, or one iterable of them.
     ...bits @ Sym
   do
-    throw nil
+    ...
 
   # Tests whether all bits represented by a symbol are set.
   #
@@ -120,43 +123,43 @@ pub class Flags
     # Bits to test for.
     bit @ Sym
   do -> Bool
-    throw nil
+    ...
 
   # Union of two flag sets.
   pub def (bor)
     self
     other
   do
-    throw nil
+    ...
 
   # Intersection of two flag sets.
   pub def (band)
     self
     other
   do
-    throw nil
+    ...
 
   # Symmetric difference of two flag sets.
   pub def (bxor)
     self
     other
   do
-    throw nil
+    ...
 
   # Complement within the supported bit set.
   pub def (bnot) self
-    throw nil
+    ...
 
   # Compares two flag sets.
   pub def (eq)
     self
     other
   do
-    throw nil
+    ...
 
   # Yields the symbols represented by the flag set.
   pub def (iter) self
-    throw nil
+    ...
 
 # Immutable macOS extended access-control entry.
 #
@@ -188,7 +191,7 @@ pub class Ace
     # Inheritance flags. Defaults to empty.
     :flags @ Flags = nil
   do
-    throw nil
+    ...
 
   # Constructs an entry that denies the permissions in `mask`.
   #[class]
@@ -201,27 +204,27 @@ pub class Ace
     # Inheritance flags. Defaults to empty.
     :flags @ Flags = nil
   do
-    throw nil
+    ...
 
   # Entry type: `:ALLOW:` or `:DENY:`.
   #[getter]
   pub def type self -> Sym
-    throw nil
+    ...
 
   # The entry's principal.
   #[getter]
   pub def principal self -> Uuid
-    throw nil
+    ...
 
   # The entry's permission mask.
   #[getter]
   pub def mask self -> Mask
-    throw nil
+    ...
 
   # The entry's inheritance flags.
   #[getter]
   pub def flags self -> Flags
-    throw nil
+    ...
 
 # Immutable macOS extended access-control list.
 #
@@ -240,13 +243,13 @@ pub class Acl
     # [`Ace`](security.macos.Ace) values.
     aces @ Iterable
   do
-    throw nil
+    ...
 
   # Immutable view of [`Ace`](security.macos.Ace)
   # values, in evaluation order. Use `.len` for the entry count.
   #[getter]
   pub def aces self -> Array[Ace]
-    throw nil
+    ...
 
 # Constructs a macOS entry from declarative arguments.
 #
@@ -269,7 +272,7 @@ pub def ace
   # Defaults to empty.
   :flags @ (Flags | Sym) = nil
 do -> Ace
-  throw nil
+  ...
 
 # Constructs a macOS ACL from entries and declarative entry dictionaries.
 #
@@ -283,7 +286,7 @@ pub def acl
   # to pass a collection.
   ...aces @ (Ace | Dict)
 do -> Acl
-  throw nil
+  ...
 
 # Resolves a Unix user ID to its macOS principal UUID.
 #
@@ -301,7 +304,7 @@ pub def uuid_for_uid
   # Unix user ID.
   uid @ Int
 do -> Uuid
-  throw nil
+  ...
 
 # Resolves a Unix group ID to its macOS principal UUID.
 #
@@ -313,7 +316,7 @@ pub def uuid_for_gid
   # Unix group ID.
   gid @ Int
 do -> Uuid
-  throw nil
+  ...
 
 # Resolves a macOS principal UUID back to the Unix uid or gid it identifies.
 #
@@ -343,4 +346,4 @@ pub def id_for_uuid
   # macOS principal UUID.
   uuid @ (Uuid | Str | Bin)
 do -> Tuple
-  throw nil
+  ...

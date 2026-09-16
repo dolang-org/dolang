@@ -10,7 +10,7 @@ pub let null = nil
 # Creates an array from positional arguments.
 #
 pub def array[T] ...values @ T -> Array[T]
-  throw nil
+  ...
 
 #
 # Converts a value to [`Bool`](std.Bool) according to its truthiness.
@@ -26,7 +26,7 @@ pub def array[T] ...values @ T -> Array[T]
 # ```
 #
 pub def bool value @ Value -> Bool
-  throw nil
+  ...
 
 #
 # Converts a value to its debug representation. Shows internal structure (e.g.
@@ -34,7 +34,7 @@ pub def bool value @ Value -> Bool
 #
 #
 pub def dbg value @ Value -> Str
-  throw nil
+  ...
 
 #
 # Creates a dictionary from positional and key arguments.
@@ -46,13 +46,13 @@ pub def dbg value @ Value -> Str
 # data](../../language/vertical-layout.md#vertical-data) instead.
 #
 pub def dict[...Ts] ...pairs @ Ts -> Dict[Ts]
-  throw nil
+  ...
 
 #
 # Coerces or parses a value as a [`Float`](std.Float).
 #
 pub def float value @ (Num | Str) -> Float
-  throw nil
+  ...
 
 #
 # Builds a getter object from a function.
@@ -73,7 +73,7 @@ pub def getter[T, R]
   # Function used for field reads.
   func @ (T -> R)
 do -> Getter[T, R]
-  throw nil
+  ...
 
 #
 # Returns a hash code computed over all supplied values in sequence. Passing
@@ -89,13 +89,13 @@ pub def hash
   # Values to hash.
   ...values @ Value
 do -> Int
-  throw nil
+  ...
 
 #
 # Coerces or parses a value as an [`Int`](std.Int).
 #
 pub def int value @ (Num | Str) -> Int
-  throw nil
+  ...
 
 #
 # Creates a record from positional and key arguments.
@@ -115,7 +115,7 @@ pub def record[...Ts]
   # Positional and key field values.
   ...args @ Ts
 do -> Record[...Ts]
-  throw nil
+  ...
 
 #
 # Builds a setter object from a function.
@@ -134,13 +134,13 @@ pub def setter[T, V]
   # Function used for field writes.
   func @ ((T, V) -> nil)
 do -> Setter[T, V]
-  throw nil
+  ...
 
 #
 # Returns the general-purpose [`Str`](std.Str) representation of a value.
 #
 pub def str value @ Value -> Str
-  throw nil
+  ...
 
 #
 # Interns a string as a [`Sym`](std.Sym).
@@ -149,13 +149,13 @@ pub def sym
   # Value to intern.
   value @ (Str | Sym)
 do -> Sym
-  throw nil
+  ...
 
 #
 # Creates a tuple from positional arguments.
 #
 pub def tuple[...Ts] ...values@Ts -> Tuple[...Ts]
-  throw nil
+  ...
 
 # Returns the value's type
 #
@@ -164,7 +164,8 @@ pub def tuple[...Ts] ...values@Ts -> Tuple[...Ts]
 # ```
 # assert_eq (type 42) $Int
 # ```
-def @type value @ Value -> Type
+pub def type value @ Value -> Type
+  ...
 
 #
 # Tests whether `value` is an instance of `type`.
@@ -176,7 +177,7 @@ def @type value @ Value -> Type
 # assert (type 42 Int)
 # ```
 pub def type value@Value type@Type
-  throw nil
+  ...
 
 #
 # Converts a value to its verbatim representation. Preserves the literal textual
@@ -184,7 +185,7 @@ pub def type value@Value type@Type
 # command-line arguments to external programs.
 #
 pub def verbatim value @ Value -> Str
-  throw nil
+  ...
 
 # The following types are declared out of alphabetical order because many
 # other types in this module reference them as supertypes.
@@ -236,7 +237,7 @@ pub class RuntimeError: Error
     # the error's complete string form
     message @ Str
   do
-    throw nil
+    ...
 
 
 #
@@ -246,67 +247,67 @@ pub class RuntimeError: Error
 pub class Iterable
   # Returns an iterator over the value.
   pub def iter self -> Iter
-    throw nil
+    ...
 
   # Tests whether every item is truthy, or satisfies `pred`.
   pub def all self pred = nil
-    throw nil
+    ...
 
   # Tests whether any item is truthy, or satisfies `pred`.
   pub def any self pred = nil
-    throw nil
+    ...
 
   # Returns an iterator followed by the additional iterables.
   pub def chain self ...values
-    throw nil
+    ...
 
   # Returns an iterator with one trailing line terminator removed from each item.
   pub def chomp self
-    throw nil
+    ...
 
   # Returns an iterator with a line terminator appended to each item.
   pub def crimp self terminator = nil
-    throw nil
+    ...
 
   # Returns an iterator of `[index, value]` tuples.
   pub def enumerate self
-    throw nil
+    ...
 
   # Returns an iterator of values for which `pred` is truthy.
   pub def filter self pred
-    throw nil
+    ...
 
   # Returns the first value for which `pred` is truthy.
   pub def find self pred :default = nil :else = nil
-    throw nil
+    ...
 
   # Accumulates a value left-to-right with `func`.
   pub def fold self init func
-    throw nil
+    ...
 
   # Returns an iterator that maps each item through `func`.
   pub def map self func
-    throw nil
+    ...
 
   # Returns the largest item.
   pub def max self :default = nil
-    throw nil
+    ...
 
   # Returns the smallest item.
   pub def min self :default = nil
-    throw nil
+    ...
 
   # Returns an iterator that discards the first `n` items.
   pub def skip self n
-    throw nil
+    ...
 
   # Returns an iterator yielding at most `n` items.
   pub def take self n
-    throw nil
+    ...
 
   # Returns an iterator of tuples across this and additional iterables.
   pub def zip self ...values
-    throw nil
+    ...
 
 
 #
@@ -315,27 +316,27 @@ pub class Iterable
 pub class Sinkable
   # Returns a sink over the value.
   pub def sink self -> Sink
-    throw nil
+    ...
 
   # Writes a value to the sink.
   pub def put self value
-    throw nil
+    ...
 
   # Returns a sink that removes one trailing line terminator from each value.
   pub def prechomp self
-    throw nil
+    ...
 
   # Returns a sink that appends a line terminator to each value.
   pub def precrimp self terminator = nil
-    throw nil
+    ...
 
   # Returns a sink that writes only values for which `pred` is truthy.
   pub def prefilter self pred
-    throw nil
+    ...
 
   # Returns a sink that transforms each value with `func` before writing it.
   pub def premap self func
-    throw nil
+    ...
 
 
 #
@@ -369,7 +370,7 @@ pub class Sink: Sinkable
   # ```
   #
   pub def prechomp self
-    throw nil
+    ...
 
   #
   # Creates a wrapper `Sink` that appends a terminator to each value before it is
@@ -394,7 +395,7 @@ pub class Sink: Sinkable
   # ```
   #
   pub def precrimp self terminator = nil
-    throw nil
+    ...
 
   #
   # Wraps the sink so only values for which `pred` is truthy are written.
@@ -413,7 +414,7 @@ pub class Sink: Sinkable
   # ```
   #
   pub def prefilter self pred
-    throw nil
+    ...
 
   #
   # Wraps the sink so each value is transformed before it is written.
@@ -434,13 +435,13 @@ pub class Sink: Sinkable
   # ```
   #
   pub def premap self func
-    throw nil
+    ...
 
   #
   # Writes a value to the sink.
   #
   pub def put self value
-    throw nil
+    ...
 
 
 # Raised when execution is aborted by the host trap mechanism.
@@ -466,7 +467,7 @@ pub class Args
   # ```
   #
   pub def (init) self
-    throw nil
+    ...
 
   #
   # Number of items in the argument pack.
@@ -478,7 +479,7 @@ pub class Args
   #
   #[getter]
   pub def len self
-    throw nil
+    ...
 
   #
   # Returns a tuple of positional values and keyed entries.
@@ -495,7 +496,7 @@ pub class Args
   # ```
   #
   pub def pos_keys self
-    throw nil
+    ...
 
   #
   # Returns an iterator over positional values.
@@ -511,7 +512,7 @@ pub class Args
   # ```
   #
   pub def pos_only self
-    throw nil
+    ...
 
   #
   # Appends positional and keyed arguments to the pack.
@@ -524,7 +525,7 @@ pub class Args
   # assert_eq $items[2][0] :name:
   # ```
   pub def push self
-    throw nil
+    ...
 
 
 #
@@ -537,7 +538,7 @@ pub class Array
   # collects its positional arguments verbatim.
   #
   pub def (init) self iterable
-    throw nil
+    ...
 
   #
   # Returns the number of elements.
@@ -551,7 +552,7 @@ pub class Array
   #
   #[getter]
   pub def len self -> Int
-    throw nil
+    ...
 
   #
   # Removes all elements from the array.
@@ -563,7 +564,7 @@ pub class Array
   # ```
   #
   pub def clear self
-    throw nil
+    ...
 
   #
   # Tests whether the array contains the given element (by equality).
@@ -584,7 +585,7 @@ pub class Array
     # the value to check
     element
   do -> Bool
-    throw nil
+    ...
 
   #
   # Returns a shallow copy of the array. Contents are *not* copied recursively.
@@ -594,7 +595,7 @@ pub class Array
   # the source array as a single positional argument.
   #
   pub def copy self -> Array
-    throw nil
+    ...
 
   #
   # Indicates whether an element was removed. Deletes the element at `index` if it exists.
@@ -614,7 +615,7 @@ pub class Array
   # ```
   #
   pub def delete self index -> Bool
-    throw nil
+    ...
 
   #
   # Retrieves the value at the given index. Returns `nil` if out of bounds and no
@@ -638,7 +639,7 @@ pub class Array
     :default = nil
     :else = nil
   do
-    throw nil
+    ...
 
   #
   # Inserts one or more values at the specified index, shifting existing elements.
@@ -661,7 +662,7 @@ pub class Array
     # values to insert
     ...values
   do
-    throw nil
+    ...
 
   #
   # Returns an iterator yielding `[index, value]` pairs.
@@ -678,7 +679,7 @@ pub class Array
   # ```
   #
   pub def pairs self -> Iter
-    throw nil
+    ...
 
   #
   # Removes and returns the last element, or the element at `index` if provided.
@@ -705,7 +706,7 @@ pub class Array
     :default = nil
     :else = nil
   do
-    throw nil
+    ...
 
   #
   # Appends one or more values to the end of the array.
@@ -723,7 +724,7 @@ pub class Array
     # values to append
     ...values
   do
-    throw nil
+    ...
 
   #
   # Sorts the array in place.
@@ -746,7 +747,7 @@ pub class Array
     :key = nil
     :reverse = nil
   do
-    throw nil
+    ...
 
   #
   # ```
@@ -780,7 +781,7 @@ pub class Array
   # `start` and `end` values count from the end. Negative steps reverse the slice.
   #
   pub def (index) self index
-    throw nil
+    ...
 
   #
   # ```
@@ -799,7 +800,7 @@ pub class Array
   # assignment with a non-unity step is rejected.
   #
   pub def (assign) self index value
-    throw nil
+    ...
 
   # ```
   # for value = [1, 2, 3]
@@ -807,7 +808,7 @@ pub class Array
   # ```
   #
   pub def (iter) self
-    throw nil
+    ...
 
   # ```
   # let a b ...rest = [1, 2, 3, 4]
@@ -816,19 +817,19 @@ pub class Array
   # ```
   # Indexes the value.
   pub def (index) self index
-    throw nil
+    ...
 
   # Assigns through an index.
   pub def (assign) self index value
-    throw nil
+    ...
 
   # Returns an iterator.
   pub def (iter) self
-    throw nil
+    ...
 
   # Unpacks the value.
   pub def (unpack) self
-    throw nil
+    ...
 
 
 #
@@ -847,7 +848,7 @@ pub class Bin
     # source bytes
     value @ (Bin | Str)
   do
-    throw nil
+    ...
 
   #
   # Returns the byte length of the binary data.
@@ -862,7 +863,7 @@ pub class Bin
   #
   #[getter]
   pub def len self -> Int
-    throw nil
+    ...
 
   #
   #
@@ -884,7 +885,7 @@ pub class Bin
   # [`trim_end`](#trim_end-chars), which strips whitespace generally.
   #
   pub def chomp self -> Bin
-    throw nil
+    ...
 
   #
   # Tests whether the binary data contains the given bytes.
@@ -904,7 +905,7 @@ pub class Bin
     # the bytes to find
     needle @ Bin
   do -> Bool
-    throw nil
+    ...
 
   #
   # Tests whether the binary data ends with the given suffix.
@@ -921,7 +922,7 @@ pub class Bin
     # the suffix bytes
     suffix @ Bin
   do -> Bool
-    throw nil
+    ...
 
   #
   # Joins values from an input source using this binary data as a separator.
@@ -938,7 +939,7 @@ pub class Bin
     # iterable to join; uses the default input when omitted
     iter = nil
   do -> Bin
-    throw nil
+    ...
 
   #
   # Like `split`, but yields segments in **right-to-left** order. Mirrors
@@ -959,7 +960,7 @@ pub class Bin
     # max splits; negative means split from left
     limit @ Int = nil
   do -> Iter
-    throw nil
+    ...
 
   #
   # Splits the binary data by the delimiter, returning an iterator that yields
@@ -987,7 +988,7 @@ pub class Bin
     # max splits; negative means split from right
     limit @ Int = nil
   do -> Iter
-    throw nil
+    ...
 
   #
   # Tests whether the binary data starts with the given prefix.
@@ -1005,7 +1006,7 @@ pub class Bin
     # the prefix bytes
     prefix @ Bin
   do -> Bool
-    throw nil
+    ...
 
   #
   # Removes bytes (or specified characters) from both ends.
@@ -1024,7 +1025,7 @@ pub class Bin
     self
     chars @ (Bin | Iterable) = nil
   do -> Bin
-    throw nil
+    ...
 
   #
   # Removes bytes (or specified characters) from the end.
@@ -1041,7 +1042,7 @@ pub class Bin
     self
     chars @ (Bin | Iterable) = nil
   do -> Bin
-    throw nil
+    ...
 
   #
   # Removes bytes (or specified characters) from the start.
@@ -1058,7 +1059,7 @@ pub class Bin
     self
     chars @ (Bin | Iterable) = nil
   do -> Bin
-    throw nil
+    ...
 
   #
   # Unpacks binary data into an array of byte values (integers from 0-255).
@@ -1072,7 +1073,7 @@ pub class Bin
   # ```
   #
   pub def unpack self -> Array
-    throw nil
+    ...
 
   #
   # Returns the binary data with the prefix removed if it matches, otherwise
@@ -1091,7 +1092,7 @@ pub class Bin
     # the prefix to remove
     prefix @ Bin
   do -> Bin
-    throw nil
+    ...
 
   #
   # Returns the binary data with the suffix removed if it matches, otherwise returns
@@ -1109,7 +1110,7 @@ pub class Bin
     # the suffix to remove
     suffix @ Bin
   do -> Bin
-    throw nil
+    ...
 
   #
   # Binary data accepts [`Range`](std.Range) values for slicing by byte position:
@@ -1130,7 +1131,7 @@ pub class Bin
   #
   # Indexes the value.
   pub def (index) self index
-    throw nil
+    ...
 
   #
   # Packs an array of integers (0-255) into binary data.
@@ -1149,7 +1150,7 @@ pub class Bin
     # array of integers (0-255)
     array @ Array
   do -> Bin
-    throw nil
+    ...
 
   #
   # Unpacks any value that can be converted to binary into an array of byte values.
@@ -1162,7 +1163,7 @@ pub class Bin
   # ```
   #[class]
   pub def unpack self value -> Array
-    throw nil
+    ...
 
 
 #
@@ -1185,7 +1186,7 @@ pub class BinBuf
     # initial contents
     initial @ Bin = nil
   do
-    throw nil
+    ...
 
   #
   # Returns the byte length of the buffer's current contents.
@@ -1198,7 +1199,7 @@ pub class BinBuf
   #
   #[getter]
   pub def len self -> Int
-    throw nil
+    ...
 
   #
   # Appends `value` to the buffer. `Str`/`Bin` input is copied byte-for-byte
@@ -1221,7 +1222,7 @@ pub class BinBuf
     # value to append
     value
   do
-    throw nil
+    ...
 
   #
   # Empties the buffer, retaining its allocated capacity.
@@ -1235,7 +1236,7 @@ pub class BinBuf
   # ```
   #
   pub def clear self
-    throw nil
+    ...
 
   #
   # Tests whether the buffer's contents contain the given bytes.
@@ -1252,7 +1253,7 @@ pub class BinBuf
     # the bytes to find
     needle @ Bin
   do -> Bool
-    throw nil
+    ...
 
   #
   # Returns an iterator that removes and yields up to `size` bytes at a time
@@ -1281,7 +1282,7 @@ pub class BinBuf
     # maximum bytes per chunk (defaults to 512 KiB)
     size @ Int = nil
   do -> Iter
-    throw nil
+    ...
 
   #
   # Tests whether the buffer's contents end with the given suffix.
@@ -1298,7 +1299,7 @@ pub class BinBuf
     # the suffix bytes
     suffix @ Bin
   do -> Bool
-    throw nil
+    ...
 
   #
   # Appends the raw bytes of `value`, which must be a [`Str`](std.Str) or
@@ -1316,7 +1317,7 @@ pub class BinBuf
     self
     value @ (Bin | Str)
   do
-    throw nil
+    ...
 
   #
   # Converts the buffer's current contents into an immutable [`Bin`](std.Bin)
@@ -1336,7 +1337,7 @@ pub class BinBuf
   # ```
   #
   pub def freeze self -> Bin
-    throw nil
+    ...
 
   #
   # Inserts `value` at the given byte index, shifting the rest of the buffer
@@ -1358,7 +1359,7 @@ pub class BinBuf
     # Byte value (0-255) or binary data.
     value @ (Int | Bin)
   do
-    throw nil
+    ...
 
   #
   # Appends one or more raw byte values to the buffer.
@@ -1376,7 +1377,7 @@ pub class BinBuf
     # byte values (0-255) to append
     ...bytes @ Int
   do
-    throw nil
+    ...
 
   #
   # Removes and returns a byte or a range of bytes, shifting the rest of the
@@ -1401,7 +1402,7 @@ pub class BinBuf
     self
     index_or_range @ (Int | Range)
   do -> (Int | Bin)
-    throw nil
+    ...
 
   #
   # Tests whether the buffer's contents start with the given prefix.
@@ -1418,7 +1419,7 @@ pub class BinBuf
     # the prefix bytes
     prefix @ Bin
   do -> Bool
-    throw nil
+    ...
 
   #
   # Shrinks the buffer to `len` bytes, discarding anything past that point.
@@ -1436,7 +1437,7 @@ pub class BinBuf
     # new length
     len @ Int
   do
-    throw nil
+    ...
 
   #
   # Unlike `StrBuf`, `BinBuf` supports both scalar and range indexing and
@@ -1448,7 +1449,7 @@ pub class BinBuf
   # assert_eq $buf[2..4] b"ob"
   # ```
   pub def (index) self index
-    throw nil
+    ...
 
   # Assigns a byte or byte range. Range assignment may grow or shrink the buffer.
   #
@@ -1459,14 +1460,14 @@ pub class BinBuf
   # assert_eq $buf.freeze() b"FXYZbar"
   # ```
   pub def (assign) self index value
-    throw nil
+    ...
 
   # Returns this buffer as a [sink](std.Sink). Values are appended verbatim,
   # making it suitable for pipeline and process-output capture.
   #
   # Use [`precrimp`](std.Sink.precrimp) to add a terminator per value.
   pub def (sink) self
-    throw nil
+    ...
 
 
 #
@@ -1475,12 +1476,12 @@ pub class BinBuf
 pub class Bool
   # Accepts an existing boolean.
   pub def (init) self
-    throw nil
+    ...
 
   #
   # Converts to a boolean.
   pub def (bool) self
-    throw nil
+    ...
 
 
 #
@@ -1502,7 +1503,7 @@ pub class CanceledError: Error
   # Builds an error reporting that a strand was canceled.
   #
   pub def (init) self
-    throw nil
+    ...
 
 
 #
@@ -1544,7 +1545,7 @@ pub class CompileError: RuntimeError
     # description of the compilation failure
     message @ Str
   do
-    throw nil
+    ...
 
 
 #
@@ -1560,7 +1561,7 @@ pub class ConcurrencyError: RuntimeError
     # detail appended to the generic message
     message @ Str = nil
   do
-    throw nil
+    ...
 
 
 #
@@ -1576,7 +1577,7 @@ pub class CyclicImportError: RuntimeError
     # the module at which the cycle was detected
     name @ Str
   do
-    throw nil
+    ...
 
 
 #
@@ -1614,7 +1615,7 @@ pub class Dict[S @ {...}]
   # and symbol keys to key arguments.
   #
   pub def (init) self source
-    throw nil
+    ...
 
   #
   # Returns the number of key-value pairs (counting each value in a multi-map
@@ -1623,7 +1624,7 @@ pub class Dict[S @ {...}]
   #
   #[getter]
   pub def len self -> Int
-    throw nil
+    ...
 
   #
   # Removes all key-value pairs.
@@ -1635,7 +1636,7 @@ pub class Dict[S @ {...}]
   # ```
   #
   pub def clear self
-    throw nil
+    ...
 
   #
   # Tests whether the dictionary contains the given key. If a value is provided,
@@ -1669,7 +1670,7 @@ pub class Dict[S @ {...}]
     # optional value to check for (multi-map)
     value = nil
   do -> Bool
-    throw nil
+    ...
 
   #
   # Returns a shallow copy of the dictionary.
@@ -1681,8 +1682,8 @@ pub class Dict[S @ {...}]
   # When inherited by a Do subclass, `copy()` calls the subclass constructor with
   # the source dict as a single positional argument.
   #
-  pub def copy self -> Dict
-    throw nil
+  pub def copy self -> Dict[S]
+    ...
 
   #
   # Returns a count derived from the dictionary's multi-map structure.
@@ -1694,7 +1695,7 @@ pub class Dict[S @ {...}]
   #
   #
   pub def count self key = nil -> Int
-    throw nil
+    ...
 
   #
   # Indicates whether any values were removed. Removes all values for the key.
@@ -1714,7 +1715,7 @@ pub class Dict[S @ {...}]
     # the key to remove
     key
   do -> Bool
-    throw nil
+    ...
 
   #
   # Retrieves the value for a key. Returns `nil` if the key is missing and no
@@ -1739,7 +1740,7 @@ pub class Dict[S @ {...}]
     :default = nil
     :else = nil
   do
-    throw nil
+    ...
 
   #
   # Adds a key-value pair. Does **not** remove existing values for the same key
@@ -1752,7 +1753,7 @@ pub class Dict[S @ {...}]
     # the value
     value
   do
-    throw nil
+    ...
 
   #
   # Returns an iterator of keys. Each distinct key is yielded exactly once, in the
@@ -1762,7 +1763,7 @@ pub class Dict[S @ {...}]
   #
   #
   pub def keys self -> Iter
-    throw nil
+    ...
 
   #
   # Returns an iterator yielding `[key, value]` pairs, the same as ordinary
@@ -1771,7 +1772,7 @@ pub class Dict[S @ {...}]
   #
   #
   pub def pairs self -> Iter
-    throw nil
+    ...
 
   #
   # Removes and returns a value for a key. Raises an error if the key is missing
@@ -1803,7 +1804,7 @@ pub class Dict[S @ {...}]
     :default = nil
     :else = nil
   do
-    throw nil
+    ...
 
   #
   # Returns an iterator of values. With no argument, it yields all stored values in
@@ -1814,7 +1815,7 @@ pub class Dict[S @ {...}]
   #
   #
   pub def values self key = nil -> Iter
-    throw nil
+    ...
 
   #
   # ```
@@ -1829,7 +1830,7 @@ pub class Dict[S @ {...}]
   # [`Range`](std.Range) values are treated as ordinary keys, not as slices.
   #
   pub def (index) self index
-    throw nil
+    ...
 
   # Iterating over a dictionary yields `[key, value]` pairs:
   #
@@ -1839,22 +1840,22 @@ pub class Dict[S @ {...}]
   # ```
   #
   pub def (iter) self
-    throw nil
+    ...
 
   # ```
   # let :name age: years = {name: "Alice", age: 30}
   # ```
   # Indexes the value.
   pub def (index) self index
-    throw nil
+    ...
 
   # Returns an iterator.
   pub def (iter) self
-    throw nil
+    ...
 
   # Unpacks the value.
   pub def (unpack) self
-    throw nil
+    ...
 
 
 #
@@ -1870,7 +1871,7 @@ pub class FieldError: RuntimeError
     # the field that does not exist
     name @ Sym
   do
-    throw nil
+    ...
 
 
 #
@@ -1882,73 +1883,73 @@ pub class Num
   # Raises [`OverflowError`](std.OverflowError) if the result is not
   # representable.
   pub def abs self
-    throw nil
+    ...
 
   # Returns the signum of the value: negative one, zero, or positive one.
   pub def signum self
-    throw nil
+    ...
 
   # Rounds to the nearest integral value, with halfway cases away from zero.
   pub def round self
-    throw nil
+    ...
 
   # Rounds toward negative infinity.
   pub def floor self
-    throw nil
+    ...
 
   # Rounds toward positive infinity.
   pub def ceil self
-    throw nil
+    ...
 
   # Rounds toward zero.
   pub def trunc self
-    throw nil
+    ...
 
   # Returns the smallest of this value and `others`.
   #
   # If a comparison is unordered, which input is returned is unspecified.
   pub def min self ...others
-    throw nil
+    ...
 
   # Returns the largest of this value and `others`.
   #
   # If a comparison is unordered, which input is returned is unspecified.
   pub def max self ...others
-    throw nil
+    ...
 
   # Restricts the value to the inclusive interval from `lower` to `upper`.
   #
   # Raises [`ValueError`](std.ValueError) if `lower > upper`. If a comparison
   # is unordered, which input is returned is unspecified.
   pub def clamp self lower upper
-    throw nil
+    ...
 
   pub def (add) self other
-    throw nil
+    ...
 
   pub def (sub) self other
-    throw nil
+    ...
 
   pub def (mul) self other
-    throw nil
+    ...
 
   pub def (div) self other
-    throw nil
+    ...
 
   pub def (ediv) self other
-    throw nil
+    ...
 
   pub def (mod) self other
-    throw nil
+    ...
 
   pub def (neg) self
-    throw nil
+    ...
 
   pub def (eq) self other
-    throw nil
+    ...
 
   pub def (lt) self other
-    throw nil
+    ...
 
 
 # 64-bit floating point numbers.
@@ -1984,27 +1985,27 @@ pub class Float: Num
   # ```
   #
   pub def (init) self
-    throw nil
+    ...
 
   # Tests whether the value is NaN.
   pub def is_nan self
-    throw nil
+    ...
 
   # Tests whether the value is finite.
   pub def is_finite self
-    throw nil
+    ...
 
   # Tests whether the value is positive or negative infinity.
   pub def is_infinite self
-    throw nil
+    ...
 
   # Tests whether the value is normal.
   pub def is_normal self
-    throw nil
+    ...
 
   # Tests whether the value is subnormal.
   pub def is_subnormal self
-    throw nil
+    ...
 
 #
 # An unbound interpolation in a [`Fmt`](std.Fmt).
@@ -2047,14 +2048,14 @@ pub class FmtParam
     # Interpolation as written in source
     :source @ Str = nil
   do
-    throw nil
+    ...
 
   #
   # The parameter named by this position, as an `Int` or a `Sym`.
   #
   #[getter]
   pub def name self
-    throw nil
+    ...
 
   #
   # The text the parameter was written as, or nil. A `${#...}` in a
@@ -2068,7 +2069,7 @@ pub class FmtParam
   #
   #[getter]
   pub def source self
-    throw nil
+    ...
 
   #
   # Returns a new `FmtParam` naming the same parameter with the supplied options
@@ -2092,12 +2093,12 @@ pub class FmtParam
     # Representation kind
     :kind @ Sym = nil
   do
-    throw nil
+    ...
 
   # Two parameters are equal when they name the same parameter under the same
   # specification and record the same [`source`](#source).
   pub def (eq) self other
-    throw nil
+    ...
 
 
 #
@@ -2134,28 +2135,28 @@ pub class FmtSpec
     # Representation kind
     :kind @ Sym = nil
   do
-    throw nil
+    ...
 
   #
   # The fill character, `:ZERO:` for numeric zero padding, or nil for spaces.
   #
   #[getter]
   pub def fill self
-    throw nil
+    ...
 
   #
   # `:LEFT:`, `:RIGHT:`, `:CENTER:`, or nil for the formatted value's default.
   #
   #[getter]
   pub def align self
-    throw nil
+    ...
 
   #
   # `:PLUS:`, `:SPACE:`, or nil to show only negative signs.
   #
   #[getter]
   pub def sign self
-    throw nil
+    ...
 
   #
   # The minimum width in extended grapheme clusters, or nil when unset. A value
@@ -2164,7 +2165,7 @@ pub class FmtSpec
   #
   #[getter]
   pub def width self
-    throw nil
+    ...
 
   #
   # The numeric precision or maximum number of extended grapheme clusters,
@@ -2172,14 +2173,14 @@ pub class FmtSpec
   #
   #[getter]
   pub def precision self
-    throw nil
+    ...
 
   #
   # Whether alternate formatting is enabled.
   #
   #[getter]
   pub def alt self
-    throw nil
+    ...
 
   #
   # The requested representation, or nil to inherit the surrounding conversion.
@@ -2201,7 +2202,7 @@ pub class FmtSpec
   #
   #[getter]
   pub def kind self
-    throw nil
+    ...
 
   #
   # Returns a new specification, or a bound [`FmtValue`](std.FmtValue) when
@@ -2231,7 +2232,7 @@ pub class FmtSpec
     # Representation kind
     :kind @ Sym = nil
   do
-    throw nil
+    ...
 
   #
   # Applies fill, alignment, width, and truncation to a string.
@@ -2248,7 +2249,7 @@ pub class FmtSpec
     # String to lay out
     value @ Str
   do -> Str
-    throw nil
+    ...
 
 
 #
@@ -2333,7 +2334,7 @@ pub class FmtValue
     # Interpolation as written in source
     :source @ Str = nil
   do
-    throw nil
+    ...
 
   #
   # The bound value, one level down. It is itself a `FmtValue` when this one
@@ -2341,7 +2342,7 @@ pub class FmtValue
   #
   #[getter]
   pub def value self
-    throw nil
+    ...
 
   #
   # The text the value was written as, or nil. Formatted interpolation records
@@ -2355,7 +2356,7 @@ pub class FmtValue
   #
   #[getter]
   pub def source self
-    throw nil
+    ...
 
   #
   # Returns a new `FmtValue` with the supplied options merged. Positional
@@ -2379,13 +2380,13 @@ pub class FmtValue
     # Representation kind
     :kind @ Sym = nil
   do
-    throw nil
+    ...
 
   # Two bindings are equal when they bind equal values to the same specification
   # and record the same [`source`](#source). `source` is readable and `dbg`
   # renders through it, so bindings that differ in it are distinguishable.
   pub def (eq) self other
-    throw nil
+    ...
 
 
 #
@@ -2485,7 +2486,7 @@ pub class Fmt
   # ```
   #
   pub def (init) self segments
-    throw nil
+    ...
 
   #
   # The number of segments.
@@ -2497,7 +2498,7 @@ pub class Fmt
   #
   #[getter]
   pub def len self
-    throw nil
+    ...
 
   #
   # Expands the sequence and returns the result: literal text as it stands, and
@@ -2534,7 +2535,7 @@ pub class Fmt
   # ```
   #
   pub def format self ...bindings -> Str
-    throw nil
+    ...
 
   #
   # `seq[i]` returns segment `i`: a [`Str`](std.Str) of literal text, a
@@ -2549,7 +2550,7 @@ pub class Fmt
   # Assigning to a segment raises an [`ImmutableError`](std.ImmutableError).
   #
   pub def (index) self index
-    throw nil
+    ...
 
   #
   # Iterating yields the segments in order, so a consumer can decide what to do
@@ -2566,7 +2567,7 @@ pub class Fmt
   # to the terminal.
   #
   pub def (iter) self
-    throw nil
+    ...
 
   #
   # Two sequences are equal when their segments are. How a sequence was assembled
@@ -2575,7 +2576,7 @@ pub class Fmt
   # equal.
   #
   pub def (eq) self other
-    throw nil
+    ...
 
   #
   # `dbg` gives the source form, reconstructed from the literal text and each
@@ -2594,7 +2595,7 @@ pub class Fmt
   # ```
   #
   pub def (fmt) self
-    throw nil
+    ...
 
 
 
@@ -2620,7 +2621,7 @@ pub class Getter[T, R]
     # instance being accessed
     obj @ T
   do -> R
-    throw nil
+    ...
 
 
 #
@@ -2632,7 +2633,7 @@ pub class ImmutableError: RuntimeError
   # Builds an error reporting an attempt to mutate an immutable object.
   #
   pub def (init) self
-    throw nil
+    ...
 
 
 #
@@ -2648,7 +2649,7 @@ pub class ImportError: RuntimeError
     # the module that could not be found
     name @ Str
   do
-    throw nil
+    ...
 
 
 #
@@ -2661,7 +2662,7 @@ pub class IndexError: RuntimeError
   # Builds an error reporting an out-of-range or otherwise invalid index.
   #
   pub def (init) self
-    throw nil
+    ...
 
 
 #
@@ -2695,31 +2696,31 @@ pub class Int: Num
   # ```
   #
   pub def (init) self
-    throw nil
+    ...
 
   # Computes bitwise AND.
   pub def (band) self other
-    throw nil
+    ...
 
   # Computes bitwise OR.
   pub def (bor) self other
-    throw nil
+    ...
 
   # Computes bitwise XOR.
   pub def (bxor) self other
-    throw nil
+    ...
 
   # Computes bitwise NOT.
   pub def (bnot) self
-    throw nil
+    ...
 
   # Shifts left.
   pub def (shl) self other
-    throw nil
+    ...
 
   # Shifts right arithmetically, sign-extending negative values.
   pub def (shr) self other
-    throw nil
+    ...
 
 # Error raised to signal that an iterator is exhausted. This is used
 # internally by the iteration protocol and can be caught in `try`/`catch`
@@ -2729,7 +2730,7 @@ pub class IterStop: Error
   #
   # Builds the signal that an iterator is exhausted.
   pub def (init) self
-    throw nil
+    ...
 
 
 #
@@ -2753,7 +2754,7 @@ pub class Iter: Iterable
   # Empty iterators return `true`.
   #
   pub def all self pred = nil
-    throw nil
+    ...
 
   #
   # Returns `true` if any yielded value is truthy.
@@ -2763,14 +2764,14 @@ pub class Iter: Iterable
   # Empty iterators return `false`.
   #
   pub def any self pred = nil
-    throw nil
+    ...
 
   #
   # Returns an iterator that yields this iterator followed by each additional
   # iterable in sequence.
   #
   pub def chain self ...values
-    throw nil
+    ...
 
   #
   # Creates a wrapper `Iter` which removes one trailing line terminator (`\r\n` or
@@ -2795,13 +2796,13 @@ pub class Iter: Iterable
   # specifically and takes nothing.
   #
   pub def chomp self
-    throw nil
+    ...
 
   #
   # Consumes the iterator and returns the number of yielded values.
   #
   pub def count self
-    throw nil
+    ...
 
   #
   # Creates a wrapper `Iter` which appends a line terminator to each item.
@@ -2828,7 +2829,7 @@ pub class Iter: Iterable
   # ```
   #
   pub def crimp self terminator = nil
-    throw nil
+    ...
 
   #
   # Returns an iterator that yields `[index, value]` tuples.
@@ -2836,14 +2837,14 @@ pub class Iter: Iterable
   # The first index is `0`.
   #
   pub def enumerate self
-    throw nil
+    ...
 
   #
   # Creates a wrapper `Iter` which yields each `value` from the wrapper iterator
   # only if `pred(value)` is truthy.
   #
   pub def filter self pred
-    throw nil
+    ...
 
   #
   # Consumes the iterator and returns the first value where `pred(value)` is truthy.
@@ -2854,7 +2855,7 @@ pub class Iter: Iterable
   # no fallback is provided.
   #
   pub def find self pred :default = nil :else = nil
-    throw nil
+    ...
 
   #
   # Consumes the iterator left-to-right, repeatedly applying `func(acc, value)`.
@@ -2862,7 +2863,7 @@ pub class Iter: Iterable
   # Returns `init` unchanged if the iterator is empty.
   #
   pub def fold self init func
-    throw nil
+    ...
 
   #
   # Returns an iterator wrapper that preserves normal iteration, but opts into
@@ -2878,14 +2879,14 @@ pub class Iter: Iterable
   # ```
   #
   pub def kv self
-    throw nil
+    ...
 
   #
   # Creates a wrapper `Iter` which yields `func(value)` for each `value` yielded by
   # the wrapper iterator.
   #
   pub def map self func
-    throw nil
+    ...
 
   #
   # Consumes the iterator and returns the maximum yielded value.
@@ -2896,7 +2897,7 @@ pub class Iter: Iterable
   # `default:` is provided.
   #
   pub def max self :default = nil
-    throw nil
+    ...
 
   #
   # Consumes the iterator and returns the minimum yielded value.
@@ -2907,7 +2908,7 @@ pub class Iter: Iterable
   # `default:` is provided.
   #
   pub def min self :default = nil
-    throw nil
+    ...
 
   #
   # Returns the next value from the iterator.
@@ -2918,7 +2919,7 @@ pub class Iter: Iterable
   # is provided.
   #
   pub def next self :default = nil :else = nil
-    throw nil
+    ...
 
   #
   # Returns an iterator that discards the first `n` values, then yields the rest.
@@ -2931,7 +2932,7 @@ pub class Iter: Iterable
   # | [`ValueError`](std.ValueError) | `n` is negative     |
   #
   pub def skip self n
-    throw nil
+    ...
 
   #
   # Returns an iterator that yields at most `n` values.
@@ -2944,14 +2945,14 @@ pub class Iter: Iterable
   # | [`ValueError`](std.ValueError) | `n` is negative     |
   #
   pub def take self n
-    throw nil
+    ...
 
   #
   # Returns an iterator that yields one tuple for each step across this iterator
   # and the additional iterables.
   # The zipped iterator stops as soon as any input is exhausted.
   pub def zip self ...values
-    throw nil
+    ...
 
 
 
@@ -2968,7 +2969,7 @@ pub class MissingKeyError: RuntimeError
     # the missing key
     key
   do
-    throw nil
+    ...
 
 
 #
@@ -2984,7 +2985,7 @@ pub class MissingPosError: RuntimeError
     # zero-based position of the missing item
     index @ Int
   do
-    throw nil
+    ...
 
 
 #
@@ -3007,11 +3008,11 @@ pub class Nil
 pub class Null: Iter Sink
   # Ends the iteration immediately without yielding a value.
   pub def (next) self
-    throw nil
+    ...
 
   # Discards the value.
   pub def (put) self value
-    throw nil
+    ...
 
 
 #
@@ -3023,7 +3024,7 @@ pub class OverflowError: RuntimeError
   # Builds an error reporting numeric overflow.
   #
   pub def (init) self
-    throw nil
+    ...
 
 
 #
@@ -3042,28 +3043,28 @@ pub class Range
   # Open-ended forms keep the missing endpoint as `nil` internally.
   #
   pub def (init) self start = nil end = nil step = nil
-    throw nil
+    ...
 
   #
   # The ending value (exclusive), or `nil` for open-end ranges.
   #
   #[getter]
   pub def end self
-    throw nil
+    ...
 
   #
   # The starting value, or `nil` for open-start ranges.
   #
   #[getter]
   pub def start self
-    throw nil
+    ...
 
   #
   # The step size.
   #
   #[getter]
   pub def step self
-    throw nil
+    ...
 
   #
   # Tests whether the given value is within the Range interval. For increasing
@@ -3093,15 +3094,15 @@ pub class Range
     # the value to check
     value
   do -> Bool
-    throw nil
+    ...
 
   # Iterates the interval. Open-ended ranges require a concrete start.
   pub def (iter) self
-    throw nil
+    ...
 
   # Supplies slice bounds when used as an index by sequence types.
   pub def (index) self collection
-    throw nil
+    ...
 
 
 #
@@ -3138,7 +3139,7 @@ pub class Record[...Ts]
   # ```
   #
   pub def (init) self source
-    throw nil
+    ...
 
   #
   # Records support direct dot-syntax for symbol keys:
@@ -3156,7 +3157,7 @@ pub class Record[...Ts]
   #
   # Reads a field.
   pub def (get) self name
-    throw nil
+    ...
 
   #
   # Tests whether the record contains the given key. If a value is provided,
@@ -3188,7 +3189,7 @@ pub class Record[...Ts]
     # optional value to check for (multi-map)
     value = nil
   do -> Bool
-    throw nil
+    ...
 
   #
   # Returns a count derived from the record's multi-map structure.
@@ -3200,7 +3201,7 @@ pub class Record[...Ts]
   #
   #[class]
   pub def count self rec key = nil
-    throw nil
+    ...
 
   #
   # Gets a field value with optional default. Supports `instance:` for multi-map
@@ -3208,7 +3209,7 @@ pub class Record[...Ts]
   #
   #[class]
   pub def get self rec key :instance = nil :default = nil :else = nil
-    throw nil
+    ...
 
   #
   # Returns an iterator of keys. Each distinct key is yielded exactly once, in the
@@ -3218,7 +3219,7 @@ pub class Record[...Ts]
   #
   #[class]
   pub def keys self rec
-    throw nil
+    ...
 
   #
   # Returns the number of fields.
@@ -3226,7 +3227,7 @@ pub class Record[...Ts]
   #
   #[class]
   pub def len self rec -> Int
-    throw nil
+    ...
 
   #
   # Returns an iterator of values. With no `key`, it yields all stored values in
@@ -3236,15 +3237,15 @@ pub class Record[...Ts]
   # Missing keys return an empty iterator.
   #[class]
   pub def values self rec key = nil
-    throw nil
+    ...
 
   # Iterates record entries as `[key, value]` pairs in insertion order.
   pub def (iter) self
-    throw nil
+    ...
 
   # Unpacks record fields by their symbol or integer keys.
   pub def (unpack) self
-    throw nil
+    ...
 
 
 
@@ -3260,7 +3261,7 @@ pub class Set
   # Builds a set from one iterable.
   #
   pub def (init) self iterable
-    throw nil
+    ...
 
   #
   # Returns the number of members.
@@ -3268,7 +3269,7 @@ pub class Set
   #
   #[getter]
   pub def len self -> Int
-    throw nil
+    ...
 
   #
   # Adds `value` if it is not already present.
@@ -3287,7 +3288,7 @@ pub class Set
     # the value to insert
     value
   do
-    throw nil
+    ...
 
   #
   # Removes all members.
@@ -3299,7 +3300,7 @@ pub class Set
   # ```
   #
   pub def clear self
-    throw nil
+    ...
 
   #
   # Tests whether the Set contains `value`.
@@ -3310,7 +3311,7 @@ pub class Set
     # the value to test
     value
   do -> Bool
-    throw nil
+    ...
 
   #
   # Returns a shallow copy of the Set.
@@ -3319,7 +3320,7 @@ pub class Set
   #
   #
   pub def copy self -> Set
-    throw nil
+    ...
 
   #
   # Indicates whether a value was removed. Removes `value` if present.
@@ -3330,7 +3331,7 @@ pub class Set
     # the value to remove
     value
   do -> Bool
-    throw nil
+    ...
 
   #
   # Returns a new Set containing members from the receiver that are not present in
@@ -3342,7 +3343,7 @@ pub class Set
     # other Set
     other @ Set
   do -> Set
-    throw nil
+    ...
 
   #
   # Returns a new Set containing members that are present in both sets, in
@@ -3354,7 +3355,7 @@ pub class Set
     # other Set
     other @ Set
   do -> Set
-    throw nil
+    ...
 
   #
   # Returns `true` when every member of the receiver is present in `other`.
@@ -3365,7 +3366,7 @@ pub class Set
     # other Set
     other @ Set
   do -> Bool
-    throw nil
+    ...
 
   #
   # Returns `true` when every member of `other` is present in the receiver.
@@ -3376,7 +3377,7 @@ pub class Set
     # other Set
     other @ Set
   do -> Bool
-    throw nil
+    ...
 
   #
   # Returns a new Set containing members present in exactly one of the two
@@ -3388,7 +3389,7 @@ pub class Set
     # other Set
     other @ Set
   do -> Set
-    throw nil
+    ...
 
   #
   # Returns a new Set containing all members from `self`, then first-seen members
@@ -3400,7 +3401,7 @@ pub class Set
     # other Set
     other @ Set
   do -> Set
-    throw nil
+    ...
 
   #
   # Iterates values in insertion order:
@@ -3411,7 +3412,7 @@ pub class Set
   # ```
   # Returns an iterator.
   pub def (iter) self
-    throw nil
+    ...
 
 
 #
@@ -3433,7 +3434,7 @@ pub class Setter[T, V]
     # new field value
     value @ V
   do
-    throw nil
+    ...
 
 
 #
@@ -3450,7 +3451,7 @@ pub class SinkStop: Error
   # throw SinkStop()
   # ```
   pub def (init) self
-    throw nil
+    ...
 
 
 
@@ -3469,7 +3470,7 @@ pub class StateError: RuntimeError
     # description of the invalid state
     message @ Str
   do
-    throw nil
+    ...
 
 
 #
@@ -3517,7 +3518,7 @@ pub class Str
   # ```
   #
   pub def (init) self value
-    throw nil
+    ...
 
   #
   # Returns the byte length of the string.
@@ -3532,7 +3533,7 @@ pub class Str
   #
   #[getter]
   pub def len self -> Int
-    throw nil
+    ...
 
   #
   # Returns an immutable view of the string's Unicode scalar values.
@@ -3553,7 +3554,7 @@ pub class Str
   # ```
   #
   pub def scalars self -> Iterable
-    throw nil
+    ...
 
   #
   # Returns the Unicode scalar value encoded by a single-scalar string.
@@ -3572,7 +3573,7 @@ pub class Str
   # ```
   #
   pub def scalar self -> Int
-    throw nil
+    ...
 
   #
   # Removes one trailing line terminator.
@@ -3601,7 +3602,7 @@ pub class Str
   # `.map do |x| x.chomp()`, with the mapping done inline.
   #
   pub def chomp self -> Str
-    throw nil
+    ...
 
   #
   # Tests whether the string contains the given substring.
@@ -3621,7 +3622,7 @@ pub class Str
     # the substring to find
     needle @ Str
   do -> Bool
-    throw nil
+    ...
 
   #
   # Tests whether the string ends with the given suffix.
@@ -3638,7 +3639,7 @@ pub class Str
     # the suffix string
     suffix @ Str
   do -> Bool
-    throw nil
+    ...
 
   #
   # Returns an immutable view of the string's extended grapheme clusters.
@@ -3657,7 +3658,7 @@ pub class Str
   # ```
   #
   pub def graphemes self -> Iterable
-    throw nil
+    ...
 
   #
   # Joins values from an input source using this string as a separator.
@@ -3674,7 +3675,7 @@ pub class Str
     # iterable to join; uses the default input when omitted
     iter = nil
   do -> Str
-    throw nil
+    ...
 
   #
   # Returns the string converted to lowercase.
@@ -3688,7 +3689,7 @@ pub class Str
   # ```
   #
   pub def lower self -> Str
-    throw nil
+    ...
 
   #
   # Returns the string repeated `count` times.
@@ -3706,7 +3707,7 @@ pub class Str
     # non-negative repetition count
     count @ Int
   do -> Str
-    throw nil
+    ...
 
   #
   # Returns a new string with all non-overlapping occurrences of `from` replaced
@@ -3728,7 +3729,7 @@ pub class Str
     # replacement string
     to @ Str
   do -> Str
-    throw nil
+    ...
 
   #
   # Like `split`, but yields segments in **right-to-left** order (rightmost segment
@@ -3758,7 +3759,7 @@ pub class Str
     # - Omitted splits fully with no limit.
     limit @ Int = nil
   do -> Iter
-    throw nil
+    ...
 
   #
   # Splits the string by the delimiter, returning an iterator that yields segments
@@ -3793,7 +3794,7 @@ pub class Str
     # - Omitted splits fully with no limit.
     limit @ Int = nil
   do -> Iter
-    throw nil
+    ...
 
   #
   # Tests whether the string starts with the given prefix.
@@ -3811,7 +3812,7 @@ pub class Str
     # the prefix string
     prefix @ Str
   do -> Bool
-    throw nil
+    ...
 
   #
   # Removes whitespace (or specified characters) from both ends.
@@ -3829,7 +3830,7 @@ pub class Str
     self
     chars @ (Str | Iterable) = nil
   do -> Str
-    throw nil
+    ...
 
   #
   # Removes whitespace (or specified characters) from the end.
@@ -3846,7 +3847,7 @@ pub class Str
     self
     chars @ (Str | Iterable) = nil
   do -> Str
-    throw nil
+    ...
 
   #
   # Removes whitespace (or specified characters) from the start.
@@ -3863,7 +3864,7 @@ pub class Str
     self
     chars @ (Str | Iterable) = nil
   do -> Str
-    throw nil
+    ...
 
   #
   # Returns the string converted to uppercase.
@@ -3877,7 +3878,7 @@ pub class Str
   # ```
   #
   pub def upper self -> Str
-    throw nil
+    ...
 
   #
   # Returns the string with the prefix removed if it matches, otherwise returns
@@ -3896,7 +3897,7 @@ pub class Str
     # the prefix to remove
     prefix @ Str
   do -> Str
-    throw nil
+    ...
 
   #
   # Returns the string with the suffix removed if it matches, otherwise returns
@@ -3914,7 +3915,7 @@ pub class Str
     # the suffix to remove
     suffix @ Str
   do -> Str
-    throw nil
+    ...
 
   #
   # Strings accept [`Range`](std.Range) values for slicing by byte position:
@@ -3932,11 +3933,11 @@ pub class Str
   # and negative endpoints count from the end.
   # Indexes the value.
   pub def (index) self index
-    throw nil
+    ...
 
   # Returns an iterator.
   pub def (iter) self
-    throw nil
+    ...
 
 
 #
@@ -3959,7 +3960,7 @@ pub class StrBuf
     # initial contents
     initial @ Str = nil
   do
-    throw nil
+    ...
 
   #
   # Returns the byte length of the buffer's current contents.
@@ -3973,7 +3974,7 @@ pub class StrBuf
   #
   #[getter]
   pub def len self -> Int
-    throw nil
+    ...
 
   #
   # Appends `value` to the buffer. `Str` input is copied byte-for-byte; anything
@@ -3994,7 +3995,7 @@ pub class StrBuf
     # value to append
     value
   do
-    throw nil
+    ...
 
   #
   # Empties the buffer, retaining its allocated capacity.
@@ -4008,7 +4009,7 @@ pub class StrBuf
   # ```
   #
   pub def clear self
-    throw nil
+    ...
 
   #
   # Tests whether the buffer's contents contain the given substring.
@@ -4025,7 +4026,7 @@ pub class StrBuf
     # the substring to find
     needle @ Str
   do -> Bool
-    throw nil
+    ...
 
   #
   # Returns an iterator that removes and yields up to `size` bytes at a time
@@ -4059,7 +4060,7 @@ pub class StrBuf
     # maximum bytes per chunk (defaults to 512 KiB)
     size @ Int = nil
   do -> Iter
-    throw nil
+    ...
 
   #
   # Tests whether the buffer's contents end with the given suffix.
@@ -4076,7 +4077,7 @@ pub class StrBuf
     # the suffix string
     suffix @ Str
   do -> Bool
-    throw nil
+    ...
 
   #
   # Appends the raw bytes of `value`, which must be a [`Str`](std.Str).
@@ -4094,7 +4095,7 @@ pub class StrBuf
     # string to append
     value @ Str
   do
-    throw nil
+    ...
 
   #
   # Converts the buffer's current contents into an immutable [`Str`](std.Str)
@@ -4114,7 +4115,7 @@ pub class StrBuf
   # ```
   #
   pub def freeze self -> Str
-    throw nil
+    ...
 
   #
   # Inserts `value` at the given byte index, shifting the rest of the buffer
@@ -4135,7 +4136,7 @@ pub class StrBuf
     # string to insert
     value @ Str
   do
-    throw nil
+    ...
 
   #
   # Removes and returns the substring covered by `range`, shifting the rest of
@@ -4158,7 +4159,7 @@ pub class StrBuf
     # byte range to remove; must fall on UTF-8 boundaries
     range @ Range
   do -> Str
-    throw nil
+    ...
 
   #
   # Tests whether the buffer's contents start with the given prefix.
@@ -4175,7 +4176,7 @@ pub class StrBuf
     # the prefix string
     prefix @ Str
   do -> Bool
-    throw nil
+    ...
 
   #
   # Shrinks the buffer to `len` bytes, discarding anything past that point.
@@ -4193,7 +4194,7 @@ pub class StrBuf
     # new length; must fall on a UTF-8 boundary
     len @ Int
   do
-    throw nil
+    ...
 
   #
   # `StrBuf` supports only range indexing and assignment, matching `Str` — a
@@ -4211,11 +4212,11 @@ pub class StrBuf
   # assigned value's boundaries must land on UTF-8 code point boundaries.
   #
   pub def (index) self index
-    throw nil
+    ...
 
   # Assigns through an index.
   pub def (assign) self index value
-    throw nil
+    ...
 
   #
   # `StrBuf` is a [sink](std.Sink), so it can be the target of a pipeline, of
@@ -4240,7 +4241,7 @@ pub class StrBuf
   # assert_eq $buf.freeze() "first\nsecond\n"
   # ```
   pub def (sink) self
-    throw nil
+    ...
 
 
 #
@@ -4284,7 +4285,7 @@ pub class Sym
   # assert (:foo: != :bar:)
   # ```
   pub def (eq) self other
-    throw nil
+    ...
 
   # Symbols compare lexicographically by name.
   #
@@ -4292,7 +4293,7 @@ pub class Sym
   # assert (:alpha: < :beta:)
   # ```
   pub def (lt) self other
-    throw nil
+    ...
 
 
 #
@@ -4305,7 +4306,7 @@ pub class TimedOutError: RuntimeError
   # Builds an error reporting that a strand timed out.
   #
   pub def (init) self
-    throw nil
+    ...
 
 
 #
@@ -4338,7 +4339,7 @@ pub class Tuple[...Ts]
     # values to collect
     iterable
   do
-    throw nil
+    ...
 
   #
   # Returns the number of elements.
@@ -4346,7 +4347,7 @@ pub class Tuple[...Ts]
   #
   #[getter]
   pub def len self -> Int
-    throw nil
+    ...
 
   #
   # Tests whether the tuple contains the given element (by equality).
@@ -4357,7 +4358,7 @@ pub class Tuple[...Ts]
     # the value to check
     element
   do -> Bool
-    throw nil
+    ...
 
   #
   # Returns a shallow copy of the tuple. Because tuples are immutable, the
@@ -4365,7 +4366,7 @@ pub class Tuple[...Ts]
   #
   #
   pub def copy self -> Tuple[...Ts]
-    throw nil
+    ...
 
   #
   # Retrieves the value at the given index. Returns `nil` if out of bounds and no
@@ -4379,14 +4380,14 @@ pub class Tuple[...Ts]
     :default = nil
     :else = nil
   do
-    throw nil
+    ...
 
   #
   # Returns an iterator yielding `[index, value]` pairs.
   #
   #
   pub def pairs self -> Iter
-    throw nil
+    ...
 
   #
   # ```
@@ -4414,7 +4415,7 @@ pub class Tuple[...Ts]
   # means the tuple length, and negative endpoints count from the end. Negative
   # steps reverse the slice.
   pub def (index) self index
-    throw nil
+    ...
 
   # Unpacks tuple elements.
   #
@@ -4423,7 +4424,7 @@ pub class Tuple[...Ts]
   #   echo "$k = $v"
   # ```
   pub def (unpack) self
-    throw nil
+    ...
 
 
 #
@@ -4439,7 +4440,7 @@ pub class TypeError: RuntimeError
     # description of the mismatch
     message @ Str
   do
-    throw nil
+    ...
 
 
 #
@@ -4459,7 +4460,7 @@ pub class UnexpectedKeyError: RuntimeError
     # the unexpected key
     key
   do
-    throw nil
+    ...
 
 
 #
@@ -4475,7 +4476,7 @@ pub class UnexpectedPosError: RuntimeError
     # zero-based position of the unexpected item
     index @ Int
   do
-    throw nil
+    ...
 
 
 #
@@ -4487,7 +4488,7 @@ pub class UnsupportedError: RuntimeError
   # Builds an error reporting that an operation is not supported.
   #
   pub def (init) self
-    throw nil
+    ...
 
 
 #
@@ -4504,7 +4505,7 @@ pub class ValueError: RuntimeError
     # description of the problem with the value
     message @ Str
   do
-    throw nil
+    ...
 
 
 #
@@ -4522,4 +4523,4 @@ pub class ZeroDivError: RuntimeError
   # Builds an error reporting division by an integer zero.
   #
   pub def (init) self
-    throw nil
+    ...

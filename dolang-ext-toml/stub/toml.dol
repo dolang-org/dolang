@@ -45,7 +45,7 @@ pub def decode
   # TOML input to parse.
   toml @ Str
 do -> Value
-  throw nil
+  ...
 
 # Serializes a Do value to a TOML string.
 #
@@ -86,4 +86,4 @@ pub def encode
   # The value to serialize.
   value
 do -> Str
-  throw nil
+  ...

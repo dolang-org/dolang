@@ -48,10 +48,6 @@
 # | [`WouldBlockError`](sys.WouldBlockError)                           | Operation would block                                |
 # | [`WriteZeroError`](sys.WriteZeroError)                             | Write wrote zero bytes                               |
 
-import std:
-  - @RuntimeError
-  - @ValueError
-
 # `Error` is raised for system and I/O failures.
 #
 # It can be subclassed for library-specific operational failures.
@@ -80,7 +76,7 @@ pub class Error: std.RuntimeError
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
   # The underlying native system error code, or `nil` when one does not exist.
   #
@@ -91,7 +87,7 @@ pub class Error: std.RuntimeError
   # where the error originated.
   #[getter]
   pub def code self
-    throw nil
+    ...
 
 # Native system error code.
 #
@@ -104,19 +100,19 @@ pub class ErrorCode
   # The raw integer value.
   #[getter]
   pub def value self
-    throw nil
+    ...
 
 # CPU information for the active VFS target returned by [`cpu_info`](#cpu_info).
 pub class CpuInfo
   # Target architecture. Supported values are `:X86_64:` and `:AARCH64:`.
   #[getter]
   pub def arch self
-    throw nil
+    ...
 
   # Logical CPU count captured when the VFS context is established.
   #[getter]
   pub def logical_count self
-    throw nil
+    ...
 
 # Operating system information for the active VFS target returned by
 # [`os_info`](#os_info).
@@ -125,20 +121,20 @@ pub class OsInfo
   # `:UNIX:` and `:WINDOWS:`.
   #[getter]
   pub def family self
-    throw nil
+    ...
 
   # Whether the process is running under Wine.
   #
   # This field is only available for Windows targets.
   #[getter]
   pub def is_wine self
-    throw nil
+    ...
 
   # Specific operating system. Supported values are `:LINUX:`, `:MACOS:`,
   # `:FREEBSD:`, and `:WINDOWS:`.
   #[getter]
   pub def os self
-    throw nil
+    ...
 
 # Returns CPU information for the current VFS target.
 #
@@ -149,7 +145,7 @@ pub class OsInfo
 # echo "running on $info.arch with $info.logical_count logical CPUs"
 # ```
 pub def cpu_info()
-  throw nil
+  ...
 
 # Returns operating system information for the current VFS target.
 #
@@ -160,7 +156,7 @@ pub def cpu_info()
 #   echo "running on Windows"
 # ```
 pub def os_info()
-  throw nil
+  ...
 
 # A network address is already in use.
 pub class AddrInUseError: Error
@@ -172,7 +168,7 @@ pub class AddrInUseError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A requested network address is unavailable.
 pub class AddrNotAvailableError: Error
@@ -184,7 +180,7 @@ pub class AddrNotAvailableError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # Raised when creating or renaming something would conflict with an existing
 # filesystem path or other system resource.
@@ -198,7 +194,7 @@ pub class AlreadyExistsError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A system argument list is too long.
 pub class ArgumentListTooLongError: Error
@@ -210,7 +206,7 @@ pub class ArgumentListTooLongError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A pipe or connection was closed by its reader.
 pub class BrokenPipeError: Error
@@ -222,7 +218,7 @@ pub class BrokenPipeError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A connection was aborted.
 pub class ConnectionAbortedError: Error
@@ -234,7 +230,7 @@ pub class ConnectionAbortedError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A connection attempt was refused.
 pub class ConnectionRefusedError: Error
@@ -246,7 +242,7 @@ pub class ConnectionRefusedError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A connection was reset.
 pub class ConnectionResetError: Error
@@ -258,7 +254,7 @@ pub class ConnectionResetError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # An operation cannot cross device boundaries.
 pub class CrossesDevicesError: Error
@@ -270,7 +266,7 @@ pub class CrossesDevicesError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # An operation would cause a deadlock.
 pub class DeadlockError: Error
@@ -282,7 +278,7 @@ pub class DeadlockError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A directory or key is not empty.
 pub class DirectoryNotEmptyError: Error
@@ -294,7 +290,7 @@ pub class DirectoryNotEmptyError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # An executable file is busy.
 pub class ExecutableFileBusyError: Error
@@ -306,7 +302,7 @@ pub class ExecutableFileBusyError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A file exceeds a supported size limit.
 pub class FileTooLargeError: Error
@@ -318,7 +314,7 @@ pub class FileTooLargeError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A network host is unreachable.
 pub class HostUnreachableError: Error
@@ -330,7 +326,7 @@ pub class HostUnreachableError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A system operation was interrupted.
 pub class InterruptedError: Error
@@ -342,7 +338,7 @@ pub class InterruptedError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # Input data is malformed or violates a protocol.
 pub class InvalidDataError: Error
@@ -354,7 +350,7 @@ pub class InvalidDataError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A filename is invalid.
 pub class InvalidFilenameError: Error
@@ -366,7 +362,7 @@ pub class InvalidFilenameError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # Raised when a system operation receives invalid input.
 pub class InvalidInputError: Error std.ValueError
@@ -379,7 +375,7 @@ pub class InvalidInputError: Error std.ValueError
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A file operation targeted a directory.
 pub class IsADirectoryError: Error
@@ -391,7 +387,7 @@ pub class IsADirectoryError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # The network is down.
 pub class NetworkDownError: Error
@@ -403,7 +399,7 @@ pub class NetworkDownError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A network is unreachable.
 pub class NetworkUnreachableError: Error
@@ -415,7 +411,7 @@ pub class NetworkUnreachableError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A path component is not a directory.
 pub class NotADirectoryError: Error
@@ -427,7 +423,7 @@ pub class NotADirectoryError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # An operation requires a connected endpoint.
 pub class NotConnectedError: Error
@@ -439,7 +435,7 @@ pub class NotConnectedError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # Raised when a filesystem path, program, or other system resource cannot be
 # found.
@@ -453,7 +449,7 @@ pub class NotFoundError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A stream does not support seeking.
 pub class NotSeekableError: Error
@@ -465,7 +461,7 @@ pub class NotSeekableError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A system operation could not allocate memory.
 pub class OutOfMemoryError: Error
@@ -477,7 +473,7 @@ pub class OutOfMemoryError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # Raised when a system operation is not permitted by filesystem, process, or
 # platform access rules.
@@ -490,7 +486,7 @@ pub class PermissionDeniedError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A storage quota was exceeded.
 pub class QuotaExceededError: Error
@@ -502,7 +498,7 @@ pub class QuotaExceededError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # An operation attempted to modify a read-only filesystem.
 pub class ReadOnlyFilesystemError: Error
@@ -514,7 +510,7 @@ pub class ReadOnlyFilesystemError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A system resource is busy.
 pub class ResourceBusyError: Error
@@ -526,7 +522,7 @@ pub class ResourceBusyError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A network filesystem handle is stale.
 pub class StaleNetworkFileHandleError: Error
@@ -538,7 +534,7 @@ pub class StaleNetworkFileHandleError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A storage device is full.
 pub class StorageFullError: Error
@@ -550,7 +546,7 @@ pub class StorageFullError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # Raised when a system operation times out.
 pub class TimedOutError: Error std.TimedOutError
@@ -562,7 +558,7 @@ pub class TimedOutError: Error std.TimedOutError
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A filesystem object has too many links.
 pub class TooManyLinksError: Error
@@ -574,7 +570,7 @@ pub class TooManyLinksError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # Input ended unexpectedly.
 pub class UnexpectedEofError: Error
@@ -586,7 +582,7 @@ pub class UnexpectedEofError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # Raised when a system operation is unsupported.
 pub class UnsupportedError: Error std.UnsupportedError
@@ -599,7 +595,7 @@ pub class UnsupportedError: Error std.UnsupportedError
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # An operation would block.
 pub class WouldBlockError: Error
@@ -611,7 +607,7 @@ pub class WouldBlockError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
 
 # A write operation wrote zero bytes.
 pub class WriteZeroError: Error
@@ -623,4 +619,4 @@ pub class WriteZeroError: Error
     # Underlying platform code.
     :code @ ErrorCode = nil
   do
-    throw nil
+    ...
