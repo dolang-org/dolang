@@ -623,7 +623,7 @@ let double = (do |x @ Int| -> Int x * 2)
 
 `[]` directly after a `def` or `class` name declares binders (names standing for
 types; also `:K` and a trailing `...R`). Binders may have type-expression
-bounds and defaults (`T @ Bound = Default`); a schema bound such as `S @ {}`
+bounds and defaults (`T @ Bound = Default`); a schema bound such as `S @ {...}`
 marks a schema binder. A superclass may take type arguments:
 
 ```

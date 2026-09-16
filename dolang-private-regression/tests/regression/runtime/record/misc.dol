@@ -2,14 +2,14 @@ import
   std:
     - Iter
     - IterStop
+    - ImmutableError
     - MissingPosError
 
 # Record.contains tests - Record.contains is a class method taking record as first arg
 assert (!(bool (record())))
 assert (bool (record(a: 1)))
 
-let rec = record(1, 2, 3, a: "first", b: "second")
-Record.insert $rec :a: second
+let rec = record(1, 2, 3, a: "first", b: "second", a: "second")
 # Key-only checks
 assert (Record.contains rec 0)
 assert (Record.contains rec 1)
@@ -30,23 +30,12 @@ assert (!Record.contains rec :nonexistent: "value")
 # Empty record
 assert (!Record.contains(record(), 0))
 
-# Record.pop with instance tests
-let r = record x: "first"
-Record.insert $r :x: "second"
-Record.insert $r :x: "third"
+# Record.get instance tests
+let r = record x: "first" x: "second" x: "third"
 assert_eq (Record.len r) 3
 assert_eq (Record.get r :x: -1) "third"
 assert_eq (Record.get r :x: -2) "second"
 assert_eq (Record.get r :x: -4) nil
-# Pop instance 1 (second)
-assert_eq (Record.pop r :x: 1) "second"
-assert_eq (Record.len r) 2
-# Pop instance -1 (third) - remaining is ["first"]
-assert_eq (Record.pop r :x: -1) "third"
-assert_eq (Record.len r) 1
-# Pop last one
-assert_eq (Record.pop r :x:) "first"
-assert_eq (Record.len r) 0
 
 # Record.values iterators
 let vals = Record.values(record(name: "Alice", age: 30, name: "Bob"))
@@ -119,16 +108,11 @@ assert_eq (keyed_iter.next()) "Alice"
 assert_eq (keyed_iter.next()) "Bob"
 assert_throws $IterStop do keyed_iter.next()
 
-let concurrent_source = record(a: 1, a: 2)
-let concurrent_iter = Record.values $concurrent_source
-Record.insert $concurrent_source :b: 9
-let concurrent_caught = try
-  concurrent_iter.next()
-  false
-catch e
-  assert_eq (str e) "conflicting concurrent operation: collection was modified during iteration"
-  true
-assert $concurrent_caught
+let immutable = record(a: 1)
+assert_throws $ImmutableError do immutable.a = 2
+assert_throws $ImmutableError do immutable[:a:] = 2
+assert_throws $std.FieldError do Record.insert
+assert_throws $std.FieldError do Record.pop
 
 class MyRecord: Record
   def (init) self source

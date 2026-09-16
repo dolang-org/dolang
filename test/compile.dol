@@ -654,7 +654,6 @@ def superclasses_are_types_of_their_class()
     import std
     import std:
       - Record
-      - @Dict
 
     class Named: Record
       pub field name = nil
@@ -662,7 +661,7 @@ def superclasses_are_types_of_their_class()
     class Tagged: std.Record
       pub field tag = nil
 
-    class Keyed[K]: Record[Dict[K, Int]]
+    class Keyed[K]: Record[...K: Int]
       pub field key = nil
   let unit = compile.compile "supers.dol" $source document: true
   assert_no_errors $unit
@@ -670,7 +669,6 @@ def superclasses_are_types_of_their_class()
 
   let module = nodes.find(do |pair| type(pair[1], compile.ImportModule))
   let record = (named_node source nodes compile.ImportItem "Record")
-  let dict = (named_node source nodes compile.ImportItem "Dict")
 
   let named = (named_node source nodes compile.Class "Named")
   let named_supers = (types_of nodes named[0])
@@ -690,14 +688,13 @@ def superclasses_are_types_of_their_class()
   let binder = nodes.find(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == keyed[0])))
   let app = (types_of(nodes, keyed[0])[0][1].expr)
   assert_type $compile.AppType $app
-  assert_eq (span_text(source, app.span)) "Record[Dict[K, Int]]"
+  assert_eq (span_text(source, app.span)) "Record[...K: Int]"
   assert_eq $app.base.target $record[0]
-  let arg = app.args[0].ty
-  assert_eq $arg.base.target $dict[0]
-  assert_eq $arg.args[0].ty.target $binder[0]
+  let arg = app.args[0]
+  assert_type $compile.KeyRestTypeArg $arg
+  assert_eq $arg.key_ty.target $binder[0]
 
   assert !(record[1].type_only)
-  assert $dict[1].type_only
 
 #[test]
 def type_followups_are_exposed()
@@ -721,5 +718,12 @@ def type_followups_are_exposed()
   assert_eq (span_text(source, schema.args[0].span)) "..."
   assert_eq (span_text(source, schema.args[1].key_ty.span)) "K"
   assert_eq (span_text(source, schema.args[2].key_ty.span)) "Tuple[Int, Int]"
+  # Names in a binder's bound and default, and in the aliased type, resolve
+  let prelude_item = do |item|
+    nodes.find(do |pair| (type(pair[1], compile.PreludeItem) && (pair[1].item == item)))[0]
+  assert_eq $binder[1].bound.target (prelude_item "Str")
+  assert_eq $binder[1].default.target (prelude_item "Sym")
+  assert_eq (types_of(nodes, alias[0])[0][1].expr.base.target) (prelude_item "Dict")
+  assert_eq $schema.args[1].key_ty.target $binder[0]
   # Type-only declarations have no runtime imports or bindings to emit.
   unit.emit()

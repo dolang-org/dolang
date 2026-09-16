@@ -379,12 +379,12 @@ impl Parser<'_> {
                         // `K:` is one lexer token, while a compound key type such as
                         // `Tuple[Int, Int]:` leaves the `:` as its own token.
                         if let Some(token!(TokenInfo::Key, key_span)) = this.peek()? {
-                            if delim != Delim::Brace {
+                            if delim == Delim::Paren {
                                 let token = this.next()?;
                                 return Err(this.syntax_error(
                                     scope,
                                     token,
-                                    "a keyed rest item is only valid in a schema",
+                                    "a keyed rest item is not valid in function parameters",
                                 ));
                             }
                             this.advance();
@@ -403,24 +403,24 @@ impl Parser<'_> {
                                 .peek()?
                                 .is_some_and(|token| delim.is_close(&token.info))
                         {
-                            if delim != Delim::Brace {
+                            if delim == Delim::Paren {
                                 let token = this.peek()?;
                                 return Err(this.syntax_error(
                                     scope,
                                     token,
-                                    "an open rest item is only valid in a schema",
+                                    "an open rest item is not valid in function parameters",
                                 ));
                             }
                             TypeArgKind::OpenRest { ellipsis_span }
                         } else {
                             let ty = this.parse_type_full(scope)?;
                             if let Some(token!(TokenInfo::Colon)) = this.peek()? {
-                                if delim != Delim::Brace {
+                                if delim == Delim::Paren {
                                     let token = this.next()?;
                                     return Err(this.syntax_error(
                                         scope,
                                         token,
-                                        "a keyed rest item is only valid in a schema",
+                                        "a keyed rest item is not valid in function parameters",
                                     ));
                                 }
                                 let colon_span = this.advance();

@@ -1962,17 +1962,21 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
         });
         if matches!(
             T::NAME,
+            "PosTypeArg" | "KeyTypeArg" | "RestTypeArg" | "OpenRestTypeArg" | "KeyRestTypeArg"
+        ) {
+            builder = builder.get("optional", |this, strand, out| {
+                let TypeDetail::Arg { optional, .. } = &this.annex().detail else {
+                    unreachable!()
+                };
+                Output::set(strand, out, *optional);
+                Ok(())
+            });
+        }
+        if matches!(
+            T::NAME,
             "PosTypeArg" | "KeyTypeArg" | "RestTypeArg" | "KeyRestTypeArg"
         ) {
-            builder = builder
-                .get("optional", |this, strand, out| {
-                    let TypeDetail::Arg { optional, .. } = &this.annex().detail else {
-                        unreachable!()
-                    };
-                    Output::set(strand, out, *optional);
-                    Ok(())
-                })
-                .get("ty", slot!(0));
+            builder = builder.get("ty", slot!(0));
         }
         if T::NAME == "KeyRestTypeArg" {
             builder = builder.get("key_ty", slot!(1));

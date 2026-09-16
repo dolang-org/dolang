@@ -872,12 +872,20 @@ def normalize_manifest records strip
 
   [normalized, outputs]
 
-def archive_record :raw :parts :kind :size :mode :mtime
-  record :raw :parts :kind :size :mode :mtime
-    link: nil
-    output_parts: nil
-    output: nil
-    resolved_link: nil
+# One archive entry. Normalizing the manifest fills in where it lands, and the
+# entry is shared with the output map and a TAR unpacker's lookup by raw path,
+# so it is updated in place.
+class ArchiveEntry
+  pub field raw parts kind size mode mtime = nil
+  pub field link output_parts output resolved_link = nil
+
+  def (init) self :raw :parts :kind :size :mode :mtime
+    self.raw = raw
+    self.parts = parts
+    self.kind = kind
+    self.size = size
+    self.mode = mode
+    self.mtime = mtime
 
 def output_path root item
   (root / item.output)
@@ -950,7 +958,7 @@ class TarUnpack
         let raw = (str entry.path)
         if (self.#by_raw.contains raw)
           throw std.ValueError "duplicate archive entry: $raw"
-        let item = archive_record :raw :kind
+        let item = ArchiveEntry :raw :kind
           parts: $safe_components(entry.path, "archive path")
           size: $entry.size
           mode: $entry.mode
@@ -1003,7 +1011,7 @@ class ZipUnpack
         let kind = entry.type
         if !(kind == :FILE: || kind == :DIR: || kind == :SYMLINK:)
           throw std.ValueError "unsupported ZIP entry type: $raw"
-        let item = archive_record :kind :mode
+        let item = ArchiveEntry :kind :mode
           raw: $raw
           parts: $safe_components(raw, "archive path")
           size: $entry.size

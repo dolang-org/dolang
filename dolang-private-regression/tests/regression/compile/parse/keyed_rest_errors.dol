@@ -1,23 +1,11 @@
-let x @Array[...Str: Int] = nil
-# error: a keyed rest item is only valid in a schema
-#   --> keyed_rest_errors.dol:LL:LL
-#    |
-# LL | let x @Array[...Str: Int] = nil
-#    |                 ^^^
 let y @((...Str: Int) -> Int) = nil
-# error: a keyed rest item is only valid in a schema
+# error: a keyed rest item is not valid in function parameters
 #   --> keyed_rest_errors.dol:LL:LL
 #    |
 # LL | let y @((...Str: Int) -> Int) = nil
 #    |             ^^^
-let z @Array[...] = nil
-# error: an open rest item is only valid in a schema
-#   --> keyed_rest_errors.dol:LL:LL
-#    |
-# LL | let z @Array[...] = nil
-#    |                 ^
 let w @((...) -> Int) = nil
-# error: an open rest item is only valid in a schema
+# error: an open rest item is not valid in function parameters
 #   --> keyed_rest_errors.dol:LL:LL
 #    |
 # LL | let w @((...) -> Int) = nil

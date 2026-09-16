@@ -58,7 +58,7 @@
 
 {% for alias in aliases %}
 {% set base_id = alias._identifier %}
-{{ ("<code>" ~ alias.declaration_name ~ " =</code>" ~ alias.annotation) | heading(heading_level + 1, role="class", id=base_id, toc_label=alias.declaration_name) }}
+{{ ("<code>" ~ (alias.declaration_name | e) ~ " =</code>" ~ alias.annotation) | heading(heading_level + 1, role="class", id=base_id, toc_label=alias.declaration_name) }}
 {% if alias.doc %}
 {{ alias.doc | convert_markdown(heading_level + 1, base_id) }}
 {% endif %}

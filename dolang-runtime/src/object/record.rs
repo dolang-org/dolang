@@ -95,7 +95,7 @@ impl<'v> AsMut<Inner<'v>> for Record<'v> {
 
 unsafe impl<'v> Collect for Record<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
+    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -414,18 +414,12 @@ impl<'v> Protocol<'v> for Record<'v> {
     }
 
     fn op_assign<'a, 's>(
-        this: Recv<'v, 'a, Self>,
+        _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        key: Slot<'v, 'a>,
-        value: Slot<'v, 'a>,
+        _key: Slot<'v, 'a>,
+        _value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if !key.is_int(strand) && key.as_sym(strand).is_none() {
-            return Err(Error::type_error(
-                strand,
-                "records only support symbol and integer keys",
-            ));
-        }
-        kv::Inner::op_assign(this, strand, key, value)
+        Err(Error::immutable(strand))
     }
 
     fn op_get<'a, 's>(
@@ -453,16 +447,12 @@ impl<'v> Protocol<'v> for Record<'v> {
     }
 
     fn op_set<'a, 's>(
-        this: Recv<'v, 'a, Self>,
+        _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-        field: Sym<'v, 'a>,
-        mut value: Slot<'v, 'a>,
+        _field: Sym<'v, 'a>,
+        _value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let key = Value::from_object(strand.sym_obj(field));
-        let hv = kv::hash(strand, &key).unwrap();
-        let mut borrow = this.borrow_mut(strand)?;
-        borrow.0.insert(strand, key, value.take(), hv, true);
-        Ok(())
+        Err(Error::immutable(strand))
     }
 
     async fn op_iter<'a, 's>(
@@ -598,12 +588,10 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::LT_METHOD),
                 Method(sym::HASH_METHOD),
                 Method(sym::INDEX_METHOD),
-                Method(sym::ASSIGN_METHOD),
                 Method(sym::ITER_METHOD),
                 Method(sym::UNPACK_METHOD),
                 Method(sym::SPREAD_METHOD),
                 Method(sym::GET_METHOD),
-                Method(sym::SET_METHOD),
             ],
         })
     }
@@ -633,16 +621,6 @@ impl<'v> Protocol<'v> for Class {
                 Output::set(strand, out, input);
                 Ok(())
             }
-            sym::CLEAR => {
-                let ([record], []) = unpack!(strand, args, 1, 0)?;
-                let record = Self::recv(strand, &record)?;
-                kv::Inner::mcall_clear(record, strand)
-            }
-            sym::INSERT => {
-                let ([record, key, value], []) = unpack!(strand, args, 3, 0)?;
-                let record = Self::recv(strand, &record)?;
-                kv::Inner::mcall_insert(record, strand, key, value)
-            }
             sym::GET => {
                 let default = Sym::well_known(sym::DEFAULT);
                 let else_key = Sym::well_known(sym::ELSE);
@@ -650,19 +628,6 @@ impl<'v> Protocol<'v> for Class {
                     unpack!(strand, args, 2, 1, default = None, else_key = None)?;
                 let record = Self::recv(strand, &record)?;
                 kv::Inner::mcall_get(record, strand, key, subindex, default, or_else, out).await
-            }
-            sym::POP => {
-                let default = Sym::well_known(sym::DEFAULT);
-                let else_key = Sym::well_known(sym::ELSE);
-                let ([record, key], [subindex, default, or_else]) =
-                    unpack!(strand, args, 2, 1, default = None, else_key = None)?;
-                let record = Self::recv(strand, &record)?;
-                kv::Inner::mcall_pop(record, strand, key, subindex, default, or_else, out).await
-            }
-            sym::DELETE => {
-                let ([record, key], _) = unpack!(strand, args, 2, 0)?;
-                let record = Self::recv(strand, &record)?;
-                kv::Inner::mcall_delete(record, strand, key, out)
             }
             sym::PAIRS => {
                 let _ = unpack!(strand, args, 0, 0)?;
@@ -753,11 +718,7 @@ impl<'v> Protocol<'v> for Class {
         match field.tag() {
             sym::INIT_METHOD
             | sym::LEN
-            | sym::CLEAR
-            | sym::INSERT
             | sym::GET
-            | sym::POP
-            | sym::DELETE
             | sym::PAIRS
             | sym::KEYS
             | sym::VALUES
@@ -770,12 +731,10 @@ impl<'v> Protocol<'v> for Class {
             | sym::LT_METHOD
             | sym::HASH_METHOD
             | sym::INDEX_METHOD
-            | sym::ASSIGN_METHOD
             | sym::ITER_METHOD
             | sym::UNPACK_METHOD
             | sym::SPREAD_METHOD
-            | sym::GET_METHOD
-            | sym::SET_METHOD => {
+            | sym::GET_METHOD => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }

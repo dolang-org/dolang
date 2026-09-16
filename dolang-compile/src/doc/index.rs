@@ -407,11 +407,17 @@ impl Index<'_> {
     }
 
     /// Index the binders of a function, method or class.
-    fn binders(&mut self, parent: Option<Id>, binders: Option<&mut Binders>) {
+    fn binders(&mut self, scope: &Scope<'_>, parent: Option<Id>, binders: Option<&mut Binders>) {
         let (Some(parent), Some(binders)) = (parent, binders) else {
             return;
         };
         for binder in &mut binders.binders {
+            if let Some(bound) = &mut binder.bound {
+                self.ty(scope, &mut bound.ty);
+            }
+            if let Some(default) = &mut binder.default {
+                self.ty(scope, &mut default.ty);
+            }
             let (kind, sigil) = match binder.kind {
                 BinderKind::Pos => (crate::BinderKind::Pos, None),
                 BinderKind::Key { colon_span } => (crate::BinderKind::Key, Some(colon_span)),
@@ -504,7 +510,8 @@ impl Index<'_> {
                 );
                 alias.node = Some(id);
                 self.type_decls.insert(name.start, id);
-                self.binders(Some(id), alias.binders.as_deref_mut());
+                self.binders(scope, Some(id), alias.binders.as_deref_mut());
+                self.ty(scope, &mut alias.ty);
                 self.type_node(id, &alias.ty);
             }
             _ => {}
@@ -759,7 +766,7 @@ impl Index<'_> {
                 if let Some(id) = id {
                     self.decorators(id, &mut def.decorators);
                 }
-                self.binders(id, def.binders.as_deref_mut());
+                self.binders(scope, id, def.binders.as_deref_mut());
                 self.function(scope, &mut def.func, id, true, false);
             }
             Stmt::Class(class) => self.class(scope, class),
@@ -832,12 +839,20 @@ impl Index<'_> {
         if let Some(id) = id {
             self.decorators(id, &mut class.decorators);
         }
-        self.binders(id, class.binders.as_deref_mut());
+        self.binders(scope, id, class.binders.as_deref_mut());
         for super_ref in &mut class.super_refs {
             self.reference(scope, &mut super_ref.ident);
             for arg in &mut super_ref.args {
-                if let Some(ty) = arg.ty_mut() {
-                    self.ty(scope, ty);
+                match &mut arg.kind {
+                    TypeArgKind::KeyRest { key_ty, ty, .. } => {
+                        self.ty(scope, key_ty);
+                        self.ty(scope, ty);
+                    }
+                    _ => {
+                        if let Some(ty) = arg.ty_mut() {
+                            self.ty(scope, ty);
+                        }
+                    }
                 }
             }
             if let Some(id) = id {
@@ -877,7 +892,7 @@ impl Index<'_> {
                         self.expr(scope, &mut decorator.expr);
                     }
                     self.decorators(id, &mut method.decorators);
-                    self.binders(Some(id), method.binders.as_deref_mut());
+                    self.binders(scope, Some(id), method.binders.as_deref_mut());
                     self.function(scope, &mut method.func, Some(id), true, true);
                 }
                 ClassMember::Field(field) => {
