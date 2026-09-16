@@ -6,7 +6,9 @@ use crate::{
     gc::{Collect, arena::Visit},
     object::{
         BoundMethod,
-        protocol::{Inspect, Member, Protocol, Recv, dispatch_native_method, members},
+        protocol::{
+            Inspect, Member, Protocol, Recv, instance_mcall_fallback, members, type_mcall_fallback,
+        },
     },
     strand::Strand,
     sym::{self, Sym},
@@ -169,7 +171,7 @@ async fn fallback_mcall<'v, 'a, 's>(
         _ => {
             let mut args = args;
             args.prepend_self(Value::from_input(strand.vm(), rcvr));
-            dispatch_native_method(strand, &strand.singletons().num, method, args, out).await
+            type_mcall_fallback(strand, &strand.singletons().num, method, args, out).await
         }
     }
 }
@@ -203,7 +205,10 @@ pub(crate) async fn int_mcall<'v, 'a, 's>(
         sym::MIN | sym::MAX | sym::CLAMP => {
             default_mcall(strand, &receiver, method, args, out).await
         }
-        _ => Err(Error::field(strand, method)),
+        _ => match instance_mcall_fallback(strand, &receiver, method, args, out).await {
+            Some(result) => result,
+            None => Err(Error::field(strand, method)),
+        },
     }
 }
 
@@ -238,7 +243,10 @@ pub(crate) async fn float_mcall<'v, 'a, 's>(
     } else if matches!(method.tag(), sym::MIN | sym::MAX | sym::CLAMP) {
         default_mcall(strand, &receiver, method, args, out).await
     } else {
-        Err(Error::field(strand, method))
+        match instance_mcall_fallback(strand, &receiver, method, args, out).await {
+            Some(result) => result,
+            None => Err(Error::field(strand, method)),
+        }
     }
 }
 

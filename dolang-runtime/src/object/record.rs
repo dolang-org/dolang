@@ -26,7 +26,7 @@ use super::{
     BoundMethod, iter,
     kv::{self, Inner, UnpackState},
     protocol::{
-        GcObj, GcObjBorrow, Inspect, Protocol, Recv, Spread, SpreadContext, dispatch_native_method,
+        GcObj, GcObjBorrow, Inspect, Protocol, Recv, Spread, SpreadContext, type_mcall_fallback,
     },
 };
 
@@ -704,7 +704,7 @@ impl<'v> Protocol<'v> for Class {
             }
             _ => {
                 let vm = strand.vm();
-                dispatch_native_method(strand, &vm.singletons().record, method, args, out).await
+                type_mcall_fallback(strand, &vm.singletons().record, method, args, out).await
             }
         }
     }

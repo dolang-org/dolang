@@ -8,7 +8,7 @@ use crate::{
     gc::{Collect, arena::Visit},
     object::{
         BoundMethod,
-        protocol::{Inspect, Protocol, Recv, dispatch_native_method, members},
+        protocol::{Inspect, Protocol, Recv, members, type_mcall_fallback},
     },
     strand::Strand,
     sym::{self, Sym},
@@ -772,7 +772,7 @@ impl<'v> Protocol<'v> for Int {
                 self_val.op_fill(strand, &strand.singletons().int, native)?;
                 Ok(())
             }
-            _ => dispatch_native_method(strand, &strand.singletons().int, method, args, out).await,
+            _ => type_mcall_fallback(strand, &strand.singletons().int, method, args, out).await,
         }
     }
 }

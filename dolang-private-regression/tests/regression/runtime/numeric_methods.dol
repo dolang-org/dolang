@@ -15,6 +15,17 @@ assert_eq $Int.MIN -170141183460469231731687303715884105728
 assert_eq $Int.MAX 170141183460469231731687303715884105727
 assert_throws $OverflowError do Int.MIN.abs()
 
+# Qualified special methods use the same receiver operations through instances and types.
+assert_eq (5.(add) 6) 11
+assert_eq (Int.(add) 5 6) 11
+assert_eq (1000000000000000000000.(add) 6) 1000000000000000000006
+assert_eq (1.5.(add) 2.5) 4.0
+assert_eq (Float.(add) 1.5 2.5) 4.0
+assert_eq (true.(bool)()) true
+assert_eq ("abc".(str)()) "abc"
+assert_eq ([1, 2].(str)()) (str [1, 2])
+assert_throws $FieldError do 5.no_such_method()
+
 assert_eq $(-5).abs() 5
 assert_eq $(-5).signum() -1
 assert_eq $0.signum() 0

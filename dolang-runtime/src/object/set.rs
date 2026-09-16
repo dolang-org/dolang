@@ -20,7 +20,10 @@ use crate::{
 
 use super::{
     BoundMethod, iter, kv,
-    protocol::{GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, dispatch_native_method},
+    protocol::{
+        GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback,
+        is_special_mcall, type_mcall_fallback,
+    },
     tuple,
 };
 
@@ -686,6 +689,11 @@ impl<'v> Protocol<'v> for Set<'v> {
                 strand,
                 "set.len is a field, not a method",
             )),
+            _ if is_special_mcall(method.tag()) => {
+                instance_mcall_fallback(strand, &this, method, args, out)
+                    .await
+                    .expect("supported special method")
+            }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -878,7 +886,7 @@ impl<'v> Protocol<'v> for Type {
                 self_val.op_fill(strand, &strand.singletons().set, native)?;
                 Ok(())
             }
-            _ => dispatch_native_method(strand, &strand.singletons().set, method, args, out).await,
+            _ => type_mcall_fallback(strand, &strand.singletons().set, method, args, out).await,
         }
     }
 }

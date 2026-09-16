@@ -9,6 +9,7 @@ use std::{
 use crate::{
     arg::Args,
     error::{Error, Result},
+    object::protocol::{instance_mcall_fallback, is_special_mcall},
     strand::Strand,
     sym::Sym,
 };
@@ -102,6 +103,12 @@ impl Prim {
             Prim::F64(value) => {
                 let receiver = Value::from_prim(strand, self);
                 crate::object::num::float_mcall(strand, &receiver, value, method, args, out).await
+            }
+            Prim::Bool(_) if is_special_mcall(method.tag()) => {
+                let receiver = Value::from_prim(strand, self);
+                instance_mcall_fallback(strand, &receiver, method, args, out)
+                    .await
+                    .expect("supported special method")
             }
             _ => Err(Error::type_error(strand, "method call not supported")),
         }

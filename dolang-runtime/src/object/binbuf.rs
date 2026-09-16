@@ -19,7 +19,10 @@ use crate::{
 
 use super::{
     BoundMethod, index, iter,
-    protocol::{GcObj, Inspect, Protocol, Recv, dispatch_native_method},
+    protocol::{
+        GcObj, Inspect, Protocol, Recv, instance_mcall_fallback, is_special_mcall,
+        type_mcall_fallback,
+    },
     range,
 };
 
@@ -489,6 +492,11 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(strand, "len is a field, not a method")),
+            _ if is_special_mcall(method.tag()) => {
+                instance_mcall_fallback(strand, &this, method, args, out)
+                    .await
+                    .expect("supported special method")
+            }
             _ => iter::sink_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -660,9 +668,7 @@ impl<'v> Protocol<'v> for Class {
                 self_val.op_fill(strand, &strand.singletons().binbuf, native)?;
                 Ok(())
             }
-            _ => {
-                dispatch_native_method(strand, &strand.singletons().binbuf, method, args, out).await
-            }
+            _ => type_mcall_fallback(strand, &strand.singletons().binbuf, method, args, out).await,
         }
     }
 

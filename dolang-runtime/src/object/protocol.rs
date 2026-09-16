@@ -2116,12 +2116,12 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
 ///
 /// Protocol-level special method symbols are shimmed to the corresponding `Value`-level
 /// operation.  All other symbols are forwarded to `self_val.op_mcall(strand, method, trailing, out)`.
-pub(crate) async fn dispatch_native_method<'v, 's>(
+pub(crate) async fn type_mcall_fallback<'v, 's>(
     strand: &mut Strand<'v, 's>,
     ty: &Value<'v>,
     method: Sym<'v, '_>,
     args: Args<'v, '_>,
-    mut out: Slot<'v, '_>,
+    out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     // Handle the special case of a `(get)` or `(set)` intended for the class object itself
     // rather than qualified method invocation on an instance
@@ -2161,22 +2161,80 @@ pub(crate) async fn dispatch_native_method<'v, 's>(
             })?
         };
 
+    if is_special_mcall(method.tag()) {
+        special_mcall(strand, receiver, delegator, method, trailing, out).await
+    } else {
+        match delegator {
+            Some(delegator) => {
+                Delegated::new(receiver, delegator)
+                    .op_mcall(strand, method, trailing, out)
+                    .await
+            }
+            None => receiver.op_mcall(strand, method, trailing, out).await,
+        }
+    }
+}
+
+/// Handle the special methods supported by qualified native method calls.
+/// All other symbols belong to the caller's ordinary method-call fallback.
+pub(crate) async fn instance_mcall_fallback<'v, 'a, 's>(
+    strand: &mut Strand<'v, 's>,
+    receiver: impl Input<'v>,
+    method: Sym<'v, 'a>,
+    args: Args<'v, 'a>,
+    out: Slot<'v, 'a>,
+) -> Option<Result<'v, 's, ()>> {
+    if is_special_mcall(method.tag()) {
+        let receiver = Value::from_input(strand.vm(), receiver);
+        Some(special_mcall(strand, &receiver, None, method, args, out).await)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn is_special_mcall(tag: sym::Tag) -> bool {
+    matches!(
+        tag,
+        sym::STR_METHOD
+            | sym::DBG_METHOD
+            | sym::FMT_METHOD
+            | sym::BOOL_METHOD
+            | sym::HASH_METHOD
+            | sym::EQ_METHOD
+            | sym::LT_METHOD
+            | sym::NEG_METHOD
+            | sym::BNOT_METHOD
+            | sym::ADD_METHOD
+            | sym::SUB_METHOD
+            | sym::RSUB_METHOD
+            | sym::MUL_METHOD
+            | sym::DIV_METHOD
+            | sym::RDIV_METHOD
+            | sym::EDIV_METHOD
+            | sym::REDIV_METHOD
+            | sym::MOD_METHOD
+            | sym::RMOD_METHOD
+            | sym::BAND_METHOD
+            | sym::BOR_METHOD
+            | sym::BXOR_METHOD
+            | sym::SHL_METHOD
+            | sym::SHR_METHOD
+    )
+}
+
+async fn special_mcall<'v, 'a, 's>(
+    strand: &mut Strand<'v, 's>,
+    receiver: &Value<'v>,
+    delegator: Option<&Value<'v>>,
+    method: Sym<'v, 'a>,
+    args: Args<'v, 'a>,
+    mut out: Slot<'v, 'a>,
+) -> Result<'v, 's, ()> {
     macro_rules! dispatch {
         ($op:ident $(, $arg:expr)*) => {
             match delegator {
                 Some(delegator) => Delegated::new(receiver, delegator).$op(strand $(, $arg)*),
                 None => receiver.$op(strand $(, $arg)*),
-            }
-        };
-    }
-
-    macro_rules! dispatch_async {
-        ($op:ident $(, $arg:expr)*) => {
-            match delegator {
-                Some(delegator) => {
-                    Delegated::new(receiver, delegator).$op(strand $(, $arg)*).await
-                }
-                None => receiver.$op(strand $(, $arg)*).await,
             }
         };
     }
@@ -2193,7 +2251,7 @@ pub(crate) async fn dispatch_native_method<'v, 's>(
             format.finish(strand, out);
         }
         sym::FMT_METHOD => {
-            let ([spec], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([spec], []) = unpack!(strand, args, 1, 0)?;
             let spec = crate::stdlib::fmt::spec_of(strand, &spec)?;
             let mut format = crate::value::StrEmbryo::new();
             dispatch!(op_fmt, &spec, &mut format)?;
@@ -2209,7 +2267,7 @@ pub(crate) async fn dispatch_native_method<'v, 's>(
             Output::set(strand, out, hasher.finish());
         }
         sym::EQ_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             let value = match delegator {
                 Some(delegator) => Delegated::new(receiver, delegator).op_eq(strand, &other)?,
                 None => receiver.op_eq(strand, &other),
@@ -2217,7 +2275,7 @@ pub(crate) async fn dispatch_native_method<'v, 's>(
             out.store(value);
         }
         sym::LT_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_lt, &other)?);
         }
         sym::NEG_METHOD => {
@@ -2227,68 +2285,66 @@ pub(crate) async fn dispatch_native_method<'v, 's>(
             out.store(dispatch!(op_bnot)?);
         }
         sym::ADD_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_add, &other)?);
         }
         sym::SUB_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_sub, &other)?);
         }
         sym::RSUB_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_rsub, &other)?);
         }
         sym::MUL_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_mul, &other)?);
         }
         sym::DIV_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_div, &other)?);
         }
         sym::RDIV_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_rdiv, &other)?);
         }
         sym::EDIV_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_ediv, &other)?);
         }
         sym::REDIV_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_rediv, &other)?);
         }
         sym::MOD_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_mod, &other)?);
         }
         sym::RMOD_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_rmod, &other)?);
         }
         sym::BAND_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_band, &other)?);
         }
         sym::BOR_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_bor, &other)?);
         }
         sym::BXOR_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_bxor, &other)?);
         }
         sym::SHL_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_shl, &other)?);
         }
         sym::SHR_METHOD => {
-            let ([other], []) = unpack!(strand, trailing, 1, 0)?;
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_shr, &other)?);
         }
-        _ => {
-            dispatch_async!(op_mcall, method, trailing, out)?;
-        }
+        _ => unreachable!("special_mcall requires a supported symbol"),
     }
     Ok(())
 }

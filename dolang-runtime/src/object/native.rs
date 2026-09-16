@@ -33,7 +33,10 @@ use crate::{
 use super::{
     BoundMethod,
     field_iter::FieldIter,
-    protocol::{self, Inspect, Member, MemberKind, Protocol, TypeHandle, dispatch_native_method},
+    protocol::{
+        self, Inspect, Member, MemberKind, Protocol, TypeHandle, instance_mcall_fallback,
+        is_special_mcall, type_mcall_fallback,
+    },
 };
 use dolang_bytecode::Variadic;
 use dolang_util::alias;
@@ -1720,6 +1723,11 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
                         .as_sym(strand)
                         .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
                     Self::op_set(this, strand, field, value)
+                }
+                _ if is_special_mcall(method.tag()) => {
+                    instance_mcall_fallback(strand, &this, method, args, out)
+                        .await
+                        .expect("supported special method")
                 }
                 _ => T::method(Instance::from_recv(&this), strand, method, args, out).await,
             }
@@ -3609,7 +3617,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
             )
             .await
         } else {
-            // Fall through to dispatch_native_method for protocol/special
+            // Fall through to type_mcall_fallback for protocol/special
             // methods (str, dbg, bool, hash, arithmetic, comparison, etc.).
             // It will error for unsupported operations.
             if matches!(
@@ -3638,7 +3646,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                     | sym::BXOR_METHOD
             ) {
                 let singleton = this.singleton(strand.vm());
-                dispatch_native_method(strand, singleton, method, args, out).await
+                type_mcall_fallback(strand, singleton, method, args, out).await
             } else {
                 T::type_method(this.ty(strand.vm()), strand, method, args, out).await
             }
@@ -5024,6 +5032,24 @@ mod tests {
                             .unwrap();
                         })
                         .await;
+
+                    // Unregistered special methods use the receiver protocol.
+                    strand
+                        .with_slots_dynamic(0, async |strand, mut arg_slots| {
+                            let sig: [Option<Sym>; 0] = [];
+                            let args = args_from_slots(&mut arg_slots, &sig, 0);
+                            ObjectWrap::<SlotFixture>::op_mcall(
+                                recv.clone(),
+                                strand,
+                                Sym::well_known(sym::BOOL_METHOD),
+                                args,
+                                Slot::reborrow(&mut out),
+                            )
+                            .await
+                            .unwrap();
+                        })
+                        .await;
+                    assert!(out.to_bool(strand));
 
                     // Falls through to `T::method`'s default field error.
                     strand

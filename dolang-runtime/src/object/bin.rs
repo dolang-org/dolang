@@ -21,7 +21,9 @@ use crate::{
 
 use super::{
     BoundMethod, iter,
-    protocol::{Inspect, Protocol, Recv, dispatch_native_method},
+    protocol::{
+        Inspect, Protocol, Recv, instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
+    },
     range,
 };
 
@@ -462,6 +464,11 @@ impl<'v> Protocol<'v> for [u8] {
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(strand, "len is a field, not a method")),
+            _ if is_special_mcall(method.tag()) => {
+                instance_mcall_fallback(strand, &this, method, args, out)
+                    .await
+                    .expect("supported special method")
+            }
             _ => Err(Error::field(strand, method)),
         }
     }
@@ -831,7 +838,7 @@ impl<'v> Protocol<'v> for Class {
                 }
                 Ok(())
             }
-            _ => dispatch_native_method(strand, &strand.singletons().bin, method, args, out).await,
+            _ => type_mcall_fallback(strand, &strand.singletons().bin, method, args, out).await,
         }
     }
 
