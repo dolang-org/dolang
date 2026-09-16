@@ -144,13 +144,13 @@ pub(crate) enum BinderKind {
 
 impl TypeExpr {
     /// Visit each name within the type: its head, what the head names besides a variable,
-    /// and whether the name is dotted.
-    pub(crate) fn each_name<F: FnMut(&mut Ident, &mut Option<TypeDecl>, bool)>(
+    /// and the fields dotted onto the head.
+    pub(crate) fn each_name<F: FnMut(&mut Ident, &mut Option<TypeDecl>, &[Span])>(
         &mut self,
         f: &mut F,
     ) {
         match self {
-            TypeExpr::Name { head, fields, decl } => f(head, decl, !fields.is_empty()),
+            TypeExpr::Name { head, fields, decl } => f(head, decl, fields),
             TypeExpr::Const { .. } | TypeExpr::Error => {}
             TypeExpr::App { base, args, .. } => {
                 base.each_name(f);
@@ -180,7 +180,7 @@ impl TypeExpr {
 }
 
 impl TypeArg {
-    fn each_name<F: FnMut(&mut Ident, &mut Option<TypeDecl>, bool)>(&mut self, f: &mut F) {
+    fn each_name<F: FnMut(&mut Ident, &mut Option<TypeDecl>, &[Span])>(&mut self, f: &mut F) {
         if let TypeArgKind::KeyRest { key_ty, .. } = &mut self.kind {
             key_ty.each_name(f);
         }

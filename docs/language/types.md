@@ -130,6 +130,19 @@ import @geometry
 let point @ geometry.Point = nil
 ```
 
+Modules are not nested, so a module holds only the types declared in it, and a
+dotted type name reaches no further than the module it imports. Modules sharing
+a leading name are separate imports, written one per line under `import`:
+
+```
+import
+  @geometry.plane
+  @geometry.solid
+
+let area @ geometry.plane.Area = nil
+let volume @ geometry.solid.Volume = nil
+```
+
 ## Overloads
 
 `def @` declares a signature for the function of the same name without giving it

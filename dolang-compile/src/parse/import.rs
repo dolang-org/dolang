@@ -158,6 +158,26 @@ impl Parser<'_> {
         }
     }
 
+    /// Parse the rest of `@module.name`, after the `@`.
+    fn parse_type_import_module(
+        &mut self,
+        scope: &mut Scope,
+        at_span: Span,
+    ) -> Result<ImportElement> {
+        use self::Ident;
+
+        let (module, _) = self.parse_module_name(scope, false)?;
+        Ok(ImportElement::ModuleAsIs {
+            module,
+            bind: Ident::new(self.module_name_first(module)),
+            insert: false,
+            type_only: Some(TypeOnly {
+                at_span,
+                node: None,
+            }),
+        })
+    }
+
     fn parse_import_elem_vert(&mut self, scope: &mut Scope) -> Result<ImportElement> {
         use self::{Ident, Op};
         use TokenInfo::*;
@@ -167,6 +187,10 @@ impl Parser<'_> {
                 // FIXME: this needs to go back into AST
                 let _minus_span = self.advance();
                 self.expect(scope, &[ExpectKind::ArgSep])?;
+                if let Some(token!(At)) = decay_ident!(self.peek()?) {
+                    let at_span = self.advance();
+                    return self.parse_type_import_module(scope, at_span);
+                }
                 let (span, _) = self.parse_module_name(scope, false)?;
                 Ok(ImportElement::ModuleAsIs {
                     module: span,
@@ -174,6 +198,10 @@ impl Parser<'_> {
                     insert: false,
                     type_only: None,
                 })
+            }
+            Some(token!(At)) => {
+                let at_span = self.advance();
+                self.parse_type_import_module(scope, at_span)
             }
             Some(token!(Ident | Key)) => {
                 let (module_span, is_key) = self.parse_module_name(scope, true)?;
@@ -278,16 +306,7 @@ impl Parser<'_> {
             elems.push(match decay_ident!(self.peek()?) {
                 Some(token!(At)) => {
                     let at_span = self.advance();
-                    let (mod_span, _) = self.parse_module_name(scope, false)?;
-                    ImportElement::ModuleAsIs {
-                        module: mod_span,
-                        bind: Ident::new(self.module_name_first(mod_span)),
-                        insert: false,
-                        type_only: Some(TypeOnly {
-                            at_span,
-                            node: None,
-                        }),
-                    }
+                    self.parse_type_import_module(scope, at_span)?
                 }
                 Some(token!(Ident | Key)) => {
                     let (mod_span, is_key) = self.parse_module_name(scope, true)?;

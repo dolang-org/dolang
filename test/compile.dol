@@ -758,3 +758,56 @@ def type_followups_are_exposed()
   assert_eq $schema.args[1].key_ty.target $binder[0]
   # Type-only declarations have no runtime imports or bindings to emit.
   unit.emit()
+
+#[test]
+def sibling_module_type_imports_resolve_separately()
+  # Modules are not nested, so sibling imports bind the same head and only the
+  # whole path says which module a dotted name comes from.
+  let source = r|-
+    import
+      @not_loaded.one
+      - @not_loaded.two
+    pub let @First = not_loaded.one.Thing
+    pub let @Second = not_loaded.two.Thing
+  let unit = compile.compile "siblings.dol" $source document: true
+  assert_no_errors $unit
+  # Both imports are used, so neither is reported unused
+  let diagnostics = [...unit.diagnostics()]
+  assert_eq $diagnostics.len 0
+  let nodes = [...unit.nodes()]
+  let imports = [...nodes.filter(do |pair| type(pair[1], compile.ImportModule))]
+  assert_eq $imports.len 2
+  for pair = imports
+    assert $pair[1].type_only
+  let first = (named_node source nodes compile.Alias "First")
+  let second = (named_node source nodes compile.Alias "Second")
+  assert_eq (types_of(nodes, first[0])[0][1].expr.target) $imports[0][0]
+  assert_eq (types_of(nodes, second[0])[0][1].expr.target) $imports[1][0]
+
+#[test]
+def unused_module_type_import_names_its_whole_path()
+  let source = r|-
+    import @not_loaded.one
+    import @not_loaded.two
+    pub let @First = not_loaded.one.Thing
+  let unit = compile.compile "unused_sibling.dol" $source document: true
+  assert_no_errors $unit
+  let diagnostics = [...unit.diagnostics()]
+  assert_eq $diagnostics.len 1
+  assert_eq (span_text(source, diagnostics[0].span)) "not_loaded.two"
+
+#[test]
+def a_module_import_names_types_in_that_module_alone()
+  # Importing the head of a path does not reach the modules under it, so the
+  # whole module a type names must be imported.
+  let source = r|-
+    import @not_loaded
+    import loaded
+    pub let @Near = not_loaded.Thing
+    pub let @Far = not_loaded.deeper.Thing
+    pub let @Runtime = loaded.nested.Thing
+  let unit = compile.compile "reach.dol" $source document: true
+  assert_no_errors $unit
+  let unbound = [...unit.diagnostics().filter(do |d| (d.message == "unbound type name"))]
+  # The module is what is unbound, so each is reported over its whole path
+  assert_eq [...unbound.map(do |d| span_text(source, d.span))] ["not_loaded.deeper", "loaded.nested"]
