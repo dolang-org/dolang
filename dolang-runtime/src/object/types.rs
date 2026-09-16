@@ -12,7 +12,7 @@ use crate::{
         BoundMethod,
         arg::ArgPack,
         class,
-        protocol::{GcObj, Inspect, Protocol, Recv, dispatch_native_method, members},
+        protocol::{GcObj, Inspect, Protocol, Recv, members, type_mcall_fallback},
     },
     strand::Strand,
     sym::{self, Sym},
@@ -299,7 +299,7 @@ impl<'v> Protocol<'v> for Bool {
             }
             _ => {
                 let vm = strand.vm();
-                dispatch_native_method(strand, &vm.singletons().bool, method, args, out).await
+                type_mcall_fallback(strand, &vm.singletons().bool, method, args, out).await
             }
         }
     }

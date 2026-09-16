@@ -26,7 +26,10 @@ use crate::{
 
 use super::{
     BoundMethod, index, iter,
-    protocol::{Inspect, Protocol, Recv, Spread, SpreadContext, dispatch_native_method},
+    protocol::{
+        Inspect, Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback, is_special_mcall,
+        type_mcall_fallback,
+    },
     range,
 };
 
@@ -440,6 +443,11 @@ impl<'v> Protocol<'v> for str {
                 strand,
                 "Str.len is a field, not a method",
             )),
+            _ if is_special_mcall(method.tag()) => {
+                instance_mcall_fallback(strand, &this, method, args, out)
+                    .await
+                    .expect("supported special method")
+            }
             _ => Err(Error::field(strand, method)),
         }
     }
@@ -1208,7 +1216,7 @@ impl<'v> Protocol<'v> for Type {
             }
             _ => {
                 let vm = strand.vm();
-                dispatch_native_method(strand, &vm.singletons().str, method, args, out).await
+                type_mcall_fallback(strand, &vm.singletons().str, method, args, out).await
             }
         }
     }
