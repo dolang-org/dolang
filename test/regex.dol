@@ -1,10 +1,12 @@
 import regex
 import regex:
   - Regex
+import std
 import std:
   - Iter
 import test:
   - assert_eq
+  - assert_throws
   - assert_type
   - test
 
@@ -113,12 +115,28 @@ def replace()
   assert_eq (re.replace "abc def" "X") "abc def"
 
   let date_re = Regex r"(\d{4})-(\d{2})-(\d{2})"
-  assert_eq (date_re.replace "date: 2024-03-15" r"$2/$3/$1") "date: 03/15/2024"
+  assert_eq (date_re.replace "date: 2024-03-15" t"$#2/$#3/$#1") "date: 03/15/2024"
 
   let named_re = Regex r"(?<first>\w+)\s+(?<last>\w+)"
-  assert_eq (named_re.replace "John Smith" r"${last}, ${first}") "Smith, John"
+  assert_eq (named_re.replace "John Smith" t"$#last, $#first") "Smith, John"
 
-  assert_eq (re.replace "price: 42" r"$$$0") r"price: $42"
+  assert_eq (date_re.replace "2024-03-15" r"$2/${month}/$$") r"$2/${month}/$$"
+  assert_eq (re.replace "price: 42" t"\$$#0") r"price: $42"
+
+  let separator = "/"
+  assert_eq (date_re.replace "2024-03-15" t"$#2$separator$#3") "03/15"
+  assert_eq (re.replace "42" t"[${#0:>5}]") "[   42]"
+
+  let inner = t"$#word"
+  let outer = t"<$inner>"
+  let word_re = Regex r"(?<word>\w+)"
+  assert_eq (word_re.replace "hello" outer) "<hello>"
+
+  let optional = Regex r"(a)?b"
+  assert_throws $std.MissingPosError do optional.replace "b" t"$#1"
+  assert_throws $std.MissingKeyError do optional.replace "ab" t"$#missing"
+  assert_eq (optional.replace "none" t"$#missing") "none"
+  assert_eq (optional.replace "ab" t"$#missing" limit: 0) "ab"
 
   let result = re.replace "abc 123 def 456" do |caps|
     let n = int (str caps[0])
