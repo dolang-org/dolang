@@ -384,8 +384,12 @@ _BINDS_FUNC, _BINDS_UNION, _BINDS_COMPACT = range(3)
 
 
 def _escape_type_text(text: str) -> str:
-    """Escape text for HTML that Markdown will still read."""
-    return _MARKDOWN_SPECIAL.sub(r"\\\1", html.escape(text, quote=False))
+    """Escape text for HTML that Markdown will still read.
+
+    Quotes are escaped too: a string constant can reach a heading, whose text
+    autorefs copies into the `title` attribute of links to it.
+    """
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", html.escape(text))
 
 
 def _render_type(ty: dict, scope: _TypeScope, context: int, plain: bool = False) -> str:
