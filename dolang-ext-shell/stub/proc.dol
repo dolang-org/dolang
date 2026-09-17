@@ -433,10 +433,6 @@ do -> Info
 
 # Opens a handle to a process.
 #
-# ## Returns
-#
-# [`Proc`](proc.Proc), or the result of `block` if one was given.
-#
 # ## Errors
 #
 # | Exception                                      | Condition                                |
@@ -447,24 +443,34 @@ do -> Info
 # ## Example
 #
 # ```
-# # Scoped: the handle is closed when the block finishes
-# let name = open $pid do |p|
-#   p.info().name
-#
-# # Manual: closing is the caller's business
 # let p = open $pid
 # try
 #   echo $p.info().name
 # finally
 #   p.close()
 # ```
-pub def open
+def @open
   # Information record, or a raw
   # PID.
   target @ (Info | Int)
-  # Block to run with the handle, which is closed when it returns.
-  block @ Func = nil
-do -> Value
+do -> Proc
+
+# Opens a handle to a process and runs a block with it. The handle is closed
+# when the block returns.
+#
+# ```
+# let name = open $pid do |p|
+#   p.info().name
+# ```
+def @open[R]
+  # Information record, or a raw
+  # PID.
+  target @ (Info | Int)
+  # Block to run with the handle.
+  block @ (Proc -> R)
+do -> R
+
+pub def open target ...block
   ...
 
 # Captures the output of a block as a string.
@@ -483,7 +489,7 @@ do -> Value
 # ```
 pub def sub
   # Block whose output to capture.
-  block @ Func
+  block @ (() -> Value)
   # Remove one trailing LF or CRLF. True by
   # default. This is a whole-capture strip, not a per-value one: it removes at
   # most one line ending, from the end of the finished string.
@@ -507,16 +513,16 @@ do -> Str
 # with_policy signal: :INT: grace: 2.5 do
 #   run worker
 # ```
-pub def with_policy
+pub def with_policy[R]
   # Block to run.
-  block @ Func
+  block @ (() -> R)
   # Unix signal name. `:TERM:` by default.
   :signal @ Sym = nil
   # Time before forced termination. Five seconds by default.
   :grace @ (Duration | Int | Float) = nil
   # Force termination after the grace period.
   :force @ Bool = nil
-do
+do -> R
   ...
 
 # Runs an external program, or creates a [`Program`](proc.Program) proxy.

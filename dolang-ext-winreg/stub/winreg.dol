@@ -47,6 +47,10 @@
 import security.windows:
   - @SecDesc
 
+# Registry value data in its natural Do representation. See
+# [`Value.value`](winreg.Value.value) for how each value kind maps to it.
+pub let @Data = (Str | Array[Str] | Int | Bin | nil)
+
 # Access rights for a registry key.
 #
 # A mask is built from symbols, and most APIs taking one also accept a bare
@@ -181,10 +185,6 @@ pub class Key
 
   # Creates a subkey, or opens it when it already exists.
   #
-  # ## Returns
-  #
-  # `Key` when no `func` is given, otherwise the result of calling `func`.
-  #
   # ## Example
   #
   # ```
@@ -192,7 +192,7 @@ pub class Key
   #   root.create "Software/MyApp" do |app|
   #     app.set "installed" true
   # ```
-  pub def create
+  def @create
     self
     # Path to the subkey, relative to this key.
     subpath @ Str
@@ -203,10 +203,26 @@ pub class Key
     # rights, as a mask, a symbol, or an iterable of symbols. Defaults to
     # `:READ:`.
     :access @ (AccessMask | Sym) = nil
-    # Called with the new `Key`, which is closed when it returns.
-    # Omit to receive the handle instead.
-    func @ Func = nil
-  do -> Value
+  do -> Key
+
+  # Creates or opens a subkey and calls `func` with it. The key is closed when
+  # `func` returns.
+  def @create[R]
+    self
+    # Path to the subkey, relative to this key.
+    subpath @ Str
+    # [Registry view](winreg.registry-views).
+    # Defaults to `:NATIVE:`.
+    :view @ Sym = nil
+    # Access
+    # rights, as a mask, a symbol, or an iterable of symbols. Defaults to
+    # `:READ:`.
+    :access @ (AccessMask | Sym) = nil
+    # Called with the new `Key`.
+    func @ (Key -> R)
+  do -> R
+
+  pub def create self subpath ...options
     ...
 
   # Deletes a subkey.
@@ -284,7 +300,7 @@ pub class Key
     self
     # Value name; `""` is the key's default value.
     name @ Str
-  do -> Value
+  do -> Data
     ...
 
   # Reads a value as a [`Value`](winreg.Value), or `nil` when it does not exist.
@@ -348,10 +364,6 @@ pub class Key
 
   # Opens a subkey.
   #
-  # ## Returns
-  #
-  # `Key` when no `func` is given, otherwise the result of calling `func`.
-  #
   # ## Errors
   #
   # | Exception                                                        | Condition                 |
@@ -366,7 +378,7 @@ pub class Key
   #   root.open "Environment" do |env|
   #     echo (env.get "TEMP")
   # ```
-  pub def open
+  def @open
     self
     # Path to the subkey, relative to this key.
     subpath @ Str
@@ -381,10 +393,30 @@ pub class Key
     # resolution](winreg.link-resolution): `:TARGET:` follows a link,
     # `:LINK:` opens the link key itself. Defaults to `:TARGET:`.
     :resolve @ Sym = nil
-    # Called with the `Key`, which is closed when it returns.
-    # Omit to receive the handle instead.
-    func @ Func = nil
-  do -> Value
+  do -> Key
+
+  # Opens a subkey and calls `func` with it. The key is closed when `func`
+  # returns.
+  def @open[R]
+    self
+    # Path to the subkey, relative to this key.
+    subpath @ Str
+    # [Registry view](winreg.registry-views).
+    # Defaults to `:NATIVE:`.
+    :view @ Sym = nil
+    # Access
+    # rights, as a mask, a symbol, or an iterable of symbols. Defaults to
+    # `:READ:`.
+    :access @ (AccessMask | Sym) = nil
+    # [Link
+    # resolution](winreg.link-resolution): `:TARGET:` follows a link,
+    # `:LINK:` opens the link key itself. Defaults to `:TARGET:`.
+    :resolve @ Sym = nil
+    # Called with the `Key`.
+    func @ (Key -> R)
+  do -> R
+
+  pub def open self subpath ...options
     ...
 
   # Reads a registry link without following it.
@@ -606,15 +638,10 @@ pub class Value
   #   echo "$(entry.name) ($(entry.kind)): $(entry.value)"
   # ```
   #[getter]
-  pub def value self
+  pub def value self -> Data
     ...
 
 # Opens a predefined registry root.
-#
-# ## Returns
-#
-# [`Key`](winreg.Key) when no `func` is given, otherwise the result of calling
-# `func`.
 #
 # ## Example
 #
@@ -625,7 +652,7 @@ pub class Value
 # let root = open :LOCAL_MACHINE: access: :READ_WRITE:
 # root.close()
 # ```
-pub def open
+def @open
   # [Registry root](winreg.registry-roots) to
   # open.
   root @ Sym
@@ -635,8 +662,23 @@ pub def open
   # Access rights,
   # as a mask, a symbol, or an iterable of symbols. Defaults to `:READ:`.
   :access @ (AccessMask | Sym) = nil
-  # Called with the [`Key`](winreg.Key), which is closed when it
-  # returns. Omit to receive the handle instead.
-  func @ Func = nil
-do -> Value
+do -> Key
+
+# Opens a registry root and calls `func` with it. The key is closed when
+# `func` returns.
+def @open[R]
+  # [Registry root](winreg.registry-roots) to
+  # open.
+  root @ Sym
+  # [Registry view](winreg.registry-views).
+  # Defaults to `:NATIVE:`.
+  :view @ Sym = nil
+  # Access rights,
+  # as a mask, a symbol, or an iterable of symbols. Defaults to `:READ:`.
+  :access @ (AccessMask | Sym) = nil
+  # Called with the [`Key`](winreg.Key).
+  func @ (Key -> R)
+do -> R
+
+pub def open root ...options
   ...

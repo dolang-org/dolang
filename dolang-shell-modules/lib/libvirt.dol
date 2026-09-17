@@ -2130,15 +2130,15 @@ pub class Domain
   # domain.with cd: /usr/src env: {MAKEOBJDIRPREFIX: "/tmp/obj"} do
   #   run make buildworld
   # ```
-  pub def with
+  pub def with[R]
     self
     # Block to run in the guest.
-    block @ Func
+    block @ (() -> R)
     # Initial guest working directory.
     :cd @ (Str | Path) = nil
     # Environment overrides for the block.
     :env @ Dict = {}
-  do -> Value
+  do -> R
     self.#impl.with $block :cd :env
 
 
@@ -3284,13 +3284,13 @@ do -> Domain
 #   do
 #     run uname -a
 # ```
-pub def with
+pub def with[R]
   # Block to run in the guest VFS.
-  block @ Func
+  block @ (() -> R)
   # Options described in
   # [Common Domain Options](libvirt.common-domain-options).
   ...options @ Value
-do -> Value
+do -> R
   let domain = create ...options
   try
     domain.with $block

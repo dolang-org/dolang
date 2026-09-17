@@ -76,11 +76,6 @@ pub class Archive
   # `mode`, `size`, and `compression` apply to entries being created; passing
   # any of them in read mode is an error.
   #
-  # ## Returns
-  #
-  # [`File`](zip.File) when no `func` is given, otherwise the result of
-  # calling `func`.
-  #
   # ## Example
   #
   # ```
@@ -101,7 +96,7 @@ pub class Archive
   #       for chunk = source
   #         file.write $chunk
   # ```
-  pub def open
+  def @open
     self
     # Name of the file within the archive.
     name @ Str
@@ -120,10 +115,29 @@ pub class Archive
     # `:STORED:`, `:DEFLATE:` (the default), or
     # `:ZSTD:`.
     :compression @ Sym = nil
-    # Called with the [`File`](zip.File), which is closed when it
-    # returns. Omit to receive the handle instead.
-    func @ Func = nil
-  do -> Value
+  do -> File
+
+  # Opens a file within the archive and calls `func` with it. The file is
+  # closed when `func` returns.
+  #
+  # The keywords are those of the form without `func`.
+  def @open[R]
+    self
+    # Name of the file within the archive.
+    name @ Str
+    # Unix permission bits in write mode. Defaults
+    # to `0`.
+    :mode @ Int = nil
+    # Expected uncompressed size.
+    :size @ Int = nil
+    # `:STORED:`, `:DEFLATE:` (the default), or
+    # `:ZSTD:`.
+    :compression @ Sym = nil
+    # Called with the [`File`](zip.File).
+    func @ (File -> R)
+  do -> R
+
+  pub def open self name ...options
     ...
 
   # Creates a symbolic link entry pointing to `target`. Write mode only.
@@ -203,10 +217,13 @@ pub class Entry
 
   # Opens the entry for reading.
   #
-  # ## Returns
+  # ## Errors
   #
-  # [`File`](zip.File) when no `block` is given, otherwise the result of
-  # calling `block`.
+  # Raises a concurrency error if another file is already open in the archive.
+  def @open self -> File
+
+  # Opens the entry for reading and calls `block` with it. The file is closed
+  # when `block` returns.
   #
   # ## Errors
   #
@@ -219,12 +236,13 @@ pub class Entry
   #   entry.open do |file|
   #     echo (str (file.read entry.size))
   # ```
-  pub def open
+  def @open[R]
     self
-    # Called with the [`File`](zip.File), which is closed when it
-    # returns. Omit to receive the handle instead.
-    block @ Func = nil
-  do -> Value
+    # Called with the [`File`](zip.File).
+    block @ (File -> R)
+  do -> R
+
+  pub def open self ...block
     ...
 
 # An open file within a ZIP archive.
@@ -289,39 +307,58 @@ pub class File
   do
     ...
 
+# Access mode accepted by [`open`](zip.open).
+#
+# | Mode  | Description                                                      |
+# | ----- | ---------------------------------------------------------------- |
+# | `"r"` | Read mode -- opens an existing archive for reading               |
+# | `"w"` | Write mode -- creates a new archive, truncating any existing one |
+pub let @OpenMode = ("r" | "w")
+
 # Opens a ZIP archive.
 #
-# ## Returns
-#
-# [`Archive`](zip.Archive) when no `func` is given, otherwise the result of
-# calling `func`.
-#
-# ## Example
-#
-# ```
-# # Read an existing archive
-# open "archive.zip" do |archive|
-#   for entry = archive.entries
-#     echo "Entry: $entry.name"
-#
-# # Create a new archive
-# open "output.zip" "w" do |archive|
-#   archive.open "file.txt" do |file|
-#     file.write "Hello, World!"
-# ```
-pub def open
+# The archive stays open until [`Archive.close`](zip.Archive.close) is called.
+def @open
   # Path to the ZIP archive
   # file.
   path @ (Str | Path)
   # Access mode. Defaults to `"r"`.
-  #
-  # | Mode  | Description                                           |
-  # | ----- | ----------------------------------------------------- |
-  # | `"r"` | Read mode -- opens an existing archive for reading    |
-  # | `"w"` | Write mode -- creates a new archive, truncating any existing one |
-  mode @ Str = nil
-  # Called with the [`Archive`](zip.Archive), which is closed
-  # when it returns. Omit to receive the handle instead.
-  func @ Func = nil
-do -> Value
+  mode @ OpenMode = nil
+do -> Archive
+
+# Opens a ZIP archive for reading and calls `func` with it. The archive is
+# closed when `func` returns.
+#
+# ```
+# open "archive.zip" do |archive|
+#   for entry = archive.entries
+#     echo "Entry: $entry.name"
+# ```
+def @open[R]
+  # Path to the ZIP archive
+  # file.
+  path @ (Str | Path)
+  # Called with the [`Archive`](zip.Archive).
+  func @ (Archive -> R)
+do -> R
+
+# Opens a ZIP archive with a mode and calls `func` with it. The archive is
+# closed when `func` returns.
+#
+# ```
+# open "output.zip" "w" do |archive|
+#   archive.open "file.txt" do |file|
+#     file.write "Hello, World!"
+# ```
+def @open[R]
+  # Path to the ZIP archive
+  # file.
+  path @ (Str | Path)
+  # Access mode.
+  mode @ OpenMode
+  # Called with the [`Archive`](zip.Archive).
+  func @ (Archive -> R)
+do -> R
+
+pub def open path ...options
   ...

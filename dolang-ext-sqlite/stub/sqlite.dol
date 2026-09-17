@@ -133,11 +133,6 @@ pub class Connection
   # or `${#0}` stays unfilled and is supplied at each
   # [`query`](sqlite.Statement.query) or [`execute`](sqlite.Statement.execute).
   #
-  # ## Returns
-  #
-  # [`Statement`](sqlite.Statement) when no `func` is given, otherwise the result
-  # of calling `func`.
-  #
   # ## Example
   #
   # ```
@@ -150,15 +145,25 @@ pub class Connection
   #   stmt.execute name: "Charlie"
   #   stmt.close()
   # ```
-  pub def prepare
+  def @prepare
     self
     # SQL template. See [Parameter
     # Binding](sqlite.Statement.parameter-binding).
     sql @ Fmt
-    # Called with the [`Statement`](sqlite.Statement),
-    # which is closed when it returns. Omit to receive the handle instead.
-    func @ Func = nil
-  do -> Value
+  do -> Statement
+
+  # Prepares a statement and calls `func` with it. The statement is closed when
+  # `func` returns.
+  def @prepare[R]
+    self
+    # SQL template. See [Parameter
+    # Binding](sqlite.Statement.parameter-binding).
+    sql @ Fmt
+    # Called with the [`Statement`](sqlite.Statement).
+    func @ (Statement -> R)
+  do -> R
+
+  pub def prepare self sql ...options
     ...
 
   # Runs `func` inside a database transaction.
@@ -189,11 +194,11 @@ pub class Connection
   #     if should_cancel
   #       tx.rollback()
   # ```
-  pub def transaction
+  pub def transaction[R]
     self
     # Called with the [`Transaction`](sqlite.Transaction).
-    func @ Func
-  do -> Value
+    func @ (Transaction -> R)
+  do -> R
     ...
 
 # A compiled SQL statement that can be run repeatedly with different
@@ -448,11 +453,6 @@ pub class Transaction
 
 # Opens a database connection, creating the database if it does not exist.
 #
-# ## Returns
-#
-# [`Connection`](sqlite.Connection) when no `func` is given, otherwise the
-# result of calling `func`.
-#
 # ## Example
 #
 # ```
@@ -470,7 +470,7 @@ pub class Transaction
 # open ":memory:" do |conn|
 #   conn.execute t"CREATE TABLE scratch (n INTEGER)"
 # ```
-pub def open
+def @open
   # Path to the database
   # file, or `":memory:"` for a private in-memory database. A relative path
   # resolves against the current directory of the active VFS context.
@@ -485,8 +485,28 @@ pub def open
   # Ceiling in milliseconds for the doubling retry
   # wait. Defaults to `1000`.
   :max_wait @ Int = nil
-  # Called with the [`Connection`](sqlite.Connection),
-  # which is closed when it returns. Omit to receive the handle instead.
-  func @ Func = nil
-do -> Value
+do -> Connection
+
+# Opens a database connection and calls `func` with it. The connection is
+# closed when `func` returns.
+def @open[R]
+  # Path to the database
+  # file, or `":memory:"` for a private in-memory database. A relative path
+  # resolves against the current directory of the active VFS context.
+  path @ (Str | Path)
+  # Attempts to retry an operation that fails
+  # because the database is busy. Defaults to `10`; `0` disables retrying. See
+  # [Busy retry](sqlite.Connection.busy-retry).
+  :retries @ Int = nil
+  # Milliseconds to wait before the first retry.
+  # Defaults to `1`.
+  :min_wait @ Int = nil
+  # Ceiling in milliseconds for the doubling retry
+  # wait. Defaults to `1000`.
+  :max_wait @ Int = nil
+  # Called with the [`Connection`](sqlite.Connection).
+  func @ (Connection -> R)
+do -> R
+
+pub def open path ...options
   ...

@@ -177,17 +177,17 @@ pub class File
   # file.lock (0..128) do |lock|
   #   update_header()
   # ```
-  pub def lock
+  pub def lock[R]
     self
     # Half-open byte range; `..` is the whole
     # file.
     range @ Range
     # Block receiving a
     # [`FileLock`](fs.FileLock).
-    func @ Func
+    func @ (FileLock -> R)
     # Acquire a shared rather than exclusive lock.
     :shared @ Bool = nil
-  do -> Value
+  do -> R
     ...
 
   # Attempts to acquire a byte-range lock without waiting.
@@ -207,17 +207,17 @@ pub class File
   #   if lock.held
   #     update_index()
   # ```
-  pub def try_lock
+  pub def try_lock[R]
     self
     # Half-open byte range; `..` is the whole
     # file.
     range @ Range
     # Block receiving a
     # [`FileLock`](fs.FileLock).
-    func @ Func
+    func @ (FileLock -> R)
     # Acquire a shared rather than exclusive lock.
     :shared @ Bool = nil
-  do -> Value
+  do -> R
     ...
 
   # Reads data from the file.
@@ -2793,12 +2793,12 @@ do -> Path
 # with_temp_dir parent: my_temp do |dir|
 #   echo $dir
 # ```
-pub def with_temp_dir
+pub def with_temp_dir[R]
   # Called with a [`Path`](fs.Path) to the
   # temporary directory.
-  func @ Func
+  func @ (Path -> R)
   # Parent directory. Defaults
   # to [`temp_dir()`](fs.temp_dir).
   :parent @ (Str | Path) = nil
-do
+do -> R
   ...

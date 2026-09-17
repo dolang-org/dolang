@@ -91,14 +91,14 @@ do -> nil
 # ```
 # sudo.with do run cat /etc/shadow
 # ```
-pub def with
+pub def with[R]
   # Block to run.
-  func @ Func
+  func @ (() -> R)
   # Account to use instead of root.
   :user @ Str = nil
   # Initial elevated directory.
   :cd @ (Str | Path) = nil
   # Initial environment overrides.
   :env @ Dict = {}
-do -> Value
+do -> R
   run_agent $func :user :cd :env

@@ -18,7 +18,7 @@ import
 # for chunk = entry
 #   output.put $chunk
 # ```
-pub class Entry: Iter
+pub class Entry: Iter[Bin]
   # Device major number, or `nil` when absent.
   #[getter]
   pub def device_major self
@@ -140,7 +140,7 @@ pub class EntryWriter: Sink
 #   for entry = archive
 #     echo $entry.path
 # ```
-pub class Reader: Iter
+pub class Reader: Iter[Entry]
   # Detected compression as `:NONE:`, `:GZIP:`, or `:ZSTD:`.
   #[getter]
   pub def compression self
@@ -211,7 +211,7 @@ pub class Writer
   # archive.entry data.bin size: 4 mode: 0o600 do |entry|
   #   entry.write b"\x00\x01\x02\x03"
   # ```
-  pub def entry
+  pub def entry[R]
     self
     # Entry
     # path.
@@ -233,8 +233,8 @@ pub class Writer
     :group_name @ Str = nil
     # Entry writer scope, called with an
     # [`EntryWriter`](tar.EntryWriter).
-    func @ Func
-  do -> Value
+    func @ (EntryWriter -> R)
+  do -> R
     ...
 
   # Creates a hard-link entry pointing to `target`.
@@ -319,12 +319,12 @@ pub class Writer
 #   for entry = archive
 #     echo "$entry.path: $entry.size bytes"
 # ```
-pub def read
+pub def read[R]
   # Archive path.
   path @ (Str | Path)
   # Reader scope, called with a [`Reader`](tar.Reader).
-  func @ Func
-do -> Value
+  func @ (Reader -> R)
+do -> R
   ...
 
 # Creates an archive and calls `func` with a [`Writer`](tar.Writer).
@@ -340,7 +340,7 @@ do -> Value
 #   archive.entry greeting.txt size: 5 do |entry|
 #     entry.write hello
 # ```
-pub def write
+pub def write[R]
   # Archive path.
   path @ (Str | Path)
   # `:NONE:`, `:GZIP:`, or `:ZSTD:`.
@@ -350,6 +350,6 @@ pub def write
   # case-insensitive. An explicit `compression` overrides the path.
   :compression @ Sym = nil
   # Writer scope, called with a [`Writer`](tar.Writer).
-  func @ Func
-do -> Value
+  func @ (Writer -> R)
+do -> R
   ...

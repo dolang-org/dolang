@@ -74,7 +74,7 @@ do
 # ```
 pub def import_handler
   # Called with the requested module name.
-  callback @ Func
+  callback @ (Str -> Value)
 do -> ImportHandler
   ...
 
@@ -105,7 +105,7 @@ do -> ImportHandler
 pub def run
   # Compiled Do bytecode.
   bytecode @ Bin
-  # Program-specific module importer.
-  :importer @ Func = nil
+  # Program-specific module importer, called with the requested module name.
+  :importer @ (Str -> Value) = nil
 do -> Value
   ...

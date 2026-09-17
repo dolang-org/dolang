@@ -143,18 +143,18 @@ do -> Container
 # ## Returns
 #
 # Result of `func`
-pub def with
+pub def with[R]
   # Image name or ID.
   image @ Str
   # Function to run.
-  func @ Func
+  func @ (() -> R)
   # Optional container working directory.
   :cd @ Str = nil
   # Container environment.
   :env @ Dict = {}
   # Image pull policy: `:MISSING:`, `:ALWAYS:`, or `:NEVER:`.
   :pull @ Sym = :MISSING:
-do -> Value
+do -> R
   docker.with $image $func :cd :env :pull
 
 # Build a Docker image.

@@ -57,11 +57,11 @@ import _ssh
 #     cd $checkout do
 #       cargo build --release
 # ```
-pub def with
+pub def with[R]
   # SSH destination.
   host @ Str
   # Block to run under the remote VFS.
-  block @ Func
+  block @ (() -> R)
   # Remote user.
   :user @ Str = nil
   # SSH server port.
@@ -107,7 +107,7 @@ pub def with
   # | `identity` | [`Str`](std.Str)\|[`Path`](fs.Path) | Identity file. Repeatable  |
   # | `jump`     | [`Str`](std.Str)                    | Jump host. Repeatable      |
   ...options
-do -> Value
+do -> R
   _ssh.with_program ssh
     $host
     $block

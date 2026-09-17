@@ -37,14 +37,14 @@ pub def query() -> Bool
 # admin.with do
 #   echo "administrator: $(admin.query())"
 # ```
-pub def with
+pub def with[R]
   # Block to run.
-  block @ Func
+  block @ (() -> R)
   # Initial working directory.
   :cd @ (Str | Path) = nil
   # Initial environment overrides.
   :env @ Dict = {}
-do -> Value
+do -> R
   if (sys.os_info().family == :WINDOWS:)
     if security_windows.token_info().is_elevated
       return shell.env $env do

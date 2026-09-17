@@ -485,6 +485,8 @@ def _render_annotations(entity: dict, scope: _TypeScope) -> None:
             param["annotation"] = param["annotation"].replace("<code>", "<code>...", 1)
     if entity.get("kind") in ("function", "method"):
         entity["return_annotation"] = _type_html(entity.get("returns"), scope)
+        # A method may narrow its receiver, as `self @ Iter[U]`
+        entity["self_annotation"] = _type_html(entity.get("self_type"), scope)
     elif entity.get("kind") == "field":
         entity["annotation"] = _type_html(entity.get("type"), scope)
     elif entity.get("kind") == "alias":

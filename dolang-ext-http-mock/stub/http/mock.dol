@@ -127,12 +127,15 @@ pub class Server
   # http.mock.Server do |server|
   #   echo $server.url
   # ```
-  pub def (init)
+  #[class]
+  def @(call)[R]
     self
-    # Called with the `Server`, which is shut down when it returns.
-    # Omit to receive the server instead.
-    func @ Func = nil
-  do -> Value
+    # Called with the `Server`.
+    func @ (Server -> R)
+  do -> R
+
+  #[class]
+  pub def (call) self ...func
     ...
 
   # The server's base URL. Use `/` to build
@@ -197,10 +200,8 @@ pub class Server
   # [`Mock.unmount`](http.mock.Mock.unmount) -- and on demand via
   # [`Mock.verify`](http.mock.Mock.verify).
   #
-  # ## Returns
-  #
-  # A [`Mock`](http.mock.Mock) covering every item this call registered: passed to
-  # `func` if one is given, and returned otherwise.
+  # The returned [`Mock`](http.mock.Mock) covers every item this call
+  # registered.
   #
   # ## Errors
   #
@@ -238,7 +239,7 @@ pub class Server
   #       status: 401
   # ```
   #
-  # Without a block, the script owns the handle:
+  # The script owns the returned handle:
   #
   # ```
   # let handle = server.mock
@@ -250,16 +251,36 @@ pub class Server
   # http.get (server.url / "/users/42")
   # handle.unmount()
   # ```
-  pub def mock
+  def @mock
     self
-    # Called with the [`Mock`](http.mock.Mock) handle. The mocks are
-    # unmounted when it returns, however it exits. Omit to receive the handle
-    # instead and unmount it yourself. Written last at the call site, as a
-    # trailing `do` block.
-    func @ Func = nil
     # Mock items, as described above.
     ...items @ Dict
   do -> Mock
+
+  # Registers mocks for the duration of a block, which is called with the
+  # [`Mock`](http.mock.Mock) handle. The mocks are unmounted when the block
+  # returns, however it exits.
+  #
+  # The items are those of the form without a block, and the block is written
+  # last at the call site, as a trailing `do` block.
+  #
+  # ```
+  # server.mock
+  #   - method: GET
+  #     path: /health
+  #     respond:
+  #       status: 200
+  #   do |handle|
+  #     http.get (server.url / "/health")
+  #     handle.verify()
+  # ```
+  def @mock[R]
+    self
+    # Mock items followed by the block.
+    ...args @ {...Dict, (Mock -> R)}
+  do -> R
+
+  pub def mock self ...args
     ...
 
   # Every request the server received, whichever mock matched it -- or none.

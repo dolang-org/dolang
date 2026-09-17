@@ -55,6 +55,10 @@ pub class Point[T @ (Int | Str) = Int, :K, ...R]: Record
   pub def shift[U] self by :clamp = false
     self.x = (self.x + by)
 
+  # Label it, only for a string point.
+  pub def label[S @ Str] self @ Point[S] -> S
+    str $self.x
+
   # Not exported.
   def helper self
     nil

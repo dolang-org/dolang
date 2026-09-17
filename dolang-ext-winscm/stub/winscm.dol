@@ -498,11 +498,6 @@ pub class ScManager
 
   # Opens an existing service.
   #
-  # ## Returns
-  #
-  # [`Service`](winscm.Service) when no `func` is given, otherwise the result of
-  # calling `func`.
-  #
   # ## Errors
   #
   # | Exception                                        | Condition                    |
@@ -515,25 +510,32 @@ pub class ScManager
   # manager.open_service Spooler access: :SERVICE_QUERY_STATUS: do |service|
   #   echo $service.query_status().current_state
   # ```
-  pub def open_service
+  def @open_service
     self
     # Service name.
     name @ Str
     # Rights the returned handle requests, as a mask, a symbol, or an iterable
     # of symbols. Defaults to `:SERVICE_QUERY_STATUS:`.
     :access @ (ServiceAccessMask | Sym) = nil
-    # Called with the [`Service`](winscm.Service), which is closed
-    # when it returns. Omit to receive the handle instead.
-    func @ Func = nil
-  do -> Value
+  do -> Service
+
+  # Opens an existing service and calls `func` with it. The service handle is
+  # closed when `func` returns.
+  def @open_service[R]
+    self
+    # Service name.
+    name @ Str
+    # Rights the returned handle requests, as a mask, a symbol, or an iterable
+    # of symbols. Defaults to `:SERVICE_QUERY_STATUS:`.
+    :access @ (ServiceAccessMask | Sym) = nil
+    # Called with the [`Service`](winscm.Service).
+    func @ (Service -> R)
+  do -> R
+
+  pub def open_service self name ...options
     ...
 
   # Creates a service.
-  #
-  # ## Returns
-  #
-  # [`Service`](winscm.Service) when no `func` is given, otherwise the result of
-  # calling `func`.
   #
   # ## Example
   #
@@ -543,7 +545,7 @@ pub class ScManager
   #   binary_path: [r"C:\Program Files\My Service\service.exe"]
   #   access: :SERVICE_ALL_ACCESS:
   # ```
-  pub def create_service
+  def @create_service
     self
     # Service name.
     name @ Str
@@ -579,10 +581,44 @@ pub class ScManager
     :service_start_name @ Str = nil
     # Password for `service_start_name`.
     :password @ Str = nil
-    # Called with the [`Service`](winscm.Service), which is closed
-    # when it returns. Omit to receive the handle instead.
-    func @ Func = nil
-  do -> Value
+  do -> Service
+
+  # Creates a service and calls `func` with it. The service handle is closed
+  # when `func` returns.
+  def @create_service[R]
+    self
+    # Service name.
+    name @ Str
+    # Display name. Omit to pass `NULL` to Windows.
+    :display_name @ Str = nil
+    # Service executable path or command line. Omit to pass `NULL` to Windows.
+    :binary_path @ (Str | Path) = nil
+    # Service
+    # type, as a value, a symbol, or an iterable of symbols. Defaults to
+    # `:WIN32_OWN_PROCESS:`.
+    :service_type @ (ServiceType | Sym) = nil
+    # [Start type](winscm.start-types). Defaults
+    # to `:DEMAND_START:`.
+    :start_type @ Sym = nil
+    # [Error control
+    # level](winscm.error-control-levels). Defaults to `:NORMAL:`.
+    :error_control @ Sym = nil
+    # Rights the returned handle requests, as a mask, a symbol, or an iterable
+    # of symbols. Defaults to `:SERVICE_QUERY_STATUS:`.
+    :access @ (ServiceAccessMask | Sym) = nil
+    # Load-order group.
+    :load_order_group @ Str = nil
+    # Service or load-order-group names this service depends on.
+    :dependencies @ Iterable = nil
+    # Account the service runs as.
+    :service_start_name @ Str = nil
+    # Password for `service_start_name`.
+    :password @ Str = nil
+    # Called with the [`Service`](winscm.Service).
+    func @ (Service -> R)
+  do -> R
+
+  pub def create_service self name ...options
     ...
 
   # Opens a live forward enumeration of matching services. Entries are fetched
@@ -892,11 +928,6 @@ pub class ServiceInfo
 
 # Opens the local Service Control Manager.
 #
-# ## Returns
-#
-# [`ScManager`](winscm.ScManager) when no `func` is given, otherwise the result
-# of calling `func`.
-#
 # ## Example
 #
 # ```
@@ -904,12 +935,21 @@ pub class ServiceInfo
 #   for info = manager.enumerate_services()
 #     echo $info.name
 # ```
-pub def open
+def @open
   # Rights the returned handle requests, as a mask, a symbol, or an iterable of
   # symbols. Defaults to `:SC_MANAGER_CONNECT:`.
   :access @ (ManagerAccessMask | Sym) = nil
-  # Called with the [`ScManager`](winscm.ScManager), which is closed
-  # when it returns. Omit to receive the handle instead.
-  func @ Func = nil
-do -> Value
+do -> ScManager
+
+# Opens the local Service Control Manager and calls `func` with it. The
+# manager handle is closed when `func` returns.
+def @open[R]
+  # Rights the returned handle requests, as a mask, a symbol, or an iterable of
+  # symbols. Defaults to `:SC_MANAGER_CONNECT:`.
+  :access @ (ManagerAccessMask | Sym) = nil
+  # Called with the [`ScManager`](winscm.ScManager).
+  func @ (ScManager -> R)
+do -> R
+
+pub def open ...options
   ...

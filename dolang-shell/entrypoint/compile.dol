@@ -447,6 +447,13 @@ class Document
           default: (self.#type_tree(child.default))
     result
 
+  # The annotation on a method's `self`, as a tree, or `nil`.
+  def self_type self id
+    for child_id = self.#index.own_ids(id)
+      if type(self.#index.node(child_id), compile.SelfParam)
+        return self.#type_of $child_id
+    nil
+
   # The type describing a node, as a tree, or `nil`.
   def type_of self id
     for child = self.#own(id)
@@ -652,6 +659,7 @@ class Document
 
   def method_entry self id node is_pub special
     let returns = self.#type_of $id
+    let self_type = self.#self_type $id
     let binders = self.#binders(id)
     self.#add_member $node $
       if decorated(self.#own(id), self.#getter)
@@ -675,6 +683,8 @@ class Document
         scope: (self.#scope(id))
         if (binders.len > 0)
           binders: $binders
+        if (self_type != nil)
+          self_type: $self_type
         params: (self.#params(id))
         if (returns != nil)
           returns: $returns

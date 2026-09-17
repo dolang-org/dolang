@@ -1,6 +1,10 @@
 #
 # The `std` module provides core language facilities.
 
+# The union of its type arguments. `Union[Int, Str]` is `(Int | Str)`, and a
+# pack spreads into one, as in `Union[T, ...Us]`.
+pub let @Union[...Ts] = ...
+
 # The singleton [`Null`](std.Null) value.
 #
 # As an iterator it ends immediately; as a sink it discards every value.
@@ -244,69 +248,69 @@ pub class RuntimeError: Error
 # Abstract type for iterable values. Values that implement the `(iter)` protocol
 # are instances of `Iterable`, which can be used for type testing.
 #
-pub class Iterable
+pub class Iterable[T]
   # Returns an iterator over the value.
-  pub def iter self -> Iter
+  pub def iter self -> Iter[T]
     ...
 
   # Tests whether every item is truthy, or satisfies `pred`.
-  pub def all self pred = nil
+  pub def all self pred @ (T -> Value) = nil -> Bool
     ...
 
   # Tests whether any item is truthy, or satisfies `pred`.
-  pub def any self pred = nil
+  pub def any self pred @ (T -> Value) = nil -> Bool
     ...
 
   # Returns an iterator followed by the additional iterables.
-  pub def chain self ...values
+  pub def chain[...Us] self ...values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
     ...
 
   # Returns an iterator with one trailing line terminator removed from each item.
-  pub def chomp self
+  pub def chomp self -> Iter[T]
     ...
 
   # Returns an iterator with a line terminator appended to each item.
-  pub def crimp self terminator = nil
+  pub def crimp self terminator @ (Str | Bin) = nil -> Iter[T]
     ...
 
   # Returns an iterator of `[index, value]` tuples.
-  pub def enumerate self
+  pub def enumerate self -> Iter[Tuple[Int, T]]
     ...
 
   # Returns an iterator of values for which `pred` is truthy.
-  pub def filter self pred
+  pub def filter self pred @ (T -> Value) -> Iter[T]
     ...
 
   # Returns the first value for which `pred` is truthy.
-  pub def find self pred :default = nil :else = nil
+  pub def find[D = T] self pred @ (T -> Value) :default @ D = nil :else @ (() -> D) = nil -> (T | D)
     ...
 
   # Accumulates a value left-to-right with `func`.
-  pub def fold self init func
+  pub def fold[A] self init @ A func @ ((A, T) -> A) -> A
     ...
 
   # Returns an iterator that maps each item through `func`.
-  pub def map self func
+  pub def map[U] self func @ (T -> U) -> Iter[U]
     ...
 
   # Returns the largest item.
-  pub def max self :default = nil
+  pub def max[D = T] self :default @ D = nil -> (T | D)
     ...
 
   # Returns the smallest item.
-  pub def min self :default = nil
+  pub def min[D = T] self :default @ D = nil -> (T | D)
     ...
 
   # Returns an iterator that discards the first `n` items.
-  pub def skip self n
+  pub def skip self n @ Int -> Iter[T]
     ...
 
   # Returns an iterator yielding at most `n` items.
-  pub def take self n
+  pub def take self n @ Int -> Iter[T]
     ...
 
   # Returns an iterator of tuples across this and additional iterables.
-  pub def zip self ...values
+  pub def zip[...Us] self ...values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
     ...
 
 
@@ -331,11 +335,11 @@ pub class Sinkable
     ...
 
   # Returns a sink that writes only values for which `pred` is truthy.
-  pub def prefilter self pred
+  pub def prefilter self pred @ (Value -> Value) -> Sink
     ...
 
   # Returns a sink that transforms each value with `func` before writing it.
-  pub def premap self func
+  pub def premap self func @ (Value -> Value) -> Sink
     ...
 
 
@@ -413,7 +417,7 @@ pub class Sink: Sinkable
   # assert_eq $acc [2]
   # ```
   #
-  pub def prefilter self pred
+  pub def prefilter self pred @ (Value -> Value) -> Sink
     ...
 
   #
@@ -434,7 +438,7 @@ pub class Sink: Sinkable
   # assert_eq $acc [6]
   # ```
   #
-  pub def premap self func
+  pub def premap self func @ (Value -> Value) -> Sink
     ...
 
   #
@@ -637,7 +641,7 @@ pub class Array
     # the index to access
     index @ Int
     :default = nil
-    :else = nil
+    :else @ (() -> Value) = nil
   do
     ...
 
@@ -678,7 +682,7 @@ pub class Array
   # # 2: 30
   # ```
   #
-  pub def pairs self -> Iter
+  pub def pairs self -> Iter[Tuple[Int, Value]]
     ...
 
   #
@@ -704,7 +708,7 @@ pub class Array
     # optional index to remove; defaults to the last element
     index @ Int = nil
     :default = nil
-    :else = nil
+    :else @ (() -> Value) = nil
   do
     ...
 
@@ -959,7 +963,7 @@ pub class Bin
     delimiter @ Bin
     # max splits; negative means split from left
     limit @ Int = nil
-  do -> Iter
+  do -> Iter[Bin]
     ...
 
   #
@@ -987,7 +991,7 @@ pub class Bin
     delimiter @ Bin
     # max splits; negative means split from right
     limit @ Int = nil
-  do -> Iter
+  do -> Iter[Bin]
     ...
 
   #
@@ -1281,7 +1285,7 @@ pub class BinBuf
     self
     # maximum bytes per chunk (defaults to 512 KiB)
     size @ Int = nil
-  do -> Iter
+  do -> Iter[Bin]
     ...
 
   #
@@ -1738,7 +1742,7 @@ pub class Dict[S @ {...}]
     # which value to retrieve when a key has multiple values (0-indexed; negative counts from end; default: last)
     instance @ Int = nil
     :default = nil
-    :else = nil
+    :else @ (() -> Value) = nil
   do
     ...
 
@@ -1771,7 +1775,7 @@ pub class Dict[S @ {...}]
   # over both [`Dict`](std.Dict) and [`Array`](std.Array).
   #
   #
-  pub def pairs self -> Iter
+  pub def pairs self -> Iter[Tuple[Value, Value]]
     ...
 
   #
@@ -1802,7 +1806,7 @@ pub class Dict[S @ {...}]
     # which value to remove when a key has multiple values (0-indexed; negative counts from end; default: first)
     instance @ Int = nil
     :default = nil
-    :else = nil
+    :else @ (() -> Value) = nil
   do
     ...
 
@@ -2744,7 +2748,7 @@ pub class IterStop: Error
 # assert_eq (type $ [1, 2, 3].iter()) $Iter
 # ```
 #
-pub class Iter: Iterable
+pub class Iter[T]: Iterable[T]
   #
   #
   # Returns `true` if every yielded value is truthy.
@@ -2753,7 +2757,7 @@ pub class Iter: Iterable
   #
   # Empty iterators return `true`.
   #
-  pub def all self pred = nil
+  pub def all self pred @ (T -> Value) = nil -> Bool
     ...
 
   #
@@ -2763,14 +2767,14 @@ pub class Iter: Iterable
   #
   # Empty iterators return `false`.
   #
-  pub def any self pred = nil
+  pub def any self pred @ (T -> Value) = nil -> Bool
     ...
 
   #
   # Returns an iterator that yields this iterator followed by each additional
   # iterable in sequence.
   #
-  pub def chain self ...values
+  pub def chain[...Us] self ...values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
     ...
 
   #
@@ -2795,13 +2799,13 @@ pub class Iter: Iterable
   # and takes an optional character set. `chomp` is about a line terminator
   # specifically and takes nothing.
   #
-  pub def chomp self
+  pub def chomp self -> Iter[T]
     ...
 
   #
   # Consumes the iterator and returns the number of yielded values.
   #
-  pub def count self
+  pub def count self -> Int
     ...
 
   #
@@ -2828,7 +2832,7 @@ pub class Iter: Iterable
   # run cmd stdin: (["one", "two"].crimp())
   # ```
   #
-  pub def crimp self terminator = nil
+  pub def crimp self terminator @ (Str | Bin) = nil -> Iter[T]
     ...
 
   #
@@ -2836,14 +2840,14 @@ pub class Iter: Iterable
   #
   # The first index is `0`.
   #
-  pub def enumerate self
+  pub def enumerate self -> Iter[Tuple[Int, T]]
     ...
 
   #
   # Creates a wrapper `Iter` which yields each `value` from the wrapper iterator
   # only if `pred(value)` is truthy.
   #
-  pub def filter self pred
+  pub def filter self pred @ (T -> Value) -> Iter[T]
     ...
 
   #
@@ -2854,7 +2858,7 @@ pub class Iter: Iterable
   # Raises [`RuntimeError`](std.RuntimeError) if no value matches and
   # no fallback is provided.
   #
-  pub def find self pred :default = nil :else = nil
+  pub def find[D = T] self pred @ (T -> Value) :default @ D = nil :else @ (() -> D) = nil -> (T | D)
     ...
 
   #
@@ -2862,7 +2866,7 @@ pub class Iter: Iterable
   #
   # Returns `init` unchanged if the iterator is empty.
   #
-  pub def fold self init func
+  pub def fold[A] self init @ A func @ ((A, T) -> A) -> A
     ...
 
   #
@@ -2878,14 +2882,14 @@ pub class Iter: Iterable
   # assert_eq {...entries.kv()} {"x": "1", "y": "2"}
   # ```
   #
-  pub def kv self
+  pub def kv self -> Iter[T]
     ...
 
   #
   # Creates a wrapper `Iter` which yields `func(value)` for each `value` yielded by
   # the wrapper iterator.
   #
-  pub def map self func
+  pub def map[U] self func @ (T -> U) -> Iter[U]
     ...
 
   #
@@ -2896,7 +2900,7 @@ pub class Iter: Iterable
   # Raises [`IterStop`](std.IterStop) if the iterator is empty and no
   # `default:` is provided.
   #
-  pub def max self :default = nil
+  pub def max[D = T] self :default @ D = nil -> (T | D)
     ...
 
   #
@@ -2907,7 +2911,7 @@ pub class Iter: Iterable
   # Raises [`IterStop`](std.IterStop) if the iterator is empty and no
   # `default:` is provided.
   #
-  pub def min self :default = nil
+  pub def min[D = T] self :default @ D = nil -> (T | D)
     ...
 
   #
@@ -2918,7 +2922,7 @@ pub class Iter: Iterable
   # Raises [`IterStop`](std.IterStop) when exhausted and no fallback
   # is provided.
   #
-  pub def next self :default = nil :else = nil
+  pub def next[D = T] self :default @ D = nil :else @ (() -> D) = nil -> (T | D)
     ...
 
   #
@@ -2931,7 +2935,7 @@ pub class Iter: Iterable
   # | [`TypeError`](std.TypeError)   | `n` is not an `Int` |
   # | [`ValueError`](std.ValueError) | `n` is negative     |
   #
-  pub def skip self n
+  pub def skip self n @ Int -> Iter[T]
     ...
 
   #
@@ -2944,14 +2948,14 @@ pub class Iter: Iterable
   # | [`TypeError`](std.TypeError)   | `n` is not an `Int` |
   # | [`ValueError`](std.ValueError) | `n` is negative     |
   #
-  pub def take self n
+  pub def take self n @ Int -> Iter[T]
     ...
 
   #
   # Returns an iterator that yields one tuple for each step across this iterator
   # and the additional iterables.
   # The zipped iterator stops as soon as any input is exhausted.
-  pub def zip self ...values
+  pub def zip[...Us] self ...values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
     ...
 
 
@@ -3208,7 +3212,7 @@ pub class Record[...Ts]
   # access. Negative `instance:` indexes count from the end.
   #
   #[class]
-  pub def get self rec key :instance = nil :default = nil :else = nil
+  pub def get self rec key :instance = nil :default = nil :else @ (() -> Value) = nil
     ...
 
   #
@@ -3758,7 +3762,7 @@ pub class Str
     #   segments right-to-left.
     # - Omitted splits fully with no limit.
     limit @ Int = nil
-  do -> Iter
+  do -> Iter[Str]
     ...
 
   #
@@ -3793,7 +3797,7 @@ pub class Str
     #   suffix such as a file extension.
     # - Omitted splits fully with no limit.
     limit @ Int = nil
-  do -> Iter
+  do -> Iter[Str]
     ...
 
   #
@@ -4059,7 +4063,7 @@ pub class StrBuf
     self
     # maximum bytes per chunk (defaults to 512 KiB)
     size @ Int = nil
-  do -> Iter
+  do -> Iter[Str]
     ...
 
   #
@@ -4378,7 +4382,7 @@ pub class Tuple[...Ts]
     # the index to access
     index @ Int
     :default = nil
-    :else = nil
+    :else @ (() -> Value) = nil
   do
     ...
 
@@ -4386,7 +4390,7 @@ pub class Tuple[...Ts]
   # Returns an iterator yielding `[index, value]` pairs.
   #
   #
-  pub def pairs self -> Iter
+  pub def pairs self -> Iter[Tuple[Int, Value]]
     ...
 
   #

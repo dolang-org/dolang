@@ -50,7 +50,7 @@ pub class Key
 # Receivers are returned by [`channel`](strand). Once the channel is closed
 # and drained, `next()` raises `IterStop`; a sender error is re-raised after any
 # buffered values are drained.
-pub class Receiver: std.Iter
+pub class Receiver[T]: std.Iter[T]
   #
   # Closes the receiver. This prevents any more values from being sent and
   # wakes up any waiting senders.
@@ -91,18 +91,33 @@ pub class Resource
   # network.with do
   #   fetch_data()
   # ```
-  pub def with
+  pub def with[R]
     self
     # scoped work to execute
-    block @ Func
-  do
+    block @ (() -> R)
+  do -> R
     ...
 
 
 # Sends values into a channel. As a [`Sink`](std.Sink), it accepts `put`.
 #
 # Senders are returned by [`channel`](strand).
-pub class Sender: std.Sink
+pub class Sender[T]: std.Sink
+  # Sends a value, waiting while the channel's buffer is full.
+  #
+  # ## Errors
+  #
+  # | Exception                            | Condition                          |
+  # | ------------------------------------ | ---------------------------------- |
+  # | [`StateError`](std.StateError)       | The sender is closed               |
+  # | [`SinkStop`](std.SinkStop)           | The receiver is closed             |
+  pub def put
+    self
+    # Value to send.
+    value @ T
+  do
+    ...
+
   #
   # Closes the sender, signaling EOF to receivers. After closing:
   #
@@ -129,7 +144,7 @@ pub class Sender: std.Sink
 
 
 # Handles a background strand created by [`spawn`](strand).
-pub class Strand
+pub class Strand[R]
   #
   # Whether the strand has completed execution.
   #
@@ -149,7 +164,7 @@ pub class Strand
   # terminates normally, returns the value returned by the function. If the strand
   # exited with an error, this method re-raises it.
   #
-  pub def join self 
+  pub def join self -> R
     ...
 
   #
@@ -165,7 +180,7 @@ pub class Strand
 #
 # Its iterator re-raises a strand error after draining output; its sink reports
 # ordinary shutdown after input closes.
-pub class Stream
+pub class Stream[R]
   #
   # Whether the strand has completed execution.
   #
@@ -188,7 +203,7 @@ pub class Stream
   # Closing the channels before waiting prevents deadlock when the strand is
   # blocked waiting for input or waiting for a consumer to read its output.
   #
-  pub def join self 
+  pub def join self -> R
     ...
 
   #
@@ -201,23 +216,23 @@ pub class Stream
 
 
 # Creates a channel for communication between strands.
-pub def channel
+pub def channel[T]
   # Buffer capacity (default: 1, unbuffered)
-  :buffer @ Int = nil
-do
+  buffer @ Int = nil
+do -> Tuple[Sender[T], Receiver[T]]
   ...
 
 # Creates a pipeline stage that collects input values.
 pub def collect
   # collection to add to (defaults to a new `array`)
-  :target @ Sinkable = nil
+  target @ Sinkable = nil
 do
   ...
 
 # Creates a pipeline stage that transforms each input value.
 pub def each
   # a function that transforms a single value
-  func @ Func
+  func @ (Value -> Value)
 do
   ...
 
@@ -240,43 +255,45 @@ pub def map
   # number of worker strands
   count @ Int
   # function applied to each input value
-  func @ Func
+  func @ (Value -> Value)
   # source; defaults to the strand-local iterator
-  :input @ input = nil
+  :input @ Iterable = nil
   # destination; defaults to the strand-local sink
-  :output @ output = nil
+  :output @ Sinkable = nil
 do
   ...
 
-# Connects pipeline stages and runs them concurrently.
-pub def pipeline
+# Connects pipeline stages and runs them concurrently, returning the last
+# stage's result.
+pub def pipeline[R]
   # override strand-local input for the first stage
   :input @ Iterable = nil
   # override strand-local output for the last stage
   :output @ Sinkable = nil
   # pipeline stages
-  ...stages @ Func
-do
+  ...stages @ {...(() -> Value), (() -> R)}
+do -> R
   ...
 
 # Runs a function over an iterator with a fixed number of scoped workers.
-pub def pool
+def @pool
   # number of worker strands
   count @ Int
   # iterable of items
   input @ Iterable
   # function applied to each input value
-  func @ Func
+  func @ (Value -> Value)
 do
-  ...
 
 # Runs a function over the strand-local input with a fixed number of scoped workers.
-pub def pool
+def @pool
   # number of worker strands
   count @ Int
   # function applied to each input value
-  func @ Func
+  func @ (Value -> Value)
 do
+
+pub def pool count ...args
   ...
 
 # Writes a value to the strand-local output.
@@ -302,33 +319,33 @@ do
 #   strand.each do |x| (x * 2)
 # assert_eq $doubled [2, 4, 6]
 # ```
-pub def redirect
+pub def redirect[R]
   # replacement for the strand-local input
   :input @ Iterable = nil
   # replacement for the strand-local output
   :output @ Sinkable = nil
   # function to call
-  block @ Func
-do
+  block @ (() -> R)
+do -> R
   ...
 
 # Runs a function in a background strand.
-pub def spawn
+pub def spawn[R]
   # the function to execute
-  func @ Func
-do
+  func @ (() -> R)
+do -> Strand[R]
   ...
 
 # Runs a function in a background strand with channel-backed endpoints.
-pub def stream
+pub def stream[R]
   # the function to execute
-  func @ Func
-do
+  func @ (() -> R)
+do -> Stream[R]
   ...
 
 # Creates a pipeline stage that filters input values.
 pub def where
   # a function returning a truthy/falsy value
-  predicate @ Func
+  predicate @ (Value -> Value)
 do
   ...

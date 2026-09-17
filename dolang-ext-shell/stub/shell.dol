@@ -218,7 +218,7 @@ pub class Vfs
   pub def (init)
     self
     # VFS server launcher.
-    func @ Func
+    func @ (() -> Value)
   do
     ...
 
@@ -343,11 +343,11 @@ pub class Vfs
   #   run ls /
   #   run cat /etc/os-release
   # ```
-  pub def with
+  pub def with[R]
     self
     # Function to run.
-    func @ Func
-  do
+    func @ (() -> R)
+  do -> R
     ...
 
   # Sends a stop request to the connected VFS server.
@@ -357,32 +357,40 @@ pub class Vfs
   pub def stop self
     ...
 
-# Returns the current strand's working directory, or changes it.
-#
-# With no arguments, reports the directory. With a path, changes it. With a
-# function as well, the change lasts only for that call, and is undone however
-# the call exits.
-#
-# ## Returns
-#
-# The working directory as an [`fs.Path`](fs.Path) when called with no
-# arguments, otherwise the function's result.
-#
-# ## Example
+# Returns the current strand's working directory.
 #
 # ```
 # echo $ cd()
+# ```
+def @cd() -> Path
+
+# Changes the current strand's working directory.
+#
+# ```
 # cd /tmp
+# ```
+def @cd
+  # Directory to change to,
+  # resolved against the current one.
+  path @ (Str | Path)
+do
+
+# Runs a function with the working directory changed for the duration of the
+# call. The change is undone however the call exits.
+#
+# ```
 # cd /var/log do
 #   run ls
 # ```
-pub def cd
+def @cd[R]
   # Directory to change to,
   # resolved against the current one.
-  path @ (Str | Path) = nil
+  path @ (Str | Path)
   # Function to run in the new directory.
-  func @ Func = nil
-do -> Path
+  func @ (() -> R)
+do -> R
+
+pub def cd ...args
   ...
 
 # Replaces the interpreter with an external program, after shell cleanup.
@@ -447,10 +455,10 @@ pub def vfs_exe() -> (Path | nil)
 # ## Returns
 #
 # The function's result.
-pub def with_host
+pub def with_host[R]
   # Function to run.
-  func @ Func
-do
+  func @ (() -> R)
+do -> R
   ...
 
 # Runs a function with a scoped command-line arguments or program identity.
@@ -470,9 +478,9 @@ do
 # | ----------------------------------- | --------------------------------- |
 # | [`TypeError`](std.TypeError) | `args` is not iterable            |
 # | [`TypeError`](std.TypeError) | `program` is not a string or path |
-pub def with_override
+pub def with_override[R]
   # Function to run.
-  func @ Func
+  func @ (() -> R)
   # Arguments seen as
   # [`shell.args`](shell.args), converted with
   # [`verbatim`](std.verbatim).
@@ -480,7 +488,7 @@ pub def with_override
   # Identity seen as
   # [`shell.program`](shell.program).
   :program @ (Str | Path) = nil
-do
+do -> R
   ...
 
 # The command-line arguments of the current invocation.

@@ -451,10 +451,6 @@ pub class Client
   # Browser builds accept only `func`; any other option raises
   # [`RuntimeError`](std.RuntimeError).
   #
-  # ## Returns
-  #
-  # `Client` when no `func` is given, otherwise the result of calling `func`.
-  #
   # ## Example
   #
   # ```
@@ -465,7 +461,8 @@ pub class Client
   #   session.get https://example.com/dashboard do |resp|
   #     echo $resp.status
   # ```
-  pub def (init)
+  #[class]
+  def @(call)
     self
     # Path to a Unix domain socket to connect
     # through. Unix only.
@@ -501,20 +498,50 @@ pub class Client
     # certificate validation. It is the only accepted value, and it is
     # dangerous -- it defeats the point of TLS, so reserve it for testing.
     :invalid_certs @ Sym = nil
-    # Called with the `Client`, which is closed when it returns.
-    # Omit to receive the client instead.
-    func @ Func = nil
-  do -> Value
+  do -> Client
+
+  # Builds a client and calls `func` with it. The client is closed when `func`
+  # returns.
+  #
+  # Browser builds accept only `func`; any other option raises
+  # [`RuntimeError`](std.RuntimeError).
+  #[class]
+  def @(call)[R]
+    self
+    # Path to a Unix domain socket to connect
+    # through. Unix only.
+    :unix_socket @ Str = nil
+    # Proxy for every
+    # request made by this client.
+    :proxy @ (Str | (Url | nil)) = nil
+    # Give the client a cookie jar, so cookies it
+    # receives are replayed on later requests.
+    :cookies @ Bool = nil
+    # PEM-encoded CA
+    # certificate to add to the trust store.
+    :ca_cert @ (Str | Bin) = nil
+    # PKCS#12/PFX client
+    # certificate, for mutual TLS.
+    :identity @ (Str | Bin) = nil
+    # Password for `identity`. Defaults to empty.
+    # Passing it without `identity` raises
+    # [`ValueError`](std.ValueError).
+    :password @ Str = nil
+    # Pass `:DANGER_ACCEPT:` to disable TLS
+    # certificate validation. It is the only accepted value, and it is
+    # dangerous -- it defeats the point of TLS, so reserve it for testing.
+    :invalid_certs @ Sym = nil
+    # Called with the `Client`. Omit to receive the client instead.
+    func @ (Client -> R)
+  do -> R
+
+  #[class]
+  pub def (call) self ...options
     ...
 
   # Makes a request without a body.
   #
   # `head`, `delete`, `options`, `trace` and `connect` take the same arguments.
-  #
-  # ## Returns
-  #
-  # [`Response`](http.Response) when no `block` is given, otherwise the result
-  # of calling `block`.
   #
   # ## Errors
   #
@@ -531,7 +558,7 @@ pub class Client
   #   headers: {authorization: "Bearer token123"}
   # echo $response.status
   # ```
-  pub def get
+  def @get
     self
     # URL to request.
     url @ (Str | Url)
@@ -545,21 +572,35 @@ pub class Client
     # when its status is outside `200..=299`, instead of raising
     # [`Status`](http.Status).
     :status @ Sym = nil
-    # Called with the [`Response`](http.Response), which is closed
-    # when it returns. Omit to receive the response instead.
-    block @ Func = nil
-  do -> Value
+  do -> Response
+
+  # Makes a request without a body and calls `block` with the response. The
+  # response is closed when `block` returns.
+  def @get[R]
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request headers -- see
+    # [`headers`](http.Client.headers).
+    :headers @ Dict = nil
+    # Query parameters -- see
+    # [`query`](http.Client.query).
+    :query @ Dict = nil
+    # Pass `:IGNORE:` to return the response even
+    # when its status is outside `200..=299`, instead of raising
+    # [`Status`](http.Status).
+    :status @ Sym = nil
+    # Called with the [`Response`](http.Response). Omit to receive the response instead.
+    block @ (Response -> R)
+  do -> R
+
+  pub def get self url ...options
     ...
 
   # Makes a request with a body.
   #
   # `put` and `patch` take the same arguments. At most one of `body`, `json`,
   # `lines` and `multipart` may be given.
-  #
-  # ## Returns
-  #
-  # [`Response`](http.Response) when no `block` is given, otherwise the result
-  # of calling `block`.
   #
   # ## Errors
   #
@@ -576,7 +617,7 @@ pub class Client
   #     name: Alice
   #     age: 30
   # ```
-  pub def post
+  def @post
     self
     # URL to request.
     url @ (Str | Url)
@@ -601,10 +642,40 @@ pub class Client
     # when its status is outside `200..=299`, instead of raising
     # [`Status`](http.Status).
     :status @ Sym = nil
-    # Called with the [`Response`](http.Response), which is closed
-    # when it returns. Omit to receive the response instead.
-    block @ Func = nil
-  do -> Value
+  do -> Response
+
+  # Makes a request with a body and calls `block` with the response. The
+  # response is closed when `block` returns.
+  def @post[R]
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request body -- see
+    # [`body`](http.Client.body).
+    :body @ (Str | Bin) = nil
+    # Request body, JSON-serialized -- see [`json`](http.Client.json).
+    :json = nil
+    # Request body streamed with a newline after each element --
+    # see [`lines`](http.Client.lines).
+    :lines @ Iterable = nil
+    # Multipart form parts -- see
+    # [`multipart`](http.Client.multipart).
+    :multipart @ Iterable = nil
+    # Request headers -- see
+    # [`headers`](http.Client.headers).
+    :headers @ Dict = nil
+    # Query parameters -- see
+    # [`query`](http.Client.query).
+    :query @ Dict = nil
+    # Pass `:IGNORE:` to return the response even
+    # when its status is outside `200..=299`, instead of raising
+    # [`Status`](http.Status).
+    :status @ Sym = nil
+    # Called with the [`Response`](http.Response). Omit to receive the response instead.
+    block @ (Response -> R)
+  do -> R
+
+  pub def post self url ...options
     ...
 
   # Closes the client, releasing its connection pool.
@@ -620,18 +691,13 @@ pub class Client
 # [`Client.get`](http.Client.get) for the arguments and
 # [`Client`](http.Client.request-options) for what each option means.
 #
-# ## Returns
-#
-# [`Response`](http.Response) when no `block` is given, otherwise the result of
-# calling `block`.
-#
 # ## Example
 #
 # ```
 # get https://api.example.com/users do |response|
 #   echo $response.status
 # ```
-pub def get
+def @get
   # URL to request.
   url @ (Str | Url)
   # Request headers.
@@ -641,10 +707,25 @@ pub def get
   # Pass `:IGNORE:` to return the response even when
   # its status is outside `200..=299`.
   :status @ Sym = nil
-  # Called with the [`Response`](http.Response), which is closed
-  # when it returns.
-  block @ Func = nil
-do -> Value
+do -> Response
+
+# Makes a `GET` request through a fresh stateless client and calls `block` with
+# the response. The response is closed when `block` returns.
+def @get[R]
+  # URL to request.
+  url @ (Str | Url)
+  # Request headers.
+  :headers @ Dict = nil
+  # Query parameters.
+  :query @ Dict = nil
+  # Pass `:IGNORE:` to return the response even when
+  # its status is outside `200..=299`.
+  :status @ Sym = nil
+  # Called with the [`Response`](http.Response).
+  block @ (Response -> R)
+do -> R
+
+pub def get url ...options
   ...
 
 # Makes a `POST` request through a fresh stateless client.
@@ -653,18 +734,13 @@ do -> Value
 # arguments. See [`Client.post`](http.Client.post) for the arguments and
 # [`Client`](http.Client.request-options) for what each option means.
 #
-# ## Returns
-#
-# [`Response`](http.Response) when no `block` is given, otherwise the result of
-# calling `block`.
-#
 # ## Example
 #
 # ```
 # post https://api.example.com/users
 #   json: {name: "Alice"}
 # ```
-pub def post
+def @post
   # URL to request.
   url @ (Str | Url)
   # Request body.
@@ -682,8 +758,31 @@ pub def post
   # Pass `:IGNORE:` to return the response even when
   # its status is outside `200..=299`.
   :status @ Sym = nil
-  # Called with the [`Response`](http.Response), which is closed
-  # when it returns.
-  block @ Func = nil
-do -> Value
+do -> Response
+
+# Makes a `POST` request through a fresh stateless client and calls `block`
+# with the response. The response is closed when `block` returns.
+def @post[R]
+  # URL to request.
+  url @ (Str | Url)
+  # Request body.
+  :body @ (Str | Bin) = nil
+  # Request body, JSON-serialized.
+  :json = nil
+  # Request body streamed with a newline after each element.
+  :lines @ Iterable = nil
+  # Multipart form parts.
+  :multipart @ Iterable = nil
+  # Request headers.
+  :headers @ Dict = nil
+  # Query parameters.
+  :query @ Dict = nil
+  # Pass `:IGNORE:` to return the response even when
+  # its status is outside `200..=299`.
+  :status @ Sym = nil
+  # Called with the [`Response`](http.Response).
+  block @ (Response -> R)
+do -> R
+
+pub def post url ...options
   ...

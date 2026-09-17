@@ -136,7 +136,7 @@ pub class Node
     # Value returned when absent.
     :default = nil
     # Function evaluated when absent.
-    :else = nil
+    :else @ (() -> Value) = nil
   do
     ...
 

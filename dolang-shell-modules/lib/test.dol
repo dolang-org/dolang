@@ -312,17 +312,13 @@ class Fixture
 # def example_test()
 #   do_something()
 # ```
-pub def fixture wrap -> Func
+pub def fixture wrap -> (Value -> Value)
   do |value|
     let test_def = to_test_def $value
     test_def.func = Fixture $wrap $test_def.func
     test_def
 
-# Registers a zero-argument test function.
-#
-# ## Returns
-#
-# Returns `func`, or a decorator awaiting it when `func` is omitted.
+# Returns a decorator that registers a zero-argument test function.
 #
 # ## Example
 #
@@ -331,16 +327,31 @@ pub def fixture wrap -> Func
 # def connects_to_service()
 #   connect()
 # ```
-pub def test
+def @test
+  # Reporting name. Defaults to the test function's string form.
+  :name @ Str = nil
+  # Tags to attach. Order and duplicates are
+  # preserved.
+  :tags @ Iterable = []
+do -> (Value -> Value)
+
+# Registers a zero-argument test function, returning it.
+def @test[F]
   # Reporting name. Defaults to `str(func)`.
   :name @ Str = nil
   # Tags to attach. Order and duplicates are
   # preserved.
   :tags @ Iterable = []
-  # Test function. Supplied implicitly when this
-  # function is used as a decorator.
-  func @ Func = nil
-do -> func
+  # Test function, or a test decorated with
+  # [`parametrize`](test.parametrize) or a fixture.
+  func @ F
+do -> F
+
+pub def test
+  :name @ Str = nil
+  :tags @ Iterable = []
+  func = nil
+do
   if (func == nil)
     return do |func| test name: $name tags: $tags $func
   let tag_values = []
@@ -399,12 +410,25 @@ do -> func
 # def connects :backend
 #   backend.ping()
 # ```
-pub def parametrize
-  # Test function. Supplied implicitly when this
-  # function is used as a decorator.
-  func @ Func = nil
+def @parametrize
   # An axis name paired with an iterable of raw
   # values and/or `tagged(value, ...tags)` wrappers for that axis.
+  ...axes @ Iterable
+do -> (Value -> Value)
+
+# Registers parametrize axes on a test function directly, returning the
+# decorated test for [`test`](test.test).
+def @parametrize
+  # Test function, or a test already decorated with
+  # `parametrize` or a fixture.
+  func
+  # An axis name paired with an iterable of raw
+  # values and/or `tagged(value, ...tags)` wrappers for that axis.
+  ...axes @ Iterable
+do
+
+pub def parametrize
+  func = nil
   ...axes @ Iterable
 do
   if (func == nil)
@@ -565,7 +589,7 @@ pub def run
   :module_jobs @ Int = 4
   # Predicate receiving a
   # [`TestInfo`](test.TestInfo). Defaults to accepting every test.
-  :filter @ Func = (do |_| true)
+  :filter @ (TestInfo -> Bool) = (do |_| true)
   # Per-test and module-load timeout in seconds.
   :timeout @ Int = 600
   # Capture output and show it for failures.

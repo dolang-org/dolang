@@ -952,11 +952,6 @@ do -> Share
 # Connections belong to a logon session. One made under a given account is not
 # visible to a process running as another.
 #
-# ## Returns
-#
-# [`Connection`](winnet.Connection) when no `func` is given, otherwise the result
-# of calling `func`.
-#
 # ## Errors
 #
 # | Exception                                                        | Condition                              |
@@ -987,7 +982,7 @@ do -> Share
 #   password: $secret
 #   persistent: true
 # ```
-pub def connect
+def @connect
   # Remote resource in UNC form, such as
   # `r"\\server\share"`.
   remote @ Str
@@ -1019,10 +1014,33 @@ pub def connect
   # so a connection provisioned for a service account must be made under that
   # account to be restored for it.
   :save_credentials @ Bool = nil
-  # Called with the [`Connection`](winnet.Connection), which is
-  # disconnected when it returns. Omit to receive the handle instead.
-  func @ Func = nil
-do -> Value
+do -> Connection
+
+# Connects to a network resource and calls `func` with the connection, which is
+# disconnected when `func` returns.
+def @connect[R]
+  # Remote resource in UNC form, such as
+  # `r"\\server\share"`.
+  remote @ Str
+  # Local device to redirect, such as `"Z:"`.
+  :local @ Str = nil
+  # Account to authenticate as.
+  :user @ Str = nil
+  # Password for `user`.
+  :password @ Str = nil
+  # Resource kind: `:DISK:`, `:PRINT:`, or `:ANY:`.
+  :kind @ Sym = nil
+  # Record the connection so it is restored at
+  # logon.
+  :persistent @ Bool = nil
+  # Override whether credentials are saved for the
+  # server.
+  :save_credentials @ Bool = nil
+  # Called with the [`Connection`](winnet.Connection).
+  func @ (Connection -> R)
+do -> R
+
+pub def connect remote ...options
   ...
 
 # Obtains a handle to an existing connection.
