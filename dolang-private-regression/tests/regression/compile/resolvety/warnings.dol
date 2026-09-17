@@ -81,3 +81,24 @@ def _import_hidden x @Local
   # LL |     - @Local
   #    |        ^^^^^
   x
+
+# A use before or within an alias that shadows an outer type means the alias. A
+# parameter is outside the body the alias is declared in.
+let @_Shadowed = Int
+def _shadow_early x @_Shadowed
+  let _early @_Shadowed = x
+  # warning: type name refers to its block's alias, not the outer type it shadows
+  #   --> warnings.dol:LL:LL
+  #    |
+  # LL |   let _early @_Shadowed = x
+  #    |               ^^^^^^^^^
+  let @_Shadowed = Array[_Shadowed]
+  # warning: type name refers to its block's alias, not the outer type it shadows
+  #   --> warnings.dol:LL:LL
+  #    |
+  # LL |   let @_Shadowed = Array[_Shadowed]
+  #    |                          ^^^^^^^^^
+  _early
+let _shadow_late = do
+  let @_Shadowed = Str
+  let _late @_Shadowed = nil

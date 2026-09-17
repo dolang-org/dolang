@@ -654,14 +654,14 @@ class Square: @Shape
 `@` before an import item binds it for types only; the item is not imported:
 
 ```
-
-`import @geometry` similarly binds a whole module only for dotted type names
-without loading it at runtime. `let @Name = Type` declares a type-only alias
-visible after its declaration.
 import geometry:
   - @Point
   - @Vector: Offset
 ```
+
+`import @geometry` similarly binds a whole module only for dotted type names
+without loading it at runtime. `let @Name = Type` declares a type-only alias
+visible throughout its block, so it may refer to itself or a later alias.
 
 An annotation or return type is a compact type, so the first whitespace after
 it begins ends it, even inside `()`. Parenthesize unions and function types:

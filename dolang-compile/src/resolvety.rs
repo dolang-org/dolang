@@ -121,6 +121,23 @@ impl Diagnose for TypeShadowsValue {
     }
 }
 
+struct AliasShadowsEarly(Span);
+
+impl Diagnose for AliasShadowsEarly {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "type name refers to its block's alias, not the outer type it shadows"
+        )
+    }
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
 struct ValueShadowsType(Span);
 
 impl Diagnose for ValueShadowsType {
@@ -246,8 +263,9 @@ struct TypeName {
     module: Option<Span>,
     /// A type-only import rather than a binder
     import: bool,
-    /// The name is visible only at sites after this offset.
-    visible_after: Option<u32>,
+    /// The declaration of an alias, which is visible throughout its block but shadows
+    /// an outer name even before it appears
+    alias: Option<Span>,
     /// Whether an unused name should be diagnosed.
     warn_unused: bool,
     used: Cell<bool>,
@@ -306,7 +324,7 @@ impl<'s> Frame<'s> {
                 span: binder.ident.span,
                 module: None,
                 import: false,
-                visible_after: None,
+                alias: None,
                 warn_unused: true,
                 used: Cell::new(false),
             })
@@ -391,13 +409,15 @@ impl Check<'_> {
         false
     }
 
+    /// Whether a type named `name` is visible at `site`. An alias counts only once
+    /// declared, so a value is diagnosed where the later of the two appears.
     fn has_type(&self, frame: &Frame<'_>, name: &str, site: u32) -> bool {
         let mut frame = Some(frame);
         while let Some(current) = frame {
             if let FrameKind::Types { names } = &current.kind
                 && names.iter().rev().any(|found| {
                     found.bound_name(self.file) == name
-                        && found.visible_after.is_none_or(|offset| site > offset)
+                        && found.alias.is_none_or(|alias| site > alias.end)
                 })
             {
                 return true;
@@ -468,11 +488,24 @@ impl Check<'_> {
                 }
                 FrameKind::Types { names } => {
                     // A later binding of a name shadows an earlier one
-                    if let Some(found) = names.iter().rev().find(|found| {
-                        found.matches(self.file, path)
-                            && found.visible_after.is_none_or(|offset| site > offset)
-                    }) {
+                    if let Some(found) = names
+                        .iter()
+                        .rev()
+                        .find(|found| found.matches(self.file, path))
+                    {
                         found.used.set(true);
+                        if let Some(alias) = found.alias
+                            && site <= alias.end
+                            // Past the block's own variables, whose conflicts with its
+                            // aliases are diagnosed at the alias
+                            && let Some(outer) = current.outer.and_then(|block| block.outer)
+                            && (self.has_type(outer, name, site) || self.has_value(outer, name, site))
+                        {
+                            self.diags.push(AliasShadowsEarly(Span {
+                                start: site,
+                                end: site + name.len() as u32,
+                            }));
+                        }
                         return Some(Found::Type {
                             import: found.import,
                             span: found.span,
@@ -1065,7 +1098,7 @@ impl Element for Stmt {
                             span: bind.span,
                             module: Some(*module),
                             import: true,
-                            visible_after: None,
+                            alias: None,
                             warn_unused: true,
                             used: Cell::new(import.pub_span.is_some()),
                         }),
@@ -1075,7 +1108,7 @@ impl Element for Stmt {
                                     span: item.bind().span,
                                     module: None,
                                     import: true,
-                                    visible_after: None,
+                                    alias: None,
                                     warn_unused: true,
                                     // An exported name may be used elsewhere
                                     used: Cell::new(import.pub_span.is_some()),
@@ -1090,7 +1123,7 @@ impl Element for Stmt {
                 span: alias.ident.span,
                 module: None,
                 import: false,
-                visible_after: Some(alias.span().end),
+                alias: Some(alias.span()),
                 warn_unused: false,
                 used: Cell::new(false),
             }),
@@ -1099,7 +1132,7 @@ impl Element for Stmt {
                 span: class.ident.span,
                 module: None,
                 import: false,
-                visible_after: None,
+                alias: None,
                 warn_unused: false,
                 used: Cell::new(false),
             }),

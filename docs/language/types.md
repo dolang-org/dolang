@@ -108,13 +108,15 @@ class Registry[V]: Table[Sym, V]
 
 ## Type Aliases
 
-`let @` declares a name for a type or schema. An alias is visible in types
-after its declaration and has no runtime binding. It may declare binders and
-may be exported.
+`let @` declares a name for a type or schema. An alias has no runtime binding,
+and is visible in types throughout its block, so it may refer to itself or to an
+alias declared later. It may declare binders and may be exported.
 
 ```
 pub let @Pair[T] = Tuple[T, T]
 let @Options = {name: Str, ?port: Int}
+let @Json = (Scalar | Array[Json] | Dict[{...Str: Json}])
+let @Scalar = (Str | Int | Float | Bool | nil)
 ```
 
 ## Type-Only Imports

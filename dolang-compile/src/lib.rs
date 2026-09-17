@@ -6,12 +6,12 @@ pub(crate) mod constant;
 pub mod diag;
 pub(crate) mod doc;
 pub(crate) mod elab;
-pub(crate) mod elabty;
 pub(crate) mod emit;
 pub(crate) mod flow;
 pub(crate) mod lex;
 pub(crate) mod lower;
 pub(crate) mod parse;
+pub(crate) mod resolvety;
 pub(crate) mod sig;
 pub mod source;
 pub(crate) mod sym;
@@ -1245,7 +1245,7 @@ impl<'a> Config<'a> {
         // Types only matter to documentation, and a unit that failed to elaborate has no
         // scopes to resolve them in
         if self.document && !failed {
-            elabty::check(
+            resolvety::check(
                 &mut ast,
                 &compiler.file,
                 &compiler.symtab,

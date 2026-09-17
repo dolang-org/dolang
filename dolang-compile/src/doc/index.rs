@@ -558,11 +558,6 @@ impl Index<'_> {
                 );
                 alias.node = Some(id);
                 self.type_decls.insert(name.start, id);
-                self.binders(scope, Some(id), alias.binders.as_deref_mut());
-                if let AliasBody::Type(ty) = &mut alias.body {
-                    self.ty(scope, ty);
-                    self.type_node(id, ty);
-                }
             }
             _ => {}
         }
@@ -807,7 +802,17 @@ impl Index<'_> {
                 self.prim(scope, &mut node.rhs);
             }
             Stmt::Import(_) => {}
-            Stmt::TypeAlias(_) => {}
+            // The body is resolved once every alias of the block is declared, since it
+            // may name a later one
+            Stmt::TypeAlias(alias) => {
+                if let Some(id) = alias.node {
+                    self.binders(scope, Some(id), alias.binders.as_deref_mut());
+                    if let AliasBody::Type(ty) = &mut alias.body {
+                        self.ty(scope, ty);
+                        self.type_node(id, ty);
+                    }
+                }
+            }
             Stmt::Def(def) => {
                 let id = def.ident.res.and_then(|res| res.node).or(def.node);
                 for decorator in &mut def.decorators {

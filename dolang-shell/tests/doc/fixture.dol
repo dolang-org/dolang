@@ -118,3 +118,9 @@ pub def mapped[...Rs] ...thunks @ ...(() -> Rs) -> Tuple[...Rs]
 
 # A type with no definition in source.
 pub let @Opaque[T] = ...
+
+# A nested list of labels.
+pub let @Outline = Array[(Label | Outline)]
+
+# A leaf of an outline.
+pub let @Label = Str
