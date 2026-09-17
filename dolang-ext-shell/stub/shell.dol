@@ -19,10 +19,6 @@ pub class Stdin
   #
   # This is the default framing, so it is only needed to undo a previous
   # [`chunks`](shell.Stdin.chunks).
-  #
-  # ## Returns
-  #
-  # [`Stdin`](shell.Stdin)
   pub def lines self -> Stdin
     ...
 
@@ -45,7 +41,7 @@ pub class Stdin
   #
   # ## Returns
   #
-  # [`Bin`](std.Bin). Empty means end of stream.
+  # An empty value at the end of the stream.
   #
   # ## Example
   #
@@ -165,7 +161,7 @@ pub class Stderr
   #
   # ## Returns
   #
-  # [`Int`](std.Int) - Bytes written.
+  # The number of bytes written.
   #
   # ## Example
   #
@@ -332,10 +328,6 @@ pub class Vfs
   # Everything else stays in the interpreter process unless its documentation
   # says otherwise -- network clients and native resources especially.
   #
-  # ## Returns
-  #
-  # The function's result.
-  #
   # ## Example
   #
   # ```
@@ -442,19 +434,11 @@ pub def line_ending() -> Str
 
 # Returns the current executable reported by the active VFS context, or `nil`
 # when running on the host.
-#
-# ## Returns
-#
-# [`fs.Path`](fs.Path) or `nil`.
 pub def vfs_exe() -> (Path | nil)
   ...
 
 # Runs a function in the interpreter's original host context, whatever VFS
 # contexts are currently entered.
-#
-# ## Returns
-#
-# The function's result.
 pub def with_host[R]
   # Function to run.
   func @ (() -> R)
@@ -467,10 +451,6 @@ do -> R
 # nested calls can override just one part of the invocation identity. Strands
 # created within the call inherit the overrides. Previous values are restored
 # when `func` returns, however it exits.
-#
-# ## Returns
-#
-# The function's result.
 #
 # ## Errors
 #

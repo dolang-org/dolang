@@ -102,10 +102,6 @@ pub class DateTime
     ...
 
   # Returns the UTC calendar date.
-  #
-  # ## Returns
-  #
-  # [`Date`](time.Date)
   pub def date self -> Date
     ...
 
@@ -227,18 +223,10 @@ pub class Date
     ...
 
   # Returns the RFC full-date representation, `YYYY-MM-DD`.
-  #
-  # ## Returns
-  #
-  # [`Str`](std.Str)
   pub def rfc self -> Str
     ...
 
   # Returns midnight UTC on this date.
-  #
-  # ## Returns
-  #
-  # [`DateTime`](time.DateTime)
   pub def datetime self -> DateTime
     ...
 
@@ -452,10 +440,6 @@ do
 # delivered at the next suspend or interrupt-check point, so a block that never
 # reaches one runs to completion regardless. The timeout is scoped: it is torn
 # down when the block returns, however it exits.
-#
-# ## Returns
-#
-# The block's result.
 #
 # ## Errors
 #

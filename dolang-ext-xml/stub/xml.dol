@@ -144,7 +144,7 @@ pub class Node
   #
   # ## Returns
   #
-  # `Bool` indicating whether an attribute was deleted.
+  # Whether an attribute was deleted.
   pub def delete_attr
     self
     # Local attribute name.
@@ -205,7 +205,7 @@ pub class Node
 #
 # ## Returns
 #
-# [`Node`](xml.Node), the root element.
+# The root element.
 #
 # ## Errors
 #
@@ -228,10 +228,6 @@ do -> Node
 #
 # Namespace declaration spelling and placement can differ from the input while
 # preserving element and attribute namespace semantics.
-#
-# ## Returns
-#
-# `Str` containing the serialized XML.
 #
 # ## Errors
 #

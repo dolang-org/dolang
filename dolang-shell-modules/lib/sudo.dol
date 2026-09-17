@@ -82,10 +82,6 @@ do -> nil
 # Filesystem access and spawned programs use a temporary elevated VFS for the
 # duration of the block. Pass `user` to run as an account other than root.
 #
-# ## Returns
-#
-# The result of `func`.
-#
 # ## Example
 #
 # ```

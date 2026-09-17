@@ -36,10 +36,6 @@ pub class Mask: Iterable[Sym]
     ...
 
   # Tests whether all bits represented by a symbol are set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool)
   pub def contains
     self
     # Bits to test for.
@@ -112,10 +108,6 @@ pub class Flags: Iterable[Sym]
     ...
 
   # Tests whether all bits represented by a symbol are set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool)
   pub def contains
     self
     # Bits to test for.
@@ -360,10 +352,6 @@ do -> Ace
 # Constructs an NFSv4 ACL from entries and declarative entry dictionaries.
 #
 # An empty ACL is valid.
-#
-# ## Returns
-#
-# [`Acl`](security.nfs4.Acl)
 pub def acl
   # Entries, spread with `...`
   # to pass a collection.

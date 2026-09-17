@@ -847,27 +847,16 @@ pub class Array[T]: Iterable[T] Sinkable[T]
   #   echo $value
   # ```
   #
-  pub def (iter) self
+  pub def (iter) self -> Iter[T]
     ...
 
+  # Destructures the array positionally.
+  #
   # ```
   # let a b ...rest = [1, 2, 3, 4]
   # assert_eq $a 1
   # assert_eq $b 2
   # ```
-  # Indexes the value.
-  pub def (index) self index
-    ...
-
-  # Assigns through an index.
-  pub def (assign) self index value
-    ...
-
-  # Returns an iterator.
-  pub def (iter) self
-    ...
-
-  # Unpacks the value.
   pub def (unpack) self
     ...
 
@@ -977,7 +966,7 @@ pub class Bin
   pub def join
     self
     # iterable to join; uses the default input when omitted
-    iter = nil
+    iter @ Iterable[(Str | Bin)] = nil
   do -> Bin
     ...
 
@@ -1112,7 +1101,7 @@ pub class Bin
   # assert_eq $bytes.unpack() [104, 101, 108, 108, 111]
   # ```
   #
-  pub def unpack self -> Array
+  pub def unpack self -> Array[Int]
     ...
 
   #
@@ -1188,7 +1177,7 @@ pub class Bin
   pub def pack
     self
     # array of integers (0-255)
-    array @ Array
+    array @ Array[Int]
   do -> Bin
     ...
 
@@ -1202,7 +1191,7 @@ pub class Bin
   # assert_eq (bin.unpack b"hello") [104, 101, 108, 108, 111]
   # ```
   #[class]
-  pub def unpack self value -> Array
+  pub def unpack self value -> Array[Int]
     ...
 
 
@@ -1879,21 +1868,14 @@ pub class Dict[S @ {...}]: Iterable[Tuple[Value, Value]]
   #   echo $pair
   # ```
   #
-  pub def (iter) self
+  pub def (iter) self -> Iter[Tuple[Value, Value]]
     ...
 
+  # Destructures the dictionary by key.
+  #
   # ```
   # let :name age: years = {name: "Alice", age: 30}
   # ```
-  # Indexes the value.
-  pub def (index) self index
-    ...
-
-  # Returns an iterator.
-  pub def (iter) self
-    ...
-
-  # Unpacks the value.
   pub def (unpack) self
     ...
 
@@ -2657,6 +2639,10 @@ pub class Fmt
 # `Func` is the abstract supertype of function values.
 pub class Func
 
+# A module object, produced by `import` or by loading a compiled module. Its
+# fields are the module's exported bindings.
+pub class Module
+
 #
 # Abstract type for class-field getter objects.
 #
@@ -3281,7 +3267,7 @@ pub class Record[...Ts]: @BaseIterable[Tuple[(Sym | Int), Value]]
   #
   #
   #[class]
-  pub def len self rec -> Int
+  pub def len self rec @ Record -> Int
     ...
 
   #
@@ -3728,7 +3714,7 @@ pub class Str
   pub def join
     self
     # iterable to join; uses the default input when omitted
-    iter = nil
+    iter @ Iterable = nil
   do -> Str
     ...
 

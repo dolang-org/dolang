@@ -9,7 +9,7 @@ pub class State
   #
   # ## Returns
   #
-  # [`Bin`](std.Bin) holding a snapshot of the digest.
+  # A snapshot of the digest so far.
   #
   # ## Example
   #
@@ -30,7 +30,7 @@ pub class State
   #
   # ## Returns
   #
-  # The same handle, for chaining.
+  # The same state, for chaining.
   #
   # ## Example
   #
@@ -55,7 +55,7 @@ pub class State
     self
     # Input to hash.
     data @ (Str | Bin)
-  do
+  do -> State
     ...
 
 # [`State`](digest.State) handle for BLAKE3.
@@ -137,7 +137,7 @@ pub class Sha512: State
 #
 # ## Returns
 #
-# [`Bin`](std.Bin) holding the 32-byte digest.
+# The 32-byte digest.
 #
 # ## Example
 #
@@ -157,7 +157,7 @@ do -> Bin
 #
 # ## Returns
 #
-# [`Bin`](std.Bin) holding the 16-byte digest.
+# The 16-byte digest.
 #
 # ## Example
 #
@@ -176,7 +176,7 @@ do -> Bin
 #
 # ## Returns
 #
-# [`Bin`](std.Bin) holding the 20-byte digest.
+# The 20-byte digest.
 #
 # ## Example
 #
@@ -195,7 +195,7 @@ do -> Bin
 #
 # ## Returns
 #
-# [`Bin`](std.Bin) holding the 32-byte digest.
+# The 32-byte digest.
 #
 # ## Example
 #
@@ -214,7 +214,7 @@ do -> Bin
 #
 # ## Returns
 #
-# [`Bin`](std.Bin) holding the 64-byte digest.
+# The 64-byte digest.
 #
 # ## Example
 #

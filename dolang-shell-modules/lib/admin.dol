@@ -9,10 +9,6 @@ import sudo sys shell time
 #
 # On Windows, this checks whether the access token is elevated. On Unix, it
 # checks whether the effective user ID is zero.
-#
-# ## Returns
-#
-# `Bool`
 pub def query() -> Bool
   if (sys.os_info().family == :WINDOWS:)
     security_windows.token_info().is_elevated
@@ -26,10 +22,6 @@ pub def query() -> Bool
 #
 # Filesystem access and spawned programs use the elevated VFS for the duration
 # of the block.
-#
-# ## Returns
-#
-# The result of `block`.
 #
 # ## Example
 #

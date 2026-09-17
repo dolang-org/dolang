@@ -25,6 +25,22 @@
 import term:
   - @Text
 
+# What a prelude binds a module to: an alias, an array of items, or a
+# dictionary of items to their aliases.
+pub @let PreludeBinding = (
+  | Str | Sym
+  | Array[(Str | Sym)]
+  | Dict[{...(Str | Sym): (Str | Sym)}]
+)
+
+# Imports to bind before compiled source: a module name, an array of module
+# names, or a dictionary of module names to their bindings.
+pub @let Prelude = (
+  | Str | Sym
+  | Array[(Str | Sym)]
+  | Dict[{...(Str | Sym): PreludeBinding}]
+)
+
 # A staged compilation unit.
 #
 # Provides diagnostics and document nodes for one source file before emitting
@@ -62,7 +78,7 @@ pub class Unit
   #
   # ## Returns
   #
-  # The [`Node`](compile.Node), or `nil` when the ID belongs to another unit.
+  # `nil` when the ID belongs to another unit.
   pub def node
     self
     # The ID to look up.
@@ -118,26 +134,26 @@ pub class NodeId
 # concrete kinds by what they carry, so a consumer can match on the level it
 # cares about.
 pub class Node
-  # The [`Span`](compile.Span) of the comment block documenting the node, or
-  # `nil` where none attaches.
+  # The span of the comment block documenting the node, or `nil` where none
+  # attaches.
   #
   # Every node answers, rather than only the kinds that can be documented:
   # which of them those are is the compiler's determination, and a consumer
   # that has to know it in advance gains nothing.
   #[getter]
-  pub def doc self
+  pub def doc self -> (Span | nil)
     ...
 
-  # The [`NodeId`](compile.NodeId) of the enclosing node, or `nil` for
+  # The ID of the enclosing node, or `nil` for
   # [`Root`](compile.Root).
   #[getter]
-  pub def parent self
+  pub def parent self -> (NodeId | nil)
     ...
 
-  # The [`Span`](compile.Span) the node covers in the source, or `nil` for a
+  # The span the node covers in the source, or `nil` for a
   # prelude node, which has no source text.
   #[getter]
-  pub def span self
+  pub def span self -> (Span | nil)
     ...
 
 # The complete source document.
@@ -155,9 +171,9 @@ pub class Root: Node
 # [`PreludeItem`](compile.PreludeItem) report a [`Str`](std.Str) instead,
 # since a prelude binding has no source text to point at.
 pub class Declaration: Node
-  # The bound name, as a [`Span`](compile.Span) or a [`Str`](std.Str).
+  # The bound name.
   #[getter]
-  pub def name self
+  pub def name self -> (Span | Str)
     ...
 
 # A class declaration.
@@ -166,7 +182,7 @@ pub class Declaration: Node
 pub class Class: Declaration
   # Whether the class was declared `pub`.
   #[getter]
-  pub def is_pub self
+  pub def is_pub self -> Bool
     ...
 
   # Whether the class is a protocol, declared `@class Name`.
@@ -179,7 +195,7 @@ pub class Function: Declaration
   # Whether the function was declared `pub`. An overload is public when its
   # implementation is.
   #[getter]
-  pub def is_pub self
+  pub def is_pub self -> Bool
     ...
 
   # Whether the function is an overload signature, declared `@def name`.
@@ -192,7 +208,7 @@ pub class Method: Declaration
   # Whether the method was declared `pub`. An overload is public when its
   # implementation is.
   #[getter]
-  pub def is_pub self
+  pub def is_pub self -> Bool
     ...
 
   # Whether the method has no body: an overload signature or a protocol member.
@@ -218,7 +234,7 @@ pub class SpecialMethod: Declaration
 pub class Field: Declaration
   # Whether the field was declared `pub`.
   #[getter]
-  pub def is_pub self
+  pub def is_pub self -> Bool
     ...
 
 # A `let` or other binding.
@@ -228,7 +244,7 @@ pub class Bind: Declaration
 pub class Alias: Declaration
   # Whether the binding was declared `pub`.
   #[getter]
-  pub def is_pub self
+  pub def is_pub self -> Bool
     ...
 
   # Whether the alias is opaque, declared with `...` in place of a type. An
@@ -242,17 +258,16 @@ pub class SelfParam: Declaration
 
 # Supertype of the nodes that bind a name to something imported.
 pub class Import: Declaration
-  # The module path, as a [`Span`](compile.Span) as written or, for a prelude
-  # binding, a [`Str`](std.Str).
+  # The module path as written, or as a string for a prelude binding.
   #[getter]
-  pub def module self
+  pub def module self -> (Span | Str)
     ...
 
 # A module bound by `import foo` or `import foo: bar`.
 pub class ImportModule: Import
   # Whether the module was imported `pub`.
   #[getter]
-  pub def is_pub self
+  pub def is_pub self -> Bool
     ...
 
   # Whether the module was imported with `@`, for types only.
@@ -264,17 +279,17 @@ pub class ImportModule: Import
 pub class ImportItem: Import
   # Whether the item was imported `pub`.
   #[getter]
-  pub def is_pub self
+  pub def is_pub self -> Bool
     ...
-  # The [`Span`](compile.Span) of the item name within the module.
+  # The span of the item name within the module.
   #[getter]
-  pub def item self
+  pub def item self -> Span
     ...
 
   # Whether the item was imported with `@`, for types only. Such an item binds no
   # variable.
   #[getter]
-  pub def type_only self
+  pub def type_only self -> Bool
     ...
 
 # A module bound by the prelude.
@@ -293,27 +308,27 @@ pub class PreludeModule: Import
 # [`Str`](std.Str) values rather than spans, and it appears only where
 # the binding it introduces is referenced.
 pub class PreludeItem: Import
-  # The item name within the module, as a [`Str`](std.Str).
+  # The item name within the module.
   #[getter]
-  pub def item self
+  pub def item self -> Str
     ...
 
 # Supertype of a function's parameters. The function is the parent.
 pub class Param: Node
-  # The bound name as a [`Span`](compile.Span).
+  # The bound name.
   #
   # `nil` for an anonymous [`RestParam`](compile.RestParam); every other
   # parameter has one.
   #[getter]
-  pub def name self
+  pub def name self -> (Span | nil)
     ...
 
 # A positional parameter.
 pub class PositionalParam: Param
-  # The [`Span`](compile.Span) of the default value expression, or `nil` when the
-  # parameter has no default. Slice the source for its text.
+  # The span of the default value expression, or `nil` when the parameter has
+  # no default. Slice the source for its text.
   #[getter]
-  pub def default self
+  pub def default self -> (Span | nil)
     ...
 
 # A keyword parameter.
@@ -322,15 +337,15 @@ pub class PositionalParam: Param
 # and `foo: local` both arrive here, differing only in whether `key` and `name`
 # cover the same text.
 pub class KeyParam: Param
-  # The [`Span`](compile.Span) of the default value expression, or `nil` when the
-  # parameter has no default. Slice the source for its text.
+  # The span of the default value expression, or `nil` when the parameter has
+  # no default. Slice the source for its text.
   #[getter]
-  pub def default self
+  pub def default self -> (Span | nil)
     ...
 
-  # The [`Span`](compile.Span) of the key as written, without the `:` sigil.
+  # The span of the key as written, without the `:` sigil.
   #[getter]
-  pub def key self
+  pub def key self -> Span
     ...
 
 # A rest parameter. Its `name` is `nil` when it is anonymous.
@@ -378,10 +393,9 @@ pub class IfElem: Block
 
 # Supertype of the nodes that name another node.
 pub class Reference: Node
-  # The [`NodeId`](compile.NodeId) of the node named, or `nil` when the compiler
-  # could not resolve one.
+  # The ID of the node named, or `nil` when the compiler could not resolve one.
   #[getter]
-  pub def target self
+  pub def target self -> (NodeId | nil)
     ...
 
 # A decorator.
@@ -406,9 +420,9 @@ pub class Return: Reference
 # class it is a superclass of. A declaration naming several fields yields one
 # type per field.
 pub class Type: Node
-  # The type as a [`TypeExpr`](compile.TypeExpr).
+  # The type expression.
   #[getter]
-  pub def expr self
+  pub def expr self -> TypeExpr
     ...
 
 # Supertype of binders: names standing for types within the function, method,
@@ -439,82 +453,79 @@ pub class RestBinder: Binder
 # converts all of its types the first time one is asked for, so the same type
 # always yields the same objects.
 pub class TypeExpr
-  # The [`Span`](compile.Span) of the type as written, including any
-  # parentheses around it.
+  # The span of the type as written, including any parentheses around it.
   #[getter]
-  pub def span self
+  pub def span self -> Span
     ...
 
 # A possibly dotted name, such as `Str` or `time.Duration`.
 pub class NameType: TypeExpr
-  # The [`Span`](compile.Span) of the first name.
+  # The span of the first name.
   #[getter]
-  pub def head self
+  pub def head self -> Span
     ...
 
-  # The [`NodeId`](compile.NodeId) of the node the first name refers to, or
-  # `nil` when the compiler could not resolve it.
+  # The ID of the node the first name refers to, or `nil` when the compiler
+  # could not resolve it.
   #[getter]
-  pub def target self
+  pub def target self -> (NodeId | nil)
     ...
 
 # A constant, such as `:TARGET:` or `nil`.
 pub class ConstType: TypeExpr
-  # The constant's value: a [`Sym`](std.Sym), [`Str`](std.Str),
-  # [`Int`](std.Int), [`Bool`](std.Bool), or `nil`.
+  # The constant's value.
   #[getter]
-  pub def value self
+  pub def value self -> (Sym | Str | Int | Bool | nil)
     ...
 
 # Type arguments applied to a type, such as `Array[Int]`.
 pub class AppType: TypeExpr
-  # An array of [`TypeArg`](compile.TypeArg) objects.
+  # The type arguments.
   #[getter]
-  pub def args self
+  pub def args self -> Array[TypeArg]
     ...
 
-  # The [`TypeExpr`](compile.TypeExpr) the arguments apply to.
+  # The type the arguments apply to.
   #[getter]
-  pub def base self
+  pub def base self -> TypeExpr
     ...
 
 # A schema, such as `{name: Str, ?port: Int}`.
 pub class SchemaType: TypeExpr
-  # An array of [`TypeArg`](compile.TypeArg) objects, one per entry.
+  # The entries.
   #[getter]
-  pub def args self
+  pub def args self -> Array[TypeArg]
     ...
 
 # A union, such as `(Str | Path)`.
 pub class UnionType: TypeExpr
-  # An array of the member [`TypeExpr`](compile.TypeExpr) objects, in the order
-  # written.
+  # The members, in the order written.
   #[getter]
-  pub def members self
+  pub def members self -> Array[TypeExpr]
     ...
 
 # A function type, such as `(Int, ?Int) -> Int`.
 pub class FuncType: TypeExpr
-  # An array of [`TypeArg`](compile.TypeArg) objects, one per parameter.
+  # The parameters.
   #[getter]
-  pub def params self
+  pub def params self -> Array[TypeArg]
     ...
 
-  # The return [`TypeExpr`](compile.TypeExpr).
+  # The return type.
   #[getter]
-  pub def ret self
+  pub def ret self -> TypeExpr
     ...
 
 # Supertype of the items in the `[]`, `()`, or `{}` of a type.
 pub class TypeArg
   # Whether the item is marked optional with `?`.
   #[getter]
-  pub def optional self
+  pub def optional self -> Bool
     ...
 
-  # The [`Span`](compile.Span) of the item, without a trailing `,`.
+  # The span of the item, without a trailing `,`.
   #[getter]
-  pub def span self
+  pub def span self -> Span
     ...
 
 # A positional item, such as `T`.
@@ -530,10 +541,10 @@ pub class KeyTypeArg: TypeArg
   #[getter]
   pub def ty self -> TypeExpr
     ...
-  # The [`Span`](compile.Span) of the key as written. A bareword key is a symbol
+  # The span of the key as written. A bareword key is a symbol
   # and a quoted one is a string.
   #[getter]
-  pub def key self
+  pub def key self -> Span
     ...
 
 # A rest item, such as `...T`.
@@ -557,6 +568,37 @@ pub class KeyRestTypeArg: TypeArg
   pub def key_ty self -> TypeExpr
     ...
 
+# The kind of a [`Token`](compile.Token).
+#
+# | Value            | Meaning                                                  |
+# | ---------------- | --------------------------------------------------------- |
+# | `:ANNOTATION:`   | An `@` annotation marker                                  |
+# | `:BINDER:`       | A type binder declaration                                 |
+# | `:COMMENT:`      | A comment                                                  |
+# | `:CONSTANT:`     | A non-numeric, non-string constant such as `nil` or `false` |
+# | `:DELIM:`        | A delimiter such as `(`, `[`, etc                          |
+# | `:ESCAPE:`       | An escape within a string                                  |
+# | `:FIELD:`        | A field, e.g. `bar` in `foo.bar`                           |
+# | `:METHOD:`       | A method declaration name                                  |
+# | `:KEY:`          | A key such as `foo:`                                       |
+# | `:MODULE_NAME:`  | A module name                                              |
+# | `:MODULE_ITEM:`  | A module item                                              |
+# | `:KEYWORD:`      | A keyword such as `while`, `for`, `do`, `import`           |
+# | `:LITERAL:`      | A literal string, including non-escape, non-interpolated portions of quoted strings |
+# | `:NUMBER:`       | A numeric constant                                         |
+# | `:OPERATOR:`     | A unary or binary operator such as `+` or `-`               |
+# | `:STRING_DELIM:` | A string delimiter (`"`)                                   |
+# | `:TYPE:`         | A name within a type expression                           |
+# | `:TYPE_KEY:`     | A keyed argument within a type expression                 |
+# | `:VARIABLE:`     | A variable                                                 |
+# | `:SIGIL:`        | A sigil like `$` or `...`                                  |
+pub @let TokenKind = (
+  | :ANNOTATION: | :BINDER: | :COMMENT: | :CONSTANT: | :DELIM: | :ESCAPE:
+  | :FIELD: | :METHOD: | :KEY: | :MODULE_NAME: | :MODULE_ITEM: | :KEYWORD:
+  | :LITERAL: | :NUMBER: | :OPERATOR: | :STRING_DELIM: | :TYPE: | :TYPE_KEY:
+  | :VARIABLE: | :SIGIL:
+)
+
 # A syntactic token.
 #
 # Tokens describe how a span of source text should be presented (for syntax
@@ -573,48 +615,24 @@ pub class KeyRestTypeArg: TypeArg
 # ```
 pub class Token
   # The token kind.
-  #
-  # | Value            | Meaning                                                  |
-  # | ---------------- | --------------------------------------------------------- |
-  # | `:ANNOTATION:`   | An `@` annotation marker                                  |
-  # | `:BINDER:`       | A type binder declaration                                 |
-  # | `:COMMENT:`      | A comment                                                  |
-  # | `:CONSTANT:`     | A non-numeric, non-string constant such as `nil` or `false` |
-  # | `:DELIM:`        | A delimiter such as `(`, `[`, etc                          |
-  # | `:ESCAPE:`       | An escape within a string                                  |
-  # | `:FIELD:`        | A field, e.g. `bar` in `foo.bar`                           |
-  # | `:METHOD:`       | A method declaration name                                  |
-  # | `:KEY:`          | A key such as `foo:`                                       |
-  # | `:MODULE_NAME:`  | A module name                                              |
-  # | `:MODULE_ITEM:`  | A module item                                              |
-  # | `:KEYWORD:`      | A keyword such as `while`, `for`, `do`, `import`           |
-  # | `:LITERAL:`      | A literal string, including non-escape, non-interpolated portions of quoted strings |
-  # | `:NUMBER:`       | A numeric constant                                         |
-  # | `:OPERATOR:`     | A unary or binary operator such as `+` or `-`               |
-  # | `:STRING_DELIM:` | A string delimiter (`"`)                                   |
-  # | `:TYPE:`         | A name within a type expression                           |
-  # | `:TYPE_KEY:`     | A keyed argument within a type expression                 |
-  # | `:VARIABLE:`     | A variable                                                 |
-  # | `:SIGIL:`        | A sigil like `$` or `...`                                  |
   #[getter]
-  pub def kind self
+  pub def kind self -> TokenKind
     ...
 
-  # The [`Span`](compile.Span) of source text the token covers.
+  # The span of source text the token covers.
   #[getter]
-  pub def span self
+  pub def span self -> Span
     ...
 
-  # The [`NodeId`](compile.NodeId) of the declaration this token names, or
-  # `nil` when it names none.
+  # The ID of the declaration this token names, or `nil` when it names none.
   #[getter]
-  pub def node self
+  pub def node self -> (NodeId | nil)
     ...
 
-  # The syntactic context the token appears in, currently only `:CALL:` (a
-  # callee position) or `nil`.
+  # The syntactic context the token appears in: `:CALL:` for a callee position,
+  # or `nil`.
   #[getter]
-  pub def context self
+  pub def context self -> (:CALL: | nil)
     ...
 
 # A compiler diagnostic.
@@ -627,90 +645,89 @@ pub class Token
 #   echo $diag.render()
 # ```
 pub class Diagnostic
-  # An array of [`Annotation`](compile.Annotation) objects describing additional
-  # highlighted source regions.
+  # Additional highlighted source regions.
   #[getter]
-  pub def annotations self
+  pub def annotations self -> Array[Annotation]
     ...
 
-  # The primary diagnostic message as [`Str`](std.Str).
+  # The primary diagnostic message.
   #[getter]
-  pub def message self
+  pub def message self -> Str
     ...
 
-  # An array of [`Note`](compile.Note) objects with extra context or help.
+  # Notes with extra context or help.
   #[getter]
-  pub def notes self
+  pub def notes self -> Array[Note]
     ...
 
-  # An array of [`Patch`](compile.Patch) objects describing suggested edits.
+  # Suggested edits.
   #[getter]
-  pub def patches self
+  pub def patches self -> Array[Patch]
     ...
 
-  # The severity as `:ERROR:` or `:WARNING:`.
+  # The severity.
   #[getter]
-  pub def severity self
+  pub def severity self -> (:ERROR: | :WARNING:)
     ...
 
-  # The primary source [`Span`](compile.Span).
+  # The primary source span.
   #[getter]
-  pub def span self
+  pub def span self -> Span
     ...
 
   # Renders the diagnostic for terminal presentation.
   #
   # ## Returns
   #
-  # [`term.Text`](term.Text), without a final newline.
+  # The rendering, without a final newline.
   pub def render self -> Text
     ...
 
 # An additional highlighted region attached to a
 # [`Diagnostic`](compile.Diagnostic).
 pub class Annotation
-  # The annotation kind as `:PRIMARY:` or `:CONTEXT:`.
+  # The annotation kind.
   #[getter]
-  pub def kind self
+  pub def kind self -> (:PRIMARY: | :CONTEXT:)
     ...
 
-  # The annotation label as [`Str`](std.Str).
+  # The annotation label.
   #[getter]
-  pub def message self
+  pub def message self -> Str
     ...
 
-  # The annotated [`Span`](compile.Span).
+  # The annotated span.
   #[getter]
-  pub def span self
+  pub def span self -> Span
     ...
 
 # An auxiliary note attached to a [`Diagnostic`](compile.Diagnostic).
 pub class Note
-  # The note kind as `:INFO:` or `:HELP:`.
+  # The note kind.
   #[getter]
-  pub def kind self
+  pub def kind self -> (:INFO: | :HELP:)
     ...
 
-  # The note text as [`Str`](std.Str).
+  # The note text.
   #[getter]
-  pub def message self
+  pub def message self -> Str
     ...
 
 # A suggested source edit attached to a [`Diagnostic`](compile.Diagnostic).
 pub class Patch
   # Human-readable text describing the suggested change.
   #[getter]
-  pub def message self
+  pub def message self -> Str
     ...
 
-  # The [`Span`](compile.Span) to replace.
+  # The span to replace.
   #[getter]
-  pub def span self
+  pub def span self -> Span
     ...
 
-  # The replacement text as [`Str`](std.Str).
+  # The replacement text.
   #[getter]
-  pub def sub self
+  pub def sub self -> Str
     ...
 
 # A region of source text.
@@ -718,31 +735,31 @@ pub class Patch
 # Spans compare and order by position, so they can be sorted or used as dict
 # keys.
 pub class Span
-  # The exclusive end position as [`Pos`](compile.Pos).
+  # The exclusive end position.
   #[getter]
-  pub def end self
+  pub def end self -> Pos
     ...
 
-  # The inclusive start position as [`Pos`](compile.Pos).
+  # The inclusive start position.
   #[getter]
-  pub def start self
+  pub def start self -> Pos
     ...
 
 # A position within source text. All coordinates are zero-based.
 pub class Pos
   # Byte offset from the start of the source.
   #[getter]
-  pub def byte_offset self
+  pub def byte_offset self -> Int
     ...
 
   # Column offset within the line.
   #[getter]
-  pub def column self
+  pub def column self -> Int
     ...
 
   # Line offset from the start of the source.
   #[getter]
-  pub def line self
+  pub def line self -> Int
     ...
 
 # Parses and elaborates Do source into a staged compilation unit.
@@ -801,13 +818,9 @@ pub def compile
   # mode, running it yields a module object holding the exported bindings, or
   # the value of an early return.
   :module @ Str = nil
-  # Additional imports to bind before the source.
-  #
-  # Accepts the same logical import shapes used by the LSP prelude settings:
-  # an array of module names, a dict mapping a module to an alias, or a dict
-  # mapping a module to the items to take from it, themselves optionally
-  # aliased.
-  :prelude @ Dict = nil
+  # Additional imports to bind before the source, in the shapes the LSP prelude
+  # settings take.
+  :prelude @ Prelude = nil
   # Continue parsing after syntax errors. Defaults
   # to `false`.
   #

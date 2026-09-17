@@ -17,6 +17,145 @@ import progress json patch rand shlex strand proc sys transfer _vfs time
   _container.common:
     - runtime_dir
     - cache_dir
+  fs.unix:
+    - @Mode
+
+# An image pull policy.
+#
+# | Value       | Meaning                                  |
+# | ----------- | ---------------------------------------- |
+# | `:MISSING:` | Pull the image only when it is not local |
+# | `:ALWAYS:`  | Always pull the image                    |
+# | `:NEVER:`   | Never pull the image                     |
+pub @let PullPolicy = (:MISSING: | :ALWAYS: | :NEVER:)
+
+# Environment variables to set. A value of `:INHERIT:` copies the variable from
+# the calling environment; any other value is converted to a string.
+pub @let Env = Dict[{...(Str | Sym): Value}]
+
+# A mount for a container.
+#
+# | Key        | Meaning                                         |
+# | ---------- | ----------------------------------------------- |
+# | `type`     | Mount type                                      |
+# | `target`   | Mount path in the container                     |
+# | `source`   | Host path or volume name. Required for `:BIND:` |
+# | `readonly` | Mount read-only. Defaults to `false`            |
+pub @let ContainerMount = Dict[{
+  type: (:BIND: | :VOLUME: | :TMPFS:), target: (Str | Path),
+  ?source: (Str | Path), ?readonly: Bool,
+}]
+
+# A mount available to every build step.
+#
+# | Key        | Meaning                                         |
+# | ---------- | ----------------------------------------------- |
+# | `type`     | Mount type                                      |
+# | `target`   | Mount path in the container                     |
+# | `source`   | Host path or volume name. Required for `:BIND:` |
+# | `id`       | Cache ID. Defaults to `target`                  |
+# | `readonly` | Mount read-only. Defaults to `false`            |
+pub @let BuildMount = Dict[{
+  type: (:CACHE: | :BIND: | :VOLUME: | :TMPFS:), target: (Str | Path),
+  ?source: (Str | Path), ?id: Str, ?readonly: Bool,
+}]
+
+# A network protocol for a published port.
+pub @let PortProtocol = (:TCP: | :UDP: | :SCTP:)
+
+# A container port to publish on the host.
+#
+# | Key              | Meaning                                         |
+# | ---------------- | ----------------------------------------------- |
+# | `container_port` | Container port                                  |
+# | `host_port`      | Host port. Assigned automatically when omitted  |
+# | `host_ip`        | Host address to bind                            |
+# | `protocol`       | Protocol. Defaults to `:TCP:`                   |
+pub @let PortSpec = Dict[{
+  container_port: (Int | Str), ?host_port: (Int | Str), ?host_ip: Str,
+  ?protocol: PortProtocol,
+}]
+
+# A container restart policy.
+#
+# | Value              | Meaning                            |
+# | ------------------ | ---------------------------------- |
+# | `:NO:`             | Do not restart the container       |
+# | `:ON_FAILURE:`     | Restart after an unsuccessful exit |
+# | `:ALWAYS:`         | Always restart the container       |
+# | `:UNLESS_STOPPED:` | Restart unless explicitly stopped  |
+#
+# `max_retries` limits restarts, and applies only to `:ON_FAILURE:`.
+pub @let RestartSpec = Dict[{
+  policy: (:NO: | :ON_FAILURE: | :ALWAYS: | :UNLESS_STOPPED:),
+  ?max_retries: Int,
+}]
+
+# A target platform: an `os/arch[/variant]` string, or its parts.
+pub @let Platform = (Str | Dict[{os: Str, arch: Str, ?variant: Str}])
+
+# An image archive format. Docker supports only `:DOCKER_ARCHIVE:`.
+#
+# | Value              | Meaning                                                 |
+# | ------------------ | ------------------------------------------------------- |
+# | `:DOCKER_ARCHIVE:` | Single-file Docker archive, the only multi-image format |
+# | `:OCI_ARCHIVE:`    | Single-file OCI archive                                 |
+# | `:OCI_DIR:`        | OCI layout directory                                    |
+# | `:DOCKER_DIR:`     | Docker directory format                                 |
+# | `:DIR:`            | Plain directory of layers                               |
+pub @let ArchiveFormat = (
+  | :DOCKER_ARCHIVE: | :OCI_ARCHIVE: | :OCI_DIR: | :DOCKER_DIR: | :DIR:
+)
+
+# A file to add in a build step, from a path or URL or as direct content.
+#
+# If `target` is a directory, a source path or URL keeps its file name. Direct
+# content is always written to `target` itself. `chmod` sets the destination's
+# permissions.
+pub @let AddSpec = (
+  | Dict[{source: (Str | Path | Url), target: (Str | Path), ?chmod: (Int | Mode)}]
+  | Dict[{content: (Str | Bin), target: (Str | Path), ?chmod: (Int | Mode)}]
+)
+
+# A unified patch to apply in a build step, from a file or as direct content.
+pub @let PatchSpec = (Dict[{source: (Str | Path)}] | Dict[{content: (Str | Bin)}])
+
+# The lifecycle state of a container.
+pub @let ContainerStatus = (
+  | :CREATED: | :RUNNING: | :PAUSED: | :RESTARTING: | :REMOVING: | :EXITED:
+  | :DEAD:
+)
+
+# A published port of a container, as reported by
+# [`Container.state`](_container.dockman.Container.state).
+pub @let PortBinding = Record[...{
+  protocol: (PortProtocol | Str), container_port: Int,
+  host_ip: (Str | nil), host_port: (Int | nil),
+}]
+
+# A mount of a container, as reported by
+# [`Container.state`](_container.dockman.Container.state).
+pub @let MountInfo = Record[...{
+  type: (:BIND: | :VOLUME: | :TMPFS: | :IMAGE: | :NPIPE: | :CLUSTER: | Str | nil),
+  source: (Path | nil), target: (Path | nil), readonly: Bool,
+  mode: (Str | nil), propagation: (Str | nil), name: (Str | nil),
+}]
+
+# The live state of a container.
+#
+# `state` is `nil` when the runtime reports no status, and `status` is the
+# runtime's own word for it.
+pub @let ContainerState = Record[...{
+  name: (Str | nil), state: (ContainerStatus | Str | nil), status: (Str | nil),
+  ports: Array[PortBinding], mounts: Array[MountInfo],
+}]
+
+# A repository and tag naming an image.
+pub @let ImageTag = Record[...{repo: Str, tag: Str}]
+
+# The result of pushing an image: the reference pushed and, when the runtime
+# reports one, its digest.
+pub @let PushResult = Record[...{ref: Str, digest: (Str | nil)}]
 
 let COPY_BLOCK_SIZE = 1048576
 
@@ -115,22 +254,28 @@ let NO_CONTAINER_ERRORS = $
   - CONTAINER NOT KNOWN
   - NO CONTAINER FOUND
 
+# Raised when an image reference is malformed.
 pub class InvalidImageReferenceError: RuntimeError
-  pub field ref = nil
+  # The malformed reference.
+  pub field ref @ Str = nil
 
   def (init) self ref
     RuntimeError.(init) $self "invalid image reference: $ref"
     self.ref = ref
 
+# Raised when a registry rejects the credentials for an image.
 pub class RegistryAuthError: RuntimeError
-  pub field ref = nil
+  # The image reference.
+  pub field ref @ Str = nil
 
   def (init) self ref
     RuntimeError.(init) $self "registry authentication failed: $ref"
     self.ref = ref
 
+# Raised when an image archive cannot be read or written.
 pub class ArchiveError: RuntimeError
-  pub field source = nil
+  # The archive.
+  pub field source @ (Str | Path) = nil
 
   def (init) self source
     RuntimeError.(init) $self "archive operation failed: $source"
@@ -147,8 +292,8 @@ pub class ArchiveError: RuntimeError
 #   echo "not found: $e.ref"
 # ```
 pub class NoImageError: RuntimeError
-  # The image reference that was not found
-  pub field ref = nil
+  # The image reference that was not found.
+  pub field ref @ Str = nil
 
   def (init) self ref
     RuntimeError.(init) $self "image not found: $ref"
@@ -157,8 +302,10 @@ pub class NoImageError: RuntimeError
   pub def (dbg) self
     "<NoImageError ref: $(dbg self.ref)>"
 
+# Raised when a container ID or name cannot be found.
 pub class NoContainerError: RuntimeError
-  pub field ref = nil
+  # The container ID or name that was not found.
+  pub field ref @ Str = nil
 
   def (init) self ref
     RuntimeError.(init) $self "container not found: $ref"
@@ -170,7 +317,7 @@ pub class NoContainerError: RuntimeError
 # Raised by `Container.wait` when the container exits unsuccessfully.
 pub class ContainerExitError: RuntimeError
   # Numeric container exit status.
-  pub field rc = nil
+  pub field rc @ Int = nil
 
   def (init) self rc
     RuntimeError.(init) $self "container exited with status: $rc"
@@ -461,7 +608,7 @@ def parse_container_ports ports
           :protocol
           :container_port
           :host_ip
-          host_port: (host_port != nil && int host_port)
+          host_port: (host_port && int(host_port))
   mapped
 
 def parse_container_mounts mounts
@@ -1201,30 +1348,30 @@ pub class Builder
 
 # A container image.
 pub class Image
-  # Full image ID (`sha256:...`)
-  pub field id = nil
-  # Creation timestamp
-  pub field created = nil
-  # Image size in bytes
-  pub field size = nil
-  # Array of layer digest strings
-  pub field layers = nil
-  # CPU architecture (e.g. `"amd64"`)
-  pub field architecture = nil
-  # Operating system (e.g. `"linux"`)
-  pub field os = nil
-  # Command (`Array` of `Str`)
-  pub field cmd = nil
-  # Entrypoint (`Array` of `Str`)
-  pub field entrypoint = nil
-  # Environment (a `Dict`)
-  pub field env = nil
-  # Working directory (a `Path`)
-  pub field working_dir = nil
-  # User (`Str`)
-  pub field user = nil
-  # Labels (`dict)`A
-  pub field labels = nil
+  # Full image ID, `sha256:...`.
+  pub field id @ Str = nil
+  # Creation timestamp, as the runtime reports it.
+  pub field created @ Str = nil
+  # Image size in bytes.
+  pub field size @ Int = nil
+  # Layer digests.
+  pub field layers @ Array[Str] = nil
+  # CPU architecture, such as `"amd64"`.
+  pub field architecture @ Str = nil
+  # Operating system, such as `"linux"`.
+  pub field os @ Str = nil
+  # Default command, or `nil` when unset.
+  pub field cmd @ (Array[Str] | nil) = nil
+  # Entrypoint, or `nil` when unset.
+  pub field entrypoint @ (Array[Str] | nil) = nil
+  # Environment variables.
+  pub field env @ Dict[{...Str: Str}] = nil
+  # Working directory, or `nil` when unset.
+  pub field working_dir @ (Path | nil) = nil
+  # Default user, or `nil` when unset.
+  pub field user @ (Str | nil) = nil
+  # Labels, or `nil` when the image has none.
+  pub field labels @ (Dict[{...Str: Str}] | nil) = nil
 
   field runtime = nil
 
@@ -1274,29 +1421,35 @@ pub class Image
   pub def (str) self
     self.id
 
-  # Current tags, or an empty array for untagged images.
-  pub def tags self
+  # Returns the current tags, which are empty for an untagged image.
+  pub def tags self -> Array[ImageTag]
     let data = inspect_image $self.#runtime $self.id
     parse_image_tags $self.#runtime (data.get "RepoTags"  default: [])
 
-  # Tag the image with a new name.
+  # Tags the image with a new name.
   #
   # ```
   # img.tag "registry.example.com/myapp:v1.2"
   # ```
-  pub def tag self new_tag
+  pub def tag
+    self
+    # Reference to tag the image as.
+    new_tag @ Str
+  do
     let ref = str $self
     self.#runtime.quiet_cli tag $ref $new_tag
 
-  # Remove the image.
-  #
-  # - `force`: force removal even if the image is in use
+  # Removes the image.
   #
   # ```
   # img.remove()
   # img.remove force: true
   # ```
-  pub def remove self :force = false
+  pub def remove
+    self
+    # Remove the image even if containers use it, removing them too.
+    :force @ Bool = false
+  do
     if force
       # `rmi --force` removes containers using the image as part of the same
       # operation, but one can be self-removing at the same time (e.g. a
@@ -1315,19 +1468,34 @@ pub class Image
         --force
       $self.id
 
-  # Save the image to an archive or directory.
-  pub def save self target :format = :DOCKER_ARCHIVE: :platform = nil
+  # Saves the image to an archive or directory, returning `target`.
+  pub def save
+    self
+    # Archive path or directory to write.
+    target @ (Str | Path)
+    # Archive format.
+    :format @ ArchiveFormat = :DOCKER_ARCHIVE:
+    # Platform to save.
+    :platform @ Platform = nil
+  do -> (Str | Path)
     self.#runtime.save $target :format :platform $self.id
 
 # A running or stopped container.
 pub class Container
-  pub field id = nil
-  pub field image = nil
-  pub field image_id = nil
-  pub field created = nil
-  pub field cmd = nil
-  pub field entrypoint = nil
-  pub field labels = nil
+  # Full container ID.
+  pub field id @ Str = nil
+  # Image reference the container was created from.
+  pub field image @ (Str | nil) = nil
+  # ID of the image the container was created from.
+  pub field image_id @ (Str | nil) = nil
+  # Creation timestamp, as the runtime reports it.
+  pub field created @ (Str | nil) = nil
+  # Command, or `nil` when unset.
+  pub field cmd @ (Array[Str] | nil) = nil
+  # Entrypoint, or `nil` when unset.
+  pub field entrypoint @ (Array[Str] | nil) = nil
+  # Labels, or `nil` when the container has none.
+  pub field labels @ (Dict[{...Str: Str}] | nil) = nil
 
   field runtime = nil
 
@@ -1365,13 +1533,15 @@ pub class Container
   # `/tmp` and launched with the container runtime's `exec` command. The helper
   # is removed after the VFS connection starts when the container user has
   # permission to do so.
-  #
-  # `cd` selects the initial working directory. `env` applies initial
-  # environment overrides; `nil` unsets a variable and `:INHERIT:` copies its
-  # value from the calling context.
-  #
-  # Returns the result of `func`.
-  pub def with self func :cd = nil :env = {}
+  pub def with[R]
+    self
+    # Function to run.
+    func @ (() -> R)
+    # Initial working directory.
+    :cd @ (Str | Path) = nil
+    # Environment overrides. `nil` unsets a variable.
+    :env @ Env = {}
+  do -> R
     with_temp_dir parent: $runtime_dir() do |subdir|
       let ctr_agent = Path "/tmp/dolang-vfs-$(subdir.name)"
       self.#runtime.cli cp $(_vfs.bin()) "$(self.id):$ctr_agent"
@@ -1388,8 +1558,8 @@ pub class Container
       finally
         time.timeout 30 do vfs.stop()
 
-  # Current container state.
-  pub def state self
+  # Returns the container's live state.
+  pub def state self -> ContainerState
     let data = inspect_container $self.#runtime $self.id
     let name = data.get "Name"
     let state = data.get "State" default: {}
@@ -1411,19 +1581,27 @@ pub class Container
       ports: $parse_container_ports(network.get("Ports", default: {}))
       mounts: $parse_container_mounts(mounts)
 
-  pub def stop self :timeout = nil
+  # Stops the container.
+  pub def stop
+    self
+    # Seconds to wait before killing the container. Defaults to the runtime's.
+    :timeout @ Int = nil
+  do
     self.#runtime.quiet_cli stop
       if (timeout != nil)
         --time $timeout
       $self.id
 
+  # Starts the container.
   pub def start self
     self.#runtime.quiet_cli start $self.id
 
   # Waits for the container to stop.
   #
-  # Returns `nil` when the container exits successfully. Raises
-  # `ContainerExitError` for a nonzero exit status.
+  # ## Errors
+  #
+  # [`ContainerExitError`](_container.dockman.ContainerExitError) for a nonzero
+  # exit status.
   pub def wait self
     let lines = []
     let output = try
@@ -1436,16 +1614,29 @@ pub class Container
     if (rc != 0)
       throw ContainerExitError $rc
 
+  # Kills the container.
   pub def kill self
     self.#runtime.quiet_cli kill $self.id
 
-  pub def restart self :timeout = nil
+  # Restarts the container.
+  pub def restart
+    self
+    # Seconds to wait before killing the container. Defaults to the runtime's.
+    :timeout @ Int = nil
+  do
     self.#runtime.quiet_cli restart
       if (timeout != nil)
         --time $timeout
       $self.id
 
-  pub def remove self :force = false :volumes = false
+  # Removes the container.
+  pub def remove
+    self
+    # Remove the container even if it is running.
+    :force @ Bool = false
+    # Also remove its anonymous volumes.
+    :volumes @ Bool = false
+  do
     let lines = []
     try
       sub do self.#runtime.cli rm

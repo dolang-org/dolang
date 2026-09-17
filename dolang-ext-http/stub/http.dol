@@ -107,10 +107,6 @@ pub class Status: Error
     ...
 
   # The saved body excerpt.
-  #
-  # ## Returns
-  #
-  # [`Bin`](std.Bin).
   pub def body self -> Bin
     ...
 
@@ -209,10 +205,6 @@ pub class Response
     ...
 
   # Reads the whole body as bytes, consuming and closing the response.
-  #
-  # ## Returns
-  #
-  # [`Bin`](std.Bin).
   pub def body self -> Bin
     ...
 
@@ -254,10 +246,6 @@ pub class Response
   # Streams the body as raw byte chunks, so a large response need not be held
   # in memory whole.
   #
-  # ## Returns
-  #
-  # An [`Iter`](std.Iter) yielding [`Bin`](std.Bin)s.
-  #
   # ## Example
   #
   # ```
@@ -273,10 +261,6 @@ pub class Response
   # Streams the body as lines, split on `\n` or `\r\n` with the line ending
   # stripped.
   #
-  # ## Returns
-  #
-  # An [`Iter`](std.Iter) yielding [`Str`](std.Str)s.
-  #
   # ## Example
   #
   # ```
@@ -290,10 +274,6 @@ pub class Response
 
   # Streams the body as a Server-Sent Events stream -- the shape LLM responses,
   # log tails and other `text/event-stream` feeds arrive in.
-  #
-  # ## Returns
-  #
-  # An [`Iter`](std.Iter) yielding [`Event`](http.Event)s.
   #
   # ## Errors
   #

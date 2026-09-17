@@ -67,6 +67,7 @@ import
     - @Path
   security.windows:
     - @SecDesc
+    - @SecDescSpec
 
 # Access rights for a [`ScManager`](winscm.ScManager) handle.
 #
@@ -134,11 +135,6 @@ pub class ManagerAccessMask
 
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
-  #
-  # ## Returns
-  #
-  # `ManagerAccessMask`.
-  #[class]
   pub def from_int
     self
     # Native Windows access mask.
@@ -153,10 +149,6 @@ pub class ManagerAccessMask
     ...
 
   # Tests whether every bit a symbol stands for is set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool).
   pub def contains
     self
     # Right to test. See [Accepted
@@ -234,11 +226,6 @@ pub class ServiceAccessMask
 
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
-  #
-  # ## Returns
-  #
-  # `ServiceAccessMask`.
-  #[class]
   pub def from_int
     self
     # Native Windows access mask.
@@ -253,10 +240,6 @@ pub class ServiceAccessMask
     ...
 
   # Tests whether every bit a symbol stands for is set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool).
   pub def contains
     self
     # Right to test. See [Accepted
@@ -304,11 +287,6 @@ pub class ServiceType
 
   # Builds a value from a native integer, preserving every bit including ones
   # this type does not name.
-  #
-  # ## Returns
-  #
-  # `ServiceType`.
-  #[class]
   pub def from_int
     self
     # Native service type mask.
@@ -323,10 +301,6 @@ pub class ServiceType
     ...
 
   # Tests whether every bit a symbol stands for is set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool).
   pub def contains
     self
     # Service type to test. See [Accepted
@@ -378,11 +352,6 @@ pub class NotifyMask
 
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
-  #
-  # ## Returns
-  #
-  # `NotifyMask`.
-  #[class]
   pub def from_int
     self
     # Native notification mask.
@@ -397,10 +366,6 @@ pub class NotifyMask
     ...
 
   # Tests whether every bit a symbol stands for is set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool).
   pub def contains
     self
     # Status change to test. See [Accepted
@@ -455,11 +420,6 @@ pub class ServiceControlsAccepted
 
   # Builds a value from a native integer, preserving every bit including ones
   # this type does not name.
-  #
-  # ## Returns
-  #
-  # `ServiceControlsAccepted`.
-  #[class]
   pub def from_int
     self
     # Native controls-accepted mask.
@@ -474,10 +434,6 @@ pub class ServiceControlsAccepted
     ...
 
   # Tests whether every bit a symbol stands for is set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool).
   pub def contains
     self
     # Control to test. See [Accepted
@@ -624,11 +580,6 @@ pub class ScManager
   # Opens a live forward enumeration of matching services. Entries are fetched
   # from Windows as iteration advances.
   #
-  # ## Returns
-  #
-  # An [`Iter`](std.Iter) yielding
-  # [`ServiceInfo`](winscm.ServiceInfo)s.
-  #
   # ## Example
   #
   # ```
@@ -671,7 +622,7 @@ pub class Service
   #
   # ## Returns
   #
-  # The resulting [`Status`](winscm.Status).
+  # The status after the control is applied.
   #
   # ## Example
   #
@@ -693,10 +644,6 @@ pub class Service
     ...
 
   # Fetches the current service status.
-  #
-  # ## Returns
-  #
-  # [`Status`](winscm.Status).
   pub def query_status self -> Status
     ...
 
@@ -704,7 +651,7 @@ pub class Service
   #
   # ## Returns
   #
-  # The [`Status`](winscm.Status) observed after the change.
+  # The status observed after the change.
   pub def wait_for_status_change
     self
     # Changes to
@@ -717,7 +664,7 @@ pub class Service
   #
   # ## Returns
   #
-  # An immutable [`ServiceConfig`](winscm.ServiceConfig) snapshot.
+  # An immutable snapshot.
   pub def config self -> ServiceConfig
     ...
 
@@ -758,10 +705,6 @@ pub class Service
     ...
 
   # Gets selected parts of the service's Windows security descriptor.
-  #
-  # ## Returns
-  #
-  # [`security.windows.SecDesc`](security.windows.SecDesc).
   pub def sec_desc
     self
     # Load the owner SID. Defaults to `true`.
@@ -778,17 +721,12 @@ pub class Service
     ...
 
   # Applies the components a Windows security descriptor's `mask` selects.
-  #
-  # The descriptor's [component
-  # options](security.windows.SecDesc.(init)--component-options) may be passed as
-  # keyword arguments instead of, or alongside, `desc`, exactly as
-  # [`security.windows.sec_desc`](security.windows.sec_desc)
-  # accepts them.
   pub def update_sec_desc
     self
-    # Descriptor, self-relative packet, or specification dict.
-    desc @ (SecDesc | Bin | Dict) = nil
-    # Component options, as above.
+    # Descriptor to apply.
+    desc @ SecDescSpec = nil
+    # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
+    # of or alongside `desc`.
     ...options
   do
     ...

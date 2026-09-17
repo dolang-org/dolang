@@ -103,7 +103,7 @@ pub class Connection
   #
   # ## Returns
   #
-  # [`Int`](std.Int) -- rows affected.
+  # The number of rows affected.
   #
   # ## Example
   #
@@ -176,10 +176,6 @@ pub class Connection
   # retrying the failing statement: a rolled-back transaction has to start
   # over anyway. The block is rolled back and re-invoked until it succeeds, is
   # explicitly rolled back, or the connection's retry limit is exhausted.
-  #
-  # ## Returns
-  #
-  # The result of calling `func`.
   #
   # ## Example
   #
@@ -288,7 +284,7 @@ pub class Statement
   #
   # ## Returns
   #
-  # [`Int`](std.Int) -- rows affected.
+  # The number of rows affected.
   #
   # ## Errors
   #

@@ -45,10 +45,6 @@ do -> Str
 
 # Decodes a Windows process command line into its arguments.
 #
-# ## Returns
-#
-# An `Iter` yielding each argument as a [`Str`](std.Str).
-#
 # ## Errors
 #
 # | Exception                           | Condition                                 |

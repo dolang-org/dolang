@@ -3,21 +3,6 @@
 #
 # Cached bytecode is stored under `fs.cache_dir()`, scoped by application name.
 # If `app:` is omitted, the scope is derived from `shell.program`.
-#
-# ## Common Parameters {: #exec.common-parameters }
-#
-# `run` and `module` share these options:
-#
-# | Name      | Type                   | Description                              |
-# | --------- | ---------------------- | ----------------------------------------- |
-# | `app`     | [`Str`](std.Str)  | Cache scope; defaults from `shell.program` |
-# | `prelude` | [`Dict`](std.Dict) | Passed through to `compile.compile`       |
-# | `inject`  | [`Dict`](std.Dict) | Global symbol/value bindings for compilation and execution |
-# | `import`  | [`Dict`](std.Dict) | Modules supplied by name during execution |
-#
-# ### `import`
-#
-# Dictionary values are exposed as records.
 
 import compile digest fs load std shell
 
@@ -152,9 +137,11 @@ class Operation
         nil
     self.#compile_cached()
 
-# Compile `path` in script mode if needed, cache the bytecode, and execute it.
+# Compiles a script if needed, caches the bytecode, and runs it.
 #
-# See [common parameters](exec.common-parameters).
+# ## Returns
+#
+# The value of the script's final expression or early return.
 #
 # ## Example
 #
@@ -168,22 +155,21 @@ class Operation
 # ```
 pub def run
   # Script path.
-  path @ Str
-  # See [common parameters](exec.common-parameters).
+  path @ (Str | fs.Path)
+  # Cache scope. Defaults to a name derived from `shell.program`.
   :app @ Str = nil
-  # See [common parameters](exec.common-parameters).
-  :prelude @ Dict = {}
-  # See [common parameters](exec.common-parameters).
-  :inject @ Dict = {}
-  # See [common parameters](exec.common-parameters).
-  :import @ Dict = {}
-do
+  # Imports to bind before the source, as
+  # [`compile.compile`](compile.compile) takes them.
+  :prelude @ Dict[{...(Str | Sym): compile.PreludeBinding}] = {}
+  # Global bindings visible to the source when compiled and run.
+  :inject @ Dict[{...Sym: Value}] = {}
+  # Modules supplied by name while running. A dictionary value is exposed as
+  # a record.
+  :import @ Dict[{...(Str | Sym): Value}] = {}
+do -> Value
   (Operation path mode: "script" name: nil :app :prelude :inject :import).run()
 
-# Compile `path` in module mode if needed, cache the bytecode, and return the
-# loaded module object.
-#
-# See [common parameters](exec.common-parameters).
+# Compiles a module if needed, caches the bytecode, and loads it.
 #
 # ## Example
 #
@@ -198,17 +184,19 @@ do
 # ```
 pub def module
   # Module source path.
-  path @ Str
+  path @ (Str | fs.Path)
   # Module name. Defaults to the source file stem.
   :name @ Str = nil
-  # See [common parameters](exec.common-parameters).
+  # Cache scope. Defaults to a name derived from `shell.program`.
   :app @ Str = nil
-  # See [common parameters](exec.common-parameters).
-  :prelude @ Dict = {}
-  # See [common parameters](exec.common-parameters).
-  :inject @ Dict = {}
-  # See [common parameters](exec.common-parameters).
-  :import @ Dict = {}
-do
+  # Imports to bind before the source, as
+  # [`compile.compile`](compile.compile) takes them.
+  :prelude @ Dict[{...(Str | Sym): compile.PreludeBinding}] = {}
+  # Global bindings visible to the source when compiled and run.
+  :inject @ Dict[{...Sym: Value}] = {}
+  # Modules supplied by name while running. A dictionary value is exposed as
+  # a record.
+  :import @ Dict[{...(Str | Sym): Value}] = {}
+do -> std.Module
   let name = module_name (fs.Path path) $name
   (Operation path mode: "module" :name :app :prelude :inject :import).run()

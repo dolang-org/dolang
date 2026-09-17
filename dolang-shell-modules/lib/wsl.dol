@@ -30,10 +30,6 @@ def find_windows_command()
 # Runs `block` in a WSL Linux distribution through a stdio VFS.
 #
 # The active VFS target must be Windows.
-#
-# ## Returns
-#
-# The result of `block`.
 pub def with_linux[R]
   # Block to run in Linux.
   block @ (() -> R)
@@ -59,10 +55,6 @@ do -> R
 
 # Runs `block` on the Windows host through WSL interoperability and a stdio
 # VFS. The active VFS target must be Linux.
-#
-# ## Returns
-#
-# The result of `block`.
 pub def with_windows[R]
   # Block to run on Windows.
   block @ (() -> R)

@@ -137,10 +137,6 @@ pub class Console
   # independently `nil` when unknown, rather than the whole result being
   # absent.
   #
-  # ## Returns
-  #
-  # [`Geometry`](term.Geometry)?
-  #
   # ## Example
   #
   # ```
@@ -158,11 +154,11 @@ pub class Console
   # writing to the same console would otherwise interleave between the text
   # and its terminator.
   #
-  # #### Returns
+  # ## Returns
   #
-  # [`Int`](std.Int) - Total bytes written.
+  # The number of bytes written.
   #
-  # #### Example
+  # ## Example
   #
   # ```
   # term.console.write b"\x1b[2K" "\r"
@@ -171,7 +167,7 @@ pub class Console
     self
     # Pieces to write, in order.
     ...data @ (Str | Bin)
-  do
+  do -> Int
     ...
 
   # Accepts values as a [sink](std.Sink).
@@ -564,10 +560,6 @@ pub class Text
 # assert_eq $out ["hi"]
 # ```
 #
-# ## Returns
-#
-# The block's result.
-#
 # ## Errors
 #
 # | Exception                             | Condition                                                                              |
@@ -609,10 +601,6 @@ do
 # Runs a block with default console-bound output silenced: `echo`, `print`,
 # unredirected program `stderr`, and the rest.
 #
-# ## Returns
-#
-# The block's result.
-#
 # ## Example
 #
 # ```
@@ -630,10 +618,6 @@ do -> R
 # This is the one installed by an enclosing [`capture`](term.capture), or
 # [`console`](term.console) if there is none, and it is where `echo`,
 # `print`, diagnostics and unredirected child process output go.
-#
-# ## Returns
-#
-# [`Console`](term.Console)
 pub def output() -> Console
   ...
 

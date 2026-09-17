@@ -11,10 +11,6 @@
 # The result is a string the shell expands back to exactly `obj`, quoted only
 # when quoting is needed.
 #
-# ## Returns
-#
-# [`Str`](std.Str) - The quoted word.
-#
 # ## Errors
 #
 # | Exception      | Condition                                                    |
@@ -35,10 +31,6 @@ do -> Str
   ...
 
 # Joins values into a single POSIX shell command line, quoting each.
-#
-# ## Returns
-#
-# [`Str`](std.Str) - The joined command line.
 #
 # ## Errors
 #
@@ -63,10 +55,6 @@ do -> Str
 # The split is lazy: a malformed line, such as one with an unterminated quote,
 # is not diagnosed when `split` returns but when iteration reaches the end of
 # the input.
-#
-# ## Returns
-#
-# An `Iter` yielding each word as a [`Str`](std.Str).
 #
 # ## Errors
 #

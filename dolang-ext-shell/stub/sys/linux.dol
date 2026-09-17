@@ -1,12 +1,6 @@
 # The `sys.linux` module exposes Linux-specific system types.
-#
+
 import sys.unix
-#
-# ## Types
-#
-# | Type                  | Description        |
-# | --------------------- | ------------------ |
-# | [`Errno`](sys.linux.Errno) | Linux error number |
 
 # [`sys.unix.Errno`](sys.unix.Errno) originating from Linux.
 pub class Errno: sys.unix.Errno

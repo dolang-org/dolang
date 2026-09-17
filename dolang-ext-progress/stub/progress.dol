@@ -113,10 +113,6 @@ pub class Indicator
 # Outside a [`with`](progress.with) scope, the callback is invoked with a dummy
 # indicator whose methods are silent no-ops.
 #
-# ## Returns
-#
-# The return value of `func`.
-#
 # ## Example
 #
 # ```
@@ -167,7 +163,7 @@ do -> R
 #
 # ## Returns
 #
-# An [`Array`](std.Array) holding each step's return value, in order.
+# Each step's return value, in order.
 #
 # ## Example
 #
@@ -202,10 +198,6 @@ do -> Array
 # Terminal output — echo, print, and child process stdout/stderr — is routed
 # through the progress display so that it does not interfere with active
 # indicators.
-#
-# ## Returns
-#
-# The return value of `func`.
 #
 # ## Example
 #

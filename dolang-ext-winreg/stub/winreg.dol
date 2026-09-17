@@ -46,6 +46,7 @@
 
 import security.windows:
   - @SecDesc
+  - @SecDescSpec
 
 # Registry value data in its natural Do representation. See
 # [`Value.value`](winreg.Value.value) for how each value kind maps to it.
@@ -309,10 +310,6 @@ pub class Key
   # the value's kind rather than only its coerced data -- use it to test for
   # existence or to inspect a raw `REG_*` kind.
   #
-  # ## Returns
-  #
-  # [`Value`](winreg.Value), or `nil`.
-  #
   # ## Example
   #
   # ```
@@ -546,13 +543,10 @@ pub class Key
   # ```
   pub def update_sec_desc
     self
-    # Descriptor, packet, or spec.
-    desc @ (SecDesc | Bin | Dict) = nil
-    # The descriptor's [component
-    # options](security.windows.SecDesc.(init)--component-options), accepted
-    # here exactly as
-    # [`sec_desc`](security.windows.sec_desc) takes
-    # them. They may replace `desc` or accompany it.
+    # Descriptor to apply.
+    desc @ SecDescSpec = nil
+    # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
+    # of or alongside `desc`.
     ...options
   do
     ...

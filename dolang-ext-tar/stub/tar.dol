@@ -194,10 +194,6 @@ pub class Writer
   # [`hard_link`](tar.Writer.hard_link) instead -- none of them carry content, so none of
   # them have any use for a write handle.
   #
-  # ## Returns
-  #
-  # The result of `func`.
-  #
   # ## Errors
   #
   # | Exception          | Condition                                                    |
@@ -308,10 +304,6 @@ pub class Writer
 #
 # Compression is detected from gzip or zstd magic bytes.
 #
-# ## Returns
-#
-# The result of `func`.
-#
 # ## Example
 #
 # ```
@@ -328,10 +320,6 @@ do -> R
   ...
 
 # Creates an archive and calls `func` with a [`Writer`](tar.Writer).
-#
-# ## Returns
-#
-# The result of `func`.
 #
 # ## Example
 #

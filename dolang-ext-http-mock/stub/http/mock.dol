@@ -74,10 +74,6 @@ pub class Request
 pub class Mock
   # Every request any of this handle's mocks matched, in the order received.
   #
-  # ## Returns
-  #
-  # An [`Array`](std.Array) of [`Request`](http.mock.Request).
-  #
   # ## Example
   #
   # ```
@@ -287,10 +283,6 @@ pub class Server
   # Every request the server received, whichever mock matched it -- or none.
   #
   # Use [`Mock.received`](http.mock.Mock.received) to scope this to one `mock` call.
-  #
-  # ## Returns
-  #
-  # An [`Array`](std.Array) of [`Request`](http.mock.Request).
   pub def received_requests self -> Array[Request]
     ...
 

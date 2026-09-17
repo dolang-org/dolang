@@ -19,6 +19,7 @@ import
   security.windows:
     - @Sid
     - @SecDesc
+    - @SecDescSpec
   time:
     - @DateTime
 
@@ -224,7 +225,7 @@ pub class File: Iter[(Str | Bin)] Sink[Value]
   #
   # ## Returns
   #
-  # [`Str`](std.Str) in text mode, [`Bin`](std.Bin) in binary mode.
+  # A `Str` in text mode, or a `Bin` in binary mode.
   #
   # ## Example
   #
@@ -268,7 +269,7 @@ pub class File: Iter[(Str | Bin)] Sink[Value]
     # for a positional read to carry a split character forward on, so unlike a
     # streaming read it cannot hold a partial character back for next time.
     :offset @ Int = nil
-  do -> Str
+  do -> (Str | Bin)
     ...
 
   # Writes data to the file.
@@ -277,7 +278,7 @@ pub class File: Iter[(Str | Bin)] Sink[Value]
   #
   # ## Returns
   #
-  # [`Int`](std.Int), the number of bytes written.
+  # The number of bytes written.
   #
   # ## Errors
   #
@@ -333,7 +334,7 @@ pub class File: Iter[(Str | Bin)] Sink[Value]
     :offset @ Int = nil
     # `:AUTO:` (default), `:REQUIRE:`, or `:NEVER:`.
     :clone @ Sym = nil
-  do
+  do -> Int
     ...
 
   # Truncates the file to the given byte length.
@@ -422,20 +423,17 @@ pub class File: Iter[(Str | Bin)] Sink[Value]
   # Applies the components selected by a security descriptor's `mask` through
   # this file's existing handle.
   #
-  # The descriptor's
-  # [component options](security.windows.SecDesc.(init)--component-options) may
-  # be passed as keyword arguments instead of, or alongside, `desc`, exactly as
-  # [`security.windows.sec_desc`](security.windows.sec_desc)
-  # accepts them.
-  #
   # The operation raises a permission error if the file was opened without the
   # necessary Windows access rights. Windows may normalize the resulting
   # descriptor. Other platforms raise
   # [`sys.UnsupportedError`](sys.UnsupportedError).
   pub def update_sec_desc
     self
-    # Descriptor, packet, or spec.
-    desc @ (SecDesc | Bin | Dict) = nil
+    # Descriptor to apply.
+    desc @ SecDescSpec = nil
+    # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
+    # of or alongside `desc`.
+    ...options
   do
     ...
 
@@ -590,7 +588,7 @@ pub class File: Iter[(Str | Bin)] Sink[Value]
   #
   # ## Returns
   #
-  # [`Int`](std.Int), the new absolute byte position.
+  # The new absolute byte position.
   #
   # ## Example
   #
@@ -1728,7 +1726,7 @@ pub def read path ...options
 #
 # ## Returns
 #
-# [`Int`](std.Int), the number of bytes written.
+# The number of bytes written.
 #
 # ## Example
 #
@@ -1748,7 +1746,7 @@ do -> Int
 #
 # ## Returns
 #
-# [`Int`](std.Int), the number of bytes written.
+# The number of bytes written.
 #
 # ## Example
 #
@@ -2579,7 +2577,7 @@ do
 #
 # ## Returns
 #
-# [`Path`](fs.Path), the path the symlink points to.
+# The path the symlink points to.
 #
 # ## Errors
 #
@@ -2665,7 +2663,7 @@ do -> Path
 #
 # ## Returns
 #
-# [`Path`](fs.Path), or the original path if it cannot be made relative.
+# The original path if it cannot be made relative.
 #
 # ## Example
 #
@@ -2693,10 +2691,6 @@ do -> Path
 # | -------- | --------------------------------------------------------------- |
 # | Unix     | `env["HOME"]`, or the home directory from the passwd database   |
 # | Windows  | `FOLDERID_Profile`, typically `C:\Users\<user>`                 |
-#
-# ## Returns
-#
-# [`Path`](fs.Path)
 pub def home_dir() -> Path
   ...
 
@@ -2706,10 +2700,6 @@ pub def home_dir() -> Path
 # | -------- | ----------------------------------------------------------- |
 # | Unix     | `$TMPDIR`, otherwise `/tmp`                                 |
 # | Windows  | `%TMP%`, otherwise `%TEMP%`, otherwise the platform default |
-#
-# ## Returns
-#
-# [`Path`](fs.Path)
 pub def temp_dir() -> Path
   ...
 

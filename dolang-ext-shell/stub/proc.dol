@@ -170,19 +170,11 @@ pub class Info
 pub class PipeReceiver: std.Iter
   # Selects arbitrary-sized [`Bin`](std.Bin) chunks when the receiver
   # reads bytes from an external program.
-  #
-  # ## Returns
-  #
-  # [`PipeReceiver`](proc.PipeReceiver)
   pub def chunks self -> PipeReceiver
     ...
 
   # Selects line framing when the receiver reads bytes from an external
   # program. This is the default.
-  #
-  # ## Returns
-  #
-  # [`PipeReceiver`](proc.PipeReceiver)
   pub def lines self -> PipeReceiver
     ...
 
@@ -228,10 +220,6 @@ pub class Proc
     ...
 
   # Takes a fresh snapshot of process state.
-  #
-  # ## Returns
-  #
-  # [`Info`](proc.Info)
   pub def info self -> Info
     ...
 
@@ -270,10 +258,6 @@ pub class Proc
     ...
 
   # Waits for the process to exit.
-  #
-  # ## Returns
-  #
-  # [`Status`](proc.Status)
   pub def wait self -> Status
     ...
 
@@ -302,7 +286,7 @@ pub class Program
   #
   # ## Returns
   #
-  # [`fs.Path`](fs.Path), or `nil` when the program is not found.
+  # `nil` when the program is not found.
   #
   # ## Example
   #
@@ -381,7 +365,7 @@ pub class Status
 #
 # ## Returns
 #
-# An `Iter` of [`Info`](proc.Info). Destructuring is not supported.
+# An iterator of process information. It cannot be destructured.
 #
 # ## Example
 #
@@ -395,7 +379,7 @@ pub class Status
 #     if (info.unix_id.uid == uid)
 #       - $info
 # ```
-pub def enumerate() -> Info
+pub def enumerate() -> Iter[Info]
   ...
 
 # Describes the process that currently owns `pid`, or the target process itself
@@ -502,10 +486,6 @@ do -> Str
 # The signal setting is retained when the strand later targets a Unix VFS.
 # Windows launches always use `CTRL_BREAK_EVENT`. With `force: false`, a
 # process that outlives the grace period is orphaned.
-#
-# ## Returns
-#
-# The block's result.
 #
 # ## Example
 #

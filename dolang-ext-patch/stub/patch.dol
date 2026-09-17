@@ -89,8 +89,7 @@ pub class Patch
   #
   # ## Returns
   #
-  # [`Str`](std.Str)\|[`Bin`](std.Bin), matching the type of
-  # `base`.
+  # The same type as `base`.
   #
   # ## Errors
   #

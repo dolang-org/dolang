@@ -21,10 +21,6 @@ import _ssh
 # Windows hosts it reads the user environment from the registry, which the
 # OpenSSH server there populates only for `PATH`.
 #
-# ## Returns
-#
-# The result of `block`.
-#
 # ## Errors
 #
 # | Error                                          | Condition                                    |

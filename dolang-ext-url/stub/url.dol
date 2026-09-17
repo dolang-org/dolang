@@ -116,10 +116,6 @@ pub class Url
   # Returns a new `Url` with its fragment replaced.
   #
   # Pass `nil` to remove the fragment.
-  #
-  # ## Returns
-  #
-  # `Url`
   pub def with_fragment
     self
     # Fragment string or `nil`.
@@ -151,10 +147,6 @@ pub class Url
   # Returns a new `Url` with its raw query replaced.
   #
   # Pass `nil` to remove the query.
-  #
-  # ## Returns
-  #
-  # `Url`
   pub def with_query_raw
     self
     # Raw query string or `nil`.

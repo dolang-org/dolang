@@ -1,52 +1,5 @@
 # The `sys` module exposes basic information and types associated with systems
 # and platforms supported by Do.
-#
-# ## Types
-#
-# | Type                                                                  | Description                                          |
-# | --------------------------------------------------------------------- | ---------------------------------------------------- |
-# | [`AddrInUseError`](sys.AddrInUseError)                            | Network address already in use                       |
-# | [`AddrNotAvailableError`](sys.AddrNotAvailableError)              | Requested network address is unavailable             |
-# | [`AlreadyExistsError`](sys.AlreadyExistsError)                     | Creating or renaming conflicts with an existing path |
-# | [`ArgumentListTooLongError`](sys.ArgumentListTooLongError)       | System argument list is too long                     |
-# | [`BrokenPipeError`](sys.BrokenPipeError)                           | Pipe closed by its reader                            |
-# | [`ConnectionAbortedError`](sys.ConnectionAbortedError)             | Connection was aborted                               |
-# | [`ConnectionRefusedError`](sys.ConnectionRefusedError)             | Connection attempt refused                           |
-# | [`ConnectionResetError`](sys.ConnectionResetError)                 | Connection was reset                                 |
-# | [`CpuInfo`](sys.CpuInfo)                                             | CPU target information                               |
-# | [`CrossesDevicesError`](sys.CrossesDevicesError)                   | Operation crosses device boundaries                  |
-# | [`DeadlockError`](sys.DeadlockError)                                | Operation would cause a deadlock                     |
-# | [`DirectoryNotEmptyError`](sys.DirectoryNotEmptyError)            | Directory is not empty                               |
-# | [`Error`](sys.Error)                                                 | Error raised for system and I/O failures             |
-# | [`ErrorCode`](sys.ErrorCode)                                        | Native system error code                             |
-# | [`ExecutableFileBusyError`](sys.ExecutableFileBusyError)          | Executable file is busy                              |
-# | [`FileTooLargeError`](sys.FileTooLargeError)                      | File exceeds size limit                              |
-# | [`HostUnreachableError`](sys.HostUnreachableError)                 | Network host is unreachable                          |
-# | [`InterruptedError`](sys.InterruptedError)                          | System operation was interrupted                     |
-# | [`InvalidDataError`](sys.InvalidDataError)                         | Malformed input data                                 |
-# | [`InvalidFilenameError`](sys.InvalidFilenameError)                 | Filename is invalid                                  |
-# | [`InvalidInputError`](sys.InvalidInputError)                       | Invalid input to a system operation                  |
-# | [`IsADirectoryError`](sys.IsADirectoryError)                      | File operation targeted a directory                  |
-# | [`NetworkDownError`](sys.NetworkDownError)                         | Network is down                                      |
-# | [`NetworkUnreachableError`](sys.NetworkUnreachableError)           | Network is unreachable                               |
-# | [`NotADirectoryError`](sys.NotADirectoryError)                    | Path component is not a directory                    |
-# | [`NotConnectedError`](sys.NotConnectedError)                       | Operation requires a connected endpoint              |
-# | [`NotFoundError`](sys.NotFoundError)                               | Missing file, path, or program                       |
-# | [`NotSeekableError`](sys.NotSeekableError)                         | Stream does not support seeking                      |
-# | [`OsInfo`](sys.OsInfo)                                               | Operating system target information                  |
-# | [`OutOfMemoryError`](sys.OutOfMemoryError)                        | Could not allocate memory                            |
-# | [`PermissionDeniedError`](sys.PermissionDeniedError)               | Operation not permitted by access rules              |
-# | [`QuotaExceededError`](sys.QuotaExceededError)                     | Storage quota exceeded                               |
-# | [`ReadOnlyFilesystemError`](sys.ReadOnlyFilesystemError)          | Modifying a read-only filesystem                     |
-# | [`ResourceBusyError`](sys.ResourceBusyError)                       | System resource is busy                              |
-# | [`StaleNetworkFileHandleError`](sys.StaleNetworkFileHandleError) | Stale network filesystem handle                      |
-# | [`StorageFullError`](sys.StorageFullError)                         | Storage device is full                               |
-# | [`TimedOutError`](sys.TimedOutError)                               | System operation timed out                           |
-# | [`TooManyLinksError`](sys.TooManyLinksError)                      | Filesystem object has too many links                 |
-# | [`UnexpectedEofError`](sys.UnexpectedEofError)                     | Input ended unexpectedly                             |
-# | [`UnsupportedError`](sys.UnsupportedError)                          | Unsupported system operation                         |
-# | [`WouldBlockError`](sys.WouldBlockError)                           | Operation would block                                |
-# | [`WriteZeroError`](sys.WriteZeroError)                             | Write wrote zero bytes                               |
 
 # `Error` is raised for system and I/O failures.
 #
