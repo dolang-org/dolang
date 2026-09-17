@@ -4,6 +4,8 @@
 
 import fs:
   - @Path
+import std:
+  - @Seq
 
 # An open ZIP archive.
 #
@@ -30,7 +32,7 @@ pub class Archive
   #   echo "Total files: $(entries.len)"
   # ```
   #[getter]
-  pub def entries self
+  pub def entries self -> Seq[Entry]
     ...
 
   # Closes the archive and releases resources.

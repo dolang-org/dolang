@@ -1,6 +1,8 @@
 # macOS extended access-control-list types and principal identity resolution
 # between Unix uid/gid values and macOS `guid_t` UUIDs.
 
+import std:
+  - @Seq
 import uuid:
   - @Uuid
 
@@ -240,7 +242,7 @@ pub class Acl
   # Immutable view of [`Ace`](security.macos.Ace)
   # values, in evaluation order. Use `.len` for the entry count.
   #[getter]
-  pub def aces self -> Array[Ace]
+  pub def aces self -> Seq[Ace]
     ...
 
 # The principal of an entry, as a UUID or its string or binary form.

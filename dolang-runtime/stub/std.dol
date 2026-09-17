@@ -277,12 +277,115 @@ pub @class BaseSink[T]
   pub def (put) self value @ T
 
 
+# An opaque type that mentions `S`, for a field that only marks a binder as
+# used.
+pub @let Phantom[S] = ...
+
+
+# A value that implements the
+# [`(index)`](../../language/classes.md#index-and-assign-subscript-access)
+# protocol for the keys in `S`. A key's presence is not checked, only that the
+# value has such a key.
+pub @class Index[S @ {}]
+  field schema @Phantom[S]
+
+  # Returns the value at `key`.
+  pub def (index)[K, V, U @ {?(K): V, ...}] self@Index[U] key@K -> V
+
+
+# A value that implements the
+# [`(assign)`](../../language/classes.md#index-and-assign-subscript-access)
+# protocol for the keys in `S`, which it need not already have.
+pub @class Assign[S @ {}]
+  field schema @Phantom[S]
+
+  # Sets the value at `key`.
+  pub def (assign)[K, V, U @ {?(K): V, ...}] self@Assign[U] key@K value@V
+
+
+# A value that implements the
+# [`(spread)`](../../language/classes.md#spread-spreading) protocol, spreading
+# as the items in `S`.
+pub @class Spread[S @ {}]
+  # Returns a value to spread in place of this one.
+  pub def (spread) self -> Spread[S]
+
+
+# A value that implements the
+# [`(unpack)`](../../language/classes.md#unpack-destructuring) protocol,
+# destructuring as the items in `S`.
+pub @class Unpack[S @ {}]
+  # Returns a value to destructure in place of this one.
+  pub def (unpack) self -> Unpack[S]
+
+
+# An iterable sequence of `T`, which integers index, slices, spreads, and
+# destructures.
+pub @class Seq[T]: Iterable[T] Index[{...Int: T}] Spread[{...T}] Unpack[{...T}]
+  # The number of items.
+  #[getter]
+  pub def len self -> Int
+
+  # Returns the items in `range`.
+  pub def (index) self range@Range[Int] -> Seq[T]
+
+
+# A [`Seq`](std.Seq) whose items can be replaced, but not added or removed.
+pub @class AssignSeq[T]: Seq[T] Assign[{...Int: T}]
+
+
+# A [`Seq`](std.Seq) whose items can be replaced, added, and removed.
+pub @class MutSeq[T]: AssignSeq[T]
+  # Appends values.
+  pub def push
+    self
+    # The values to append.
+    ...values @ T
+  do
+
+  # Inserts values before `index`, shifting later items.
+  pub def insert
+    self
+    # The position to insert at. Negative indexes count from the end.
+    index @ Int
+    # The values to insert.
+    ...values @ T
+  do
+
+  # Removes and returns the last item, or the item at `index`.
+  #
+  # ## Errors
+  #
+  # [`IndexError`](std.IndexError) if the item does not exist and there is no
+  # `default` or `else`.
+  pub def pop[D = Empty]
+    self
+    # The position to remove. Negative indexes count from the end.
+    index @ Int = nil
+    # The value to return when the item does not exist.
+    :default @ D = nil
+    # A block whose result to return when the item does not exist and there is
+    # no `default`.
+    :else @ (() -> D) = nil
+  do -> (T | D)
+
+  # Removes the item at `index` if it exists, returning whether it did.
+  pub def delete
+    self
+    # The position to remove. Negative indexes count from the end.
+    index @ Int
+  do -> Bool
+
+  # Removes all items.
+  pub def clear self
+
+
 #
 # Abstract type for iterable values, whose instances have the methods below.
 # Arrays, dicts, and ranges are `Iterable`; a [`Record`](std.Record), or a
 # class that only implements [`(iter)`](std.BaseIterable), is not.
 #
-pub class Iterable[T]: @BaseIterable[T]
+pub class Iterable[T]: @BaseIterable[T] @Spread[{...T}]
   # Returns an iterator over the value.
   pub def iter self -> Iter[T]
     ...
@@ -496,7 +599,7 @@ pub class AbortError: Error
 # calling the `Args` type object. Iterating an `Args` value yields `[key, value]`
 # pairs. Positional items use their positional index as the key.
 #
-pub class Args: Iterable[Tuple[(Int | Sym), Value]]
+pub class Args: @Spread[{...}] @Unpack[{...}] Iterable[Tuple[(Int | Sym), Value]]
   #
   #
   # Creates an argument pack from positional and keyed arguments.
@@ -571,7 +674,7 @@ pub class Args: Iterable[Tuple[(Int | Sym), Value]]
 #
 # Arrays are ordered, mutable sequences of values.
 #
-pub class Array[T]: Iterable[T] Sinkable[T]
+pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   #
   #
   # Builds an array from one iterable. The lowercase `array` factory instead
@@ -789,6 +892,9 @@ pub class Array[T]: Iterable[T] Sinkable[T]
   do
     ...
 
+  @def (index) self index@Int -> T
+  @def (index) self range@Range[Int] -> Array[T]
+
   #
   # ```
   # let arr = [10, 20, 30]
@@ -863,7 +969,7 @@ pub class Array[T]: Iterable[T] Sinkable[T]
 
 #
 # Binary data; an immutable sequence of bytes.
-pub class Bin
+pub class Bin: @Index[{...Range[Int]: Bin}]
   # Accepts binary data or copies the UTF-8 bytes of a string.
   #
   # ## Example
@@ -1198,7 +1304,7 @@ pub class Bin
 #
 # Mutable byte buffer; the mutable counterpart to [`Bin`](std.Bin).
 #
-pub class BinBuf
+pub class BinBuf: @Index[{...Int: Int, ...Range[Int]: Bin}] @Assign[{...Int: Int, ...Range[Int]: Bin}]
   #
   #
   # Builds a buffer, optionally seeded with the contents of existing binary data.
@@ -1636,7 +1742,7 @@ pub class CyclicImportError: RuntimeError
 #   values by their position (0-indexed) among values for that key; negative
 #   instance indexes count from the end
 #
-pub class Dict[S @ {...}]: Iterable[Tuple[Value, Value]]
+pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[Tuple[Value, Value]]
   #
   #
   # Builds a dictionary from one spreadable source of key-value pairs. The
@@ -2425,6 +2531,8 @@ pub class FmtValue
     ...
 
 
+@let FmtSegment = (Str | FmtValue | FmtParam)
+
 #
 # An immutable sequence of literal text, bound interpolations, and unbound
 # parameters, produced by a
@@ -2499,7 +2607,7 @@ pub class FmtValue
 # assert_eq $seq[1].value $user
 # assert_eq $seq[1].width 8
 # ```
-pub class Fmt
+pub class Fmt: @Index[{...Int: FmtSegment, ...Range[Int]: Array[FmtSegment]}] @Spread[{...FmtSegment}] @Unpack[{...FmtSegment}]
   #
   #
   # Builds a sequence from an iterable of segments.
@@ -2785,7 +2893,7 @@ pub class IterStop: Error
 # assert_eq (type $ [1, 2, 3].iter()) $Iter
 # ```
 #
-pub class Iter[T]: Iterable[T] @BaseIter[T]
+pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[{...T}]
   #
   #
   # Returns `true` if every yielded value is truthy.
@@ -3141,10 +3249,6 @@ pub class Range[T @ Num]: Iterable[T]
   pub def (iter) self -> Iter[T]
     ...
 
-  # Supplies slice bounds when used as an index by sequence types.
-  pub def (index) self @ Range[Int] collection
-    ...
-
 
 #
 # Stores immutable, ordered symbol and integer fields.
@@ -3156,7 +3260,7 @@ pub class Range[T @ Num]: Iterable[T]
 # ```
 # let updated = record ...old status: ready
 # ```
-pub class Record[...Ts]: @BaseIterable[Tuple[(Sym | Int), Value]]
+pub class Record[...Ts]: @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}] @BaseIterable[Tuple[(Sym | Int), Value]]
   #
   #
   # Builds a record from one spreadable source of key-value pairs.
@@ -3547,7 +3651,7 @@ pub let static = nil
 #
 # Strings are immutable sequences of UTF-8 bytes.
 #
-pub class Str
+pub class Str: @Index[{...Range[Int]: Str}]
   #
   #
   # Accepts a string or decodes UTF-8 binary data. The lowercase `str` function
@@ -3984,7 +4088,7 @@ pub class Str
 #
 # Mutable UTF-8 string buffer; the mutable counterpart to [`Str`](std.Str).
 #
-pub class StrBuf
+pub class StrBuf: @Index[{...Range[Int]: Str}] @Assign[{...Range[Int]: Str}]
   #
   #
   # Builds a buffer, optionally seeded with the contents of an existing string.
@@ -4356,7 +4460,7 @@ pub class TimedOutError: RuntimeError
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
 #
-pub class Tuple[...Ts]: Iterable[Union[...Ts]]
+pub class Tuple[...Ts]: Iterable[Union[...Ts]] @Seq[Union[...Ts]]
   #
   #
   # Builds a tuple from an iterable.
@@ -4429,6 +4533,9 @@ pub class Tuple[...Ts]: Iterable[Union[...Ts]]
   #
   pub def pairs self -> Iter[Tuple[Int, Value]]
     ...
+
+  @def (index) self index@Int -> Union[...Ts]
+  @def (index) self range@Range[Int] -> Tuple[...Union[...Ts]]
 
   #
   # ```

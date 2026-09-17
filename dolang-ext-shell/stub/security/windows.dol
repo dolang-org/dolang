@@ -21,6 +21,8 @@
 #       flags: [:OBJECT_INHERIT:, :CONTAINER_INHERIT:]
 # ```
 
+import std:
+  - @Seq
 import uuid:
   - @Guid
 
@@ -945,7 +947,7 @@ pub class Acl
 
   # Immutable array-like view of the entries.
   #[getter]
-  pub def aces self
+  pub def aces self -> Seq[Ace]
     ...
 
   # The revision, or its native number when it has no symbol.
@@ -1254,7 +1256,7 @@ pub class TokenInfo
   # Immutable array-like view of the token's
   # [`TokenGroup`](security.windows.TokenGroup)s.
   #[getter]
-  pub def groups self
+  pub def groups self -> Seq[TokenGroup]
     ...
 
   # Whether the token is elevated.

@@ -1,5 +1,8 @@
 # URL parsing and construction utilities.
 
+import std:
+  - @Seq
+
 # Structured URL value with parsed access to components and decoded path/query
 # iteration.
 pub class Url
@@ -105,7 +108,7 @@ pub class Url
   # assert_eq [...url.segments] ["a b", "c"]
   # ```
   #[getter]
-  pub def segments self -> Iter
+  pub def segments self -> Seq[Str]
     ...
 
   # The decoded username, or `nil` if not present.

@@ -16,6 +16,8 @@ import
   fs.windows:
     - @StreamEntry
   @security
+  std:
+    - @Seq
   security.windows:
     - @Sid
     - @SecDesc
@@ -1224,7 +1226,7 @@ pub class Path
   # Windows paths carry the alternate data stream specified in the final path
   # component if present.
   #[getter]
-  pub def components self
+  pub def components self -> Seq[Str]
     ...
 
   # Returns a new path with `ext` appended as an additional extension.

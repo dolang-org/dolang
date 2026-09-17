@@ -1,5 +1,10 @@
 # Parses, edits, validates, and serializes XML element trees.
 
+import std:
+  - @Assign
+  - @Index
+  - @MutSeq
+
 # An XML attribute.
 pub class Attr
   # Creates an attribute.
@@ -49,7 +54,7 @@ pub class Attr
 #
 # Nodes can be shared or inserted into different trees. Serialization derives
 # namespace declarations from each node rather than from parent pointers.
-pub class Node
+pub class Node: @Index[{...Str: Str, ...Int: (Node | Str), ...Range[Int]: Array[(Node | Str)]}] @Assign[{...Str: Str}]
   # Creates an element, optionally with attributes and children.
   #
   # Children are not checked here, matching `children.push`; [`verify`](xml.verify)
@@ -90,14 +95,14 @@ pub class Node
   # The view supports indexed assignment and array mutation methods. Duplicate
   # expanded names can exist temporarily, but verification rejects them.
   #[getter]
-  pub def attrs self
+  pub def attrs self -> MutSeq[Attr]
     ...
 
   # Mutable array-like view of child `Node` and `Str` values in document order.
   #
   # Iterating a node iterates this view directly.
   #[getter]
-  pub def children self
+  pub def children self -> MutSeq[(Node | Str)]
     ...
 
   # Mutable namespace URI, or `nil` for no namespace.
@@ -190,8 +195,8 @@ pub class Node
   pub def (index) self key
     ...
 
-  # Updates an unnamespaced attribute or child by index.
-  pub def (set) self key value
+  # Sets an unnamespaced attribute, adding it if it is missing.
+  pub def (assign) self key@Str value@Str
     ...
 
   # Iterates the children.

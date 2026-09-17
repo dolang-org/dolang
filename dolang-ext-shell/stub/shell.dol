@@ -4,6 +4,7 @@
 # For how byte streams are divided into values when communicating with external
 # programs, see [Output mode](../../shell/external-programs.md#output-mode).
 
+import std
 import fs:
   - @Path
 
@@ -471,12 +472,15 @@ pub def with_override[R]
 do -> R
   ...
 
-# The command-line arguments of the current invocation.
+# The type of [`args`](shell.args), an immutable sequence.
 #
-# An immutable array-like sequence: it has `len`, indexes by
-# [`Int`](std.Int) or [`Range`](std.Range), iterates, spreads, and
-# destructures positionally. Assigning to an index raises
-# [`ImmutableError`](std.ImmutableError).
+# Assigning to an index raises [`ImmutableError`](std.ImmutableError).
+pub @class Args: std.Seq[Str]
+  # Returns the arguments in `range`.
+  pub def (index) self range@Range[Int] -> Array[Str]
+
+
+# The command-line arguments of the current invocation.
 #
 # ## Example
 #
@@ -487,40 +491,69 @@ do -> R
 # let first ...rest = shell.args
 # run tool ...rest
 # ```
-pub let args = nil
+pub let args @ Args = nil
+
+# The type of [`env`](shell.env), which reads, writes, iterates, spreads, and
+# destructures like a [`Dict`](std.Dict) of variable names and values.
+#
+# Assigning `nil` unsets a variable. Reading a name that is not set raises; use
+# [`get`](shell.Env.get) for a default instead.
+pub @class Env: std.Index[{...Str: Str}] std.Assign[{...Str: (Str | nil)}] std.Spread[{...Str: Str}] std.Unpack[{...Str: Str}] std.BaseIterable[Tuple[Str, Str]]
+  # Reads a variable, returning `nil` rather than raising when it is unset.
+  #
+  # ## Example
+  #
+  # ```
+  # let home = env.get HOME default: /root
+  # let tmp = env.get TMPDIR else: do
+  #   fs.temp_dir()
+  # ```
+  pub def get[D]
+    self
+    # The variable name.
+    name @ Str
+    # The value to return when the variable is unset.
+    :default @ D = nil
+    # A block whose result to return when the variable is unset and there is no
+    # `default`.
+    :else @ (() -> D) = nil
+  do -> (Str | D | nil)
+
+  # Calls `body` with overrides from a dict in place, restoring them when it
+  # returns.
+  pub def (call)[R]
+    self
+    # The overrides, as for keyword arguments.
+    vars @ Dict[{...(Str | Sym): (Str | :INHERIT: | nil)}]
+    # The block to call.
+    body @ (() -> R)
+  do -> R
+
+  # Calls `body` with the variables given as keyword arguments in place,
+  # restoring them when it returns.
+  #
+  # A `nil` value unsets a variable, and `:INHERIT:` captures the variable's
+  # current value in the calling strand.
+  #
+  # ## Example
+  #
+  # ```
+  # env PATH: "/opt/bin:$(env["PATH"])" do
+  #   run tool
+  #
+  # env {LANG: "C", TZ: nil} do
+  #   run tool
+  # ```
+  pub def (call)[R]
+    self
+    # The block to call.
+    body @ (() -> R)
+    # Overrides by variable name.
+    ...vars
+  do -> R
+
 
 # The environment of the current context.
-#
-# Reads with `env[name]`, writes with `env[name] = value`, and iterates,
-# spreads, and destructures like a [`Dict`](std.Dict). Assigning `nil`
-# unsets a variable. Reading a name that is not set raises; use
-# [`get`](shell.env) for a default instead.
-#
-# ## Scoped overrides
-#
-# Calling `env` runs a function with overrides in place, restored when it
-# returns. Overrides may be keyword arguments or a dict, whose keys may be
-# strings or symbols. `nil` unsets a variable, and `:INHERIT:` captures the
-# variable's current value in the calling strand.
-#
-# ```
-# env PATH: "/opt/bin:$(env["PATH"])" do
-#   run tool
-#
-# env {LANG: "C", TZ: nil} do
-#   run tool
-# ```
-#
-# ## Reading with a default
-#
-# `env.get name` returns `nil` rather than raising when the variable is unset.
-# `default:` supplies a value instead, and `else:` a block to call.
-#
-# ```
-# let home = env.get HOME default: /root
-# let tmp = env.get TMPDIR else: do
-#   fs.temp_dir()
-# ```
 #
 # ## Example
 #
@@ -530,7 +563,7 @@ pub let args = nil
 # for name value = env
 #   echo "$name=$value"
 # ```
-pub let env = nil
+pub let env @ Env = nil
 
 # The path the host reports for the running `dolang` executable, as an
 # [`fs.Path`](fs.Path).

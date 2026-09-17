@@ -21,6 +21,8 @@ import
   std:
     - RuntimeError
     - @Fmt
+    - @Index
+    - @Unpack
 
 # Raised when a SQLite operation fails for any reason other than the database
 # being locked.
@@ -391,7 +393,7 @@ pub class Statement
 # for value = rest
 #   echo $ str value
 # ```
-pub class Row
+pub class Row: @Index[{...(Int | Str): Value}] @Unpack[{...Value, ...Sym: Value}]
   # Reads a column by position or by name.
   #
   # ## Errors

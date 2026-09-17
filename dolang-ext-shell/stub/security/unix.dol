@@ -1,5 +1,7 @@
 # Unix security types and uid/gid identity lookups.
 
+import std:
+  - @Seq
 import uuid:
   - @Uuid
 
@@ -208,7 +210,7 @@ pub class Acl
   # Immutable view of
   # [`Ace`](security.unix.Ace) values. Use `.len` for the entry count.
   #[getter]
-  pub def aces self -> Array[Ace]
+  pub def aces self -> Seq[Ace]
     ...
 
 # Permissions given as a [`Permission`](security.unix.Permission), one
