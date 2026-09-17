@@ -160,9 +160,11 @@ pub(crate) enum Kind {
     },
 
     // Types
-    /// A type in an annotation, return type or superclass list, describing its parent
+    /// A type in an annotation, return type or superclass list, describing its parent,
+    /// or with `type_only` a supertype the class does not inherit from at runtime
     Type {
         expr: TypeExpr,
+        type_only: bool,
     },
     Binder {
         name: Span,

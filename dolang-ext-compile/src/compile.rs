@@ -1483,7 +1483,13 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
         }
         if matches!(
             T::NAME,
-            "Class" | "Function" | "Method" | "SpecialMethod" | "ImportModule" | "ImportItem"
+            "Class"
+                | "Function"
+                | "Method"
+                | "SpecialMethod"
+                | "ImportModule"
+                | "ImportItem"
+                | "Type"
         ) {
             builder = builder.get("type_only", |this, strand, out| {
                 project_type_only(this, strand, out)
@@ -1683,7 +1689,8 @@ fn project_type_only<'v, 's, T: NodeMarker + 'static>(
         | compile::Kind::Method { type_only, .. }
         | compile::Kind::SpecialMethod { type_only, .. }
         | compile::Kind::ImportModule { type_only, .. }
-        | compile::Kind::ImportItem { type_only, .. } => type_only,
+        | compile::Kind::ImportItem { type_only, .. }
+        | compile::Kind::Type { type_only, .. } => type_only,
         _ => unreachable!(),
     })?;
     Output::set(strand, out, v);
@@ -1767,7 +1774,7 @@ fn ensure_types<'v, 's>(
                 return Err(Error::state_error(strand, "unit was emitted"));
             };
             for (id, node) in unit.nodes() {
-                if let compile::Kind::Type { expr } = node.kind() {
+                if let compile::Kind::Type { expr, .. } = node.kind() {
                     create_type_expr(global, strand, borrow.identity, expr, &mut item)?;
                     index.insert(id, array.len(strand)?);
                     array.push(strand, &mut item)?;

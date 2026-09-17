@@ -527,31 +527,17 @@ class Document
           type: (self.#type_tree(arg.ty))
     result
 
-  # A class's superclasses, in source order.
+  # A class's supertypes, in source order, as type trees. A type-only one is
+  # marked.
   def supers self id
     let result = []
     for child = self.#own(id)
       if type(child, compile.Type)
-        result.push $self.#super_json(child.expr)
+        let tree = self.#type_tree(child.expr)
+        if child.type_only
+          tree[:type_only:] = true
+        result.push $tree
     result
-
-  # A superclass naming an imported item, as its module and item, or else its
-  # text.
-  def super_json self expr
-    let text = self.#text(expr.span)
-    if (!type(expr, compile.NameType) || expr.target == nil || text != self.#text(expr.head))
-      return text
-    let target = self.#index.node $expr.target
-    if type(target, compile.ImportItem)
-      $
-        module: (self.#text(target.module))
-        item: (self.#text(target.item))
-    else if type(target, compile.PreludeItem)
-      $
-        module: $target.module
-        item: $target.item
-    else
-      text
 
   def add_member self node member
     let list = self.#members.get $node.parent else: do return

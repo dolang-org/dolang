@@ -498,6 +498,14 @@ def _render_annotations(entity: dict, scope: _TypeScope) -> None:
         entity["annotation"] = _type_html(entity.get("type"), scope)
     elif entity.get("kind") == "alias":
         entity["annotation"] = _type_html(entity.get("type"), scope)
+    elif entity.get("kind") == "class":
+        supers = entity.get("supers") or []
+        entity["super_annotations"] = [
+            _type_html(sup, scope) for sup in supers if not sup.get("type_only")
+        ]
+        entity["protocol_annotations"] = [
+            _type_html(sup, scope) for sup in supers if sup.get("type_only")
+        ]
     for member in entity.get("members", []):
         _render_annotations(member, scope)
 

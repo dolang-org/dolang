@@ -6,25 +6,26 @@
 {#
   A type is rendered on a page of its own, which carries its own title, so this
   heading only exists to register an anchor: without one, a link to the type
-  from its module's Types table has nothing to resolve against.
+  from its module's Types table has nothing to resolve against. Like a module's,
+  it has no label, which keeps it out of the table of contents, and the page's
+  sections sit at its level rather than beneath it.
 #}
-{{ ("<code>" ~ entity.declaration_name ~ "</code>") | heading(heading_level, role="class", id=base_id, toc_label=entity.declaration_name, hidden=true) }}
+{{ "" | heading(heading_level, role="class", id=base_id, hidden=true) }}
+{% set heading_level = heading_level - 1 %}
 
 {% if entity.doc %}
-{{ entity.doc | convert_markdown(heading_level, "") }}
+{{ entity.doc | convert_markdown(heading_level - 1, "") }}
 {% endif %}
 
-{% if entity.supers %}
-<p><strong>Inherits from:</strong>
-{% for sup in entity.supers %}
-  {% if sup is mapping %}
-    <code>{{ sup.module }}.{{ sup.item if sup.item is defined else "" }}</code>
-  {% else %}
-    <code>{{ sup }}</code>
-  {% endif %}
-  {% if not loop.last %}, {% endif %}
-{% endfor %}
-</p>
+{# A protocol's supertypes are all type-only, but it has no runtime ones to
+   tell them apart from. #}
+{% set supers = entity.super_annotations + (entity.protocol_annotations if entity.protocol else []) %}
+{% set protocols = [] if entity.protocol else entity.protocol_annotations %}
+{% if supers %}
+<p><strong>Inherits from:</strong> {{ supers | join(", ") | convert_markdown(heading_level, base_id ~ "--supers", strip_paragraph=true) }}</p>
+{% endif %}
+{% if protocols %}
+<p><strong>Implements:</strong> {{ protocols | join(", ") | convert_markdown(heading_level, base_id ~ "--protocols", strip_paragraph=true) }}</p>
 {% endif %}
 
 {% set pub_members = entity.members | selectattr("pub") | list %}

@@ -423,11 +423,12 @@ impl<'a> Node<'a> {
             doc::Kind::Return { target } => Kind::Return {
                 target: target.map(public_node_id),
             },
-            doc::Kind::Type { expr } => Kind::Type {
+            doc::Kind::Type { expr, type_only } => Kind::Type {
                 expr: TypeExpr {
                     file: self.file,
                     expr,
                 },
+                type_only: *type_only,
             },
             doc::Kind::Binder {
                 name,
@@ -639,6 +640,9 @@ pub enum Kind<'a> {
     Type {
         /// The type as written
         expr: TypeExpr<'a>,
+        /// Whether the type is a supertype written with `@`, which the class does not
+        /// inherit from at runtime
+        type_only: bool,
     },
     /// A binder, a name standing for a type.  The function, method or class
     /// declaring it is its parent.

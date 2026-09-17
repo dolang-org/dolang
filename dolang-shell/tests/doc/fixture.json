@@ -1422,6 +1422,7 @@
       },
       "parent": 18,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -1508,6 +1509,7 @@
       },
       "parent": 42,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -1929,6 +1931,7 @@
       },
       "parent": 53,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -2284,6 +2287,7 @@
       },
       "parent": 64,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "AppType",
         "span": {
@@ -2390,6 +2394,7 @@
       },
       "parent": 62,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -2506,6 +2511,7 @@
       },
       "parent": 19,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -2610,6 +2616,7 @@
       },
       "parent": 71,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -2708,6 +2715,7 @@
       },
       "parent": 73,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "UnionType",
         "span": {
@@ -2787,6 +2795,7 @@
       },
       "parent": 20,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "AppType",
         "span": {
@@ -2995,6 +3004,7 @@
       },
       "parent": 77,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "AppType",
         "span": {
@@ -3154,6 +3164,7 @@
       },
       "parent": 79,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "FuncType",
         "span": {
@@ -3357,6 +3368,7 @@
       },
       "parent": 81,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "AppType",
         "span": {
@@ -3689,6 +3701,7 @@
       },
       "parent": 83,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "UnionType",
         "span": {
@@ -3791,6 +3804,7 @@
       },
       "parent": 21,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -4063,6 +4077,7 @@
       },
       "parent": 89,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -4208,6 +4223,7 @@
       },
       "parent": 94,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -4253,6 +4269,7 @@
       },
       "parent": 92,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -4298,6 +4315,7 @@
       },
       "parent": 24,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -4343,6 +4361,7 @@
       },
       "parent": 24,
       "doc": null,
+      "type_only": true,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -4459,6 +4478,7 @@
       },
       "parent": 99,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -4593,6 +4613,7 @@
       },
       "parent": 104,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -4638,6 +4659,7 @@
       },
       "parent": 25,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -4712,6 +4734,7 @@
       },
       "parent": 107,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -4757,6 +4780,7 @@
       },
       "parent": 26,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -4901,6 +4925,7 @@
       },
       "parent": 112,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "FuncType",
         "span": {
@@ -4962,6 +4987,7 @@
       },
       "parent": 28,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "AppType",
         "span": {
@@ -5097,6 +5123,7 @@
       },
       "parent": 30,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "AppType",
         "span": {
@@ -5248,6 +5275,7 @@
       },
       "parent": 31,
       "doc": null,
+      "type_only": false,
       "expr": {
         "kind": "NameType",
         "span": {
@@ -13723,6 +13751,9 @@
         ],
         "supers": [
           {
+            "kind": "name",
+            "name": "Record",
+            "target": 12,
             "module": "std",
             "item": "Record"
           }
@@ -13974,7 +14005,12 @@
         },
         "doc": "Inherits through a module path rather than an imported item.",
         "supers": [
-          "std.Record"
+          {
+            "kind": "name",
+            "name": "std.Record",
+            "target": 13,
+            "module": "std"
+          }
         ],
         "members": [
           {
@@ -14389,8 +14425,17 @@
         },
         "doc": "A point with an area.",
         "supers": [
-          "Point",
-          "Shaped"
+          {
+            "kind": "name",
+            "name": "Point",
+            "target": 18
+          },
+          {
+            "kind": "name",
+            "name": "Shaped",
+            "target": 23,
+            "type_only": true
+          }
         ],
         "members": [
           {

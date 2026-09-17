@@ -425,6 +425,12 @@ pub class Type: Node
   pub def expr self -> TypeExpr
     ...
 
+  # Whether this is a supertype written with `@`, which the class does not
+  # inherit from at runtime.
+  #[getter]
+  pub def type_only self -> Bool
+    ...
+
 # Supertype of binders: names standing for types within the function, method,
 # or class that is their parent.
 pub class Binder: Declaration

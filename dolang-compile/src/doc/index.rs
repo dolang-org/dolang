@@ -283,7 +283,14 @@ impl Index<'_> {
     /// Record a resolved type as describing `parent`, unless it could not be read.
     fn type_node(&mut self, parent: Id, ty: &TypeExpr) {
         if let Some(expr) = self.type_expr(ty) {
-            self.push_to(Some(parent), Kind::Type { expr }, ty.span());
+            self.push_to(
+                Some(parent),
+                Kind::Type {
+                    expr,
+                    type_only: false,
+                },
+                ty.span(),
+            );
         }
     }
 
@@ -316,7 +323,14 @@ impl Index<'_> {
             };
         }
         let span = expr.span;
-        self.push_to(Some(class), Kind::Type { expr }, span);
+        self.push_to(
+            Some(class),
+            Kind::Type {
+                expr,
+                type_only: super_ref.type_only,
+            },
+            span,
+        );
     }
 
     fn type_expr(&self, ty: &TypeExpr) -> Option<doc::TypeExpr> {
