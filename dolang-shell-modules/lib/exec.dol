@@ -160,12 +160,12 @@ pub def run
   :app @ Str = nil
   # Imports to bind before the source, as
   # [`compile.compile`](compile.compile) takes them.
-  :prelude @ Dict[{...(Str | Sym): compile.PreludeBinding}] = {}
+  :prelude @ Dict[(Str | Sym), compile.PreludeBinding] = {}
   # Global bindings visible to the source when compiled and run.
-  :inject @ Dict[{...Sym: Value}] = {}
+  :inject @ Dict[Sym, Value] = {}
   # Modules supplied by name while running. A dictionary value is exposed as
   # a record.
-  :import @ Dict[{...(Str | Sym): Value}] = {}
+  :import @ Dict[(Str | Sym), Value] = {}
 do -> Value
   (Operation path mode: "script" name: nil :app :prelude :inject :import).run()
 
@@ -191,12 +191,12 @@ pub def module
   :app @ Str = nil
   # Imports to bind before the source, as
   # [`compile.compile`](compile.compile) takes them.
-  :prelude @ Dict[{...(Str | Sym): compile.PreludeBinding}] = {}
+  :prelude @ Dict[(Str | Sym), compile.PreludeBinding] = {}
   # Global bindings visible to the source when compiled and run.
-  :inject @ Dict[{...Sym: Value}] = {}
+  :inject @ Dict[Sym, Value] = {}
   # Modules supplied by name while running. A dictionary value is exposed as
   # a record.
-  :import @ Dict[{...(Str | Sym): Value}] = {}
+  :import @ Dict[(Str | Sym), Value] = {}
 do -> std.Module
   let name = module_name (fs.Path path) $name
   (Operation path mode: "module" :name :app :prelude :inject :import).run()

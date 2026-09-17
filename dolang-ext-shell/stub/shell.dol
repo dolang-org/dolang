@@ -498,7 +498,7 @@ pub let args @ Args = nil
 #
 # Assigning `nil` unsets a variable. Reading a name that is not set raises; use
 # [`get`](shell.Env.get) for a default instead.
-pub @class Env: std.Index[{...Str: Str}] std.Assign[{...Str: (Str | nil)}] std.Spread[{...Str: Str}] std.Unpack[{...Str: Str}] std.BaseIterable[Tuple[Str, Str]]
+pub @class Env: std.Index[Str, Str] std.Assign[Str, (Str | nil)] std.Spread[Str, Str] std.Unpack[Str, Str] std.BaseIterable[Tuple[Str, Str]]
   # Reads a variable, returning `nil` rather than raising when it is unset.
   #
   # ## Example
@@ -524,7 +524,7 @@ pub @class Env: std.Index[{...Str: Str}] std.Assign[{...Str: (Str | nil)}] std.S
   pub def (call)[R]
     self
     # The overrides, as for keyword arguments.
-    vars @ Dict[{...(Str | Sym): (Str | :INHERIT: | nil)}]
+    vars @ Dict[(Str | Sym), (Str | :INHERIT: | nil)]
     # The block to call.
     body @ (() -> R)
   do -> R

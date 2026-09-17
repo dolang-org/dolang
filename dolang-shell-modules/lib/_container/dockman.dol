@@ -31,7 +31,7 @@ pub @let PullPolicy = (:MISSING: | :ALWAYS: | :NEVER:)
 
 # Environment variables to set. A value of `:INHERIT:` copies the variable from
 # the calling environment; any other value is converted to a string.
-pub @let Env = Dict[{...(Str | Sym): Value}]
+pub @let Env = Dict[(Str | Sym), Value]
 
 # A mount for a container.
 #
@@ -1365,13 +1365,13 @@ pub class Image
   # Entrypoint, or `nil` when unset.
   pub field entrypoint @ (Array[Str] | nil) = nil
   # Environment variables.
-  pub field env @ Dict[{...Str: Str}] = nil
+  pub field env @ Dict[Str, Str] = nil
   # Working directory, or `nil` when unset.
   pub field working_dir @ (Path | nil) = nil
   # Default user, or `nil` when unset.
   pub field user @ (Str | nil) = nil
   # Labels, or `nil` when the image has none.
-  pub field labels @ (Dict[{...Str: Str}] | nil) = nil
+  pub field labels @ (Dict[Str, Str] | nil) = nil
 
   field runtime = nil
 
@@ -1495,7 +1495,7 @@ pub class Container
   # Entrypoint, or `nil` when unset.
   pub field entrypoint @ (Array[Str] | nil) = nil
   # Labels, or `nil` when the container has none.
-  pub field labels @ (Dict[{...Str: Str}] | nil) = nil
+  pub field labels @ (Dict[Str, Str] | nil) = nil
 
   field runtime = nil
 

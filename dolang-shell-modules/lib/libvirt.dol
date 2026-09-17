@@ -2159,7 +2159,7 @@ pub class Domain
     :cd @ (Str | Path) = nil
     # Environment overrides for the block. `nil` unsets a variable, and
     # `:INHERIT:` copies it from the calling context.
-    :env @ Dict[{...(Str | Sym): Value}] = {}
+    :env @ Dict[(Str | Sym), Value] = {}
   do -> R
     self.#impl.with $block :cd :env
 

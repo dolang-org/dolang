@@ -1,13 +1,13 @@
 # YAML serialization and deserialization.
 
 # A value decoded from YAML. A mapping key may be any YAML value.
-pub @let Data = (nil | Bool | Int | Float | Str | Array[Data] | Dict[{...Data: Data}])
+pub @let Data = (nil | Bool | Int | Float | Str | Array[Data] | Dict[Data, Data])
 
 # A value that encodes as YAML.
 pub @let Encodable = (
   | nil | Bool | Int | Float | Str | Sym
   | Array[Encodable] | Tuple[...Encodable] | Record[...{...Encodable, ...Sym: Encodable}]
-  | Dict[{...Encodable: Encodable}]
+  | Dict[Encodable, Encodable]
 )
 
 # Parses a YAML string into a Do value.

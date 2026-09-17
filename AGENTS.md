@@ -673,7 +673,9 @@ it begins ends it, even inside `()`. Parenthesize unions and function types:
 dict with a schema. Within a schema, `...K: V` describes arbitrary keyed
 entries, and `{...}` is shorthand for `{...std.Value}`. Schemas are closed
 unless they contain a rest item. Keyed and open rest items are not allowed in
-`[]` or function parameter lists.
+`[]` or function parameter lists. A type whose only parameter is a schema takes
+`Foo[T]` for positional items of type `T` and `Foo[K, V]` for
+`Foo[{...K: V}]`; prefer these to a schema with a single rest item.
 
 ### Concurrency
 

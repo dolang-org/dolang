@@ -85,9 +85,10 @@ let halve = (do |x @ Int| -> Int x // 2)
 stand for types within the declaration. A binder is a name, `:name` for a
 keyword type argument, or `...name` for any number of further type arguments.
 `@` gives a bound and `=` gives a default; both are type expressions. A
-variadic binder must come last and cannot have a default. An unbounded binder
-is provisionally a type binder; a schema bound such as `S @ {...}` explicitly
-makes it a schema binder.
+variadic binder must come last and cannot have a default. A variadic binder
+stands for the remaining arguments, so it is always a schema binder. Any other
+binder is a type binder unless a schema bound such as `S @ {...}` makes it a
+schema binder.
 
 ```
 def first[T] items @ Array[T] -> T
@@ -115,7 +116,7 @@ alias declared later. It may declare binders and may be exported.
 ```
 pub @let Pair[T] = Tuple[T, T]
 @let Options = {name: Str, ?port: Int}
-@let Json = (Scalar | Array[Json] | Dict[{...Str: Json}])
+@let Json = (Scalar | Array[Json] | Dict[Str, Json])
 @let Scalar = (Str | Int | Float | Bool | nil)
 ```
 
@@ -313,8 +314,16 @@ let headers @ Dict[{...Str: Str}] = {}
 let anything @ Dict[{...}] = {}
 ```
 
-`Dict[K, V]` is shorthand for the keyed-rest form, roughly
-`Dict[{...K: V}]`.
+A type whose only parameter is a schema, such as `Dict`, also accepts types in
+its place. `Dict[T]` stands for a schema of any number of positional items of
+type `T`, and `Dict[K, V]` stands for `Dict[{...K: V}]`. An argument that is
+already a schema, including a binder bounded by one, is passed as is:
+
+```
+let headers @ Dict[Str, Str] = {}
+class Table[S @ {...}]
+  pub field rows @ Dict[S] = {}
+```
 
 ### Functions
 

@@ -321,7 +321,7 @@ pub @class Unpack[S @ {}]
 
 # An iterable sequence of `T`, which integers index, slices, spreads, and
 # destructures.
-pub @class Seq[T]: Iterable[T] Index[{...Int: T}] Spread[{...T}] Unpack[{...T}]
+pub @class Seq[T]: Iterable[T] Index[Int, T] Spread[T] Unpack[T]
   # The number of items.
   #[getter]
   pub def len self -> Int
@@ -331,7 +331,7 @@ pub @class Seq[T]: Iterable[T] Index[{...Int: T}] Spread[{...T}] Unpack[{...T}]
 
 
 # A [`Seq`](std.Seq) whose items can be replaced, but not added or removed.
-pub @class AssignSeq[T]: Seq[T] Assign[{...Int: T}]
+pub @class AssignSeq[T]: Seq[T] Assign[Int, T]
 
 
 # A [`Seq`](std.Seq) whose items can be replaced, added, and removed.
@@ -385,7 +385,7 @@ pub @class MutSeq[T]: AssignSeq[T]
 # Arrays, dicts, and ranges are `Iterable`; a [`Record`](std.Record), or a
 # class that only implements [`(iter)`](std.BaseIterable), is not.
 #
-pub class Iterable[T]: @BaseIterable[T] @Spread[{...T}]
+pub class Iterable[T]: @BaseIterable[T] @Spread[T]
   # Returns an iterator over the value.
   pub def iter self -> Iter[T]
     ...
@@ -969,7 +969,7 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
 
 #
 # Binary data; an immutable sequence of bytes.
-pub class Bin: @Index[{...Range[Int]: Bin}]
+pub class Bin: @Index[Range[Int], Bin]
   # Accepts binary data or copies the UTF-8 bytes of a string.
   #
   # ## Example
@@ -2607,7 +2607,7 @@ pub class FmtValue
 # assert_eq $seq[1].value $user
 # assert_eq $seq[1].width 8
 # ```
-pub class Fmt: @Index[{...Int: FmtSegment, ...Range[Int]: Array[FmtSegment]}] @Spread[{...FmtSegment}] @Unpack[{...FmtSegment}]
+pub class Fmt: @Index[{...Int: FmtSegment, ...Range[Int]: Array[FmtSegment]}] @Spread[FmtSegment] @Unpack[FmtSegment]
   #
   #
   # Builds a sequence from an iterable of segments.
@@ -2893,7 +2893,7 @@ pub class IterStop: Error
 # assert_eq (type $ [1, 2, 3].iter()) $Iter
 # ```
 #
-pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[{...T}]
+pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T]
   #
   #
   # Returns `true` if every yielded value is truthy.
@@ -3651,7 +3651,7 @@ pub let static = nil
 #
 # Strings are immutable sequences of UTF-8 bytes.
 #
-pub class Str: @Index[{...Range[Int]: Str}]
+pub class Str: @Index[Range[Int], Str]
   #
   #
   # Accepts a string or decodes UTF-8 binary data. The lowercase `str` function
@@ -4088,7 +4088,7 @@ pub class Str: @Index[{...Range[Int]: Str}]
 #
 # Mutable UTF-8 string buffer; the mutable counterpart to [`Str`](std.Str).
 #
-pub class StrBuf: @Index[{...Range[Int]: Str}] @Assign[{...Range[Int]: Str}]
+pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str]
   #
   #
   # Builds a buffer, optionally seeded with the contents of an existing string.

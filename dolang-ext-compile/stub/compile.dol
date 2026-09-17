@@ -30,7 +30,7 @@ import term:
 pub @let PreludeBinding = (
   | Str | Sym
   | Array[(Str | Sym)]
-  | Dict[{...(Str | Sym): (Str | Sym)}]
+  | Dict[(Str | Sym), (Str | Sym)]
 )
 
 # Imports to bind before compiled source: a module name, an array of module
@@ -38,7 +38,7 @@ pub @let PreludeBinding = (
 pub @let Prelude = (
   | Str | Sym
   | Array[(Str | Sym)]
-  | Dict[{...(Str | Sym): PreludeBinding}]
+  | Dict[(Str | Sym), PreludeBinding]
 )
 
 # A staged compilation unit.

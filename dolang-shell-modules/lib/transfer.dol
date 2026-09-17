@@ -483,7 +483,7 @@ pub def put
   # Request headers for an HTTP(S) destination.
   #
   # Only valid for an HTTP(S) destination.
-  :headers @ Dict[{...(Str | Sym): Str}] = nil
+  :headers @ Dict[(Str | Sym), Str] = nil
 do -> nil
   source = (parse_location source)
   if (type source Url)
