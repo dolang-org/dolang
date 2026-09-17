@@ -291,6 +291,8 @@ def _rewrite_doc_refs(entity: dict, aliases: dict[str, str]) -> None:
     doc = entity.get("doc", "") or ""
     for source, target in aliases.items():
         doc = doc.replace(f"]({source})", f"]({target})")
+        # A member of a re-exported class moves with it
+        doc = doc.replace(f"]({source}.", f"]({target}.")
     entity["doc"] = doc
     for member in entity.get("members", []):
         _rewrite_doc_refs(member, aliases)
