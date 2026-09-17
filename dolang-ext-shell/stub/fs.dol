@@ -39,6 +39,23 @@ import
 # junctions.
 pub let @Resolve = (:TARGET: | :LINK:)
 
+# File access mode accepted by [`open`](fs.open).
+#
+# | Mode   | Description                              |
+# | ------ | ---------------------------------------- |
+# | `"r"`  | Read-only                                |
+# | `"w"`  | Write-only (truncates existing file)     |
+# | `"a"`  | Append to existing file                  |
+# | `"r+"` | Read and write                           |
+# | `"w+"` | Read and write (truncates existing file) |
+# | `"a+"` | Read and append                          |
+#
+# A `"b"` suffix selects binary mode, as in `"rb"`, `"wb"`, or `"r+b"`.
+pub let @OpenMode = (
+  | "r" | "w" | "a" | "r+" | "w+" | "a+"
+  | "rb" | "wb" | "ab" | "r+b" | "w+b" | "a+b"
+)
+
 # An entry within a directory.
 #
 # Yielded by [`entries`](fs.entries) and
@@ -1319,14 +1336,29 @@ pub class Path
     ...
 
   # The method form of [`fs.open`](fs.open).
-  pub def open
+  def @open
     self
     # File access mode. Defaults to `"r"`.
-    mode @ Str = nil
-    # Block to run with the file; it is closed when
-    # the block returns.
-    func @ Func = nil
-  do
+    mode @ OpenMode = nil
+  do -> File
+
+  # The method form of [`fs.open`](fs.open) with a block.
+  def @open[R]
+    self
+    # Block to run with the file; it is closed when the block returns.
+    func @ (File -> R)
+  do -> R
+
+  # The method form of [`fs.open`](fs.open) with a mode and a block.
+  def @open[R]
+    self
+    # File access mode.
+    mode @ OpenMode
+    # Block to run with the file; it is closed when the block returns.
+    func @ (File -> R)
+  do -> R
+
+  pub def open self ...options
     ...
 
   # The method form of [`fs.read`](fs.read).
@@ -1614,42 +1646,51 @@ pub class XattrEntry
 
 # Opens a file.
 #
-# ## Returns
-#
-# [`File`](fs.File), or the block's result when `func` is given.
-#
-# ## Example
+# The file stays open until [`File.close`](fs.File.close) is called.
 #
 # ```
-# # Read a file (auto-closed when the block finishes)
-# open config.txt r do |file|
-#   echo "Content: $(file.read())"
-#
-# # Manual file management
 # let file = open data.txt w
 # file.write "some data"
 # file.close()
 # ```
-pub def open
+def @open
   # Path to the file to open.
   path @ (Str | Path)
   # File access mode. Defaults to `"r"`.
-  #
-  # | Mode   | Description                              |
-  # | ------ | ---------------------------------------- |
-  # | `"r"`  | Read-only                                |
-  # | `"w"`  | Write-only (truncates existing file)     |
-  # | `"a"`  | Append to existing file                  |
-  # | `"r+"` | Read and write                           |
-  # | `"w+"` | Read and write (truncates existing file) |
-  # | `"a+"` | Read and append                          |
-  #
-  # Add a `"b"` suffix for binary mode, as in `"rb"`, `"wb"`, or `"r+b"`.
-  mode @ Str = nil
-  # Block to run with the file; it is closed when
-  # the block returns.
-  func @ Func = nil
-do -> Value
+  mode @ OpenMode = nil
+do -> File
+
+# Opens a file for reading and runs a block with it. The file is closed when
+# the block returns.
+#
+# ```
+# open config.txt do |file|
+#   echo "Content: $(file.read())"
+# ```
+def @open[R]
+  # Path to the file to open.
+  path @ (Str | Path)
+  # Block to run with the file.
+  func @ (File -> R)
+do -> R
+
+# Opens a file with a mode and runs a block with it. The file is closed when
+# the block returns.
+#
+# ```
+# open log.txt a do |file|
+#   file.write "entry\n"
+# ```
+def @open[R]
+  # Path to the file to open.
+  path @ (Str | Path)
+  # File access mode.
+  mode @ OpenMode
+  # Block to run with the file.
+  func @ (File -> R)
+do -> R
+
+pub def open path ...options
   ...
 
 # Reads the entire contents of a file in one call.
