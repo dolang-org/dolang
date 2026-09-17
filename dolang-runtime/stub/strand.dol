@@ -11,7 +11,7 @@ pub class Key
   # let key = strand.Key()
   # ```
   #
-  pub def (init) self 
+  pub def (init) self
     ...
 
   #
@@ -54,7 +54,7 @@ pub class Receiver[T]: std.Iter[T]
   #
   # Closes the receiver. This prevents any more values from being sent and
   # wakes up any waiting senders.
-  pub def close self 
+  pub def close self
     ...
 
 
@@ -102,7 +102,7 @@ pub class Resource
 # Sends values into a channel. As a [`Sink`](std.Sink), it accepts `put`.
 #
 # Senders are returned by [`channel`](strand).
-pub class Sender[T]: std.Sink
+pub class Sender[T]: std.Sink[T]
   # Sends a value, waiting while the channel's buffer is full.
   #
   # ## Errors
@@ -156,7 +156,7 @@ pub class Strand[R]
   # Requests cancellation of the strand, causing a `Canceled` error to be raised
   # if the strand is suspended and on all subsequent suspension attempts.
   #
-  pub def cancel self 
+  pub def cancel self
     ...
 
   #
@@ -171,7 +171,7 @@ pub class Strand[R]
   # Waits until the strand completes. Unlike [`join()`](#join), this method does
   # not return the strand's return value or re-raise any error. Use this when you
   # only care that the strand finished, not what it returned.
-  pub def wait self 
+  pub def wait self
     ...
 
 
@@ -192,7 +192,7 @@ pub class Stream[R]
   # Requests cancellation of the strand, causing a `Canceled` error to be raised
   # at the strand's next suspension point.
   #
-  pub def cancel self 
+  pub def cancel self
     ...
 
   #
@@ -211,7 +211,7 @@ pub class Stream[R]
   # not close the channels, does not return the strand's result, and does not
   # re-raise any error.
   #
-  pub def wait self 
+  pub def wait self
     ...
 
 
@@ -222,14 +222,20 @@ pub def channel[T]
 do -> Tuple[Sender[T], Receiver[T]]
   ...
 
-# Creates a pipeline stage that collects input values.
-pub def collect
-  # collection to add to (defaults to a new `array`)
-  target @ Sinkable = nil
-do
+# Collects the strand-local input into a new array.
+def @collect() -> Array
+
+# Collects the strand-local input into a sink, returning the sink.
+def @collect[S @ Sinkable]
+  # collection to add to
+  target @ S
+do -> S
+
+pub def collect ...args
   ...
 
-# Creates a pipeline stage that transforms each input value.
+# Transforms each value of the strand-local input and writes the result to the
+# strand-local output.
 pub def each
   # a function that transforms a single value
   func @ (Value -> Value)
@@ -243,7 +249,7 @@ pub def fork[...Rs]
 do -> Tuple[...Rs]
   ...
 
-# Creates a pipeline stage that emits values from an iterable.
+# Writes the values of an iterable to the strand-local output.
 pub def from
   # an iterable to emit values from
   value @ Iterable
@@ -343,7 +349,8 @@ pub def stream[R]
 do -> Stream[R]
   ...
 
-# Creates a pipeline stage that filters input values.
+# Writes the values of the strand-local input that satisfy a predicate to the
+# strand-local output.
 pub def where
   # a function returning a truthy/falsy value
   predicate @ (Value -> Value)

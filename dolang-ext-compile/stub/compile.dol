@@ -40,11 +40,11 @@ import term:
 # let bytecode = unit.emit()
 # ```
 pub class Unit
-  # Returns a fresh iterator of [`Diagnostic`](compile.Diagnostic) objects.
-  pub def diagnostics self
+  # Returns a fresh iterator of diagnostics.
+  pub def diagnostics self -> Iter[Diagnostic]
     ...
 
-  # Returns a fresh iterator of `[NodeId, Node]` pairs.
+  # Returns a fresh iterator of `[id, node]` pairs.
   #
   # Empty unless the unit was compiled with `document: true`. An enabled unit
   # always contains one [`Root`](compile.Root), even for empty source.
@@ -55,7 +55,7 @@ pub class Unit
   # for id node = unit.nodes()
   #   echo $id $node.span
   # ```
-  pub def nodes self
+  pub def nodes self -> Iter[Array[(NodeId | Node)]]
     ...
 
   # Looks up a node by [`NodeId`](compile.NodeId).
@@ -70,8 +70,8 @@ pub class Unit
   do -> (Node | nil)
     ...
 
-  # Returns a fresh iterator of [`Token`](compile.Token) objects covering the
-  # whole source, in source order.
+  # Returns a fresh iterator of tokens covering the whole source, in source
+  # order.
   #
   # ## Example
   #
@@ -79,10 +79,10 @@ pub class Unit
   # for token = unit.tokens()
   #   echo $token.kind $token.span
   # ```
-  pub def tokens self
+  pub def tokens self -> Iter[Token]
     ...
 
-  # Consumes the unit and returns bytecode as [`Bin`](std.Bin).
+  # Consumes the unit and returns its bytecode.
   #
   # ## Errors
   #
@@ -90,7 +90,7 @@ pub class Unit
   # | ------------------ | -------------------------------------------------- |
   # | `std.CompileError` | Compilation failed                                 |
   # | `std.StateError`   | The unit, its node iterators, or its nodes are used after emission |
-  pub def emit self
+  pub def emit self -> Bin
     ...
 
 # An opaque handle identifying one node within a [`Unit`](compile.Unit).

@@ -127,17 +127,17 @@ pub class Node
   # ```
   # let id = node.attr "id" namespace: "urn:inventory"
   # ```
-  pub def attr
+  pub def attr[D = nil]
     self
     # Local attribute name.
     name @ Str
     # Namespace URI.
     :namespace @ Str = nil
     # Value returned when absent.
-    :default = nil
+    :default @ D = nil
     # Function evaluated when absent.
-    :else @ (() -> Value) = nil
-  do
+    :else @ (() -> D) = nil
+  do -> (Str | D)
     ...
 
   # Deletes all attributes matching an expanded name.
@@ -181,7 +181,7 @@ pub class Node
     ...
 
   # Returns a depth-first, parent-first iterator over this node and descendants.
-  pub def traverse self
+  pub def traverse self -> Iter[(Node | Str)]
     ...
 
   # Reads an unnamespaced attribute by string or a child by integer index.

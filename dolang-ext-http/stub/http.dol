@@ -1,5 +1,8 @@
 import std:
   - RuntimeError
+import json:
+  - @Data: JsonData
+  - @Encodable: JsonEncodable
 import url:
   - @Url
 
@@ -124,11 +127,7 @@ pub class Status: Error
   # The saved body excerpt, parsed as JSON.
   #
   # Available when the extension is built with its `json` feature.
-  #
-  # ## Returns
-  #
-  # The parsed value.
-  pub def json self -> Value
+  pub def json self -> JsonData
     ...
 
 # One item of a Server-Sent Events stream.
@@ -234,12 +233,6 @@ pub class Response
   #
   # Available when the extension is built with its `json` feature.
   #
-  # ## Returns
-  #
-  # The parsed value, as a tree of [`Int`](std.Int),
-  # [`Float`](std.Float), [`Str`](std.Str),
-  # [`Array`](std.Array) and [`Dict`](std.Dict).
-  #
   # ## Errors
   #
   # | Exception                             | Condition                       |
@@ -255,7 +248,7 @@ pub class Response
   # let data = response.json()
   # echo $data["users"][0]["name"]
   # ```
-  pub def json self -> Value
+  pub def json self -> JsonData
     ...
 
   # Streams the body as raw byte chunks, so a large response need not be held
@@ -625,7 +618,7 @@ pub class Client
     # [`body`](http.Client.body).
     :body @ (Str | Bin) = nil
     # Request body, JSON-serialized -- see [`json`](http.Client.json).
-    :json = nil
+    :json @ JsonEncodable = nil
     # Request body streamed with a newline after each element --
     # see [`lines`](http.Client.lines).
     :lines @ Iterable = nil
@@ -654,7 +647,7 @@ pub class Client
     # [`body`](http.Client.body).
     :body @ (Str | Bin) = nil
     # Request body, JSON-serialized -- see [`json`](http.Client.json).
-    :json = nil
+    :json @ JsonEncodable = nil
     # Request body streamed with a newline after each element --
     # see [`lines`](http.Client.lines).
     :lines @ Iterable = nil
@@ -746,7 +739,7 @@ def @post
   # Request body.
   :body @ (Str | Bin) = nil
   # Request body, JSON-serialized.
-  :json = nil
+  :json @ JsonEncodable = nil
   # Request body streamed with a newline after each element.
   :lines @ Iterable = nil
   # Multipart form parts.
@@ -768,7 +761,7 @@ def @post[R]
   # Request body.
   :body @ (Str | Bin) = nil
   # Request body, JSON-serialized.
-  :json = nil
+  :json @ JsonEncodable = nil
   # Request body streamed with a newline after each element.
   :lines @ Iterable = nil
   # Multipart form parts.

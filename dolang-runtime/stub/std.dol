@@ -5,6 +5,10 @@
 # pack spreads into one, as in `Union[T, ...Us]`.
 pub let @Union[...Ts] = ...
 
+# The type with no values, which a function that never returns can declare as
+# its result.
+pub let @Empty = Union[]
+
 # The singleton [`Null`](std.Null) value.
 #
 # As an iterator it ends immediately; as a sink it discards every value.
@@ -180,7 +184,7 @@ pub def type value @ Value -> Type
 # ```
 # assert (type 42 Int)
 # ```
-pub def type value@Value type@Type
+pub def type value@Value type@Type -> Bool
   ...
 
 #
@@ -244,11 +248,41 @@ pub class RuntimeError: Error
     ...
 
 
+# A value that implements the [`(iter)`](../../language/classes.md#iter-obtain-iterator)
+# protocol, as `for` and spreading require. Only an [`Iterable`](std.Iterable)
+# also has its methods.
+pub class @BaseIterable[T]
+  # Returns an iterator over the value.
+  pub def (iter) self -> BaseIter[T]
+
+
+# A value that implements the [`(next)`](../../language/classes.md#next-iterator-protocol)
+# protocol. Only an [`Iter`](std.Iter) also has its methods.
+pub class @BaseIter[T]
+  # Returns the next value, raising [`IterStop`](std.IterStop) once exhausted.
+  pub def (next) self -> T
+
+
+# A value that implements the [`(sink)`](../../language/classes.md#sink-obtain-sink)
+# protocol. Only a [`Sinkable`](std.Sinkable) also has its methods.
+pub class @BaseSinkable[T]
+  # Returns a sink that writes to the value.
+  pub def (sink) self -> BaseSink[T]
+
+
+# A value that implements the [`(put)`](../../language/classes.md#put-sink-protocol)
+# protocol. Only a [`Sink`](std.Sink) also has its methods.
+pub class @BaseSink[T]
+  # Writes a value.
+  pub def (put) self value @ T
+
+
 #
-# Abstract type for iterable values. Values that implement the `(iter)` protocol
-# are instances of `Iterable`, which can be used for type testing.
+# Abstract type for iterable values, whose instances have the methods below.
+# Arrays, dicts, and ranges are `Iterable`; a [`Record`](std.Record), or a
+# class that only implements [`(iter)`](std.BaseIterable), is not.
 #
-pub class Iterable[T]
+pub class Iterable[T]: @BaseIterable[T]
   # Returns an iterator over the value.
   pub def iter self -> Iter[T]
     ...
@@ -266,11 +300,11 @@ pub class Iterable[T]
     ...
 
   # Returns an iterator with one trailing line terminator removed from each item.
-  pub def chomp self -> Iter[T]
+  pub def chomp[U @ (Str | Bin)] self @ Iterable[U] -> Iter[U]
     ...
 
   # Returns an iterator with a line terminator appended to each item.
-  pub def crimp self terminator @ (Str | Bin) = nil -> Iter[T]
+  pub def crimp[U @ (Str | Bin)] self @ Iterable[U] terminator @ (Str | Bin) = nil -> Iter[U]
     ...
 
   # Returns an iterator of `[index, value]` tuples.
@@ -315,37 +349,39 @@ pub class Iterable[T]
 
 
 #
-# Abstract type for values that implement the `(sink)` protocol.
+# Abstract type for values that sinks can be obtained from, whose instances have
+# the methods below. An [`Array`](std.Array) is `Sinkable`; a class that only
+# implements [`(sink)`](std.BaseSinkable) is not.
 #
-pub class Sinkable
+pub class Sinkable[T]: @BaseSinkable[T]
   # Returns a sink over the value.
-  pub def sink self -> Sink
+  pub def sink self -> Sink[T]
     ...
 
   # Writes a value to the sink.
-  pub def put self value
+  pub def put self value @ T
     ...
 
   # Returns a sink that removes one trailing line terminator from each value.
-  pub def prechomp self
+  pub def prechomp[U @ (Str | Bin)] self @ Sinkable[U] -> Sink[U]
     ...
 
   # Returns a sink that appends a line terminator to each value.
-  pub def precrimp self terminator = nil
+  pub def precrimp[U @ (Str | Bin)] self @ Sinkable[U] terminator @ (Str | Bin) = nil -> Sink[U]
     ...
 
   # Returns a sink that writes only values for which `pred` is truthy.
-  pub def prefilter self pred @ (Value -> Value) -> Sink
+  pub def prefilter self pred @ (T -> Value) -> Sink[T]
     ...
 
   # Returns a sink that transforms each value with `func` before writing it.
-  pub def premap self func @ (Value -> Value) -> Sink
+  pub def premap[U] self func @ (U -> T) -> Sink[U]
     ...
 
 
 #
-# Abstract type for sinks. Values that implement the sink protocol
-# are instances of `Sink`, which can be used for type testing.
+# Abstract type for sinks, whose instances have the methods below. Built-in
+# sinks are `Sink`; a class that only implements [`(put)`](std.BaseSink) is not.
 #
 # `Sink` is not constructible directly.
 #
@@ -353,7 +389,7 @@ pub class Sinkable
 # assert_eq (type $ [].sink()) $Sink
 # ```
 #
-pub class Sink: Sinkable
+pub class Sink[T]: Sinkable[T] @BaseSink[T]
   #
   #
   # Creates a wrapper `Sink` which removes a trailing line terminator (`\n` or
@@ -373,7 +409,7 @@ pub class Sink: Sinkable
   # assert_eq $acc ["line"]
   # ```
   #
-  pub def prechomp self
+  pub def prechomp[U @ (Str | Bin)] self @ Sink[U] -> Sink[U]
     ...
 
   #
@@ -398,7 +434,7 @@ pub class Sink: Sinkable
   #   file.precrimp(shell.line_ending()).put "native"
   # ```
   #
-  pub def precrimp self terminator = nil
+  pub def precrimp[U @ (Str | Bin)] self @ Sink[U] terminator @ (Str | Bin) = nil -> Sink[U]
     ...
 
   #
@@ -417,7 +453,7 @@ pub class Sink: Sinkable
   # assert_eq $acc [2]
   # ```
   #
-  pub def prefilter self pred @ (Value -> Value) -> Sink
+  pub def prefilter self pred @ (T -> Value) -> Sink[T]
     ...
 
   #
@@ -438,13 +474,13 @@ pub class Sink: Sinkable
   # assert_eq $acc [6]
   # ```
   #
-  pub def premap self func @ (Value -> Value) -> Sink
+  pub def premap[U] self func @ (U -> T) -> Sink[U]
     ...
 
   #
   # Writes a value to the sink.
   #
-  pub def put self value
+  pub def put self value @ T
     ...
 
 
@@ -460,7 +496,7 @@ pub class AbortError: Error
 # calling the `Args` type object. Iterating an `Args` value yields `[key, value]`
 # pairs. Positional items use their positional index as the key.
 #
-pub class Args
+pub class Args: Iterable[Tuple[(Int | Sym), Value]]
   #
   #
   # Creates an argument pack from positional and keyed arguments.
@@ -482,7 +518,7 @@ pub class Args
   # ```
   #
   #[getter]
-  pub def len self
+  pub def len self -> Int
     ...
 
   #
@@ -499,7 +535,7 @@ pub class Args
   # assert_eq [...pack] [[0, 1], [:left:, 2], [1, 3], [:right:, 4]]
   # ```
   #
-  pub def pos_keys self
+  pub def pos_keys self -> Tuple[Iter, Iter[Tuple[Sym, Value]]]
     ...
 
   #
@@ -515,7 +551,7 @@ pub class Args
   # assert_eq [...pack] [[0, 1], [1, 2], [2, 3]]
   # ```
   #
-  pub def pos_only self
+  pub def pos_only self -> Iter
     ...
 
   #
@@ -535,13 +571,13 @@ pub class Args
 #
 # Arrays are ordered, mutable sequences of values.
 #
-pub class Array
+pub class Array[T]: Iterable[T] Sinkable[T]
   #
   #
   # Builds an array from one iterable. The lowercase `array` factory instead
   # collects its positional arguments verbatim.
   #
-  pub def (init) self iterable
+  pub def (init) self iterable @ Iterable[T]
     ...
 
   #
@@ -598,7 +634,7 @@ pub class Array
   # When inherited by a Do subclass, `copy()` calls the subclass constructor with
   # the source array as a single positional argument.
   #
-  pub def copy self -> Array
+  pub def copy self -> Array[T]
     ...
 
   #
@@ -618,7 +654,7 @@ pub class Array
   # assert_eq $arr [10]
   # ```
   #
-  pub def delete self index -> Bool
+  pub def delete self index @ Int -> Bool
     ...
 
   #
@@ -636,13 +672,13 @@ pub class Array
   # assert_eq (arr.get 5 else: do "computed") "computed"
   # ```
   #
-  pub def get
+  pub def get[D = nil]
     self
     # the index to access
     index @ Int
-    :default = nil
-    :else @ (() -> Value) = nil
-  do
+    :default @ D = nil
+    :else @ (() -> D) = nil
+  do -> (T | D)
     ...
 
   #
@@ -664,7 +700,7 @@ pub class Array
     # the position to insert at
     index @ Int
     # values to insert
-    ...values
+    ...values @ T
   do
     ...
 
@@ -682,7 +718,7 @@ pub class Array
   # # 2: 30
   # ```
   #
-  pub def pairs self -> Iter[Tuple[Int, Value]]
+  pub def pairs self -> Iter[Tuple[Int, T]]
     ...
 
   #
@@ -703,13 +739,13 @@ pub class Array
   # assert_eq (empty.pop default: "none") "none"
   # ```
   #
-  pub def pop
+  pub def pop[D = Empty]
     self
     # optional index to remove; defaults to the last element
     index @ Int = nil
-    :default = nil
-    :else @ (() -> Value) = nil
-  do
+    :default @ D = nil
+    :else @ (() -> D) = nil
+  do -> (T | D)
     ...
 
   #
@@ -726,7 +762,7 @@ pub class Array
   pub def push
     self
     # values to append
-    ...values
+    ...values @ T
   do
     ...
 
@@ -748,8 +784,8 @@ pub class Array
   #
   pub def sort
     self
-    :key = nil
-    :reverse = nil
+    :key @ (T -> Value) = nil
+    :reverse @ Bool = nil
   do
     ...
 
@@ -1027,7 +1063,7 @@ pub class Bin
   #
   pub def trim
     self
-    chars @ (Bin | Iterable) = nil
+    chars @ (Bin | Iterable[Bin]) = nil
   do -> Bin
     ...
 
@@ -1044,7 +1080,7 @@ pub class Bin
   #
   pub def trim_end
     self
-    chars @ (Bin | Iterable) = nil
+    chars @ (Bin | Iterable[Bin]) = nil
   do -> Bin
     ...
 
@@ -1061,7 +1097,7 @@ pub class Bin
   #
   pub def trim_start
     self
-    chars @ (Bin | Iterable) = nil
+    chars @ (Bin | Iterable[Bin]) = nil
   do -> Bin
     ...
 
@@ -1404,7 +1440,7 @@ pub class BinBuf
   #
   pub def remove
     self
-    index_or_range @ (Int | Range)
+    index_or_range @ (Int | Range[Int])
   do -> (Int | Bin)
     ...
 
@@ -1611,7 +1647,7 @@ pub class CyclicImportError: RuntimeError
 #   values by their position (0-indexed) among values for that key; negative
 #   instance indexes count from the end
 #
-pub class Dict[S @ {...}]
+pub class Dict[S @ {...}]: Iterable[Tuple[Value, Value]]
   #
   #
   # Builds a dictionary from one spreadable source of key-value pairs. The
@@ -1735,15 +1771,15 @@ pub class Dict[S @ {...}]
   # assert_eq (d.get :missing: default: "unknown") "unknown"
   # ```
   #
-  pub def get
+  pub def get[D = nil]
     self
     # the key to look up
     key
     # which value to retrieve when a key has multiple values (0-indexed; negative counts from end; default: last)
     instance @ Int = nil
-    :default = nil
-    :else @ (() -> Value) = nil
-  do
+    :default @ D = nil
+    :else @ (() -> D) = nil
+  do -> (Value | D)
     ...
 
   #
@@ -1799,15 +1835,15 @@ pub class Dict[S @ {...}]
   # assert_eq (d.pop "multi" 0) "second"
   # ```
   #
-  pub def pop
+  pub def pop[D = Empty]
     self
     # the key to remove
     key
     # which value to remove when a key has multiple values (0-indexed; negative counts from end; default: first)
     instance @ Int = nil
-    :default = nil
-    :else @ (() -> Value) = nil
-  do
+    :default @ D = nil
+    :else @ (() -> D) = nil
+  do -> (Value | D)
     ...
 
   #
@@ -1886,46 +1922,46 @@ pub class Num
   #
   # Raises [`OverflowError`](std.OverflowError) if the result is not
   # representable.
-  pub def abs self
+  pub def abs[N @ Num] self @ N -> N
     ...
 
   # Returns the signum of the value: negative one, zero, or positive one.
-  pub def signum self
+  pub def signum[N @ Num] self @ N -> N
     ...
 
   # Rounds to the nearest integral value, with halfway cases away from zero.
-  pub def round self
+  pub def round[N @ Num] self @ N -> N
     ...
 
   # Rounds toward negative infinity.
-  pub def floor self
+  pub def floor[N @ Num] self @ N -> N
     ...
 
   # Rounds toward positive infinity.
-  pub def ceil self
+  pub def ceil[N @ Num] self @ N -> N
     ...
 
   # Rounds toward zero.
-  pub def trunc self
+  pub def trunc[N @ Num] self @ N -> N
     ...
 
   # Returns the smallest of this value and `others`.
   #
   # If a comparison is unordered, which input is returned is unspecified.
-  pub def min self ...others
+  pub def min[N @ Num] self @ N ...others @ N -> N
     ...
 
   # Returns the largest of this value and `others`.
   #
   # If a comparison is unordered, which input is returned is unspecified.
-  pub def max self ...others
+  pub def max[N @ Num] self @ N ...others @ N -> N
     ...
 
   # Restricts the value to the inclusive interval from `lower` to `upper`.
   #
   # Raises [`ValueError`](std.ValueError) if `lower > upper`. If a comparison
   # is unordered, which input is returned is unspecified.
-  pub def clamp self lower upper
+  pub def clamp[N @ Num] self @ N lower @ N upper @ N -> N
     ...
 
   pub def (add) self other
@@ -1992,24 +2028,38 @@ pub class Float: Num
     ...
 
   # Tests whether the value is NaN.
-  pub def is_nan self
+  pub def is_nan self -> Bool
     ...
 
   # Tests whether the value is finite.
-  pub def is_finite self
+  pub def is_finite self -> Bool
     ...
 
   # Tests whether the value is positive or negative infinity.
-  pub def is_infinite self
+  pub def is_infinite self -> Bool
     ...
 
   # Tests whether the value is normal.
-  pub def is_normal self
+  pub def is_normal self -> Bool
     ...
 
   # Tests whether the value is subnormal.
-  pub def is_subnormal self
+  pub def is_subnormal self -> Bool
     ...
+
+# A fill for formatted output: a single character, or `:ZERO:` for numeric
+# zero padding.
+pub let @FmtFill = (Str | :ZERO:)
+
+# An alignment for formatted output.
+pub let @FmtAlign = (:LEFT: | :RIGHT: | :CENTER:)
+
+# A sign display for formatted numbers.
+pub let @FmtSign = (:PLUS: | :SPACE:)
+
+# A representation kind for formatted output. See
+# [`FmtSpec.kind`](std.FmtSpec.kind).
+pub let @FmtKind = (:STR: | :DBG: | :VERBATIM: | :HEX: | :OCT: | :BIN: | :DEC: | :EXP: | :FIXED:)
 
 #
 # An unbound interpolation in a [`Fmt`](std.Fmt).
@@ -2042,13 +2092,13 @@ pub class FmtParam
   pub def (init)
     self
     name @ (Int | Sym)
-    :fill = nil
-    :align = nil
-    :sign = nil
-    :width = nil
-    :precision = nil
-    :alt = nil
-    :kind = nil
+    :fill @ FmtFill = nil
+    :align @ FmtAlign = nil
+    :sign @ FmtSign = nil
+    :width @ Int = nil
+    :precision @ Int = nil
+    :alt @ Bool = nil
+    :kind @ FmtKind = nil
     # Interpolation as written in source
     :source @ Str = nil
   do
@@ -2058,7 +2108,7 @@ pub class FmtParam
   # The parameter named by this position, as an `Int` or a `Sym`.
   #
   #[getter]
-  pub def name self
+  pub def name self -> (Int | Sym)
     ...
 
   #
@@ -2072,7 +2122,7 @@ pub class FmtParam
   # ```
   #
   #[getter]
-  pub def source self
+  pub def source self -> (Str | nil)
     ...
 
   #
@@ -2082,21 +2132,21 @@ pub class FmtParam
   #
   pub def (call)
     self
-    # Fill character, `:ZERO:`, or nil
-    :fill @ (Str | nil) = nil
-    # `:LEFT:`, `:RIGHT:`, or `:CENTER:`
-    :align @ Sym = nil
-    # `:PLUS:` or `:SPACE:`
-    :sign @ Sym = nil
+    # Padding fill
+    :fill @ (FmtFill | nil) = nil
+    # Alignment
+    :align @ (FmtAlign | nil) = nil
+    # Sign display
+    :sign @ (FmtSign | nil) = nil
     # Minimum width in grapheme clusters
-    :width @ Int = nil
+    :width @ (Int | nil) = nil
     # Numeric precision or maximum graphemes
-    :precision @ Int = nil
+    :precision @ (Int | nil) = nil
     # Enables alternate formatting
-    :alt @ Bool = nil
+    :alt @ (Bool | nil) = nil
     # Representation kind
-    :kind @ Sym = nil
-  do
+    :kind @ (FmtKind | nil) = nil
+  do -> FmtParam
     ...
 
   # Two parameters are equal when they name the same parameter under the same
@@ -2124,12 +2174,12 @@ pub class FmtSpec
   #
   pub def (init)
     self
-    # Fill character, `:ZERO:`, or nil
-    :fill @ (Str | nil) = nil
-    # `:LEFT:`, `:RIGHT:`, or `:CENTER:`
-    :align @ Sym = nil
-    # `:PLUS:` or `:SPACE:`
-    :sign @ Sym = nil
+    # Padding fill
+    :fill @ FmtFill = nil
+    # Alignment
+    :align @ FmtAlign = nil
+    # Sign display
+    :sign @ FmtSign = nil
     # Minimum width in grapheme clusters
     :width @ Int = nil
     # Numeric precision or maximum graphemes
@@ -2137,7 +2187,7 @@ pub class FmtSpec
     # Enables alternate formatting
     :alt @ Bool = nil
     # Representation kind
-    :kind @ Sym = nil
+    :kind @ FmtKind = nil
   do
     ...
 
@@ -2145,21 +2195,21 @@ pub class FmtSpec
   # The fill character, `:ZERO:` for numeric zero padding, or nil for spaces.
   #
   #[getter]
-  pub def fill self
+  pub def fill self -> (FmtFill | nil)
     ...
 
   #
   # `:LEFT:`, `:RIGHT:`, `:CENTER:`, or nil for the formatted value's default.
   #
   #[getter]
-  pub def align self
+  pub def align self -> (FmtAlign | nil)
     ...
 
   #
   # `:PLUS:`, `:SPACE:`, or nil to show only negative signs.
   #
   #[getter]
-  pub def sign self
+  pub def sign self -> (FmtSign | nil)
     ...
 
   #
@@ -2168,7 +2218,7 @@ pub class FmtSpec
   # terminal cells.
   #
   #[getter]
-  pub def width self
+  pub def width self -> (Int | nil)
     ...
 
   #
@@ -2176,14 +2226,14 @@ pub class FmtSpec
   # depending on the formatted value, or nil when unset.
   #
   #[getter]
-  pub def precision self
+  pub def precision self -> (Int | nil)
     ...
 
   #
   # Whether alternate formatting is enabled.
   #
   #[getter]
-  pub def alt self
+  pub def alt self -> Bool
     ...
 
   #
@@ -2205,7 +2255,7 @@ pub class FmtSpec
   # interpolation](../../language/strings.md#formatted-interpolation).
   #
   #[getter]
-  pub def kind self
+  pub def kind self -> (FmtKind | nil)
     ...
 
   #
@@ -2221,20 +2271,20 @@ pub class FmtSpec
     self
     # value to bind
     value = nil
-    # Fill character, `:ZERO:`, or nil
-    :fill @ (Str | nil) = nil
-    # `:LEFT:`, `:RIGHT:`, or `:CENTER:`
-    :align @ Sym = nil
-    # `:PLUS:` or `:SPACE:`
-    :sign @ Sym = nil
+    # Padding fill
+    :fill @ (FmtFill | nil) = nil
+    # Alignment
+    :align @ (FmtAlign | nil) = nil
+    # Sign display
+    :sign @ (FmtSign | nil) = nil
     # Minimum width in grapheme clusters
-    :width @ Int = nil
+    :width @ (Int | nil) = nil
     # Numeric precision or maximum graphemes
-    :precision @ Int = nil
+    :precision @ (Int | nil) = nil
     # Enables alternate formatting
-    :alt @ Bool = nil
+    :alt @ (Bool | nil) = nil
     # Representation kind
-    :kind @ Sym = nil
+    :kind @ (FmtKind | nil) = nil
   do
     ...
 
@@ -2321,12 +2371,12 @@ pub class FmtValue
     self
     # Value to bind
     value @ Value
-    # Fill character, `:ZERO:`, or nil
-    :fill @ (Str | nil) = nil
-    # `:LEFT:`, `:RIGHT:`, or `:CENTER:`
-    :align @ Sym = nil
-    # `:PLUS:` or `:SPACE:`
-    :sign @ Sym = nil
+    # Padding fill
+    :fill @ FmtFill = nil
+    # Alignment
+    :align @ FmtAlign = nil
+    # Sign display
+    :sign @ FmtSign = nil
     # Minimum width in grapheme clusters
     :width @ Int = nil
     # Numeric precision or maximum graphemes
@@ -2334,7 +2384,7 @@ pub class FmtValue
     # Enables alternate formatting
     :alt @ Bool = nil
     # Representation kind
-    :kind @ Sym = nil
+    :kind @ FmtKind = nil
     # Interpolation as written in source
     :source @ Str = nil
   do
@@ -2359,7 +2409,7 @@ pub class FmtValue
   # ```
   #
   #[getter]
-  pub def source self
+  pub def source self -> (Str | nil)
     ...
 
   #
@@ -2369,21 +2419,21 @@ pub class FmtValue
   #
   pub def (call)
     self
-    # Fill character, `:ZERO:`, or nil
-    :fill @ (Str | nil) = nil
-    # `:LEFT:`, `:RIGHT:`, or `:CENTER:`
-    :align @ Sym = nil
-    # `:PLUS:` or `:SPACE:`
-    :sign @ Sym = nil
+    # Padding fill
+    :fill @ (FmtFill | nil) = nil
+    # Alignment
+    :align @ (FmtAlign | nil) = nil
+    # Sign display
+    :sign @ (FmtSign | nil) = nil
     # Minimum width in grapheme clusters
-    :width @ Int = nil
+    :width @ (Int | nil) = nil
     # Numeric precision or maximum graphemes
-    :precision @ Int = nil
+    :precision @ (Int | nil) = nil
     # Enables alternate formatting
-    :alt @ Bool = nil
+    :alt @ (Bool | nil) = nil
     # Representation kind
-    :kind @ Sym = nil
-  do
+    :kind @ (FmtKind | nil) = nil
+  do -> FmtValue
     ...
 
   # Two bindings are equal when they bind equal values to the same specification
@@ -2501,7 +2551,7 @@ pub class Fmt
   # ```
   #
   #[getter]
-  pub def len self
+  pub def len self -> Int
     ...
 
   #
@@ -2738,8 +2788,9 @@ pub class IterStop: Error
 
 
 #
-# Abstract type for iterators. Values that implement the iteration protocol
-# are instances of `Iter`, which can be used for type testing.
+# Abstract type for iterators, whose instances have the methods below. Built-in
+# iterators are `Iter`; a class that only implements [`(next)`](std.BaseIter)
+# is not.
 #
 # `Iter` is not constructible directly. See
 # [Classes](../../language/classes.md) for defining custom iterators.
@@ -2748,7 +2799,7 @@ pub class IterStop: Error
 # assert_eq (type $ [1, 2, 3].iter()) $Iter
 # ```
 #
-pub class Iter[T]: Iterable[T]
+pub class Iter[T]: Iterable[T] @BaseIter[T]
   #
   #
   # Returns `true` if every yielded value is truthy.
@@ -2799,7 +2850,7 @@ pub class Iter[T]: Iterable[T]
   # and takes an optional character set. `chomp` is about a line terminator
   # specifically and takes nothing.
   #
-  pub def chomp self -> Iter[T]
+  pub def chomp[U @ (Str | Bin)] self @ Iter[U] -> Iter[U]
     ...
 
   #
@@ -2832,7 +2883,7 @@ pub class Iter[T]: Iterable[T]
   # run cmd stdin: (["one", "two"].crimp())
   # ```
   #
-  pub def crimp self terminator @ (Str | Bin) = nil -> Iter[T]
+  pub def crimp[U @ (Str | Bin)] self @ Iter[U] terminator @ (Str | Bin) = nil -> Iter[U]
     ...
 
   #
@@ -3009,7 +3060,7 @@ pub class Nil
 # run tool stdin: $null stdout: $null
 # ```
 #
-pub class Null: Iter Sink
+pub class Null: Iter[Empty] Sink[Value]
   # Ends the iteration immediately without yielding a value.
   pub def (next) self
     ...
@@ -3033,7 +3084,7 @@ pub class OverflowError: RuntimeError
 
 #
 # Describes a numeric interval for iteration and slicing.
-pub class Range
+pub class Range[T @ Num]: Iterable[T]
   #
   # ```
   # let bounded = (1..5)
@@ -3046,28 +3097,28 @@ pub class Range
   #
   # Open-ended forms keep the missing endpoint as `nil` internally.
   #
-  pub def (init) self start = nil end = nil step = nil
+  pub def (init) self start@T = nil end@T = nil step@T = nil
     ...
 
   #
   # The ending value (exclusive), or `nil` for open-end ranges.
   #
   #[getter]
-  pub def end self
+  pub def end self -> (T | nil)
     ...
 
   #
   # The starting value, or `nil` for open-start ranges.
   #
   #[getter]
-  pub def start self
+  pub def start self -> (T | nil)
     ...
 
   #
-  # The step size.
+  # The step size, or `nil` when unset.
   #
   #[getter]
-  pub def step self
+  pub def step self -> (T | nil)
     ...
 
   #
@@ -3096,16 +3147,16 @@ pub class Range
   pub def contains
     self
     # the value to check
-    value
+    value @ T
   do -> Bool
     ...
 
   # Iterates the interval. Open-ended ranges require a concrete start.
-  pub def (iter) self
+  pub def (iter) self -> Iter[T]
     ...
 
   # Supplies slice bounds when used as an index by sequence types.
-  pub def (index) self collection
+  pub def (index) self @ Range[Int] collection
     ...
 
 
@@ -3119,7 +3170,7 @@ pub class Range
 # ```
 # let updated = record ...old status: ready
 # ```
-pub class Record[...Ts]
+pub class Record[...Ts]: @BaseIterable[Tuple[(Sym | Int), Value]]
   #
   #
   # Builds a record from one spreadable source of key-value pairs.
@@ -3204,7 +3255,7 @@ pub class Record[...Ts]
   # Missing keys return `0`.
   #
   #[class]
-  pub def count self rec key = nil
+  pub def count self rec @ Record key @ (Int | Sym) = nil -> Int
     ...
 
   #
@@ -3212,7 +3263,7 @@ pub class Record[...Ts]
   # access. Negative `instance:` indexes count from the end.
   #
   #[class]
-  pub def get self rec key :instance = nil :default = nil :else @ (() -> Value) = nil
+  pub def get[D = nil] self rec @ Record key @ (Int | Sym) :instance @ Int = nil :default @ D = nil :else @ (() -> D) = nil -> (Value | D)
     ...
 
   #
@@ -3222,7 +3273,7 @@ pub class Record[...Ts]
   # If duplicate-key iteration is needed, use ordinary record iteration.
   #
   #[class]
-  pub def keys self rec
+  pub def keys self rec @ Record -> Iter[(Int | Sym)]
     ...
 
   #
@@ -3240,7 +3291,7 @@ pub class Record[...Ts]
   #
   # Missing keys return an empty iterator.
   #[class]
-  pub def values self rec key = nil
+  pub def values self rec @ Record key @ (Int | Sym) = nil -> Iter
     ...
 
   # Iterates record entries as `[key, value]` pairs in insertion order.
@@ -3259,12 +3310,12 @@ pub class Record[...Ts]
 # Iteration preserves insertion order. Reinserting an existing value is a no-op
 # and does not move it to the end.
 #
-pub class Set
+pub class Set[T]: Iterable[T]
   #
   #
   # Builds a set from one iterable.
   #
-  pub def (init) self iterable
+  pub def (init) self iterable @ Iterable[T]
     ...
 
   #
@@ -3290,7 +3341,7 @@ pub class Set
   pub def add
     self
     # the value to insert
-    value
+    value @ T
   do
     ...
 
@@ -3323,7 +3374,7 @@ pub class Set
   # Insertion order is preserved. Contained values are *not* recursively copied.
   #
   #
-  pub def copy self -> Set
+  pub def copy self -> Set[T]
     ...
 
   #
@@ -3346,7 +3397,7 @@ pub class Set
     self
     # other Set
     other @ Set
-  do -> Set
+  do -> Set[T]
     ...
 
   #
@@ -3358,7 +3409,7 @@ pub class Set
     self
     # other Set
     other @ Set
-  do -> Set
+  do -> Set[T]
     ...
 
   #
@@ -3388,11 +3439,11 @@ pub class Set
   # sets.
   #
   #
-  pub def sym_diff
+  pub def sym_diff[U]
     self
     # other Set
-    other @ Set
-  do -> Set
+    other @ Set[U]
+  do -> Set[Union[T, U]]
     ...
 
   #
@@ -3400,11 +3451,11 @@ pub class Set
   # from `other`.
   #
   #
-  pub def union
+  pub def union[U]
     self
     # other Set
-    other @ Set
-  do -> Set
+    other @ Set[U]
+  do -> Set[Union[T, U]]
     ...
 
   #
@@ -3832,7 +3883,7 @@ pub class Str
   #
   pub def trim
     self
-    chars @ (Str | Iterable) = nil
+    chars @ (Str | Iterable[Str]) = nil
   do -> Str
     ...
 
@@ -3849,7 +3900,7 @@ pub class Str
   #
   pub def trim_end
     self
-    chars @ (Str | Iterable) = nil
+    chars @ (Str | Iterable[Str]) = nil
   do -> Str
     ...
 
@@ -3866,7 +3917,7 @@ pub class Str
   #
   pub def trim_start
     self
-    chars @ (Str | Iterable) = nil
+    chars @ (Str | Iterable[Str]) = nil
   do -> Str
     ...
 
@@ -4161,7 +4212,7 @@ pub class StrBuf
   pub def remove
     self
     # byte range to remove; must fall on UTF-8 boundaries
-    range @ Range
+    range @ Range[Int]
   do -> Str
     ...
 
@@ -4319,7 +4370,7 @@ pub class TimedOutError: RuntimeError
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
 #
-pub class Tuple[...Ts]
+pub class Tuple[...Ts]: Iterable[Union[...Ts]]
   #
   #
   # Builds a tuple from an iterable.
@@ -4377,13 +4428,13 @@ pub class Tuple[...Ts]
   # alternative is provided. Negative indexes count from the end.
   #
   #
-  pub def get
+  pub def get[D = nil]
     self
     # the index to access
     index @ Int
-    :default = nil
-    :else @ (() -> Value) = nil
-  do
+    :default @ D = nil
+    :else @ (() -> D) = nil
+  do -> (Union[...Ts] | D)
     ...
 
   #

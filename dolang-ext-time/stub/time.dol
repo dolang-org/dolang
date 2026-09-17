@@ -24,7 +24,7 @@ pub class DateTime
   # echo $DateTime.now()
   # ```
   #[class]
-  pub def now self
+  pub def now self -> DateTime
     ...
 
   # Builds an instant from a Unix timestamp.
@@ -57,7 +57,7 @@ pub class DateTime
     # Nanoseconds since the Unix epoch, or, when
     # `seconds` is also given, nanoseconds to add to it.
     :nanos @ Int = nil
-  do
+  do -> DateTime
     ...
 
   # Parses an RFC 3339 date-time.
@@ -144,7 +144,7 @@ pub class DateTime
     self
     # Instant to subtract.
     other @ DateTime
-  do
+  do -> Duration
     ...
 
   # Returns the RFC 3339 representation, as [`rfc`](time.DateTime.rfc) does.
@@ -159,7 +159,7 @@ pub class DateTime
 pub class Date
   # Returns the current UTC date.
   #[class]
-  pub def today self
+  pub def today self -> Date
     ...
 
   # Builds a date from calendar components.
@@ -187,7 +187,7 @@ pub class Date
     month @ (Month | Int)
     # Day of month.
     day @ Int
-  do
+  do -> Date
     ...
 
   # Parses an RFC full-date, `YYYY-MM-DD`.
@@ -297,7 +297,7 @@ pub class Date
     self
     # Date to subtract.
     other @ Date
-  do
+  do -> Duration
     ...
 
   # Returns the `YYYY-MM-DD` form, as [`rfc`](time.Date.rfc) does.
@@ -318,11 +318,11 @@ pub class Date
 # ```
 pub class Month
   # Returns the following month, wrapping from December to January.
-  pub def next self
+  pub def next self -> Month
     ...
 
   # Returns the preceding month, wrapping from January to December.
-  pub def previous self
+  pub def previous self -> Month
     ...
 
   # Returns the month with the given number.
@@ -343,7 +343,7 @@ pub class Month
     self
     # Month number, 1 through 12.
     number @ Int
-  do
+  do -> Month
     ...
 
   # Compares two months.
@@ -369,11 +369,11 @@ pub class Month
 # [`Month`](time.Month) is. Weekdays are not ordered, so `<` and friends raise.
 pub class Weekday
   # Returns the following weekday, wrapping from Sunday to Monday.
-  pub def next self
+  pub def next self -> Weekday
     ...
 
   # Returns the preceding weekday, wrapping from Monday to Sunday.
-  pub def previous self
+  pub def previous self -> Weekday
     ...
 
   # Compares two weekdays.

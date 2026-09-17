@@ -111,7 +111,7 @@ pub class Entry: Iter[Bin]
 # entry.put "first"
 # entry.put b"second"
 # ```
-pub class EntryWriter: Sink
+pub class EntryWriter: Sink[Str | Bin]
   # Writes raw string or binary bytes.
   #
   # ## Example

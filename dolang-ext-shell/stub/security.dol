@@ -1,5 +1,17 @@
 # Platform-neutral security APIs.
 
+import
+  @security.macos
+  @security.nfs4
+  @security.unix
+
+# An access-control list in any portable format.
+pub let @AnyAcl = (security.unix.Acl | security.nfs4.Acl | security.macos.Acl)
+
+# An access-control list in any portable format, built or given as its
+# entries.
+pub let @AclSpec = (security.unix.AclSpec | security.nfs4.AclSpec | security.macos.AclSpec)
+
 # Get the current user's name.
 #
 # This is the real user ID's name on Unix, or the access token's user SID's

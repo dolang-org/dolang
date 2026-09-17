@@ -1,7 +1,7 @@
 # NFSv4 access-control-list types.
 
 # NFSv4 ACE permission bits.
-pub class Mask
+pub class Mask: Iterable[Sym]
   # Constructs a mask from symbols or one iterable of symbols.
   #
   # ## Supported symbols
@@ -50,26 +50,26 @@ pub class Mask
   # Union of two masks.
   pub def (bor)
     self
-    other
-  do
+    other @ Mask
+  do -> Mask
     ...
 
   # Intersection of two masks.
   pub def (band)
     self
-    other
-  do
+    other @ Mask
+  do -> Mask
     ...
 
   # Symmetric difference of two masks.
   pub def (bxor)
     self
-    other
-  do
+    other @ Mask
+  do -> Mask
     ...
 
   # Complement within the supported bit set.
-  pub def (bnot) self
+  pub def (bnot) self -> Mask
     ...
 
   # Compares two masks.
@@ -80,11 +80,11 @@ pub class Mask
     ...
 
   # Yields the symbols represented by the mask.
-  pub def (iter) self
+  pub def (iter) self -> Iter[Sym]
     ...
 
 # NFSv4 ACE inheritance and audit flags.
-pub class Flags
+pub class Flags: Iterable[Sym]
   # Constructs a flag set from symbols or one iterable of symbols.
   #
   # ## Supported symbols
@@ -126,26 +126,26 @@ pub class Flags
   # Union of two flag sets.
   pub def (bor)
     self
-    other
-  do
+    other @ Flags
+  do -> Flags
     ...
 
   # Intersection of two flag sets.
   pub def (band)
     self
-    other
-  do
+    other @ Flags
+  do -> Flags
     ...
 
   # Symmetric difference of two flag sets.
   pub def (bxor)
     self
-    other
-  do
+    other @ Flags
+  do -> Flags
     ...
 
   # Complement within the supported bit set.
-  pub def (bnot) self
+  pub def (bnot) self -> Flags
     ...
 
   # Compares two flag sets.
@@ -156,7 +156,7 @@ pub class Flags
     ...
 
   # Yields the symbols represented by the flag set.
-  pub def (iter) self
+  pub def (iter) self -> Iter[Sym]
     ...
 
 # Immutable NFSv4 access-control entry.
@@ -183,7 +183,7 @@ pub class Ace
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
     :flags @ Flags = nil
-  do
+  do -> Ace
     ...
 
   # Constructs the `GROUP@` entry.
@@ -197,7 +197,7 @@ pub class Ace
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
     :flags @ Flags = nil
-  do
+  do -> Ace
     ...
 
   # Constructs the `EVERYONE@` entry.
@@ -211,7 +211,7 @@ pub class Ace
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
     :flags @ Flags = nil
-  do
+  do -> Ace
     ...
 
   # Constructs a named-user entry.
@@ -227,7 +227,7 @@ pub class Ace
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
     :flags @ Flags = nil
-  do
+  do -> Ace
     ...
 
   # Constructs a named-group entry.
@@ -243,7 +243,7 @@ pub class Ace
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
     :flags @ Flags = nil
-  do
+  do -> Ace
     ...
 
   # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`, or
@@ -291,7 +291,7 @@ pub class Acl
   pub def (init)
     self
     # [`Ace`](security.nfs4.Ace) values.
-    aces @ Iterable
+    aces @ Iterable[Ace]
   do
     ...
 
@@ -300,6 +300,35 @@ pub class Acl
   #[getter]
   pub def aces self -> Array[Ace]
     ...
+
+# The principal of an entry: the file owner, owning group, everyone, or a
+# user or group ID.
+pub let @Principal = (
+  | :OWNER: | :OWNING_GROUP: | :EVERYONE:
+  | Dict[{user: Int}] | Dict[{group: Int}]
+)
+
+# A mask given as a [`Mask`](security.nfs4.Mask), one symbol, or an iterable
+# of symbols.
+pub let @MaskSpec = (Mask | Sym | Iterable[Sym])
+
+# Flags given as [`Flags`](security.nfs4.Flags), one symbol, or an iterable of
+# symbols.
+pub let @FlagsSpec = (Flags | Sym | Iterable[Sym])
+
+# An NFSv4 entry, built or declared as a dictionary. A dictionary has
+# exactly one type key, with the same meaning as the keyword arguments of
+# [`ace`](security.nfs4.ace).
+pub let @AceSpec = (
+  | Ace
+  | Dict[{allow: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
+  | Dict[{deny: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
+  | Dict[{audit: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
+  | Dict[{alarm: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
+)
+
+# An NFSv4 ACL, built or given as its entries.
+pub let @AclSpec = (Acl | Iterable[AceSpec])
 
 # Constructs an NFSv4 entry from declarative arguments.
 #
@@ -313,22 +342,18 @@ pub class Acl
 # ace deny: {user: 1000} mask: :WRITE_DATA:
 # ```
 pub def ace
-  # Principal for an `:ALLOW:` entry:
-  # `:OWNER:`, `:OWNING_GROUP:`, `:EVERYONE:`, `{user: id}`, or `{group: id}`.
-  :allow @ (Sym | Dict) = nil
-  # Principal for a `:DENY:` entry, in
-  # the same forms as `allow:`.
-  :deny @ (Sym | Dict) = nil
-  # Principal for an `:AUDIT:` entry, in
-  # the same forms as `allow:`.
-  :audit @ (Sym | Dict) = nil
-  # Principal for an `:ALARM:` entry, in
-  # the same forms as `allow:`.
-  :alarm @ (Sym | Dict) = nil
+  # Principal for an `:ALLOW:` entry.
+  :allow @ Principal = nil
+  # Principal for a `:DENY:` entry.
+  :deny @ Principal = nil
+  # Principal for an `:AUDIT:` entry.
+  :audit @ Principal = nil
+  # Principal for an `:ALARM:` entry.
+  :alarm @ Principal = nil
   # Permission mask.
-  :mask @ (Mask | Sym | Iterable)
+  :mask @ MaskSpec
   # Inheritance/audit flags. Defaults to empty.
-  :flags @ (Flags | Sym | Iterable) = nil
+  :flags @ FlagsSpec = nil
 do -> Ace
   ...
 
@@ -342,6 +367,6 @@ do -> Ace
 pub def acl
   # Entries, spread with `...`
   # to pass a collection.
-  ...aces @ (Ace | Dict)
+  ...aces @ AceSpec
 do -> Acl
   ...

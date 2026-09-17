@@ -5,19 +5,19 @@
 # In addition to `image` and `cmd` (documented on `run`/`create` themselves),
 # `create` and `run` share these options:
 #
-# | Name         | Type                             | Description                                 |
-# | ------------ | -------------------------------- | ------------------------------------------- |
-# | `cd`         | [`Str`](std.Str)           | Optional container working directory        |
-# | `env`        | [`Dict`](std.Dict)         | Container environment                       |
-# | `pull`       | [`Sym`](std.Sym)           | Image pull policy; default `:MISSING:`      |
-# | `name`       | [`Str`](std.Str)           | Optional container name                     |
-# | `mounts`     | [`Iterable`](std.Iterable) | Mount specifications                        |
-# | `labels`     | [`Dict`](std.Dict)         | Container labels                            |
-# | `ports`      | [`Iterable`](std.Iterable) | Published-port specifications               |
-# | `networks`   | [`Iterable`](std.Iterable) | Network names or IDs                        |
-# | `user`       | [`Str`](std.Str)           | Optional user or `user:group`               |
-# | `entrypoint` | [`Str`](std.Str)           | Optional entrypoint override                |
-# | `args`       | [`Value`](std.Value)       | Arguments passed to `cmd`                   |
+# | Name         | Type                       | Description                            |
+# | ------------ | -------------------------- | -------------------------------------- |
+# | `cd`         | [`Str`](std.Str)           | Optional container working directory   |
+# | `env`        | [`Dict`](std.Dict)         | Container environment                  |
+# | `pull`       | [`Sym`](std.Sym)           | Image pull policy; default `:MISSING:` |
+# | `name`       | [`Str`](std.Str)           | Optional container name                |
+# | `mounts`     | [`Iterable`](std.Iterable) | Mount specifications                   |
+# | `labels`     | [`Dict`](std.Dict)         | Container labels                       |
+# | `ports`      | [`Iterable`](std.Iterable) | Published-port specifications          |
+# | `networks`   | [`Iterable`](std.Iterable) | Network names or IDs                   |
+# | `user`       | [`Str`](std.Str)           | Optional user or `user:group`          |
+# | `entrypoint` | [`Str`](std.Str)           | Optional entrypoint override           |
+# | `args`       | [`Value`](std.Value)       | Arguments passed to `cmd`              |
 #
 # ### `pull`
 #

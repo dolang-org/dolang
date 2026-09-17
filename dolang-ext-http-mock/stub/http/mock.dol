@@ -116,10 +116,11 @@ pub class Mock
 # A running mock HTTP server, bound to a random local port.
 pub class Server
   # Starts a server.
-  #
-  # ## Returns
-  #
-  # `Server` when no `func` is given, otherwise the result of calling `func`.
+  #[class]
+  def @(call) self -> Server
+
+  # Starts a server and calls `func` with it. The server is shut down when
+  # `func` returns.
   #
   # ## Example
   #
