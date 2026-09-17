@@ -86,6 +86,7 @@ pub(crate) enum Kind {
     Alias {
         name: Span,
         is_pub: bool,
+        opaque: bool,
     },
     PositionalParam {
         name: Span,
@@ -98,6 +99,8 @@ pub(crate) enum Kind {
     },
     RestParam {
         name: Option<Span>,
+        /// The explicit expansion marker in the annotation, if present.
+        type_ellipsis: Option<Span>,
     },
     SelfParam {
         name: Span,
@@ -157,9 +160,11 @@ pub(crate) enum Kind {
     },
 
     // Types
-    /// A type in an annotation, return type or superclass list, describing its parent
+    /// A type in an annotation, return type or superclass list, describing its parent,
+    /// or with `type_only` a supertype the class does not inherit from at runtime
     Type {
         expr: TypeExpr,
+        type_only: bool,
     },
     Binder {
         name: Span,
@@ -223,9 +228,11 @@ pub(crate) struct TypeArg {
 #[derive(Debug)]
 pub(crate) enum TypeArgKind {
     Pos,
-    /// The key as written, quotes and all
     Key {
+        /// The key as written, quotes and parentheses and all
         key: Span,
+        /// The type giving the key, absent for a bareword symbol
+        key_ty: Option<TypeExpr>,
     },
     Rest,
     OpenRest,
@@ -257,7 +264,7 @@ impl Kind {
             | Kind::ImportModule { name, .. }
             | Kind::ImportItem { name, .. }
             | Kind::Binder { name, .. } => Some(*name),
-            Kind::RestParam { name } => *name,
+            Kind::RestParam { name, .. } => *name,
             Kind::Root
             | Kind::PreludeModule { .. }
             | Kind::PreludeItem { .. }

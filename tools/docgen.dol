@@ -38,12 +38,13 @@ def collect_doc_jobs()
 # The documented public classes a module declares or re-exports. Only
 # documented ones receive pages because the handler hides undocumented
 # entities by default. Each result keeps the bare name used for its filename
-# and identifier alongside the binders its page title declares.
+# and identifier alongside the binders its page title declares, and whether it
+# is a protocol.
 def module_classes modules module entities chain = []
   let classes = []
   for e = entities
     if ((e["kind"] == "class") && e["pub"] && e["doc"])
-      classes.push [e["name"], e.get("binders", default: [])]
+      classes.push [e["name"], e.get("binders", default: []), e.get("protocol", default: false)]
     else if ((e["kind"] == "import_item") && e["pub"])
       let key = "$module.$(e["name"])"
       if chain.contains $key
@@ -56,7 +57,7 @@ def module_classes modules module entities chain = []
         throw "public doc re-export $key names missing item $(e["module"]).$(e["item"])"
       let resolved = module_classes $modules $e["module"] [target] [...chain, key]
       if resolved.len
-        classes.push [e["name"], resolved[0][1]]
+        classes.push [e["name"], resolved[0][1], resolved[0][2]]
   classes
 
 # How tightly each type form binds, so that it is parenthesized where needed
@@ -117,9 +118,11 @@ def binder_text binder
   text
 
 # A class page's title, naming its binders for the nav, and its heading, which
-# declares them in full.
+# declares them in full. A protocol's name keeps the `@` it is declared with, so
+# it is not mistaken for a class.
 def class_titles entry
-  let name binders = entry
+  let bare binders protocol = entry
+  let name = (protocol && "@$bare" || bare)
   if !binders.len
     return [name, name]
   let names = [...binders.map(do |binder| binder["name"])]

@@ -1,4 +1,4 @@
-class @Proto
+@class Proto
 
 pub let value = Proto
 # error: unbound identifier

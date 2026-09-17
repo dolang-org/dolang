@@ -600,12 +600,13 @@ impl<'v> Object<'v> for Vfs {
                     Some(Arg::Pos(slot)) => slot,
                     Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
                 };
+                let ([], []) = unpack!(strand, args, 0, 0)?;
                 let borrow = this.annex();
                 Local::with_vfs(
                     strand,
                     borrow.global.local,
                     borrow.vfs.clone(),
-                    async move |strand| func.call(strand, args, out).await,
+                    async move |strand| call!(strand, func, out).await,
                 )
                 .await
             })
@@ -956,9 +957,10 @@ pub(crate) fn configure_vm<'v>(
                 Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
             };
 
+            let ([], []) = unpack!(strand, args, 0, 0)?;
             let host_vfs = error::io_result(strand, VfsVfs::direct())?;
             Local::with_vfs(strand, global.local, host_vfs, async move |strand| {
-                func.call(strand, args, out).await
+                call!(strand, func, out).await
             })
             .await
         })
@@ -973,18 +975,18 @@ pub(crate) fn configure_vm<'v>(
                 Some(Arg::Pos(slot)) => slot,
                 Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
             };
-            let dir = path_from_value(strand, &dir)?;
-            let local = global.local.get(strand);
-
-            let path = local.cwd().join(dir.as_str());
             let func = match args.next() {
                 None => None,
                 Some(Arg::Pos(slot)) => Some(slot),
                 Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
             };
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            let dir = path_from_value(strand, &dir)?;
+            let local = global.local.get(strand);
+            let path = local.cwd().join(dir.as_str());
             if let Some(func) = func {
                 let old = local.replace_cwd(path);
-                let res = func.call(strand, args, out).await;
+                let res = call!(strand, func, out).await;
                 let local = global.local.get(strand);
                 let _ = local.replace_cwd(old);
                 res

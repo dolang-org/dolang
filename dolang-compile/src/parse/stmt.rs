@@ -5,9 +5,9 @@ use super::{
 };
 use crate::{
     ast::{
-        Assign, Bind, Block, CatchHandler, Expr, For, Function, Ident, If, IfBranch, ImportElement,
-        Let, Param, PatternBind, PatternBindKind, PrimStmt, Return, Stmt, Throw, Try, TypeAlias,
-        While, visit::Node,
+        AliasBody, Assign, Bind, Block, CatchHandler, Expr, For, Function, Ident, If, IfBranch,
+        ImportElement, Let, Param, PatternBind, PatternBindKind, PrimStmt, Return, Stmt, Throw,
+        Try, TypeAlias, While, visit::Node,
     },
     lex::{Keyword, Token, TokenInfo},
     source::Span,
@@ -27,11 +27,15 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_let(&mut self, scope: &mut Scope, pub_span: Option<Span>) -> Result<Stmt> {
+    fn parse_let(
+        &mut self,
+        scope: &mut Scope,
+        pub_span: Option<Span>,
+        at_span: Option<Span>,
+    ) -> Result<Stmt> {
         let let_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Let)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
-        if let Some(token!(TokenInfo::At)) = self.peek()? {
-            let at_span = self.advance();
+        if let Some(at_span) = at_span {
             let ident = match decay_ident!(self.next()?) {
                 Some(token!(TokenInfo::Ident, span)) => Ident::new(span),
                 other => return Err(self.syntax_error(scope, other, "expected alias name")),
@@ -42,11 +46,29 @@ impl Parser<'_> {
             }
             let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
             self.expect(scope, &[ExpectKind::ArgSep])?;
-            let ty = self.with_inline_shell(|this| this.parse_type_compact(scope))?;
+            let body = if let Some(token!(TokenInfo::Ellipsis)) = self.peek()? {
+                AliasBody::Opaque(self.advance())
+            } else {
+                AliasBody::Type(self.with_inline_shell(|this| this.parse_type_compact(scope))?)
+            };
+            if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+                self.advance();
+            }
+            match self.peek()? {
+                None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)) => {}
+                _ => {
+                    let token = self.consume();
+                    return Err(self.syntax_error(
+                        scope,
+                        Some(token),
+                        "expected end of statement after alias",
+                    ));
+                }
+            }
             return Ok(Stmt::TypeAlias(TypeAlias {
                 ident,
                 binders,
-                ty,
+                body,
                 let_span,
                 at_span,
                 equal_span,
@@ -342,6 +364,33 @@ impl Parser<'_> {
         }))
     }
 
+    pub(super) fn parse_decl_marker(
+        &mut self,
+        scope: &mut Scope,
+        method: bool,
+    ) -> Result<Option<Span>> {
+        if !matches!(self.peek()?, Some(token!(TokenInfo::At))) {
+            return Ok(None);
+        }
+        let span = self.advance();
+        match self.peek()? {
+            Some(token!(TokenInfo::Keyword(Keyword::Def))) => {}
+            Some(
+                token!(TokenInfo::Keyword(
+                    Keyword::Let | Keyword::Class | Keyword::Import
+                )),
+            ) if !method => {}
+            other => {
+                return Err(self.syntax_error(
+                    scope,
+                    other,
+                    "expected type-only declaration keyword after `@`",
+                ));
+            }
+        }
+        Ok(Some(span))
+    }
+
     pub(super) fn parse_stmt(&mut self, scope: &mut Scope) -> Result<Stmt> {
         use self::{Keyword, Return, Throw};
         use Keyword::*;
@@ -358,7 +407,7 @@ impl Parser<'_> {
             let span = self.advance();
             self.expect(scope, &[ExpectKind::ArgSep])?;
             match self.peek()? {
-                Some(token!(Keyword(Let | Def | Class | Import))) => (),
+                Some(token!(Keyword(Let | Def | Class | Import) | At)) => (),
                 Some(token @ token!(DecoratorOpen)) => {
                     return Err(self.syntax_error(
                         scope,
@@ -379,6 +428,8 @@ impl Parser<'_> {
             None
         };
 
+        let at_span = self.parse_decl_marker(scope, false)?;
+
         if !decorators.is_empty() && !matches!(self.peek()?, Some(token!(Keyword(Def | Class)))) {
             let token = self.peek()?;
             return Err(self.syntax_error(
@@ -389,20 +440,20 @@ impl Parser<'_> {
         }
 
         match self.peek()? {
-            Some(token!(Keyword(Let))) => self.parse_let(scope, pub_span),
-            Some(token!(Keyword(Def))) => {
-                Ok(Stmt::Def(self.parse_def(scope, pub_span, decorators)?))
-            }
-            Some(token!(Keyword(Class))) => {
-                Ok(Stmt::Class(self.parse_class(scope, pub_span, decorators)?))
-            }
+            Some(token!(Keyword(Let))) => self.parse_let(scope, pub_span, at_span),
+            Some(token!(Keyword(Def))) => Ok(Stmt::Def(
+                self.parse_def(scope, pub_span, decorators, at_span)?,
+            )),
+            Some(token!(Keyword(Class))) => Ok(Stmt::Class(
+                self.parse_class(scope, pub_span, decorators, at_span)?,
+            )),
             Some(token!(Keyword(If))) => Ok(Stmt::Prim(PrimStmt::If(self.parse_if(scope)?))),
             Some(token!(Keyword(Try))) => Ok(Stmt::Prim(PrimStmt::Try(self.parse_try(scope)?))),
             Some(token!(Keyword(While))) => self.parse_while(scope),
             Some(token!(Keyword(For))) => self.parse_for(scope),
             Some(token!(Keyword(Bind))) => Ok(Stmt::Bind(self.parse_bind(scope)?)),
             Some(token!(Keyword(Import))) => {
-                let import = self.parse_import(scope, pub_span)?;
+                let import = self.parse_import(scope, pub_span, at_span)?;
                 if pub_span.is_some() {
                     for element in &import.elements {
                         if let ImportElement::ModuleAsIs { module, .. } = element

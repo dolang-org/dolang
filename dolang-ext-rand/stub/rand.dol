@@ -2,10 +2,6 @@
 
 # Samples a uniformly distributed integer from `[0, end)` or `[start, end)`.
 #
-# ## Returns
-#
-# [`Int`](std.Int) sampled from the requested range.
-#
 # ## Errors
 #
 # | Exception    | Condition                               |
@@ -31,10 +27,6 @@ do -> Int
 
 # Selects one random element from an array.
 #
-# ## Returns
-#
-# One element from `collection`.
-#
 # ## Errors
 #
 # `TypeError` if `collection` is not an array. `ValueError` if it is empty.
@@ -45,10 +37,10 @@ do -> Int
 # let item = pick [1, 2, 3]
 # assert ([1, 2, 3].contains $item)
 # ```
-pub def pick
+pub def pick[T]
   # Source array.
-  collection @ Array
-do -> collection
+  collection @ Array[T]
+do -> T
   ...
 
 # Shuffles an array in place using a uniform Fisher-Yates pass.
@@ -77,10 +69,6 @@ do
   ...
 
 # Generates a random string by sampling characters from `alphabet`.
-#
-# ## Returns
-#
-# [`Str`](std.Str) containing the generated text.
 #
 # ## Errors
 #

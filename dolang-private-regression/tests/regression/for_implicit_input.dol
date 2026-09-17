@@ -9,3 +9,10 @@ redirect input: ["foo", "bar", "baz"] do
 # bar
 # baz
 # END
+
+let called = false
+let block = do |..._args|
+  called = true
+assert_throws $std.UnexpectedPosError do redirect $block 42
+assert_throws $std.UnexpectedKeyError do redirect $block unused: 42
+assert_eq $called false

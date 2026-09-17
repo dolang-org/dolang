@@ -13,23 +13,23 @@ pub let TAU @Float = nil
 pub let E @Float = nil
 
 # Computes the square root.
-pub def sqrt x
+pub def sqrt x @ (Int | Float) -> Float
   ...
 
 # Computes the cube root.
-pub def cbrt x
+pub def cbrt x @ (Int | Float) -> Float
   ...
 
 # Computes `e` raised to `x`.
-pub def exp x
+pub def exp x @ (Int | Float) -> Float
   ...
 
 # Computes `e` raised to `x`, minus one, accurately near zero.
-pub def expm1 x
+pub def expm1 x @ (Int | Float) -> Float
   ...
 
 # Computes two raised to `x`.
-pub def exp2 x
+pub def exp2 x @ (Int | Float) -> Float
   ...
 
 # Computes the logarithm in a required base.
@@ -38,56 +38,65 @@ pub def log
   :base @ (Int | Float)
   # Value whose logarithm is computed.
   x @ (Int | Float)
-do
+do -> Float
   ...
 
 # Computes the natural logarithm.
-pub def ln x
+pub def ln x @ (Int | Float) -> Float
   ...
 
 # Computes the natural logarithm of `1 + x` accurately near zero.
-pub def ln1p x
+pub def ln1p x @ (Int | Float) -> Float
   ...
 
 # Computes the base-two logarithm.
-pub def log2 x
+pub def log2 x @ (Int | Float) -> Float
   ...
 
 # Computes the base-ten logarithm.
-pub def log10 x
+pub def log10 x @ (Int | Float) -> Float
   ...
 
 # Raises `base` to `exponent`.
+#
+# ## Returns
+#
+# An `Int` when both arguments are integers and `exponent` is non-negative;
+# otherwise a `Float`.
+#
+# ## Errors
+#
+# `OverflowError` if an integer result does not fit in `Int`.
 pub def pow
   # Base value.
   base @ (Int | Float)
   # Exponent value.
   exponent @ (Int | Float)
-do
+do -> (Int | Float)
   ...
 
 # Computes the sine of an angle in radians.
-pub def sin x
+pub def sin x @ (Int | Float) -> Float
   ...
 
 # Computes the cosine of an angle in radians.
-pub def cos x
+pub def cos x @ (Int | Float) -> Float
   ...
 
 # Computes the tangent of an angle in radians.
-pub def tan x
+pub def tan x @ (Int | Float) -> Float
   ...
 
 # Computes the inverse sine in radians.
-pub def asin x
+pub def asin x @ (Int | Float) -> Float
   ...
 
 # Computes the inverse cosine in radians.
-pub def acos x
+pub def acos x @ (Int | Float) -> Float
   ...
 
 # Computes the inverse tangent in radians.
-pub def atan x
+pub def atan x @ (Int | Float) -> Float
   ...
 
 # Computes the inverse tangent of `y / x`, using both signs to select a quadrant.
@@ -96,31 +105,31 @@ pub def atan2
   y @ (Int | Float)
   # Horizontal coordinate.
   x @ (Int | Float)
-do
+do -> Float
   ...
 
 # Computes the hyperbolic sine.
-pub def sinh x
+pub def sinh x @ (Int | Float) -> Float
   ...
 
 # Computes the hyperbolic cosine.
-pub def cosh x
+pub def cosh x @ (Int | Float) -> Float
   ...
 
 # Computes the hyperbolic tangent.
-pub def tanh x
+pub def tanh x @ (Int | Float) -> Float
   ...
 
 # Computes the inverse hyperbolic sine.
-pub def asinh x
+pub def asinh x @ (Int | Float) -> Float
   ...
 
 # Computes the inverse hyperbolic cosine.
-pub def acosh x
+pub def acosh x @ (Int | Float) -> Float
   ...
 
 # Computes the inverse hyperbolic tangent.
-pub def atanh x
+pub def atanh x @ (Int | Float) -> Float
   ...
 
 # Computes the Euclidean norm of two or more coordinates.
@@ -131,7 +140,7 @@ pub def hypot
   second @ (Int | Float)
   # Additional coordinates.
   ...rest @ (Int | Float)
-do
+do -> Float
   ...
 
 # Computes the greatest common divisor of one or more integers.
@@ -140,7 +149,7 @@ pub def gcd
   first @ Int
   # Additional values.
   ...rest @ Int
-do
+do -> Int
   ...
 
 # Computes the least common multiple of one or more integers.
@@ -149,15 +158,15 @@ pub def lcm
   first @ Int
   # Additional values.
   ...rest @ Int
-do
+do -> Int
   ...
 
 # Converts radians to degrees.
-pub def degrees x
+pub def degrees x @ (Int | Float) -> Float
   ...
 
 # Converts degrees to radians.
-pub def radians x
+pub def radians x @ (Int | Float) -> Float
   ...
 
 # Returns the magnitude of `x` with the sign of `sign`.
@@ -166,5 +175,5 @@ pub def copysign
   x @ (Int | Float)
   # Value providing the sign.
   sign @ (Int | Float)
-do
+do -> Float
   ...

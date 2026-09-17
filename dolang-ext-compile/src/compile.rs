@@ -14,7 +14,7 @@ use dolang::{
         Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Type, Value,
         object::{Mut, Ref, TypeBuilder},
         unpack,
-        value::{Array, AsSym, Dict, Empty, Nil, PinBin, PinStr, TypeObject, View},
+        value::{Array, AsSym, AsTuple, Dict, Empty, Nil, PinBin, PinStr, TypeObject, View},
         vm::{Register, Stateful},
     },
 };
@@ -1065,10 +1065,7 @@ impl<'v> Object<'v> for NodeIter {
             strand.with_slots_sync(|strand, [mut id_out, mut node_out]| {
                 create_node_id(strand, owner_borrow.identity, id, &mut id_out);
                 create_node(strand, owner, id, &mut node_out)?;
-                Output::set(strand, &mut out, Empty::Array);
-                let arr = out.as_array(strand).unwrap();
-                arr.push(strand, &mut id_out)?;
-                arr.push(strand, &mut node_out)?;
+                Output::set(strand, &mut out, AsTuple::new([&id_out, &node_out]));
                 Ok(())
             })?;
             Ok(Some(id))
@@ -1447,6 +1444,20 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 project_default(this, strand, out)
             });
         }
+        if T::NAME == "RestParam" {
+            builder = builder.get("type_ellipsis", |this, strand, out| {
+                let span = with_node(this, strand, |n, _| match n.kind() {
+                    compile::Kind::RestParam { type_ellipsis, .. } => type_ellipsis.map(span_data),
+                    _ => None,
+                })?;
+                if let Some(span) = span {
+                    create_span(strand.state(), strand, span, out)
+                } else {
+                    Output::set(strand, out, Nil)
+                };
+                Ok(())
+            });
+        }
         if T::NAME == "KeyParam" {
             builder = builder.get("key", |this, strand, out| {
                 project_span_field(this, strand, "key", out)
@@ -1472,10 +1483,26 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
         }
         if matches!(
             T::NAME,
-            "Class" | "Function" | "Method" | "SpecialMethod" | "ImportModule" | "ImportItem"
+            "Class"
+                | "Function"
+                | "Method"
+                | "SpecialMethod"
+                | "ImportModule"
+                | "ImportItem"
+                | "Type"
         ) {
             builder = builder.get("type_only", |this, strand, out| {
                 project_type_only(this, strand, out)
+            });
+        }
+        if T::NAME == "Alias" {
+            builder = builder.get("opaque", |this, strand, out| {
+                let v = with_node(this, strand, |n, _| match n.kind() {
+                    compile::Kind::Alias { opaque, .. } => opaque,
+                    _ => unreachable!(),
+                })?;
+                Output::set(strand, out, v);
+                Ok(())
             });
         }
         if T::NAME == "Type" {
@@ -1538,7 +1565,9 @@ fn project_name<'v, 's, T: NodeMarker + 'static>(
         | compile::Kind::PositionalParam { name, .. }
         | compile::Kind::KeyParam { name, .. }
         | compile::Kind::Binder { name, .. } => Name::Span(span_data(name)),
-        compile::Kind::RestParam { name } => name.map_or(Name::None, |v| Name::Span(span_data(v))),
+        compile::Kind::RestParam { name, .. } => {
+            name.map_or(Name::None, |v| Name::Span(span_data(v)))
+        }
         compile::Kind::PreludeModule { name, .. } | compile::Kind::PreludeItem { name, .. } => {
             Name::Text(name.to_owned())
         }
@@ -1660,7 +1689,8 @@ fn project_type_only<'v, 's, T: NodeMarker + 'static>(
         | compile::Kind::Method { type_only, .. }
         | compile::Kind::SpecialMethod { type_only, .. }
         | compile::Kind::ImportModule { type_only, .. }
-        | compile::Kind::ImportItem { type_only, .. } => type_only,
+        | compile::Kind::ImportItem { type_only, .. }
+        | compile::Kind::Type { type_only, .. } => type_only,
         _ => unreachable!(),
     })?;
     Output::set(strand, out, v);
@@ -1744,7 +1774,7 @@ fn ensure_types<'v, 's>(
                 return Err(Error::state_error(strand, "unit was emitted"));
             };
             for (id, node) in unit.nodes() {
-                if let compile::Kind::Type { expr } = node.kind() {
+                if let compile::Kind::Type { expr, .. } = node.kind() {
                     create_type_expr(global, strand, borrow.identity, expr, &mut item)?;
                     index.insert(id, array.len(strand)?);
                     array.push(strand, &mut item)?;
@@ -1908,7 +1938,25 @@ fn create_type_args<'v, 's>(
             let t = &global.types.arg_kinds;
             match arg.kind() {
                 compile::TypeArgKind::Pos => make!(t.pos, None),
-                compile::TypeArgKind::Key { key } => make!(t.key, Some(span_data(key))),
+                compile::TypeArgKind::Key {
+                    key,
+                    key_ty: key_expr,
+                } => {
+                    if let Some(key_expr) = key_expr {
+                        create_type_expr(global, strand, unit, key_expr, &mut key_ty)?;
+                    }
+                    make!(t.key, Some(span_data(key)));
+                    t.key
+                        .cast(&item)
+                        .unwrap()
+                        .enter_sync(strand, |strand, object| {
+                            Output::set(
+                                strand,
+                                Mut::slot_mut::<1>(&mut object.borrow_mut_unwrap()),
+                                &*key_ty,
+                            );
+                        });
+                }
                 compile::TypeArgKind::Rest => make!(t.rest, None),
                 compile::TypeArgKind::OpenRest => {
                     t.open_rest.create_with_annex(
@@ -1985,7 +2033,7 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
         ) {
             builder = builder.get("ty", slot!(0));
         }
-        if T::NAME == "KeyRestTypeArg" {
+        if matches!(T::NAME, "KeyTypeArg" | "KeyRestTypeArg") {
             builder = builder.get("key_ty", slot!(1));
         }
         match T::NAME {

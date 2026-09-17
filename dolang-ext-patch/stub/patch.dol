@@ -89,8 +89,7 @@ pub class Patch
   #
   # ## Returns
   #
-  # [`Str`](std.Str)\|[`Bin`](std.Bin), matching the type of
-  # `base`.
+  # The same type as `base`.
   #
   # ## Errors
   #
@@ -125,7 +124,7 @@ pub class Patch
 # for p = patch.decode diff_text
 #   echo $p.type
 # ```
-pub class PatchIter: Iter
+pub class PatchIter: Iter[Patch]
   # Yields the next [`Patch`](patch.Patch), ending iteration once the stream is
   # exhausted.
   pub def (next) self

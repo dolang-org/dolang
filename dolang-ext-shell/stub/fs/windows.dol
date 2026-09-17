@@ -3,6 +3,7 @@
 import @fs
 import security.windows:
   - @SecDesc
+  - @SecDescSpec
 
 # [`fs.Path`](fs.Path) using Windows path syntax.
 #
@@ -160,13 +161,6 @@ pub class Path
 
   # Applies the components selected by a `SecDesc`'s `mask`.
   #
-  # The descriptor's
-  # [component options](security.windows.SecDesc.(init)--component-options)
-  # may be passed as keyword arguments instead of, or alongside, `desc`,
-  # exactly as
-  # [`sec_desc`](security.windows.sec_desc)
-  # accepts them.
-  #
   # Windows may normalize the descriptor when associating it with the
   # filesystem object.
   #
@@ -184,18 +178,17 @@ pub class Path
   # ```
   pub def update_sec_desc
     self
-    # Descriptor, packet, or spec.
-    desc @ (SecDesc | Bin | Dict) = nil
+    # Descriptor to apply.
+    desc @ SecDescSpec = nil
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ fs.Resolve = nil
+    # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
+    # of or alongside `desc`.
+    ...options
   do
     ...
 
   # Lists alternate data streams for this path.
-  #
-  # ## Returns
-  #
-  # [`Iter`](std.Iter) of [`StreamEntry`](fs.windows.StreamEntry)
   #
   # ## Example
   #
@@ -209,7 +202,7 @@ pub class Path
     self
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ fs.Resolve = nil
-  do -> Iter
+  do -> Iter[StreamEntry]
     ...
 
 # An NTFS alternate data stream of a file.
@@ -259,10 +252,6 @@ pub class StreamEntry
     ...
 
 # Gets selected parts of a Windows security descriptor.
-#
-# ## Returns
-#
-# [`security.windows.SecDesc`](security.windows.SecDesc)
 pub def sec_desc
   # Path to query.
   path @ (Str | Path)
@@ -282,18 +271,15 @@ do -> SecDesc
   ...
 
 # Applies the components selected by a Windows security descriptor's `mask`.
-#
-# The descriptor's
-# [component options](security.windows.SecDesc.(init)--component-options) may
-# be passed as keyword arguments instead of, or alongside, `desc`, exactly as
-# [`security.windows.sec_desc`](security.windows.sec_desc)
-# accepts them.
 pub def update_sec_desc
   # Path to update.
   path @ (Str | Path)
-  # Descriptor, packet, or spec.
-  desc @ (SecDesc | Bin | Dict) = nil
+  # Descriptor to apply.
+  desc @ SecDescSpec = nil
   # Resolution mode. Defaults to `:TARGET:`.
   :resolve @ fs.Resolve = nil
+  # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
+  # of or alongside `desc`.
+  ...options
 do
   ...

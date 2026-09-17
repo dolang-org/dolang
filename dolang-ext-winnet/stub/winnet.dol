@@ -48,10 +48,6 @@ pub class User
     ...
 
   # Reads a fresh snapshot of the account.
-  #
-  # ## Returns
-  #
-  # [`UserInfo`](winnet.UserInfo).
   pub def info self -> UserInfo
     ...
 
@@ -67,7 +63,7 @@ pub class User
   #
   # ## Returns
   #
-  # A fresh [`UserInfo`](winnet.UserInfo).
+  # Fresh information for the account.
   #
   # ## Example
   #
@@ -115,8 +111,7 @@ pub class User
   #
   # ## Returns
   #
-  # An [`Array`](std.Array) of [`Str`](std.Str), such as
-  # `["SeServiceLogonRight"]`.
+  # Right names, such as `["SeServiceLogonRight"]`.
   pub def rights self -> Array[Str]
     ...
 
@@ -273,10 +268,6 @@ pub class Group
     ...
 
   # Reads a fresh snapshot of the group.
-  #
-  # ## Returns
-  #
-  # [`GroupInfo`](winnet.GroupInfo).
   pub def info self -> GroupInfo
     ...
 
@@ -287,7 +278,7 @@ pub class Group
   #
   # ## Returns
   #
-  # A fresh [`GroupInfo`](winnet.GroupInfo).
+  # Fresh information for the group.
   pub def update
     self
     # New group name.
@@ -335,10 +326,6 @@ pub class Group
     ...
 
   # Lists the account rights assigned through the local security policy.
-  #
-  # ## Returns
-  #
-  # An [`Array`](std.Array) of [`Str`](std.Str).
   pub def rights self -> Array[Str]
     ...
 
@@ -447,10 +434,6 @@ pub class Share
     ...
 
   # Reads a fresh snapshot of the share.
-  #
-  # ## Returns
-  #
-  # [`ShareInfo`](winnet.ShareInfo).
   pub def info self -> ShareInfo
     ...
 
@@ -461,7 +444,7 @@ pub class Share
   #
   # ## Returns
   #
-  # A fresh [`ShareInfo`](winnet.ShareInfo).
+  # Fresh information for the share.
   pub def update
     self
     # Comment. `nil` clears it.
@@ -549,10 +532,6 @@ pub class Connection
     ...
 
   # Reads a fresh snapshot of the connection.
-  #
-  # ## Returns
-  #
-  # [`ConnectionInfo`](winnet.ConnectionInfo).
   pub def info self -> ConnectionInfo
     ...
 
@@ -763,10 +742,6 @@ pub class ServerType
     ...
 
 # Reads the local password and lockout policy.
-#
-# ## Returns
-#
-# [`AccountPolicy`](winnet.AccountPolicy).
 pub def account_policy() -> AccountPolicy
   ...
 
@@ -776,7 +751,7 @@ pub def account_policy() -> AccountPolicy
 #
 # ## Returns
 #
-# The resulting [`AccountPolicy`](winnet.AccountPolicy).
+# The resulting policy.
 pub def update_account_policy
   # Minimum password length.
   :min_password_length @ Int = nil
@@ -802,10 +777,6 @@ do -> AccountPolicy
   ...
 
 # Obtains a handle to an existing local user.
-#
-# ## Returns
-#
-# [`User`](winnet.User).
 pub def user
   # Account name, SID, or a prior snapshot.
   principal @ (Str | Sid | UserInfo)
@@ -813,10 +784,6 @@ do -> User
   ...
 
 # Lists local user accounts.
-#
-# ## Returns
-#
-# An [`Iter`](std.Iter) yielding [`UserInfo`](winnet.UserInfo)s.
 pub def users() -> Iter[UserInfo]
   ...
 
@@ -864,10 +831,6 @@ do -> User
   ...
 
 # Obtains a handle to an existing local group.
-#
-# ## Returns
-#
-# [`Group`](winnet.Group).
 pub def group
   # Group name, SID, or a prior snapshot.
   principal @ (Str | Sid | GroupInfo)
@@ -875,18 +838,10 @@ do -> Group
   ...
 
 # Lists local groups.
-#
-# ## Returns
-#
-# An [`Iter`](std.Iter) yielding [`GroupInfo`](winnet.GroupInfo)s.
 pub def groups() -> Iter[GroupInfo]
   ...
 
 # Creates a local group.
-#
-# ## Returns
-#
-# [`Group`](winnet.Group).
 pub def create_group
   # Group name.
   name @ Str
@@ -896,10 +851,6 @@ do -> Group
   ...
 
 # Obtains a handle to an existing local SMB share.
-#
-# ## Returns
-#
-# [`Share`](winnet.Share).
 pub def share
   # Share name or a
   # prior snapshot.
@@ -908,18 +859,10 @@ do -> Share
   ...
 
 # Lists every local SMB share, administrative and non-disk shares included.
-#
-# ## Returns
-#
-# An [`Iter`](std.Iter) yielding [`ShareInfo`](winnet.ShareInfo)s.
 pub def shares() -> Iter[ShareInfo]
   ...
 
 # Creates a local SMB share.
-#
-# ## Returns
-#
-# [`Share`](winnet.Share).
 pub def create_share
   # Share name.
   name @ Str
@@ -952,11 +895,6 @@ do -> Share
 # Connections belong to a logon session. One made under a given account is not
 # visible to a process running as another.
 #
-# ## Returns
-#
-# [`Connection`](winnet.Connection) when no `func` is given, otherwise the result
-# of calling `func`.
-#
 # ## Errors
 #
 # | Exception                                                        | Condition                              |
@@ -987,7 +925,7 @@ do -> Share
 #   password: $secret
 #   persistent: true
 # ```
-pub def connect
+@def connect
   # Remote resource in UNC form, such as
   # `r"\\server\share"`.
   remote @ Str
@@ -1019,17 +957,36 @@ pub def connect
   # so a connection provisioned for a service account must be made under that
   # account to be restored for it.
   :save_credentials @ Bool = nil
-  # Called with the [`Connection`](winnet.Connection), which is
-  # disconnected when it returns. Omit to receive the handle instead.
-  func @ Func = nil
-do -> Value
+do -> Connection
+
+# Connects to a network resource and calls `func` with the connection, which is
+# disconnected when `func` returns.
+@def connect[R]
+  # Remote resource in UNC form, such as
+  # `r"\\server\share"`.
+  remote @ Str
+  # Local device to redirect, such as `"Z:"`.
+  :local @ Str = nil
+  # Account to authenticate as.
+  :user @ Str = nil
+  # Password for `user`.
+  :password @ Str = nil
+  # Resource kind: `:DISK:`, `:PRINT:`, or `:ANY:`.
+  :kind @ Sym = nil
+  # Record the connection so it is restored at
+  # logon.
+  :persistent @ Bool = nil
+  # Override whether credentials are saved for the
+  # server.
+  :save_credentials @ Bool = nil
+  # Called with the [`Connection`](winnet.Connection).
+  func @ (Connection -> R)
+do -> R
+
+pub def connect remote ...options
   ...
 
 # Obtains a handle to an existing connection.
-#
-# ## Returns
-#
-# [`Connection`](winnet.Connection).
 pub def connection
   # Local
   # device, remote name, or a prior snapshot.
@@ -1039,11 +996,6 @@ do -> Connection
 
 # Lists every connection, including ones saved in the profile that are not
 # currently connected.
-#
-# ## Returns
-#
-# An [`Iter`](std.Iter) yielding
-# [`ConnectionInfo`](winnet.ConnectionInfo)s.
 #
 # ## Example
 #
@@ -1068,18 +1020,10 @@ do -> Str
   ...
 
 # Reads the machine's current workgroup or domain membership.
-#
-# ## Returns
-#
-# [`JoinStatus`](winnet.JoinStatus).
 pub def join_status() -> JoinStatus
   ...
 
 # Reads the computer name, domain membership, OS level and server role.
-#
-# ## Returns
-#
-# [`MachineInfo`](winnet.MachineInfo).
 pub def machine_info() -> MachineInfo
   ...
 

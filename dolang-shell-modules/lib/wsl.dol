@@ -30,13 +30,9 @@ def find_windows_command()
 # Runs `block` in a WSL Linux distribution through a stdio VFS.
 #
 # The active VFS target must be Windows.
-#
-# ## Returns
-#
-# The result of `block`.
-pub def with_linux
+pub def with_linux[R]
   # Block to run in Linux.
-  block @ Func
+  block @ (() -> R)
   # WSL distribution. Defaults to WSL's configured
   # default.
   :distro @ Str = nil
@@ -48,7 +44,7 @@ pub def with_linux
   :cd @ (Str | Path) = nil
   # Initial Linux environment overrides.
   :env @ Dict = {}
-do -> Value
+do -> R
   require_windows()
   let executable = run["wsl.exe"].which()
   if (executable == nil)
@@ -59,13 +55,9 @@ do -> Value
 
 # Runs `block` on the Windows host through WSL interoperability and a stdio
 # VFS. The active VFS target must be Linux.
-#
-# ## Returns
-#
-# The result of `block`.
-pub def with_windows
+pub def with_windows[R]
   # Block to run on Windows.
-  block @ Func
+  block @ (() -> R)
   # Windows VFS launcher command and arguments.
   # Defaults to `dolang-vfs.exe`, preferring `dolang.exe --vfs` as a
   # fallback.
@@ -74,7 +66,7 @@ pub def with_windows
   :cd @ (Str | Path) = nil
   # Initial Windows environment overrides.
   :env @ Dict = {}
-do -> Value
+do -> R
   require_linux()
   let argv = _wsl.build_windows_command $command :cd :env
   _wsl.with_command $argv $block

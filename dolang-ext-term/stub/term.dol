@@ -137,10 +137,6 @@ pub class Console
   # independently `nil` when unknown, rather than the whole result being
   # absent.
   #
-  # ## Returns
-  #
-  # [`Geometry`](term.Geometry)?
-  #
   # ## Example
   #
   # ```
@@ -158,11 +154,11 @@ pub class Console
   # writing to the same console would otherwise interleave between the text
   # and its terminator.
   #
-  # #### Returns
+  # ## Returns
   #
-  # [`Int`](std.Int) - Total bytes written.
+  # The number of bytes written.
   #
-  # #### Example
+  # ## Example
   #
   # ```
   # term.console.write b"\x1b[2K" "\r"
@@ -171,7 +167,7 @@ pub class Console
     self
     # Pieces to write, in order.
     ...data @ (Str | Bin)
-  do
+  do -> Int
     ...
 
   # Accepts values as a [sink](std.Sink).
@@ -564,29 +560,23 @@ pub class Text
 # assert_eq $out ["hi"]
 # ```
 #
-# ## Returns
-#
-# The block's result.
-#
 # ## Errors
 #
 # | Exception                             | Condition                                                                              |
 # | ------------------------------------- | -------------------------------------------------------------------------------------- |
 # | [`ValueError`](std.ValueError) | `mode:` is given when `console` is already a `Console`, which fixes its own output mode |
-pub def capture
+pub def capture[R]
   # Destination to
   # install. A plain sink is wrapped in a
   # [`SinkConsole`](term.SinkConsole) using the requested `mode:`.
   console @ (Console | Sink)
   # Block to run.
-  block @ Func
+  block @ (() -> R)
   # `:LINE:` (the default) or `:CHUNK:`, when
   # `console` is a plain sink. See
   # [Output mode](term.SinkConsole.output-mode).
   :mode @ Sym = nil
-  # Additional arguments passed to the block.
-  ...args
-do
+do -> R
   ...
 
 # Prints arguments separated by spaces, followed by a newline.
@@ -611,22 +601,16 @@ do
 # Runs a block with default console-bound output silenced: `echo`, `print`,
 # unredirected program `stderr`, and the rest.
 #
-# ## Returns
-#
-# The block's result.
-#
 # ## Example
 #
 # ```
 # # Nothing from this reaches the terminal.
 # mute do run printf "this will not be printed"
 # ```
-pub def mute
+pub def mute[R]
   # Block to run.
-  block @ Func
-  # Additional arguments passed to the block.
-  ...args
-do
+  block @ (() -> R)
+do -> R
   ...
 
 # Returns the current output console.
@@ -634,10 +618,6 @@ do
 # This is the one installed by an enclosing [`capture`](term.capture), or
 # [`console`](term.console) if there is none, and it is where `echo`,
 # `print`, diagnostics and unredirected child process output go.
-#
-# ## Returns
-#
-# [`Console`](term.Console)
 pub def output() -> Console
   ...
 
@@ -689,14 +669,12 @@ do
 # ```
 pub def sub
   # Block to run.
-  block @ Func
+  block @ (() -> Value)
   # Strip one trailing line ending, LF or CRLF.
   # True by default.
   :chomp @ Bool = true
   # Keep ANSI styling. False by default.
   :can_style @ Bool = false
-  # Additional arguments passed to the block.
-  ...args
 do -> Str
   ...
 

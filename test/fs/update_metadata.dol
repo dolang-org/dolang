@@ -68,10 +68,10 @@ def owner_and_group_name()
   open $test_path w do |f|
     f.write "ownership"
 
-  let owner = sub $id -un
-  let group = sub $id -gn
-  let uid = int $ sub $id -u
-  let gid = int $ sub $id -g
+  let owner = sub do id -un
+  let group = sub do id -gn
+  let uid = int $ sub do id -u
+  let gid = int $ sub do id -g
   Path(test_path).update_metadata owner: $owner group: $group
   let after = Path(test_path).metadata()
   assert_eq $after.uid $uid
@@ -125,7 +125,7 @@ def unknown_owner_fails()
 def follow_controls_symlink_handling()
   let link_path = "test_chown_link"
   let missing_target = "test_chown_missing_target"
-  let group = sub $id -gn
+  let group = sub do id -gn
 
   remove $link_path ignore: true
 

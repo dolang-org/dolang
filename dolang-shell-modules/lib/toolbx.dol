@@ -55,10 +55,10 @@ do
 # Run a function inside a toolbox container.
 #
 # The block sees the toolbox filesystem and process environment.
-pub def with
-  block
+pub def with[R]
+  block @ (() -> R)
   :name = nil
   :cd = nil
   :env = {}
-do
+do -> R
   run_agent :name :cd :env $block

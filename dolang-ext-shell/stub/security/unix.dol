@@ -1,5 +1,7 @@
 # Unix security types and uid/gid identity lookups.
 
+import std:
+  - @Seq
 import uuid:
   - @Uuid
 
@@ -29,11 +31,11 @@ pub class Identity
 
   # Supplementary group IDs.
   #[getter]
-  pub def groups self -> Tuple
+  pub def groups self -> Tuple[...Int]
     ...
 
 # POSIX read/write/execute permission bits.
-pub class Permission
+pub class Permission: Iterable[Sym]
   # Constructs a permission set from symbols or one iterable of symbols.
   #
   # ## Supported symbols
@@ -57,10 +59,6 @@ pub class Permission
     ...
 
   # Tests whether all bits represented by a symbol are set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool)
   pub def contains
     self
     # Bits to test for.
@@ -71,26 +69,26 @@ pub class Permission
   # Union of two permission sets.
   pub def (bor)
     self
-    other
-  do
+    other @ Permission
+  do -> Permission
     ...
 
   # Intersection of two permission sets.
   pub def (band)
     self
-    other
-  do
+    other @ Permission
+  do -> Permission
     ...
 
   # Symmetric difference of two permission sets.
   pub def (bxor)
     self
-    other
-  do
+    other @ Permission
+  do -> Permission
     ...
 
   # Complement within the supported bit set.
-  pub def (bnot) self
+  pub def (bnot) self -> Permission
     ...
 
   # Compares two permission sets.
@@ -101,7 +99,7 @@ pub class Permission
     ...
 
   # Yields the symbols represented by the permission set.
-  pub def (iter) self
+  pub def (iter) self -> Iter[Sym]
     ...
 
 # Immutable POSIX.1e access-control entry.
@@ -115,7 +113,7 @@ pub class Ace
     self
     # Entry permissions. Defaults to empty.
     permissions @ Permission = nil
-  do
+  do -> Ace
     ...
 
   # Constructs a named-user entry.
@@ -126,7 +124,7 @@ pub class Ace
     id @ Int
     # Entry permissions. Defaults to empty.
     permissions @ Permission = nil
-  do
+  do -> Ace
     ...
 
   # Constructs the file-group entry.
@@ -135,7 +133,7 @@ pub class Ace
     self
     # Entry permissions. Defaults to empty.
     permissions @ Permission = nil
-  do
+  do -> Ace
     ...
 
   # Constructs a named-group entry.
@@ -146,7 +144,7 @@ pub class Ace
     id @ Int
     # Entry permissions. Defaults to empty.
     permissions @ Permission = nil
-  do
+  do -> Ace
     ...
 
   # Constructs the effective-rights mask entry.
@@ -155,7 +153,7 @@ pub class Ace
     self
     # Entry permissions. Defaults to empty.
     permissions @ Permission = nil
-  do
+  do -> Ace
     ...
 
   # Constructs the entry for all other users.
@@ -164,7 +162,7 @@ pub class Ace
     self
     # Entry permissions. Defaults to empty.
     permissions @ Permission = nil
-  do
+  do -> Ace
     ...
 
   # Entry qualifier: `:USER_OBJ:`, `:USER:`,
@@ -205,15 +203,35 @@ pub class Acl
   pub def (init)
     self
     # [`Ace`](security.unix.Ace) values.
-    aces @ Iterable
+    aces @ Iterable[Ace]
   do
     ...
 
   # Immutable view of
   # [`Ace`](security.unix.Ace) values. Use `.len` for the entry count.
   #[getter]
-  pub def aces self -> Array[Ace]
+  pub def aces self -> Seq[Ace]
     ...
+
+# Permissions given as a [`Permission`](security.unix.Permission), one
+# permission symbol, or an iterable of permission symbols.
+pub @let PermissionSpec = (Permission | Sym | Iterable[Sym])
+
+# A POSIX entry, built or declared as a dictionary. A dictionary has exactly
+# one qualifier key, with the same meaning as the keyword arguments of
+# [`ace`](security.unix.ace).
+pub @let AceSpec = (
+  | Ace
+  | Dict[{user_obj: PermissionSpec}]
+  | Dict[{group_obj: PermissionSpec}]
+  | Dict[{mask: PermissionSpec}]
+  | Dict[{other: PermissionSpec}]
+  | Dict[{user: Int, ?permissions: PermissionSpec}]
+  | Dict[{group: Int, ?permissions: PermissionSpec}]
+)
+
+# A POSIX ACL, built or given as its entries.
+pub @let AclSpec = (Acl | Iterable[AceSpec])
 
 # Constructs a POSIX entry from declarative arguments.
 #
@@ -232,19 +250,19 @@ pub class Acl
 # ```
 pub def ace
   # Permissions for the file-owner entry.
-  :user_obj @ (Permission | Sym | Iterable) = nil
+  :user_obj @ PermissionSpec = nil
   # User ID for a named-user entry.
   :user @ Int = nil
   # Permissions for the file-group entry.
-  :group_obj @ (Permission | Sym | Iterable) = nil
+  :group_obj @ PermissionSpec = nil
   # Group ID for a named-group entry.
   :group @ Int = nil
   # Permissions for the effective-rights mask entry.
-  :mask @ (Permission | Sym | Iterable) = nil
+  :mask @ PermissionSpec = nil
   # Permissions for the entry covering all other users.
-  :other @ (Permission | Sym | Iterable) = nil
+  :other @ PermissionSpec = nil
   # Permissions for a `user:` or `group:` entry.
-  :permissions @ (Permission | Sym | Iterable) = nil
+  :permissions @ PermissionSpec = nil
 do -> Ace
   ...
 
@@ -264,7 +282,7 @@ do -> Ace
 pub def acl
   # Entries, spread with `...`
   # to pass a collection.
-  ...aces @ (Ace | Dict)
+  ...aces @ AceSpec
 do -> Acl
   ...
 

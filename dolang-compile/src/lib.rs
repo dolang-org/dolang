@@ -6,12 +6,12 @@ pub(crate) mod constant;
 pub mod diag;
 pub(crate) mod doc;
 pub(crate) mod elab;
-pub(crate) mod elabty;
 pub(crate) mod emit;
 pub(crate) mod flow;
 pub(crate) mod lex;
 pub(crate) mod lower;
 pub(crate) mod parse;
+pub(crate) mod resolvety;
 pub(crate) mod sig;
 pub mod source;
 pub(crate) mod sym;
@@ -347,9 +347,14 @@ impl<'a> Node<'a> {
                 name: span(name),
                 is_pub: *is_pub,
             },
-            doc::Kind::Alias { name, is_pub } => Kind::Alias {
+            doc::Kind::Alias {
+                name,
+                is_pub,
+                opaque,
+            } => Kind::Alias {
                 name: span(name),
                 is_pub: *is_pub,
+                opaque: *opaque,
             },
             doc::Kind::PositionalParam { name, default } => Kind::PositionalParam {
                 name: span(name),
@@ -360,8 +365,12 @@ impl<'a> Node<'a> {
                 name: span(name),
                 default: default.as_ref().map(span),
             },
-            doc::Kind::RestParam { name } => Kind::RestParam {
+            doc::Kind::RestParam {
+                name,
+                type_ellipsis,
+            } => Kind::RestParam {
                 name: name.as_ref().map(span),
+                type_ellipsis: type_ellipsis.as_ref().map(span),
             },
             doc::Kind::SelfParam { name } => Kind::SelfParam { name: span(name) },
             doc::Kind::ImportModule {
@@ -414,11 +423,12 @@ impl<'a> Node<'a> {
             doc::Kind::Return { target } => Kind::Return {
                 target: target.map(public_node_id),
             },
-            doc::Kind::Type { expr } => Kind::Type {
+            doc::Kind::Type { expr, type_only } => Kind::Type {
                 expr: TypeExpr {
                     file: self.file,
                     expr,
                 },
+                type_only: *type_only,
             },
             doc::Kind::Binder {
                 name,
@@ -457,7 +467,7 @@ pub enum Kind<'a> {
         name: diag::Span,
         /// Declared `pub`
         is_pub: bool,
-        /// A protocol, declared `class @Name`, which exists only in types
+        /// A protocol, declared `@class Name`, which exists only in types
         type_only: bool,
     },
     /// A `def` at statement level
@@ -466,7 +476,7 @@ pub enum Kind<'a> {
         name: diag::Span,
         /// Declared `pub`, or for an overload, whether its implementation is
         is_pub: bool,
-        /// An overload signature, declared `def @name`, which has no body
+        /// An overload signature, declared `@def name`, which has no body
         type_only: bool,
     },
     /// A `def` in a class body.  Its class is its parent.
@@ -510,6 +520,8 @@ pub enum Kind<'a> {
         name: diag::Span,
         /// Declared `pub`
         is_pub: bool,
+        /// Declared with `...` in place of a type
+        opaque: bool,
     },
     /// A positional parameter. Its function is its parent.
     PositionalParam {
@@ -531,6 +543,8 @@ pub enum Kind<'a> {
     RestParam {
         /// The bound name; absent for an anonymous rest parameter
         name: Option<diag::Span>,
+        /// The explicit expansion marker in the annotation, if present.
+        type_ellipsis: Option<diag::Span>,
     },
     /// The `self` parameter of a method
     SelfParam {
@@ -626,6 +640,9 @@ pub enum Kind<'a> {
     Type {
         /// The type as written
         expr: TypeExpr<'a>,
+        /// Whether the type is a supertype written with `@`, which the class does not
+        /// inherit from at runtime
+        type_only: bool,
     },
     /// A binder, a name standing for a type.  The function, method or class
     /// declaring it is its parent.
@@ -780,8 +797,12 @@ impl<'a> TypeArg<'a> {
     pub fn kind(&self) -> TypeArgKind<'a> {
         match &self.arg.kind {
             doc::TypeArgKind::Pos => TypeArgKind::Pos,
-            doc::TypeArgKind::Key { key } => TypeArgKind::Key {
+            doc::TypeArgKind::Key { key, key_ty } => TypeArgKind::Key {
                 key: convert_span(self.file, *key),
+                key_ty: key_ty.as_ref().map(|expr| TypeExpr {
+                    file: self.file,
+                    expr,
+                }),
             },
             doc::TypeArgKind::Rest => TypeArgKind::Rest,
             doc::TypeArgKind::OpenRest => TypeArgKind::OpenRest,
@@ -811,8 +832,11 @@ pub enum TypeArgKind<'a> {
     Pos,
     /// `key: T`
     Key {
-        /// The key as written: a bareword for a symbol, or a quoted string
+        /// The key as written: a bareword for a symbol, or a type such as a quoted string
+        /// or a parenthesized name
         key: diag::Span,
+        /// The type giving the key, or `None` for a bareword symbol
+        key_ty: Option<TypeExpr<'a>>,
     },
     /// `...T`, for any number of further items
     Rest,
@@ -829,7 +853,11 @@ impl fmt::Debug for TypeArgKind<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Pos => f.write_str("Pos"),
-            Self::Key { key } => f.debug_struct("Key").field("key", key).finish(),
+            Self::Key { key, key_ty } => f
+                .debug_struct("Key")
+                .field("key", key)
+                .field("key_ty", &key_ty.as_ref().map(|_| ..))
+                .finish(),
             Self::Rest => f.write_str("Rest"),
             Self::OpenRest => f.write_str("OpenRest"),
             Self::KeyRest { .. } => f.write_str("KeyRest { key_ty: ... }"),
@@ -1232,7 +1260,7 @@ impl<'a> Config<'a> {
         // Types only matter to documentation, and a unit that failed to elaborate has no
         // scopes to resolve them in
         if self.document && !failed {
-            elabty::check(
+            resolvety::check(
                 &mut ast,
                 &compiler.file,
                 &compiler.symtab,

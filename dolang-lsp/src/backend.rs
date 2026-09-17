@@ -331,7 +331,7 @@ fn declaration_label(
                 .map(|span| span_text(content, &span))
                 .collect::<Vec<_>>();
             format!(
-                "{}class {}{name}{}",
+                "{}{}class {name}{}",
                 if is_pub { "pub " } else { "" },
                 if type_only { "@" } else { "" },
                 if supers.is_empty() {
@@ -353,7 +353,7 @@ fn declaration_label(
                 }
             );
             format!(
-                "{}def {}{name}{}{}",
+                "{}{}def {name}{}{}",
                 if is_pub && !at { "pub " } else { "" },
                 if at { "@" } else { "" },
                 if params.is_empty() {

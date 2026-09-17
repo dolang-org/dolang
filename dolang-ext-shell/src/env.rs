@@ -175,69 +175,72 @@ impl<'v> Object<'v> for Env<'v> {
     async fn call<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut args: Args<'v, 'a>,
+        args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut vars = HashMap::new();
-        let mut first_positional = true;
-        let func = loop {
-            match args.next() {
-                None => return Err(Error::missing_positional(strand, 0)),
-                Some(Arg::Pos(slot)) if first_positional => {
-                    first_positional = false;
-                    let View::Dict(dict) = slot.view(strand) else {
-                        break slot;
-                    };
-                    let mut pairs = dict.pairs();
-                    strand.with_slots_sync(|strand, [mut key, mut value]| {
-                        while pairs.next(strand, &mut key, &mut value)? {
-                            let key = match key.view(strand) {
-                                View::Str(key) => key.to_string(),
-                                View::Sym(key) => key.as_str(strand).to_string(),
-                                _ => {
-                                    return Err(Error::type_error(
-                                        strand,
-                                        "env key: expected Str or Sym",
-                                    ));
-                                }
-                            };
-                            let value = if value.is_nil() {
-                                None
-                            } else if value.as_sym(strand)
-                                == Some(this.borrow(strand)?.global.syms.inherit)
-                            {
-                                this.borrow(strand)?
-                                    .global
-                                    .local
-                                    .get(strand)
-                                    .env()
-                                    .get(&key)
-                                    .map(|value| value.into_owned())
-                            } else {
-                                Some(value.to_string(strand)?)
-                            };
-                            vars.insert(key, value);
-                        }
-                        Ok(())
-                    })?;
-                }
-                Some(Arg::Pos(slot)) => break slot,
-                Some(Arg::Key(sym, slot)) => {
-                    vars.insert(
-                        sym.as_str(strand).to_string(),
-                        if slot.is_nil() {
-                            None
-                        } else {
-                            Some(slot.to_string(strand)?)
-                        },
-                    );
-                }
+        let ([first], [second], mut args) = unpack!(strand, args, 1, 1, ...)?;
+        let func = if let Some(func) = second {
+            let Some(dict) = first.as_dict(strand) else {
+                return Err(Error::type_error(strand, "expected `Dict`"));
             };
+            let mut pairs = dict.pairs();
+            strand.with_slots_sync(|strand, [mut key, mut value]| {
+                while pairs.next(strand, &mut key, &mut value)? {
+                    let key = match key.view(strand) {
+                        View::Str(key) => key.to_string(),
+                        View::Sym(key) => key.as_str(strand).to_string(),
+                        _ => {
+                            return Err(Error::type_error(strand, "key: expected Str or Sym"));
+                        }
+                    };
+                    let value = if value.is_nil() {
+                        None
+                    } else if value.as_sym(strand) == Some(this.borrow(strand)?.global.syms.inherit)
+                    {
+                        this.borrow(strand)?
+                            .global
+                            .local
+                            .get(strand)
+                            .env()
+                            .get(&key)
+                            .map(|value| value.into_owned())
+                    } else {
+                        Some(value.to_string(strand)?)
+                    };
+                    vars.insert(key, value);
+                }
+                Ok(())
+            })?;
+            match args.next() {
+                None => (),
+                Some(Arg::Pos(_)) => return Err(Error::unexpected_positional(strand, 2)),
+                Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
+            }
+            func
+        } else {
+            for arg in args {
+                match arg {
+                    Arg::Pos(_) => return Err(Error::unexpected_positional(strand, 1)),
+                    Arg::Key(sym, slot) => {
+                        vars.insert(
+                            sym.as_str(strand).to_string(),
+                            if slot.is_nil() {
+                                None
+                            } else {
+                                Some(slot.to_string(strand)?)
+                            },
+                        );
+                    }
+                };
+            }
+            first
         };
+
         let me = this.borrow(strand)?;
         let local = me.global.local.get(strand);
         let env = local.replace_env(Rc::new(local::Env::derived(local.env(), vars)));
-        let res = func.call(strand, args, out).await;
+        let res = call!(strand, func, out).await;
         let local = me.global.local.get(strand);
         let _ = local.replace_env(env);
         res

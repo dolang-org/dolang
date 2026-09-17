@@ -26,10 +26,6 @@ pub class Glob
 
   # Tests whether `value` matches this glob.
   #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool) indicating whether the value matches.
-  #
   # ## Example
   #
   # ```
@@ -47,10 +43,6 @@ pub class Glob
 # Tests whether `value` matches a glob pattern.
 #
 # Passing pattern text compiles it for this call only.
-#
-# ## Returns
-#
-# [`Bool`](std.Bool) indicating whether the value matches.
 #
 # ## Example
 #

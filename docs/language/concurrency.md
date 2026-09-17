@@ -68,7 +68,7 @@ The returned [Strand](strand.Strand) handle allows you to:
 ### `fork`
 
 The [`strand.fork`](strand.fork) function executes
-multiple blocks concurrently and returns their results as an array:
+multiple blocks concurrently and returns their results as a tuple:
 
 ```playground
 #> import test:
@@ -80,7 +80,7 @@ let results = fork
   - do "hello"
   - do (1 + 2)
 
-assert_eq $results [42, "hello", 3]
+assert_eq $results (Tuple([42, "hello", 3]))
 ```
 
 All blocks become runnable simultaneously and the function waits for all to

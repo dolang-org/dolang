@@ -21,6 +21,8 @@ import
   std:
     - RuntimeError
     - @Fmt
+    - @Index
+    - @Unpack
 
 # Raised when a SQLite operation fails for any reason other than the database
 # being locked.
@@ -103,7 +105,7 @@ pub class Connection
   #
   # ## Returns
   #
-  # [`Int`](std.Int) -- rows affected.
+  # The number of rows affected.
   #
   # ## Example
   #
@@ -133,11 +135,6 @@ pub class Connection
   # or `${#0}` stays unfilled and is supplied at each
   # [`query`](sqlite.Statement.query) or [`execute`](sqlite.Statement.execute).
   #
-  # ## Returns
-  #
-  # [`Statement`](sqlite.Statement) when no `func` is given, otherwise the result
-  # of calling `func`.
-  #
   # ## Example
   #
   # ```
@@ -150,15 +147,25 @@ pub class Connection
   #   stmt.execute name: "Charlie"
   #   stmt.close()
   # ```
-  pub def prepare
+  @def prepare
     self
     # SQL template. See [Parameter
     # Binding](sqlite.Statement.parameter-binding).
     sql @ Fmt
-    # Called with the [`Statement`](sqlite.Statement),
-    # which is closed when it returns. Omit to receive the handle instead.
-    func @ Func = nil
-  do -> Value
+  do -> Statement
+
+  # Prepares a statement and calls `func` with it. The statement is closed when
+  # `func` returns.
+  @def prepare[R]
+    self
+    # SQL template. See [Parameter
+    # Binding](sqlite.Statement.parameter-binding).
+    sql @ Fmt
+    # Called with the [`Statement`](sqlite.Statement).
+    func @ (Statement -> R)
+  do -> R
+
+  pub def prepare self sql ...options
     ...
 
   # Runs `func` inside a database transaction.
@@ -171,10 +178,6 @@ pub class Connection
   # retrying the failing statement: a rolled-back transaction has to start
   # over anyway. The block is rolled back and re-invoked until it succeeds, is
   # explicitly rolled back, or the connection's retry limit is exhausted.
-  #
-  # ## Returns
-  #
-  # The result of calling `func`.
   #
   # ## Example
   #
@@ -189,11 +192,11 @@ pub class Connection
   #     if should_cancel
   #       tx.rollback()
   # ```
-  pub def transaction
+  pub def transaction[R]
     self
     # Called with the [`Transaction`](sqlite.Transaction).
-    func @ Func
-  do -> Value
+    func @ (Transaction -> R)
+  do -> R
     ...
 
 # A compiled SQL statement that can be run repeatedly with different
@@ -283,7 +286,7 @@ pub class Statement
   #
   # ## Returns
   #
-  # [`Int`](std.Int) -- rows affected.
+  # The number of rows affected.
   #
   # ## Errors
   #
@@ -390,7 +393,7 @@ pub class Statement
 # for value = rest
 #   echo $ str value
 # ```
-pub class Row
+pub class Row: @Index[(Int | Str), Value] @Unpack[{...Value, ...Sym: Value}]
   # Reads a column by position or by name.
   #
   # ## Errors
@@ -448,11 +451,6 @@ pub class Transaction
 
 # Opens a database connection, creating the database if it does not exist.
 #
-# ## Returns
-#
-# [`Connection`](sqlite.Connection) when no `func` is given, otherwise the
-# result of calling `func`.
-#
 # ## Example
 #
 # ```
@@ -470,7 +468,7 @@ pub class Transaction
 # open ":memory:" do |conn|
 #   conn.execute t"CREATE TABLE scratch (n INTEGER)"
 # ```
-pub def open
+@def open
   # Path to the database
   # file, or `":memory:"` for a private in-memory database. A relative path
   # resolves against the current directory of the active VFS context.
@@ -485,8 +483,28 @@ pub def open
   # Ceiling in milliseconds for the doubling retry
   # wait. Defaults to `1000`.
   :max_wait @ Int = nil
-  # Called with the [`Connection`](sqlite.Connection),
-  # which is closed when it returns. Omit to receive the handle instead.
-  func @ Func = nil
-do -> Value
+do -> Connection
+
+# Opens a database connection and calls `func` with it. The connection is
+# closed when `func` returns.
+@def open[R]
+  # Path to the database
+  # file, or `":memory:"` for a private in-memory database. A relative path
+  # resolves against the current directory of the active VFS context.
+  path @ (Str | Path)
+  # Attempts to retry an operation that fails
+  # because the database is busy. Defaults to `10`; `0` disables retrying. See
+  # [Busy retry](sqlite.Connection.busy-retry).
+  :retries @ Int = nil
+  # Milliseconds to wait before the first retry.
+  # Defaults to `1`.
+  :min_wait @ Int = nil
+  # Ceiling in milliseconds for the doubling retry
+  # wait. Defaults to `1000`.
+  :max_wait @ Int = nil
+  # Called with the [`Connection`](sqlite.Connection).
+  func @ (Connection -> R)
+do -> R
+
+pub def open path ...options
   ...

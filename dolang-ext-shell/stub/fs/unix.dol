@@ -70,7 +70,7 @@ pub class Mode
     self
     # Raw mode bits.
     value @ Int
-  do
+  do -> Mode
     ...
 
   # Owner
@@ -104,10 +104,6 @@ pub class Mode
     ...
 
   # Tests whether all bits represented by a symbol are set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool)
   pub def contains
     self
     # Bits to test for.

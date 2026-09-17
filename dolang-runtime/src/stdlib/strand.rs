@@ -610,6 +610,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     }
                 }
             };
+            let ([], []) = unpack!(strand, args, 0, 0)?;
             let mut redir = Redirect::new(strand);
             if let Some(input) = arg_input {
                 input.iter(&mut redir, &mut tmp).await?;
@@ -620,7 +621,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 redir = redir.output(&mut tmp);
             }
             redir
-                .enter(async move |strand| block.call(strand, args, out).await)
+                .enter(async move |strand| call!(strand, block, out).await)
                 .await
         })
         .function("channel", async move |strand, args, mut out| {
@@ -953,7 +954,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 map_workers(strand, count, input, output, block).await
             },
         )
-        .function("fork", async move |strand, args, out| {
+        .function("fork", async move |strand, args, mut out| {
             let mut thunks = Vec::new();
             for arg in args {
                 match arg {
@@ -1008,11 +1009,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     }
                     .await;
                     let results = result?;
-                    strand
-                        .vm()
-                        .builtin_types()
-                        .array
-                        .create(strand, Array { inner: results }, out);
+                    out.store(Value::from_object(tuple::tuple(strand, results)));
                     Ok(())
                 })
                 .await

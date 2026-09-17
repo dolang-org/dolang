@@ -143,20 +143,18 @@ impl Parser<'_> {
 
     /// Parse a `def`, which has no body when it is type-only: marked with `@`, or a
     /// protocol member.
-    fn parse_def_common(&mut self, scope: &mut Scope, protocol: bool) -> Result<DefCommon> {
+    fn parse_def_common(
+        &mut self,
+        scope: &mut Scope,
+        protocol: bool,
+        at_span: Option<Span>,
+    ) -> Result<DefCommon> {
         let def_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Def)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
-        let at_span = match self.peek()? {
-            Some(token!(TokenInfo::At)) => {
-                let span = self.advance();
-                if protocol {
-                    self.fail = true;
-                    self.diags.push(RedundantTypeOnly(span));
-                }
-                Some(span)
-            }
-            _ => None,
-        };
+        if protocol && let Some(span) = at_span {
+            self.fail = true;
+            self.diags.push(RedundantTypeOnly(span));
+        }
         let type_only = protocol || at_span.is_some();
         // A declaration names what it defines; nothing after `def` is read as
         // the keyword it spells, so a function may take the name of one.
@@ -262,6 +260,7 @@ impl Parser<'_> {
         scope: &mut Scope,
         pub_span: Option<Span>,
         decorators: Vec<Decorator>,
+        at_span: Option<Span>,
     ) -> Result<Def> {
         let DefCommon {
             def_span,
@@ -270,7 +269,7 @@ impl Parser<'_> {
             special,
             binders,
             func,
-        } = self.parse_def_common(scope, false)?;
+        } = self.parse_def_common(scope, false, at_span)?;
 
         if special.is_some() {
             self.fail = true;
@@ -295,6 +294,7 @@ impl Parser<'_> {
         pub_span: Option<Span>,
         decorators: Vec<Decorator>,
         protocol: bool,
+        at_span: Option<Span>,
     ) -> Result<Method> {
         let DefCommon {
             def_span,
@@ -303,7 +303,7 @@ impl Parser<'_> {
             special,
             binders,
             func,
-        } = self.parse_def_common(scope, protocol)?;
+        } = self.parse_def_common(scope, protocol, at_span)?;
         Ok(Method {
             def_span,
             decorators,

@@ -113,10 +113,6 @@ pub class Indicator
 # Outside a [`with`](progress.with) scope, the callback is invoked with a dummy
 # indicator whose methods are silent no-ops.
 #
-# ## Returns
-#
-# The return value of `func`.
-#
 # ## Example
 #
 # ```
@@ -129,7 +125,7 @@ pub class Indicator
 #
 # The [`Indicator`](progress.Indicator) is only valid inside its callback.
 # Using it after the callback returns raises a runtime error.
-pub def show
+pub def show[R]
   # Total value. The indicator starts in bar mode
   # when given and in spinner mode otherwise; the mode changes with `total`.
   :total @ Int = nil
@@ -151,8 +147,8 @@ pub def show
   # Tick interval in seconds. Defaults to `0.08`.
   :tick @ Float = nil
   # Callback receiving an [`Indicator`](progress.Indicator).
-  func @ Func
-do -> Value
+  func @ (Indicator -> R)
+do -> R
   ...
 
 # Runs a sequence of steps under an indicator tracking step completion.
@@ -167,7 +163,7 @@ do -> Value
 #
 # ## Returns
 #
-# An [`Array`](std.Array) holding each step's return value, in order.
+# Each step's return value, in order.
 #
 # ## Example
 #
@@ -193,8 +189,8 @@ pub def steps
   # | ------ | -------------------- | ----------------------------------- |
   # | `name` | [`Str`](std.Str)     | Step name                           |
   # | `icon` | [`Str`](std.Str)     | Icon overriding the default         |
-  ...steps @ (Func | Dict)
-do -> Value
+  ...steps @ ((() -> Value) | Dict[{(() -> Value), ?name: Str, ?icon: Str}])
+do -> Array
   ...
 
 # Activates a progress context for the duration of `func`.
@@ -202,10 +198,6 @@ do -> Value
 # Terminal output — echo, print, and child process stdout/stderr — is routed
 # through the progress display so that it does not interfere with active
 # indicators.
-#
-# ## Returns
-#
-# The return value of `func`.
 #
 # ## Example
 #
@@ -234,7 +226,7 @@ do -> Value
 #   do progress.show message: "working" do |w|
 #     # ...
 # ```
-pub def with
+pub def with[R]
   # Display style overrides.
   #
   # Top-level keys name the visual elements of the progress display, and each
@@ -303,6 +295,6 @@ pub def with
   # when connected to a real terminal.
   :interval @ Float = nil
   # Callback taking no arguments.
-  func @ Func
-do -> Value
+  func @ (() -> R)
+do -> R
   ...

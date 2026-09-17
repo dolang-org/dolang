@@ -1,4 +1,4 @@
-def @foo x
+@def foo x
   x
 # error: a type-only declaration has no body
 #   --> type_only_body.dol:LL:LL

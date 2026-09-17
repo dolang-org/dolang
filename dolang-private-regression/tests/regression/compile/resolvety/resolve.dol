@@ -79,3 +79,23 @@ let _thing @Thing = nil
 # An exported type-only import is not reported as unused
 pub import import_fixture:
   - @Exported
+
+# An alias is visible throughout its block, so it may name itself or a later alias
+let _tree @_Tree = nil
+@let _Tree = (Int | Array[_Tree] | _Forest)
+@let _Forest = Dict[{...Str: _Tree}]
+
+def _nested x @_Local -> _Local
+  # warning: unbound type name
+  #   --> resolve.dol:LL:LL
+  #    |
+  # LL | def _nested x @_Local -> _Local
+  #    |                ^^^^^^
+  # warning: unbound type name
+  #   --> resolve.dol:LL:LL
+  #    |
+  # LL | def _nested x @_Local -> _Local
+  #    |                          ^^^^^^
+  @let _Local = Array[_Local]
+  x
+assert_eq (_nested 1) 1

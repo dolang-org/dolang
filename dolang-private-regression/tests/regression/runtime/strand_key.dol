@@ -33,7 +33,7 @@ let results = fork
     assert_eq $key.value "fork"
     key.value
 
-assert_eq $results ["fork"]
+assert_eq $results (Tuple(["fork"]))
 assert_eq $key.value "parent"
 
 key.value = nil

@@ -54,17 +54,33 @@ enum Compact {
 impl Parser<'_> {
     /// Parse a `@` annotation if one is next.
     pub(super) fn parse_annot(&mut self, scope: &mut Scope) -> Result<Option<Box<Annot>>> {
-        Ok(match self.peek()? {
+        self.parse_annot_with_ellipsis(scope, false)
+            .map(|(annot, _)| annot)
+    }
+
+    pub(super) fn parse_annot_with_ellipsis(
+        &mut self,
+        scope: &mut Scope,
+        allow_ellipsis: bool,
+    ) -> Result<(Option<Box<Annot>>, Option<Span>)> {
+        let mut ellipsis = None;
+        let annot = match self.peek()? {
             Some(token!(TokenInfo::At)) => {
                 let at_span = self.advance();
                 if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
                     self.advance();
                 }
-                let ty = self.with_inline_shell(|this| this.parse_type_compact(scope))?;
+                let ty = self.with_inline_shell(|this| {
+                    if allow_ellipsis && matches!(this.peek()?, Some(token!(TokenInfo::Ellipsis))) {
+                        ellipsis = Some(this.advance());
+                    }
+                    this.parse_type_compact(scope)
+                })?;
                 Some(Box::new(Annot { at_span, ty }))
             }
             _ => None,
-        })
+        };
+        Ok((annot, ellipsis))
     }
 
     /// Parse a `->` return type if one is next.
@@ -427,25 +443,23 @@ impl Parser<'_> {
                     _ => {
                         let ty = this.parse_type_full(scope)?;
                         match this.peek()? {
-                            Some(token @ token!(TokenInfo::Colon)) => match ty {
-                                TypeExpr::Const { expr }
-                                    if matches!(expr.fold(this.file), Some(Const::Str(_))) =>
-                                {
-                                    let colon_span = this.advance();
-                                    TypeArgKind::Key {
-                                        key: TypeKey::Str(expr),
-                                        colon_span,
-                                        ty: this.parse_type_full(scope)?,
-                                    }
-                                }
-                                _ => {
+                            // A schema key may be any type, while a named type argument or
+                            // parameter has a name
+                            Some(token @ token!(TokenInfo::Colon)) => {
+                                if delim != Delim::Brace {
                                     return Err(this.syntax_error(
                                         scope,
                                         Some(token),
-                                        "a key in a type must be a name or a string",
+                                        "a key outside a schema must be a name",
                                     ));
                                 }
-                            },
+                                let colon_span = this.advance();
+                                TypeArgKind::Key {
+                                    key: TypeKey::Type(Box::new(ty)),
+                                    colon_span,
+                                    ty: this.parse_type_full(scope)?,
+                                }
+                            }
                             _ => TypeArgKind::Pos(ty),
                         }
                     }

@@ -13,10 +13,6 @@
 # By default both alphabets and any amount of padding are accepted. Specifying
 # `alphabet:` or `pad:` makes decoding strict in that respect.
 #
-# ## Returns
-#
-# [`Bin`](std.Bin) - Decoded bytes
-#
 # ## Errors
 #
 # | Exception    | Condition                                                               |
@@ -52,10 +48,6 @@ do -> Bin
   ...
 
 # Encodes a string or binary value as base64 text.
-#
-# ## Returns
-#
-# [`Str`](std.Str) - Base64 text
 #
 # ## Errors
 #

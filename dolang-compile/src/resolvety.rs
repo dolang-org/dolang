@@ -17,9 +17,10 @@ use dolang_util::intern::BinTable;
 use crate::{
     Compiler,
     ast::{
-        Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Def, DictElem, Expr, ExprBody,
-        FieldInit, For, Function, Ident, If, ImportElement, LValue, Origin, Param, PatIdent,
-        Pattern, PrimStmt, Res, Root, Stmt, TypeArgKind, TypeDecl, TypeExpr, Var, visit::Node,
+        AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Def, DictElem, Expr,
+        ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue, Origin, Param,
+        PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl, TypeExpr, Var,
+        visit::Node,
     },
     diag::Severity,
     source::{Diagnose, Diags, File, Span},
@@ -114,6 +115,23 @@ impl Diagnose for TypeShadowsValue {
     }
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "type name shadows a value of the same name")
+    }
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
+struct AliasShadowsEarly(Span);
+
+impl Diagnose for AliasShadowsEarly {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "type name refers to its block's alias, not the outer type it shadows"
+        )
     }
     fn span(&self) -> Span {
         self.0
@@ -241,12 +259,14 @@ struct TypeName {
     /// The whole dotted path of a type-only module import, of which `span` is only the
     /// head. Modules are not nested, so `security.unix` and `security.nfs4` are separate
     /// imports that happen to share the head they bind, and only the whole path says
-    /// which module a dotted type name comes from.
+    /// which module a dotted type name comes from. For a renamed import, this is
+    /// the local name instead.
     module: Option<Span>,
     /// A type-only import rather than a binder
     import: bool,
-    /// The name is visible only at sites after this offset.
-    visible_after: Option<u32>,
+    /// The declaration of an alias, which is visible throughout its block but shadows
+    /// an outer name even before it appears
+    alias: Option<Span>,
     /// Whether an unused name should be diagnosed.
     warn_unused: bool,
     used: Cell<bool>,
@@ -305,7 +325,7 @@ impl<'s> Frame<'s> {
                 span: binder.ident.span,
                 module: None,
                 import: false,
-                visible_after: None,
+                alias: None,
                 warn_unused: true,
                 used: Cell::new(false),
             })
@@ -390,13 +410,15 @@ impl Check<'_> {
         false
     }
 
+    /// Whether a type named `name` is visible at `site`. An alias counts only once
+    /// declared, so a value is diagnosed where the later of the two appears.
     fn has_type(&self, frame: &Frame<'_>, name: &str, site: u32) -> bool {
         let mut frame = Some(frame);
         while let Some(current) = frame {
             if let FrameKind::Types { names } = &current.kind
                 && names.iter().rev().any(|found| {
                     found.bound_name(self.file) == name
-                        && found.visible_after.is_none_or(|offset| site > offset)
+                        && found.alias.is_none_or(|alias| site > alias.end)
                 })
             {
                 return true;
@@ -467,11 +489,24 @@ impl Check<'_> {
                 }
                 FrameKind::Types { names } => {
                     // A later binding of a name shadows an earlier one
-                    if let Some(found) = names.iter().rev().find(|found| {
-                        found.matches(self.file, path)
-                            && found.visible_after.is_none_or(|offset| site > offset)
-                    }) {
+                    if let Some(found) = names
+                        .iter()
+                        .rev()
+                        .find(|found| found.matches(self.file, path))
+                    {
                         found.used.set(true);
+                        if let Some(alias) = found.alias
+                            && site <= alias.end
+                            // Past the block's own variables, whose conflicts with its
+                            // aliases are diagnosed at the alias
+                            && let Some(outer) = current.outer.and_then(|block| block.outer)
+                            && (self.has_type(outer, name, site) || self.has_value(outer, name, site))
+                        {
+                            self.diags.push(AliasShadowsEarly(Span {
+                                start: site,
+                                end: site + name.len() as u32,
+                            }));
+                        }
                         return Some(Found::Type {
                             import: found.import,
                             span: found.span,
@@ -673,6 +708,11 @@ impl Check<'_> {
                             bind,
                             type_only: Some(_),
                             ..
+                        }
+                        | ImportElement::ModuleRenamed {
+                            bind,
+                            type_only: Some(_),
+                            ..
                         } => {
                             if self.has_value(frame, self.file.str(bind.span), bind.span.start) {
                                 self.diags.push(TypeShadowsValue(bind.span));
@@ -702,8 +742,11 @@ impl Check<'_> {
                 }
                 let inner = Frame::binders(frame, alias.binders.as_deref());
                 self.binder_types(&inner, alias.binders.as_deref_mut());
-                self.ty(&inner, &mut alias.ty);
-                self.unused_types(&inner);
+                // An opaque alias has no body to use its binders in
+                if let AliasBody::Type(ty) = &mut alias.body {
+                    self.ty(&inner, ty);
+                    self.unused_types(&inner);
+                }
             }
             Stmt::Def(def) => {
                 // An overload names the value its implementation binds
@@ -776,18 +819,8 @@ impl Check<'_> {
                     &super_ref.fields,
                 );
             }
-            for arg in &mut super_ref.args {
-                match &mut arg.kind {
-                    TypeArgKind::KeyRest { key_ty, ty, .. } => {
-                        self.ty(&inner, key_ty);
-                        self.ty(&inner, ty);
-                    }
-                    _ => {
-                        if let Some(ty) = arg.ty_mut() {
-                            self.ty(&inner, ty);
-                        }
-                    }
-                }
+            for ty in super_ref.args.iter_mut().flat_map(TypeArg::tys_mut) {
+                self.ty(&inner, ty);
             }
         }
         let impls: HashSet<(bool, &str)> = class
@@ -1028,10 +1061,15 @@ impl Element for Stmt {
                             type_only: None,
                             ..
                         } => declare_module(decls, bind, ModulePath::Dotted(*module)),
-                        ImportElement::ModuleRenamed { bind, .. } => {
-                            declare_module(decls, bind, ModulePath::Bind)
-                        }
+                        ImportElement::ModuleRenamed {
+                            bind,
+                            type_only: None,
+                            ..
+                        } => declare_module(decls, bind, ModulePath::Bind),
                         ImportElement::ModuleAsIs {
+                            type_only: Some(_), ..
+                        }
+                        | ImportElement::ModuleRenamed {
                             type_only: Some(_), ..
                         } => {}
                         ImportElement::Items { items, .. } => {
@@ -1061,7 +1099,19 @@ impl Element for Stmt {
                             span: bind.span,
                             module: Some(*module),
                             import: true,
-                            visible_after: None,
+                            alias: None,
+                            warn_unused: true,
+                            used: Cell::new(import.pub_span.is_some()),
+                        }),
+                        ImportElement::ModuleRenamed {
+                            bind,
+                            type_only: Some(_),
+                            ..
+                        } => names.push(TypeName {
+                            span: bind.span,
+                            module: Some(bind.span),
+                            import: true,
+                            alias: None,
                             warn_unused: true,
                             used: Cell::new(import.pub_span.is_some()),
                         }),
@@ -1071,7 +1121,7 @@ impl Element for Stmt {
                                     span: item.bind().span,
                                     module: None,
                                     import: true,
-                                    visible_after: None,
+                                    alias: None,
                                     warn_unused: true,
                                     // An exported name may be used elsewhere
                                     used: Cell::new(import.pub_span.is_some()),
@@ -1086,7 +1136,7 @@ impl Element for Stmt {
                 span: alias.ident.span,
                 module: None,
                 import: false,
-                visible_after: Some(alias.span().end),
+                alias: Some(alias.span()),
                 warn_unused: false,
                 used: Cell::new(false),
             }),
@@ -1095,7 +1145,7 @@ impl Element for Stmt {
                 span: class.ident.span,
                 module: None,
                 import: false,
-                visible_after: None,
+                alias: None,
                 warn_unused: false,
                 used: Cell::new(false),
             }),

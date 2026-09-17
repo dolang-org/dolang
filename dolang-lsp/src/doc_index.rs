@@ -6,8 +6,9 @@
 //! from.
 
 #[cfg(test)]
-#[path = "../doc_markdown.rs"]
-mod doc_markdown;
+#[allow(dead_code)]
+#[path = "../build.rs"]
+mod doc_build;
 
 /// One parameter of a documented function or method.
 pub(crate) struct Param {

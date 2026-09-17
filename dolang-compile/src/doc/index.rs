@@ -189,9 +189,11 @@ impl Index<'_> {
                 ellipsis_span,
                 ident,
                 ty,
+                type_ellipsis_span,
             } => (
                 Kind::RestParam {
                     name: ident.as_ref().map(|ident| ident.span),
+                    type_ellipsis: *type_ellipsis_span,
                 },
                 Some(*ellipsis_span),
                 ident.as_ref().map(|ident| ident.span),
@@ -281,7 +283,14 @@ impl Index<'_> {
     /// Record a resolved type as describing `parent`, unless it could not be read.
     fn type_node(&mut self, parent: Id, ty: &TypeExpr) {
         if let Some(expr) = self.type_expr(ty) {
-            self.push_to(Some(parent), Kind::Type { expr }, ty.span());
+            self.push_to(
+                Some(parent),
+                Kind::Type {
+                    expr,
+                    type_only: false,
+                },
+                ty.span(),
+            );
         }
     }
 
@@ -314,7 +323,14 @@ impl Index<'_> {
             };
         }
         let span = expr.span;
-        self.push_to(Some(class), Kind::Type { expr }, span);
+        self.push_to(
+            Some(class),
+            Kind::Type {
+                expr,
+                type_only: super_ref.type_only,
+            },
+            span,
+        );
     }
 
     fn type_expr(&self, ty: &TypeExpr) -> Option<doc::TypeExpr> {
@@ -366,11 +382,11 @@ impl Index<'_> {
                 let (kind, ty, start) = match &arg.kind {
                     TypeArgKind::Pos(ty) => (doc::TypeArgKind::Pos, Some(ty), None),
                     TypeArgKind::Key { key, ty, .. } => {
-                        let key = match key {
-                            TypeKey::Sym(span) => *span,
-                            TypeKey::Str(expr) => expr.span(),
+                        let (key, key_ty) = match key {
+                            TypeKey::Sym(span) => (*span, None),
+                            TypeKey::Type(key_ty) => (key_ty.span(), Some(self.type_expr(key_ty)?)),
                         };
-                        (doc::TypeArgKind::Key { key }, Some(ty), Some(key))
+                        (doc::TypeArgKind::Key { key, key_ty }, Some(ty), Some(key))
                     }
                     TypeArgKind::Rest { ellipsis_span, ty } => {
                         (doc::TypeArgKind::Rest, Some(ty), Some(*ellipsis_span))
@@ -415,13 +431,9 @@ impl Index<'_> {
         let (Some(parent), Some(binders)) = (parent, binders) else {
             return;
         };
+        // Every binder is in scope of each bound and default, so declare them all first
+        let mut ids = Vec::with_capacity(binders.binders.len());
         for binder in &mut binders.binders {
-            if let Some(bound) = &mut binder.bound {
-                self.ty(scope, &mut bound.ty);
-            }
-            if let Some(default) = &mut binder.default {
-                self.ty(scope, &mut default.ty);
-            }
             let (kind, sigil) = match binder.kind {
                 BinderKind::Pos => (crate::BinderKind::Pos, None),
                 BinderKind::Key { colon_span } => (crate::BinderKind::Key, Some(colon_span)),
@@ -440,6 +452,27 @@ impl Index<'_> {
             .flatten()
             .reduce(|left, right| left | right)
             .unwrap();
+            let id = self.push_to(
+                Some(parent),
+                Kind::Binder {
+                    name,
+                    kind,
+                    bound: None,
+                    default: None,
+                },
+                span,
+            );
+            binder.node = Some(id);
+            self.type_decls.insert(name.start, id);
+            ids.push(id);
+        }
+        for (binder, id) in binders.binders.iter_mut().zip(ids) {
+            if let Some(bound) = &mut binder.bound {
+                self.ty(scope, &mut bound.ty);
+            }
+            if let Some(default) = &mut binder.default {
+                self.ty(scope, &mut default.ty);
+            }
             let bound = binder
                 .bound
                 .as_ref()
@@ -448,18 +481,16 @@ impl Index<'_> {
                 .default
                 .as_ref()
                 .and_then(|default| self.type_expr(&default.ty));
-            let id = self.push_to(
-                Some(parent),
-                Kind::Binder {
-                    name,
-                    kind,
-                    bound,
-                    default,
-                },
-                span,
-            );
-            binder.node = Some(id);
-            self.type_decls.insert(name.start, id);
+            let Kind::Binder {
+                bound: node_bound,
+                default: node_default,
+                ..
+            } = &mut self.table[id].kind
+            else {
+                unreachable!()
+            };
+            *node_bound = bound;
+            *node_default = default;
         }
     }
 
@@ -550,14 +581,12 @@ impl Index<'_> {
                     Kind::Alias {
                         name,
                         is_pub: alias.pub_span.is_some(),
+                        opaque: matches!(alias.body, AliasBody::Opaque(_)),
                     },
                     alias.span(),
                 );
                 alias.node = Some(id);
                 self.type_decls.insert(name.start, id);
-                self.binders(scope, Some(id), alias.binders.as_deref_mut());
-                self.ty(scope, &mut alias.ty);
-                self.type_node(id, &alias.ty);
             }
             _ => {}
         }
@@ -593,18 +622,25 @@ impl Index<'_> {
                         self.declaration(scope, bind, kind, element_span);
                     }
                 }
-                ImportElement::ModuleRenamed { module, bind, .. } => {
-                    self.declaration(
-                        scope,
-                        bind,
-                        Kind::ImportModule {
-                            module: *module,
-                            name: bind.span,
-                            is_pub,
-                            type_only: false,
-                        },
-                        element_span,
-                    );
+                ImportElement::ModuleRenamed {
+                    module,
+                    bind,
+                    type_only,
+                    ..
+                } => {
+                    let kind = Kind::ImportModule {
+                        module: *module,
+                        name: bind.span,
+                        is_pub,
+                        type_only: type_only.is_some(),
+                    };
+                    if let Some(type_only) = type_only {
+                        let id = self.push(scope, kind, element_span);
+                        type_only.node = Some(id);
+                        self.type_decls.insert(bind.span.start, id);
+                    } else {
+                        self.declaration(scope, bind, kind, element_span);
+                    }
                 }
                 ImportElement::Items { module, items } => {
                     for item in items {
@@ -802,7 +838,17 @@ impl Index<'_> {
                 self.prim(scope, &mut node.rhs);
             }
             Stmt::Import(_) => {}
-            Stmt::TypeAlias(_) => {}
+            // The body is resolved once every alias of the block is declared, since it
+            // may name a later one
+            Stmt::TypeAlias(alias) => {
+                if let Some(id) = alias.node {
+                    self.binders(scope, Some(id), alias.binders.as_deref_mut());
+                    if let AliasBody::Type(ty) = &mut alias.body {
+                        self.ty(scope, ty);
+                        self.type_node(id, ty);
+                    }
+                }
+            }
             Stmt::Def(def) => {
                 let id = def.ident.res.and_then(|res| res.node).or(def.node);
                 for decorator in &mut def.decorators {
@@ -891,18 +937,8 @@ impl Index<'_> {
                 Some(decl) => decl.node = self.type_decls.get(&decl.span.start).copied(),
                 None => self.reference(scope, &mut super_ref.ident),
             }
-            for arg in &mut super_ref.args {
-                match &mut arg.kind {
-                    TypeArgKind::KeyRest { key_ty, ty, .. } => {
-                        self.ty(scope, key_ty);
-                        self.ty(scope, ty);
-                    }
-                    _ => {
-                        if let Some(ty) = arg.ty_mut() {
-                            self.ty(scope, ty);
-                        }
-                    }
-                }
+            for ty in super_ref.args.iter_mut().flat_map(TypeArg::tys_mut) {
+                self.ty(scope, ty);
             }
             if let Some(id) = id {
                 self.super_node(id, super_ref);

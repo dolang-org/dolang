@@ -291,6 +291,8 @@ def _rewrite_doc_refs(entity: dict, aliases: dict[str, str]) -> None:
     doc = entity.get("doc", "") or ""
     for source, target in aliases.items():
         doc = doc.replace(f"]({source})", f"]({target})")
+        # A member of a re-exported class moves with it
+        doc = doc.replace(f"]({source}.", f"]({target}.")
     entity["doc"] = doc
     for member in entity.get("members", []):
         _rewrite_doc_refs(member, aliases)
@@ -384,8 +386,12 @@ _BINDS_FUNC, _BINDS_UNION, _BINDS_COMPACT = range(3)
 
 
 def _escape_type_text(text: str) -> str:
-    """Escape text for HTML that Markdown will still read."""
-    return _MARKDOWN_SPECIAL.sub(r"\\\1", html.escape(text, quote=False))
+    """Escape text for HTML that Markdown will still read.
+
+    Quotes are escaped too: a string constant can reach a heading, whose text
+    autorefs copies into the `title` attribute of links to it.
+    """
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", html.escape(text))
 
 
 def _render_type(ty: dict, scope: _TypeScope, context: int, plain: bool = False) -> str:
@@ -439,6 +445,11 @@ def _render_type_args(args: list[dict], scope: _TypeScope, plain: bool = False) 
         elif arg.get("kind") == "key_rest":
             key = _render_type(arg["key_type"], scope, _BINDS_FUNC, plain)
             text += f"...{key}: "
+        elif arg.get("kind") == "key" and "key_type" in arg:
+            # A name must be parenthesized to not be taken as a symbol key
+            key_type = arg["key_type"]
+            key = _render_type(key_type, scope, _BINDS_COMPACT, plain)
+            text += f"({key}): " if key_type.get("kind") == "name" else f"{key}: "
         elif arg.get("kind") == "key":
             key = arg.get("key", "")
             text += f"{key if plain else _escape_type_text(key)}: "
@@ -477,12 +488,24 @@ def _render_annotations(entity: dict, scope: _TypeScope) -> None:
     ]
     for param in entity.get("params") or []:
         param["annotation"] = _type_html(param.get("type"), scope)
+        if param.get("type_spread") and param["annotation"]:
+            param["annotation"] = param["annotation"].replace("<code>", "<code>...", 1)
     if entity.get("kind") in ("function", "method"):
         entity["return_annotation"] = _type_html(entity.get("returns"), scope)
+        # A method may narrow its receiver, as `self @ Iter[U]`
+        entity["self_annotation"] = _type_html(entity.get("self_type"), scope)
     elif entity.get("kind") == "field":
         entity["annotation"] = _type_html(entity.get("type"), scope)
     elif entity.get("kind") == "alias":
         entity["annotation"] = _type_html(entity.get("type"), scope)
+    elif entity.get("kind") == "class":
+        supers = entity.get("supers") or []
+        entity["super_annotations"] = [
+            _type_html(sup, scope) for sup in supers if not sup.get("type_only")
+        ]
+        entity["protocol_annotations"] = [
+            _type_html(sup, scope) for sup in supers if sup.get("type_only")
+        ]
     for member in entity.get("members", []):
         _render_annotations(member, scope)
 

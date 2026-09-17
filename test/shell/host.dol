@@ -62,6 +62,12 @@ def stdio_vfs_runs_over_strand_stream()
     assert_eq $vfs_exe() nil
     let vfs = Vfs do run $vfs_bin --stdio
     try
+      let called = false
+      let block = do |..._args|
+        called = true
+      assert_throws $std.UnexpectedPosError do vfs.with $block 42
+      assert_throws $std.UnexpectedKeyError do vfs.with $block unused: 42
+      assert_eq $called false
       vfs.with do
         assert_eq $vfs_exe() $expected_exe
         assert_eq $_vfs.bin() $expected_exe

@@ -25,6 +25,7 @@
 
 import std:
   - @Fmt
+  - @Index
 
 # A compiled regular expression.
 pub class Regex
@@ -227,7 +228,7 @@ pub class Regex
 # `Captures` values are returned by [`Regex.match`](regex.Regex.match) and
 # yielded by [`Regex.find`](regex.Regex.find). Coercing one with `str` produces
 # the text of the overall match.
-pub class Captures
+pub class Captures: @Index[(Int | Str), Match]
   # The byte offset of the end of the overall match within the haystack.
   #[getter]
   pub def end self -> Int

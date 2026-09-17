@@ -67,6 +67,7 @@ import
     - @Path
   security.windows:
     - @SecDesc
+    - @SecDescSpec
 
 # Access rights for a [`ScManager`](winscm.ScManager) handle.
 #
@@ -134,11 +135,6 @@ pub class ManagerAccessMask
 
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
-  #
-  # ## Returns
-  #
-  # `ManagerAccessMask`.
-  #[class]
   pub def from_int
     self
     # Native Windows access mask.
@@ -153,10 +149,6 @@ pub class ManagerAccessMask
     ...
 
   # Tests whether every bit a symbol stands for is set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool).
   pub def contains
     self
     # Right to test. See [Accepted
@@ -234,11 +226,6 @@ pub class ServiceAccessMask
 
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
-  #
-  # ## Returns
-  #
-  # `ServiceAccessMask`.
-  #[class]
   pub def from_int
     self
     # Native Windows access mask.
@@ -253,10 +240,6 @@ pub class ServiceAccessMask
     ...
 
   # Tests whether every bit a symbol stands for is set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool).
   pub def contains
     self
     # Right to test. See [Accepted
@@ -304,11 +287,6 @@ pub class ServiceType
 
   # Builds a value from a native integer, preserving every bit including ones
   # this type does not name.
-  #
-  # ## Returns
-  #
-  # `ServiceType`.
-  #[class]
   pub def from_int
     self
     # Native service type mask.
@@ -323,10 +301,6 @@ pub class ServiceType
     ...
 
   # Tests whether every bit a symbol stands for is set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool).
   pub def contains
     self
     # Service type to test. See [Accepted
@@ -378,11 +352,6 @@ pub class NotifyMask
 
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
-  #
-  # ## Returns
-  #
-  # `NotifyMask`.
-  #[class]
   pub def from_int
     self
     # Native notification mask.
@@ -397,10 +366,6 @@ pub class NotifyMask
     ...
 
   # Tests whether every bit a symbol stands for is set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool).
   pub def contains
     self
     # Status change to test. See [Accepted
@@ -455,11 +420,6 @@ pub class ServiceControlsAccepted
 
   # Builds a value from a native integer, preserving every bit including ones
   # this type does not name.
-  #
-  # ## Returns
-  #
-  # `ServiceControlsAccepted`.
-  #[class]
   pub def from_int
     self
     # Native controls-accepted mask.
@@ -474,10 +434,6 @@ pub class ServiceControlsAccepted
     ...
 
   # Tests whether every bit a symbol stands for is set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool).
   pub def contains
     self
     # Control to test. See [Accepted
@@ -498,11 +454,6 @@ pub class ScManager
 
   # Opens an existing service.
   #
-  # ## Returns
-  #
-  # [`Service`](winscm.Service) when no `func` is given, otherwise the result of
-  # calling `func`.
-  #
   # ## Errors
   #
   # | Exception                                        | Condition                    |
@@ -515,25 +466,32 @@ pub class ScManager
   # manager.open_service Spooler access: :SERVICE_QUERY_STATUS: do |service|
   #   echo $service.query_status().current_state
   # ```
-  pub def open_service
+  @def open_service
     self
     # Service name.
     name @ Str
     # Rights the returned handle requests, as a mask, a symbol, or an iterable
     # of symbols. Defaults to `:SERVICE_QUERY_STATUS:`.
     :access @ (ServiceAccessMask | Sym) = nil
-    # Called with the [`Service`](winscm.Service), which is closed
-    # when it returns. Omit to receive the handle instead.
-    func @ Func = nil
-  do -> Value
+  do -> Service
+
+  # Opens an existing service and calls `func` with it. The service handle is
+  # closed when `func` returns.
+  @def open_service[R]
+    self
+    # Service name.
+    name @ Str
+    # Rights the returned handle requests, as a mask, a symbol, or an iterable
+    # of symbols. Defaults to `:SERVICE_QUERY_STATUS:`.
+    :access @ (ServiceAccessMask | Sym) = nil
+    # Called with the [`Service`](winscm.Service).
+    func @ (Service -> R)
+  do -> R
+
+  pub def open_service self name ...options
     ...
 
   # Creates a service.
-  #
-  # ## Returns
-  #
-  # [`Service`](winscm.Service) when no `func` is given, otherwise the result of
-  # calling `func`.
   #
   # ## Example
   #
@@ -543,7 +501,7 @@ pub class ScManager
   #   binary_path: [r"C:\Program Files\My Service\service.exe"]
   #   access: :SERVICE_ALL_ACCESS:
   # ```
-  pub def create_service
+  @def create_service
     self
     # Service name.
     name @ Str
@@ -579,19 +537,48 @@ pub class ScManager
     :service_start_name @ Str = nil
     # Password for `service_start_name`.
     :password @ Str = nil
-    # Called with the [`Service`](winscm.Service), which is closed
-    # when it returns. Omit to receive the handle instead.
-    func @ Func = nil
-  do -> Value
+  do -> Service
+
+  # Creates a service and calls `func` with it. The service handle is closed
+  # when `func` returns.
+  @def create_service[R]
+    self
+    # Service name.
+    name @ Str
+    # Display name. Omit to pass `NULL` to Windows.
+    :display_name @ Str = nil
+    # Service executable path or command line. Omit to pass `NULL` to Windows.
+    :binary_path @ (Str | Path) = nil
+    # Service
+    # type, as a value, a symbol, or an iterable of symbols. Defaults to
+    # `:WIN32_OWN_PROCESS:`.
+    :service_type @ (ServiceType | Sym) = nil
+    # [Start type](winscm.start-types). Defaults
+    # to `:DEMAND_START:`.
+    :start_type @ Sym = nil
+    # [Error control
+    # level](winscm.error-control-levels). Defaults to `:NORMAL:`.
+    :error_control @ Sym = nil
+    # Rights the returned handle requests, as a mask, a symbol, or an iterable
+    # of symbols. Defaults to `:SERVICE_QUERY_STATUS:`.
+    :access @ (ServiceAccessMask | Sym) = nil
+    # Load-order group.
+    :load_order_group @ Str = nil
+    # Service or load-order-group names this service depends on.
+    :dependencies @ Iterable = nil
+    # Account the service runs as.
+    :service_start_name @ Str = nil
+    # Password for `service_start_name`.
+    :password @ Str = nil
+    # Called with the [`Service`](winscm.Service).
+    func @ (Service -> R)
+  do -> R
+
+  pub def create_service self name ...options
     ...
 
   # Opens a live forward enumeration of matching services. Entries are fetched
   # from Windows as iteration advances.
-  #
-  # ## Returns
-  #
-  # An [`Iter`](std.Iter) yielding
-  # [`ServiceInfo`](winscm.ServiceInfo)s.
   #
   # ## Example
   #
@@ -635,7 +622,7 @@ pub class Service
   #
   # ## Returns
   #
-  # The resulting [`Status`](winscm.Status).
+  # The status after the control is applied.
   #
   # ## Example
   #
@@ -657,10 +644,6 @@ pub class Service
     ...
 
   # Fetches the current service status.
-  #
-  # ## Returns
-  #
-  # [`Status`](winscm.Status).
   pub def query_status self -> Status
     ...
 
@@ -668,7 +651,7 @@ pub class Service
   #
   # ## Returns
   #
-  # The [`Status`](winscm.Status) observed after the change.
+  # The status observed after the change.
   pub def wait_for_status_change
     self
     # Changes to
@@ -681,7 +664,7 @@ pub class Service
   #
   # ## Returns
   #
-  # An immutable [`ServiceConfig`](winscm.ServiceConfig) snapshot.
+  # An immutable snapshot.
   pub def config self -> ServiceConfig
     ...
 
@@ -722,10 +705,6 @@ pub class Service
     ...
 
   # Gets selected parts of the service's Windows security descriptor.
-  #
-  # ## Returns
-  #
-  # [`security.windows.SecDesc`](security.windows.SecDesc).
   pub def sec_desc
     self
     # Load the owner SID. Defaults to `true`.
@@ -742,17 +721,12 @@ pub class Service
     ...
 
   # Applies the components a Windows security descriptor's `mask` selects.
-  #
-  # The descriptor's [component
-  # options](security.windows.SecDesc.(init)--component-options) may be passed as
-  # keyword arguments instead of, or alongside, `desc`, exactly as
-  # [`security.windows.sec_desc`](security.windows.sec_desc)
-  # accepts them.
   pub def update_sec_desc
     self
-    # Descriptor, self-relative packet, or specification dict.
-    desc @ (SecDesc | Bin | Dict) = nil
-    # Component options, as above.
+    # Descriptor to apply.
+    desc @ SecDescSpec = nil
+    # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
+    # of or alongside `desc`.
     ...options
   do
     ...
@@ -892,11 +866,6 @@ pub class ServiceInfo
 
 # Opens the local Service Control Manager.
 #
-# ## Returns
-#
-# [`ScManager`](winscm.ScManager) when no `func` is given, otherwise the result
-# of calling `func`.
-#
 # ## Example
 #
 # ```
@@ -904,12 +873,21 @@ pub class ServiceInfo
 #   for info = manager.enumerate_services()
 #     echo $info.name
 # ```
-pub def open
+@def open
   # Rights the returned handle requests, as a mask, a symbol, or an iterable of
   # symbols. Defaults to `:SC_MANAGER_CONNECT:`.
   :access @ (ManagerAccessMask | Sym) = nil
-  # Called with the [`ScManager`](winscm.ScManager), which is closed
-  # when it returns. Omit to receive the handle instead.
-  func @ Func = nil
-do -> Value
+do -> ScManager
+
+# Opens the local Service Control Manager and calls `func` with it. The
+# manager handle is closed when `func` returns.
+@def open[R]
+  # Rights the returned handle requests, as a mask, a symbol, or an iterable of
+  # symbols. Defaults to `:SC_MANAGER_CONNECT:`.
+  :access @ (ManagerAccessMask | Sym) = nil
+  # Called with the [`ScManager`](winscm.ScManager).
+  func @ (ScManager -> R)
+do -> R
+
+pub def open ...options
   ...

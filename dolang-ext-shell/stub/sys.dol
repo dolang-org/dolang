@@ -1,52 +1,5 @@
 # The `sys` module exposes basic information and types associated with systems
 # and platforms supported by Do.
-#
-# ## Types
-#
-# | Type                                                                  | Description                                          |
-# | --------------------------------------------------------------------- | ---------------------------------------------------- |
-# | [`AddrInUseError`](sys.AddrInUseError)                            | Network address already in use                       |
-# | [`AddrNotAvailableError`](sys.AddrNotAvailableError)              | Requested network address is unavailable             |
-# | [`AlreadyExistsError`](sys.AlreadyExistsError)                     | Creating or renaming conflicts with an existing path |
-# | [`ArgumentListTooLongError`](sys.ArgumentListTooLongError)       | System argument list is too long                     |
-# | [`BrokenPipeError`](sys.BrokenPipeError)                           | Pipe closed by its reader                            |
-# | [`ConnectionAbortedError`](sys.ConnectionAbortedError)             | Connection was aborted                               |
-# | [`ConnectionRefusedError`](sys.ConnectionRefusedError)             | Connection attempt refused                           |
-# | [`ConnectionResetError`](sys.ConnectionResetError)                 | Connection was reset                                 |
-# | [`CpuInfo`](sys.CpuInfo)                                             | CPU target information                               |
-# | [`CrossesDevicesError`](sys.CrossesDevicesError)                   | Operation crosses device boundaries                  |
-# | [`DeadlockError`](sys.DeadlockError)                                | Operation would cause a deadlock                     |
-# | [`DirectoryNotEmptyError`](sys.DirectoryNotEmptyError)            | Directory is not empty                               |
-# | [`Error`](sys.Error)                                                 | Error raised for system and I/O failures             |
-# | [`ErrorCode`](sys.ErrorCode)                                        | Native system error code                             |
-# | [`ExecutableFileBusyError`](sys.ExecutableFileBusyError)          | Executable file is busy                              |
-# | [`FileTooLargeError`](sys.FileTooLargeError)                      | File exceeds size limit                              |
-# | [`HostUnreachableError`](sys.HostUnreachableError)                 | Network host is unreachable                          |
-# | [`InterruptedError`](sys.InterruptedError)                          | System operation was interrupted                     |
-# | [`InvalidDataError`](sys.InvalidDataError)                         | Malformed input data                                 |
-# | [`InvalidFilenameError`](sys.InvalidFilenameError)                 | Filename is invalid                                  |
-# | [`InvalidInputError`](sys.InvalidInputError)                       | Invalid input to a system operation                  |
-# | [`IsADirectoryError`](sys.IsADirectoryError)                      | File operation targeted a directory                  |
-# | [`NetworkDownError`](sys.NetworkDownError)                         | Network is down                                      |
-# | [`NetworkUnreachableError`](sys.NetworkUnreachableError)           | Network is unreachable                               |
-# | [`NotADirectoryError`](sys.NotADirectoryError)                    | Path component is not a directory                    |
-# | [`NotConnectedError`](sys.NotConnectedError)                       | Operation requires a connected endpoint              |
-# | [`NotFoundError`](sys.NotFoundError)                               | Missing file, path, or program                       |
-# | [`NotSeekableError`](sys.NotSeekableError)                         | Stream does not support seeking                      |
-# | [`OsInfo`](sys.OsInfo)                                               | Operating system target information                  |
-# | [`OutOfMemoryError`](sys.OutOfMemoryError)                        | Could not allocate memory                            |
-# | [`PermissionDeniedError`](sys.PermissionDeniedError)               | Operation not permitted by access rules              |
-# | [`QuotaExceededError`](sys.QuotaExceededError)                     | Storage quota exceeded                               |
-# | [`ReadOnlyFilesystemError`](sys.ReadOnlyFilesystemError)          | Modifying a read-only filesystem                     |
-# | [`ResourceBusyError`](sys.ResourceBusyError)                       | System resource is busy                              |
-# | [`StaleNetworkFileHandleError`](sys.StaleNetworkFileHandleError) | Stale network filesystem handle                      |
-# | [`StorageFullError`](sys.StorageFullError)                         | Storage device is full                               |
-# | [`TimedOutError`](sys.TimedOutError)                               | System operation timed out                           |
-# | [`TooManyLinksError`](sys.TooManyLinksError)                      | Filesystem object has too many links                 |
-# | [`UnexpectedEofError`](sys.UnexpectedEofError)                     | Input ended unexpectedly                             |
-# | [`UnsupportedError`](sys.UnsupportedError)                          | Unsupported system operation                         |
-# | [`WouldBlockError`](sys.WouldBlockError)                           | Operation would block                                |
-# | [`WriteZeroError`](sys.WriteZeroError)                             | Write wrote zero bytes                               |
 
 # `Error` is raised for system and I/O failures.
 #
@@ -86,7 +39,7 @@ pub class Error: std.RuntimeError
   # [`sys.windows.WinError`](sys.windows.WinError), according to the system
   # where the error originated.
   #[getter]
-  pub def code self
+  pub def code self -> (ErrorCode | nil)
     ...
 
 # Native system error code.
@@ -99,41 +52,40 @@ pub class Error: std.RuntimeError
 pub class ErrorCode
   # The raw integer value.
   #[getter]
-  pub def value self
+  pub def value self -> Int
     ...
 
-# CPU information for the active VFS target returned by [`cpu_info`](#cpu_info).
+# CPU information for the active VFS target, returned by
+# [`cpu_info`](sys.cpu_info).
 pub class CpuInfo
-  # Target architecture. Supported values are `:X86_64:` and `:AARCH64:`.
+  # Target architecture.
   #[getter]
-  pub def arch self
+  pub def arch self -> (:X86_64: | :AARCH64:)
     ...
 
   # Logical CPU count captured when the VFS context is established.
   #[getter]
-  pub def logical_count self
+  pub def logical_count self -> Int
     ...
 
-# Operating system information for the active VFS target returned by
-# [`os_info`](#os_info).
+# Operating system information for the active VFS target, returned by
+# [`os_info`](sys.os_info).
 pub class OsInfo
-  # Operating system family derived from the target OS. Supported values are
-  # `:UNIX:` and `:WINDOWS:`.
+  # Operating system family derived from the target OS.
   #[getter]
-  pub def family self
+  pub def family self -> (:UNIX: | :WINDOWS:)
     ...
 
   # Whether the process is running under Wine.
   #
   # This field is only available for Windows targets.
   #[getter]
-  pub def is_wine self
+  pub def is_wine self -> Bool
     ...
 
-  # Specific operating system. Supported values are `:LINUX:`, `:MACOS:`,
-  # `:FREEBSD:`, and `:WINDOWS:`.
+  # Specific operating system.
   #[getter]
-  pub def os self
+  pub def os self -> (:LINUX: | :MACOS: | :FREEBSD: | :WINDOWS:)
     ...
 
 # Returns CPU information for the current VFS target.
@@ -142,9 +94,9 @@ pub class OsInfo
 #
 # ```
 # let info = sys.cpu_info()
-# echo "running on $info.arch with $info.logical_count logical CPUs"
+# echo "running on $(info.arch) with $(info.logical_count) logical CPUs"
 # ```
-pub def cpu_info()
+pub def cpu_info() -> CpuInfo
   ...
 
 # Returns operating system information for the current VFS target.
@@ -155,7 +107,7 @@ pub def cpu_info()
 # if (sys.os_info().family == :WINDOWS:)
 #   echo "running on Windows"
 # ```
-pub def os_info()
+pub def os_info() -> OsInfo
   ...
 
 # A network address is already in use.

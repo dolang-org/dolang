@@ -170,19 +170,11 @@ pub class Info
 pub class PipeReceiver: std.Iter
   # Selects arbitrary-sized [`Bin`](std.Bin) chunks when the receiver
   # reads bytes from an external program.
-  #
-  # ## Returns
-  #
-  # [`PipeReceiver`](proc.PipeReceiver)
   pub def chunks self -> PipeReceiver
     ...
 
   # Selects line framing when the receiver reads bytes from an external
   # program. This is the default.
-  #
-  # ## Returns
-  #
-  # [`PipeReceiver`](proc.PipeReceiver)
   pub def lines self -> PipeReceiver
     ...
 
@@ -228,10 +220,6 @@ pub class Proc
     ...
 
   # Takes a fresh snapshot of process state.
-  #
-  # ## Returns
-  #
-  # [`Info`](proc.Info)
   pub def info self -> Info
     ...
 
@@ -270,10 +258,6 @@ pub class Proc
     ...
 
   # Waits for the process to exit.
-  #
-  # ## Returns
-  #
-  # [`Status`](proc.Status)
   pub def wait self -> Status
     ...
 
@@ -302,7 +286,7 @@ pub class Program
   #
   # ## Returns
   #
-  # [`fs.Path`](fs.Path), or `nil` when the program is not found.
+  # `nil` when the program is not found.
   #
   # ## Example
   #
@@ -381,7 +365,7 @@ pub class Status
 #
 # ## Returns
 #
-# An `Iter` of [`Info`](proc.Info). Destructuring is not supported.
+# An iterator of process information. It cannot be destructured.
 #
 # ## Example
 #
@@ -395,7 +379,7 @@ pub class Status
 #     if (info.unix_id.uid == uid)
 #       - $info
 # ```
-pub def enumerate() -> Info
+pub def enumerate() -> Iter[Info]
   ...
 
 # Describes the process that currently owns `pid`, or the target process itself
@@ -433,10 +417,6 @@ do -> Info
 
 # Opens a handle to a process.
 #
-# ## Returns
-#
-# [`Proc`](proc.Proc), or the result of `block` if one was given.
-#
 # ## Errors
 #
 # | Exception                                      | Condition                                |
@@ -447,24 +427,34 @@ do -> Info
 # ## Example
 #
 # ```
-# # Scoped: the handle is closed when the block finishes
-# let name = open $pid do |p|
-#   p.info().name
-#
-# # Manual: closing is the caller's business
 # let p = open $pid
 # try
 #   echo $p.info().name
 # finally
 #   p.close()
 # ```
-pub def open
+@def open
   # Information record, or a raw
   # PID.
   target @ (Info | Int)
-  # Block to run with the handle, which is closed when it returns.
-  block @ Func = nil
-do -> Value
+do -> Proc
+
+# Opens a handle to a process and runs a block with it. The handle is closed
+# when the block returns.
+#
+# ```
+# let name = open $pid do |p|
+#   p.info().name
+# ```
+@def open[R]
+  # Information record, or a raw
+  # PID.
+  target @ (Info | Int)
+  # Block to run with the handle.
+  block @ (Proc -> R)
+do -> R
+
+pub def open target ...block
   ...
 
 # Captures the output of a block as a string.
@@ -483,13 +473,11 @@ do -> Value
 # ```
 pub def sub
   # Block whose output to capture.
-  block @ Func
+  block @ (() -> Value)
   # Remove one trailing LF or CRLF. True by
   # default. This is a whole-capture strip, not a per-value one: it removes at
   # most one line ending, from the end of the finished string.
   :chomp @ Bool = true
-  # Additional arguments passed to the block.
-  ...args
 do -> Str
   ...
 
@@ -499,28 +487,22 @@ do -> Str
 # Windows launches always use `CTRL_BREAK_EVENT`. With `force: false`, a
 # process that outlives the grace period is orphaned.
 #
-# ## Returns
-#
-# The block's result.
-#
 # ## Example
 #
 # ```
 # with_policy signal: :INT: grace: 2.5 do
 #   run worker
 # ```
-pub def with_policy
+pub def with_policy[R]
   # Block to run.
-  block @ Func
+  block @ (() -> R)
   # Unix signal name. `:TERM:` by default.
   :signal @ Sym = nil
   # Time before forced termination. Five seconds by default.
   :grace @ (Duration | Int | Float) = nil
   # Force termination after the grace period.
   :force @ Bool = nil
-  # Additional arguments passed to the block.
-  ...args
-do
+do -> R
   ...
 
 # Runs an external program, or creates a [`Program`](proc.Program) proxy.

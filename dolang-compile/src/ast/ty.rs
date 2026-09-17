@@ -94,8 +94,8 @@ pub(crate) enum TypeArgKind {
 pub(crate) enum TypeKey {
     /// A bareword key, which is a symbol
     Sym(Span),
-    /// A quoted key, which is a string
-    Str(Box<Expr>),
+    /// A key given by a type, such as a quoted string or a parenthesized name
+    Type(Box<TypeExpr>),
 }
 
 /// A `@` annotation on a bound name
@@ -181,22 +181,26 @@ impl TypeExpr {
 
 impl TypeArg {
     fn each_name<F: FnMut(&mut Ident, &mut Option<TypeDecl>, &[Span])>(&mut self, f: &mut F) {
-        if let TypeArgKind::KeyRest { key_ty, .. } = &mut self.kind {
-            key_ty.each_name(f);
-        }
-        if let Some(ty) = self.ty_mut() {
+        for ty in self.tys_mut() {
             ty.each_name(f);
         }
     }
 
-    pub(crate) fn ty_mut(&mut self) -> Option<&mut TypeExpr> {
-        match &mut self.kind {
-            TypeArgKind::Pos(ty)
-            | TypeArgKind::Key { ty, .. }
-            | TypeArgKind::Rest { ty, .. }
-            | TypeArgKind::KeyRest { ty, .. } => Some(ty),
-            TypeArgKind::OpenRest { .. } => None,
-        }
+    /// The item's key type, if it has one, then its type.
+    pub(crate) fn tys_mut(&mut self) -> impl Iterator<Item = &mut TypeExpr> {
+        let (key_ty, ty) = match &mut self.kind {
+            TypeArgKind::Pos(ty) | TypeArgKind::Rest { ty, .. } => (None, Some(ty)),
+            TypeArgKind::Key { key, ty, .. } => (
+                match key {
+                    TypeKey::Sym(_) => None,
+                    TypeKey::Type(key_ty) => Some(&mut **key_ty),
+                },
+                Some(ty),
+            ),
+            TypeArgKind::KeyRest { key_ty, ty, .. } => (Some(key_ty), Some(ty)),
+            TypeArgKind::OpenRest { .. } => (None, None),
+        };
+        key_ty.into_iter().chain(ty)
     }
 }
 
@@ -295,7 +299,7 @@ impl Node for TypeArg {
             } => {
                 match key {
                     TypeKey::Sym(span) => visit.token(Token::TypeKey, *span, None)?,
-                    TypeKey::Str(expr) => visit.node(&**expr)?,
+                    TypeKey::Type(key_ty) => visit.node(&**key_ty)?,
                 }
                 visit.token(Token::Delim, *colon_span, None)?;
                 visit.node(ty)?
@@ -332,8 +336,7 @@ impl Node for TypeArg {
 
 impl Node for Annot {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
-        visit.token(Token::Annotation, self.at_span, None)?;
-        visit.node(&self.ty)
+        self.with_ellipsis(None).accept(visit)
     }
 
     fn kind(&self) -> NodeKind {
@@ -387,5 +390,24 @@ impl Node for RetType {
 
     fn kind(&self) -> NodeKind {
         NodeKind::RetType
+    }
+}
+
+impl Annot {
+    pub(crate) fn with_ellipsis(&self, ellipsis: Option<Span>) -> impl Node + '_ {
+        struct RestAnnot<'a>(&'a Annot, Option<Span>);
+        impl Node for RestAnnot<'_> {
+            fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+                visit.token(Token::Annotation, self.0.at_span, None)?;
+                if let Some(span) = self.1 {
+                    visit.token(Token::Sigil, span, None)?;
+                }
+                visit.node(&self.0.ty)
+            }
+            fn kind(&self) -> NodeKind {
+                NodeKind::Annot
+            }
+        }
+        RestAnnot(self, ellipsis)
     }
 }

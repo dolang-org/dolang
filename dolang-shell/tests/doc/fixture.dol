@@ -9,6 +9,13 @@ import std:
 
 import std
 
+# Re-exported for types only.
+pub import std:
+  - @Iterable: Seq
+
+import std:
+  - @Iter: Cursor
+
 # A greeting.
 #
 # Spans several lines.
@@ -55,6 +62,10 @@ pub class Point[T @ (Int | Str) = Int, :K, ...R]: Record
   pub def shift[U] self by :clamp = false
     self.x = (self.x + by)
 
+  # Label it, only for a string point.
+  pub def label[S @ Str] self @ Point[S] -> S
+    str $self.x
+
   # Not exported.
   def helper self
     nil
@@ -85,7 +96,7 @@ do
   echo $from $pull ...args
 
 # Something with an area.
-pub class @Shaped
+pub @class Shaped
   # The area.
   pub def area self -> Int
 
@@ -95,15 +106,28 @@ pub class @Shaped
 # A point with an area.
 pub class Plot: Point @Shaped
   # The area of a point.
-  def @area self -> Int
+  @def area self -> Int
   pub def area _self
     0
 
 # Grow a number.
-def @grow x @ Int -> Int
+@def grow x @ Int -> Int
 
 # Grow a string.
-def @grow x @ Str -> Str
+@def grow x @ Str -> Str
 
 pub def grow x
   (x + x)
+
+# Collects callable arguments with corresponding result types.
+pub def mapped[...Rs] ...thunks @ ...(() -> Rs) -> Tuple[...Rs]
+  thunks
+
+# A type with no definition in source.
+pub @let Opaque[T] = ...
+
+# A nested list of labels.
+pub @let Outline = Array[(Label | Outline)]
+
+# A leaf of an outline.
+pub @let Label = Str

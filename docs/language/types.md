@@ -33,6 +33,17 @@ def configure ...options@{name: Str, ?port: Int}
   apply ...options
 ```
 
+A leading `...` after `@` explicitly expands a type pattern over a pack:
+
+```
+def fork[...Rs] ...thunks @ ...(() -> Rs) -> Tuple[...Rs]
+  ...
+```
+
+The expansion marker is accepted only on rest bindings, including rest items
+in destructuring and `bind` patterns. Its operand is a compact type; enclose
+function types and unions in parentheses.
+
 A field declaration that names several fields share an annotation, just as
 they share a default value:
 
@@ -74,9 +85,10 @@ let halve = (do |x @ Int| -> Int x // 2)
 stand for types within the declaration. A binder is a name, `:name` for a
 keyword type argument, or `...name` for any number of further type arguments.
 `@` gives a bound and `=` gives a default; both are type expressions. A
-variadic binder must come last and cannot have a default. An unbounded binder
-is provisionally a type binder; a schema bound such as `S @ {...}` explicitly
-makes it a schema binder.
+variadic binder must come last and cannot have a default. A variadic binder
+stands for the remaining arguments, so it is always a schema binder. Any other
+binder is a type binder unless a schema bound such as `S @ {...}` makes it a
+schema binder.
 
 ```
 def first[T] items @ Array[T] -> T
@@ -97,13 +109,15 @@ class Registry[V]: Table[Sym, V]
 
 ## Type Aliases
 
-`let @` declares a name for a type or schema. An alias is visible in types
-after its declaration and has no runtime binding. It may declare binders and
-may be exported.
+`@let` declares a name for a type or schema. An alias has no runtime binding,
+and is visible in types throughout its block, so it may refer to itself or to an
+alias declared later. It may declare binders and may be exported.
 
 ```
-pub let @Pair[T] = Tuple[T, T]
-let @Options = {name: Str, ?port: Int}
+pub @let Pair[T] = Tuple[T, T]
+@let Options = {name: Str, ?port: Int}
+@let Json = (Scalar | Array[Json] | Dict[Str, Json])
+@let Scalar = (Str | Int | Float | Bool | nil)
 ```
 
 ## Type-Only Imports
@@ -143,16 +157,30 @@ let area @ geometry.plane.Area = nil
 let volume @ geometry.solid.Volume = nil
 ```
 
+`@import` makes every module and item in the statement type-only, including
+renamed imports. Individual `@` markers remain valid but are redundant:
+
+```
+@import geometry: g
+@import
+  geometry.plane
+  geometry.solid:
+    - Shape
+    Vector: Offset
+
+let point @ g.Point = nil
+```
+
 ## Overloads
 
-`def @` declares a signature for the function of the same name without giving it
+`@def` declares a signature for the function of the same name without giving it
 a body. The signatures declared this way are the function's overloads, each a
 way it can be called. They may appear anywhere in the block that declares the
 function:
 
 ```
-def @double x @ Int -> Int
-def @double x @ Str -> Str
+@def double x @ Int -> Int
+@def double x @ Str -> Str
 pub def double x
   (x + x)
 ```
@@ -163,12 +191,12 @@ it is never written `pub`. A method, including a special method such as
 
 ## Protocols
 
-`class @` declares a protocol, a type made up of the members a value has. A
+`@class` declares a protocol, a type made up of the members a value has. A
 protocol has no runtime binding. Its methods have no bodies, its fields have no
 defaults, and methods sharing a name are overloads:
 
 ```
-pub class @Shape
+pub @class Shape
   pub field name @ Str
   pub def area self -> Int
   pub def area self scale @ Int -> Int
@@ -189,7 +217,7 @@ A protocol's own supertypes are type-only already, so they are written without
 `@`:
 
 ```
-pub class @Solid: Shape
+pub @class Solid: Shape
   pub def volume self -> Int
 ```
 
@@ -273,7 +301,8 @@ There is no shorthand for a type that also accepts `nil`; write `(T | nil)`.
 A schema is not itself a type. It lists the positional and keyed entries of a
 `Dict`, argument pack, or similar construct and the type of each value. Put it
 inside `Dict[...]` to describe a dict. Bare keys are symbols and quoted keys are
-strings, as in dict literals. `?` marks an optional key. `...T` allows further
+strings, as in dict literals. Any other type may give a key, parenthesized when
+it is a name, as in `{(K): V}`. `?` marks an optional key. `...T` allows further
 items with values of type `T`, or splices `T` when it is a schema. `...K: V`
 allows further keyed entries whose keys have type `K` and values have type `V`.
 Schemas are closed unless they contain a rest item. `{...}` is the universal
@@ -285,8 +314,16 @@ let headers @ Dict[{...Str: Str}] = {}
 let anything @ Dict[{...}] = {}
 ```
 
-`Dict[K, V]` is shorthand for the keyed-rest form, roughly
-`Dict[{...K: V}]`.
+A type whose only parameter is a schema, such as `Dict`, also accepts types in
+its place. `Dict[T]` stands for a schema of any number of positional items of
+type `T`, and `Dict[K, V]` stands for `Dict[{...K: V}]`. An argument that is
+already a schema, including a binder bounded by one, is passed as is:
+
+```
+let headers @ Dict[Str, Str] = {}
+class Table[S @ {...}]
+  pub field rows @ Dict[S] = {}
+```
 
 ### Functions
 

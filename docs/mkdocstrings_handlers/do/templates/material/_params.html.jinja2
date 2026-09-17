@@ -6,7 +6,9 @@
   parameter appears once it renders: the signature is abbreviated in that case,
   so the table is the only place the full list is written.
 
-  The Type column is filled from the parameter's annotation.
+  The Type column is filled from the parameter's annotation. A method whose
+  `self` is annotated gets a leading `self` row, since that annotation
+  constrains which receivers the method applies to.
 #}
 {#
   A function/method's `<code>signature -> ReturnType</code>` heading, with
@@ -32,11 +34,18 @@
 {% endmacro %}
 
 {% macro parameters(entity, heading_level, base_id) %}
-{% if entity.params | selectattr("documented") | list %}
+{% if entity.self_annotation or entity.params | selectattr("documented") | list %}
 {{ "Parameters" | heading(heading_level, skip_inventory=true, id=base_id ~ "--parameters") }}
 <table>
 <thead><tr><th>Name</th><th>Type</th><th>Description</th></tr></thead>
 <tbody>
+{% if entity.self_annotation %}
+<tr>
+  <td><code>self</code></td>
+  <td>{{ entity.self_annotation | convert_markdown(heading_level, base_id ~ "--self", strip_paragraph=true) }}</td>
+  <td>Receiver.</td>
+</tr>
+{% endif %}
 {% for p in entity.params %}
 <tr>
   <td><code>{{ p.name }}{{ "?" if p.optional }}</code></td>

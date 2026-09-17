@@ -6,25 +6,26 @@
 {#
   A type is rendered on a page of its own, which carries its own title, so this
   heading only exists to register an anchor: without one, a link to the type
-  from its module's Types table has nothing to resolve against.
+  from its module's Types table has nothing to resolve against. Like a module's,
+  it has no label, which keeps it out of the table of contents, and the page's
+  sections sit at its level rather than beneath it.
 #}
-{{ ("<code>" ~ entity.declaration_name ~ "</code>") | heading(heading_level, role="class", id=base_id, toc_label=entity.declaration_name, hidden=true) }}
+{{ "" | heading(heading_level, role="class", id=base_id, hidden=true) }}
+{% set heading_level = heading_level - 1 %}
 
 {% if entity.doc %}
-{{ entity.doc | convert_markdown(heading_level, "") }}
+{{ entity.doc | convert_markdown(heading_level - 1, "") }}
 {% endif %}
 
-{% if entity.supers %}
-<p><strong>Inherits from:</strong>
-{% for sup in entity.supers %}
-  {% if sup is mapping %}
-    <code>{{ sup.module }}.{{ sup.item if sup.item is defined else "" }}</code>
-  {% else %}
-    <code>{{ sup }}</code>
-  {% endif %}
-  {% if not loop.last %}, {% endif %}
-{% endfor %}
-</p>
+{# A protocol's supertypes are all type-only, but it has no runtime ones to
+   tell them apart from. #}
+{% set supers = entity.super_annotations + (entity.protocol_annotations if entity.protocol else []) %}
+{% set protocols = [] if entity.protocol else entity.protocol_annotations %}
+{% if supers %}
+<p><strong>Inherits from:</strong> {{ supers | join(", ") | convert_markdown(heading_level, base_id ~ "--supers", strip_paragraph=true) }}</p>
+{% endif %}
+{% if protocols %}
+<p><strong>Implements:</strong> {{ protocols | join(", ") | convert_markdown(heading_level, base_id ~ "--protocols", strip_paragraph=true) }}</p>
 {% endif %}
 
 {% set pub_members = entity.members | selectattr("pub") | list %}
@@ -35,8 +36,12 @@
 
 {% set class_fields = all_members | selectattr("kind", "equalto", "field") | rejectattr("scope", "equalto", "instance") | list %}
 {% set fields = all_members | selectattr("kind", "equalto", "field") | selectattr("scope", "equalto", "instance") | list %}
-{% set class_methods = all_members | selectattr("kind", "equalto", "method") | rejectattr("scope", "equalto", "instance") | list %}
-{% set constructors = all_members | selectattr("kind", "equalto", "method") | selectattr("name", "equalto", "(init)") | list %}
+{# Calling the class runs a class-scope `(call)` when there is one, which,
+   unlike `(init)`, can return something other than the new instance. Both are
+   listed as constructors. #}
+{% set class_calls = all_members | selectattr("kind", "equalto", "method") | selectattr("name", "equalto", "(call)") | rejectattr("scope", "equalto", "instance") | list %}
+{% set class_methods = all_members | selectattr("kind", "equalto", "method") | rejectattr("scope", "equalto", "instance") | rejectattr("name", "equalto", "(call)") | list %}
+{% set constructors = (all_members | selectattr("kind", "equalto", "method") | selectattr("name", "equalto", "(init)") | list) + class_calls %}
 {% set methods = all_members | selectattr("kind", "equalto", "method") | selectattr("scope", "equalto", "instance") | rejectattr("name", "equalto", "(init)") | list %}
 
 {% macro render_fields(items, title, anchor) %}
@@ -84,9 +89,14 @@
 {{ "Constructor" | heading(heading_level + 1, skip_inventory=true, id="constructor") }}
 {% for method in constructors %}
 {% set method_id = method._anchor %}
-{# A constructor is called through the class's name alone: its binders
-   describe the type, not arguments a caller writes. #}
+{# A constructor is called through the class's name alone. The binders of
+   `(init)` describe the type, not arguments a caller writes; those of a
+   class-scope `(call)` are its own, and the parameter table shows them. #}
+{% if method.name == "(call)" %}
+{% set sig = entity.name ~ method.signature[method.declaration_name | length:] %}
+{% else %}
 {% set sig = method.signature | replace("(init)", entity.name, 1) %}
+{% endif %}
 {{ params.signature_heading(sig, method.return_type, heading_level + 2, method_id, "method", sig) }}
 {% if method.doc_intro %}
 {{ method.doc_intro | convert_markdown(heading_level + 1, method_id) }}

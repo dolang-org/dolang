@@ -1,16 +1,17 @@
 # JSON serialization and deserialization.
 
+# A value decoded from JSON.
+pub @let Data = (nil | Bool | Int | Float | Str | Array[Data] | Dict[Str, Data])
+
+# A value that encodes as JSON. An object key may also be a number or boolean,
+# which is written as its string form.
+pub @let Encodable = (
+  | nil | Bool | Int | Float | Str | Sym
+  | Array[Encodable] | Tuple[...Encodable] | Record[...{...Encodable, ...Sym: Encodable}]
+  | Dict[(Str | Sym | Int | Float | Bool), Encodable]
+)
+
 # Deserializes a JSON string to a Do value.
-#
-# ## Returns
-#
-# The parsed Do value.
-#
-# ## Errors
-#
-# `ValueError` if the JSON is invalid.
-#
-# JSON values map to Do values as follows:
 #
 # | JSON Type | Do Type |
 # | --------- | ------- |
@@ -19,8 +20,14 @@
 # | integer   | `Int`   |
 # | float     | `Float` |
 # | string    | `Str`   |
-# | array     | `array` |
-# | object    | `dict`  |
+# | array     | `Array` |
+# | object    | `Dict`  |
+#
+# An integer too large for `Int` decodes as a `Float`.
+#
+# ## Errors
+#
+# `ValueError` if the JSON is invalid.
 #
 # ## Example
 #
@@ -40,25 +47,23 @@
 pub def decode
   # JSON string to parse.
   json @ Str
-do -> Value
+do -> Data
   ...
 
 # Serializes a Do value to a JSON string.
 #
-# ## Returns
-#
-# [`Str`](std.Str) containing JSON.
-#
-# | Do Type | JSON Type            |
-# | ------- | -------------------- |
-# | `nil`   | `null`               |
-# | `Bool`  | boolean              |
-# | `Int`   | number               |
-# | `Float` | number               |
-# | `Str`   | string               |
-# | `Sym`   | string (symbol name) |
-# | `array` | array                |
-# | `dict`  | object               |
+# | Do Type  | JSON Type            |
+# | -------- | -------------------- |
+# | `nil`    | `null`               |
+# | `Bool`   | boolean              |
+# | `Int`    | number               |
+# | `Float`  | number               |
+# | `Str`    | string               |
+# | `Sym`    | string (symbol name) |
+# | `Array`  | array                |
+# | `Tuple`  | array                |
+# | `Dict`   | object               |
+# | `Record` | object               |
 #
 # Object keys are written in the order the dict holds them.
 #
@@ -72,7 +77,7 @@ do -> Value
 # ```
 pub def encode
   # The value to serialize.
-  value
+  value @ Encodable
   # Spaces per level; one line when omitted.
   :indent @ Int = nil
 do -> Str

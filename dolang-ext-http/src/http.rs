@@ -1109,7 +1109,8 @@ impl<'v> Object<'v> for Response {
             Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
             None => return Err(Error::missing_positional(strand, 0)),
         };
-        let res = thunk.call(strand, args, out).await;
+        let ([], []) = unpack!(strand, args, 0, 0)?;
+        let res = call!(strand, thunk, out).await;
         drop(this.borrow_mut(strand)?.inner.take());
         res
     }

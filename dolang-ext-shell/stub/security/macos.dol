@@ -1,11 +1,13 @@
 # macOS extended access-control-list types and principal identity resolution
 # between Unix uid/gid values and macOS `guid_t` UUIDs.
 
+import std:
+  - @Seq
 import uuid:
   - @Uuid
 
 # macOS extended ACE permission bits.
-pub class Mask
+pub class Mask: Iterable[Sym]
   # Constructs a mask from symbols or one iterable of symbols.
   #
   # ## Supported symbols
@@ -40,10 +42,6 @@ pub class Mask
     ...
 
   # Tests whether all bits represented by a symbol are set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool)
   pub def contains
     self
     # Bits to test for.
@@ -54,26 +52,26 @@ pub class Mask
   # Union of two masks.
   pub def (bor)
     self
-    other
-  do
+    other @ Mask
+  do -> Mask
     ...
 
   # Intersection of two masks.
   pub def (band)
     self
-    other
-  do
+    other @ Mask
+  do -> Mask
     ...
 
   # Symmetric difference of two masks.
   pub def (bxor)
     self
-    other
-  do
+    other @ Mask
+  do -> Mask
     ...
 
   # Complement within the supported bit set.
-  pub def (bnot) self
+  pub def (bnot) self -> Mask
     ...
 
   # Compares two masks.
@@ -84,11 +82,11 @@ pub class Mask
     ...
 
   # Yields the symbols represented by the mask.
-  pub def (iter) self
+  pub def (iter) self -> Iter[Sym]
     ...
 
 # macOS extended ACE inheritance flags.
-pub class Flags
+pub class Flags: Iterable[Sym]
   # Constructs a flag set from symbols or one iterable of symbols.
   #
   # ## Supported symbols
@@ -114,10 +112,6 @@ pub class Flags
     ...
 
   # Tests whether all bits represented by a symbol are set.
-  #
-  # ## Returns
-  #
-  # [`Bool`](std.Bool)
   pub def contains
     self
     # Bits to test for.
@@ -128,26 +122,26 @@ pub class Flags
   # Union of two flag sets.
   pub def (bor)
     self
-    other
-  do
+    other @ Flags
+  do -> Flags
     ...
 
   # Intersection of two flag sets.
   pub def (band)
     self
-    other
-  do
+    other @ Flags
+  do -> Flags
     ...
 
   # Symmetric difference of two flag sets.
   pub def (bxor)
     self
-    other
-  do
+    other @ Flags
+  do -> Flags
     ...
 
   # Complement within the supported bit set.
-  pub def (bnot) self
+  pub def (bnot) self -> Flags
     ...
 
   # Compares two flag sets.
@@ -158,7 +152,7 @@ pub class Flags
     ...
 
   # Yields the symbols represented by the flag set.
-  pub def (iter) self
+  pub def (iter) self -> Iter[Sym]
     ...
 
 # Immutable macOS extended access-control entry.
@@ -190,7 +184,7 @@ pub class Ace
     :mask @ Mask
     # Inheritance flags. Defaults to empty.
     :flags @ Flags = nil
-  do
+  do -> Ace
     ...
 
   # Constructs an entry that denies the permissions in `mask`.
@@ -203,7 +197,7 @@ pub class Ace
     :mask @ Mask
     # Inheritance flags. Defaults to empty.
     :flags @ Flags = nil
-  do
+  do -> Ace
     ...
 
   # Entry type: `:ALLOW:` or `:DENY:`.
@@ -241,15 +235,38 @@ pub class Acl
   pub def (init)
     self
     # [`Ace`](security.macos.Ace) values.
-    aces @ Iterable
+    aces @ Iterable[Ace]
   do
     ...
 
   # Immutable view of [`Ace`](security.macos.Ace)
   # values, in evaluation order. Use `.len` for the entry count.
   #[getter]
-  pub def aces self -> Array[Ace]
+  pub def aces self -> Seq[Ace]
     ...
+
+# The principal of an entry, as a UUID or its string or binary form.
+pub @let Principal = (Uuid | Str | Bin)
+
+# A mask given as a [`Mask`](security.macos.Mask), one symbol, or an iterable
+# of symbols.
+pub @let MaskSpec = (Mask | Sym | Iterable[Sym])
+
+# Flags given as [`Flags`](security.macos.Flags), one symbol, or an iterable of
+# symbols.
+pub @let FlagsSpec = (Flags | Sym | Iterable[Sym])
+
+# A macOS entry, built or declared as a dictionary. A dictionary has
+# exactly one type key, with the same meaning as the keyword arguments of
+# [`ace`](security.macos.ace).
+pub @let AceSpec = (
+  | Ace
+  | Dict[{allow: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
+  | Dict[{deny: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
+)
+
+# A macOS ACL, built or given as its entries.
+pub @let AclSpec = (Acl | Iterable[AceSpec])
 
 # Constructs a macOS entry from declarative arguments.
 #
@@ -263,28 +280,24 @@ pub class Acl
 # ```
 pub def ace
   # Principal for an `:ALLOW:` entry.
-  :allow @ (Uuid | Str | Bin) = nil
+  :allow @ Principal = nil
   # Principal for a `:DENY:` entry.
-  :deny @ (Uuid | Str | Bin) = nil
+  :deny @ Principal = nil
   # Permission mask.
-  :mask @ (Mask | Sym)
+  :mask @ MaskSpec
   # Inheritance flags.
   # Defaults to empty.
-  :flags @ (Flags | Sym) = nil
+  :flags @ FlagsSpec = nil
 do -> Ace
   ...
 
 # Constructs a macOS ACL from entries and declarative entry dictionaries.
 #
 # An empty ACL is valid.
-#
-# ## Returns
-#
-# [`Acl`](security.macos.Acl)
 pub def acl
   # Entries, spread with `...`
   # to pass a collection.
-  ...aces @ (Ace | Dict)
+  ...aces @ AceSpec
 do -> Acl
   ...
 
@@ -323,11 +336,6 @@ do -> Uuid
 # The Membership framework reports which kind the UUID resolved to, so the
 # result carries both the ID and whether it names a user or a group.
 #
-# ## Returns
-#
-# A two-element [`Tuple`](std.Tuple) of `(kind, id)`, where `kind` is
-# `:UID:` or `:GID:` and `id` is an [`Int`](std.Int).
-#
 # ## Errors
 #
 # Raises [`UnsupportedError`](std.UnsupportedError) when the active
@@ -345,5 +353,5 @@ do -> Uuid
 pub def id_for_uuid
   # macOS principal UUID.
   uuid @ (Uuid | Str | Bin)
-do -> Tuple
+do -> Tuple[(:UID: | :GID:), Int]
   ...

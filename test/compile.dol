@@ -94,7 +94,9 @@ def nodes()
   let preludes = 0
   let first_id = nil
   let first_node = nil
-  for id node = unit.nodes()
+  for pair = unit.nodes()
+    assert_type $Tuple $pair
+    let id node = pair
     assert_type $compile.NodeId $id
     assert_type $compile.Node $node
     # A prelude binding has no source text to span
@@ -250,6 +252,7 @@ def anonymous_rest_params_are_indexed()
   assert_no_errors $unit
   let rest = unit.nodes().find(do |pair| type(pair[1], compile.RestParam))
   assert_eq $rest[1].name nil
+  assert_eq $rest[1].type_ellipsis nil
 
 #[test]
 def nonlocal_jumps_target_the_construct_they_leave()
@@ -568,13 +571,13 @@ def types_of nodes id
 #[test]
 def type_only_declarations_are_exposed()
   let source = r|-
-    pub class @Shape
+    pub @class Shape
       pub def area self -> Int
-    def @grow x @ Int -> Int
+    @def grow x @ Int -> Int
     pub def grow x
       x
     pub class Square: @Shape
-      def @(init) self
+      @def (init) self
       def (init) _self
         nil
   let unit = compile.compile "type_only.dol" $source document: true
@@ -731,8 +734,9 @@ def superclasses_are_types_of_their_class()
 def type_followups_are_exposed()
   let source = r|-
     import @not_loaded
-    pub let @Entries[K @ Str = Sym] = Dict[{..., ...K: Int, ...Tuple[Int, Int]: Str}]
+    pub @let Entries[K @ Str = Sym] = Dict[{..., ...K: Int, ...Tuple[Int, Int]: Str, (K): Bool, "k": nil}]
     let value @Entries[Str] = nil
+    @let Later[U @ Array[T], T] = U
   let unit = compile.compile "type_followups.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
@@ -745,10 +749,24 @@ def type_followups_are_exposed()
   assert_eq (span_text(source, binder[1].default.span)) "Sym"
   let schema = (types_of(nodes, alias[0])[0][1].expr.args[0].ty)
   assert_type $compile.SchemaType $schema
-  assert_eq [...schema.args.map(do |arg| type arg)] [compile.OpenRestTypeArg, compile.KeyRestTypeArg, compile.KeyRestTypeArg]
+  assert_eq [...schema.args.map(do |arg| type arg)] $
+    - $compile.OpenRestTypeArg
+    - $compile.KeyRestTypeArg
+    - $compile.KeyRestTypeArg
+    - $compile.KeyTypeArg
+    - $compile.KeyTypeArg
   assert_eq (span_text(source, schema.args[0].span)) "..."
   assert_eq (span_text(source, schema.args[1].key_ty.span)) "K"
   assert_eq (span_text(source, schema.args[2].key_ty.span)) "Tuple[Int, Int]"
+  # A key other than a bareword is a type, and a name in it resolves
+  assert_eq (span_text(source, schema.args[3].key)) "(K)"
+  assert_eq $schema.args[3].key_ty.target $binder[0]
+  assert_type $compile.ConstType $schema.args[4].key_ty
+  assert_eq $schema.args[4].key_ty.value "k"
+  # A binder's bound may name a later binder
+  let later = (named_node source nodes compile.Alias "Later")
+  let later_binders = [...nodes.filter(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == later[0])))]
+  assert_eq $later_binders[0][1].bound.args[0].ty.target $later_binders[1][0]
   # Names in a binder's bound and default, and in the aliased type, resolve
   let prelude_item = do |item|
     nodes.find(do |pair| (type(pair[1], compile.PreludeItem) && (pair[1].item == item)))[0]
@@ -767,8 +785,8 @@ def sibling_module_type_imports_resolve_separately()
     import
       @not_loaded.one
       - @not_loaded.two
-    pub let @First = not_loaded.one.Thing
-    pub let @Second = not_loaded.two.Thing
+    pub @let First = not_loaded.one.Thing
+    pub @let Second = not_loaded.two.Thing
   let unit = compile.compile "siblings.dol" $source document: true
   assert_no_errors $unit
   # Both imports are used, so neither is reported unused
@@ -789,7 +807,7 @@ def unused_module_type_import_names_its_whole_path()
   let source = r|-
     import @not_loaded.one
     import @not_loaded.two
-    pub let @First = not_loaded.one.Thing
+    pub @let First = not_loaded.one.Thing
   let unit = compile.compile "unused_sibling.dol" $source document: true
   assert_no_errors $unit
   let diagnostics = [...unit.diagnostics()]
@@ -803,11 +821,68 @@ def a_module_import_names_types_in_that_module_alone()
   let source = r|-
     import @not_loaded
     import loaded
-    pub let @Near = not_loaded.Thing
-    pub let @Far = not_loaded.deeper.Thing
-    pub let @Runtime = loaded.nested.Thing
+    pub @let Near = not_loaded.Thing
+    pub @let Far = not_loaded.deeper.Thing
+    pub @let Runtime = loaded.nested.Thing
   let unit = compile.compile "reach.dol" $source document: true
   assert_no_errors $unit
   let unbound = [...unit.diagnostics().filter(do |d| (d.message == "unbound type name"))]
   # The module is what is unbound, so each is reported over its whole path
   assert_eq [...unbound.map(do |d| span_text(source, d.span))] ["not_loaded.deeper", "loaded.nested"]
+
+#[test]
+def rest_annotation_expansion_is_indexed()
+  let source = "def f[...Rs] ...args @ ...(() -> Rs) -> Tuple[...Rs]\n  args\n"
+  let unit = compile.compile "rest.dol" $source document: true
+  assert_no_errors $unit
+  let rest = unit.nodes().find(do |pair| type(pair[1], compile.RestParam))[1]
+  assert_eq (span_text source rest.type_ellipsis) "..."
+  assert_eq $rest.type_ellipsis.start.byte_offset 23
+  bind rest
+    :type_ellipsis
+    ...
+  assert_eq $type_ellipsis.start.byte_offset $rest.type_ellipsis.start.byte_offset
+
+#[test]
+def invalid_rest_annotation_expansions()
+  for source = [
+    "def f x @ ...Int\n  x\n",
+    "def f ...x @ ...\n  x\n",
+    "def f ...x @ ......Int\n  x\n",
+    "def f ...x -> ...Int\n  x\n",
+    "def f ...x @ ... Int\n  x\n",
+  ]
+    let unit = compile.compile "bad-rest.dol" $source recover: true
+    assert (unit.diagnostics().count() > 0)
+
+#[test]
+def statement_type_imports_keep_document_targets()
+  let source = r|-
+    pub @import missing.module: renamed
+    pub @import
+      missing.other: other
+      missing.items:
+        - Item
+        Original: Alias
+        - @Explicit
+    pub @let First = renamed.Thing
+    pub @let Second = other.Thing
+    pub @let Third = Item
+    pub @let Fourth = Alias
+    pub @let Fifth = Explicit
+  let unit = compile.compile "static_imports.dol" $source document: true
+  assert_no_errors $unit
+  assert_eq ([...unit.diagnostics()].len) 0
+  let nodes = [...unit.nodes()]
+  let imports = [...nodes.filter(do |pair|
+    (type(pair[1], compile.ImportModule) || type(pair[1], compile.ImportItem)))]
+  assert_eq $imports.len 5
+  for pair = imports
+    assert $pair[1].type_only
+    assert $pair[1].is_pub
+  for i name = ["First", "Second", "Third", "Fourth", "Fifth"].enumerate()
+    let alias = (named_node source nodes compile.Alias name)
+    assert_eq (types_of(nodes, alias[0])[0][1].expr.target) $imports[i][0]
+  assert_eq (span_text source imports[0][1].module) "missing.module"
+  assert_eq (span_text source imports[0][1].name) "renamed"
+  unit.emit()

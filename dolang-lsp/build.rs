@@ -56,6 +56,8 @@ struct Entity {
 
 #[derive(Clone, serde::Deserialize)]
 struct ParamJson {
+    #[serde(default)]
+    type_spread: bool,
     name: String,
     #[serde(default)]
     optional: bool,
@@ -377,7 +379,11 @@ fn render(rows: &[Row]) -> String {
                 "Param {{ name: {:?}, optional: {}, type_: {:?} }}, ",
                 param.name,
                 param.optional,
-                param.type_.as_ref().map(|ty| ty.render(Binding::Compact)),
+                param.type_.as_ref().map(|ty| format!(
+                    "{}{}",
+                    if param.type_spread { "..." } else { "" },
+                    ty.render(Binding::Compact)
+                )),
             )
             .expect("writing to a String cannot fail");
         }
@@ -385,4 +391,30 @@ fn render(rows: &[Row]) -> String {
     }
     out.push_str("];\n");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rest_expansion_survives_static_index_generation() {
+        let module: ModuleJson = serde_json::from_str(
+            r#"{
+            "module": "m", "entities": [{
+                "kind": "function", "name": "fork", "pub": true,
+                "params": [{"name": "...thunks", "type_spread": true,
+                    "type": {"kind": "func", "params": [], "ret": {"kind": "name", "name": "Rs"}}}]
+            }]
+        }"#,
+        )
+        .unwrap();
+        let mut rows = Vec::new();
+        add_module(&mut rows, &HashMap::new(), &module);
+        assert!(render(&rows).contains("...(() -> Rs)"));
+        let old: ParamJson =
+            serde_json::from_str(r#"{"name": "...args", "type": {"kind": "name", "name": "Int"}}"#)
+                .unwrap();
+        assert!(!old.type_spread);
+    }
 }

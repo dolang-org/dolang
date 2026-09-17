@@ -52,6 +52,13 @@ def private_declarations_appear_only_with_all()
   assert (names("--all").contains("internal"))
   assert (names("--all").contains("secret"))
 
+# An item imported for types only is exported as a type when it is public, and
+# not at all otherwise.
+#[test]
+def type_only_items_appear_only_when_public()
+  assert (names().contains("Seq"))
+  assert !(names("--all").contains("Cursor"))
+
 # Only syntax highlighting consumes the source's tokens, and they dwarf the
 # rest of the output, so they are written only when asked for.
 #[test]

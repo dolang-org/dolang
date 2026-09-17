@@ -7,4 +7,7 @@ let res = fork
   do bar = async false
 assert_eq $foo 42
 assert_eq $bar false
-assert_eq $res [42, false]
+assert_eq $res (Tuple([42, false]))
+
+assert_eq (type res) $Tuple
+assert_eq (fork()) (Tuple([]))

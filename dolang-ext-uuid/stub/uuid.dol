@@ -101,11 +101,6 @@ pub class Guid
     ...
 
   # Generates a random `Guid`.
-  #
-  # ## Returns
-  #
-  # `Guid`
-  #[class]
   pub def generate self -> Guid
     ...
 

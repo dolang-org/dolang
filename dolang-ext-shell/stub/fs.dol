@@ -13,12 +13,15 @@
 import
   fs.unix:
     - @Mode
-  @security.macos
-  @security.nfs4
-  @security.unix
+  fs.windows:
+    - @StreamEntry
+  @security
+  std:
+    - @Seq
   security.windows:
     - @Sid
     - @SecDesc
+    - @SecDescSpec
   time:
     - @DateTime
 
@@ -37,7 +40,24 @@ import
 # On Unix, `:LINK:` corresponds to `lstat`-style behavior. On Windows, it
 # applies to both symbolic links and other reparse points such as directory
 # junctions.
-pub let @Resolve = (:TARGET: | :LINK:)
+pub @let Resolve = (:TARGET: | :LINK:)
+
+# File access mode accepted by [`open`](fs.open).
+#
+# | Mode   | Description                              |
+# | ------ | ---------------------------------------- |
+# | `"r"`  | Read-only                                |
+# | `"w"`  | Write-only (truncates existing file)     |
+# | `"a"`  | Append to existing file                  |
+# | `"r+"` | Read and write                           |
+# | `"w+"` | Read and write (truncates existing file) |
+# | `"a+"` | Read and append                          |
+#
+# A `"b"` suffix selects binary mode, as in `"rb"`, `"wb"`, or `"r+b"`.
+pub @let OpenMode = (
+  | "r" | "w" | "a" | "r+" | "w+" | "a+"
+  | "rb" | "wb" | "ab" | "r+b" | "w+b" | "a+b"
+)
 
 # An entry within a directory.
 #
@@ -106,7 +126,7 @@ pub class DirEntry
 # file's lifetime: a text-mode file yields and accepts lines, a binary-mode one
 # arbitrary chunks. In either mode the values read from a file concatenate back
 # to exactly the file's bytes.
-pub class File
+pub class File: Iter[(Str | Bin)] Sink[Value]
   # Closes the file.
   #
   # This is required if [`open`](fs.open) was not given a block.
@@ -160,17 +180,17 @@ pub class File
   # file.lock (0..128) do |lock|
   #   update_header()
   # ```
-  pub def lock
+  pub def lock[R]
     self
     # Half-open byte range; `..` is the whole
     # file.
-    range @ Range
+    range @ Range[Int]
     # Block receiving a
     # [`FileLock`](fs.FileLock).
-    func @ Func
+    func @ (FileLock -> R)
     # Acquire a shared rather than exclusive lock.
     :shared @ Bool = nil
-  do -> Value
+  do -> R
     ...
 
   # Attempts to acquire a byte-range lock without waiting.
@@ -190,24 +210,24 @@ pub class File
   #   if lock.held
   #     update_index()
   # ```
-  pub def try_lock
+  pub def try_lock[R]
     self
     # Half-open byte range; `..` is the whole
     # file.
-    range @ Range
+    range @ Range[Int]
     # Block receiving a
     # [`FileLock`](fs.FileLock).
-    func @ Func
+    func @ (FileLock -> R)
     # Acquire a shared rather than exclusive lock.
     :shared @ Bool = nil
-  do -> Value
+  do -> R
     ...
 
   # Reads data from the file.
   #
   # ## Returns
   #
-  # [`Str`](std.Str) in text mode, [`Bin`](std.Bin) in binary mode.
+  # A `Str` in text mode, or a `Bin` in binary mode.
   #
   # ## Example
   #
@@ -251,7 +271,7 @@ pub class File
     # for a positional read to carry a split character forward on, so unlike a
     # streaming read it cannot hold a partial character back for next time.
     :offset @ Int = nil
-  do -> Str
+  do -> (Str | Bin)
     ...
 
   # Writes data to the file.
@@ -260,7 +280,7 @@ pub class File
   #
   # ## Returns
   #
-  # [`Int`](std.Int), the number of bytes written.
+  # The number of bytes written.
   #
   # ## Errors
   #
@@ -309,14 +329,14 @@ pub class File
     # Handle to write to.
     dst @ File
     # Absolute byte region of the source.
-    :range @ Range = nil
+    :range @ Range[Int] = nil
     # Number of bytes to take from the source cursor.
     :size @ Int = nil
     # Absolute byte offset in the destination.
     :offset @ Int = nil
     # `:AUTO:` (default), `:REQUIRE:`, or `:NEVER:`.
     :clone @ Sym = nil
-  do
+  do -> Int
     ...
 
   # Truncates the file to the given byte length.
@@ -405,20 +425,17 @@ pub class File
   # Applies the components selected by a security descriptor's `mask` through
   # this file's existing handle.
   #
-  # The descriptor's
-  # [component options](security.windows.SecDesc.(init)--component-options) may
-  # be passed as keyword arguments instead of, or alongside, `desc`, exactly as
-  # [`security.windows.sec_desc`](security.windows.sec_desc)
-  # accepts them.
-  #
   # The operation raises a permission error if the file was opened without the
   # necessary Windows access rights. Windows may normalize the resulting
   # descriptor. Other platforms raise
   # [`sys.UnsupportedError`](sys.UnsupportedError).
   pub def update_sec_desc
     self
-    # Descriptor, packet, or spec.
-    desc @ (SecDesc | Bin | Dict) = nil
+    # Descriptor to apply.
+    desc @ SecDescSpec = nil
+    # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
+    # of or alongside `desc`.
+    ...options
   do
     ...
 
@@ -436,7 +453,7 @@ pub class File
     # Query the directory's inheritable default
     # ACL.
     :default @ Bool = nil
-  do -> (security.unix.Acl | security.nfs4.Acl | security.macos.Acl | nil)
+  do -> (security.AnyAcl | nil)
     ...
 
   # Sets or removes an ACL on the open file.
@@ -447,7 +464,7 @@ pub class File
   pub def set_acl
     self
     # ACL or declarative ACE sequence.
-    acl @ (security.unix.Acl | security.nfs4.Acl | security.macos.Acl | Iterable | nil)
+    acl @ (security.AclSpec | nil)
     # Required for an untyped ACL
     # specification.
     :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
@@ -462,10 +479,6 @@ pub class File
   # On Windows, this uses NTFS extended attributes. Returned names may differ
   # in case from the requested name.
   #
-  # ## Returns
-  #
-  # [`Iter`](std.Iter) of [`XattrEntry`](fs.XattrEntry)
-  #
   # ## Example
   #
   # ```
@@ -479,7 +492,7 @@ pub class File
     # `:USER:` and `:SYSTEM:` name well-known namespaces, and `:ANY:` lists all
     # namespaces.
     :namespace @ (Str | Sym) = nil
-  do -> Iter
+  do -> Iter[XattrEntry]
     ...
 
   # Gets an extended attribute value.
@@ -546,11 +559,6 @@ pub class File
   #
   # Windows only.
   #
-  # ## Returns
-  #
-  # [`Iter`](std.Iter) of
-  # [`fs.windows.StreamEntry`](fs.windows.StreamEntry)
-  #
   # ## Example
   #
   # ```
@@ -559,7 +567,7 @@ pub class File
   #   for stream = file.streams()
   #     echo (path / stream)
   # ```
-  pub def streams self -> Iter
+  pub def streams self -> Iter[StreamEntry]
     ...
 
   # Returns the current cursor position in bytes.
@@ -582,7 +590,7 @@ pub class File
   #
   # ## Returns
   #
-  # [`Int`](std.Int), the new absolute byte position.
+  # The new absolute byte position.
   #
   # ## Example
   #
@@ -606,7 +614,7 @@ pub class File
     ...
 
   # Returns the file as its own iterator.
-  pub def (iter) self
+  pub def (iter) self -> File
     ...
 
   # Fetches the next value from the file.
@@ -622,11 +630,11 @@ pub class File
   # ```
   #
   # In binary mode it reads a chunk of data of arbitrary length.
-  pub def (next) self
+  pub def (next) self -> (Str | Bin)
     ...
 
   # Returns the file as its own sink.
-  pub def (sink) self
+  pub def (sink) self -> File
     ...
 
   # Writes a value to the file, verbatim.
@@ -1155,7 +1163,7 @@ pub class Path
     self
     # Path components to join.
     ...components @ (Str | Path)
-  do
+  do -> Path
     ...
 
   # The final component of the path, or `nil` if the
@@ -1218,7 +1226,7 @@ pub class Path
   # Windows paths carry the alternate data stream specified in the final path
   # component if present.
   #[getter]
-  pub def components self
+  pub def components self -> Seq[Str]
     ...
 
   # Returns a new path with `ext` appended as an additional extension.
@@ -1233,7 +1241,7 @@ pub class Path
     self
     # Extension to append.
     ext @ Str
-  do
+  do -> Path
     ...
 
   # Returns a new path with the final extension replaced.
@@ -1248,7 +1256,7 @@ pub class Path
     self
     # Replacement extension.
     ext @ Str
-  do
+  do -> Path
     ...
 
   # Returns a new path with the final extension removed.
@@ -1259,7 +1267,7 @@ pub class Path
   # let path = Path "archive.tar.gz"
   # echo (path.without_ext())  # archive.tar
   # ```
-  pub def without_ext self
+  pub def without_ext self -> Path
     ...
 
   # Returns a new path with the final component replaced.
@@ -1274,7 +1282,7 @@ pub class Path
     self
     # Replacement final component.
     name @ Str
-  do
+  do -> Path
     ...
 
   # Returns a new path with the final stem replaced, preserving the final
@@ -1290,19 +1298,19 @@ pub class Path
     self
     # Replacement stem.
     stem @ Str
-  do
+  do -> Path
     ...
 
   # The method form of [`fs.absolute`](fs.absolute).
-  pub def absolute self
+  pub def absolute self -> Path
     ...
 
   # The method form of [`fs.canonical`](fs.canonical).
-  pub def canonical self
+  pub def canonical self -> Path
     ...
 
   # The method form of [`fs.normalize`](fs.normalize).
-  pub def normalize self
+  pub def normalize self -> Path
     ...
 
   # The method form of [`fs.relative`](fs.relative).
@@ -1311,30 +1319,50 @@ pub class Path
     # Base directory. Defaults
     # to the current working directory.
     base @ (Str | Path) = nil
-  do
+  do -> Path
     ...
 
   # The method form of [`fs.exists`](fs.exists).
-  pub def exists self
+  pub def exists self -> Bool
     ...
 
   # The method form of [`fs.open`](fs.open).
-  pub def open
+  @def open
     self
     # File access mode. Defaults to `"r"`.
-    mode @ Str = nil
-    # Block to run with the file; it is closed when
-    # the block returns.
-    func @ Func = nil
-  do
+    mode @ OpenMode = nil
+  do -> File
+
+  # The method form of [`fs.open`](fs.open) with a block.
+  @def open[R]
+    self
+    # Block to run with the file; it is closed when the block returns.
+    func @ (File -> R)
+  do -> R
+
+  # The method form of [`fs.open`](fs.open) with a mode and a block.
+  @def open[R]
+    self
+    # File access mode.
+    mode @ OpenMode
+    # Block to run with the file; it is closed when the block returns.
+    func @ (File -> R)
+  do -> R
+
+  pub def open self ...options
     ...
 
-  # The method form of [`fs.read`](fs.read).
-  pub def read
+  # The method form of [`fs.read`](fs.read) for a text file.
+  @def read self -> Str
+
+  # The method form of [`fs.read`](fs.read) in binary mode.
+  @def read
     self
-    # Optional mode string; only `"b"` is allowed.
-    mode @ Str = nil
-  do
+    # Binary mode.
+    mode @ "b"
+  do -> Bin
+
+  pub def read self ...options
     ...
 
   # The method form of [`fs.write`](fs.write).
@@ -1342,7 +1370,7 @@ pub class Path
     self
     # Value to write.
     content @ (Str | Bin)
-  do
+  do -> Int
     ...
 
   # The method form of [`fs.append`](fs.append).
@@ -1350,7 +1378,7 @@ pub class Path
     self
     # Content to append.
     content @ (Str | Bin)
-  do
+  do -> Int
     ...
 
   # The method form of [`fs.set_size`](fs.set_size).
@@ -1374,7 +1402,7 @@ pub class Path
     self
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
-  do
+  do -> Metadata
     ...
 
   # The method form of [`fs.fs_metadata`](fs.fs_metadata).
@@ -1382,7 +1410,7 @@ pub class Path
     self
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
-  do
+  do -> FsMetadata
     ...
 
   # The method form of [`fs.update_metadata`](fs.update_metadata),
@@ -1395,7 +1423,7 @@ pub class Path
     ...
 
   # The method form of [`fs.entries`](fs.entries).
-  pub def entries self
+  pub def entries self -> Iter[DirEntry]
     ...
 
   # The method form of [`fs.glob`](fs.glob), searching within this
@@ -1411,7 +1439,7 @@ pub class Path
     :max_depth @ Int = nil
     # Resolution mode. Defaults to `:LINK:`.
     :resolve @ Resolve = nil
-  do
+  do -> Iter[Path]
     ...
 
   # The method form of [`fs.create_dir`](fs.create_dir).
@@ -1484,7 +1512,7 @@ pub class Path
     ...
 
   # The method form of [`fs.read_link`](fs.read_link).
-  pub def read_link self
+  pub def read_link self -> Path
     ...
 
   # The method form of [`fs.acl`](fs.acl).
@@ -1498,7 +1526,7 @@ pub class Path
     :default @ Bool = nil
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
-  do
+  do -> (security.AnyAcl | nil)
     ...
 
   # The method form of [`fs.set_acl`](fs.set_acl).
@@ -1508,7 +1536,7 @@ pub class Path
   pub def set_acl
     self
     # ACL or declarative ACE sequence.
-    acl @ (security.unix.Acl | security.nfs4.Acl | security.macos.Acl | Iterable | nil)
+    acl @ (security.AclSpec | nil)
     # Required for an untyped ACL
     # specification.
     :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
@@ -1527,7 +1555,7 @@ pub class Path
     :namespace @ (Str | Sym) = nil
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
-  do
+  do -> Iter[XattrEntry]
     ...
 
   # The method form of [`fs.xattr`](fs.xattr).
@@ -1540,7 +1568,7 @@ pub class Path
     :namespace @ (Str | Sym) = nil
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
-  do
+  do -> Bin
     ...
 
   # The method form of [`fs.set_xattr`](fs.set_xattr).
@@ -1614,62 +1642,84 @@ pub class XattrEntry
 
 # Opens a file.
 #
-# ## Returns
-#
-# [`File`](fs.File), or the block's result when `func` is given.
-#
-# ## Example
+# The file stays open until [`File.close`](fs.File.close) is called.
 #
 # ```
-# # Read a file (auto-closed when the block finishes)
-# open config.txt r do |file|
-#   echo "Content: $(file.read())"
-#
-# # Manual file management
 # let file = open data.txt w
 # file.write "some data"
 # file.close()
 # ```
-pub def open
+@def open
   # Path to the file to open.
   path @ (Str | Path)
   # File access mode. Defaults to `"r"`.
-  #
-  # | Mode   | Description                              |
-  # | ------ | ---------------------------------------- |
-  # | `"r"`  | Read-only                                |
-  # | `"w"`  | Write-only (truncates existing file)     |
-  # | `"a"`  | Append to existing file                  |
-  # | `"r+"` | Read and write                           |
-  # | `"w+"` | Read and write (truncates existing file) |
-  # | `"a+"` | Read and append                          |
-  #
-  # Add a `"b"` suffix for binary mode, as in `"rb"`, `"wb"`, or `"r+b"`.
-  mode @ Str = nil
-  # Block to run with the file; it is closed when
-  # the block returns.
-  func @ Func = nil
-do -> Value
+  mode @ OpenMode = nil
+do -> File
+
+# Opens a file for reading and runs a block with it. The file is closed when
+# the block returns.
+#
+# ```
+# open config.txt do |file|
+#   echo "Content: $(file.read())"
+# ```
+@def open[R]
+  # Path to the file to open.
+  path @ (Str | Path)
+  # Block to run with the file.
+  func @ (File -> R)
+do -> R
+
+# Opens a file with a mode and runs a block with it. The file is closed when
+# the block returns.
+#
+# ```
+# open log.txt a do |file|
+#   file.write "entry\n"
+# ```
+@def open[R]
+  # Path to the file to open.
+  path @ (Str | Path)
+  # File access mode.
+  mode @ OpenMode
+  # Block to run with the file.
+  func @ (File -> R)
+do -> R
+
+pub def open path ...options
   ...
 
-# Reads the entire contents of a file in one call.
+# Reads the entire contents of a text file in one call.
 #
-# ## Returns
+# ## Errors
 #
-# [`Str`](std.Str), or [`Bin`](std.Bin) in binary mode.
+# `RuntimeError` if the file is not valid UTF-8.
 #
 # ## Example
 #
 # ```
 # let text = read "config.txt"
-# let data = read "archive.bin" "b"
 # ```
-pub def read
+@def read
   # Path to the file to read.
   path @ (Str | Path)
-  # Optional mode string; only `"b"` is allowed.
-  mode @ Str = nil
 do -> Str
+
+# Reads the entire contents of a file in one call as binary data.
+#
+# ## Example
+#
+# ```
+# let data = read "archive.bin" "b"
+# ```
+@def read
+  # Path to the file to read.
+  path @ (Str | Path)
+  # Binary mode.
+  mode @ "b"
+do -> Bin
+
+pub def read path ...options
   ...
 
 # Writes the entire contents of a file in one call, creating or truncating it.
@@ -1678,7 +1728,7 @@ do -> Str
 #
 # ## Returns
 #
-# [`Int`](std.Int), the number of bytes written.
+# The number of bytes written.
 #
 # ## Example
 #
@@ -1698,7 +1748,7 @@ do -> Int
 #
 # ## Returns
 #
-# [`Int`](std.Int), the number of bytes written.
+# The number of bytes written.
 #
 # ## Example
 #
@@ -1795,7 +1845,7 @@ pub def copy_data
   #
   # Using cursor-based source addressing advances the cursor by the amount
   # copied on success.
-  :range @ Range = nil
+  :range @ Range[Int] = nil
   # Number of bytes to take from the source cursor.
   :size @ Int = nil
   # Absolute byte offset in the destination.
@@ -2088,7 +2138,7 @@ pub def acl
   # Resolution mode. Defaults to
   # `:TARGET:`.
   :resolve @ Resolve = nil
-do -> (security.unix.Acl | security.nfs4.Acl | security.macos.Acl | nil)
+do -> (security.AnyAcl | nil)
   ...
 
 # Sets or removes an ACL.
@@ -2114,7 +2164,7 @@ pub def set_acl
   # Path to update.
   path @ (Str | Path)
   # ACL or declarative ACE sequence.
-  acl @ (security.unix.Acl | security.nfs4.Acl | security.macos.Acl | Iterable | nil)
+  acl @ (security.AclSpec | nil)
   # Required for an untyped ACL
   # specification.
   :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
@@ -2130,10 +2180,6 @@ do
 #
 # On Windows, this uses NTFS extended attributes. Returned names may differ in
 # case from the requested name.
-#
-# ## Returns
-#
-# [`Iter`](std.Iter) of [`XattrEntry`](fs.XattrEntry)
 #
 # ## Example
 #
@@ -2151,7 +2197,7 @@ pub def xattrs
   # Resolution mode. Defaults to
   # `:TARGET:`.
   :resolve @ Resolve = nil
-do -> Iter
+do -> Iter[XattrEntry]
   ...
 
 # Gets an extended attribute value.
@@ -2228,11 +2274,6 @@ do
 #
 # Windows only.
 #
-# ## Returns
-#
-# [`Iter`](std.Iter) of
-# [`fs.windows.StreamEntry`](fs.windows.StreamEntry)
-#
 # ## Example
 #
 # ```
@@ -2247,14 +2288,10 @@ pub def streams
   # Resolution mode. Defaults to
   # `:TARGET:`.
   :resolve @ Resolve = nil
-do -> Iter
+do -> Iter[StreamEntry]
   ...
 
 # Reads the entries in a directory.
-#
-# ## Returns
-#
-# [`Iter`](std.Iter) of [`DirEntry`](fs.DirEntry)
 #
 # ## Example
 #
@@ -2268,14 +2305,10 @@ do -> Iter
 pub def entries
   # Path to the directory.
   path @ (Str | Path)
-do -> Iter
+do -> Iter[DirEntry]
   ...
 
 # Returns an iterator over paths matching a glob pattern.
-#
-# ## Returns
-#
-# [`Iter`](std.Iter) of [`Path`](fs.Path)
 #
 # ## Example
 #
@@ -2308,7 +2341,7 @@ pub def glob
   :max_depth @ Int = nil
   # Resolution mode. Defaults to `:LINK:`.
   :resolve @ Resolve = nil
-do -> Iter
+do -> Iter[Path]
   ...
 
 # Creates a directory.
@@ -2546,7 +2579,7 @@ do
 #
 # ## Returns
 #
-# [`Path`](fs.Path), the path the symlink points to.
+# The path the symlink points to.
 #
 # ## Errors
 #
@@ -2632,7 +2665,7 @@ do -> Path
 #
 # ## Returns
 #
-# [`Path`](fs.Path), or the original path if it cannot be made relative.
+# The original path if it cannot be made relative.
 #
 # ## Example
 #
@@ -2660,10 +2693,6 @@ do -> Path
 # | -------- | --------------------------------------------------------------- |
 # | Unix     | `env["HOME"]`, or the home directory from the passwd database   |
 # | Windows  | `FOLDERID_Profile`, typically `C:\Users\<user>`                 |
-#
-# ## Returns
-#
-# [`Path`](fs.Path)
 pub def home_dir() -> Path
   ...
 
@@ -2673,10 +2702,6 @@ pub def home_dir() -> Path
 # | -------- | ----------------------------------------------------------- |
 # | Unix     | `$TMPDIR`, otherwise `/tmp`                                 |
 # | Windows  | `%TMP%`, otherwise `%TEMP%`, otherwise the platform default |
-#
-# ## Returns
-#
-# [`Path`](fs.Path)
 pub def temp_dir() -> Path
   ...
 
@@ -2752,12 +2777,12 @@ do -> Path
 # with_temp_dir parent: my_temp do |dir|
 #   echo $dir
 # ```
-pub def with_temp_dir
+pub def with_temp_dir[R]
   # Called with a [`Path`](fs.Path) to the
   # temporary directory.
-  func @ Func
+  func @ (Path -> R)
   # Parent directory. Defaults
   # to [`temp_dir()`](fs.temp_dir).
   :parent @ (Str | Path) = nil
-do
+do -> R
   ...

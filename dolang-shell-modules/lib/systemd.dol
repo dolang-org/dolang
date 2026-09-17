@@ -10,6 +10,9 @@ import shlex term
     - Url
   std:
     - Args
+    - @BaseIterable
+    - @Index
+    - @Unpack
 
 let ESC = str b"\x1b"
 
@@ -155,22 +158,26 @@ def fancy_value value
   let value = value.replace r"\033" $ESC
   term.preformat $value
 
+# A system- or configuration-extension scope. An unrecognized scope is kept as
+# written.
+pub @let ExtensionScope = (:SYSTEM: | :INITRD: | :PORTABLE: | Str)
+
 # Parsed operating-system identification data with standard-aware projections.
 #
 # Named fields apply the defaults and conversions prescribed by the
 # os-release specification.
-pub class OsRelease
+pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str] @BaseIterable[Tuple[Str, Str]]
   field values = nil
 
   def (init) self values
     self.#values = values
 
   # Reads a parsed `os-release` assignment by key.
-  pub def (index) self key
+  pub def (index) self key @ Str -> Str
     self.#values[key]
 
   # Iterates the parsed `os-release` assignments.
-  pub def (iter) self
+  pub def (iter) self -> Iter[Tuple[Str, Str]]
     self.#values.iter()
 
   # Destructures the parsed `os-release` assignments.
@@ -179,27 +186,27 @@ pub class OsRelease
 
   # The operating system name, defaulting to `Linux`.
   #[getter]
-  pub def name self
+  pub def name self -> Str
     self.#values.get "NAME" default: "Linux"
 
   # The operating-system identifier, defaulting to `linux`.
   #[getter]
-  pub def id self
+  pub def id self -> Str
     self.#values.get "ID" default: "linux"
 
   # The presentation name, defaulting to `Linux`.
   #[getter]
-  pub def pretty_name self
+  pub def pretty_name self -> Str
     self.#values.get "PRETTY_NAME" default: "Linux"
 
   # The preformatted fancy presentation name, if defined.
   #[getter]
-  pub def fancy_name self
+  pub def fancy_name self -> (term.Text | nil)
     fancy_value $ self.#values.get "FANCY_NAME" default: nil
 
   # The fancy name when available, otherwise the ANSI-colored presentation name.
   #[getter]
-  pub def display_name self
+  pub def display_name self -> term.Text
     let fancy = fancy_value $ self.#values.get "FANCY_NAME" default: nil
     if (fancy != nil)
       return fancy
@@ -211,18 +218,18 @@ pub class OsRelease
 
   # An ordered set of compatible operating-system identifiers.
   #[getter]
-  pub def id_like self
+  pub def id_like self -> Set[Str]
     Set $ words $ self.#values.get "ID_LIKE" default: nil
 
   # The release channel symbol, defaulting to `:STABLE:`.
   #[getter]
-  pub def release_type self
+  pub def release_type self -> (:STABLE: | :LTS: | :DEVELOPMENT: | :EXPERIMENT:)
     let value = self.#values.get "RELEASE_TYPE" default: "stable"
     RELEASE_TYPES.get $value default: :STABLE:
 
   # The portable-service scope, defaulting to `:SYSTEM:`.
   #[getter]
-  pub def portable_scope self
+  pub def portable_scope self -> (:SYSTEM: | :USER: | :ANY: | Str)
     let value = self.#values.get "PORTABLE_SCOPE" default: nil
     if (value == nil)
       return :SYSTEM:
@@ -230,142 +237,142 @@ pub class OsRelease
 
   # An ordered set of system-extension scopes.
   #[getter]
-  pub def sysext_scope self
+  pub def sysext_scope self -> Set[ExtensionScope]
     Set $ scopes $ self.#values.get "SYSEXT_SCOPE" default: "system portable"
 
   # An ordered set of configuration-extension scopes.
   #[getter]
-  pub def confext_scope self
+  pub def confext_scope self -> Set[ExtensionScope]
     Set $ scopes $ self.#values.get "CONFEXT_SCOPE" default: "system portable"
 
   # An ordered set of portable-service unit-name prefixes.
   #[getter]
-  pub def portable_prefixes self
+  pub def portable_prefixes self -> Set[Str]
     Set $ words $ self.#values.get "PORTABLE_PREFIXES" default: nil
 
-  # The support end date as a UTC `Date`, if valid and defined.
+  # The support end date, in UTC, if valid and defined.
   #[getter]
-  pub def support_end self
+  pub def support_end self -> (Date | nil)
     support_end $ self.#values.get "SUPPORT_END" default: nil
 
   # The terminal style specified by `ANSI_COLOR`, if defined.
   #[getter]
-  pub def ansi_color self
+  pub def ansi_color self -> (term.Style | nil)
     ansi_style $ self.#values.get "ANSI_COLOR" default: nil
 
   # The terminal style specified by `ANSI_COLOR_REVERSE`, if defined.
   #[getter]
-  pub def ansi_color_reverse self
+  pub def ansi_color_reverse self -> (term.Style | nil)
     ansi_style $ self.#values.get "ANSI_COLOR_REVERSE" default: nil
 
-  # The project's home page as a `Url`, if valid and defined.
+  # The project's home page, if valid and defined.
   #[getter]
-  pub def home_url self
+  pub def home_url self -> (Url | nil)
     url_value $ self.#values.get "HOME_URL" default: nil
 
-  # The documentation URL as a `Url`, if valid and defined.
+  # The documentation URL, if valid and defined.
   #[getter]
-  pub def documentation_url self
+  pub def documentation_url self -> (Url | nil)
     url_value $ self.#values.get "DOCUMENTATION_URL" default: nil
 
-  # The support URL as a `Url`, if valid and defined.
+  # The support URL, if valid and defined.
   #[getter]
-  pub def support_url self
+  pub def support_url self -> (Url | nil)
     url_value $ self.#values.get "SUPPORT_URL" default: nil
 
-  # The bug-report URL as a `Url`, if valid and defined.
+  # The bug-report URL, if valid and defined.
   #[getter]
-  pub def bug_report_url self
+  pub def bug_report_url self -> (Url | nil)
     url_value $ self.#values.get "BUG_REPORT_URL" default: nil
 
-  # The privacy-policy URL as a `Url`, if valid and defined.
+  # The privacy-policy URL, if valid and defined.
   #[getter]
-  pub def privacy_policy_url self
+  pub def privacy_policy_url self -> (Url | nil)
     url_value $ self.#values.get "PRIVACY_POLICY_URL" default: nil
 
-  # The vendor's URL as a `Url`, if valid and defined.
+  # The vendor's URL, if valid and defined.
   #[getter]
-  pub def vendor_url self
+  pub def vendor_url self -> (Url | nil)
     url_value $ self.#values.get "VENDOR_URL" default: nil
 
-  # The experiment URL as a `Url`, if valid and defined.
+  # The experiment URL, if valid and defined.
   #[getter]
-  pub def experiment_url self
+  pub def experiment_url self -> (Url | nil)
     url_value $ self.#values.get "EXPERIMENT_URL" default: nil
 
   # The human-readable operating-system version, if defined.
   #[getter]
-  pub def version self
+  pub def version self -> (Str | nil)
     self.#values.get "VERSION" default: nil
 
   # The operating-system version identifier, if defined.
   #[getter]
-  pub def version_id self
+  pub def version_id self -> (Str | nil)
     self.#values.get "VERSION_ID" default: nil
 
   # The operating-system version codename, if defined.
   #[getter]
-  pub def version_codename self
+  pub def version_codename self -> (Str | nil)
     self.#values.get "VERSION_CODENAME" default: nil
 
   # The human-readable operating-system variant, if defined.
   #[getter]
-  pub def variant self
+  pub def variant self -> (Str | nil)
     self.#values.get "VARIANT" default: nil
 
   # The operating-system variant identifier, if defined.
   #[getter]
-  pub def variant_id self
+  pub def variant_id self -> (Str | nil)
     self.#values.get "VARIANT_ID" default: nil
 
   # The build identifier, if defined.
   #[getter]
-  pub def build_id self
+  pub def build_id self -> (Str | nil)
     self.#values.get "BUILD_ID" default: nil
 
   # The image identifier, if defined.
   #[getter]
-  pub def image_id self
+  pub def image_id self -> (Str | nil)
     self.#values.get "IMAGE_ID" default: nil
 
   # The image version, if defined.
   #[getter]
-  pub def image_version self
+  pub def image_version self -> (Str | nil)
     self.#values.get "IMAGE_VERSION" default: nil
 
   # The CPE name, if defined.
   #[getter]
-  pub def cpe_name self
+  pub def cpe_name self -> (Str | nil)
     self.#values.get "CPE_NAME" default: nil
 
   # The icon name for the operating system, if defined.
   #[getter]
-  pub def logo self
+  pub def logo self -> (Str | nil)
     self.#values.get "LOGO" default: nil
 
   # The vendor name, if defined.
   #[getter]
-  pub def vendor_name self
+  pub def vendor_name self -> (Str | nil)
     self.#values.get "VENDOR_NAME" default: nil
 
   # The experiment identifier, if defined.
   #[getter]
-  pub def experiment self
+  pub def experiment self -> (Str | nil)
     self.#values.get "EXPERIMENT" default: nil
 
   # The default hostname, if defined.
   #[getter]
-  pub def default_hostname self
+  pub def default_hostname self -> (Str | nil)
     self.#values.get "DEFAULT_HOSTNAME" default: nil
 
   # The system-extension compatibility level, if defined.
   #[getter]
-  pub def sysext_level self
+  pub def sysext_level self -> (Str | nil)
     self.#values.get "SYSEXT_LEVEL" default: nil
 
   # The configuration-extension compatibility level, if defined.
   #[getter]
-  pub def confext_level self
+  pub def confext_level self -> (Str | nil)
     self.#values.get "CONFEXT_LEVEL" default: nil
 
 # Returns parsed OS-identification data from an `os-release` file.
@@ -374,7 +381,7 @@ pub def os_release
   # `/etc/os-release`, falling back to `/usr/lib/os-release` as required by
   # the os-release specification.
   :path @ (Str | Path) = nil
-do
+do -> OsRelease
   if (path == nil)
     let etc = Path /etc/os-release
     path = if etc.exists()

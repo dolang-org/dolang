@@ -98,3 +98,47 @@ import import_fixture:
 
 let adder @Adder = nil
 #          ^~~~~: type_token, node=import_item
+
+def expanded[...Rs] ...args @ ...(() -> Rs) -> Tuple[...Rs]
+  #                 ^~~: sigil
+  #                         ^: annotation
+  #                           ^~~: sigil
+  #                                     ^~: type_token, node=binder
+  args
+
+#: annotation
+@let Alias = Int
+#^~~: keyword
+#    ^~~~~: type_token, node=alias
+
+#: annotation
+@class Protocol
+#^~~~~: keyword
+#      ^~~~~~~~: type_token, node=class
+
+#: annotation
+@def overloaded x @ Int -> Int
+#^~~: keyword
+
+def overloaded x
+  x
+
+#: annotation
+@import missing.module: renamed
+#^~~~~~: keyword
+#                       ^~~~~~~: type_token, node=import_module
+
+let _renamed @ renamed.Thing = nil
+#              ^~~~~~~: type_token, node=import_module
+
+@import missing:
+  - Selected
+  # ^~~~~~~~: type_token, node=import_item
+  Original: AliasItem
+  #         ^~~~~~~~~: type_token, node=import_item
+
+let _selected @ Selected = nil
+#               ^~~~~~~~: type_token, node=import_item
+
+let _alias @ AliasItem = nil
+#            ^~~~~~~~~: type_token, node=import_item

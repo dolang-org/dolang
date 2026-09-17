@@ -1,15 +1,16 @@
 # YAML serialization and deserialization.
 
+# A value decoded from YAML. A mapping key may be any YAML value.
+pub @let Data = (nil | Bool | Int | Float | Str | Array[Data] | Dict[Data, Data])
+
+# A value that encodes as YAML.
+pub @let Encodable = (
+  | nil | Bool | Int | Float | Str | Sym
+  | Array[Encodable] | Tuple[...Encodable] | Record[...{...Encodable, ...Sym: Encodable}]
+  | Dict[Encodable, Encodable]
+)
+
 # Parses a YAML string into a Do value.
-#
-# ## Returns
-#
-# The parsed Do value.
-#
-# ## Errors
-#
-# `ValueError` if the input is invalid, contains more than one document, or
-# uses unsupported YAML features such as tags or aliases.
 #
 # | YAML Value | Do Type |
 # | ---------- | ------- |
@@ -18,8 +19,13 @@
 # | integer    | `Int`   |
 # | float      | `Float` |
 # | string     | `Str`   |
-# | sequence   | `array` |
-# | mapping    | `dict`  |
+# | sequence   | `Array` |
+# | mapping    | `Dict`  |
+#
+# ## Errors
+#
+# `ValueError` if the input is invalid, contains more than one document, or
+# uses unsupported YAML features such as tags or aliases.
 #
 # ## Example
 #
@@ -41,30 +47,28 @@
 pub def decode
   # YAML document to parse.
   yaml @ Str
-do -> Value
+do -> Data
   ...
 
 # Serializes a Do value to a YAML string.
 #
-# ## Returns
-#
-# [`Str`](std.Str) containing YAML.
+# | Do Type  | YAML Value |
+# | -------- | ---------- |
+# | `nil`    | `null`     |
+# | `Bool`   | boolean    |
+# | `Int`    | integer    |
+# | `Float`  | float      |
+# | `Str`    | string     |
+# | `Sym`    | string     |
+# | `Array`  | sequence   |
+# | `Tuple`  | sequence   |
+# | `Dict`   | mapping    |
+# | `Record` | mapping    |
 #
 # ## Errors
 #
 # `TypeError` if a value is not YAML-representable, such as binary data or a
 # custom object.
-#
-# | Do Type | YAML Value |
-# | ------- | ---------- |
-# | `nil`   | `null`     |
-# | `Bool`  | boolean    |
-# | `Int`   | integer    |
-# | `Float` | float      |
-# | `Str`   | string     |
-# | `Sym`   | string     |
-# | `array` | sequence   |
-# | `dict`  | mapping    |
 #
 # ## Example
 #
@@ -74,6 +78,6 @@ do -> Value
 # ```
 pub def encode
   # The value to serialize.
-  value
+  value @ Encodable
 do -> Str
   ...

@@ -4,6 +4,7 @@ import test:
   - assert
   - assert_eq
   - assert_type
+  - assert_throws
   - test
 
 #[test]
@@ -99,3 +100,23 @@ def json_body()
           let user1 = data[1]
           assert_eq $user0["name"] "alice"
           assert_eq $user1["name"] "bob"
+
+#[test]
+def response_scope_rejects_forwarded_arguments()
+  http.mock.Server do |server|
+    server.mock
+      - path: /scope
+        respond:
+          body: ok
+      do |_|
+        let response = http.get (server.url / "/scope")
+        let called = false
+        let block = do |..._args|
+          called = true
+        try
+          assert_throws $std.UnexpectedPosError do response $block 42
+          assert_throws $std.UnexpectedKeyError do response $block unused: 42
+          assert_eq $called false
+          assert_eq (response do response.text()) ok
+        finally
+          response.close()

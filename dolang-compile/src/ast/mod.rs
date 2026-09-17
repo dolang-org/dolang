@@ -1477,6 +1477,7 @@ pub(crate) enum Param {
         ellipsis_span: Span,
         ident: Option<Ident>,
         ty: Option<Box<Annot>>,
+        type_ellipsis_span: Option<Span>,
     },
 }
 
@@ -1549,6 +1550,7 @@ impl Node for Param {
                 ellipsis_span,
                 ident,
                 ty,
+                type_ellipsis_span,
             } => {
                 visit.token(Token::Sigil, *ellipsis_span, None)?;
                 if let Some(ident) = ident {
@@ -1559,7 +1561,7 @@ impl Node for Param {
                     )?;
                 }
                 if let Some(ty) = ty {
-                    visit.node(&**ty)?;
+                    visit.node(&ty.with_ellipsis(*type_ellipsis_span))?;
                 }
                 ControlFlow::Continue(())
             }
@@ -1637,10 +1639,18 @@ pub(crate) struct Let {
     pub(crate) pub_span: Option<Span>,
 }
 
+/// What a type alias stands for.
+pub(crate) enum AliasBody {
+    Type(TypeExpr),
+    /// `...`: a type with no definition in source, such as a primitive or one a type
+    /// checker handles specially.
+    Opaque(Span),
+}
+
 pub(crate) struct TypeAlias {
     pub(crate) ident: Ident,
     pub(crate) binders: Option<Box<Binders>>,
-    pub(crate) ty: TypeExpr,
+    pub(crate) body: AliasBody,
     pub(crate) let_span: Span,
     pub(crate) at_span: Span,
     pub(crate) equal_span: Span,
@@ -1653,14 +1663,17 @@ impl Node for TypeAlias {
         if let Some(span) = self.pub_span {
             visit.token(Token::Keyword, span, None)?;
         }
-        visit.token(Token::Keyword, self.let_span, None)?;
         visit.token(Token::Annotation, self.at_span, None)?;
+        visit.token(Token::Keyword, self.let_span, None)?;
         visit.token(Token::Type, self.ident.span, self.node)?;
         if let Some(binders) = &self.binders {
             visit.node(&**binders)?;
         }
         visit.token(Token::Operator, self.equal_span, None)?;
-        visit.node(&self.ty)
+        match &self.body {
+            AliasBody::Type(ty) => visit.node(ty),
+            AliasBody::Opaque(span) => visit.token(Token::Sigil, *span, None),
+        }
     }
 
     fn kind(&self) -> NodeKind {
@@ -1758,7 +1771,8 @@ pub(crate) enum ImportItem {
 
 /// What marks an import item as named only in types
 pub(crate) struct TypeOnly {
-    pub(crate) at_span: Span,
+    /// Absent when inherited from `@import`.
+    pub(crate) at_span: Option<Span>,
     /// The item's document node, which its name has no variable to carry
     pub(crate) node: Option<doc::Id>,
 }
@@ -1805,8 +1819,8 @@ impl Node for ImportItem {
                 if let Some(minus_span) = minus_span {
                     visit.token(Token::Delim, *minus_span, None)?;
                 }
-                if let Some(type_only) = type_only {
-                    visit.token(Token::Annotation, type_only.at_span, None)?;
+                if let Some(span) = type_only.as_ref().and_then(|ty| ty.at_span) {
+                    visit.token(Token::Annotation, span, None)?;
                 }
                 visit.token(
                     if type_only.is_some() {
@@ -1826,8 +1840,8 @@ impl Node for ImportItem {
                 type_only,
             } => {
                 visit.token(Token::Delim, *delim_span, None)?;
-                if let Some(type_only) = type_only {
-                    visit.token(Token::Annotation, type_only.at_span, None)?;
+                if let Some(span) = type_only.as_ref().and_then(|ty| ty.at_span) {
+                    visit.token(Token::Annotation, span, None)?;
                 }
                 accept_import_bind(bind, type_only, visit)
             }
@@ -1850,6 +1864,7 @@ pub(crate) enum ImportElement {
         module: Span,
         bind: Ident,
         delim_span: Span,
+        type_only: Option<TypeOnly>,
     },
     Items {
         module: Span,
@@ -1866,8 +1881,8 @@ impl Node for ImportElement {
                 type_only,
                 ..
             } => {
-                if let Some(type_only) = type_only {
-                    visit.token(Token::Annotation, type_only.at_span, None)?;
+                if let Some(span) = type_only.as_ref().and_then(|ty| ty.at_span) {
+                    visit.token(Token::Annotation, span, None)?;
                 }
                 visit.token(Token::ModuleName, *module, None)?;
                 accept_import_bind(bind, type_only, visit)
@@ -1876,10 +1891,14 @@ impl Node for ImportElement {
                 module,
                 bind,
                 delim_span,
+                type_only,
             } => {
+                if let Some(span) = type_only.as_ref().and_then(|ty| ty.at_span) {
+                    visit.token(Token::Annotation, span, None)?;
+                }
                 visit.token(Token::ModuleName, *module, None)?;
                 visit.token(Token::Delim, *delim_span, None)?;
-                visit.node(bind)
+                accept_import_bind(bind, type_only, visit)
             }
             ImportElement::Items { module, items } => {
                 visit.token(Token::ModuleName, *module, None)?;
@@ -1894,6 +1913,7 @@ impl Node for ImportElement {
 }
 
 pub(crate) struct Import {
+    pub(crate) at_span: Option<Span>,
     pub(crate) elements: Vec<ImportElement>,
     pub(crate) import_span: Span,
     pub(crate) pub_span: Option<Span>,
@@ -1901,12 +1921,16 @@ pub(crate) struct Import {
 
 impl Node for Import {
     fn span(&self) -> Span {
-        self.pub_span.unwrap_or(self.import_span) | self.elements.last().as_ref().unwrap().span()
+        self.pub_span.or(self.at_span).unwrap_or(self.import_span)
+            | self.elements.last().as_ref().unwrap().span()
     }
 
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         if let Some(span) = self.pub_span {
             visit.token(Token::Keyword, span, None)?;
+        }
+        if let Some(span) = self.at_span {
+            visit.token(Token::Annotation, span, None)?;
         }
         visit.token(Token::Keyword, self.import_span, None)?;
         self.elements.accept(visit)
@@ -2087,10 +2111,10 @@ impl Node for Def {
         if let Some(span) = self.pub_span {
             visit.token(Token::Keyword, span, None)?;
         }
-        visit.token(Token::Keyword, self.def_span, None)?;
         if let Some(span) = self.at_span {
             visit.token(Token::Annotation, span, None)?;
         }
+        visit.token(Token::Keyword, self.def_span, None)?;
         visit.token(
             Token::Variable,
             self.ident.span,
@@ -2129,10 +2153,10 @@ impl Node for Method {
         if let Some(span) = self.pub_span {
             visit.token(Token::Keyword, span, None)?;
         }
-        visit.token(Token::Keyword, self.def_span, None)?;
         if let Some(span) = self.at_span {
             visit.token(Token::Annotation, span, None)?;
         }
+        visit.token(Token::Keyword, self.def_span, None)?;
         visit.token(Token::Method, self.name_span, self.node)?;
         if let Some(binders) = &self.binders {
             visit.node(&**binders)?;
@@ -2150,6 +2174,7 @@ pub(crate) enum SpecialMethod {
     Init,
     Call,
     Unpack,
+    Spread,
     Iter,
     Sink,
     Next,
@@ -2191,6 +2216,7 @@ impl SpecialMethod {
             SpecialMethod::Init => "(init)",
             SpecialMethod::Call => "(call)",
             SpecialMethod::Unpack => "(unpack)",
+            SpecialMethod::Spread => "(spread)",
             SpecialMethod::Iter => "(iter)",
             SpecialMethod::Sink => "(sink)",
             SpecialMethod::Next => "(next)",
@@ -2259,9 +2285,11 @@ impl Node for Class {
         if let Some(span) = self.pub_span {
             visit.token(Token::Keyword, span, None)?;
         }
-        visit.token(Token::Keyword, self.class_span, None)?;
         if let Some(span) = self.at_span {
             visit.token(Token::Annotation, span, None)?;
+        }
+        visit.token(Token::Keyword, self.class_span, None)?;
+        if self.at_span.is_some() {
             visit.token(Token::Type, self.ident.span, self.node)?;
         } else {
             visit.token(

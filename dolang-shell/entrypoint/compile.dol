@@ -146,7 +146,7 @@ def type_arg_json id_to_index arg
     optional: $arg.optional
     if type(arg, compile.KeyTypeArg)
       key: (span_json arg.key)
-    if type(arg, compile.KeyRestTypeArg)
+    if (type(arg, compile.KeyTypeArg) && arg.key_ty != nil || type(arg, compile.KeyRestTypeArg))
       key_type: (type_expr_json id_to_index arg.key_ty)
     if !type(arg, compile.OpenRestTypeArg)
       type: (type_expr_json id_to_index arg.ty)
@@ -186,6 +186,7 @@ def node_json id_to_index node
     :item = nil
     :target = nil
     :type_only = nil
+    :type_ellipsis = nil
     :expr = nil
     ...
   $
@@ -209,6 +210,8 @@ def node_json id_to_index node
       item: (span_or_str item)
     if (target != nil)
       target: (node_ref id_to_index target)
+    if (type_ellipsis != nil)
+      type_ellipsis: (span_json type_ellipsis)
     if (type_only != nil)
       type_only: $type_only
     if (expr != nil)
@@ -414,6 +417,8 @@ class Document
       let param = $
         name: $name
         optional: $optional
+        if (type(child, compile.RestParam) && child.type_ellipsis != nil)
+          type_spread: true
         doc: (self.#doc_of(child))
         if (ty != nil)
           type: $ty
@@ -442,6 +447,13 @@ class Document
           default: (self.#type_tree(child.default))
     result
 
+  # The annotation on a method's `self`, as a tree, or `nil`.
+  def self_type self id
+    for child_id = self.#index.own_ids(id)
+      if type(self.#index.node(child_id), compile.SelfParam)
+        return self.#type_of $child_id
+    nil
+
   # The type describing a node, as a tree, or `nil`.
   def type_of self id
     for child = self.#own(id)
@@ -457,7 +469,7 @@ class Document
     else if type(expr, compile.ConstType)
       $
         kind: "const"
-        text: (self.#text(expr.span))
+        text: (self.#ungrouped_text(expr.span))
     else if type(expr, compile.AppType)
       $
         kind: "app"
@@ -480,11 +492,19 @@ class Document
         params: (self.#type_args(expr.params))
         ret: (self.#type_tree(expr.ret))
 
+  # The text of a name or constant type, whose span includes any parentheses
+  # grouping it.
+  def ungrouped_text self span
+    let text = self.#text(span)
+    while (text.starts_with("(") && text.ends_with(")"))
+      text = text[1..(text.len - 1)].trim()
+    text
+
   def name_tree self expr
     let target = self.#index.node $expr.target
     $
       kind: "name"
-      name: (self.#text(expr.span))
+      name: (self.#ungrouped_text(expr.span))
       target: (node_ref(self.#index.id_to_index(), expr.target))
       # An import's node gives its names only as spans
       if type(target, compile.ImportItem)
@@ -501,37 +521,23 @@ class Document
         optional: $arg.optional
         if type(arg, compile.KeyTypeArg)
           key: (self.#text(arg.key))
-        if type(arg, compile.KeyRestTypeArg)
+        if (type(arg, compile.KeyTypeArg) && arg.key_ty != nil || type(arg, compile.KeyRestTypeArg))
           key_type: (self.#type_tree(arg.key_ty))
         if !type(arg, compile.OpenRestTypeArg)
           type: (self.#type_tree(arg.ty))
     result
 
-  # A class's superclasses, in source order.
+  # A class's supertypes, in source order, as type trees. A type-only one is
+  # marked.
   def supers self id
     let result = []
     for child = self.#own(id)
       if type(child, compile.Type)
-        result.push $self.#super_json(child.expr)
+        let tree = self.#type_tree(child.expr)
+        if child.type_only
+          tree[:type_only:] = true
+        result.push $tree
     result
-
-  # A superclass naming an imported item, as its module and item, or else its
-  # text.
-  def super_json self expr
-    let text = self.#text(expr.span)
-    if (!type(expr, compile.NameType) || expr.target == nil || text != self.#text(expr.head))
-      return text
-    let target = self.#index.node $expr.target
-    if type(target, compile.ImportItem)
-      $
-        module: (self.#text(target.module))
-        item: (self.#text(target.item))
-    else if type(target, compile.PreludeItem)
-      $
-        module: $target.module
-        item: $target.item
-    else
-      text
 
   def add_member self node member
     let list = self.#members.get $node.parent else: do return
@@ -597,7 +603,10 @@ class Document
       doc: (self.#doc_of(node))
       if (binders.len > 0)
         binders: $binders
-      type: (self.#type_of(id))
+      if node.opaque
+        opaque: true
+      else
+        type: (self.#type_of(id))
 
   def import_module_entry self _id node
     if (node.type_only || !self.#included(node.is_pub))
@@ -610,13 +619,16 @@ class Document
       doc: (self.#doc_of(node))
 
   def import_item_entry self _id node
-    # An item imported for types only is not a value the module exports
-    if (node.type_only || !self.#included(node.is_pub))
+    # An item imported for types only is exported only as a type, so a private
+    # one is of no interest even when private entities are included
+    if (node.type_only && !node.is_pub || !self.#included(node.is_pub))
       return
     self.#entities.push $
       kind: "import_item"
       name: (self.#text(node.name))
       pub: $node.is_pub
+      if node.type_only
+        type_only: true
       module: (self.#text(node.module))
       item: (self.#text(node.item))
       doc: (self.#doc_of(node))
@@ -644,6 +656,7 @@ class Document
 
   def method_entry self id node is_pub special
     let returns = self.#type_of $id
+    let self_type = self.#self_type $id
     let binders = self.#binders(id)
     self.#add_member $node $
       if decorated(self.#own(id), self.#getter)
@@ -667,6 +680,8 @@ class Document
         scope: (self.#scope(id))
         if (binders.len > 0)
           binders: $binders
+        if (self_type != nil)
+          self_type: $self_type
         params: (self.#params(id))
         if (returns != nil)
           returns: $returns

@@ -1,0 +1,22 @@
+@let Trailing = Int echo
+# error: expected end of statement after alias
+#   --> alias_errors.dol:LL:LL
+#    |
+# LL | @let Trailing = Int echo
+#    |                     ^^^^
+
+@let OpaqueTrailing = ... Foo
+# error: expected end of statement after alias
+#   --> alias_errors.dol:LL:LL
+#    |
+# LL | @let OpaqueTrailing = ... Foo
+#    |                           ^^^
+
+@let OpaqueJoined = ...Foo
+# error: expected end of statement after alias
+#   --> alias_errors.dol:LL:LL
+#    |
+# LL | @let OpaqueJoined = ...Foo
+#    |                        ^^^
+
+@let Opaque[T] = ...

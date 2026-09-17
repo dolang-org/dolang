@@ -1,59 +1,5 @@
 # Runs and manages Podman containers and images.
-#
-# ## Create and Run Parameters {: #podman.create-and-run-parameters }
-#
-# In addition to `image` and `cmd` (documented on `run`/`create` themselves),
-# `create` and `run` share these options:
-#
-# | Name         | Type                             | Description                                 |
-# | ------------ | -------------------------------- | ------------------------------------------- |
-# | `cd`         | [`Str`](std.Str)           | Optional container working directory        |
-# | `env`        | [`Dict`](std.Dict)         | Container environment                       |
-# | `pull`       | [`Sym`](std.Sym)           | Image pull policy; default `:MISSING:`      |
-# | `name`       | [`Str`](std.Str)           | Optional container name                     |
-# | `mounts`     | [`Iterable`](std.Iterable) | Mount specifications                        |
-# | `labels`     | [`Dict`](std.Dict)         | Container labels                            |
-# | `ports`      | [`Iterable`](std.Iterable) | Published-port specifications               |
-# | `networks`   | [`Iterable`](std.Iterable) | Network names or IDs                        |
-# | `user`       | [`Str`](std.Str)           | Optional user or `user:group`               |
-# | `entrypoint` | [`Str`](std.Str)           | Optional entrypoint override                |
-# | `args`       | [`Value`](std.Value)       | Arguments passed to `cmd`                   |
-#
-# ### `pull`
-#
-# | Value       | Meaning                                  |
-# | ----------- | ---------------------------------------- |
-# | `:MISSING:` | Pull the image only when it is not local |
-# | `:ALWAYS:`  | Always pull the image                    |
-# | `:NEVER:`   | Never pull the image                     |
-#
-# ### `env`
-#
-# Keys are strings or symbols. A value of `:INHERIT:` copies the variable from
-# the host environment; other values are converted to strings. `nil` values are
-# not supported.
-#
-# ### `mounts`
-#
-# Each element is a [`Dict`](std.Dict) with these keys:
-#
-# | Name       | Type                        | Meaning                                      |
-# | ---------- | --------------------------- | -------------------------------------------- |
-# | `type`     | [`Sym`](std.Sym)      | `:BIND:`, `:VOLUME:`, or `:TMPFS:`           |
-# | `target`   | [`Value`](std.Value)  | Mount path in the container                  |
-# | `source`   | [`Value`](std.Value)  | Host path or volume name; required for binds |
-# | `readonly` | [`Bool`](std.Bool)    | Mount read-only when `true`; default `false` |
-#
-# ### `ports`
-#
-# Each element is a [`Dict`](std.Dict) with these keys:
-#
-# | Name             | Type                        | Meaning                                      |
-# | ---------------- | --------------------------- | -------------------------------------------- |
-# | `container_port` | [`Value`](std.Value)  | Container port                               |
-# | `host_port`      | [`Value`](std.Value)  | Host port; assigned automatically if omitted |
-# | `host_ip`        | [`Str`](std.Str)      | Optional host address to bind                |
-# | `protocol`       | [`Sym`](std.Sym)      | `:TCP:` (default), `:UDP:`, or `:SCTP:`      |
+
 import
   proc
   fs:
@@ -69,6 +15,23 @@ pub import _container.dockman:
   - InvalidImageReferenceError
   - RegistryAuthError
   - ArchiveError
+  - @AddSpec
+  - @ArchiveFormat
+  - @BuildMount
+  - @ContainerMount
+  - @ContainerState
+  - @ContainerStatus
+  - @Env
+  - @ImageTag
+  - @MountInfo
+  - @PatchSpec
+  - @Platform
+  - @PortBinding
+  - @PortProtocol
+  - @PortSpec
+  - @PullPolicy
+  - @PushResult
+  - @RestartSpec
 
 let podman_cli = proc.run[:podman:]
 
@@ -77,85 +40,92 @@ class PodmanRuntime: dockman.Runtime
     dockman.Runtime.(init) $self :PODMAN:
 
   pub def cli _self ...args
-    env LC_ALL: C LANG: C do
-      podman_cli ...args
+    env LC_ALL: C LANG: C do podman_cli ...args
 
 let podman = PodmanRuntime()
 
 # Runs a command in a temporary Podman container.
-#
-# See [Create and run parameters](podman.create-and-run-parameters).
-#
-# ## Returns
-#
-# `nil`
 pub def run
   # Image name or ID.
   image @ Str
   # Command to run instead of the image command.
   cmd @ Str
-  # Arguments passed to `cmd`, plus any of the shared
-  # [create/run options](podman.create-and-run-parameters).
-  ...args @ Value
+  # Container working directory.
+  :cd @ (Str | Path) = nil
+  # Container environment.
+  :env @ Env = {}
+  # Image pull policy.
+  :pull @ PullPolicy = :MISSING:
+  # Container name.
+  :name @ Str = nil
+  # Mounts.
+  :mounts @ Iterable[ContainerMount] = []
+  # Container labels.
+  :labels @ Dict[(Str | Sym), Value] = {}
+  # Ports to publish.
+  :ports @ Iterable[PortSpec] = []
+  # Networks to connect to, by name or ID.
+  :networks @ Iterable[Str] = []
+  # User, or `user:group`.
+  :user @ Str = nil
+  # Entrypoint override.
+  :entrypoint @ Str = nil
+  # Arguments passed to `cmd`.
+  ...args
 do -> nil
-  podman.run $image $cmd ...args
+  podman.run $image $cmd :cd :env :pull :name :mounts :labels :ports :networks
+    :user :entrypoint ...args
 
-# Creates a stopped Podman container.
-#
-# See [Create and run parameters](podman.create-and-run-parameters).
-#
-# ## Returns
-#
-# [`Container`](_container.dockman.Container) in the `:CREATED:` state
+# Creates a stopped Podman container, in the `:CREATED:` state.
 pub def create
   # Image name or ID.
   image @ Str
   # Command to run instead of the image command.
-  #
-  # Optional; omit to use the image's own command.
   cmd @ Str = nil
-  # Container restart policy.
-  #
-  # | Name          | Type                   | Meaning                             |
-  # | ------------- | ---------------------- | ----------------------------------- |
-  # | `policy`      | [`Sym`](std.Sym) | Restart policy                      |
-  # | `max_retries` | [`Int`](std.Int) | Optional retry limit for `:ON_FAILURE:` only |
-  #
-  # `policy` accepts:
-  #
-  # | Value              | Meaning                            |
-  # | ------------------ | ----------------------------------- |
-  # | `:NO:`             | Do not restart the container       |
-  # | `:ON_FAILURE:`     | Restart after an unsuccessful exit |
-  # | `:ALWAYS:`         | Always restart the container       |
-  # | `:UNLESS_STOPPED:` | Restart unless explicitly stopped  |
-  :restart @ Dict = nil
-  # Any of the shared
-  # [create/run options](podman.create-and-run-parameters).
-  ...args @ Value
+  # Container working directory.
+  :cd @ (Str | Path) = nil
+  # Container environment. `nil` values are not supported.
+  :env @ Env = {}
+  # Image pull policy.
+  :pull @ PullPolicy = :MISSING:
+  # Container name.
+  :name @ Str = nil
+  # Mounts.
+  :mounts @ Iterable[ContainerMount] = []
+  # Container labels.
+  :labels @ Dict[(Str | Sym), Value] = {}
+  # Ports to publish.
+  :ports @ Iterable[PortSpec] = []
+  # Networks to connect to, by name or ID.
+  :networks @ Iterable[Str] = []
+  # User, or `user:group`.
+  :user @ Str = nil
+  # Entrypoint override.
+  :entrypoint @ Str = nil
+  # Restart policy.
+  :restart @ RestartSpec = nil
+  # Arguments passed to `cmd`.
+  ...args
 do -> Container
-  podman.create $image $cmd :restart ...args
+  podman.create $image $cmd :cd :env :pull :name :mounts :labels :ports
+    :networks :user :entrypoint :restart ...args
 
 # Runs a function in a temporary Podman container.
 #
-# Program execution and filesystem access will be redirected for the
-# duration of the function.
-#
-# ## Returns
-#
-# Result of `func`
-pub def with
+# Program execution and filesystem access are redirected for the duration of
+# the function.
+pub def with[R]
   # Image name or ID.
   image @ Str
   # Function to run.
-  func @ Func
-  # Optional container working directory.
-  :cd @ Str = nil
+  func @ (() -> R)
+  # Container working directory.
+  :cd @ (Str | Path) = nil
   # Container environment.
-  :env @ Dict = {}
-  # Image pull policy: `:MISSING:`, `:ALWAYS:`, or `:NEVER:`.
-  :pull @ Sym = :MISSING:
-do -> Value
+  :env @ Env = {}
+  # Image pull policy.
+  :pull @ PullPolicy = :MISSING:
+do -> R
   podman.with $image $func :cd :env :pull
 
 # Builds a Podman image.
@@ -171,162 +141,96 @@ do -> Value
 # ```
 pub def build
   # Image pull policy for the base image.
-  #
-  # | Value       | Meaning                                  |
-  # | ----------- | ---------------------------------------- |
-  # | `:MISSING:` | Pull the image only when it is not local |
-  # | `:ALWAYS:`  | Always pull the image                    |
-  # | `:NEVER:`   | Never pull the image                     |
-  :pull @ Sym = :MISSING:
+  :pull @ PullPolicy = :MISSING:
   # Mounts available to every build step.
-  #
-  # Each element is a [`Dict`](std.Dict) with these keys:
-  #
-  # | Name     | Type                   | Meaning                                      |
-  # | -------- | ---------------------- | --------------------------------------------- |
-  # | `type`   | [`Sym`](std.Sym) | `:CACHE:`, `:BIND:`, `:VOLUME:`, or `:TMPFS:` |
-  # | `target` | [`Value`](std.Value) | Mount path in the container                  |
-  # | `source` | [`Value`](std.Value) | Mount source; required for `:BIND:`           |
-  # | `id`     | [`Value`](std.Value) | Optional cache ID; defaults to `target`       |
-  :mounts @ Iterable = []
-  # Optional working directory for `run` steps.
-  :cd @ Str = nil
+  :mounts @ Iterable[BuildMount] = []
+  # Working directory for `run` steps.
+  :cd @ (Str | Path) = nil
   # Environment for `run` steps.
-  :env @ Dict = {}
+  :env @ Env = {}
   # Base image.
   :from @ Str
-  # Ordered build items.
+  # Build steps and tags, in order, as keyword arguments. Keys may repeat.
   #
-  # Vertical keyword items define tags and build steps. Items may be repeated.
-  #
-  # | Pattern       | Value                       | Meaning                            |
-  # | ------------- | --------------------------- | ---------------------------------- |
-  # | `tag: name`   | [`Str`](std.Str)       | Apply an output image tag          |
-  # | `run: func`   | [`Func`](std.Func)    | Run a function inside the container |
-  # | `add: spec`   | [`Dict`](std.Dict)     | Add a file to the image            |
-  # | `patch: spec` | [`Dict`](std.Dict)     | Apply a patch inside the image     |
-  # | `commit: msg` | [`Str`](std.Str)       | Commit a layer with a message      |
-  #
-  # #### `add: spec`
-  #
-  # `spec` accepts exactly one of `source` and `content`.
-  #
-  # | Name      | Type                                                                  | Meaning                         |
-  # | --------- | --------------------------------------------------------------------- | -------------------------------- |
-  # | `source`  | [`Str`](std.Str)\|[`fs.Path`](fs.Path)\|[`url.Url`](url.Url) | Source path or URL              |
-  # | `content` | [`Str`](std.Str)\|[`Bin`](std.Bin)                        | Content to write                |
-  # | `target`  | [`Str`](std.Str)\|[`fs.Path`](fs.Path)                    | Destination path                |
-  # | `chmod`   | [`Int`](std.Int)\|[`fs.unix.Mode`](fs.unix.Mode)         | Optional destination permissions |
-  #
-  # If `target` is a directory, a source path or URL retains its filename.
-  # Direct content is always written to `target` itself.
-  #
-  # #### `patch: spec`
-  #
-  # `spec` accepts exactly one of `source` and `content`.
-  #
-  # | Name      | Type                                            | Meaning                    |
-  # | --------- | ----------------------------------------------- | -------------------------- |
-  # | `source`  | [`Str`](std.Str)\|[`fs.Path`](fs.Path) | Unified patch file         |
-  # | `content` | [`Str`](std.Str)\|[`Bin`](std.Bin) | Unified patch data         |
-  ...args @ Value
+  # | Key      | Value                        | Meaning                              |
+  # | -------- | ---------------------------- | ------------------------------------ |
+  # | `tag`    | `Str`                        | Apply an output image tag            |
+  # | `run`    | `() -> Value`                | Run a function inside the container  |
+  # | `add`    | [`AddSpec`](podman.AddSpec)     | Add a file to the image              |
+  # | `patch`  | [`PatchSpec`](podman.PatchSpec) | Apply a patch inside the image       |
+  # | `commit` | `Str`                        | Commit a layer with a message        |
+  ...steps
 do -> Image
-  podman.build :pull :mounts :cd :env :from ...args
+  podman.build :pull :mounts :cd :env :from ...steps
 
-# List images, returning an iterator of `Image` objects
-#
-# ## Returns
-#
-# An iterator of `Image` objects, one per repository:tag pair
+# Lists images, one per repository and tag.
 pub def images
   # List all images, including intermediate layers.
   :all @ Bool = false
-  # Optional filter expression (e.g. `"reference=myapp*"`).
+  # Filter expression, such as `"reference=myapp*"`.
   :filter @ Str = nil
-do -> Iter
+do -> Iterable[Image]
   podman.images :all :filter
 
-# Get a single image by reference
-#
-# ## Returns
-#
-# An `Image` object
+# Gets an image by reference.
 pub def image
-  # Image reference (e.g. `"myapp:latest"`, `"sha256:abc..."`).
+  # Image reference, such as `"myapp:latest"` or `"sha256:abc..."`.
   ref @ Str
 do -> Image
   podman.image $ref
 
-# List containers.
+# Lists containers.
 pub def containers
   # List all containers, including stopped ones.
   :all @ Bool = false
-  # Optional filter expression (e.g. `"name=myapp*"`).
+  # Filter expression, such as `"name=myapp*"`.
   :filter @ Str = nil
-do
+do -> Iterable[Container]
   podman.containers :all :filter
 
-# Get a single container by ID or name.
+# Gets a container by ID or name.
 pub def container
   # Container ID or name.
   ref @ Str
-do
+do -> Container
   podman.container $ref
 
-# Save one or more images to an archive or directory.
+# Saves one or more images to an archive or directory, returning `target`.
 pub def save
-  # Archive path to write, or
-  # destination directory for `:OCI_DIR:`, `:DOCKER_DIR:`, or `:DIR:`.
+  # Archive path to write, or the directory for a directory format.
   target @ (Str | Path)
   # Archive format.
-  #
-  # | Value              | Meaning                                          |
-  # | ------------------ | ------------------------------------------------- |
-  # | `:DOCKER_ARCHIVE:` | Single-file Docker archive; the only format that supports saving multiple images |
-  # | `:OCI_ARCHIVE:`    | Single-file OCI archive                          |
-  # | `:OCI_DIR:`        | OCI layout directory                             |
-  # | `:DOCKER_DIR:`     | Docker directory format                          |
-  # | `:DIR:`            | Plain directory of layers                        |
-  :format @ Sym = :DOCKER_ARCHIVE:
-  # Target platform.
-  #
-  # An `os/arch[/variant]` string, or a `{:os, :arch, :variant}` dict.
-  :platform @ (Str | Dict) = nil
-  # Image references to save. Only `:DOCKER_ARCHIVE:`
-  # supports saving more than one.
+  :format @ ArchiveFormat = :DOCKER_ARCHIVE:
+  # Platform to save.
+  :platform @ Platform = nil
+  # Image references to save. Only `:DOCKER_ARCHIVE:` holds more than one.
   ...images @ Str
-do
+do -> (Str | Path)
   podman.save $target :format :platform ...images
 
-# Load images from an archive.
+# Loads images from an archive.
 pub def load
   # Archive to load.
   source @ (Str | Path)
-  # Target platform.
-  #
-  # An `os/arch[/variant]` string, or a `{:os, :arch, :variant}` dict.
-  :platform @ (Str | Dict) = nil
-do
+  # Platform to load.
+  :platform @ Platform = nil
+do -> Array[Image]
   podman.load $source :platform
 
-# Pull an image from a registry.
+# Pulls an image from a registry.
 pub def pull
   # Image reference.
   ref @ Str
-  # Target platform.
-  #
-  # An `os/arch[/variant]` string, or a `{:os, :arch, :variant}` dict.
-  :platform @ (Str | Dict) = nil
-do
+  # Platform to pull.
+  :platform @ Platform = nil
+do -> Image
   podman.pull $ref :platform
 
-# Push an image to a registry.
+# Pushes an image to a registry.
 pub def push
   # Image reference.
   ref @ Str
-  # Target platform.
-  #
-  # An `os/arch[/variant]` string, or a `{:os, :arch, :variant}` dict.
-  :platform @ (Str | Dict) = nil
-do
+  # Platform to push.
+  :platform @ Platform = nil
+do -> PushResult
   podman.push $ref :platform

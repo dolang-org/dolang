@@ -1,7 +1,7 @@
 use dolang::{
     compile::Config,
     runtime::{
-        Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
+        Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
         object::{TypeBuilder, fmt},
         strand::Redirect,
         unpack,
@@ -304,15 +304,14 @@ pub(crate) fn configure_vm<'v>(
             let signal_sym = global.syms.signal;
             let grace_sym = global.syms.grace;
             let force_sym = global.syms.force;
-            let ([func], [signal, grace, force], rest) = unpack!(
+            let ([func], [signal, grace, force]) = unpack!(
                 strand,
                 args,
                 1,
                 0,
                 signal_sym = None,
                 grace_sym = None,
-                force_sym = None,
-                ...
+                force_sym = None
             )?;
             let old_policy = global.local.get(strand).termination_policy();
             let policy = apply_policy_values(
@@ -323,7 +322,7 @@ pub(crate) fn configure_vm<'v>(
                 force.as_deref(),
             )?;
             global.local.get(strand).replace_termination_policy(policy);
-            let result = func.call(strand, rest, out).await;
+            let result = call!(strand, func, out).await;
             global
                 .local
                 .get(strand)
@@ -331,12 +330,12 @@ pub(crate) fn configure_vm<'v>(
             result
         })
         .function_with_slots("sub", async move |strand, args, out, [mut cap, tmp]| {
-            let ([func], [chomp], rest) = unpack!(strand, args, 1, 0, chomp_sym = None, ...)?;
+            let ([func], [chomp]) = unpack!(strand, args, 1, 0, chomp_sym = None)?;
             let chomp = chomp.map(|v| v.to_bool(strand)).unwrap_or(true);
             capture_ty.create(strand, Capture::new(), &mut cap);
             Redirect::new(strand)
                 .output(&cap)
-                .enter(async move |strand| func.call(strand, rest, tmp).await)
+                .enter(async move |strand| call!(strand, func, tmp).await)
                 .await?;
             capture_ty
                 .cast(&cap)

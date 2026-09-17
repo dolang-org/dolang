@@ -19,6 +19,26 @@ import _vfs digest fs http json proc progress shell std sys tar zip
 import fs.unix: unix_fs
 import fs.unix:
   - @Mode
+
+# An archive format [`pack`](transfer.pack) writes.
+#
+# | Value        | Meaning                  |
+# | ------------ | ------------------------ |
+# | `:TAR:`      | Uncompressed TAR         |
+# | `:TAR_GZIP:` | gzip-compressed TAR      |
+# | `:TAR_ZSTD:` | Zstandard-compressed TAR |
+# | `:ZIP:`      | ZIP                      |
+pub @let ArchiveFormat = (:TAR: | :TAR_GZIP: | :TAR_ZSTD: | :ZIP:)
+
+# An input format [`unpack`](transfer.unpack) reads: an archive, or a raw
+# compressed stream.
+#
+# | Value    | Meaning              |
+# | -------- | -------------------- |
+# | `:GZIP:` | Raw gzip stream      |
+# | `:ZSTD:` | Raw Zstandard stream |
+# | `:XZ:`   | Raw XZ stream        |
+pub @let UnpackFormat = (ArchiveFormat | :GZIP: | :ZSTD: | :XZ:)
 import security.unix: security_unix
 
 let DIGESTS = $
@@ -416,7 +436,7 @@ pub def get
   # `app`. Mainly useful for tests that want an isolated, disposable cache
   # root.
   :cache @ (Str | Path) = nil
-do
+do -> Path
   if (app != nil && cache != nil)
     throw std.ValueError "app: not valid together with cache"
   source = parse_location $source
@@ -463,8 +483,8 @@ pub def put
   # Request headers for an HTTP(S) destination.
   #
   # Only valid for an HTTP(S) destination.
-  :headers @ Dict = nil
-do
+  :headers @ Dict[(Str | Sym), Str] = nil
+do -> nil
   source = (parse_location source)
   if (type source Url)
     source = get $source
@@ -703,14 +723,7 @@ pub def pack
   #
   # Inferred from the destination name when omitted, which fails if the name
   # carries no recognized extension.
-  #
-  # | Value        | Meaning                    |
-  # | ------------ | -------------------------- |
-  # | `:TAR:`      | Uncompressed TAR           |
-  # | `:TAR_GZIP:` | gzip-compressed TAR        |
-  # | `:TAR_ZSTD:` | Zstandard-compressed TAR   |
-  # | `:ZIP:`      | ZIP                        |
-  :format @ Sym = nil
+  :format @ ArchiveFormat = nil
   # Relative path prepended
   # to every archive entry.
   :prefix @ (Str | Path) = nil
@@ -738,7 +751,7 @@ pub def pack
   # Modification time. Defaults to the source
   # modification time, or the Unix epoch when unavailable.
   :mtime @ DateTime = nil
-do
+do -> nil
   let metadata = $
     if (mode != nil)
       mode: $mode
@@ -1050,11 +1063,11 @@ class ZipUnpack
     finish_metadata $root $records
 
 # Raised when unpacking a raw compressed stream (gzip, Zstandard, XZ) fails.
-#
-# `detail` is the failing tool's stderr, when it printed exactly one line.
 pub class ArchiveError: std.RuntimeError
-  pub field source = nil
-  pub field detail = nil
+  # The stream that failed to unpack.
+  pub field source @ Path = nil
+  # The failing tool's error output, when it printed exactly one line.
+  pub field detail @ (Str | nil) = nil
 
   def (init) self source detail = nil
     std.RuntimeError.(init) $self
@@ -1112,27 +1125,17 @@ pub def unpack
   # Inferred from the source name when omitted. A compressed TAR archive is
   # distinguished from a raw stream by filename: `.tar.gz` selects
   # `:TAR_GZIP:` while `.gz` selects `:GZIP:`.
-  #
-  # | Value        | Meaning                    |
-  # | ------------ | -------------------------- |
-  # | `:TAR:`      | Uncompressed TAR           |
-  # | `:TAR_GZIP:` | gzip-compressed TAR        |
-  # | `:TAR_ZSTD:` | Zstandard-compressed TAR   |
-  # | `:ZIP:`      | ZIP                        |
-  # | `:GZIP:`     | Raw gzip stream            |
-  # | `:ZSTD:`     | Raw Zstandard stream       |
-  # | `:XZ:`       | Raw XZ stream              |
-  :format @ Sym = nil
+  :format @ UnpackFormat = nil
   # Leading path components to
   # strip from each entry.
   #
   # `:ROOT:` strips one component, and requires a non-empty archive whose
   # entries share a single root component. Raw streams require `0`.
-  :strip @ (Int | Sym) = 0
+  :strip @ (Int | :ROOT:) = 0
   # Application name selecting the cache directory,
   # for a URL source.
   :app @ Str = nil
-do
+do -> nil
   source = parse_location $source
   if (type source Url)
     source = get $source app: $app

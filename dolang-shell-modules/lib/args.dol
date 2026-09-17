@@ -1,10 +1,10 @@
 # Declarative command-line argument parsing.
 #
-# ## Spec declarations
-#
-# Both `args.parse` and `args.with` accept `help:` and `usage:` as key
-# arguments, plus any number of positional spec items using `-` list syntax.
-# Each spec item is a dict whose first key is both the item type and its name:
+# [`parse`](args.parse) and [`with`](args.with) take the options, arguments,
+# and subcommands to accept as positional spec items, written with `-` list
+# syntax. Each item is a dictionary whose first key gives both its kind and its
+# name: [`flag:`](args.FlagSpec), [`opt:`](args.OptSpec),
+# [`arg:`](args.ArgSpec), or [`cmd:`](args.CmdSpec).
 #
 # ```
 # args.parse
@@ -20,97 +20,90 @@
 #       echo "Deploying $(p.deploy.service)"
 # ```
 #
-# ### `- flag: <name>`
-#
-# A boolean flag. Present on the command line sets it to `true`; absent defaults
-# to `false`. Additional settings:
-#
-# | Name        | Type                | Meaning |
-# | ----------- | ------------------- | ------- |
-# | `:long?`    | [`Str`](std.Str)?   | `--long-flag` name (defaults to `name`; `nil` disables entirely) |
-# | `:short?`   | [`Str`](std.Str)   | Single-character shorthand, such as `v` for `-v` |
-# | `:default?` | [`Bool`](std.Bool) | Default value (defaults to `false`) |
-# | `:divider?` | [`Bool`](std.Bool) | Stop interpreting subsequent arguments as options or flags |
-# | `:env?`     | [`Str`](std.Str)   | Environment variable used when the flag is absent |
-# | `:help?`    | [`Str`](std.Str)   | Description shown in `--help` output |
-#
-# `name` becomes the result record key (hyphens converted to underscores:
-# `dry-run` → `p.dry_run`). `long` controls the CLI flag independently.
-#
-# ### `- opt: <name>`
-#
-# A value-consuming named option. Additional settings:
-#
-# | Name        | Type                  | Meaning |
-# | ----------- | --------------------- | ------- |
-# | `:long?`    | [`Str`](std.Str)      | `--long-option` name (defaults to `name`) |
-# | `:parse?`   | [`Func`](std.Func)    | Parser applied to the raw string value |
-# | `:short?`   | [`Str`](std.Str)      | Single-character shorthand, such as `f` for `-f` |
-# | `:default?` | [`Value`](std.Value)  | Default value; omitting it makes the option required |
-# | `:divider?` | [`Bool`](std.Bool)    | Stop interpreting subsequent arguments as options or flags |
-# | `:env?`     | [`Str`](std.Str)      | Environment variable used when the option is absent |
-# | `:collect?` | [`Bool`](std.Bool)    | Accept the option multiple times and return an array |
-# | `:meta?`    | [`Str`](std.Str)      | Metavar shown in help output (defaults to the uppercased name) |
-# | `:values?`  | [`Array`](std.Array)  | Allowed values; other values are rejected |
-# | `:help?`    | [`Str`](std.Str)      | Description shown in `--help` output |
-#
-# `name` becomes the result record key (hyphens converted to underscores:
-# `dry-run` → `p.dry_run`). `long` controls the option syntax independently
-# if you need them to differ.
-#
-# ### `- arg: <name>`
-#
-# A positional argument. Additional settings:
-#
-# | Name        | Type                  | Meaning |
-# | ----------- | --------------------- | ------- |
-# | `:parse?`   | [`Func`](std.Func)    | Parser applied to the raw string value |
-# | `:default?` | [`Value`](std.Value)  | Default value; omitting it makes the argument required |
-# | `:divider?` | [`Bool`](std.Bool)    | Stop interpreting subsequent arguments as options or flags |
-# | `:collect?` | [`Bool`](std.Bool)    | Absorb all remaining positional arguments into an array; valid only on the last `arg:` |
-# | `:values?`  | [`Array`](std.Array)  | Allowed values |
-# | `:help?`    | [`Str`](std.Str)      | Description shown in `--help` output |
-#
-# ### `- cmd: <name>`
-#
-# A subcommand. Additional items:
-#
-# | Name                             | Type                | Meaning |
-# | -------------------------------- | ------------------- | ------- |
-# | `:help?`                         | [`Str`](std.Str)    | Description shown in `--help` output |
-# | `flag:`, `opt:`, `arg:`, `cmd:` | [`Dict`](std.Dict)  | Nested spec item for the subcommand's arguments |
-# | `handler?`                       | [`Func`](std.Func)  | Positional handler called by `args.with` with the parsed record |
-#
-# When a subcommand is matched, `p.cmd` is set to the normalized symbol of the
-# matched subcommand name (e.g. `:deploy:` or `:build_docs:`). The selected
-# subcommand's fields are stored in a nested record at `p[p.cmd]`, alongside any
-# global options on the top-level result. The effective handler is available at
-# `p.handler`, so callers using `args.parse` may invoke it themselves. When help
-# is requested, `p.help` is set to the rendered help text string and parsing
-# returns early.
-#
-# ### `args: <array>`
-#
-# The argument list to parse. Defaults to `shell.args`.
-#
-# ### `program: <str>`
-#
-# The program name used in `--help` output and error messages. Derived from
-# `shell.program` by default — the stem of the script filename for scripts, or the
-# module name for modules.
-#
-# ### `help: <str>`
-#
-# Description paragraph shown below the usage line in `--help` output.
-#
-# ### `usage: <str>`
-#
-# Override the auto-generated `Usage:` line. The program name is prepended
-# automatically.
+# An item's name becomes its key in the result record, with hyphens converted
+# to underscores: `dry-run` is read as `p.dry_run`.
 
 import shell
 import fs:
   - Path
+
+# A boolean flag, set to `true` when present on the command line.
+#
+# | Key       | Meaning                                                            |
+# | --------- | ------------------------------------------------------------------ |
+# | `flag`    | Name                                                               |
+# | `long`    | `--long` name. Defaults to the name; `nil` disables it             |
+# | `short`   | Single-character shorthand, such as `v` for `-v`                   |
+# | `default` | Value when absent. Defaults to `false`                             |
+# | `divider` | Stop interpreting later arguments as options or flags              |
+# | `env`     | Environment variable consulted when the flag is absent             |
+# | `help`    | Description shown in `--help` output                               |
+pub @let FlagSpec = Dict[{
+  flag: Str, ?long: (Str | nil), ?short: Str, ?default: Bool, ?divider: Bool,
+  ?env: Str, ?help: Str,
+}]
+
+# A named option that takes a value.
+#
+# | Key       | Meaning                                                            |
+# | --------- | ------------------------------------------------------------------ |
+# | `opt`     | Name                                                               |
+# | `long`    | `--long` name. Defaults to the name; `nil` disables it             |
+# | `short`   | Single-character shorthand, such as `f` for `-f`                   |
+# | `parse`   | Parser applied to the raw value                                    |
+# | `default` | Value when absent. Without one, the option is required             |
+# | `divider` | Stop interpreting later arguments as options or flags              |
+# | `env`     | Environment variable consulted when the option is absent           |
+# | `collect` | Accept the option several times and collect the values in an array |
+# | `meta`    | Placeholder shown in help output. Defaults to the uppercased name  |
+# | `values`  | Allowed values                                                     |
+# | `help`    | Description shown in `--help` output                               |
+pub @let OptSpec = Dict[{
+  opt: Str, ?long: (Str | nil), ?short: Str, ?parse: (Str -> Value),
+  ?default: Value, ?divider: Bool, ?env: Str, ?collect: Bool, ?meta: Str,
+  ?values: Iterable, ?help: Str,
+}]
+
+# A positional argument.
+#
+# | Key       | Meaning                                                            |
+# | --------- | ------------------------------------------------------------------ |
+# | `arg`     | Name                                                               |
+# | `parse`   | Parser applied to the raw value                                    |
+# | `default` | Value when absent. Without one, the argument is required           |
+# | `divider` | Stop interpreting later arguments as options or flags              |
+# | `collect` | Collect all remaining arguments in an array. Last argument only    |
+# | `values`  | Allowed values                                                     |
+# | `help`    | Description shown in `--help` output                               |
+pub @let ArgSpec = Dict[{
+  arg: Str, ?parse: (Str -> Value), ?default: Value, ?divider: Bool,
+  ?collect: Bool, ?values: Iterable, ?help: Str,
+}]
+
+# A subcommand.
+#
+# Its positional entries are the subcommand's own spec items and, optionally,
+# its handler.
+#
+# | Key     | Meaning                                                  |
+# | ------- | -------------------------------------------------------- |
+# | `cmd`   | Name                                                     |
+# | `help`  | Description shown in `--help` output                     |
+# | `usage` | Replacement for the generated `Usage:` line              |
+#
+# When a subcommand is matched, the result's `cmd` field is its name as a
+# symbol, such as `:deploy:` or `:build_docs:`, and its own fields are in a
+# nested record at `p[p.cmd]`. The result's `handler` field is the matched
+# handler.
+pub @let CmdSpec = Dict[{
+  cmd: Str, ?help: Str, ?usage: Str, ...(SpecItem | Handler),
+}]
+
+# An item of an argument specification.
+pub @let SpecItem = (FlagSpec | OptSpec | ArgSpec | CmdSpec)
+
+# A handler, called by [`with`](args.with) with the parsed record.
+pub @let Handler = (Record -> Value)
 
 # ===========================================================================
 # Public: error type
@@ -119,11 +112,11 @@ import fs:
 # Error thrown when argument parsing fails.
 pub class Error
   # Description of the specific problem, such as `unknown option: --foo`.
-  pub field message = nil
+  pub field message @ Str = nil
 
   # Optional follow-up line, such as
   # `Try 'prog --help' for more information.`
-  pub field hint = nil
+  pub field hint @ (Str | nil) = nil
 
   def (init) self message hint = nil
     self.message = message
@@ -134,8 +127,8 @@ pub class Error
 
 # Help requested during argument parsing.
 pub class Help
-  # Rendered help text chosen by `args.with`.
-  pub field message = nil
+  # Rendered help text.
+  pub field message @ Str = nil
 
   def (init) self message
     self.message = message
@@ -618,24 +611,21 @@ def prog_default()
   else
     p
 
-# Parse command-line arguments according to a spec.
+# Parses command-line arguments according to a spec.
 #
-# Returns a record whose keys are the declared option/argument names (with
-# hyphens converted to underscores). When a subcommand is matched, `p.cmd`
-# is set to the normalized symbol of the subcommand name (e.g. `:deploy:` or
-# `:build_docs:`), and the selected subcommand's fields are stored in a nested
-# record at `p[p.cmd]`. The selected handler is available as `p.handler`.
-# When help is requested, `p.help` is set to the rendered help text string and
-# parsing returns early.
+# ## Returns
 #
-# Throws `args.Error` on unknown options, missing required arguments, or
-# invalid values. `--help`/`-h` does not throw; callers must inspect `p.help`.
+# A record whose fields are the declared item names. When help is requested,
+# its `help` field holds the rendered help text and parsing stops early.
+#
+# ## Errors
+#
+# [`Error`](args.Error) for an unknown option, a missing required argument, or
+# an invalid value. `--help` and `-h` do not raise.
 #
 # ## Example
 #
 # ```
-# import args
-#
 # let p = args.parse
 #   - opt: format
 #     short: f
@@ -647,37 +637,38 @@ def prog_default()
 # echo "format=$(p.format) file=$(p.file)"
 # ```
 pub def parse
-  # Argument list. Defaults to `shell.args`.
-  :args @ Array = nil
-
+  # Arguments to parse. Defaults to `shell.args`.
+  :args @ Iterable[Str] = nil
   # Program name shown in help output and error messages.
   #
   # Defaults to `shell.program`: the stem of the script filename for scripts,
   # or the module name for modules.
   :program @ Str = nil
-
-  # Argument specification items.
-  #
-  # See the spec declaration reference at the top of this page.
-  ...spec @ (Dict | Func)
-do
-  let p = Parser name: (program || prog_default()) ...spec
+  # Description shown below the usage line in `--help` output.
+  :help @ Str = nil
+  # Replacement for the generated `Usage:` line, after the program name.
+  :usage @ Str = nil
+  # Spec items, and optionally a handler for the top level.
+  ...spec @ (SpecItem | Handler)
+do -> Record
+  let p = Parser name: (program || prog_default()) :help :usage ...spec
   p.parse
     if (args != nil)
       $args
     else
       $shell.args
 
-# Parse arguments and dispatch to a handler, suitable for use at script top-level.
+# Parses arguments and calls the matched handler with the result.
 #
-# The subcommand or top-level `cmd:` block's handler is called with the parsed
-# top-level record.
+# Suited to a script's top level.
+#
+# ## Returns
+#
+# The handler's result, or the parsed record when there is no handler.
 #
 # ## Example
 #
 # ```
-# import args
-#
 # args.with
 #   help: Deploy or roll back a service.
 #   - cmd: deploy
@@ -688,29 +679,27 @@ do
 #   - cmd: rollback
 #     - arg: service
 #     do |p|
-#       echo "Rolling back $(p.rollbox.service)"
+#       echo "Rolling back $(p.rollback.service)"
 # ```
 pub def with
-  # Argument list. Defaults to `shell.args`.
-  :args @ Array = nil
-
-  # Print errors or help and exit when `true`.
-  #
-  # When `false`, throws `args.Error` or `args.Help` instead.
+  # Arguments to parse. Defaults to `shell.args`.
+  :args @ Iterable[Str] = nil
+  # Print errors or help and exit. When `false`, raise
+  # [`Error`](args.Error) or [`Help`](args.Help) instead.
   :exit @ Bool = true
-
   # Program name shown in help output and error messages.
   #
   # Defaults to `shell.program`: the stem of the script filename for scripts,
   # or the module name for modules.
   :program @ Str = nil
-
-  # Argument specification items.
-  #
-  # Accepts the same spec declarations as `args.parse`.
-  ...spec @ (Dict | Func)
-do
-  let p = Parser name: (program || prog_default()) ...spec
+  # Description shown below the usage line in `--help` output.
+  :help @ Str = nil
+  # Replacement for the generated `Usage:` line, after the program name.
+  :usage @ Str = nil
+  # Spec items, and optionally a handler for the top level.
+  ...spec @ (SpecItem | Handler)
+do -> Value
+  let p = Parser name: (program || prog_default()) :help :usage ...spec
   try
     let result = p.parse
       if (args != nil)
