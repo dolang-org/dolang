@@ -35,7 +35,7 @@ pub class Key
   #     key.value = "child"
   #     key.value
   #
-  # assert_eq $results ["child"]
+  # assert_eq $results (Tuple(["child"]))
   # assert_eq $key.value "parent"
   # ```
   #[getter]
@@ -222,10 +222,10 @@ do
   ...
 
 # Runs blocks concurrently and returns their results in block order.
-pub def fork
+pub def fork[...Rs]
   # functions to execute concurrently
-  ...blocks @ Func
-do
+  ...blocks @ ...(() -> Rs)
+do -> Tuple[...Rs]
   ...
 
 # Creates a pipeline stage that emits values from an iterable.

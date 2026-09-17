@@ -33,7 +33,7 @@ let results = fork
         i
 
 helper.join()
-assert_eq $results [0, 1, 2, 3]
+assert_eq $results (Tuple([0, 1, 2, 3]))
 assert_eq $max_active 2
 
 # Entering the same resource again in one strand is reentrant.
@@ -45,7 +45,7 @@ let inherited = one.with do
   fork
     - do one.with do 1
     - do one.with do 2
-assert_eq $inherited [1, 2]
+assert_eq $inherited (Tuple([1, 2]))
 
 # A background strand does not inherit its parent's reservation.
 let inside = false

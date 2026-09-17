@@ -9,4 +9,4 @@ let values = fork
     import import_wait: mod
     mod.value
 
-assert_eq $values [42, 42]
+assert_eq $values (Tuple([42, 42]))
