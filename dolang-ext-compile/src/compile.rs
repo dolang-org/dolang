@@ -1492,6 +1492,16 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 project_type_only(this, strand, out)
             });
         }
+        if T::NAME == "Alias" {
+            builder = builder.get("opaque", |this, strand, out| {
+                let v = with_node(this, strand, |n, _| match n.kind() {
+                    compile::Kind::Alias { opaque, .. } => opaque,
+                    _ => unreachable!(),
+                })?;
+                Output::set(strand, out, v);
+                Ok(())
+            });
+        }
         if T::NAME == "Type" {
             builder = builder.get("expr", |this, strand, out| project_expr(this, strand, out));
         }

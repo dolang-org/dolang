@@ -347,9 +347,14 @@ impl<'a> Node<'a> {
                 name: span(name),
                 is_pub: *is_pub,
             },
-            doc::Kind::Alias { name, is_pub } => Kind::Alias {
+            doc::Kind::Alias {
+                name,
+                is_pub,
+                opaque,
+            } => Kind::Alias {
                 name: span(name),
                 is_pub: *is_pub,
+                opaque: *opaque,
             },
             doc::Kind::PositionalParam { name, default } => Kind::PositionalParam {
                 name: span(name),
@@ -514,6 +519,8 @@ pub enum Kind<'a> {
         name: diag::Span,
         /// Declared `pub`
         is_pub: bool,
+        /// Declared with `...` in place of a type
+        opaque: bool,
     },
     /// A positional parameter. Its function is its parent.
     PositionalParam {

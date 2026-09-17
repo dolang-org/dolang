@@ -59,7 +59,8 @@
 {% for alias in aliases %}
 {% set base_id = alias._identifier %}
 {# Captured for the same reason as `signature_heading` in `_params.html.jinja2` #}
-{% set content %}<code>{{ alias.declaration_name }} = {{ alias.annotation | convert_markdown(heading_level + 1, base_id ~ "--type", strip_paragraph=true) }}</code>{% endset %}
+{# An opaque alias (`= ...`) has no type to show. #}
+{% set content %}<code>{{ alias.declaration_name }}{% if alias.annotation %} = {{ alias.annotation | convert_markdown(heading_level + 1, base_id ~ "--type", strip_paragraph=true) }}{% endif %}</code>{% endset %}
 {{ content | trim | heading(heading_level + 1, role="class", id=base_id, toc_label=alias.declaration_name) }}
 {% if alias.doc %}
 {{ alias.doc | convert_markdown(heading_level + 1, base_id) }}

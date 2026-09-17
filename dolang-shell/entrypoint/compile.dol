@@ -602,7 +602,10 @@ class Document
       doc: (self.#doc_of(node))
       if (binders.len > 0)
         binders: $binders
-      type: (self.#type_of(id))
+      if node.opaque
+        opaque: true
+      else
+        type: (self.#type_of(id))
 
   def import_module_entry self _id node
     if (node.type_only || !self.#included(node.is_pub))

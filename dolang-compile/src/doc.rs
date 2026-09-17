@@ -86,6 +86,7 @@ pub(crate) enum Kind {
     Alias {
         name: Span,
         is_pub: bool,
+        opaque: bool,
     },
     PositionalParam {
         name: Span,

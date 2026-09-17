@@ -17,9 +17,10 @@ use dolang_util::intern::BinTable;
 use crate::{
     Compiler,
     ast::{
-        Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Def, DictElem, Expr, ExprBody,
-        FieldInit, For, Function, Ident, If, ImportElement, LValue, Origin, Param, PatIdent,
-        Pattern, PrimStmt, Res, Root, Stmt, TypeArgKind, TypeDecl, TypeExpr, Var, visit::Node,
+        AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Def, DictElem, Expr,
+        ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue, Origin, Param,
+        PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeArgKind, TypeDecl, TypeExpr, Var,
+        visit::Node,
     },
     diag::Severity,
     source::{Diagnose, Diags, File, Span},
@@ -702,8 +703,11 @@ impl Check<'_> {
                 }
                 let inner = Frame::binders(frame, alias.binders.as_deref());
                 self.binder_types(&inner, alias.binders.as_deref_mut());
-                self.ty(&inner, &mut alias.ty);
-                self.unused_types(&inner);
+                // An opaque alias has no body to use its binders in
+                if let AliasBody::Type(ty) = &mut alias.body {
+                    self.ty(&inner, ty);
+                    self.unused_types(&inner);
+                }
             }
             Stmt::Def(def) => {
                 // An overload names the value its implementation binds

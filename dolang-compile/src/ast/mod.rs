@@ -1639,10 +1639,18 @@ pub(crate) struct Let {
     pub(crate) pub_span: Option<Span>,
 }
 
+/// What a type alias stands for.
+pub(crate) enum AliasBody {
+    Type(TypeExpr),
+    /// `...`: a type with no definition in source, such as a primitive or one a type
+    /// checker handles specially.
+    Opaque(Span),
+}
+
 pub(crate) struct TypeAlias {
     pub(crate) ident: Ident,
     pub(crate) binders: Option<Box<Binders>>,
-    pub(crate) ty: TypeExpr,
+    pub(crate) body: AliasBody,
     pub(crate) let_span: Span,
     pub(crate) at_span: Span,
     pub(crate) equal_span: Span,
@@ -1662,7 +1670,10 @@ impl Node for TypeAlias {
             visit.node(&**binders)?;
         }
         visit.token(Token::Operator, self.equal_span, None)?;
-        visit.node(&self.ty)
+        match &self.body {
+            AliasBody::Type(ty) => visit.node(ty),
+            AliasBody::Opaque(span) => visit.token(Token::Sigil, *span, None),
+        }
     }
 
     fn kind(&self) -> NodeKind {

@@ -13,6 +13,10 @@ class _Holder[T]
 # LL | class _Holder[T]
 #    |               ^
 
+let @_Spread[..._Ts] = Int
+
+let @_Opaque[T, ...Ts] = ...
+
 let _value = 1
 let _dotted @_value.Field = nil
 # warning: a dotted type name must begin with an import

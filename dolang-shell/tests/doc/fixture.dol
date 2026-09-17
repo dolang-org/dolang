@@ -111,3 +111,6 @@ pub def grow x
 # Collects callable arguments with corresponding result types.
 pub def mapped[...Rs] ...thunks @ ...(() -> Rs) -> Tuple[...Rs]
   thunks
+
+# A type with no definition in source.
+pub let @Opaque[T] = ...

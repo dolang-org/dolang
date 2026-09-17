@@ -231,6 +231,12 @@ pub class Alias: Declaration
   pub def is_pub self
     ...
 
+  # Whether the alias is opaque, declared with `...` in place of a type. An
+  # opaque alias has no [`Type`](compile.Type) child.
+  #[getter]
+  pub def opaque self -> Bool
+    ...
+
 # The `self` parameter of a method.
 pub class SelfParam: Declaration
 

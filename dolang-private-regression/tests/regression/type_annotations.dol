@@ -3,6 +3,9 @@
 for prelude_type = [Iter, Iterable, Sink, Sinkable, Value]
   assert (type prelude_type Type)
 
+let @_Opaque[T] = ...
+let _opaque @_Opaque[Int] = nil
+
 let x @Int = 1
 assert_eq $x 1
 

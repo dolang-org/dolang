@@ -552,14 +552,17 @@ impl Index<'_> {
                     Kind::Alias {
                         name,
                         is_pub: alias.pub_span.is_some(),
+                        opaque: matches!(alias.body, AliasBody::Opaque(_)),
                     },
                     alias.span(),
                 );
                 alias.node = Some(id);
                 self.type_decls.insert(name.start, id);
                 self.binders(scope, Some(id), alias.binders.as_deref_mut());
-                self.ty(scope, &mut alias.ty);
-                self.type_node(id, &alias.ty);
+                if let AliasBody::Type(ty) = &mut alias.body {
+                    self.ty(scope, ty);
+                    self.type_node(id, ty);
+                }
             }
             _ => {}
         }

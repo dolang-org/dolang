@@ -5,9 +5,9 @@ use super::{
 };
 use crate::{
     ast::{
-        Assign, Bind, Block, CatchHandler, Expr, For, Function, Ident, If, IfBranch, ImportElement,
-        Let, Param, PatternBind, PatternBindKind, PrimStmt, Return, Stmt, Throw, Try, TypeAlias,
-        While, visit::Node,
+        AliasBody, Assign, Bind, Block, CatchHandler, Expr, For, Function, Ident, If, IfBranch,
+        ImportElement, Let, Param, PatternBind, PatternBindKind, PrimStmt, Return, Stmt, Throw,
+        Try, TypeAlias, While, visit::Node,
     },
     lex::{Keyword, Token, TokenInfo},
     source::Span,
@@ -42,11 +42,29 @@ impl Parser<'_> {
             }
             let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
             self.expect(scope, &[ExpectKind::ArgSep])?;
-            let ty = self.with_inline_shell(|this| this.parse_type_compact(scope))?;
+            let body = if let Some(token!(TokenInfo::Ellipsis)) = self.peek()? {
+                AliasBody::Opaque(self.advance())
+            } else {
+                AliasBody::Type(self.with_inline_shell(|this| this.parse_type_compact(scope))?)
+            };
+            if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+                self.advance();
+            }
+            match self.peek()? {
+                None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)) => {}
+                _ => {
+                    let token = self.consume();
+                    return Err(self.syntax_error(
+                        scope,
+                        Some(token),
+                        "expected end of statement after alias",
+                    ));
+                }
+            }
             return Ok(Stmt::TypeAlias(TypeAlias {
                 ident,
                 binders,
-                ty,
+                body,
                 let_span,
                 at_span,
                 equal_span,
