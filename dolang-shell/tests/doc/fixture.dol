@@ -9,6 +9,13 @@ import std:
 
 import std
 
+# Re-exported for types only.
+pub import std:
+  - @Iterable: Seq
+
+import std:
+  - @Iter: Cursor
+
 # A greeting.
 #
 # Spans several lines.

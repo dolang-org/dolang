@@ -625,13 +625,16 @@ class Document
       doc: (self.#doc_of(node))
 
   def import_item_entry self _id node
-    # An item imported for types only is not a value the module exports
-    if (node.type_only || !self.#included(node.is_pub))
+    # An item imported for types only is exported only as a type, so a private
+    # one is of no interest even when private entities are included
+    if (node.type_only && !node.is_pub || !self.#included(node.is_pub))
       return
     self.#entities.push $
       kind: "import_item"
       name: (self.#text(node.name))
       pub: $node.is_pub
+      if node.type_only
+        type_only: true
       module: (self.#text(node.module))
       item: (self.#text(node.item))
       doc: (self.#doc_of(node))
