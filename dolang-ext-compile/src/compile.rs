@@ -14,7 +14,7 @@ use dolang::{
         Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Type, Value,
         object::{Mut, Ref, TypeBuilder},
         unpack,
-        value::{Array, AsSym, Dict, Empty, Nil, PinBin, PinStr, TypeObject, View},
+        value::{Array, AsSym, AsTuple, Dict, Empty, Nil, PinBin, PinStr, TypeObject, View},
         vm::{Register, Stateful},
     },
 };
@@ -1065,10 +1065,7 @@ impl<'v> Object<'v> for NodeIter {
             strand.with_slots_sync(|strand, [mut id_out, mut node_out]| {
                 create_node_id(strand, owner_borrow.identity, id, &mut id_out);
                 create_node(strand, owner, id, &mut node_out)?;
-                Output::set(strand, &mut out, Empty::Array);
-                let arr = out.as_array(strand).unwrap();
-                arr.push(strand, &mut id_out)?;
-                arr.push(strand, &mut node_out)?;
+                Output::set(strand, &mut out, AsTuple::new([&id_out, &node_out]));
                 Ok(())
             })?;
             Ok(Some(id))

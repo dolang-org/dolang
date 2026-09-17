@@ -44,7 +44,7 @@ pub class Unit
   pub def diagnostics self -> Iter[Diagnostic]
     ...
 
-  # Returns a fresh iterator of `[id, node]` pairs.
+  # Returns a fresh iterator of node IDs paired with their nodes.
   #
   # Empty unless the unit was compiled with `document: true`. An enabled unit
   # always contains one [`Root`](compile.Root), even for empty source.
@@ -55,7 +55,7 @@ pub class Unit
   # for id node = unit.nodes()
   #   echo $id $node.span
   # ```
-  pub def nodes self -> Iter[Array[(NodeId | Node)]]
+  pub def nodes self -> Iter[Tuple[NodeId, Node]]
     ...
 
   # Looks up a node by [`NodeId`](compile.NodeId).

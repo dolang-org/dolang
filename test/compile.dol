@@ -94,7 +94,9 @@ def nodes()
   let preludes = 0
   let first_id = nil
   let first_node = nil
-  for id node = unit.nodes()
+  for pair = unit.nodes()
+    assert_type $Tuple $pair
+    let id node = pair
     assert_type $compile.NodeId $id
     assert_type $compile.Node $node
     # A prelude binding has no source text to span
