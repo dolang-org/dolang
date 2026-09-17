@@ -1,0 +1,23 @@
+class Options
+  pub field verbose = true
+
+  def (spread) self
+    {verbose: self.verbose}
+
+class Pair
+  def (spread) _self
+    [1, 2]
+
+def show :verbose = false
+  verbose
+
+# The value `(spread)` returns is spread in place of the instance.
+assert_eq (show(...Options())) true
+assert_eq [...Pair()] [1, 2]
+
+class Numbers
+  def (iter) _self
+    [3, 4].iter()
+
+# Without `(spread)`, an instance spreads its iterator's items.
+assert_eq [...Numbers()] [3, 4]

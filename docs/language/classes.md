@@ -606,6 +606,26 @@ let :x :y = p
 echo "$x, $y"   # 3, 4
 ```
 
+### `(spread)`: Spreading
+
+Return a value for `...` to spread in place of `self`. Without `(spread)`, an
+instance spreads the items of its iterator:
+
+```playground
+#> import test:
+#>   - assert_eq
+class Options
+  pub field verbose = true
+
+  def (spread) self
+    {verbose: self.verbose}
+
+def show :verbose = false
+  verbose
+
+assert_eq (show(...Options())) true
+```
+
 ### `(iter)`: Obtain Iterator
 
 Invoked implicitly by for loops, certain iterator combinators, etc. Should

@@ -22,6 +22,7 @@ impl Parser<'_> {
             "init" => SpecialMethod::Init,
             "call" => SpecialMethod::Call,
             "unpack" => SpecialMethod::Unpack,
+            "spread" => SpecialMethod::Spread,
             "iter" => SpecialMethod::Iter,
             "sink" => SpecialMethod::Sink,
             "next" => SpecialMethod::Next,
