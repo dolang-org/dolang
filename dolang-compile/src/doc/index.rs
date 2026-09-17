@@ -189,9 +189,11 @@ impl Index<'_> {
                 ellipsis_span,
                 ident,
                 ty,
+                type_ellipsis_span,
             } => (
                 Kind::RestParam {
                     name: ident.as_ref().map(|ident| ident.span),
+                    type_ellipsis: *type_ellipsis_span,
                 },
                 Some(*ellipsis_span),
                 ident.as_ref().map(|ident| ident.span),

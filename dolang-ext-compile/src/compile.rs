@@ -1447,6 +1447,20 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 project_default(this, strand, out)
             });
         }
+        if T::NAME == "RestParam" {
+            builder = builder.get("type_ellipsis", |this, strand, out| {
+                let span = with_node(this, strand, |n, _| match n.kind() {
+                    compile::Kind::RestParam { type_ellipsis, .. } => type_ellipsis.map(span_data),
+                    _ => None,
+                })?;
+                if let Some(span) = span {
+                    create_span(strand.state(), strand, span, out)
+                } else {
+                    Output::set(strand, out, Nil)
+                };
+                Ok(())
+            });
+        }
         if T::NAME == "KeyParam" {
             builder = builder.get("key", |this, strand, out| {
                 project_span_field(this, strand, "key", out)
@@ -1538,7 +1552,9 @@ fn project_name<'v, 's, T: NodeMarker + 'static>(
         | compile::Kind::PositionalParam { name, .. }
         | compile::Kind::KeyParam { name, .. }
         | compile::Kind::Binder { name, .. } => Name::Span(span_data(name)),
-        compile::Kind::RestParam { name } => name.map_or(Name::None, |v| Name::Span(span_data(v))),
+        compile::Kind::RestParam { name, .. } => {
+            name.map_or(Name::None, |v| Name::Span(span_data(v)))
+        }
         compile::Kind::PreludeModule { name, .. } | compile::Kind::PreludeItem { name, .. } => {
             Name::Text(name.to_owned())
         }

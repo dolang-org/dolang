@@ -329,6 +329,10 @@ pub class KeyParam: Param
 
 # A rest parameter. Its `name` is `nil` when it is anonymous.
 pub class RestParam: Param
+  # The explicit `...` in the type annotation, or `nil` when absent.
+  #[getter]
+  pub def type_ellipsis self -> (Span | nil)
+    ...
 
 # Supertype of the nodes that introduce a nested body.
 #

@@ -360,8 +360,12 @@ impl<'a> Node<'a> {
                 name: span(name),
                 default: default.as_ref().map(span),
             },
-            doc::Kind::RestParam { name } => Kind::RestParam {
+            doc::Kind::RestParam {
+                name,
+                type_ellipsis,
+            } => Kind::RestParam {
                 name: name.as_ref().map(span),
+                type_ellipsis: type_ellipsis.as_ref().map(span),
             },
             doc::Kind::SelfParam { name } => Kind::SelfParam { name: span(name) },
             doc::Kind::ImportModule {
@@ -531,6 +535,8 @@ pub enum Kind<'a> {
     RestParam {
         /// The bound name; absent for an anonymous rest parameter
         name: Option<diag::Span>,
+        /// The explicit expansion marker in the annotation, if present.
+        type_ellipsis: Option<diag::Span>,
     },
     /// The `self` parameter of a method
     SelfParam {

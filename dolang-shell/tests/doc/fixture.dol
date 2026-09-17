@@ -107,3 +107,7 @@ def @grow x @ Str -> Str
 
 pub def grow x
   (x + x)
+
+# Collects callable arguments with corresponding result types.
+pub def mapped[...Rs] ...thunks @ ...(() -> Rs) -> Tuple[...Rs]
+  thunks

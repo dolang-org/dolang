@@ -332,8 +332,7 @@ impl Node for TypeArg {
 
 impl Node for Annot {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
-        visit.token(Token::Annotation, self.at_span, None)?;
-        visit.node(&self.ty)
+        self.with_ellipsis(None).accept(visit)
     }
 
     fn kind(&self) -> NodeKind {
@@ -387,5 +386,24 @@ impl Node for RetType {
 
     fn kind(&self) -> NodeKind {
         NodeKind::RetType
+    }
+}
+
+impl Annot {
+    pub(crate) fn with_ellipsis(&self, ellipsis: Option<Span>) -> impl Node + '_ {
+        struct RestAnnot<'a>(&'a Annot, Option<Span>);
+        impl Node for RestAnnot<'_> {
+            fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+                visit.token(Token::Annotation, self.0.at_span, None)?;
+                if let Some(span) = self.1 {
+                    visit.token(Token::Sigil, span, None)?;
+                }
+                visit.node(&self.0.ty)
+            }
+            fn kind(&self) -> NodeKind {
+                NodeKind::Annot
+            }
+        }
+        RestAnnot(self, ellipsis)
     }
 }

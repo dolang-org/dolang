@@ -1477,6 +1477,7 @@ pub(crate) enum Param {
         ellipsis_span: Span,
         ident: Option<Ident>,
         ty: Option<Box<Annot>>,
+        type_ellipsis_span: Option<Span>,
     },
 }
 
@@ -1549,6 +1550,7 @@ impl Node for Param {
                 ellipsis_span,
                 ident,
                 ty,
+                type_ellipsis_span,
             } => {
                 visit.token(Token::Sigil, *ellipsis_span, None)?;
                 if let Some(ident) = ident {
@@ -1559,7 +1561,7 @@ impl Node for Param {
                     )?;
                 }
                 if let Some(ty) = ty {
-                    visit.node(&**ty)?;
+                    visit.node(&ty.with_ellipsis(*type_ellipsis_span))?;
                 }
                 ControlFlow::Continue(())
             }

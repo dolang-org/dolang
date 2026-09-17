@@ -238,12 +238,16 @@ impl Parser<'_> {
                             ));
                         }
                     };
-                    let ty = self.parse_param_annot(scope)?;
+                    if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+                        self.advance();
+                    }
+                    let (ty, type_ellipsis_span) = self.parse_annot_with_ellipsis(scope, true)?;
 
                     params.push(Param::Rest {
                         ellipsis_span,
                         ident,
                         ty,
+                        type_ellipsis_span,
                     });
                     variadic = true;
                     variadic_span = Some(ellipsis_span);

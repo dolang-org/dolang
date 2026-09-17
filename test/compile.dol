@@ -250,6 +250,7 @@ def anonymous_rest_params_are_indexed()
   assert_no_errors $unit
   let rest = unit.nodes().find(do |pair| type(pair[1], compile.RestParam))
   assert_eq $rest[1].name nil
+  assert_eq $rest[1].type_ellipsis nil
 
 #[test]
 def nonlocal_jumps_target_the_construct_they_leave()
@@ -811,3 +812,28 @@ def a_module_import_names_types_in_that_module_alone()
   let unbound = [...unit.diagnostics().filter(do |d| (d.message == "unbound type name"))]
   # The module is what is unbound, so each is reported over its whole path
   assert_eq [...unbound.map(do |d| span_text(source, d.span))] ["not_loaded.deeper", "loaded.nested"]
+
+#[test]
+def rest_annotation_expansion_is_indexed()
+  let source = "def f[...Rs] ...args @ ...(() -> Rs) -> Tuple[...Rs]\n  args\n"
+  let unit = compile.compile "rest.dol" $source document: true
+  assert_no_errors $unit
+  let rest = unit.nodes().find(do |pair| type(pair[1], compile.RestParam))[1]
+  assert_eq (span_text source rest.type_ellipsis) "..."
+  assert_eq $rest.type_ellipsis.start.byte_offset 23
+  bind rest
+    :type_ellipsis
+    ...
+  assert_eq $type_ellipsis.start.byte_offset $rest.type_ellipsis.start.byte_offset
+
+#[test]
+def invalid_rest_annotation_expansions()
+  for source = [
+    "def f x @ ...Int\n  x\n",
+    "def f ...x @ ...\n  x\n",
+    "def f ...x @ ......Int\n  x\n",
+    "def f ...x -> ...Int\n  x\n",
+    "def f ...x @ ... Int\n  x\n",
+  ]
+    let unit = compile.compile "bad-rest.dol" $source recover: true
+    assert (unit.diagnostics().count() > 0)

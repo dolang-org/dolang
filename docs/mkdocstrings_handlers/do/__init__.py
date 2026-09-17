@@ -477,6 +477,8 @@ def _render_annotations(entity: dict, scope: _TypeScope) -> None:
     ]
     for param in entity.get("params") or []:
         param["annotation"] = _type_html(param.get("type"), scope)
+        if param.get("type_spread") and param["annotation"]:
+            param["annotation"] = param["annotation"].replace("<code>", "<code>...", 1)
     if entity.get("kind") in ("function", "method"):
         entity["return_annotation"] = _type_html(entity.get("returns"), scope)
     elif entity.get("kind") == "field":

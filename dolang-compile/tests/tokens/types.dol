@@ -98,3 +98,10 @@ import import_fixture:
 
 let adder @Adder = nil
 #          ^~~~~: type_token, node=import_item
+
+def expanded[...Rs] ...args @ ...(() -> Rs) -> Tuple[...Rs]
+  #                 ^~~: sigil
+  #                         ^: annotation
+  #                           ^~~: sigil
+  #                                     ^~: type_token, node=binder
+  args

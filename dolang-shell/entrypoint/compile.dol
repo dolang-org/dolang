@@ -186,6 +186,7 @@ def node_json id_to_index node
     :item = nil
     :target = nil
     :type_only = nil
+    :type_ellipsis = nil
     :expr = nil
     ...
   $
@@ -209,6 +210,8 @@ def node_json id_to_index node
       item: (span_or_str item)
     if (target != nil)
       target: (node_ref id_to_index target)
+    if (type_ellipsis != nil)
+      type_ellipsis: (span_json type_ellipsis)
     if (type_only != nil)
       type_only: $type_only
     if (expr != nil)
@@ -414,6 +417,8 @@ class Document
       let param = $
         name: $name
         optional: $optional
+        if (type(child, compile.RestParam) && child.type_ellipsis != nil)
+          type_spread: true
         doc: (self.#doc_of(child))
         if (ty != nil)
           type: $ty

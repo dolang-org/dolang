@@ -33,6 +33,17 @@ def configure ...options@{name: Str, ?port: Int}
   apply ...options
 ```
 
+A leading `...` after `@` explicitly expands a type pattern over a pack:
+
+```
+def fork[...Rs] ...thunks @ ...(() -> Rs) -> Tuple[...Rs]
+  ...
+```
+
+The expansion marker is accepted only on rest bindings, including rest items
+in destructuring and `bind` patterns. Its operand is a compact type; enclose
+function types and unions in parentheses.
+
 A field declaration that names several fields share an annotation, just as
 they share a default value:
 

@@ -13,9 +13,9 @@
           "byte_offset": 0
         },
         "end": {
-          "line": 109,
+          "line": 113,
           "column": 0,
-          "byte_offset": 2122
+          "byte_offset": 2259
         }
       },
       "parent": null,
@@ -75,6 +75,15 @@
       "name": "Str",
       "module": "std",
       "item": "Str"
+    },
+    {
+      "kind": "PreludeItem",
+      "span": null,
+      "parent": 0,
+      "doc": null,
+      "name": "Tuple",
+      "module": "std",
+      "item": "Tuple"
     },
     {
       "kind": "PreludeItem",
@@ -713,6 +722,48 @@
       "type_only": false
     },
     {
+      "kind": "Function",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 0,
+          "byte_offset": 2186
+        },
+        "end": {
+          "line": 112,
+          "column": 8,
+          "byte_offset": 2258
+        }
+      },
+      "parent": 0,
+      "doc": {
+        "start": {
+          "line": 110,
+          "column": 0,
+          "byte_offset": 2123
+        },
+        "end": {
+          "line": 110,
+          "column": 62,
+          "byte_offset": 2185
+        }
+      },
+      "name": {
+        "start": {
+          "line": 111,
+          "column": 8,
+          "byte_offset": 2194
+        },
+        "end": {
+          "line": 111,
+          "column": 14,
+          "byte_offset": 2200
+        }
+      },
+      "is_pub": true,
+      "type_only": false
+    },
+    {
       "kind": "PositionalParam",
       "span": {
         "start": {
@@ -726,7 +777,7 @@
           "byte_offset": 178
         }
       },
-      "parent": 13,
+      "parent": 14,
       "doc": null,
       "name": {
         "start": {
@@ -755,7 +806,7 @@
           "byte_offset": 198
         }
       },
-      "parent": 13,
+      "parent": 14,
       "doc": null,
       "name": {
         "start": {
@@ -808,7 +859,7 @@
           "byte_offset": 206
         }
       },
-      "parent": 13,
+      "parent": 14,
       "doc": null,
       "name": {
         "start": {
@@ -837,7 +888,7 @@
           "byte_offset": 318
         }
       },
-      "parent": 14,
+      "parent": 15,
       "doc": null,
       "name": {
         "start": {
@@ -948,7 +999,7 @@
           "byte_offset": 494
         }
       },
-      "parent": 15,
+      "parent": 16,
       "doc": null,
       "name": {
         "start": {
@@ -1078,7 +1129,7 @@
           "byte_offset": 498
         }
       },
-      "parent": 15,
+      "parent": 16,
       "doc": null,
       "name": {
         "start": {
@@ -1107,7 +1158,7 @@
           "byte_offset": 504
         }
       },
-      "parent": 15,
+      "parent": 16,
       "doc": null,
       "name": {
         "start": {
@@ -1136,7 +1187,7 @@
           "byte_offset": 513
         }
       },
-      "parent": 15,
+      "parent": 16,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -1164,7 +1215,7 @@
             "byte_offset": 513
           }
         },
-        "target": 11
+        "target": 12
       }
     },
     {
@@ -1181,7 +1232,7 @@
           "byte_offset": 567
         }
       },
-      "parent": 15,
+      "parent": 16,
       "doc": {
         "start": {
           "line": 29,
@@ -1222,7 +1273,7 @@
           "byte_offset": 563
         }
       },
-      "parent": 35,
+      "parent": 37,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -1267,7 +1318,7 @@
           "byte_offset": 628
         }
       },
-      "parent": 15,
+      "parent": 16,
       "doc": {
         "start": {
           "line": 32,
@@ -1308,9 +1359,9 @@
           "byte_offset": 606
         }
       },
-      "parent": 37,
+      "parent": 39,
       "doc": null,
-      "target": 6
+      "target": 7
     },
     {
       "kind": "Field",
@@ -1326,7 +1377,7 @@
           "byte_offset": 687
         }
       },
-      "parent": 15,
+      "parent": 16,
       "doc": {
         "start": {
           "line": 36,
@@ -1367,9 +1418,9 @@
           "byte_offset": 662
         }
       },
-      "parent": 39,
+      "parent": 41,
       "doc": null,
-      "target": 8
+      "target": 9
     },
     {
       "kind": "SpecialMethod",
@@ -1385,7 +1436,7 @@
           "byte_offset": 746
         }
       },
-      "parent": 15,
+      "parent": 16,
       "doc": {
         "start": {
           "line": 40,
@@ -1426,7 +1477,7 @@
           "byte_offset": 729
         }
       },
-      "parent": 41,
+      "parent": 43,
       "doc": null,
       "name": {
         "start": {
@@ -1455,7 +1506,7 @@
           "byte_offset": 731
         }
       },
-      "parent": 41,
+      "parent": 43,
       "doc": null,
       "name": {
         "start": {
@@ -1484,7 +1535,7 @@
           "byte_offset": 799
         }
       },
-      "parent": 15,
+      "parent": 16,
       "doc": {
         "start": {
           "line": 44,
@@ -1525,7 +1576,7 @@
           "byte_offset": 783
         }
       },
-      "parent": 44,
+      "parent": 46,
       "doc": null,
       "name": {
         "start": {
@@ -1554,7 +1605,7 @@
           "byte_offset": 893
         }
       },
-      "parent": 15,
+      "parent": 16,
       "doc": {
         "start": {
           "line": 48,
@@ -1596,9 +1647,9 @@
           "byte_offset": 849
         }
       },
-      "parent": 46,
+      "parent": 48,
       "doc": null,
-      "target": 7
+      "target": 8
     },
     {
       "kind": "SelfParam",
@@ -1614,7 +1665,7 @@
           "byte_offset": 875
         }
       },
-      "parent": 46,
+      "parent": 48,
       "doc": null,
       "name": {
         "start": {
@@ -1643,7 +1694,7 @@
           "byte_offset": 882
         }
       },
-      "parent": 46,
+      "parent": 48,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -1688,7 +1739,7 @@
           "byte_offset": 976
         }
       },
-      "parent": 15,
+      "parent": 16,
       "doc": {
         "start": {
           "line": 53,
@@ -1730,7 +1781,7 @@
           "byte_offset": 925
         }
       },
-      "parent": 50,
+      "parent": 52,
       "doc": null,
       "name": {
         "start": {
@@ -1759,7 +1810,7 @@
           "byte_offset": 931
         }
       },
-      "parent": 50,
+      "parent": 52,
       "doc": null,
       "name": {
         "start": {
@@ -1788,7 +1839,7 @@
           "byte_offset": 934
         }
       },
-      "parent": 50,
+      "parent": 52,
       "doc": null,
       "name": {
         "start": {
@@ -1817,7 +1868,7 @@
           "byte_offset": 949
         }
       },
-      "parent": 50,
+      "parent": 52,
       "doc": null,
       "name": {
         "start": {
@@ -1870,7 +1921,7 @@
           "byte_offset": 1021
         }
       },
-      "parent": 15,
+      "parent": 16,
       "doc": {
         "start": {
           "line": 57,
@@ -1912,7 +1963,7 @@
           "byte_offset": 1013
         }
       },
-      "parent": 55,
+      "parent": 57,
       "doc": null,
       "name": {
         "start": {
@@ -1941,7 +1992,7 @@
           "byte_offset": 1114
         }
       },
-      "parent": 16,
+      "parent": 17,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -1969,7 +2020,7 @@
             "byte_offset": 1107
           }
         },
-        "target": 12
+        "target": 13
       }
     },
     {
@@ -1986,7 +2037,7 @@
           "byte_offset": 1136
         }
       },
-      "parent": 16,
+      "parent": 17,
       "doc": null,
       "name": {
         "start": {
@@ -2016,7 +2067,7 @@
           "byte_offset": 1181
         }
       },
-      "parent": 17,
+      "parent": 18,
       "doc": null,
       "name": {
         "start": {
@@ -2045,7 +2096,7 @@
           "byte_offset": 1181
         }
       },
-      "parent": 59,
+      "parent": 61,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -2073,7 +2124,7 @@
             "byte_offset": 1181
           }
         },
-        "target": 15
+        "target": 16
       }
     },
     {
@@ -2090,7 +2141,7 @@
           "byte_offset": 1207
         }
       },
-      "parent": 17,
+      "parent": 18,
       "doc": null,
       "name": {
         "start": {
@@ -2143,7 +2194,7 @@
           "byte_offset": 1201
         }
       },
-      "parent": 61,
+      "parent": 63,
       "doc": null,
       "expr": {
         "kind": "UnionType",
@@ -2222,7 +2273,7 @@
           "byte_offset": 1232
         }
       },
-      "parent": 17,
+      "parent": 18,
       "doc": null,
       "expr": {
         "kind": "AppType",
@@ -2264,7 +2315,7 @@
               "byte_offset": 1214
             }
           },
-          "target": 12
+          "target": 13
         },
         "args": [
           {
@@ -2352,7 +2403,7 @@
                   "byte_offset": 1231
                 }
               },
-              "target": 11
+              "target": 12
             }
           }
         ]
@@ -2372,7 +2423,7 @@
           "byte_offset": 1282
         }
       },
-      "parent": 18,
+      "parent": 19,
       "doc": null,
       "name": {
         "start": {
@@ -2401,7 +2452,7 @@
           "byte_offset": 1299
         }
       },
-      "parent": 18,
+      "parent": 19,
       "doc": null,
       "name": {
         "start": {
@@ -2430,7 +2481,7 @@
           "byte_offset": 1299
         }
       },
-      "parent": 65,
+      "parent": 67,
       "doc": null,
       "expr": {
         "kind": "AppType",
@@ -2516,7 +2567,7 @@
                   "byte_offset": 1298
                 }
               },
-              "target": 64
+              "target": 66
             }
           }
         ]
@@ -2536,7 +2587,7 @@
           "byte_offset": 1335
         }
       },
-      "parent": 18,
+      "parent": 19,
       "doc": null,
       "name": {
         "start": {
@@ -2589,7 +2640,7 @@
           "byte_offset": 1329
         }
       },
-      "parent": 67,
+      "parent": 69,
       "doc": null,
       "expr": {
         "kind": "FuncType",
@@ -2721,7 +2772,7 @@
               "byte_offset": 1328
             }
           },
-          "target": 64
+          "target": 66
         }
       }
     },
@@ -2739,7 +2790,7 @@
           "byte_offset": 1394
         }
       },
-      "parent": 18,
+      "parent": 19,
       "doc": null,
       "name": {
         "start": {
@@ -2792,7 +2843,7 @@
           "byte_offset": 1388
         }
       },
-      "parent": 69,
+      "parent": 71,
       "doc": null,
       "expr": {
         "kind": "AppType",
@@ -3071,7 +3122,7 @@
           "byte_offset": 1436
         }
       },
-      "parent": 18,
+      "parent": 19,
       "doc": null,
       "name": {
         "start": {
@@ -3124,7 +3175,7 @@
           "byte_offset": 1430
         }
       },
-      "parent": 71,
+      "parent": 73,
       "doc": null,
       "expr": {
         "kind": "UnionType",
@@ -3226,7 +3277,7 @@
           "byte_offset": 1441
         }
       },
-      "parent": 18,
+      "parent": 19,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -3254,7 +3305,7 @@
             "byte_offset": 1441
           }
         },
-        "target": 64
+        "target": 66
       }
     },
     {
@@ -3271,7 +3322,7 @@
           "byte_offset": 1607
         }
       },
-      "parent": 19,
+      "parent": 20,
       "doc": {
         "start": {
           "line": 77,
@@ -3323,7 +3374,7 @@
           "byte_offset": 1655
         }
       },
-      "parent": 19,
+      "parent": 20,
       "doc": {
         "start": {
           "line": 79,
@@ -3387,7 +3438,7 @@
           "byte_offset": 1700
         }
       },
-      "parent": 19,
+      "parent": 20,
       "doc": {
         "start": {
           "line": 81,
@@ -3427,7 +3478,7 @@
           "byte_offset": 1816
         }
       },
-      "parent": 20,
+      "parent": 21,
       "doc": {
         "start": {
           "line": 88,
@@ -3469,7 +3520,7 @@
           "byte_offset": 1809
         }
       },
-      "parent": 77,
+      "parent": 79,
       "doc": null,
       "name": {
         "start": {
@@ -3498,7 +3549,7 @@
           "byte_offset": 1816
         }
       },
-      "parent": 77,
+      "parent": 79,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -3543,7 +3594,7 @@
           "byte_offset": 1878
         }
       },
-      "parent": 20,
+      "parent": 21,
       "doc": {
         "start": {
           "line": 91,
@@ -3585,7 +3636,7 @@
           "byte_offset": 1859
         }
       },
-      "parent": 80,
+      "parent": 82,
       "doc": null,
       "name": {
         "start": {
@@ -3614,7 +3665,7 @@
           "byte_offset": 1871
         }
       },
-      "parent": 80,
+      "parent": 82,
       "doc": null,
       "name": {
         "start": {
@@ -3643,7 +3694,7 @@
           "byte_offset": 1871
         }
       },
-      "parent": 82,
+      "parent": 84,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -3688,7 +3739,7 @@
           "byte_offset": 1878
         }
       },
-      "parent": 80,
+      "parent": 82,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -3733,7 +3784,7 @@
           "byte_offset": 1925
         }
       },
-      "parent": 21,
+      "parent": 22,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -3761,7 +3812,7 @@
             "byte_offset": 1925
           }
         },
-        "target": 15
+        "target": 16
       }
     },
     {
@@ -3778,7 +3829,7 @@
           "byte_offset": 1933
         }
       },
-      "parent": 21,
+      "parent": 22,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -3806,7 +3857,7 @@
             "byte_offset": 1933
           }
         },
-        "target": 20
+        "target": 21
       }
     },
     {
@@ -3823,7 +3874,7 @@
           "byte_offset": 1982
         }
       },
-      "parent": 21,
+      "parent": 22,
       "doc": {
         "start": {
           "line": 96,
@@ -3865,7 +3916,7 @@
           "byte_offset": 1975
         }
       },
-      "parent": 87,
+      "parent": 89,
       "doc": null,
       "name": {
         "start": {
@@ -3894,7 +3945,7 @@
           "byte_offset": 1982
         }
       },
-      "parent": 87,
+      "parent": 89,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -3939,7 +3990,7 @@
           "byte_offset": 2009
         }
       },
-      "parent": 21,
+      "parent": 22,
       "doc": null,
       "name": {
         "start": {
@@ -3970,7 +4021,7 @@
           "byte_offset": 2003
         }
       },
-      "parent": 90,
+      "parent": 92,
       "doc": null,
       "name": {
         "start": {
@@ -3999,7 +4050,7 @@
           "byte_offset": 2045
         }
       },
-      "parent": 22,
+      "parent": 23,
       "doc": null,
       "name": {
         "start": {
@@ -4028,7 +4079,7 @@
           "byte_offset": 2045
         }
       },
-      "parent": 92,
+      "parent": 94,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -4073,7 +4124,7 @@
           "byte_offset": 2052
         }
       },
-      "parent": 22,
+      "parent": 23,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -4118,7 +4169,7 @@
           "byte_offset": 2088
         }
       },
-      "parent": 23,
+      "parent": 24,
       "doc": null,
       "name": {
         "start": {
@@ -4147,7 +4198,7 @@
           "byte_offset": 2088
         }
       },
-      "parent": 95,
+      "parent": 97,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -4192,7 +4243,7 @@
           "byte_offset": 2095
         }
       },
-      "parent": 23,
+      "parent": 24,
       "doc": null,
       "expr": {
         "kind": "NameType",
@@ -4237,7 +4288,7 @@
           "byte_offset": 2111
         }
       },
-      "parent": 24,
+      "parent": 25,
       "doc": null,
       "name": {
         "start": {
@@ -4250,6 +4301,243 @@
           "column": 14,
           "byte_offset": 2111
         }
+      }
+    },
+    {
+      "kind": "RestBinder",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 15,
+          "byte_offset": 2201
+        },
+        "end": {
+          "line": 111,
+          "column": 20,
+          "byte_offset": 2206
+        }
+      },
+      "parent": 26,
+      "doc": null,
+      "name": {
+        "start": {
+          "line": 111,
+          "column": 18,
+          "byte_offset": 2204
+        },
+        "end": {
+          "line": 111,
+          "column": 20,
+          "byte_offset": 2206
+        }
+      }
+    },
+    {
+      "kind": "RestParam",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 22,
+          "byte_offset": 2208
+        },
+        "end": {
+          "line": 111,
+          "column": 47,
+          "byte_offset": 2233
+        }
+      },
+      "parent": 26,
+      "doc": null,
+      "name": {
+        "start": {
+          "line": 111,
+          "column": 25,
+          "byte_offset": 2211
+        },
+        "end": {
+          "line": 111,
+          "column": 31,
+          "byte_offset": 2217
+        }
+      },
+      "type_ellipsis": {
+        "start": {
+          "line": 111,
+          "column": 34,
+          "byte_offset": 2220
+        },
+        "end": {
+          "line": 111,
+          "column": 37,
+          "byte_offset": 2223
+        }
+      }
+    },
+    {
+      "kind": "Type",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 37,
+          "byte_offset": 2223
+        },
+        "end": {
+          "line": 111,
+          "column": 47,
+          "byte_offset": 2233
+        }
+      },
+      "parent": 102,
+      "doc": null,
+      "expr": {
+        "kind": "FuncType",
+        "span": {
+          "start": {
+            "line": 111,
+            "column": 37,
+            "byte_offset": 2223
+          },
+          "end": {
+            "line": 111,
+            "column": 47,
+            "byte_offset": 2233
+          }
+        },
+        "params": [],
+        "ret": {
+          "kind": "NameType",
+          "span": {
+            "start": {
+              "line": 111,
+              "column": 44,
+              "byte_offset": 2230
+            },
+            "end": {
+              "line": 111,
+              "column": 46,
+              "byte_offset": 2232
+            }
+          },
+          "head": {
+            "start": {
+              "line": 111,
+              "column": 44,
+              "byte_offset": 2230
+            },
+            "end": {
+              "line": 111,
+              "column": 46,
+              "byte_offset": 2232
+            }
+          },
+          "target": 101
+        }
+      }
+    },
+    {
+      "kind": "Type",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 51,
+          "byte_offset": 2237
+        },
+        "end": {
+          "line": 111,
+          "column": 63,
+          "byte_offset": 2249
+        }
+      },
+      "parent": 26,
+      "doc": null,
+      "expr": {
+        "kind": "AppType",
+        "span": {
+          "start": {
+            "line": 111,
+            "column": 51,
+            "byte_offset": 2237
+          },
+          "end": {
+            "line": 111,
+            "column": 63,
+            "byte_offset": 2249
+          }
+        },
+        "base": {
+          "kind": "NameType",
+          "span": {
+            "start": {
+              "line": 111,
+              "column": 51,
+              "byte_offset": 2237
+            },
+            "end": {
+              "line": 111,
+              "column": 56,
+              "byte_offset": 2242
+            }
+          },
+          "head": {
+            "start": {
+              "line": 111,
+              "column": 51,
+              "byte_offset": 2237
+            },
+            "end": {
+              "line": 111,
+              "column": 56,
+              "byte_offset": 2242
+            }
+          },
+          "target": 6
+        },
+        "args": [
+          {
+            "kind": "RestTypeArg",
+            "span": {
+              "start": {
+                "line": 111,
+                "column": 57,
+                "byte_offset": 2243
+              },
+              "end": {
+                "line": 111,
+                "column": 62,
+                "byte_offset": 2248
+              }
+            },
+            "optional": false,
+            "type": {
+              "kind": "NameType",
+              "span": {
+                "start": {
+                  "line": 111,
+                  "column": 60,
+                  "byte_offset": 2246
+                },
+                "end": {
+                  "line": 111,
+                  "column": 62,
+                  "byte_offset": 2248
+                }
+              },
+              "head": {
+                "start": {
+                  "line": 111,
+                  "column": 60,
+                  "byte_offset": 2246
+                },
+                "end": {
+                  "line": 111,
+                  "column": 62,
+                  "byte_offset": 2248
+                }
+              },
+              "target": 101
+            }
+          }
+        ]
       }
     }
   ],
@@ -4319,7 +4607,7 @@
           "byte_offset": 107
         }
       },
-      "ref": 11,
+      "ref": 12,
       "context": null
     },
     {
@@ -4370,7 +4658,7 @@
           "byte_offset": 119
         }
       },
-      "ref": 12,
+      "ref": 13,
       "context": null
     },
     {
@@ -4421,7 +4709,7 @@
           "byte_offset": 173
         }
       },
-      "ref": 13,
+      "ref": 14,
       "context": null
     },
     {
@@ -4438,7 +4726,7 @@
           "byte_offset": 178
         }
       },
-      "ref": 25,
+      "ref": 27,
       "context": null
     },
     {
@@ -4489,7 +4777,7 @@
           "byte_offset": 188
         }
       },
-      "ref": 26,
+      "ref": 28,
       "context": null
     },
     {
@@ -4591,7 +4879,7 @@
           "byte_offset": 206
         }
       },
-      "ref": 27,
+      "ref": 29,
       "context": null
     },
     {
@@ -4608,7 +4896,7 @@
           "byte_offset": 213
         }
       },
-      "ref": 10,
+      "ref": 11,
       "context": "CALL"
     },
     {
@@ -4642,7 +4930,7 @@
           "byte_offset": 223
         }
       },
-      "ref": 26,
+      "ref": 28,
       "context": null
     },
     {
@@ -4676,7 +4964,7 @@
           "byte_offset": 229
         }
       },
-      "ref": 25,
+      "ref": 27,
       "context": null
     },
     {
@@ -4710,7 +4998,7 @@
           "byte_offset": 237
         }
       },
-      "ref": 27,
+      "ref": 29,
       "context": null
     },
     {
@@ -4744,7 +5032,7 @@
           "byte_offset": 316
         }
       },
-      "ref": 14,
+      "ref": 15,
       "context": null
     },
     {
@@ -4761,7 +5049,7 @@
           "byte_offset": 318
         }
       },
-      "ref": 28,
+      "ref": 30,
       "context": null
     },
     {
@@ -4778,7 +5066,7 @@
           "byte_offset": 322
         }
       },
-      "ref": 28,
+      "ref": 30,
       "context": null
     },
     {
@@ -4829,7 +5117,7 @@
           "byte_offset": 373
         }
       },
-      "ref": 29,
+      "ref": 31,
       "context": null
     },
     {
@@ -4931,7 +5219,7 @@
           "byte_offset": 429
         }
       },
-      "ref": 30,
+      "ref": 32,
       "context": null
     },
     {
@@ -5050,7 +5338,7 @@
           "byte_offset": 472
         }
       },
-      "ref": 15,
+      "ref": 16,
       "context": null
     },
     {
@@ -5084,7 +5372,7 @@
           "byte_offset": 474
         }
       },
-      "ref": 31,
+      "ref": 33,
       "context": null
     },
     {
@@ -5271,7 +5559,7 @@
           "byte_offset": 498
         }
       },
-      "ref": 32,
+      "ref": 34,
       "context": null
     },
     {
@@ -5322,7 +5610,7 @@
           "byte_offset": 504
         }
       },
-      "ref": 33,
+      "ref": 35,
       "context": null
     },
     {
@@ -5373,7 +5661,7 @@
           "byte_offset": 513
         }
       },
-      "ref": 11,
+      "ref": 12,
       "context": null
     },
     {
@@ -5424,7 +5712,7 @@
           "byte_offset": 558
         }
       },
-      "ref": 35,
+      "ref": 37,
       "context": null
     },
     {
@@ -5526,7 +5814,7 @@
           "byte_offset": 605
         }
       },
-      "ref": 6,
+      "ref": 7,
       "context": null
     },
     {
@@ -5594,7 +5882,7 @@
           "byte_offset": 624
         }
       },
-      "ref": 37,
+      "ref": 39,
       "context": null
     },
     {
@@ -5662,7 +5950,7 @@
           "byte_offset": 661
         }
       },
-      "ref": 8,
+      "ref": 9,
       "context": null
     },
     {
@@ -5730,7 +6018,7 @@
           "byte_offset": 681
         }
       },
-      "ref": 39,
+      "ref": 41,
       "context": null
     },
     {
@@ -5815,7 +6103,7 @@
           "byte_offset": 723
         }
       },
-      "ref": 41,
+      "ref": 43,
       "context": null
     },
     {
@@ -5832,7 +6120,7 @@
           "byte_offset": 729
         }
       },
-      "ref": 42,
+      "ref": 44,
       "context": null
     },
     {
@@ -5849,7 +6137,7 @@
           "byte_offset": 731
         }
       },
-      "ref": 43,
+      "ref": 45,
       "context": null
     },
     {
@@ -5866,7 +6154,7 @@
           "byte_offset": 740
         }
       },
-      "ref": 42,
+      "ref": 44,
       "context": null
     },
     {
@@ -5934,7 +6222,7 @@
           "byte_offset": 746
         }
       },
-      "ref": 43,
+      "ref": 45,
       "context": null
     },
     {
@@ -5985,7 +6273,7 @@
           "byte_offset": 777
         }
       },
-      "ref": 44,
+      "ref": 46,
       "context": null
     },
     {
@@ -6002,7 +6290,7 @@
           "byte_offset": 783
         }
       },
-      "ref": 45,
+      "ref": 47,
       "context": null
     },
     {
@@ -6019,7 +6307,7 @@
           "byte_offset": 791
         }
       },
-      "ref": 9,
+      "ref": 10,
       "context": "CALL"
     },
     {
@@ -6053,7 +6341,7 @@
           "byte_offset": 797
         }
       },
-      "ref": 45,
+      "ref": 47,
       "context": null
     },
     {
@@ -6121,7 +6409,7 @@
           "byte_offset": 848
         }
       },
-      "ref": 7,
+      "ref": 8,
       "context": null
     },
     {
@@ -6189,7 +6477,7 @@
           "byte_offset": 870
         }
       },
-      "ref": 46,
+      "ref": 48,
       "context": null
     },
     {
@@ -6206,7 +6494,7 @@
           "byte_offset": 875
         }
       },
-      "ref": 48,
+      "ref": 50,
       "context": null
     },
     {
@@ -6257,7 +6545,7 @@
           "byte_offset": 891
         }
       },
-      "ref": 48,
+      "ref": 50,
       "context": null
     },
     {
@@ -6342,7 +6630,7 @@
           "byte_offset": 923
         }
       },
-      "ref": 50,
+      "ref": 52,
       "context": null
     },
     {
@@ -6376,7 +6664,7 @@
           "byte_offset": 925
         }
       },
-      "ref": 51,
+      "ref": 53,
       "context": null
     },
     {
@@ -6410,7 +6698,7 @@
           "byte_offset": 931
         }
       },
-      "ref": 52,
+      "ref": 54,
       "context": null
     },
     {
@@ -6427,7 +6715,7 @@
           "byte_offset": 934
         }
       },
-      "ref": 53,
+      "ref": 55,
       "context": null
     },
     {
@@ -6478,7 +6766,7 @@
           "byte_offset": 941
         }
       },
-      "ref": 54,
+      "ref": 56,
       "context": null
     },
     {
@@ -6529,7 +6817,7 @@
           "byte_offset": 958
         }
       },
-      "ref": 52,
+      "ref": 54,
       "context": null
     },
     {
@@ -6631,7 +6919,7 @@
           "byte_offset": 968
         }
       },
-      "ref": 52,
+      "ref": 54,
       "context": null
     },
     {
@@ -6699,7 +6987,7 @@
           "byte_offset": 975
         }
       },
-      "ref": 53,
+      "ref": 55,
       "context": null
     },
     {
@@ -6733,7 +7021,7 @@
           "byte_offset": 1008
         }
       },
-      "ref": 55,
+      "ref": 57,
       "context": null
     },
     {
@@ -6750,7 +7038,7 @@
           "byte_offset": 1013
         }
       },
-      "ref": 56,
+      "ref": 58,
       "context": null
     },
     {
@@ -6818,7 +7106,7 @@
           "byte_offset": 1102
         }
       },
-      "ref": 16,
+      "ref": 17,
       "context": null
     },
     {
@@ -6852,7 +7140,7 @@
           "byte_offset": 1107
         }
       },
-      "ref": 12,
+      "ref": 13,
       "context": null
     },
     {
@@ -6937,7 +7225,7 @@
           "byte_offset": 1130
         }
       },
-      "ref": 58,
+      "ref": 60,
       "context": null
     },
     {
@@ -7022,7 +7310,7 @@
           "byte_offset": 1168
         }
       },
-      "ref": 17,
+      "ref": 18,
       "context": null
     },
     {
@@ -7039,7 +7327,7 @@
           "byte_offset": 1174
         }
       },
-      "ref": 59,
+      "ref": 61,
       "context": null
     },
     {
@@ -7073,7 +7361,7 @@
           "byte_offset": 1181
         }
       },
-      "ref": 15,
+      "ref": 16,
       "context": null
     },
     {
@@ -7124,7 +7412,7 @@
           "byte_offset": 1188
         }
       },
-      "ref": 61,
+      "ref": 63,
       "context": null
     },
     {
@@ -7294,7 +7582,7 @@
           "byte_offset": 1214
         }
       },
-      "ref": 12,
+      "ref": 13,
       "context": null
     },
     {
@@ -7396,7 +7684,7 @@
           "byte_offset": 1231
         }
       },
-      "ref": 11,
+      "ref": 12,
       "context": null
     },
     {
@@ -7481,7 +7769,7 @@
           "byte_offset": 1280
         }
       },
-      "ref": 18,
+      "ref": 19,
       "context": null
     },
     {
@@ -7515,7 +7803,7 @@
           "byte_offset": 1282
         }
       },
-      "ref": 64,
+      "ref": 66,
       "context": null
     },
     {
@@ -7549,7 +7837,7 @@
           "byte_offset": 1289
         }
       },
-      "ref": 65,
+      "ref": 67,
       "context": null
     },
     {
@@ -7617,7 +7905,7 @@
           "byte_offset": 1298
         }
       },
-      "ref": 64,
+      "ref": 66,
       "context": null
     },
     {
@@ -7685,7 +7973,7 @@
           "byte_offset": 1309
         }
       },
-      "ref": 67,
+      "ref": 69,
       "context": null
     },
     {
@@ -7855,7 +8143,7 @@
           "byte_offset": 1328
         }
       },
-      "ref": 64,
+      "ref": 66,
       "context": null
     },
     {
@@ -7957,7 +8245,7 @@
           "byte_offset": 1344
         }
       },
-      "ref": 69,
+      "ref": 71,
       "context": null
     },
     {
@@ -8365,7 +8653,7 @@
           "byte_offset": 1400
         }
       },
-      "ref": 71,
+      "ref": 73,
       "context": null
     },
     {
@@ -8637,7 +8925,7 @@
           "byte_offset": 1441
         }
       },
-      "ref": 64,
+      "ref": 66,
       "context": null
     },
     {
@@ -8654,7 +8942,7 @@
           "byte_offset": 1449
         }
       },
-      "ref": 65,
+      "ref": 67,
       "context": null
     },
     {
@@ -8756,7 +9044,7 @@
           "byte_offset": 1568
         }
       },
-      "ref": 19,
+      "ref": 20,
       "context": null
     },
     {
@@ -8807,7 +9095,7 @@
           "byte_offset": 1607
         }
       },
-      "ref": 74,
+      "ref": 76,
       "context": null
     },
     {
@@ -8858,7 +9146,7 @@
           "byte_offset": 1648
         }
       },
-      "ref": 75,
+      "ref": 77,
       "context": null
     },
     {
@@ -8926,7 +9214,7 @@
           "byte_offset": 1700
         }
       },
-      "ref": 76,
+      "ref": 78,
       "context": null
     },
     {
@@ -8943,7 +9231,7 @@
           "byte_offset": 1710
         }
       },
-      "ref": 10,
+      "ref": 11,
       "context": "CALL"
     },
     {
@@ -8977,7 +9265,7 @@
           "byte_offset": 1716
         }
       },
-      "ref": 74,
+      "ref": 76,
       "context": null
     },
     {
@@ -9011,7 +9299,7 @@
           "byte_offset": 1722
         }
       },
-      "ref": 75,
+      "ref": 77,
       "context": null
     },
     {
@@ -9045,7 +9333,7 @@
           "byte_offset": 1730
         }
       },
-      "ref": 76,
+      "ref": 78,
       "context": null
     },
     {
@@ -9113,7 +9401,7 @@
           "byte_offset": 1775
         }
       },
-      "ref": 20,
+      "ref": 21,
       "context": null
     },
     {
@@ -9164,7 +9452,7 @@
           "byte_offset": 1804
         }
       },
-      "ref": 77,
+      "ref": 79,
       "context": null
     },
     {
@@ -9181,7 +9469,7 @@
           "byte_offset": 1809
         }
       },
-      "ref": 78,
+      "ref": 80,
       "context": null
     },
     {
@@ -9266,7 +9554,7 @@
           "byte_offset": 1854
         }
       },
-      "ref": 80,
+      "ref": 82,
       "context": null
     },
     {
@@ -9283,7 +9571,7 @@
           "byte_offset": 1859
         }
       },
-      "ref": 81,
+      "ref": 83,
       "context": null
     },
     {
@@ -9300,7 +9588,7 @@
           "byte_offset": 1865
         }
       },
-      "ref": 82,
+      "ref": 84,
       "context": null
     },
     {
@@ -9419,7 +9707,7 @@
           "byte_offset": 1918
         }
       },
-      "ref": 21,
+      "ref": 22,
       "context": null
     },
     {
@@ -9453,7 +9741,7 @@
           "byte_offset": 1925
         }
       },
-      "ref": 15,
+      "ref": 16,
       "context": null
     },
     {
@@ -9487,7 +9775,7 @@
           "byte_offset": 1933
         }
       },
-      "ref": 20,
+      "ref": 21,
       "context": null
     },
     {
@@ -9538,7 +9826,7 @@
           "byte_offset": 1970
         }
       },
-      "ref": 87,
+      "ref": 89,
       "context": null
     },
     {
@@ -9555,7 +9843,7 @@
           "byte_offset": 1975
         }
       },
-      "ref": 88,
+      "ref": 90,
       "context": null
     },
     {
@@ -9640,7 +9928,7 @@
           "byte_offset": 1997
         }
       },
-      "ref": 90,
+      "ref": 92,
       "context": null
     },
     {
@@ -9657,7 +9945,7 @@
           "byte_offset": 2003
         }
       },
-      "ref": 91,
+      "ref": 93,
       "context": null
     },
     {
@@ -9725,7 +10013,7 @@
           "byte_offset": 2037
         }
       },
-      "ref": 22,
+      "ref": 23,
       "context": null
     },
     {
@@ -9742,7 +10030,7 @@
           "byte_offset": 2039
         }
       },
-      "ref": 92,
+      "ref": 94,
       "context": null
     },
     {
@@ -9861,7 +10149,7 @@
           "byte_offset": 2080
         }
       },
-      "ref": 23,
+      "ref": 24,
       "context": null
     },
     {
@@ -9878,7 +10166,7 @@
           "byte_offset": 2082
         }
       },
-      "ref": 95,
+      "ref": 97,
       "context": null
     },
     {
@@ -9997,7 +10285,7 @@
           "byte_offset": 2109
         }
       },
-      "ref": 24,
+      "ref": 25,
       "context": null
     },
     {
@@ -10014,7 +10302,7 @@
           "byte_offset": 2111
         }
       },
-      "ref": 98,
+      "ref": 100,
       "context": null
     },
     {
@@ -10065,7 +10353,7 @@
           "byte_offset": 2116
         }
       },
-      "ref": 98,
+      "ref": 100,
       "context": null
     },
     {
@@ -10099,7 +10387,415 @@
           "byte_offset": 2120
         }
       },
-      "ref": 98,
+      "ref": 100,
+      "context": null
+    },
+    {
+      "kind": "KEYWORD",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 0,
+          "byte_offset": 2186
+        },
+        "end": {
+          "line": 111,
+          "column": 3,
+          "byte_offset": 2189
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "KEYWORD",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 4,
+          "byte_offset": 2190
+        },
+        "end": {
+          "line": 111,
+          "column": 7,
+          "byte_offset": 2193
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "VARIABLE",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 8,
+          "byte_offset": 2194
+        },
+        "end": {
+          "line": 111,
+          "column": 14,
+          "byte_offset": 2200
+        }
+      },
+      "ref": 26,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 14,
+          "byte_offset": 2200
+        },
+        "end": {
+          "line": 111,
+          "column": 15,
+          "byte_offset": 2201
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "SIGIL",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 15,
+          "byte_offset": 2201
+        },
+        "end": {
+          "line": 111,
+          "column": 18,
+          "byte_offset": 2204
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "BINDER",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 18,
+          "byte_offset": 2204
+        },
+        "end": {
+          "line": 111,
+          "column": 20,
+          "byte_offset": 2206
+        }
+      },
+      "ref": 101,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 20,
+          "byte_offset": 2206
+        },
+        "end": {
+          "line": 111,
+          "column": 21,
+          "byte_offset": 2207
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "SIGIL",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 22,
+          "byte_offset": 2208
+        },
+        "end": {
+          "line": 111,
+          "column": 25,
+          "byte_offset": 2211
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "VARIABLE",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 25,
+          "byte_offset": 2211
+        },
+        "end": {
+          "line": 111,
+          "column": 31,
+          "byte_offset": 2217
+        }
+      },
+      "ref": 102,
+      "context": null
+    },
+    {
+      "kind": "ANNOTATION",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 32,
+          "byte_offset": 2218
+        },
+        "end": {
+          "line": 111,
+          "column": 33,
+          "byte_offset": 2219
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "SIGIL",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 34,
+          "byte_offset": 2220
+        },
+        "end": {
+          "line": 111,
+          "column": 37,
+          "byte_offset": 2223
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 37,
+          "byte_offset": 2223
+        },
+        "end": {
+          "line": 111,
+          "column": 38,
+          "byte_offset": 2224
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 38,
+          "byte_offset": 2224
+        },
+        "end": {
+          "line": 111,
+          "column": 39,
+          "byte_offset": 2225
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 39,
+          "byte_offset": 2225
+        },
+        "end": {
+          "line": 111,
+          "column": 40,
+          "byte_offset": 2226
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "OPERATOR",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 41,
+          "byte_offset": 2227
+        },
+        "end": {
+          "line": 111,
+          "column": 43,
+          "byte_offset": 2229
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 44,
+          "byte_offset": 2230
+        },
+        "end": {
+          "line": 111,
+          "column": 46,
+          "byte_offset": 2232
+        }
+      },
+      "ref": 101,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 46,
+          "byte_offset": 2232
+        },
+        "end": {
+          "line": 111,
+          "column": 47,
+          "byte_offset": 2233
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "OPERATOR",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 48,
+          "byte_offset": 2234
+        },
+        "end": {
+          "line": 111,
+          "column": 50,
+          "byte_offset": 2236
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 51,
+          "byte_offset": 2237
+        },
+        "end": {
+          "line": 111,
+          "column": 56,
+          "byte_offset": 2242
+        }
+      },
+      "ref": 6,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 56,
+          "byte_offset": 2242
+        },
+        "end": {
+          "line": 111,
+          "column": 57,
+          "byte_offset": 2243
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "SIGIL",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 57,
+          "byte_offset": 2243
+        },
+        "end": {
+          "line": 111,
+          "column": 60,
+          "byte_offset": 2246
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 60,
+          "byte_offset": 2246
+        },
+        "end": {
+          "line": 111,
+          "column": 62,
+          "byte_offset": 2248
+        }
+      },
+      "ref": 101,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 111,
+          "column": 62,
+          "byte_offset": 2248
+        },
+        "end": {
+          "line": 111,
+          "column": 63,
+          "byte_offset": 2249
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "VARIABLE",
+      "span": {
+        "start": {
+          "line": 112,
+          "column": 2,
+          "byte_offset": 2252
+        },
+        "end": {
+          "line": 112,
+          "column": 8,
+          "byte_offset": 2258
+        }
+      },
+      "ref": 102,
       "context": null
     },
     {
@@ -10713,6 +11409,23 @@
       },
       "ref": null,
       "context": null
+    },
+    {
+      "kind": "COMMENT",
+      "span": {
+        "start": {
+          "line": 110,
+          "column": 0,
+          "byte_offset": 2123
+        },
+        "end": {
+          "line": 110,
+          "column": 62,
+          "byte_offset": 2185
+        }
+      },
+      "ref": null,
+      "context": null
     }
   ],
   "diagnostics": [
@@ -11317,7 +12030,7 @@
             "type": {
               "kind": "name",
               "name": "Point",
-              "target": 15
+              "target": 16
             }
           },
           {
@@ -11345,7 +12058,7 @@
           "base": {
             "kind": "name",
             "name": "std.Dict",
-            "target": 12,
+            "target": 13,
             "module": "std"
           },
           "args": [
@@ -11364,7 +12077,7 @@
               "type": {
                 "kind": "name",
                 "name": "Record",
-                "target": 11,
+                "target": 12,
                 "module": "std",
                 "item": "Record"
               }
@@ -11413,7 +12126,7 @@
                   "type": {
                     "kind": "name",
                     "name": "T",
-                    "target": 64
+                    "target": 66
                   }
                 }
               ]
@@ -11448,7 +12161,7 @@
               "ret": {
                 "kind": "name",
                 "name": "T",
-                "target": 64
+                "target": 66
               }
             }
           },
@@ -11540,7 +12253,7 @@
         "returns": {
           "kind": "name",
           "name": "T",
-          "target": 64
+          "target": 66
         }
       },
       {
@@ -11833,6 +12546,65 @@
             "doc": null
           }
         ]
+      },
+      {
+        "kind": "function",
+        "name": "mapped",
+        "pub": true,
+        "span": {
+          "start": {
+            "line": 111,
+            "column": 8,
+            "byte_offset": 2194
+          },
+          "end": {
+            "line": 111,
+            "column": 14,
+            "byte_offset": 2200
+          }
+        },
+        "doc": "Collects callable arguments with corresponding result types.",
+        "binders": [
+          {
+            "name": "...Rs"
+          }
+        ],
+        "params": [
+          {
+            "name": "...thunks",
+            "optional": false,
+            "type_spread": true,
+            "doc": null,
+            "type": {
+              "kind": "func",
+              "params": [],
+              "ret": {
+                "kind": "name",
+                "name": "Rs",
+                "target": 101
+              }
+            }
+          }
+        ],
+        "returns": {
+          "kind": "app",
+          "base": {
+            "kind": "name",
+            "name": "Tuple",
+            "target": 6
+          },
+          "args": [
+            {
+              "kind": "rest",
+              "optional": false,
+              "type": {
+                "kind": "name",
+                "name": "Rs",
+                "target": 101
+              }
+            }
+          ]
+        }
       }
     ]
   }

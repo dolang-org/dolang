@@ -98,6 +98,8 @@ pub(crate) enum Kind {
     },
     RestParam {
         name: Option<Span>,
+        /// The explicit expansion marker in the annotation, if present.
+        type_ellipsis: Option<Span>,
     },
     SelfParam {
         name: Span,
@@ -257,7 +259,7 @@ impl Kind {
             | Kind::ImportModule { name, .. }
             | Kind::ImportItem { name, .. }
             | Kind::Binder { name, .. } => Some(*name),
-            Kind::RestParam { name } => *name,
+            Kind::RestParam { name, .. } => *name,
             Kind::Root
             | Kind::PreludeModule { .. }
             | Kind::PreludeItem { .. }
