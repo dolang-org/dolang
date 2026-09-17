@@ -290,8 +290,7 @@ do
 # result.
 #
 # The previous input and output are restored when `block` returns or raises.
-# Keyword arguments must precede `block`; arguments after it are passed to
-# `block`.
+# Keyword arguments must precede `block`.
 #
 # ## Example
 #
@@ -310,8 +309,6 @@ pub def redirect
   :output @ Sinkable = nil
   # function to call
   block @ Func
-  # arguments passed to `block`
-  ...args
 do
   ...
 

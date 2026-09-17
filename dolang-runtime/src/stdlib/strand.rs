@@ -610,6 +610,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     }
                 }
             };
+            let ([], []) = unpack!(strand, args, 0, 0)?;
             let mut redir = Redirect::new(strand);
             if let Some(input) = arg_input {
                 input.iter(&mut redir, &mut tmp).await?;
@@ -620,7 +621,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 redir = redir.output(&mut tmp);
             }
             redir
-                .enter(async move |strand| block.call(strand, args, out).await)
+                .enter(async move |strand| call!(strand, block, out).await)
                 .await
         })
         .function("channel", async move |strand, args, mut out| {

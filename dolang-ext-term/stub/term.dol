@@ -584,8 +584,6 @@ pub def capture
   # `console` is a plain sink. See
   # [Output mode](term.SinkConsole.output-mode).
   :mode @ Sym = nil
-  # Additional arguments passed to the block.
-  ...args
 do
   ...
 
@@ -624,8 +622,6 @@ do
 pub def mute
   # Block to run.
   block @ Func
-  # Additional arguments passed to the block.
-  ...args
 do
   ...
 
@@ -695,8 +691,6 @@ pub def sub
   :chomp @ Bool = true
   # Keep ANSI styling. False by default.
   :can_style @ Bool = false
-  # Additional arguments passed to the block.
-  ...args
 do -> Str
   ...
 

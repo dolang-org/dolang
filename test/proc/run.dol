@@ -132,7 +132,7 @@ def background_strand_process_groups()
 #[test]
 #[vfs]
 def echo_sub()
-  let res = sub $echo hello world
+  let res = sub do echo hello world
   assert_eq $res "hello world"
 
 #[test]
@@ -140,7 +140,7 @@ def echo_sub()
 def cat_file()
   let path = Path "fixture.txt"
   path.write "[package]\nname = fixture\n"
-  let content = sub $cat $path
+  let content = sub do cat $path
   assert (content.starts_with "[package]")
 
 #[test]
@@ -154,7 +154,7 @@ def grep_file()
     [dependencies.tokio]
     [dependencies.dolang]
     [dependencies.dolang-vfs]
-  let res = [...(sub grep "\\[depend" path).split("\n").map do |x| x.trim_end "\r"]
+  let res = [...(sub do grep "\\[depend" path).split("\n").map do |x| x.trim_end "\r"]
   assert_eq $res $
     - "[dependencies]"
     - "[dependencies.tokio]"
@@ -483,7 +483,7 @@ def cross_domain_redirects_host_file_into_remote_process_stdin()
     open $path w do |file| file.write "remote-input\n"
 
     let input = open $path r
-    let res = with_remote_vfs do sub $cat stdin: $input
+    let res = with_remote_vfs do sub do cat stdin: $input
     assert_eq $res "remote-input"
 
 #[test]
@@ -501,7 +501,7 @@ def cross_domain_redirects_remote_file_into_host_process_stdin()
     path.write "remote-input\n"
     with_remote_vfs do open $path r do |input| 
       shell.with_host do
-        let res = sub $cat stdin: $input
+        let res = sub do cat stdin: $input
         assert_eq $res "remote-input"
 
 #[test]

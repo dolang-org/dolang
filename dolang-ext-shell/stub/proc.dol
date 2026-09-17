@@ -488,8 +488,6 @@ pub def sub
   # default. This is a whole-capture strip, not a per-value one: it removes at
   # most one line ending, from the end of the finished string.
   :chomp @ Bool = true
-  # Additional arguments passed to the block.
-  ...args
 do -> Str
   ...
 
@@ -518,8 +516,6 @@ pub def with_policy
   :grace @ (Duration | Int | Float) = nil
   # Force termination after the grace period.
   :force @ Bool = nil
-  # Additional arguments passed to the block.
-  ...args
 do
   ...
 

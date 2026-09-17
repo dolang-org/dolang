@@ -347,8 +347,6 @@ pub class Vfs
     self
     # Function to run.
     func @ Func
-    # Additional arguments passed to `func`.
-    ...args @ Value
   do
     ...
 
@@ -452,8 +450,6 @@ pub def vfs_exe() -> (Path | nil)
 pub def with_host
   # Function to run.
   func @ Func
-  # Additional arguments passed to `func`.
-  ...args @ Value
 do
   ...
 

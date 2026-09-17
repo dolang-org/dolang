@@ -3,7 +3,7 @@ use dolang::runtime::value::fmt::{self as fmt_spec, Fill, Format, Kind, Pad, Spe
 use dolang::{
     compile::Config,
     runtime::{
-        Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Value,
+        Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Value, call,
         method,
         object::{Mut, Ref, TypeBuilder},
         strand::Redirect,
@@ -1548,8 +1548,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             "capture",
             async move |strand, args, out, [mut console, mut line_ending, mut tmp]| {
                 let mode_sym = global.syms.mode;
-                let ([target, func], [mode], rest) =
-                    unpack!(strand, args, 2, 0, mode_sym = None, ...)?;
+                let ([target, func], [mode]) = unpack!(strand, args, 2, 0, mode_sym = None)?;
                 if target.is_instance_of(strand, global.types.console) {
                     if mode.is_some() {
                         return Err(Error::value(
@@ -1581,7 +1580,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     &console,
                     can_style,
                     &line_ending,
-                    async move |strand| func.call(strand, rest, out).await,
+                    async move |strand| call!(strand, func, out).await,
                 )
                 .await;
                 // An unterminated `print` is only visible once the partial line
@@ -1593,8 +1592,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .function_with_slots(
             "sub",
             async move |strand, args, out, [mut console, mut line_ending, mut tmp]| {
-                let ([func], [chomp, can_style], rest) =
-                    unpack!(strand, args, 1, 0, chomp_sym = None, can_style = None, ...)?;
+                let ([func], [chomp, can_style]) =
+                    unpack!(strand, args, 1, 0, chomp_sym = None, can_style = None)?;
                 let chomp = chomp.map(|v| v.to_bool(strand)).unwrap_or(true);
                 let can_style = can_style.is_some_and(|v| v.to_bool(strand));
                 global
@@ -1608,7 +1607,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     &console,
                     can_style,
                     &line_ending,
-                    async move |strand| func.call(strand, rest, &mut tmp).await,
+                    async move |strand| call!(strand, func, &mut tmp).await,
                 )
                 .await?;
                 global.types.sub_console.cast(&console).unwrap().enter_sync(
@@ -1628,7 +1627,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .function_with_slots(
             "mute",
             async move |strand, args, out, [mut console, mut scratch, mut line_ending]| {
-                let ([func], [], rest) = unpack!(strand, args, 1, 0, ...)?;
+                let ([func], []) = unpack!(strand, args, 1, 0)?;
                 // A console over std.null discards everything written to it —
                 // the same mechanism `capture` uses, just wired to a sink that
                 // throws writes away instead of collecting them.
@@ -1662,7 +1661,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                             &console,
                             false,
                             &line_ending,
-                            async move |strand| func.call(strand, rest, out).await,
+                            async move |strand| call!(strand, func, out).await,
                         )
                         .await
                     })
