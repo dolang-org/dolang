@@ -223,10 +223,10 @@ do -> Tuple[Sender[T], Receiver[T]]
   ...
 
 # Collects the strand-local input into a new array.
-def @collect() -> Array
+@def collect() -> Array
 
 # Collects the strand-local input into a sink, returning the sink.
-def @collect[S @ Sinkable]
+@def collect[S @ Sinkable]
   # collection to add to
   target @ S
 do -> S
@@ -282,7 +282,7 @@ do -> R
   ...
 
 # Runs a function over an iterator with a fixed number of scoped workers.
-def @pool
+@def pool
   # number of worker strands
   count @ Int
   # iterable of items
@@ -292,7 +292,7 @@ def @pool
 do
 
 # Runs a function over the strand-local input with a fixed number of scoped workers.
-def @pool
+@def pool
   # number of worker strands
   count @ Int
   # function applied to each input value

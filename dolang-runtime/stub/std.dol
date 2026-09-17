@@ -3,11 +3,11 @@
 
 # The union of its type arguments. `Union[Int, Str]` is `(Int | Str)`, and a
 # pack spreads into one, as in `Union[T, ...Us]`.
-pub let @Union[...Ts] = ...
+pub @let Union[...Ts] = ...
 
 # The type with no values, which a function that never returns can declare as
 # its result.
-pub let @Empty = Union[]
+pub @let Empty = Union[]
 
 # The singleton [`Null`](std.Null) value.
 #
@@ -251,28 +251,28 @@ pub class RuntimeError: Error
 # A value that implements the [`(iter)`](../../language/classes.md#iter-obtain-iterator)
 # protocol, as `for` and spreading require. Only an [`Iterable`](std.Iterable)
 # also has its methods.
-pub class @BaseIterable[T]
+pub @class BaseIterable[T]
   # Returns an iterator over the value.
   pub def (iter) self -> BaseIter[T]
 
 
 # A value that implements the [`(next)`](../../language/classes.md#next-iterator-protocol)
 # protocol. Only an [`Iter`](std.Iter) also has its methods.
-pub class @BaseIter[T]
+pub @class BaseIter[T]
   # Returns the next value, raising [`IterStop`](std.IterStop) once exhausted.
   pub def (next) self -> T
 
 
 # A value that implements the [`(sink)`](../../language/classes.md#sink-obtain-sink)
 # protocol. Only a [`Sinkable`](std.Sinkable) also has its methods.
-pub class @BaseSinkable[T]
+pub @class BaseSinkable[T]
   # Returns a sink that writes to the value.
   pub def (sink) self -> BaseSink[T]
 
 
 # A value that implements the [`(put)`](../../language/classes.md#put-sink-protocol)
 # protocol. Only a [`Sink`](std.Sink) also has its methods.
-pub class @BaseSink[T]
+pub @class BaseSink[T]
   # Writes a value.
   pub def (put) self value @ T
 
@@ -2049,17 +2049,17 @@ pub class Float: Num
 
 # A fill for formatted output: a single character, or `:ZERO:` for numeric
 # zero padding.
-pub let @FmtFill = (Str | :ZERO:)
+pub @let FmtFill = (Str | :ZERO:)
 
 # An alignment for formatted output.
-pub let @FmtAlign = (:LEFT: | :RIGHT: | :CENTER:)
+pub @let FmtAlign = (:LEFT: | :RIGHT: | :CENTER:)
 
 # A sign display for formatted numbers.
-pub let @FmtSign = (:PLUS: | :SPACE:)
+pub @let FmtSign = (:PLUS: | :SPACE:)
 
 # A representation kind for formatted output. See
 # [`FmtSpec.kind`](std.FmtSpec.kind).
-pub let @FmtKind = (:STR: | :DBG: | :VERBATIM: | :HEX: | :OCT: | :BIN: | :DEC: | :EXP: | :FIXED:)
+pub @let FmtKind = (:STR: | :DBG: | :VERBATIM: | :HEX: | :OCT: | :BIN: | :DEC: | :EXP: | :FIXED:)
 
 #
 # An unbound interpolation in a [`Fmt`](std.Fmt).

@@ -1,27 +1,27 @@
-def @takes unused -> Int
+@def takes unused -> Int
 pub def takes value
   value
 
-pub def @exported x
+pub @def exported x
 # error: a type-only `def` is exported with its implementation, so it cannot be `pub`
 #   --> type_only.dol:LL:LL
 #    |
-# LL | pub def @exported x
+# LL | pub @def exported x
 #    | ^^^
 pub def exported x
   x
 
 pub class Box
-  pub def @get self key@Str
+  pub @def get self key@Str
   # error: a type-only `def` is exported with its implementation, so it cannot be `pub`
   #   --> type_only.dol:LL:LL
   #    |
-  # LL |   pub def @get self key@Str
+  # LL |   pub @def get self key@Str
   #    |   ^^^
-  def @get self key@Sym
+  @def get self key@Sym
   pub def get _self key
     key
 
-class @Proto
+@class Proto
   pub def method self unused
   pub field value @ Int

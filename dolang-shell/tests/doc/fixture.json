@@ -10338,7 +10338,7 @@
       "context": null
     },
     {
-      "kind": "KEYWORD",
+      "kind": "ANNOTATION",
       "span": {
         "start": {
           "line": 91,
@@ -10347,25 +10347,25 @@
         },
         "end": {
           "line": 91,
-          "column": 9,
-          "byte_offset": 1869
+          "column": 5,
+          "byte_offset": 1865
         }
       },
       "ref": null,
       "context": null
     },
     {
-      "kind": "ANNOTATION",
+      "kind": "KEYWORD",
       "span": {
         "start": {
           "line": 91,
-          "column": 10,
-          "byte_offset": 1870
+          "column": 5,
+          "byte_offset": 1865
         },
         "end": {
           "line": 91,
-          "column": 11,
-          "byte_offset": 1871
+          "column": 10,
+          "byte_offset": 1870
         }
       },
       "ref": null,
@@ -10763,7 +10763,7 @@
       "context": null
     },
     {
-      "kind": "KEYWORD",
+      "kind": "ANNOTATION",
       "span": {
         "start": {
           "line": 101,
@@ -10772,25 +10772,25 @@
         },
         "end": {
           "line": 101,
-          "column": 5,
-          "byte_offset": 2066
+          "column": 3,
+          "byte_offset": 2064
         }
       },
       "ref": null,
       "context": null
     },
     {
-      "kind": "ANNOTATION",
+      "kind": "KEYWORD",
       "span": {
         "start": {
           "line": 101,
-          "column": 6,
-          "byte_offset": 2067
+          "column": 3,
+          "byte_offset": 2064
         },
         "end": {
           "line": 101,
-          "column": 7,
-          "byte_offset": 2068
+          "column": 6,
+          "byte_offset": 2067
         }
       },
       "ref": null,
@@ -10950,7 +10950,7 @@
       "context": null
     },
     {
-      "kind": "KEYWORD",
+      "kind": "ANNOTATION",
       "span": {
         "start": {
           "line": 106,
@@ -10959,25 +10959,25 @@
         },
         "end": {
           "line": 106,
-          "column": 3,
-          "byte_offset": 2133
+          "column": 1,
+          "byte_offset": 2131
         }
       },
       "ref": null,
       "context": null
     },
     {
-      "kind": "ANNOTATION",
+      "kind": "KEYWORD",
       "span": {
         "start": {
           "line": 106,
-          "column": 4,
-          "byte_offset": 2134
+          "column": 1,
+          "byte_offset": 2131
         },
         "end": {
           "line": 106,
-          "column": 5,
-          "byte_offset": 2135
+          "column": 4,
+          "byte_offset": 2134
         }
       },
       "ref": null,
@@ -11086,7 +11086,7 @@
       "context": null
     },
     {
-      "kind": "KEYWORD",
+      "kind": "ANNOTATION",
       "span": {
         "start": {
           "line": 109,
@@ -11095,25 +11095,25 @@
         },
         "end": {
           "line": 109,
-          "column": 3,
-          "byte_offset": 2176
+          "column": 1,
+          "byte_offset": 2174
         }
       },
       "ref": null,
       "context": null
     },
     {
-      "kind": "ANNOTATION",
+      "kind": "KEYWORD",
       "span": {
         "start": {
           "line": 109,
-          "column": 4,
-          "byte_offset": 2177
+          "column": 1,
+          "byte_offset": 2174
         },
         "end": {
           "line": 109,
-          "column": 5,
-          "byte_offset": 2178
+          "column": 4,
+          "byte_offset": 2177
         }
       },
       "ref": null,
@@ -11800,7 +11800,7 @@
       "context": null
     },
     {
-      "kind": "KEYWORD",
+      "kind": "ANNOTATION",
       "span": {
         "start": {
           "line": 119,
@@ -11809,25 +11809,25 @@
         },
         "end": {
           "line": 119,
-          "column": 7,
-          "byte_offset": 2408
+          "column": 5,
+          "byte_offset": 2406
         }
       },
       "ref": null,
       "context": null
     },
     {
-      "kind": "ANNOTATION",
+      "kind": "KEYWORD",
       "span": {
         "start": {
           "line": 119,
-          "column": 8,
-          "byte_offset": 2409
+          "column": 5,
+          "byte_offset": 2406
         },
         "end": {
           "line": 119,
-          "column": 9,
-          "byte_offset": 2410
+          "column": 8,
+          "byte_offset": 2409
         }
       },
       "ref": null,
@@ -11953,7 +11953,7 @@
       "context": null
     },
     {
-      "kind": "KEYWORD",
+      "kind": "ANNOTATION",
       "span": {
         "start": {
           "line": 122,
@@ -11962,25 +11962,25 @@
         },
         "end": {
           "line": 122,
-          "column": 7,
-          "byte_offset": 2461
+          "column": 5,
+          "byte_offset": 2459
         }
       },
       "ref": null,
       "context": null
     },
     {
-      "kind": "ANNOTATION",
+      "kind": "KEYWORD",
       "span": {
         "start": {
           "line": 122,
-          "column": 8,
-          "byte_offset": 2462
+          "column": 5,
+          "byte_offset": 2459
         },
         "end": {
           "line": 122,
-          "column": 9,
-          "byte_offset": 2463
+          "column": 8,
+          "byte_offset": 2462
         }
       },
       "ref": null,
@@ -12174,7 +12174,7 @@
       "context": null
     },
     {
-      "kind": "KEYWORD",
+      "kind": "ANNOTATION",
       "span": {
         "start": {
           "line": 125,
@@ -12183,25 +12183,25 @@
         },
         "end": {
           "line": 125,
-          "column": 7,
-          "byte_offset": 2530
+          "column": 5,
+          "byte_offset": 2528
         }
       },
       "ref": null,
       "context": null
     },
     {
-      "kind": "ANNOTATION",
+      "kind": "KEYWORD",
       "span": {
         "start": {
           "line": 125,
-          "column": 8,
-          "byte_offset": 2531
+          "column": 5,
+          "byte_offset": 2528
         },
         "end": {
           "line": 125,
-          "column": 9,
-          "byte_offset": 2532
+          "column": 8,
+          "byte_offset": 2531
         }
       },
       "ref": null,

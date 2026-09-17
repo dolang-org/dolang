@@ -2068,7 +2068,12 @@ impl<'a> Elaborater<'a> {
                         });
                     }
                 }
-                ImportElement::ModuleRenamed { bind, .. } => {
+                ImportElement::ModuleRenamed {
+                    bind, type_only, ..
+                } => {
+                    if type_only.is_some() {
+                        continue;
+                    }
                     let id = self
                         .symtab
                         .id(&self.bintab.id_str(self.file.str(bind.span)));

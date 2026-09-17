@@ -593,18 +593,25 @@ impl Index<'_> {
                         self.declaration(scope, bind, kind, element_span);
                     }
                 }
-                ImportElement::ModuleRenamed { module, bind, .. } => {
-                    self.declaration(
-                        scope,
-                        bind,
-                        Kind::ImportModule {
-                            module: *module,
-                            name: bind.span,
-                            is_pub,
-                            type_only: false,
-                        },
-                        element_span,
-                    );
+                ImportElement::ModuleRenamed {
+                    module,
+                    bind,
+                    type_only,
+                    ..
+                } => {
+                    let kind = Kind::ImportModule {
+                        module: *module,
+                        name: bind.span,
+                        is_pub,
+                        type_only: type_only.is_some(),
+                    };
+                    if let Some(type_only) = type_only {
+                        let id = self.push(scope, kind, element_span);
+                        type_only.node = Some(id);
+                        self.type_decls.insert(bind.span.start, id);
+                    } else {
+                        self.declaration(scope, bind, kind, element_span);
+                    }
                 }
                 ImportElement::Items { module, items } => {
                     for item in items {

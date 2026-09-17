@@ -145,7 +145,7 @@ pub class Connection
   #   stmt.execute name: "Charlie"
   #   stmt.close()
   # ```
-  def @prepare
+  @def prepare
     self
     # SQL template. See [Parameter
     # Binding](sqlite.Statement.parameter-binding).
@@ -154,7 +154,7 @@ pub class Connection
 
   # Prepares a statement and calls `func` with it. The statement is closed when
   # `func` returns.
-  def @prepare[R]
+  @def prepare[R]
     self
     # SQL template. See [Parameter
     # Binding](sqlite.Statement.parameter-binding).
@@ -470,7 +470,7 @@ pub class Transaction
 # open ":memory:" do |conn|
 #   conn.execute t"CREATE TABLE scratch (n INTEGER)"
 # ```
-def @open
+@def open
   # Path to the database
   # file, or `":memory:"` for a private in-memory database. A relative path
   # resolves against the current directory of the active VFS context.
@@ -489,7 +489,7 @@ do -> Connection
 
 # Opens a database connection and calls `func` with it. The connection is
 # closed when `func` returns.
-def @open[R]
+@def open[R]
   # Path to the database
   # file, or `":memory:"` for a private in-memory database. A relative path
   # resolves against the current directory of the active VFS context.

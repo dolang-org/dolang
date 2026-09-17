@@ -117,7 +117,7 @@ pub class Mock
 pub class Server
   # Starts a server.
   #[class]
-  def @(call) self -> Server
+  @def (call) self -> Server
 
   # Starts a server and calls `func` with it. The server is shut down when
   # `func` returns.
@@ -129,7 +129,7 @@ pub class Server
   #   echo $server.url
   # ```
   #[class]
-  def @(call)[R]
+  @def (call)[R]
     self
     # Called with the `Server`.
     func @ (Server -> R)
@@ -252,7 +252,7 @@ pub class Server
   # http.get (server.url / "/users/42")
   # handle.unmount()
   # ```
-  def @mock
+  @def mock
     self
     # Mock items, as described above.
     ...items @ Dict
@@ -275,7 +275,7 @@ pub class Server
   #     http.get (server.url / "/health")
   #     handle.verify()
   # ```
-  def @mock[R]
+  @def mock[R]
     self
     # Mock items followed by the block.
     ...args @ {...Dict, (Mock -> R)}

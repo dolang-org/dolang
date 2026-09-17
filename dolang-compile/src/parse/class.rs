@@ -197,12 +197,14 @@ impl Parser<'_> {
             None
         };
 
+        let at_span = self.parse_decl_marker(scope, true)?;
+
         match self.peek()? {
             Some(token!(Keyword(Field))) => Ok(ClassMember::Field(
                 self.parse_field(scope, pub_span, decorators, protocol)?,
             )),
             Some(token!(Keyword(Def))) => Ok(ClassMember::Method(
-                self.parse_method(scope, pub_span, decorators, protocol)?,
+                self.parse_method(scope, pub_span, decorators, protocol, at_span)?,
             )),
             Some(token!(Dedent)) | None => {
                 Err(self.syntax_error(scope, None, "expected statement"))
@@ -254,14 +256,10 @@ impl Parser<'_> {
         scope: &mut Scope,
         pub_span: Option<Span>,
         decorators: Vec<Decorator>,
+        at_span: Option<Span>,
     ) -> Result<Class> {
         let class_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Class)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
-        // `@` makes the class a protocol, which exists only in types
-        let at_span = match self.peek()? {
-            Some(token!(TokenInfo::At)) => Some(self.advance()),
-            _ => None,
-        };
         let protocol = at_span.is_some();
 
         // Class name can be either `Name` (Ident) or `Name:` (Key) if there's a superclass

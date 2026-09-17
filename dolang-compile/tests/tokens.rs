@@ -119,6 +119,7 @@ const ALL_CONTEXTS: [Context; 2] = [Context::None, Context::Call];
 fn node_name(kind: &Kind<'_>) -> &'static str {
     match kind {
         Kind::Root => "root",
+        Kind::Alias { .. } => "alias",
         Kind::ImportItem { .. } => "import_item",
         Kind::ImportModule { .. } => "import_module",
         Kind::PreludeModule { .. } => "prelude_module",
@@ -154,6 +155,7 @@ fn node_name(kind: &Kind<'_>) -> &'static str {
 }
 
 const NODE_NAMES: &[&str] = &[
+    "alias",
     "import_item",
     "import_module",
     "prelude_module",

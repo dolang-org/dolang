@@ -217,12 +217,12 @@ pub class Acl
 
 # Permissions given as a [`Permission`](security.unix.Permission), one
 # permission symbol, or an iterable of permission symbols.
-pub let @PermissionSpec = (Permission | Sym | Iterable[Sym])
+pub @let PermissionSpec = (Permission | Sym | Iterable[Sym])
 
 # A POSIX entry, built or declared as a dictionary. A dictionary has exactly
 # one qualifier key, with the same meaning as the keyword arguments of
 # [`ace`](security.unix.ace).
-pub let @AceSpec = (
+pub @let AceSpec = (
   | Ace
   | Dict[{user_obj: PermissionSpec}]
   | Dict[{group_obj: PermissionSpec}]
@@ -233,7 +233,7 @@ pub let @AceSpec = (
 )
 
 # A POSIX ACL, built or given as its entries.
-pub let @AclSpec = (Acl | Iterable[AceSpec])
+pub @let AclSpec = (Acl | Iterable[AceSpec])
 
 # Constructs a POSIX entry from declarative arguments.
 #

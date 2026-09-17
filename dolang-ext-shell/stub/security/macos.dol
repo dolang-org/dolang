@@ -252,27 +252,27 @@ pub class Acl
     ...
 
 # The principal of an entry, as a UUID or its string or binary form.
-pub let @Principal = (Uuid | Str | Bin)
+pub @let Principal = (Uuid | Str | Bin)
 
 # A mask given as a [`Mask`](security.macos.Mask), one symbol, or an iterable
 # of symbols.
-pub let @MaskSpec = (Mask | Sym | Iterable[Sym])
+pub @let MaskSpec = (Mask | Sym | Iterable[Sym])
 
 # Flags given as [`Flags`](security.macos.Flags), one symbol, or an iterable of
 # symbols.
-pub let @FlagsSpec = (Flags | Sym | Iterable[Sym])
+pub @let FlagsSpec = (Flags | Sym | Iterable[Sym])
 
 # A macOS entry, built or declared as a dictionary. A dictionary has
 # exactly one type key, with the same meaning as the keyword arguments of
 # [`ace`](security.macos.ace).
-pub let @AceSpec = (
+pub @let AceSpec = (
   | Ace
   | Dict[{allow: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
   | Dict[{deny: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
 )
 
 # A macOS ACL, built or given as its entries.
-pub let @AclSpec = (Acl | Iterable[AceSpec])
+pub @let AclSpec = (Acl | Iterable[AceSpec])
 
 # Constructs a macOS entry from declarative arguments.
 #

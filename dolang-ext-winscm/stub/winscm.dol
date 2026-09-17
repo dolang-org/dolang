@@ -510,7 +510,7 @@ pub class ScManager
   # manager.open_service Spooler access: :SERVICE_QUERY_STATUS: do |service|
   #   echo $service.query_status().current_state
   # ```
-  def @open_service
+  @def open_service
     self
     # Service name.
     name @ Str
@@ -521,7 +521,7 @@ pub class ScManager
 
   # Opens an existing service and calls `func` with it. The service handle is
   # closed when `func` returns.
-  def @open_service[R]
+  @def open_service[R]
     self
     # Service name.
     name @ Str
@@ -545,7 +545,7 @@ pub class ScManager
   #   binary_path: [r"C:\Program Files\My Service\service.exe"]
   #   access: :SERVICE_ALL_ACCESS:
   # ```
-  def @create_service
+  @def create_service
     self
     # Service name.
     name @ Str
@@ -585,7 +585,7 @@ pub class ScManager
 
   # Creates a service and calls `func` with it. The service handle is closed
   # when `func` returns.
-  def @create_service[R]
+  @def create_service[R]
     self
     # Service name.
     name @ Str
@@ -935,7 +935,7 @@ pub class ServiceInfo
 #   for info = manager.enumerate_services()
 #     echo $info.name
 # ```
-def @open
+@def open
   # Rights the returned handle requests, as a mask, a symbol, or an iterable of
   # symbols. Defaults to `:SC_MANAGER_CONNECT:`.
   :access @ (ManagerAccessMask | Sym) = nil
@@ -943,7 +943,7 @@ do -> ScManager
 
 # Opens the local Service Control Manager and calls `func` with it. The
 # manager handle is closed when `func` returns.
-def @open[R]
+@def open[R]
   # Rights the returned handle requests, as a mask, a symbol, or an iterable of
   # symbols. Defaults to `:SC_MANAGER_CONNECT:`.
   :access @ (ManagerAccessMask | Sym) = nil

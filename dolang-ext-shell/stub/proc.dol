@@ -449,7 +449,7 @@ do -> Info
 # finally
 #   p.close()
 # ```
-def @open
+@def open
   # Information record, or a raw
   # PID.
   target @ (Info | Int)
@@ -462,7 +462,7 @@ do -> Proc
 # let name = open $pid do |p|
 #   p.info().name
 # ```
-def @open[R]
+@def open[R]
   # Information record, or a raw
   # PID.
   target @ (Info | Int)

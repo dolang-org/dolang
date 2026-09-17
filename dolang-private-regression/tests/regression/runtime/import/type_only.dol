@@ -15,3 +15,35 @@ def sum x @Thing y @Adder -> Total
 
 assert_eq (sum 1 2) 3
 assert_eq (plus 2 2) 4
+
+# Statement-wide imports never load even nonexistent modules.
+@import missing_module missing_alias: alias
+@import missing_items:
+  - First
+  Second: Renamed
+  - @Third
+  - @Fourth: LastType
+@import
+  missing.dotted
+  missing.renamed: renamed
+  missing.vertical:
+    - Vertical
+    Original: VerticalAlias
+  @missing.explicit
+
+def accept_types
+  a @ missing_module.Thing
+  b @ alias.Thing
+  c @ First
+  d @ Renamed
+  e @ Third
+  f @ LastType
+  g @ missing.dotted.Thing
+  h @ renamed.Thing
+  i @ Vertical
+  j @ VerticalAlias
+  k @ missing.explicit.Thing
+do
+  [a, b, c, d, e, f, g, h, i, j, k]
+
+assert_eq (accept_types 1 2 3 4 5 6 7 8 9 10 11) [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]

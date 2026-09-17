@@ -108,15 +108,15 @@ class Registry[V]: Table[Sym, V]
 
 ## Type Aliases
 
-`let @` declares a name for a type or schema. An alias has no runtime binding,
+`@let` declares a name for a type or schema. An alias has no runtime binding,
 and is visible in types throughout its block, so it may refer to itself or to an
 alias declared later. It may declare binders and may be exported.
 
 ```
-pub let @Pair[T] = Tuple[T, T]
-let @Options = {name: Str, ?port: Int}
-let @Json = (Scalar | Array[Json] | Dict[{...Str: Json}])
-let @Scalar = (Str | Int | Float | Bool | nil)
+pub @let Pair[T] = Tuple[T, T]
+@let Options = {name: Str, ?port: Int}
+@let Json = (Scalar | Array[Json] | Dict[{...Str: Json}])
+@let Scalar = (Str | Int | Float | Bool | nil)
 ```
 
 ## Type-Only Imports
@@ -156,16 +156,30 @@ let area @ geometry.plane.Area = nil
 let volume @ geometry.solid.Volume = nil
 ```
 
+`@import` makes every module and item in the statement type-only, including
+renamed imports. Individual `@` markers remain valid but are redundant:
+
+```
+@import geometry: g
+@import
+  geometry.plane
+  geometry.solid:
+    - Shape
+    Vector: Offset
+
+let point @ g.Point = nil
+```
+
 ## Overloads
 
-`def @` declares a signature for the function of the same name without giving it
+`@def` declares a signature for the function of the same name without giving it
 a body. The signatures declared this way are the function's overloads, each a
 way it can be called. They may appear anywhere in the block that declares the
 function:
 
 ```
-def @double x @ Int -> Int
-def @double x @ Str -> Str
+@def double x @ Int -> Int
+@def double x @ Str -> Str
 pub def double x
   (x + x)
 ```
@@ -176,12 +190,12 @@ it is never written `pub`. A method, including a special method such as
 
 ## Protocols
 
-`class @` declares a protocol, a type made up of the members a value has. A
+`@class` declares a protocol, a type made up of the members a value has. A
 protocol has no runtime binding. Its methods have no bodies, its fields have no
 defaults, and methods sharing a name are overloads:
 
 ```
-pub class @Shape
+pub @class Shape
   pub field name @ Str
   pub def area self -> Int
   pub def area self scale @ Int -> Int
@@ -202,7 +216,7 @@ A protocol's own supertypes are type-only already, so they are written without
 `@`:
 
 ```
-pub class @Solid: Shape
+pub @class Solid: Shape
   pub def volume self -> Int
 ```
 

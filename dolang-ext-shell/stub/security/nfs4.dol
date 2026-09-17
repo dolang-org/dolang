@@ -303,23 +303,23 @@ pub class Acl
 
 # The principal of an entry: the file owner, owning group, everyone, or a
 # user or group ID.
-pub let @Principal = (
+pub @let Principal = (
   | :OWNER: | :OWNING_GROUP: | :EVERYONE:
   | Dict[{user: Int}] | Dict[{group: Int}]
 )
 
 # A mask given as a [`Mask`](security.nfs4.Mask), one symbol, or an iterable
 # of symbols.
-pub let @MaskSpec = (Mask | Sym | Iterable[Sym])
+pub @let MaskSpec = (Mask | Sym | Iterable[Sym])
 
 # Flags given as [`Flags`](security.nfs4.Flags), one symbol, or an iterable of
 # symbols.
-pub let @FlagsSpec = (Flags | Sym | Iterable[Sym])
+pub @let FlagsSpec = (Flags | Sym | Iterable[Sym])
 
 # An NFSv4 entry, built or declared as a dictionary. A dictionary has
 # exactly one type key, with the same meaning as the keyword arguments of
 # [`ace`](security.nfs4.ace).
-pub let @AceSpec = (
+pub @let AceSpec = (
   | Ace
   | Dict[{allow: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
   | Dict[{deny: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
@@ -328,7 +328,7 @@ pub let @AceSpec = (
 )
 
 # An NFSv4 ACL, built or given as its entries.
-pub let @AclSpec = (Acl | Iterable[AceSpec])
+pub @let AclSpec = (Acl | Iterable[AceSpec])
 
 # Constructs an NFSv4 entry from declarative arguments.
 #

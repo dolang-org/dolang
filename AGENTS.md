@@ -630,21 +630,21 @@ marks a schema binder. A superclass may take type arguments:
 def first[T] items @ Array[T] -> T
   items[0]
 class Registry[V]: Table[Sym, V]
-pub let @Pair[T] = Tuple[T, T]
+pub @let Pair[T] = Tuple[T, T]
 ```
 
-`def @name` declares a bodiless overload of the function or method `name` in the
+`@def name` declares a bodiless overload of the function or method `name` in the
 same block or class body; it is exported with its implementation, so it is
-never `pub`. `class @Name` declares a protocol, whose members have no bodies.
+never `pub`. `@class Name` declares a protocol, whose members have no bodies.
 `@` before a supertype makes it type-only, so the class does not inherit from it
 at runtime:
 
 ```
-def @double x@Int -> Int
-def @double x@Str -> Str
+@def double x@Int -> Int
+@def double x@Str -> Str
 pub def double x
   (x + x)
-pub class @Shape
+pub @class Shape
   pub def area self -> Int
 class Square: @Shape
   pub def area _self
@@ -659,9 +659,11 @@ import geometry:
   - @Vector: Offset
 ```
 
-`import @geometry` similarly binds a whole module only for dotted type names
-without loading it at runtime. `let @Name = Type` declares a type-only alias
-visible throughout its block, so it may refer to itself or a later alias.
+`@import` makes every module and item in the statement type-only, including
+renamed imports. `import @geometry` similarly binds a whole module only for
+dotted type names without loading it at runtime. `@let Name = Type` declares a
+type-only alias visible throughout its block, so it may refer to itself or a
+later alias.
 
 An annotation or return type is a compact type, so the first whitespace after
 it begins ends it, even inside `()`. Parenthesize unions and function types:

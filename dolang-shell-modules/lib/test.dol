@@ -327,7 +327,7 @@ pub def fixture wrap -> (Value -> Value)
 # def connects_to_service()
 #   connect()
 # ```
-def @test
+@def test
   # Reporting name. Defaults to the test function's string form.
   :name @ Str = nil
   # Tags to attach. Order and duplicates are
@@ -336,7 +336,7 @@ def @test
 do -> (Value -> Value)
 
 # Registers a zero-argument test function, returning it.
-def @test[F]
+@def test[F]
   # Reporting name. Defaults to `str(func)`.
   :name @ Str = nil
   # Tags to attach. Order and duplicates are
@@ -410,7 +410,7 @@ do
 # def connects :backend
 #   backend.ping()
 # ```
-def @parametrize
+@def parametrize
   # An axis name paired with an iterable of raw
   # values and/or `tagged(value, ...tags)` wrappers for that axis.
   ...axes @ Iterable
@@ -418,7 +418,7 @@ do -> (Value -> Value)
 
 # Registers parametrize axes on a test function directly, returning the
 # decorated test for [`test`](test.test).
-def @parametrize
+@def parametrize
   # Test function, or a test already decorated with
   # `parametrize` or a fixture.
   func

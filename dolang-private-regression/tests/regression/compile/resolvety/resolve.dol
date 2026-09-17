@@ -82,8 +82,8 @@ pub import import_fixture:
 
 # An alias is visible throughout its block, so it may name itself or a later alias
 let _tree @_Tree = nil
-let @_Tree = (Int | Array[_Tree] | _Forest)
-let @_Forest = Dict[{...Str: _Tree}]
+@let _Tree = (Int | Array[_Tree] | _Forest)
+@let _Forest = Dict[{...Str: _Tree}]
 
 def _nested x @_Local -> _Local
   # warning: unbound type name
@@ -96,6 +96,6 @@ def _nested x @_Local -> _Local
   #    |
   # LL | def _nested x @_Local -> _Local
   #    |                          ^^^^^^
-  let @_Local = Array[_Local]
+  @let _Local = Array[_Local]
   x
 assert_eq (_nested 1) 1

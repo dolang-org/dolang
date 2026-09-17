@@ -37,7 +37,7 @@ import
 # On Unix, `:LINK:` corresponds to `lstat`-style behavior. On Windows, it
 # applies to both symbolic links and other reparse points such as directory
 # junctions.
-pub let @Resolve = (:TARGET: | :LINK:)
+pub @let Resolve = (:TARGET: | :LINK:)
 
 # File access mode accepted by [`open`](fs.open).
 #
@@ -51,7 +51,7 @@ pub let @Resolve = (:TARGET: | :LINK:)
 # | `"a+"` | Read and append                          |
 #
 # A `"b"` suffix selects binary mode, as in `"rb"`, `"wb"`, or `"r+b"`.
-pub let @OpenMode = (
+pub @let OpenMode = (
   | "r" | "w" | "a" | "r+" | "w+" | "a+"
   | "rb" | "wb" | "ab" | "r+b" | "w+b" | "a+b"
 )
@@ -1327,21 +1327,21 @@ pub class Path
     ...
 
   # The method form of [`fs.open`](fs.open).
-  def @open
+  @def open
     self
     # File access mode. Defaults to `"r"`.
     mode @ OpenMode = nil
   do -> File
 
   # The method form of [`fs.open`](fs.open) with a block.
-  def @open[R]
+  @def open[R]
     self
     # Block to run with the file; it is closed when the block returns.
     func @ (File -> R)
   do -> R
 
   # The method form of [`fs.open`](fs.open) with a mode and a block.
-  def @open[R]
+  @def open[R]
     self
     # File access mode.
     mode @ OpenMode
@@ -1353,10 +1353,10 @@ pub class Path
     ...
 
   # The method form of [`fs.read`](fs.read) for a text file.
-  def @read self -> Str
+  @def read self -> Str
 
   # The method form of [`fs.read`](fs.read) in binary mode.
-  def @read
+  @def read
     self
     # Binary mode.
     mode @ "b"
@@ -1649,7 +1649,7 @@ pub class XattrEntry
 # file.write "some data"
 # file.close()
 # ```
-def @open
+@def open
   # Path to the file to open.
   path @ (Str | Path)
   # File access mode. Defaults to `"r"`.
@@ -1663,7 +1663,7 @@ do -> File
 # open config.txt do |file|
 #   echo "Content: $(file.read())"
 # ```
-def @open[R]
+@def open[R]
   # Path to the file to open.
   path @ (Str | Path)
   # Block to run with the file.
@@ -1677,7 +1677,7 @@ do -> R
 # open log.txt a do |file|
 #   file.write "entry\n"
 # ```
-def @open[R]
+@def open[R]
   # Path to the file to open.
   path @ (Str | Path)
   # File access mode.
@@ -1700,7 +1700,7 @@ pub def open path ...options
 # ```
 # let text = read "config.txt"
 # ```
-def @read
+@def read
   # Path to the file to read.
   path @ (Str | Path)
 do -> Str
@@ -1712,7 +1712,7 @@ do -> Str
 # ```
 # let data = read "archive.bin" "b"
 # ```
-def @read
+@def read
   # Path to the file to read.
   path @ (Str | Path)
   # Binary mode.

@@ -49,7 +49,7 @@ import security.windows:
 
 # Registry value data in its natural Do representation. See
 # [`Value.value`](winreg.Value.value) for how each value kind maps to it.
-pub let @Data = (Str | Array[Str] | Int | Bin | nil)
+pub @let Data = (Str | Array[Str] | Int | Bin | nil)
 
 # Access rights for a registry key.
 #
@@ -192,7 +192,7 @@ pub class Key
   #   root.create "Software/MyApp" do |app|
   #     app.set "installed" true
   # ```
-  def @create
+  @def create
     self
     # Path to the subkey, relative to this key.
     subpath @ Str
@@ -207,7 +207,7 @@ pub class Key
 
   # Creates or opens a subkey and calls `func` with it. The key is closed when
   # `func` returns.
-  def @create[R]
+  @def create[R]
     self
     # Path to the subkey, relative to this key.
     subpath @ Str
@@ -378,7 +378,7 @@ pub class Key
   #   root.open "Environment" do |env|
   #     echo (env.get "TEMP")
   # ```
-  def @open
+  @def open
     self
     # Path to the subkey, relative to this key.
     subpath @ Str
@@ -397,7 +397,7 @@ pub class Key
 
   # Opens a subkey and calls `func` with it. The key is closed when `func`
   # returns.
-  def @open[R]
+  @def open[R]
     self
     # Path to the subkey, relative to this key.
     subpath @ Str
@@ -652,7 +652,7 @@ pub class Value
 # let root = open :LOCAL_MACHINE: access: :READ_WRITE:
 # root.close()
 # ```
-def @open
+@def open
   # [Registry root](winreg.registry-roots) to
   # open.
   root @ Sym
@@ -666,7 +666,7 @@ do -> Key
 
 # Opens a registry root and calls `func` with it. The key is closed when
 # `func` returns.
-def @open[R]
+@def open[R]
   # [Registry root](winreg.registry-roots) to
   # open.
   root @ Sym

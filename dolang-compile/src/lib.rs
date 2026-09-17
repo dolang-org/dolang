@@ -466,7 +466,7 @@ pub enum Kind<'a> {
         name: diag::Span,
         /// Declared `pub`
         is_pub: bool,
-        /// A protocol, declared `class @Name`, which exists only in types
+        /// A protocol, declared `@class Name`, which exists only in types
         type_only: bool,
     },
     /// A `def` at statement level
@@ -475,7 +475,7 @@ pub enum Kind<'a> {
         name: diag::Span,
         /// Declared `pub`, or for an overload, whether its implementation is
         is_pub: bool,
-        /// An overload signature, declared `def @name`, which has no body
+        /// An overload signature, declared `@def name`, which has no body
         type_only: bool,
     },
     /// A `def` in a class body.  Its class is its parent.

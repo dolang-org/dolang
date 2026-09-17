@@ -169,7 +169,7 @@ pub class Class: Declaration
   pub def is_pub self
     ...
 
-  # Whether the class is a protocol, declared `class @Name`.
+  # Whether the class is a protocol, declared `@class Name`.
   #[getter]
   pub def type_only self -> Bool
     ...
@@ -182,7 +182,7 @@ pub class Function: Declaration
   pub def is_pub self
     ...
 
-  # Whether the function is an overload signature, declared `def @name`.
+  # Whether the function is an overload signature, declared `@def name`.
   #[getter]
   pub def type_only self -> Bool
     ...

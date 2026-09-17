@@ -1,11 +1,11 @@
 # JSON serialization and deserialization.
 
 # A value decoded from JSON.
-pub let @Data = (nil | Bool | Int | Float | Str | Array[Data] | Dict[{...Str: Data}])
+pub @let Data = (nil | Bool | Int | Float | Str | Array[Data] | Dict[{...Str: Data}])
 
 # A value that encodes as JSON. An object key may also be a number or boolean,
 # which is written as its string form.
-pub let @Encodable = (
+pub @let Encodable = (
   | nil | Bool | Int | Float | Str | Sym
   | Array[Encodable] | Tuple[...Encodable] | Record[...{...Encodable, ...Sym: Encodable}]
   | Dict[{...(Str | Sym | Int | Float | Bool): Encodable}]

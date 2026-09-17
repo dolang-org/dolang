@@ -1,15 +1,15 @@
-class @Proto: @Other
+@class Proto: @Other
   # error: a protocol's members and supertypes are already type-only
   #   --> type_only_protocol.dol:LL:LL
   #    |
-  # LL | class @Proto: @Other
+  # LL | @class Proto: @Other
   #    |               ^
-  def @method self
+  @def method self
   # error: a protocol's members and supertypes are already type-only
   #   --> type_only_protocol.dol:LL:LL
   #    |
-  # LL |   def @method self
-  #    |       ^
+  # LL |   @def method self
+  #    |   ^
   field value = 1
 # error: a protocol field has no default
 #   --> type_only_protocol.dol:LL:LL

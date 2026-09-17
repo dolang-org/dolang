@@ -6,11 +6,11 @@ import
   @security.unix
 
 # An access-control list in any portable format.
-pub let @AnyAcl = (security.unix.Acl | security.nfs4.Acl | security.macos.Acl)
+pub @let AnyAcl = (security.unix.Acl | security.nfs4.Acl | security.macos.Acl)
 
 # An access-control list in any portable format, built or given as its
 # entries.
-pub let @AclSpec = (security.unix.AclSpec | security.nfs4.AclSpec | security.macos.AclSpec)
+pub @let AclSpec = (security.unix.AclSpec | security.nfs4.AclSpec | security.macos.AclSpec)
 
 # Get the current user's name.
 #

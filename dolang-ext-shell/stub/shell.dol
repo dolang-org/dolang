@@ -362,14 +362,14 @@ pub class Vfs
 # ```
 # echo $ cd()
 # ```
-def @cd() -> Path
+@def cd() -> Path
 
 # Changes the current strand's working directory.
 #
 # ```
 # cd /tmp
 # ```
-def @cd
+@def cd
   # Directory to change to,
   # resolved against the current one.
   path @ (Str | Path)
@@ -382,7 +382,7 @@ do
 # cd /var/log do
 #   run ls
 # ```
-def @cd[R]
+@def cd[R]
   # Directory to change to,
   # resolved against the current one.
   path @ (Str | Path)

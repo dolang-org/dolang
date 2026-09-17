@@ -157,7 +157,7 @@ def fancy_value value
 
 # A system- or configuration-extension scope. An unrecognized scope is kept as
 # written.
-pub let @ExtensionScope = (:SYSTEM: | :INITRD: | :PORTABLE: | Str)
+pub @let ExtensionScope = (:SYSTEM: | :INITRD: | :PORTABLE: | Str)
 
 # Parsed operating-system identification data with standard-aware projections.
 #

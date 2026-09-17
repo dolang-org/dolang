@@ -2308,7 +2308,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         );
                     }
                 }
-                ImportElement::ModuleRenamed { bind, .. } => {
+                ImportElement::ModuleRenamed {
+                    bind, type_only, ..
+                } => {
+                    if type_only.is_some() {
+                        continue;
+                    }
                     let cid = self.consttab.str(self.bintab.id_str(self.file.str(module)));
                     self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
                     let get = self.symtab.id(&self.bintab.id_str("get"));

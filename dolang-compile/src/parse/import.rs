@@ -128,7 +128,7 @@ impl Parser<'_> {
         use TokenInfo::*;
 
         let type_only = Some(TypeOnly {
-            at_span,
+            at_span: Some(at_span),
             node: None,
         });
         match decay_ident!(self.next()?) {
@@ -172,7 +172,7 @@ impl Parser<'_> {
             bind: Ident::new(self.module_name_first(module)),
             insert: false,
             type_only: Some(TypeOnly {
-                at_span,
+                at_span: Some(at_span),
                 node: None,
             }),
         })
@@ -221,6 +221,7 @@ impl Parser<'_> {
                             module: module_span,
                             bind: Ident::new(span),
                             delim_span: span.after_right_char(),
+                            type_only: None,
                         }),
                         other => Err(self.syntax_error(
                             scope,
@@ -263,6 +264,7 @@ impl Parser<'_> {
                 Some(token!(Dedent)) => {
                     self.advance();
                     break Ok(Import {
+                        at_span: None,
                         elements: elems,
                         import_span,
                         pub_span,
@@ -277,7 +279,37 @@ impl Parser<'_> {
         &mut self,
         scope: &mut Scope,
         pub_span: Option<Span>,
+        at_span: Option<Span>,
     ) -> Result<Import> {
+        let mut import = self.parse_import_inner(scope, pub_span)?;
+        import.at_span = at_span;
+        if at_span.is_some() {
+            for element in &mut import.elements {
+                match element {
+                    ImportElement::ModuleAsIs { type_only, .. }
+                    | ImportElement::ModuleRenamed { type_only, .. } => {
+                        type_only.get_or_insert(TypeOnly {
+                            at_span: None,
+                            node: None,
+                        });
+                    }
+                    ImportElement::Items { items, .. } => {
+                        for item in items {
+                            let (ImportItem::AsIs { type_only, .. }
+                            | ImportItem::Renamed { type_only, .. }) = item;
+                            type_only.get_or_insert(TypeOnly {
+                                at_span: None,
+                                node: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(import)
+    }
+
+    fn parse_import_inner(&mut self, scope: &mut Scope, pub_span: Option<Span>) -> Result<Import> {
         use self::{Ident, Keyword};
         use TokenInfo::*;
 
@@ -289,6 +321,7 @@ impl Parser<'_> {
             match self.peek()? {
                 None | Some(token!(StmtSep | Dedent)) => {
                     break Ok(Import {
+                        at_span: None,
                         elements: elems,
                         import_span,
                         pub_span,
@@ -319,6 +352,7 @@ impl Parser<'_> {
                             });
                             self.expect(scope, &[ExpectKind::Dedent])?;
                             break Ok(Import {
+                                at_span: None,
                                 elements: elems,
                                 import_span,
                                 pub_span,
@@ -330,6 +364,7 @@ impl Parser<'_> {
                                 module: mod_span,
                                 bind: Ident::new(span),
                                 delim_span: mod_span.after_right_char(),
+                                type_only: None,
                             },
                             other => {
                                 return Err(self.syntax_error(

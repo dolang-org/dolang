@@ -259,7 +259,8 @@ struct TypeName {
     /// The whole dotted path of a type-only module import, of which `span` is only the
     /// head. Modules are not nested, so `security.unix` and `security.nfs4` are separate
     /// imports that happen to share the head they bind, and only the whole path says
-    /// which module a dotted type name comes from.
+    /// which module a dotted type name comes from. For a renamed import, this is
+    /// the local name instead.
     module: Option<Span>,
     /// A type-only import rather than a binder
     import: bool,
@@ -707,6 +708,11 @@ impl Check<'_> {
                             bind,
                             type_only: Some(_),
                             ..
+                        }
+                        | ImportElement::ModuleRenamed {
+                            bind,
+                            type_only: Some(_),
+                            ..
                         } => {
                             if self.has_value(frame, self.file.str(bind.span), bind.span.start) {
                                 self.diags.push(TypeShadowsValue(bind.span));
@@ -1065,10 +1071,15 @@ impl Element for Stmt {
                             type_only: None,
                             ..
                         } => declare_module(decls, bind, ModulePath::Dotted(*module)),
-                        ImportElement::ModuleRenamed { bind, .. } => {
-                            declare_module(decls, bind, ModulePath::Bind)
-                        }
+                        ImportElement::ModuleRenamed {
+                            bind,
+                            type_only: None,
+                            ..
+                        } => declare_module(decls, bind, ModulePath::Bind),
                         ImportElement::ModuleAsIs {
+                            type_only: Some(_), ..
+                        }
+                        | ImportElement::ModuleRenamed {
                             type_only: Some(_), ..
                         } => {}
                         ImportElement::Items { items, .. } => {
@@ -1097,6 +1108,18 @@ impl Element for Stmt {
                         } => names.push(TypeName {
                             span: bind.span,
                             module: Some(*module),
+                            import: true,
+                            alias: None,
+                            warn_unused: true,
+                            used: Cell::new(import.pub_span.is_some()),
+                        }),
+                        ImportElement::ModuleRenamed {
+                            bind,
+                            type_only: Some(_),
+                            ..
+                        } => names.push(TypeName {
+                            span: bind.span,
+                            module: Some(bind.span),
                             import: true,
                             alias: None,
                             warn_unused: true,

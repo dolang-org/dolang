@@ -96,7 +96,7 @@ pub class Archive
   #       for chunk = source
   #         file.write $chunk
   # ```
-  def @open
+  @def open
     self
     # Name of the file within the archive.
     name @ Str
@@ -121,7 +121,7 @@ pub class Archive
   # closed when `func` returns.
   #
   # The keywords are those of the form without `func`.
-  def @open[R]
+  @def open[R]
     self
     # Name of the file within the archive.
     name @ Str
@@ -220,7 +220,7 @@ pub class Entry
   # ## Errors
   #
   # Raises a concurrency error if another file is already open in the archive.
-  def @open self -> File
+  @def open self -> File
 
   # Opens the entry for reading and calls `block` with it. The file is closed
   # when `block` returns.
@@ -236,7 +236,7 @@ pub class Entry
   #   entry.open do |file|
   #     echo (str (file.read entry.size))
   # ```
-  def @open[R]
+  @def open[R]
     self
     # Called with the [`File`](zip.File).
     block @ (File -> R)
@@ -313,12 +313,12 @@ pub class File
 # | ----- | ---------------------------------------------------------------- |
 # | `"r"` | Read mode -- opens an existing archive for reading               |
 # | `"w"` | Write mode -- creates a new archive, truncating any existing one |
-pub let @OpenMode = ("r" | "w")
+pub @let OpenMode = ("r" | "w")
 
 # Opens a ZIP archive.
 #
 # The archive stays open until [`Archive.close`](zip.Archive.close) is called.
-def @open
+@def open
   # Path to the ZIP archive
   # file.
   path @ (Str | Path)
@@ -334,7 +334,7 @@ do -> Archive
 #   for entry = archive.entries
 #     echo "Entry: $entry.name"
 # ```
-def @open[R]
+@def open[R]
   # Path to the ZIP archive
   # file.
   path @ (Str | Path)
@@ -350,7 +350,7 @@ do -> R
 #   archive.open "file.txt" do |file|
 #     file.write "Hello, World!"
 # ```
-def @open[R]
+@def open[R]
   # Path to the ZIP archive
   # file.
   path @ (Str | Path)

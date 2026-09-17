@@ -455,7 +455,7 @@ pub class Client
   #     echo $resp.status
   # ```
   #[class]
-  def @(call)
+  @def (call)
     self
     # Path to a Unix domain socket to connect
     # through. Unix only.
@@ -499,7 +499,7 @@ pub class Client
   # Browser builds accept only `func`; any other option raises
   # [`RuntimeError`](std.RuntimeError).
   #[class]
-  def @(call)[R]
+  @def (call)[R]
     self
     # Path to a Unix domain socket to connect
     # through. Unix only.
@@ -551,7 +551,7 @@ pub class Client
   #   headers: {authorization: "Bearer token123"}
   # echo $response.status
   # ```
-  def @get
+  @def get
     self
     # URL to request.
     url @ (Str | Url)
@@ -569,7 +569,7 @@ pub class Client
 
   # Makes a request without a body and calls `block` with the response. The
   # response is closed when `block` returns.
-  def @get[R]
+  @def get[R]
     self
     # URL to request.
     url @ (Str | Url)
@@ -610,7 +610,7 @@ pub class Client
   #     name: Alice
   #     age: 30
   # ```
-  def @post
+  @def post
     self
     # URL to request.
     url @ (Str | Url)
@@ -639,7 +639,7 @@ pub class Client
 
   # Makes a request with a body and calls `block` with the response. The
   # response is closed when `block` returns.
-  def @post[R]
+  @def post[R]
     self
     # URL to request.
     url @ (Str | Url)
@@ -690,7 +690,7 @@ pub class Client
 # get https://api.example.com/users do |response|
 #   echo $response.status
 # ```
-def @get
+@def get
   # URL to request.
   url @ (Str | Url)
   # Request headers.
@@ -704,7 +704,7 @@ do -> Response
 
 # Makes a `GET` request through a fresh stateless client and calls `block` with
 # the response. The response is closed when `block` returns.
-def @get[R]
+@def get[R]
   # URL to request.
   url @ (Str | Url)
   # Request headers.
@@ -733,7 +733,7 @@ pub def get url ...options
 # post https://api.example.com/users
 #   json: {name: "Alice"}
 # ```
-def @post
+@def post
   # URL to request.
   url @ (Str | Url)
   # Request body.
@@ -755,7 +755,7 @@ do -> Response
 
 # Makes a `POST` request through a fresh stateless client and calls `block`
 # with the response. The response is closed when `block` returns.
-def @post[R]
+@def post[R]
   # URL to request.
   url @ (Str | Url)
   # Request body.

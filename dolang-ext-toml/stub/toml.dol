@@ -1,10 +1,10 @@
 # TOML serialization and deserialization.
 
 # A value decoded from TOML.
-pub let @Data = (Bool | Int | Float | Str | Array[Data] | Dict[{...Str: Data}])
+pub @let Data = (Bool | Int | Float | Str | Array[Data] | Dict[{...Str: Data}])
 
 # A value that encodes as TOML.
-pub let @Encodable = (
+pub @let Encodable = (
   | Bool | Int | Float | Str | Sym
   | Array[Encodable] | Tuple[...Encodable] | Record[...{...Sym: Encodable}]
   | Dict[{...(Str | Sym): Encodable}]

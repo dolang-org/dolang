@@ -982,7 +982,7 @@ do -> Share
 #   password: $secret
 #   persistent: true
 # ```
-def @connect
+@def connect
   # Remote resource in UNC form, such as
   # `r"\\server\share"`.
   remote @ Str
@@ -1018,7 +1018,7 @@ do -> Connection
 
 # Connects to a network resource and calls `func` with the connection, which is
 # disconnected when `func` returns.
-def @connect[R]
+@def connect[R]
   # Remote resource in UNC form, such as
   # `r"\\server\share"`.
   remote @ Str
