@@ -1931,7 +1931,25 @@ fn create_type_args<'v, 's>(
             let t = &global.types.arg_kinds;
             match arg.kind() {
                 compile::TypeArgKind::Pos => make!(t.pos, None),
-                compile::TypeArgKind::Key { key } => make!(t.key, Some(span_data(key))),
+                compile::TypeArgKind::Key {
+                    key,
+                    key_ty: key_expr,
+                } => {
+                    if let Some(key_expr) = key_expr {
+                        create_type_expr(global, strand, unit, key_expr, &mut key_ty)?;
+                    }
+                    make!(t.key, Some(span_data(key)));
+                    t.key
+                        .cast(&item)
+                        .unwrap()
+                        .enter_sync(strand, |strand, object| {
+                            Output::set(
+                                strand,
+                                Mut::slot_mut::<1>(&mut object.borrow_mut_unwrap()),
+                                &*key_ty,
+                            );
+                        });
+                }
                 compile::TypeArgKind::Rest => make!(t.rest, None),
                 compile::TypeArgKind::OpenRest => {
                     t.open_rest.create_with_annex(
@@ -2008,7 +2026,7 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
         ) {
             builder = builder.get("ty", slot!(0));
         }
-        if T::NAME == "KeyRestTypeArg" {
+        if matches!(T::NAME, "KeyTypeArg" | "KeyRestTypeArg") {
             builder = builder.get("key_ty", slot!(1));
         }
         match T::NAME {

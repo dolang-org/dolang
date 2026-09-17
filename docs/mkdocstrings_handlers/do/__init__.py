@@ -445,6 +445,11 @@ def _render_type_args(args: list[dict], scope: _TypeScope, plain: bool = False) 
         elif arg.get("kind") == "key_rest":
             key = _render_type(arg["key_type"], scope, _BINDS_FUNC, plain)
             text += f"...{key}: "
+        elif arg.get("kind") == "key" and "key_type" in arg:
+            # A name must be parenthesized to not be taken as a symbol key
+            key_type = arg["key_type"]
+            key = _render_type(key_type, scope, _BINDS_COMPACT, plain)
+            text += f"({key}): " if key_type.get("kind") == "name" else f"{key}: "
         elif arg.get("kind") == "key":
             key = arg.get("key", "")
             text += f"{key if plain else _escape_type_text(key)}: "

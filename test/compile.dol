@@ -734,8 +734,9 @@ def superclasses_are_types_of_their_class()
 def type_followups_are_exposed()
   let source = r|-
     import @not_loaded
-    pub @let Entries[K @ Str = Sym] = Dict[{..., ...K: Int, ...Tuple[Int, Int]: Str}]
+    pub @let Entries[K @ Str = Sym] = Dict[{..., ...K: Int, ...Tuple[Int, Int]: Str, (K): Bool, "k": nil}]
     let value @Entries[Str] = nil
+    @let Later[U @ Array[T], T] = U
   let unit = compile.compile "type_followups.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
@@ -748,10 +749,24 @@ def type_followups_are_exposed()
   assert_eq (span_text(source, binder[1].default.span)) "Sym"
   let schema = (types_of(nodes, alias[0])[0][1].expr.args[0].ty)
   assert_type $compile.SchemaType $schema
-  assert_eq [...schema.args.map(do |arg| type arg)] [compile.OpenRestTypeArg, compile.KeyRestTypeArg, compile.KeyRestTypeArg]
+  assert_eq [...schema.args.map(do |arg| type arg)] $
+    - $compile.OpenRestTypeArg
+    - $compile.KeyRestTypeArg
+    - $compile.KeyRestTypeArg
+    - $compile.KeyTypeArg
+    - $compile.KeyTypeArg
   assert_eq (span_text(source, schema.args[0].span)) "..."
   assert_eq (span_text(source, schema.args[1].key_ty.span)) "K"
   assert_eq (span_text(source, schema.args[2].key_ty.span)) "Tuple[Int, Int]"
+  # A key other than a bareword is a type, and a name in it resolves
+  assert_eq (span_text(source, schema.args[3].key)) "(K)"
+  assert_eq $schema.args[3].key_ty.target $binder[0]
+  assert_type $compile.ConstType $schema.args[4].key_ty
+  assert_eq $schema.args[4].key_ty.value "k"
+  # A binder's bound may name a later binder
+  let later = (named_node source nodes compile.Alias "Later")
+  let later_binders = [...nodes.filter(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == later[0])))]
+  assert_eq $later_binders[0][1].bound.args[0].ty.target $later_binders[1][0]
   # Names in a binder's bound and default, and in the aliased type, resolve
   let prelude_item = do |item|
     nodes.find(do |pair| (type(pair[1], compile.PreludeItem) && (pair[1].item == item)))[0]

@@ -58,12 +58,18 @@ let j @(Int | Str -> Int) = 1
 #    |
 # LL | let j @(Int | Str -> Int) = 1
 #    |                   ^^
-let k @{0: Int} = 1
-# error: a key in a type must be a name or a string
+let k @Array[0: Int] = 1
+# error: a key outside a schema must be a name
 #   --> type_errors.dol:LL:LL
 #    |
-# LL | let k @{0: Int} = 1
-#    |          ^
+# LL | let k @Array[0: Int] = 1
+#    |               ^
+let k2 @(("k": Int) -> Int) = 1
+# error: a key outside a schema must be a name
+#   --> type_errors.dol:LL:LL
+#    |
+# LL | let k2 @(("k": Int) -> Int) = 1
+#    |              ^
 let l @ Int = 1
 let m@Int = 1
 let n @do = 1

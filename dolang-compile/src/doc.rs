@@ -226,9 +226,11 @@ pub(crate) struct TypeArg {
 #[derive(Debug)]
 pub(crate) enum TypeArgKind {
     Pos,
-    /// The key as written, quotes and all
     Key {
+        /// The key as written, quotes and parentheses and all
         key: Span,
+        /// The type giving the key, absent for a bareword symbol
+        key_ty: Option<TypeExpr>,
     },
     Rest,
     OpenRest,

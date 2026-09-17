@@ -102,3 +102,13 @@ def _shadow_early x @_Shadowed
 let _shadow_late = do
   @let _Shadowed = Str
   let _late @_Shadowed = nil
+
+# A key given by a type resolves like any other type, and a later binder is in
+# scope of an earlier one's bound
+def _schema_key[U @ {(K): V, (_MissingKey): V, ...}, K, V] x @U -> V
+  # warning: unbound type name
+  #   --> warnings.dol:LL:LL
+  #    |
+  # LL | def _schema_key[U @ {(K): V, (_MissingKey): V, ...}, K, V] x @U -> V
+  #    |                               ^^^^^^^^^^^
+  x

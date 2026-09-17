@@ -443,25 +443,23 @@ impl Parser<'_> {
                     _ => {
                         let ty = this.parse_type_full(scope)?;
                         match this.peek()? {
-                            Some(token @ token!(TokenInfo::Colon)) => match ty {
-                                TypeExpr::Const { expr }
-                                    if matches!(expr.fold(this.file), Some(Const::Str(_))) =>
-                                {
-                                    let colon_span = this.advance();
-                                    TypeArgKind::Key {
-                                        key: TypeKey::Str(expr),
-                                        colon_span,
-                                        ty: this.parse_type_full(scope)?,
-                                    }
-                                }
-                                _ => {
+                            // A schema key may be any type, while a named type argument or
+                            // parameter has a name
+                            Some(token @ token!(TokenInfo::Colon)) => {
+                                if delim != Delim::Brace {
                                     return Err(this.syntax_error(
                                         scope,
                                         Some(token),
-                                        "a key in a type must be a name or a string",
+                                        "a key outside a schema must be a name",
                                     ));
                                 }
-                            },
+                                let colon_span = this.advance();
+                                TypeArgKind::Key {
+                                    key: TypeKey::Type(Box::new(ty)),
+                                    colon_span,
+                                    ty: this.parse_type_full(scope)?,
+                                }
+                            }
                             _ => TypeArgKind::Pos(ty),
                         }
                     }

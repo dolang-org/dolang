@@ -300,7 +300,8 @@ There is no shorthand for a type that also accepts `nil`; write `(T | nil)`.
 A schema is not itself a type. It lists the positional and keyed entries of a
 `Dict`, argument pack, or similar construct and the type of each value. Put it
 inside `Dict[...]` to describe a dict. Bare keys are symbols and quoted keys are
-strings, as in dict literals. `?` marks an optional key. `...T` allows further
+strings, as in dict literals. Any other type may give a key, parenthesized when
+it is a name, as in `{(K): V}`. `?` marks an optional key. `...T` allows further
 items with values of type `T`, or splices `T` when it is a schema. `...K: V`
 allows further keyed entries whose keys have type `K` and values have type `V`.
 Schemas are closed unless they contain a rest item. `{...}` is the universal

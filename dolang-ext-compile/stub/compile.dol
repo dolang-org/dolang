@@ -535,16 +535,20 @@ pub class PosTypeArg: TypeArg
   pub def ty self -> TypeExpr
     ...
 
-# A keyed item, such as `name: T`.
+# A keyed item, such as `name: T` or `(K): T`.
 pub class KeyTypeArg: TypeArg
   # The item's type.
   #[getter]
   pub def ty self -> TypeExpr
     ...
-  # The span of the key as written. A bareword key is a symbol
-  # and a quoted one is a string.
+  # The span of the key as written. A bareword key is a symbol; any other
+  # key is a type, such as a quoted string or a parenthesized name.
   #[getter]
   pub def key self -> Span
+    ...
+  # The type giving the key, or `nil` for a bareword symbol.
+  #[getter]
+  pub def key_ty self -> (TypeExpr | nil)
     ...
 
 # A rest item, such as `...T`.

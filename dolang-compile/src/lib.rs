@@ -793,8 +793,12 @@ impl<'a> TypeArg<'a> {
     pub fn kind(&self) -> TypeArgKind<'a> {
         match &self.arg.kind {
             doc::TypeArgKind::Pos => TypeArgKind::Pos,
-            doc::TypeArgKind::Key { key } => TypeArgKind::Key {
+            doc::TypeArgKind::Key { key, key_ty } => TypeArgKind::Key {
                 key: convert_span(self.file, *key),
+                key_ty: key_ty.as_ref().map(|expr| TypeExpr {
+                    file: self.file,
+                    expr,
+                }),
             },
             doc::TypeArgKind::Rest => TypeArgKind::Rest,
             doc::TypeArgKind::OpenRest => TypeArgKind::OpenRest,
@@ -824,8 +828,11 @@ pub enum TypeArgKind<'a> {
     Pos,
     /// `key: T`
     Key {
-        /// The key as written: a bareword for a symbol, or a quoted string
+        /// The key as written: a bareword for a symbol, or a type such as a quoted string
+        /// or a parenthesized name
         key: diag::Span,
+        /// The type giving the key, or `None` for a bareword symbol
+        key_ty: Option<TypeExpr<'a>>,
     },
     /// `...T`, for any number of further items
     Rest,
@@ -842,7 +849,11 @@ impl fmt::Debug for TypeArgKind<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Pos => f.write_str("Pos"),
-            Self::Key { key } => f.debug_struct("Key").field("key", key).finish(),
+            Self::Key { key, key_ty } => f
+                .debug_struct("Key")
+                .field("key", key)
+                .field("key_ty", &key_ty.as_ref().map(|_| ..))
+                .finish(),
             Self::Rest => f.write_str("Rest"),
             Self::OpenRest => f.write_str("OpenRest"),
             Self::KeyRest { .. } => f.write_str("KeyRest { key_ty: ... }"),

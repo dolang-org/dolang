@@ -19,7 +19,7 @@ use crate::{
     ast::{
         AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Def, DictElem, Expr,
         ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue, Origin, Param,
-        PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeArgKind, TypeDecl, TypeExpr, Var,
+        PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl, TypeExpr, Var,
         visit::Node,
     },
     diag::Severity,
@@ -819,18 +819,8 @@ impl Check<'_> {
                     &super_ref.fields,
                 );
             }
-            for arg in &mut super_ref.args {
-                match &mut arg.kind {
-                    TypeArgKind::KeyRest { key_ty, ty, .. } => {
-                        self.ty(&inner, key_ty);
-                        self.ty(&inner, ty);
-                    }
-                    _ => {
-                        if let Some(ty) = arg.ty_mut() {
-                            self.ty(&inner, ty);
-                        }
-                    }
-                }
+            for ty in super_ref.args.iter_mut().flat_map(TypeArg::tys_mut) {
+                self.ty(&inner, ty);
             }
         }
         let impls: HashSet<(bool, &str)> = class

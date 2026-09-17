@@ -146,7 +146,7 @@ def type_arg_json id_to_index arg
     optional: $arg.optional
     if type(arg, compile.KeyTypeArg)
       key: (span_json arg.key)
-    if type(arg, compile.KeyRestTypeArg)
+    if (type(arg, compile.KeyTypeArg) && arg.key_ty != nil || type(arg, compile.KeyRestTypeArg))
       key_type: (type_expr_json id_to_index arg.key_ty)
     if !type(arg, compile.OpenRestTypeArg)
       type: (type_expr_json id_to_index arg.ty)
@@ -469,7 +469,7 @@ class Document
     else if type(expr, compile.ConstType)
       $
         kind: "const"
-        text: (self.#text(expr.span))
+        text: (self.#ungrouped_text(expr.span))
     else if type(expr, compile.AppType)
       $
         kind: "app"
@@ -492,11 +492,19 @@ class Document
         params: (self.#type_args(expr.params))
         ret: (self.#type_tree(expr.ret))
 
+  # The text of a name or constant type, whose span includes any parentheses
+  # grouping it.
+  def ungrouped_text self span
+    let text = self.#text(span)
+    while (text.starts_with("(") && text.ends_with(")"))
+      text = text[1..(text.len - 1)].trim()
+    text
+
   def name_tree self expr
     let target = self.#index.node $expr.target
     $
       kind: "name"
-      name: (self.#text(expr.span))
+      name: (self.#ungrouped_text(expr.span))
       target: (node_ref(self.#index.id_to_index(), expr.target))
       # An import's node gives its names only as spans
       if type(target, compile.ImportItem)
@@ -513,7 +521,7 @@ class Document
         optional: $arg.optional
         if type(arg, compile.KeyTypeArg)
           key: (self.#text(arg.key))
-        if type(arg, compile.KeyRestTypeArg)
+        if (type(arg, compile.KeyTypeArg) && arg.key_ty != nil || type(arg, compile.KeyRestTypeArg))
           key_type: (self.#type_tree(arg.key_ty))
         if !type(arg, compile.OpenRestTypeArg)
           type: (self.#type_tree(arg.ty))

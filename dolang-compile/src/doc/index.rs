@@ -368,11 +368,11 @@ impl Index<'_> {
                 let (kind, ty, start) = match &arg.kind {
                     TypeArgKind::Pos(ty) => (doc::TypeArgKind::Pos, Some(ty), None),
                     TypeArgKind::Key { key, ty, .. } => {
-                        let key = match key {
-                            TypeKey::Sym(span) => *span,
-                            TypeKey::Str(expr) => expr.span(),
+                        let (key, key_ty) = match key {
+                            TypeKey::Sym(span) => (*span, None),
+                            TypeKey::Type(key_ty) => (key_ty.span(), Some(self.type_expr(key_ty)?)),
                         };
-                        (doc::TypeArgKind::Key { key }, Some(ty), Some(key))
+                        (doc::TypeArgKind::Key { key, key_ty }, Some(ty), Some(key))
                     }
                     TypeArgKind::Rest { ellipsis_span, ty } => {
                         (doc::TypeArgKind::Rest, Some(ty), Some(*ellipsis_span))
@@ -417,13 +417,9 @@ impl Index<'_> {
         let (Some(parent), Some(binders)) = (parent, binders) else {
             return;
         };
+        // Every binder is in scope of each bound and default, so declare them all first
+        let mut ids = Vec::with_capacity(binders.binders.len());
         for binder in &mut binders.binders {
-            if let Some(bound) = &mut binder.bound {
-                self.ty(scope, &mut bound.ty);
-            }
-            if let Some(default) = &mut binder.default {
-                self.ty(scope, &mut default.ty);
-            }
             let (kind, sigil) = match binder.kind {
                 BinderKind::Pos => (crate::BinderKind::Pos, None),
                 BinderKind::Key { colon_span } => (crate::BinderKind::Key, Some(colon_span)),
@@ -442,6 +438,27 @@ impl Index<'_> {
             .flatten()
             .reduce(|left, right| left | right)
             .unwrap();
+            let id = self.push_to(
+                Some(parent),
+                Kind::Binder {
+                    name,
+                    kind,
+                    bound: None,
+                    default: None,
+                },
+                span,
+            );
+            binder.node = Some(id);
+            self.type_decls.insert(name.start, id);
+            ids.push(id);
+        }
+        for (binder, id) in binders.binders.iter_mut().zip(ids) {
+            if let Some(bound) = &mut binder.bound {
+                self.ty(scope, &mut bound.ty);
+            }
+            if let Some(default) = &mut binder.default {
+                self.ty(scope, &mut default.ty);
+            }
             let bound = binder
                 .bound
                 .as_ref()
@@ -450,18 +467,16 @@ impl Index<'_> {
                 .default
                 .as_ref()
                 .and_then(|default| self.type_expr(&default.ty));
-            let id = self.push_to(
-                Some(parent),
-                Kind::Binder {
-                    name,
-                    kind,
-                    bound,
-                    default,
-                },
-                span,
-            );
-            binder.node = Some(id);
-            self.type_decls.insert(name.start, id);
+            let Kind::Binder {
+                bound: node_bound,
+                default: node_default,
+                ..
+            } = &mut self.table[id].kind
+            else {
+                unreachable!()
+            };
+            *node_bound = bound;
+            *node_default = default;
         }
     }
 
@@ -908,18 +923,8 @@ impl Index<'_> {
                 Some(decl) => decl.node = self.type_decls.get(&decl.span.start).copied(),
                 None => self.reference(scope, &mut super_ref.ident),
             }
-            for arg in &mut super_ref.args {
-                match &mut arg.kind {
-                    TypeArgKind::KeyRest { key_ty, ty, .. } => {
-                        self.ty(scope, key_ty);
-                        self.ty(scope, ty);
-                    }
-                    _ => {
-                        if let Some(ty) = arg.ty_mut() {
-                            self.ty(scope, ty);
-                        }
-                    }
-                }
+            for ty in super_ref.args.iter_mut().flat_map(TypeArg::tys_mut) {
+                self.ty(scope, ty);
             }
             if let Some(id) = id {
                 self.super_node(id, super_ref);
