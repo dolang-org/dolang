@@ -139,11 +139,10 @@ log INFO hello world
 # prints: [INFO] hello world
 ```
 
-The `rest` parameter receives an immutable argument pack. It is iterable, but
-is not itself an iterator, so iterating or spreading it does not consume it.
-Iteration yields positional and key arguments in invocation order as key/value
-tuples, where the key is the positional argument index (0-origin) for
-positional arguments.
+The `rest` parameter receives a [record](std.Record) of the extra
+arguments, in invocation order. A key argument is a field, as in `rest.name`.
+Iteration yields key/value tuples, where the key is the positional argument
+index (0-origin) for positional arguments.
 
 ```playground
 def echo_all ...args

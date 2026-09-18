@@ -38,10 +38,6 @@ let s = Set()
 s.add 7
 assert_eq [...s.map (do |x| x + 1)] [8]
 
-def count_variadic ...rest
-  [...rest.map (do |x| x)].len
-assert_eq (count_variadic 1 2) 2
-
 # Methods deliberately withheld from Iterable stay withheld: `next` would mint
 # a fresh iterator per call, `count` is `len` spelled expensively, and `kv` is
 # the iterable's own business.

@@ -593,62 +593,6 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
 pub class AbortError: Error
 
 #
-# Argument pack.
-#
-# `Args` values are returned by variadic captures such as `...rest` and by
-# calling the `Args` type object. Iterating an `Args` value yields `[key, value]`
-# pairs. Positional items use their positional index as the key.
-#
-# Destructure a pack with `*` and `**` rests to separate its positional and
-# keyed items:
-#
-# ```
-# let pack = Args 1 left: 2 3
-# let *pos **keyed = pack
-# assert_eq $pos (1, 3)
-# assert_eq $keyed (left: 2)
-# ```
-#
-pub class Args: @Spread[{...}] @Unpack[{...}] Iterable[Tuple[(Int | Sym), Value]]
-  #
-  #
-  # Creates an argument pack from positional and keyed arguments.
-  #
-  # ```
-  # let pack = Args 1 name: Alice 2
-  # assert_eq [...pack] [[0, 1], [:name:, "Alice"], [1, 2]]
-  # ```
-  #
-  pub def (init) self
-    ...
-
-  #
-  # Number of items in the argument pack.
-  #
-  # ```
-  # let pack = Args 1 2 name: Alice
-  # assert_eq $pack.len 3
-  # ```
-  #
-  #[getter]
-  pub def len self -> Int
-    ...
-
-  #
-  # Appends positional and keyed arguments to the pack.
-  #
-  # ```
-  # let pack = args 1
-  # pack.push 2 name: Alice
-  # let items = [...pack]
-  # assert_eq $items[1][1] 2
-  # assert_eq $items[2][0] :name:
-  # ```
-  pub def push self
-    ...
-
-
-#
 # Arrays are ordered, mutable sequences of values.
 #
 pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
@@ -3231,7 +3175,8 @@ pub class Range[T @ Num]: Iterable[T]
 # Stores an immutable sequence of positional items and symbol-keyed fields.
 #
 # Records keep their items in order, and a key may repeat. A lookup finds the
-# latest value for a key. Use a class for mutable named fields. To produce a
+# latest value for a key. A variadic capture such as `...rest` binds a record
+# of the remaining arguments. Use a class for mutable named fields. To produce a
 # changed record, spread the old record into a new one:
 #
 # ```

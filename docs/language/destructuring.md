@@ -64,8 +64,8 @@ the same iterator as `...`, and `**` captures an empty record. For a
 dictionary, the positional items are the integer keys counting up from the
 next position; `*` captures their values as a tuple, and `**` captures the
 other pairs. Without a `*`, `**` also takes the surplus integer keys, and
-spreading it passes them as keys rather than positions. An argument pack
-captures a tuple and a record, as `*` and `**` parameters of a
+spreading it passes them as keys rather than positions. A record captures a
+tuple and a record, as `*` and `**` parameters of a
 [function](./functions.md#variadic-parameters) do.
 
 `*` or `**` alone ignores the surplus items it would capture.

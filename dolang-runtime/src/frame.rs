@@ -16,7 +16,7 @@ use crate::{
     bytecode::{Rest, Variadic},
     error::{Error, Result},
     gc::{Collect, Gc, arena::Visit},
-    object::{arg, protocol::GcObj, record::Record, tuple},
+    object::{protocol::GcObj, record::Record, tuple},
     sig,
     strand::Strand,
     value::Value,
@@ -219,14 +219,14 @@ impl<'v> CallFrame<'v> {
                 Ok(Ok(())) => (),
             };
             if let Some(rest) = rest {
-                let args = arg::ArgPack::new(rest.into_iter().flatten().collect());
+                let record = Record::new(rest.into_iter().flatten().collect());
                 (*slots
                     .get_unchecked(offset + pos_count + unpack.keys.len())
                     .get())
                 .store(Value::from_object(GcObj::new(
                     inner.vm().arena(),
-                    inner.vm().builtin_types().arg_pack,
-                    args,
+                    inner.vm().builtin_types().record,
+                    record,
                 )));
             }
             let mut rest_slot = offset + pos_count + unpack.keys.len();

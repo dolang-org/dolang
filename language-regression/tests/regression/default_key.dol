@@ -1,6 +1,3 @@
-import std:
-  - Args
-
 def foo :bar = "hello"
   bar
 
@@ -15,10 +12,10 @@ bind {foo: nil}
   :foo = 42
 assert_eq $foo nil
 
-bind Args()
+bind record()
   :foo = 42
 assert_eq $foo 42
 
-bind Args foo: nil
+bind record foo: nil
   :foo = 42
 assert_eq $foo nil

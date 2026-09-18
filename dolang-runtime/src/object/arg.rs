@@ -1,4 +1,4 @@
-use std::{collections::HashSet, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use crate::value::fmt::Format;
 
@@ -6,17 +6,15 @@ use crate::{
     arg::{Arg, Args},
     error::{Error, Result},
     gc::{Collect, arena::Visit},
-    object::iter,
-    sig,
     strand::Strand,
     sym::{self, Sym},
-    value::{Output, Slot, Slots, Value},
+    value::{Output, Slot, Value},
     vm::Vm,
 };
 
 use super::{
-    protocol::{GcObj, Protocol, Recv, Spread, SpreadContext},
-    record::{self, ArgItem, Record},
+    protocol::{Protocol, Recv, Spread, SpreadContext},
+    record::ArgItem,
     tuple,
 };
 
@@ -47,20 +45,6 @@ impl<'v> ArgPack<'v> {
     /// Removes and returns every item.
     pub(crate) fn take(&mut self) -> Vec<ArgItem<'v>> {
         std::mem::take(&mut self.inner)
-    }
-
-    /// A record of the items as they are now
-    fn snapshot(&self, strand: &mut Strand<'v, '_>) -> GcObj<'v, Record<'v>> {
-        let items = self
-            .inner
-            .iter()
-            .map(|(key, value)| (key.clone(), value.dup()))
-            .collect();
-        GcObj::new(
-            strand.arena(),
-            strand.builtin_types().record,
-            Record::new(items),
-        )
     }
 }
 
@@ -101,30 +85,6 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         crate::fmt!(strand, w, "<args>")
     }
 
-    async fn op_iter<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let record = this.borrow(strand)?.snapshot(strand);
-        strand.builtin_types().record_iter.create(
-            strand,
-            record::Iter::new(record, HashSet::new(), 0, 0),
-            out,
-        );
-        Ok(())
-    }
-
-    async fn op_unpack<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        out: Slots<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let record = this.borrow(strand)?.snapshot(strand);
-        record::unpack(strand, record, sig, out)
-    }
-
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -162,29 +122,12 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         Ok(())
     }
 
-    fn op_get<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        field: Sym<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        match field.tag() {
-            sym::LEN => {
-                let len = i64::try_from(this.borrow(strand)?.inner.len())
-                    .map_err(|_| Error::overflow(strand))?;
-                Output::set(strand, out, len);
-                Ok(())
-            }
-            _ => iter::iterable_get(strand, &this, field, out),
-        }
-    }
-
     async fn op_mcall<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
+        _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::PUSH => {
@@ -199,7 +142,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
                 }
                 Ok(())
             }
-            _ => iter::iterable_mcall(strand, &this, method, args, out).await,
+            _ => Err(Error::field(strand, method)),
         }
     }
 }

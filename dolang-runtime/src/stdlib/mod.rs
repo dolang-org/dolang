@@ -41,7 +41,6 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let record = bc.record.dup();
     let bin = bc.bin.dup();
     let binbuf = bc.binbuf.dup();
-    let args = bc.args.dup();
 
     // Iterator protocol types (from former std.iter)
     let iter_type = bc.input_iter.dup();
@@ -107,7 +106,6 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("Record", &record)
         .value("Bin", &bin)
         .value("BinBuf", &binbuf)
-        .value("Args", &args)
         .value("FmtSpec", fmt.types.spec)
         .value("FmtValue", fmt.types.value)
         .value("FmtParam", fmt.types.param)

@@ -338,7 +338,7 @@ pub def exported x        # public (module export)
 def connect :host = "localhost" :port = 8080
   echo "Connecting to $host:$port"
 
-def log level ...rest     # variadic: rest is an Args pack
+def log level ...rest     # variadic: rest is a Record
   echo "[$level]" ...rest
 
 def run cmd *args **opts  # positional (Tuple) and key (Record) rests

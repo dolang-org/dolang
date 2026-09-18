@@ -9,10 +9,8 @@ use crate::{
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::{
-        BoundMethod,
-        arg::ArgPack,
-        class,
-        protocol::{GcObj, Inspect, Protocol, Recv, members, type_mcall_fallback},
+        BoundMethod, class,
+        protocol::{Inspect, Protocol, Recv, members, type_mcall_fallback},
     },
     strand::Strand,
     sym::{self, Sym},
@@ -319,10 +317,7 @@ impl<'v> Protocol<'v> for ArgsType {
         strand: &'a mut Strand<'v, 's>,
         supertype: &DoValue<'v>,
     ) -> bool {
-        let sings = strand.singletons();
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, TypeObject::Value)
-            || sings.iterable.eq(strand, supertype)
+        supertype.eq(strand, &this) || supertype.eq(strand, TypeObject::Value)
     }
 
     fn op_debug<'a, 's>(
@@ -331,20 +326,6 @@ impl<'v> Protocol<'v> for ArgsType {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         crate::fmt!(strand, w, "<type std.Args>")
-    }
-
-    async fn op_call<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        out.store(DoValue::from_object(GcObj::new(
-            strand.arena(),
-            strand.builtin_types().arg_pack,
-            ArgPack::from_args(strand, args),
-        )));
-        Ok(())
     }
 }
 
@@ -460,54 +441,22 @@ mod tests {
     }
 
     #[test]
-    fn args_type_op_subtype_and_op_call() {
-        with_vm(async |strand, [mut out]| {
-            let args_recv = strand
-                .builtin_types()
-                .args_type
-                .cast(&strand.singletons().args)
-                .unwrap();
-            args_recv.enter_sync(strand, |strand, recv| {
-                assert!(ArgsType::op_subtype(
-                    recv,
-                    strand,
-                    &strand.singletons().args
-                ));
-            });
-            let args_recv = strand
-                .builtin_types()
-                .args_type
-                .cast(&strand.singletons().args)
-                .unwrap();
-            args_recv.enter_sync(strand, |strand, recv| {
-                assert!(ArgsType::op_subtype(
-                    recv,
-                    strand,
-                    &strand.singletons().iterable
-                ));
-            });
-            let args_recv = strand
-                .builtin_types()
-                .args_type
-                .cast(&strand.singletons().args)
-                .unwrap();
-            args_recv.enter_sync(strand, |strand, recv| {
-                assert!(!ArgsType::op_subtype(
-                    recv,
-                    strand,
-                    &strand.singletons().int
-                ));
-            });
-
-            call!(strand, &strand.singletons().args, &mut out)
-                .await
-                .unwrap();
-            let result: &DoValue = &out;
-            assert!(
-                result
-                    .downcast_ref(strand.builtin_types().arg_pack)
-                    .is_some()
-            );
+    fn args_type_op_subtype() {
+        with_vm(async |strand, []| {
+            for (supertype, expected) in [
+                (strand.singletons().args.dup(), true),
+                (strand.singletons().iterable.dup(), false),
+                (strand.singletons().int.dup(), false),
+            ] {
+                let args_recv = strand
+                    .builtin_types()
+                    .args_type
+                    .cast(&strand.singletons().args)
+                    .unwrap();
+                args_recv.enter_sync(strand, |strand, recv| {
+                    assert_eq!(ArgsType::op_subtype(recv, strand, &supertype), expected);
+                });
+            }
         });
     }
 }
