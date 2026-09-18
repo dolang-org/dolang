@@ -1,7 +1,9 @@
 # str/debug formatting
-assert_eq (str (record())) "<record >"
-assert_eq (str (record(1, 2, a: 3))) "<record 1 2 a: 3>"
-assert_eq (str (record(a: "x", b: "y"))) "<record a: \"x\" b: \"y\">"
+assert_eq (str (record())) "()"
+assert_eq (str (record(1, 2, a: 3))) "(1, 2, a: 3)"
+assert_eq (str (record(a: "x", b: "y"))) "(a: \"x\", b: \"y\")"
+assert_eq (str (record(1))) "(1,)"
+assert_eq (str (record(a: 1))) "(a: 1)"
 
 # equality: length mismatch and value mismatch
 let r1 = record(1, 2, 3)

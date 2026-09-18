@@ -354,7 +354,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        kv::Inner::op_debug(this, strand, w, "<record ", ">", " ")
+        kv::Inner::op_debug(this, strand, w, "(", ")", ", ", ",")
     }
 
     fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
