@@ -967,8 +967,6 @@ dependencies = [
  "dolang",
  "dolang-ext-shell",
  "dolang-ext-term",
- "dolang-private-build",
- "dolang-private-test",
  "futures",
  "indicatif",
  "tokio",
@@ -1134,8 +1132,6 @@ name = "dolang-ext-xml"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-build",
- "dolang-private-test",
  "futures",
  "quick-xml",
 ]
