@@ -30,6 +30,18 @@ def compile_match_and_find()
   let no_match = date_pattern.match "not a date"
   assert_eq $no_match nil
 
+  let optional = Regex r"(a)?(?<rest>b)(?<tail>c)?"
+  let caps = optional.match "b"
+  assert_eq $caps[1] nil
+  assert_eq $caps["tail"] nil
+  assert_eq (str caps["rest"]) "b"
+  assert_throws $std.IndexError do caps[4]
+  assert_throws $std.IndexError do caps["missing"]
+  let found = [...optional.find "b"]
+  assert_eq $found[0][1] nil
+  assert_eq $found[0]["tail"] nil
+  assert_eq (optional.replace "b" (do |c| str(c["tail"] == nil))) "true"
+
   let text = "Dates: 2024-01-01, 2024-02-02, 2024-03-03"
   let matches = [...date_pattern.find text]
   assert_eq $matches.len 3

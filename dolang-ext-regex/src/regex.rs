@@ -85,7 +85,8 @@ impl<'v> Object<'v> for Regex {
                             &mut out,
                         );
 
-                        // Store haystack GC object in slot 0 of the Captures object
+                        // Store haystack GC object in slot 0 and regex in slot 1 of the
+                        // Captures object
                         annex
                             .global
                             .types
@@ -95,6 +96,7 @@ impl<'v> Object<'v> for Regex {
                             .enter_sync(strand, |strand, inst| {
                                 let mut captures = inst.borrow_mut_unwrap();
                                 Output::set(strand, Mut::slot_mut::<0>(&mut captures), haystack_value);
+                                Output::set(strand, Mut::slot_mut::<1>(&mut captures), this);
                             });
                     }
                     None => {
@@ -231,7 +233,7 @@ impl<'v> Object<'v> for Regex {
                                 },
                                 &mut caps_slot,
                             );
-                            // Store haystack in Captures slot 0
+                            // Store haystack in Captures slot 0 and regex in slot 1
                             annex
                                 .global
                                 .types
@@ -245,6 +247,7 @@ impl<'v> Object<'v> for Regex {
                                         Mut::slot_mut::<0>(&mut captures_mut),
                                         &haystack_value,
                                     );
+                                    Output::set(strand, Mut::slot_mut::<1>(&mut captures_mut), this);
                                 });
 
                             // Call the replacement function with the Captures
@@ -517,7 +520,8 @@ fn missing_capture<'v, 's>(strand: &mut Strand<'v, 's>, name: &Value<'v>) -> Err
 pub(crate) struct Captures<'v> {
     // SAFETY: `caps` is lifetime-transmuted to `'static` but actually borrows from
     // the haystack pinned by `haystack` and rooted in slot 0. Runtime finalization drops
-    // both before the slots are cleared.
+    // both before the slots are cleared. Slot 1 holds the `Regex`, whose group names
+    // tell an unmatched group apart from a nonexistent one.
     caps: rx::Captures<'static>,
     _haystack: PinStr<'v, 'static>,
 }
@@ -529,7 +533,7 @@ pub(crate) struct CapturesAnnex<'v> {
 impl<'v> Object<'v> for Captures<'v> {
     const NAME: &'v str = "Captures";
     const MODULE: &'v str = "regex";
-    const SLOTS: usize = 1;
+    const SLOTS: usize = 2;
     type Annex = CapturesAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
@@ -553,11 +557,32 @@ impl<'v> Object<'v> for Captures<'v> {
         let borrow = this.borrow(strand)?;
 
         let cap = if let Ok(idx) = index.to_i64(strand) {
-            borrow
-                .caps
-                .get(idx.try_into().map_err(|_| Error::overflow(strand))?)
+            let idx: usize = idx.try_into().map_err(|_| Error::overflow(strand))?;
+            if idx >= borrow.caps.len() {
+                return Err(Error::index(strand));
+            }
+            borrow.caps.get(idx)
         } else if let Some(name) = index.as_str(strand) {
-            strand.access(|x| borrow.caps.name(name.as_str(x)))
+            let name = name.pin();
+            let cap = borrow.caps.name(&name);
+            if cap.is_none() {
+                let regex = annex
+                    .global
+                    .types
+                    .regex
+                    .cast(Ref::slot::<1>(&borrow))
+                    .unwrap();
+                let exists = regex.enter_sync(strand, |_, inst| {
+                    inst.annex()
+                        .regex
+                        .capture_names()
+                        .any(|group| group == Some(&*name))
+                });
+                if !exists {
+                    return Err(Error::index(strand));
+                }
+            }
+            cap
         } else {
             return Err(Error::type_error(strand, "expected `Int` or `Str`"));
         };
@@ -605,7 +630,11 @@ impl<'v> Object<'v> for Captures<'v> {
 
                 Ok(())
             }
-            None => Err(Error::index(strand)),
+            // The group exists but did not participate in the match
+            None => {
+                Output::set(strand, out, Nil);
+                Ok(())
+            }
         }
     }
 
@@ -739,7 +768,8 @@ impl<'v> Object<'v> for Find<'v> {
                     &mut out,
                 );
 
-                // Copy haystack from Find slot 1 to Captures slot 0
+                // Copy haystack from Find slot 1 to Captures slot 0, and regex from
+                // Find slot 0 to Captures slot 1
                 annex.global.types.captures.cast(&out).unwrap().enter_sync(
                     strand,
                     |strand, inst| {
@@ -748,6 +778,11 @@ impl<'v> Object<'v> for Find<'v> {
                             strand,
                             Mut::slot_mut::<0>(&mut captures_mut),
                             Mut::slot::<1>(&borrow),
+                        );
+                        Output::set(
+                            strand,
+                            Mut::slot_mut::<1>(&mut captures_mut),
+                            Mut::slot::<0>(&borrow),
                         );
                     },
                 );
