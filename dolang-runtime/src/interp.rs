@@ -492,9 +492,7 @@ impl<'v> Vm<'v> {
     }
 
     pub(crate) fn check_trap_gc<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        if self.arena.collect() {
-            self.sym_gc();
-        }
+        self.collect();
         self.check_trap(strand)
     }
 

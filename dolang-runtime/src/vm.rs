@@ -407,8 +407,18 @@ impl<'v> Vm<'v> {
         self.symtab.obj(sym)
     }
 
-    pub(crate) fn sym_gc(&self) {
-        self.symtab.gc()
+    /// Collect cycles if enough allocations have accumulated, pruning dead
+    /// symbols afterward.
+    pub(crate) fn collect(&self) {
+        if self.arena.collect() {
+            self.symtab.gc();
+        }
+    }
+
+    /// Unconditionally collect cycles and prune dead symbols.
+    pub(crate) fn collect_full(&self) {
+        self.arena.collect_full();
+        self.symtab.gc();
     }
 
     pub(crate) fn builtin_types(&self) -> &BuiltinTypes<'v> {
@@ -1348,7 +1358,7 @@ impl<'v> Builder<'v> {
         }
         while background.next().await.is_some() {}
 
-        self.reg.inner.arena.collect_full();
+        self.reg.inner.collect_full();
         res
     }
 
