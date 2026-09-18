@@ -10,7 +10,6 @@ import shlex term
     - Url
   std:
     - Args
-    - @BaseIterable
     - @Index
     - @Unpack
 
@@ -166,7 +165,7 @@ pub @let ExtensionScope = (:SYSTEM: | :INITRD: | :PORTABLE: | Str)
 #
 # Named fields apply the defaults and conversions prescribed by the
 # os-release specification.
-pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str] @BaseIterable[Tuple[Str, Str]]
+pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str] Iterable[Tuple[Str, Str]]
   field values = nil
 
   def (init) self values
