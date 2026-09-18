@@ -172,7 +172,7 @@ impl<'v, 'a> Unpack<'v, 'a> {
     /// which should be populated with an iterator over any remaining items.
     #[inline]
     pub fn exhaustive(&self) -> bool {
-        self.inner.variadic == Variadic::None
+        self.inner.variadic == Variadic::NONE
     }
 
     /// Returns if match has an [`UnpackItem::Rest`] element
@@ -1491,7 +1491,7 @@ async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
                 }
             }
 
-            if sig.variadic == Variadic::None {
+            if sig.variadic == Variadic::NONE {
                 let matched = matched.as_mut().unwrap();
                 for (index, (sym, entry)) in entries.iter().enumerate() {
                     if matched[index] || !readable_entry(entry) {
@@ -4249,7 +4249,7 @@ mod tests {
     #[test]
     fn unpack_iter_exhaustive_without_variadic_has_no_rest_item() {
         with_fixture_vm(async |strand, []| {
-            let sig = sig::Unpack::new(0, vec![], vec![], Variadic::None);
+            let sig = sig::Unpack::new(0, vec![], vec![], Variadic::NONE);
             strand
                 .with_slots_dynamic(0, async |_strand, slots| {
                     let mut unpack = Unpack { inner: &sig, slots };
@@ -4446,7 +4446,7 @@ mod tests {
             make_fixture(strand, Slot::reborrow(&mut owner));
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureState>();
-            let sig = sig::Unpack::new(0, vec![], vec![], Variadic::None);
+            let sig = sig::Unpack::new(0, vec![], vec![], Variadic::NONE);
             state
                 .fixture_ty
                 .vtbl
@@ -4602,7 +4602,7 @@ mod tests {
                         default: None,
                     },
                 ],
-                Variadic::None,
+                Variadic::NONE,
             );
             strand
                 .with_slots_dynamic(2, async |strand, mut out| {

@@ -647,7 +647,7 @@ fn fill_unpack<'v, 's>(
             });
         }
     }
-    if sig.variadic == Variadic::None && next().is_some() {
+    if sig.variadic == Variadic::NONE && next().is_some() {
         return Err(Error::unexpected_positional(strand, pos_count));
     }
     Ok(())
@@ -1017,7 +1017,7 @@ impl<'v> Protocol<'v> for Split<'v> {
 
         // If variadic, assign this (now with updated state) to variadic slot
         match sig.variadic {
-            Variadic::None | Variadic::Discard => {}
+            Variadic::Discard | Variadic::Split(..) => {}
             Variadic::Capture => {
                 value::Output::set(strand, out.at(pos_count + sig.keys.len()), &this);
             }

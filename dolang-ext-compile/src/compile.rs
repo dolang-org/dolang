@@ -1445,6 +1445,14 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
             });
         }
         if T::NAME == "RestParam" {
+            builder = builder.get("sigil", |this, strand, out| {
+                let sigil = with_node(this, strand, |n, _| match n.kind() {
+                    compile::Kind::RestParam { kind, .. } => kind.sigil(),
+                    _ => unreachable!("RestParam object for another node kind"),
+                })?;
+                Output::set(strand, out, sigil);
+                Ok(())
+            });
             builder = builder.get("type_ellipsis", |this, strand, out| {
                 let span = with_node(this, strand, |n, _| match n.kind() {
                     compile::Kind::RestParam { type_ellipsis, .. } => type_ellipsis.map(span_data),

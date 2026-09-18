@@ -113,11 +113,11 @@ fn unpack_plan<'v, 'a, 's>(
         if skip.contains(&idx) {
             continue;
         }
-        if pos == pos_count && keys_left == 0 && sig.variadic != Variadic::None {
+        if pos == pos_count && keys_left == 0 && sig.variadic != Variadic::NONE {
             break;
         }
         if let Some(sym) = key {
-            if keys_left == 0 && sig.variadic == Variadic::None {
+            if keys_left == 0 && sig.variadic == Variadic::NONE {
                 return Err(Error::unexpected_key(strand, unsafe {
                     Sym::from_tag(sym.tag)
                 }));
@@ -138,14 +138,14 @@ fn unpack_plan<'v, 'a, 's>(
                     continue 'top;
                 }
             }
-            if sig.variadic == Variadic::None {
+            if sig.variadic == Variadic::NONE {
                 return Err(Error::unexpected_key(strand, unsafe {
                     Sym::from_tag(sym.tag)
                 }));
             }
         } else {
             if pos >= pos_count {
-                if sig.variadic == Variadic::None {
+                if sig.variadic == Variadic::NONE {
                     return Err(Error::unexpected_positional(strand, sig.required));
                 } else {
                     continue;
@@ -163,7 +163,7 @@ fn unpack_plan<'v, 'a, 's>(
         return Err(Error::missing_positional(strand, pos));
     }
 
-    if sig.variadic == Variadic::None && keys_left != 0 {
+    if sig.variadic == Variadic::NONE && keys_left != 0 {
         for (wanted, seen) in sig.keys.iter().zip(seen_keys.iter()) {
             if *seen {
                 continue;

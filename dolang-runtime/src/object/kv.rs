@@ -498,7 +498,7 @@ impl<'v> Inner<'v> {
                 }
             }
         }
-        if sig.variadic == Variadic::None && next(index).is_some() {
+        if sig.variadic == Variadic::NONE && next(index).is_some() {
             return Err(Error::unexpected_positional(strand, sig.required));
         }
         Ok(index)
@@ -1201,7 +1201,7 @@ impl<'v> Inner<'v> {
             }
         }
         let value = i64::try_from(pos_count).map_err(|_| Error::overflow(strand))?;
-        if sig.variadic == Variadic::None
+        if sig.variadic == Variadic::NONE
             && inner
                 .get(strand, &Value::from_i64(strand, value), Some(0))?
                 .is_some()
@@ -1231,13 +1231,13 @@ impl<'v> Inner<'v> {
             }
         }
         let int_limit = i64::try_from(pos_count).map_err(|_| Error::overflow(strand))?;
-        if sig.variadic == Variadic::None
+        if sig.variadic == Variadic::NONE
             && let Some(key) = inner.leftover_key(strand, int_limit, &skip)?
         {
             return Err(Error::unexpected_key(strand, &key));
         }
         match sig.variadic {
-            Variadic::None | Variadic::Discard => {}
+            Variadic::Discard | Variadic::Split(..) => {}
             Variadic::Capture => {
                 let container = this.to_strong();
                 let epoch = inner.epoch;
@@ -1722,7 +1722,7 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
             .ok()
             .and_then(|i| i.checked_add(int))
             .ok_or_else(|| Error::overflow(strand))?;
-        if sig.variadic == Variadic::None
+        if sig.variadic == Variadic::NONE
             && inner
                 .get(strand, &Value::from_i64(strand, value), Some(0))?
                 .is_some()
@@ -1758,7 +1758,7 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
         // (everything below `int`) are consumed too, as are the ones this
         // unpack just took.
         let int_limit = int.saturating_add_unsigned(pos_count as u64);
-        if sig.variadic == Variadic::None
+        if sig.variadic == Variadic::NONE
             && let Some(key) = inner.leftover_key(strand, int_limit, &temp_skip)?
         {
             // Error during validation - temp_skip discarded, original untouched
@@ -1783,7 +1783,7 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
             },
         };
         match sig.variadic {
-            Variadic::None | Variadic::Discard => {}
+            Variadic::Discard | Variadic::Split(..) => {}
             Variadic::Capture => {
                 Output::set(strand, out.at(sig.required + sig.keys.len()), &this);
             }

@@ -587,7 +587,7 @@ fn unpack_sig_pairs<'v, 's>(
             });
         }
     }
-    if sig.variadic == Variadic::None
+    if sig.variadic == Variadic::NONE
         && let Some(index) = consumed.first_zero()
     {
         return Err(Error::unexpected_key(strand, &pairs[index].0));

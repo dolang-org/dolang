@@ -16,6 +16,7 @@ use std::{
 use crate::{
     Program,
     arg::Args,
+    bytecode::{Rest, Variadic},
     error::{Error, ErrorKind, Result},
     frame::{Frame, Upvars},
     gc::{self, Base, BaseBorrow, BaseWeak, Collect, Gc, arena},
@@ -1006,6 +1007,14 @@ impl<'v> Value<'v> {
         sig: &'a Unpack<'v, 'a>,
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        // TODO(#703): remove once every unpack implementation handles split rests
+        if matches!(sig.variadic, Variadic::Split(pos, key) if pos != Rest::None || key != Rest::None)
+        {
+            return Err(Error::type_error(
+                strand,
+                "`*` and `**` rests are not yet supported in destructuring",
+            ));
+        }
         match self.case() {
             Case::Object(o) => o.op_unpack(strand, sig, out).await,
             Case::Prim(_) => Err(Error::type_error(

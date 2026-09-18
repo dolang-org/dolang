@@ -401,7 +401,7 @@ class Document
         ""
       else
         self.#text(child.name)
-      ["...$bound", false]
+      ["$(child.sigil)$bound", false]
     else
       nil
 

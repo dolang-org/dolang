@@ -1,0 +1,7 @@
+def f *a *b
+  # error: duplicate rest parameter
+  #   --> rest_split_duplicate.dol:LL:LL
+  #    |
+  # LL | def f *a *b
+  #    |          ^
+  nil

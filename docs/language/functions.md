@@ -156,6 +156,21 @@ echo_all foo bar: 1 baz
 # 1: baz
 ```
 
+`*` accepts only extra positional arguments, and `**` only extra key
+arguments. `*args` receives a tuple and `**kwargs` a record. Both may appear,
+`*` first, but neither combines with `...`. An extra argument that no rest
+parameter accepts is an error:
+
+```playground
+def run cmd *args **opts
+  echo $cmd $args $opts
+
+run ls -l -a color: always
+# prints: ls ("-l", "-a") (color: "always")
+```
+
+Without a name, `*` and `**` accept the arguments without binding them.
+
 ### Argument Spreading
 
 Spread collections or iterators into a call:

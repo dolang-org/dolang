@@ -350,6 +350,12 @@ pub class KeyParam: Param
 
 # A rest parameter. Its `name` is `nil` when it is anonymous.
 pub class RestParam: Param
+  # The sigil that introduces it: `...` for positional and keyed items, `*`
+  # for positional items only, or `**` for keyed items only.
+  #[getter]
+  pub def sigil self -> Str
+    ...
+
   # The explicit `...` in the type annotation, or `nil` when absent.
   #[getter]
   pub def type_ellipsis self -> (Span | nil)

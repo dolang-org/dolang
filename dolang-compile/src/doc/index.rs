@@ -186,16 +186,18 @@ impl Index<'_> {
                 )
             }
             Param::Rest {
-                ellipsis_span,
+                kind,
+                sigil_span,
                 ident,
                 ty,
                 type_ellipsis_span,
             } => (
                 Kind::RestParam {
+                    kind: *kind,
                     name: ident.as_ref().map(|ident| ident.span),
                     type_ellipsis: *type_ellipsis_span,
                 },
-                Some(*ellipsis_span),
+                Some(*sigil_span),
                 ident.as_ref().map(|ident| ident.span),
                 ty,
                 &None,

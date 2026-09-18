@@ -1750,7 +1750,7 @@ async fn default_class_unpack<'v, 'a, 's>(
                 }
             }
 
-            if sig.variadic == Variadic::None {
+            if sig.variadic == Variadic::NONE {
                 let matched = matched.as_mut().unwrap();
                 for (index, (sym, entry)) in entries.iter().enumerate() {
                     if matched[index]

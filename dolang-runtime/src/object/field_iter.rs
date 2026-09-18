@@ -169,7 +169,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                     }
                 }
 
-                if sig.variadic == Variadic::None {
+                if sig.variadic == Variadic::NONE {
                     let consumed = consumed.as_mut().unwrap();
                     for (index, symbol) in symbols.iter().enumerate() {
                         if consumed[index] {

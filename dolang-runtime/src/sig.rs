@@ -61,13 +61,7 @@ impl<'v, 'a> Unpack<'v, 'a> {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.required
-            + self.optional.len()
-            + self.keys.len()
-            + match self.variadic {
-                Variadic::None | Variadic::Discard => 0,
-                Variadic::Capture => 1,
-            }
+        self.required + self.optional.len() + self.keys.len() + self.variadic.captures()
     }
 
     pub(crate) fn sym_offset(&self, sym: Sym<'v, '_>) -> Option<usize> {

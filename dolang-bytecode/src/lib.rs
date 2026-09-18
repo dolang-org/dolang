@@ -1199,14 +1199,60 @@ pub enum Arg {
     Key(usize),
 }
 
+/// Treatment of leftover items of one kind (positional or keyed)
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Rest {
+    /// Leftover items are an error
+    None,
+    /// Leftover items are allowed but dropped (`*` or `**`)
+    Discard,
+    /// Leftover items are captured (`*name` or `**name`)
+    Capture,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Variadic {
-    /// No rest parameter - strict validation, no extra args allowed
-    None,
-    /// Rest parameter without capture (...) - allow extra args but don't build iterator
+    /// Interleaved rest without capture (`...`): allow extra items of either kind
     Discard,
-    /// Rest parameter with capture (...name) - build iterator for remaining items
+    /// Interleaved rest with capture (`...name`): capture extra items of either kind, in order
     Capture,
+    /// Separate positional (`*`) and keyed (`**`) rests. `Split(Rest::None, Rest::None)`,
+    /// also [`Variadic::NONE`], means no rest at all.
+    Split(Rest, Rest),
+}
+
+impl Variadic {
+    /// No rest: extra items of either kind are an error
+    pub const NONE: Self = Self::Split(Rest::None, Rest::None);
+
+    /// Treatment of leftover positional items. An interleaved rest treats both kinds alike.
+    pub fn positional(self) -> Rest {
+        match self {
+            Self::Discard => Rest::Discard,
+            Self::Capture => Rest::Capture,
+            Self::Split(pos, _) => pos,
+        }
+    }
+
+    /// Treatment of leftover keyed items. An interleaved rest treats both kinds alike.
+    pub fn keyed(self) -> Rest {
+        match self {
+            Self::Discard => Rest::Discard,
+            Self::Capture => Rest::Capture,
+            Self::Split(_, key) => key,
+        }
+    }
+
+    /// Number of slots the rests capture into
+    pub fn captures(self) -> usize {
+        match self {
+            Self::Discard => 0,
+            Self::Capture => 1,
+            Self::Split(pos, key) => {
+                (pos == Rest::Capture) as usize + (key == Rest::Capture) as usize
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]

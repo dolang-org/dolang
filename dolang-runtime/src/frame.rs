@@ -13,12 +13,12 @@ use dolang_util::alias;
 use crate::{
     Program,
     arg::{Arg, Args, OwnedItem},
-    bytecode::Variadic,
+    bytecode::{Rest, Variadic},
     error::{Error, Result},
     gc::{Collect, Gc, arena::Visit},
-    object::{arg, protocol::GcObj},
+    object::{arg, protocol::GcObj, record::Record, tuple},
     sig,
-    strand::StrandInner,
+    strand::Strand,
     value::Value,
 };
 
@@ -56,7 +56,7 @@ impl<'v> CallFrame<'v> {
     /// 2. **Handle arguments**:
     ///     - Positional: add to required slots, then optional
     ///     - Key: match against declared keyword parameters
-    ///     - Collect excess args if variadic capture is enabled
+    ///     - Collect excess args into the rest parameters (`...name`, `*name`, `**name`)
     /// 3. **Apply defaults**: Fill unset optional/keyword slots with default values
     /// 4. **Validate**: Ensure all required args were provided
     ///
@@ -77,15 +77,16 @@ impl<'v> CallFrame<'v> {
     ///
     /// Returns an error if:
     /// - Required positional argument is missing
-    /// - Unexpected positional argument (non-variadic function)
-    /// - Unexpected keyword argument (non-variadic function)
+    /// - Unexpected positional argument (no rest parameter takes it)
+    /// - Unexpected keyword argument (no rest parameter takes it)
     /// - Required keyword argument without default is missing
     pub(crate) unsafe fn unpack_unchecked<'s>(
         &mut self,
-        inner: &'s StrandInner<'v>,
+        strand: &mut Strand<'v, 's>,
         args: Args<'v, '_>,
     ) -> Result<'v, 's, ()> {
         unsafe {
+            let inner = strand.inner;
             let program = self.program.annex();
             let (func, slot_max) = &program.funcs.get_unchecked(self.func);
             let unpack = program.unpacktab.get_unchecked(func.sig);
@@ -99,6 +100,13 @@ impl<'v> CallFrame<'v> {
             } else {
                 None
             };
+            // Leftovers for split rests (`*name` and `**name`)
+            let mut pos_rest = (unpack.variadic.positional() == Rest::Capture
+                && unpack.variadic != Variadic::Capture)
+                .then(Vec::new);
+            let mut key_rest = (unpack.variadic.keyed() == Rest::Capture
+                && unpack.variadic != Variadic::Capture)
+                .then(Vec::new);
 
             assert!(*slot_max >= func.locals + unpack.len());
 
@@ -112,18 +120,25 @@ impl<'v> CallFrame<'v> {
                         Arg::Pos(mut value) => {
                             if pos == pos_count {
                                 match unpack.variadic {
-                                    Variadic::None => {
-                                        return Err(Error::unexpected_positional_raw(inner, pos));
-                                    }
-                                    Variadic::Discard => {
-                                        // Allow but discard extra positional arguments
-                                    }
                                     Variadic::Capture => {
                                         // Capture extra positional arguments in rest
                                         rest.as_mut()
                                             .unwrap()
                                             .push_back(Some((None, value.take())));
                                     }
+                                    variadic => match variadic.positional() {
+                                        Rest::None => {
+                                            return Err(Error::unexpected_positional_raw(
+                                                inner, pos,
+                                            ));
+                                        }
+                                        // Allow but discard extra positional arguments
+                                        Rest::Discard => {}
+                                        // Capture extra positional arguments in `*name`
+                                        Rest::Capture => {
+                                            pos_rest.as_mut().unwrap().push(value.take())
+                                        }
+                                    },
                                 }
                             } else {
                                 (*slots.get_unchecked(offset + pos).get())
@@ -136,12 +151,6 @@ impl<'v> CallFrame<'v> {
                                 (*slots.get_unchecked(offset + i).get()).store(value.take());
                             } else {
                                 match unpack.variadic {
-                                    Variadic::None => {
-                                        return Err(Error::unexpected_key_raw(inner, sym));
-                                    }
-                                    Variadic::Discard => {
-                                        // Allow but discard extra key arguments
-                                    }
                                     Variadic::Capture => {
                                         // Capture extra key arguments in rest
                                         rest.as_mut().unwrap().push_back(Some((
@@ -149,6 +158,18 @@ impl<'v> CallFrame<'v> {
                                             value.take(),
                                         )));
                                     }
+                                    variadic => match variadic.keyed() {
+                                        Rest::None => {
+                                            return Err(Error::unexpected_key_raw(inner, sym));
+                                        }
+                                        // Allow but discard extra key arguments
+                                        Rest::Discard => {}
+                                        // Capture extra key arguments in `**name`
+                                        Rest::Capture => key_rest
+                                            .as_mut()
+                                            .unwrap()
+                                            .push((inner.vm().sym_obj(sym), value.take())),
+                                    },
                                 }
                             }
                         }
@@ -206,6 +227,20 @@ impl<'v> CallFrame<'v> {
                     inner.vm().arena(),
                     inner.vm().builtin_types().arg_pack,
                     args,
+                )));
+            }
+            let mut rest_slot = offset + pos_count + unpack.keys.len();
+            if let Some(values) = pos_rest {
+                (*slots.get_unchecked(rest_slot).get())
+                    .store(Value::from_object(tuple::tuple(inner.vm(), values)));
+                rest_slot += 1;
+            }
+            if let Some(entries) = key_rest {
+                let record = Record::from_sym_entries(strand, entries);
+                (*slots.get_unchecked(rest_slot).get()).store(Value::from_object(GcObj::new(
+                    inner.vm().arena(),
+                    inner.vm().builtin_types().record,
+                    record,
                 )));
             }
             self.sp.set(offset + unpack.len());

@@ -16,6 +16,7 @@ use std::{
 };
 
 use crate::{
+    RestKind,
     ast::visit::{Node, NodeKind, Token, Visit},
     doc,
     source::File,
@@ -1516,7 +1517,9 @@ pub(crate) enum Param {
         colon_span: Span,
     },
     Rest {
-        ellipsis_span: Span,
+        kind: RestKind,
+        /// The `...`, `*` or `**`
+        sigil_span: Span,
         ident: Option<Ident>,
         ty: Option<Box<Annot>>,
         type_ellipsis_span: Option<Span>,
@@ -1589,12 +1592,13 @@ impl Node for Param {
                 ControlFlow::Continue(())
             }
             Param::Rest {
-                ellipsis_span,
+                sigil_span,
                 ident,
                 ty,
                 type_ellipsis_span,
+                ..
             } => {
-                visit.token(Token::Sigil, *ellipsis_span, None)?;
+                visit.token(Token::Sigil, *sigil_span, None)?;
                 if let Some(ident) = ident {
                     visit.token(
                         Token::Variable,

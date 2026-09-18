@@ -366,9 +366,11 @@ impl<'a> Node<'a> {
                 default: default.as_ref().map(span),
             },
             doc::Kind::RestParam {
+                kind,
                 name,
                 type_ellipsis,
             } => Kind::RestParam {
+                kind: *kind,
                 name: name.as_ref().map(span),
                 type_ellipsis: type_ellipsis.as_ref().map(span),
             },
@@ -541,6 +543,8 @@ pub enum Kind<'a> {
     },
     /// A rest parameter. Its function is its parent.
     RestParam {
+        /// Which leftover items it takes
+        kind: RestKind,
         /// The bound name; absent for an anonymous rest parameter
         name: Option<diag::Span>,
         /// The explicit expansion marker in the annotation, if present.
@@ -668,6 +672,29 @@ pub enum BinderKind {
     Key,
     /// `...R`, taking any number of further arguments
     Rest,
+}
+
+/// Which leftover items a rest parameter takes
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RestKind {
+    /// `...name`: positional and keyed items, in order
+    Mixed,
+    /// `*name`: positional items only
+    Pos,
+    /// `**name`: keyed items only
+    Key,
+}
+
+impl RestKind {
+    /// The sigil that introduces the rest, such as `...`
+    pub fn sigil(self) -> &'static str {
+        match self {
+            Self::Mixed => "...",
+            Self::Pos => "*",
+            Self::Key => "**",
+        }
+    }
 }
 
 /// A type as written, with the names in it resolved

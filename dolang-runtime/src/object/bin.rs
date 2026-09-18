@@ -664,7 +664,7 @@ impl<'v> Protocol<'v> for Split<'v> {
 
         // If variadic, assign this (now with updated state) to variadic slot
         match sig.variadic {
-            Variadic::None | Variadic::Discard => {}
+            Variadic::Discard | Variadic::Split(..) => {}
             Variadic::Capture => {
                 value::Output::set(strand, out.at(pos_count + sig.keys.len()), &this);
             }
@@ -1318,7 +1318,7 @@ mod tests {
             .await
             .unwrap();
 
-            let sig = sig::Unpack::new(2, vec![], vec![], Variadic::None);
+            let sig = sig::Unpack::new(2, vec![], vec![], Variadic::NONE);
             strand
                 .builtin_types()
                 .bin_split
@@ -1341,7 +1341,7 @@ mod tests {
                     kind: sig::UnpackKeyKind::Sym(key_sym),
                     default: None,
                 }],
-                Variadic::None,
+                Variadic::NONE,
             );
             strand
                 .builtin_types()

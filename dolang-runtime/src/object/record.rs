@@ -28,6 +28,7 @@ use super::{
     protocol::{
         GcObj, GcObjBorrow, Inspect, Protocol, Recv, Spread, SpreadContext, type_mcall_fallback,
     },
+    sym::SymObj,
 };
 
 // ── Record newtype ──────────────────────────────────────────────────
@@ -138,6 +139,23 @@ impl<'v> Record<'v> {
         }
 
         Ok(this)
+    }
+
+    /// Builds a record of symbol-keyed entries, such as the leftovers for a `**name` rest.
+    ///
+    /// This never checks for a GC trap, so the caller may hold `entries` unrooted.
+    pub(crate) fn from_sym_entries<'s>(
+        strand: &mut Strand<'v, 's>,
+        entries: Vec<(GcObj<'v, SymObj>, Value<'v>)>,
+    ) -> Self {
+        let mut this = Self(Inner::new());
+        for (key, value) in entries {
+            let key = Value::from_object(key);
+            // Hashing a symbol cannot fail
+            let hv = kv::hash(strand, &key).unwrap();
+            this.0.insert(strand, key, value, hv, false);
+        }
+        this
     }
 }
 

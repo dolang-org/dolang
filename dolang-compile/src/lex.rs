@@ -91,6 +91,7 @@ pub(crate) enum Op {
     Slash,
     SlashSlash,
     Star,
+    StarStar,
     GtGt,
     Tilde,
 }
@@ -124,6 +125,7 @@ impl Display for Op {
                 Slash => "/",
                 SlashSlash => "//",
                 Star => "*",
+                StarStar => "**",
                 GtGt => ">>",
                 Tilde => "~",
             }
@@ -313,6 +315,7 @@ enum RawState {
     SlashSlash,
     Space,
     Star,
+    StarStar,
     EmitDot,
     EmitDotBeforeE,
     EmitDotBeforeParen,
@@ -723,6 +726,8 @@ macro_rules! lex {
             $self: $token => match {
                 $($m)*,
                 Some(b'$') => emit!($self.$method, $token, Dollar),
+                // Unreachable after `*`, which continues to `**`
+                #[allow(unreachable_patterns)]
                 Some(b'*') => emit!($self.$method, $token, Star),
                 Some(b'(') => emit!($self.$method, $token, LeftParen),
                 Some(b')') => emit!($self.$method, $token, RightParen),
@@ -931,7 +936,10 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                 At => return self.token(RawToken::At, Empty),
                 Question => return self.token(RawToken::Question, Empty),
                 Plus => symbol!(self, RawToken::Op(Op::Plus), {}),
-                Star => symbol!(self, RawToken::Op(Op::Star), {}),
+                Star => symbol!(self, RawToken::Op(Op::Star), {
+                    match Some(b'*') => self.trans(StarStar),
+                }),
+                StarStar => symbol!(self, RawToken::Op(Op::StarStar), {}),
                 Slash => symbol!(self, RawToken::Op(Op::Slash), {
                     match Some(b'/') => self.trans(SlashSlash),
                 }),

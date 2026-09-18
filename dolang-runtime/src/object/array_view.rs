@@ -866,7 +866,7 @@ fn unpack_from<'v, 's>(
     if sig.required > len {
         return Err(Error::missing_positional(strand, sig.required));
     }
-    if pos_count < len && sig.variadic == Variadic::None {
+    if pos_count < len && sig.variadic == Variadic::NONE {
         return Err(Error::unexpected_positional(strand, sig.required));
     }
     let min = pos_count.min(len);
@@ -1061,7 +1061,7 @@ mod tests {
                 view: FixtureGlue,
                 ty: strand.vm().state::<FixtureState>().ty,
             };
-            let sig = sig::Unpack::new(3, vec![], vec![], Variadic::None);
+            let sig = sig::Unpack::new(3, vec![], vec![], Variadic::NONE);
             strand
                 .with_slots_dynamic(3, async |strand, mut out| {
                     let err = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap_err();
@@ -1080,7 +1080,7 @@ mod tests {
                 view: FixtureGlue,
                 ty: strand.vm().state::<FixtureState>().ty,
             };
-            let sig = sig::Unpack::new(1, vec![], vec![], Variadic::None);
+            let sig = sig::Unpack::new(1, vec![], vec![], Variadic::NONE);
             strand
                 .with_slots_dynamic(1, async |strand, mut out| {
                     let err = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap_err();
@@ -1130,7 +1130,7 @@ mod tests {
                     kind: sig::UnpackKeyKind::Sym(key_sym),
                     default: None,
                 }],
-                Variadic::None,
+                Variadic::NONE,
             );
             strand
                 .with_slots_dynamic(1, async |strand, mut out| {
@@ -1161,7 +1161,7 @@ mod tests {
                     kind: sig::UnpackKeyKind::Sym(key_sym),
                     default: Some(Value::from_i64(strand, 42)),
                 }],
-                Variadic::None,
+                Variadic::NONE,
             );
             strand
                 .with_slots_dynamic(1, async |strand, mut out| {

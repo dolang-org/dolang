@@ -1,0 +1,7 @@
+def f ...a *b
+  # error: `...` rest cannot be combined with `*` or `**`
+  #   --> rest_split_mixed.dol:LL:LL
+  #    |
+  # LL | def f ...a *b
+  #    |            ^
+  nil

@@ -1101,7 +1101,7 @@ fn unpack_from<'v, 's>(
     if sig.required > len {
         return Err(Error::missing_positional(strand, sig.required));
     }
-    if pos_count < len && sig.variadic == Variadic::None {
+    if pos_count < len && sig.variadic == Variadic::NONE {
         return Err(Error::unexpected_positional(strand, sig.required));
     }
     let backfill = if len < pos_count {

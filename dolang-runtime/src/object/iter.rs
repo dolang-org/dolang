@@ -1301,7 +1301,7 @@ impl<'v> Protocol<'v> for Kv<'v> {
                                 optional: vec![],
                                 keys: vec![],
                                 sym_index: vec![],
-                                variadic: Variadic::None,
+                                variadic: Variadic::NONE,
                             };
                             let cells = [UnsafeCell::new(Value::NIL), UnsafeCell::new(Value::NIL)];
                             item.op_unpack(strand, &unpack, unsafe { Slots::new(&cells) })
