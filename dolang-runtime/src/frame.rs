@@ -236,7 +236,7 @@ impl<'v> CallFrame<'v> {
                 rest_slot += 1;
             }
             if let Some(entries) = key_rest {
-                let record = Record::from_sym_entries(strand, entries);
+                let record = Record::from_sym_entries(entries);
                 (*slots.get_unchecked(rest_slot).get()).store(Value::from_object(GcObj::new(
                     inner.vm().arena(),
                     inner.vm().builtin_types().record,

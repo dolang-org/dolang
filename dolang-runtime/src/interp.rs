@@ -273,7 +273,7 @@ impl<'v> Vm<'v> {
         args: Args<'v, '_>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let record = Record::from_args(strand, args)?;
+        let record = Record::from_args(strand, args);
         strand.builtin_types().record.create(strand, record, out);
         Ok(())
     }

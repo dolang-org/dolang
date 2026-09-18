@@ -108,8 +108,8 @@ pub def int value @ (Num | Str) -> Int
 #
 # Creates a record from positional and key arguments.
 #
-# Positional arguments receive incrementing integer keys starting at `0`.
-# Key arguments become symbol fields.
+# Positional arguments become positional items, and key arguments become
+# symbol fields.
 #
 #
 # ## Example
@@ -3228,11 +3228,11 @@ pub class Range[T @ Num]: Iterable[T]
 
 
 #
-# Stores immutable, ordered symbol and integer fields.
+# Stores an immutable sequence of positional items and symbol-keyed fields.
 #
-# Records preserve insertion order and multiple values for a key. Use a class
-# for mutable named fields. To produce a changed record, spread the old record
-# into a new one:
+# Records keep their items in order, and a key may repeat. A lookup finds the
+# latest value for a key. Use a class for mutable named fields. To produce a
+# changed record, spread the old record into a new one:
 #
 # ```
 # let updated = record ...old status: ready
@@ -3246,20 +3246,18 @@ pub class Record[...Ts]: @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}] @Base
   # let r = Record {name: Alice, age: 30}
   # ```
   #
-  # The lowercase `record` factory constructs a record verbatim from all
-  # arguments, with positional arguments receiving incrementing integer keys and
-  # key arguments becoming fields. Order and key multiplicity are preserved.
+  # Integer keys counting up from `0` become positional items, as when
+  # spreading a dict.
+  #
+  # The lowercase `record` factory instead builds a record from its arguments.
   #
   # ```
   # let r = record first second name: Alice
   # ```
   #
-  # ```
-  # let r = record name: Alice age: 30
-  # echo $r.name  # Alice
-  # echo $r.age   # 30
-  # ```
+  # ## Errors
   #
+  # Raises `TypeError` for any other key that is not a symbol.
   pub def (init) self source
     ...
 
@@ -3271,7 +3269,7 @@ pub class Record[...Ts]: @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}] @Base
   # echo $r.name
   # ```
   #
-  # And indexing for both symbol and integer keys:
+  # And indexing by symbol or position:
   #
   # ```
   # echo $r[:name:]
@@ -3282,90 +3280,26 @@ pub class Record[...Ts]: @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}] @Base
     ...
 
   #
-  # Tests whether the record contains the given key. If a value is provided,
-  # tests whether any value associated with that key matches.
-  #
-  #
-  # ## Example
-  #
-  # ```
-  # let r = record 1 2 3 a: "first" a: "second"
-  #
-  # # Key-only check
-  # assert (record.contains $r 0)
-  # assert (record.contains $r :a:)
-  # assert (!record.contains $r 10)
-  #
-  # # Key + value check
-  # assert (record.contains $r :a: "first")
-  # assert (record.contains $r :a: "second")
-  # ```
+  # Gets the value for a symbol or position, with an optional default.
   #
   #[class]
-  pub def contains
-    self
-    # the record to check
-    rec @ Record[...Ts]
-    # the key to check
-    key @ (Int | Sym)
-    # optional value to check for (multi-map)
-    value = nil
-  do -> Bool
+  pub def get[D = nil] self rec @ Record key @ (Int | Sym) :default @ D = nil :else @ (() -> D) = nil -> (Value | D)
     ...
 
   #
-  # Returns a count derived from the record's multi-map structure.
-  #
-  # With no `key`, it returns the number of distinct keys. With a `key`, it returns
-  # the number of values associated with that key.
-  #
-  # Missing keys return `0`.
-  #
-  #[class]
-  pub def count self rec @ Record key @ (Int | Sym) = nil -> Int
-    ...
-
-  #
-  # Gets a field value with optional default. Supports `instance:` for multi-map
-  # access. Negative `instance:` indexes count from the end.
-  #
-  #[class]
-  pub def get[D = nil] self rec @ Record key @ (Int | Sym) :instance @ Int = nil :default @ D = nil :else @ (() -> D) = nil -> (Value | D)
-    ...
-
-  #
-  # Returns an iterator of keys. Each distinct key is yielded exactly once, in the
-  # order its first pair was inserted.
-  #
-  # If duplicate-key iteration is needed, use ordinary record iteration.
-  #
-  #[class]
-  pub def keys self rec @ Record -> Iter[(Int | Sym)]
-    ...
-
-  #
-  # Returns the number of fields.
+  # Returns the number of items, counting each instance of a repeated key.
   #
   #
   #[class]
   pub def len self rec @ Record -> Int
     ...
 
-  #
-  # Returns an iterator of values. With no `key`, it yields all stored values in
-  # pair insertion order. With a `key`, it yields only the values associated with
-  # that key, in that key's insertion order.
-  #
-  # Missing keys return an empty iterator.
-  #[class]
-  pub def values self rec @ Record key @ (Int | Sym) = nil -> Iter
-    ...
-
-  # Iterates record entries as `[key, value]` pairs in insertion order.
+  # Iterates record items as `[key, value]` pairs in order. A positional item's
+  # key is its position.
   pub def (iter) self
     ...
 
-  # Unpacks record fields by their symbol or integer keys.
+  # Unpacks record items by position and symbol.
   pub def (unpack) self
     ...
 

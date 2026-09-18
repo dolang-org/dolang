@@ -649,14 +649,16 @@ impl<'v, 'a> Record<'v, 'a> {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
         };
-        Ok(borrow.0.total_pairs)
+        Ok(borrow.items().len())
     }
 
-    /// Return a stateful cursor over insertion-order key-value pairs.
+    /// Return a stateful cursor over the key-value pairs in order. A positional
+    /// item's key is its position.
     pub fn pairs(&self) -> RecordPairs<'v, 'a> {
         RecordPairs {
             borrow: self.0,
             pos: 0,
+            int: 0,
         }
     }
 }
@@ -900,6 +902,7 @@ impl<'v, 'a> SetMembers<'v, 'a> {
 pub struct RecordPairs<'v, 'a> {
     borrow: GcObjBorrow<'v, 'a, record::Record<'v>>,
     pos: usize,
+    int: i64,
 }
 
 impl<'v, 'a> RecordPairs<'v, 'a> {
@@ -915,7 +918,19 @@ impl<'v, 'a> RecordPairs<'v, 'a> {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
         };
-        Ok(kv_next_pair(&borrow.0, &mut self.pos, strand, key, value))
+        let Some((item_key, item_value)) = borrow.items().get(self.pos) else {
+            return Ok(false);
+        };
+        self.pos += 1;
+        match item_key {
+            Some(item_key) => Output::set(strand, key, unsafe { Sym::from_obj(item_key) }),
+            None => {
+                Output::set(strand, key, self.int);
+                self.int += 1;
+            }
+        }
+        Output::set(strand, value, item_value);
+        Ok(true)
     }
 }
 

@@ -164,7 +164,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Ok(())
         })
         .function("record", async move |strand, args, out| {
-            let record = Record::from_args(strand, args)?;
+            let record = Record::from_args(strand, args);
             strand.builtin_types().record.create(strand, record, out);
             Ok(())
         })
