@@ -1,7 +1,7 @@
 [package]
-name = "dolang-private-regression"
+name = "language-regression"
 version = "0.1.0"
-description = "Regression test suite for the Do language crates."
+description = "Regression test suite for the core Do language"
 edition = "2024"
 license.workspace = true
 repository.workspace = true
