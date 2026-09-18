@@ -393,6 +393,14 @@ impl Parser<'_> {
                 }
                 let kind = match this.peek()? {
                     Some(token @ token!(TokenInfo::Op(Op::Star) | TokenInfo::Op(Op::StarStar))) => {
+                        if delim == Delim::Bracket {
+                            let token = this.next()?;
+                            return Err(this.syntax_error(
+                                scope,
+                                token,
+                                "type arguments expand a pack only with `...`",
+                            ));
+                        }
                         let sigil_span = this.advance();
                         if let Some(span) = optional
                             && delim != Delim::Bracket

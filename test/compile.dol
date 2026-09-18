@@ -890,7 +890,7 @@ def statement_type_imports_keep_document_targets()
 #[test]
 def rest_sigils_are_exposed()
   let source = r|-
-    def split[*Ps, **Ks] a *rest @Ps **kw @Ks -> Tuple[*Int]
+    def split[*Ps, **Ks] a *rest @Ps **kw @Ks -> Tuple[...Ps]
       [a, rest, kw]
     def mixed[...R] ...rest @R
       rest

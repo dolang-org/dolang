@@ -1,0 +1,6 @@
+let row @ Tuple[*Str] = nil
+# error: type arguments expand a pack only with `...`
+#   --> type_arg_star.dol:LL:LL
+#    |
+# LL | let row @ Tuple[*Str] = nil
+#    |                 ^

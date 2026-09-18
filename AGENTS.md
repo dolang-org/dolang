@@ -338,8 +338,11 @@ pub def exported x        # public (module export)
 def connect :host = "localhost" :port = 8080
   echo "Connecting to $host:$port"
 
-def log level ...rest     # variadic
+def log level ...rest     # variadic: rest is an Args pack
   echo "[$level]" ...rest
+
+def run cmd *args **opts  # positional (Tuple) and key (Record) rests
+  echo $cmd ...args ...opts
 ```
 
 Vertical parameter layout with `do` to introduce the body:
@@ -523,8 +526,7 @@ echo $ type $ str $ range 10
 
 ```
 class Point
-  pub let x = 0
-  pub let y = 0
+  pub field x y = 0
 
   def (init) self x y
     self.x = x
@@ -534,7 +536,7 @@ class Point
     ((self.x * self.x + self.y * self.y) / 1.0)
 
 class Dog: Animal              # inheritance
-  pub let breed = nil
+  pub field breed = nil
 
   def (init) self name breed
     Animal.(init) $self $name dog
@@ -549,7 +551,7 @@ Private fields/methods use `.#`:
 
 ```
 class Counter
-  let count = 0               # private field
+  field count = 0             # private field
 
   pub def increment self
     self.#count = (self.#count + 1)
@@ -591,6 +593,7 @@ catch _
 ```
 let a b = [1, 2]
 let first ...rest = [1, 2, 3, 4]
+let first *pos **keyed = {1, 2, color: "red"}  # pos == (2,), keyed has color
 let :name :age = {name: "Alice", age: 30}
 
 bind args
@@ -629,9 +632,11 @@ let double = (do |x @ Int| -> Int x * 2)
 ```
 
 `[]` directly after a `def` or `class` name declares binders (names standing for
-types; also `:K` and a trailing `...R`). Binders may have type-expression
-bounds and defaults (`T @ Bound = Default`); a schema bound such as `S @ {...}`
-marks a schema binder. A superclass may take type arguments:
+types; also `:K`, and trailing `...R` or `*R`/`**R` as for rest parameters).
+Binders may have type-expression bounds and defaults (`T @ Bound = Default`); a
+schema bound such as `S @ {...}` marks a schema binder. Type arguments expand a
+pack only with `...`, whatever its binder: `class Tuple[*Ts]` is used as
+`Tuple[...Ts]`. A superclass may take type arguments:
 
 ```
 def first[T] items @ Array[T] -> T
@@ -677,12 +682,14 @@ it begins ends it, even inside `()`. Parenthesize unions and function types:
 `@Str|Path` is not a union, but `@(Str | Path)` is. Other forms:
 `@Dict[Str, Array[Int]]`, `@{name: Str, ?port: Int}`, `@((Int, ?Int) -> Int)`,
 `@(:a: | :b:)`. Braces form schemas rather than types; use `Dict[{...}]` for a
-dict with a schema. Within a schema, `...K: V` describes arbitrary keyed
-entries, and `{...}` is shorthand for `{...std.Value}`. Schemas are closed
-unless they contain a rest item. Keyed and open rest items are not allowed in
-`[]` or function parameter lists. A type whose only parameter is a schema takes
-`Foo[T]` for positional items of type `T` and `Foo[K, V]` for
-`Foo[{...K: V}]`; prefer these to a schema with a single rest item.
+dict with a schema. Within a schema, `...T` describes further items of any
+kind, `*T` further positional items, `**T` further keyed items, and `...K: V`
+arbitrary keyed entries; `{...}` is shorthand for `{...std.Value}`. Schemas are
+closed unless they contain a rest item. Keyed and open rest items are not
+allowed in function parameter lists: `((Int, *Str, **Bool) -> nil)`. A type
+whose only parameter is a schema takes `Foo[T]` for `Foo[{*T}]` and
+`Foo[K, V]` for `Foo[{...K: V}]`; prefer these to a schema with a single rest
+item.
 
 ### Concurrency
 

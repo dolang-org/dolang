@@ -39,7 +39,7 @@ def configure ...options@{name: Str, ?port: Int}
 A leading `...` after `@` explicitly expands a type pattern over a pack:
 
 ```
-def fork[...Rs] ...thunks @ ...(() -> Rs) -> Tuple[...Rs]
+def fork[*Rs] *thunks @ ...(() -> Rs) -> Tuple[...Rs]
   ...
 ```
 
@@ -278,15 +278,16 @@ let mode @ (:TARGET: | :LINK:) = :TARGET:
 `[]` directly after a type applies generic arguments.
 
 The items of `[]`, `()`, and `{}` share positional, symbol-keyed, and rest
-syntax. `...type` stands for any number of further items, `*type` for further
-positional items, and `**type` for further keyed items. The `...K: V` and open
-`...` rest items are allowed in schemas and generic applications, but not in
-function parameter lists.
+syntax. `...type` stands for any number of further items. In schemas and
+function parameter lists, `*type` stands for further positional items and
+`**type` for further keyed items; `[]` expands packs only with `...`. The
+`...K: V` and open `...` rest items are allowed in schemas and generic
+applications, but not in function parameter lists.
 
 ```
 let names @ Array[Str] = []
 let index @ Dict[Str, Array[Int]] = {}
-let row @ Tuple[*Str] = Tuple ["id", "name"]
+let row @ Tuple[...Str] = Tuple ["id", "name"]
 let result @ Record[value: Int, error: (Error | nil)] = nil
 let open @ Record[name: Str, ...] = nil
 ```

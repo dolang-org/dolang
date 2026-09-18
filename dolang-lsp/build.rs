@@ -126,6 +126,9 @@ struct TypeArgJson {
     optional: bool,
     #[serde(default)]
     key: Option<String>,
+    /// The key type of `...K: V`, or of a schema key given as a type
+    #[serde(default)]
+    key_type: Option<TypeJson>,
     /// A rest item's `...`, `*` or `**`
     #[serde(default)]
     sigil: Option<String>,
@@ -182,9 +185,21 @@ fn render_args(args: &[TypeArgJson]) -> String {
                 return format!("{optional}...");
             };
             let ty = ty.render(Binding::Func);
-            match (arg.kind.as_str(), &arg.key) {
-                ("rest", _) => format!("{optional}{}{ty}", arg.sigil.as_deref().unwrap_or("...")),
-                ("key", Some(key)) => format!("{optional}{key}: {ty}"),
+            match (arg.kind.as_str(), &arg.key_type, &arg.key) {
+                ("rest", _, _) => {
+                    format!("{optional}{}{ty}", arg.sigil.as_deref().unwrap_or("..."))
+                }
+                ("key_rest", Some(key), _) => {
+                    format!("{optional}...{}: {ty}", key.render(Binding::Func))
+                }
+                // A name must be parenthesized to not be taken as a symbol key
+                ("key", Some(key @ TypeJson::Name { .. }), _) => {
+                    format!("{optional}({}): {ty}", key.render(Binding::Compact))
+                }
+                ("key", Some(key), _) => {
+                    format!("{optional}{}: {ty}", key.render(Binding::Compact))
+                }
+                ("key", None, Some(key)) => format!("{optional}{key}: {ty}"),
                 _ => format!("{optional}{ty}"),
             }
         })

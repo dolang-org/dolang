@@ -223,7 +223,7 @@ def mapped ...thunks
 assert_eq (mapped 10) {10}
 
 # Positional and keyed rest items and binders
-@def segregate[*Ps, **Ks] *args @ Ps **kw @ Ks -> Tuple[Tuple[*Ps], Record[**Ks]]
+@def segregate[*Ps, **Ks] *args @ Ps **kw @ Ks -> Tuple[Tuple[...Ps], Record[...Ks]]
 def segregate *args **kw
   (args, kw)
 assert_eq (segregate 1 k: 2) ((1,), (k: 2))

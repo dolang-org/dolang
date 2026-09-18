@@ -162,7 +162,7 @@ do -> Sym
 #
 # Creates a tuple from positional arguments.
 #
-pub def tuple[...Ts] ...values@Ts -> Tuple[...Ts]
+pub def tuple[*Ts] *values@Ts -> Tuple[...Ts]
   ...
 
 # Returns the value's type
@@ -4437,7 +4437,7 @@ pub class TimedOutError: RuntimeError
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
 #
-pub class Tuple[...Ts]: Iterable[Union[...Ts]] @Seq[Union[...Ts]]
+pub class Tuple[*Ts]: Iterable[Union[...Ts]] @Seq[Union[...Ts]]
   #
   #
   # Builds a tuple from an iterable.
