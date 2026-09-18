@@ -183,6 +183,73 @@ impl Diagnose for AmbigIndex {
     }
 }
 
+/// A C-style call whose arguments are separated from the callee by whitespace,
+/// such as `f (1, 2)`, which looks like a call with a tuple or record.
+#[derive(Clone, Copy)]
+pub(super) struct MisleadingCall {
+    pub(super) callee_span: Span,
+    pub(super) paren_span: Span,
+    /// Whether the parentheses would make a record rather than a tuple
+    pub(super) record: bool,
+}
+
+enum MisleadingCallPatchKind {
+    NoSpace,
+    Parens,
+}
+
+struct MisleadingCallPatch(MisleadingCallPatchKind, MisleadingCall);
+
+impl Patch for MisleadingCallPatch {
+    fn span(&self) -> Span {
+        self.1.callee_span | self.1.paren_span
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        match self.0 {
+            MisleadingCallPatchKind::NoSpace => write!(w, "remove space"),
+            MisleadingCallPatchKind::Parens => {
+                let kind = if self.1.record { "record" } else { "tuple" };
+                write!(w, "wrap with parentheses to call with a {kind}")
+            }
+        }
+    }
+
+    fn sub(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        let callee = compiler.file.str(self.1.callee_span);
+        let args = compiler.file.str(self.1.paren_span);
+        match self.0 {
+            MisleadingCallPatchKind::NoSpace => write!(w, "{callee}{args}"),
+            MisleadingCallPatchKind::Parens => write!(w, "{callee}({args})"),
+        }
+    }
+}
+
+impl Diagnose for MisleadingCall {
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "call arguments separated by whitespace are misleading")
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn span(&self) -> Span {
+        self.callee_span | self.paren_span
+    }
+
+    fn patches(&self) -> Box<dyn Iterator<Item = Box<dyn Patch>>> {
+        Box::new(
+            [
+                Box::new(MisleadingCallPatch(MisleadingCallPatchKind::NoSpace, *self))
+                    as Box<dyn Patch>,
+                Box::new(MisleadingCallPatch(MisleadingCallPatchKind::Parens, *self)),
+            ]
+            .into_iter(),
+        )
+    }
+}
+
 pub(super) struct BadFloat(pub(super) Span);
 
 impl Diagnose for BadFloat {

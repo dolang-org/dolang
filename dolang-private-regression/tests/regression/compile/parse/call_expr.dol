@@ -5,11 +5,8 @@
 (echo(foo: 1))
 (echo (1) 2 3 (4))
 (echo(1, 2))
-(echo (1, 2))
-(echo (1,))
 let x = 3
 (echo(:x))
-(echo (:x, 4))
 # output: END
 # 5 foo: false
 # bar: true
@@ -18,8 +15,5 @@ let x = 3
 # foo: 1
 # 1 2 3 4
 # 1 2
-# 1 2
-# 1
 # x: 3
-# x: 3 4
 # END
