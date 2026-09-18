@@ -69,6 +69,16 @@ def normalize_imports imports
     normalized[name] = value
   normalized
 
+# Calls `func` with `shell.args` and `shell.program` overridden by whichever of
+# `args` and `program` is given
+def with_invocation args program func
+  shell.with_override
+    if (args != nil)
+      args: $args
+    if (program != nil)
+      program: $program
+    - $func
+
 class Operation
   field path mode name prelude inject import key cache synthetic
 
@@ -152,11 +162,12 @@ class Operation
 # exec.run "./tool.dol" app: "my-tool"
 # exec.run "./tool.dol" inject: {answer: 42}
 # exec.run "./tool.dol" import: {config: {answer: 42}}
+# exec.run "./tool.dol" args: ["--verbose"] program: "./tool.dol"
 # ```
 pub def run
   # Script path.
   path @ (Str | fs.Path)
-  # Cache scope. Defaults to a name derived from `shell.program`.
+  # Cache scope. Defaults to a name derived from the caller's `shell.program`.
   :app @ Str = nil
   # Imports to bind before the source, as
   # [`compile.compile`](compile.compile) takes them.
@@ -166,8 +177,15 @@ pub def run
   # Modules supplied by name while running. A dictionary value is exposed as
   # a record.
   :import @ Dict[(Str | Sym), Value] = {}
+  # Arguments the script sees as [`shell.args`](shell.args). Defaults to the
+  # caller's.
+  :args @ Iterable = nil
+  # Identity the script sees as [`shell.program`](shell.program). Defaults to
+  # the caller's.
+  :program @ (Str | fs.Path) = nil
 do -> Value
-  (Operation path mode: "script" name: nil :app :prelude :inject :import).run()
+  let op = Operation $path mode: "script" name: nil :app :prelude :inject :import
+  with_invocation $args $program do op.run()
 
 # Compiles a module if needed, caches the bytecode, and loads it.
 #
@@ -187,7 +205,7 @@ pub def module
   path @ (Str | fs.Path)
   # Module name. Defaults to the source file stem.
   :name @ Str = nil
-  # Cache scope. Defaults to a name derived from `shell.program`.
+  # Cache scope. Defaults to a name derived from the caller's `shell.program`.
   :app @ Str = nil
   # Imports to bind before the source, as
   # [`compile.compile`](compile.compile) takes them.
@@ -197,6 +215,13 @@ pub def module
   # Modules supplied by name while running. A dictionary value is exposed as
   # a record.
   :import @ Dict[(Str | Sym), Value] = {}
+  # Arguments the module sees as [`shell.args`](shell.args) while it loads.
+  # Defaults to the caller's.
+  :args @ Iterable = nil
+  # Identity the module sees as [`shell.program`](shell.program) while it
+  # loads. Defaults to the caller's.
+  :program @ (Str | fs.Path) = nil
 do -> std.Module
   let name = module_name (fs.Path path) $name
-  (Operation path mode: "module" :name :app :prelude :inject :import).run()
+  let op = Operation $path mode: "module" :name :app :prelude :inject :import
+  with_invocation $args $program do op.run()

@@ -488,7 +488,7 @@ def raw_decompression_validates_destination_and_strip()
   Path("existing").write b"old"
   assert_throws $ValueError do transfer.unpack payload.gz existing
   assert_throws $ValueError do transfer.unpack payload.gz stripped strip: 1
-  assert !(Path("stripped").exists())
+  assert (!(Path("stripped").exists()))
 
 #[test]
 #[vfs]
@@ -500,7 +500,7 @@ def corrupt_raw_input_is_not_published()
   let e = assert_throws $transfer.ArchiveError do transfer.unpack corrupt.xz output
   assert_eq $e.source.name corrupt.xz
   assert e.detail
-  assert !(Path("output").exists())
+  assert (!(Path("output").exists()))
 
 #[test]
 #[vfs]
@@ -516,7 +516,7 @@ def extraction_rejects_unsafe_zip_paths()
   zip.open unsafe.zip w do |archive|
     archive.open "../escape" do |file| file.write nope
   assert_throws $ValueError do transfer.unpack unsafe.zip out
-  assert !(Path("escape").exists())
+  assert (!(Path("escape").exists()))
 
 #[test]
 #[vfs]
@@ -524,7 +524,7 @@ def extraction_rejects_escaping_symlink_targets()
   tar.write unsafe-link.tar do |archive|
     archive.symlink (unix_fs.Path "../../escape") (unix_fs.Path "dir/link")
   assert_throws $ValueError do transfer.unpack unsafe-link.tar out
-  assert !(Path("escape").exists())
+  assert (!(Path("escape").exists()))
 
 #[test]
 #[vfs]

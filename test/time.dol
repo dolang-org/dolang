@@ -206,7 +206,7 @@ def canceled_resource_acquisition_retains_outer_resource()
     catch TimedOutError: _
       nil
     inside = true
-    contender = strand.spawn do outer.with do assert !$inside
+    contender = strand.spawn do outer.with do assert $!inside
     inside = false
 
   release_send.put ok

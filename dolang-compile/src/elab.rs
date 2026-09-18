@@ -2,7 +2,7 @@ use std::{
     cell::Cell,
     collections::HashMap,
     fmt::{self, Write},
-    result,
+    iter, result,
 };
 
 use dolang_util::{arena::ArenaVec, intern::BinTable};
@@ -381,6 +381,78 @@ impl Patch for BinaryOpPatch {
     fn sub(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
         let original_text = compiler.file.str(self.span);
         write!(w, "({})", original_text)
+    }
+}
+
+// Warning: `!$x` or `!(x)` as a command argument, which is a literal `!`
+// rather than negation
+struct NotAsArg {
+    span: Span,
+    operator_span: Span,
+    fix: NotFix,
+}
+
+enum NotFix {
+    // `!$x`: swap `!$` for `$!`
+    Dollar,
+    // `!(x)` or `!"x"`: wrap the argument in parentheses
+    Parens,
+    // `!(x y)` lexes as several arguments, so there is no single fix
+    None,
+}
+
+impl Diagnose for NotAsArg {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "literal string where logical negation may be intended")
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
+        Box::new(
+            [Box::new(BinaryOpAnnotation {
+                span: self.operator_span,
+            }) as Box<dyn Annotate>]
+            .into_iter(),
+        )
+    }
+
+    fn patches(&self) -> Box<dyn Iterator<Item = Box<dyn Patch>>> {
+        let patch = match self.fix {
+            NotFix::Dollar => Box::new(NotDollarPatch {
+                span: Span {
+                    start: self.operator_span.start,
+                    end: self.operator_span.end + 1,
+                },
+            }) as Box<dyn Patch>,
+            NotFix::Parens => Box::new(BinaryOpPatch { span: self.span }),
+            NotFix::None => return Box::new(iter::empty()),
+        };
+        Box::new([patch].into_iter())
+    }
+}
+
+struct NotDollarPatch {
+    span: Span,
+}
+
+impl Patch for NotDollarPatch {
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "place `!` after `$`")
+    }
+
+    fn sub(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "$!")
     }
 }
 
@@ -1485,6 +1557,50 @@ impl<'a> Elaborater<'a> {
         )
     }
 
+    fn check_not_as_arg(&mut self, expr: &Expr) {
+        let Expr::Concat {
+            exprs,
+            delim_span: None,
+            ..
+        } = expr
+        else {
+            return;
+        };
+        let Some(Expr::Literal(first)) = exprs.first() else {
+            return;
+        };
+        let text = self.file.str(*first);
+        let fix = if text == "!" && exprs.len() > 1 {
+            // `!$x`, `!"x"`
+            let operand = self.file.str(Span {
+                start: first.end,
+                end: expr.span().end,
+            });
+            if operand.starts_with('$') {
+                NotFix::Dollar
+            } else {
+                NotFix::Parens
+            }
+        } else if text.starts_with("!(") {
+            // `!(x)` lexes as a literal, since `(` doesn't end one
+            if exprs.len() == 1 && text.ends_with(')') {
+                NotFix::Parens
+            } else {
+                NotFix::None
+            }
+        } else {
+            return;
+        };
+        self.diags.push(NotAsArg {
+            span: expr.span(),
+            operator_span: Span {
+                start: first.start,
+                end: first.start + 1,
+            },
+            fix,
+        });
+    }
+
     fn visit_expr(&mut self, scope: &mut Scope<'_>, node: &mut Expr, is_arg: bool) -> Result<()> {
         match node {
             Expr::Ident(ident) => self.visit_ident(scope, ident),
@@ -1512,6 +1628,9 @@ impl<'a> Elaborater<'a> {
 
                 for arg in args.iter_mut() {
                     self.visit_cmd_arg(scope, arg)?;
+                    if let Arg::Pos(Single { expr, .. }) | Arg::Key(Key { expr, .. }) = arg {
+                        self.check_not_as_arg(expr);
+                    }
                 }
 
                 if let Some(Arg::Pos(Single {

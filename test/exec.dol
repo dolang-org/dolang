@@ -1,4 +1,4 @@
-import exec fs
+import exec fs shell
   std:
     - TypeError
   test:
@@ -99,3 +99,37 @@ def run_rejects_non_symbol_inject_key()
       assert_eq (str err) "type error: inject key: expected `Sym`"
       true
     assert $ok
+
+#[test]
+def run_overrides_invocation()
+  fs.with_temp_dir do |dir|
+    let script = (dir / "script.dol")
+    script.write |
+      import shell
+      [[...shell.args], shell.program]
+    let caller_args = [...shell.args]
+    assert_eq (exec.run script args: ["-v", "x"] program: "tool") [["-v", "x"], "tool"]
+    assert_eq (exec.run script args: []) [[], shell.program]
+    assert_eq (exec.run script program: script) [caller_args, script]
+    assert_eq [...shell.args] $caller_args
+
+#[test]
+def module_overrides_invocation_during_init()
+  fs.with_temp_dir do |dir|
+    let mod_path = (dir / "demo_mod.dol")
+    mod_path.write |
+      import shell
+      pub let args = [...shell.args]
+      pub let program = shell.program
+    let m = exec.module $mod_path args: ["a"] program: demo
+    assert_eq $m.args ["a"]
+    assert_eq $m.program demo
+
+#[test]
+def run_keeps_caller_cache_scope()
+  fs.with_temp_dir do |dir|
+    let script = (dir / "script.dol")
+    script.write "0\n"
+    let probe = "exec-program-override-probe"
+    exec.run $script program: $probe
+    assert (!(fs.cache_dir() / probe).exists())

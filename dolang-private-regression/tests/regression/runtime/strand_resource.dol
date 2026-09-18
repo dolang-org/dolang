@@ -56,7 +56,7 @@ one.with do
   child = spawn do
     started_send.put ok
     one.with do
-      assert !$inside
+      assert $!inside
       :CHILD:
   started_recv.next()
   inside = false
@@ -70,7 +70,7 @@ one.with do
   streamed = stream do
     stream_started_send.put ok
     one.with do
-      assert !$inside
+      assert $!inside
       :STREAM:
   stream_started_recv.next()
   inside = false

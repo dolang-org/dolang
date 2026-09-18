@@ -40,7 +40,7 @@ def exists_method()
     f.write "test"
 
   assert $existing.exists()
-  assert !$nonexistent.exists()
+  assert $!nonexistent.exists()
 
 #[test]
 #[vfs]
@@ -50,7 +50,7 @@ def exists_through_file()
   open $file w do |f|
     f.write "test"
 
-  assert !$((file / "child")).exists()
+  assert (!(file / "child").exists())
 
 #[test]
 #[vfs]
