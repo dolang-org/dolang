@@ -314,7 +314,7 @@ def container_inspect_lifecycle()
           assert_eq $state.state :RUNNING:
           assert_eq $state.status running
           assert $ctr.created
-          assert_eq $state.ports []
+          assert_eq $state.ports ()
       - name: list containers
         do
           let listed = [...runtime.containers filter: "name=$name"]
@@ -417,10 +417,10 @@ def container_create_structured_lifecycle()
               env: $env["TEST_DOLANG_CREATE"]
               uid: $uid
               mounted: $Path("/mnt/host-release").exists()
-          assert_eq $configured.cd (unix.Path "/tmp")
-          assert_eq $configured.env value
-          assert_eq $configured.uid "65534"
-          assert $configured.mounted
+          assert_eq $configured[:cd:] (unix.Path "/tmp")
+          assert_eq $configured[:env:] value
+          assert_eq $configured[:uid:] "65534"
+          assert $configured[:mounted:]
       - name: inspect running state
         do
           let state = ctr.state()

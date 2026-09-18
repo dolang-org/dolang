@@ -238,7 +238,7 @@ def response_metadata identity response payload digest_info
   # bytes just downloaded, so `verified` starts empty on every fresh body.
   let verified = {}
   if digest_info
-    verified[digest_info.algorithm] = digest_info.expected
+    verified[digest_info[:algorithm:]] = digest_info[:expected:]
   let now = DateTime.now().rfc()
   let modified = (headers.get "last-modified")
   return $
@@ -307,11 +307,11 @@ class Cache
           return :RETRY:
         if (response.status == 206)
           let range = (parse_content_range (response.headers.get "content-range"))
-          if (range == nil || range.start != offset)
+          if (range == nil || range[:start:] != offset)
             part.remove ignore: true
             return :RETRY:
           append = true
-          total = range.total
+          total = range[:total:]
         else
           # A `200` means the range was ignored (or `If-Range` failed), so the
           # body is the whole representation: start over without another
@@ -338,9 +338,9 @@ class Cache
       let state = if (digest_info == nil)
         nil
       else if append
-        digest_state $part $digest_info.constructor
+        digest_state $part $digest_info[:constructor:]
       else
-        digest_info.constructor()
+        digest_info[:constructor:]()
 
       let mode = if append
         "ab"
@@ -357,7 +357,7 @@ class Cache
       if (total != nil && size != total)
         # The sidecar and its metadata stay put: the next `get` resumes here.
         throw std.ValueError "incomplete download for $identity: got $size of $total bytes"
-      if (state && "${state.digest():x}" != digest_info.expected)
+      if (state && "${state.digest():x}" != digest_info[:expected:])
         part.remove ignore: true
         metadata_path.remove ignore: true
         throw std.ValueError "digest mismatch for $identity"
@@ -395,11 +395,11 @@ class Cache
       if (intact_payload payload metadata)
         if digest_info
           let verified = (metadata.get "verified" || {})
-          if (verified.get(digest_info.algorithm) == digest_info.expected)
+          if (verified.get(digest_info[:algorithm:]) == digest_info[:expected:])
             return payload
-          let actual = (file_digest payload digest_info.constructor)
-          if (actual == digest_info.expected)
-            verified[digest_info.algorithm] = digest_info.expected
+          let actual = (file_digest payload digest_info[:constructor:])
+          if (actual == digest_info[:expected:])
+            verified[digest_info[:algorithm:]] = digest_info[:expected:]
             metadata["verified"] = verified
             write_metadata $metadata_path $metadata
             return payload
@@ -443,8 +443,8 @@ do -> Path
   if (type source Path)
     if (digest != nil)
       let digest_info = digest_spec $digest
-      let actual = file_digest $source $digest_info.constructor
-      if (actual != digest_info.expected)
+      let actual = file_digest $source $digest_info[:constructor:]
+      if (actual != digest_info[:expected:])
         throw std.ValueError "digest mismatch for $source"
     return source
 

@@ -26,7 +26,8 @@ use super::{
     arg::ArgPack,
     iter,
     protocol::{
-        GcObj, GcObjBorrow, Inspect, Protocol, Recv, Spread, SpreadContext, type_mcall_fallback,
+        GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback,
+        is_special_mcall, type_mcall_fallback,
     },
     sym::SymObj,
     tuple,
@@ -719,18 +720,61 @@ impl<'v> Protocol<'v> for Record<'v> {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let borrow = this.borrow(strand)?;
-        let found = borrow
-            .items
-            .iter()
-            .rev()
-            .find(|(key, _)| key.as_ref().is_some_and(|key| key.tag == field.tag()));
-        match found {
-            Some((_, value)) => {
-                Output::set(strand, out, value);
+        match field.tag() {
+            sym::LEN => {
+                let len = this.borrow(strand)?.items.len();
+                let len = i64::try_from(len).map_err(|_| Error::overflow(strand))?;
+                Output::set(strand, out, len);
                 Ok(())
             }
-            None => Err(Error::field(strand, field)),
+            sym::GET => {
+                BoundMethod::create(strand, &this, field, out);
+                Ok(())
+            }
+            _ => iter::iterable_get(strand, &this, field, out),
+        }
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        match method.tag() {
+            sym::GET => {
+                let default = Sym::well_known(sym::DEFAULT);
+                let else_key = Sym::well_known(sym::ELSE);
+                let ([key], [default, or_else]) =
+                    unpack!(strand, args, 1, 0, default = None, else_key = None)?;
+                if default.is_some() && or_else.is_some() {
+                    return Err(Error::unexpected_key(strand, else_key));
+                }
+                let found = this.borrow(strand)?.find(strand, &key).map(Value::dup);
+                if let Some(value) = found {
+                    out.store(value);
+                    Ok(())
+                } else if let Some(mut default) = default {
+                    out.store(default.take());
+                    Ok(())
+                } else if let Some(or_else) = or_else {
+                    call!(strand, or_else, out).await
+                } else {
+                    out.store(Value::NIL);
+                    Ok(())
+                }
+            }
+            sym::LEN => Err(Error::type_error(
+                strand,
+                "record.len is a field, not a method",
+            )),
+            _ if is_special_mcall(method.tag()) => {
+                instance_mcall_fallback(strand, &this, method, args, out)
+                    .await
+                    .expect("supported special method")
+            }
+            _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }
     }
 
@@ -862,22 +906,6 @@ impl<'v, 's> Spread<'v, 's> for RecordPairs<'_, 'v> {
 
 pub(crate) struct Class;
 
-impl Class {
-    fn downcast<'v, 's, 'a>(
-        strand: &mut Strand<'v, 's>,
-        value: &'a Value<'v>,
-    ) -> Result<'v, 's, GcObjBorrow<'v, 'a, Record<'v>>> {
-        if let Some(borrow) = value.downcast_ref(strand.builtin_types().record) {
-            Ok(borrow)
-        } else {
-            Err(Error::type_error(
-                strand,
-                "record: expected Record for first argument",
-            ))
-        }
-    }
-}
-
 unsafe impl Collect for Class {
     const CYCLIC: bool = false;
     const IMMUTABLE: bool = true;
@@ -899,13 +927,14 @@ impl<'v> Protocol<'v> for Class {
         Output::set(strand, out, &strand.singletons().type_obj)
     }
 
-    // Not `Iterable`, matching the instance-level `op_subtype` above.
     fn op_subtype<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this) || supertype.eq(strand, TypeObject::Value)
+        supertype.eq(strand, &this)
+            || supertype.eq(strand, &strand.singletons().iterable)
+            || supertype.eq(strand, TypeObject::Value)
     }
 
     fn op_debug<'a, 's>(
@@ -932,11 +961,12 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
                 Method(sym::HASH_METHOD),
+                Getter(sym::LEN),
+                Method(sym::GET),
                 Method(sym::INDEX_METHOD),
                 Method(sym::ITER_METHOD),
                 Method(sym::UNPACK_METHOD),
                 Method(sym::SPREAD_METHOD),
-                Method(sym::GET_METHOD),
             ],
         })
     }
@@ -946,7 +976,7 @@ impl<'v> Protocol<'v> for Class {
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
@@ -958,38 +988,6 @@ impl<'v> Protocol<'v> for Class {
                         Ok(())
                     })
                     .await
-            }
-            sym::LEN => {
-                let ([record], []) = unpack!(strand, args, 1, 0)?;
-                let len = Self::downcast(strand, &record)?.get().items.len();
-                let len = i64::try_from(len).map_err(|_| Error::overflow(strand))?;
-                Output::set(strand, out, len);
-                Ok(())
-            }
-            sym::GET => {
-                let default = Sym::well_known(sym::DEFAULT);
-                let else_key = Sym::well_known(sym::ELSE);
-                let ([record, key], [default, or_else]) =
-                    unpack!(strand, args, 2, 0, default = None, else_key = None)?;
-                if default.is_some() && or_else.is_some() {
-                    return Err(Error::unexpected_key(strand, else_key));
-                }
-                let found = Self::downcast(strand, &record)?
-                    .get()
-                    .find(strand, &key)
-                    .map(Value::dup);
-                if let Some(value) = found {
-                    out.store(value);
-                    Ok(())
-                } else if let Some(mut default) = default {
-                    out.store(default.take());
-                    Ok(())
-                } else if let Some(or_else) = or_else {
-                    call!(strand, or_else, out).await
-                } else {
-                    out.store(Value::NIL);
-                    Ok(())
-                }
             }
             _ => {
                 let vm = strand.vm();
@@ -1017,8 +1015,7 @@ impl<'v> Protocol<'v> for Class {
             | sym::INDEX_METHOD
             | sym::ITER_METHOD
             | sym::UNPACK_METHOD
-            | sym::SPREAD_METHOD
-            | sym::GET_METHOD => {
+            | sym::SPREAD_METHOD => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }

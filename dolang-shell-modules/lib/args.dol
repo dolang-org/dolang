@@ -20,8 +20,8 @@
 #       echo "Deploying $(p.deploy.service)"
 # ```
 #
-# An item's name becomes its key in the result record, with hyphens converted
-# to underscores: `dry-run` is read as `p.dry_run`.
+# An item's name becomes a field of the resulting [`Args`](args.Args), with
+# hyphens converted to underscores: `dry-run` is read as `p.dry_run`.
 
 import shell
 import fs:
@@ -93,7 +93,7 @@ pub @let ArgSpec = Dict[{
 #
 # When a subcommand is matched, the result's `cmd` field is its name as a
 # symbol, such as `:deploy:` or `:build_docs:`, and its own fields are in a
-# nested record at `p[p.cmd]`. The result's `handler` field is the matched
+# nested [`Args`](args.Args) at `p[p.cmd]`. The result's `handler` field is the matched
 # handler.
 pub @let CmdSpec = Dict[{
   cmd: Str, ?help: Str, ?usage: Str, ...(SpecItem | Handler),
@@ -102,8 +102,45 @@ pub @let CmdSpec = Dict[{
 # An item of an argument specification.
 pub @let SpecItem = (FlagSpec | OptSpec | ArgSpec | CmdSpec)
 
-# A handler, called by [`with`](args.with) with the parsed record.
-pub @let Handler = (Record -> Value)
+# A handler, called by [`with`](args.with) with the parsed arguments.
+pub @let Handler = (Args -> Value)
+
+# ===========================================================================
+# Public: result type
+# ===========================================================================
+
+# Parsed arguments, as returned by [`parse`](args.parse) and passed to a
+# [`Handler`](args.Handler).
+#
+# Each declared item is a read-only field named after it, with hyphens
+# converted to underscores. When a subcommand is matched, `cmd` holds its name
+# as a symbol and the subcommand's own arguments are at `p[p.cmd]`; `handler`
+# holds the matched handler. Destructuring or spreading an `Args` takes its
+# fields as keys.
+#
+# ```
+# let :format :file = p
+# ```
+pub class Args
+  field values
+
+  def (init) self values
+    self.#values = Record $values
+
+  def (get) self name
+    self.#values.get $name else: do throw std.FieldError $name
+
+  def (set) _self _name _value
+    throw std.ImmutableError()
+
+  def (index) self name
+    self.#values[name]
+
+  def (unpack) self
+    self.#values
+
+  def (spread) self
+    self.#values
 
 # ===========================================================================
 # Public: error type
@@ -439,7 +476,7 @@ class Parser
     if (sub != nil)
       sub.init_rec()
       let sub_rec = sub.parse_impl $argi
-      self.#rec[sub.#sym] = Record $sub_rec
+      self.#rec[sub.#sym] = Args $sub_rec
       self.#rec[:cmd:] = sub.#sym
       self.#rec[:handler:] = sub_rec[:handler:]
       if sub_rec[:help:]
@@ -596,7 +633,7 @@ class Parser
       rec[:help:] = self.selected_help $rec
     self.validate()
     self.#rec = nil
-    Record $rec
+    Args $rec
 
 # ===========================================================================
 # Public API
@@ -615,8 +652,7 @@ def prog_default()
 #
 # ## Returns
 #
-# A record whose fields are the declared item names. When help is requested,
-# its `help` field holds the rendered help text and parsing stops early.
+# The parsed arguments. When help is requested, their `help` field holds the rendered help text and parsing stops early.
 #
 # ## Errors
 #
@@ -650,7 +686,7 @@ pub def parse
   :usage @ Str = nil
   # Spec items, and optionally a handler for the top level.
   ...spec @ (SpecItem | Handler)
-do -> Record
+do -> Args
   let p = Parser name: (program || prog_default()) :help :usage ...spec
   p.parse
     if (args != nil)
@@ -664,7 +700,7 @@ do -> Record
 #
 # ## Returns
 #
-# The handler's result, or the parsed record when there is no handler.
+# The handler's result, or the parsed arguments when there is no handler.
 #
 # ## Example
 #

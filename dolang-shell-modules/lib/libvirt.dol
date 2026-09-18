@@ -443,6 +443,21 @@ def require_os os
     throw std.ValueError "os: is required"
   os
 
+# Named fields for data this module passes between its own functions, read as
+# `s.name` and destructured like the record of keyword arguments it was built
+# from.
+class Struct
+  field fields
+
+  def (init) self **fields
+    self.#fields = fields
+
+  def (get) self key
+    self.#fields[key]
+
+  def (unpack) self
+    self.#fields
+
 # The machine shape and provisioning style a guest OS needs.
 #
 # This class is the shape a cloud image expects: a plain BIOS machine with a
@@ -977,7 +992,7 @@ class DomainConfig
     self.#media = []
     for entry = source.media
       let path = Path(entry.path).absolute()
-      let attached = record :path boot: $entry.boot
+      let attached = Struct :path boot: $entry.boot
       self.#media.push $attached
     if (self.#media.len > MEDIA_TARGETS.len)
       throw std.ValueError "at most $(MEDIA_TARGETS.len) media may be attached"
@@ -1254,7 +1269,7 @@ class DomainXml
     let path = node_text(node).trim()
     if (path == "")
       return nil
-    record path: $(Path(path).absolute()) format: $(node.attr "format")
+    Struct path: $(Path(path).absolute()) format: $(node.attr "format")
 
   # The vTPM's state directory and the device it belongs to, or `nil` for a
   # domain with no TPM.
@@ -1274,7 +1289,7 @@ class DomainXml
     let path = source.attr "path"
     if (path == nil)
       return nil
-    record
+    Struct
       path: $(Path(path).absolute())
       model: $(tpm.attr "model")
       version: $(backend.attr "version")
@@ -1322,7 +1337,7 @@ class DomainXml
     # it was built as. Absent from a domain defined before the module emitted
     # them, which restores under whatever its OS profile says today — the same
     # behavior that domain was created with.
-    record :app :os :arch :user :command
+    Struct :app :os :arch :user :command
       machine: $(metadata_value metadata "machine")
       firmware: $(metadata_value metadata "firmware")
       tpm: $(metadata_value metadata "tpm")
@@ -1351,7 +1366,7 @@ class DomainXml
       return nil
     if !path_within(workdir, xdg.data_home().absolute())
       return nil
-    record :workdir :source
+    Struct :workdir :source
 
   # The domain's single file-backed disk, which is what any export flattens.
   pub def export_source self
@@ -1467,7 +1482,7 @@ class DomainImpl
       normalized_state (parts[1].replace(")", ""))
     else
       :UNKNOWN:
-    record :state :reason
+    Struct :state :reason
 
   # Starts the domain.
   pub def start self
@@ -2401,7 +2416,7 @@ def image_format image
 # on its own — the disk into a shared image store — where the bundle's own
 # digest no longer covers it.
 def bundle_member kind path name :format = nil
-  record :kind :path :name :format
+  Struct :kind :path :name :format
 
 # Builds the manifest for a bundle, with `version` first because this format
 # will change.
@@ -2601,7 +2616,7 @@ def manifest_member members key bundle :required = false
       # Only a member whose bytes have a format worth recording carries one:
       # the disk and the variable store do, the vTPM tar does not.
       "format": format = nil
-    record
+    Struct
       kind: $key
       name: (manifest_typed name Str "member name" bundle)
       format: (manifest_typed format Str "member format" bundle optional: true)
@@ -2653,7 +2668,7 @@ def read_manifest bundle
       "domain_xml": _ = nil
     if !(type members Dict)
       throw std.ValueError "bundle manifest members is not an object: $bundle"
-    record
+    Struct
       app: (manifest_typed app Str "app" bundle)
       os: (manifest_enum os MANIFEST_OS "os" bundle)
       arch: (manifest_enum arch MANIFEST_ARCH "arch" bundle)
@@ -2664,7 +2679,7 @@ def read_manifest bundle
       machine: (manifest_typed machine Str "machine" bundle optional: true)
       firmware: (manifest_enum firmware MANIFEST_FIRMWARE "firmware" bundle optional: true)
       tpm: (manifest_enum tpm MANIFEST_TPM "tpm" bundle optional: true)
-      members: $ record
+      members: $ Struct
         disk: (manifest_member members "disk" bundle required: true)
         nvram: (manifest_member members "nvram" bundle)
         tpm: (manifest_member members "tpm" bundle)
@@ -2733,7 +2748,7 @@ def ensure_key root app
       key.remove ignore: true
       public.remove ignore: true
       cli ssh-keygen -q -t ed25519 -N "" -C $app -f $key
-  record :key :public
+  Struct :key :public
 
 # `chmod:` accepts an `Int` mode or a `fs.unix.Mode`, normalized to a
 # plain `Int` here, whichever `add:` it appears in.
@@ -2771,7 +2786,7 @@ def write_files_entry add app
 # `run:` keyword argument instead.
 def parse_init init
   if (init == nil)
-    return record boot: [] write: [] packages: []
+    return Struct boot: [] write: [] packages: []
   if !(type init Dict)
     throw std.TypeError "init: expected Dict"
 
@@ -2800,7 +2815,7 @@ def parse_init init
     else
       throw std.UnexpectedKeyError $key
 
-  record :boot :write :packages
+  Struct :boot :write :packages
 
 # Steps spelled as a bare positional item rather than as a `key: value` pair,
 # because they take no argument. A vertical block interleaves positional items
@@ -2826,11 +2841,11 @@ def parse_extra_options options
   let drivers = []
   for key value = options
     if (key == :add:)
-      post.push (record kind: :add: add: (parse_add value "add"))
+      post.push (Struct kind: :add: add: (parse_add value "add"))
     else if (key == :run:)
       if (type value Str || type value Array)
         throw std.TypeError "run: expected a func; use init: {run: ...} for boot-time commands"
-      post.push (record kind: :run: block: value)
+      post.push (Struct kind: :run: block: value)
     else if (key == :installer:)
       installers.push (parse_installer value)
     else if (key == :drivers:)
@@ -2839,10 +2854,10 @@ def parse_extra_options options
       if !(type value Str && POSITIONAL_STEPS.contains value)
         let known = ", ".join(POSITIONAL_STEPS)
         throw std.ValueError "unknown step $value; the positional steps are: $known"
-      post.push (record kind: :reboot:)
+      post.push (Struct kind: :reboot:)
     else
       throw std.UnexpectedKeyError $key
-  record :post :installers :drivers
+  Struct :post :installers :drivers
 
 # Unpacks the guest payload archive into the image store, cached under a
 # digest of the archive so it is unpacked once per release rather than once
@@ -2931,19 +2946,19 @@ def build_provision_iso root files
 # it.
 def normalize_dolang_spec spec
   if (spec == nil)
-    return record version: nil artifact: nil
+    return Struct version: nil artifact: nil
   if (type spec Str)
-    return record version: $spec artifact: nil
+    return Struct version: $spec artifact: nil
   if (type spec Dict && spec.get(:version:) != nil)
     if (spec.get(:digest:) != nil)
       throw std.ValueError "dolang: digest is not yet supported together with version"
     for key _ = spec
       if (key != :version:)
         throw std.UnexpectedKeyError $key
-    return record version: (spec.get :version:) artifact: nil
+    return Struct version: (spec.get :version:) artifact: nil
   if !(type spec Path || type spec Url || type spec Dict)
     throw std.TypeError "dolang: expected Str, Path, Url, or Dict"
-  record version: nil artifact: (parse_artifact spec "dolang")
+  Struct version: nil artifact: (parse_artifact spec "dolang")
 
 def dolang_platform_key os arch
   "$(str(arch).lower())-$(str(os).lower())"
@@ -3078,7 +3093,7 @@ class ImageSource: Source
       probe: :SSH:
       image: $stored
       format: $(image_format stored)
-      media: [record(path: seed, boot: nil)]
+      media: [Struct(path: seed, boot: nil)]
 
   # The payload is copied in over SSH — this is the one path where the guest
   # brings up sshd itself and the VFS arrives afterwards — and then cloud-init
@@ -3112,11 +3127,11 @@ class InstallerSource: Source
         edition = spec.edition
         index = spec.index
       let resolved = spec.resolve $app
-      media.push (record path: resolved boot: boot)
+      media.push (Struct path: resolved boot: boot)
       boot = (boot + 1)
     for spec = drivers
       let resolved = spec.resolve $app
-      media.push (record path: resolved boot: nil)
+      media.push (Struct path: resolved boot: nil)
 
     let archive = dolang.resolve $app
     let payload = unpack_payload $root $archive
@@ -3142,7 +3157,7 @@ class InstallerSource: Source
           authorized_key: $(keys.public.read().trim())
         for file = payload.entries()
           "payload/$(file.name)": (payload / file)
-    media.push (record path: provision boot: nil)
+    media.push (Struct path: provision boot: nil)
 
     Source.(init) $self
       :os :arch :user :media

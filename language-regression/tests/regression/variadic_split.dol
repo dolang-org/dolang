@@ -33,7 +33,7 @@ let b kw = keyed 1 x: 2 y: 3
 assert_eq $b 1
 assert_eq (type kw) $Record
 assert_eq $kw (x: 2, y: 3)
-assert_eq $kw.x 2
+assert_eq $kw[:x:] 2
 assert_eq $(keyed 1)[1] $record()
 
 # Named keyword parameters take their keys first

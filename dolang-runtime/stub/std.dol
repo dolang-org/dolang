@@ -109,14 +109,14 @@ pub def int value @ (Num | Str) -> Int
 # Creates a record from positional and key arguments.
 #
 # Positional arguments become positional items, and key arguments become
-# symbol fields.
+# symbol-keyed items.
 #
 #
 # ## Example
 #
 # ```
 # let r = record name: Alice age: 30
-# echo $r.name  # Alice
+# echo $r[:name:]  # Alice
 # ```
 #
 pub def record[...Ts]
@@ -3172,17 +3172,23 @@ pub class Range[T @ Num]: Iterable[T]
 
 
 #
-# Stores an immutable sequence of positional items and symbol-keyed fields.
+# Stores an immutable sequence of positional items and symbol-keyed items.
 #
 # Records keep their items in order, and a key may repeat. A lookup finds the
-# latest value for a key. A variadic capture such as `...rest` binds a record
-# of the remaining arguments. Use a class for mutable named fields. To produce a
-# changed record, spread the old record into a new one:
+# latest value for a key. Keys are read by indexing, not as fields:
+#
+# ```
+# let r = record name: Alice age: 30
+# assert_eq $r[:name:] Alice
+# ```
+#
+# A variadic capture such as `...rest` binds a record of the remaining
+# arguments. To produce a changed record, spread the old record into a new one:
 #
 # ```
 # let updated = record ...old status: ready
 # ```
-pub class Record[...Ts]: @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}] @BaseIterable[Tuple[(Sym | Int), Value]]
+pub class Record[...Ts]: Iterable[Tuple[(Sym | Int), Value]] @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}]
   #
   #
   # Builds a record from one spreadable source of key-value pairs.
@@ -3207,36 +3213,16 @@ pub class Record[...Ts]: @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}] @Base
     ...
 
   #
-  # Records support direct dot-syntax for symbol keys:
-  #
-  # ```
-  # let r = record name: Alice age: 30
-  # echo $r.name
-  # ```
-  #
-  # And indexing by symbol or position:
-  #
-  # ```
-  # echo $r[:name:]
-  # ```
-  #
-  # Reads a field.
-  pub def (get) self name
-    ...
-
-  #
   # Gets the value for a symbol or position, with an optional default.
   #
-  #[class]
-  pub def get[D = nil] self rec @ Record key @ (Int | Sym) :default @ D = nil :else @ (() -> D) = nil -> (Value | D)
+  pub def get[D = nil] self key @ (Int | Sym) :default @ D = nil :else @ (() -> D) = nil -> (Value | D)
     ...
 
   #
-  # Returns the number of items, counting each instance of a repeated key.
+  # Number of items, counting each instance of a repeated key.
   #
-  #
-  #[class]
-  pub def len self rec @ Record -> Int
+  #[getter]
+  pub def len self -> Int
     ...
 
   # Iterates record items as `[key, value]` pairs in order. A positional item's

@@ -139,8 +139,8 @@ log INFO hello world
 # prints: [INFO] hello world
 ```
 
-The `rest` parameter receives a [record](std.Record) of the extra
-arguments, in invocation order. A key argument is a field, as in `rest.name`.
+The `rest` parameter receives a [record](std.Record) of the extra arguments,
+in invocation order. Read a key argument by indexing, as in `rest[:name:]`.
 Iteration yields key/value tuples, where the key is the positional argument
 index (0-origin) for positional arguments.
 

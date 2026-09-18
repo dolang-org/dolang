@@ -6,20 +6,22 @@ import
 assert (!(bool (record())))
 assert (bool (record(a: 1)))
 
-# Record.len counts every item, including repeated keys
+# len counts every item, including repeated keys
 let counted = (name: "Alice", age: 30, name: "Bob", 1, 2, age: 31)
-assert_eq (Record.len counted) 6
-assert_eq (Record.len (record())) 0
+assert_eq $counted.len 6
+assert_eq $record().len 0
+assert_throws $TypeError do counted.len()
 
-# Record.get takes a position or a symbol
+# get takes a position or a symbol
 let rec = record(1, 2, 3, a: "first", b: "second", a: "second")
-assert_eq (Record.get rec 0) 1
-assert_eq (Record.get rec 2) 3
-assert_eq (Record.get rec 3) nil
+assert_eq (rec.get 0) 1
+assert_eq (rec.get 2) 3
+assert_eq (rec.get 3) nil
+assert_eq (rec.get :b:) "second"
+assert_eq (rec.get :z: default: 42) 42
+assert_eq (rec.get :z: else: do 43) 43
+assert_eq (rec.get "a") nil
 assert_eq (Record.get rec :b:) "second"
-assert_eq (Record.get rec :z: default: 42) 42
-assert_eq (Record.get rec :z: else: do 43) 43
-assert_eq (Record.get rec "a") nil
 
 # Indexing takes a position or a symbol
 assert_eq $rec[1] 2
@@ -27,12 +29,14 @@ assert_eq $rec[:b:] "second"
 assert_throws $std.IndexError do rec[3]
 assert_throws $TypeError do rec["a"]
 
-# Dict-like methods are not part of a record's API
-assert_throws $std.FieldError do Record.keys
-assert_throws $std.FieldError do Record.values
-assert_throws $std.FieldError do Record.contains
-assert_throws $std.FieldError do Record.count
-assert_throws $std.FieldError do Record.pairs
+# Keys are not fields
+assert_throws $std.FieldError do rec.a
+assert_throws $std.FieldError do rec.keys
+assert_throws $std.FieldError do rec.pairs
+
+# A record is Iterable over its key/value pairs
+assert (type rec Iterable)
+assert_eq [...rec.filter (do |kv| type kv[0] Sym)] [(:a:, "first"), (:b:, "second"), (:a:, "second")]
 
 let immutable = record(a: 1)
 assert_throws $ImmutableError do immutable.a = 2
@@ -45,17 +49,16 @@ class MyRecord: Record
     Record.(init) $self $source
 
 let custom = MyRecord {name: "Alice", age: 30}
-assert_eq $custom.name "Alice"
-assert_eq $custom.age 30
+assert_eq $custom[:name:] "Alice"
+assert_eq $custom[:age:] 30
 assert (type custom MyRecord)
 
 # A lookup resolves to the *last* value for the key, so a duplicate key
 # overrides the ones before it: last wins, the same rule dict indexing follows.
 let dup = record a: 1 b: 2 a: 3
-assert_eq $dup.a 3
 assert_eq $dup[:a:] 3
-assert_eq (Record.get dup :a:) 3
-assert_eq $dup.b 2
+assert_eq (dup.get :a:) 3
+assert_eq $dup[:b:] 2
 assert_eq [...dup] [(:a:, 1), (:b:, 2), (:a:, 3)]
 
 # A record holds positional items and symbol keys. Integer keys counting up

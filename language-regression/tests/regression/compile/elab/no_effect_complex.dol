@@ -1,7 +1,19 @@
 let x = 5
 let y = 10
-let arr = [record field: 1, 2, 3]
-let obj = record nested: (record field: false)
+class Leaf
+  pub field field
+
+  def (init) self field
+    self.field = field
+
+class Node
+  pub field nested
+
+  def (init) self nested
+    self.nested = nested
+
+let arr = [Leaf(1), 2, 3]
+let obj = Node (Leaf false)
 
 # Chained operations
 (x + y * 2)

@@ -128,34 +128,156 @@ pub @let ContainerStatus = (
 
 # A published port of a container, as reported by
 # [`Container.state`](_container.dockman.Container.state).
-pub @let PortBinding = Record[...{
-  protocol: (PortProtocol | Str), container_port: Int,
-  host_ip: (Str | nil), host_port: (Int | nil),
-}]
+pub class PortBinding
+  field protocol container_port host_ip host_port
+
+  def (init) self :protocol :container_port :host_ip :host_port
+    self.#protocol = protocol
+    self.#container_port = container_port
+    self.#host_ip = host_ip
+    self.#host_port = host_port
+
+  # Protocol, or the runtime's own name for an unrecognized one.
+  #[getter]
+  pub def protocol self -> (PortProtocol | Str)
+    self.#protocol
+
+  # Port inside the container.
+  #[getter]
+  pub def container_port self -> Int
+    self.#container_port
+
+  # Host address, or `nil` when unpublished.
+  #[getter]
+  pub def host_ip self -> (Str | nil)
+    self.#host_ip
+
+  # Host port, or `nil` when unpublished.
+  #[getter]
+  pub def host_port self -> (Int | nil)
+    self.#host_port
 
 # A mount of a container, as reported by
 # [`Container.state`](_container.dockman.Container.state).
-pub @let MountInfo = Record[...{
-  type: (:BIND: | :VOLUME: | :TMPFS: | :IMAGE: | :NPIPE: | :CLUSTER: | Str | nil),
-  source: (Path | nil), target: (Path | nil), readonly: Bool,
-  mode: (Str | nil), propagation: (Str | nil), name: (Str | nil),
-}]
+pub class MountInfo
+  field type source target readonly mode propagation name
+
+  def (init) self :type :source :target :readonly :mode :propagation :name
+    self.#type = type
+    self.#source = source
+    self.#target = target
+    self.#readonly = readonly
+    self.#mode = mode
+    self.#propagation = propagation
+    self.#name = name
+
+  # Mount type, or the runtime's own name for an unrecognized one.
+  #[getter]
+  pub def type self -> (:BIND: | :VOLUME: | :TMPFS: | :IMAGE: | :NPIPE: | :CLUSTER: | Str | nil)
+    self.#type
+
+  # Source on the host.
+  #[getter]
+  pub def source self -> (Path | nil)
+    self.#source
+
+  # Mount point in the container.
+  #[getter]
+  pub def target self -> (Path | nil)
+    self.#target
+
+  # Whether the mount is read-only.
+  #[getter]
+  pub def readonly self -> Bool
+    self.#readonly
+
+  # Mount mode, as the runtime reports it.
+  #[getter]
+  pub def mode self -> (Str | nil)
+    self.#mode
+
+  # Bind propagation, as the runtime reports it.
+  #[getter]
+  pub def propagation self -> (Str | nil)
+    self.#propagation
+
+  # Volume name.
+  #[getter]
+  pub def name self -> (Str | nil)
+    self.#name
 
 # The live state of a container.
-#
-# `state` is `nil` when the runtime reports no status, and `status` is the
-# runtime's own word for it.
-pub @let ContainerState = Record[...{
-  name: (Str | nil), state: (ContainerStatus | Str | nil), status: (Str | nil),
-  ports: Array[PortBinding], mounts: Array[MountInfo],
-}]
+pub class ContainerState
+  field name state status ports mounts
+
+  def (init) self :name :state :status :ports :mounts
+    self.#name = name
+    self.#state = state
+    self.#status = status
+    self.#ports = Tuple $ports
+    self.#mounts = Tuple $mounts
+
+  # Container name.
+  #[getter]
+  pub def name self -> (Str | nil)
+    self.#name
+
+  # Lifecycle state, the runtime's own word for an unrecognized one, or `nil`
+  # when the runtime reports no status.
+  #[getter]
+  pub def state self -> (ContainerStatus | Str | nil)
+    self.#state
+
+  # The runtime's own word for the state.
+  #[getter]
+  pub def status self -> (Str | nil)
+    self.#status
+
+  # Published ports.
+  #[getter]
+  pub def ports self -> Tuple[...PortBinding]
+    self.#ports
+
+  # Mounts.
+  #[getter]
+  pub def mounts self -> Tuple[...MountInfo]
+    self.#mounts
 
 # A repository and tag naming an image.
-pub @let ImageTag = Record[...{repo: Str, tag: Str}]
+pub class ImageTag
+  field repo tag
 
-# The result of pushing an image: the reference pushed and, when the runtime
-# reports one, its digest.
-pub @let PushResult = Record[...{ref: Str, digest: (Str | nil)}]
+  def (init) self :repo :tag
+    self.#repo = repo
+    self.#tag = tag
+
+  # Repository.
+  #[getter]
+  pub def repo self -> Str
+    self.#repo
+
+  # Tag.
+  #[getter]
+  pub def tag self -> Str
+    self.#tag
+
+# The result of pushing an image.
+pub class PushResult
+  field ref digest
+
+  def (init) self :ref :digest
+    self.#ref = ref
+    self.#digest = digest
+
+  # The reference pushed.
+  #[getter]
+  pub def ref self -> Str
+    self.#ref
+
+  # Digest of the pushed image, when the runtime reports one.
+  #[getter]
+  pub def digest self -> (Str | nil)
+    self.#digest
 
 let COPY_BLOCK_SIZE = 1048576
 
@@ -593,7 +715,7 @@ def parse_container_ports ports
     let protocol = normalize_known $PORT_PROTOCOLS $proto
     let container_port = int $port
     if (bindings == nil)
-      mapped.push $ record
+      mapped.push $ PortBinding
         :protocol
         :container_port
         host_ip: nil
@@ -604,7 +726,7 @@ def parse_container_ports ports
           "HostIp": host_ip = nil
           "HostPort": host_port = nil
           ...
-        mapped.push $ record
+        mapped.push $ PortBinding
           :protocol
           :container_port
           :host_ip
@@ -623,7 +745,7 @@ def parse_container_mounts mounts
       "Propagation": propagation = nil
       "Name": name = nil
       ...
-    mapped.push $ record
+    mapped.push $ MountInfo
       type: (type && normalize_known(MOUNT_TYPES, type))
       source: (source && Path source)
       target: (target && Path target)
@@ -643,7 +765,7 @@ def parse_image_tags runtime repo_tags
     let repo tag = tag.split ":" limit: 1
     if (strip_localhost && repo.starts_with "localhost/")
       repo = repo.without_prefix "localhost/"
-    record :repo :tag
+    ImageTag :repo :tag
 
 def inspect_image runtime ref
   let lines = []
@@ -887,10 +1009,10 @@ pub class Runtime
   pub def save self target :format = :DOCKER_ARCHIVE: :platform = nil *images
     if (images.len == 0)
       throw "save: expected at least one image"
-    let spec = normalize_save_format $self $format
-    if (!spec.multi && images.len > 1)
+    let :cli :file :multi = normalize_save_format $self $format
+    if (!multi && images.len > 1)
       throw "save format does not support multiple images: $format"
-    let path_target = if spec.file
+    let path_target = if file
       nil
     else
       Path $target
@@ -900,18 +1022,18 @@ pub class Runtime
     try
       self.cli save
         if (self.id == :PODMAN:)
-          --format $spec.cli
-        if !spec.file
+          --format $cli
+        if !file
           --output $path_target
         if (platform != nil)
           --platform $platform
         ...refs
-        if spec.file
+        if file
           stdout: $target
         stderr: $lines.prechomp()
     catch proc.Error: e
       classify_image_error $refs[0] $lines
-      classify_archive_error $(spec.file && target || path_target) $lines
+      classify_archive_error $(file && target || path_target) $lines
       report_unknown $lines
       throw e
     target
@@ -981,7 +1103,7 @@ pub class Runtime
       report_unknown $lines
       throw e
     let digest = parse_pushed_digest $output $lines
-    record :ref :digest
+    PushResult :ref :digest
 
 pub def mount_args mounts
   let args = []
@@ -1574,7 +1696,7 @@ pub class Container
     else
       name
     let live_state = (status && normalize_known(CONTAINER_STATES, status) || nil)
-    record
+    ContainerState
       name: $live_name
       state: $live_state
       :status

@@ -113,7 +113,18 @@ class Spec
     self.cargo build --bin dolang-vfs --bin dolang-private-polyfill
     self.cargo ...rest
 
-let native = Spec (record target: nil)
+# Stands in for parsed arguments where a spec or test run is built outside a
+# task.
+class Options
+  pub field target args slow release
+
+  def (init) self :target = nil :args = nil :slow = false :release = false
+    self.target = target
+    self.args = args
+    self.slow = slow
+    self.release = release
+
+let native = Spec $ Options()
 
 def default_shell_tests slow release
   $
@@ -191,7 +202,7 @@ def shell_test spec args
 
 def both_test spec args
   cargo_test $spec []
-  shell_test $spec $ record args: nil slow: $args.slow release: $args.release
+  shell_test $spec $ Options slow: $args.slow release: $args.release
 
 def can_write_dir path
   try
