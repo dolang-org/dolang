@@ -90,6 +90,11 @@ def split_iter_unpack()
   assert_eq $b "y"
   assert_eq $c "z"
 
+  let head *tail **keys = re.split "p q r"
+  assert_eq $head "p"
+  assert_eq ([...tail]) ["q", "r"]
+  assert_eq $keys $record()
+
 #[test]
 def split_unpack_atomic()
   let re = Regex r"\s+"

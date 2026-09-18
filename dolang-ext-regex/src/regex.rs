@@ -5,7 +5,7 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value, call,
     error::ResultExt,
-    object::{Mut, Ref, TypeBuilder, Unpack, UnpackItem},
+    object::{Mut, Ref, Rest, TypeBuilder, Unpack, UnpackItem},
     unpack,
     value::{
         Nil, PinStr, TypeObject, View,
@@ -896,7 +896,8 @@ impl<'v> Object<'v> for RegexSplit<'v> {
             return Err(Error::missing_key(strand, key));
         }
 
-        let fallible = unpack.required() > 0 || unpack.exhaustive();
+        let exhaustive = unpack.pos_rest() == Rest::None;
+        let fallible = unpack.required() > 0 || exhaustive;
         let mut borrow = this.borrow_mut(strand)?;
 
         if fallible {
@@ -907,7 +908,7 @@ impl<'v> Object<'v> for RegexSplit<'v> {
             if remaining < unpack.required() {
                 return Err(Error::missing_positional(strand, unpack.required()));
             }
-            if unpack.exhaustive() && remaining > unpack.required() + unpack.optional() {
+            if exhaustive && remaining > unpack.required() + unpack.optional() {
                 return Err(Error::unexpected_positional(
                     strand,
                     unpack.required() + unpack.optional(),
@@ -926,10 +927,10 @@ impl<'v> Object<'v> for RegexSplit<'v> {
                 | UnpackItem::ConstKey { slot, default, .. } => {
                     Output::set(strand, slot, default.unwrap());
                 }
-                UnpackItem::Rest { slot } => {
+                UnpackItem::Rest { slot } | UnpackItem::PosRest { slot } => {
                     Output::set(strand, slot, this);
-                    return Ok(());
                 }
+                UnpackItem::KeyRest { slot } => Unpack::empty_key_rest(strand, slot),
             }
         }
         Ok(())

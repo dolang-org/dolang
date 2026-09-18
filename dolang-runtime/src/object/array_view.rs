@@ -4,7 +4,7 @@ use std::{cell::Cell, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
-use dolang_bytecode::Variadic;
+use dolang_bytecode::Rest;
 
 use crate::{
     arg::{Arg, Args},
@@ -653,16 +653,17 @@ impl<'v> Protocol<'v> for View<'v> {
     ) -> Result<'v, 's, ()> {
         let view = this.get();
         let consumed = unpack_from(strand, sig, &mut out, &view.owner, &*view.glue, 0)?;
-        if sig.variadic == Variadic::Capture {
+        if let Some(i) = sig.pos_rest_slot() {
             strand.builtin_types().array_view_iter.create(
                 strand,
                 Iter {
                     parent: this.to_strong(),
                     index: Cell::new(consumed),
                 },
-                out.at(sig.len() - 1),
+                out.at(i),
             );
         }
+        sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
     }
     fn op_type<'a, 's>(
@@ -723,9 +724,10 @@ impl<'v> Protocol<'v> for Iter<'v> {
             iter.index.get(),
         )?;
         iter.index.set(iter.index.get() + consumed);
-        if sig.variadic == Variadic::Capture {
-            Output::set(strand, out.at(sig.len() - 1), &this);
+        if let Some(i) = sig.pos_rest_slot() {
+            Output::set(strand, out.at(i), &this);
         }
+        sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
     }
     fn op_get<'a, 's>(
@@ -834,7 +836,7 @@ fn unpack_native<'v, 's>(
                     return Err(Error::missing_key(strand, key));
                 }
             }
-            UnpackItem::Rest { slot } => {
+            UnpackItem::Rest { slot } | UnpackItem::PosRest { slot } => {
                 strand.builtin_types().array_view_iter.create(
                     strand,
                     Iter {
@@ -844,10 +846,11 @@ fn unpack_native<'v, 's>(
                     slot,
                 );
             }
+            UnpackItem::KeyRest { slot } => NativeUnpack::empty_key_rest(strand, slot),
         }
     }
     let view = &*parent;
-    if unpack.exhaustive() && position < view.glue.len(&view.owner, strand) {
+    if unpack.pos_rest() == Rest::None && position < view.glue.len(&view.owner, strand) {
         return Err(Error::unexpected_positional(strand, position));
     }
     Ok(())
@@ -866,7 +869,7 @@ fn unpack_from<'v, 's>(
     if sig.required > len {
         return Err(Error::missing_positional(strand, sig.required));
     }
-    if pos_count < len && sig.variadic == Variadic::NONE {
+    if pos_count < len && sig.pos_rest() == Rest::None {
         return Err(Error::unexpected_positional(strand, sig.required));
     }
     let min = pos_count.min(len);
@@ -880,7 +883,7 @@ fn unpack_from<'v, 's>(
     }
     for (i, key) in sig.keys.iter().enumerate() {
         if let Some(default) = &key.default {
-            out.at(min + i).store(default.dup());
+            out.at(pos_count + i).store(default.dup());
         } else {
             return Err(match &key.kind {
                 UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -888,7 +891,7 @@ fn unpack_from<'v, 's>(
             });
         }
     }
-    Ok(min + sig.keys.len())
+    Ok(min)
 }
 
 /// Type object shared by every array view.

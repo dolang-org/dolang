@@ -126,6 +126,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        sig.reject_split(strand)?;
         let pos_count = sig.required + sig.optional.len();
         if sig.required != 0 {
             return Err(Error::missing_positional(strand, 0));

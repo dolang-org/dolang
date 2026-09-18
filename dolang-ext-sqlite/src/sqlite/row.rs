@@ -3,7 +3,7 @@ use std::ffi::CStr;
 use bitvec::slice::BitSlice;
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
-    object::{Mut, Ref, Spread, SpreadContext, TypeBuilder, Unpack, UnpackItem},
+    object::{Mut, Ref, Rest, Spread, SpreadContext, TypeBuilder, Unpack, UnpackItem},
     value::Nil,
     value::TypeObject,
 };
@@ -85,7 +85,10 @@ impl<'v> Object<'v> for Rows {
                 | UnpackItem::ConstKey { slot, default, .. } => {
                     Output::set(strand, slot, default.unwrap())
                 }
-                UnpackItem::Rest { slot } => Output::set(strand, slot, this),
+                UnpackItem::Rest { slot } | UnpackItem::PosRest { slot } => {
+                    Output::set(strand, slot, this)
+                }
+                UnpackItem::KeyRest { slot } => Unpack::empty_key_rest(strand, slot),
             }
         }
         Ok(())
@@ -267,7 +270,16 @@ unsafe fn unpack_row<'v, 's, 'a>(
     unsafe {
         let count = sqlite3_column_count(raw) as usize;
         let mut rest_slot = None;
-        let exhaustive = unpack.exhaustive();
+        // TODO(#703): handle `*` and `**` rests
+        if !unpack.mixed_rest()
+            && (unpack.pos_rest() != Rest::None || unpack.key_rest() != Rest::None)
+        {
+            return Err(Error::type_error(
+                strand,
+                "`*` and `**` rests are not yet supported in destructuring",
+            ));
+        }
+        let exhaustive = !unpack.mixed_rest();
 
         'top: for item in unpack.iter() {
             match item {
@@ -351,6 +363,7 @@ unsafe fn unpack_row<'v, 's, 'a>(
                 UnpackItem::Rest { slot } => {
                     rest_slot = Some(slot);
                 }
+                UnpackItem::PosRest { .. } | UnpackItem::KeyRest { .. } => unreachable!(),
             }
         }
 

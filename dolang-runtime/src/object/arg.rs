@@ -316,6 +316,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        sig.reject_split(strand)?;
         let pack = this.borrow(strand)?;
         let plan = unpack_plan(strand, &pack.inner, &HashSet::new(), 0, sig)?;
 
@@ -503,6 +504,7 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        sig.reject_split(strand)?;
         let mut iter = this.borrow_mut(strand)?;
         let pack = iter
             .pack

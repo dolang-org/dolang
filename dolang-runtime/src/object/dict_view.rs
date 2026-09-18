@@ -5,7 +5,7 @@ use std::ops::ControlFlow;
 use crate::value::fmt::Format;
 
 use bitvec::{bitbox, boxed::BitBox};
-use dolang_bytecode::Variadic;
+use dolang_bytecode::{Rest, Variadic};
 
 use crate::{
     arg::{Arg, Args},
@@ -473,6 +473,7 @@ fn unpack_pairs<'v, 's>(
     pairs: Vec<(Value<'v>, Value<'v>)>,
     mut unpack: Unpack<'v, '_>,
 ) -> Result<'v, 's, ()> {
+    unpack.reject_split(strand)?;
     let mut consumed = bitbox![0; pairs.len()];
     let mut position = 0i64;
     for item in unpack.iter() {
@@ -502,6 +503,8 @@ fn unpack_pairs<'v, 's>(
                 );
                 continue;
             }
+            // Rejected above until stage 3 of #703
+            UnpackItem::PosRest { .. } | UnpackItem::KeyRest { .. } => unreachable!(),
         };
 
         let found = pairs
@@ -527,7 +530,7 @@ fn unpack_pairs<'v, 's>(
             return Err(Error::missing_key(strand, &key));
         }
     }
-    if unpack.exhaustive()
+    if unpack.key_rest() == Rest::None
         && let Some(index) = consumed.first_zero()
     {
         return Err(Error::unexpected_key(strand, &pairs[index].0));
@@ -782,6 +785,7 @@ impl<'v> Protocol<'v> for View<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        sig.reject_split(strand)?;
         let pairs = flatten_glue(this.get(), strand)?;
         let consumed = unpack_sig_pairs(strand, &pairs, sig, &mut out)?;
         if sig.variadic == Variadic::Capture {
@@ -846,6 +850,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        sig.reject_split(strand)?;
         // Unpack against the remaining pairs in place: no copy of the tail,
         // and the iterator is only advanced once the unpack has succeeded, so
         // a failure leaves it exactly where it was. The shared borrow is held

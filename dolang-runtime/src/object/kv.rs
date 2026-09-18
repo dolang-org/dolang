@@ -638,6 +638,7 @@ impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Protocol<'v> for Values<'v, T> {
         sig: &sig::Unpack<'v, '_>,
         mut out: Slots<'v, '_>,
     ) -> Result<'v, 's, ()> {
+        sig.reject_split(strand)?;
         let borrow = this.borrow(strand)?;
         let next_index = {
             let container_borrow = borrow
@@ -724,6 +725,7 @@ impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Protocol<'v> for KeyValues<'v, T> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        sig.reject_split(strand)?;
         let borrow = this.borrow(strand)?;
         {
             let container_borrow = borrow
@@ -818,6 +820,7 @@ impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Protocol<'v> for Keys<'v, T> {
         sig: &sig::Unpack<'v, '_>,
         mut out: Slots<'v, '_>,
     ) -> Result<'v, 's, ()> {
+        sig.reject_split(strand)?;
         let borrow = this.borrow(strand)?;
         let (next_index, pending) = {
             let container_borrow = borrow
@@ -1184,6 +1187,7 @@ impl<'v> Inner<'v> {
         mut out: Slots<'v, 'a>,
         make_unpack: impl FnOnce(&mut Strand<'v, 's>, GcObj<'v, T>, u64, Skip<'v>) -> Value<'v>,
     ) -> Result<'v, 's, ()> {
+        sig.reject_split(strand)?;
         let borrow = this.borrow(strand)?;
         let inner: &Inner<'v> = (*borrow).as_ref();
         let pos_count = sig.required + sig.optional.len();
@@ -1685,6 +1689,7 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        sig.reject_split(strand)?;
         let mut borrow = this.borrow_mut(strand)?;
         let borrow = AsMut::<Self>::as_mut(&mut *borrow);
         let dict = borrow.kv.clone();

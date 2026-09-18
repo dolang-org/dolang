@@ -8,7 +8,7 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::{
     AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     method,
-    object::{TypeBuilder, Unpack, UnpackItem},
+    object::{Rest, TypeBuilder, Unpack, UnpackItem},
     unpack,
     value::{Nil, Singleton},
     vm::Register,
@@ -960,10 +960,10 @@ impl<'v> Object<'v> for Run<'v> {
         strand: &'a mut Strand<'v, 's>,
         mut unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if unpack.exhaustive() {
+        if unpack.key_rest() == Rest::None {
             return Err(Error::value(
                 strand,
-                "proc.run unpacking requires a trailing `...`",
+                "proc.run unpacking requires a trailing `...` or `**`",
             ));
         }
 
@@ -979,7 +979,10 @@ impl<'v> Object<'v> for Run<'v> {
                     })?;
                     Run { global }.get(strand, name.to_string(), slot);
                 }
-                UnpackItem::Rest { slot } => Output::set(strand, slot, this),
+                UnpackItem::Rest { slot } | UnpackItem::KeyRest { slot } => {
+                    Output::set(strand, slot, this)
+                }
+                UnpackItem::PosRest { slot } => Unpack::empty_pos_rest(strand, slot),
                 UnpackItem::Pos { .. } => {
                     return Err(Error::value(
                         strand,

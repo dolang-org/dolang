@@ -138,6 +138,21 @@ def partial_unpack()
         assert_eq $remaining[2] 4
 
 #[test]
+def query_star_unpack()
+  sqlite.open ":memory:" do |conn|
+    conn.execute t"CREATE TABLE test (n INTEGER)"
+    conn.execute t"INSERT INTO test VALUES (1), (2), (3)"
+
+    conn.prepare t"SELECT n FROM test ORDER BY n" do |stmt|
+      bind stmt.query()
+        - first = nil
+        *others
+      assert_eq $first["n"] 1
+      let rest = [...others]
+      assert_eq $rest.len 2
+      assert_eq $rest[1]["n"] 3
+
+#[test]
 def repeat_unpack_consumes()
   sqlite.open ":memory:" do |conn|
     conn.execute t"CREATE TABLE test (x INTEGER, y TEXT, z REAL)"

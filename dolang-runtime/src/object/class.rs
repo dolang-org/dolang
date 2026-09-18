@@ -2333,6 +2333,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         sig: &'a Unpack<'v, 'a>,
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        sig.reject_split(strand)?;
         let annex = this.annex();
         match annex.class.annex().entry_by_tag(sym::UNPACK_METHOD) {
             Some(ClassEntry::Method(v)) => {

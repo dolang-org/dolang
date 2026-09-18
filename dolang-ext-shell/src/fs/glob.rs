@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand,
-    object::{TypeBuilder, Unpack, UnpackItem},
+    object::{Rest, TypeBuilder, Unpack, UnpackItem},
     value::TypeObject,
 };
 
@@ -86,7 +86,7 @@ impl<'v> Object<'v> for GlobIter {
             return Err(Error::missing_positional(strand, available));
         }
 
-        if unpack.exhaustive() && available > total_pos {
+        if unpack.pos_rest() == Rest::None && available > total_pos {
             return Err(Error::unexpected_positional(strand, total_pos));
         }
 
@@ -108,7 +108,10 @@ impl<'v> Object<'v> for GlobIter {
                     // All keyed items must have defaults (checked above)
                     Output::set(strand, slot, default.unwrap());
                 }
-                UnpackItem::Rest { slot } => Output::set(strand, slot, this),
+                UnpackItem::Rest { slot } | UnpackItem::PosRest { slot } => {
+                    Output::set(strand, slot, this)
+                }
+                UnpackItem::KeyRest { slot } => Unpack::empty_key_rest(strand, slot),
             }
         }
         Ok(())

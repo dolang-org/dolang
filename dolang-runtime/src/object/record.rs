@@ -159,6 +159,12 @@ impl<'v> Record<'v> {
     }
 }
 
+/// Creates an empty record.
+pub(crate) fn empty<'v>(strand: &mut Strand<'v, '_>) -> GcObj<'v, Record<'v>> {
+    let vm = strand.vm();
+    GcObj::new(vm.arena(), vm.builtin_types().record, Record(Inner::new()))
+}
+
 // ── Iter ────────────────────────────────────────────────────────────
 
 pub(crate) struct Iter<'v> {
