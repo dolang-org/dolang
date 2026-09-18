@@ -19,7 +19,7 @@ import sys
 def create_dir_creates_single_directory()
   let new_dir = Path "new_directory"
 
-  assert !$new_dir.exists()
+  assert $!new_dir.exists()
 
   create_dir $new_dir
 

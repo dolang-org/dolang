@@ -592,7 +592,7 @@ def type_only_declarations_are_exposed()
   # An overload is public with its implementation
   assert $grows[0][1].is_pub
   let square = (named_node source nodes compile.Class "Square")
-  assert !(square[1].type_only)
+  assert (!(square[1].type_only))
   assert_eq (types_of(nodes, square[0])[0][1].expr.target) $shape[0]
   let inits = [...nodes.filter(do |pair| type(pair[1], compile.SpecialMethod))]
   assert_eq [...inits.map(do |pair| pair[1].type_only)] [true, false]
@@ -728,7 +728,7 @@ def superclasses_are_types_of_their_class()
   assert_type $compile.KeyRestTypeArg $arg
   assert_eq $arg.key_ty.target $binder[0]
 
-  assert !(record[1].type_only)
+  assert (!(record[1].type_only))
 
 #[test]
 def type_followups_are_exposed()

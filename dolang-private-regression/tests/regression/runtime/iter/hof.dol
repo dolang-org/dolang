@@ -36,7 +36,7 @@ let seen = []
 let ok = [1, 2, 3].iter().all do |x|
   seen.push $x
   (x < 2)
-assert !$ok
+assert $!ok
 assert_eq $seen [1, 2]
 
 seen = []

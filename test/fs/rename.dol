@@ -26,7 +26,7 @@ def rename_file()
 
   rename $old_path $new_path
 
-  assert !$old_path.exists()
+  assert $!old_path.exists()
 
   open $new_path r do |f|
     let contents = f.read()
@@ -46,7 +46,7 @@ def rename_to_different_directory()
 
   rename $old_path $new_path
 
-  assert !$old_path.exists()
+  assert $!old_path.exists()
   open $new_path r do |f|
     let contents = f.read()
     assert_eq $contents "moved content"
@@ -65,7 +65,7 @@ def rename_over_existing_file()
 
   rename $path1 $path2
 
-  assert !$path1.exists()
+  assert $!path1.exists()
   open $path2 r do |f|
     let contents = f.read()
     assert_eq $contents "content1"
@@ -90,7 +90,7 @@ def path_rename_method()
 
   src.rename $dst
 
-  assert !$src.exists()
+  assert $!src.exists()
   open $dst r do |f|
     assert_eq (f.read()) "rename method"
 
@@ -122,5 +122,5 @@ def path_rename_without_replacement()
     assert $src.exists()
   else
     src.rename $dst replace: false
-    assert !$src.exists()
+    assert $!src.exists()
     assert_eq (dst.read()) source

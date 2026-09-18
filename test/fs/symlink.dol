@@ -109,7 +109,7 @@ def broken_symlink()
 
   symlink_file $target $link
 
-  assert !$target.exists()
+  assert $!target.exists()
 
   let resolved = link.read_link()
   assert_eq $resolved $target
