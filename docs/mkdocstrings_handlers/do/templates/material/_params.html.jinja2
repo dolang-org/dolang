@@ -42,14 +42,14 @@
 {% if entity.self_annotation %}
 <tr>
   <td><code>self</code></td>
-  <td>{{ entity.self_annotation | convert_markdown(heading_level, base_id ~ "--self", strip_paragraph=true) }}</td>
+  <td><code>{{ entity.self_annotation | convert_markdown(heading_level, base_id ~ "--self", strip_paragraph=true) }}</code></td>
   <td>Receiver.</td>
 </tr>
 {% endif %}
 {% for p in entity.params %}
 <tr>
   <td><code>{{ p.name }}{{ "?" if p.optional }}</code></td>
-  <td>{% if p.type %}{{ p.type | convert_markdown(heading_level, base_id ~ "--" ~ p.slug, strip_paragraph=true) }}{% endif %}</td>
+  <td>{% if p.type %}<code>{{ p.type | convert_markdown(heading_level, base_id ~ "--" ~ p.slug, strip_paragraph=true) }}</code>{% endif %}</td>
   <td>{{ p.doc_short | convert_markdown(heading_level, base_id ~ "--" ~ p.slug, strip_paragraph=true) }}</td>
 </tr>
 {% endfor %}

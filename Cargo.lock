@@ -1214,17 +1214,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dolang-private-regression"
-version = "0.1.0"
-dependencies = [
- "dolang",
- "dolang-private-build",
- "dolang-private-test",
- "dolang-runtime",
- "futures",
-]
-
-[[package]]
 name = "dolang-private-test"
 version = "0.1.1"
 dependencies = [
@@ -2300,6 +2289,17 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "language-regression"
+version = "0.1.0"
+dependencies = [
+ "dolang",
+ "dolang-private-build",
+ "dolang-private-test",
+ "dolang-runtime",
+ "futures",
 ]
 
 [[package]]

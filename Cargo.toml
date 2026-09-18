@@ -6,7 +6,6 @@ members = [
   "dolang-private-bundle",
   "dolang-private-test",
   "dolang-private-polyfill",
-  "dolang-private-regression",
   "dolang-vfs",
   "dolang-shell-vfs",
   "dolang-winterop",
@@ -49,10 +48,10 @@ members = [
   "dolang-ext-time",
   "dolang-rpc",
   "fuzz",
+  "language-regression"
 ]
 default-members = [
   "dolang",
-  "dolang-private-regression",
   "dolang-private-polyfill",
   "dolang-vfs",
   "dolang-shell-vfs",
@@ -95,6 +94,7 @@ default-members = [
   "dolang-ext-uuid",
   "dolang-ext-time",
   "dolang-rpc",
+  "language-regression",
 ]
 resolver = "3"
 

@@ -474,11 +474,13 @@ def _type_html(ty: dict | None, scope: _TypeScope) -> str:
     reads the text between them, so that text is escaped for both. Links are
     optional: a name with no documentation renders as plain text. Like an
     annotation in source, it is a compact type, so a union or function type is
-    parenthesized.
+    parenthesized. The result is not wrapped in `<code>`: a type often goes
+    inside a larger code span, as in `name @ Type`, so templates add the
+    wrapper where a type stands alone.
     """
     if not ty:
         return ""
-    return f"<code>{_render_type(ty, scope, _BINDS_COMPACT)}</code>"
+    return _render_type(ty, scope, _BINDS_COMPACT)
 
 
 def _render_annotations(entity: dict, scope: _TypeScope) -> None:
@@ -489,7 +491,7 @@ def _render_annotations(entity: dict, scope: _TypeScope) -> None:
     for param in entity.get("params") or []:
         param["annotation"] = _type_html(param.get("type"), scope)
         if param.get("type_spread") and param["annotation"]:
-            param["annotation"] = param["annotation"].replace("<code>", "<code>...", 1)
+            param["annotation"] = "..." + param["annotation"]
     if entity.get("kind") in ("function", "method"):
         entity["return_annotation"] = _type_html(entity.get("returns"), scope)
         # A method may narrow its receiver, as `self @ Iter[U]`
@@ -501,10 +503,14 @@ def _render_annotations(entity: dict, scope: _TypeScope) -> None:
     elif entity.get("kind") == "class":
         supers = entity.get("supers") or []
         entity["super_annotations"] = [
-            _type_html(sup, scope) for sup in supers if not sup.get("type_only")
+            f"<code>{_type_html(sup, scope)}</code>"
+            for sup in supers
+            if not sup.get("type_only")
         ]
         entity["protocol_annotations"] = [
-            _type_html(sup, scope) for sup in supers if sup.get("type_only")
+            f"<code>{_type_html(sup, scope)}</code>"
+            for sup in supers
+            if sup.get("type_only")
         ]
     for member in entity.get("members", []):
         _render_annotations(member, scope)
